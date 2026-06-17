@@ -1814,6 +1814,19 @@ fn write_synthetic_receiver_failure_report(
     state: &ReceiverDiagnosticsStateV1,
 ) -> Result<()> {
     let last_sample = state.samples.last();
+    let progress_summary_from_path = last_sample
+        .and_then(|sample| sample.get("pipeline_progress_report_path"))
+        .and_then(Value::as_str)
+        .map(Path::new)
+        .and_then(read_pipeline_progress_summary);
+    let repair_source = if last_sample
+        .and_then(|sample| sample.get("repair_packet_received_count"))
+        .is_some()
+    {
+        last_sample
+    } else {
+        progress_summary_from_path.as_ref()
+    };
     let ack_snapshot = fs::read_to_string(ack_report_path())
         .ok()
         .and_then(|raw| serde_json::from_str::<Value>(raw.as_str()).ok());
@@ -1845,10 +1858,51 @@ fn write_synthetic_receiver_failure_report(
         .and_then(|ack| ack.get("missing_count"))
         .and_then(Value::as_u64)
         .unwrap_or_else(|| expected_tx_count.saturating_sub(stable_progress_total));
-    let repair_packet_received_count = last_sample
+    let final_missing_ranges = missing_ranges_from_json(&final_missing_ranges_sample);
+    let repair_received_ranges = repair_source
+        .and_then(|sample| sample.get("repair_sequence_received_ranges_sample"))
+        .map(missing_ranges_from_json)
+        .unwrap_or_default();
+    let repair_accepted_ranges = repair_source
+        .and_then(|sample| sample.get("repair_sequence_accepted_ranges_sample"))
+        .map(missing_ranges_from_json)
+        .unwrap_or_default();
+    let repair_enqueued_ranges = repair_source
+        .and_then(|sample| sample.get("repair_sequence_enqueued_ranges_sample"))
+        .map(missing_ranges_from_json)
+        .unwrap_or_default();
+    let repair_already_receipted_ranges = repair_source
+        .and_then(|sample| sample.get("repair_sequence_already_receipted_ranges_sample"))
+        .map(missing_ranges_from_json)
+        .unwrap_or_default();
+    let repair_packet_received_count = repair_source
         .and_then(|sample| sample.get("repair_packet_received_count"))
         .and_then(Value::as_u64);
     let repair_attribution_available = repair_packet_received_count.is_some();
+    let repair_received_final_missing_overlap_count =
+        missing_ranges_overlap_count(final_missing_ranges.as_slice(), repair_received_ranges.as_slice());
+    let repair_accepted_final_missing_overlap_count =
+        missing_ranges_overlap_count(final_missing_ranges.as_slice(), repair_accepted_ranges.as_slice());
+    let repair_enqueued_final_missing_overlap_count =
+        missing_ranges_overlap_count(final_missing_ranges.as_slice(), repair_enqueued_ranges.as_slice());
+    let repair_already_receipted_final_missing_overlap_count = missing_ranges_overlap_count(
+        final_missing_ranges.as_slice(),
+        repair_already_receipted_ranges.as_slice(),
+    );
+    let receipt_index_false_positive_suspected =
+        repair_already_receipted_final_missing_overlap_count > 0;
+    let repair_accepted_but_not_effective_count =
+        repair_accepted_final_missing_overlap_count.saturating_sub(
+            repair_enqueued_final_missing_overlap_count
+                .saturating_add(repair_already_receipted_final_missing_overlap_count),
+        );
+    let mut repair_accepted_but_not_effective_reason_counts = serde_json::Map::new();
+    if repair_accepted_but_not_effective_count > 0 {
+        repair_accepted_but_not_effective_reason_counts.insert(
+            "accepted_not_enqueued_for_final_missing".to_string(),
+            serde_json::json!(repair_accepted_but_not_effective_count),
+        );
+    }
     let report = serde_json::json!({
         "schema": REPORT_SCHEMA_V1,
         "role": "receiver",
@@ -1869,34 +1923,41 @@ fn write_synthetic_receiver_failure_report(
             "final_missing_ranges_sample": final_missing_ranges_sample,
             "repair_attribution_available": repair_attribution_available,
             "repair_packet_received_count": repair_packet_received_count,
-            "repair_packet_decode_failed_count": last_sample
+            "repair_packet_decode_failed_count": repair_source
                 .and_then(|sample| sample.get("repair_packet_decode_failed_count"))
                 .and_then(Value::as_u64),
-            "repair_sequence_received_count": last_sample
+            "repair_sequence_received_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_received_count"))
                 .and_then(Value::as_u64),
-            "repair_sequence_received_min": last_sample
+            "repair_sequence_received_min": repair_source
                 .and_then(|sample| sample.get("repair_sequence_received_min"))
                 .cloned(),
-            "repair_sequence_received_max": last_sample
+            "repair_sequence_received_max": repair_source
                 .and_then(|sample| sample.get("repair_sequence_received_max"))
                 .cloned(),
-            "repair_sequence_accepted_count": last_sample
+            "repair_sequence_received_final_missing_overlap_count": repair_received_final_missing_overlap_count,
+            "repair_sequence_accepted_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_accepted_count"))
                 .and_then(Value::as_u64),
-            "repair_sequence_enqueued_count": last_sample
+            "repair_sequence_accepted_final_missing_overlap_count": repair_accepted_final_missing_overlap_count,
+            "repair_sequence_enqueued_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_enqueued_count"))
                 .and_then(Value::as_u64),
-            "repair_sequence_duplicate_count": last_sample
+            "repair_sequence_enqueued_final_missing_overlap_count": repair_enqueued_final_missing_overlap_count,
+            "repair_sequence_already_receipted_final_missing_overlap_count": repair_already_receipted_final_missing_overlap_count,
+            "repair_sequence_duplicate_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_duplicate_count"))
                 .and_then(Value::as_u64),
-            "repair_sequence_rejected_count": last_sample
+            "repair_sequence_rejected_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_rejected_count"))
                 .and_then(Value::as_u64),
-            "repair_reject_reason_counts": last_sample
+            "repair_reject_reason_counts": repair_source
                 .and_then(|sample| sample.get("repair_reject_reason_counts"))
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({})),
+            "receipt_index_false_positive_suspected": receipt_index_false_positive_suspected,
+            "repair_accepted_but_not_effective_count": repair_accepted_but_not_effective_count,
+            "repair_accepted_but_not_effective_reason_counts": Value::Object(repair_accepted_but_not_effective_reason_counts.clone()),
         },
         "receiver_summary": {
             "accepted": false,
@@ -1905,15 +1966,19 @@ fn write_synthetic_receiver_failure_report(
             "progress_score": stable_progress_total,
             "repair_attribution_available": repair_attribution_available,
             "repair_packet_received_count": repair_packet_received_count,
-            "repair_sequence_received_max": last_sample
+            "repair_sequence_received_max": repair_source
                 .and_then(|sample| sample.get("repair_sequence_received_max"))
                 .cloned(),
-            "repair_sequence_accepted_count": last_sample
+            "repair_sequence_accepted_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_accepted_count"))
                 .and_then(Value::as_u64),
-            "repair_sequence_enqueued_count": last_sample
+            "repair_sequence_enqueued_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_enqueued_count"))
                 .and_then(Value::as_u64),
+            "repair_sequence_received_final_missing_overlap_count": repair_received_final_missing_overlap_count,
+            "repair_sequence_accepted_final_missing_overlap_count": repair_accepted_final_missing_overlap_count,
+            "repair_sequence_enqueued_final_missing_overlap_count": repair_enqueued_final_missing_overlap_count,
+            "repair_sequence_already_receipted_final_missing_overlap_count": repair_already_receipted_final_missing_overlap_count,
         },
         "receiver_ack_snapshot": {
             "expected_tx_total": ack_snapshot
@@ -2490,6 +2555,28 @@ fn diagnostics_summary_sample(
         "queue_pending_last": summary_u64(summary, "queue_pending_last"),
         "queue_dropped_total": summary_u64(summary, "queue_dropped_last"),
         "queue_rejected_total": summary_u64(summary, "queue_rejected_last"),
+        "repair_packet_received_count": summary_u64(summary, "repair_packet_received_count"),
+        "repair_packet_decode_failed_count": summary_u64(summary, "repair_packet_decode_failed_count"),
+        "repair_sequence_received_count": summary_u64(summary, "repair_sequence_received_count"),
+        "repair_sequence_received_min": summary.get("repair_sequence_received_min").cloned().unwrap_or(Value::Null),
+        "repair_sequence_received_max": summary.get("repair_sequence_received_max").cloned().unwrap_or(Value::Null),
+        "repair_sequence_received_ranges_sample": summary.get("repair_sequence_received_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_accepted_ranges_sample": summary.get("repair_sequence_accepted_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_enqueued_ranges_sample": summary.get("repair_sequence_enqueued_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_already_receipted_ranges_sample": summary.get("repair_sequence_already_receipted_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_duplicate_ranges_sample": summary.get("repair_sequence_duplicate_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_accepted_count": summary_u64(summary, "repair_sequence_accepted_count"),
+        "repair_sequence_duplicate_count": summary_u64(summary, "repair_sequence_duplicate_count"),
+        "repair_sequence_rejected_count": summary_u64(summary, "repair_sequence_rejected_count"),
+        "repair_reject_reason_counts": summary.get("repair_reject_reason_counts").cloned().unwrap_or_else(|| serde_json::json!({})),
+        "repair_reject_reason_samples": summary.get("repair_reject_reason_samples").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_already_receipted_count": summary_u64(summary, "repair_sequence_already_receipted_count"),
+        "repair_sequence_wrong_run_id_count": summary_u64(summary, "repair_sequence_wrong_run_id_count"),
+        "repair_sequence_wrong_chain_id_count": summary_u64(summary, "repair_sequence_wrong_chain_id_count"),
+        "repair_sequence_out_of_range_count": summary_u64(summary, "repair_sequence_out_of_range_count"),
+        "repair_sequence_stale_count": summary_u64(summary, "repair_sequence_stale_count"),
+        "repair_sequence_enqueued_count": summary_u64(summary, "repair_sequence_enqueued_count"),
+        "repair_sequence_admitted_to_aoem_count": summary_u64(summary, "repair_sequence_admitted_to_aoem_count"),
         "ticks": summary_u64(summary, "ticks"),
         "ticks_per_sec_x1000": summary_u64(summary, "ticks_per_sec_x1000"),
     });
@@ -2655,6 +2742,27 @@ fn write_diagnostics_report(
             .map(|sample| sample_u64(sample, "private_bytes_per_1000_tx")),
         "last_native_heap_unattributed_bytes_per_1000_tx": last_live_sample
             .map(|sample| sample_u64(sample, "native_heap_unattributed_bytes_per_1000_tx")),
+        "last_repair_packet_received_count": last_sample_any
+            .map(|sample| sample_u64(sample, "repair_packet_received_count")),
+        "last_repair_sequence_received_count": last_sample_any
+            .map(|sample| sample_u64(sample, "repair_sequence_received_count")),
+        "last_repair_sequence_received_min": last_sample_any
+            .and_then(|sample| sample.get("repair_sequence_received_min"))
+            .cloned(),
+        "last_repair_sequence_received_max": last_sample_any
+            .and_then(|sample| sample.get("repair_sequence_received_max"))
+            .cloned(),
+        "last_repair_sequence_accepted_count": last_sample_any
+            .map(|sample| sample_u64(sample, "repair_sequence_accepted_count")),
+        "last_repair_sequence_enqueued_count": last_sample_any
+            .map(|sample| sample_u64(sample, "repair_sequence_enqueued_count")),
+        "last_repair_sequence_duplicate_count": last_sample_any
+            .map(|sample| sample_u64(sample, "repair_sequence_duplicate_count")),
+        "last_repair_sequence_rejected_count": last_sample_any
+            .map(|sample| sample_u64(sample, "repair_sequence_rejected_count")),
+        "last_repair_reject_reason_counts": last_sample_any
+            .and_then(|sample| sample.get("repair_reject_reason_counts"))
+            .cloned(),
         "peak_live_working_set_bytes": peak_live_sample
             .map(|sample| sample_u64(sample, "process_working_set_bytes")),
         "peak_live_private_bytes": peak_live_sample
