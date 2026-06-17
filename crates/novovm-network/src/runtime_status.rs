@@ -1508,6 +1508,14 @@ fn network_runtime_native_repair_probe_observe_pending_view_v1(
     }
 }
 
+fn network_runtime_native_repair_probe_tx_hashes_v1(chain_id: u64) -> HashSet<[u8; 32]> {
+    runtime_native_repair_probe_map()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&chain_id).map(|state| state.tx_hash_seen.clone()))
+        .unwrap_or_default()
+}
+
 pub fn observe_network_runtime_native_pending_tx_repair_probe_v1(
     chain_id: u64,
     tx_hash: [u8; 32],
@@ -5312,6 +5320,7 @@ pub fn snapshot_network_runtime_native_active_pending_txs_v1(
     limit: usize,
 ) -> Vec<NetworkRuntimeNativePendingTxStateV1> {
     runtime_native_pending_tx_cleanup_v1(chain_id, now_unix_millis());
+    let repair_tx_hashes = network_runtime_native_repair_probe_tx_hashes_v1(chain_id);
     let guard = match runtime_native_pending_tx_map().lock() {
         Ok(guard) => guard,
         Err(_) => return Vec::new(),
@@ -5332,8 +5341,13 @@ pub fn snapshot_network_runtime_native_active_pending_txs_v1(
         })
         .collect::<Vec<_>>();
     ordered.sort_by(|a, b| {
-        b.last_updated_unix_ms
+        repair_tx_hashes
+            .contains(&b.tx_hash)
+            .cmp(&repair_tx_hashes.contains(&a.tx_hash))
+            .then_with(|| {
+                b.last_updated_unix_ms
             .cmp(&a.last_updated_unix_ms)
+            })
             .then_with(|| b.tx_hash.cmp(&a.tx_hash))
     });
     if limit > 0 && ordered.len() > limit {
@@ -8008,6 +8022,44 @@ mod tests {
         assert!(
             get_network_runtime_native_pending_tx_payload_v1(chain_id, included_tx).is_none(),
             "duplicate reentry after canonical inclusion must not retain payload"
+        );
+    }
+
+    #[test]
+    fn active_pending_snapshot_prioritizes_repair_observed_pending() {
+        let chain_id = 20622_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let normal_tx = [0xb1; 32];
+        let repair_tx = [0xb2; 32];
+
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            31,
+            repair_tx,
+            Some(b"repair-native-payload"),
+        );
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            31,
+            normal_tx,
+            Some(b"normal-native-payload"),
+        );
+        {
+            let mut guard = runtime_native_repair_probe_map()
+                .lock()
+                .expect("repair probe lock");
+            let state = guard.entry(chain_id).or_default();
+            state.tx_hash_seen.insert(repair_tx);
+            state.tx_hash_to_sequence.insert(repair_tx, 1);
+            state.sequence_seen.insert(1);
+        }
+
+        let active = snapshot_network_runtime_native_active_pending_txs_v1(chain_id, 1);
+        assert_eq!(active.len(), 1);
+        assert_eq!(
+            active[0].tx_hash, repair_tx,
+            "repair-observed pending must stay inside the AOEM scan window"
         );
     }
 
