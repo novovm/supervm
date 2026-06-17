@@ -131,8 +131,10 @@ struct TailRepairConfigV1 {
     missing_sample_limit: u64,
     fallback_tail_window: u64,
     packet_copies: u64,
+    tail_packet_copies: u64,
     batch_size: u64,
     batch_pause_ms: u64,
+    tail_batch_pause_ms: u64,
     round_pause_ms: u64,
 }
 
@@ -149,6 +151,8 @@ struct UdpAckStateV1 {
     received_count: u64,
     latest_epoch: u64,
     latest_missing_count: u64,
+    missing_ranges_full_count: u64,
+    highest_sequence_seen: Option<u64>,
     latest_ranges: Vec<MissingRangeV1>,
     receiver_done: bool,
 }
@@ -510,7 +514,9 @@ fn merge_send_stats(target: &mut SendScheduleStatsV1, next: SendScheduleStatsV1)
     target.reordered_packets = target
         .reordered_packets
         .saturating_add(next.reordered_packets);
-    target.send_retry_count = target.send_retry_count.saturating_add(next.send_retry_count);
+    target.send_retry_count = target
+        .send_retry_count
+        .saturating_add(next.send_retry_count);
     target.send_would_block_count = target
         .send_would_block_count
         .saturating_add(next.send_would_block_count);
@@ -692,6 +698,36 @@ fn missing_ranges_count(ranges: &[MissingRangeV1]) -> u64 {
         .sum()
 }
 
+fn normalize_missing_ranges(ranges: &[MissingRangeV1], expected: u64) -> Vec<MissingRangeV1> {
+    if expected == 0 {
+        return Vec::new();
+    }
+    let max_index = expected.saturating_sub(1);
+    let mut normalized = ranges
+        .iter()
+        .filter_map(|range| {
+            let start = range.start.min(max_index);
+            let end_inclusive = range.end_inclusive.min(max_index);
+            (end_inclusive >= start).then_some(MissingRangeV1 {
+                start,
+                end_inclusive,
+            })
+        })
+        .collect::<Vec<_>>();
+    normalized.sort_by_key(|range| (range.start, range.end_inclusive));
+    let mut merged = Vec::<MissingRangeV1>::new();
+    for range in normalized {
+        if let Some(last) = merged.last_mut() {
+            if range.start <= last.end_inclusive.saturating_add(1) {
+                last.end_inclusive = last.end_inclusive.max(range.end_inclusive);
+                continue;
+            }
+        }
+        merged.push(range);
+    }
+    merged
+}
+
 fn read_missing_ranges_from_ack(path: &Path, limit: u64) -> Option<Vec<MissingRangeV1>> {
     let raw = fs::read_to_string(path).ok()?;
     let value = serde_json::from_str::<Value>(raw.as_str()).ok()?;
@@ -753,6 +789,11 @@ fn parse_ack_value(value: &Value, limit: u64) -> Option<UdpAckStateV1> {
             .get("missing_count")
             .and_then(Value::as_u64)
             .unwrap_or_default(),
+        missing_ranges_full_count: value
+            .get("missing_ranges_full_count")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| ranges.len().try_into().unwrap_or(u64::MAX)),
+        highest_sequence_seen: value.get("highest_sequence_seen").and_then(Value::as_u64),
         latest_ranges: ranges,
         receiver_done: value
             .get("receiver_done")
@@ -761,11 +802,7 @@ fn parse_ack_value(value: &Value, limit: u64) -> Option<UdpAckStateV1> {
     })
 }
 
-fn drain_udp_ack_socket(
-    socket: &UdpSocket,
-    limit: u64,
-    wait_ms: u64,
-) -> UdpAckStateV1 {
+fn drain_udp_ack_socket(socket: &UdpSocket, limit: u64, wait_ms: u64) -> UdpAckStateV1 {
     let started = Instant::now();
     let mut state = UdpAckStateV1::default();
     let mut buf = vec![0u8; 65_536];
@@ -1235,8 +1272,9 @@ fn run_receiver_node(
                 );
             let sample_limit =
                 u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256);
-            let final_ack_start_epoch =
-                state.samples_dropped.saturating_add(state.samples.len() as u64);
+            let final_ack_start_epoch = state
+                .samples_dropped
+                .saturating_add(state.samples.len() as u64);
             let _ = write_receiver_ack_report(
                 expected_tx_count,
                 final_progress,
@@ -1251,16 +1289,16 @@ fn run_receiver_node(
             );
             let final_ack_repeat_count =
                 u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_COUNT", 10).unwrap_or(10);
-            let (final_ack_sent_count, final_ack_last_epoch) = if final_progress >= expected_tx_count
-            {
-                repeat_final_receiver_udp_ack(
-                    expected_tx_count,
-                    sample_limit,
-                    final_ack_start_epoch,
-                )
-            } else {
-                (0, final_ack_start_epoch)
-            };
+            let (final_ack_sent_count, final_ack_last_epoch) =
+                if final_progress >= expected_tx_count {
+                    repeat_final_receiver_udp_ack(
+                        expected_tx_count,
+                        sample_limit,
+                        final_ack_start_epoch,
+                    )
+                } else {
+                    (0, final_ack_start_epoch)
+                };
             summary["final_ack_repeat_count"] = serde_json::json!(final_ack_repeat_count);
             summary["final_ack_sent_count"] = serde_json::json!(final_ack_sent_count);
             summary["final_ack_last_epoch"] = serde_json::json!(final_ack_last_epoch);
@@ -1425,13 +1463,17 @@ fn run_receiver_node(
                 expected_tx_count,
                 stable_progress,
                 u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256),
-                state.samples_dropped.saturating_add(state.samples.len() as u64),
+                state
+                    .samples_dropped
+                    .saturating_add(state.samples.len() as u64),
             );
             send_receiver_udp_ack(
                 expected_tx_count,
                 stable_progress,
                 u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256),
-                state.samples_dropped.saturating_add(state.samples.len() as u64),
+                state
+                    .samples_dropped
+                    .saturating_add(state.samples.len() as u64),
             );
             state.samples.push(sample);
             if state.samples.len() > 256 {
@@ -1532,7 +1574,8 @@ fn write_receiver_ack_report(
     sample_limit: u64,
     ack_epoch: u64,
 ) -> Result<()> {
-    let report = receiver_ack_report_value(expected_tx_count, stable_progress, sample_limit, ack_epoch);
+    let report =
+        receiver_ack_report_value(expected_tx_count, stable_progress, sample_limit, ack_epoch);
     write_report(ack_report_path().as_path(), &report)
 }
 
@@ -1544,6 +1587,12 @@ fn receiver_ack_report_value(
 ) -> Value {
     let missing_count = expected_tx_count.saturating_sub(stable_progress);
     let ranges = missing_ranges_from_progress(stable_progress, expected_tx_count, sample_limit);
+    let missing_ranges_full_count = ranges.len();
+    let highest_sequence_seen = if stable_progress == 0 {
+        Value::Null
+    } else {
+        serde_json::json!(stable_progress.saturating_sub(1))
+    };
     serde_json::json!({
         "schema": "novovm-native-pipeline-cross-machine-sustained-ack/v1",
         "packet_type": "native_pipeline_ack_v1",
@@ -1551,8 +1600,10 @@ fn receiver_ack_report_value(
         "received_unique_count": stable_progress,
         "canonical_unique_included": stable_progress,
         "receipt_count": stable_progress,
-        "highest_sequence_seen": stable_progress.saturating_sub(1),
+        "highest_sequence_seen": highest_sequence_seen,
         "missing_count": missing_count,
+        "missing_ranges_full_count": missing_ranges_full_count,
+        "missing_ranges_sample_truncated": (missing_ranges_full_count as u64) > sample_limit,
         "missing_ranges_sample": missing_ranges_to_json(ranges.as_slice(), sample_limit),
         "ack_epoch": ack_epoch,
         "timestamp_ms": now_ms(),
@@ -1577,7 +1628,8 @@ fn send_receiver_udp_ack(
     if !enabled {
         return;
     }
-    let report = receiver_ack_report_value(expected_tx_count, stable_progress, sample_limit, ack_epoch);
+    let report =
+        receiver_ack_report_value(expected_tx_count, stable_progress, sample_limit, ack_epoch);
     let Ok(payload) = serde_json::to_vec(&report) else {
         return;
     };
@@ -1594,15 +1646,15 @@ fn repeat_final_receiver_udp_ack(
     sample_limit: u64,
     start_epoch: u64,
 ) -> (u64, u64) {
-    let repeat_count = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_COUNT", 10)
-        .unwrap_or(10);
-    let repeat_interval_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_INTERVAL_MS", 500)
-        .unwrap_or(500);
+    let repeat_count = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_COUNT", 10).unwrap_or(10);
+    let repeat_interval_ms =
+        u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_INTERVAL_MS", 500).unwrap_or(500);
     let mut sent = 0u64;
     let mut last_epoch = start_epoch;
     for offset in 0..repeat_count {
         let epoch = start_epoch.saturating_add(offset).saturating_add(1);
-        let _ = write_receiver_ack_report(expected_tx_count, expected_tx_count, sample_limit, epoch);
+        let _ =
+            write_receiver_ack_report(expected_tx_count, expected_tx_count, sample_limit, epoch);
         send_receiver_udp_ack(expected_tx_count, expected_tx_count, sample_limit, epoch);
         sent = sent.saturating_add(1);
         last_epoch = epoch;
@@ -2606,10 +2658,9 @@ fn send_scheduled_batch(
         });
         match safe_send_with_retry(&sender, NodeId(receiver_node), msg, retry) {
             Ok(retry_stats) => {
-                send_retry_count =
-                    send_retry_count.saturating_add(retry_stats.retry_count);
-                send_would_block_count = send_would_block_count
-                    .saturating_add(retry_stats.would_block_count);
+                send_retry_count = send_retry_count.saturating_add(retry_stats.retry_count);
+                send_would_block_count =
+                    send_would_block_count.saturating_add(retry_stats.would_block_count);
                 sent_packets = sent_packets.saturating_add(1);
                 let hash = hex_lower(&tx.tx_hash);
                 sent_unique.insert(hash.clone());
@@ -2671,10 +2722,15 @@ fn send_repair_payloads_paced(
     txs: &[NativeFixtureTxV1],
     repair_round: u64,
     tail_repair: TailRepairConfigV1,
+    packet_copies_override: Option<u64>,
+    batch_pause_ms_override: Option<u64>,
     retry: UdpSendRetryConfigV1,
 ) -> Result<SendScheduleStatsV1> {
-    let copies = tail_repair.packet_copies.max(1);
+    let copies = packet_copies_override
+        .unwrap_or(tail_repair.packet_copies)
+        .max(1);
     let batch_size = tail_repair.batch_size.max(1) as usize;
+    let batch_pause_ms = batch_pause_ms_override.unwrap_or(tail_repair.batch_pause_ms);
     let mut out = empty_send_stats();
     for copy in 0..copies {
         let copy_index = repair_round
@@ -2702,8 +2758,8 @@ fn send_repair_payloads_paced(
             if out.send_failed_count > 0 {
                 return Ok(out);
             }
-            if tail_repair.batch_pause_ms > 0 {
-                std::thread::sleep(Duration::from_millis(tail_repair.batch_pause_ms));
+            if batch_pause_ms > 0 {
+                std::thread::sleep(Duration::from_millis(batch_pause_ms));
             }
         }
     }
@@ -2897,14 +2953,23 @@ fn run_sender(
     let mut tail_repair_udp_ack_used_count = 0u64;
     let mut final_missing_count = tx_count;
     let mut latest_ack_missing_count: Option<u64> = None;
+    let mut latest_ack_missing_ranges_full_count: Option<u64> = None;
+    let mut latest_ack_highest_sequence_seen: Option<u64> = None;
     let mut latest_ack_receiver_done = false;
     let mut tail_repair_latest_ack_epoch = 0u64;
+    let mut repair_used_full_missing_ranges = false;
     let mut repair_sequence_sent_ranges = Vec::<MissingRangeV1>::new();
     let mut repair_sequence_sent_count = 0u64;
     let mut repair_sequence_sent_min: Option<u64> = None;
     let mut repair_sequence_sent_max: Option<u64> = None;
     let mut repair_rounds_detail_sample = Vec::<Value>::new();
     let mut repair_no_progress_rounds = 0u64;
+    let mut tail_gap_detected = false;
+    let mut tail_gap_range: Option<MissingRangeV1> = None;
+    let mut tail_gap_repair_sent_count = 0u64;
+    let mut tail_gap_repair_packet_count = 0u64;
+    let mut tail_gap_repair_rounds = 0u64;
+    let mut tail_gap_ack_after_missing_count: Option<u64> = None;
     let final_ack_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS", 10_000)?;
     let final_ack_poll_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS", 500)?.max(1);
     let mut final_ack_wait_elapsed_ms = 0u64;
@@ -2970,7 +3035,11 @@ fn run_sender(
                 std::thread::sleep(std::time::Duration::from_millis(tail_repair.round_pause_ms));
             }
             let udp_ack_state = ack_socket.as_ref().map(|socket| {
-                drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, udp_ack.recv_timeout_ms)
+                drain_udp_ack_socket(
+                    socket,
+                    tail_repair.missing_sample_limit,
+                    udp_ack.recv_timeout_ms,
+                )
             });
             let ack_epoch_before = udp_ack_state
                 .as_ref()
@@ -2985,13 +3054,15 @@ fn run_sender(
                 .unwrap_or_else(|| tx_count.saturating_sub(stats.sent_unique));
             if let Some(state) = udp_ack_state.as_ref() {
                 if state.received_count > 0 {
-                    tail_repair_ack_received_count = tail_repair_ack_received_count
-                        .saturating_add(state.received_count);
-                    tail_repair_udp_ack_received_count = tail_repair_udp_ack_received_count
-                        .saturating_add(state.received_count);
+                    tail_repair_ack_received_count =
+                        tail_repair_ack_received_count.saturating_add(state.received_count);
+                    tail_repair_udp_ack_received_count =
+                        tail_repair_udp_ack_received_count.saturating_add(state.received_count);
                     tail_repair_latest_ack_epoch =
                         tail_repair_latest_ack_epoch.max(state.latest_epoch);
                     latest_ack_missing_count = Some(state.latest_missing_count);
+                    latest_ack_missing_ranges_full_count = Some(state.missing_ranges_full_count);
+                    latest_ack_highest_sequence_seen = state.highest_sequence_seen;
                     latest_ack_receiver_done = state.receiver_done;
                     final_missing_count = state.latest_missing_count;
                     if state.receiver_done && state.latest_missing_count == 0 {
@@ -3007,9 +3078,11 @@ fn run_sender(
             let ack_path = ack_report_path();
             let file_ack_ranges =
                 read_missing_ranges_from_ack(ack_path.as_path(), tail_repair.missing_sample_limit);
-            let txs = if let Some(ranges) = udp_ranges.as_ref() {
-                tail_repair_udp_ack_used_count =
-                    tail_repair_udp_ack_used_count.saturating_add(1);
+            let mut txs = if let Some(ranges) = udp_ranges.as_ref() {
+                tail_repair_udp_ack_used_count = tail_repair_udp_ack_used_count.saturating_add(1);
+                repair_used_full_missing_ranges = latest_ack_missing_ranges_full_count
+                    .map(|full_count| full_count <= ranges.len().try_into().unwrap_or(u64::MAX))
+                    .unwrap_or(false);
                 tail_repair_missing_ranges_seen = tail_repair_missing_ranges_seen
                     .saturating_add(ranges.len().try_into().unwrap_or(u64::MAX));
                 final_missing_count = missing_ranges_count(ranges.as_slice());
@@ -3029,12 +3102,11 @@ fn run_sender(
                     );
                 }
                 build_tail_repair_payloads_from_ranges(chain_id, ranges.as_slice(), repair_round)?
-            } else if let Some(ranges) = file_ack_ranges.as_ref().filter(|ranges| !ranges.is_empty())
+            } else if let Some(ranges) =
+                file_ack_ranges.as_ref().filter(|ranges| !ranges.is_empty())
             {
-                tail_repair_file_ack_used_count =
-                    tail_repair_file_ack_used_count.saturating_add(1);
-                tail_repair_ack_received_count =
-                    tail_repair_ack_received_count.saturating_add(1);
+                tail_repair_file_ack_used_count = tail_repair_file_ack_used_count.saturating_add(1);
+                tail_repair_ack_received_count = tail_repair_ack_received_count.saturating_add(1);
                 tail_repair_missing_ranges_seen = tail_repair_missing_ranges_seen
                     .saturating_add(ranges.len().try_into().unwrap_or(u64::MAX));
                 final_missing_count = missing_ranges_count(ranges.as_slice());
@@ -3058,8 +3130,7 @@ fn run_sender(
                 final_missing_count = tx_count.saturating_sub(stats.sent_unique);
                 Vec::new()
             } else {
-                tail_repair_fallback_used_count =
-                    tail_repair_fallback_used_count.saturating_add(1);
+                tail_repair_fallback_used_count = tail_repair_fallback_used_count.saturating_add(1);
                 let start = if tail_repair.fallback_tail_window == 0
                     || tail_repair.fallback_tail_window >= tx_count
                 {
@@ -3092,6 +3163,66 @@ fn run_sender(
                     tail_repair.fallback_tail_window,
                 )?
             };
+            let mut sequence_sent_ranges_this_round = if let Some(ranges) = udp_ranges.as_ref() {
+                ranges.clone()
+            } else if let Some(ranges) =
+                file_ack_ranges.as_ref().filter(|ranges| !ranges.is_empty())
+            {
+                ranges.clone()
+            } else if !txs.is_empty() {
+                let min = txs.iter().map(|tx| tx.index).min().unwrap_or(0);
+                let max = txs.iter().map(|tx| tx.index).max().unwrap_or(0);
+                vec![MissingRangeV1 {
+                    start: min,
+                    end_inclusive: max,
+                }]
+            } else {
+                Vec::new()
+            };
+            let tail_gap_this_round = latest_ack_highest_sequence_seen
+                .filter(|highest| {
+                    latest_ack_missing_count.unwrap_or(0) > 0
+                        && *highest < tx_count.saturating_sub(1)
+                })
+                .map(|highest| MissingRangeV1 {
+                    start: highest.saturating_add(1),
+                    end_inclusive: tx_count.saturating_sub(1),
+                });
+            let mut tail_gap_sent_count_this_round = 0u64;
+            if let Some(gap) = tail_gap_this_round {
+                let gap_count = missing_ranges_count(&[gap]);
+                let existing_overlap = missing_ranges_overlap_count(
+                    &[gap],
+                    sequence_sent_ranges_this_round.as_slice(),
+                );
+                if existing_overlap < gap_count {
+                    tail_gap_sent_count_this_round = gap_count;
+                    tail_gap_detected = true;
+                    tail_gap_range = Some(gap);
+                    tail_gap_repair_rounds = tail_gap_repair_rounds.saturating_add(1);
+                    tail_gap_repair_sent_count =
+                        tail_gap_repair_sent_count.saturating_add(gap_count);
+                    sequence_sent_ranges_this_round.push(gap);
+                    let mut tail_txs =
+                        build_tail_repair_payloads_from_ranges(chain_id, &[gap], repair_round)?;
+                    txs.append(&mut tail_txs);
+                    repair_sequence_sent_count =
+                        repair_sequence_sent_count.saturating_add(gap_count);
+                    repair_sequence_sent_ranges.push(gap);
+                    repair_sequence_sent_min = Some(
+                        repair_sequence_sent_min
+                            .map(|current| current.min(gap.start))
+                            .unwrap_or(gap.start),
+                    );
+                    repair_sequence_sent_max = Some(
+                        repair_sequence_sent_max
+                            .map(|current| current.max(gap.end_inclusive))
+                            .unwrap_or(gap.end_inclusive),
+                    );
+                }
+            }
+            sequence_sent_ranges_this_round =
+                normalize_missing_ranges(sequence_sent_ranges_this_round.as_slice(), tx_count);
             let sequence_sent_count_this_round = txs.len().try_into().unwrap_or(u64::MAX);
             let (sequence_sent_min_this_round, sequence_sent_max_this_round) = if !txs.is_empty() {
                 let mut min = None::<u64>;
@@ -3103,19 +3234,6 @@ fn run_sender(
                 (min, max)
             } else {
                 (None, None)
-            };
-            let sequence_sent_ranges_this_round = if let Some(ranges) = udp_ranges.as_ref() {
-                ranges.clone()
-            } else if let Some(ranges) = file_ack_ranges.as_ref().filter(|ranges| !ranges.is_empty())
-            {
-                ranges.clone()
-            } else if !txs.is_empty() {
-                vec![MissingRangeV1 {
-                    start: sequence_sent_min_this_round.unwrap_or(0),
-                    end_inclusive: sequence_sent_max_this_round.unwrap_or(0),
-                }]
-            } else {
-                Vec::new()
             };
             if txs.is_empty() {
                 repair_rounds_used = repair_rounds_used.saturating_add(1);
@@ -3130,6 +3248,8 @@ fn run_sender(
                         "sequence_sent_min": Value::Null,
                         "sequence_sent_max": Value::Null,
                         "sequence_sent_ranges_sample": [],
+                        "tail_gap_detected": tail_gap_this_round.is_some(),
+                        "tail_gap_range": missing_ranges_to_json(tail_gap_this_round.as_slice(), 1),
                         "ack_epoch_after": tail_repair_latest_ack_epoch,
                         "missing_count_after": latest_ack_missing_count,
                         "missing_delta": 0,
@@ -3147,9 +3267,16 @@ fn run_sender(
                 txs.as_slice(),
                 repair_round,
                 tail_repair,
+                tail_gap_this_round.map(|_| tail_repair.tail_packet_copies),
+                tail_gap_this_round.map(|_| tail_repair.tail_batch_pause_ms),
                 udp_send_retry,
             )?;
             let round_packet_sent_count = round_stats.sent_packets;
+            if tail_gap_sent_count_this_round > 0 {
+                tail_gap_repair_packet_count = tail_gap_repair_packet_count.saturating_add(
+                    tail_gap_sent_count_this_round.saturating_mul(tail_repair.tail_packet_copies),
+                );
+            }
             merge_send_stats(&mut repair_stats, round_stats);
             repair_rounds_used = repair_rounds_used.saturating_add(1);
             if repair_stats.send_failed_count > 0 {
@@ -3159,23 +3286,32 @@ fn run_sender(
                 std::thread::sleep(Duration::from_millis(tail_repair.round_pause_ms));
             }
             let ack_after = ack_socket.as_ref().map(|socket| {
-                drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, udp_ack.recv_timeout_ms)
+                drain_udp_ack_socket(
+                    socket,
+                    tail_repair.missing_sample_limit,
+                    udp_ack.recv_timeout_ms,
+                )
             });
             let mut missing_count_after = latest_ack_missing_count.unwrap_or(final_missing_count);
             let mut ack_epoch_after = tail_repair_latest_ack_epoch;
             if let Some(state) = ack_after.as_ref() {
                 if state.received_count > 0 {
-                    tail_repair_ack_received_count = tail_repair_ack_received_count
-                        .saturating_add(state.received_count);
-                    tail_repair_udp_ack_received_count = tail_repair_udp_ack_received_count
-                        .saturating_add(state.received_count);
+                    tail_repair_ack_received_count =
+                        tail_repair_ack_received_count.saturating_add(state.received_count);
+                    tail_repair_udp_ack_received_count =
+                        tail_repair_udp_ack_received_count.saturating_add(state.received_count);
                     tail_repair_latest_ack_epoch =
                         tail_repair_latest_ack_epoch.max(state.latest_epoch);
                     latest_ack_missing_count = Some(state.latest_missing_count);
+                    latest_ack_missing_ranges_full_count = Some(state.missing_ranges_full_count);
+                    latest_ack_highest_sequence_seen = state.highest_sequence_seen;
                     latest_ack_receiver_done = state.receiver_done;
                     final_missing_count = state.latest_missing_count;
                     missing_count_after = state.latest_missing_count;
                     ack_epoch_after = state.latest_epoch;
+                    if tail_gap_this_round.is_some() {
+                        tail_gap_ack_after_missing_count = Some(state.latest_missing_count);
+                    }
                 }
             }
             let missing_delta = missing_count_before.saturating_sub(missing_count_after);
@@ -3194,6 +3330,10 @@ fn run_sender(
                     "sequence_sent_min": sequence_sent_min_this_round,
                     "sequence_sent_max": sequence_sent_max_this_round,
                     "sequence_sent_ranges_sample": missing_ranges_to_json(sequence_sent_ranges_this_round.as_slice(), tail_repair.missing_sample_limit),
+                    "tail_gap_detected": tail_gap_this_round.is_some(),
+                    "tail_gap_range": missing_ranges_to_json(tail_gap_this_round.as_slice(), 1),
+                    "tail_packet_copies_used": tail_gap_this_round.map(|_| tail_repair.tail_packet_copies).unwrap_or(tail_repair.packet_copies),
+                    "tail_batch_pause_ms_used": tail_gap_this_round.map(|_| tail_repair.tail_batch_pause_ms).unwrap_or(tail_repair.batch_pause_ms),
                     "ack_epoch_after": ack_epoch_after,
                     "missing_count_after": missing_count_after,
                     "missing_delta": missing_delta,
@@ -3223,8 +3363,11 @@ fn run_sender(
                 final_ack_grace_timeout = true;
                 break;
             };
-            let state =
-                drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, udp_ack.recv_timeout_ms);
+            let state = drain_udp_ack_socket(
+                socket,
+                tail_repair.missing_sample_limit,
+                udp_ack.recv_timeout_ms,
+            );
             final_ack_wait_elapsed_ms = started.elapsed().as_millis() as u64;
             if state.received_count == 0 {
                 continue;
@@ -3235,6 +3378,8 @@ fn run_sender(
                 tail_repair_udp_ack_received_count.saturating_add(state.received_count);
             tail_repair_latest_ack_epoch = tail_repair_latest_ack_epoch.max(state.latest_epoch);
             latest_ack_missing_count = Some(state.latest_missing_count);
+            latest_ack_missing_ranges_full_count = Some(state.missing_ranges_full_count);
+            latest_ack_highest_sequence_seen = state.highest_sequence_seen;
             latest_ack_receiver_done = state.receiver_done;
             final_missing_count = state.latest_missing_count;
             if state.receiver_done && state.latest_missing_count == 0 {
@@ -3385,8 +3530,10 @@ fn run_sender(
             "interval_ms": tail_repair.interval_ms,
             "repair_pacing_enabled": true,
             "repair_packet_copies": tail_repair.packet_copies,
+            "repair_tail_packet_copies": tail_repair.tail_packet_copies,
             "repair_batch_size": tail_repair.batch_size,
             "repair_batch_pause_ms": tail_repair.batch_pause_ms,
+            "repair_tail_batch_pause_ms": tail_repair.tail_batch_pause_ms,
             "repair_round_pause_ms": tail_repair.round_pause_ms,
             "repair_round_count": repair_rounds_used,
             "repair_rounds_detail_sample": repair_rounds_detail_sample,
@@ -3398,7 +3545,16 @@ fn run_sender(
             "tail_repair_latest_ack_epoch": tail_repair_latest_ack_epoch,
             "latest_ack_epoch": tail_repair_latest_ack_epoch,
             "latest_ack_missing_count": latest_ack_missing_count,
+            "latest_ack_missing_ranges_full_count": latest_ack_missing_ranges_full_count,
+            "latest_ack_highest_sequence_seen": latest_ack_highest_sequence_seen,
             "latest_ack_receiver_done": latest_ack_receiver_done,
+            "repair_used_full_missing_ranges": repair_used_full_missing_ranges,
+            "tail_gap_detected": tail_gap_detected,
+            "tail_gap_range": missing_ranges_to_json(tail_gap_range.as_slice(), 1),
+            "tail_gap_repair_sent_count": tail_gap_repair_sent_count,
+            "tail_gap_repair_packet_count": tail_gap_repair_packet_count,
+            "tail_gap_repair_rounds": tail_gap_repair_rounds,
+            "tail_gap_ack_after_missing_count": tail_gap_ack_after_missing_count,
             "receiver_final_missing_count": receiver_final_missing_count,
             "receiver_final_done": receiver_final_done,
             "final_ack_wait_enabled": final_ack_wait_ms > 0,
@@ -3439,6 +3595,7 @@ fn run_sender(
                 tail_repair.missing_sample_limit,
             ),
             "repair_sequence_sent_ranges_total": repair_sequence_sent_ranges.len(),
+            "repair_sequence_sent_ranges_full_count": repair_sequence_sent_ranges.len(),
             "repair_sequence_sent_min": repair_sequence_sent_min,
             "repair_sequence_sent_max": repair_sequence_sent_max,
             "repair_packet_sent_count": repair_stats.sent_packets,
@@ -3802,8 +3959,10 @@ fn run_memory_bisect_variant(
             missing_sample_limit: 256,
             fallback_tail_window: tx_count.min(2048),
             packet_copies: 1,
+            tail_packet_copies: 1,
             batch_size: 64,
             batch_pause_ms: 0,
+            tail_batch_pause_ms: 0,
             round_pause_ms: 200,
         },
         default_udp_send_retry_config(),
@@ -4100,8 +4259,10 @@ fn main() -> Result<()> {
             tx_count.min(2048),
         )?,
         packet_copies: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_PACKET_COPIES", 3)?.max(1),
+        tail_packet_copies: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_TAIL_PACKET_COPIES", 6)?.max(1),
         batch_size: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_BATCH_SIZE", 64)?.max(1),
         batch_pause_ms: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_BATCH_PAUSE_MS", 5)?,
+        tail_batch_pause_ms: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_TAIL_BATCH_PAUSE_MS", 10)?,
         round_pause_ms: u64_env(
             "NOVOVM_NATIVE_PIPELINE_REPAIR_ROUND_PAUSE_MS",
             u64_env(
