@@ -1814,6 +1814,9 @@ fn write_synthetic_receiver_failure_report(
     state: &ReceiverDiagnosticsStateV1,
 ) -> Result<()> {
     let last_sample = state.samples.last();
+    let ack_snapshot = fs::read_to_string(ack_report_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(raw.as_str()).ok());
     let stable_progress_total = last_sample
         .and_then(|sample| sample.get("stable_progress_total"))
         .and_then(Value::as_u64)
@@ -1826,6 +1829,26 @@ fn write_synthetic_receiver_failure_report(
         .and_then(|sample| sample.get("queue_pending_last"))
         .and_then(Value::as_u64)
         .unwrap_or_default();
+    let final_missing_ranges_sample = ack_snapshot
+        .as_ref()
+        .and_then(|ack| ack.get("missing_ranges_sample"))
+        .cloned()
+        .unwrap_or_else(|| {
+            missing_ranges_to_json(
+                missing_ranges_from_progress(stable_progress_total, expected_tx_count, 256)
+                    .as_slice(),
+                256,
+            )
+        });
+    let final_missing_sequence_count = ack_snapshot
+        .as_ref()
+        .and_then(|ack| ack.get("missing_count"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| expected_tx_count.saturating_sub(stable_progress_total));
+    let repair_packet_received_count = last_sample
+        .and_then(|sample| sample.get("repair_packet_received_count"))
+        .and_then(Value::as_u64);
+    let repair_attribution_available = repair_packet_received_count.is_some();
     let report = serde_json::json!({
         "schema": REPORT_SCHEMA_V1,
         "role": "receiver",
@@ -1842,12 +1865,86 @@ fn write_synthetic_receiver_failure_report(
             "semantic_head_monotonic": true,
             "receipt_index_consistent": false,
             "aoem_concurrency_owner": "AOEM_runtime",
+            "final_missing_sequence_count": final_missing_sequence_count,
+            "final_missing_ranges_sample": final_missing_ranges_sample,
+            "repair_attribution_available": repair_attribution_available,
+            "repair_packet_received_count": repair_packet_received_count,
+            "repair_packet_decode_failed_count": last_sample
+                .and_then(|sample| sample.get("repair_packet_decode_failed_count"))
+                .and_then(Value::as_u64),
+            "repair_sequence_received_count": last_sample
+                .and_then(|sample| sample.get("repair_sequence_received_count"))
+                .and_then(Value::as_u64),
+            "repair_sequence_received_min": last_sample
+                .and_then(|sample| sample.get("repair_sequence_received_min"))
+                .cloned(),
+            "repair_sequence_received_max": last_sample
+                .and_then(|sample| sample.get("repair_sequence_received_max"))
+                .cloned(),
+            "repair_sequence_accepted_count": last_sample
+                .and_then(|sample| sample.get("repair_sequence_accepted_count"))
+                .and_then(Value::as_u64),
+            "repair_sequence_enqueued_count": last_sample
+                .and_then(|sample| sample.get("repair_sequence_enqueued_count"))
+                .and_then(Value::as_u64),
+            "repair_sequence_duplicate_count": last_sample
+                .and_then(|sample| sample.get("repair_sequence_duplicate_count"))
+                .and_then(Value::as_u64),
+            "repair_sequence_rejected_count": last_sample
+                .and_then(|sample| sample.get("repair_sequence_rejected_count"))
+                .and_then(Value::as_u64),
+            "repair_reject_reason_counts": last_sample
+                .and_then(|sample| sample.get("repair_reject_reason_counts"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
         },
         "receiver_summary": {
             "accepted": false,
             "aoem_executed_total": aoem_executed_total,
             "queue_pending_last": queue_pending_last,
             "progress_score": stable_progress_total,
+            "repair_attribution_available": repair_attribution_available,
+            "repair_packet_received_count": repair_packet_received_count,
+            "repair_sequence_received_max": last_sample
+                .and_then(|sample| sample.get("repair_sequence_received_max"))
+                .cloned(),
+            "repair_sequence_accepted_count": last_sample
+                .and_then(|sample| sample.get("repair_sequence_accepted_count"))
+                .and_then(Value::as_u64),
+            "repair_sequence_enqueued_count": last_sample
+                .and_then(|sample| sample.get("repair_sequence_enqueued_count"))
+                .and_then(Value::as_u64),
+        },
+        "receiver_ack_snapshot": {
+            "expected_tx_total": ack_snapshot
+                .as_ref()
+                .and_then(|ack| ack.get("expected_tx_total"))
+                .and_then(Value::as_u64),
+            "received_unique_count": ack_snapshot
+                .as_ref()
+                .and_then(|ack| ack.get("received_unique_count"))
+                .and_then(Value::as_u64),
+            "highest_sequence_seen": ack_snapshot
+                .as_ref()
+                .and_then(|ack| ack.get("highest_sequence_seen"))
+                .cloned(),
+            "missing_count": ack_snapshot
+                .as_ref()
+                .and_then(|ack| ack.get("missing_count"))
+                .and_then(Value::as_u64),
+            "missing_ranges_sample": ack_snapshot
+                .as_ref()
+                .and_then(|ack| ack.get("missing_ranges_sample"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "ack_epoch": ack_snapshot
+                .as_ref()
+                .and_then(|ack| ack.get("ack_epoch"))
+                .and_then(Value::as_u64),
+            "receiver_done": ack_snapshot
+                .as_ref()
+                .and_then(|ack| ack.get("receiver_done"))
+                .and_then(Value::as_bool),
         },
         "violations": [
             format!("receiver exited before expected_tx_total: progress={stable_progress_total} expected={expected_tx_count}"),
