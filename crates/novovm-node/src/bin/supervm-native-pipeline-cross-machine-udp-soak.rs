@@ -1097,7 +1097,7 @@ fn run_receiver_node(
             let (stdout_path, stderr_path, output_artifact_error) =
                 persist_child_output_artifacts(&output);
             let summary_result = parse_summary_ref(&output, "cross-machine receiver");
-            let summary = match summary_result {
+            let mut summary = match summary_result {
                 Ok(summary) => summary,
                 Err(err) => {
                     let ledger_stats = semantic_ledger_stats(ledger_path.as_path());
@@ -1196,18 +1196,37 @@ fn run_receiver_node(
                         .and_then(Value::as_u64)
                         .unwrap_or_default(),
                 );
+            let sample_limit =
+                u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256);
+            let final_ack_start_epoch =
+                state.samples_dropped.saturating_add(state.samples.len() as u64);
             let _ = write_receiver_ack_report(
                 expected_tx_count,
                 final_progress,
-                u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256),
-                state.samples_dropped.saturating_add(state.samples.len() as u64),
+                sample_limit,
+                final_ack_start_epoch,
             );
             send_receiver_udp_ack(
                 expected_tx_count,
                 final_progress,
-                u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256),
-                state.samples_dropped.saturating_add(state.samples.len() as u64),
+                sample_limit,
+                final_ack_start_epoch,
             );
+            let final_ack_repeat_count =
+                u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_COUNT", 10).unwrap_or(10);
+            let (final_ack_sent_count, final_ack_last_epoch) = if final_progress >= expected_tx_count
+            {
+                repeat_final_receiver_udp_ack(
+                    expected_tx_count,
+                    sample_limit,
+                    final_ack_start_epoch,
+                )
+            } else {
+                (0, final_ack_start_epoch)
+            };
+            summary["final_ack_repeat_count"] = serde_json::json!(final_ack_repeat_count);
+            summary["final_ack_sent_count"] = serde_json::json!(final_ack_sent_count);
+            summary["final_ack_last_epoch"] = serde_json::json!(final_ack_last_epoch);
             state.samples.push(sample);
             write_diagnostics_report(&diagnostics, &state, true, child_pid, expected_tx_count)?;
             write_receiver_exit_report(
@@ -1531,6 +1550,30 @@ fn send_receiver_udp_ack(
         return;
     };
     let _ = socket.send_to(payload.as_slice(), target_addr.as_str());
+}
+
+fn repeat_final_receiver_udp_ack(
+    expected_tx_count: u64,
+    sample_limit: u64,
+    start_epoch: u64,
+) -> (u64, u64) {
+    let repeat_count = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_COUNT", 10)
+        .unwrap_or(10);
+    let repeat_interval_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_INTERVAL_MS", 500)
+        .unwrap_or(500);
+    let mut sent = 0u64;
+    let mut last_epoch = start_epoch;
+    for offset in 0..repeat_count {
+        let epoch = start_epoch.saturating_add(offset).saturating_add(1);
+        let _ = write_receiver_ack_report(expected_tx_count, expected_tx_count, sample_limit, epoch);
+        send_receiver_udp_ack(expected_tx_count, expected_tx_count, sample_limit, epoch);
+        sent = sent.saturating_add(1);
+        last_epoch = epoch;
+        if repeat_interval_ms > 0 && offset + 1 < repeat_count {
+            std::thread::sleep(Duration::from_millis(repeat_interval_ms));
+        }
+    }
+    (sent, last_epoch)
 }
 
 fn write_artifact_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -2706,6 +2749,14 @@ fn run_sender(
     let mut repair_sequence_sent_count = 0u64;
     let mut repair_sequence_sent_min: Option<u64> = None;
     let mut repair_sequence_sent_max: Option<u64> = None;
+    let final_ack_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS", 10_000)?;
+    let final_ack_poll_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS", 500)?.max(1);
+    let mut final_ack_wait_elapsed_ms = 0u64;
+    let mut final_ack_received_after_repair = false;
+    let mut final_ack_epoch: Option<u64> = None;
+    let mut final_ack_missing_count: Option<u64> = None;
+    let mut final_ack_receiver_done: Option<bool> = None;
+    let mut final_ack_grace_timeout = false;
     let ack_socket = if udp_ack.enabled {
         let socket = UdpSocket::bind(udp_ack.bind_addr.as_str())
             .with_context(|| format!("bind sender UDP ack socket failed: {}", udp_ack.bind_addr))?;
@@ -2896,6 +2947,49 @@ fn run_sender(
         }
         merge_send_stats(&mut stats, repair_stats.clone());
     }
+    let sender_completed = stats.sent_unique == tx_count && stats.send_failed_count == 0;
+    if tail_repair.enabled
+        && sender_completed
+        && !(latest_ack_receiver_done && latest_ack_missing_count == Some(0))
+        && final_ack_wait_ms > 0
+    {
+        let started = Instant::now();
+        loop {
+            if started.elapsed() >= Duration::from_millis(final_ack_wait_ms) {
+                final_ack_grace_timeout = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(final_ack_poll_ms));
+            let Some(socket) = ack_socket.as_ref() else {
+                final_ack_grace_timeout = true;
+                break;
+            };
+            let state =
+                drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, udp_ack.recv_timeout_ms);
+            final_ack_wait_elapsed_ms = started.elapsed().as_millis() as u64;
+            if state.received_count == 0 {
+                continue;
+            }
+            tail_repair_ack_received_count =
+                tail_repair_ack_received_count.saturating_add(state.received_count);
+            tail_repair_udp_ack_received_count =
+                tail_repair_udp_ack_received_count.saturating_add(state.received_count);
+            tail_repair_latest_ack_epoch = tail_repair_latest_ack_epoch.max(state.latest_epoch);
+            latest_ack_missing_count = Some(state.latest_missing_count);
+            latest_ack_receiver_done = state.receiver_done;
+            final_missing_count = state.latest_missing_count;
+            if state.receiver_done && state.latest_missing_count == 0 {
+                final_ack_received_after_repair = true;
+                final_ack_epoch = Some(state.latest_epoch);
+                final_ack_missing_count = Some(0);
+                final_ack_receiver_done = Some(true);
+                break;
+            }
+        }
+        if final_ack_wait_elapsed_ms == 0 {
+            final_ack_wait_elapsed_ms = started.elapsed().as_millis() as u64;
+        }
+    }
     if tail_repair_ack_received_count == 0 {
         final_missing_count = tx_count.saturating_sub(stats.sent_unique);
     }
@@ -2926,7 +3020,6 @@ fn run_sender(
     } else {
         "unknown"
     };
-    let sender_completed = stats.sent_unique == tx_count && stats.send_failed_count == 0;
     let tail_repair_success = if tail_repair.enabled {
         receiver_final_done == Some(true) && receiver_final_missing_count == Some(0)
     } else {
@@ -2941,9 +3034,15 @@ fn run_sender(
     let tail_repair_completion_reason = if !tail_repair.enabled {
         "tail_repair_disabled"
     } else if tail_repair_success {
-        "receiver_done_ack"
+        if final_ack_received_after_repair {
+            "receiver_done_ack_after_grace"
+        } else {
+            "receiver_done_ack"
+        }
     } else if tail_repair_ack_received_count == 0 {
         "no_ack"
+    } else if final_ack_grace_timeout {
+        "final_ack_grace_timeout_latest_ack_missing"
     } else if repair_budget_exhausted {
         "repair_budget_exhausted_latest_ack_missing"
     } else {
@@ -3034,6 +3133,15 @@ fn run_sender(
             "latest_ack_receiver_done": latest_ack_receiver_done,
             "receiver_final_missing_count": receiver_final_missing_count,
             "receiver_final_done": receiver_final_done,
+            "final_ack_wait_enabled": final_ack_wait_ms > 0,
+            "final_ack_wait_ms": final_ack_wait_ms,
+            "final_ack_poll_ms": final_ack_poll_ms,
+            "final_ack_wait_elapsed_ms": final_ack_wait_elapsed_ms,
+            "final_ack_received_after_repair": final_ack_received_after_repair,
+            "final_ack_epoch": final_ack_epoch,
+            "final_ack_missing_count": final_ack_missing_count,
+            "final_ack_receiver_done": final_ack_receiver_done,
+            "final_ack_grace_timeout": final_ack_grace_timeout,
             "tail_repair_completion_reason": tail_repair_completion_reason,
             "repair_budget_exhausted": repair_budget_exhausted,
             "repair_waited_for_receiver_done": repair_waited_for_receiver_done,
