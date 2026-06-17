@@ -130,6 +130,10 @@ struct TailRepairConfigV1 {
     require_ack: bool,
     missing_sample_limit: u64,
     fallback_tail_window: u64,
+    packet_copies: u64,
+    batch_size: u64,
+    batch_pause_ms: u64,
+    round_pause_ms: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -2625,6 +2629,54 @@ fn send_scheduled_batch(
     })
 }
 
+fn send_repair_payloads_paced(
+    chain_id: u64,
+    sender_node: u64,
+    receiver_node: u64,
+    sender_addr: &str,
+    receiver_addr: &str,
+    txs: &[NativeFixtureTxV1],
+    repair_round: u64,
+    tail_repair: TailRepairConfigV1,
+    retry: UdpSendRetryConfigV1,
+) -> Result<SendScheduleStatsV1> {
+    let copies = tail_repair.packet_copies.max(1);
+    let batch_size = tail_repair.batch_size.max(1) as usize;
+    let mut out = empty_send_stats();
+    for copy in 0..copies {
+        let copy_index = repair_round
+            .saturating_add(1)
+            .saturating_mul(1_000)
+            .saturating_add(copy)
+            .saturating_add(1);
+        for chunk in txs.chunks(batch_size) {
+            let mut chunk_txs = chunk.to_vec();
+            for tx in &mut chunk_txs {
+                tx.copy_index = copy_index;
+                tx.dropped = false;
+            }
+            let stats = send_scheduled_batch(
+                chain_id,
+                sender_node,
+                receiver_node,
+                sender_addr,
+                receiver_addr,
+                chunk_txs.as_slice(),
+                0,
+                retry,
+            )?;
+            merge_send_stats(&mut out, stats);
+            if out.send_failed_count > 0 {
+                return Ok(out);
+            }
+            if tail_repair.batch_pause_ms > 0 {
+                std::thread::sleep(Duration::from_millis(tail_repair.batch_pause_ms));
+            }
+        }
+    }
+    Ok(out)
+}
+
 fn validate_boundaries(summary: &Value, violations: &mut Vec<String>) {
     if summary_str(summary, "execution_kernel") != "AOEM" {
         violations.push(format!(
@@ -2749,6 +2801,8 @@ fn run_sender(
     let mut repair_sequence_sent_count = 0u64;
     let mut repair_sequence_sent_min: Option<u64> = None;
     let mut repair_sequence_sent_max: Option<u64> = None;
+    let mut repair_rounds_detail_sample = Vec::<Value>::new();
+    let mut repair_no_progress_rounds = 0u64;
     let final_ack_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS", 10_000)?;
     let final_ack_poll_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS", 500)?.max(1);
     let mut final_ack_wait_elapsed_ms = 0u64;
@@ -2810,12 +2864,23 @@ fn run_sender(
     let mut repair_rounds_used = 0u64;
     if stats.send_failed_count == 0 && tail_repair.enabled && tail_repair.rounds > 0 {
         for repair_round in 0..tail_repair.rounds {
-            if tail_repair.interval_ms > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(tail_repair.interval_ms));
+            if tail_repair.round_pause_ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(tail_repair.round_pause_ms));
             }
             let udp_ack_state = ack_socket.as_ref().map(|socket| {
                 drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, udp_ack.recv_timeout_ms)
             });
+            let ack_epoch_before = udp_ack_state
+                .as_ref()
+                .filter(|state| state.received_count > 0)
+                .map(|state| state.latest_epoch)
+                .filter(|epoch| *epoch > 0);
+            let missing_count_before = udp_ack_state
+                .as_ref()
+                .filter(|state| state.received_count > 0)
+                .map(|state| state.latest_missing_count)
+                .or(latest_ack_missing_count)
+                .unwrap_or_else(|| tx_count.saturating_sub(stats.sent_unique));
             if let Some(state) = udp_ack_state.as_ref() {
                 if state.received_count > 0 {
                     tail_repair_ack_received_count = tail_repair_ack_received_count
@@ -2925,23 +2990,115 @@ fn run_sender(
                     tail_repair.fallback_tail_window,
                 )?
             };
+            let sequence_sent_count_this_round = txs.len().try_into().unwrap_or(u64::MAX);
+            let (sequence_sent_min_this_round, sequence_sent_max_this_round) = if !txs.is_empty() {
+                let mut min = None::<u64>;
+                let mut max = None::<u64>;
+                for tx in &txs {
+                    min = Some(min.map(|current| current.min(tx.index)).unwrap_or(tx.index));
+                    max = Some(max.map(|current| current.max(tx.index)).unwrap_or(tx.index));
+                }
+                (min, max)
+            } else {
+                (None, None)
+            };
+            let sequence_sent_ranges_this_round = if let Some(ranges) = udp_ranges.as_ref() {
+                ranges.clone()
+            } else if let Some(ranges) = file_ack_ranges.as_ref().filter(|ranges| !ranges.is_empty())
+            {
+                ranges.clone()
+            } else if !txs.is_empty() {
+                vec![MissingRangeV1 {
+                    start: sequence_sent_min_this_round.unwrap_or(0),
+                    end_inclusive: sequence_sent_max_this_round.unwrap_or(0),
+                }]
+            } else {
+                Vec::new()
+            };
             if txs.is_empty() {
                 repair_rounds_used = repair_rounds_used.saturating_add(1);
+                if repair_rounds_detail_sample.len() < tail_repair.missing_sample_limit as usize {
+                    repair_rounds_detail_sample.push(serde_json::json!({
+                        "round_index": repair_round,
+                        "ack_epoch_before": ack_epoch_before,
+                        "missing_count_before": missing_count_before,
+                        "missing_ranges_before_sample": missing_ranges_to_json(sequence_sent_ranges_this_round.as_slice(), tail_repair.missing_sample_limit),
+                        "sequence_sent_count": 0,
+                        "packet_sent_count": 0,
+                        "sequence_sent_min": Value::Null,
+                        "sequence_sent_max": Value::Null,
+                        "sequence_sent_ranges_sample": [],
+                        "ack_epoch_after": tail_repair_latest_ack_epoch,
+                        "missing_count_after": latest_ack_missing_count,
+                        "missing_delta": 0,
+                        "no_progress": true,
+                    }));
+                }
                 continue;
             }
-            let round_stats = send_scheduled_batch(
+            let round_stats = send_repair_payloads_paced(
                 chain_id,
                 sender_node,
                 receiver_node,
                 sender_addr,
                 receiver_addr,
                 txs.as_slice(),
-                0,
+                repair_round,
+                tail_repair,
                 udp_send_retry,
             )?;
+            let round_packet_sent_count = round_stats.sent_packets;
             merge_send_stats(&mut repair_stats, round_stats);
             repair_rounds_used = repair_rounds_used.saturating_add(1);
             if repair_stats.send_failed_count > 0 {
+                break;
+            }
+            if tail_repair.round_pause_ms > 0 {
+                std::thread::sleep(Duration::from_millis(tail_repair.round_pause_ms));
+            }
+            let ack_after = ack_socket.as_ref().map(|socket| {
+                drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, udp_ack.recv_timeout_ms)
+            });
+            let mut missing_count_after = latest_ack_missing_count.unwrap_or(final_missing_count);
+            let mut ack_epoch_after = tail_repair_latest_ack_epoch;
+            if let Some(state) = ack_after.as_ref() {
+                if state.received_count > 0 {
+                    tail_repair_ack_received_count = tail_repair_ack_received_count
+                        .saturating_add(state.received_count);
+                    tail_repair_udp_ack_received_count = tail_repair_udp_ack_received_count
+                        .saturating_add(state.received_count);
+                    tail_repair_latest_ack_epoch =
+                        tail_repair_latest_ack_epoch.max(state.latest_epoch);
+                    latest_ack_missing_count = Some(state.latest_missing_count);
+                    latest_ack_receiver_done = state.receiver_done;
+                    final_missing_count = state.latest_missing_count;
+                    missing_count_after = state.latest_missing_count;
+                    ack_epoch_after = state.latest_epoch;
+                }
+            }
+            let missing_delta = missing_count_before.saturating_sub(missing_count_after);
+            let no_progress = missing_count_after >= missing_count_before;
+            if no_progress {
+                repair_no_progress_rounds = repair_no_progress_rounds.saturating_add(1);
+            }
+            if repair_rounds_detail_sample.len() < tail_repair.missing_sample_limit as usize {
+                repair_rounds_detail_sample.push(serde_json::json!({
+                    "round_index": repair_round,
+                    "ack_epoch_before": ack_epoch_before,
+                    "missing_count_before": missing_count_before,
+                    "missing_ranges_before_sample": missing_ranges_to_json(sequence_sent_ranges_this_round.as_slice(), tail_repair.missing_sample_limit),
+                    "sequence_sent_count": sequence_sent_count_this_round,
+                    "packet_sent_count": round_packet_sent_count,
+                    "sequence_sent_min": sequence_sent_min_this_round,
+                    "sequence_sent_max": sequence_sent_max_this_round,
+                    "sequence_sent_ranges_sample": missing_ranges_to_json(sequence_sent_ranges_this_round.as_slice(), tail_repair.missing_sample_limit),
+                    "ack_epoch_after": ack_epoch_after,
+                    "missing_count_after": missing_count_after,
+                    "missing_delta": missing_delta,
+                    "no_progress": no_progress,
+                }));
+            }
+            if latest_ack_receiver_done && latest_ack_missing_count == Some(0) {
                 break;
             }
         }
@@ -3124,6 +3281,15 @@ fn run_sender(
             "enabled": tail_repair.enabled,
             "rounds_configured": tail_repair.rounds,
             "interval_ms": tail_repair.interval_ms,
+            "repair_pacing_enabled": true,
+            "repair_packet_copies": tail_repair.packet_copies,
+            "repair_batch_size": tail_repair.batch_size,
+            "repair_batch_pause_ms": tail_repair.batch_pause_ms,
+            "repair_round_pause_ms": tail_repair.round_pause_ms,
+            "repair_round_count": repair_rounds_used,
+            "repair_rounds_detail_sample": repair_rounds_detail_sample,
+            "repair_no_progress_rounds": repair_no_progress_rounds,
+            "repair_total_packet_copies_sent": repair_stats.sent_packets,
             "repair_rounds_used": repair_rounds_used,
             "tail_repair_ack_received_count": tail_repair_ack_received_count,
             "tail_repair_udp_ack_received_count": tail_repair_udp_ack_received_count,
@@ -3533,6 +3699,10 @@ fn run_memory_bisect_variant(
             require_ack: false,
             missing_sample_limit: 256,
             fallback_tail_window: tx_count.min(2048),
+            packet_copies: 1,
+            batch_size: 64,
+            batch_pause_ms: 0,
+            round_pause_ms: 200,
         },
         default_udp_send_retry_config(),
         default_udp_ack_config(),
@@ -3826,6 +3996,16 @@ fn main() -> Result<()> {
         fallback_tail_window: u64_env(
             "NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_FALLBACK_TAIL_WINDOW",
             tx_count.min(2048),
+        )?,
+        packet_copies: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_PACKET_COPIES", 3)?.max(1),
+        batch_size: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_BATCH_SIZE", 64)?.max(1),
+        batch_pause_ms: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_BATCH_PAUSE_MS", 5)?,
+        round_pause_ms: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_REPAIR_ROUND_PAUSE_MS",
+            u64_env(
+                "NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_INTERVAL_MS",
+                if tail_repair_enabled { 1000 } else { 0 },
+            )?,
         )?,
     };
     let udp_send_retry = UdpSendRetryConfigV1 {
