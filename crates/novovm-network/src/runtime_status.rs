@@ -8,6 +8,7 @@ use crate::{
     },
     EthFullnodeBudgetHooksV1,
 };
+use novovm_protocol::{decode_nov_native_tx_wire_v1, NovTxKindV1};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
@@ -135,6 +136,9 @@ static NETWORK_RUNTIME_NATIVE_PENDING_TX_TOMBSTONES: OnceLock<
 static NETWORK_RUNTIME_NATIVE_PENDING_TX_BROADCAST_RUNTIME: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativePendingTxBroadcastRuntimeSummaryV1>>,
 > = OnceLock::new();
+static NETWORK_RUNTIME_NATIVE_REPAIR_PROBE: OnceLock<
+    Mutex<HashMap<u64, NetworkRuntimeNativeRepairProbeStateV1>>,
+> = OnceLock::new();
 static NETWORK_RUNTIME_NATIVE_EXECUTION_BUDGET_RUNTIME: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeExecutionBudgetRuntimeSummaryV1>>,
 > = OnceLock::new();
@@ -252,6 +256,11 @@ fn runtime_native_pending_tx_tombstone_map(
 fn runtime_native_pending_tx_broadcast_runtime_map(
 ) -> &'static Mutex<HashMap<u64, NetworkRuntimeNativePendingTxBroadcastRuntimeSummaryV1>> {
     NETWORK_RUNTIME_NATIVE_PENDING_TX_BROADCAST_RUNTIME.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_native_repair_probe_map(
+) -> &'static Mutex<HashMap<u64, NetworkRuntimeNativeRepairProbeStateV1>> {
+    NETWORK_RUNTIME_NATIVE_REPAIR_PROBE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_native_execution_budget_runtime_map(
@@ -935,6 +944,37 @@ pub struct NetworkRuntimeNativePendingTxTombstoneV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
+pub struct NetworkRuntimeNativeRepairSequenceRangeV1 {
+    pub start: u64,
+    pub end_inclusive: u64,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct NetworkRuntimeNativeRepairProbeStateV1 {
+    packet_received_count: u64,
+    packet_decode_failed_count: u64,
+    sequence_received_count: u64,
+    sequence_received_min: Option<u64>,
+    sequence_received_max: Option<u64>,
+    sequence_seen: HashSet<u64>,
+    tx_hash_seen: HashSet<[u8; 32]>,
+    sequence_accepted_count: u64,
+    sequence_duplicate_count: u64,
+    sequence_rejected_count: u64,
+    sequence_already_receipted_count: u64,
+    sequence_wrong_run_id_count: u64,
+    sequence_wrong_chain_id_count: u64,
+    sequence_out_of_range_count: u64,
+    sequence_stale_count: u64,
+    sequence_enqueued_count: u64,
+    sequence_admitted_to_aoem_count: u64,
+    reject_reason_counts: HashMap<String, u64>,
+    reject_reason_samples: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub chain_id: u64,
     pub tx_count: usize,
@@ -968,6 +1008,24 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub last_broadcast_candidate_count: u64,
     pub last_broadcast_tx_count: u64,
     pub last_broadcast_unix_ms: Option<u128>,
+    pub repair_packet_received_count: u64,
+    pub repair_packet_decode_failed_count: u64,
+    pub repair_sequence_received_count: u64,
+    pub repair_sequence_received_min: Option<u64>,
+    pub repair_sequence_received_max: Option<u64>,
+    pub repair_sequence_received_ranges_sample: Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub repair_sequence_accepted_count: u64,
+    pub repair_sequence_duplicate_count: u64,
+    pub repair_sequence_rejected_count: u64,
+    pub repair_reject_reason_counts: HashMap<String, u64>,
+    pub repair_reject_reason_samples: Vec<String>,
+    pub repair_sequence_already_receipted_count: u64,
+    pub repair_sequence_wrong_run_id_count: u64,
+    pub repair_sequence_wrong_chain_id_count: u64,
+    pub repair_sequence_out_of_range_count: u64,
+    pub repair_sequence_stale_count: u64,
+    pub repair_sequence_enqueued_count: u64,
+    pub repair_sequence_admitted_to_aoem_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1245,6 +1303,213 @@ fn runtime_native_pending_tx_summarize_v1(
             .saturating_add(tx.propagated_peer_count);
     }
     summary
+}
+
+fn network_runtime_native_repair_sequence_ranges_sample_v1(
+    sequences: &HashSet<u64>,
+    limit: usize,
+) -> Vec<NetworkRuntimeNativeRepairSequenceRangeV1> {
+    if sequences.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    let mut sorted = sequences.iter().copied().collect::<Vec<_>>();
+    sorted.sort_unstable();
+    let mut out = Vec::new();
+    let mut start = sorted[0];
+    let mut last = sorted[0];
+    for sequence in sorted.into_iter().skip(1) {
+        if sequence == last.saturating_add(1) {
+            last = sequence;
+            continue;
+        }
+        out.push(NetworkRuntimeNativeRepairSequenceRangeV1 {
+            start,
+            end_inclusive: last,
+            count: last.saturating_sub(start).saturating_add(1),
+        });
+        if out.len() >= limit {
+            return out;
+        }
+        start = sequence;
+        last = sequence;
+    }
+    if out.len() < limit {
+        out.push(NetworkRuntimeNativeRepairSequenceRangeV1 {
+            start,
+            end_inclusive: last,
+            count: last.saturating_sub(start).saturating_add(1),
+        });
+    }
+    out
+}
+
+fn network_runtime_native_repair_probe_summary_v1(
+    chain_id: u64,
+) -> NetworkRuntimeNativePendingTxSummaryV1 {
+    let Ok(guard) = runtime_native_repair_probe_map().lock() else {
+        return NetworkRuntimeNativePendingTxSummaryV1 {
+            chain_id,
+            ..Default::default()
+        };
+    };
+    let Some(state) = guard.get(&chain_id) else {
+        return NetworkRuntimeNativePendingTxSummaryV1 {
+            chain_id,
+            ..Default::default()
+        };
+    };
+    NetworkRuntimeNativePendingTxSummaryV1 {
+        chain_id,
+        repair_packet_received_count: state.packet_received_count,
+        repair_packet_decode_failed_count: state.packet_decode_failed_count,
+        repair_sequence_received_count: state.sequence_received_count,
+        repair_sequence_received_min: state.sequence_received_min,
+        repair_sequence_received_max: state.sequence_received_max,
+        repair_sequence_received_ranges_sample:
+            network_runtime_native_repair_sequence_ranges_sample_v1(&state.sequence_seen, 64),
+        repair_sequence_accepted_count: state.sequence_accepted_count,
+        repair_sequence_duplicate_count: state.sequence_duplicate_count,
+        repair_sequence_rejected_count: state.sequence_rejected_count,
+        repair_reject_reason_counts: state.reject_reason_counts.clone(),
+        repair_reject_reason_samples: state.reject_reason_samples.clone(),
+        repair_sequence_already_receipted_count: state.sequence_already_receipted_count,
+        repair_sequence_wrong_run_id_count: state.sequence_wrong_run_id_count,
+        repair_sequence_wrong_chain_id_count: state.sequence_wrong_chain_id_count,
+        repair_sequence_out_of_range_count: state.sequence_out_of_range_count,
+        repair_sequence_stale_count: state.sequence_stale_count,
+        repair_sequence_enqueued_count: state.sequence_enqueued_count,
+        repair_sequence_admitted_to_aoem_count: state.sequence_admitted_to_aoem_count,
+        ..Default::default()
+    }
+}
+
+fn apply_network_runtime_native_repair_probe_summary_v1(
+    summary: &mut NetworkRuntimeNativePendingTxSummaryV1,
+    repair: &NetworkRuntimeNativePendingTxSummaryV1,
+) {
+    summary.repair_packet_received_count = repair.repair_packet_received_count;
+    summary.repair_packet_decode_failed_count = repair.repair_packet_decode_failed_count;
+    summary.repair_sequence_received_count = repair.repair_sequence_received_count;
+    summary.repair_sequence_received_min = repair.repair_sequence_received_min;
+    summary.repair_sequence_received_max = repair.repair_sequence_received_max;
+    summary.repair_sequence_received_ranges_sample =
+        repair.repair_sequence_received_ranges_sample.clone();
+    summary.repair_sequence_accepted_count = repair.repair_sequence_accepted_count;
+    summary.repair_sequence_duplicate_count = repair.repair_sequence_duplicate_count;
+    summary.repair_sequence_rejected_count = repair.repair_sequence_rejected_count;
+    summary.repair_reject_reason_counts = repair.repair_reject_reason_counts.clone();
+    summary.repair_reject_reason_samples = repair.repair_reject_reason_samples.clone();
+    summary.repair_sequence_already_receipted_count =
+        repair.repair_sequence_already_receipted_count;
+    summary.repair_sequence_wrong_run_id_count = repair.repair_sequence_wrong_run_id_count;
+    summary.repair_sequence_wrong_chain_id_count = repair.repair_sequence_wrong_chain_id_count;
+    summary.repair_sequence_out_of_range_count = repair.repair_sequence_out_of_range_count;
+    summary.repair_sequence_stale_count = repair.repair_sequence_stale_count;
+    summary.repair_sequence_enqueued_count = repair.repair_sequence_enqueued_count;
+    summary.repair_sequence_admitted_to_aoem_count =
+        repair.repair_sequence_admitted_to_aoem_count;
+}
+
+fn network_runtime_native_repair_probe_reject_v1(
+    state: &mut NetworkRuntimeNativeRepairProbeStateV1,
+    reason: &str,
+) {
+    state.sequence_rejected_count = state.sequence_rejected_count.saturating_add(1);
+    *state
+        .reject_reason_counts
+        .entry(reason.to_string())
+        .or_default() += 1;
+    if state.reject_reason_samples.len() < 32 {
+        state.reject_reason_samples.push(reason.to_string());
+    }
+    match reason {
+        "decode_failed" => {
+            state.packet_decode_failed_count = state.packet_decode_failed_count.saturating_add(1);
+        }
+        "wrong_chain_id" => {
+            state.sequence_wrong_chain_id_count =
+                state.sequence_wrong_chain_id_count.saturating_add(1);
+        }
+        "non_execute_tx" => {
+            state.sequence_out_of_range_count =
+                state.sequence_out_of_range_count.saturating_add(1);
+        }
+        _ => {}
+    }
+}
+
+fn network_runtime_native_repair_probe_observe_pending_view_v1(
+    chain_id: u64,
+    tx_hash: [u8; 32],
+    already_receipted: bool,
+) {
+    let Ok(mut guard) = runtime_native_repair_probe_map().lock() else {
+        return;
+    };
+    let Some(state) = guard.get_mut(&chain_id) else {
+        return;
+    };
+    if !state.tx_hash_seen.contains(&tx_hash) {
+        return;
+    }
+    state.sequence_enqueued_count = state.sequence_enqueued_count.saturating_add(1);
+    if already_receipted {
+        state.sequence_already_receipted_count =
+            state.sequence_already_receipted_count.saturating_add(1);
+    }
+}
+
+pub fn observe_network_runtime_native_pending_tx_repair_probe_v1(
+    chain_id: u64,
+    tx_hash: [u8; 32],
+    repair_copy_index: u64,
+    tx_payload: Option<&[u8]>,
+) {
+    if repair_copy_index == 0 {
+        return;
+    }
+    let Ok(mut guard) = runtime_native_repair_probe_map().lock() else {
+        return;
+    };
+    let state = guard.entry(chain_id).or_default();
+    state.packet_received_count = state.packet_received_count.saturating_add(1);
+    let Some(payload) = tx_payload.filter(|payload| !payload.is_empty()) else {
+        network_runtime_native_repair_probe_reject_v1(state, "missing_payload");
+        return;
+    };
+    let Ok(tx) = decode_nov_native_tx_wire_v1(payload) else {
+        network_runtime_native_repair_probe_reject_v1(state, "decode_failed");
+        return;
+    };
+    if tx.chain_id != chain_id {
+        network_runtime_native_repair_probe_reject_v1(state, "wrong_chain_id");
+        return;
+    }
+    let sequence = match tx.kind {
+        NovTxKindV1::Execute(execute) => execute.nonce.saturating_sub(1),
+        NovTxKindV1::Transfer(_) | NovTxKindV1::Governance(_) => {
+            network_runtime_native_repair_probe_reject_v1(state, "non_execute_tx");
+            return;
+        }
+    };
+    state.sequence_received_count = state.sequence_received_count.saturating_add(1);
+    state.sequence_received_min = Some(
+        state
+            .sequence_received_min
+            .map(|current| current.min(sequence))
+            .unwrap_or(sequence),
+    );
+    state.sequence_received_max = Some(
+        state
+            .sequence_received_max
+            .map(|current| current.max(sequence))
+            .unwrap_or(sequence),
+    );
+    if !state.sequence_seen.insert(sequence) {
+        state.sequence_duplicate_count = state.sequence_duplicate_count.saturating_add(1);
+    }
+    state.tx_hash_seen.insert(tx_hash);
+    state.sequence_accepted_count = state.sequence_accepted_count.saturating_add(1);
 }
 
 const NETWORK_RUNTIME_NATIVE_PENDING_TX_RETRY_BASE_DELAY_MS_V1: u128 = 500;
@@ -3710,6 +3975,7 @@ pub fn observe_network_runtime_native_pending_tx_local_native_payload_v1(
 ) {
     let now = now_unix_millis();
     let mut retain_payload = false;
+    let mut already_receipted = false;
     if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
         let chain_txs = guard.entry(chain_id).or_default();
         let tx = chain_txs
@@ -3752,6 +4018,10 @@ pub fn observe_network_runtime_native_pending_tx_local_native_payload_v1(
                 pending_final_disposition:
                     NetworkRuntimeNativePendingTxFinalDispositionV1::Retained,
             });
+        already_receipted = matches!(
+            tx.lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+        );
         if !matches!(
             tx.lifecycle_stage,
             NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
@@ -3775,6 +4045,11 @@ pub fn observe_network_runtime_native_pending_tx_local_native_payload_v1(
             chain_payloads.remove(&tx_hash);
         }
     }
+    network_runtime_native_repair_probe_observe_pending_view_v1(
+        chain_id,
+        tx_hash,
+        already_receipted,
+    );
 }
 
 pub fn observe_network_runtime_native_pending_tx_remote_native_payload_v1(
@@ -4820,6 +5095,7 @@ pub fn snapshot_network_runtime_native_pending_tx_summary_v1(
     runtime_native_pending_tx_cleanup_v1(chain_id, now_unix_millis());
     let broadcast_runtime =
         snapshot_network_runtime_native_pending_tx_broadcast_runtime_summary_v1(chain_id);
+    let repair_probe = network_runtime_native_repair_probe_summary_v1(chain_id);
     let tombstone_counts = runtime_native_pending_tx_tombstone_map()
         .lock()
         .ok()
@@ -4864,6 +5140,7 @@ pub fn snapshot_network_runtime_native_pending_tx_summary_v1(
             summary.last_broadcast_candidate_count = broadcast_runtime.last_candidate_count;
             summary.last_broadcast_tx_count = broadcast_runtime.last_broadcast_tx_count;
             summary.last_broadcast_unix_ms = broadcast_runtime.last_updated_unix_ms;
+            apply_network_runtime_native_repair_probe_summary_v1(&mut summary, &repair_probe);
             return summary;
         }
     };
@@ -4883,6 +5160,7 @@ pub fn snapshot_network_runtime_native_pending_tx_summary_v1(
         summary.last_broadcast_candidate_count = broadcast_runtime.last_candidate_count;
         summary.last_broadcast_tx_count = broadcast_runtime.last_broadcast_tx_count;
         summary.last_broadcast_unix_ms = broadcast_runtime.last_updated_unix_ms;
+        apply_network_runtime_native_repair_probe_summary_v1(&mut summary, &repair_probe);
         return summary;
     };
     let mut summary = runtime_native_pending_tx_summarize_v1(chain_id, chain_txs);
@@ -4897,6 +5175,7 @@ pub fn snapshot_network_runtime_native_pending_tx_summary_v1(
     summary.last_broadcast_candidate_count = broadcast_runtime.last_candidate_count;
     summary.last_broadcast_tx_count = broadcast_runtime.last_broadcast_tx_count;
     summary.last_broadcast_unix_ms = broadcast_runtime.last_updated_unix_ms;
+    apply_network_runtime_native_repair_probe_summary_v1(&mut summary, &repair_probe);
     summary
 }
 

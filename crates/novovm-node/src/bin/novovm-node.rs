@@ -33712,6 +33712,24 @@ fn build_native_execution_pipeline_report_v1(
                 "total": pending_summary.tx_count,
                 "local": pending_summary.local_origin_count,
                 "remote": pending_summary.remote_origin_count,
+                "repair_packet_received_count": pending_summary.repair_packet_received_count,
+                "repair_packet_decode_failed_count": pending_summary.repair_packet_decode_failed_count,
+                "repair_sequence_received_count": pending_summary.repair_sequence_received_count,
+                "repair_sequence_received_min": pending_summary.repair_sequence_received_min,
+                "repair_sequence_received_max": pending_summary.repair_sequence_received_max,
+                "repair_sequence_received_ranges_sample": pending_summary.repair_sequence_received_ranges_sample.clone(),
+                "repair_sequence_accepted_count": pending_summary.repair_sequence_accepted_count,
+                "repair_sequence_duplicate_count": pending_summary.repair_sequence_duplicate_count,
+                "repair_sequence_rejected_count": pending_summary.repair_sequence_rejected_count,
+                "repair_reject_reason_counts": pending_summary.repair_reject_reason_counts.clone(),
+                "repair_reject_reason_samples": pending_summary.repair_reject_reason_samples.clone(),
+                "repair_sequence_already_receipted_count": pending_summary.repair_sequence_already_receipted_count,
+                "repair_sequence_wrong_run_id_count": pending_summary.repair_sequence_wrong_run_id_count,
+                "repair_sequence_wrong_chain_id_count": pending_summary.repair_sequence_wrong_chain_id_count,
+                "repair_sequence_out_of_range_count": pending_summary.repair_sequence_out_of_range_count,
+                "repair_sequence_stale_count": pending_summary.repair_sequence_stale_count,
+                "repair_sequence_enqueued_count": pending_summary.repair_sequence_enqueued_count,
+                "repair_sequence_admitted_to_aoem_count": pending_summary.repair_sequence_admitted_to_aoem_count,
             },
             "queue": {
                 "tx_count": pending_summary.tx_count,
@@ -33955,6 +33973,24 @@ struct NativeExecutionPipelineAggregateV1 {
     proof_ticks: u64,
     commit_ticks: u64,
     ingress_total_last: u64,
+    repair_packet_received_count: u64,
+    repair_packet_decode_failed_count: u64,
+    repair_sequence_received_count: u64,
+    repair_sequence_received_min: Option<u64>,
+    repair_sequence_received_max: Option<u64>,
+    repair_sequence_received_ranges_sample: serde_json::Value,
+    repair_sequence_accepted_count: u64,
+    repair_sequence_duplicate_count: u64,
+    repair_sequence_rejected_count: u64,
+    repair_reject_reason_counts: serde_json::Value,
+    repair_reject_reason_samples: serde_json::Value,
+    repair_sequence_already_receipted_count: u64,
+    repair_sequence_wrong_run_id_count: u64,
+    repair_sequence_wrong_chain_id_count: u64,
+    repair_sequence_out_of_range_count: u64,
+    repair_sequence_stale_count: u64,
+    repair_sequence_enqueued_count: u64,
+    repair_sequence_admitted_to_aoem_count: u64,
     queue_tx_count_last: u64,
     queue_active_pending_last: u64,
     queue_historical_pending_last: u64,
@@ -34021,6 +34057,24 @@ impl NativeExecutionPipelineAggregateV1 {
             proof_ticks: 0,
             commit_ticks: 0,
             ingress_total_last: 0,
+            repair_packet_received_count: 0,
+            repair_packet_decode_failed_count: 0,
+            repair_sequence_received_count: 0,
+            repair_sequence_received_min: None,
+            repair_sequence_received_max: None,
+            repair_sequence_received_ranges_sample: serde_json::json!([]),
+            repair_sequence_accepted_count: 0,
+            repair_sequence_duplicate_count: 0,
+            repair_sequence_rejected_count: 0,
+            repair_reject_reason_counts: serde_json::json!({}),
+            repair_reject_reason_samples: serde_json::json!([]),
+            repair_sequence_already_receipted_count: 0,
+            repair_sequence_wrong_run_id_count: 0,
+            repair_sequence_wrong_chain_id_count: 0,
+            repair_sequence_out_of_range_count: 0,
+            repair_sequence_stale_count: 0,
+            repair_sequence_enqueued_count: 0,
+            repair_sequence_admitted_to_aoem_count: 0,
             queue_tx_count_last: 0,
             queue_active_pending_last: 0,
             queue_historical_pending_last: 0,
@@ -34319,6 +34373,76 @@ impl NativeExecutionPipelineAggregateV1 {
         }
         self.ingress_total_last = ingress
             .get("total")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_packet_received_count = ingress
+            .get("repair_packet_received_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_packet_decode_failed_count = ingress
+            .get("repair_packet_decode_failed_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_sequence_received_count = ingress
+            .get("repair_sequence_received_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_sequence_received_min = ingress
+            .get("repair_sequence_received_min")
+            .and_then(|value| value.as_u64());
+        self.repair_sequence_received_max = ingress
+            .get("repair_sequence_received_max")
+            .and_then(|value| value.as_u64());
+        self.repair_sequence_received_ranges_sample = ingress
+            .get("repair_sequence_received_ranges_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.repair_sequence_accepted_count = ingress
+            .get("repair_sequence_accepted_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_sequence_duplicate_count = ingress
+            .get("repair_sequence_duplicate_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_sequence_rejected_count = ingress
+            .get("repair_sequence_rejected_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_reject_reason_counts = ingress
+            .get("repair_reject_reason_counts")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        self.repair_reject_reason_samples = ingress
+            .get("repair_reject_reason_samples")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.repair_sequence_already_receipted_count = ingress
+            .get("repair_sequence_already_receipted_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_sequence_wrong_run_id_count = ingress
+            .get("repair_sequence_wrong_run_id_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_sequence_wrong_chain_id_count = ingress
+            .get("repair_sequence_wrong_chain_id_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_sequence_out_of_range_count = ingress
+            .get("repair_sequence_out_of_range_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_sequence_stale_count = ingress
+            .get("repair_sequence_stale_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_sequence_enqueued_count = ingress
+            .get("repair_sequence_enqueued_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_sequence_admitted_to_aoem_count = ingress
+            .get("repair_sequence_admitted_to_aoem_count")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
         self.queue_pending_last = queue
@@ -34634,6 +34758,78 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "ingress_total_last".to_string(),
             serde_json::json!(self.ingress_total_last),
+        );
+        out.insert(
+            "repair_packet_received_count".to_string(),
+            serde_json::json!(self.repair_packet_received_count),
+        );
+        out.insert(
+            "repair_packet_decode_failed_count".to_string(),
+            serde_json::json!(self.repair_packet_decode_failed_count),
+        );
+        out.insert(
+            "repair_sequence_received_count".to_string(),
+            serde_json::json!(self.repair_sequence_received_count),
+        );
+        out.insert(
+            "repair_sequence_received_min".to_string(),
+            serde_json::json!(self.repair_sequence_received_min),
+        );
+        out.insert(
+            "repair_sequence_received_max".to_string(),
+            serde_json::json!(self.repair_sequence_received_max),
+        );
+        out.insert(
+            "repair_sequence_received_ranges_sample".to_string(),
+            self.repair_sequence_received_ranges_sample.clone(),
+        );
+        out.insert(
+            "repair_sequence_accepted_count".to_string(),
+            serde_json::json!(self.repair_sequence_accepted_count),
+        );
+        out.insert(
+            "repair_sequence_duplicate_count".to_string(),
+            serde_json::json!(self.repair_sequence_duplicate_count),
+        );
+        out.insert(
+            "repair_sequence_rejected_count".to_string(),
+            serde_json::json!(self.repair_sequence_rejected_count),
+        );
+        out.insert(
+            "repair_reject_reason_counts".to_string(),
+            self.repair_reject_reason_counts.clone(),
+        );
+        out.insert(
+            "repair_reject_reason_samples".to_string(),
+            self.repair_reject_reason_samples.clone(),
+        );
+        out.insert(
+            "repair_sequence_already_receipted_count".to_string(),
+            serde_json::json!(self.repair_sequence_already_receipted_count),
+        );
+        out.insert(
+            "repair_sequence_wrong_run_id_count".to_string(),
+            serde_json::json!(self.repair_sequence_wrong_run_id_count),
+        );
+        out.insert(
+            "repair_sequence_wrong_chain_id_count".to_string(),
+            serde_json::json!(self.repair_sequence_wrong_chain_id_count),
+        );
+        out.insert(
+            "repair_sequence_out_of_range_count".to_string(),
+            serde_json::json!(self.repair_sequence_out_of_range_count),
+        );
+        out.insert(
+            "repair_sequence_stale_count".to_string(),
+            serde_json::json!(self.repair_sequence_stale_count),
+        );
+        out.insert(
+            "repair_sequence_enqueued_count".to_string(),
+            serde_json::json!(self.repair_sequence_enqueued_count),
+        );
+        out.insert(
+            "repair_sequence_admitted_to_aoem_count".to_string(),
+            serde_json::json!(self.repair_sequence_admitted_to_aoem_count),
         );
         out.insert(
             "queue_tx_count_last".to_string(),

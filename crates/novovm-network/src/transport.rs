@@ -75,6 +75,7 @@ use crate::{
     observe_network_runtime_native_pending_tx_propagated_v1,
     observe_network_runtime_native_pending_tx_propagated_with_context_v1,
     observe_network_runtime_native_pending_tx_propagation_failure_v1,
+    observe_network_runtime_native_pending_tx_repair_probe_v1,
     observe_network_runtime_native_pending_tx_remote_native_payload_v1,
     observe_network_runtime_peer_head, observe_network_runtime_peer_head_with_local_head_max,
     plan_network_runtime_sync_pull_window, register_network_runtime_peer,
@@ -9251,10 +9252,19 @@ fn maybe_update_runtime_sync_from_protocol_message_with_context(
             EvmNativeMessage::Transactions {
                 from,
                 tx_hash,
+                tx_count,
                 payload,
                 ..
             } => {
                 let _ = register_network_runtime_peer(chain_id, from.0);
+                if *tx_count > 1 {
+                    observe_network_runtime_native_pending_tx_repair_probe_v1(
+                        chain_id,
+                        *tx_hash,
+                        tx_count.saturating_sub(1),
+                        Some(payload.as_slice()),
+                    );
+                }
                 if payload.starts_with(b"NNX1") {
                     observe_network_runtime_native_pending_tx_remote_native_payload_v1(
                         chain_id,
