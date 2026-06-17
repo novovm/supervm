@@ -1516,6 +1516,20 @@ fn network_runtime_native_repair_probe_tx_hashes_v1(chain_id: u64) -> HashSet<[u
         .unwrap_or_default()
 }
 
+fn network_runtime_native_repair_probe_sequence_by_tx_hash_v1(
+    chain_id: u64,
+) -> HashMap<[u8; 32], u64> {
+    runtime_native_repair_probe_map()
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .get(&chain_id)
+                .map(|state| state.tx_hash_to_sequence.clone())
+        })
+        .unwrap_or_default()
+}
+
 pub fn observe_network_runtime_native_pending_tx_repair_probe_v1(
     chain_id: u64,
     tx_hash: [u8; 32],
@@ -5321,6 +5335,8 @@ pub fn snapshot_network_runtime_native_active_pending_txs_v1(
 ) -> Vec<NetworkRuntimeNativePendingTxStateV1> {
     runtime_native_pending_tx_cleanup_v1(chain_id, now_unix_millis());
     let repair_tx_hashes = network_runtime_native_repair_probe_tx_hashes_v1(chain_id);
+    let repair_sequence_by_tx_hash =
+        network_runtime_native_repair_probe_sequence_by_tx_hash_v1(chain_id);
     let guard = match runtime_native_pending_tx_map().lock() {
         Ok(guard) => guard,
         Err(_) => return Vec::new(),
@@ -5341,13 +5357,19 @@ pub fn snapshot_network_runtime_native_active_pending_txs_v1(
         })
         .collect::<Vec<_>>();
     ordered.sort_by(|a, b| {
-        repair_tx_hashes
-            .contains(&b.tx_hash)
-            .cmp(&repair_tx_hashes.contains(&a.tx_hash))
-            .then_with(|| {
-                b.last_updated_unix_ms
-            .cmp(&a.last_updated_unix_ms)
+        let a_repair = repair_tx_hashes.contains(&a.tx_hash);
+        let b_repair = repair_tx_hashes.contains(&b.tx_hash);
+        let a_sequence = repair_sequence_by_tx_hash.get(&a.tx_hash).copied();
+        let b_sequence = repair_sequence_by_tx_hash.get(&b.tx_hash).copied();
+        b_repair
+            .cmp(&a_repair)
+            .then_with(|| match (a_sequence, b_sequence) {
+                (Some(a_sequence), Some(b_sequence)) => a_sequence.cmp(&b_sequence),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
             })
+            .then_with(|| b.last_updated_unix_ms.cmp(&a.last_updated_unix_ms))
             .then_with(|| b.tx_hash.cmp(&a.tx_hash))
     });
     if limit > 0 && ordered.len() > limit {
@@ -8060,6 +8082,54 @@ mod tests {
         assert_eq!(
             active[0].tx_hash, repair_tx,
             "repair-observed pending must stay inside the AOEM scan window"
+        );
+    }
+
+    #[test]
+    fn active_pending_snapshot_orders_repair_pending_by_sequence() {
+        let chain_id = 20624_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let high_repair_tx = [0xd1; 32];
+        let low_repair_tx = [0xd2; 32];
+        let normal_tx = [0xd3; 32];
+
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            31,
+            high_repair_tx,
+            Some(b"high-repair-native-payload"),
+        );
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            31,
+            normal_tx,
+            Some(b"normal-native-payload"),
+        );
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            31,
+            low_repair_tx,
+            Some(b"low-repair-native-payload"),
+        );
+        {
+            let mut guard = runtime_native_repair_probe_map()
+                .lock()
+                .expect("repair probe lock");
+            let state = guard.entry(chain_id).or_default();
+            state.tx_hash_seen.insert(high_repair_tx);
+            state.tx_hash_seen.insert(low_repair_tx);
+            state.tx_hash_to_sequence.insert(high_repair_tx, 14399);
+            state.tx_hash_to_sequence.insert(low_repair_tx, 14104);
+            state.sequence_seen.insert(14399);
+            state.sequence_seen.insert(14104);
+        }
+
+        let active = snapshot_network_runtime_native_active_pending_txs_v1(chain_id, 1);
+        assert_eq!(active.len(), 1);
+        assert_eq!(
+            active[0].tx_hash, low_repair_tx,
+            "lowest missing repair sequence must enter the AOEM scan window first"
         );
     }
 
