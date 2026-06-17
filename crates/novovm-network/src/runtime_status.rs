@@ -1756,6 +1756,7 @@ fn runtime_native_pending_tx_cleanup_v1(chain_id: u64, now: u128) {
     let pending_ttl_ms = (budget.pending_tx_ttl_ms.max(1)) as u128;
     let pending_reorg_return_window_ms = (budget.pending_tx_reorg_return_window_ms.max(1)) as u128;
     let tombstone_retention_max = budget.pending_tx_tombstone_retention_max.max(1) as usize;
+    let repair_tx_hashes = network_runtime_native_repair_probe_tx_hashes_v1(chain_id);
     let canonical_head_number =
         runtime_native_canonical_chain_map()
             .lock()
@@ -1793,7 +1794,16 @@ fn runtime_native_pending_tx_cleanup_v1(chain_id: u64, now: u128) {
                 }
                 continue;
             }
-            if tx.propagation_attempt_count >= no_success_attempt_limit
+            let repair_active_pending = repair_tx_hashes.contains(tx_hash)
+                && matches!(
+                    tx.lifecycle_stage,
+                    NetworkRuntimeNativePendingTxLifecycleStageV1::Seen
+                        | NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+                        | NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
+                        | NetworkRuntimeNativePendingTxLifecycleStageV1::ReorgedBackToPending
+                );
+            if !repair_active_pending
+                && tx.propagation_attempt_count >= no_success_attempt_limit
                 && tx.propagation_success_count == 0
             {
                 remove_candidates.push((
@@ -1802,7 +1812,12 @@ fn runtime_native_pending_tx_cleanup_v1(chain_id: u64, now: u128) {
                 ));
                 continue;
             }
-            if now.saturating_sub(tx.first_seen_unix_ms) > pending_ttl_ms {
+            let ttl_anchor = if repair_active_pending {
+                tx.last_updated_unix_ms
+            } else {
+                tx.first_seen_unix_ms
+            };
+            if now.saturating_sub(ttl_anchor) > pending_ttl_ms {
                 remove_candidates.push((
                     *tx_hash,
                     NetworkRuntimeNativePendingTxFinalDispositionV1::Expired,
@@ -4724,6 +4739,9 @@ pub fn clear_network_runtime_native_snapshots_for_chain_v1(chain_id: u64) {
     if let Ok(mut guard) = runtime_native_pending_tx_broadcast_runtime_map().lock() {
         guard.remove(&chain_id);
     }
+    if let Ok(mut guard) = runtime_native_repair_probe_map().lock() {
+        guard.remove(&chain_id);
+    }
     if let Ok(mut guard) = runtime_native_execution_budget_runtime_map().lock() {
         guard.remove(&chain_id);
     }
@@ -7544,6 +7562,82 @@ mod tests {
             NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedNonCanonical
         );
         assert!(get_network_runtime_native_pending_tx_tombstone_v1(chain_id, tx_hash).is_none());
+    }
+
+    #[test]
+    fn repair_observed_active_pending_cleanup_uses_refresh_window() {
+        let chain_id = 20570_u64;
+        let budget = get_network_runtime_native_budget_hooks_v1(chain_id);
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let repair_tx = [0x97; 32];
+        let normal_tx = [0x98; 32];
+        let repair_last_updated = budget.pending_tx_ttl_ms as u128;
+        let cleanup_now = repair_last_updated + 1_000;
+
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            8,
+            repair_tx,
+            Some(b"repair-native-payload"),
+        );
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            8,
+            normal_tx,
+            Some(b"normal-native-payload"),
+        );
+        {
+            let mut guard = runtime_native_repair_probe_map()
+                .lock()
+                .expect("repair probe lock");
+            let state = guard.entry(chain_id).or_default();
+            state.tx_hash_seen.insert(repair_tx);
+            state.tx_hash_to_sequence.insert(repair_tx, 14_399);
+            state.sequence_seen.insert(14_399);
+        }
+        if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
+            let chain_txs = guard.get_mut(&chain_id).expect("pending map");
+            let repair = chain_txs.get_mut(&repair_tx).expect("repair pending");
+            repair.first_seen_unix_ms = 0;
+            repair.last_updated_unix_ms = repair_last_updated;
+            repair.propagation_attempt_count = budget.pending_tx_no_success_attempt_limit + 5;
+            repair.propagation_success_count = 0;
+
+            let normal = chain_txs.get_mut(&normal_tx).expect("normal pending");
+            normal.first_seen_unix_ms = 0;
+            normal.last_updated_unix_ms = repair_last_updated;
+            normal.propagation_attempt_count = budget.pending_tx_no_success_attempt_limit + 5;
+            normal.propagation_success_count = 0;
+        }
+
+        runtime_native_pending_tx_cleanup_v1(chain_id, cleanup_now);
+
+        let retained =
+            get_network_runtime_native_pending_tx_v1(chain_id, repair_tx).expect("repair retained");
+        assert_eq!(
+            retained.lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+        );
+        assert!(
+            get_network_runtime_native_pending_tx_payload_v1(chain_id, repair_tx).is_some(),
+            "fresh repair pending payload must remain available for AOEM admission"
+        );
+        assert!(
+            get_network_runtime_native_pending_tx_tombstone_v1(chain_id, repair_tx).is_none(),
+            "fresh repair pending must not be tombstoned by original first_seen"
+        );
+
+        assert!(
+            get_network_runtime_native_pending_tx_v1(chain_id, normal_tx).is_none(),
+            "normal pending must still obey existing cleanup semantics"
+        );
+        let tombstone = get_network_runtime_native_pending_tx_tombstone_v1(chain_id, normal_tx)
+            .expect("normal tombstone");
+        assert_eq!(
+            tombstone.final_disposition,
+            NetworkRuntimeNativePendingTxFinalDispositionV1::Evicted
+        );
     }
 
     #[test]
