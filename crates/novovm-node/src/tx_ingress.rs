@@ -13290,6 +13290,102 @@ mod tests {
     }
 
     #[test]
+    fn run_nov_execute_pending_native_tx_batch_prioritizes_tail_repair_pending() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_019;
+                    let build_and_ingest_repair =
+                        |nonce: u64, account: &str, amount: u64| -> ([u8; 32], Vec<u8>) {
+                            let native_tx = NovNativeTxWireV1 {
+                                chain_id,
+                                kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                                    caller: vec![nonce as u8; 20],
+                                    account_id: Some(account.to_string()),
+                                    fee_owner_account_id: Some(account.to_string()),
+                                    nonce_owner_account_id: Some(account.to_string()),
+                                    target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                                        "treasury".to_string(),
+                                    ),
+                                    method: "deposit_reserve".to_string(),
+                                    args: serde_json::to_vec(&serde_json::json!({
+                                        "asset": "USDT",
+                                        "amount": amount
+                                    }))
+                                    .expect("encode args"),
+                                    execution_mode: NovExecutionModeV1::Batch,
+                                    execution_policy: NovExecutionPolicyV1::Standard,
+                                    privacy_mode: NovPrivacyModeV1::Public,
+                                    verification_mode: NovVerificationModeV1::Standard,
+                                    fee_policy: NovFeePolicyV1 {
+                                        pay_asset: "USDT".to_string(),
+                                        max_pay_amount: 50,
+                                        slippage_bps: 100,
+                                    },
+                                    gas_like_limit: Some(90_000),
+                                    nonce,
+                                }),
+                                signature: [0xeeu8; 32],
+                            };
+                            let raw =
+                                encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                            let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
+                                &serde_json::json!({}),
+                                raw.as_slice(),
+                            )
+                            .expect("native pending ingress should store payload");
+                            novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
+                                chain_id,
+                                tx_hash,
+                                1,
+                                Some(raw.as_slice()),
+                            );
+                            (tx_hash, raw)
+                        };
+
+                    let low_hash = build_and_ingest_repair(3_737, "acct-low-repair", 25).0;
+                    let high_hash = build_and_ingest_repair(14_400, "acct-tail-repair", 35).0;
+                    assert!(
+                        get_network_runtime_native_pending_tx_payload_v1(chain_id, low_hash)
+                            .is_some()
+                    );
+                    assert!(
+                        get_network_runtime_native_pending_tx_payload_v1(chain_id, high_hash)
+                            .is_some()
+                    );
+
+                    let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
+                        &serde_json::json!({
+                            "chain_id": chain_id,
+                            "limit": 1,
+                            "scan_limit": 1,
+                            "native_execution_store_path": path,
+                        }),
+                    )
+                    .expect("pending native batch should execute highest repair sequence");
+
+                    assert_eq!(out["accepted"].as_bool(), Some(true));
+                    assert_eq!(out["executed"].as_bool(), Some(true));
+                    assert_eq!(out["selected_count"].as_u64(), Some(1));
+                    let selected = out["selected_tx_hashes"]
+                        .as_array()
+                        .expect("selected hashes")
+                        .first()
+                        .and_then(|value| value.as_str())
+                        .expect("selected hash");
+                    assert_eq!(
+                        selected,
+                        to_hex_prefixed_v1(&high_hash),
+                        "AOEM admission must select tail repair pending before stale lower repair pending"
+                    );
+                })
+            },
+        )
+    }
+
+    #[test]
     fn run_nov_native_execution_tick_budget_drains_pending_through_aoem_batch() {
         with_env_override_v1(
             NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,

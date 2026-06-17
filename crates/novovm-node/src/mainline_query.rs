@@ -9656,6 +9656,7 @@ mod tests {
                         last_broadcast_candidate_count: 0,
                         last_broadcast_tx_count: 0,
                         last_broadcast_unix_ms: None,
+                        ..Default::default()
                     },
                 native_pending_tx_broadcast_runtime:
                     novovm_network::NetworkRuntimeNativePendingTxBroadcastRuntimeSummaryV1 {
