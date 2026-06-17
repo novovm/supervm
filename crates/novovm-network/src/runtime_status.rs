@@ -4101,6 +4101,7 @@ pub fn observe_network_runtime_native_pending_tx_remote_native_payload_v1(
 ) {
     let now = now_unix_millis();
     let mut retain_payload = false;
+    let mut already_receipted = false;
     if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
         let chain_txs = guard.entry(chain_id).or_default();
         let tx = chain_txs
@@ -4143,6 +4144,10 @@ pub fn observe_network_runtime_native_pending_tx_remote_native_payload_v1(
                 pending_final_disposition:
                     NetworkRuntimeNativePendingTxFinalDispositionV1::Retained,
             });
+        already_receipted = matches!(
+            tx.lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+        );
         if !matches!(
             tx.lifecycle_stage,
             NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
@@ -4166,6 +4171,11 @@ pub fn observe_network_runtime_native_pending_tx_remote_native_payload_v1(
             chain_payloads.remove(&tx_hash);
         }
     }
+    network_runtime_native_repair_probe_observe_pending_view_v1(
+        chain_id,
+        tx_hash,
+        already_receipted,
+    );
 }
 
 pub fn observe_network_runtime_native_pending_tx_propagated_v1(chain_id: u64, tx_hash: [u8; 32]) {

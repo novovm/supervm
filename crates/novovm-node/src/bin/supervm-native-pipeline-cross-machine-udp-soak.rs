@@ -1875,6 +1875,10 @@ fn write_synthetic_receiver_failure_report(
         .and_then(|sample| sample.get("repair_sequence_already_receipted_ranges_sample"))
         .map(missing_ranges_from_json)
         .unwrap_or_default();
+    let repair_duplicate_ranges = repair_source
+        .and_then(|sample| sample.get("repair_sequence_duplicate_ranges_sample"))
+        .map(missing_ranges_from_json)
+        .unwrap_or_default();
     let repair_packet_received_count = repair_source
         .and_then(|sample| sample.get("repair_packet_received_count"))
         .and_then(Value::as_u64);
@@ -1888,6 +1892,10 @@ fn write_synthetic_receiver_failure_report(
     let repair_already_receipted_final_missing_overlap_count = missing_ranges_overlap_count(
         final_missing_ranges.as_slice(),
         repair_already_receipted_ranges.as_slice(),
+    );
+    let repair_duplicate_final_missing_overlap_count = missing_ranges_overlap_count(
+        final_missing_ranges.as_slice(),
+        repair_duplicate_ranges.as_slice(),
     );
     let receipt_index_false_positive_suspected =
         repair_already_receipted_final_missing_overlap_count > 0;
@@ -1945,6 +1953,12 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(Value::as_u64),
             "repair_sequence_enqueued_final_missing_overlap_count": repair_enqueued_final_missing_overlap_count,
             "repair_sequence_already_receipted_final_missing_overlap_count": repair_already_receipted_final_missing_overlap_count,
+            "repair_sequence_pending_duplicate_final_missing_overlap_count": repair_duplicate_final_missing_overlap_count,
+            "repair_final_missing_force_enqueued_count": repair_enqueued_final_missing_overlap_count,
+            "repair_final_missing_already_pending_count": repair_duplicate_final_missing_overlap_count,
+            "repair_final_missing_receipt_hit_count": repair_already_receipted_final_missing_overlap_count,
+            "repair_final_missing_enqueue_failed_count": repair_accepted_but_not_effective_count,
+            "repair_final_missing_enqueue_failed_reason_counts": Value::Object(repair_accepted_but_not_effective_reason_counts.clone()),
             "repair_sequence_duplicate_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_duplicate_count"))
                 .and_then(Value::as_u64),
@@ -1979,6 +1993,12 @@ fn write_synthetic_receiver_failure_report(
             "repair_sequence_accepted_final_missing_overlap_count": repair_accepted_final_missing_overlap_count,
             "repair_sequence_enqueued_final_missing_overlap_count": repair_enqueued_final_missing_overlap_count,
             "repair_sequence_already_receipted_final_missing_overlap_count": repair_already_receipted_final_missing_overlap_count,
+            "repair_sequence_pending_duplicate_final_missing_overlap_count": repair_duplicate_final_missing_overlap_count,
+            "repair_final_missing_force_enqueued_count": repair_enqueued_final_missing_overlap_count,
+            "repair_final_missing_already_pending_count": repair_duplicate_final_missing_overlap_count,
+            "repair_final_missing_receipt_hit_count": repair_already_receipted_final_missing_overlap_count,
+            "repair_final_missing_enqueue_failed_count": repair_accepted_but_not_effective_count,
+            "repair_final_missing_enqueue_failed_reason_counts": Value::Object(repair_accepted_but_not_effective_reason_counts),
         },
         "receiver_ack_snapshot": {
             "expected_tx_total": ack_snapshot
@@ -3127,6 +3147,11 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
             "receipt_index_hit_for_final_missing_count": repair_sequence_already_receipted_final_missing_overlap_count,
             "receipt_index_hit_for_final_missing_sample": missing_ranges_to_json(repair_already_receipted_ranges.as_slice(), 256),
             "receipt_index_false_positive_suspected": receipt_index_false_positive_suspected,
+            "repair_final_missing_force_enqueued_count": repair_sequence_enqueued_final_missing_overlap_count,
+            "repair_final_missing_already_pending_count": repair_sequence_duplicate_final_missing_overlap_count,
+            "repair_final_missing_receipt_hit_count": repair_sequence_already_receipted_final_missing_overlap_count,
+            "repair_final_missing_enqueue_failed_count": repair_accepted_but_not_effective_count,
+            "repair_final_missing_enqueue_failed_reason_counts": Value::Object(repair_accepted_but_not_effective_reason_counts.clone()),
             "repair_accepted_but_not_effective_count": repair_accepted_but_not_effective_count,
             "repair_accepted_but_not_effective_reason_counts": Value::Object(repair_accepted_but_not_effective_reason_counts),
             "repair_accepted_but_not_effective_ranges_sample": missing_ranges_to_json(final_missing_ranges.as_slice(), 256),
