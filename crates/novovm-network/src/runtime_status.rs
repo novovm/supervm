@@ -963,6 +963,7 @@ struct NetworkRuntimeNativeRepairProbeStateV1 {
     sequence_duplicate_seen: HashSet<u64>,
     sequence_enqueued_seen: HashSet<u64>,
     sequence_already_receipted_seen: HashSet<u64>,
+    sequence_admitted_to_aoem_seen: HashSet<u64>,
     sequence_accepted_count: u64,
     sequence_duplicate_count: u64,
     sequence_rejected_count: u64,
@@ -1023,6 +1024,8 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub repair_sequence_already_receipted_ranges_sample:
         Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
     pub repair_sequence_duplicate_ranges_sample: Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub repair_sequence_admitted_to_aoem_ranges_sample:
+        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
     pub repair_sequence_accepted_count: u64,
     pub repair_sequence_duplicate_count: u64,
     pub repair_sequence_rejected_count: u64,
@@ -1390,6 +1393,11 @@ fn network_runtime_native_repair_probe_summary_v1(
                 &state.sequence_duplicate_seen,
                 64,
             ),
+        repair_sequence_admitted_to_aoem_ranges_sample:
+            network_runtime_native_repair_sequence_ranges_sample_v1(
+                &state.sequence_admitted_to_aoem_seen,
+                64,
+            ),
         repair_sequence_accepted_count: state.sequence_accepted_count,
         repair_sequence_duplicate_count: state.sequence_duplicate_count,
         repair_sequence_rejected_count: state.sequence_rejected_count,
@@ -1425,6 +1433,8 @@ fn apply_network_runtime_native_repair_probe_summary_v1(
         repair.repair_sequence_already_receipted_ranges_sample.clone();
     summary.repair_sequence_duplicate_ranges_sample =
         repair.repair_sequence_duplicate_ranges_sample.clone();
+    summary.repair_sequence_admitted_to_aoem_ranges_sample =
+        repair.repair_sequence_admitted_to_aoem_ranges_sample.clone();
     summary.repair_sequence_accepted_count = repair.repair_sequence_accepted_count;
     summary.repair_sequence_duplicate_count = repair.repair_sequence_duplicate_count;
     summary.repair_sequence_rejected_count = repair.repair_sequence_rejected_count;
@@ -1551,6 +1561,26 @@ pub fn observe_network_runtime_native_pending_tx_repair_probe_v1(
     state.tx_hash_seen.insert(tx_hash);
     state.tx_hash_to_sequence.insert(tx_hash, sequence);
     state.sequence_accepted_count = state.sequence_accepted_count.saturating_add(1);
+}
+
+pub fn observe_network_runtime_native_pending_tx_repair_aoem_admission_v1(
+    chain_id: u64,
+    tx_hash: [u8; 32],
+) {
+    let Ok(mut guard) = runtime_native_repair_probe_map().lock() else {
+        return;
+    };
+    let Some(state) = guard.get_mut(&chain_id) else {
+        return;
+    };
+    if !state.tx_hash_seen.contains(&tx_hash) {
+        return;
+    }
+    state.sequence_admitted_to_aoem_count =
+        state.sequence_admitted_to_aoem_count.saturating_add(1);
+    if let Some(sequence) = state.tx_hash_to_sequence.get(&tx_hash).copied() {
+        state.sequence_admitted_to_aoem_seen.insert(sequence);
+    }
 }
 
 const NETWORK_RUNTIME_NATIVE_PENDING_TX_RETRY_BASE_DELAY_MS_V1: u128 = 500;

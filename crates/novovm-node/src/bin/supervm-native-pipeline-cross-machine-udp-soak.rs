@@ -1879,6 +1879,10 @@ fn write_synthetic_receiver_failure_report(
         .and_then(|sample| sample.get("repair_sequence_duplicate_ranges_sample"))
         .map(missing_ranges_from_json)
         .unwrap_or_default();
+    let repair_admitted_to_aoem_ranges = repair_source
+        .and_then(|sample| sample.get("repair_sequence_admitted_to_aoem_ranges_sample"))
+        .map(missing_ranges_from_json)
+        .unwrap_or_default();
     let repair_packet_received_count = repair_source
         .and_then(|sample| sample.get("repair_packet_received_count"))
         .and_then(Value::as_u64);
@@ -1896,6 +1900,10 @@ fn write_synthetic_receiver_failure_report(
     let repair_duplicate_final_missing_overlap_count = missing_ranges_overlap_count(
         final_missing_ranges.as_slice(),
         repair_duplicate_ranges.as_slice(),
+    );
+    let repair_admitted_to_aoem_final_missing_overlap_count = missing_ranges_overlap_count(
+        final_missing_ranges.as_slice(),
+        repair_admitted_to_aoem_ranges.as_slice(),
     );
     let receipt_index_false_positive_suspected =
         repair_already_receipted_final_missing_overlap_count > 0;
@@ -1952,6 +1960,7 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(|sample| sample.get("repair_sequence_enqueued_count"))
                 .and_then(Value::as_u64),
             "repair_sequence_enqueued_final_missing_overlap_count": repair_enqueued_final_missing_overlap_count,
+            "repair_sequence_admitted_to_aoem_final_missing_overlap_count": repair_admitted_to_aoem_final_missing_overlap_count,
             "repair_sequence_already_receipted_final_missing_overlap_count": repair_already_receipted_final_missing_overlap_count,
             "repair_sequence_pending_duplicate_final_missing_overlap_count": repair_duplicate_final_missing_overlap_count,
             "repair_final_missing_force_enqueued_count": repair_enqueued_final_missing_overlap_count,
@@ -1992,6 +2001,7 @@ fn write_synthetic_receiver_failure_report(
             "repair_sequence_received_final_missing_overlap_count": repair_received_final_missing_overlap_count,
             "repair_sequence_accepted_final_missing_overlap_count": repair_accepted_final_missing_overlap_count,
             "repair_sequence_enqueued_final_missing_overlap_count": repair_enqueued_final_missing_overlap_count,
+            "repair_sequence_admitted_to_aoem_final_missing_overlap_count": repair_admitted_to_aoem_final_missing_overlap_count,
             "repair_sequence_already_receipted_final_missing_overlap_count": repair_already_receipted_final_missing_overlap_count,
             "repair_sequence_pending_duplicate_final_missing_overlap_count": repair_duplicate_final_missing_overlap_count,
             "repair_final_missing_force_enqueued_count": repair_enqueued_final_missing_overlap_count,
@@ -2585,6 +2595,7 @@ fn diagnostics_summary_sample(
         "repair_sequence_enqueued_ranges_sample": summary.get("repair_sequence_enqueued_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "repair_sequence_already_receipted_ranges_sample": summary.get("repair_sequence_already_receipted_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "repair_sequence_duplicate_ranges_sample": summary.get("repair_sequence_duplicate_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_admitted_to_aoem_ranges_sample": summary.get("repair_sequence_admitted_to_aoem_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "repair_sequence_accepted_count": summary_u64(summary, "repair_sequence_accepted_count"),
         "repair_sequence_duplicate_count": summary_u64(summary, "repair_sequence_duplicate_count"),
         "repair_sequence_rejected_count": summary_u64(summary, "repair_sequence_rejected_count"),
@@ -3066,6 +3077,11 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
             .get("repair_sequence_duplicate_ranges_sample")
             .unwrap_or(&Value::Null),
     );
+    let repair_admitted_to_aoem_ranges = missing_ranges_from_json(
+        summary
+            .get("repair_sequence_admitted_to_aoem_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
     let repair_sequence_received_final_missing_overlap_count =
         missing_ranges_overlap_count(&final_missing_ranges, &repair_received_ranges);
     let repair_sequence_accepted_final_missing_overlap_count =
@@ -3076,6 +3092,8 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
         missing_ranges_overlap_count(&final_missing_ranges, &repair_already_receipted_ranges);
     let repair_sequence_duplicate_final_missing_overlap_count =
         missing_ranges_overlap_count(&final_missing_ranges, &repair_duplicate_ranges);
+    let repair_sequence_admitted_to_aoem_final_missing_overlap_count =
+        missing_ranges_overlap_count(&final_missing_ranges, &repair_admitted_to_aoem_ranges);
     let receipt_index_false_positive_suspected =
         repair_sequence_already_receipted_final_missing_overlap_count > 0;
     let repair_accepted_but_not_effective_count =
@@ -3142,6 +3160,7 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
             "repair_sequence_received_final_missing_overlap_count": repair_sequence_received_final_missing_overlap_count,
             "repair_sequence_accepted_final_missing_overlap_count": repair_sequence_accepted_final_missing_overlap_count,
             "repair_sequence_enqueued_final_missing_overlap_count": repair_sequence_enqueued_final_missing_overlap_count,
+            "repair_sequence_admitted_to_aoem_final_missing_overlap_count": repair_sequence_admitted_to_aoem_final_missing_overlap_count,
             "repair_sequence_already_receipted_final_missing_overlap_count": repair_sequence_already_receipted_final_missing_overlap_count,
             "repair_sequence_pending_duplicate_final_missing_overlap_count": repair_sequence_duplicate_final_missing_overlap_count,
             "receipt_index_hit_for_final_missing_count": repair_sequence_already_receipted_final_missing_overlap_count,
@@ -4766,6 +4785,7 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "repair_sequence_enqueued_ranges_sample": summary.get("repair_sequence_enqueued_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "repair_sequence_already_receipted_ranges_sample": summary.get("repair_sequence_already_receipted_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "repair_sequence_duplicate_ranges_sample": summary.get("repair_sequence_duplicate_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_admitted_to_aoem_ranges_sample": summary.get("repair_sequence_admitted_to_aoem_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "repair_sequence_accepted_count": summary_u64(&summary, "repair_sequence_accepted_count"),
         "repair_sequence_duplicate_count": summary_u64(&summary, "repair_sequence_duplicate_count"),
         "repair_sequence_rejected_count": summary_u64(&summary, "repair_sequence_rejected_count"),

@@ -33692,7 +33692,7 @@ fn build_native_execution_pipeline_report_v1(
     let ingress_drive = compact_native_execution_pipeline_drive_report_v1(ingress_drive);
     let broadcast_drive = compact_native_execution_pipeline_drive_report_v1(broadcast_drive);
 
-    serde_json::json!({
+    let mut report = serde_json::json!({
         "method": "nov_runNativeExecutionPipeline",
         "accepted": true,
         "tick": tick_index,
@@ -33841,7 +33841,22 @@ fn build_native_execution_pipeline_report_v1(
             },
         },
         "tick_result": compact_tick_out,
-    })
+    });
+    if let Some(ingress) = report
+        .pointer_mut("/lifecycle/ingress")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        ingress.insert(
+            "repair_sequence_admitted_to_aoem_ranges_sample".to_string(),
+            serde_json::to_value(
+                pending_summary
+                    .repair_sequence_admitted_to_aoem_ranges_sample
+                    .clone(),
+            )
+            .unwrap_or_else(|_| serde_json::json!([])),
+        );
+    }
+    report
 }
 
 fn compact_native_execution_pipeline_drive_report_v1(
@@ -33987,6 +34002,7 @@ struct NativeExecutionPipelineAggregateV1 {
     repair_sequence_enqueued_ranges_sample: serde_json::Value,
     repair_sequence_already_receipted_ranges_sample: serde_json::Value,
     repair_sequence_duplicate_ranges_sample: serde_json::Value,
+    repair_sequence_admitted_to_aoem_ranges_sample: serde_json::Value,
     repair_sequence_accepted_count: u64,
     repair_sequence_duplicate_count: u64,
     repair_sequence_rejected_count: u64,
@@ -34075,6 +34091,7 @@ impl NativeExecutionPipelineAggregateV1 {
             repair_sequence_enqueued_ranges_sample: serde_json::json!([]),
             repair_sequence_already_receipted_ranges_sample: serde_json::json!([]),
             repair_sequence_duplicate_ranges_sample: serde_json::json!([]),
+            repair_sequence_admitted_to_aoem_ranges_sample: serde_json::json!([]),
             repair_sequence_accepted_count: 0,
             repair_sequence_duplicate_count: 0,
             repair_sequence_rejected_count: 0,
@@ -34423,6 +34440,10 @@ impl NativeExecutionPipelineAggregateV1 {
             .unwrap_or_else(|| serde_json::json!([]));
         self.repair_sequence_duplicate_ranges_sample = ingress
             .get("repair_sequence_duplicate_ranges_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.repair_sequence_admitted_to_aoem_ranges_sample = ingress
+            .get("repair_sequence_admitted_to_aoem_ranges_sample")
             .cloned()
             .unwrap_or_else(|| serde_json::json!([]));
         self.repair_sequence_accepted_count = ingress
@@ -34826,6 +34847,10 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "repair_sequence_duplicate_ranges_sample".to_string(),
             self.repair_sequence_duplicate_ranges_sample.clone(),
+        );
+        out.insert(
+            "repair_sequence_admitted_to_aoem_ranges_sample".to_string(),
+            self.repair_sequence_admitted_to_aoem_ranges_sample.clone(),
         );
         out.insert(
             "repair_sequence_accepted_count".to_string(),

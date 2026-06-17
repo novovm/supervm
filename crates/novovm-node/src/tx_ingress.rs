@@ -24,6 +24,7 @@ use novovm_network::{
     observe_network_runtime_native_pending_tx_dropped_v1,
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
     observe_network_runtime_native_pending_tx_local_native_payload_v1,
+    observe_network_runtime_native_pending_tx_repair_aoem_admission_v1,
     observe_network_runtime_native_pending_tx_rejected_v1,
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
     snapshot_network_runtime_native_active_pending_txs_v1,
@@ -11315,6 +11316,10 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         selected_raw_payloads.push(payload);
         selected_hash_bytes.push(pending_tx.tx_hash);
         selected_hashes.push(to_hex_prefixed_v1(&pending_tx.tx_hash));
+        observe_network_runtime_native_pending_tx_repair_aoem_admission_v1(
+            chain_id,
+            pending_tx.tx_hash,
+        );
     }
 
     if raw_txs.is_empty() {
