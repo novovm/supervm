@@ -33718,6 +33718,10 @@ fn build_native_execution_pipeline_report_v1(
                 "repair_sequence_received_min": pending_summary.repair_sequence_received_min,
                 "repair_sequence_received_max": pending_summary.repair_sequence_received_max,
                 "repair_sequence_received_ranges_sample": pending_summary.repair_sequence_received_ranges_sample.clone(),
+                "repair_sequence_accepted_ranges_sample": pending_summary.repair_sequence_accepted_ranges_sample.clone(),
+                "repair_sequence_enqueued_ranges_sample": pending_summary.repair_sequence_enqueued_ranges_sample.clone(),
+                "repair_sequence_already_receipted_ranges_sample": pending_summary.repair_sequence_already_receipted_ranges_sample.clone(),
+                "repair_sequence_duplicate_ranges_sample": pending_summary.repair_sequence_duplicate_ranges_sample.clone(),
                 "repair_sequence_accepted_count": pending_summary.repair_sequence_accepted_count,
                 "repair_sequence_duplicate_count": pending_summary.repair_sequence_duplicate_count,
                 "repair_sequence_rejected_count": pending_summary.repair_sequence_rejected_count,
@@ -33979,6 +33983,10 @@ struct NativeExecutionPipelineAggregateV1 {
     repair_sequence_received_min: Option<u64>,
     repair_sequence_received_max: Option<u64>,
     repair_sequence_received_ranges_sample: serde_json::Value,
+    repair_sequence_accepted_ranges_sample: serde_json::Value,
+    repair_sequence_enqueued_ranges_sample: serde_json::Value,
+    repair_sequence_already_receipted_ranges_sample: serde_json::Value,
+    repair_sequence_duplicate_ranges_sample: serde_json::Value,
     repair_sequence_accepted_count: u64,
     repair_sequence_duplicate_count: u64,
     repair_sequence_rejected_count: u64,
@@ -34063,6 +34071,10 @@ impl NativeExecutionPipelineAggregateV1 {
             repair_sequence_received_min: None,
             repair_sequence_received_max: None,
             repair_sequence_received_ranges_sample: serde_json::json!([]),
+            repair_sequence_accepted_ranges_sample: serde_json::json!([]),
+            repair_sequence_enqueued_ranges_sample: serde_json::json!([]),
+            repair_sequence_already_receipted_ranges_sample: serde_json::json!([]),
+            repair_sequence_duplicate_ranges_sample: serde_json::json!([]),
             repair_sequence_accepted_count: 0,
             repair_sequence_duplicate_count: 0,
             repair_sequence_rejected_count: 0,
@@ -34395,6 +34407,22 @@ impl NativeExecutionPipelineAggregateV1 {
             .and_then(|value| value.as_u64());
         self.repair_sequence_received_ranges_sample = ingress
             .get("repair_sequence_received_ranges_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.repair_sequence_accepted_ranges_sample = ingress
+            .get("repair_sequence_accepted_ranges_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.repair_sequence_enqueued_ranges_sample = ingress
+            .get("repair_sequence_enqueued_ranges_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.repair_sequence_already_receipted_ranges_sample = ingress
+            .get("repair_sequence_already_receipted_ranges_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.repair_sequence_duplicate_ranges_sample = ingress
+            .get("repair_sequence_duplicate_ranges_sample")
             .cloned()
             .unwrap_or_else(|| serde_json::json!([]));
         self.repair_sequence_accepted_count = ingress
@@ -34782,6 +34810,22 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "repair_sequence_received_ranges_sample".to_string(),
             self.repair_sequence_received_ranges_sample.clone(),
+        );
+        out.insert(
+            "repair_sequence_accepted_ranges_sample".to_string(),
+            self.repair_sequence_accepted_ranges_sample.clone(),
+        );
+        out.insert(
+            "repair_sequence_enqueued_ranges_sample".to_string(),
+            self.repair_sequence_enqueued_ranges_sample.clone(),
+        );
+        out.insert(
+            "repair_sequence_already_receipted_ranges_sample".to_string(),
+            self.repair_sequence_already_receipted_ranges_sample.clone(),
+        );
+        out.insert(
+            "repair_sequence_duplicate_ranges_sample".to_string(),
+            self.repair_sequence_duplicate_ranges_sample.clone(),
         );
         out.insert(
             "repair_sequence_accepted_count".to_string(),

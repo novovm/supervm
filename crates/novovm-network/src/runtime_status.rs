@@ -959,6 +959,10 @@ struct NetworkRuntimeNativeRepairProbeStateV1 {
     sequence_received_max: Option<u64>,
     sequence_seen: HashSet<u64>,
     tx_hash_seen: HashSet<[u8; 32]>,
+    tx_hash_to_sequence: HashMap<[u8; 32], u64>,
+    sequence_duplicate_seen: HashSet<u64>,
+    sequence_enqueued_seen: HashSet<u64>,
+    sequence_already_receipted_seen: HashSet<u64>,
     sequence_accepted_count: u64,
     sequence_duplicate_count: u64,
     sequence_rejected_count: u64,
@@ -1014,6 +1018,11 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub repair_sequence_received_min: Option<u64>,
     pub repair_sequence_received_max: Option<u64>,
     pub repair_sequence_received_ranges_sample: Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub repair_sequence_accepted_ranges_sample: Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub repair_sequence_enqueued_ranges_sample: Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub repair_sequence_already_receipted_ranges_sample:
+        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub repair_sequence_duplicate_ranges_sample: Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
     pub repair_sequence_accepted_count: u64,
     pub repair_sequence_duplicate_count: u64,
     pub repair_sequence_rejected_count: u64,
@@ -1367,6 +1376,20 @@ fn network_runtime_native_repair_probe_summary_v1(
         repair_sequence_received_max: state.sequence_received_max,
         repair_sequence_received_ranges_sample:
             network_runtime_native_repair_sequence_ranges_sample_v1(&state.sequence_seen, 64),
+        repair_sequence_accepted_ranges_sample:
+            network_runtime_native_repair_sequence_ranges_sample_v1(&state.sequence_seen, 64),
+        repair_sequence_enqueued_ranges_sample:
+            network_runtime_native_repair_sequence_ranges_sample_v1(&state.sequence_enqueued_seen, 64),
+        repair_sequence_already_receipted_ranges_sample:
+            network_runtime_native_repair_sequence_ranges_sample_v1(
+                &state.sequence_already_receipted_seen,
+                64,
+            ),
+        repair_sequence_duplicate_ranges_sample:
+            network_runtime_native_repair_sequence_ranges_sample_v1(
+                &state.sequence_duplicate_seen,
+                64,
+            ),
         repair_sequence_accepted_count: state.sequence_accepted_count,
         repair_sequence_duplicate_count: state.sequence_duplicate_count,
         repair_sequence_rejected_count: state.sequence_rejected_count,
@@ -1394,6 +1417,14 @@ fn apply_network_runtime_native_repair_probe_summary_v1(
     summary.repair_sequence_received_max = repair.repair_sequence_received_max;
     summary.repair_sequence_received_ranges_sample =
         repair.repair_sequence_received_ranges_sample.clone();
+    summary.repair_sequence_accepted_ranges_sample =
+        repair.repair_sequence_accepted_ranges_sample.clone();
+    summary.repair_sequence_enqueued_ranges_sample =
+        repair.repair_sequence_enqueued_ranges_sample.clone();
+    summary.repair_sequence_already_receipted_ranges_sample =
+        repair.repair_sequence_already_receipted_ranges_sample.clone();
+    summary.repair_sequence_duplicate_ranges_sample =
+        repair.repair_sequence_duplicate_ranges_sample.clone();
     summary.repair_sequence_accepted_count = repair.repair_sequence_accepted_count;
     summary.repair_sequence_duplicate_count = repair.repair_sequence_duplicate_count;
     summary.repair_sequence_rejected_count = repair.repair_sequence_rejected_count;
@@ -1452,10 +1483,18 @@ fn network_runtime_native_repair_probe_observe_pending_view_v1(
     if !state.tx_hash_seen.contains(&tx_hash) {
         return;
     }
-    state.sequence_enqueued_count = state.sequence_enqueued_count.saturating_add(1);
+    let sequence = state.tx_hash_to_sequence.get(&tx_hash).copied();
     if already_receipted {
         state.sequence_already_receipted_count =
             state.sequence_already_receipted_count.saturating_add(1);
+        if let Some(sequence) = sequence {
+            state.sequence_already_receipted_seen.insert(sequence);
+        }
+        return;
+    }
+    state.sequence_enqueued_count = state.sequence_enqueued_count.saturating_add(1);
+    if let Some(sequence) = sequence {
+        state.sequence_enqueued_seen.insert(sequence);
     }
 }
 
@@ -1507,8 +1546,10 @@ pub fn observe_network_runtime_native_pending_tx_repair_probe_v1(
     );
     if !state.sequence_seen.insert(sequence) {
         state.sequence_duplicate_count = state.sequence_duplicate_count.saturating_add(1);
+        state.sequence_duplicate_seen.insert(sequence);
     }
     state.tx_hash_seen.insert(tx_hash);
+    state.tx_hash_to_sequence.insert(tx_hash, sequence);
     state.sequence_accepted_count = state.sequence_accepted_count.saturating_add(1);
 }
 

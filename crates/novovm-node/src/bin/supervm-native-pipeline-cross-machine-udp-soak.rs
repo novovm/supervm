@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 
 use anyhow::{bail, Context, Result};
 use novovm_network::{Transport, UdpTransport};
@@ -645,6 +645,39 @@ fn missing_ranges_to_json(ranges: &[MissingRangeV1], limit: u64) -> Value {
         })
     });
     serde_json::Value::Array(limited.collect())
+}
+
+fn missing_ranges_from_json(value: &Value) -> Vec<MissingRangeV1> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let start = item.get("start").and_then(Value::as_u64)?;
+                    let end_inclusive = item.get("end_inclusive").and_then(Value::as_u64)?;
+                    (end_inclusive >= start).then_some(MissingRangeV1 {
+                        start,
+                        end_inclusive,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn missing_ranges_overlap_count(a: &[MissingRangeV1], b: &[MissingRangeV1]) -> u64 {
+    let mut count = 0u64;
+    for left in a {
+        for right in b {
+            let start = left.start.max(right.start);
+            let end = left.end_inclusive.min(right.end_inclusive);
+            if end >= start {
+                count = count.saturating_add(end.saturating_sub(start).saturating_add(1));
+            }
+        }
+    }
+    count
 }
 
 fn missing_ranges_count(ranges: &[MissingRangeV1]) -> u64 {
@@ -2725,6 +2758,62 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
         .and_then(Value::as_bool)
         == Some(true)
         && receipt_count == tx_count;
+    let final_missing_sequence_count = tx_count.saturating_sub(received_unique.min(tx_count));
+    let final_missing_ranges = missing_ranges_from_progress(received_unique, tx_count, 1);
+    let repair_received_ranges = missing_ranges_from_json(
+        summary
+            .get("repair_sequence_received_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+    let repair_accepted_ranges = missing_ranges_from_json(
+        summary
+            .get("repair_sequence_accepted_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+    let repair_enqueued_ranges = missing_ranges_from_json(
+        summary
+            .get("repair_sequence_enqueued_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+    let repair_already_receipted_ranges = missing_ranges_from_json(
+        summary
+            .get("repair_sequence_already_receipted_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+    let repair_duplicate_ranges = missing_ranges_from_json(
+        summary
+            .get("repair_sequence_duplicate_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+    let repair_sequence_received_final_missing_overlap_count =
+        missing_ranges_overlap_count(&final_missing_ranges, &repair_received_ranges);
+    let repair_sequence_accepted_final_missing_overlap_count =
+        missing_ranges_overlap_count(&final_missing_ranges, &repair_accepted_ranges);
+    let repair_sequence_enqueued_final_missing_overlap_count =
+        missing_ranges_overlap_count(&final_missing_ranges, &repair_enqueued_ranges);
+    let repair_sequence_already_receipted_final_missing_overlap_count =
+        missing_ranges_overlap_count(&final_missing_ranges, &repair_already_receipted_ranges);
+    let repair_sequence_duplicate_final_missing_overlap_count =
+        missing_ranges_overlap_count(&final_missing_ranges, &repair_duplicate_ranges);
+    let receipt_index_false_positive_suspected =
+        repair_sequence_already_receipted_final_missing_overlap_count > 0;
+    let repair_accepted_but_not_effective_count =
+        repair_sequence_accepted_final_missing_overlap_count
+            .saturating_sub(repair_sequence_enqueued_final_missing_overlap_count)
+            .saturating_sub(repair_sequence_already_receipted_final_missing_overlap_count);
+    let mut repair_accepted_but_not_effective_reason_counts = serde_json::Map::new();
+    if receipt_index_false_positive_suspected {
+        repair_accepted_but_not_effective_reason_counts.insert(
+            "already_receipted_final_missing_overlap".to_string(),
+            serde_json::json!(repair_sequence_already_receipted_final_missing_overlap_count),
+        );
+    }
+    if repair_accepted_but_not_effective_count > 0 {
+        repair_accepted_but_not_effective_reason_counts.insert(
+            "accepted_not_enqueued_or_receipted_overlap".to_string(),
+            serde_json::json!(repair_accepted_but_not_effective_count),
+        );
+    }
     let mut violations = Vec::<String>::new();
     validate_boundaries(summary, &mut violations);
     if received_unique != tx_count {
@@ -2767,6 +2856,19 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
             "semantic_head_monotonic": semantic_head_monotonic,
             "receipt_index_consistent": receipt_index_consistent,
             "aoem_concurrency_owner": summary_str(summary, "aoem_concurrency_owner"),
+            "final_missing_sequence_count": final_missing_sequence_count,
+            "final_missing_ranges_sample": missing_ranges_to_json(final_missing_ranges.as_slice(), 256),
+            "repair_sequence_received_final_missing_overlap_count": repair_sequence_received_final_missing_overlap_count,
+            "repair_sequence_accepted_final_missing_overlap_count": repair_sequence_accepted_final_missing_overlap_count,
+            "repair_sequence_enqueued_final_missing_overlap_count": repair_sequence_enqueued_final_missing_overlap_count,
+            "repair_sequence_already_receipted_final_missing_overlap_count": repair_sequence_already_receipted_final_missing_overlap_count,
+            "repair_sequence_pending_duplicate_final_missing_overlap_count": repair_sequence_duplicate_final_missing_overlap_count,
+            "receipt_index_hit_for_final_missing_count": repair_sequence_already_receipted_final_missing_overlap_count,
+            "receipt_index_hit_for_final_missing_sample": missing_ranges_to_json(repair_already_receipted_ranges.as_slice(), 256),
+            "receipt_index_false_positive_suspected": receipt_index_false_positive_suspected,
+            "repair_accepted_but_not_effective_count": repair_accepted_but_not_effective_count,
+            "repair_accepted_but_not_effective_reason_counts": Value::Object(repair_accepted_but_not_effective_reason_counts),
+            "repair_accepted_but_not_effective_ranges_sample": missing_ranges_to_json(final_missing_ranges.as_slice(), 256),
         }),
         violations,
     )
@@ -4269,6 +4371,10 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "repair_sequence_received_min": summary.get("repair_sequence_received_min").cloned().unwrap_or(Value::Null),
         "repair_sequence_received_max": summary.get("repair_sequence_received_max").cloned().unwrap_or(Value::Null),
         "repair_sequence_received_ranges_sample": summary.get("repair_sequence_received_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_accepted_ranges_sample": summary.get("repair_sequence_accepted_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_enqueued_ranges_sample": summary.get("repair_sequence_enqueued_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_already_receipted_ranges_sample": summary.get("repair_sequence_already_receipted_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_duplicate_ranges_sample": summary.get("repair_sequence_duplicate_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "repair_sequence_accepted_count": summary_u64(&summary, "repair_sequence_accepted_count"),
         "repair_sequence_duplicate_count": summary_u64(&summary, "repair_sequence_duplicate_count"),
         "repair_sequence_rejected_count": summary_u64(&summary, "repair_sequence_rejected_count"),
