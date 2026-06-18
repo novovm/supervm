@@ -33855,6 +33855,87 @@ fn build_native_execution_pipeline_report_v1(
             )
             .unwrap_or_else(|_| serde_json::json!([])),
         );
+        ingress.insert(
+            "repair_attempted_unreceipted_count".to_string(),
+            serde_json::json!(pending_summary.repair_attempted_unreceipted_count),
+        );
+        ingress.insert(
+            "repair_attempted_unreceipted_final_missing_overlap_count".to_string(),
+            serde_json::json!(
+                pending_summary.repair_attempted_unreceipted_final_missing_overlap_count
+            ),
+        );
+        ingress.insert(
+            "repair_attempted_unreceipted_requeued_count".to_string(),
+            serde_json::json!(pending_summary.repair_attempted_unreceipted_requeued_count),
+        );
+        ingress.insert(
+            "repair_attempted_unreceipted_requeue_failed_count".to_string(),
+            serde_json::json!(pending_summary.repair_attempted_unreceipted_requeue_failed_count),
+        );
+        ingress.insert(
+            "repair_final_missing_payload_available_count".to_string(),
+            serde_json::json!(pending_summary.repair_final_missing_payload_available_count),
+        );
+        ingress.insert(
+            "repair_final_missing_payload_available_but_inactive_count".to_string(),
+            serde_json::json!(
+                pending_summary.repair_final_missing_payload_available_but_inactive_count
+            ),
+        );
+        ingress.insert(
+            "repair_final_missing_invariant_violation_count".to_string(),
+            serde_json::json!(pending_summary.repair_final_missing_invariant_violation_count),
+        );
+        ingress.insert(
+            "repair_final_missing_sequence_to_tx_hash_count".to_string(),
+            serde_json::json!(pending_summary.repair_final_missing_sequence_to_tx_hash_count),
+        );
+        ingress.insert(
+            "repair_final_missing_tx_hash_payload_hit_count".to_string(),
+            serde_json::json!(pending_summary.repair_final_missing_tx_hash_payload_hit_count),
+        );
+        ingress.insert(
+            "repair_final_missing_payload_missing_by_sequence_count".to_string(),
+            serde_json::json!(
+                pending_summary.repair_final_missing_payload_missing_by_sequence_count
+            ),
+        );
+        ingress.insert(
+            "repair_final_missing_payload_missing_ranges_sample".to_string(),
+            serde_json::to_value(
+                pending_summary
+                    .repair_final_missing_payload_missing_ranges_sample
+                    .clone(),
+            )
+            .unwrap_or_else(|_| serde_json::json!([])),
+        );
+        ingress.insert(
+            "repair_sequence_payload_index_count".to_string(),
+            serde_json::json!(pending_summary.repair_sequence_payload_index_count),
+        );
+        ingress.insert(
+            "repair_sequence_payload_index_final_missing_overlap_count".to_string(),
+            serde_json::json!(
+                pending_summary.repair_sequence_payload_index_final_missing_overlap_count
+            ),
+        );
+        ingress.insert(
+            "repair_sequence_payload_index_evicted_count".to_string(),
+            serde_json::json!(pending_summary.repair_sequence_payload_index_evicted_count),
+        );
+        ingress.insert(
+            "repair_payload_retention_false_negative_suspected".to_string(),
+            serde_json::json!(pending_summary.repair_payload_retention_false_negative_suspected),
+        );
+        ingress.insert(
+            "repair_final_missing_payload_recovered_count".to_string(),
+            serde_json::json!(pending_summary.repair_final_missing_payload_recovered_count),
+        );
+        ingress.insert(
+            "repair_final_missing_payload_recovered_requeued_count".to_string(),
+            serde_json::json!(pending_summary.repair_final_missing_payload_recovered_requeued_count),
+        );
     }
     report
 }
@@ -34015,6 +34096,23 @@ struct NativeExecutionPipelineAggregateV1 {
     repair_sequence_stale_count: u64,
     repair_sequence_enqueued_count: u64,
     repair_sequence_admitted_to_aoem_count: u64,
+    repair_attempted_unreceipted_count: u64,
+    repair_attempted_unreceipted_final_missing_overlap_count: u64,
+    repair_attempted_unreceipted_requeued_count: u64,
+    repair_attempted_unreceipted_requeue_failed_count: u64,
+    repair_final_missing_payload_available_count: u64,
+    repair_final_missing_payload_available_but_inactive_count: u64,
+    repair_final_missing_invariant_violation_count: u64,
+    repair_final_missing_sequence_to_tx_hash_count: u64,
+    repair_final_missing_tx_hash_payload_hit_count: u64,
+    repair_final_missing_payload_missing_by_sequence_count: u64,
+    repair_final_missing_payload_missing_ranges_sample: serde_json::Value,
+    repair_sequence_payload_index_count: u64,
+    repair_sequence_payload_index_final_missing_overlap_count: u64,
+    repair_sequence_payload_index_evicted_count: u64,
+    repair_payload_retention_false_negative_suspected: bool,
+    repair_final_missing_payload_recovered_count: u64,
+    repair_final_missing_payload_recovered_requeued_count: u64,
     queue_tx_count_last: u64,
     queue_active_pending_last: u64,
     queue_historical_pending_last: u64,
@@ -34104,6 +34202,23 @@ impl NativeExecutionPipelineAggregateV1 {
             repair_sequence_stale_count: 0,
             repair_sequence_enqueued_count: 0,
             repair_sequence_admitted_to_aoem_count: 0,
+            repair_attempted_unreceipted_count: 0,
+            repair_attempted_unreceipted_final_missing_overlap_count: 0,
+            repair_attempted_unreceipted_requeued_count: 0,
+            repair_attempted_unreceipted_requeue_failed_count: 0,
+            repair_final_missing_payload_available_count: 0,
+            repair_final_missing_payload_available_but_inactive_count: 0,
+            repair_final_missing_invariant_violation_count: 0,
+            repair_final_missing_sequence_to_tx_hash_count: 0,
+            repair_final_missing_tx_hash_payload_hit_count: 0,
+            repair_final_missing_payload_missing_by_sequence_count: 0,
+            repair_final_missing_payload_missing_ranges_sample: serde_json::json!([]),
+            repair_sequence_payload_index_count: 0,
+            repair_sequence_payload_index_final_missing_overlap_count: 0,
+            repair_sequence_payload_index_evicted_count: 0,
+            repair_payload_retention_false_negative_suspected: false,
+            repair_final_missing_payload_recovered_count: 0,
+            repair_final_missing_payload_recovered_requeued_count: 0,
             queue_tx_count_last: 0,
             queue_active_pending_last: 0,
             queue_historical_pending_last: 0,
@@ -34492,6 +34607,74 @@ impl NativeExecutionPipelineAggregateV1 {
             .unwrap_or_default();
         self.repair_sequence_admitted_to_aoem_count = ingress
             .get("repair_sequence_admitted_to_aoem_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_attempted_unreceipted_count = ingress
+            .get("repair_attempted_unreceipted_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_attempted_unreceipted_final_missing_overlap_count = ingress
+            .get("repair_attempted_unreceipted_final_missing_overlap_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_attempted_unreceipted_requeued_count = ingress
+            .get("repair_attempted_unreceipted_requeued_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_attempted_unreceipted_requeue_failed_count = ingress
+            .get("repair_attempted_unreceipted_requeue_failed_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_final_missing_payload_available_count = ingress
+            .get("repair_final_missing_payload_available_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_final_missing_payload_available_but_inactive_count = ingress
+            .get("repair_final_missing_payload_available_but_inactive_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_final_missing_invariant_violation_count = ingress
+            .get("repair_final_missing_invariant_violation_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_final_missing_sequence_to_tx_hash_count = ingress
+            .get("repair_final_missing_sequence_to_tx_hash_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_final_missing_tx_hash_payload_hit_count = ingress
+            .get("repair_final_missing_tx_hash_payload_hit_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_final_missing_payload_missing_by_sequence_count = ingress
+            .get("repair_final_missing_payload_missing_by_sequence_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_final_missing_payload_missing_ranges_sample = ingress
+            .get("repair_final_missing_payload_missing_ranges_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.repair_sequence_payload_index_count = ingress
+            .get("repair_sequence_payload_index_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_sequence_payload_index_final_missing_overlap_count = ingress
+            .get("repair_sequence_payload_index_final_missing_overlap_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_sequence_payload_index_evicted_count = ingress
+            .get("repair_sequence_payload_index_evicted_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_payload_retention_false_negative_suspected = ingress
+            .get("repair_payload_retention_false_negative_suspected")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        self.repair_final_missing_payload_recovered_count = ingress
+            .get("repair_final_missing_payload_recovered_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.repair_final_missing_payload_recovered_requeued_count = ingress
+            .get("repair_final_missing_payload_recovered_requeued_count")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
         self.queue_pending_last = queue
@@ -34899,6 +35082,74 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "repair_sequence_admitted_to_aoem_count".to_string(),
             serde_json::json!(self.repair_sequence_admitted_to_aoem_count),
+        );
+        out.insert(
+            "repair_attempted_unreceipted_count".to_string(),
+            serde_json::json!(self.repair_attempted_unreceipted_count),
+        );
+        out.insert(
+            "repair_attempted_unreceipted_final_missing_overlap_count".to_string(),
+            serde_json::json!(self.repair_attempted_unreceipted_final_missing_overlap_count),
+        );
+        out.insert(
+            "repair_attempted_unreceipted_requeued_count".to_string(),
+            serde_json::json!(self.repair_attempted_unreceipted_requeued_count),
+        );
+        out.insert(
+            "repair_attempted_unreceipted_requeue_failed_count".to_string(),
+            serde_json::json!(self.repair_attempted_unreceipted_requeue_failed_count),
+        );
+        out.insert(
+            "repair_final_missing_payload_available_count".to_string(),
+            serde_json::json!(self.repair_final_missing_payload_available_count),
+        );
+        out.insert(
+            "repair_final_missing_payload_available_but_inactive_count".to_string(),
+            serde_json::json!(self.repair_final_missing_payload_available_but_inactive_count),
+        );
+        out.insert(
+            "repair_final_missing_invariant_violation_count".to_string(),
+            serde_json::json!(self.repair_final_missing_invariant_violation_count),
+        );
+        out.insert(
+            "repair_final_missing_sequence_to_tx_hash_count".to_string(),
+            serde_json::json!(self.repair_final_missing_sequence_to_tx_hash_count),
+        );
+        out.insert(
+            "repair_final_missing_tx_hash_payload_hit_count".to_string(),
+            serde_json::json!(self.repair_final_missing_tx_hash_payload_hit_count),
+        );
+        out.insert(
+            "repair_final_missing_payload_missing_by_sequence_count".to_string(),
+            serde_json::json!(self.repair_final_missing_payload_missing_by_sequence_count),
+        );
+        out.insert(
+            "repair_final_missing_payload_missing_ranges_sample".to_string(),
+            self.repair_final_missing_payload_missing_ranges_sample.clone(),
+        );
+        out.insert(
+            "repair_sequence_payload_index_count".to_string(),
+            serde_json::json!(self.repair_sequence_payload_index_count),
+        );
+        out.insert(
+            "repair_sequence_payload_index_final_missing_overlap_count".to_string(),
+            serde_json::json!(self.repair_sequence_payload_index_final_missing_overlap_count),
+        );
+        out.insert(
+            "repair_sequence_payload_index_evicted_count".to_string(),
+            serde_json::json!(self.repair_sequence_payload_index_evicted_count),
+        );
+        out.insert(
+            "repair_payload_retention_false_negative_suspected".to_string(),
+            serde_json::json!(self.repair_payload_retention_false_negative_suspected),
+        );
+        out.insert(
+            "repair_final_missing_payload_recovered_count".to_string(),
+            serde_json::json!(self.repair_final_missing_payload_recovered_count),
+        );
+        out.insert(
+            "repair_final_missing_payload_recovered_requeued_count".to_string(),
+            serde_json::json!(self.repair_final_missing_payload_recovered_requeued_count),
         );
         out.insert(
             "queue_tx_count_last".to_string(),
