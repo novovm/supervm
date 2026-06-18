@@ -895,36 +895,13 @@ fn select_novorudp_repair_ranges_from_ack(
     ranges: &[MissingRangeV1],
     expected: u64,
     window_size: u64,
-    latest_missing_count: u64,
-    missing_ranges_full_count: u64,
-    max_window_retries: u64,
+    _latest_missing_count: u64,
+    _missing_ranges_full_count: u64,
+    _max_window_retries: u64,
 ) -> Option<NovoRudpRepairSelectionV1> {
     let normalized = normalize_missing_ranges(ranges, expected);
     let (window_id, window, window_ranges) =
         first_missing_window_ranges(normalized.as_slice(), expected, window_size)?;
-    let full_ranges_available =
-        missing_ranges_full_count <= normalized.len().try_into().unwrap_or(u64::MAX);
-    let full_coverage_limit = window_size.max(1).saturating_mul(max_window_retries.max(1));
-    if full_ranges_available
-        && latest_missing_count > 0
-        && latest_missing_count <= full_coverage_limit
-    {
-        return Some(NovoRudpRepairSelectionV1 {
-            window_id,
-            window: MissingRangeV1 {
-                start: normalized
-                    .first()
-                    .map(|range| range.start)
-                    .unwrap_or(window.start),
-                end_inclusive: normalized
-                    .last()
-                    .map(|range| range.end_inclusive)
-                    .unwrap_or(window.end_inclusive),
-            },
-            ranges: normalized,
-            used_full_missing_bitmap: true,
-        });
-    }
     Some(NovoRudpRepairSelectionV1 {
         window_id,
         window,
@@ -1240,8 +1217,10 @@ mod novorudp_tests {
             config.tail_window_max_retries,
         )
         .expect("repair selection");
-        assert!(first.used_full_missing_bitmap);
-        assert_eq!(missing_ranges_count(first.ranges.as_slice()), 82);
+        assert!(!first.used_full_missing_bitmap);
+        assert_eq!(first.window.start, 14156);
+        assert_eq!(first.window.end_inclusive, 14219);
+        assert_eq!(missing_ranges_count(first.ranges.as_slice()), 20);
 
         let ack_round_2 = vec![MissingRangeV1 {
             start: 14312,
@@ -1256,7 +1235,7 @@ mod novorudp_tests {
             config.tail_window_max_retries,
         )
         .expect("second repair selection");
-        assert!(second.used_full_missing_bitmap);
+        assert!(!second.used_full_missing_bitmap);
         assert_eq!(missing_ranges_count(second.ranges.as_slice()), 20);
 
         let ack_round_3: Vec<MissingRangeV1> = Vec::new();
@@ -1288,9 +1267,17 @@ mod novorudp_tests {
         )
         .expect("full current missing selection");
 
-        assert!(selection.used_full_missing_bitmap);
-        assert_eq!(selection.ranges, ranges);
-        assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 244);
+        assert!(!selection.used_full_missing_bitmap);
+        assert_eq!(selection.window.start, 14156);
+        assert_eq!(selection.window.end_inclusive, 14219);
+        assert_eq!(
+            selection.ranges,
+            vec![MissingRangeV1 {
+                start: 14156,
+                end_inclusive: 14219,
+            }]
+        );
+        assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 64);
     }
 
     #[test]
@@ -1333,14 +1320,20 @@ mod novorudp_tests {
             config.tail_window_max_retries,
         )
         .expect("new ack selection");
-        assert!(new_selection.used_full_missing_bitmap);
+        assert!(!new_selection.used_full_missing_bitmap);
         assert_eq!(new_selection.window.start, 14163);
-        assert_eq!(new_selection.window.end_inclusive, 14399);
-        assert_eq!(new_selection.ranges, new_ack_ranges);
+        assert_eq!(new_selection.window.end_inclusive, 14226);
+        assert_eq!(
+            new_selection.ranges,
+            vec![MissingRangeV1 {
+                start: 14163,
+                end_inclusive: 14226,
+            }]
+        );
     }
 
     #[test]
-    fn novorudp_sender_uses_latest_ack_full_missing_bitmap() {
+    fn novorudp_sender_uses_latest_ack_first_missing_window_bitmap() {
         let config = sender_timeout_novorudp_config();
         let ranges = vec![MissingRangeV1 {
             start: 14162,
@@ -1356,10 +1349,10 @@ mod novorudp_tests {
         )
         .expect("latest ack selection");
 
-        assert!(selection.used_full_missing_bitmap);
+        assert!(!selection.used_full_missing_bitmap);
         assert_eq!(selection.ranges[0].start, 14162);
-        assert_eq!(selection.ranges[0].end_inclusive, 14399);
-        assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 238);
+        assert_eq!(selection.ranges[0].end_inclusive, 14225);
+        assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 64);
     }
 
     #[test]

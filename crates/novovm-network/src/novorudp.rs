@@ -70,6 +70,170 @@ pub struct NovoRudpRepairPlan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NovoRudpFrameKind {
+    Data,
+    Ack,
+    Repair,
+    Close,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NovoRudpFrameHeader {
+    pub version: u16,
+    pub kind: NovoRudpFrameKind,
+    pub session_id: [u8; 16],
+    pub epoch: u64,
+    pub sequence: Option<u64>,
+    pub window_id: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NovoRudpAckFrame {
+    pub header: NovoRudpFrameHeader,
+    pub expected_total: u64,
+    pub receiver_done: bool,
+    pub missing_count: u64,
+    pub current_window: Option<NovoRudpRange>,
+    pub current_window_missing_ranges: Vec<NovoRudpRange>,
+}
+
+impl NovoRudpAckFrame {
+    #[must_use]
+    pub fn current_window_missing_count(&self) -> u64 {
+        missing_count(self.current_window_missing_ranges.as_slice())
+    }
+
+    #[must_use]
+    pub fn is_window_complete(&self) -> bool {
+        self.current_window_missing_count() == 0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NovoRudpPacingProfile {
+    pub packet_copies: u64,
+    pub tail_packet_copies: u64,
+    pub batch_size: u64,
+    pub batch_pause_ms: u64,
+    pub ack_wait_ms: u64,
+    pub no_progress_backoff: bool,
+}
+
+impl Default for NovoRudpPacingProfile {
+    fn default() -> Self {
+        Self {
+            packet_copies: 2,
+            tail_packet_copies: 6,
+            batch_size: 16,
+            batch_pause_ms: 10,
+            ack_wait_ms: 1000,
+            no_progress_backoff: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NovoRudpSenderState {
+    pub latest_ack_epoch: u64,
+    pub active_window: Option<NovoRudpRange>,
+    pub stale_ack_rejected_count: u64,
+    pub window_advance_count: u64,
+    pub no_progress_count: u64,
+}
+
+impl NovoRudpSenderState {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            latest_ack_epoch: 0,
+            active_window: None,
+            stale_ack_rejected_count: 0,
+            window_advance_count: 0,
+            no_progress_count: 0,
+        }
+    }
+}
+
+impl Default for NovoRudpSenderState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NovoRudpSenderRepairDecision {
+    ReceiverDone,
+    WindowComplete,
+    StaleAck { latest_epoch: u64, ack_epoch: u64 },
+    Repair(NovoRudpRepairPlan),
+}
+
+pub fn sender_repair_decision_from_ack(
+    state: &mut NovoRudpSenderState,
+    ack: &NovoRudpAckFrame,
+    config: &NovoRudpWindowConfig,
+    pacing: &NovoRudpPacingProfile,
+) -> NovoRudpSenderRepairDecision {
+    if ack.header.epoch <= state.latest_ack_epoch {
+        state.stale_ack_rejected_count = state.stale_ack_rejected_count.saturating_add(1);
+        return NovoRudpSenderRepairDecision::StaleAck {
+            latest_epoch: state.latest_ack_epoch,
+            ack_epoch: ack.header.epoch,
+        };
+    }
+    state.latest_ack_epoch = ack.header.epoch;
+    if ack.receiver_done && ack.missing_count == 0 {
+        state.active_window = None;
+        return NovoRudpSenderRepairDecision::ReceiverDone;
+    }
+    let Some(window) = ack.current_window else {
+        state.active_window = None;
+        return NovoRudpSenderRepairDecision::WindowComplete;
+    };
+    let window_missing = normalize_missing_ranges(
+        ack.current_window_missing_ranges.as_slice(),
+        ack.expected_total,
+    )
+    .into_iter()
+    .filter_map(|range| {
+        let start = range.start.max(window.start);
+        let end = range.end_inclusive.min(window.end_inclusive);
+        (end >= start).then_some(NovoRudpRange::new(start, end))
+    })
+    .collect::<Vec<_>>();
+    let window_missing_count = missing_count(window_missing.as_slice());
+    if window_missing_count == 0 {
+        state.active_window = Some(window);
+        return NovoRudpSenderRepairDecision::WindowComplete;
+    }
+    if state.active_window.is_some_and(|current| current != window) {
+        state.window_advance_count = state.window_advance_count.saturating_add(1);
+    }
+    state.active_window = Some(window);
+    let tail_starts_at = ack.expected_total.saturating_sub(config.window_size.max(1));
+    let packet_copies = if window.start >= tail_starts_at {
+        pacing
+            .tail_packet_copies
+            .max(pacing.packet_copies)
+            .max(config.tail_packet_copies)
+            .max(1)
+    } else {
+        pacing.packet_copies.max(config.packet_copies).max(1)
+    };
+    NovoRudpSenderRepairDecision::Repair(NovoRudpRepairPlan {
+        window: NovoRudpRepairWindow {
+            window_id: window.start / config.window_size.max(1),
+            range: window,
+            missing_ranges: window_missing,
+            missing_count: window_missing_count,
+        },
+        packet_copies,
+        batch_size: pacing.batch_size.max(config.batch_size).max(1),
+        batch_pause_ms: pacing.batch_pause_ms.max(config.batch_pause_ms),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NovoRudpAckProgress {
     Complete,
     Progress,
@@ -554,23 +718,16 @@ pub fn evaluate_semantic_modulation_frame(
 mod tests {
     use super::{
         build_repair_plan, classify_ack_progress, evaluate_semantic_modulation_frame,
-        normalize_missing_ranges, select_first_missing_window, NovoRudpAckProgress,
-        NovoRudpAlgebraicFrame, NovoRudpRange, NovoRudpSemanticCodec,
+        normalize_missing_ranges, select_first_missing_window, sender_repair_decision_from_ack,
+        NovoRudpAckFrame, NovoRudpAckProgress, NovoRudpAlgebraicFrame, NovoRudpFrameHeader,
+        NovoRudpFrameKind, NovoRudpPacingProfile, NovoRudpRange, NovoRudpSemanticCodec,
         NovoRudpSemanticModulationDecision, NovoRudpSemanticModulationProfile,
-        NovoRudpSequenceLifecycleLedger, NovoRudpWindowConfig,
+        NovoRudpSenderRepairDecision, NovoRudpSenderState, NovoRudpSequenceLifecycleLedger,
+        NovoRudpWindowConfig,
     };
     use std::collections::{BTreeMap, BTreeSet};
 
     #[derive(Debug, Clone)]
-    struct HarnessAck {
-        epoch: u64,
-        receiver_done: bool,
-        missing_count: u64,
-        current_window: Option<NovoRudpRange>,
-        current_window_missing_ranges: Vec<NovoRudpRange>,
-    }
-
-    #[derive(Debug)]
     struct HarnessReceiver {
         expected: u64,
         window_size: u64,
@@ -631,7 +788,7 @@ mod tests {
             ranges
         }
 
-        fn ack(&mut self) -> HarnessAck {
+        fn ack(&mut self) -> NovoRudpAckFrame {
             self.epoch = self.epoch.saturating_add(1);
             let ranges = self.missing_ranges();
             let missing_count = super::missing_count(ranges.as_slice());
@@ -643,8 +800,16 @@ mod tests {
                     ..NovoRudpWindowConfig::default()
                 },
             );
-            HarnessAck {
-                epoch: self.epoch,
+            NovoRudpAckFrame {
+                header: NovoRudpFrameHeader {
+                    version: 1,
+                    kind: NovoRudpFrameKind::Ack,
+                    session_id: [0x11; 16],
+                    epoch: self.epoch,
+                    sequence: None,
+                    window_id: window.as_ref().map(|window| window.window_id),
+                },
+                expected_total: self.expected,
                 receiver_done: missing_count == 0,
                 missing_count,
                 current_window: window.as_ref().map(|window| window.range),
@@ -687,46 +852,6 @@ mod tests {
                     self.active_pending.insert(sequence);
                 }
             }
-        }
-    }
-
-    #[derive(Debug)]
-    struct HarnessSender {
-        latest_epoch: u64,
-        current_window: Option<NovoRudpRange>,
-        stale_ack_rejected: u64,
-        sent_sequences: Vec<u64>,
-    }
-
-    impl HarnessSender {
-        fn new() -> Self {
-            Self {
-                latest_epoch: 0,
-                current_window: None,
-                stale_ack_rejected: 0,
-                sent_sequences: Vec::new(),
-            }
-        }
-
-        fn repair_from_ack(&mut self, ack: &HarnessAck) -> Vec<u64> {
-            if ack.epoch <= self.latest_epoch {
-                self.stale_ack_rejected = self.stale_ack_rejected.saturating_add(1);
-                return Vec::new();
-            }
-            self.latest_epoch = ack.epoch;
-            if ack.receiver_done || ack.missing_count == 0 {
-                self.current_window = None;
-                return Vec::new();
-            }
-            self.current_window = ack.current_window;
-            let mut repair = Vec::<u64>::new();
-            for range in &ack.current_window_missing_ranges {
-                for sequence in range.start..=range.end_inclusive {
-                    repair.push(sequence);
-                }
-            }
-            self.sent_sequences.extend(repair.iter().copied());
-            repair
         }
     }
 
@@ -811,17 +936,144 @@ mod tests {
     }
 
     #[test]
+    fn sender_repair_decision_uses_receiver_owned_current_window_only() {
+        let mut sender = NovoRudpSenderState::new();
+        let ack = NovoRudpAckFrame {
+            header: NovoRudpFrameHeader {
+                version: 1,
+                kind: NovoRudpFrameKind::Ack,
+                session_id: [0x31; 16],
+                epoch: 1,
+                sequence: None,
+                window_id: Some(220),
+            },
+            expected_total: 14_400,
+            receiver_done: false,
+            missing_count: 248,
+            current_window: Some(NovoRudpRange::new(14_152, 14_215)),
+            current_window_missing_ranges: vec![
+                NovoRudpRange::new(14_152, 14_160),
+                NovoRudpRange::new(14_300, 14_399),
+            ],
+        };
+
+        let decision = sender_repair_decision_from_ack(
+            &mut sender,
+            &ack,
+            &NovoRudpWindowConfig::default(),
+            &NovoRudpPacingProfile::default(),
+        );
+        let NovoRudpSenderRepairDecision::Repair(plan) = decision else {
+            panic!("expected repair plan");
+        };
+        assert_eq!(plan.window.range, NovoRudpRange::new(14_152, 14_215));
+        assert_eq!(
+            plan.window.missing_ranges,
+            vec![NovoRudpRange::new(14_152, 14_160)]
+        );
+        assert!(
+            plan.window
+                .missing_ranges
+                .iter()
+                .all(|range| range.end_inclusive <= 14_215),
+            "sender must never repair outside receiver-owned current window"
+        );
+    }
+
+    #[test]
+    fn sender_repair_decision_does_not_repair_completed_window() {
+        let mut sender = NovoRudpSenderState::new();
+        let ack = NovoRudpAckFrame {
+            header: NovoRudpFrameHeader {
+                version: 1,
+                kind: NovoRudpFrameKind::Ack,
+                session_id: [0x32; 16],
+                epoch: 1,
+                sequence: None,
+                window_id: Some(220),
+            },
+            expected_total: 14_400,
+            receiver_done: false,
+            missing_count: 10,
+            current_window: Some(NovoRudpRange::new(14_152, 14_215)),
+            current_window_missing_ranges: Vec::new(),
+        };
+
+        assert!(matches!(
+            sender_repair_decision_from_ack(
+                &mut sender,
+                &ack,
+                &NovoRudpWindowConfig::default(),
+                &NovoRudpPacingProfile::default()
+            ),
+            NovoRudpSenderRepairDecision::WindowComplete
+        ));
+    }
+
+    #[test]
+    fn sender_repair_decision_uses_tail_pacing_profile() {
+        let mut sender = NovoRudpSenderState::new();
+        let ack = NovoRudpAckFrame {
+            header: NovoRudpFrameHeader {
+                version: 1,
+                kind: NovoRudpFrameKind::Ack,
+                session_id: [0x33; 16],
+                epoch: 1,
+                sequence: None,
+                window_id: Some(224),
+            },
+            expected_total: 14_400,
+            receiver_done: false,
+            missing_count: 64,
+            current_window: Some(NovoRudpRange::new(14_336, 14_399)),
+            current_window_missing_ranges: vec![NovoRudpRange::new(14_336, 14_399)],
+        };
+        let pacing = NovoRudpPacingProfile {
+            packet_copies: 2,
+            tail_packet_copies: 9,
+            batch_size: 8,
+            batch_pause_ms: 25,
+            ack_wait_ms: 1500,
+            no_progress_backoff: true,
+        };
+
+        let decision = sender_repair_decision_from_ack(
+            &mut sender,
+            &ack,
+            &NovoRudpWindowConfig::default(),
+            &pacing,
+        );
+        let NovoRudpSenderRepairDecision::Repair(plan) = decision else {
+            panic!("expected repair plan");
+        };
+        assert_eq!(plan.packet_copies, 9);
+        assert_eq!(plan.batch_size, 16, "config lower bound remains enforced");
+        assert_eq!(plan.batch_pause_ms, 25);
+    }
+
+    #[test]
     fn novorudp_window_state_machine_converges_with_tail_loss() {
         let mut receiver = HarnessReceiver::new(14_400, 14_152, 64);
-        let mut sender = HarnessSender::new();
+        let mut sender = NovoRudpSenderState::new();
         let mut channel = LossyHarnessChannel::with_tail_loss(14_152, 14_399, 2);
+        let config = NovoRudpWindowConfig::default();
+        let pacing = NovoRudpPacingProfile::default();
 
         for _ in 0..128 {
             let ack = receiver.ack();
             if ack.receiver_done {
                 break;
             }
-            let repair = sender.repair_from_ack(&ack);
+            let repair = match sender_repair_decision_from_ack(&mut sender, &ack, &config, &pacing)
+            {
+                NovoRudpSenderRepairDecision::Repair(plan) => plan
+                    .window
+                    .missing_ranges
+                    .iter()
+                    .flat_map(|range| range.start..=range.end_inclusive)
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            };
             channel.deliver(repair.as_slice(), &mut receiver);
             receiver.admit_active_pending(16);
         }
@@ -837,27 +1089,59 @@ mod tests {
 
     #[test]
     fn novorudp_window_state_machine_rejects_stale_ack_progress() {
-        let mut sender = HarnessSender::new();
-        let fresh_ack = HarnessAck {
-            epoch: 10,
+        let mut sender = NovoRudpSenderState::new();
+        let fresh_ack = NovoRudpAckFrame {
+            header: NovoRudpFrameHeader {
+                version: 1,
+                kind: NovoRudpFrameKind::Ack,
+                session_id: [0x22; 16],
+                epoch: 10,
+                sequence: None,
+                window_id: Some(221),
+            },
+            expected_total: 14_400,
             receiver_done: false,
             missing_count: 64,
             current_window: Some(NovoRudpRange::new(14_152, 14_215)),
             current_window_missing_ranges: vec![NovoRudpRange::new(14_152, 14_215)],
         };
-        let stale_ack = HarnessAck {
-            epoch: 9,
+        let stale_ack = NovoRudpAckFrame {
+            header: NovoRudpFrameHeader {
+                version: 1,
+                kind: NovoRudpFrameKind::Ack,
+                session_id: [0x22; 16],
+                epoch: 9,
+                sequence: None,
+                window_id: Some(58),
+            },
+            expected_total: 14_400,
             receiver_done: false,
             missing_count: 10_648,
             current_window: Some(NovoRudpRange::new(3_752, 3_815)),
             current_window_missing_ranges: vec![NovoRudpRange::new(3_752, 3_815)],
         };
 
-        assert_eq!(sender.repair_from_ack(&fresh_ack).len(), 64);
-        assert!(sender.repair_from_ack(&stale_ack).is_empty());
-        assert_eq!(sender.stale_ack_rejected, 1);
+        assert!(matches!(
+            sender_repair_decision_from_ack(
+                &mut sender,
+                &fresh_ack,
+                &NovoRudpWindowConfig::default(),
+                &NovoRudpPacingProfile::default()
+            ),
+            NovoRudpSenderRepairDecision::Repair(_)
+        ));
+        assert!(matches!(
+            sender_repair_decision_from_ack(
+                &mut sender,
+                &stale_ack,
+                &NovoRudpWindowConfig::default(),
+                &NovoRudpPacingProfile::default()
+            ),
+            NovoRudpSenderRepairDecision::StaleAck { .. }
+        ));
+        assert_eq!(sender.stale_ack_rejected_count, 1);
         assert_eq!(
-            sender.current_window,
+            sender.active_window,
             Some(NovoRudpRange::new(14_152, 14_215))
         );
     }
@@ -865,9 +1149,22 @@ mod tests {
     #[test]
     fn novorudp_window_state_machine_does_not_advance_until_window_bitmap_zero() {
         let mut receiver = HarnessReceiver::new(14_400, 14_152, 64);
-        let mut sender = HarnessSender::new();
+        let mut sender = NovoRudpSenderState::new();
         let ack = receiver.ack();
-        let first_repair = sender.repair_from_ack(&ack);
+        let first_repair = match sender_repair_decision_from_ack(
+            &mut sender,
+            &ack,
+            &NovoRudpWindowConfig::default(),
+            &NovoRudpPacingProfile::default(),
+        ) {
+            NovoRudpSenderRepairDecision::Repair(plan) => plan
+                .window
+                .missing_ranges
+                .iter()
+                .flat_map(|range| range.start..=range.end_inclusive)
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
         for sequence in first_repair.iter().copied().take(32) {
             receiver.receive_repair(sequence);
         }
@@ -901,15 +1198,26 @@ mod tests {
     #[test]
     fn novorudp_window_state_machine_completes_14152_14399_tail_gap() {
         let mut receiver = HarnessReceiver::new(14_400, 14_152, 64);
-        let mut sender = HarnessSender::new();
+        let mut sender = NovoRudpSenderState::new();
         let mut channel = LossyHarnessChannel::with_tail_loss(14_152, 14_399, 1);
+        let config = NovoRudpWindowConfig::default();
+        let pacing = NovoRudpPacingProfile::default();
 
         for _ in 0..96 {
             let ack = receiver.ack();
             if ack.receiver_done {
                 break;
             }
-            let repair = sender.repair_from_ack(&ack);
+            let repair = match sender_repair_decision_from_ack(&mut sender, &ack, &config, &pacing)
+            {
+                NovoRudpSenderRepairDecision::Repair(plan) => plan
+                    .window
+                    .missing_ranges
+                    .iter()
+                    .flat_map(|range| range.start..=range.end_inclusive)
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            };
             assert!(
                 repair.iter().all(|seq| ack
                     .current_window_missing_ranges
