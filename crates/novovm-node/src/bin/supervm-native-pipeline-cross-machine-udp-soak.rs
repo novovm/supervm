@@ -2259,6 +2259,27 @@ fn write_synthetic_receiver_failure_report(
             "repair_final_missing_receipt_hit_count": repair_already_receipted_final_missing_overlap_count,
             "repair_final_missing_enqueue_failed_count": repair_accepted_but_not_effective_count,
             "repair_final_missing_enqueue_failed_reason_counts": Value::Object(repair_accepted_but_not_effective_reason_counts.clone()),
+            "repair_attempted_unreceipted_count": repair_source
+                .and_then(|sample| sample.get("repair_attempted_unreceipted_count"))
+                .and_then(Value::as_u64),
+            "repair_attempted_unreceipted_final_missing_overlap_count": repair_source
+                .and_then(|sample| sample.get("repair_attempted_unreceipted_final_missing_overlap_count"))
+                .and_then(Value::as_u64),
+            "repair_attempted_unreceipted_requeued_count": repair_source
+                .and_then(|sample| sample.get("repair_attempted_unreceipted_requeued_count"))
+                .and_then(Value::as_u64),
+            "repair_attempted_unreceipted_requeue_failed_count": repair_source
+                .and_then(|sample| sample.get("repair_attempted_unreceipted_requeue_failed_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_payload_available_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_payload_available_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_payload_available_but_inactive_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_payload_available_but_inactive_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_invariant_violation_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_invariant_violation_count"))
+                .and_then(Value::as_u64),
             "repair_sequence_duplicate_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_duplicate_count"))
                 .and_then(Value::as_u64),
@@ -2300,6 +2321,27 @@ fn write_synthetic_receiver_failure_report(
             "repair_final_missing_receipt_hit_count": repair_already_receipted_final_missing_overlap_count,
             "repair_final_missing_enqueue_failed_count": repair_accepted_but_not_effective_count,
             "repair_final_missing_enqueue_failed_reason_counts": Value::Object(repair_accepted_but_not_effective_reason_counts),
+            "repair_attempted_unreceipted_count": repair_source
+                .and_then(|sample| sample.get("repair_attempted_unreceipted_count"))
+                .and_then(Value::as_u64),
+            "repair_attempted_unreceipted_final_missing_overlap_count": repair_source
+                .and_then(|sample| sample.get("repair_attempted_unreceipted_final_missing_overlap_count"))
+                .and_then(Value::as_u64),
+            "repair_attempted_unreceipted_requeued_count": repair_source
+                .and_then(|sample| sample.get("repair_attempted_unreceipted_requeued_count"))
+                .and_then(Value::as_u64),
+            "repair_attempted_unreceipted_requeue_failed_count": repair_source
+                .and_then(|sample| sample.get("repair_attempted_unreceipted_requeue_failed_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_payload_available_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_payload_available_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_payload_available_but_inactive_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_payload_available_but_inactive_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_invariant_violation_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_invariant_violation_count"))
+                .and_then(Value::as_u64),
         },
         "receiver_ack_snapshot": {
             "expected_tx_total": ack_snapshot
@@ -2899,6 +2941,13 @@ fn diagnostics_summary_sample(
         "repair_sequence_stale_count": summary_u64(summary, "repair_sequence_stale_count"),
         "repair_sequence_enqueued_count": summary_u64(summary, "repair_sequence_enqueued_count"),
         "repair_sequence_admitted_to_aoem_count": summary_u64(summary, "repair_sequence_admitted_to_aoem_count"),
+        "repair_attempted_unreceipted_count": summary_u64(summary, "repair_attempted_unreceipted_count"),
+        "repair_attempted_unreceipted_final_missing_overlap_count": summary_u64(summary, "repair_attempted_unreceipted_final_missing_overlap_count"),
+        "repair_attempted_unreceipted_requeued_count": summary_u64(summary, "repair_attempted_unreceipted_requeued_count"),
+        "repair_attempted_unreceipted_requeue_failed_count": summary_u64(summary, "repair_attempted_unreceipted_requeue_failed_count"),
+        "repair_final_missing_payload_available_count": summary_u64(summary, "repair_final_missing_payload_available_count"),
+        "repair_final_missing_payload_available_but_inactive_count": summary_u64(summary, "repair_final_missing_payload_available_but_inactive_count"),
+        "repair_final_missing_invariant_violation_count": summary_u64(summary, "repair_final_missing_invariant_violation_count"),
         "ticks": summary_u64(summary, "ticks"),
         "ticks_per_sec_x1000": summary_u64(summary, "ticks_per_sec_x1000"),
     });
@@ -5308,6 +5357,13 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "repair_sequence_stale_count": summary_u64(&summary, "repair_sequence_stale_count"),
         "repair_sequence_enqueued_count": summary_u64(&summary, "repair_sequence_enqueued_count"),
         "repair_sequence_admitted_to_aoem_count": summary_u64(&summary, "repair_sequence_admitted_to_aoem_count"),
+        "repair_attempted_unreceipted_count": summary_u64(&summary, "repair_attempted_unreceipted_count"),
+        "repair_attempted_unreceipted_final_missing_overlap_count": summary_u64(&summary, "repair_attempted_unreceipted_final_missing_overlap_count"),
+        "repair_attempted_unreceipted_requeued_count": summary_u64(&summary, "repair_attempted_unreceipted_requeued_count"),
+        "repair_attempted_unreceipted_requeue_failed_count": summary_u64(&summary, "repair_attempted_unreceipted_requeue_failed_count"),
+        "repair_final_missing_payload_available_count": summary_u64(&summary, "repair_final_missing_payload_available_count"),
+        "repair_final_missing_payload_available_but_inactive_count": summary_u64(&summary, "repair_final_missing_payload_available_but_inactive_count"),
+        "repair_final_missing_invariant_violation_count": summary_u64(&summary, "repair_final_missing_invariant_violation_count"),
         "queue_tx_count_last": summary_u64(&summary, "queue_tx_count_last"),
         "queue_active_pending_last": summary_u64(&summary, "queue_active_pending_last"),
         "queue_historical_pending_last": summary_u64(&summary, "queue_historical_pending_last"),

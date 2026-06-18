@@ -964,6 +964,8 @@ struct NetworkRuntimeNativeRepairProbeStateV1 {
     sequence_enqueued_seen: HashSet<u64>,
     sequence_already_receipted_seen: HashSet<u64>,
     sequence_admitted_to_aoem_seen: HashSet<u64>,
+    sequence_attempted_unreceipted_seen: HashSet<u64>,
+    sequence_attempted_unreceipted_requeued_seen: HashSet<u64>,
     sequence_accepted_count: u64,
     sequence_duplicate_count: u64,
     sequence_rejected_count: u64,
@@ -974,6 +976,13 @@ struct NetworkRuntimeNativeRepairProbeStateV1 {
     sequence_stale_count: u64,
     sequence_enqueued_count: u64,
     sequence_admitted_to_aoem_count: u64,
+    attempted_unreceipted_count: u64,
+    attempted_unreceipted_final_missing_overlap_count: u64,
+    attempted_unreceipted_requeued_count: u64,
+    attempted_unreceipted_requeue_failed_count: u64,
+    final_missing_payload_available_count: u64,
+    final_missing_payload_available_but_inactive_count: u64,
+    final_missing_invariant_violation_count: u64,
     reject_reason_counts: HashMap<String, u64>,
     reject_reason_samples: Vec<String>,
 }
@@ -1038,6 +1047,13 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub repair_sequence_stale_count: u64,
     pub repair_sequence_enqueued_count: u64,
     pub repair_sequence_admitted_to_aoem_count: u64,
+    pub repair_attempted_unreceipted_count: u64,
+    pub repair_attempted_unreceipted_final_missing_overlap_count: u64,
+    pub repair_attempted_unreceipted_requeued_count: u64,
+    pub repair_attempted_unreceipted_requeue_failed_count: u64,
+    pub repair_final_missing_payload_available_count: u64,
+    pub repair_final_missing_payload_available_but_inactive_count: u64,
+    pub repair_final_missing_invariant_violation_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1382,7 +1398,10 @@ fn network_runtime_native_repair_probe_summary_v1(
         repair_sequence_accepted_ranges_sample:
             network_runtime_native_repair_sequence_ranges_sample_v1(&state.sequence_seen, 64),
         repair_sequence_enqueued_ranges_sample:
-            network_runtime_native_repair_sequence_ranges_sample_v1(&state.sequence_enqueued_seen, 64),
+            network_runtime_native_repair_sequence_ranges_sample_v1(
+                &state.sequence_enqueued_seen,
+                64,
+            ),
         repair_sequence_already_receipted_ranges_sample:
             network_runtime_native_repair_sequence_ranges_sample_v1(
                 &state.sequence_already_receipted_seen,
@@ -1410,6 +1429,17 @@ fn network_runtime_native_repair_probe_summary_v1(
         repair_sequence_stale_count: state.sequence_stale_count,
         repair_sequence_enqueued_count: state.sequence_enqueued_count,
         repair_sequence_admitted_to_aoem_count: state.sequence_admitted_to_aoem_count,
+        repair_attempted_unreceipted_count: state.attempted_unreceipted_count,
+        repair_attempted_unreceipted_final_missing_overlap_count: state
+            .attempted_unreceipted_final_missing_overlap_count,
+        repair_attempted_unreceipted_requeued_count: state.attempted_unreceipted_requeued_count,
+        repair_attempted_unreceipted_requeue_failed_count: state
+            .attempted_unreceipted_requeue_failed_count,
+        repair_final_missing_payload_available_count: state.final_missing_payload_available_count,
+        repair_final_missing_payload_available_but_inactive_count: state
+            .final_missing_payload_available_but_inactive_count,
+        repair_final_missing_invariant_violation_count: state
+            .final_missing_invariant_violation_count,
         ..Default::default()
     }
 }
@@ -1429,12 +1459,14 @@ fn apply_network_runtime_native_repair_probe_summary_v1(
         repair.repair_sequence_accepted_ranges_sample.clone();
     summary.repair_sequence_enqueued_ranges_sample =
         repair.repair_sequence_enqueued_ranges_sample.clone();
-    summary.repair_sequence_already_receipted_ranges_sample =
-        repair.repair_sequence_already_receipted_ranges_sample.clone();
+    summary.repair_sequence_already_receipted_ranges_sample = repair
+        .repair_sequence_already_receipted_ranges_sample
+        .clone();
     summary.repair_sequence_duplicate_ranges_sample =
         repair.repair_sequence_duplicate_ranges_sample.clone();
-    summary.repair_sequence_admitted_to_aoem_ranges_sample =
-        repair.repair_sequence_admitted_to_aoem_ranges_sample.clone();
+    summary.repair_sequence_admitted_to_aoem_ranges_sample = repair
+        .repair_sequence_admitted_to_aoem_ranges_sample
+        .clone();
     summary.repair_sequence_accepted_count = repair.repair_sequence_accepted_count;
     summary.repair_sequence_duplicate_count = repair.repair_sequence_duplicate_count;
     summary.repair_sequence_rejected_count = repair.repair_sequence_rejected_count;
@@ -1447,8 +1479,20 @@ fn apply_network_runtime_native_repair_probe_summary_v1(
     summary.repair_sequence_out_of_range_count = repair.repair_sequence_out_of_range_count;
     summary.repair_sequence_stale_count = repair.repair_sequence_stale_count;
     summary.repair_sequence_enqueued_count = repair.repair_sequence_enqueued_count;
-    summary.repair_sequence_admitted_to_aoem_count =
-        repair.repair_sequence_admitted_to_aoem_count;
+    summary.repair_sequence_admitted_to_aoem_count = repair.repair_sequence_admitted_to_aoem_count;
+    summary.repair_attempted_unreceipted_count = repair.repair_attempted_unreceipted_count;
+    summary.repair_attempted_unreceipted_final_missing_overlap_count =
+        repair.repair_attempted_unreceipted_final_missing_overlap_count;
+    summary.repair_attempted_unreceipted_requeued_count =
+        repair.repair_attempted_unreceipted_requeued_count;
+    summary.repair_attempted_unreceipted_requeue_failed_count =
+        repair.repair_attempted_unreceipted_requeue_failed_count;
+    summary.repair_final_missing_payload_available_count =
+        repair.repair_final_missing_payload_available_count;
+    summary.repair_final_missing_payload_available_but_inactive_count =
+        repair.repair_final_missing_payload_available_but_inactive_count;
+    summary.repair_final_missing_invariant_violation_count =
+        repair.repair_final_missing_invariant_violation_count;
 }
 
 fn network_runtime_native_repair_probe_reject_v1(
@@ -1472,8 +1516,7 @@ fn network_runtime_native_repair_probe_reject_v1(
                 state.sequence_wrong_chain_id_count.saturating_add(1);
         }
         "non_execute_tx" => {
-            state.sequence_out_of_range_count =
-                state.sequence_out_of_range_count.saturating_add(1);
+            state.sequence_out_of_range_count = state.sequence_out_of_range_count.saturating_add(1);
         }
         _ => {}
     }
@@ -1598,11 +1641,209 @@ pub fn observe_network_runtime_native_pending_tx_repair_aoem_admission_v1(
     if !state.tx_hash_seen.contains(&tx_hash) {
         return;
     }
-    state.sequence_admitted_to_aoem_count =
-        state.sequence_admitted_to_aoem_count.saturating_add(1);
+    state.sequence_admitted_to_aoem_count = state.sequence_admitted_to_aoem_count.saturating_add(1);
     if let Some(sequence) = state.tx_hash_to_sequence.get(&tx_hash).copied() {
         state.sequence_admitted_to_aoem_seen.insert(sequence);
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct NetworkRuntimeNativeRepairPendingRequeueSummaryV1 {
+    pub chain_id: u64,
+    pub final_missing_sequence_start: Option<u64>,
+    pub repair_attempted_unreceipted_count: u64,
+    pub repair_attempted_unreceipted_final_missing_overlap_count: u64,
+    pub repair_attempted_unreceipted_requeued_count: u64,
+    pub repair_attempted_unreceipted_requeue_failed_count: u64,
+    pub repair_final_missing_payload_available_count: u64,
+    pub repair_final_missing_payload_available_but_inactive_count: u64,
+    pub repair_final_missing_invariant_violation_count: u64,
+}
+
+#[inline]
+fn runtime_native_pending_tx_active_stage_v1(
+    stage: NetworkRuntimeNativePendingTxLifecycleStageV1,
+) -> bool {
+    matches!(
+        stage,
+        NetworkRuntimeNativePendingTxLifecycleStageV1::Seen
+            | NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+            | NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
+            | NetworkRuntimeNativePendingTxLifecycleStageV1::ReorgedBackToPending
+    )
+}
+
+#[must_use]
+pub fn requeue_network_runtime_native_repair_pending_for_final_missing_v1(
+    chain_id: u64,
+    final_missing_sequence_start: Option<u64>,
+) -> NetworkRuntimeNativeRepairPendingRequeueSummaryV1 {
+    let Some(start_sequence) = final_missing_sequence_start else {
+        return NetworkRuntimeNativeRepairPendingRequeueSummaryV1 {
+            chain_id,
+            final_missing_sequence_start,
+            ..Default::default()
+        };
+    };
+    let now = now_unix_millis();
+    let repair_state = runtime_native_repair_probe_map()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&chain_id).cloned());
+    let Some(repair_state) = repair_state else {
+        return NetworkRuntimeNativeRepairPendingRequeueSummaryV1 {
+            chain_id,
+            final_missing_sequence_start,
+            ..Default::default()
+        };
+    };
+    let payload_available = runtime_native_pending_tx_payload_map()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&chain_id).cloned())
+        .unwrap_or_default();
+    let mut summary = NetworkRuntimeNativeRepairPendingRequeueSummaryV1 {
+        chain_id,
+        final_missing_sequence_start,
+        ..Default::default()
+    };
+    let mut sequence_attempted_unreceipted_seen = Vec::<u64>::new();
+    let mut sequence_requeued_seen = Vec::<u64>::new();
+    let mut sequence_requeue_failed_count = 0_u64;
+    if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
+        let chain_txs = guard.entry(chain_id).or_default();
+        for (tx_hash, sequence) in repair_state.tx_hash_to_sequence.iter() {
+            if *sequence < start_sequence {
+                continue;
+            }
+            let payload_exists = payload_available.contains_key(tx_hash);
+            if payload_exists {
+                summary.repair_final_missing_payload_available_count = summary
+                    .repair_final_missing_payload_available_count
+                    .saturating_add(1);
+            }
+            let active = chain_txs
+                .get(tx_hash)
+                .is_some_and(|tx| runtime_native_pending_tx_active_stage_v1(tx.lifecycle_stage));
+            let attempted = repair_state
+                .sequence_admitted_to_aoem_seen
+                .contains(sequence);
+            if attempted {
+                summary.repair_attempted_unreceipted_count =
+                    summary.repair_attempted_unreceipted_count.saturating_add(1);
+                summary.repair_attempted_unreceipted_final_missing_overlap_count = summary
+                    .repair_attempted_unreceipted_final_missing_overlap_count
+                    .saturating_add(1);
+                sequence_attempted_unreceipted_seen.push(*sequence);
+            }
+            if active {
+                continue;
+            }
+            if payload_exists {
+                summary.repair_final_missing_payload_available_but_inactive_count = summary
+                    .repair_final_missing_payload_available_but_inactive_count
+                    .saturating_add(1);
+                let tx = chain_txs.entry(*tx_hash).or_insert_with(|| {
+                    NetworkRuntimeNativePendingTxStateV1 {
+                        chain_id,
+                        tx_hash: *tx_hash,
+                        lifecycle_stage: NetworkRuntimeNativePendingTxLifecycleStageV1::Pending,
+                        origin: NetworkRuntimeNativePendingTxOriginV1::Remote,
+                        source_peer_id: None,
+                        first_seen_unix_ms: now,
+                        last_updated_unix_ms: now,
+                        last_block_number: None,
+                        last_block_hash: None,
+                        canonical_inclusion: None,
+                        ingress_count: 0,
+                        propagation_count: 0,
+                        inclusion_count: 0,
+                        reorg_back_count: 0,
+                        drop_count: 0,
+                        reject_count: 0,
+                        propagation_attempt_count: 0,
+                        propagation_success_count: 0,
+                        propagation_failure_count: 0,
+                        propagated_peer_count: 0,
+                        last_propagation_unix_ms: None,
+                        last_propagation_attempt_unix_ms: None,
+                        last_propagation_failure_unix_ms: None,
+                        last_propagation_failure_class: None,
+                        last_propagation_failure_phase: None,
+                        last_propagation_peer_id: None,
+                        last_propagated_peer_id: None,
+                        propagation_disposition: None,
+                        propagation_stop_reason: None,
+                        propagation_recoverability: None,
+                        retry_eligible: true,
+                        retry_after_unix_ms: None,
+                        retry_backoff_level: 0,
+                        retry_suppressed_reason: None,
+                        pending_final_disposition:
+                            NetworkRuntimeNativePendingTxFinalDispositionV1::Retained,
+                    }
+                });
+                tx.lifecycle_stage = NetworkRuntimeNativePendingTxLifecycleStageV1::Pending;
+                tx.origin = NetworkRuntimeNativePendingTxOriginV1::Remote;
+                tx.canonical_inclusion = None;
+                tx.pending_final_disposition =
+                    NetworkRuntimeNativePendingTxFinalDispositionV1::Retained;
+                tx.last_updated_unix_ms = now;
+                tx.ingress_count = tx.ingress_count.saturating_add(1);
+                runtime_native_pending_tx_mark_retry_eligible_v1(tx);
+                summary.repair_attempted_unreceipted_requeued_count = summary
+                    .repair_attempted_unreceipted_requeued_count
+                    .saturating_add(1);
+                sequence_requeued_seen.push(*sequence);
+            } else if attempted {
+                sequence_requeue_failed_count = sequence_requeue_failed_count.saturating_add(1);
+                summary.repair_attempted_unreceipted_requeue_failed_count = summary
+                    .repair_attempted_unreceipted_requeue_failed_count
+                    .saturating_add(1);
+                summary.repair_final_missing_invariant_violation_count = summary
+                    .repair_final_missing_invariant_violation_count
+                    .saturating_add(1);
+            }
+        }
+    }
+    if let Ok(mut guard) = runtime_native_repair_probe_map().lock() {
+        let state = guard.entry(chain_id).or_default();
+        state.attempted_unreceipted_count = state
+            .attempted_unreceipted_count
+            .saturating_add(summary.repair_attempted_unreceipted_count);
+        state.attempted_unreceipted_final_missing_overlap_count = state
+            .attempted_unreceipted_final_missing_overlap_count
+            .saturating_add(summary.repair_attempted_unreceipted_final_missing_overlap_count);
+        state.attempted_unreceipted_requeued_count = state
+            .attempted_unreceipted_requeued_count
+            .saturating_add(summary.repair_attempted_unreceipted_requeued_count);
+        state.attempted_unreceipted_requeue_failed_count = state
+            .attempted_unreceipted_requeue_failed_count
+            .saturating_add(summary.repair_attempted_unreceipted_requeue_failed_count);
+        state.final_missing_payload_available_count = state
+            .final_missing_payload_available_count
+            .saturating_add(summary.repair_final_missing_payload_available_count);
+        state.final_missing_payload_available_but_inactive_count = state
+            .final_missing_payload_available_but_inactive_count
+            .saturating_add(summary.repair_final_missing_payload_available_but_inactive_count);
+        state.final_missing_invariant_violation_count = state
+            .final_missing_invariant_violation_count
+            .saturating_add(summary.repair_final_missing_invariant_violation_count);
+        state
+            .sequence_attempted_unreceipted_seen
+            .extend(sequence_attempted_unreceipted_seen);
+        state
+            .sequence_attempted_unreceipted_requeued_seen
+            .extend(sequence_requeued_seen);
+        if sequence_requeue_failed_count > 0 {
+            *state
+                .reject_reason_counts
+                .entry("attempted_unreceipted_requeue_missing_payload".to_string())
+                .or_default() += sequence_requeue_failed_count;
+        }
+    }
+    summary
 }
 
 const NETWORK_RUNTIME_NATIVE_PENDING_TX_RETRY_BASE_DELAY_MS_V1: u128 = 500;
@@ -8296,6 +8537,148 @@ mod tests {
         assert_eq!(
             active[0].tx_hash, final_missing_repair_tx,
             "final-missing repair pending must not be truncated by normal or old repair pending"
+        );
+    }
+
+    #[test]
+    fn repair_attempted_unreceipted_final_missing_is_requeued() {
+        let chain_id = 20626_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let repair_tx = [0xe4; 32];
+        let sequence = 14_168_u64;
+
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            41,
+            repair_tx,
+            Some(b"repair-final-missing-payload"),
+        );
+        {
+            let mut guard = runtime_native_repair_probe_map()
+                .lock()
+                .expect("repair probe lock");
+            let state = guard.entry(chain_id).or_default();
+            state.tx_hash_seen.insert(repair_tx);
+            state.tx_hash_to_sequence.insert(repair_tx, sequence);
+            state.sequence_seen.insert(sequence);
+            state.sequence_enqueued_seen.insert(sequence);
+            state.sequence_admitted_to_aoem_seen.insert(sequence);
+        }
+        {
+            let mut guard = runtime_native_pending_tx_map()
+                .lock()
+                .expect("pending tx lock");
+            let tx = guard
+                .get_mut(&chain_id)
+                .and_then(|chain_txs| chain_txs.get_mut(&repair_tx))
+                .expect("repair tx");
+            tx.lifecycle_stage = NetworkRuntimeNativePendingTxLifecycleStageV1::Dropped;
+            tx.drop_count = tx.drop_count.saturating_add(1);
+        }
+
+        let before = snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
+            chain_id,
+            8,
+            Some(sequence),
+        );
+        assert!(before.is_empty());
+        assert!(get_network_runtime_native_pending_tx_payload_v1(chain_id, repair_tx).is_some());
+
+        let requeue = requeue_network_runtime_native_repair_pending_for_final_missing_v1(
+            chain_id,
+            Some(sequence),
+        );
+        assert_eq!(requeue.repair_attempted_unreceipted_count, 1);
+        assert_eq!(
+            requeue.repair_attempted_unreceipted_final_missing_overlap_count,
+            1
+        );
+        assert_eq!(requeue.repair_final_missing_payload_available_count, 1);
+        assert_eq!(
+            requeue.repair_final_missing_payload_available_but_inactive_count,
+            1
+        );
+        assert_eq!(requeue.repair_attempted_unreceipted_requeued_count, 1);
+        assert_eq!(requeue.repair_attempted_unreceipted_requeue_failed_count, 0);
+
+        let repaired =
+            get_network_runtime_native_pending_tx_v1(chain_id, repair_tx).expect("repair state");
+        assert_eq!(
+            repaired.lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+        );
+        let active = snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
+            chain_id,
+            1,
+            Some(sequence),
+        );
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].tx_hash, repair_tx);
+    }
+
+    #[test]
+    fn repair_final_missing_payload_exists_cannot_timeout_with_empty_active_pending() {
+        let chain_id = 20627_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let repair_tx = [0xe5; 32];
+        let sequence = 14_399_u64;
+
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            42,
+            repair_tx,
+            Some(b"tail-repair-final-missing-payload"),
+        );
+        {
+            let mut guard = runtime_native_repair_probe_map()
+                .lock()
+                .expect("repair probe lock");
+            let state = guard.entry(chain_id).or_default();
+            state.tx_hash_seen.insert(repair_tx);
+            state.tx_hash_to_sequence.insert(repair_tx, sequence);
+            state.sequence_seen.insert(sequence);
+            state.sequence_enqueued_seen.insert(sequence);
+        }
+        {
+            let mut guard = runtime_native_pending_tx_map()
+                .lock()
+                .expect("pending tx lock");
+            let tx = guard
+                .get_mut(&chain_id)
+                .and_then(|chain_txs| chain_txs.get_mut(&repair_tx))
+                .expect("repair tx");
+            tx.lifecycle_stage = NetworkRuntimeNativePendingTxLifecycleStageV1::Dropped;
+        }
+
+        assert!(
+            snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
+                chain_id,
+                4,
+                Some(sequence),
+            )
+            .is_empty()
+        );
+        let requeue = requeue_network_runtime_native_repair_pending_for_final_missing_v1(
+            chain_id,
+            Some(sequence),
+        );
+        assert_eq!(requeue.repair_final_missing_payload_available_count, 1);
+        assert_eq!(
+            requeue.repair_final_missing_payload_available_but_inactive_count,
+            1
+        );
+        assert_eq!(requeue.repair_attempted_unreceipted_requeued_count, 1);
+        assert_eq!(requeue.repair_final_missing_invariant_violation_count, 0);
+        assert_eq!(
+            snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
+                chain_id,
+                4,
+                Some(sequence),
+            )
+            .len(),
+            1
         );
     }
 

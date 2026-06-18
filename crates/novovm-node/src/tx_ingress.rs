@@ -26,6 +26,7 @@ use novovm_network::{
     observe_network_runtime_native_pending_tx_local_native_payload_v1,
     observe_network_runtime_native_pending_tx_rejected_v1,
     observe_network_runtime_native_pending_tx_repair_aoem_admission_v1,
+    requeue_network_runtime_native_repair_pending_for_final_missing_v1,
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
     snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1,
     snapshot_network_runtime_native_execution_budget_runtime_summary_v1,
@@ -11266,6 +11267,10 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     let native_store_path = resolve_native_execution_store_path_from_params_v1(params)
         .unwrap_or_else(nov_native_execution_store_path_v1);
     let receipt_lookup = NovNativeExecutionReceiptLookupV1::open(native_store_path.as_path())?;
+    let repair_requeue = requeue_network_runtime_native_repair_pending_for_final_missing_v1(
+        chain_id,
+        repair_final_missing_sequence_start,
+    );
     let pending = snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
         chain_id,
         scan_limit,
@@ -11340,6 +11345,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             "effective_limit": limit,
             "scan_limit": scan_limit,
             "repair_final_missing_sequence_start": repair_final_missing_sequence_start,
+            "repair_attempted_unreceipted_requeue": repair_requeue,
             "pending_scanned": pending.len(),
             "selected_count": 0,
             "executed": false,
@@ -11376,6 +11382,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         "effective_limit": limit,
         "scan_limit": scan_limit,
         "repair_final_missing_sequence_start": repair_final_missing_sequence_start,
+        "repair_attempted_unreceipted_requeue": repair_requeue,
         "pending_scanned": pending.len(),
         "selected_count": selected_hashes.len(),
         "selected_tx_hashes": selected_hashes,
