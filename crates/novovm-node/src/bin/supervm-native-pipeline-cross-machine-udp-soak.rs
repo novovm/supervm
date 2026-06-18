@@ -236,6 +236,10 @@ struct UdpAckStateV1 {
     missing_ranges_full_count: u64,
     highest_sequence_seen: Option<u64>,
     latest_ranges: Vec<MissingRangeV1>,
+    novorudp_current_window_id: Option<u64>,
+    novorudp_current_window: Option<MissingRangeV1>,
+    novorudp_current_window_missing_count: u64,
+    novorudp_current_window_missing_ranges: Vec<MissingRangeV1>,
     receiver_done: bool,
 }
 
@@ -929,6 +933,53 @@ fn select_novorudp_repair_ranges_from_ack(
     })
 }
 
+fn select_novorudp_repair_ranges_from_receiver_ack(
+    ack: &UdpAckStateV1,
+    expected: u64,
+    window_size: u64,
+    max_window_retries: u64,
+) -> Option<NovoRudpRepairSelectionV1> {
+    if ack.receiver_done || ack.latest_missing_count == 0 {
+        return None;
+    }
+    if let Some(window) = ack.novorudp_current_window {
+        if ack.novorudp_current_window_missing_count == 0 {
+            return None;
+        }
+        let window_ranges = if ack.novorudp_current_window_missing_ranges.is_empty() {
+            missing_ranges_intersection_with_window(
+                ack.latest_ranges.as_slice(),
+                window.start,
+                window.end_inclusive,
+            )
+        } else {
+            missing_ranges_intersection_with_window(
+                ack.novorudp_current_window_missing_ranges.as_slice(),
+                window.start,
+                window.end_inclusive,
+            )
+        };
+        if !window_ranges.is_empty() {
+            return Some(NovoRudpRepairSelectionV1 {
+                window_id: ack
+                    .novorudp_current_window_id
+                    .unwrap_or_else(|| window.start / window_size.max(1)),
+                window,
+                ranges: window_ranges,
+                used_full_missing_bitmap: true,
+            });
+        }
+    }
+    select_novorudp_repair_ranges_from_ack(
+        ack.latest_ranges.as_slice(),
+        expected,
+        window_size,
+        ack.latest_missing_count,
+        ack.missing_ranges_full_count,
+        max_window_retries,
+    )
+}
+
 fn tail_gap_range_from_ack(
     tx_count: u64,
     latest_missing_count: Option<u64>,
@@ -1360,6 +1411,162 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn real_sender_uses_receiver_owned_current_window() {
+        let ack_value = serde_json::json!({
+            "schema": "novovm-native-pipeline-cross-machine-sustained-ack/v1",
+            "expected_tx_total": 14400,
+            "missing_count": 248,
+            "missing_ranges_full_count": 1,
+            "missing_ranges_sample": [{"start": 14152, "end_inclusive": 14399}],
+            "novorudp_current_window_id": 221,
+            "novorudp_current_window_start": 14152,
+            "novorudp_current_window_end_inclusive": 14215,
+            "novorudp_current_window_missing_count": 64,
+            "novorudp_current_window_missing_ranges_sample": [{"start": 14152, "end_inclusive": 14215}],
+            "ack_epoch": 500,
+            "receiver_done": false,
+        });
+        let ack = parse_ack_value(&ack_value, 256).expect("ack");
+        let selection = select_novorudp_repair_ranges_from_receiver_ack(&ack, 14400, 64, 16)
+            .expect("selection");
+
+        assert_eq!(
+            selection.window,
+            MissingRangeV1 {
+                start: 14152,
+                end_inclusive: 14215
+            }
+        );
+        assert_eq!(
+            selection.ranges,
+            vec![MissingRangeV1 {
+                start: 14152,
+                end_inclusive: 14215
+            }]
+        );
+        assert!(selection.used_full_missing_bitmap);
+    }
+
+    #[test]
+    fn real_sender_rejects_stale_ack_for_repair() {
+        let latest_epoch = 500u64;
+        let stale_ack = serde_json::json!({
+            "schema": "novovm-native-pipeline-cross-machine-sustained-ack/v1",
+            "missing_count": 10648,
+            "missing_ranges_full_count": 1,
+            "missing_ranges_sample": [{"start": 3752, "end_inclusive": 14399}],
+            "novorudp_current_window_id": 58,
+            "novorudp_current_window_start": 3752,
+            "novorudp_current_window_end_inclusive": 3815,
+            "novorudp_current_window_missing_count": 64,
+            "novorudp_current_window_missing_ranges_sample": [{"start": 3752, "end_inclusive": 3815}],
+            "ack_epoch": 499,
+            "receiver_done": false,
+        });
+        let ack = parse_ack_value(&stale_ack, 256).expect("ack");
+
+        assert!(ack.latest_epoch <= latest_epoch);
+        assert!(
+            ack.latest_epoch > latest_epoch
+                || select_novorudp_repair_ranges_from_receiver_ack(&ack, 14400, 64, 16).is_some()
+        );
+        assert!(
+            ack.latest_epoch <= latest_epoch,
+            "real sender gate must reject this ack before repair selection"
+        );
+    }
+
+    #[test]
+    fn real_sender_does_not_advance_until_window_bitmap_zero() {
+        let ack_value = serde_json::json!({
+            "schema": "novovm-native-pipeline-cross-machine-sustained-ack/v1",
+            "missing_count": 32,
+            "missing_ranges_full_count": 1,
+            "missing_ranges_sample": [{"start": 14184, "end_inclusive": 14215}],
+            "novorudp_current_window_id": 221,
+            "novorudp_current_window_start": 14152,
+            "novorudp_current_window_end_inclusive": 14215,
+            "novorudp_current_window_missing_count": 32,
+            "novorudp_current_window_missing_ranges_sample": [{"start": 14184, "end_inclusive": 14215}],
+            "ack_epoch": 501,
+            "receiver_done": false,
+        });
+        let ack = parse_ack_value(&ack_value, 256).expect("ack");
+        let selection = select_novorudp_repair_ranges_from_receiver_ack(&ack, 14400, 64, 16)
+            .expect("selection");
+
+        assert_eq!(ack.novorudp_current_window_missing_count, 32);
+        assert_eq!(
+            selection.window,
+            MissingRangeV1 {
+                start: 14152,
+                end_inclusive: 14215
+            }
+        );
+        assert_eq!(
+            selection.ranges,
+            vec![MissingRangeV1 {
+                start: 14184,
+                end_inclusive: 14215
+            }]
+        );
+        assert!(!ack.receiver_done);
+    }
+
+    #[test]
+    fn real_sender_uses_full_current_missing_bitmap_not_sample() {
+        let ack_value = serde_json::json!({
+            "schema": "novovm-native-pipeline-cross-machine-sustained-ack/v1",
+            "missing_count": 238,
+            "missing_ranges_full_count": 1,
+            "missing_ranges_sample": [{"start": 14162, "end_inclusive": 14399}],
+            "novorudp_current_window_id": 221,
+            "novorudp_current_window_start": 14162,
+            "novorudp_current_window_end_inclusive": 14225,
+            "novorudp_current_window_missing_count": 64,
+            "novorudp_current_window_missing_ranges_sample": [
+                {"start": 14162, "end_inclusive": 14175},
+                {"start": 14190, "end_inclusive": 14225}
+            ],
+            "ack_epoch": 502,
+            "receiver_done": false,
+        });
+        let ack = parse_ack_value(&ack_value, 256).expect("ack");
+        let selection = select_novorudp_repair_ranges_from_receiver_ack(&ack, 14400, 64, 16)
+            .expect("selection");
+
+        assert_eq!(selection.ranges.len(), 2);
+        assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 50);
+        assert_eq!(selection.window.start, 14162);
+        assert_eq!(selection.window.end_inclusive, 14225);
+    }
+
+    #[test]
+    fn real_receiver_ack_advances_window_only_after_bitmap_zero() {
+        let ack_before = receiver_ack_report_value(14400, 14152, 256, 1);
+        let before = parse_ack_value(&ack_before, 256).expect("ack before");
+        assert_eq!(
+            before.novorudp_current_window,
+            Some(MissingRangeV1 {
+                start: 14152,
+                end_inclusive: 14215,
+            })
+        );
+        assert_eq!(before.novorudp_current_window_missing_count, 64);
+
+        let ack_after = receiver_ack_report_value(14400, 14216, 256, 2);
+        let after = parse_ack_value(&ack_after, 256).expect("ack after");
+        assert_eq!(
+            after.novorudp_current_window,
+            Some(MissingRangeV1 {
+                start: 14216,
+                end_inclusive: 14279,
+            })
+        );
+        assert_eq!(after.novorudp_current_window_missing_count, 64);
+    }
+
+    #[test]
     fn novorudp_sender_finalization_times_out_when_receiver_never_done() {
         with_sender_hard_timeout_env(200, || {
             let chain_id = 92_001;
@@ -1501,15 +1708,9 @@ fn read_missing_ranges_from_ack(path: &Path, limit: u64) -> Option<Vec<MissingRa
     Some(ranges)
 }
 
-fn parse_ack_value(value: &Value, limit: u64) -> Option<UdpAckStateV1> {
-    if value.get("packet_type").and_then(Value::as_str) != Some("native_pipeline_ack_v1")
-        && value.get("schema").and_then(Value::as_str)
-            != Some("novovm-native-pipeline-cross-machine-sustained-ack/v1")
-    {
-        return None;
-    }
-    let ranges = value
-        .get("missing_ranges_sample")
+fn missing_ranges_from_value_key(value: &Value, key: &str, limit: u64) -> Vec<MissingRangeV1> {
+    value
+        .get(key)
         .and_then(Value::as_array)
         .map(|items| {
             items
@@ -1528,7 +1729,36 @@ fn parse_ack_value(value: &Value, limit: u64) -> Option<UdpAckStateV1> {
                 .take(limit as usize)
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+fn parse_ack_value(value: &Value, limit: u64) -> Option<UdpAckStateV1> {
+    if value.get("packet_type").and_then(Value::as_str) != Some("native_pipeline_ack_v1")
+        && value.get("schema").and_then(Value::as_str)
+            != Some("novovm-native-pipeline-cross-machine-sustained-ack/v1")
+    {
+        return None;
+    }
+    let ranges = missing_ranges_from_value_key(value, "missing_ranges_sample", limit);
+    let current_window_missing_ranges = missing_ranges_from_value_key(
+        value,
+        "novorudp_current_window_missing_ranges_sample",
+        limit,
+    );
+    let current_window = value
+        .get("novorudp_current_window_start")
+        .and_then(Value::as_u64)
+        .zip(
+            value
+                .get("novorudp_current_window_end_inclusive")
+                .and_then(Value::as_u64),
+        )
+        .and_then(|(start, end_inclusive)| {
+            (end_inclusive >= start).then_some(MissingRangeV1 {
+                start,
+                end_inclusive,
+            })
+        });
     Some(UdpAckStateV1 {
         received_count: 1,
         latest_epoch: value
@@ -1545,6 +1775,15 @@ fn parse_ack_value(value: &Value, limit: u64) -> Option<UdpAckStateV1> {
             .unwrap_or_else(|| ranges.len().try_into().unwrap_or(u64::MAX)),
         highest_sequence_seen: value.get("highest_sequence_seen").and_then(Value::as_u64),
         latest_ranges: ranges,
+        novorudp_current_window_id: value
+            .get("novorudp_current_window_id")
+            .and_then(Value::as_u64),
+        novorudp_current_window: current_window,
+        novorudp_current_window_missing_count: value
+            .get("novorudp_current_window_missing_count")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| missing_ranges_count(current_window_missing_ranges.as_slice())),
+        novorudp_current_window_missing_ranges: current_window_missing_ranges,
         receiver_done: value
             .get("receiver_done")
             .and_then(Value::as_bool)
@@ -4326,9 +4565,11 @@ fn run_sender(
                     }
                 }
             }
-            let udp_ranges = udp_ack_state
+            let udp_ack_for_repair = udp_ack_state
                 .as_ref()
-                .filter(|state| state.received_count > 0 && !state.latest_ranges.is_empty())
+                .filter(|state| state.received_count > 0 && state.latest_missing_count > 0);
+            let udp_ranges = udp_ack_for_repair
+                .filter(|state| !state.latest_ranges.is_empty())
                 .map(|state| state.latest_ranges.clone());
             let ack_path = ack_report_path();
             let file_ack_ranges =
@@ -4337,16 +4578,13 @@ fn run_sender(
             let mut novorudp_window_range_this_round: Option<MissingRangeV1> = None;
             let mut novorudp_selected_ranges_this_round = Vec::<MissingRangeV1>::new();
             let mut novorudp_used_full_missing_bitmap_this_round = false;
-            let mut txs = if let Some(ranges) = udp_ranges.as_ref() {
+            let mut txs = if let Some(state) = udp_ack_for_repair {
                 tail_repair_udp_ack_used_count = tail_repair_udp_ack_used_count.saturating_add(1);
                 let selected_ranges = if novorudp.enabled {
-                    if let Some(selection) = select_novorudp_repair_ranges_from_ack(
-                        ranges.as_slice(),
+                    if let Some(selection) = select_novorudp_repair_ranges_from_receiver_ack(
+                        state,
                         tx_count,
                         novorudp.window_size,
-                        missing_count_before,
-                        latest_ack_missing_ranges_full_count
-                            .unwrap_or_else(|| ranges.len().try_into().unwrap_or(u64::MAX)),
                         novorudp.tail_window_max_retries,
                     ) {
                         novorudp_window_id_this_round = Some(selection.window_id);
@@ -4363,17 +4601,16 @@ fn run_sender(
                         Vec::new()
                     }
                 } else {
-                    ranges.clone()
+                    state.latest_ranges.clone()
                 };
                 repair_used_full_missing_ranges = if novorudp.enabled {
                     repair_used_full_missing_ranges || novorudp_used_full_missing_bitmap_this_round
                 } else {
-                    latest_ack_missing_ranges_full_count
-                        .map(|full_count| full_count <= ranges.len().try_into().unwrap_or(u64::MAX))
-                        .unwrap_or(false)
+                    state.missing_ranges_full_count
+                        <= state.latest_ranges.len().try_into().unwrap_or(u64::MAX)
                 };
                 tail_repair_missing_ranges_seen = tail_repair_missing_ranges_seen
-                    .saturating_add(ranges.len().try_into().unwrap_or(u64::MAX));
+                    .saturating_add(state.latest_ranges.len().try_into().unwrap_or(u64::MAX));
                 final_missing_count = missing_ranges_count(selected_ranges.as_slice());
                 repair_sequence_sent_count =
                     repair_sequence_sent_count.saturating_add(final_missing_count);
