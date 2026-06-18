@@ -2477,6 +2477,37 @@ fn write_synthetic_receiver_failure_report(
             "repair_final_missing_invariant_violation_count": repair_source
                 .and_then(|sample| sample.get("repair_final_missing_invariant_violation_count"))
                 .and_then(Value::as_u64),
+            "repair_final_missing_sequence_to_tx_hash_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_sequence_to_tx_hash_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_tx_hash_payload_hit_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_tx_hash_payload_hit_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_payload_missing_by_sequence_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_payload_missing_by_sequence_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_payload_missing_ranges_sample": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_payload_missing_ranges_sample"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "repair_sequence_payload_index_count": repair_source
+                .and_then(|sample| sample.get("repair_sequence_payload_index_count"))
+                .and_then(Value::as_u64),
+            "repair_sequence_payload_index_final_missing_overlap_count": repair_source
+                .and_then(|sample| sample.get("repair_sequence_payload_index_final_missing_overlap_count"))
+                .and_then(Value::as_u64),
+            "repair_sequence_payload_index_evicted_count": repair_source
+                .and_then(|sample| sample.get("repair_sequence_payload_index_evicted_count"))
+                .and_then(Value::as_u64),
+            "repair_payload_retention_false_negative_suspected": repair_source
+                .and_then(|sample| sample.get("repair_payload_retention_false_negative_suspected"))
+                .and_then(Value::as_bool),
+            "repair_final_missing_payload_recovered_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_payload_recovered_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_payload_recovered_requeued_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_payload_recovered_requeued_count"))
+                .and_then(Value::as_u64),
             "repair_sequence_duplicate_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_duplicate_count"))
                 .and_then(Value::as_u64),
@@ -2538,6 +2569,37 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(Value::as_u64),
             "repair_final_missing_invariant_violation_count": repair_source
                 .and_then(|sample| sample.get("repair_final_missing_invariant_violation_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_sequence_to_tx_hash_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_sequence_to_tx_hash_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_tx_hash_payload_hit_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_tx_hash_payload_hit_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_payload_missing_by_sequence_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_payload_missing_by_sequence_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_payload_missing_ranges_sample": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_payload_missing_ranges_sample"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "repair_sequence_payload_index_count": repair_source
+                .and_then(|sample| sample.get("repair_sequence_payload_index_count"))
+                .and_then(Value::as_u64),
+            "repair_sequence_payload_index_final_missing_overlap_count": repair_source
+                .and_then(|sample| sample.get("repair_sequence_payload_index_final_missing_overlap_count"))
+                .and_then(Value::as_u64),
+            "repair_sequence_payload_index_evicted_count": repair_source
+                .and_then(|sample| sample.get("repair_sequence_payload_index_evicted_count"))
+                .and_then(Value::as_u64),
+            "repair_payload_retention_false_negative_suspected": repair_source
+                .and_then(|sample| sample.get("repair_payload_retention_false_negative_suspected"))
+                .and_then(Value::as_bool),
+            "repair_final_missing_payload_recovered_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_payload_recovered_count"))
+                .and_then(Value::as_u64),
+            "repair_final_missing_payload_recovered_requeued_count": repair_source
+                .and_then(|sample| sample.get("repair_final_missing_payload_recovered_requeued_count"))
                 .and_then(Value::as_u64),
         },
         "receiver_ack_snapshot": {
@@ -3145,6 +3207,16 @@ fn diagnostics_summary_sample(
         "repair_final_missing_payload_available_count": summary_u64(summary, "repair_final_missing_payload_available_count"),
         "repair_final_missing_payload_available_but_inactive_count": summary_u64(summary, "repair_final_missing_payload_available_but_inactive_count"),
         "repair_final_missing_invariant_violation_count": summary_u64(summary, "repair_final_missing_invariant_violation_count"),
+        "repair_final_missing_sequence_to_tx_hash_count": summary_u64(summary, "repair_final_missing_sequence_to_tx_hash_count"),
+        "repair_final_missing_tx_hash_payload_hit_count": summary_u64(summary, "repair_final_missing_tx_hash_payload_hit_count"),
+        "repair_final_missing_payload_missing_by_sequence_count": summary_u64(summary, "repair_final_missing_payload_missing_by_sequence_count"),
+        "repair_final_missing_payload_missing_ranges_sample": summary.get("repair_final_missing_payload_missing_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_payload_index_count": summary_u64(summary, "repair_sequence_payload_index_count"),
+        "repair_sequence_payload_index_final_missing_overlap_count": summary_u64(summary, "repair_sequence_payload_index_final_missing_overlap_count"),
+        "repair_sequence_payload_index_evicted_count": summary_u64(summary, "repair_sequence_payload_index_evicted_count"),
+        "repair_payload_retention_false_negative_suspected": summary.get("repair_payload_retention_false_negative_suspected").and_then(Value::as_bool).unwrap_or(false),
+        "repair_final_missing_payload_recovered_count": summary_u64(summary, "repair_final_missing_payload_recovered_count"),
+        "repair_final_missing_payload_recovered_requeued_count": summary_u64(summary, "repair_final_missing_payload_recovered_requeued_count"),
         "ticks": summary_u64(summary, "ticks"),
         "ticks_per_sec_x1000": summary_u64(summary, "ticks_per_sec_x1000"),
     });
@@ -5630,6 +5702,16 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "repair_final_missing_payload_available_count": summary_u64(&summary, "repair_final_missing_payload_available_count"),
         "repair_final_missing_payload_available_but_inactive_count": summary_u64(&summary, "repair_final_missing_payload_available_but_inactive_count"),
         "repair_final_missing_invariant_violation_count": summary_u64(&summary, "repair_final_missing_invariant_violation_count"),
+        "repair_final_missing_sequence_to_tx_hash_count": summary_u64(&summary, "repair_final_missing_sequence_to_tx_hash_count"),
+        "repair_final_missing_tx_hash_payload_hit_count": summary_u64(&summary, "repair_final_missing_tx_hash_payload_hit_count"),
+        "repair_final_missing_payload_missing_by_sequence_count": summary_u64(&summary, "repair_final_missing_payload_missing_by_sequence_count"),
+        "repair_final_missing_payload_missing_ranges_sample": summary.get("repair_final_missing_payload_missing_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "repair_sequence_payload_index_count": summary_u64(&summary, "repair_sequence_payload_index_count"),
+        "repair_sequence_payload_index_final_missing_overlap_count": summary_u64(&summary, "repair_sequence_payload_index_final_missing_overlap_count"),
+        "repair_sequence_payload_index_evicted_count": summary_u64(&summary, "repair_sequence_payload_index_evicted_count"),
+        "repair_payload_retention_false_negative_suspected": summary.get("repair_payload_retention_false_negative_suspected").and_then(Value::as_bool).unwrap_or(false),
+        "repair_final_missing_payload_recovered_count": summary_u64(&summary, "repair_final_missing_payload_recovered_count"),
+        "repair_final_missing_payload_recovered_requeued_count": summary_u64(&summary, "repair_final_missing_payload_recovered_requeued_count"),
         "queue_tx_count_last": summary_u64(&summary, "queue_tx_count_last"),
         "queue_active_pending_last": summary_u64(&summary, "queue_active_pending_last"),
         "queue_historical_pending_last": summary_u64(&summary, "queue_historical_pending_last"),

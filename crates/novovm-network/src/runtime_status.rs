@@ -960,6 +960,10 @@ struct NetworkRuntimeNativeRepairProbeStateV1 {
     sequence_seen: HashSet<u64>,
     tx_hash_seen: HashSet<[u8; 32]>,
     tx_hash_to_sequence: HashMap<[u8; 32], u64>,
+    sequence_to_tx_hash: HashMap<u64, [u8; 32]>,
+    repair_payload_by_tx_hash: HashMap<[u8; 32], Vec<u8>>,
+    sequence_payload_index_seen: HashSet<u64>,
+    sequence_payload_missing_seen: HashSet<u64>,
     sequence_duplicate_seen: HashSet<u64>,
     sequence_enqueued_seen: HashSet<u64>,
     sequence_already_receipted_seen: HashSet<u64>,
@@ -983,6 +987,12 @@ struct NetworkRuntimeNativeRepairProbeStateV1 {
     final_missing_payload_available_count: u64,
     final_missing_payload_available_but_inactive_count: u64,
     final_missing_invariant_violation_count: u64,
+    final_missing_sequence_to_tx_hash_count: u64,
+    final_missing_tx_hash_payload_hit_count: u64,
+    final_missing_payload_missing_by_sequence_count: u64,
+    sequence_payload_index_evicted_count: u64,
+    final_missing_payload_recovered_count: u64,
+    final_missing_payload_recovered_requeued_count: u64,
     reject_reason_counts: HashMap<String, u64>,
     reject_reason_samples: Vec<String>,
 }
@@ -1054,6 +1064,17 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub repair_final_missing_payload_available_count: u64,
     pub repair_final_missing_payload_available_but_inactive_count: u64,
     pub repair_final_missing_invariant_violation_count: u64,
+    pub repair_final_missing_sequence_to_tx_hash_count: u64,
+    pub repair_final_missing_tx_hash_payload_hit_count: u64,
+    pub repair_final_missing_payload_missing_by_sequence_count: u64,
+    pub repair_final_missing_payload_missing_ranges_sample:
+        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub repair_sequence_payload_index_count: u64,
+    pub repair_sequence_payload_index_final_missing_overlap_count: u64,
+    pub repair_sequence_payload_index_evicted_count: u64,
+    pub repair_payload_retention_false_negative_suspected: bool,
+    pub repair_final_missing_payload_recovered_count: u64,
+    pub repair_final_missing_payload_recovered_requeued_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1440,6 +1461,30 @@ fn network_runtime_native_repair_probe_summary_v1(
             .final_missing_payload_available_but_inactive_count,
         repair_final_missing_invariant_violation_count: state
             .final_missing_invariant_violation_count,
+        repair_final_missing_sequence_to_tx_hash_count: state
+            .final_missing_sequence_to_tx_hash_count,
+        repair_final_missing_tx_hash_payload_hit_count: state.final_missing_tx_hash_payload_hit_count,
+        repair_final_missing_payload_missing_by_sequence_count: state
+            .final_missing_payload_missing_by_sequence_count,
+        repair_final_missing_payload_missing_ranges_sample:
+            network_runtime_native_repair_sequence_ranges_sample_v1(
+                &state.sequence_payload_missing_seen,
+                64,
+            ),
+        repair_sequence_payload_index_count: state
+            .sequence_payload_index_seen
+            .len()
+            .try_into()
+            .unwrap_or(u64::MAX),
+        repair_sequence_payload_index_final_missing_overlap_count: state
+            .final_missing_tx_hash_payload_hit_count,
+        repair_sequence_payload_index_evicted_count: state.sequence_payload_index_evicted_count,
+        repair_payload_retention_false_negative_suspected: state
+            .final_missing_payload_missing_by_sequence_count
+            > 0,
+        repair_final_missing_payload_recovered_count: state.final_missing_payload_recovered_count,
+        repair_final_missing_payload_recovered_requeued_count: state
+            .final_missing_payload_recovered_requeued_count,
         ..Default::default()
     }
 }
@@ -1493,6 +1538,25 @@ fn apply_network_runtime_native_repair_probe_summary_v1(
         repair.repair_final_missing_payload_available_but_inactive_count;
     summary.repair_final_missing_invariant_violation_count =
         repair.repair_final_missing_invariant_violation_count;
+    summary.repair_final_missing_sequence_to_tx_hash_count =
+        repair.repair_final_missing_sequence_to_tx_hash_count;
+    summary.repair_final_missing_tx_hash_payload_hit_count =
+        repair.repair_final_missing_tx_hash_payload_hit_count;
+    summary.repair_final_missing_payload_missing_by_sequence_count =
+        repair.repair_final_missing_payload_missing_by_sequence_count;
+    summary.repair_final_missing_payload_missing_ranges_sample =
+        repair.repair_final_missing_payload_missing_ranges_sample.clone();
+    summary.repair_sequence_payload_index_count = repair.repair_sequence_payload_index_count;
+    summary.repair_sequence_payload_index_final_missing_overlap_count =
+        repair.repair_sequence_payload_index_final_missing_overlap_count;
+    summary.repair_sequence_payload_index_evicted_count =
+        repair.repair_sequence_payload_index_evicted_count;
+    summary.repair_payload_retention_false_negative_suspected =
+        repair.repair_payload_retention_false_negative_suspected;
+    summary.repair_final_missing_payload_recovered_count =
+        repair.repair_final_missing_payload_recovered_count;
+    summary.repair_final_missing_payload_recovered_requeued_count =
+        repair.repair_final_missing_payload_recovered_requeued_count;
 }
 
 fn network_runtime_native_repair_probe_reject_v1(
@@ -1625,6 +1689,9 @@ pub fn observe_network_runtime_native_pending_tx_repair_probe_v1(
     }
     state.tx_hash_seen.insert(tx_hash);
     state.tx_hash_to_sequence.insert(tx_hash, sequence);
+    state.sequence_to_tx_hash.insert(sequence, tx_hash);
+    state.repair_payload_by_tx_hash.insert(tx_hash, payload.to_vec());
+    state.sequence_payload_index_seen.insert(sequence);
     state.sequence_accepted_count = state.sequence_accepted_count.saturating_add(1);
 }
 
@@ -1659,6 +1726,17 @@ pub struct NetworkRuntimeNativeRepairPendingRequeueSummaryV1 {
     pub repair_final_missing_payload_available_count: u64,
     pub repair_final_missing_payload_available_but_inactive_count: u64,
     pub repair_final_missing_invariant_violation_count: u64,
+    pub repair_final_missing_sequence_to_tx_hash_count: u64,
+    pub repair_final_missing_tx_hash_payload_hit_count: u64,
+    pub repair_final_missing_payload_missing_by_sequence_count: u64,
+    pub repair_final_missing_payload_missing_ranges_sample:
+        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub repair_sequence_payload_index_count: u64,
+    pub repair_sequence_payload_index_final_missing_overlap_count: u64,
+    pub repair_sequence_payload_index_evicted_count: u64,
+    pub repair_payload_retention_false_negative_suspected: bool,
+    pub repair_final_missing_payload_recovered_count: u64,
+    pub repair_final_missing_payload_recovered_requeued_count: u64,
 }
 
 #[inline]
@@ -1706,10 +1784,17 @@ pub fn requeue_network_runtime_native_repair_pending_for_final_missing_v1(
     let mut summary = NetworkRuntimeNativeRepairPendingRequeueSummaryV1 {
         chain_id,
         final_missing_sequence_start,
+        repair_sequence_payload_index_count: repair_state
+            .sequence_payload_index_seen
+            .len()
+            .try_into()
+            .unwrap_or(u64::MAX),
         ..Default::default()
     };
     let mut sequence_attempted_unreceipted_seen = Vec::<u64>::new();
     let mut sequence_requeued_seen = Vec::<u64>::new();
+    let mut sequence_payload_missing_seen = Vec::<u64>::new();
+    let mut restored_payloads = Vec::<([u8; 32], Vec<u8>)>::new();
     let mut sequence_requeue_failed_count = 0_u64;
     if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
         let chain_txs = guard.entry(chain_id).or_default();
@@ -1717,11 +1802,31 @@ pub fn requeue_network_runtime_native_repair_pending_for_final_missing_v1(
             if *sequence < start_sequence {
                 continue;
             }
-            let payload_exists = payload_available.contains_key(tx_hash);
+            if repair_state.sequence_to_tx_hash.contains_key(sequence) {
+                summary.repair_final_missing_sequence_to_tx_hash_count = summary
+                    .repair_final_missing_sequence_to_tx_hash_count
+                    .saturating_add(1);
+            }
+            if repair_state.sequence_payload_index_seen.contains(sequence) {
+                summary.repair_sequence_payload_index_final_missing_overlap_count = summary
+                    .repair_sequence_payload_index_final_missing_overlap_count
+                    .saturating_add(1);
+            }
+            let pending_payload_exists = payload_available.contains_key(tx_hash);
+            let repair_payload = repair_state.repair_payload_by_tx_hash.get(tx_hash);
+            let payload_exists = pending_payload_exists || repair_payload.is_some();
             if payload_exists {
                 summary.repair_final_missing_payload_available_count = summary
                     .repair_final_missing_payload_available_count
                     .saturating_add(1);
+                summary.repair_final_missing_tx_hash_payload_hit_count = summary
+                    .repair_final_missing_tx_hash_payload_hit_count
+                    .saturating_add(1);
+            } else {
+                summary.repair_final_missing_payload_missing_by_sequence_count = summary
+                    .repair_final_missing_payload_missing_by_sequence_count
+                    .saturating_add(1);
+                sequence_payload_missing_seen.push(*sequence);
             }
             let active = chain_txs
                 .get(tx_hash)
@@ -1738,12 +1843,27 @@ pub fn requeue_network_runtime_native_repair_pending_for_final_missing_v1(
                 sequence_attempted_unreceipted_seen.push(*sequence);
             }
             if active {
+                if !pending_payload_exists {
+                    if let Some(payload) = repair_payload {
+                        restored_payloads.push((*tx_hash, payload.clone()));
+                        summary.repair_final_missing_payload_recovered_count = summary
+                            .repair_final_missing_payload_recovered_count
+                            .saturating_add(1);
+                    }
+                }
                 continue;
             }
             if payload_exists {
                 summary.repair_final_missing_payload_available_but_inactive_count = summary
                     .repair_final_missing_payload_available_but_inactive_count
                     .saturating_add(1);
+                let recovered_from_repair_index = !pending_payload_exists && repair_payload.is_some();
+                if let Some(payload) = repair_payload.filter(|_| !pending_payload_exists) {
+                    restored_payloads.push((*tx_hash, payload.clone()));
+                    summary.repair_final_missing_payload_recovered_count = summary
+                        .repair_final_missing_payload_recovered_count
+                        .saturating_add(1);
+                }
                 let tx = chain_txs.entry(*tx_hash).or_insert_with(|| {
                     NetworkRuntimeNativePendingTxStateV1 {
                         chain_id,
@@ -1795,6 +1915,11 @@ pub fn requeue_network_runtime_native_repair_pending_for_final_missing_v1(
                 summary.repair_attempted_unreceipted_requeued_count = summary
                     .repair_attempted_unreceipted_requeued_count
                     .saturating_add(1);
+                if recovered_from_repair_index {
+                    summary.repair_final_missing_payload_recovered_requeued_count = summary
+                        .repair_final_missing_payload_recovered_requeued_count
+                        .saturating_add(1);
+                }
                 sequence_requeued_seen.push(*sequence);
             } else if attempted {
                 sequence_requeue_failed_count = sequence_requeue_failed_count.saturating_add(1);
@@ -1807,6 +1932,21 @@ pub fn requeue_network_runtime_native_repair_pending_for_final_missing_v1(
             }
         }
     }
+    if !restored_payloads.is_empty() {
+        if let Ok(mut guard) = runtime_native_pending_tx_payload_map().lock() {
+            let chain_payloads = guard.entry(chain_id).or_default();
+            for (tx_hash, payload) in restored_payloads {
+                chain_payloads.insert(tx_hash, payload);
+            }
+        }
+    }
+    summary.repair_final_missing_payload_missing_ranges_sample =
+        network_runtime_native_repair_sequence_ranges_sample_v1(
+            &sequence_payload_missing_seen.iter().copied().collect::<HashSet<_>>(),
+            64,
+        );
+    summary.repair_payload_retention_false_negative_suspected =
+        summary.repair_final_missing_payload_missing_by_sequence_count > 0;
     if let Ok(mut guard) = runtime_native_repair_probe_map().lock() {
         let state = guard.entry(chain_id).or_default();
         state.attempted_unreceipted_count = state
@@ -1830,12 +1970,30 @@ pub fn requeue_network_runtime_native_repair_pending_for_final_missing_v1(
         state.final_missing_invariant_violation_count = state
             .final_missing_invariant_violation_count
             .saturating_add(summary.repair_final_missing_invariant_violation_count);
+        state.final_missing_sequence_to_tx_hash_count = state
+            .final_missing_sequence_to_tx_hash_count
+            .saturating_add(summary.repair_final_missing_sequence_to_tx_hash_count);
+        state.final_missing_tx_hash_payload_hit_count = state
+            .final_missing_tx_hash_payload_hit_count
+            .saturating_add(summary.repair_final_missing_tx_hash_payload_hit_count);
+        state.final_missing_payload_missing_by_sequence_count = state
+            .final_missing_payload_missing_by_sequence_count
+            .saturating_add(summary.repair_final_missing_payload_missing_by_sequence_count);
+        state.final_missing_payload_recovered_count = state
+            .final_missing_payload_recovered_count
+            .saturating_add(summary.repair_final_missing_payload_recovered_count);
+        state.final_missing_payload_recovered_requeued_count = state
+            .final_missing_payload_recovered_requeued_count
+            .saturating_add(summary.repair_final_missing_payload_recovered_requeued_count);
         state
             .sequence_attempted_unreceipted_seen
             .extend(sequence_attempted_unreceipted_seen);
         state
             .sequence_attempted_unreceipted_requeued_seen
             .extend(sequence_requeued_seen);
+        state
+            .sequence_payload_missing_seen
+            .extend(sequence_payload_missing_seen);
         if sequence_requeue_failed_count > 0 {
             *state
                 .reject_reason_counts
@@ -6009,6 +6167,40 @@ pub fn finish_network_runtime_native_sync(
 mod tests {
     use super::*;
 
+    fn build_native_repair_payload_for_test(chain_id: u64, sequence: u64) -> Vec<u8> {
+        let tx = novovm_protocol::NovNativeTxWireV1 {
+            chain_id,
+            kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                caller: vec![(sequence % 251) as u8; 20],
+                account_id: Some(format!("repair-{sequence}")),
+                fee_owner_account_id: Some(format!("repair-{sequence}")),
+                nonce_owner_account_id: Some(format!("repair-{sequence}")),
+                target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                    "treasury".to_string(),
+                ),
+                method: "deposit_reserve".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset": "USDT",
+                    "amount": sequence.saturating_add(1)
+                }))
+                .expect("encode args"),
+                execution_mode: novovm_protocol::NovExecutionModeV1::Batch,
+                execution_policy: novovm_protocol::NovExecutionPolicyV1::Standard,
+                privacy_mode: novovm_protocol::NovPrivacyModeV1::Public,
+                verification_mode: novovm_protocol::NovVerificationModeV1::Standard,
+                fee_policy: novovm_protocol::NovFeePolicyV1 {
+                    pay_asset: "USDT".to_string(),
+                    max_pay_amount: 50,
+                    slippage_bps: 100,
+                },
+                gas_like_limit: Some(90_000),
+                nonce: sequence.saturating_add(1),
+            }),
+            signature: [0x33; 32],
+        };
+        novovm_protocol::encode_nov_native_tx_wire_v1(&tx).expect("encode native repair tx")
+    }
+
     fn clear_runtime_sync_status_for_test(chain_id: u64) {
         if let Ok(mut statuses) = runtime_sync_status_map().lock() {
             statuses.remove(&chain_id);
@@ -8679,6 +8871,148 @@ mod tests {
             )
             .len(),
             1
+        );
+    }
+
+    #[test]
+    fn repair_final_missing_sequence_maps_to_payload_after_remote_repair_accept() {
+        let chain_id = 20628_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let repair_tx = [0xe6; 32];
+        let sequence = 14_399_u64;
+        let payload = build_native_repair_payload_for_test(chain_id, sequence);
+
+        observe_network_runtime_native_pending_tx_repair_probe_v1(
+            chain_id,
+            repair_tx,
+            1,
+            Some(payload.as_slice()),
+        );
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            44,
+            repair_tx,
+            Some(payload.as_slice()),
+        );
+
+        let requeue = requeue_network_runtime_native_repair_pending_for_final_missing_v1(
+            chain_id,
+            Some(sequence),
+        );
+        assert_eq!(requeue.repair_final_missing_sequence_to_tx_hash_count, 1);
+        assert_eq!(requeue.repair_sequence_payload_index_count, 1);
+        assert_eq!(
+            requeue.repair_sequence_payload_index_final_missing_overlap_count,
+            1
+        );
+        assert_eq!(requeue.repair_final_missing_tx_hash_payload_hit_count, 1);
+        assert_eq!(requeue.repair_final_missing_payload_available_count, 1);
+        assert_eq!(
+            get_network_runtime_native_pending_tx_payload_v1(chain_id, repair_tx),
+            Some(payload)
+        );
+    }
+
+    #[test]
+    fn repair_final_missing_payload_available_requeues_by_sequence() {
+        let chain_id = 20629_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let repair_tx = [0xe7; 32];
+        let sequence = 14_168_u64;
+        let payload = build_native_repair_payload_for_test(chain_id, sequence);
+
+        observe_network_runtime_native_pending_tx_repair_probe_v1(
+            chain_id,
+            repair_tx,
+            1,
+            Some(payload.as_slice()),
+        );
+        if let Ok(mut guard) = runtime_native_pending_tx_payload_map().lock() {
+            guard.entry(chain_id).or_default().remove(&repair_tx);
+        }
+
+        let requeue = requeue_network_runtime_native_repair_pending_for_final_missing_v1(
+            chain_id,
+            Some(sequence),
+        );
+        assert_eq!(requeue.repair_final_missing_payload_available_count, 1);
+        assert_eq!(requeue.repair_final_missing_payload_recovered_count, 1);
+        assert_eq!(
+            requeue.repair_final_missing_payload_recovered_requeued_count,
+            1
+        );
+        assert_eq!(requeue.repair_attempted_unreceipted_requeued_count, 1);
+        assert_eq!(requeue.repair_final_missing_payload_missing_by_sequence_count, 0);
+        assert_eq!(
+            get_network_runtime_native_pending_tx_payload_v1(chain_id, repair_tx),
+            Some(payload)
+        );
+        let active = snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
+            chain_id,
+            1,
+            Some(sequence),
+        );
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].tx_hash, repair_tx);
+    }
+
+    #[test]
+    fn repair_payload_retention_survives_cleanup_for_receipt_miss_final_missing() {
+        let chain_id = 20630_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        set_network_runtime_native_budget_hooks_v1(
+            chain_id,
+            EthFullnodeBudgetHooksV1 {
+                pending_tx_ttl_ms: 100,
+                ..default_eth_fullnode_budget_hooks_v1()
+            },
+        );
+        let repair_tx = [0xe8; 32];
+        let sequence = 14_200_u64;
+        let payload = build_native_repair_payload_for_test(chain_id, sequence);
+
+        observe_network_runtime_native_pending_tx_repair_probe_v1(
+            chain_id,
+            repair_tx,
+            1,
+            Some(payload.as_slice()),
+        );
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            chain_id,
+            45,
+            repair_tx,
+            Some(payload.as_slice()),
+        );
+        if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
+            let tx = guard
+                .get_mut(&chain_id)
+                .and_then(|chain_txs| chain_txs.get_mut(&repair_tx))
+                .expect("repair pending");
+            tx.lifecycle_stage = NetworkRuntimeNativePendingTxLifecycleStageV1::Dropped;
+            tx.first_seen_unix_ms = 1;
+            tx.last_updated_unix_ms = 1;
+        }
+        runtime_native_pending_tx_cleanup_v1(chain_id, 10_000);
+        assert!(
+            get_network_runtime_native_pending_tx_payload_v1(chain_id, repair_tx).is_none(),
+            "normal pending payload map can be cleaned"
+        );
+
+        let requeue = requeue_network_runtime_native_repair_pending_for_final_missing_v1(
+            chain_id,
+            Some(sequence),
+        );
+        assert_eq!(requeue.repair_final_missing_sequence_to_tx_hash_count, 1);
+        assert_eq!(requeue.repair_final_missing_payload_available_count, 1);
+        assert_eq!(requeue.repair_final_missing_payload_recovered_count, 1);
+        assert_eq!(requeue.repair_final_missing_payload_missing_by_sequence_count, 0);
+        assert_eq!(requeue.repair_payload_retention_false_negative_suspected, false);
+        assert_eq!(
+            get_network_runtime_native_pending_tx_payload_v1(chain_id, repair_tx),
+            Some(payload)
         );
     }
 
