@@ -899,6 +899,85 @@ fn merge_tail_gap_into_repair_ranges(
 mod novorudp_tests {
     use super::*;
 
+    fn with_sender_hard_timeout_env<T>(timeout_ms: u64, run: impl FnOnce() -> T) -> T {
+        let previous_timeout = std::env::var_os("NOVOVM_NATIVE_PIPELINE_SENDER_HARD_TIMEOUT_MS");
+        let previous_report = std::env::var_os("NOVOVM_NATIVE_PIPELINE_SENDER_REPORT_ON_TIMEOUT");
+        let previous_exit =
+            std::env::var_os("NOVOVM_NATIVE_PIPELINE_SENDER_EXIT_ON_REPAIR_TIMEOUT");
+        std::env::set_var(
+            "NOVOVM_NATIVE_PIPELINE_SENDER_HARD_TIMEOUT_MS",
+            timeout_ms.to_string(),
+        );
+        std::env::set_var("NOVOVM_NATIVE_PIPELINE_SENDER_REPORT_ON_TIMEOUT", "1");
+        std::env::set_var("NOVOVM_NATIVE_PIPELINE_SENDER_EXIT_ON_REPAIR_TIMEOUT", "1");
+        let result = run();
+        match previous_timeout {
+            Some(value) => {
+                std::env::set_var("NOVOVM_NATIVE_PIPELINE_SENDER_HARD_TIMEOUT_MS", value)
+            }
+            None => std::env::remove_var("NOVOVM_NATIVE_PIPELINE_SENDER_HARD_TIMEOUT_MS"),
+        }
+        match previous_report {
+            Some(value) => {
+                std::env::set_var("NOVOVM_NATIVE_PIPELINE_SENDER_REPORT_ON_TIMEOUT", value)
+            }
+            None => std::env::remove_var("NOVOVM_NATIVE_PIPELINE_SENDER_REPORT_ON_TIMEOUT"),
+        }
+        match previous_exit {
+            Some(value) => std::env::set_var(
+                "NOVOVM_NATIVE_PIPELINE_SENDER_EXIT_ON_REPAIR_TIMEOUT",
+                value,
+            ),
+            None => std::env::remove_var("NOVOVM_NATIVE_PIPELINE_SENDER_EXIT_ON_REPAIR_TIMEOUT"),
+        }
+        result
+    }
+
+    fn sender_timeout_tail_repair_config() -> TailRepairConfigV1 {
+        TailRepairConfigV1 {
+            enabled: true,
+            rounds: 8,
+            interval_ms: 10,
+            require_ack: true,
+            missing_sample_limit: 64,
+            fallback_tail_window: 64,
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            batch_size: 8,
+            batch_pause_ms: 0,
+            tail_batch_pause_ms: 0,
+            round_pause_ms: 10,
+        }
+    }
+
+    fn sender_timeout_novorudp_config() -> NovoRudpConfigV1 {
+        NovoRudpConfigV1 {
+            enabled: true,
+            window_size: 64,
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            batch_size: 8,
+            batch_pause_ms: 0,
+            window_ack_wait_ms: 10,
+            max_window_retries: 32,
+            tail_window_max_retries: 32,
+            tail_window_packet_copies: 1,
+            tail_window_batch_size: 8,
+            tail_window_batch_pause_ms: 0,
+            tail_window_ack_wait_ms: 10,
+            no_progress_backoff: true,
+        }
+    }
+
+    fn sender_timeout_sustained_config(tx_count: u64) -> SustainedConfigV1 {
+        SustainedConfigV1 {
+            enabled: false,
+            duration_seconds: 0,
+            tx_per_round: tx_count,
+            round_interval_ms: 0,
+        }
+    }
+
     #[test]
     fn novorudp_first_missing_window_limits_repair_scope() {
         let ranges = vec![MissingRangeV1 {
@@ -974,6 +1053,124 @@ mod novorudp_tests {
         }
         assert_eq!(current_window_missing_count, 0);
         assert!(retry_count <= 16);
+    }
+
+    #[test]
+    fn novorudp_sender_finalization_times_out_when_receiver_never_done() {
+        with_sender_hard_timeout_env(200, || {
+            let chain_id = 92_001;
+            let tx_count = 8;
+            let sender_addr = reserve_udp_addr().expect("sender addr");
+            let receiver_addr = reserve_udp_addr().expect("receiver addr");
+            let ack_bind_addr = reserve_udp_addr().expect("ack bind addr");
+            let ack_target_addr = ack_bind_addr.clone();
+            let ack_thread = std::thread::spawn(move || {
+                let socket = UdpSocket::bind("127.0.0.1:0").expect("ack sender socket");
+                for epoch in 1..=32_u64 {
+                    let ack = receiver_ack_report_value(tx_count, 4, 64, epoch);
+                    let _ = socket.send_to(ack.to_string().as_bytes(), ack_target_addr.as_str());
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            });
+
+            let report = run_sender(
+                chain_id,
+                tx_count,
+                1,
+                2,
+                sender_addr.as_str(),
+                receiver_addr.as_str(),
+                FaultConfigV1 {
+                    enabled: false,
+                    loss_bps: 0,
+                    duplicate_bps: 0,
+                    delay_ms: 0,
+                    reorder_bps: 0,
+                    seed: 0,
+                },
+                sender_timeout_sustained_config(tx_count),
+                sender_timeout_tail_repair_config(),
+                default_udp_send_retry_config(),
+                UdpAckConfigV1 {
+                    enabled: true,
+                    bind_addr: ack_bind_addr,
+                    target_addr: None,
+                    recv_timeout_ms: 10,
+                },
+                sender_timeout_novorudp_config(),
+            )
+            .expect("sender must return a fail report instead of hanging");
+            let _ = ack_thread.join();
+
+            assert_eq!(report["accepted"].as_bool(), Some(false));
+            assert_eq!(
+                report["fail_reason"].as_str(),
+                Some("sender_finalization_timeout")
+            );
+            assert_eq!(report["report_written"].as_bool(), Some(true));
+            assert_eq!(report["sender_hard_timeout_reached"].as_bool(), Some(true));
+            assert!(
+                report["tail_repair"]["tail_repair_udp_ack_received_count"]
+                    .as_u64()
+                    .unwrap_or_default()
+                    > 0
+            );
+            assert_eq!(
+                report["tail_repair"]["latest_ack_receiver_done"].as_bool(),
+                Some(false)
+            );
+        });
+    }
+
+    #[test]
+    fn novorudp_sender_writes_report_on_no_ack_timeout() {
+        with_sender_hard_timeout_env(160, || {
+            let chain_id = 92_002;
+            let tx_count = 4;
+            let sender_addr = reserve_udp_addr().expect("sender addr");
+            let receiver_addr = reserve_udp_addr().expect("receiver addr");
+            let ack_bind_addr = reserve_udp_addr().expect("ack bind addr");
+
+            let report = run_sender(
+                chain_id,
+                tx_count,
+                1,
+                2,
+                sender_addr.as_str(),
+                receiver_addr.as_str(),
+                FaultConfigV1 {
+                    enabled: false,
+                    loss_bps: 0,
+                    duplicate_bps: 0,
+                    delay_ms: 0,
+                    reorder_bps: 0,
+                    seed: 0,
+                },
+                sender_timeout_sustained_config(tx_count),
+                sender_timeout_tail_repair_config(),
+                default_udp_send_retry_config(),
+                UdpAckConfigV1 {
+                    enabled: true,
+                    bind_addr: ack_bind_addr,
+                    target_addr: None,
+                    recv_timeout_ms: 10,
+                },
+                sender_timeout_novorudp_config(),
+            )
+            .expect("sender must return a no-ack fail report instead of hanging");
+
+            assert_eq!(report["accepted"].as_bool(), Some(false));
+            assert_eq!(
+                report["fail_reason"].as_str(),
+                Some("sender_finalization_timeout")
+            );
+            assert_eq!(report["report_written"].as_bool(), Some(true));
+            assert_eq!(report["sender_hard_timeout_reached"].as_bool(), Some(true));
+            assert_eq!(
+                report["tail_repair"]["tail_repair_ack_received_count"].as_u64(),
+                Some(0)
+            );
+        });
     }
 }
 
@@ -3534,6 +3731,23 @@ fn run_sender(
     udp_ack: UdpAckConfigV1,
     novorudp: NovoRudpConfigV1,
 ) -> Result<Value> {
+    let sender_started = Instant::now();
+    let default_sender_hard_timeout_ms = sustained
+        .duration_seconds
+        .saturating_mul(1000)
+        .saturating_add(120_000)
+        .max(1);
+    let sender_hard_timeout_ms = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_SENDER_HARD_TIMEOUT_MS",
+        default_sender_hard_timeout_ms,
+    )?;
+    let sender_report_on_timeout = bool_env("NOVOVM_NATIVE_PIPELINE_SENDER_REPORT_ON_TIMEOUT")
+        || string_env_nonempty("NOVOVM_NATIVE_PIPELINE_SENDER_REPORT_ON_TIMEOUT").is_none();
+    let sender_exit_on_repair_timeout =
+        bool_env("NOVOVM_NATIVE_PIPELINE_SENDER_EXIT_ON_REPAIR_TIMEOUT")
+            || string_env_nonempty("NOVOVM_NATIVE_PIPELINE_SENDER_EXIT_ON_REPAIR_TIMEOUT")
+                .is_none();
+    let mut sender_hard_timeout_reached = false;
     let mut stats = empty_send_stats();
     let mut repair_stats = empty_send_stats();
     let mut tail_repair_ack_received_count = 0u64;
@@ -3597,6 +3811,12 @@ fn run_sender(
     let rounds = div_ceil_u64(tx_count, tx_per_round).max(1);
     let mut sent_unique_target = 0u64;
     for round in 0..rounds {
+        if sender_hard_timeout_ms > 0
+            && sender_started.elapsed() >= Duration::from_millis(sender_hard_timeout_ms)
+        {
+            sender_hard_timeout_reached = true;
+            break;
+        }
         let remaining = tx_count.saturating_sub(sent_unique_target);
         if remaining == 0 {
             break;
@@ -3637,8 +3857,20 @@ fn run_sender(
         };
         let repair_send_config = novorudp.repair_config(tail_repair);
         for repair_round in 0..repair_loop_rounds {
+            if sender_hard_timeout_ms > 0
+                && sender_started.elapsed() >= Duration::from_millis(sender_hard_timeout_ms)
+            {
+                sender_hard_timeout_reached = true;
+                break;
+            }
             if tail_repair.round_pause_ms > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(tail_repair.round_pause_ms));
+            }
+            if sender_hard_timeout_ms > 0
+                && sender_started.elapsed() >= Duration::from_millis(sender_hard_timeout_ms)
+            {
+                sender_hard_timeout_reached = true;
+                break;
             }
             let udp_ack_state = ack_socket.as_ref().map(|socket| {
                 drain_udp_ack_socket(
@@ -3911,6 +4143,13 @@ fn run_sender(
                         "no_progress": true,
                     }));
                 }
+                if sender_exit_on_repair_timeout
+                    && sender_hard_timeout_ms > 0
+                    && sender_started.elapsed() >= Duration::from_millis(sender_hard_timeout_ms)
+                {
+                    sender_hard_timeout_reached = true;
+                    break;
+                }
                 continue;
             }
             let round_stats = send_repair_payloads_paced(
@@ -3964,8 +4203,20 @@ fn run_sender(
             if repair_stats.send_failed_count > 0 {
                 break;
             }
+            if sender_hard_timeout_ms > 0
+                && sender_started.elapsed() >= Duration::from_millis(sender_hard_timeout_ms)
+            {
+                sender_hard_timeout_reached = true;
+                break;
+            }
             if tail_repair.round_pause_ms > 0 {
                 std::thread::sleep(Duration::from_millis(tail_repair.round_pause_ms));
+            }
+            if sender_hard_timeout_ms > 0
+                && sender_started.elapsed() >= Duration::from_millis(sender_hard_timeout_ms)
+            {
+                sender_hard_timeout_reached = true;
+                break;
             }
             let ack_wait_ms = if novorudp.enabled {
                 if tail_gap_this_round.is_some() {
@@ -4080,6 +4331,7 @@ fn run_sender(
     let sender_completed = stats.sent_unique == tx_count && stats.send_failed_count == 0;
     if tail_repair.enabled
         && sender_completed
+        && !sender_hard_timeout_reached
         && !(latest_ack_receiver_done && latest_ack_missing_count == Some(0))
         && final_ack_wait_ms > 0
     {
@@ -4174,6 +4426,12 @@ fn run_sender(
         } else {
             "receiver_done_ack"
         }
+    } else if sender_hard_timeout_reached {
+        if tail_repair_ack_received_count == 0 {
+            "sender_hard_timeout_no_ack"
+        } else {
+            "sender_hard_timeout_latest_ack_missing"
+        }
     } else if tail_repair_ack_received_count == 0 {
         "no_ack"
     } else if final_ack_grace_timeout {
@@ -4186,6 +4444,8 @@ fn run_sender(
     let accepted = sender_completed && tail_repair_success;
     let fail_reason = if accepted {
         None
+    } else if sender_hard_timeout_reached {
+        Some("sender_finalization_timeout")
     } else if !sender_completed {
         Some("sender_send_incomplete")
     } else if tail_repair_ack_received_count == 0 {
@@ -4198,6 +4458,12 @@ fn run_sender(
         "role": "sender",
         "accepted": accepted,
         "fail_reason": fail_reason,
+        "report_written": sender_report_on_timeout || !sender_hard_timeout_reached,
+        "elapsed_ms": sender_started.elapsed().as_millis() as u64,
+        "hard_timeout_ms": sender_hard_timeout_ms,
+        "sender_hard_timeout_reached": sender_hard_timeout_reached,
+        "sender_report_on_timeout": sender_report_on_timeout,
+        "sender_exit_on_repair_timeout": sender_exit_on_repair_timeout,
         "chain_id": chain_id,
         "tx_count": tx_count,
         "tx_target_total": tx_count,
