@@ -1,4 +1,4 @@
-use crate::relay::RelayFrame;
+use crate::relay::{MultiHopRelayFrame, RelayFrame};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayResult<T> {
@@ -6,6 +6,16 @@ pub struct RelayResult<T> {
     pub relay_id: String,
     pub ok: bool,
     pub response: T,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiHopRelayResult {
+    pub request_id: String,
+    pub target_peer_id: String,
+    pub delivered: bool,
+    pub visited_hops: Vec<String>,
+    pub remaining_ttl: u8,
+    pub payload: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +67,44 @@ impl RelayServer {
             RelayFrame::Result { .. } => {
                 unreachable!("RelayServer::forward_with only accepts Forward frame")
             }
+        }
+    }
+
+    pub fn forward_multihop(&self, mut frame: MultiHopRelayFrame) -> MultiHopRelayResult {
+        if frame.ttl == 0 || !frame.is_no_ip_route() {
+            return MultiHopRelayResult {
+                request_id: frame.request_id,
+                target_peer_id: frame.target_peer_id,
+                delivered: false,
+                visited_hops: Vec::new(),
+                remaining_ttl: frame.ttl,
+                payload: frame.payload,
+            };
+        }
+
+        let mut visited = Vec::new();
+        for hop in frame.hop_peer_ids.iter() {
+            if frame.ttl == 0 {
+                return MultiHopRelayResult {
+                    request_id: frame.request_id,
+                    target_peer_id: frame.target_peer_id,
+                    delivered: false,
+                    visited_hops: visited,
+                    remaining_ttl: 0,
+                    payload: frame.payload,
+                };
+            }
+            frame.ttl = frame.ttl.saturating_sub(1);
+            visited.push(hop.clone());
+        }
+
+        MultiHopRelayResult {
+            request_id: frame.request_id,
+            target_peer_id: frame.target_peer_id,
+            delivered: frame.ttl > 0 || frame.hop_peer_ids.is_empty(),
+            visited_hops: visited,
+            remaining_ttl: frame.ttl,
+            payload: frame.payload,
         }
     }
 }

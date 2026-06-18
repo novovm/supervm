@@ -8,7 +8,7 @@ pub use server::*;
 
 #[cfg(test)]
 mod tests {
-    use super::{RelayClient, RelayServer};
+    use super::{MultiHopRelayFrame, RelayClient, RelayServer};
 
     #[test]
     fn single_relay_forward_roundtrip() {
@@ -31,5 +31,65 @@ mod tests {
         assert_eq!(result.relay_id, "relay-01");
         assert_eq!(result.request_id, "req-1");
         assert_eq!(result.response, b"echo:ping".to_vec());
+    }
+
+    #[test]
+    fn multihop_relay_preserves_no_ip_identity_route() {
+        let relay_server = RelayServer::new("relay-root");
+        let frame = MultiHopRelayFrame::new(
+            "req-2",
+            "peer-source",
+            "peer-target",
+            vec!["peer-relay-a".to_string(), "peer-relay-b".to_string()],
+            vec!["token-a".to_string(), "token-b".to_string()],
+            3,
+            b"novorudp-frame".to_vec(),
+        );
+
+        let result = relay_server.forward_multihop(frame);
+        assert!(result.delivered);
+        assert_eq!(
+            result.visited_hops,
+            vec!["peer-relay-a".to_string(), "peer-relay-b".to_string()]
+        );
+        assert_eq!(result.remaining_ttl, 1);
+        assert_eq!(result.payload, b"novorudp-frame".to_vec());
+    }
+
+    #[test]
+    fn multihop_relay_rejects_ip_addressed_hop() {
+        let relay_server = RelayServer::new("relay-root");
+        let frame = MultiHopRelayFrame::new(
+            "req-3",
+            "peer-source",
+            "peer-target",
+            vec!["192.168.1.10:39001".to_string()],
+            vec!["token-a".to_string()],
+            3,
+            b"novorudp-frame".to_vec(),
+        );
+
+        let result = relay_server.forward_multihop(frame);
+        assert!(!result.delivered);
+        assert!(result.visited_hops.is_empty());
+    }
+
+    #[test]
+    fn multihop_relay_enforces_ttl() {
+        let relay_server = RelayServer::new("relay-root");
+        let frame = MultiHopRelayFrame::new(
+            "req-4",
+            "peer-source",
+            "peer-target",
+            vec!["peer-relay-a".to_string(), "peer-relay-b".to_string()],
+            vec!["token-a".to_string(), "token-b".to_string()],
+            1,
+            b"novorudp-frame".to_vec(),
+        );
+
+        let result = relay_server.forward_multihop(frame);
+        assert!(!result.delivered);
+        assert_eq!(result.visited_hops, vec!["peer-relay-a".to_string()]);
+        assert_eq!(result.remaining_ttl, 0);
     }
 }

@@ -89,6 +89,7 @@ pub enum OverlayRouteDecision {
     RelayRequired,
     RejectIpAddressedRoute,
     RejectTooManyHops,
+    RejectMissingCamouflageProfile,
 }
 
 pub fn evaluate_overlay_route(
@@ -101,7 +102,16 @@ pub fn evaluate_overlay_route(
     if profile.no_ip_identity_routing && !route_set.is_no_ip_identity_routed() {
         return OverlayRouteDecision::RejectIpAddressedRoute;
     }
+    if profile.relay_required_when_direct_blocked
+        && profile.camouflage_profile.as_ref().is_some_and(|profile| profile.trim().is_empty())
+    {
+        return OverlayRouteDecision::RejectMissingCamouflageProfile;
+    }
     if route_set.requires_relay() {
+        OverlayRouteDecision::RelayRequired
+    } else if profile.relay_required_when_direct_blocked
+        && profile.camouflage_profile.as_ref().is_some_and(|profile| !profile.trim().is_empty())
+    {
         OverlayRouteDecision::RelayRequired
     } else {
         OverlayRouteDecision::DirectAllowed
@@ -147,6 +157,19 @@ mod tests {
         };
         assert_eq!(
             evaluate_overlay_route(&route, &AntiCensorshipProfile::default()),
+            OverlayRouteDecision::RelayRequired
+        );
+    }
+
+    #[test]
+    fn camouflage_profile_can_force_relay_route() {
+        let route = RouteSet::direct(PeerId::new("peer-target"));
+        let profile = AntiCensorshipProfile {
+            camouflage_profile: Some("webtransport-cover-v0".to_string()),
+            ..AntiCensorshipProfile::default()
+        };
+        assert_eq!(
+            evaluate_overlay_route(&route, &profile),
             OverlayRouteDecision::RelayRequired
         );
     }

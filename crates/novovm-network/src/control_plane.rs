@@ -194,6 +194,9 @@ impl ControlPlaneRegistry {
             OverlayRouteDecision::RejectTooManyHops => {
                 return ControlPlaneRegisterResult::RejectedTooManyHops;
             }
+            OverlayRouteDecision::RejectMissingCamouflageProfile => {
+                return ControlPlaneRegisterResult::RejectedMissingCamouflageProfile;
+            }
             OverlayRouteDecision::DirectAllowed | OverlayRouteDecision::RelayRequired => {}
         }
         let key = route_set.target_peer_id.0.clone();
@@ -260,6 +263,9 @@ impl ControlPlaneRegistry {
                 Err(ControlPlaneResolveError::IpAddressedRouteRejected)
             }
             OverlayRouteDecision::RejectTooManyHops => Err(ControlPlaneResolveError::TooManyHops),
+            OverlayRouteDecision::RejectMissingCamouflageProfile => {
+                Err(ControlPlaneResolveError::MissingCamouflageProfile)
+            }
             OverlayRouteDecision::DirectAllowed | OverlayRouteDecision::RelayRequired => {
                 Ok(ResolvedDataPlaneRoute {
                     peer_id: peer_id.clone(),
@@ -283,6 +289,7 @@ pub enum ControlPlaneRegisterResult {
     RejectedNoIpRoutingRequired,
     RejectedIpAddressedRoute,
     RejectedTooManyHops,
+    RejectedMissingCamouflageProfile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,6 +307,7 @@ pub enum ControlPlaneResolveError {
     RouteSetMissing,
     IpAddressedRouteRejected,
     TooManyHops,
+    MissingCamouflageProfile,
 }
 
 #[cfg(test)]
