@@ -948,6 +948,21 @@ fn tail_gap_range_from_ack(
     })
 }
 
+fn novorudp_tail_gap_coverage_limit(window_size: u64, tail_window_max_retries: u64) -> u64 {
+    window_size
+        .max(1)
+        .saturating_mul(tail_window_max_retries.max(1))
+}
+
+fn novorudp_should_send_tail_gap(
+    gap: MissingRangeV1,
+    window_size: u64,
+    tail_window_max_retries: u64,
+) -> bool {
+    missing_ranges_count(&[gap])
+        <= novorudp_tail_gap_coverage_limit(window_size, tail_window_max_retries)
+}
+
 #[cfg(test)]
 fn merge_tail_gap_into_repair_ranges(
     selected_ranges: &[MissingRangeV1],
@@ -1225,6 +1240,123 @@ mod novorudp_tests {
         assert!(selection.used_full_missing_bitmap);
         assert_eq!(selection.ranges, ranges);
         assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 244);
+    }
+
+    #[test]
+    fn novorudp_sender_recomputes_repair_window_when_ack_progresses() {
+        let config = sender_timeout_novorudp_config();
+        let old_ack_ranges = vec![MissingRangeV1 {
+            start: 3752,
+            end_inclusive: 14399,
+        }];
+        let old_selection = select_novorudp_repair_ranges_from_ack(
+            old_ack_ranges.as_slice(),
+            14400,
+            config.window_size,
+            10648,
+            old_ack_ranges.len() as u64,
+            config.tail_window_max_retries,
+        )
+        .expect("old ack selection");
+        assert_eq!(old_selection.window.start, 3752);
+        assert_eq!(old_selection.window.end_inclusive, 3815);
+
+        let stale_tail_gap =
+            tail_gap_range_from_ack(14400, Some(10648), Some(3751)).expect("stale tail gap");
+        assert!(!novorudp_should_send_tail_gap(
+            stale_tail_gap,
+            config.window_size,
+            config.tail_window_max_retries
+        ));
+
+        let new_ack_ranges = vec![MissingRangeV1 {
+            start: 14163,
+            end_inclusive: 14399,
+        }];
+        let new_selection = select_novorudp_repair_ranges_from_ack(
+            new_ack_ranges.as_slice(),
+            14400,
+            config.window_size,
+            237,
+            new_ack_ranges.len() as u64,
+            config.tail_window_max_retries,
+        )
+        .expect("new ack selection");
+        assert!(new_selection.used_full_missing_bitmap);
+        assert_eq!(new_selection.window.start, 14163);
+        assert_eq!(new_selection.window.end_inclusive, 14399);
+        assert_eq!(new_selection.ranges, new_ack_ranges);
+    }
+
+    #[test]
+    fn novorudp_sender_uses_latest_ack_full_missing_bitmap() {
+        let config = sender_timeout_novorudp_config();
+        let ranges = vec![MissingRangeV1 {
+            start: 14162,
+            end_inclusive: 14399,
+        }];
+        let selection = select_novorudp_repair_ranges_from_ack(
+            ranges.as_slice(),
+            14400,
+            config.window_size,
+            238,
+            ranges.len() as u64,
+            config.tail_window_max_retries,
+        )
+        .expect("latest ack selection");
+
+        assert!(selection.used_full_missing_bitmap);
+        assert_eq!(selection.ranges[0].start, 14162);
+        assert_eq!(selection.ranges[0].end_inclusive, 14399);
+        assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 238);
+    }
+
+    #[test]
+    fn novorudp_sender_does_not_send_huge_tail_gap_from_stale_ack() {
+        let config = sender_timeout_novorudp_config();
+        let stale_tail_gap =
+            tail_gap_range_from_ack(14400, Some(10648), Some(3751)).expect("stale tail gap");
+        let final_tail_gap =
+            tail_gap_range_from_ack(14400, Some(238), Some(14161)).expect("final tail gap");
+
+        assert_eq!(stale_tail_gap.start, 3752);
+        assert_eq!(stale_tail_gap.end_inclusive, 14399);
+        assert!(!novorudp_should_send_tail_gap(
+            stale_tail_gap,
+            config.window_size,
+            config.tail_window_max_retries
+        ));
+        assert!(novorudp_should_send_tail_gap(
+            final_tail_gap,
+            config.window_size,
+            config.tail_window_max_retries
+        ));
+    }
+
+    #[test]
+    fn novorudp_sender_does_not_loop_forever_on_stale_ack() {
+        let config = sender_timeout_novorudp_config();
+        let stale_ack_epoch_before = 106u64;
+        let stale_ack_epoch_after = 106u64;
+        let stale_tail_gap =
+            tail_gap_range_from_ack(14400, Some(10648), Some(3751)).expect("stale tail gap");
+        let stale_ack_repair_aborted_count = if stale_ack_epoch_after == stale_ack_epoch_before
+            && !novorudp_should_send_tail_gap(
+                stale_tail_gap,
+                config.window_size,
+                config.tail_window_max_retries,
+            ) {
+            1
+        } else {
+            0
+        };
+
+        assert_eq!(stale_ack_repair_aborted_count, 1);
+        assert!(!novorudp_should_send_tail_gap(
+            stale_tail_gap,
+            config.window_size,
+            config.tail_window_max_retries
+        ));
     }
 
     #[test]
@@ -4038,6 +4170,19 @@ fn run_sender(
     let mut current_window_repair_missing_sequence_sent_count = 0u64;
     let mut current_window_repair_missing_sequence_covered_count = 0u64;
     let mut current_window_ack_missing_count_after: Option<u64> = None;
+    let mut latest_ack_received_at: Option<Instant> = None;
+    let mut latest_ack_stale_rounds = 0u64;
+    let mut latest_ack_stale_duration_ms = 0u64;
+    let mut ack_epoch_at_repair_start: Option<u64> = None;
+    let mut ack_epoch_at_repair_end: Option<u64> = None;
+    let mut ack_highest_sequence_seen_at_repair_start: Option<u64> = None;
+    let mut ack_highest_sequence_seen_at_repair_end: Option<u64> = None;
+    let mut repair_window_recomputed_count = 0u64;
+    let mut repair_window_recomputed_due_to_ack_progress = 0u64;
+    let mut stale_ack_repair_aborted_count = 0u64;
+    let moving_window_enabled = novorudp.enabled;
+    let mut moving_window_last_range: Option<MissingRangeV1> = None;
+    let mut moving_window_last_ack_epoch: Option<u64> = None;
     let final_ack_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS", 10_000)?;
     let final_ack_poll_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS", 500)?.max(1);
     let mut final_ack_wait_elapsed_ms = 0u64;
@@ -4149,12 +4294,27 @@ fn run_sender(
                 .unwrap_or_else(|| tx_count.saturating_sub(stats.sent_unique));
             if let Some(state) = udp_ack_state.as_ref() {
                 if state.received_count > 0 {
+                    let previous_epoch = tail_repair_latest_ack_epoch;
+                    let previous_highest = latest_ack_highest_sequence_seen;
                     tail_repair_ack_received_count =
                         tail_repair_ack_received_count.saturating_add(state.received_count);
                     tail_repair_udp_ack_received_count =
                         tail_repair_udp_ack_received_count.saturating_add(state.received_count);
                     tail_repair_latest_ack_epoch =
                         tail_repair_latest_ack_epoch.max(state.latest_epoch);
+                    latest_ack_received_at = Some(Instant::now());
+                    ack_epoch_at_repair_start = Some(state.latest_epoch);
+                    ack_highest_sequence_seen_at_repair_start = state.highest_sequence_seen;
+                    if novorudp.enabled
+                        && state.latest_epoch > previous_epoch
+                        && state.highest_sequence_seen.unwrap_or_default()
+                            > previous_highest.unwrap_or_default()
+                    {
+                        repair_window_recomputed_count =
+                            repair_window_recomputed_count.saturating_add(1);
+                        repair_window_recomputed_due_to_ack_progress =
+                            repair_window_recomputed_due_to_ack_progress.saturating_add(1);
+                    }
                     latest_ack_missing_count = Some(state.latest_missing_count);
                     latest_ack_missing_ranges_full_count = Some(state.missing_ranges_full_count);
                     latest_ack_highest_sequence_seen = state.highest_sequence_seen;
@@ -4379,11 +4539,28 @@ fn run_sender(
             } else {
                 Vec::new()
             };
-            let tail_gap_this_round = tail_gap_range_from_ack(
+            let raw_tail_gap_this_round = tail_gap_range_from_ack(
                 tx_count,
                 latest_ack_missing_count,
                 latest_ack_highest_sequence_seen,
             );
+            let tail_gap_this_round = if novorudp.enabled {
+                raw_tail_gap_this_round.filter(|gap| {
+                    novorudp_should_send_tail_gap(
+                        *gap,
+                        novorudp.window_size,
+                        novorudp.tail_window_max_retries,
+                    )
+                })
+            } else {
+                raw_tail_gap_this_round
+            };
+            if novorudp.enabled
+                && raw_tail_gap_this_round.is_some()
+                && tail_gap_this_round.is_none()
+            {
+                stale_ack_repair_aborted_count = stale_ack_repair_aborted_count.saturating_add(1);
+            }
             let mut tail_gap_sent_count_this_round = 0u64;
             if let Some(gap) = tail_gap_this_round {
                 let gap_count = missing_ranges_count(&[gap]);
@@ -4395,6 +4572,8 @@ fn run_sender(
                     tail_gap_sent_count_this_round = gap_count;
                     tail_gap_detected = true;
                     tail_gap_range = Some(gap);
+                    moving_window_last_range = Some(gap);
+                    moving_window_last_ack_epoch = Some(tail_repair_latest_ack_epoch);
                     tail_gap_repair_rounds = tail_gap_repair_rounds.saturating_add(1);
                     tail_gap_repair_sent_count =
                         tail_gap_repair_sent_count.saturating_add(gap_count);
@@ -4547,12 +4726,27 @@ fn run_sender(
                         tail_repair_ack_received_count.saturating_add(state.received_count);
                     tail_repair_udp_ack_received_count =
                         tail_repair_udp_ack_received_count.saturating_add(state.received_count);
+                    let previous_epoch = tail_repair_latest_ack_epoch;
+                    let previous_highest = latest_ack_highest_sequence_seen;
                     tail_repair_latest_ack_epoch =
                         tail_repair_latest_ack_epoch.max(state.latest_epoch);
+                    latest_ack_received_at = Some(Instant::now());
                     latest_ack_missing_count = Some(state.latest_missing_count);
                     latest_ack_missing_ranges_full_count = Some(state.missing_ranges_full_count);
                     latest_ack_highest_sequence_seen = state.highest_sequence_seen;
                     latest_ack_receiver_done = state.receiver_done;
+                    ack_epoch_at_repair_end = Some(state.latest_epoch);
+                    ack_highest_sequence_seen_at_repair_end = state.highest_sequence_seen;
+                    if novorudp.enabled
+                        && state.latest_epoch > previous_epoch
+                        && state.highest_sequence_seen.unwrap_or_default()
+                            > previous_highest.unwrap_or_default()
+                    {
+                        repair_window_recomputed_count =
+                            repair_window_recomputed_count.saturating_add(1);
+                        repair_window_recomputed_due_to_ack_progress =
+                            repair_window_recomputed_due_to_ack_progress.saturating_add(1);
+                    }
                     final_missing_count = state.latest_missing_count;
                     missing_count_after = state.latest_missing_count;
                     ack_epoch_after = state.latest_epoch;
@@ -4584,6 +4778,16 @@ fn run_sender(
                 current_window_repair_missing_sequence_covered_count =
                     current_window_repair_missing_sequence_covered_count
                         .saturating_add(missing_delta.min(sequence_sent_count_this_round));
+            }
+            if ack_after
+                .as_ref()
+                .map(|state| state.received_count == 0)
+                .unwrap_or(true)
+            {
+                latest_ack_stale_rounds = latest_ack_stale_rounds.saturating_add(1);
+                latest_ack_stale_duration_ms = latest_ack_received_at
+                    .map(|received_at| received_at.elapsed().as_millis() as u64)
+                    .unwrap_or_default();
             }
             let no_progress = missing_count_after >= missing_count_before;
             if no_progress {
@@ -4698,6 +4902,7 @@ fn run_sender(
             tail_repair_udp_ack_received_count =
                 tail_repair_udp_ack_received_count.saturating_add(state.received_count);
             tail_repair_latest_ack_epoch = tail_repair_latest_ack_epoch.max(state.latest_epoch);
+            latest_ack_received_at = Some(Instant::now());
             latest_ack_missing_count = Some(state.latest_missing_count);
             latest_ack_missing_ranges_full_count = Some(state.missing_ranges_full_count);
             latest_ack_highest_sequence_seen = state.highest_sequence_seen;
@@ -4767,6 +4972,11 @@ fn run_sender(
     } else if sender_hard_timeout_reached {
         if tail_repair_ack_received_count == 0 {
             "sender_hard_timeout_no_ack"
+        } else if latest_ack_stale_rounds > 0
+            && latest_ack_missing_count.unwrap_or_default() > 0
+            && !latest_ack_receiver_done
+        {
+            "sender_finalization_timeout_stale_ack"
         } else {
             "sender_hard_timeout_latest_ack_missing"
         }
@@ -4783,7 +4993,14 @@ fn run_sender(
     let fail_reason = if accepted {
         None
     } else if sender_hard_timeout_reached {
-        Some("sender_finalization_timeout")
+        if latest_ack_stale_rounds > 0
+            && latest_ack_missing_count.unwrap_or_default() > 0
+            && !latest_ack_receiver_done
+        {
+            Some("sender_finalization_timeout_stale_ack")
+        } else {
+            Some("sender_finalization_timeout")
+        }
     } else if !sender_completed {
         Some("sender_send_incomplete")
     } else if tail_repair_ack_received_count == 0 {
@@ -4845,6 +5062,19 @@ fn run_sender(
             "current_window_repair_missing_sequence_sent_count": current_window_repair_missing_sequence_sent_count,
             "current_window_repair_missing_sequence_covered_count": current_window_repair_missing_sequence_covered_count,
             "current_window_ack_missing_count_after": current_window_ack_missing_count_after,
+            "latest_ack_age_ms": latest_ack_received_at.map(|received_at| received_at.elapsed().as_millis() as u64),
+            "latest_ack_stale_rounds": latest_ack_stale_rounds,
+            "latest_ack_stale_duration_ms": latest_ack_stale_duration_ms,
+            "ack_epoch_at_repair_start": ack_epoch_at_repair_start,
+            "ack_epoch_at_repair_end": ack_epoch_at_repair_end,
+            "ack_highest_sequence_seen_at_repair_start": ack_highest_sequence_seen_at_repair_start,
+            "ack_highest_sequence_seen_at_repair_end": ack_highest_sequence_seen_at_repair_end,
+            "repair_window_recomputed_count": repair_window_recomputed_count,
+            "repair_window_recomputed_due_to_ack_progress": repair_window_recomputed_due_to_ack_progress,
+            "stale_ack_repair_aborted_count": stale_ack_repair_aborted_count,
+            "moving_window_enabled": moving_window_enabled,
+            "moving_window_last_range": missing_ranges_to_json(moving_window_last_range.as_slice(), 1),
+            "moving_window_last_ack_epoch": moving_window_last_ack_epoch,
             "windows_detail_sample": novorudp_windows_detail_sample,
         },
         "sender_completed": sender_completed,
@@ -4944,6 +5174,19 @@ fn run_sender(
             "current_window_repair_missing_sequence_sent_count": current_window_repair_missing_sequence_sent_count,
             "current_window_repair_missing_sequence_covered_count": current_window_repair_missing_sequence_covered_count,
             "current_window_ack_missing_count_after": current_window_ack_missing_count_after,
+            "latest_ack_age_ms": latest_ack_received_at.map(|received_at| received_at.elapsed().as_millis() as u64),
+            "latest_ack_stale_rounds": latest_ack_stale_rounds,
+            "latest_ack_stale_duration_ms": latest_ack_stale_duration_ms,
+            "ack_epoch_at_repair_start": ack_epoch_at_repair_start,
+            "ack_epoch_at_repair_end": ack_epoch_at_repair_end,
+            "ack_highest_sequence_seen_at_repair_start": ack_highest_sequence_seen_at_repair_start,
+            "ack_highest_sequence_seen_at_repair_end": ack_highest_sequence_seen_at_repair_end,
+            "repair_window_recomputed_count": repair_window_recomputed_count,
+            "repair_window_recomputed_due_to_ack_progress": repair_window_recomputed_due_to_ack_progress,
+            "stale_ack_repair_aborted_count": stale_ack_repair_aborted_count,
+            "moving_window_enabled": moving_window_enabled,
+            "moving_window_last_range": missing_ranges_to_json(moving_window_last_range.as_slice(), 1),
+            "moving_window_last_ack_epoch": moving_window_last_ack_epoch,
             "receiver_final_missing_count": receiver_final_missing_count,
             "receiver_final_done": receiver_final_done,
             "final_ack_wait_enabled": final_ack_wait_ms > 0,
