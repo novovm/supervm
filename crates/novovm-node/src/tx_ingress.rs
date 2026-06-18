@@ -29,6 +29,7 @@ use novovm_network::{
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
     snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1,
     snapshot_network_runtime_native_execution_budget_runtime_summary_v1,
+    snapshot_network_runtime_native_pending_tx_summary_v1,
     snapshot_network_runtime_novorudp_ledger_final_missing_admission_candidates_v1,
     NetworkRuntimeNativeBodySnapshotV1, NetworkRuntimeNativeExecutionBudgetTargetObservationV1,
     NetworkRuntimeNativeHeadSnapshotV1, NetworkRuntimeNativePendingTxLifecycleStageV1,
@@ -11393,6 +11394,8 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         selected_hash_bytes.as_slice(),
         selected_raw_payloads.as_slice(),
     );
+    let post_batch_pending_summary =
+        snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
     Ok(serde_json::json!({
         "method": "nov_executePendingNativeTxBatch",
         "accepted": true,
@@ -11408,6 +11411,14 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         "pending_scanned": pending.len(),
         "selected_count": selected_hashes.len(),
         "selected_tx_hashes": selected_hashes,
+        "ledger_final_missing_actual_batch_count": post_batch_pending_summary.ledger_final_missing_actual_batch_count,
+        "ledger_final_missing_actual_batch_ranges_sample": post_batch_pending_summary.ledger_final_missing_actual_batch_ranges_sample,
+        "ledger_final_missing_raw_txs_count": post_batch_pending_summary.ledger_final_missing_raw_txs_count,
+        "ledger_final_missing_batch_result_count": post_batch_pending_summary.ledger_final_missing_batch_result_count,
+        "ledger_final_missing_receipt_written_count": post_batch_pending_summary.ledger_final_missing_receipt_written_count,
+        "ledger_final_missing_receipt_missing_after_admission_count": post_batch_pending_summary.ledger_final_missing_receipt_missing_after_admission_count,
+        "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count": post_batch_pending_summary.ledger_final_missing_admitted_but_no_receipt_invariant_violation_count,
+        "ledger_admission_counter_is_actual_batch": post_batch_pending_summary.ledger_admission_counter_is_actual_batch,
         "executed": true,
         "canonical_projection": canonical_projection,
         "skipped": {
@@ -13819,6 +13830,271 @@ mod tests {
                         .and_then(|value| value.as_str())
                         .expect("selected hash");
                     assert_eq!(selected, to_hex_prefixed_v1(&tx_hash));
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn final_missing_admitted_to_aoem_generates_receipt() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_024;
+                    let native_tx = NovNativeTxWireV1 {
+                        chain_id,
+                        kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                            caller: vec![0x24; 20],
+                            account_id: Some("acct-ledger-receipt".to_string()),
+                            fee_owner_account_id: Some("acct-ledger-receipt".to_string()),
+                            nonce_owner_account_id: Some("acct-ledger-receipt".to_string()),
+                            target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                                "treasury".to_string(),
+                            ),
+                            method: "deposit_reserve".to_string(),
+                            args: serde_json::to_vec(&serde_json::json!({
+                                "asset": "USDT",
+                                "amount": 99
+                            }))
+                            .expect("encode args"),
+                            execution_mode: NovExecutionModeV1::Batch,
+                            execution_policy: NovExecutionPolicyV1::Standard,
+                            privacy_mode: NovPrivacyModeV1::Public,
+                            verification_mode: NovVerificationModeV1::Standard,
+                            fee_policy: NovFeePolicyV1 {
+                                pay_asset: "USDT".to_string(),
+                                max_pay_amount: 50,
+                                slippage_bps: 100,
+                            },
+                            gas_like_limit: Some(90_000),
+                            nonce: 14_113,
+                        }),
+                        signature: [0x24u8; 32],
+                    };
+                    let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                    let (_, _, tx_hash) =
+                        ingest_local_nov_raw_tx_payload_v1(&serde_json::json!({}), raw.as_slice())
+                            .expect("native pending ingress should store payload");
+                    novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
+                        chain_id,
+                        tx_hash,
+                        1,
+                        Some(raw.as_slice()),
+                    );
+
+                    let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
+                        &serde_json::json!({
+                            "chain_id": chain_id,
+                            "limit": 1,
+                            "scan_limit": 1,
+                            "repair_final_missing_sequence_start": 14_112,
+                            "native_execution_store_path": path,
+                        }),
+                    )
+                    .expect("final-missing repair must execute through AOEM");
+
+                    assert_eq!(out["executed"].as_bool(), Some(true));
+                    assert_eq!(out["selected_count"].as_u64(), Some(1));
+                    assert_eq!(
+                        out["selected_tx_hashes"][0].as_str(),
+                        Some(to_hex_prefixed_v1(&tx_hash).as_str())
+                    );
+                    let store = load_nov_native_execution_store_v1(path.as_path())
+                        .expect("execution store should load");
+                    assert_eq!(store.receipts.len(), 1);
+                    let pending =
+                        novovm_network::get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+                            .expect("pending state must remain visible as canonical");
+                    assert_eq!(
+                        pending.lifecycle_stage,
+                        novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+                    );
+                    let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+                    assert_eq!(summary.ledger_final_missing_actual_batch_count, 1);
+                    assert_eq!(summary.ledger_final_missing_receipt_written_count, 1);
+                    assert_eq!(
+                        summary.ledger_final_missing_receipt_missing_after_admission_count,
+                        0
+                    );
+                    assert!(summary.ledger_admission_counter_is_actual_batch);
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn admitted_without_receipt_remains_retryable() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|_path| {
+                    let chain_id = 88_025;
+                    let native_tx = NovNativeTxWireV1 {
+                        chain_id,
+                        kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                            caller: vec![0x25; 20],
+                            account_id: Some("acct-ledger-retryable".to_string()),
+                            fee_owner_account_id: Some("acct-ledger-retryable".to_string()),
+                            nonce_owner_account_id: Some("acct-ledger-retryable".to_string()),
+                            target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                                "treasury".to_string(),
+                            ),
+                            method: "deposit_reserve".to_string(),
+                            args: serde_json::to_vec(&serde_json::json!({
+                                "asset": "USDT",
+                                "amount": 5
+                            }))
+                            .expect("encode args"),
+                            execution_mode: NovExecutionModeV1::Batch,
+                            execution_policy: NovExecutionPolicyV1::Standard,
+                            privacy_mode: NovPrivacyModeV1::Public,
+                            verification_mode: NovVerificationModeV1::Standard,
+                            fee_policy: NovFeePolicyV1 {
+                                pay_asset: "USDT".to_string(),
+                                max_pay_amount: 50,
+                                slippage_bps: 100,
+                            },
+                            gas_like_limit: Some(90_000),
+                            nonce: 14_121,
+                        }),
+                        signature: [0x25u8; 32],
+                    };
+                    let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                    let (_, _, tx_hash) =
+                        ingest_local_nov_raw_tx_payload_v1(&serde_json::json!({}), raw.as_slice())
+                            .expect("native pending ingress should store payload");
+                    novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
+                        chain_id,
+                        tx_hash,
+                        1,
+                        Some(raw.as_slice()),
+                    );
+                    novovm_network::observe_network_runtime_native_pending_tx_repair_aoem_admission_v1(
+                        chain_id,
+                        tx_hash,
+                    );
+
+                    let snapshot =
+                        novovm_network::snapshot_network_runtime_novorudp_ledger_final_missing_admission_candidates_v1(
+                            chain_id,
+                            1,
+                            Some(14_120),
+                        );
+
+                    assert_eq!(snapshot.ledger_final_missing_candidate_count, 1);
+                    assert_eq!(snapshot.candidates.len(), 1);
+                    let pending =
+                        novovm_network::get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+                            .expect("admitted-but-unreceipted repair must stay pending");
+                    assert!(
+                        matches!(
+                            pending.lifecycle_stage,
+                            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+                                | novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Seen
+                                | novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
+                                | novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::ReorgedBackToPending
+                        ),
+                        "admitted-but-unreceipted repair must remain retryable"
+                    );
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn ledger_admission_counter_matches_actual_batch() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_026;
+                    let mut tx_hashes = Vec::new();
+                    for sequence in 14_130..14_133 {
+                        let native_tx = NovNativeTxWireV1 {
+                            chain_id,
+                            kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                                caller: vec![(sequence % 251) as u8; 20],
+                                account_id: Some(format!("acct-ledger-actual-{sequence}")),
+                                fee_owner_account_id: Some(format!(
+                                    "acct-ledger-actual-{sequence}"
+                                )),
+                                nonce_owner_account_id: Some(format!(
+                                    "acct-ledger-actual-{sequence}"
+                                )),
+                                target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                                    "treasury".to_string(),
+                                ),
+                                method: "deposit_reserve".to_string(),
+                                args: serde_json::to_vec(&serde_json::json!({
+                                    "asset": "USDT",
+                                    "amount": 3
+                                }))
+                                .expect("encode args"),
+                                execution_mode: NovExecutionModeV1::Batch,
+                                execution_policy: NovExecutionPolicyV1::Standard,
+                                privacy_mode: NovPrivacyModeV1::Public,
+                                verification_mode: NovVerificationModeV1::Standard,
+                                fee_policy: NovFeePolicyV1 {
+                                    pay_asset: "USDT".to_string(),
+                                    max_pay_amount: 50,
+                                    slippage_bps: 100,
+                                },
+                                gas_like_limit: Some(90_000),
+                                nonce: sequence + 1,
+                            }),
+                            signature: [0x26u8; 32],
+                        };
+                        let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                        let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
+                            &serde_json::json!({}),
+                            raw.as_slice(),
+                        )
+                        .expect("native pending ingress should store payload");
+                        novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
+                            chain_id,
+                            tx_hash,
+                            1,
+                            Some(raw.as_slice()),
+                        );
+                        tx_hashes.push(tx_hash);
+                    }
+
+                    let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
+                        &serde_json::json!({
+                            "chain_id": chain_id,
+                            "limit": 1,
+                            "scan_limit": 1,
+                            "repair_final_missing_sequence_start": 14_130,
+                            "native_execution_store_path": path,
+                        }),
+                    )
+                    .expect("only one actual raw tx should be admitted");
+
+                    assert_eq!(out["selected_count"].as_u64(), Some(1));
+                    assert_eq!(
+                        out["ledger_final_missing_admission"]
+                            ["ledger_final_missing_candidate_count"]
+                            .as_u64(),
+                        Some(3)
+                    );
+                    let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+                    assert_eq!(
+                        summary.ledger_final_missing_actual_batch_count, 1,
+                        "actual batch count must not equal candidate count when limit=1"
+                    );
+                    assert_eq!(summary.ledger_final_missing_receipt_written_count, 1);
+                    assert_eq!(
+                        summary.ledger_final_missing_receipt_missing_after_admission_count,
+                        0
+                    );
+                    assert!(tx_hashes.iter().any(|hash| {
+                        out["selected_tx_hashes"][0].as_str()
+                            == Some(to_hex_prefixed_v1(hash).as_str())
+                    }));
                 })
             },
         )

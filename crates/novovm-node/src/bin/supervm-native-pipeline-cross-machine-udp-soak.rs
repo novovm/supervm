@@ -1673,9 +1673,8 @@ mod novorudp_tests {
             fresh_ack.latest_epoch > latest_epoch
                 && fresh_ack.latest_missing_count < stale_ack.latest_missing_count
         );
-        let selection =
-            select_novorudp_repair_ranges_from_receiver_ack(&fresh_ack, 14400, 64, 16)
-                .expect("fresh ack should drive next repair");
+        let selection = select_novorudp_repair_ranges_from_receiver_ack(&fresh_ack, 14400, 64, 16)
+            .expect("fresh ack should drive next repair");
         assert_eq!(selection.window_id, 221);
         assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 54);
     }
@@ -1726,9 +1725,13 @@ mod novorudp_tests {
                 "NOVOVM_NATIVE_PIPELINE_PROGRESS_SAMPLE_INTERVAL_MS",
                 Some("5000"),
                 || {
-                    with_env_var("NOVOVM_NOVORUDP_ACK_PROGRESS_INTERVAL_MS", Some("250"), || {
-                        assert_eq!(receiver_child_progress_report_interval_ms(), 250);
-                    })
+                    with_env_var(
+                        "NOVOVM_NOVORUDP_ACK_PROGRESS_INTERVAL_MS",
+                        Some("250"),
+                        || {
+                            assert_eq!(receiver_child_progress_report_interval_ms(), 250);
+                        },
+                    )
                 },
             )
         });
@@ -1736,14 +1739,8 @@ mod novorudp_tests {
 
     #[test]
     fn novorudp_sender_extends_repair_deadline_while_ack_progresses() {
-        let decision = novorudp_sender_timeout_decision_v1(
-            1_920_000,
-            0,
-            120_000,
-            2_700_000,
-            false,
-            2_248,
-        );
+        let decision =
+            novorudp_sender_timeout_decision_v1(1_920_000, 0, 120_000, 2_700_000, false, 2_248);
 
         assert_eq!(decision, NovoRudpSenderTimeoutDecisionV1::Continue);
     }
@@ -1751,18 +1748,10 @@ mod novorudp_tests {
     #[test]
     fn novorudp_sender_times_out_only_after_true_no_progress() {
         let decision = novorudp_sender_timeout_decision_v1(
-            1_920_000,
-            120_000,
-            120_000,
-            2_700_000,
-            false,
-            2_248,
+            1_920_000, 120_000, 120_000, 2_700_000, false, 2_248,
         );
 
-        assert_eq!(
-            decision,
-            NovoRudpSenderTimeoutDecisionV1::NoProgressTimeout
-        );
+        assert_eq!(decision, NovoRudpSenderTimeoutDecisionV1::NoProgressTimeout);
     }
 
     #[test]
@@ -2619,12 +2608,7 @@ fn run_receiver_node(
                 state.last_canonical,
             );
             let epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
-            emit_receiver_progress_ack(
-                expected_tx_count,
-                stable_progress,
-                ack_sample_limit,
-                epoch,
-            );
+            emit_receiver_progress_ack(expected_tx_count, stable_progress, ack_sample_limit, epoch);
             last_ack_progress_at = Instant::now();
         }
 
@@ -2767,12 +2751,7 @@ fn run_receiver_node(
             }
             state.last_canonical = stable_progress;
             let epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
-            emit_receiver_progress_ack(
-                expected_tx_count,
-                stable_progress,
-                ack_sample_limit,
-                epoch,
-            );
+            emit_receiver_progress_ack(expected_tx_count, stable_progress, ack_sample_limit, epoch);
             sample["novorudp_ack_progress_interval_ms"] =
                 serde_json::json!(receiver_ack_progress_interval_ms);
             sample["novorudp_ack_epoch_after_sample"] = serde_json::json!(epoch);
@@ -2999,7 +2978,10 @@ fn stable_progress_from_progress_summary(
     let aoem = progress_summary
         .map(|summary| summary_u64(summary, "aoem_executed_total"))
         .unwrap_or_default();
-    canonical.max(ledger_progress).max(aoem).max(fallback_progress)
+    canonical
+        .max(ledger_progress)
+        .max(aoem)
+        .max(fallback_progress)
 }
 
 fn emit_receiver_progress_ack(
@@ -4766,7 +4748,11 @@ fn run_sender(
     )?;
     let repair_no_progress_timeout_ms = u64_env(
         "NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_TIMEOUT_MS",
-        if novorudp.enabled { 120_000 } else { sender_hard_timeout_ms },
+        if novorudp.enabled {
+            120_000
+        } else {
+            sender_hard_timeout_ms
+        },
     )?
     .max(1);
     let absolute_sender_max_timeout_ms = u64_env(
@@ -5494,8 +5480,7 @@ fn run_sender(
                 if repair_progress_this_round {
                     repair_progress_observed_count =
                         repair_progress_observed_count.saturating_add(1);
-                    repair_progress_last_observed_ms =
-                        sender_started.elapsed().as_millis() as u64;
+                    repair_progress_last_observed_ms = sender_started.elapsed().as_millis() as u64;
                     repair_continuation_deadline_extended_count =
                         repair_continuation_deadline_extended_count.saturating_add(1);
                     no_progress_started_at = None;
@@ -5747,12 +5732,14 @@ fn run_sender(
     } else if tail_repair_ack_received_count == 0 {
         Some("receiver_repair_no_ack")
     } else {
-            Some("receiver_repair_incomplete")
+        Some("receiver_repair_incomplete")
     };
     if accepted && sender_exit_reason == "not_finished" {
         sender_exit_reason = "accepted".to_string();
     } else if !accepted && sender_exit_reason == "not_finished" {
-        sender_exit_reason = fail_reason.unwrap_or("receiver_repair_incomplete").to_string();
+        sender_exit_reason = fail_reason
+            .unwrap_or("receiver_repair_incomplete")
+            .to_string();
     }
     let report = serde_json::json!({
         "schema": REPORT_SCHEMA_V1,
@@ -7018,6 +7005,14 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "ledger_final_missing_requeued_before_admission_count": summary_u64(&summary, "ledger_final_missing_requeued_before_admission_count"),
         "ledger_final_missing_admitted_count": summary_u64(&summary, "ledger_final_missing_admitted_count"),
         "ledger_final_missing_admitted_ranges_sample": summary.get("ledger_final_missing_admitted_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "ledger_final_missing_actual_batch_count": summary_u64(&summary, "ledger_final_missing_actual_batch_count"),
+        "ledger_final_missing_actual_batch_ranges_sample": summary.get("ledger_final_missing_actual_batch_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "ledger_final_missing_raw_txs_count": summary_u64(&summary, "ledger_final_missing_raw_txs_count"),
+        "ledger_final_missing_batch_result_count": summary_u64(&summary, "ledger_final_missing_batch_result_count"),
+        "ledger_final_missing_receipt_written_count": summary_u64(&summary, "ledger_final_missing_receipt_written_count"),
+        "ledger_final_missing_receipt_missing_after_admission_count": summary_u64(&summary, "ledger_final_missing_receipt_missing_after_admission_count"),
+        "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count": summary_u64(&summary, "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count"),
+        "ledger_admission_counter_is_actual_batch": summary.get("ledger_admission_counter_is_actual_batch").and_then(Value::as_bool).unwrap_or(false),
         "ledger_final_missing_admission_skipped_count": summary_u64(&summary, "ledger_final_missing_admission_skipped_count"),
         "ledger_final_missing_admission_skip_reason_counts": summary.get("ledger_final_missing_admission_skip_reason_counts").cloned().unwrap_or_else(|| serde_json::json!({})),
         "admission_used_ledger_final_missing_bucket": summary.get("admission_used_ledger_final_missing_bucket").and_then(Value::as_bool).unwrap_or(false),

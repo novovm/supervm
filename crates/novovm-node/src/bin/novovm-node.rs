@@ -34103,6 +34103,14 @@ struct NativeExecutionPipelineAggregateV1 {
     repair_sequence_stale_count: u64,
     repair_sequence_enqueued_count: u64,
     repair_sequence_admitted_to_aoem_count: u64,
+    ledger_final_missing_actual_batch_count: u64,
+    ledger_final_missing_actual_batch_ranges_sample: serde_json::Value,
+    ledger_final_missing_raw_txs_count: u64,
+    ledger_final_missing_batch_result_count: u64,
+    ledger_final_missing_receipt_written_count: u64,
+    ledger_final_missing_receipt_missing_after_admission_count: u64,
+    ledger_final_missing_admitted_but_no_receipt_invariant_violation_count: u64,
+    ledger_admission_counter_is_actual_batch: bool,
     repair_attempted_unreceipted_count: u64,
     repair_attempted_unreceipted_final_missing_overlap_count: u64,
     repair_attempted_unreceipted_requeued_count: u64,
@@ -34217,6 +34225,14 @@ impl NativeExecutionPipelineAggregateV1 {
             repair_sequence_stale_count: 0,
             repair_sequence_enqueued_count: 0,
             repair_sequence_admitted_to_aoem_count: 0,
+            ledger_final_missing_actual_batch_count: 0,
+            ledger_final_missing_actual_batch_ranges_sample: serde_json::json!([]),
+            ledger_final_missing_raw_txs_count: 0,
+            ledger_final_missing_batch_result_count: 0,
+            ledger_final_missing_receipt_written_count: 0,
+            ledger_final_missing_receipt_missing_after_admission_count: 0,
+            ledger_final_missing_admitted_but_no_receipt_invariant_violation_count: 0,
+            ledger_admission_counter_is_actual_batch: false,
             repair_attempted_unreceipted_count: 0,
             repair_attempted_unreceipted_final_missing_overlap_count: 0,
             repair_attempted_unreceipted_requeued_count: 0,
@@ -34699,6 +34715,38 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("repair_final_missing_payload_recovered_requeued_count")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.ledger_final_missing_actual_batch_count = ingress
+            .get("ledger_final_missing_actual_batch_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_actual_batch_ranges_sample = ingress
+            .get("ledger_final_missing_actual_batch_ranges_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.ledger_final_missing_raw_txs_count = ingress
+            .get("ledger_final_missing_raw_txs_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_result_count = ingress
+            .get("ledger_final_missing_batch_result_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_receipt_written_count = ingress
+            .get("ledger_final_missing_receipt_written_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_receipt_missing_after_admission_count = ingress
+            .get("ledger_final_missing_receipt_missing_after_admission_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_admitted_but_no_receipt_invariant_violation_count = ingress
+            .get("ledger_final_missing_admitted_but_no_receipt_invariant_violation_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_admission_counter_is_actual_batch = ingress
+            .get("ledger_admission_counter_is_actual_batch")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
         if let Some(ledger_admission) = report
             .pointer("/tick_result/batch_result/ledger_final_missing_admission")
             .filter(|value| value.is_object())
@@ -35239,6 +35287,40 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "ledger_final_missing_admitted_ranges_sample".to_string(),
             self.ledger_final_missing_admitted_ranges_sample.clone(),
+        );
+        out.insert(
+            "ledger_final_missing_actual_batch_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_actual_batch_count),
+        );
+        out.insert(
+            "ledger_final_missing_actual_batch_ranges_sample".to_string(),
+            self.ledger_final_missing_actual_batch_ranges_sample.clone(),
+        );
+        out.insert(
+            "ledger_final_missing_raw_txs_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_raw_txs_count),
+        );
+        out.insert(
+            "ledger_final_missing_batch_result_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_result_count),
+        );
+        out.insert(
+            "ledger_final_missing_receipt_written_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_receipt_written_count),
+        );
+        out.insert(
+            "ledger_final_missing_receipt_missing_after_admission_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_receipt_missing_after_admission_count),
+        );
+        out.insert(
+            "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count".to_string(),
+            serde_json::json!(
+                self.ledger_final_missing_admitted_but_no_receipt_invariant_violation_count
+            ),
+        );
+        out.insert(
+            "ledger_admission_counter_is_actual_batch".to_string(),
+            serde_json::json!(self.ledger_admission_counter_is_actual_batch),
         );
         out.insert(
             "ledger_final_missing_admission_skipped_count".to_string(),

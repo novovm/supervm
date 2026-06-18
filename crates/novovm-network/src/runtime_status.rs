@@ -976,6 +976,8 @@ struct NetworkRuntimeNativeRepairProbeStateV1 {
     sequence_enqueued_seen: HashSet<u64>,
     sequence_already_receipted_seen: HashSet<u64>,
     sequence_admitted_to_aoem_seen: HashSet<u64>,
+    sequence_actual_batch_seen: HashSet<u64>,
+    sequence_receipt_written_seen: HashSet<u64>,
     sequence_attempted_unreceipted_seen: HashSet<u64>,
     sequence_attempted_unreceipted_requeued_seen: HashSet<u64>,
     sequence_accepted_count: u64,
@@ -988,6 +990,8 @@ struct NetworkRuntimeNativeRepairProbeStateV1 {
     sequence_stale_count: u64,
     sequence_enqueued_count: u64,
     sequence_admitted_to_aoem_count: u64,
+    final_missing_actual_batch_count: u64,
+    final_missing_receipt_written_count: u64,
     attempted_unreceipted_count: u64,
     attempted_unreceipted_final_missing_overlap_count: u64,
     attempted_unreceipted_requeued_count: u64,
@@ -1065,6 +1069,15 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub repair_sequence_stale_count: u64,
     pub repair_sequence_enqueued_count: u64,
     pub repair_sequence_admitted_to_aoem_count: u64,
+    pub ledger_final_missing_actual_batch_count: u64,
+    pub ledger_final_missing_actual_batch_ranges_sample:
+        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub ledger_final_missing_raw_txs_count: u64,
+    pub ledger_final_missing_batch_result_count: u64,
+    pub ledger_final_missing_receipt_written_count: u64,
+    pub ledger_final_missing_receipt_missing_after_admission_count: u64,
+    pub ledger_final_missing_admitted_but_no_receipt_invariant_violation_count: u64,
+    pub ledger_admission_counter_is_actual_batch: bool,
     pub repair_attempted_unreceipted_count: u64,
     pub repair_attempted_unreceipted_final_missing_overlap_count: u64,
     pub repair_attempted_unreceipted_requeued_count: u64,
@@ -1516,6 +1529,28 @@ fn network_runtime_native_repair_probe_summary_v1(
         repair_sequence_stale_count: state.sequence_stale_count,
         repair_sequence_enqueued_count: state.sequence_enqueued_count,
         repair_sequence_admitted_to_aoem_count: state.sequence_admitted_to_aoem_count,
+        ledger_final_missing_actual_batch_count: state.final_missing_actual_batch_count,
+        ledger_final_missing_actual_batch_ranges_sample:
+            network_runtime_native_repair_sequence_ranges_sample_v1(
+                &state.sequence_actual_batch_seen,
+                64,
+            ),
+        ledger_final_missing_raw_txs_count: state.final_missing_actual_batch_count,
+        ledger_final_missing_batch_result_count: state.final_missing_receipt_written_count,
+        ledger_final_missing_receipt_written_count: state.final_missing_receipt_written_count,
+        ledger_final_missing_receipt_missing_after_admission_count: state
+            .sequence_admitted_to_aoem_seen
+            .difference(&state.sequence_receipt_written_seen)
+            .count()
+            .try_into()
+            .unwrap_or(u64::MAX),
+        ledger_final_missing_admitted_but_no_receipt_invariant_violation_count: state
+            .sequence_admitted_to_aoem_seen
+            .difference(&state.sequence_receipt_written_seen)
+            .count()
+            .try_into()
+            .unwrap_or(u64::MAX),
+        ledger_admission_counter_is_actual_batch: true,
         repair_attempted_unreceipted_count: state.attempted_unreceipted_count,
         repair_attempted_unreceipted_final_missing_overlap_count: state
             .attempted_unreceipted_final_missing_overlap_count,
@@ -1592,6 +1627,22 @@ fn apply_network_runtime_native_repair_probe_summary_v1(
     summary.repair_sequence_stale_count = repair.repair_sequence_stale_count;
     summary.repair_sequence_enqueued_count = repair.repair_sequence_enqueued_count;
     summary.repair_sequence_admitted_to_aoem_count = repair.repair_sequence_admitted_to_aoem_count;
+    summary.ledger_final_missing_actual_batch_count =
+        repair.ledger_final_missing_actual_batch_count;
+    summary.ledger_final_missing_actual_batch_ranges_sample = repair
+        .ledger_final_missing_actual_batch_ranges_sample
+        .clone();
+    summary.ledger_final_missing_raw_txs_count = repair.ledger_final_missing_raw_txs_count;
+    summary.ledger_final_missing_batch_result_count =
+        repair.ledger_final_missing_batch_result_count;
+    summary.ledger_final_missing_receipt_written_count =
+        repair.ledger_final_missing_receipt_written_count;
+    summary.ledger_final_missing_receipt_missing_after_admission_count =
+        repair.ledger_final_missing_receipt_missing_after_admission_count;
+    summary.ledger_final_missing_admitted_but_no_receipt_invariant_violation_count =
+        repair.ledger_final_missing_admitted_but_no_receipt_invariant_violation_count;
+    summary.ledger_admission_counter_is_actual_batch =
+        repair.ledger_admission_counter_is_actual_batch;
     summary.repair_attempted_unreceipted_count = repair.repair_attempted_unreceipted_count;
     summary.repair_attempted_unreceipted_final_missing_overlap_count =
         repair.repair_attempted_unreceipted_final_missing_overlap_count;
@@ -1787,6 +1838,44 @@ pub fn observe_network_runtime_native_pending_tx_repair_aoem_admission_v1(
         state.sequence_admitted_to_aoem_seen.insert(sequence);
     }
     observe_novorudp_sequence_admitted_to_aoem_v1(chain_id, sequence);
+}
+
+pub fn observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1(
+    chain_id: u64,
+    tx_hash: [u8; 32],
+) {
+    let sequence = runtime_native_repair_probe_map()
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .get(&chain_id)
+                .and_then(|state| state.tx_hash_to_sequence.get(&tx_hash).copied())
+        });
+    let Some(sequence) = sequence else {
+        return;
+    };
+    if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
+        let ledger = guard.entry(chain_id).or_insert_with(|| {
+            NovoRudpSequenceLifecycleLedger::new(sequence.saturating_add(1), 64)
+        });
+        if ledger.expected_total <= sequence {
+            ledger.expected_total = sequence.saturating_add(1);
+            ledger.mark_expected_range(0, sequence, now_unix_millis(), "runtime_extend_expected");
+        }
+        ledger.mark_canonical_included(sequence, now_unix_millis());
+    }
+    if let Ok(mut guard) = runtime_native_repair_probe_map().lock() {
+        let state = guard.entry(chain_id).or_default();
+        if state.sequence_actual_batch_seen.insert(sequence) {
+            state.final_missing_actual_batch_count =
+                state.final_missing_actual_batch_count.saturating_add(1);
+        }
+        if state.sequence_receipt_written_seen.insert(sequence) {
+            state.final_missing_receipt_written_count =
+                state.final_missing_receipt_written_count.saturating_add(1);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -2728,6 +2817,7 @@ fn runtime_native_pending_tx_observe_body_v1(
         })
         .unwrap_or(NetworkRuntimeNativeBlockLifecycleStageV1::Seen);
     let next_stage = runtime_native_pending_tx_stage_from_block_lifecycle_v1(block_lifecycle_stage);
+    let mut canonical_tx_hashes = Vec::<[u8; 32]>::new();
     if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
         let chain_txs = guard.entry(chain_id).or_default();
         for tx_hash in &body.tx_hashes {
@@ -2787,12 +2877,16 @@ fn runtime_native_pending_tx_observe_body_v1(
                 tx.retry_after_unix_ms = None;
                 tx.retry_suppressed_reason =
                     Some(NetworkRuntimeNativePendingTxRetrySuppressedReasonV1::IncludedCanonical);
+                canonical_tx_hashes.push(*tx_hash);
             } else {
                 runtime_native_pending_tx_mark_retry_eligible_v1(tx);
             }
             tx.inclusion_count = tx.inclusion_count.saturating_add(1);
             tx.last_updated_unix_ms = body.observed_unix_ms;
         }
+    }
+    for tx_hash in canonical_tx_hashes {
+        observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1(chain_id, tx_hash);
     }
 }
 
