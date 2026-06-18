@@ -252,7 +252,7 @@ struct UdpSendRetryStatsV1 {
     would_block_count: u64,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MissingRangeV1 {
     start: u64,
     end_inclusive: u64,
@@ -832,6 +832,26 @@ fn missing_ranges_intersection_with_window(
     out
 }
 
+fn missing_ranges_intersection_many(
+    left_ranges: &[MissingRangeV1],
+    right_ranges: &[MissingRangeV1],
+) -> Vec<MissingRangeV1> {
+    let mut out = Vec::<MissingRangeV1>::new();
+    for left in left_ranges {
+        for right in right_ranges {
+            let start = left.start.max(right.start);
+            let end_inclusive = left.end_inclusive.min(right.end_inclusive);
+            if end_inclusive >= start {
+                out.push(MissingRangeV1 {
+                    start,
+                    end_inclusive,
+                });
+            }
+        }
+    }
+    normalize_missing_ranges(out.as_slice(), u64::MAX)
+}
+
 fn first_missing_window_ranges(
     ranges: &[MissingRangeV1],
     expected: u64,
@@ -857,6 +877,56 @@ fn first_missing_window_ranges(
     }
     let window_id = window_start / window_size;
     Some((window_id, window, window_ranges))
+}
+
+#[derive(Debug, Clone)]
+struct NovoRudpRepairSelectionV1 {
+    window_id: u64,
+    window: MissingRangeV1,
+    ranges: Vec<MissingRangeV1>,
+    used_full_missing_bitmap: bool,
+}
+
+fn select_novorudp_repair_ranges_from_ack(
+    ranges: &[MissingRangeV1],
+    expected: u64,
+    window_size: u64,
+    latest_missing_count: u64,
+    missing_ranges_full_count: u64,
+    max_window_retries: u64,
+) -> Option<NovoRudpRepairSelectionV1> {
+    let normalized = normalize_missing_ranges(ranges, expected);
+    let (window_id, window, window_ranges) =
+        first_missing_window_ranges(normalized.as_slice(), expected, window_size)?;
+    let full_ranges_available =
+        missing_ranges_full_count <= normalized.len().try_into().unwrap_or(u64::MAX);
+    let full_coverage_limit = window_size.max(1).saturating_mul(max_window_retries.max(1));
+    if full_ranges_available
+        && latest_missing_count > 0
+        && latest_missing_count <= full_coverage_limit
+    {
+        return Some(NovoRudpRepairSelectionV1 {
+            window_id,
+            window: MissingRangeV1 {
+                start: normalized
+                    .first()
+                    .map(|range| range.start)
+                    .unwrap_or(window.start),
+                end_inclusive: normalized
+                    .last()
+                    .map(|range| range.end_inclusive)
+                    .unwrap_or(window.end_inclusive),
+            },
+            ranges: normalized,
+            used_full_missing_bitmap: true,
+        });
+    }
+    Some(NovoRudpRepairSelectionV1 {
+        window_id,
+        window,
+        ranges: window_ranges,
+        used_full_missing_bitmap: false,
+    })
 }
 
 fn tail_gap_range_from_ack(
@@ -1053,6 +1123,108 @@ mod novorudp_tests {
         }
         assert_eq!(current_window_missing_count, 0);
         assert!(retry_count <= 16);
+    }
+
+    #[test]
+    fn novorudp_tail_window_does_not_complete_on_max_sequence_only() {
+        let current_missing = vec![
+            MissingRangeV1 {
+                start: 14156,
+                end_inclusive: 14333,
+            },
+            MissingRangeV1 {
+                start: 14399,
+                end_inclusive: 14399,
+            },
+        ];
+        let still_missing = vec![MissingRangeV1 {
+            start: 14334,
+            end_inclusive: 14398,
+        }];
+        let repair_received_max = 14399u64;
+        let current_window_missing_count = missing_ranges_count(still_missing.as_slice());
+
+        assert_eq!(repair_received_max, 14399);
+        assert!(current_window_missing_count > 0);
+        assert!(
+            missing_ranges_overlap_count(still_missing.as_slice(), current_missing.as_slice()) == 0,
+            "max sequence coverage must not imply full current missing coverage"
+        );
+    }
+
+    #[test]
+    fn novorudp_tail_window_repairs_current_missing_bitmap_until_zero() {
+        let config = sender_timeout_novorudp_config();
+        let ack_round_1 = vec![
+            MissingRangeV1 {
+                start: 14156,
+                end_inclusive: 14175,
+            },
+            MissingRangeV1 {
+                start: 14270,
+                end_inclusive: 14331,
+            },
+        ];
+        let first = select_novorudp_repair_ranges_from_ack(
+            ack_round_1.as_slice(),
+            14400,
+            config.window_size,
+            82,
+            ack_round_1.len() as u64,
+            config.tail_window_max_retries,
+        )
+        .expect("repair selection");
+        assert!(first.used_full_missing_bitmap);
+        assert_eq!(missing_ranges_count(first.ranges.as_slice()), 82);
+
+        let ack_round_2 = vec![MissingRangeV1 {
+            start: 14312,
+            end_inclusive: 14331,
+        }];
+        let second = select_novorudp_repair_ranges_from_ack(
+            ack_round_2.as_slice(),
+            14400,
+            config.window_size,
+            20,
+            ack_round_2.len() as u64,
+            config.tail_window_max_retries,
+        )
+        .expect("second repair selection");
+        assert!(second.used_full_missing_bitmap);
+        assert_eq!(missing_ranges_count(second.ranges.as_slice()), 20);
+
+        let ack_round_3: Vec<MissingRangeV1> = Vec::new();
+        let done = select_novorudp_repair_ranges_from_ack(
+            ack_round_3.as_slice(),
+            14400,
+            config.window_size,
+            0,
+            0,
+            config.tail_window_max_retries,
+        );
+        assert!(done.is_none());
+    }
+
+    #[test]
+    fn novorudp_current_missing_full_ranges_not_sample_only() {
+        let config = sender_timeout_novorudp_config();
+        let ranges = vec![MissingRangeV1 {
+            start: 14156,
+            end_inclusive: 14399,
+        }];
+        let selection = select_novorudp_repair_ranges_from_ack(
+            ranges.as_slice(),
+            14400,
+            config.window_size,
+            244,
+            ranges.len() as u64,
+            config.tail_window_max_retries,
+        )
+        .expect("full current missing selection");
+
+        assert!(selection.used_full_missing_bitmap);
+        assert_eq!(selection.ranges, ranges);
+        assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 244);
     }
 
     #[test]
@@ -3853,6 +4025,19 @@ fn run_sender(
     let mut novorudp_window_no_progress_count = 0u64;
     let mut novorudp_windows_detail_sample = Vec::<Value>::new();
     let mut novorudp_window_retry_counts = BTreeMap::<u64, u64>::new();
+    let mut current_missing_bitmap_used = false;
+    let mut repair_used_full_missing_bitmap = false;
+    let mut tail_window_missing_before: Option<u64> = None;
+    let mut tail_window_missing_after: Option<u64> = None;
+    let mut tail_window_missing_delta: Option<u64> = None;
+    let mut tail_window_remaining_missing_count: Option<u64> = None;
+    let mut tail_window_remaining_missing_ranges_sample = Vec::<MissingRangeV1>::new();
+    let mut tail_window_success_by_bitmap = false;
+    let tail_window_success_by_max_sequence_only = false;
+    let mut current_window_repair_sequence_sent_count = 0u64;
+    let mut current_window_repair_missing_sequence_sent_count = 0u64;
+    let mut current_window_repair_missing_sequence_covered_count = 0u64;
+    let mut current_window_ack_missing_count_after: Option<u64> = None;
     let final_ack_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS", 10_000)?;
     let final_ack_poll_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS", 500)?.max(1);
     let mut final_ack_wait_elapsed_ms = 0u64;
@@ -3990,32 +4175,57 @@ fn run_sender(
                 read_missing_ranges_from_ack(ack_path.as_path(), tail_repair.missing_sample_limit);
             let mut novorudp_window_id_this_round: Option<u64> = None;
             let mut novorudp_window_range_this_round: Option<MissingRangeV1> = None;
+            let mut novorudp_selected_ranges_this_round = Vec::<MissingRangeV1>::new();
+            let mut novorudp_used_full_missing_bitmap_this_round = false;
             let mut txs = if let Some(ranges) = udp_ranges.as_ref() {
                 tail_repair_udp_ack_used_count = tail_repair_udp_ack_used_count.saturating_add(1);
                 let selected_ranges = if novorudp.enabled {
-                    if let Some((window_id, window, window_ranges)) = first_missing_window_ranges(
+                    if let Some(selection) = select_novorudp_repair_ranges_from_ack(
                         ranges.as_slice(),
                         tx_count,
                         novorudp.window_size,
+                        missing_count_before,
+                        latest_ack_missing_ranges_full_count
+                            .unwrap_or_else(|| ranges.len().try_into().unwrap_or(u64::MAX)),
+                        novorudp.tail_window_max_retries,
                     ) {
-                        novorudp_window_id_this_round = Some(window_id);
-                        novorudp_window_range_this_round = Some(window);
-                        window_ranges
+                        novorudp_window_id_this_round = Some(selection.window_id);
+                        novorudp_window_range_this_round = Some(selection.window);
+                        novorudp_used_full_missing_bitmap_this_round =
+                            selection.used_full_missing_bitmap;
+                        if selection.used_full_missing_bitmap {
+                            current_missing_bitmap_used = true;
+                            repair_used_full_missing_bitmap = true;
+                        }
+                        novorudp_selected_ranges_this_round = selection.ranges.clone();
+                        selection.ranges
                     } else {
                         Vec::new()
                     }
                 } else {
                     ranges.clone()
                 };
-                repair_used_full_missing_ranges = !novorudp.enabled
-                    && latest_ack_missing_ranges_full_count
+                repair_used_full_missing_ranges = if novorudp.enabled {
+                    repair_used_full_missing_ranges || novorudp_used_full_missing_bitmap_this_round
+                } else {
+                    latest_ack_missing_ranges_full_count
                         .map(|full_count| full_count <= ranges.len().try_into().unwrap_or(u64::MAX))
-                        .unwrap_or(false);
+                        .unwrap_or(false)
+                };
                 tail_repair_missing_ranges_seen = tail_repair_missing_ranges_seen
                     .saturating_add(ranges.len().try_into().unwrap_or(u64::MAX));
                 final_missing_count = missing_ranges_count(selected_ranges.as_slice());
                 repair_sequence_sent_count =
                     repair_sequence_sent_count.saturating_add(final_missing_count);
+                if novorudp.enabled {
+                    current_window_repair_sequence_sent_count =
+                        current_window_repair_sequence_sent_count
+                            .saturating_add(final_missing_count);
+                    current_window_repair_missing_sequence_sent_count =
+                        current_window_repair_missing_sequence_sent_count
+                            .saturating_add(final_missing_count);
+                    tail_window_missing_before = Some(missing_count_before);
+                }
                 repair_sequence_sent_ranges.extend(selected_ranges.iter().copied());
                 for range in &selected_ranges {
                     repair_sequence_sent_min = Some(
@@ -4040,14 +4250,24 @@ fn run_sender(
                 tail_repair_file_ack_used_count = tail_repair_file_ack_used_count.saturating_add(1);
                 tail_repair_ack_received_count = tail_repair_ack_received_count.saturating_add(1);
                 let selected_ranges = if novorudp.enabled {
-                    if let Some((window_id, window, window_ranges)) = first_missing_window_ranges(
+                    if let Some(selection) = select_novorudp_repair_ranges_from_ack(
                         ranges.as_slice(),
                         tx_count,
                         novorudp.window_size,
+                        missing_count_before,
+                        ranges.len().try_into().unwrap_or(u64::MAX),
+                        novorudp.tail_window_max_retries,
                     ) {
-                        novorudp_window_id_this_round = Some(window_id);
-                        novorudp_window_range_this_round = Some(window);
-                        window_ranges
+                        novorudp_window_id_this_round = Some(selection.window_id);
+                        novorudp_window_range_this_round = Some(selection.window);
+                        novorudp_used_full_missing_bitmap_this_round =
+                            selection.used_full_missing_bitmap;
+                        if selection.used_full_missing_bitmap {
+                            current_missing_bitmap_used = true;
+                            repair_used_full_missing_bitmap = true;
+                        }
+                        novorudp_selected_ranges_this_round = selection.ranges.clone();
+                        selection.ranges
                     } else {
                         Vec::new()
                     }
@@ -4059,6 +4279,15 @@ fn run_sender(
                 final_missing_count = missing_ranges_count(selected_ranges.as_slice());
                 repair_sequence_sent_count =
                     repair_sequence_sent_count.saturating_add(final_missing_count);
+                if novorudp.enabled {
+                    current_window_repair_sequence_sent_count =
+                        current_window_repair_sequence_sent_count
+                            .saturating_add(final_missing_count);
+                    current_window_repair_missing_sequence_sent_count =
+                        current_window_repair_missing_sequence_sent_count
+                            .saturating_add(final_missing_count);
+                    tail_window_missing_before = Some(missing_count_before);
+                }
                 repair_sequence_sent_ranges.extend(selected_ranges.iter().copied());
                 for range in &selected_ranges {
                     repair_sequence_sent_min = Some(
@@ -4116,9 +4345,13 @@ fn run_sender(
             };
             let mut sequence_sent_ranges_this_round = if let Some(ranges) = udp_ranges.as_ref() {
                 if novorudp.enabled {
-                    novorudp_window_range_this_round
-                        .map(|window| vec![window])
-                        .unwrap_or_default()
+                    if !novorudp_selected_ranges_this_round.is_empty() {
+                        novorudp_selected_ranges_this_round.clone()
+                    } else {
+                        novorudp_window_range_this_round
+                            .map(|window| vec![window])
+                            .unwrap_or_default()
+                    }
                 } else {
                     ranges.clone()
                 }
@@ -4126,9 +4359,13 @@ fn run_sender(
                 file_ack_ranges.as_ref().filter(|ranges| !ranges.is_empty())
             {
                 if novorudp.enabled {
-                    novorudp_window_range_this_round
-                        .map(|window| vec![window])
-                        .unwrap_or_default()
+                    if !novorudp_selected_ranges_this_round.is_empty() {
+                        novorudp_selected_ranges_this_round.clone()
+                    } else {
+                        novorudp_window_range_this_round
+                            .map(|window| vec![window])
+                            .unwrap_or_default()
+                    }
                 } else {
                     ranges.clone()
                 }
@@ -4322,9 +4559,32 @@ fn run_sender(
                     if tail_gap_this_round.is_some() {
                         tail_gap_ack_after_missing_count = Some(state.latest_missing_count);
                     }
+                    if novorudp.enabled {
+                        let remaining_in_sent_ranges = missing_ranges_overlap_count(
+                            state.latest_ranges.as_slice(),
+                            sequence_sent_ranges_this_round.as_slice(),
+                        );
+                        current_window_ack_missing_count_after = Some(remaining_in_sent_ranges);
+                        tail_window_remaining_missing_count = Some(remaining_in_sent_ranges);
+                        tail_window_remaining_missing_ranges_sample =
+                            missing_ranges_intersection_many(
+                                state.latest_ranges.as_slice(),
+                                sequence_sent_ranges_this_round.as_slice(),
+                            );
+                        if remaining_in_sent_ranges == 0 && state.latest_missing_count == 0 {
+                            tail_window_success_by_bitmap = true;
+                        }
+                    }
                 }
             }
             let missing_delta = missing_count_before.saturating_sub(missing_count_after);
+            if novorudp.enabled {
+                tail_window_missing_after = Some(missing_count_after);
+                tail_window_missing_delta = Some(missing_delta);
+                current_window_repair_missing_sequence_covered_count =
+                    current_window_repair_missing_sequence_covered_count
+                        .saturating_add(missing_delta.min(sequence_sent_count_this_round));
+            }
             let no_progress = missing_count_after >= missing_count_before;
             if no_progress {
                 repair_no_progress_rounds = repair_no_progress_rounds.saturating_add(1);
@@ -4355,6 +4615,9 @@ fn run_sender(
                         "packet_sent_count": round_packet_sent_count,
                         "retry_count_for_window": retry_count,
                         "no_progress": no_progress,
+                        "current_missing_bitmap_used": novorudp_used_full_missing_bitmap_this_round,
+                        "repair_used_full_missing_bitmap": novorudp_used_full_missing_bitmap_this_round,
+                        "current_window_ack_missing_count_after": current_window_ack_missing_count_after,
                         "ack_epoch_before": ack_epoch_before,
                         "ack_epoch_after": ack_epoch_after,
                     }));
@@ -4388,6 +4651,9 @@ fn run_sender(
                     "tail_packet_copies_used": tail_gap_this_round.map(|_| if novorudp.enabled { novorudp.tail_window_packet_copies } else { tail_repair.tail_packet_copies }).unwrap_or(tail_repair.packet_copies),
                     "tail_batch_size_used": tail_gap_this_round.map(|_| if novorudp.enabled { novorudp.tail_window_batch_size } else { tail_repair.batch_size }).unwrap_or(tail_repair.batch_size),
                     "tail_batch_pause_ms_used": tail_gap_this_round.map(|_| if novorudp.enabled { novorudp.tail_window_batch_pause_ms } else { tail_repair.tail_batch_pause_ms }).unwrap_or(tail_repair.batch_pause_ms),
+                    "current_missing_bitmap_used": novorudp_used_full_missing_bitmap_this_round,
+                    "repair_used_full_missing_bitmap": novorudp_used_full_missing_bitmap_this_round,
+                    "current_window_ack_missing_count_after": current_window_ack_missing_count_after,
                     "ack_epoch_after": ack_epoch_after,
                     "missing_count_after": missing_count_after,
                     "missing_delta": missing_delta,
@@ -4563,6 +4829,22 @@ fn run_sender(
             "window_success_count": novorudp_window_success_count,
             "window_failed_count": novorudp_window_failed_count,
             "window_no_progress_count": novorudp_window_no_progress_count,
+            "current_missing_bitmap_used": current_missing_bitmap_used,
+            "repair_used_full_missing_bitmap": repair_used_full_missing_bitmap,
+            "tail_window_missing_before": tail_window_missing_before,
+            "tail_window_missing_after": tail_window_missing_after,
+            "tail_window_missing_delta": tail_window_missing_delta,
+            "tail_window_remaining_missing_count": tail_window_remaining_missing_count,
+            "tail_window_remaining_missing_ranges_sample": missing_ranges_to_json(
+                tail_window_remaining_missing_ranges_sample.as_slice(),
+                tail_repair.missing_sample_limit,
+            ),
+            "tail_window_success_by_bitmap": tail_window_success_by_bitmap,
+            "tail_window_success_by_max_sequence_only": tail_window_success_by_max_sequence_only,
+            "current_window_repair_sequence_sent_count": current_window_repair_sequence_sent_count,
+            "current_window_repair_missing_sequence_sent_count": current_window_repair_missing_sequence_sent_count,
+            "current_window_repair_missing_sequence_covered_count": current_window_repair_missing_sequence_covered_count,
+            "current_window_ack_missing_count_after": current_window_ack_missing_count_after,
             "windows_detail_sample": novorudp_windows_detail_sample,
         },
         "sender_completed": sender_completed,
@@ -4646,6 +4928,22 @@ fn run_sender(
             "tail_gap_repair_packet_count": tail_gap_repair_packet_count,
             "tail_gap_repair_rounds": tail_gap_repair_rounds,
             "tail_gap_ack_after_missing_count": tail_gap_ack_after_missing_count,
+            "current_missing_bitmap_used": current_missing_bitmap_used,
+            "repair_used_full_missing_bitmap": repair_used_full_missing_bitmap,
+            "tail_window_missing_before": tail_window_missing_before,
+            "tail_window_missing_after": tail_window_missing_after,
+            "tail_window_missing_delta": tail_window_missing_delta,
+            "tail_window_remaining_missing_count": tail_window_remaining_missing_count,
+            "tail_window_remaining_missing_ranges_sample": missing_ranges_to_json(
+                tail_window_remaining_missing_ranges_sample.as_slice(),
+                tail_repair.missing_sample_limit,
+            ),
+            "tail_window_success_by_bitmap": tail_window_success_by_bitmap,
+            "tail_window_success_by_max_sequence_only": tail_window_success_by_max_sequence_only,
+            "current_window_repair_sequence_sent_count": current_window_repair_sequence_sent_count,
+            "current_window_repair_missing_sequence_sent_count": current_window_repair_missing_sequence_sent_count,
+            "current_window_repair_missing_sequence_covered_count": current_window_repair_missing_sequence_covered_count,
+            "current_window_ack_missing_count_after": current_window_ack_missing_count_after,
             "receiver_final_missing_count": receiver_final_missing_count,
             "receiver_final_done": receiver_final_done,
             "final_ack_wait_enabled": final_ack_wait_ms > 0,

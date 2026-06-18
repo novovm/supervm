@@ -33934,7 +33934,9 @@ fn build_native_execution_pipeline_report_v1(
         );
         ingress.insert(
             "repair_final_missing_payload_recovered_requeued_count".to_string(),
-            serde_json::json!(pending_summary.repair_final_missing_payload_recovered_requeued_count),
+            serde_json::json!(
+                pending_summary.repair_final_missing_payload_recovered_requeued_count
+            ),
         );
     }
     report
@@ -34475,8 +34477,9 @@ impl NativeExecutionPipelineAggregateV1 {
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false)
             {
-                self.native_store_precommit_materialized_ticks =
-                    self.native_store_precommit_materialized_ticks.saturating_add(1);
+                self.native_store_precommit_materialized_ticks = self
+                    .native_store_precommit_materialized_ticks
+                    .saturating_add(1);
             }
             self.native_store_materialized_receipts_max =
                 self.native_store_materialized_receipts_max.max(
@@ -34485,9 +34488,8 @@ impl NativeExecutionPipelineAggregateV1 {
                         .and_then(|value| value.as_u64())
                         .unwrap_or_default(),
                 );
-            self.native_store_materialized_estimated_bytes_max = self
-                .native_store_materialized_estimated_bytes_max
-                .max(
+            self.native_store_materialized_estimated_bytes_max =
+                self.native_store_materialized_estimated_bytes_max.max(
                     materialization
                         .get("precommit_store_materialized_estimated_bytes")
                         .and_then(|value| value.as_u64())
@@ -34500,9 +34502,8 @@ impl NativeExecutionPipelineAggregateV1 {
                         .and_then(|value| value.as_u64())
                         .unwrap_or_default(),
                 );
-            self.native_store_previous_clone_estimated_bytes_max = self
-                .native_store_previous_clone_estimated_bytes_max
-                .max(
+            self.native_store_previous_clone_estimated_bytes_max =
+                self.native_store_previous_clone_estimated_bytes_max.max(
                     materialization
                         .get("previous_store_clone_estimated_bytes")
                         .and_then(|value| value.as_u64())
@@ -35125,7 +35126,8 @@ impl NativeExecutionPipelineAggregateV1 {
         );
         out.insert(
             "repair_final_missing_payload_missing_ranges_sample".to_string(),
-            self.repair_final_missing_payload_missing_ranges_sample.clone(),
+            self.repair_final_missing_payload_missing_ranges_sample
+                .clone(),
         );
         out.insert(
             "repair_sequence_payload_index_count".to_string(),
