@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NovoRudpRange {
@@ -168,11 +169,383 @@ pub fn classify_ack_progress(previous_missing: u64, current_missing: u64) -> Nov
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct NovoRudpSequenceLifecycleRecord {
+    pub run_id: Option<String>,
+    pub session_id: Option<String>,
+    pub sequence: u64,
+    pub tx_hash: Option<[u8; 32]>,
+    pub window_id: Option<u64>,
+    pub expected: bool,
+    pub received: bool,
+    pub accepted: bool,
+    pub payload_retained: bool,
+    pub pending_active: bool,
+    pub admitted_to_aoem: bool,
+    pub executed: bool,
+    pub receipt_written: bool,
+    pub canonical_included: bool,
+    pub already_receipted: bool,
+    pub duplicate_seen_count: u64,
+    pub repair_attempt_count: u64,
+    pub last_ack_epoch: Option<u64>,
+    pub last_updated_ms: u128,
+    pub last_state_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct NovoRudpLifecycleSummary {
+    pub expected_count: u64,
+    pub missing_count: u64,
+    pub final_missing_count: u64,
+    pub final_missing_received_count: u64,
+    pub final_missing_payload_retained_count: u64,
+    pub final_missing_pending_active_count: u64,
+    pub final_missing_admitted_count: u64,
+    pub final_missing_receipt_count: u64,
+    pub final_missing_canonical_count: u64,
+    pub final_missing_invariant_violation_count: u64,
+    pub final_missing_requeue_required_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct NovoRudpSequenceLifecycleLedger {
+    pub expected_total: u64,
+    pub window_size: u64,
+    pub records: BTreeMap<u64, NovoRudpSequenceLifecycleRecord>,
+}
+
+impl NovoRudpSequenceLifecycleLedger {
+    #[must_use]
+    pub fn new(expected_total: u64, window_size: u64) -> Self {
+        let mut ledger = Self {
+            expected_total,
+            window_size: window_size.max(1),
+            records: BTreeMap::new(),
+        };
+        ledger.mark_expected_range(0, expected_total.saturating_sub(1), 0, "init");
+        ledger
+    }
+
+    pub fn mark_expected_range(
+        &mut self,
+        start: u64,
+        end_inclusive: u64,
+        now_ms: u128,
+        reason: &str,
+    ) {
+        if self.expected_total == 0 || end_inclusive < start {
+            return;
+        }
+        let max = self.expected_total.saturating_sub(1);
+        for sequence in start.min(max)..=end_inclusive.min(max) {
+            let window_size = self.window_size.max(1);
+            let record = self.record_mut(sequence, now_ms, reason);
+            record.expected = true;
+            record.window_id = Some(sequence / window_size);
+        }
+    }
+
+    pub fn observe_repair_received(
+        &mut self,
+        sequence: u64,
+        tx_hash: [u8; 32],
+        payload_retained: bool,
+        now_ms: u128,
+    ) {
+        let record = self.record_mut(sequence, now_ms, "repair_received");
+        if record.received {
+            record.duplicate_seen_count = record.duplicate_seen_count.saturating_add(1);
+        }
+        record.expected = true;
+        record.received = true;
+        record.accepted = true;
+        record.tx_hash = Some(tx_hash);
+        record.payload_retained |= payload_retained;
+        record.repair_attempt_count = record.repair_attempt_count.saturating_add(1);
+    }
+
+    pub fn mark_pending_active(&mut self, sequence: u64, now_ms: u128, reason: &str) {
+        let record = self.record_mut(sequence, now_ms, reason);
+        record.pending_active = true;
+        record.already_receipted = false;
+    }
+
+    pub fn mark_admitted_to_aoem(&mut self, sequence: u64, now_ms: u128) {
+        let record = self.record_mut(sequence, now_ms, "admitted_to_aoem");
+        record.admitted_to_aoem = true;
+        // Admission is an attempt, not completion. Keep it retryable until receipt.
+        if !record.receipt_written && !record.canonical_included {
+            record.pending_active = true;
+        }
+    }
+
+    pub fn mark_receipt_written(&mut self, sequence: u64, now_ms: u128) {
+        let record = self.record_mut(sequence, now_ms, "receipt_written");
+        record.receipt_written = true;
+        record.executed = true;
+        record.pending_active = false;
+        record.already_receipted = true;
+    }
+
+    pub fn mark_canonical_included(&mut self, sequence: u64, now_ms: u128) {
+        let record = self.record_mut(sequence, now_ms, "canonical_included");
+        record.canonical_included = true;
+        record.receipt_written = true;
+        record.executed = true;
+        record.pending_active = false;
+        record.already_receipted = true;
+    }
+
+    #[must_use]
+    pub fn missing_ranges(&self) -> Vec<NovoRudpRange> {
+        let mut ranges = Vec::<NovoRudpRange>::new();
+        let mut start = None::<u64>;
+        let mut previous = None::<u64>;
+        for sequence in 0..self.expected_total {
+            let done = self
+                .records
+                .get(&sequence)
+                .is_some_and(|record| record.receipt_written || record.canonical_included);
+            if done {
+                continue;
+            }
+            match (start, previous) {
+                (Some(_), Some(prev)) if sequence == prev.saturating_add(1) => {
+                    previous = Some(sequence);
+                }
+                (Some(left), Some(prev)) => {
+                    ranges.push(NovoRudpRange::new(left, prev));
+                    start = Some(sequence);
+                    previous = Some(sequence);
+                }
+                _ => {
+                    start = Some(sequence);
+                    previous = Some(sequence);
+                }
+            }
+        }
+        if let (Some(left), Some(right)) = (start, previous) {
+            ranges.push(NovoRudpRange::new(left, right));
+        }
+        ranges
+    }
+
+    #[must_use]
+    pub fn final_missing_summary(&self, final_missing_start: Option<u64>) -> NovoRudpLifecycleSummary {
+        let mut summary = NovoRudpLifecycleSummary {
+            expected_count: self.expected_total,
+            missing_count: missing_count(self.missing_ranges().as_slice()),
+            ..Default::default()
+        };
+        let Some(start) = final_missing_start else {
+            return summary;
+        };
+        for sequence in start..self.expected_total {
+            let record = self.records.get(&sequence);
+            let done = record.is_some_and(|record| record.receipt_written || record.canonical_included);
+            if done {
+                if record.is_some_and(|record| record.receipt_written) {
+                    summary.final_missing_receipt_count =
+                        summary.final_missing_receipt_count.saturating_add(1);
+                }
+                if record.is_some_and(|record| record.canonical_included) {
+                    summary.final_missing_canonical_count =
+                        summary.final_missing_canonical_count.saturating_add(1);
+                }
+                continue;
+            }
+            summary.final_missing_count = summary.final_missing_count.saturating_add(1);
+            if record.is_some_and(|record| record.received) {
+                summary.final_missing_received_count =
+                    summary.final_missing_received_count.saturating_add(1);
+            }
+            if record.is_some_and(|record| record.payload_retained) {
+                summary.final_missing_payload_retained_count =
+                    summary.final_missing_payload_retained_count.saturating_add(1);
+            }
+            if record.is_some_and(|record| record.pending_active) {
+                summary.final_missing_pending_active_count =
+                    summary.final_missing_pending_active_count.saturating_add(1);
+            }
+            if record.is_some_and(|record| record.admitted_to_aoem) {
+                summary.final_missing_admitted_count =
+                    summary.final_missing_admitted_count.saturating_add(1);
+            }
+            if record.is_some_and(|record| {
+                record.payload_retained && !record.pending_active && !record.receipt_written
+            }) {
+                summary.final_missing_invariant_violation_count =
+                    summary.final_missing_invariant_violation_count.saturating_add(1);
+                summary.final_missing_requeue_required_count =
+                    summary.final_missing_requeue_required_count.saturating_add(1);
+            }
+        }
+        summary
+    }
+
+    #[must_use]
+    pub fn admission_buckets(
+        &self,
+        final_missing_start: Option<u64>,
+        current_window: Option<NovoRudpRange>,
+    ) -> NovoRudpAdmissionBuckets {
+        let mut buckets = NovoRudpAdmissionBuckets::default();
+        for record in self.records.values() {
+            if !record.pending_active || record.receipt_written || record.canonical_included {
+                continue;
+            }
+            let sequence = record.sequence;
+            if final_missing_start.is_some_and(|start| sequence >= start) {
+                buckets.final_missing_repair_pending.push(sequence);
+            } else if current_window
+                .is_some_and(|range| sequence >= range.start && sequence <= range.end_inclusive)
+            {
+                buckets.current_window_repair_pending.push(sequence);
+            } else if record.received || record.payload_retained || record.repair_attempt_count > 0 {
+                buckets.other_repair_pending.push(sequence);
+            } else {
+                buckets.normal_pending.push(sequence);
+            }
+        }
+        buckets
+    }
+
+    fn record_mut(
+        &mut self,
+        sequence: u64,
+        now_ms: u128,
+        reason: &str,
+    ) -> &mut NovoRudpSequenceLifecycleRecord {
+        let window_id = Some(sequence / self.window_size.max(1));
+        let record = self.records.entry(sequence).or_insert_with(|| {
+            NovoRudpSequenceLifecycleRecord {
+                sequence,
+                window_id,
+                expected: sequence < self.expected_total,
+                ..Default::default()
+            }
+        });
+        record.last_updated_ms = now_ms;
+        record.last_state_reason = Some(reason.to_string());
+        record
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct NovoRudpAdmissionBuckets {
+    pub final_missing_repair_pending: Vec<u64>,
+    pub current_window_repair_pending: Vec<u64>,
+    pub other_repair_pending: Vec<u64>,
+    pub normal_pending: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NovoRudpSemanticCodec {
+    RawBytes,
+    DictionaryDelta,
+    AlgebraicTxIr,
+    AoemNativeIr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NovoRudpAlgebraicFrame {
+    pub codec: NovoRudpSemanticCodec,
+    pub schema_version: u32,
+    pub basis_id: Option<String>,
+    pub operator_id: Option<String>,
+    pub params_commitment: [u8; 32],
+    pub raw_fallback_hash: Option<[u8; 32]>,
+    pub deterministic: bool,
+}
+
+impl NovoRudpAlgebraicFrame {
+    #[must_use]
+    pub fn requires_raw_reconstruction(&self) -> bool {
+        matches!(
+            self.codec,
+            NovoRudpSemanticCodec::RawBytes | NovoRudpSemanticCodec::DictionaryDelta
+        )
+    }
+
+    #[must_use]
+    pub fn can_feed_aoem_directly(&self) -> bool {
+        self.deterministic
+            && matches!(
+                self.codec,
+                NovoRudpSemanticCodec::AlgebraicTxIr | NovoRudpSemanticCodec::AoemNativeIr
+            )
+            && self.operator_id.as_ref().is_some_and(|op| !op.trim().is_empty())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NovoRudpSemanticModulationDecision {
+    RawReliableFrame,
+    ReversibleDeltaFrame,
+    AlgebraicIrFrame,
+    AoemNativeIrFrame,
+    RejectNondeterministicSemanticFrame,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NovoRudpSemanticModulationProfile {
+    pub allow_raw_bytes: bool,
+    pub allow_reversible_delta: bool,
+    pub allow_algebraic_ir: bool,
+    pub allow_aoem_native_ir: bool,
+    pub require_deterministic_commitment: bool,
+}
+
+impl Default for NovoRudpSemanticModulationProfile {
+    fn default() -> Self {
+        Self {
+            allow_raw_bytes: true,
+            allow_reversible_delta: true,
+            allow_algebraic_ir: true,
+            allow_aoem_native_ir: true,
+            require_deterministic_commitment: true,
+        }
+    }
+}
+
+#[must_use]
+pub fn evaluate_semantic_modulation_frame(
+    frame: &NovoRudpAlgebraicFrame,
+    profile: &NovoRudpSemanticModulationProfile,
+) -> NovoRudpSemanticModulationDecision {
+    if profile.require_deterministic_commitment && !frame.deterministic {
+        return NovoRudpSemanticModulationDecision::RejectNondeterministicSemanticFrame;
+    }
+    match frame.codec {
+        NovoRudpSemanticCodec::RawBytes if profile.allow_raw_bytes => {
+            NovoRudpSemanticModulationDecision::RawReliableFrame
+        }
+        NovoRudpSemanticCodec::DictionaryDelta if profile.allow_reversible_delta => {
+            NovoRudpSemanticModulationDecision::ReversibleDeltaFrame
+        }
+        NovoRudpSemanticCodec::AlgebraicTxIr
+            if profile.allow_algebraic_ir && frame.can_feed_aoem_directly() =>
+        {
+            NovoRudpSemanticModulationDecision::AlgebraicIrFrame
+        }
+        NovoRudpSemanticCodec::AoemNativeIr
+            if profile.allow_aoem_native_ir && frame.can_feed_aoem_directly() =>
+        {
+            NovoRudpSemanticModulationDecision::AoemNativeIrFrame
+        }
+        _ => NovoRudpSemanticModulationDecision::RejectNondeterministicSemanticFrame,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         build_repair_plan, classify_ack_progress, normalize_missing_ranges,
-        select_first_missing_window, NovoRudpAckProgress, NovoRudpRange, NovoRudpWindowConfig,
+        select_first_missing_window, evaluate_semantic_modulation_frame, NovoRudpAckProgress,
+        NovoRudpAlgebraicFrame, NovoRudpRange, NovoRudpSemanticCodec,
+        NovoRudpSemanticModulationDecision, NovoRudpSemanticModulationProfile,
+        NovoRudpSequenceLifecycleLedger, NovoRudpWindowConfig,
     };
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -544,5 +917,215 @@ mod tests {
         assert_eq!(final_ack.missing_count, 0);
         assert!(final_ack.receiver_done);
         assert_eq!(receiver.receipt.len(), 14_400);
+    }
+
+    fn hash_for_sequence(sequence: u64) -> [u8; 32] {
+        let mut hash = [0u8; 32];
+        hash[..8].copy_from_slice(&sequence.to_le_bytes());
+        hash
+    }
+
+    #[test]
+    fn ledger_final_missing_payload_retained_requires_pending_or_requeue() {
+        let mut ledger = NovoRudpSequenceLifecycleLedger::new(14_400, 64);
+        ledger.observe_repair_received(14_105, hash_for_sequence(14_105), true, 10);
+
+        let summary = ledger.final_missing_summary(Some(14_105));
+        assert_eq!(summary.final_missing_payload_retained_count, 1);
+        assert_eq!(summary.final_missing_pending_active_count, 0);
+        assert_eq!(summary.final_missing_invariant_violation_count, 1);
+        assert_eq!(summary.final_missing_requeue_required_count, 1);
+
+        ledger.mark_pending_active(14_105, 11, "requeue");
+        let repaired = ledger.final_missing_summary(Some(14_105));
+        assert_eq!(repaired.final_missing_pending_active_count, 1);
+        assert_eq!(repaired.final_missing_invariant_violation_count, 0);
+    }
+
+    #[test]
+    fn ledger_final_missing_pending_active_enters_admission_bucket() {
+        let mut ledger = NovoRudpSequenceLifecycleLedger::new(14_400, 64);
+        ledger.observe_repair_received(14_105, hash_for_sequence(14_105), true, 10);
+        ledger.mark_pending_active(14_105, 11, "final_missing_requeue");
+        ledger.observe_repair_received(10, hash_for_sequence(10), true, 12);
+        ledger.mark_pending_active(10, 13, "old_repair");
+
+        let buckets = ledger.admission_buckets(Some(14_105), Some(NovoRudpRange::new(14_105, 14_168)));
+        assert_eq!(buckets.final_missing_repair_pending, vec![14_105]);
+        assert_eq!(buckets.other_repair_pending, vec![10]);
+    }
+
+    #[test]
+    fn ledger_admitted_without_receipt_remains_retryable() {
+        let mut ledger = NovoRudpSequenceLifecycleLedger::new(14_400, 64);
+        ledger.observe_repair_received(14_106, hash_for_sequence(14_106), true, 10);
+        ledger.mark_pending_active(14_106, 11, "requeue");
+        ledger.mark_admitted_to_aoem(14_106, 12);
+
+        let record = ledger.records.get(&14_106).expect("record");
+        assert!(record.admitted_to_aoem);
+        assert!(record.pending_active, "admitted without receipt must stay retryable");
+        assert!(!record.receipt_written);
+
+        ledger.mark_receipt_written(14_106, 13);
+        let done = ledger.records.get(&14_106).expect("done");
+        assert!(done.receipt_written);
+        assert!(!done.pending_active);
+    }
+
+    #[test]
+    fn ledger_ack_missing_bitmap_derived_from_receipt_state() {
+        let mut ledger = NovoRudpSequenceLifecycleLedger::new(8, 4);
+        for sequence in 0..4 {
+            ledger.mark_receipt_written(sequence, 10 + sequence as u128);
+        }
+        ledger.observe_repair_received(6, hash_for_sequence(6), true, 20);
+        ledger.mark_pending_active(6, 21, "repair");
+
+        assert_eq!(
+            ledger.missing_ranges(),
+            vec![NovoRudpRange::new(4, 7)]
+        );
+    }
+
+    #[test]
+    fn ledger_timeout_report_explains_final_missing_layer() {
+        let mut ledger = NovoRudpSequenceLifecycleLedger::new(14_400, 64);
+        for sequence in 0..14_105 {
+            ledger.mark_receipt_written(sequence, 1);
+        }
+        ledger.observe_repair_received(14_120, hash_for_sequence(14_120), true, 2);
+        ledger.mark_pending_active(14_120, 3, "repair");
+        ledger.mark_admitted_to_aoem(14_120, 4);
+
+        let summary = ledger.final_missing_summary(Some(14_105));
+        assert_eq!(summary.final_missing_count, 295);
+        assert_eq!(summary.final_missing_received_count, 1);
+        assert_eq!(summary.final_missing_pending_active_count, 1);
+        assert_eq!(summary.final_missing_admitted_count, 1);
+        assert_eq!(summary.final_missing_receipt_count, 0);
+    }
+
+    #[test]
+    fn ledger_window_repair_converges_tail_gap_14105_14399() {
+        let mut ledger = NovoRudpSequenceLifecycleLedger::new(14_400, 64);
+        for sequence in 0..14_105 {
+            ledger.mark_receipt_written(sequence, 1);
+        }
+
+        for round in 0..16 {
+            let missing = ledger.missing_ranges();
+            if missing.is_empty() {
+                break;
+            }
+            let window = select_first_missing_window(
+                missing.as_slice(),
+                14_400,
+                &NovoRudpWindowConfig {
+                    window_size: 64,
+                    ..NovoRudpWindowConfig::default()
+                },
+            )
+            .expect("window");
+            for range in window.missing_ranges {
+                for sequence in range.start..=range.end_inclusive {
+                    if round < 2 && sequence % 3 == 0 {
+                        continue;
+                    }
+                    ledger.observe_repair_received(
+                        sequence,
+                        hash_for_sequence(sequence),
+                        true,
+                        10 + round,
+                    );
+                    ledger.mark_pending_active(sequence, 20 + round, "repair");
+                }
+            }
+            let candidates = ledger.admission_buckets(Some(14_105), Some(window.range));
+            for sequence in candidates
+                .final_missing_repair_pending
+                .into_iter()
+                .take(16)
+                .collect::<Vec<_>>()
+            {
+                ledger.mark_admitted_to_aoem(sequence, 30 + round);
+                ledger.mark_receipt_written(sequence, 40 + round);
+            }
+        }
+
+        for _ in 0..64 {
+            let candidates = ledger.admission_buckets(Some(14_105), None);
+            if candidates.final_missing_repair_pending.is_empty() {
+                break;
+            }
+            for sequence in candidates.final_missing_repair_pending.into_iter().take(16) {
+                ledger.mark_admitted_to_aoem(sequence, 100);
+                ledger.mark_receipt_written(sequence, 101);
+            }
+        }
+
+        assert!(ledger.missing_ranges().is_empty());
+        let summary = ledger.final_missing_summary(Some(14_105));
+        assert_eq!(summary.final_missing_count, 0);
+        assert_eq!(summary.missing_count, 0);
+    }
+
+    #[test]
+    fn semantic_modulation_keeps_raw_and_delta_reversible() {
+        let profile = NovoRudpSemanticModulationProfile::default();
+        let frame = NovoRudpAlgebraicFrame {
+            codec: NovoRudpSemanticCodec::DictionaryDelta,
+            schema_version: 1,
+            basis_id: Some("nov-tx-dict-v0".to_string()),
+            operator_id: None,
+            params_commitment: [7; 32],
+            raw_fallback_hash: Some([9; 32]),
+            deterministic: true,
+        };
+
+        assert!(frame.requires_raw_reconstruction());
+        assert_eq!(
+            evaluate_semantic_modulation_frame(&frame, &profile),
+            NovoRudpSemanticModulationDecision::ReversibleDeltaFrame
+        );
+    }
+
+    #[test]
+    fn semantic_modulation_allows_deterministic_aoem_native_ir() {
+        let profile = NovoRudpSemanticModulationProfile::default();
+        let frame = NovoRudpAlgebraicFrame {
+            codec: NovoRudpSemanticCodec::AoemNativeIr,
+            schema_version: 1,
+            basis_id: Some("aoem-algebraic-basis-v0".to_string()),
+            operator_id: Some("nov.transfer_batch".to_string()),
+            params_commitment: [3; 32],
+            raw_fallback_hash: None,
+            deterministic: true,
+        };
+
+        assert!(frame.can_feed_aoem_directly());
+        assert_eq!(
+            evaluate_semantic_modulation_frame(&frame, &profile),
+            NovoRudpSemanticModulationDecision::AoemNativeIrFrame
+        );
+    }
+
+    #[test]
+    fn semantic_modulation_rejects_nondeterministic_ai_frame() {
+        let profile = NovoRudpSemanticModulationProfile::default();
+        let frame = NovoRudpAlgebraicFrame {
+            codec: NovoRudpSemanticCodec::AlgebraicTxIr,
+            schema_version: 1,
+            basis_id: Some("ai-generated-template".to_string()),
+            operator_id: Some("nov.transfer_batch".to_string()),
+            params_commitment: [5; 32],
+            raw_fallback_hash: None,
+            deterministic: false,
+        };
+
+        assert_eq!(
+            evaluate_semantic_modulation_frame(&frame, &profile),
+            NovoRudpSemanticModulationDecision::RejectNondeterministicSemanticFrame
+        );
     }
 }

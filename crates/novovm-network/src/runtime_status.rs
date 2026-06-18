@@ -6,7 +6,7 @@ use crate::{
         eth_rlpx_validate_block_access_list_rlp_v1,
         eth_rlpx_validate_transaction_envelope_payload_v1,
     },
-    EthFullnodeBudgetHooksV1,
+    EthFullnodeBudgetHooksV1, NovoRudpSequenceLifecycleLedger,
 };
 use novovm_protocol::{decode_nov_native_tx_wire_v1, NovTxKindV1};
 use serde::{Deserialize, Serialize};
@@ -139,6 +139,9 @@ static NETWORK_RUNTIME_NATIVE_PENDING_TX_BROADCAST_RUNTIME: OnceLock<
 static NETWORK_RUNTIME_NATIVE_REPAIR_PROBE: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeRepairProbeStateV1>>,
 > = OnceLock::new();
+static NETWORK_RUNTIME_NOVORUDP_SEQUENCE_LEDGER: OnceLock<
+    Mutex<HashMap<u64, NovoRudpSequenceLifecycleLedger>>,
+> = OnceLock::new();
 static NETWORK_RUNTIME_NATIVE_EXECUTION_BUDGET_RUNTIME: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeExecutionBudgetRuntimeSummaryV1>>,
 > = OnceLock::new();
@@ -261,6 +264,11 @@ fn runtime_native_pending_tx_broadcast_runtime_map(
 fn runtime_native_repair_probe_map(
 ) -> &'static Mutex<HashMap<u64, NetworkRuntimeNativeRepairProbeStateV1>> {
     NETWORK_RUNTIME_NATIVE_REPAIR_PROBE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_novorudp_sequence_ledger_map(
+) -> &'static Mutex<HashMap<u64, NovoRudpSequenceLifecycleLedger>> {
+    NETWORK_RUNTIME_NOVORUDP_SEQUENCE_LEDGER.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_native_execution_budget_runtime_map(
@@ -1392,6 +1400,67 @@ fn network_runtime_native_repair_sequence_ranges_sample_v1(
     out
 }
 
+fn observe_novorudp_sequence_repair_received_v1(
+    chain_id: u64,
+    sequence: u64,
+    tx_hash: [u8; 32],
+    payload_retained: bool,
+) {
+    if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
+        let ledger = guard
+            .entry(chain_id)
+            .or_insert_with(|| NovoRudpSequenceLifecycleLedger::new(0, 64));
+        if ledger.expected_total <= sequence {
+            ledger.expected_total = sequence.saturating_add(1);
+            ledger.mark_expected_range(0, sequence, now_unix_millis(), "runtime_extend_expected");
+        }
+        ledger.observe_repair_received(sequence, tx_hash, payload_retained, now_unix_millis());
+    }
+}
+
+fn observe_novorudp_sequence_pending_view_v1(
+    chain_id: u64,
+    sequence: Option<u64>,
+    already_receipted: bool,
+) {
+    let Some(sequence) = sequence else {
+        return;
+    };
+    if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
+        let ledger = guard
+            .entry(chain_id)
+            .or_insert_with(|| NovoRudpSequenceLifecycleLedger::new(sequence.saturating_add(1), 64));
+        if ledger.expected_total <= sequence {
+            ledger.expected_total = sequence.saturating_add(1);
+            ledger.mark_expected_range(0, sequence, now_unix_millis(), "runtime_extend_expected");
+        }
+        if already_receipted {
+            ledger.mark_receipt_written(sequence, now_unix_millis());
+        } else {
+            ledger.mark_pending_active(sequence, now_unix_millis(), "runtime_pending_view");
+        }
+    }
+}
+
+fn observe_novorudp_sequence_admitted_to_aoem_v1(
+    chain_id: u64,
+    sequence: Option<u64>,
+) {
+    let Some(sequence) = sequence else {
+        return;
+    };
+    if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
+        let ledger = guard
+            .entry(chain_id)
+            .or_insert_with(|| NovoRudpSequenceLifecycleLedger::new(sequence.saturating_add(1), 64));
+        if ledger.expected_total <= sequence {
+            ledger.expected_total = sequence.saturating_add(1);
+            ledger.mark_expected_range(0, sequence, now_unix_millis(), "runtime_extend_expected");
+        }
+        ledger.mark_admitted_to_aoem(sequence, now_unix_millis());
+    }
+}
+
 fn network_runtime_native_repair_probe_summary_v1(
     chain_id: u64,
 ) -> NetworkRuntimeNativePendingTxSummaryV1 {
@@ -1609,12 +1678,14 @@ fn network_runtime_native_repair_probe_observe_pending_view_v1(
         if let Some(sequence) = sequence {
             state.sequence_already_receipted_seen.insert(sequence);
         }
+        observe_novorudp_sequence_pending_view_v1(chain_id, sequence, true);
         return;
     }
     state.sequence_enqueued_count = state.sequence_enqueued_count.saturating_add(1);
     if let Some(sequence) = sequence {
         state.sequence_enqueued_seen.insert(sequence);
     }
+    observe_novorudp_sequence_pending_view_v1(chain_id, sequence, false);
 }
 
 fn network_runtime_native_repair_probe_tx_hashes_v1(chain_id: u64) -> HashSet<[u8; 32]> {
@@ -1697,6 +1768,7 @@ pub fn observe_network_runtime_native_pending_tx_repair_probe_v1(
         .insert(tx_hash, payload.to_vec());
     state.sequence_payload_index_seen.insert(sequence);
     state.sequence_accepted_count = state.sequence_accepted_count.saturating_add(1);
+    observe_novorudp_sequence_repair_received_v1(chain_id, sequence, tx_hash, true);
 }
 
 pub fn observe_network_runtime_native_pending_tx_repair_aoem_admission_v1(
@@ -1713,9 +1785,11 @@ pub fn observe_network_runtime_native_pending_tx_repair_aoem_admission_v1(
         return;
     }
     state.sequence_admitted_to_aoem_count = state.sequence_admitted_to_aoem_count.saturating_add(1);
-    if let Some(sequence) = state.tx_hash_to_sequence.get(&tx_hash).copied() {
+    let sequence = state.tx_hash_to_sequence.get(&tx_hash).copied();
+    if let Some(sequence) = sequence {
         state.sequence_admitted_to_aoem_seen.insert(sequence);
     }
+    observe_novorudp_sequence_admitted_to_aoem_v1(chain_id, sequence);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -3252,6 +3326,9 @@ pub fn clear_network_runtime_native_state_for_host_tests_v1() {
         guard.clear();
     }
     if let Ok(mut guard) = runtime_native_pending_tx_broadcast_runtime_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
         guard.clear();
     }
     if let Ok(mut guard) = runtime_native_execution_budget_runtime_map().lock() {
@@ -5767,6 +5844,12 @@ pub fn snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
     limit: usize,
     final_missing_sequence_start: Option<u64>,
 ) -> Vec<NetworkRuntimeNativePendingTxStateV1> {
+    if final_missing_sequence_start.is_some() {
+        let _ = requeue_network_runtime_native_repair_pending_for_final_missing_v1(
+            chain_id,
+            final_missing_sequence_start,
+        );
+    }
     runtime_native_pending_tx_cleanup_v1(chain_id, now_unix_millis());
     let repair_tx_hashes = network_runtime_native_repair_probe_tx_hashes_v1(chain_id);
     let repair_sequence_by_tx_hash =
@@ -8780,7 +8863,8 @@ mod tests {
             8,
             Some(sequence),
         );
-        assert!(before.is_empty());
+        assert_eq!(before.len(), 1);
+        assert_eq!(before[0].tx_hash, repair_tx);
         assert!(get_network_runtime_native_pending_tx_payload_v1(chain_id, repair_tx).is_some());
 
         let requeue = requeue_network_runtime_native_repair_pending_for_final_missing_v1(
@@ -8795,9 +8879,9 @@ mod tests {
         assert_eq!(requeue.repair_final_missing_payload_available_count, 1);
         assert_eq!(
             requeue.repair_final_missing_payload_available_but_inactive_count,
-            1
+            0
         );
-        assert_eq!(requeue.repair_attempted_unreceipted_requeued_count, 1);
+        assert_eq!(requeue.repair_attempted_unreceipted_requeued_count, 0);
         assert_eq!(requeue.repair_attempted_unreceipted_requeue_failed_count, 0);
 
         let repaired =
@@ -8850,14 +8934,13 @@ mod tests {
             tx.lifecycle_stage = NetworkRuntimeNativePendingTxLifecycleStageV1::Dropped;
         }
 
-        assert!(
-            snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
-                chain_id,
-                4,
-                Some(sequence),
-            )
-            .is_empty()
+        let auto_requeued = snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
+            chain_id,
+            4,
+            Some(sequence),
         );
+        assert_eq!(auto_requeued.len(), 1);
+        assert_eq!(auto_requeued[0].tx_hash, repair_tx);
         let requeue = requeue_network_runtime_native_repair_pending_for_final_missing_v1(
             chain_id,
             Some(sequence),
@@ -8865,9 +8948,9 @@ mod tests {
         assert_eq!(requeue.repair_final_missing_payload_available_count, 1);
         assert_eq!(
             requeue.repair_final_missing_payload_available_but_inactive_count,
-            1
+            0
         );
-        assert_eq!(requeue.repair_attempted_unreceipted_requeued_count, 1);
+        assert_eq!(requeue.repair_attempted_unreceipted_requeued_count, 0);
         assert_eq!(requeue.repair_final_missing_invariant_violation_count, 0);
         assert_eq!(
             snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1(
