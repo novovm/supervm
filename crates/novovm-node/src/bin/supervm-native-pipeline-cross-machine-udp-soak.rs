@@ -3051,6 +3051,33 @@ fn write_synthetic_receiver_failure_report(
             "repair_final_missing_payload_recovered_requeued_count": repair_source
                 .and_then(|sample| sample.get("repair_final_missing_payload_recovered_requeued_count"))
                 .and_then(Value::as_u64),
+            "ledger_final_missing_candidate_count": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_candidate_count"))
+                .and_then(Value::as_u64),
+            "ledger_final_missing_candidate_ranges_sample": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_candidate_ranges_sample"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "ledger_final_missing_requeued_before_admission_count": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_requeued_before_admission_count"))
+                .and_then(Value::as_u64),
+            "ledger_final_missing_admitted_count": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_admitted_count"))
+                .and_then(Value::as_u64),
+            "ledger_final_missing_admitted_ranges_sample": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_admitted_ranges_sample"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "ledger_final_missing_admission_skipped_count": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_admission_skipped_count"))
+                .and_then(Value::as_u64),
+            "ledger_final_missing_admission_skip_reason_counts": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_admission_skip_reason_counts"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+            "admission_used_ledger_final_missing_bucket": repair_source
+                .and_then(|sample| sample.get("admission_used_ledger_final_missing_bucket"))
+                .and_then(Value::as_bool),
             "repair_sequence_duplicate_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_duplicate_count"))
                 .and_then(Value::as_u64),
@@ -3144,6 +3171,33 @@ fn write_synthetic_receiver_failure_report(
             "repair_final_missing_payload_recovered_requeued_count": repair_source
                 .and_then(|sample| sample.get("repair_final_missing_payload_recovered_requeued_count"))
                 .and_then(Value::as_u64),
+            "ledger_final_missing_candidate_count": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_candidate_count"))
+                .and_then(Value::as_u64),
+            "ledger_final_missing_candidate_ranges_sample": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_candidate_ranges_sample"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "ledger_final_missing_requeued_before_admission_count": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_requeued_before_admission_count"))
+                .and_then(Value::as_u64),
+            "ledger_final_missing_admitted_count": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_admitted_count"))
+                .and_then(Value::as_u64),
+            "ledger_final_missing_admitted_ranges_sample": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_admitted_ranges_sample"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "ledger_final_missing_admission_skipped_count": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_admission_skipped_count"))
+                .and_then(Value::as_u64),
+            "ledger_final_missing_admission_skip_reason_counts": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_admission_skip_reason_counts"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+            "admission_used_ledger_final_missing_bucket": repair_source
+                .and_then(|sample| sample.get("admission_used_ledger_final_missing_bucket"))
+                .and_then(Value::as_bool),
         },
         "receiver_ack_snapshot": {
             "expected_tx_total": ack_snapshot
@@ -3760,6 +3814,14 @@ fn diagnostics_summary_sample(
         "repair_payload_retention_false_negative_suspected": summary.get("repair_payload_retention_false_negative_suspected").and_then(Value::as_bool).unwrap_or(false),
         "repair_final_missing_payload_recovered_count": summary_u64(summary, "repair_final_missing_payload_recovered_count"),
         "repair_final_missing_payload_recovered_requeued_count": summary_u64(summary, "repair_final_missing_payload_recovered_requeued_count"),
+        "ledger_final_missing_candidate_count": summary_u64(summary, "ledger_final_missing_candidate_count"),
+        "ledger_final_missing_candidate_ranges_sample": summary.get("ledger_final_missing_candidate_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "ledger_final_missing_requeued_before_admission_count": summary_u64(summary, "ledger_final_missing_requeued_before_admission_count"),
+        "ledger_final_missing_admitted_count": summary_u64(summary, "ledger_final_missing_admitted_count"),
+        "ledger_final_missing_admitted_ranges_sample": summary.get("ledger_final_missing_admitted_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "ledger_final_missing_admission_skipped_count": summary_u64(summary, "ledger_final_missing_admission_skipped_count"),
+        "ledger_final_missing_admission_skip_reason_counts": summary.get("ledger_final_missing_admission_skip_reason_counts").cloned().unwrap_or_else(|| serde_json::json!({})),
+        "admission_used_ledger_final_missing_bucket": summary.get("admission_used_ledger_final_missing_bucket").and_then(Value::as_bool).unwrap_or(false),
         "ticks": summary_u64(summary, "ticks"),
         "ticks_per_sec_x1000": summary_u64(summary, "ticks_per_sec_x1000"),
     });
@@ -6490,6 +6552,14 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "repair_payload_retention_false_negative_suspected": summary.get("repair_payload_retention_false_negative_suspected").and_then(Value::as_bool).unwrap_or(false),
         "repair_final_missing_payload_recovered_count": summary_u64(&summary, "repair_final_missing_payload_recovered_count"),
         "repair_final_missing_payload_recovered_requeued_count": summary_u64(&summary, "repair_final_missing_payload_recovered_requeued_count"),
+        "ledger_final_missing_candidate_count": summary_u64(&summary, "ledger_final_missing_candidate_count"),
+        "ledger_final_missing_candidate_ranges_sample": summary.get("ledger_final_missing_candidate_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "ledger_final_missing_requeued_before_admission_count": summary_u64(&summary, "ledger_final_missing_requeued_before_admission_count"),
+        "ledger_final_missing_admitted_count": summary_u64(&summary, "ledger_final_missing_admitted_count"),
+        "ledger_final_missing_admitted_ranges_sample": summary.get("ledger_final_missing_admitted_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "ledger_final_missing_admission_skipped_count": summary_u64(&summary, "ledger_final_missing_admission_skipped_count"),
+        "ledger_final_missing_admission_skip_reason_counts": summary.get("ledger_final_missing_admission_skip_reason_counts").cloned().unwrap_or_else(|| serde_json::json!({})),
+        "admission_used_ledger_final_missing_bucket": summary.get("admission_used_ledger_final_missing_bucket").and_then(Value::as_bool).unwrap_or(false),
         "queue_tx_count_last": summary_u64(&summary, "queue_tx_count_last"),
         "queue_active_pending_last": summary_u64(&summary, "queue_active_pending_last"),
         "queue_historical_pending_last": summary_u64(&summary, "queue_historical_pending_last"),

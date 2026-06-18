@@ -1427,9 +1427,9 @@ fn observe_novorudp_sequence_pending_view_v1(
         return;
     };
     if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
-        let ledger = guard
-            .entry(chain_id)
-            .or_insert_with(|| NovoRudpSequenceLifecycleLedger::new(sequence.saturating_add(1), 64));
+        let ledger = guard.entry(chain_id).or_insert_with(|| {
+            NovoRudpSequenceLifecycleLedger::new(sequence.saturating_add(1), 64)
+        });
         if ledger.expected_total <= sequence {
             ledger.expected_total = sequence.saturating_add(1);
             ledger.mark_expected_range(0, sequence, now_unix_millis(), "runtime_extend_expected");
@@ -1442,17 +1442,14 @@ fn observe_novorudp_sequence_pending_view_v1(
     }
 }
 
-fn observe_novorudp_sequence_admitted_to_aoem_v1(
-    chain_id: u64,
-    sequence: Option<u64>,
-) {
+fn observe_novorudp_sequence_admitted_to_aoem_v1(chain_id: u64, sequence: Option<u64>) {
     let Some(sequence) = sequence else {
         return;
     };
     if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
-        let ledger = guard
-            .entry(chain_id)
-            .or_insert_with(|| NovoRudpSequenceLifecycleLedger::new(sequence.saturating_add(1), 64));
+        let ledger = guard.entry(chain_id).or_insert_with(|| {
+            NovoRudpSequenceLifecycleLedger::new(sequence.saturating_add(1), 64)
+        });
         if ledger.expected_total <= sequence {
             ledger.expected_total = sequence.saturating_add(1);
             ledger.mark_expected_range(0, sequence, now_unix_millis(), "runtime_extend_expected");
@@ -1817,6 +1814,22 @@ pub struct NetworkRuntimeNativeRepairPendingRequeueSummaryV1 {
     pub repair_final_missing_payload_recovered_requeued_count: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct NetworkRuntimeNovoRudpLedgerFinalMissingAdmissionSnapshotV1 {
+    pub chain_id: u64,
+    pub final_missing_sequence_start: Option<u64>,
+    pub ledger_final_missing_candidate_count: u64,
+    pub ledger_final_missing_candidate_ranges_sample:
+        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub ledger_final_missing_requeued_before_admission_count: u64,
+    pub ledger_final_missing_admission_skipped_count: u64,
+    pub ledger_final_missing_admission_skip_reason_counts: HashMap<String, u64>,
+    pub admission_used_ledger_final_missing_bucket: bool,
+    pub repair_requeue: NetworkRuntimeNativeRepairPendingRequeueSummaryV1,
+    pub candidates: Vec<NetworkRuntimeNativePendingTxStateV1>,
+}
+
 #[inline]
 fn runtime_native_pending_tx_active_stage_v1(
     stage: NetworkRuntimeNativePendingTxLifecycleStageV1,
@@ -2084,6 +2097,110 @@ pub fn requeue_network_runtime_native_repair_pending_for_final_missing_v1(
         }
     }
     summary
+}
+
+#[must_use]
+pub fn snapshot_network_runtime_novorudp_ledger_final_missing_admission_candidates_v1(
+    chain_id: u64,
+    limit: usize,
+    final_missing_sequence_start: Option<u64>,
+) -> NetworkRuntimeNovoRudpLedgerFinalMissingAdmissionSnapshotV1 {
+    let repair_requeue = requeue_network_runtime_native_repair_pending_for_final_missing_v1(
+        chain_id,
+        final_missing_sequence_start,
+    );
+    let Some(start_sequence) = final_missing_sequence_start else {
+        return NetworkRuntimeNovoRudpLedgerFinalMissingAdmissionSnapshotV1 {
+            chain_id,
+            final_missing_sequence_start,
+            repair_requeue,
+            ..Default::default()
+        };
+    };
+    runtime_native_pending_tx_cleanup_v1(chain_id, now_unix_millis());
+    let mut skip_reason_counts = HashMap::<String, u64>::new();
+    let mut ledger_entries = runtime_novorudp_sequence_ledger_map()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&chain_id).cloned())
+        .map(|ledger| {
+            ledger
+                .records
+                .into_iter()
+                .filter(|(sequence, record)| {
+                    *sequence >= start_sequence
+                        && record.expected
+                        && record.payload_retained
+                        && !record.receipt_written
+                        && !record.canonical_included
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    ledger_entries.sort_by_key(|(sequence, _)| *sequence);
+
+    let payloads = runtime_native_pending_tx_payload_map()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&chain_id).cloned())
+        .unwrap_or_default();
+    let pending = runtime_native_pending_tx_map()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&chain_id).cloned())
+        .unwrap_or_default();
+
+    let mut candidate_sequences = Vec::<u64>::new();
+    let mut candidates = Vec::<NetworkRuntimeNativePendingTxStateV1>::new();
+    for (sequence, record) in ledger_entries {
+        let Some(tx_hash) = record.tx_hash else {
+            *skip_reason_counts
+                .entry("missing_tx_hash".to_string())
+                .or_default() += 1;
+            continue;
+        };
+        if !payloads.contains_key(&tx_hash) {
+            *skip_reason_counts
+                .entry("missing_payload".to_string())
+                .or_default() += 1;
+            continue;
+        }
+        let Some(pending_tx) = pending.get(&tx_hash) else {
+            *skip_reason_counts
+                .entry("missing_pending_state".to_string())
+                .or_default() += 1;
+            continue;
+        };
+        if !runtime_native_pending_tx_active_stage_v1(pending_tx.lifecycle_stage) {
+            *skip_reason_counts
+                .entry("inactive_pending_stage".to_string())
+                .or_default() += 1;
+            continue;
+        }
+        candidate_sequences.push(sequence);
+        if limit == 0 || candidates.len() < limit {
+            candidates.push(pending_tx.clone());
+        }
+    }
+    let candidate_count = candidate_sequences.len().try_into().unwrap_or(u64::MAX);
+    let skipped_count = skip_reason_counts.values().copied().sum::<u64>();
+    NetworkRuntimeNovoRudpLedgerFinalMissingAdmissionSnapshotV1 {
+        chain_id,
+        final_missing_sequence_start,
+        ledger_final_missing_candidate_count: candidate_count,
+        ledger_final_missing_candidate_ranges_sample:
+            network_runtime_native_repair_sequence_ranges_sample_v1(
+                &candidate_sequences.into_iter().collect::<HashSet<_>>(),
+                64,
+            ),
+        ledger_final_missing_requeued_before_admission_count: repair_requeue
+            .repair_attempted_unreceipted_requeued_count,
+        ledger_final_missing_admission_skipped_count: skipped_count,
+        ledger_final_missing_admission_skip_reason_counts: skip_reason_counts,
+        admission_used_ledger_final_missing_bucket: !candidates.is_empty(),
+        repair_requeue,
+        candidates,
+    }
 }
 
 const NETWORK_RUNTIME_NATIVE_PENDING_TX_RETRY_BASE_DELAY_MS_V1: u128 = 500;
@@ -5224,6 +5341,9 @@ pub fn clear_network_runtime_native_snapshots_for_chain_v1(chain_id: u64) {
         guard.remove(&chain_id);
     }
     if let Ok(mut guard) = runtime_native_repair_probe_map().lock() {
+        guard.remove(&chain_id);
+    }
+    if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
         guard.remove(&chain_id);
     }
     if let Ok(mut guard) = runtime_native_execution_budget_runtime_map().lock() {

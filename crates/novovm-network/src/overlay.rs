@@ -103,14 +103,20 @@ pub fn evaluate_overlay_route(
         return OverlayRouteDecision::RejectIpAddressedRoute;
     }
     if profile.relay_required_when_direct_blocked
-        && profile.camouflage_profile.as_ref().is_some_and(|profile| profile.trim().is_empty())
+        && profile
+            .camouflage_profile
+            .as_ref()
+            .is_some_and(|profile| profile.trim().is_empty())
     {
         return OverlayRouteDecision::RejectMissingCamouflageProfile;
     }
     if route_set.requires_relay() {
         OverlayRouteDecision::RelayRequired
     } else if profile.relay_required_when_direct_blocked
-        && profile.camouflage_profile.as_ref().is_some_and(|profile| !profile.trim().is_empty())
+        && profile
+            .camouflage_profile
+            .as_ref()
+            .is_some_and(|profile| !profile.trim().is_empty())
     {
         OverlayRouteDecision::RelayRequired
     } else {

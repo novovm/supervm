@@ -332,7 +332,10 @@ impl NovoRudpSequenceLifecycleLedger {
     }
 
     #[must_use]
-    pub fn final_missing_summary(&self, final_missing_start: Option<u64>) -> NovoRudpLifecycleSummary {
+    pub fn final_missing_summary(
+        &self,
+        final_missing_start: Option<u64>,
+    ) -> NovoRudpLifecycleSummary {
         let mut summary = NovoRudpLifecycleSummary {
             expected_count: self.expected_total,
             missing_count: missing_count(self.missing_ranges().as_slice()),
@@ -343,7 +346,8 @@ impl NovoRudpSequenceLifecycleLedger {
         };
         for sequence in start..self.expected_total {
             let record = self.records.get(&sequence);
-            let done = record.is_some_and(|record| record.receipt_written || record.canonical_included);
+            let done =
+                record.is_some_and(|record| record.receipt_written || record.canonical_included);
             if done {
                 if record.is_some_and(|record| record.receipt_written) {
                     summary.final_missing_receipt_count =
@@ -361,8 +365,9 @@ impl NovoRudpSequenceLifecycleLedger {
                     summary.final_missing_received_count.saturating_add(1);
             }
             if record.is_some_and(|record| record.payload_retained) {
-                summary.final_missing_payload_retained_count =
-                    summary.final_missing_payload_retained_count.saturating_add(1);
+                summary.final_missing_payload_retained_count = summary
+                    .final_missing_payload_retained_count
+                    .saturating_add(1);
             }
             if record.is_some_and(|record| record.pending_active) {
                 summary.final_missing_pending_active_count =
@@ -375,10 +380,12 @@ impl NovoRudpSequenceLifecycleLedger {
             if record.is_some_and(|record| {
                 record.payload_retained && !record.pending_active && !record.receipt_written
             }) {
-                summary.final_missing_invariant_violation_count =
-                    summary.final_missing_invariant_violation_count.saturating_add(1);
-                summary.final_missing_requeue_required_count =
-                    summary.final_missing_requeue_required_count.saturating_add(1);
+                summary.final_missing_invariant_violation_count = summary
+                    .final_missing_invariant_violation_count
+                    .saturating_add(1);
+                summary.final_missing_requeue_required_count = summary
+                    .final_missing_requeue_required_count
+                    .saturating_add(1);
             }
         }
         summary
@@ -402,7 +409,8 @@ impl NovoRudpSequenceLifecycleLedger {
                 .is_some_and(|range| sequence >= range.start && sequence <= range.end_inclusive)
             {
                 buckets.current_window_repair_pending.push(sequence);
-            } else if record.received || record.payload_retained || record.repair_attempt_count > 0 {
+            } else if record.received || record.payload_retained || record.repair_attempt_count > 0
+            {
                 buckets.other_repair_pending.push(sequence);
             } else {
                 buckets.normal_pending.push(sequence);
@@ -418,14 +426,15 @@ impl NovoRudpSequenceLifecycleLedger {
         reason: &str,
     ) -> &mut NovoRudpSequenceLifecycleRecord {
         let window_id = Some(sequence / self.window_size.max(1));
-        let record = self.records.entry(sequence).or_insert_with(|| {
-            NovoRudpSequenceLifecycleRecord {
-                sequence,
-                window_id,
-                expected: sequence < self.expected_total,
-                ..Default::default()
-            }
-        });
+        let record =
+            self.records
+                .entry(sequence)
+                .or_insert_with(|| NovoRudpSequenceLifecycleRecord {
+                    sequence,
+                    window_id,
+                    expected: sequence < self.expected_total,
+                    ..Default::default()
+                });
         record.last_updated_ms = now_ms;
         record.last_state_reason = Some(reason.to_string());
         record
@@ -475,7 +484,10 @@ impl NovoRudpAlgebraicFrame {
                 self.codec,
                 NovoRudpSemanticCodec::AlgebraicTxIr | NovoRudpSemanticCodec::AoemNativeIr
             )
-            && self.operator_id.as_ref().is_some_and(|op| !op.trim().is_empty())
+            && self
+                .operator_id
+                .as_ref()
+                .is_some_and(|op| !op.trim().is_empty())
     }
 }
 
@@ -541,8 +553,8 @@ pub fn evaluate_semantic_modulation_frame(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_repair_plan, classify_ack_progress, normalize_missing_ranges,
-        select_first_missing_window, evaluate_semantic_modulation_frame, NovoRudpAckProgress,
+        build_repair_plan, classify_ack_progress, evaluate_semantic_modulation_frame,
+        normalize_missing_ranges, select_first_missing_window, NovoRudpAckProgress,
         NovoRudpAlgebraicFrame, NovoRudpRange, NovoRudpSemanticCodec,
         NovoRudpSemanticModulationDecision, NovoRudpSemanticModulationProfile,
         NovoRudpSequenceLifecycleLedger, NovoRudpWindowConfig,
@@ -950,7 +962,8 @@ mod tests {
         ledger.observe_repair_received(10, hash_for_sequence(10), true, 12);
         ledger.mark_pending_active(10, 13, "old_repair");
 
-        let buckets = ledger.admission_buckets(Some(14_105), Some(NovoRudpRange::new(14_105, 14_168)));
+        let buckets =
+            ledger.admission_buckets(Some(14_105), Some(NovoRudpRange::new(14_105, 14_168)));
         assert_eq!(buckets.final_missing_repair_pending, vec![14_105]);
         assert_eq!(buckets.other_repair_pending, vec![10]);
     }
@@ -964,7 +977,10 @@ mod tests {
 
         let record = ledger.records.get(&14_106).expect("record");
         assert!(record.admitted_to_aoem);
-        assert!(record.pending_active, "admitted without receipt must stay retryable");
+        assert!(
+            record.pending_active,
+            "admitted without receipt must stay retryable"
+        );
         assert!(!record.receipt_written);
 
         ledger.mark_receipt_written(14_106, 13);
@@ -982,10 +998,7 @@ mod tests {
         ledger.observe_repair_received(6, hash_for_sequence(6), true, 20);
         ledger.mark_pending_active(6, 21, "repair");
 
-        assert_eq!(
-            ledger.missing_ranges(),
-            vec![NovoRudpRange::new(4, 7)]
-        );
+        assert_eq!(ledger.missing_ranges(), vec![NovoRudpRange::new(4, 7)]);
     }
 
     #[test]

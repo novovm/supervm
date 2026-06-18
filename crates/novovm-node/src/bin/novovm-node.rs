@@ -33971,6 +33971,10 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         .pointer("/batch_result/skipped")
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
+    let ledger_final_missing_admission = tick_out
+        .pointer("/batch_result/ledger_final_missing_admission")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let native_store_dirty_set = tick_out
         .pointer("/batch_result/batch_result/native_store_commit/dirty_set")
         .cloned()
@@ -34012,6 +34016,7 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "batch_result": {
             "selected_count": selected_count,
             "skipped": skipped,
+            "ledger_final_missing_admission": ledger_final_missing_admission,
             "batch_result": {
                 "native_store_commit": {
                     "model": native_store_commit.get("model").cloned().unwrap_or(serde_json::Value::Null),
@@ -34115,6 +34120,14 @@ struct NativeExecutionPipelineAggregateV1 {
     repair_payload_retention_false_negative_suspected: bool,
     repair_final_missing_payload_recovered_count: u64,
     repair_final_missing_payload_recovered_requeued_count: u64,
+    ledger_final_missing_candidate_count: u64,
+    ledger_final_missing_candidate_ranges_sample: serde_json::Value,
+    ledger_final_missing_requeued_before_admission_count: u64,
+    ledger_final_missing_admitted_count: u64,
+    ledger_final_missing_admitted_ranges_sample: serde_json::Value,
+    ledger_final_missing_admission_skipped_count: u64,
+    ledger_final_missing_admission_skip_reason_counts: serde_json::Value,
+    admission_used_ledger_final_missing_bucket: bool,
     queue_tx_count_last: u64,
     queue_active_pending_last: u64,
     queue_historical_pending_last: u64,
@@ -34221,6 +34234,14 @@ impl NativeExecutionPipelineAggregateV1 {
             repair_payload_retention_false_negative_suspected: false,
             repair_final_missing_payload_recovered_count: 0,
             repair_final_missing_payload_recovered_requeued_count: 0,
+            ledger_final_missing_candidate_count: 0,
+            ledger_final_missing_candidate_ranges_sample: serde_json::json!([]),
+            ledger_final_missing_requeued_before_admission_count: 0,
+            ledger_final_missing_admitted_count: 0,
+            ledger_final_missing_admitted_ranges_sample: serde_json::json!([]),
+            ledger_final_missing_admission_skipped_count: 0,
+            ledger_final_missing_admission_skip_reason_counts: serde_json::json!({}),
+            admission_used_ledger_final_missing_bucket: false,
             queue_tx_count_last: 0,
             queue_active_pending_last: 0,
             queue_historical_pending_last: 0,
@@ -34678,6 +34699,52 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("repair_final_missing_payload_recovered_requeued_count")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        if let Some(ledger_admission) = report
+            .pointer("/tick_result/batch_result/ledger_final_missing_admission")
+            .filter(|value| value.is_object())
+        {
+            let candidate_count = ledger_admission
+                .get("ledger_final_missing_candidate_count")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+            let selected_count = report
+                .pointer("/tick_result/batch_result/selected_count")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+            let admitted_count = candidate_count.min(selected_count);
+            self.ledger_final_missing_candidate_count = candidate_count;
+            self.ledger_final_missing_candidate_ranges_sample = ledger_admission
+                .get("ledger_final_missing_candidate_ranges_sample")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([]));
+            self.ledger_final_missing_requeued_before_admission_count = self
+                .ledger_final_missing_requeued_before_admission_count
+                .saturating_add(
+                    ledger_admission
+                        .get("ledger_final_missing_requeued_before_admission_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.ledger_final_missing_admitted_count = self
+                .ledger_final_missing_admitted_count
+                .saturating_add(admitted_count);
+            if admitted_count > 0 {
+                self.ledger_final_missing_admitted_ranges_sample =
+                    self.ledger_final_missing_candidate_ranges_sample.clone();
+            }
+            self.ledger_final_missing_admission_skipped_count = ledger_admission
+                .get("ledger_final_missing_admission_skipped_count")
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+            self.ledger_final_missing_admission_skip_reason_counts = ledger_admission
+                .get("ledger_final_missing_admission_skip_reason_counts")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            self.admission_used_ledger_final_missing_bucket = ledger_admission
+                .get("admission_used_ledger_final_missing_bucket")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+        }
         self.queue_pending_last = queue
             .get("pending")
             .and_then(|value| value.as_u64())
@@ -35152,6 +35219,39 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "repair_final_missing_payload_recovered_requeued_count".to_string(),
             serde_json::json!(self.repair_final_missing_payload_recovered_requeued_count),
+        );
+        out.insert(
+            "ledger_final_missing_candidate_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_candidate_count),
+        );
+        out.insert(
+            "ledger_final_missing_candidate_ranges_sample".to_string(),
+            self.ledger_final_missing_candidate_ranges_sample.clone(),
+        );
+        out.insert(
+            "ledger_final_missing_requeued_before_admission_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_requeued_before_admission_count),
+        );
+        out.insert(
+            "ledger_final_missing_admitted_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_admitted_count),
+        );
+        out.insert(
+            "ledger_final_missing_admitted_ranges_sample".to_string(),
+            self.ledger_final_missing_admitted_ranges_sample.clone(),
+        );
+        out.insert(
+            "ledger_final_missing_admission_skipped_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_admission_skipped_count),
+        );
+        out.insert(
+            "ledger_final_missing_admission_skip_reason_counts".to_string(),
+            self.ledger_final_missing_admission_skip_reason_counts
+                .clone(),
+        );
+        out.insert(
+            "admission_used_ledger_final_missing_bucket".to_string(),
+            serde_json::json!(self.admission_used_ledger_final_missing_bucket),
         );
         out.insert(
             "queue_tx_count_last".to_string(),
