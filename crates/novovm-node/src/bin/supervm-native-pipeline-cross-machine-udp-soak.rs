@@ -179,6 +179,7 @@ struct NovoRudpConfigV1 {
     tail_window_batch_size: u64,
     tail_window_batch_pause_ms: u64,
     tail_window_ack_wait_ms: u64,
+    ack_progress_interval_ms: u64,
     no_progress_backoff: bool,
 }
 
@@ -199,6 +200,8 @@ impl NovoRudpConfigV1 {
             tail_window_batch_size: u64_env("NOVOVM_NOVORUDP_TAIL_WINDOW_BATCH_SIZE", 8)?.max(1),
             tail_window_batch_pause_ms: u64_env("NOVOVM_NOVORUDP_TAIL_WINDOW_BATCH_PAUSE_MS", 20)?,
             tail_window_ack_wait_ms: u64_env("NOVOVM_NOVORUDP_TAIL_WINDOW_ACK_WAIT_MS", 1500)?,
+            ack_progress_interval_ms: u64_env("NOVOVM_NOVORUDP_ACK_PROGRESS_INTERVAL_MS", 250)?
+                .max(1),
             no_progress_backoff: bool_env("NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_BACKOFF")
                 || string_env_nonempty("NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_BACKOFF").is_none(),
         })
@@ -1078,8 +1081,23 @@ mod novorudp_tests {
             tail_window_batch_size: 8,
             tail_window_batch_pause_ms: 0,
             tail_window_ack_wait_ms: 10,
+            ack_progress_interval_ms: 10,
             no_progress_backoff: true,
         }
+    }
+
+    fn with_env_var<T>(key: &str, value: Option<&str>, run: impl FnOnce() -> T) -> T {
+        let previous = std::env::var_os(key);
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+        let result = run();
+        match previous {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+        result
     }
 
     fn sender_timeout_sustained_config(tx_count: u64) -> SustainedConfigV1 {
@@ -1560,6 +1578,136 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn novorudp_receiver_emits_ack_when_window_bitmap_changes() {
+        let mut epoch = 0u64;
+        let before_epoch = next_receiver_ack_epoch(&mut epoch);
+        let before = parse_ack_value(
+            &receiver_ack_report_value(14400, 14152, 256, before_epoch),
+            256,
+        )
+        .expect("before ack");
+        let after_epoch = next_receiver_ack_epoch(&mut epoch);
+        let after = parse_ack_value(
+            &receiver_ack_report_value(14400, 14162, 256, after_epoch),
+            256,
+        )
+        .expect("after ack");
+
+        assert!(after.latest_epoch > before.latest_epoch);
+        assert!(after.latest_missing_count < before.latest_missing_count);
+        assert!(
+            after.novorudp_current_window.unwrap().start
+                > before.novorudp_current_window.unwrap().start
+        );
+    }
+
+    #[test]
+    fn novorudp_sender_waits_for_fresh_ack_after_window_repair() {
+        let stale_ack = parse_ack_value(
+            &serde_json::json!({
+                "packet_type": "native_pipeline_ack_v1",
+                "expected_tx_total": 14400,
+                "missing_count": 248,
+                "missing_ranges_full_count": 1,
+                "missing_ranges_sample": [{"start": 14152, "end_inclusive": 14399}],
+                "novorudp_current_window_id": 221,
+                "novorudp_current_window_start": 14152,
+                "novorudp_current_window_end_inclusive": 14215,
+                "novorudp_current_window_missing_count": 64,
+                "novorudp_current_window_missing_ranges_sample": [{"start": 14152, "end_inclusive": 14215}],
+                "ack_epoch": 700,
+                "receiver_done": false,
+            }),
+            256,
+        )
+        .expect("stale ack");
+        let fresh_ack = parse_ack_value(
+            &serde_json::json!({
+                "packet_type": "native_pipeline_ack_v1",
+                "expected_tx_total": 14400,
+                "missing_count": 238,
+                "missing_ranges_full_count": 1,
+                "missing_ranges_sample": [{"start": 14162, "end_inclusive": 14399}],
+                "novorudp_current_window_id": 221,
+                "novorudp_current_window_start": 14152,
+                "novorudp_current_window_end_inclusive": 14215,
+                "novorudp_current_window_missing_count": 54,
+                "novorudp_current_window_missing_ranges_sample": [{"start": 14162, "end_inclusive": 14215}],
+                "ack_epoch": 701,
+                "receiver_done": false,
+            }),
+            256,
+        )
+        .expect("fresh ack");
+
+        let latest_epoch = 700u64;
+        assert!(stale_ack.latest_epoch <= latest_epoch);
+        assert!(
+            fresh_ack.latest_epoch > latest_epoch
+                && fresh_ack.latest_missing_count < stale_ack.latest_missing_count
+        );
+        let selection =
+            select_novorudp_repair_ranges_from_receiver_ack(&fresh_ack, 14400, 64, 16)
+                .expect("fresh ack should drive next repair");
+        assert_eq!(selection.window_id, 221);
+        assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 54);
+    }
+
+    #[test]
+    fn novorudp_window_progress_closure_converges_current_window() {
+        let mut epoch = 0u64;
+        let mut progress = 14152u64;
+        let expected = 14400u64;
+        let mut observed_progress = false;
+
+        while progress < 14216 {
+            let ack_epoch = next_receiver_ack_epoch(&mut epoch);
+            let ack = parse_ack_value(
+                &receiver_ack_report_value(expected, progress, 256, ack_epoch),
+                256,
+            )
+            .expect("ack");
+            let selection = select_novorudp_repair_ranges_from_receiver_ack(&ack, expected, 64, 16)
+                .expect("window repair selection");
+            assert_eq!(selection.window.start, progress);
+            assert!(missing_ranges_count(selection.ranges.as_slice()) <= 64);
+            progress = progress.saturating_add(16).min(14216);
+            let next_ack_epoch = next_receiver_ack_epoch(&mut epoch);
+            let next_ack = parse_ack_value(
+                &receiver_ack_report_value(expected, progress, 256, next_ack_epoch),
+                256,
+            )
+            .expect("next ack");
+            observed_progress |= next_ack.latest_missing_count < ack.latest_missing_count;
+        }
+
+        let done_ack_epoch = next_receiver_ack_epoch(&mut epoch);
+        let done_ack = parse_ack_value(
+            &receiver_ack_report_value(expected, progress, 256, done_ack_epoch),
+            256,
+        )
+        .expect("done-window ack");
+        assert!(observed_progress);
+        assert_eq!(done_ack.novorudp_current_window_missing_count, 64);
+        assert_eq!(done_ack.novorudp_current_window.unwrap().start, 14216);
+    }
+
+    #[test]
+    fn novorudp_receiver_progress_ack_interval_is_not_diagnostics_interval() {
+        with_env_var("NOVOVM_NATIVE_PIPELINE_TRANSPORT", Some("novorudp"), || {
+            with_env_var(
+                "NOVOVM_NATIVE_PIPELINE_PROGRESS_SAMPLE_INTERVAL_MS",
+                Some("5000"),
+                || {
+                    with_env_var("NOVOVM_NOVORUDP_ACK_PROGRESS_INTERVAL_MS", Some("250"), || {
+                        assert_eq!(receiver_child_progress_report_interval_ms(), 250);
+                    })
+                },
+            )
+        });
+    }
+
+    #[test]
     fn novorudp_sender_finalization_times_out_when_receiver_never_done() {
         with_sender_hard_timeout_env(200, || {
             let chain_id = 92_001;
@@ -2028,8 +2176,7 @@ fn spawn_receiver_node(
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
-            string_env_nonempty("NOVOVM_NATIVE_PIPELINE_PROGRESS_SAMPLE_INTERVAL_MS")
-                .unwrap_or_else(|| "5000".to_string()),
+            receiver_child_progress_report_interval_ms().to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID",
@@ -2076,6 +2223,35 @@ fn spawn_receiver_node(
             node_bin.display()
         )
     })
+}
+
+fn receiver_child_progress_report_interval_ms() -> u64 {
+    let configured = u64_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_SAMPLE_INTERVAL_MS", 5000)
+        .unwrap_or(5000)
+        .max(1);
+    let profile = TransportProfileV1::from_env();
+    let novorudp = NovoRudpConfigV1::from_env(profile).unwrap_or(NovoRudpConfigV1 {
+        enabled: false,
+        window_size: 64,
+        packet_copies: 2,
+        tail_packet_copies: 3,
+        batch_size: 16,
+        batch_pause_ms: 10,
+        window_ack_wait_ms: 1000,
+        max_window_retries: 8,
+        tail_window_max_retries: 16,
+        tail_window_packet_copies: 6,
+        tail_window_batch_size: 8,
+        tail_window_batch_pause_ms: 20,
+        tail_window_ack_wait_ms: 1500,
+        ack_progress_interval_ms: 250,
+        no_progress_backoff: true,
+    });
+    if novorudp.enabled {
+        configured.min(novorudp.ack_progress_interval_ms.max(1))
+    } else {
+        configured
+    }
 }
 
 fn parse_summary(output: Output, label: &str) -> Result<Value> {
@@ -2138,6 +2314,19 @@ fn run_receiver_node(
     let mut last_sample_at = Instant::now()
         .checked_sub(Duration::from_millis(diagnostics.sample_interval_ms))
         .unwrap_or_else(Instant::now);
+    let profile = TransportProfileV1::from_env();
+    let novorudp = NovoRudpConfigV1::from_env(profile)?;
+    let receiver_ack_progress_interval_ms = if novorudp.enabled {
+        novorudp.ack_progress_interval_ms.max(1)
+    } else {
+        diagnostics.sample_interval_ms.max(1)
+    };
+    let mut last_ack_progress_at = Instant::now()
+        .checked_sub(Duration::from_millis(receiver_ack_progress_interval_ms))
+        .unwrap_or_else(Instant::now);
+    let ack_sample_limit =
+        u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256);
+    let mut receiver_ack_epoch = 0u64;
     let mut state = ReceiverDiagnosticsStateV1::default();
     let ledger_path = semantic_ledger_mirror_path(store_path);
     let progress_path = pipeline_progress_report_path(store_path);
@@ -2252,18 +2441,9 @@ fn run_receiver_node(
                         .and_then(Value::as_u64)
                         .unwrap_or_default(),
                 );
-            let sample_limit =
-                u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256);
-            let final_ack_start_epoch = state
-                .samples_dropped
-                .saturating_add(state.samples.len() as u64);
-            let _ = write_receiver_ack_report(
-                expected_tx_count,
-                final_progress,
-                sample_limit,
-                final_ack_start_epoch,
-            );
-            send_receiver_udp_ack(
+            let sample_limit = ack_sample_limit;
+            let final_ack_start_epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
+            emit_receiver_progress_ack(
                 expected_tx_count,
                 final_progress,
                 sample_limit,
@@ -2301,6 +2481,25 @@ fn run_receiver_node(
                 false,
             )?;
             return Ok(summary);
+        }
+
+        if last_ack_progress_at.elapsed()
+            >= Duration::from_millis(receiver_ack_progress_interval_ms)
+        {
+            let progress_summary = read_pipeline_progress_summary(progress_path.as_path());
+            let stable_progress = stable_progress_from_progress_summary(
+                progress_summary.as_ref(),
+                ledger_path.as_path(),
+                state.last_canonical,
+            );
+            let epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
+            emit_receiver_progress_ack(
+                expected_tx_count,
+                stable_progress,
+                ack_sample_limit,
+                epoch,
+            );
+            last_ack_progress_at = Instant::now();
         }
 
         if last_sample_at.elapsed() >= Duration::from_millis(diagnostics.sample_interval_ms) {
@@ -2441,22 +2640,16 @@ fn run_receiver_node(
                 ));
             }
             state.last_canonical = stable_progress;
-            let _ = write_receiver_ack_report(
+            let epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
+            emit_receiver_progress_ack(
                 expected_tx_count,
                 stable_progress,
-                u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256),
-                state
-                    .samples_dropped
-                    .saturating_add(state.samples.len() as u64),
+                ack_sample_limit,
+                epoch,
             );
-            send_receiver_udp_ack(
-                expected_tx_count,
-                stable_progress,
-                u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256),
-                state
-                    .samples_dropped
-                    .saturating_add(state.samples.len() as u64),
-            );
+            sample["novorudp_ack_progress_interval_ms"] =
+                serde_json::json!(receiver_ack_progress_interval_ms);
+            sample["novorudp_ack_epoch_after_sample"] = serde_json::json!(epoch);
             state.samples.push(sample);
             if state.samples.len() > 256 {
                 let drop_count = state.samples.len().saturating_sub(256);
@@ -2585,6 +2778,7 @@ fn receiver_ack_report_value(
         tail_window_batch_size: 8,
         tail_window_batch_pause_ms: 20,
         tail_window_ack_wait_ms: 1500,
+        ack_progress_interval_ms: 250,
         no_progress_backoff: true,
     });
     let current_window = first_missing_window_ranges(
@@ -2657,6 +2851,39 @@ fn send_receiver_udp_ack(
         return;
     };
     let _ = socket.send_to(payload.as_slice(), target_addr.as_str());
+}
+
+fn next_receiver_ack_epoch(epoch: &mut u64) -> u64 {
+    *epoch = epoch.saturating_add(1);
+    *epoch
+}
+
+fn stable_progress_from_progress_summary(
+    progress_summary: Option<&Value>,
+    ledger_path: &Path,
+    fallback_progress: u64,
+) -> u64 {
+    let ledger_progress = semantic_ledger_stats(ledger_path)
+        .get("line_count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let canonical = progress_summary
+        .map(|summary| summary_u64(summary, "included_canonical_total"))
+        .unwrap_or_default();
+    let aoem = progress_summary
+        .map(|summary| summary_u64(summary, "aoem_executed_total"))
+        .unwrap_or_default();
+    canonical.max(ledger_progress).max(aoem).max(fallback_progress)
+}
+
+fn emit_receiver_progress_ack(
+    expected_tx_count: u64,
+    stable_progress: u64,
+    sample_limit: u64,
+    ack_epoch: u64,
+) {
+    let _ = write_receiver_ack_report(expected_tx_count, stable_progress, sample_limit, ack_epoch);
+    send_receiver_udp_ack(expected_tx_count, stable_progress, sample_limit, ack_epoch);
 }
 
 fn repeat_final_receiver_udp_ack(
@@ -5333,6 +5560,7 @@ fn run_sender(
             "tail_window_batch_size": novorudp.tail_window_batch_size,
             "tail_window_batch_pause_ms": novorudp.tail_window_batch_pause_ms,
             "tail_window_ack_wait_ms": novorudp.tail_window_ack_wait_ms,
+            "ack_progress_interval_ms": novorudp.ack_progress_interval_ms,
             "no_progress_backoff": novorudp.no_progress_backoff,
             "window_round_count": novorudp_window_round_count,
             "window_success_count": novorudp_window_success_count,
@@ -5940,6 +6168,7 @@ fn run_memory_bisect_variant(
             tail_window_batch_size: 8,
             tail_window_batch_pause_ms: 20,
             tail_window_ack_wait_ms: 1500,
+            ack_progress_interval_ms: 250,
             no_progress_backoff: true,
         },
     );
