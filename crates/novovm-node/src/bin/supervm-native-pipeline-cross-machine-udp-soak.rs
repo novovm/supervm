@@ -994,6 +994,33 @@ fn novorudp_should_send_tail_gap(
         <= novorudp_tail_gap_coverage_limit(window_size, tail_window_max_retries)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NovoRudpSenderTimeoutDecisionV1 {
+    Continue,
+    NoProgressTimeout,
+    AbsoluteTimeout,
+}
+
+fn novorudp_sender_timeout_decision_v1(
+    elapsed_ms: u64,
+    no_progress_elapsed_ms: u64,
+    no_progress_timeout_ms: u64,
+    absolute_sender_max_timeout_ms: u64,
+    receiver_done: bool,
+    missing_count: u64,
+) -> NovoRudpSenderTimeoutDecisionV1 {
+    if receiver_done && missing_count == 0 {
+        return NovoRudpSenderTimeoutDecisionV1::Continue;
+    }
+    if absolute_sender_max_timeout_ms > 0 && elapsed_ms >= absolute_sender_max_timeout_ms {
+        return NovoRudpSenderTimeoutDecisionV1::AbsoluteTimeout;
+    }
+    if no_progress_timeout_ms > 0 && no_progress_elapsed_ms >= no_progress_timeout_ms {
+        return NovoRudpSenderTimeoutDecisionV1::NoProgressTimeout;
+    }
+    NovoRudpSenderTimeoutDecisionV1::Continue
+}
+
 #[cfg(test)]
 fn merge_tail_gap_into_repair_ranges(
     selected_ranges: &[MissingRangeV1],
@@ -1708,6 +1735,98 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn novorudp_sender_extends_repair_deadline_while_ack_progresses() {
+        let decision = novorudp_sender_timeout_decision_v1(
+            1_920_000,
+            0,
+            120_000,
+            2_700_000,
+            false,
+            2_248,
+        );
+
+        assert_eq!(decision, NovoRudpSenderTimeoutDecisionV1::Continue);
+    }
+
+    #[test]
+    fn novorudp_sender_times_out_only_after_true_no_progress() {
+        let decision = novorudp_sender_timeout_decision_v1(
+            1_920_000,
+            120_000,
+            120_000,
+            2_700_000,
+            false,
+            2_248,
+        );
+
+        assert_eq!(
+            decision,
+            NovoRudpSenderTimeoutDecisionV1::NoProgressTimeout
+        );
+    }
+
+    #[test]
+    fn novorudp_sender_continues_moving_window_until_receiver_done() {
+        let config = sender_timeout_novorudp_config();
+        let early_ack = parse_ack_value(
+            &serde_json::json!({
+                "packet_type": "native_pipeline_ack_v1",
+                "expected_tx_total": 14400,
+                "missing_count": 2248,
+                "missing_ranges_full_count": 1,
+                "missing_ranges_sample": [{"start": 12152, "end_inclusive": 14399}],
+                "novorudp_current_window_id": 189,
+                "novorudp_current_window_start": 12152,
+                "novorudp_current_window_end_inclusive": 12215,
+                "novorudp_current_window_missing_count": 64,
+                "novorudp_current_window_missing_ranges_sample": [{"start": 12152, "end_inclusive": 12215}],
+                "ack_epoch": 900,
+                "receiver_done": false,
+            }),
+            256,
+        )
+        .expect("early ack");
+        let late_ack = parse_ack_value(
+            &serde_json::json!({
+                "packet_type": "native_pipeline_ack_v1",
+                "expected_tx_total": 14400,
+                "missing_count": 280,
+                "missing_ranges_full_count": 1,
+                "missing_ranges_sample": [{"start": 14120, "end_inclusive": 14399}],
+                "novorudp_current_window_id": 220,
+                "novorudp_current_window_start": 14120,
+                "novorudp_current_window_end_inclusive": 14183,
+                "novorudp_current_window_missing_count": 64,
+                "novorudp_current_window_missing_ranges_sample": [{"start": 14120, "end_inclusive": 14183}],
+                "ack_epoch": 901,
+                "receiver_done": false,
+            }),
+            256,
+        )
+        .expect("late ack");
+
+        let early = select_novorudp_repair_ranges_from_receiver_ack(
+            &early_ack,
+            14400,
+            config.window_size,
+            config.tail_window_max_retries,
+        )
+        .expect("early selection");
+        let late = select_novorudp_repair_ranges_from_receiver_ack(
+            &late_ack,
+            14400,
+            config.window_size,
+            config.tail_window_max_retries,
+        )
+        .expect("late selection");
+
+        assert_eq!(early.ranges[0].end_inclusive, 12215);
+        assert_eq!(late.ranges[0].start, 14120);
+        assert!(late_ack.latest_epoch > early_ack.latest_epoch);
+        assert!(late_ack.latest_missing_count < early_ack.latest_missing_count);
+    }
+
+    #[test]
     fn novorudp_sender_finalization_times_out_when_receiver_never_done() {
         with_sender_hard_timeout_env(200, || {
             let chain_id = 92_001;
@@ -1757,10 +1876,17 @@ mod novorudp_tests {
             assert_eq!(report["accepted"].as_bool(), Some(false));
             assert_eq!(
                 report["fail_reason"].as_str(),
-                Some("sender_finalization_timeout")
+                Some("receiver_repair_incomplete")
             );
             assert_eq!(report["report_written"].as_bool(), Some(true));
-            assert_eq!(report["sender_hard_timeout_reached"].as_bool(), Some(true));
+            assert_eq!(report["sender_hard_timeout_reached"].as_bool(), Some(false));
+            assert_eq!(
+                report["repair_progress_observed_count"]
+                    .as_u64()
+                    .unwrap_or_default()
+                    > 0,
+                true
+            );
             assert!(
                 report["tail_repair"]["tail_repair_udp_ack_received_count"]
                     .as_u64()
@@ -4638,6 +4764,24 @@ fn run_sender(
         "NOVOVM_NATIVE_PIPELINE_SENDER_HARD_TIMEOUT_MS",
         default_sender_hard_timeout_ms,
     )?;
+    let repair_no_progress_timeout_ms = u64_env(
+        "NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_TIMEOUT_MS",
+        if novorudp.enabled { 120_000 } else { sender_hard_timeout_ms },
+    )?
+    .max(1);
+    let absolute_sender_max_timeout_ms = u64_env(
+        "NOVOVM_NOVORUDP_ABSOLUTE_SENDER_MAX_TIMEOUT_MS",
+        if novorudp.enabled {
+            sustained
+                .duration_seconds
+                .saturating_mul(1000)
+                .saturating_add(900_000)
+                .max(sender_hard_timeout_ms)
+        } else {
+            sender_hard_timeout_ms
+        },
+    )?
+    .max(sender_hard_timeout_ms.max(1));
     let sender_report_on_timeout = bool_env("NOVOVM_NATIVE_PIPELINE_SENDER_REPORT_ON_TIMEOUT")
         || string_env_nonempty("NOVOVM_NATIVE_PIPELINE_SENDER_REPORT_ON_TIMEOUT").is_none();
     let sender_exit_on_repair_timeout =
@@ -4645,6 +4789,15 @@ fn run_sender(
             || string_env_nonempty("NOVOVM_NATIVE_PIPELINE_SENDER_EXIT_ON_REPAIR_TIMEOUT")
                 .is_none();
     let mut sender_hard_timeout_reached = false;
+    let mut absolute_sender_timeout_reached = false;
+    let mut sender_repair_no_progress_timeout_reached = false;
+    let mut repair_progress_observed_count = 0u64;
+    let mut repair_progress_last_observed_ms = 0u64;
+    let mut repair_continuation_deadline_extended_count = 0u64;
+    let mut no_progress_started_at: Option<Instant> = None;
+    let mut no_progress_elapsed_ms = 0u64;
+    let mut repair_still_progressing_at_hard_timeout = false;
+    let mut sender_exit_reason = "not_finished".to_string();
     let mut stats = empty_send_stats();
     let mut repair_stats = empty_send_stats();
     let mut tail_repair_ack_received_count = 0u64;
@@ -4780,19 +4933,55 @@ fn run_sender(
         };
         let repair_send_config = novorudp.repair_config(tail_repair);
         for repair_round in 0..repair_loop_rounds {
-            if sender_hard_timeout_ms > 0
+            if novorudp.enabled {
+                let elapsed_ms = sender_started.elapsed().as_millis() as u64;
+                no_progress_elapsed_ms = no_progress_started_at
+                    .map(|started| started.elapsed().as_millis() as u64)
+                    .unwrap_or_default();
+                match novorudp_sender_timeout_decision_v1(
+                    elapsed_ms,
+                    no_progress_elapsed_ms,
+                    repair_no_progress_timeout_ms,
+                    absolute_sender_max_timeout_ms,
+                    latest_ack_receiver_done,
+                    latest_ack_missing_count.unwrap_or(final_missing_count),
+                ) {
+                    NovoRudpSenderTimeoutDecisionV1::Continue => {}
+                    NovoRudpSenderTimeoutDecisionV1::NoProgressTimeout => {
+                        sender_repair_no_progress_timeout_reached = true;
+                        sender_hard_timeout_reached = true;
+                        sender_exit_reason = "sender_repair_no_progress_timeout".to_string();
+                        break;
+                    }
+                    NovoRudpSenderTimeoutDecisionV1::AbsoluteTimeout => {
+                        absolute_sender_timeout_reached = true;
+                        sender_hard_timeout_reached = true;
+                        sender_exit_reason = "sender_absolute_timeout".to_string();
+                        break;
+                    }
+                }
+                if sender_hard_timeout_ms > 0
+                    && elapsed_ms >= sender_hard_timeout_ms
+                    && no_progress_started_at.is_none()
+                {
+                    repair_still_progressing_at_hard_timeout = true;
+                }
+            } else if sender_hard_timeout_ms > 0
                 && sender_started.elapsed() >= Duration::from_millis(sender_hard_timeout_ms)
             {
                 sender_hard_timeout_reached = true;
+                sender_exit_reason = "sender_finalization_timeout".to_string();
                 break;
             }
             if tail_repair.round_pause_ms > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(tail_repair.round_pause_ms));
             }
-            if sender_hard_timeout_ms > 0
+            if !novorudp.enabled
+                && sender_hard_timeout_ms > 0
                 && sender_started.elapsed() >= Duration::from_millis(sender_hard_timeout_ms)
             {
                 sender_hard_timeout_reached = true;
+                sender_exit_reason = "sender_finalization_timeout".to_string();
                 break;
             }
             let udp_ack_state = ack_socket.as_ref().map(|socket| {
@@ -5210,19 +5399,23 @@ fn run_sender(
             if repair_stats.send_failed_count > 0 {
                 break;
             }
-            if sender_hard_timeout_ms > 0
+            if !novorudp.enabled
+                && sender_hard_timeout_ms > 0
                 && sender_started.elapsed() >= Duration::from_millis(sender_hard_timeout_ms)
             {
                 sender_hard_timeout_reached = true;
+                sender_exit_reason = "sender_finalization_timeout".to_string();
                 break;
             }
             if tail_repair.round_pause_ms > 0 {
                 std::thread::sleep(Duration::from_millis(tail_repair.round_pause_ms));
             }
-            if sender_hard_timeout_ms > 0
+            if !novorudp.enabled
+                && sender_hard_timeout_ms > 0
                 && sender_started.elapsed() >= Duration::from_millis(sender_hard_timeout_ms)
             {
                 sender_hard_timeout_reached = true;
+                sender_exit_reason = "sender_finalization_timeout".to_string();
                 break;
             }
             let ack_wait_ms = if novorudp.enabled {
@@ -5291,6 +5484,27 @@ fn run_sender(
                 }
             }
             let missing_delta = missing_count_before.saturating_sub(missing_count_after);
+            let ack_progressed_this_round = ack_epoch_after > ack_epoch_before.unwrap_or_default();
+            let highest_progressed_this_round = ack_highest_sequence_seen_at_repair_end
+                .unwrap_or_default()
+                > ack_highest_sequence_seen_at_repair_start.unwrap_or_default();
+            let repair_progress_this_round =
+                missing_delta > 0 || ack_progressed_this_round || highest_progressed_this_round;
+            if novorudp.enabled {
+                if repair_progress_this_round {
+                    repair_progress_observed_count =
+                        repair_progress_observed_count.saturating_add(1);
+                    repair_progress_last_observed_ms =
+                        sender_started.elapsed().as_millis() as u64;
+                    repair_continuation_deadline_extended_count =
+                        repair_continuation_deadline_extended_count.saturating_add(1);
+                    no_progress_started_at = None;
+                    no_progress_elapsed_ms = 0;
+                } else {
+                    let started = no_progress_started_at.get_or_insert_with(Instant::now);
+                    no_progress_elapsed_ms = started.elapsed().as_millis() as u64;
+                }
+            }
             if novorudp.enabled {
                 tail_window_missing_after = Some(missing_count_after);
                 tail_window_missing_delta = Some(missing_delta);
@@ -5489,7 +5703,11 @@ fn run_sender(
             "receiver_done_ack"
         }
     } else if sender_hard_timeout_reached {
-        if tail_repair_ack_received_count == 0 {
+        if sender_repair_no_progress_timeout_reached {
+            "sender_repair_no_progress_timeout"
+        } else if absolute_sender_timeout_reached {
+            "sender_absolute_timeout"
+        } else if tail_repair_ack_received_count == 0 {
             "sender_hard_timeout_no_ack"
         } else if latest_ack_stale_rounds > 0
             && latest_ack_missing_count.unwrap_or_default() > 0
@@ -5511,6 +5729,10 @@ fn run_sender(
     let accepted = sender_completed && tail_repair_success;
     let fail_reason = if accepted {
         None
+    } else if sender_repair_no_progress_timeout_reached {
+        Some("sender_repair_no_progress_timeout")
+    } else if absolute_sender_timeout_reached {
+        Some("sender_absolute_timeout")
     } else if sender_hard_timeout_reached {
         if latest_ack_stale_rounds > 0
             && latest_ack_missing_count.unwrap_or_default() > 0
@@ -5525,8 +5747,13 @@ fn run_sender(
     } else if tail_repair_ack_received_count == 0 {
         Some("receiver_repair_no_ack")
     } else {
-        Some("receiver_repair_incomplete")
+            Some("receiver_repair_incomplete")
     };
+    if accepted && sender_exit_reason == "not_finished" {
+        sender_exit_reason = "accepted".to_string();
+    } else if !accepted && sender_exit_reason == "not_finished" {
+        sender_exit_reason = fail_reason.unwrap_or("receiver_repair_incomplete").to_string();
+    }
     let report = serde_json::json!({
         "schema": REPORT_SCHEMA_V1,
         "role": "sender",
@@ -5536,6 +5763,18 @@ fn run_sender(
         "elapsed_ms": sender_started.elapsed().as_millis() as u64,
         "hard_timeout_ms": sender_hard_timeout_ms,
         "sender_hard_timeout_reached": sender_hard_timeout_reached,
+        "absolute_sender_max_timeout_ms": absolute_sender_max_timeout_ms,
+        "absolute_sender_timeout_reached": absolute_sender_timeout_reached,
+        "no_progress_timeout_ms": repair_no_progress_timeout_ms,
+        "no_progress_elapsed_ms": no_progress_elapsed_ms,
+        "sender_repair_no_progress_timeout_reached": sender_repair_no_progress_timeout_reached,
+        "repair_progress_observed_count": repair_progress_observed_count,
+        "repair_progress_last_observed_ms": repair_progress_last_observed_ms,
+        "repair_continuation_deadline_extended_count": repair_continuation_deadline_extended_count,
+        "repair_continuation_deadline_ms": repair_progress_last_observed_ms
+            .saturating_add(repair_no_progress_timeout_ms),
+        "repair_still_progressing_at_hard_timeout": repair_still_progressing_at_hard_timeout,
+        "sender_exit_reason": sender_exit_reason,
         "sender_report_on_timeout": sender_report_on_timeout,
         "sender_exit_on_repair_timeout": sender_exit_on_repair_timeout,
         "chain_id": chain_id,
