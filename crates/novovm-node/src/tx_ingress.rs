@@ -11466,53 +11466,200 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     );
     let post_batch_pending_summary =
         snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
-    Ok(serde_json::json!({
-        "method": "nov_executePendingNativeTxBatch",
-        "accepted": true,
-        "execution_kernel": "AOEM",
-        "source": "network_runtime_native_pending",
-        "chain_id": chain_id,
-        "requested_limit": requested_limit,
-        "effective_limit": limit,
-        "scan_limit": scan_limit,
-        "repair_final_missing_sequence_start": repair_final_missing_sequence_start,
-        "repair_attempted_unreceipted_requeue": repair_requeue,
-        "ledger_final_missing_admission": ledger_final_missing_admission,
-        "ledger_final_missing_candidate_selected_count": ledger_final_missing_candidate_selected_count,
-        "ledger_final_missing_candidate_payload_available_count": ledger_final_missing_candidate_payload_available_count,
-        "ledger_final_missing_candidate_payload_missing_count": ledger_final_missing_candidate_payload_missing_count,
-        "ledger_final_missing_candidate_tx_hash_mapping_missing_count": ledger_final_missing_candidate_tx_hash_mapping_missing_count,
-        "ledger_final_missing_candidate_raw_tx_build_error_count": ledger_final_missing_candidate_raw_tx_build_error_count,
-        "ledger_final_missing_batch_blocked_by_payload_missing_count": ledger_final_missing_candidate_payload_missing_count,
-        "ledger_final_missing_batch_blocked_by_stage_filter_count": ledger_final_missing_candidate_ineligible_stage_count,
-        "ledger_final_missing_batch_blocked_by_scan_limit_count": 0,
-        "ledger_final_missing_batch_blocked_by_batch_limit_count": if ledger_final_missing_admission.candidates.len() > ledger_final_missing_candidate_selected_count { ledger_final_missing_admission.candidates.len().saturating_sub(ledger_final_missing_candidate_selected_count) } else { 0 },
-        "ledger_final_missing_batch_blocked_by_raw_tx_build_error_count": 0,
-        "ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count": ledger_final_missing_candidate_tx_hash_mapping_missing_count,
-        "ledger_final_missing_batch_blocked_by_already_receipted_count": ledger_final_missing_candidate_already_receipted_count,
-        "ledger_final_missing_batch_blocked_reason": "",
-        "pending_scanned": pending.len(),
-        "selected_count": selected_hashes.len(),
-        "selected_tx_hashes": selected_hashes,
-        "ledger_final_missing_actual_batch_count": post_batch_pending_summary.ledger_final_missing_actual_batch_count,
-        "ledger_final_missing_actual_batch_ranges_sample": post_batch_pending_summary.ledger_final_missing_actual_batch_ranges_sample,
-        "ledger_final_missing_raw_txs_count": post_batch_pending_summary.ledger_final_missing_raw_txs_count,
-        "ledger_final_missing_batch_result_count": post_batch_pending_summary.ledger_final_missing_batch_result_count,
-        "ledger_final_missing_receipt_written_count": post_batch_pending_summary.ledger_final_missing_receipt_written_count,
-        "ledger_final_missing_receipt_missing_after_admission_count": post_batch_pending_summary.ledger_final_missing_receipt_missing_after_admission_count,
-        "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count": post_batch_pending_summary.ledger_final_missing_admitted_but_no_receipt_invariant_violation_count,
-        "ledger_admission_counter_is_actual_batch": post_batch_pending_summary.ledger_admission_counter_is_actual_batch,
-        "executed": true,
-        "canonical_projection": canonical_projection,
-        "skipped": {
-            "missing_payload": skipped_missing_payload,
-            "non_native_payload": skipped_non_native_payload,
-            "chain_mismatch": skipped_chain_mismatch,
-            "ineligible_stage": skipped_ineligible_stage,
-            "already_receipted": skipped_already_receipted,
-        },
-        "batch_result": batch_result,
-    }))
+    let mut report = serde_json::Map::new();
+    report.insert(
+        "method".to_string(),
+        serde_json::json!("nov_executePendingNativeTxBatch"),
+    );
+    report.insert("accepted".to_string(), serde_json::json!(true));
+    report.insert("execution_kernel".to_string(), serde_json::json!("AOEM"));
+    report.insert(
+        "source".to_string(),
+        serde_json::json!("network_runtime_native_pending"),
+    );
+    report.insert("chain_id".to_string(), serde_json::json!(chain_id));
+    report.insert(
+        "requested_limit".to_string(),
+        serde_json::json!(requested_limit),
+    );
+    report.insert("effective_limit".to_string(), serde_json::json!(limit));
+    report.insert("scan_limit".to_string(), serde_json::json!(scan_limit));
+    report.insert(
+        "repair_final_missing_sequence_start".to_string(),
+        serde_json::json!(repair_final_missing_sequence_start),
+    );
+    report.insert(
+        "repair_attempted_unreceipted_requeue".to_string(),
+        serde_json::to_value(&repair_requeue).unwrap_or_else(|_| {
+            serde_json::json!({
+                "serialization_error": true,
+                "field": "repair_attempted_unreceipted_requeue"
+            })
+        }),
+    );
+    report.insert(
+        "ledger_final_missing_admission".to_string(),
+        serde_json::to_value(&ledger_final_missing_admission).unwrap_or_else(|_| {
+            serde_json::json!({
+                "serialization_error": true,
+                "field": "ledger_final_missing_admission"
+            })
+        }),
+    );
+    report.insert(
+        "ledger_final_missing_candidate_selected_count".to_string(),
+        serde_json::json!(ledger_final_missing_candidate_selected_count),
+    );
+    report.insert(
+        "ledger_final_missing_candidate_payload_available_count".to_string(),
+        serde_json::json!(ledger_final_missing_candidate_payload_available_count),
+    );
+    report.insert(
+        "ledger_final_missing_candidate_payload_missing_count".to_string(),
+        serde_json::json!(ledger_final_missing_candidate_payload_missing_count),
+    );
+    report.insert(
+        "ledger_final_missing_candidate_tx_hash_mapping_missing_count".to_string(),
+        serde_json::json!(ledger_final_missing_candidate_tx_hash_mapping_missing_count),
+    );
+    report.insert(
+        "ledger_final_missing_candidate_raw_tx_build_error_count".to_string(),
+        serde_json::json!(ledger_final_missing_candidate_raw_tx_build_error_count),
+    );
+    report.insert(
+        "ledger_final_missing_batch_blocked_by_payload_missing_count".to_string(),
+        serde_json::json!(ledger_final_missing_candidate_payload_missing_count),
+    );
+    report.insert(
+        "ledger_final_missing_batch_blocked_by_stage_filter_count".to_string(),
+        serde_json::json!(ledger_final_missing_candidate_ineligible_stage_count),
+    );
+    report.insert(
+        "ledger_final_missing_batch_blocked_by_scan_limit_count".to_string(),
+        serde_json::json!(0),
+    );
+    report.insert(
+        "ledger_final_missing_batch_blocked_by_batch_limit_count".to_string(),
+        serde_json::json!(if ledger_final_missing_admission.candidates.len()
+            > ledger_final_missing_candidate_selected_count
+        {
+            ledger_final_missing_admission
+                .candidates
+                .len()
+                .saturating_sub(ledger_final_missing_candidate_selected_count)
+        } else {
+            0
+        }),
+    );
+    report.insert(
+        "ledger_final_missing_batch_blocked_by_raw_tx_build_error_count".to_string(),
+        serde_json::json!(0),
+    );
+    report.insert(
+        "ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count".to_string(),
+        serde_json::json!(ledger_final_missing_candidate_tx_hash_mapping_missing_count),
+    );
+    report.insert(
+        "ledger_final_missing_batch_blocked_by_already_receipted_count".to_string(),
+        serde_json::json!(ledger_final_missing_candidate_already_receipted_count),
+    );
+    report.insert(
+        "ledger_final_missing_batch_blocked_reason".to_string(),
+        serde_json::json!(""),
+    );
+    report.insert(
+        "pending_scanned".to_string(),
+        serde_json::json!(pending.len()),
+    );
+    report.insert(
+        "selected_count".to_string(),
+        serde_json::json!(selected_hashes.len()),
+    );
+    report.insert(
+        "selected_tx_hashes".to_string(),
+        serde_json::to_value(&selected_hashes).unwrap_or_else(|_| serde_json::json!([])),
+    );
+    report.insert(
+        "ledger_final_missing_actual_batch_count".to_string(),
+        serde_json::json!(post_batch_pending_summary.ledger_final_missing_actual_batch_count),
+    );
+    report.insert(
+        "ledger_final_missing_actual_batch_ranges_sample".to_string(),
+        serde_json::json!(
+            post_batch_pending_summary.ledger_final_missing_actual_batch_ranges_sample
+        ),
+    );
+    report.insert(
+        "ledger_final_missing_raw_txs_count".to_string(),
+        serde_json::json!(post_batch_pending_summary.ledger_final_missing_raw_txs_count),
+    );
+    report.insert(
+        "ledger_final_missing_batch_result_count".to_string(),
+        serde_json::json!(post_batch_pending_summary.ledger_final_missing_batch_result_count),
+    );
+    report.insert(
+        "ledger_final_missing_receipt_written_count".to_string(),
+        serde_json::json!(post_batch_pending_summary.ledger_final_missing_receipt_written_count),
+    );
+    report.insert(
+        "ledger_final_missing_receipt_missing_after_admission_count".to_string(),
+        serde_json::json!(
+            post_batch_pending_summary.ledger_final_missing_receipt_missing_after_admission_count
+        ),
+    );
+    report.insert(
+        "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count".to_string(),
+        serde_json::json!(
+            post_batch_pending_summary
+                .ledger_final_missing_admitted_but_no_receipt_invariant_violation_count
+        ),
+    );
+    report.insert(
+        "ledger_admission_counter_is_actual_batch".to_string(),
+        serde_json::json!(post_batch_pending_summary.ledger_admission_counter_is_actual_batch),
+    );
+    report.insert("executed".to_string(), serde_json::json!(true));
+    report.insert(
+        "canonical_projection".to_string(),
+        serde_json::to_value(&canonical_projection).unwrap_or_else(|_| {
+            serde_json::json!({
+                "serialization_error": true,
+                "field": "canonical_projection"
+            })
+        }),
+    );
+    let mut skipped = serde_json::Map::new();
+    skipped.insert(
+        "missing_payload".to_string(),
+        serde_json::json!(skipped_missing_payload),
+    );
+    skipped.insert(
+        "non_native_payload".to_string(),
+        serde_json::json!(skipped_non_native_payload),
+    );
+    skipped.insert(
+        "chain_mismatch".to_string(),
+        serde_json::json!(skipped_chain_mismatch),
+    );
+    skipped.insert(
+        "ineligible_stage".to_string(),
+        serde_json::json!(skipped_ineligible_stage),
+    );
+    skipped.insert(
+        "already_receipted".to_string(),
+        serde_json::json!(skipped_already_receipted),
+    );
+    report.insert("skipped".to_string(), serde_json::Value::Object(skipped));
+    report.insert(
+        "batch_result".to_string(),
+        serde_json::to_value(&batch_result).unwrap_or_else(|_| {
+            serde_json::json!({
+                "serialization_error": true,
+                "field": "batch_result"
+            })
+        }),
+    );
+    Ok(serde_json::Value::Object(report))
 }
 
 pub fn run_nov_native_execution_tick_from_params_v1(
@@ -14280,7 +14427,10 @@ mod tests {
         )
     }
 
-    fn assert_final_missing_candidate_payload_available_v1(chain_id: u64, account: &str) {
+    fn assert_final_missing_candidate_payload_available_v1(
+        chain_id: u64,
+        account: &str,
+    ) -> serde_json::Value {
         with_env_override_v1(
             NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
             "false",
@@ -14317,6 +14467,7 @@ mod tests {
                         out["ledger_final_missing_actual_batch_count"].as_u64(),
                         Some(1)
                     );
+                    out
                 })
             },
         )
@@ -14333,6 +14484,58 @@ mod tests {
     #[test]
     fn final_missing_candidate_with_payload_enters_raw_txs() {
         assert_final_missing_candidate_payload_available_v1(88_132, "acct-final-raw-txs");
+    }
+
+    #[test]
+    fn final_missing_batch_report_json_builds_without_macro_recursion() {
+        let out =
+            assert_final_missing_candidate_payload_available_v1(88_133, "acct-final-report-map");
+
+        assert_eq!(
+            out["method"].as_str(),
+            Some("nov_executePendingNativeTxBatch")
+        );
+        assert_eq!(out["executed"].as_bool(), Some(true));
+        assert!(out["batch_result"].is_object());
+    }
+
+    #[test]
+    fn final_missing_blocked_reason_report_serializes_batch_result() {
+        let out =
+            assert_final_missing_candidate_payload_available_v1(88_134, "acct-final-batch-result");
+
+        assert_eq!(
+            out["ledger_final_missing_batch_blocked_reason"].as_str(),
+            Some("")
+        );
+        assert_eq!(out["batch_result"]["accepted"].as_bool(), Some(true));
+        assert_eq!(
+            out["batch_result"]["method"].as_str(),
+            Some("nov_sendRawTransactionBatch")
+        );
+    }
+
+    #[test]
+    fn tx_ingress_report_schema_contains_final_missing_batch_fields() {
+        let out = assert_final_missing_candidate_payload_available_v1(88_135, "acct-final-schema");
+
+        for field in [
+            "ledger_final_missing_candidate_count",
+            "ledger_final_missing_actual_batch_count",
+            "ledger_final_missing_raw_txs_count",
+            "ledger_final_missing_batch_blocked_reason",
+            "ledger_final_missing_candidate_payload_available_count",
+            "ledger_final_missing_candidate_payload_missing_count",
+        ] {
+            assert!(
+                out.get(field).is_some()
+                    || out
+                        .get("ledger_final_missing_admission")
+                        .and_then(|value| value.get(field))
+                        .is_some(),
+                "missing schema field {field}"
+            );
+        }
     }
 
     #[test]
