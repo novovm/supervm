@@ -5225,6 +5225,13 @@ const LEDGER_RECEIPT_COMPLETION_U64_FIELDS_V1: &[&str] = &[
     "ledger_final_missing_batch_blocked_by_no_tick_executed_count",
     "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count",
     "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count",
+    "ledger_final_missing_batch_limit_config",
+    "ledger_final_missing_reserved_batch_budget",
+    "ledger_final_missing_batch_budget_before_fill",
+    "ledger_final_missing_batch_budget_after_fill",
+    "ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count",
+    "ledger_final_missing_batch_limit_zero_count",
+    "ledger_final_missing_preempted_normal_pending_count",
 ];
 
 const LEDGER_RECEIPT_COMPLETION_ARRAY_FIELDS_V1: &[&str] =
@@ -5293,6 +5300,13 @@ fn apply_ledger_receipt_completion_fields_v1(target: &mut Value, source: Option<
         "ledger_admission_counter_is_actual_batch".to_string(),
         serde_json::json!(source
             .and_then(|value| value.get("ledger_admission_counter_is_actual_batch"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)),
+    );
+    target_obj.insert(
+        "ledger_final_missing_batch_nonempty_submitted".to_string(),
+        serde_json::json!(source
+            .and_then(|value| value.get("ledger_final_missing_batch_nonempty_submitted"))
             .and_then(Value::as_bool)
             .unwrap_or(false)),
     );
@@ -5657,6 +5671,14 @@ fn diagnostics_summary_sample(
         "ledger_final_missing_batch_blocked_by_no_tick_executed_count": summary_u64(summary, "ledger_final_missing_batch_blocked_by_no_tick_executed_count"),
         "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count": summary_u64(summary, "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count"),
         "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count": summary_u64(summary, "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count"),
+        "ledger_final_missing_batch_limit_config": summary_u64(summary, "ledger_final_missing_batch_limit_config"),
+        "ledger_final_missing_reserved_batch_budget": summary_u64(summary, "ledger_final_missing_reserved_batch_budget"),
+        "ledger_final_missing_batch_budget_before_fill": summary_u64(summary, "ledger_final_missing_batch_budget_before_fill"),
+        "ledger_final_missing_batch_budget_after_fill": summary_u64(summary, "ledger_final_missing_batch_budget_after_fill"),
+        "ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count": summary_u64(summary, "ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count"),
+        "ledger_final_missing_batch_limit_zero_count": summary_u64(summary, "ledger_final_missing_batch_limit_zero_count"),
+        "ledger_final_missing_preempted_normal_pending_count": summary_u64(summary, "ledger_final_missing_preempted_normal_pending_count"),
+        "ledger_final_missing_batch_nonempty_submitted": summary.get("ledger_final_missing_batch_nonempty_submitted").and_then(Value::as_bool).unwrap_or(false),
         "ledger_final_missing_actual_batch_count": summary_u64(summary, "ledger_final_missing_actual_batch_count"),
         "ledger_final_missing_actual_batch_ranges_sample": summary.get("ledger_final_missing_actual_batch_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_raw_txs_count": summary_u64(summary, "ledger_final_missing_raw_txs_count"),
@@ -8593,6 +8615,14 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "ledger_final_missing_batch_blocked_by_no_tick_executed_count": summary_u64(&summary, "ledger_final_missing_batch_blocked_by_no_tick_executed_count"),
         "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count": summary_u64(&summary, "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count"),
         "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count": summary_u64(&summary, "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count"),
+        "ledger_final_missing_batch_limit_config": summary_u64(&summary, "ledger_final_missing_batch_limit_config"),
+        "ledger_final_missing_reserved_batch_budget": summary_u64(&summary, "ledger_final_missing_reserved_batch_budget"),
+        "ledger_final_missing_batch_budget_before_fill": summary_u64(&summary, "ledger_final_missing_batch_budget_before_fill"),
+        "ledger_final_missing_batch_budget_after_fill": summary_u64(&summary, "ledger_final_missing_batch_budget_after_fill"),
+        "ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count": summary_u64(&summary, "ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count"),
+        "ledger_final_missing_batch_limit_zero_count": summary_u64(&summary, "ledger_final_missing_batch_limit_zero_count"),
+        "ledger_final_missing_preempted_normal_pending_count": summary_u64(&summary, "ledger_final_missing_preempted_normal_pending_count"),
+        "ledger_final_missing_batch_nonempty_submitted": summary.get("ledger_final_missing_batch_nonempty_submitted").and_then(Value::as_bool).unwrap_or(false),
         "ledger_final_missing_actual_batch_count": summary_u64(&summary, "ledger_final_missing_actual_batch_count"),
         "ledger_final_missing_actual_batch_ranges_sample": summary.get("ledger_final_missing_actual_batch_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_raw_txs_count": summary_u64(&summary, "ledger_final_missing_raw_txs_count"),

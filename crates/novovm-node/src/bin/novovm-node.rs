@@ -34167,6 +34167,14 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "ledger_final_missing_batch_blocked_by_no_tick_executed_count",
         "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count",
         "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count",
+        "ledger_final_missing_batch_limit_config",
+        "ledger_final_missing_reserved_batch_budget",
+        "ledger_final_missing_batch_budget_before_fill",
+        "ledger_final_missing_batch_budget_after_fill",
+        "ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count",
+        "ledger_final_missing_batch_limit_zero_count",
+        "ledger_final_missing_preempted_normal_pending_count",
+        "ledger_final_missing_batch_nonempty_submitted",
         "ledger_final_missing_actual_batch_count",
         "ledger_final_missing_raw_txs_count",
         "ledger_final_missing_batch_result_count",
@@ -34359,6 +34367,14 @@ struct NativeExecutionPipelineAggregateV1 {
     ledger_final_missing_batch_blocked_by_no_tick_executed_count: u64,
     ledger_final_missing_batch_blocked_by_classification_path_not_reached_count: u64,
     ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count: u64,
+    ledger_final_missing_batch_limit_config: u64,
+    ledger_final_missing_reserved_batch_budget: u64,
+    ledger_final_missing_batch_budget_before_fill: u64,
+    ledger_final_missing_batch_budget_after_fill: u64,
+    ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count: u64,
+    ledger_final_missing_batch_limit_zero_count: u64,
+    ledger_final_missing_preempted_normal_pending_count: u64,
+    ledger_final_missing_batch_nonempty_submitted: bool,
     ledger_final_missing_admission_skipped_count: u64,
     ledger_final_missing_admission_skip_reason_counts: serde_json::Value,
     admission_used_ledger_final_missing_bucket: bool,
@@ -34516,6 +34532,14 @@ impl NativeExecutionPipelineAggregateV1 {
             ledger_final_missing_batch_blocked_by_no_tick_executed_count: 0,
             ledger_final_missing_batch_blocked_by_classification_path_not_reached_count: 0,
             ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count: 0,
+            ledger_final_missing_batch_limit_config: 0,
+            ledger_final_missing_reserved_batch_budget: 0,
+            ledger_final_missing_batch_budget_before_fill: 0,
+            ledger_final_missing_batch_budget_after_fill: 0,
+            ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count: 0,
+            ledger_final_missing_batch_limit_zero_count: 0,
+            ledger_final_missing_preempted_normal_pending_count: 0,
+            ledger_final_missing_batch_nonempty_submitted: false,
             ledger_final_missing_admission_skipped_count: 0,
             ledger_final_missing_admission_skip_reason_counts: serde_json::json!({}),
             admission_used_ledger_final_missing_bucket: false,
@@ -35214,6 +35238,52 @@ impl NativeExecutionPipelineAggregateV1 {
                 })
                 .and_then(|value| value.as_u64())
                 .unwrap_or_default();
+        self.ledger_final_missing_batch_limit_config = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_batch_limit_config"))
+            .or_else(|| ingress.get("ledger_final_missing_batch_limit_config"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_reserved_batch_budget = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_reserved_batch_budget"))
+            .or_else(|| ingress.get("ledger_final_missing_reserved_batch_budget"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_budget_before_fill = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_batch_budget_before_fill"))
+            .or_else(|| ingress.get("ledger_final_missing_batch_budget_before_fill"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_budget_after_fill = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_batch_budget_after_fill"))
+            .or_else(|| ingress.get("ledger_final_missing_batch_budget_after_fill"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count =
+            tick_batch_result
+                .and_then(|value| {
+                    value.get("ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count")
+                })
+                .or_else(|| {
+                    ingress
+                        .get("ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count")
+                })
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+        self.ledger_final_missing_batch_limit_zero_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_batch_limit_zero_count"))
+            .or_else(|| ingress.get("ledger_final_missing_batch_limit_zero_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_preempted_normal_pending_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_preempted_normal_pending_count"))
+            .or_else(|| ingress.get("ledger_final_missing_preempted_normal_pending_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_nonempty_submitted = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_batch_nonempty_submitted"))
+            .or_else(|| ingress.get("ledger_final_missing_batch_nonempty_submitted"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
         self.ledger_final_missing_admitted_but_no_receipt_invariant_violation_count = ingress
             .get("ledger_final_missing_admitted_but_no_receipt_invariant_violation_count")
             .and_then(|value| value.as_u64())
@@ -35976,6 +36046,40 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(
                 ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count
             ),
+        );
+        out.insert(
+            "ledger_final_missing_batch_limit_config".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_limit_config),
+        );
+        out.insert(
+            "ledger_final_missing_reserved_batch_budget".to_string(),
+            serde_json::json!(self.ledger_final_missing_reserved_batch_budget),
+        );
+        out.insert(
+            "ledger_final_missing_batch_budget_before_fill".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_budget_before_fill),
+        );
+        out.insert(
+            "ledger_final_missing_batch_budget_after_fill".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_budget_after_fill),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count".to_string(),
+            serde_json::json!(
+                self.ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count
+            ),
+        );
+        out.insert(
+            "ledger_final_missing_batch_limit_zero_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_limit_zero_count),
+        );
+        out.insert(
+            "ledger_final_missing_preempted_normal_pending_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_preempted_normal_pending_count),
+        );
+        out.insert(
+            "ledger_final_missing_batch_nonempty_submitted".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_nonempty_submitted),
         );
         out.insert(
             "ledger_final_missing_actual_batch_count".to_string(),

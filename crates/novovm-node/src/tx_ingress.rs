@@ -11297,7 +11297,12 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         .or_else(|| params.get("max_txs"))
         .and_then(|value| value.as_u64())
         .unwrap_or(native_aoem_batch_max_size_v1() as u64);
-    let limit = requested_limit.clamp(1, native_aoem_batch_max_size_v1().max(1) as u64) as usize;
+    let max_batch_limit = native_aoem_batch_max_size_v1().max(1) as u64;
+    let limit = if requested_limit == 0 {
+        0
+    } else {
+        requested_limit.clamp(1, max_batch_limit) as usize
+    };
     let scan_limit = params
         .get("scan_limit")
         .and_then(|value| value.as_u64())
@@ -11359,6 +11364,18 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     let ledger_final_missing_candidate_raw_tx_build_error_count = 0usize;
     let mut ledger_final_missing_candidate_ineligible_stage_count = 0usize;
     let mut ledger_final_missing_candidate_already_receipted_count = 0usize;
+    let ledger_final_missing_batch_limit_config = limit as u64;
+    let ledger_final_missing_reserved_batch_budget =
+        if ledger_final_missing_admission.ledger_final_missing_candidate_count > 0 {
+            limit as u64
+        } else {
+            0
+        };
+    let ledger_final_missing_batch_budget_before_fill = limit as u64;
+    let normal_pending_candidate_count = pending
+        .iter()
+        .filter(|pending_tx| !ledger_candidate_hashes.contains(&pending_tx.tx_hash))
+        .count();
 
     for pending_tx in pending.iter() {
         if raw_txs.len() >= limit {
@@ -11429,8 +11446,31 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             );
         }
     }
+    let ledger_final_missing_batch_budget_after_fill =
+        (limit as u64).saturating_sub(ledger_final_missing_candidate_selected_count as u64);
+    let ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count =
+        if ledger_final_missing_candidate_selected_count > 0 {
+            ledger_final_missing_admission
+                .ledger_final_missing_candidate_count
+                .saturating_sub(ledger_final_missing_candidate_selected_count as u64)
+        } else {
+            0
+        };
+    let ledger_final_missing_batch_limit_zero_count = u64::from(
+        limit == 0 && ledger_final_missing_admission.ledger_final_missing_candidate_count > 0,
+    );
+    let ledger_final_missing_preempted_normal_pending_count =
+        ledger_final_missing_candidate_selected_count.min(normal_pending_candidate_count) as u64;
+    let ledger_final_missing_batch_nonempty_submitted =
+        !raw_txs.is_empty() && ledger_final_missing_candidate_selected_count > 0;
 
     if raw_txs.is_empty() {
+        let ledger_final_missing_batch_blocked_by_batch_limit_count =
+            if ledger_final_missing_batch_limit_zero_count > 0 {
+                ledger_final_missing_admission.ledger_final_missing_candidate_count
+            } else {
+                0
+            };
         let ledger_final_missing_batch_blocked_reason =
             final_missing_batch_blocked_reason_v1(FinalMissingBatchBlockedInputsV1 {
                 candidate_count: ledger_final_missing_admission
@@ -11450,18 +11490,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
                     .try_into()
                     .unwrap_or(u64::MAX),
                 scan_limit_count: 0,
-                batch_limit_count: if ledger_final_missing_admission.candidates.len()
-                    > ledger_final_missing_candidate_selected_count
-                {
-                    ledger_final_missing_admission
-                        .candidates
-                        .len()
-                        .saturating_sub(ledger_final_missing_candidate_selected_count)
-                        .try_into()
-                        .unwrap_or(u64::MAX)
-                } else {
-                    0
-                },
+                batch_limit_count: ledger_final_missing_batch_blocked_by_batch_limit_count,
                 batch_not_full_count: 0,
                 no_tick_executed_count: 0,
                 classification_path_not_reached_count: 0,
@@ -11542,16 +11571,35 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         );
         report.insert(
             "ledger_final_missing_batch_blocked_by_batch_limit_count".to_string(),
-            serde_json::json!(if ledger_final_missing_admission.candidates.len()
-                > ledger_final_missing_candidate_selected_count
-            {
-                ledger_final_missing_admission
-                    .candidates
-                    .len()
-                    .saturating_sub(ledger_final_missing_candidate_selected_count)
-            } else {
-                0
-            }),
+            serde_json::json!(ledger_final_missing_batch_blocked_by_batch_limit_count),
+        );
+        report.insert(
+            "ledger_final_missing_batch_limit_config".to_string(),
+            serde_json::json!(ledger_final_missing_batch_limit_config),
+        );
+        report.insert(
+            "ledger_final_missing_reserved_batch_budget".to_string(),
+            serde_json::json!(ledger_final_missing_reserved_batch_budget),
+        );
+        report.insert(
+            "ledger_final_missing_batch_budget_before_fill".to_string(),
+            serde_json::json!(ledger_final_missing_batch_budget_before_fill),
+        );
+        report.insert(
+            "ledger_final_missing_batch_budget_after_fill".to_string(),
+            serde_json::json!(ledger_final_missing_batch_budget_after_fill),
+        );
+        report.insert(
+            "ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count".to_string(),
+            serde_json::json!(ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count),
+        );
+        report.insert(
+            "ledger_final_missing_batch_limit_zero_count".to_string(),
+            serde_json::json!(ledger_final_missing_batch_limit_zero_count),
+        );
+        report.insert(
+            "ledger_final_missing_preempted_normal_pending_count".to_string(),
+            serde_json::json!(ledger_final_missing_preempted_normal_pending_count),
         );
         report.insert(
             "ledger_final_missing_batch_blocked_by_raw_tx_build_error_count".to_string(),
@@ -11603,6 +11651,10 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         report.insert(
             "ledger_final_missing_batch_result_count".to_string(),
             serde_json::json!(0),
+        );
+        report.insert(
+            "ledger_final_missing_batch_nonempty_submitted".to_string(),
+            serde_json::json!(ledger_final_missing_batch_nonempty_submitted),
         );
         report.insert(
             "ledger_final_missing_receipt_written_count".to_string(),
@@ -11739,16 +11791,35 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     );
     report.insert(
         "ledger_final_missing_batch_blocked_by_batch_limit_count".to_string(),
-        serde_json::json!(if ledger_final_missing_admission.candidates.len()
-            > ledger_final_missing_candidate_selected_count
-        {
-            ledger_final_missing_admission
-                .candidates
-                .len()
-                .saturating_sub(ledger_final_missing_candidate_selected_count)
-        } else {
-            0
-        }),
+        serde_json::json!(0),
+    );
+    report.insert(
+        "ledger_final_missing_batch_limit_config".to_string(),
+        serde_json::json!(ledger_final_missing_batch_limit_config),
+    );
+    report.insert(
+        "ledger_final_missing_reserved_batch_budget".to_string(),
+        serde_json::json!(ledger_final_missing_reserved_batch_budget),
+    );
+    report.insert(
+        "ledger_final_missing_batch_budget_before_fill".to_string(),
+        serde_json::json!(ledger_final_missing_batch_budget_before_fill),
+    );
+    report.insert(
+        "ledger_final_missing_batch_budget_after_fill".to_string(),
+        serde_json::json!(ledger_final_missing_batch_budget_after_fill),
+    );
+    report.insert(
+        "ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count".to_string(),
+        serde_json::json!(ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count),
+    );
+    report.insert(
+        "ledger_final_missing_batch_limit_zero_count".to_string(),
+        serde_json::json!(ledger_final_missing_batch_limit_zero_count),
+    );
+    report.insert(
+        "ledger_final_missing_preempted_normal_pending_count".to_string(),
+        serde_json::json!(ledger_final_missing_preempted_normal_pending_count),
     );
     report.insert(
         "ledger_final_missing_batch_blocked_by_raw_tx_build_error_count".to_string(),
@@ -11811,6 +11882,10 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     report.insert(
         "ledger_final_missing_batch_result_count".to_string(),
         serde_json::json!(post_batch_pending_summary.ledger_final_missing_batch_result_count),
+    );
+    report.insert(
+        "ledger_final_missing_batch_nonempty_submitted".to_string(),
+        serde_json::json!(ledger_final_missing_batch_nonempty_submitted),
     );
     report.insert(
         "ledger_final_missing_receipt_written_count".to_string(),
@@ -14987,6 +15062,249 @@ mod tests {
                     let after = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
                     assert_eq!(after.ledger_completed_count, 14_066);
                     assert_eq!(after.ledger_durable_missing_count, 334);
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn final_missing_bucket_preempts_batch_limit_before_normal_pending() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_136;
+                    for idx in 0..32 {
+                        let _ = ingest_test_native_repair_payload_v1(
+                            chain_id,
+                            1_000 + idx,
+                            &format!("acct-batch-preempt-normal-{idx}"),
+                            1,
+                        );
+                    }
+                    let (_raw, final_hash) = ingest_test_native_repair_payload_v1(
+                        chain_id,
+                        14_064,
+                        "acct-batch-preempt-final",
+                        77,
+                    );
+
+                    let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
+                        &serde_json::json!({
+                            "chain_id": chain_id,
+                            "limit": 1,
+                            "scan_limit": 1,
+                            "repair_final_missing_sequence_start": 14_064,
+                            "native_execution_store_path": path,
+                        }),
+                    )
+                    .expect("final-missing candidate must consume the first batch slot");
+
+                    assert_eq!(out["executed"].as_bool(), Some(true));
+                    assert_eq!(out["selected_count"].as_u64(), Some(1));
+                    assert_eq!(
+                        out["selected_tx_hashes"][0].as_str(),
+                        Some(to_hex_prefixed_v1(&final_hash).as_str())
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_actual_batch_count"].as_u64(),
+                        Some(1)
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_batch_blocked_reason"].as_str(),
+                        Some("")
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_batch_budget_before_fill"].as_u64(),
+                        Some(1)
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_batch_budget_after_fill"].as_u64(),
+                        Some(0)
+                    );
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn final_missing_candidate_gets_batch_slot_when_batch_limit_positive() {
+        let out =
+            assert_final_missing_candidate_payload_available_v1(88_137, "acct-positive-limit");
+
+        assert_eq!(out["effective_limit"].as_u64(), Some(1));
+        assert_eq!(
+            out["ledger_final_missing_candidate_payload_available_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["ledger_final_missing_actual_batch_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["ledger_final_missing_batch_blocked_by_batch_limit_count"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            out["ledger_final_missing_batch_nonempty_submitted"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn final_missing_batch_limit_zero_reports_explicit_reason() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_138;
+                    let _ = ingest_test_native_repair_payload_v1(
+                        chain_id,
+                        14_064,
+                        "acct-limit-zero",
+                        3,
+                    );
+
+                    let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
+                        &serde_json::json!({
+                            "chain_id": chain_id,
+                            "limit": 0,
+                            "scan_limit": 0,
+                            "repair_final_missing_sequence_start": 14_064,
+                            "native_execution_store_path": path,
+                        }),
+                    )
+                    .expect("limit zero should produce explicit batch-limit attribution");
+
+                    assert_eq!(out["executed"].as_bool(), Some(false));
+                    assert_eq!(out["effective_limit"].as_u64(), Some(0));
+                    assert_eq!(
+                        out["ledger_final_missing_batch_blocked_reason"].as_str(),
+                        Some("batch_limit")
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_batch_limit_zero_count"].as_u64(),
+                        Some(1)
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_batch_blocked_by_batch_limit_count"].as_u64(),
+                        Some(1)
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_actual_batch_count"].as_u64(),
+                        Some(0)
+                    );
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn partial_final_missing_batch_executes_without_waiting_full() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_139;
+                    for sequence in 14_064..14_067 {
+                        let _ = ingest_test_native_repair_payload_v1(
+                            chain_id,
+                            sequence,
+                            &format!("acct-partial-final-{sequence}"),
+                            5,
+                        );
+                    }
+
+                    let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
+                        &serde_json::json!({
+                            "chain_id": chain_id,
+                            "limit": 2,
+                            "scan_limit": 1,
+                            "repair_final_missing_sequence_start": 14_064,
+                            "native_execution_store_path": path,
+                        }),
+                    )
+                    .expect("partial final-missing batch should execute immediately");
+
+                    assert_eq!(out["executed"].as_bool(), Some(true));
+                    assert_eq!(out["selected_count"].as_u64(), Some(2));
+                    assert_eq!(
+                        out["ledger_final_missing_actual_batch_count"].as_u64(),
+                        Some(2)
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_batch_nonempty_submitted"].as_bool(),
+                        Some(true)
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_batch_blocked_by_limit_after_actual_fill_count"]
+                            .as_u64(),
+                        Some(1)
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_batch_blocked_reason"].as_str(),
+                        Some("")
+                    );
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn tail_gap_14112_14399_enters_actual_batch_under_limit() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_140;
+                    novovm_network::ensure_runtime_novorudp_sequence_expected_total_v1(
+                        chain_id, 14_400, 64,
+                    );
+                    novovm_network::observe_runtime_novorudp_sequence_completion_prefix_v1(
+                        chain_id, 14_112,
+                    );
+                    for sequence in 14_112..14_116 {
+                        let _ = ingest_test_native_repair_payload_v1(
+                            chain_id,
+                            sequence,
+                            &format!("acct-tail-14112-{sequence}"),
+                            9,
+                        );
+                    }
+
+                    let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
+                        &serde_json::json!({
+                            "chain_id": chain_id,
+                            "limit": 2,
+                            "scan_limit": 1,
+                            "repair_final_missing_sequence_start": 14_112,
+                            "native_execution_store_path": path,
+                        }),
+                    )
+                    .expect("tail gap 14112..14399 must enter actual batch under limit");
+
+                    assert_eq!(out["executed"].as_bool(), Some(true));
+                    assert_eq!(out["selected_count"].as_u64(), Some(2));
+                    assert_eq!(
+                        out["ledger_final_missing_actual_batch_count"].as_u64(),
+                        Some(2)
+                    );
+                    assert_eq!(out["ledger_final_missing_raw_txs_count"].as_u64(), Some(2));
+                    assert_eq!(
+                        out["ledger_final_missing_batch_budget_before_fill"].as_u64(),
+                        Some(2)
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_batch_budget_after_fill"].as_u64(),
+                        Some(0)
+                    );
+                    let after = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+                    assert_eq!(after.ledger_completed_count, 14_114);
+                    assert_eq!(after.ledger_durable_missing_count, 286);
                 })
             },
         )
