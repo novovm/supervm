@@ -1635,6 +1635,101 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn receiver_ack_uses_progress_summary_missing_bitmap_when_available() {
+        let summary = serde_json::json!({
+            "missing_count": 280,
+            "missing_ranges_sample": [{"start": 14120, "end_inclusive": 14399}],
+            "ledger_final_missing_candidate_count": 336,
+            "ledger_final_missing_candidate_ranges_sample": [{"start": 14064, "end_inclusive": 14399}],
+        });
+        let ack = receiver_ack_report_value_with_summary(14_400, 14_064, 256, 10, Some(&summary));
+
+        assert_eq!(
+            ack.get("missing_bitmap_source").and_then(Value::as_str),
+            Some("progress_summary")
+        );
+        assert_eq!(
+            ack.get("ack_source_selection_reason")
+                .and_then(Value::as_str),
+            Some("progress_summary_missing_bitmap")
+        );
+        assert_eq!(
+            ack.get("novorudp_current_window_start")
+                .and_then(Value::as_u64),
+            Some(14_120)
+        );
+    }
+
+    #[test]
+    fn receiver_ack_uses_ledger_missing_bitmap_before_stable_fallback() {
+        let summary = serde_json::json!({
+            "ledger_final_missing_candidate_count": 280,
+            "ledger_final_missing_candidate_ranges_sample": [{"start": 14120, "end_inclusive": 14399}],
+            "ledger_final_missing_admitted_count": 1182,
+        });
+        let ack = receiver_ack_report_value_with_summary(14_400, 14_064, 256, 11, Some(&summary));
+
+        assert_eq!(
+            ack.get("missing_bitmap_source").and_then(Value::as_str),
+            Some("ledger")
+        );
+        assert_eq!(
+            ack.get("ack_source_selection_reason")
+                .and_then(Value::as_str),
+            Some("ledger_final_missing_candidate_bitmap")
+        );
+        assert_eq!(
+            ack.get("novorudp_current_window_start")
+                .and_then(Value::as_u64),
+            Some(14_120)
+        );
+        assert_eq!(
+            ack.get("ledger_missing_bitmap_available")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn receiver_ack_reports_fallback_reason_when_source_unavailable() {
+        let ack = receiver_ack_report_value_with_summary(14_400, 14_064, 256, 12, None);
+
+        assert_eq!(
+            ack.get("missing_bitmap_source").and_then(Value::as_str),
+            Some("stable_progress_fallback")
+        );
+        assert_eq!(
+            ack.get("missing_bitmap_fallback_reason")
+                .and_then(Value::as_str),
+            Some("progress_summary_unavailable")
+        );
+        assert_eq!(
+            ack.get("novorudp_current_window_start")
+                .and_then(Value::as_u64),
+            Some(14_064)
+        );
+    }
+
+    #[test]
+    fn receiver_ack_does_not_fallback_when_ledger_admission_present() {
+        let summary = serde_json::json!({
+            "ledger_final_missing_candidate_count": 336,
+            "ledger_final_missing_candidate_ranges_sample": [{"start": 14064, "end_inclusive": 14399}],
+            "ledger_final_missing_admitted_count": 1182,
+        });
+        let ack = receiver_ack_report_value_with_summary(14_400, 13_024, 256, 13, Some(&summary));
+
+        assert_ne!(
+            ack.get("missing_bitmap_source").and_then(Value::as_str),
+            Some("stable_progress_fallback")
+        );
+        assert_eq!(
+            ack.get("missing_bitmap_source").and_then(Value::as_str),
+            Some("ledger")
+        );
+    }
+
+    #[test]
     fn real_sender_rejects_stale_ack_for_repair() {
         let latest_epoch = 500u64;
         let stale_ack = serde_json::json!({
@@ -3060,26 +3155,96 @@ fn receiver_ack_report_value_with_summary(
     ack_epoch: u64,
     progress_summary: Option<&Value>,
 ) -> Value {
-    let summary_ranges = progress_summary
+    let progress_summary_ranges = progress_summary
         .map(|summary| {
             missing_ranges_from_value_key(summary, "missing_ranges_sample", sample_limit)
         })
         .unwrap_or_default();
-    let summary_missing_count = progress_summary
+    let progress_summary_missing_count = progress_summary
         .and_then(|summary| summary.get("missing_count"))
         .and_then(Value::as_u64);
-    let use_summary_missing = summary_missing_count.is_some() && !summary_ranges.is_empty();
-    let missing_count = if use_summary_missing {
-        summary_missing_count.unwrap_or_default()
-    } else {
-        expected_tx_count.saturating_sub(stable_progress)
-    };
-    let ranges = if use_summary_missing {
-        summary_ranges
-    } else {
-        missing_ranges_from_progress(stable_progress, expected_tx_count, sample_limit)
-    };
+    let progress_summary_available = progress_summary.is_some();
+    let progress_summary_missing_available =
+        progress_summary_missing_count.is_some() && !progress_summary_ranges.is_empty();
+    let ledger_ranges = progress_summary
+        .map(|summary| {
+            missing_ranges_from_value_key(
+                summary,
+                "ledger_final_missing_candidate_ranges_sample",
+                sample_limit,
+            )
+        })
+        .unwrap_or_default();
+    let ledger_missing_count = progress_summary
+        .and_then(|summary| summary.get("ledger_final_missing_candidate_count"))
+        .and_then(Value::as_u64)
+        .filter(|count| *count > 0)
+        .unwrap_or_else(|| missing_ranges_count(ledger_ranges.as_slice()));
+    let ledger_summary_available = progress_summary.is_some_and(|summary| {
+        summary
+            .get("ledger_final_missing_candidate_count")
+            .is_some()
+            || summary
+                .get("ledger_final_missing_candidate_ranges_sample")
+                .is_some()
+            || summary.get("ledger_final_missing_admitted_count").is_some()
+    });
+    let ledger_missing_bitmap_available = ledger_missing_count > 0 && !ledger_ranges.is_empty();
+    let (ranges, missing_count, missing_bitmap_source, fallback_reason, source_reason) =
+        if progress_summary_missing_count == Some(0) {
+            (
+                Vec::new(),
+                0,
+                "progress_summary",
+                Value::Null,
+                "progress_summary_missing_zero",
+            )
+        } else if progress_summary_missing_available {
+            (
+                progress_summary_ranges,
+                progress_summary_missing_count.unwrap_or_default(),
+                "progress_summary",
+                Value::Null,
+                "progress_summary_missing_bitmap",
+            )
+        } else if ledger_missing_bitmap_available {
+            (
+                ledger_ranges,
+                ledger_missing_count,
+                "ledger",
+                Value::Null,
+                "ledger_final_missing_candidate_bitmap",
+            )
+        } else {
+            let reason = if progress_summary.is_none() {
+                "progress_summary_unavailable"
+            } else if ledger_summary_available {
+                "ledger_missing_bitmap_unavailable"
+            } else {
+                "no_missing_bitmap_fields_available"
+            };
+            (
+                missing_ranges_from_progress(stable_progress, expected_tx_count, sample_limit),
+                expected_tx_count.saturating_sub(stable_progress),
+                "stable_progress_fallback",
+                serde_json::json!(reason),
+                "stable_progress_fallback",
+            )
+        };
     let missing_ranges_full_count = ranges.len();
+    let progress_summary_last_updated_ms = progress_summary
+        .and_then(|summary| {
+            summary
+                .get("timestamp_ms")
+                .or_else(|| summary.get("last_updated_ms"))
+                .or_else(|| summary.get("elapsed_ms"))
+        })
+        .and_then(Value::as_u64);
+    let ledger_final_missing_count = progress_summary
+        .and_then(|summary| summary.get("ledger_final_missing_candidate_count"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let progress_summary_missing_count_value = progress_summary_missing_count.unwrap_or_default();
     let transport_profile = TransportProfileV1::from_env();
     let novorudp = NovoRudpConfigV1::from_env(transport_profile).unwrap_or(NovoRudpConfigV1 {
         enabled: false,
@@ -3120,7 +3285,15 @@ fn receiver_ack_report_value_with_summary(
         "missing_ranges_full_count": missing_ranges_full_count,
         "missing_ranges_sample_truncated": (missing_ranges_full_count as u64) > sample_limit,
         "missing_ranges_sample": missing_ranges_to_json(ranges.as_slice(), sample_limit),
-        "missing_bitmap_source": if use_summary_missing { "progress_summary" } else { "stable_progress_fallback" },
+        "missing_bitmap_source": missing_bitmap_source,
+        "missing_bitmap_fallback_reason": fallback_reason,
+        "ledger_summary_available": ledger_summary_available,
+        "progress_summary_available": progress_summary_available,
+        "progress_summary_last_updated_ms": progress_summary_last_updated_ms,
+        "ledger_missing_bitmap_available": ledger_missing_bitmap_available,
+        "ack_source_selection_reason": source_reason,
+        "ledger_final_missing_count": ledger_final_missing_count,
+        "progress_summary_missing_count": progress_summary_missing_count_value,
         "ack_epoch": ack_epoch,
         "timestamp_ms": now_ms(),
         "receiver_done": missing_count == 0 && stable_progress >= expected_tx_count,
