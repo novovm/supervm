@@ -1995,6 +1995,35 @@ pub fn observe_network_runtime_native_pending_tx_repair_aoem_admission_v1(
     observe_novorudp_sequence_admitted_to_aoem_v1(chain_id, sequence);
 }
 
+pub fn observe_network_runtime_native_pending_tx_repair_actual_batch_v1(
+    chain_id: u64,
+    tx_hash: [u8; 32],
+) {
+    let sequence = runtime_native_repair_probe_map()
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .get(&chain_id)
+                .and_then(|state| state.tx_hash_to_sequence.get(&tx_hash).copied())
+        });
+    let Some(sequence) = sequence else {
+        return;
+    };
+    if let Ok(mut guard) = runtime_native_repair_probe_map().lock() {
+        let state = guard.entry(chain_id).or_default();
+        if state.sequence_actual_batch_seen.insert(sequence) {
+            state.final_missing_actual_batch_count =
+                state.final_missing_actual_batch_count.saturating_add(1);
+        }
+        if state.sequence_admitted_to_aoem_seen.insert(sequence) {
+            state.sequence_admitted_to_aoem_count =
+                state.sequence_admitted_to_aoem_count.saturating_add(1);
+        }
+    }
+    observe_novorudp_sequence_admitted_to_aoem_v1(chain_id, Some(sequence));
+}
+
 pub fn observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1(
     chain_id: u64,
     tx_hash: [u8; 32],
@@ -2022,10 +2051,6 @@ pub fn observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1(
     }
     if let Ok(mut guard) = runtime_native_repair_probe_map().lock() {
         let state = guard.entry(chain_id).or_default();
-        if state.sequence_actual_batch_seen.insert(sequence) {
-            state.final_missing_actual_batch_count =
-                state.final_missing_actual_batch_count.saturating_add(1);
-        }
         if state.sequence_receipt_written_seen.insert(sequence) {
             state.final_missing_receipt_written_count =
                 state.final_missing_receipt_written_count.saturating_add(1);

@@ -34944,30 +34944,65 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("ledger_missing_without_retryable_count")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
-        self.ledger_final_missing_actual_batch_count = ingress
+        let tick_batch_result = report.pointer("/tick_result/batch_result");
+        let ledger_actual_batch_count = ingress
             .get("ledger_final_missing_actual_batch_count")
             .and_then(|value| value.as_u64())
-            .unwrap_or_default();
-        self.ledger_final_missing_actual_batch_ranges_sample = ingress
-            .get("ledger_final_missing_actual_batch_ranges_sample")
+            .unwrap_or_default()
+            .max(
+                tick_batch_result
+                    .and_then(|value| value.get("ledger_final_missing_actual_batch_count"))
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
+        self.ledger_final_missing_actual_batch_count = ledger_actual_batch_count;
+        self.ledger_final_missing_actual_batch_ranges_sample = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_actual_batch_ranges_sample"))
+            .or_else(|| ingress.get("ledger_final_missing_actual_batch_ranges_sample"))
             .cloned()
             .unwrap_or_else(|| serde_json::json!([]));
         self.ledger_final_missing_raw_txs_count = ingress
             .get("ledger_final_missing_raw_txs_count")
             .and_then(|value| value.as_u64())
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .max(
+                tick_batch_result
+                    .and_then(|value| value.get("ledger_final_missing_raw_txs_count"))
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
         self.ledger_final_missing_batch_result_count = ingress
             .get("ledger_final_missing_batch_result_count")
             .and_then(|value| value.as_u64())
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .max(
+                tick_batch_result
+                    .and_then(|value| value.get("ledger_final_missing_batch_result_count"))
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
         self.ledger_final_missing_receipt_written_count = ingress
             .get("ledger_final_missing_receipt_written_count")
             .and_then(|value| value.as_u64())
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .max(
+                tick_batch_result
+                    .and_then(|value| value.get("ledger_final_missing_receipt_written_count"))
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
         self.ledger_final_missing_receipt_missing_after_admission_count = ingress
             .get("ledger_final_missing_receipt_missing_after_admission_count")
             .and_then(|value| value.as_u64())
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .max(
+                tick_batch_result
+                    .and_then(|value| {
+                        value.get("ledger_final_missing_receipt_missing_after_admission_count")
+                    })
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
         self.ledger_final_missing_admitted_but_no_receipt_invariant_violation_count = ingress
             .get("ledger_final_missing_admitted_but_no_receipt_invariant_violation_count")
             .and_then(|value| value.as_u64())
@@ -34989,11 +35024,6 @@ impl NativeExecutionPipelineAggregateV1 {
                 .get("ledger_final_missing_candidate_count")
                 .and_then(|value| value.as_u64())
                 .unwrap_or_default();
-            let selected_count = report
-                .pointer("/tick_result/batch_result/selected_count")
-                .and_then(|value| value.as_u64())
-                .unwrap_or_default();
-            let admitted_count = candidate_count.min(selected_count);
             self.ledger_final_missing_candidate_count = candidate_count;
             self.ledger_final_missing_candidate_ranges_sample = ledger_admission
                 .get("ledger_final_missing_candidate_ranges_sample")
@@ -35007,12 +35037,10 @@ impl NativeExecutionPipelineAggregateV1 {
                         .and_then(|value| value.as_u64())
                         .unwrap_or_default(),
                 );
-            self.ledger_final_missing_admitted_count = self
-                .ledger_final_missing_admitted_count
-                .saturating_add(admitted_count);
-            if admitted_count > 0 {
+            self.ledger_final_missing_admitted_count = self.ledger_final_missing_actual_batch_count;
+            if self.ledger_final_missing_actual_batch_count > 0 {
                 self.ledger_final_missing_admitted_ranges_sample =
-                    self.ledger_final_missing_candidate_ranges_sample.clone();
+                    self.ledger_final_missing_actual_batch_ranges_sample.clone();
             }
             self.ledger_final_missing_admission_skipped_count = ledger_admission
                 .get("ledger_final_missing_admission_skipped_count")
