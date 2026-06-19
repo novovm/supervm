@@ -32914,6 +32914,71 @@ fn u64_env_alias_allow_zero(names: &[&str], default: u64) -> Result<u64> {
     Ok(default)
 }
 
+fn novorudp_child_expected_total_raw_env_v1() -> Option<String> {
+    string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TX_COUNT")
+        .or_else(|| string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_EXPECTED_TX_COUNT"))
+}
+
+fn novorudp_child_receiver_mode_v1() -> bool {
+    string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TRANSPORT")
+        .is_some_and(|value| value.eq_ignore_ascii_case("novorudp"))
+        && string_env_nonempty("NOVOVM_NATIVE_PIPELINE_ROLE")
+            .is_some_and(|value| value.eq_ignore_ascii_case("receiver"))
+}
+
+fn decorate_novorudp_child_expected_summary_v1(
+    summary: &mut serde_json::Value,
+    raw_expected: Option<&str>,
+    expected_total: u64,
+    window_size: u64,
+) {
+    let Some(obj) = summary.as_object_mut() else {
+        return;
+    };
+    obj.insert(
+        "child_env_tx_count_raw".to_string(),
+        raw_expected
+            .map(|value| serde_json::json!(value))
+            .unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "child_expected_total_from_env".to_string(),
+        serde_json::json!(expected_total),
+    );
+    obj.insert(
+        "child_expected_total_from_config".to_string(),
+        serde_json::json!(expected_total),
+    );
+    obj.insert(
+        "child_progress_summary_source".to_string(),
+        serde_json::json!("child_runtime"),
+    );
+    obj.insert(
+        "child_ledger_expected_range_init_called".to_string(),
+        serde_json::json!(expected_total > 0),
+    );
+    obj.insert(
+        "child_ledger_expected_range_init_source".to_string(),
+        serde_json::json!(if expected_total > 0 {
+            "child_expected_total_env"
+        } else {
+            "missing_expected_total"
+        }),
+    );
+    obj.insert(
+        "child_ledger_expected_range_init_error".to_string(),
+        if expected_total > 0 {
+            serde_json::Value::Null
+        } else {
+            serde_json::json!("receiver_expected_total_missing")
+        },
+    );
+    obj.insert(
+        "child_ledger_expected_window_size".to_string(),
+        serde_json::json!(window_size),
+    );
+}
+
 fn usize_env_allow_zero(name: &str, default: usize) -> Result<usize> {
     let raw = std::env::var(name).unwrap_or_else(|_| default.to_string());
     raw.trim()
@@ -37320,6 +37385,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
         5_000,
     )?;
+    let novorudp_expected_raw = novorudp_child_expected_total_raw_env_v1();
     let novorudp_expected_tx_count = u64_env_alias_allow_zero(
         &[
             "NOVOVM_NATIVE_PIPELINE_TX_COUNT",
@@ -37328,6 +37394,9 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         0,
     )?;
     let novorudp_window_size = u64_env_positive("NOVOVM_NOVORUDP_WINDOW_SIZE", 64)?;
+    if novorudp_child_receiver_mode_v1() && novorudp_expected_tx_count == 0 {
+        bail!("receiver_expected_total_missing: transport=novorudp role=receiver expected_total=0");
+    }
     if novorudp_expected_tx_count > 0 {
         novovm_network::ensure_runtime_novorudp_sequence_expected_total_v1(
             chain_id,
@@ -37431,9 +37500,16 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                         })?;
                     }
                 }
+                let mut progress_summary = aggregate.to_json();
+                decorate_novorudp_child_expected_summary_v1(
+                    &mut progress_summary,
+                    novorudp_expected_raw.as_deref(),
+                    novorudp_expected_tx_count,
+                    novorudp_window_size,
+                );
                 let progress_report = serde_json::json!({
                     "schema": "novovm-native-execution-pipeline-progress-report/v1",
-                    "summary": aggregate.to_json(),
+                    "summary": progress_summary,
                     "last_tick_report": report,
                 });
                 let encoded = serde_json::to_string_pretty(&progress_report)
@@ -37477,7 +37553,13 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         }
         ticks = ticks.saturating_add(1);
         if bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID") {
-            let summary = aggregate.to_json();
+            let mut summary = aggregate.to_json();
+            decorate_novorudp_child_expected_summary_v1(
+                &mut summary,
+                novorudp_expected_raw.as_deref(),
+                novorudp_expected_tx_count,
+                novorudp_window_size,
+            );
             if soak_gate.validate_summary(&summary).is_ok() {
                 break;
             }
@@ -37487,7 +37569,13 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         }
         std::thread::sleep(Duration::from_millis(interval_ms));
     }
-    let summary = aggregate.to_json();
+    let mut summary = aggregate.to_json();
+    decorate_novorudp_child_expected_summary_v1(
+        &mut summary,
+        novorudp_expected_raw.as_deref(),
+        novorudp_expected_tx_count,
+        novorudp_window_size,
+    );
     if let Some(path) = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH")
     {
         let report_path = PathBuf::from(path);

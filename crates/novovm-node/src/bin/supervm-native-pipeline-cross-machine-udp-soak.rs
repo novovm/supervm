@@ -1206,6 +1206,115 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn receiver_child_inherits_tx_count_env() {
+        let envs = receiver_child_expected_total_envs_v1(14_400);
+        let tx_count = envs
+            .iter()
+            .find(|(key, _)| *key == "NOVOVM_NATIVE_PIPELINE_TX_COUNT")
+            .map(|(_, value)| value.as_str());
+        let expected_total = envs
+            .iter()
+            .find(|(key, _)| *key == "NOVOVM_NATIVE_EXECUTION_PIPELINE_EXPECTED_TX_COUNT")
+            .map(|(_, value)| value.as_str());
+
+        assert_eq!(tx_count, Some("14400"));
+        assert_eq!(expected_total, Some("14400"));
+    }
+
+    #[test]
+    fn receiver_child_initializes_ledger_expected_range() {
+        let summary = serde_json::json!({
+            "included_canonical_total": 0,
+            "aoem_executed_total": 0,
+            "queue_pending_last": 0,
+            "ledger_expected_range_start": 0,
+            "ledger_expected_range_end": 14399,
+            "ledger_expected_count": 14400,
+            "ledger_durable_missing_count": 14400,
+            "ledger_durable_missing_derived_from_expected_range": true,
+            "child_env_tx_count_raw": "14400",
+            "child_expected_total_from_env": 14400,
+            "child_expected_total_from_config": 14400,
+            "child_ledger_expected_range_init_called": true,
+            "child_ledger_expected_range_init_source": "child_expected_total_env",
+            "child_ledger_expected_range_init_error": null,
+            "child_progress_summary_source": "child_runtime",
+        });
+        let sample = diagnostics_summary_sample(
+            Instant::now(),
+            &summary,
+            serde_json::json!({}),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            0,
+        );
+
+        assert_eq!(sample["ledger_expected_range_start"].as_u64(), Some(0));
+        assert_eq!(sample["ledger_expected_range_end"].as_u64(), Some(14_399));
+        assert_eq!(sample["ledger_expected_count"].as_u64(), Some(14_400));
+        assert_eq!(
+            sample["ledger_durable_missing_derived_from_expected_range"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            sample["child_ledger_expected_range_init_called"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn novorudp_receiver_fails_fast_when_expected_total_missing() {
+        assert!(novorudp_receiver_expected_total_missing_v1(
+            "novorudp", "receiver", 0
+        ));
+        assert!(!novorudp_receiver_expected_total_missing_v1(
+            "novorudp", "sender", 0
+        ));
+        assert!(!novorudp_receiver_expected_total_missing_v1(
+            "udp", "receiver", 0
+        ));
+        assert!(!novorudp_receiver_expected_total_missing_v1(
+            "novorudp", "receiver", 14_400
+        ));
+    }
+
+    #[test]
+    fn child_progress_summary_reports_child_ledger_expected_count() {
+        let summary = serde_json::json!({
+            "included_canonical_total": 128,
+            "aoem_executed_total": 128,
+            "queue_pending_last": 0,
+            "ledger_expected_count": 2400,
+            "child_env_tx_count_raw": "2400",
+            "child_expected_total_from_env": 2400,
+            "child_expected_total_from_config": 2400,
+            "child_progress_summary_source": "child_runtime",
+        });
+        let sample = diagnostics_summary_sample(
+            Instant::now(),
+            &summary,
+            serde_json::json!({}),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            0,
+        );
+
+        assert_eq!(sample["ledger_expected_count"].as_u64(), Some(2400));
+        assert_eq!(sample["child_expected_total_from_env"].as_u64(), Some(2400));
+        assert_eq!(
+            sample["child_progress_summary_source"].as_str(),
+            Some("child_runtime")
+        );
+    }
+
+    #[test]
+    fn final_missing_requires_nonzero_expected_ledger() {
+        assert!(final_missing_without_expected_ledger_v1(248, 0));
+        assert!(!final_missing_without_expected_ledger_v1(0, 0));
+        assert!(!final_missing_without_expected_ledger_v1(248, 14_400));
+    }
+
+    #[test]
     fn receiver_timeout_uses_phased_completion_not_send_duration_cutoff() {
         let config = receiver_phase_test_config();
         assert_eq!(
@@ -2808,6 +2917,24 @@ fn receiver_child_expected_total_envs_v1(expected_tx_count: u64) -> [(&'static s
     ]
 }
 
+#[cfg(test)]
+fn novorudp_receiver_expected_total_missing_v1(
+    transport: &str,
+    role: &str,
+    expected_total: u64,
+) -> bool {
+    transport.eq_ignore_ascii_case("novorudp")
+        && role.eq_ignore_ascii_case("receiver")
+        && expected_total == 0
+}
+
+fn final_missing_without_expected_ledger_v1(
+    final_missing_sequence_count: u64,
+    ledger_expected_count: u64,
+) -> bool {
+    final_missing_sequence_count > 0 && ledger_expected_count == 0
+}
+
 fn spawn_receiver_node(
     node_bin: &Path,
     chain_id: u64,
@@ -2948,6 +3075,10 @@ fn spawn_receiver_node(
     }
     for (key, value) in receiver_child_expected_total_envs_v1(expected_tx_count) {
         cmd.env(key, value);
+    }
+    cmd.env("NOVOVM_NATIVE_PIPELINE_ROLE", "receiver");
+    if let Some(transport) = string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TRANSPORT") {
+        cmd.env("NOVOVM_NATIVE_PIPELINE_TRANSPORT", transport);
     }
     for (_, env_name, _) in MEMORY_PROBE_TOGGLES_V1 {
         if let Some(value) = string_env_nonempty(env_name) {
@@ -4112,6 +4243,10 @@ fn write_synthetic_receiver_failure_report(
         .and_then(Value::as_u64)
         .unwrap_or_else(|| expected_tx_count.saturating_sub(stable_progress_total));
     let final_missing_ranges = missing_ranges_from_json(&final_missing_ranges_sample);
+    let ledger_expected_count_for_invariant = repair_source
+        .and_then(|sample| sample.get("ledger_expected_count"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
     let repair_received_ranges = repair_source
         .and_then(|sample| sample.get("repair_sequence_received_ranges_sample"))
         .map(missing_ranges_from_json)
@@ -4220,6 +4355,10 @@ fn write_synthetic_receiver_failure_report(
             "aoem_concurrency_owner": "AOEM_runtime",
             "final_missing_sequence_count": final_missing_sequence_count,
             "final_missing_ranges_sample": final_missing_ranges_sample,
+            "final_missing_without_expected_ledger_invariant_violation": final_missing_without_expected_ledger_v1(
+                final_missing_sequence_count,
+                ledger_expected_count_for_invariant,
+            ),
             "repair_attribution_available": repair_attribution_available,
             "repair_packet_received_count": repair_packet_received_count,
             "repair_packet_decode_failed_count": repair_source
@@ -4312,6 +4451,31 @@ fn write_synthetic_receiver_failure_report(
             "ledger_expected_count": repair_source
                 .and_then(|sample| sample.get("ledger_expected_count"))
                 .and_then(Value::as_u64),
+            "child_env_tx_count_raw": repair_source
+                .and_then(|sample| sample.get("child_env_tx_count_raw"))
+                .cloned(),
+            "child_expected_total_from_env": repair_source
+                .and_then(|sample| sample.get("child_expected_total_from_env"))
+                .and_then(Value::as_u64),
+            "child_expected_total_from_config": repair_source
+                .and_then(|sample| sample.get("child_expected_total_from_config"))
+                .and_then(Value::as_u64),
+            "child_ledger_expected_range_init_called": repair_source
+                .and_then(|sample| sample.get("child_ledger_expected_range_init_called"))
+                .and_then(Value::as_bool),
+            "child_ledger_expected_range_init_source": repair_source
+                .and_then(|sample| sample.get("child_ledger_expected_range_init_source"))
+                .cloned(),
+            "child_ledger_expected_range_init_error": repair_source
+                .and_then(|sample| sample.get("child_ledger_expected_range_init_error"))
+                .cloned(),
+            "child_progress_summary_source": repair_source
+                .and_then(|sample| sample.get("child_progress_summary_source"))
+                .cloned(),
+            "wrapper_progress_summary_source": repair_source
+                .and_then(|sample| sample.get("wrapper_progress_summary_source"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!("receiver_wrapper_child_progress_report")),
             "ledger_completed_count": repair_source
                 .and_then(|sample| sample.get("ledger_completed_count"))
                 .and_then(Value::as_u64),
@@ -5336,6 +5500,32 @@ fn diagnostics_summary_sample(
         "ticks": summary_u64(summary, "ticks"),
         "ticks_per_sec_x1000": summary_u64(summary, "ticks_per_sec_x1000"),
     });
+    out["child_env_tx_count_raw"] = summary
+        .get("child_env_tx_count_raw")
+        .cloned()
+        .unwrap_or(Value::Null);
+    out["child_expected_total_from_env"] =
+        serde_json::json!(summary_u64(summary, "child_expected_total_from_env"));
+    out["child_expected_total_from_config"] =
+        serde_json::json!(summary_u64(summary, "child_expected_total_from_config"));
+    out["child_ledger_expected_range_init_called"] = serde_json::json!(summary
+        .get("child_ledger_expected_range_init_called")
+        .and_then(Value::as_bool)
+        .unwrap_or(false));
+    out["child_ledger_expected_range_init_source"] = summary
+        .get("child_ledger_expected_range_init_source")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!(""));
+    out["child_ledger_expected_range_init_error"] = summary
+        .get("child_ledger_expected_range_init_error")
+        .cloned()
+        .unwrap_or(Value::Null);
+    out["child_progress_summary_source"] = summary
+        .get("child_progress_summary_source")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!(""));
+    out["wrapper_progress_summary_source"] =
+        serde_json::json!("receiver_wrapper_child_progress_report");
     out["aoem_runtime_estimated_bytes"] = serde_json::json!(aoem_runtime_estimated_bytes);
     out["aoem_batch_input_bytes"] = serde_json::json!(aoem_batch_input_bytes);
     out["aoem_batch_output_bytes"] = serde_json::json!(aoem_batch_output_bytes);
