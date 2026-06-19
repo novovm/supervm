@@ -34097,6 +34097,10 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         .pointer("/batch_result/ledger_final_missing_admission")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    let batch_result = tick_out
+        .get("batch_result")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
     let native_store_dirty_set = tick_out
         .pointer("/batch_result/batch_result/native_store_commit/dirty_set")
         .cloned()
@@ -34110,55 +34114,120 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         .cloned()
         .unwrap_or(serde_json::Value::Null);
 
-    serde_json::json!({
-        "method": tick_out.get("method").cloned().unwrap_or(serde_json::Value::Null),
-        "accepted": tick_out.get("accepted").cloned().unwrap_or(serde_json::Value::Null),
-        "execution_kernel": tick_out
-            .get("execution_kernel")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-        "aoem_concurrency_owner": tick_out
-            .get("aoem_concurrency_owner")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-        "chain_id": tick_out.get("chain_id").cloned().unwrap_or(serde_json::Value::Null),
-        "executed_count": tick_out
-            .get("executed_count")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-        "deferred_count": tick_out
-            .get("deferred_count")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-        "budget": tick_out.get("budget").cloned().unwrap_or(serde_json::Value::Null),
-        "budget_runtime": tick_out
-            .get("budget_runtime")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-        "batch_result": {
-            "selected_count": selected_count,
-            "skipped": skipped,
-            "ledger_final_missing_admission": ledger_final_missing_admission,
-            "batch_result": {
-                "native_store_commit": {
-                    "model": native_store_commit.get("model").cloned().unwrap_or(serde_json::Value::Null),
-                    "precommit_store_materialized": native_store_commit.get("precommit_store_materialized").cloned().unwrap_or(serde_json::Value::Null),
-                    "precommit_store_materialized_receipts": native_store_commit.get("precommit_store_materialized_receipts").cloned().unwrap_or(serde_json::Value::Null),
-                    "precommit_store_materialized_estimated_bytes": native_store_commit.get("precommit_store_materialized_estimated_bytes").cloned().unwrap_or(serde_json::Value::Null),
-                    "previous_store_clone_receipts": native_store_commit.get("previous_store_clone_receipts").cloned().unwrap_or(serde_json::Value::Null),
-                    "previous_store_clone_estimated_bytes": native_store_commit.get("previous_store_clone_estimated_bytes").cloned().unwrap_or(serde_json::Value::Null),
-                    "materialization_risk": native_store_commit.get("materialization_risk").cloned().unwrap_or(serde_json::Value::Null),
-                    "dirty_set": native_store_dirty_set,
-                },
-                "native_store_backend_status": native_store_backend_status,
-            },
-        },
-        "raw_txs_omitted": true,
-        "selected_tx_hashes_omitted": true,
-        "canonical_projection_omitted": true,
-        "receipt_detail_omitted": true,
-        "omission_reason": "bounded_sustained_report_memory",
-    })
+    let mut native_store_commit_compact = serde_json::Map::new();
+    for key in [
+        "model",
+        "precommit_store_materialized",
+        "precommit_store_materialized_receipts",
+        "precommit_store_materialized_estimated_bytes",
+        "previous_store_clone_receipts",
+        "previous_store_clone_estimated_bytes",
+        "materialization_risk",
+    ] {
+        native_store_commit_compact.insert(
+            key.to_string(),
+            native_store_commit
+                .get(key)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        );
+    }
+    native_store_commit_compact.insert("dirty_set".to_string(), native_store_dirty_set);
+
+    let mut nested_batch_result = serde_json::Map::new();
+    nested_batch_result.insert(
+        "native_store_commit".to_string(),
+        serde_json::Value::Object(native_store_commit_compact),
+    );
+    nested_batch_result.insert(
+        "native_store_backend_status".to_string(),
+        native_store_backend_status,
+    );
+
+    let mut compact_batch = serde_json::Map::new();
+    compact_batch.insert("selected_count".to_string(), selected_count);
+    compact_batch.insert("skipped".to_string(), skipped);
+    compact_batch.insert(
+        "ledger_final_missing_admission".to_string(),
+        ledger_final_missing_admission,
+    );
+    for key in [
+        "ledger_final_missing_candidate_payload_available_count",
+        "ledger_final_missing_candidate_payload_missing_count",
+        "ledger_final_missing_candidate_tx_hash_mapping_missing_count",
+        "ledger_final_missing_candidate_raw_tx_build_error_count",
+        "ledger_final_missing_batch_blocked_reason",
+        "ledger_final_missing_batch_blocked_by_payload_missing_count",
+        "ledger_final_missing_batch_blocked_by_stage_filter_count",
+        "ledger_final_missing_batch_blocked_by_scan_limit_count",
+        "ledger_final_missing_batch_blocked_by_batch_limit_count",
+        "ledger_final_missing_batch_blocked_by_raw_tx_build_error_count",
+        "ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count",
+        "ledger_final_missing_batch_blocked_by_batch_not_full_count",
+        "ledger_final_missing_batch_blocked_by_no_tick_executed_count",
+        "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count",
+        "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count",
+        "ledger_final_missing_actual_batch_count",
+        "ledger_final_missing_raw_txs_count",
+        "ledger_final_missing_batch_result_count",
+        "ledger_final_missing_receipt_written_count",
+        "ledger_final_missing_receipt_missing_after_admission_count",
+    ] {
+        compact_batch.insert(
+            key.to_string(),
+            batch_result
+                .get(key)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        );
+    }
+    compact_batch.insert(
+        "batch_result".to_string(),
+        serde_json::Value::Object(nested_batch_result),
+    );
+
+    let mut compact = serde_json::Map::new();
+    for key in [
+        "method",
+        "accepted",
+        "execution_kernel",
+        "aoem_concurrency_owner",
+        "chain_id",
+        "executed_count",
+        "deferred_count",
+        "budget",
+        "budget_runtime",
+    ] {
+        compact.insert(
+            key.to_string(),
+            tick_out
+                .get(key)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        );
+    }
+    compact.insert(
+        "batch_result".to_string(),
+        serde_json::Value::Object(compact_batch),
+    );
+    compact.insert("raw_txs_omitted".to_string(), serde_json::json!(true));
+    compact.insert(
+        "selected_tx_hashes_omitted".to_string(),
+        serde_json::json!(true),
+    );
+    compact.insert(
+        "canonical_projection_omitted".to_string(),
+        serde_json::json!(true),
+    );
+    compact.insert(
+        "receipt_detail_omitted".to_string(),
+        serde_json::json!(true),
+    );
+    compact.insert(
+        "omission_reason".to_string(),
+        serde_json::json!("bounded_sustained_report_memory"),
+    );
+    serde_json::Value::Object(compact)
 }
 
 #[derive(Debug)]
@@ -34286,6 +34355,10 @@ struct NativeExecutionPipelineAggregateV1 {
     ledger_final_missing_batch_blocked_by_batch_limit_count: u64,
     ledger_final_missing_batch_blocked_by_raw_tx_build_error_count: u64,
     ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count: u64,
+    ledger_final_missing_batch_blocked_by_batch_not_full_count: u64,
+    ledger_final_missing_batch_blocked_by_no_tick_executed_count: u64,
+    ledger_final_missing_batch_blocked_by_classification_path_not_reached_count: u64,
+    ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count: u64,
     ledger_final_missing_admission_skipped_count: u64,
     ledger_final_missing_admission_skip_reason_counts: serde_json::Value,
     admission_used_ledger_final_missing_bucket: bool,
@@ -34439,6 +34512,10 @@ impl NativeExecutionPipelineAggregateV1 {
             ledger_final_missing_batch_blocked_by_batch_limit_count: 0,
             ledger_final_missing_batch_blocked_by_raw_tx_build_error_count: 0,
             ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count: 0,
+            ledger_final_missing_batch_blocked_by_batch_not_full_count: 0,
+            ledger_final_missing_batch_blocked_by_no_tick_executed_count: 0,
+            ledger_final_missing_batch_blocked_by_classification_path_not_reached_count: 0,
+            ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count: 0,
             ledger_final_missing_admission_skipped_count: 0,
             ledger_final_missing_admission_skip_reason_counts: serde_json::json!({}),
             admission_used_ledger_final_missing_bucket: false,
@@ -35095,6 +35172,48 @@ impl NativeExecutionPipelineAggregateV1 {
                 })
                 .and_then(|value| value.as_u64())
                 .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_batch_not_full_count = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_batch_blocked_by_batch_not_full_count")
+            })
+            .or_else(|| ingress.get("ledger_final_missing_batch_blocked_by_batch_not_full_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_no_tick_executed_count = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_batch_blocked_by_no_tick_executed_count")
+            })
+            .or_else(|| ingress.get("ledger_final_missing_batch_blocked_by_no_tick_executed_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_classification_path_not_reached_count =
+            tick_batch_result
+                .and_then(|value| {
+                    value.get(
+                        "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count",
+                    )
+                })
+                .or_else(|| {
+                    ingress.get(
+                        "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count",
+                    )
+                })
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count =
+            tick_batch_result
+                .and_then(|value| {
+                    value.get(
+                        "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count",
+                    )
+                })
+                .or_else(|| {
+                    ingress.get(
+                        "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count",
+                    )
+                })
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
         self.ledger_final_missing_admitted_but_no_receipt_invariant_violation_count = ingress
             .get("ledger_final_missing_admitted_but_no_receipt_invariant_violation_count")
             .and_then(|value| value.as_u64())
@@ -35308,6 +35427,40 @@ impl NativeExecutionPipelineAggregateV1 {
         } else {
             self.ledger_final_missing_without_durable_missing_count
         };
+        let mut ledger_final_missing_batch_blocked_reason =
+            self.ledger_final_missing_batch_blocked_reason.clone();
+        let mut ledger_final_missing_batch_blocked_by_no_tick_executed_count =
+            self.ledger_final_missing_batch_blocked_by_no_tick_executed_count;
+        let mut ledger_final_missing_batch_blocked_by_classification_path_not_reached_count =
+            self.ledger_final_missing_batch_blocked_by_classification_path_not_reached_count;
+        let mut ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count =
+            self.ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count;
+        if self.ledger_final_missing_candidate_count > 0
+            && self.ledger_final_missing_actual_batch_count == 0
+            && ledger_final_missing_batch_blocked_reason.trim().is_empty()
+        {
+            if self.ticks == 0 {
+                ledger_final_missing_batch_blocked_reason = "no_tick_executed".to_string();
+                ledger_final_missing_batch_blocked_by_no_tick_executed_count =
+                    ledger_final_missing_batch_blocked_by_no_tick_executed_count
+                        .max(self.ledger_final_missing_candidate_count);
+            } else {
+                ledger_final_missing_batch_blocked_reason =
+                    "classification_path_not_reached".to_string();
+                ledger_final_missing_batch_blocked_by_classification_path_not_reached_count =
+                    ledger_final_missing_batch_blocked_by_classification_path_not_reached_count
+                        .max(self.ledger_final_missing_candidate_count);
+            }
+        }
+        if self.ledger_final_missing_candidate_count > 0
+            && self.ledger_final_missing_actual_batch_count == 0
+            && ledger_final_missing_batch_blocked_reason.trim().is_empty()
+        {
+            ledger_final_missing_batch_blocked_reason = "unknown_invariant_violation".to_string();
+            ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count =
+                ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count
+                    .max(self.ledger_final_missing_candidate_count);
+        }
         let mut out = serde_json::Map::new();
         out.insert(
             "method".to_string(),
@@ -35775,7 +35928,7 @@ impl NativeExecutionPipelineAggregateV1 {
         );
         out.insert(
             "ledger_final_missing_batch_blocked_reason".to_string(),
-            serde_json::json!(self.ledger_final_missing_batch_blocked_reason),
+            serde_json::json!(ledger_final_missing_batch_blocked_reason),
         );
         out.insert(
             "ledger_final_missing_batch_blocked_by_payload_missing_count".to_string(),
@@ -35801,6 +35954,27 @@ impl NativeExecutionPipelineAggregateV1 {
             "ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count".to_string(),
             serde_json::json!(
                 self.ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count
+            ),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_batch_not_full_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_blocked_by_batch_not_full_count),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_no_tick_executed_count".to_string(),
+            serde_json::json!(ledger_final_missing_batch_blocked_by_no_tick_executed_count),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count"
+                .to_string(),
+            serde_json::json!(
+                ledger_final_missing_batch_blocked_by_classification_path_not_reached_count
+            ),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count".to_string(),
+            serde_json::json!(
+                ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count
             ),
         );
         out.insert(
@@ -36527,6 +36701,92 @@ mod native_execution_pipeline_tests {
         assert_eq!(
             summary["host_concurrency_policy"].as_str(),
             Some("host_drives_lifecycle_only_no_rust_execution_scheduler")
+        );
+    }
+
+    #[test]
+    fn overlay_preserves_final_missing_blocked_reason() {
+        let report = build_native_execution_pipeline_report_v1(
+            4,
+            serde_json::json!({"enabled": true, "ok": true}),
+            serde_json::json!({"enabled": false, "ok": true}),
+            serde_json::json!({"enabled": false, "ok": true}),
+            serde_json::json!({
+                "method": "nov_runNativeExecutionTick",
+                "chain_id": 9_998_884u64,
+                "executed_count": 0u64,
+                "batch_result": {
+                    "ledger_final_missing_admission": {
+                        "ledger_final_missing_candidate_count": 304,
+                        "ledger_final_missing_candidate_ranges_sample": [
+                            {"start": 14096, "end_inclusive": 14399, "count": 304}
+                        ],
+                        "admission_used_ledger_final_missing_bucket": true
+                    },
+                    "ledger_final_missing_actual_batch_count": 0,
+                    "ledger_final_missing_batch_blocked_reason": "payload_missing",
+                    "ledger_final_missing_batch_blocked_by_payload_missing_count": 304
+                },
+                "lifecycle": {
+                    "queue": {"pending": 0},
+                    "commit": "deterministic_sharded_dirty_atomic_commit"
+                }
+            }),
+        );
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+        aggregate.observe(&report).expect("aggregate report");
+        let summary = aggregate.to_json();
+
+        assert_eq!(
+            summary["ledger_final_missing_batch_blocked_reason"].as_str(),
+            Some("payload_missing")
+        );
+        assert_eq!(
+            summary["ledger_final_missing_batch_blocked_by_payload_missing_count"].as_u64(),
+            Some(304)
+        );
+    }
+
+    #[test]
+    fn aggregate_candidate_batch_zero_sets_classification_path_not_reached() {
+        let report = build_native_execution_pipeline_report_v1(
+            5,
+            serde_json::json!({"enabled": true, "ok": true}),
+            serde_json::json!({"enabled": false, "ok": true}),
+            serde_json::json!({"enabled": false, "ok": true}),
+            serde_json::json!({
+                "method": "nov_runNativeExecutionTick",
+                "chain_id": 9_998_886u64,
+                "executed_count": 0u64,
+                "batch_result": {
+                    "ledger_final_missing_admission": {
+                        "ledger_final_missing_candidate_count": 304,
+                        "ledger_final_missing_candidate_ranges_sample": [
+                            {"start": 14096, "end_inclusive": 14399, "count": 304}
+                        ],
+                        "admission_used_ledger_final_missing_bucket": true
+                    },
+                    "ledger_final_missing_actual_batch_count": 0,
+                    "ledger_final_missing_batch_blocked_reason": ""
+                },
+                "lifecycle": {
+                    "queue": {"pending": 0},
+                    "commit": "deterministic_sharded_dirty_atomic_commit"
+                }
+            }),
+        );
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+        aggregate.observe(&report).expect("aggregate report");
+        let summary = aggregate.to_json();
+
+        assert_eq!(
+            summary["ledger_final_missing_batch_blocked_reason"].as_str(),
+            Some("classification_path_not_reached")
+        );
+        assert_eq!(
+            summary["ledger_final_missing_batch_blocked_by_classification_path_not_reached_count"]
+                .as_u64(),
+            Some(304)
         );
     }
 

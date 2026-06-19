@@ -1531,6 +1531,54 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn timeout_synthetic_final_preserves_runtime_blocked_reason() {
+        let source = serde_json::json!({
+            "ledger_final_missing_candidate_count": 304,
+            "ledger_final_missing_actual_batch_count": 0,
+            "ledger_final_missing_receipt_written_count": 0,
+            "ledger_final_missing_receipt_missing_after_admission_count": 0,
+            "ledger_final_missing_batch_blocked_reason": "",
+        });
+        let mut synthetic_validation = serde_json::json!({});
+        apply_ledger_receipt_completion_fields_v1(&mut synthetic_validation, Some(&source));
+
+        assert_eq!(
+            synthetic_validation["ledger_final_missing_batch_blocked_reason"].as_str(),
+            Some("classification_path_not_reached")
+        );
+        assert_eq!(
+            synthetic_validation
+                ["ledger_final_missing_batch_blocked_by_classification_path_not_reached_count"]
+                .as_u64(),
+            Some(304)
+        );
+    }
+
+    #[test]
+    fn wrapper_final_preserves_runtime_blocked_reason() {
+        let source = serde_json::json!({
+            "ledger_final_missing_candidate_count": 304,
+            "ledger_final_missing_actual_batch_count": 0,
+            "ledger_final_missing_receipt_written_count": 0,
+            "ledger_final_missing_receipt_missing_after_admission_count": 0,
+            "ledger_final_missing_batch_blocked_reason": "",
+        });
+        let mut wrapper_report = serde_json::json!({});
+        apply_ledger_receipt_completion_fields_v1(&mut wrapper_report, Some(&source));
+
+        assert_eq!(
+            wrapper_report["ledger_final_missing_batch_blocked_reason"].as_str(),
+            Some("classification_path_not_reached")
+        );
+        assert_eq!(
+            wrapper_report
+                ["ledger_final_missing_batch_blocked_by_classification_path_not_reached_count"]
+                .as_u64(),
+            Some(304)
+        );
+    }
+
+    #[test]
     fn ledger_candidate_empty_rehydrates_from_durable_missing() {
         let summary = serde_json::json!({
             "included_canonical_total": 14072,
@@ -5173,6 +5221,10 @@ const LEDGER_RECEIPT_COMPLETION_U64_FIELDS_V1: &[&str] = &[
     "ledger_final_missing_batch_blocked_by_batch_limit_count",
     "ledger_final_missing_batch_blocked_by_raw_tx_build_error_count",
     "ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count",
+    "ledger_final_missing_batch_blocked_by_batch_not_full_count",
+    "ledger_final_missing_batch_blocked_by_no_tick_executed_count",
+    "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count",
+    "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count",
 ];
 
 const LEDGER_RECEIPT_COMPLETION_ARRAY_FIELDS_V1: &[&str] =
@@ -5251,12 +5303,36 @@ fn apply_ledger_receipt_completion_fields_v1(target: &mut Value, source: Option<
             .cloned()
             .unwrap_or_else(|| serde_json::json!("")),
     );
+    let mut blocked_reason = source
+        .and_then(|value| value.get("ledger_final_missing_batch_blocked_reason"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if blocked_reason.trim().is_empty()
+        && source
+            .map(|value| summary_u64(value, "ledger_final_missing_candidate_count") > 0)
+            .unwrap_or(false)
+        && source
+            .map(|value| summary_u64(value, "ledger_final_missing_actual_batch_count") == 0)
+            .unwrap_or(false)
+    {
+        blocked_reason = "classification_path_not_reached".to_string();
+        let current = target_obj
+            .get("ledger_final_missing_batch_blocked_by_classification_path_not_reached_count")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let candidate_count = source
+            .map(|value| summary_u64(value, "ledger_final_missing_candidate_count"))
+            .unwrap_or_default();
+        target_obj.insert(
+            "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count"
+                .to_string(),
+            serde_json::json!(current.max(candidate_count)),
+        );
+    }
     target_obj.insert(
         "ledger_final_missing_batch_blocked_reason".to_string(),
-        source
-            .and_then(|value| value.get("ledger_final_missing_batch_blocked_reason"))
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!("")),
+        serde_json::json!(blocked_reason),
     );
     let attribution_available = ledger_receipt_completion_attribution_available_v1(source);
     target_obj.insert(
@@ -5577,6 +5653,10 @@ fn diagnostics_summary_sample(
         "ledger_final_missing_batch_blocked_by_batch_limit_count": summary_u64(summary, "ledger_final_missing_batch_blocked_by_batch_limit_count"),
         "ledger_final_missing_batch_blocked_by_raw_tx_build_error_count": summary_u64(summary, "ledger_final_missing_batch_blocked_by_raw_tx_build_error_count"),
         "ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count": summary_u64(summary, "ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count"),
+        "ledger_final_missing_batch_blocked_by_batch_not_full_count": summary_u64(summary, "ledger_final_missing_batch_blocked_by_batch_not_full_count"),
+        "ledger_final_missing_batch_blocked_by_no_tick_executed_count": summary_u64(summary, "ledger_final_missing_batch_blocked_by_no_tick_executed_count"),
+        "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count": summary_u64(summary, "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count"),
+        "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count": summary_u64(summary, "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count"),
         "ledger_final_missing_actual_batch_count": summary_u64(summary, "ledger_final_missing_actual_batch_count"),
         "ledger_final_missing_actual_batch_ranges_sample": summary.get("ledger_final_missing_actual_batch_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_raw_txs_count": summary_u64(summary, "ledger_final_missing_raw_txs_count"),
@@ -8509,6 +8589,10 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "ledger_final_missing_batch_blocked_by_batch_limit_count": summary_u64(&summary, "ledger_final_missing_batch_blocked_by_batch_limit_count"),
         "ledger_final_missing_batch_blocked_by_raw_tx_build_error_count": summary_u64(&summary, "ledger_final_missing_batch_blocked_by_raw_tx_build_error_count"),
         "ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count": summary_u64(&summary, "ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count"),
+        "ledger_final_missing_batch_blocked_by_batch_not_full_count": summary_u64(&summary, "ledger_final_missing_batch_blocked_by_batch_not_full_count"),
+        "ledger_final_missing_batch_blocked_by_no_tick_executed_count": summary_u64(&summary, "ledger_final_missing_batch_blocked_by_no_tick_executed_count"),
+        "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count": summary_u64(&summary, "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count"),
+        "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count": summary_u64(&summary, "ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count"),
         "ledger_final_missing_actual_batch_count": summary_u64(&summary, "ledger_final_missing_actual_batch_count"),
         "ledger_final_missing_actual_batch_ranges_sample": summary.get("ledger_final_missing_actual_batch_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_raw_txs_count": summary_u64(&summary, "ledger_final_missing_raw_txs_count"),
