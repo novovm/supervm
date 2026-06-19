@@ -32979,6 +32979,45 @@ fn decorate_novorudp_child_expected_summary_v1(
     );
 }
 
+fn apply_novorudp_runtime_ledger_summary_overlay_v1(
+    summary: &mut serde_json::Value,
+    chain_id: u64,
+) {
+    let Ok(runtime_summary) = serde_json::to_value(
+        novovm_network::snapshot_network_runtime_native_pending_tx_summary_v1(chain_id),
+    ) else {
+        return;
+    };
+    let Some(obj) = summary.as_object_mut() else {
+        return;
+    };
+    for key in [
+        "ledger_expected_range_start",
+        "ledger_expected_range_end",
+        "ledger_expected_count",
+        "ledger_completed_count",
+        "ledger_durable_missing_count",
+        "ledger_durable_missing_ranges_sample",
+        "ledger_durable_missing_bitmap_available",
+        "ledger_durable_missing_source",
+        "ledger_durable_missing_derived_from_expected_range",
+        "ledger_missing_closed_by_receipt_count",
+        "ledger_missing_closed_by_canonical_count",
+        "ledger_missing_incorrectly_closed_by_received_count",
+        "ledger_missing_incorrectly_closed_by_enqueued_count",
+        "ledger_candidate_rehydrated_count",
+        "ledger_candidate_empty_but_durable_missing_count",
+        "ledger_missing_without_candidate_count",
+        "ledger_missing_without_retryable_count",
+        "ledger_candidate_count_exceeds_durable_missing_invariant_violation_count",
+        "ledger_final_missing_without_durable_missing_count",
+    ] {
+        if let Some(value) = runtime_summary.get(key) {
+            obj.insert(key.to_string(), value.clone());
+        }
+    }
+}
+
 fn usize_env_allow_zero(name: &str, default: usize) -> Result<usize> {
     let raw = std::env::var(name).unwrap_or_else(|_| default.to_string());
     raw.trim()
@@ -36105,6 +36144,26 @@ mod native_execution_pipeline_tests {
     use super::*;
 
     #[test]
+    fn child_progress_summary_reports_child_runtime_ledger_expected_count() {
+        let chain_id = 9_998_777u64;
+        novovm_network::ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 2_400, 64);
+        let mut summary = serde_json::json!({});
+        apply_novorudp_runtime_ledger_summary_overlay_v1(&mut summary, chain_id);
+
+        assert_eq!(summary["ledger_expected_range_start"].as_u64(), Some(0));
+        assert_eq!(summary["ledger_expected_range_end"].as_u64(), Some(2_399));
+        assert_eq!(summary["ledger_expected_count"].as_u64(), Some(2_400));
+        assert_eq!(
+            summary["ledger_durable_missing_count"].as_u64(),
+            Some(2_400)
+        );
+        assert_eq!(
+            summary["ledger_durable_missing_derived_from_expected_range"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
     fn native_execution_pipeline_fixture_ingress_builds_standard_native_payloads() {
         let chain_id = 9_998_890u64;
         let payloads = build_native_execution_pipeline_fixture_payloads_v1(chain_id, 2)
@@ -37501,6 +37560,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                     }
                 }
                 let mut progress_summary = aggregate.to_json();
+                apply_novorudp_runtime_ledger_summary_overlay_v1(&mut progress_summary, chain_id);
                 decorate_novorudp_child_expected_summary_v1(
                     &mut progress_summary,
                     novorudp_expected_raw.as_deref(),
@@ -37554,6 +37614,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         ticks = ticks.saturating_add(1);
         if bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID") {
             let mut summary = aggregate.to_json();
+            apply_novorudp_runtime_ledger_summary_overlay_v1(&mut summary, chain_id);
             decorate_novorudp_child_expected_summary_v1(
                 &mut summary,
                 novorudp_expected_raw.as_deref(),
@@ -37570,6 +37631,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         std::thread::sleep(Duration::from_millis(interval_ms));
     }
     let mut summary = aggregate.to_json();
+    apply_novorudp_runtime_ledger_summary_overlay_v1(&mut summary, chain_id);
     decorate_novorudp_child_expected_summary_v1(
         &mut summary,
         novorudp_expected_raw.as_deref(),
