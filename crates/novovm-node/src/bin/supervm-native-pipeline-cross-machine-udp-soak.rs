@@ -274,6 +274,10 @@ struct ReceiverDiagnosticsConfigV1 {
     max_working_set_bytes: u64,
     min_canonical_delta: u64,
     max_elapsed_ms: u64,
+    primary_send_duration_ms: u64,
+    repair_drain_timeout_ms: u64,
+    final_ack_timeout_ms: u64,
+    absolute_max_ms: u64,
     report_path: PathBuf,
 }
 
@@ -492,7 +496,27 @@ fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
         u64_env("NOVOVM_NATIVE_PIPELINE_SUSTAINED_DURATION_SECONDS", 0)?.saturating_mul(1_000);
     let tail_repair_rounds = u64_env("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_ROUNDS", 3)?;
     let tail_repair_interval_ms = u64_env("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_INTERVAL_MS", 1_000)?;
-    let default_max_elapsed_ms = if sustained_duration_ms > 0 {
+    let transport_profile = TransportProfileV1::from_env();
+    let novorudp_enabled = NovoRudpConfigV1::from_env(transport_profile)
+        .map(|config| config.enabled)
+        .unwrap_or(false);
+    let repair_drain_timeout_ms =
+        u64_env("NOVOVM_NOVORUDP_REPAIR_DRAIN_TIMEOUT_SECONDS", 900)?.saturating_mul(1_000);
+    let final_ack_timeout_ms =
+        u64_env("NOVOVM_NOVORUDP_FINAL_ACK_TIMEOUT_SECONDS", 120)?.saturating_mul(1_000);
+    let default_absolute_max_ms = if sustained_duration_ms > 0 {
+        sustained_duration_ms.saturating_add(repair_drain_timeout_ms)
+    } else {
+        0
+    };
+    let absolute_max_ms = u64_env(
+        "NOVOVM_NOVORUDP_ABSOLUTE_MAX_SECONDS",
+        default_absolute_max_ms / 1_000,
+    )?
+    .saturating_mul(1_000);
+    let default_max_elapsed_ms = if novorudp_enabled && sustained_duration_ms > 0 {
+        absolute_max_ms
+    } else if sustained_duration_ms > 0 {
         sustained_duration_ms
             .saturating_add(tail_repair_rounds.saturating_mul(tail_repair_interval_ms))
             .saturating_add(60_000)
@@ -513,8 +537,34 @@ fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
             "NOVOVM_NATIVE_PIPELINE_RECEIVER_MAX_ELAPSED_MS",
             default_max_elapsed_ms,
         )?,
+        primary_send_duration_ms: sustained_duration_ms,
+        repair_drain_timeout_ms,
+        final_ack_timeout_ms,
+        absolute_max_ms,
         report_path: diagnostics_report_path(),
     })
+}
+
+fn receiver_completion_phase_v1(
+    config: &ReceiverDiagnosticsConfigV1,
+    elapsed_ms: u64,
+    stable_progress: u64,
+    expected_tx_count: u64,
+    pending_count: u64,
+) -> &'static str {
+    if stable_progress >= expected_tx_count && pending_count == 0 {
+        return "completed";
+    }
+    if config.primary_send_duration_ms == 0 || elapsed_ms < config.primary_send_duration_ms {
+        return "primary_send";
+    }
+    if stable_progress < expected_tx_count {
+        return "repair_convergence";
+    }
+    if pending_count > 0 {
+        return "receiver_drain";
+    }
+    "final_ack_wait"
 }
 
 fn novovm_node_bin() -> PathBuf {
@@ -1125,6 +1175,55 @@ mod novorudp_tests {
             None => std::env::remove_var(key),
         }
         result
+    }
+
+    fn receiver_phase_test_config() -> ReceiverDiagnosticsConfigV1 {
+        ReceiverDiagnosticsConfigV1 {
+            enabled: true,
+            sample_interval_ms: 250,
+            stall_windows: 2,
+            memory_sample_enabled: true,
+            max_working_set_bytes: 0,
+            min_canonical_delta: 0,
+            max_elapsed_ms: 2_700_000,
+            primary_send_duration_ms: 1_800_000,
+            repair_drain_timeout_ms: 900_000,
+            final_ack_timeout_ms: 120_000,
+            absolute_max_ms: 2_700_000,
+            report_path: PathBuf::from("unused.json"),
+        }
+    }
+
+    #[test]
+    fn receiver_child_env_preserves_novorudp_expected_tx_count() {
+        let envs = receiver_child_expected_total_envs_v1(14_400);
+        assert!(envs
+            .iter()
+            .any(|(key, value)| { *key == "NOVOVM_NATIVE_PIPELINE_TX_COUNT" && value == "14400" }));
+        assert!(envs.iter().any(|(key, value)| {
+            *key == "NOVOVM_NATIVE_EXECUTION_PIPELINE_EXPECTED_TX_COUNT" && value == "14400"
+        }));
+    }
+
+    #[test]
+    fn receiver_timeout_uses_phased_completion_not_send_duration_cutoff() {
+        let config = receiver_phase_test_config();
+        assert_eq!(
+            receiver_completion_phase_v1(&config, 1_799_999, 14_112, 14_400, 0),
+            "primary_send"
+        );
+        assert_eq!(
+            receiver_completion_phase_v1(&config, 1_800_000, 14_112, 14_400, 0),
+            "repair_convergence"
+        );
+        assert_eq!(
+            receiver_completion_phase_v1(&config, 1_900_000, 14_400, 14_400, 4),
+            "receiver_drain"
+        );
+        assert_eq!(
+            receiver_completion_phase_v1(&config, 1_900_000, 14_400, 14_400, 0),
+            "completed"
+        );
     }
 
     fn sender_timeout_sustained_config(tx_count: u64) -> SustainedConfigV1 {
@@ -2696,6 +2795,19 @@ fn apply_fault_schedule(
     scheduled
 }
 
+fn receiver_child_expected_total_envs_v1(expected_tx_count: u64) -> [(&'static str, String); 2] {
+    [
+        (
+            "NOVOVM_NATIVE_PIPELINE_TX_COUNT",
+            expected_tx_count.to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_EXPECTED_TX_COUNT",
+            expected_tx_count.to_string(),
+        ),
+    ]
+}
+
 fn spawn_receiver_node(
     node_bin: &Path,
     chain_id: u64,
@@ -2832,6 +2944,9 @@ fn spawn_receiver_node(
         ),
     ];
     for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    for (key, value) in receiver_child_expected_total_envs_v1(expected_tx_count) {
         cmd.env(key, value);
     }
     for (_, env_name, _) in MEMORY_PROBE_TOGGLES_V1 {
@@ -3234,7 +3349,35 @@ fn run_receiver_node(
                 .and_then(Value::as_u64)
                 .unwrap_or_default();
             let waiting_for_sender = pending_count == 0 && stable_progress < expected_tx_count;
+            let elapsed_ms = started_at.elapsed().as_millis() as u64;
+            let receiver_phase = receiver_completion_phase_v1(
+                &diagnostics,
+                elapsed_ms,
+                stable_progress,
+                expected_tx_count,
+                pending_count,
+            );
             sample["waiting_for_sender"] = serde_json::json!(waiting_for_sender);
+            sample["receiver_exit_phase"] = serde_json::json!(receiver_phase);
+            sample["primary_send_completed"] = serde_json::json!(
+                diagnostics.primary_send_duration_ms > 0
+                    && elapsed_ms >= diagnostics.primary_send_duration_ms
+            );
+            sample["repair_convergence_started"] = serde_json::json!(
+                diagnostics.primary_send_duration_ms > 0
+                    && elapsed_ms >= diagnostics.primary_send_duration_ms
+                    && stable_progress < expected_tx_count
+            );
+            sample["repair_convergence_completed"] =
+                serde_json::json!(stable_progress >= expected_tx_count);
+            sample["receiver_drain_completed"] =
+                serde_json::json!(stable_progress >= expected_tx_count && pending_count == 0);
+            sample["final_ack_received"] =
+                serde_json::json!(stable_progress >= expected_tx_count && pending_count == 0);
+            sample["absolute_timeout_reached"] = serde_json::json!(
+                diagnostics.max_elapsed_ms > 0 && elapsed_ms >= diagnostics.max_elapsed_ms
+            );
+            sample["no_progress_timeout_reached"] = serde_json::json!(false);
             if delta == 0 && pending_count > 0 && stable_progress < expected_tx_count {
                 state.stall_windows = state.stall_windows.saturating_add(1);
             } else {
@@ -3277,15 +3420,15 @@ fn run_receiver_node(
                 ));
             }
             if diagnostics.max_elapsed_ms > 0
-                && started_at.elapsed() >= Duration::from_millis(diagnostics.max_elapsed_ms)
+                && elapsed_ms >= diagnostics.max_elapsed_ms
                 && stable_progress < expected_tx_count
                 && pending_count == 0
             {
                 fail_reason = Some(format!(
-                    "receiver_expected_tx_timeout: progress={} expected={} elapsed_ms={} max_elapsed_ms={}",
+                    "receiver_expected_tx_timeout: phase=failed_absolute_timeout progress={} expected={} elapsed_ms={} max_elapsed_ms={}",
                     stable_progress,
                     expected_tx_count,
-                    started_at.elapsed().as_millis(),
+                    elapsed_ms,
                     diagnostics.max_elapsed_ms
                 ));
             }
@@ -3877,6 +4020,30 @@ fn write_receiver_exit_report(
         "expected_tx_total": expected_tx_count,
         "aoem_executed_total": aoem_executed_total,
         "queue_pending_last": queue_pending_last,
+        "receiver_exit_phase": last_sample
+            .and_then(|sample| sample.get("receiver_exit_phase"))
+            .cloned(),
+        "primary_send_completed": last_sample
+            .and_then(|sample| sample.get("primary_send_completed"))
+            .cloned(),
+        "repair_convergence_started": last_sample
+            .and_then(|sample| sample.get("repair_convergence_started"))
+            .cloned(),
+        "repair_convergence_completed": last_sample
+            .and_then(|sample| sample.get("repair_convergence_completed"))
+            .cloned(),
+        "receiver_drain_completed": last_sample
+            .and_then(|sample| sample.get("receiver_drain_completed"))
+            .cloned(),
+        "final_ack_received": last_sample
+            .and_then(|sample| sample.get("final_ack_received"))
+            .cloned(),
+        "absolute_timeout_reached": last_sample
+            .and_then(|sample| sample.get("absolute_timeout_reached"))
+            .cloned(),
+        "no_progress_timeout_reached": last_sample
+            .and_then(|sample| sample.get("no_progress_timeout_reached"))
+            .cloned(),
         "last_sample_elapsed_ms": last_sample
             .and_then(|sample| sample.get("elapsed_ms"))
             .and_then(Value::as_u64),
@@ -4017,6 +4184,30 @@ fn write_synthetic_receiver_failure_report(
         "accepted": false,
         "synthetic_failure_report": true,
         "fail_reason": fail_reason,
+        "receiver_exit_phase": last_sample
+            .and_then(|sample| sample.get("receiver_exit_phase"))
+            .cloned(),
+        "primary_send_completed": last_sample
+            .and_then(|sample| sample.get("primary_send_completed"))
+            .cloned(),
+        "repair_convergence_started": last_sample
+            .and_then(|sample| sample.get("repair_convergence_started"))
+            .cloned(),
+        "repair_convergence_completed": last_sample
+            .and_then(|sample| sample.get("repair_convergence_completed"))
+            .cloned(),
+        "receiver_drain_completed": last_sample
+            .and_then(|sample| sample.get("receiver_drain_completed"))
+            .cloned(),
+        "final_ack_received": last_sample
+            .and_then(|sample| sample.get("final_ack_received"))
+            .cloned(),
+        "absolute_timeout_reached": last_sample
+            .and_then(|sample| sample.get("absolute_timeout_reached"))
+            .cloned(),
+        "no_progress_timeout_reached": last_sample
+            .and_then(|sample| sample.get("no_progress_timeout_reached"))
+            .cloned(),
         "tx_count": expected_tx_count,
         "validation": {
             "received_unique": stable_progress_total,
@@ -5240,6 +5431,10 @@ fn write_diagnostics_report(
         "max_working_set_bytes": config.max_working_set_bytes,
         "min_canonical_delta": config.min_canonical_delta,
         "max_elapsed_ms": config.max_elapsed_ms,
+        "primary_send_duration_ms": config.primary_send_duration_ms,
+        "repair_drain_timeout_ms": config.repair_drain_timeout_ms,
+        "final_ack_timeout_ms": config.final_ack_timeout_ms,
+        "absolute_max_ms": config.absolute_max_ms,
         "fail_reason": state.fail_reason,
         "diagnostics_samples_retained": state.samples.len(),
         "diagnostics_samples_dropped": state.samples_dropped,

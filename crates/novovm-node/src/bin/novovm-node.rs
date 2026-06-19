@@ -32903,6 +32903,17 @@ fn u64_env_allow_zero(name: &str, default: u64) -> Result<u64> {
         .with_context(|| format!("invalid {name}={raw}"))
 }
 
+fn u64_env_alias_allow_zero(names: &[&str], default: u64) -> Result<u64> {
+    for name in names {
+        if let Some(raw) = string_env_nonempty(name) {
+            return raw
+                .parse::<u64>()
+                .with_context(|| format!("invalid {name}={raw}"));
+        }
+    }
+    Ok(default)
+}
+
 fn usize_env_allow_zero(name: &str, default: usize) -> Result<usize> {
     let raw = std::env::var(name).unwrap_or_else(|_| default.to_string());
     raw.trim()
@@ -37309,7 +37320,13 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
         5_000,
     )?;
-    let novorudp_expected_tx_count = u64_env_allow_zero("NOVOVM_NATIVE_PIPELINE_TX_COUNT", 0)?;
+    let novorudp_expected_tx_count = u64_env_alias_allow_zero(
+        &[
+            "NOVOVM_NATIVE_PIPELINE_TX_COUNT",
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_EXPECTED_TX_COUNT",
+        ],
+        0,
+    )?;
     let novorudp_window_size = u64_env_positive("NOVOVM_NOVORUDP_WINDOW_SIZE", 64)?;
     if novorudp_expected_tx_count > 0 {
         novovm_network::ensure_runtime_novorudp_sequence_expected_total_v1(
