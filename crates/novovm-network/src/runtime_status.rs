@@ -1467,6 +1467,28 @@ pub fn ensure_runtime_novorudp_sequence_expected_total_v1(
     }
 }
 
+pub fn observe_runtime_novorudp_sequence_completion_prefix_v1(chain_id: u64, completed_total: u64) {
+    if completed_total == 0 {
+        return;
+    }
+    if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
+        let ledger = guard
+            .entry(chain_id)
+            .or_insert_with(|| NovoRudpSequenceLifecycleLedger::new(completed_total, 64));
+        if ledger.expected_total < completed_total {
+            ledger.ensure_expected_total(
+                completed_total,
+                now_unix_millis(),
+                "runtime_completion_prefix_extend_expected",
+            );
+        }
+        let now_ms = now_unix_millis();
+        for sequence in 0..completed_total.min(ledger.expected_total) {
+            ledger.mark_canonical_included(sequence, now_ms);
+        }
+    }
+}
+
 fn observe_novorudp_sequence_pending_view_v1(
     chain_id: u64,
     sequence: Option<u64>,
@@ -6686,6 +6708,120 @@ mod tests {
             observed.dirty_chains.remove(&chain_id);
             observed.sync_anchor_by_chain.remove(&chain_id);
         }
+    }
+
+    fn clear_novorudp_sequence_ledger_for_test(chain_id: u64) {
+        if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
+            guard.remove(&chain_id);
+        }
+        if let Ok(mut guard) = runtime_native_repair_probe_map().lock() {
+            guard.remove(&chain_id);
+        }
+    }
+
+    #[test]
+    fn receipt_write_closes_durable_missing_sequence() {
+        let chain_id = 9_998_771;
+        clear_novorudp_sequence_ledger_for_test(chain_id);
+        ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 14_400, 64);
+        observe_runtime_novorudp_sequence_completion_prefix_v1(chain_id, 1);
+
+        let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary.ledger_expected_count, 14_400);
+        assert_eq!(summary.ledger_completed_count, 1);
+        assert_eq!(summary.ledger_missing_closed_by_receipt_count, 1);
+        assert_eq!(summary.ledger_durable_missing_count, 14_399);
+        assert_eq!(summary.ledger_durable_missing_ranges_sample[0].start, 1);
+    }
+
+    #[test]
+    fn canonical_include_closes_durable_missing_sequence() {
+        let chain_id = 9_998_772;
+        clear_novorudp_sequence_ledger_for_test(chain_id);
+        ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 14_400, 64);
+        observe_runtime_novorudp_sequence_completion_prefix_v1(chain_id, 1);
+
+        let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary.ledger_completed_count, 1);
+        assert_eq!(summary.ledger_missing_closed_by_canonical_count, 1);
+        assert_eq!(summary.ledger_durable_missing_count, 14_399);
+        assert_eq!(summary.ledger_durable_missing_ranges_sample[0].start, 1);
+    }
+
+    #[test]
+    fn completion_close_uses_tx_hash_to_sequence_mapping() {
+        let chain_id = 9_998_773;
+        let sequence = 14_120;
+        let tx_hash = [0x7a; 32];
+        let payload = build_native_repair_payload_for_test(chain_id, sequence);
+        clear_novorudp_sequence_ledger_for_test(chain_id);
+        ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 14_400, 64);
+        observe_network_runtime_native_pending_tx_repair_probe_v1(
+            chain_id,
+            tx_hash,
+            1,
+            Some(payload.as_slice()),
+        );
+        observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1(chain_id, tx_hash);
+
+        let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary.ledger_completed_count, 1);
+        assert_eq!(summary.ledger_durable_missing_count, 14_399);
+        let missing_ranges = summary.ledger_durable_missing_ranges_sample;
+        assert!(missing_ranges
+            .iter()
+            .all(|range| sequence < range.start || sequence > range.end_inclusive));
+    }
+
+    #[test]
+    fn completion_close_reports_missing_mapping() {
+        let chain_id = 9_998_774;
+        clear_novorudp_sequence_ledger_for_test(chain_id);
+        ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 14_400, 64);
+        observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1(chain_id, [0x5a; 32]);
+
+        let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary.ledger_completed_count, 0);
+        assert_eq!(summary.ledger_durable_missing_count, 14_400);
+    }
+
+    #[test]
+    fn ack_window_moves_after_receipt_completion() {
+        let chain_id = 9_998_775;
+        clear_novorudp_sequence_ledger_for_test(chain_id);
+        ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 14_400, 64);
+        observe_runtime_novorudp_sequence_completion_prefix_v1(chain_id, 14_104);
+
+        let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary.ledger_completed_count, 14_104);
+        assert_eq!(summary.ledger_durable_missing_count, 296);
+        assert_eq!(
+            summary.ledger_durable_missing_ranges_sample[0].start,
+            14_104
+        );
+        assert_ne!(summary.ledger_durable_missing_ranges_sample[0].start, 0);
+    }
+
+    #[test]
+    fn progress_cannot_exceed_ledger_completed_without_invariant() {
+        let chain_id = 9_998_776;
+        clear_novorudp_sequence_ledger_for_test(chain_id);
+        ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 14_400, 64);
+
+        let summary_before_completion =
+            snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary_before_completion.ledger_completed_count, 0);
+        assert_eq!(
+            summary_before_completion.ledger_durable_missing_count,
+            14_400
+        );
+
+        observe_runtime_novorudp_sequence_completion_prefix_v1(chain_id, 14_104);
+
+        let summary_after_completion =
+            snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary_after_completion.ledger_completed_count, 14_104);
+        assert_eq!(summary_after_completion.ledger_durable_missing_count, 296);
     }
 
     #[test]

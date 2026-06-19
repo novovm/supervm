@@ -33018,6 +33018,13 @@ fn apply_novorudp_runtime_ledger_summary_overlay_v1(
     }
 }
 
+fn close_novorudp_runtime_ledger_by_progress_v1(chain_id: u64, completed_total: u64) {
+    novovm_network::observe_runtime_novorudp_sequence_completion_prefix_v1(
+        chain_id,
+        completed_total,
+    );
+}
+
 fn usize_env_allow_zero(name: &str, default: usize) -> Result<usize> {
     let raw = std::env::var(name).unwrap_or_else(|_| default.to_string());
     raw.trim()
@@ -37560,6 +37567,12 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                     }
                 }
                 let mut progress_summary = aggregate.to_json();
+                close_novorudp_runtime_ledger_by_progress_v1(
+                    chain_id,
+                    aggregate
+                        .aoem_executed_total
+                        .max(aggregate.included_canonical_total),
+                );
                 apply_novorudp_runtime_ledger_summary_overlay_v1(&mut progress_summary, chain_id);
                 decorate_novorudp_child_expected_summary_v1(
                     &mut progress_summary,
@@ -37614,6 +37627,12 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         ticks = ticks.saturating_add(1);
         if bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID") {
             let mut summary = aggregate.to_json();
+            close_novorudp_runtime_ledger_by_progress_v1(
+                chain_id,
+                aggregate
+                    .aoem_executed_total
+                    .max(aggregate.included_canonical_total),
+            );
             apply_novorudp_runtime_ledger_summary_overlay_v1(&mut summary, chain_id);
             decorate_novorudp_child_expected_summary_v1(
                 &mut summary,
@@ -37631,6 +37650,12 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         std::thread::sleep(Duration::from_millis(interval_ms));
     }
     let mut summary = aggregate.to_json();
+    close_novorudp_runtime_ledger_by_progress_v1(
+        chain_id,
+        aggregate
+            .aoem_executed_total
+            .max(aggregate.included_canonical_total),
+    );
     apply_novorudp_runtime_ledger_summary_overlay_v1(&mut summary, chain_id);
     decorate_novorudp_child_expected_summary_v1(
         &mut summary,
