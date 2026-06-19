@@ -34275,6 +34275,17 @@ struct NativeExecutionPipelineAggregateV1 {
     ledger_final_missing_requeued_before_admission_count: u64,
     ledger_final_missing_admitted_count: u64,
     ledger_final_missing_admitted_ranges_sample: serde_json::Value,
+    ledger_final_missing_candidate_payload_available_count: u64,
+    ledger_final_missing_candidate_payload_missing_count: u64,
+    ledger_final_missing_candidate_tx_hash_mapping_missing_count: u64,
+    ledger_final_missing_candidate_raw_tx_build_error_count: u64,
+    ledger_final_missing_batch_blocked_reason: String,
+    ledger_final_missing_batch_blocked_by_payload_missing_count: u64,
+    ledger_final_missing_batch_blocked_by_stage_filter_count: u64,
+    ledger_final_missing_batch_blocked_by_scan_limit_count: u64,
+    ledger_final_missing_batch_blocked_by_batch_limit_count: u64,
+    ledger_final_missing_batch_blocked_by_raw_tx_build_error_count: u64,
+    ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count: u64,
     ledger_final_missing_admission_skipped_count: u64,
     ledger_final_missing_admission_skip_reason_counts: serde_json::Value,
     admission_used_ledger_final_missing_bucket: bool,
@@ -34417,6 +34428,17 @@ impl NativeExecutionPipelineAggregateV1 {
             ledger_final_missing_requeued_before_admission_count: 0,
             ledger_final_missing_admitted_count: 0,
             ledger_final_missing_admitted_ranges_sample: serde_json::json!([]),
+            ledger_final_missing_candidate_payload_available_count: 0,
+            ledger_final_missing_candidate_payload_missing_count: 0,
+            ledger_final_missing_candidate_tx_hash_mapping_missing_count: 0,
+            ledger_final_missing_candidate_raw_tx_build_error_count: 0,
+            ledger_final_missing_batch_blocked_reason: String::new(),
+            ledger_final_missing_batch_blocked_by_payload_missing_count: 0,
+            ledger_final_missing_batch_blocked_by_stage_filter_count: 0,
+            ledger_final_missing_batch_blocked_by_scan_limit_count: 0,
+            ledger_final_missing_batch_blocked_by_batch_limit_count: 0,
+            ledger_final_missing_batch_blocked_by_raw_tx_build_error_count: 0,
+            ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count: 0,
             ledger_final_missing_admission_skipped_count: 0,
             ledger_final_missing_admission_skip_reason_counts: serde_json::json!({}),
             admission_used_ledger_final_missing_bucket: false,
@@ -35003,6 +35025,76 @@ impl NativeExecutionPipelineAggregateV1 {
                     .and_then(|value| value.as_u64())
                     .unwrap_or_default(),
             );
+        self.ledger_final_missing_candidate_payload_available_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_candidate_payload_available_count"))
+            .or_else(|| ingress.get("ledger_final_missing_candidate_payload_available_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_candidate_payload_missing_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_candidate_payload_missing_count"))
+            .or_else(|| ingress.get("ledger_final_missing_candidate_payload_missing_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_candidate_tx_hash_mapping_missing_count = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_candidate_tx_hash_mapping_missing_count")
+            })
+            .or_else(|| ingress.get("ledger_final_missing_candidate_tx_hash_mapping_missing_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_candidate_raw_tx_build_error_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_candidate_raw_tx_build_error_count"))
+            .or_else(|| ingress.get("ledger_final_missing_candidate_raw_tx_build_error_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_reason = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_batch_blocked_reason"))
+            .or_else(|| ingress.get("ledger_final_missing_batch_blocked_reason"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        self.ledger_final_missing_batch_blocked_by_payload_missing_count = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_batch_blocked_by_payload_missing_count")
+            })
+            .or_else(|| ingress.get("ledger_final_missing_batch_blocked_by_payload_missing_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_stage_filter_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_batch_blocked_by_stage_filter_count"))
+            .or_else(|| ingress.get("ledger_final_missing_batch_blocked_by_stage_filter_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_scan_limit_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_batch_blocked_by_scan_limit_count"))
+            .or_else(|| ingress.get("ledger_final_missing_batch_blocked_by_scan_limit_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_batch_limit_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_batch_blocked_by_batch_limit_count"))
+            .or_else(|| ingress.get("ledger_final_missing_batch_blocked_by_batch_limit_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_raw_tx_build_error_count = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_batch_blocked_by_raw_tx_build_error_count")
+            })
+            .or_else(|| {
+                ingress.get("ledger_final_missing_batch_blocked_by_raw_tx_build_error_count")
+            })
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count =
+            tick_batch_result
+                .and_then(|value| {
+                    value.get("ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count")
+                })
+                .or_else(|| {
+                    ingress
+                        .get("ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count")
+                })
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
         self.ledger_final_missing_admitted_but_no_receipt_invariant_violation_count = ingress
             .get("ledger_final_missing_admitted_but_no_receipt_invariant_violation_count")
             .and_then(|value| value.as_u64())
@@ -35664,6 +35756,52 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "ledger_final_missing_admitted_ranges_sample".to_string(),
             self.ledger_final_missing_admitted_ranges_sample.clone(),
+        );
+        out.insert(
+            "ledger_final_missing_candidate_payload_available_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_candidate_payload_available_count),
+        );
+        out.insert(
+            "ledger_final_missing_candidate_payload_missing_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_candidate_payload_missing_count),
+        );
+        out.insert(
+            "ledger_final_missing_candidate_tx_hash_mapping_missing_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_candidate_tx_hash_mapping_missing_count),
+        );
+        out.insert(
+            "ledger_final_missing_candidate_raw_tx_build_error_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_candidate_raw_tx_build_error_count),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_reason".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_blocked_reason),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_payload_missing_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_blocked_by_payload_missing_count),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_stage_filter_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_blocked_by_stage_filter_count),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_scan_limit_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_blocked_by_scan_limit_count),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_batch_limit_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_blocked_by_batch_limit_count),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_raw_tx_build_error_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_blocked_by_raw_tx_build_error_count),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count".to_string(),
+            serde_json::json!(
+                self.ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count
+            ),
         );
         out.insert(
             "ledger_final_missing_actual_batch_count".to_string(),

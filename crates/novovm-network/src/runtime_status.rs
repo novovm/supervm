@@ -2408,11 +2408,6 @@ pub fn snapshot_network_runtime_novorudp_ledger_final_missing_admission_candidat
         .unwrap_or_default();
     ledger_entries.sort_by_key(|(sequence, _)| *sequence);
 
-    let payloads = runtime_native_pending_tx_payload_map()
-        .lock()
-        .ok()
-        .and_then(|guard| guard.get(&chain_id).cloned())
-        .unwrap_or_default();
     let pending = runtime_native_pending_tx_map()
         .lock()
         .ok()
@@ -2428,12 +2423,6 @@ pub fn snapshot_network_runtime_novorudp_ledger_final_missing_admission_candidat
                 .or_default() += 1;
             continue;
         };
-        if !payloads.contains_key(&tx_hash) {
-            *skip_reason_counts
-                .entry("missing_payload".to_string())
-                .or_default() += 1;
-            continue;
-        }
         let Some(pending_tx) = pending.get(&tx_hash) else {
             *skip_reason_counts
                 .entry("missing_pending_state".to_string())
