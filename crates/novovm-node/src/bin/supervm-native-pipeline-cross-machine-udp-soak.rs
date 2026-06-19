@@ -1892,6 +1892,133 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn durable_missing_includes_unreceipted_final_tail() {
+        let mut ledger = novovm_network::NovoRudpSequenceLifecycleLedger::new(14_400, 64);
+        for sequence in 0..14_144 {
+            ledger.mark_receipt_written(sequence, 1);
+        }
+        for sequence in 14_144..14_400 {
+            ledger.observe_repair_received(sequence, [sequence as u8; 32], true, 2);
+            ledger.mark_pending_active(sequence, 3, "repair_enqueued");
+        }
+
+        let missing = ledger.ack_missing_bitmap();
+        let missing_count = missing
+            .iter()
+            .fold(0u64, |total, range| total.saturating_add(range.count()));
+        assert_eq!(missing_count, 256);
+        assert_eq!(
+            missing,
+            vec![novovm_network::NovoRudpRange::new(14_144, 14_399)]
+        );
+    }
+
+    #[test]
+    fn received_enqueued_does_not_clear_durable_missing() {
+        let mut ledger = novovm_network::NovoRudpSequenceLifecycleLedger::new(14_400, 64);
+        for sequence in 0..14_144 {
+            ledger.mark_receipt_written(sequence, 1);
+        }
+        ledger.observe_repair_received(14_144, [1u8; 32], true, 2);
+        ledger.mark_pending_active(14_144, 3, "repair_enqueued");
+        ledger.mark_admitted_to_aoem(14_144, 4);
+
+        assert!(ledger
+            .ack_missing_bitmap()
+            .iter()
+            .any(|range| { range.start <= 14_144 && range.end_inclusive >= 14_144 }));
+    }
+
+    #[test]
+    fn receipt_closes_durable_missing() {
+        let mut ledger = novovm_network::NovoRudpSequenceLifecycleLedger::new(14_400, 64);
+        for sequence in 0..14_144 {
+            ledger.mark_receipt_written(sequence, 1);
+        }
+        ledger.observe_repair_received(14_144, [1u8; 32], true, 2);
+        ledger.mark_pending_active(14_144, 3, "repair_enqueued");
+        assert!(ledger
+            .ack_missing_bitmap()
+            .iter()
+            .any(|range| { range.start <= 14_144 && range.end_inclusive >= 14_144 }));
+
+        ledger.mark_receipt_written(14_144, 4);
+        assert!(!ledger
+            .ack_missing_bitmap()
+            .iter()
+            .any(|range| { range.start <= 14_144 && range.end_inclusive >= 14_144 }));
+    }
+
+    #[test]
+    fn candidate_bucket_cannot_exceed_durable_missing_truth() {
+        let summary = serde_json::json!({
+            "included_canonical_total": 14144,
+            "aoem_executed_total": 14144,
+            "ledger_durable_missing_count": 0,
+            "ledger_final_missing_candidate_count": 256,
+            "ledger_candidate_count_exceeds_durable_missing_invariant_violation_count": 256,
+            "ledger_final_missing_without_durable_missing_count": 256,
+        });
+        let sample = diagnostics_summary_sample(
+            Instant::now(),
+            &summary,
+            serde_json::json!({"line_count": 14144, "bytes": 1}),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            14144,
+        );
+
+        assert_eq!(
+            sample["ledger_candidate_count_exceeds_durable_missing_invariant_violation_count"]
+                .as_u64(),
+            Some(256)
+        );
+        assert_eq!(
+            sample["ledger_final_missing_without_durable_missing_count"].as_u64(),
+            Some(256)
+        );
+    }
+
+    #[test]
+    fn tail_gap_14144_14399_durable_missing_ack_window() {
+        let summary = serde_json::json!({
+            "ledger_expected_range_start": 0,
+            "ledger_expected_range_end": 14399,
+            "ledger_expected_count": 14400,
+            "ledger_completed_count": 14144,
+            "ledger_durable_missing_count": 256,
+            "ledger_durable_missing_ranges_sample": [{"start": 14144, "end_inclusive": 14399}],
+            "ledger_durable_missing_bitmap_available": true,
+            "ledger_durable_missing_derived_from_expected_range": true,
+        });
+        let ack = receiver_ack_report_value_with_summary(14_400, 14_144, 256, 17, Some(&summary));
+
+        assert_eq!(
+            ack.get("missing_bitmap_source").and_then(Value::as_str),
+            Some("ledger")
+        );
+        assert_eq!(
+            ack.get("ack_source_selection_reason")
+                .and_then(Value::as_str),
+            Some("ledger_durable_missing_bitmap")
+        );
+        assert_eq!(
+            ack.get("novorudp_current_window_start")
+                .and_then(Value::as_u64),
+            Some(14_144)
+        );
+        assert_eq!(
+            ack.get("novorudp_current_window_missing_count")
+                .and_then(Value::as_u64),
+            Some(64)
+        );
+        assert_ne!(
+            ack.get("missing_bitmap_source").and_then(Value::as_str),
+            Some("stable_progress_fallback")
+        );
+    }
+
+    #[test]
     fn real_sender_rejects_stale_ack_for_repair() {
         let latest_epoch = 500u64;
         let stale_ack = serde_json::json!({
@@ -3985,6 +4112,18 @@ fn write_synthetic_receiver_failure_report(
             "repair_final_missing_payload_recovered_requeued_count": repair_source
                 .and_then(|sample| sample.get("repair_final_missing_payload_recovered_requeued_count"))
                 .and_then(Value::as_u64),
+            "ledger_expected_range_start": repair_source
+                .and_then(|sample| sample.get("ledger_expected_range_start"))
+                .cloned(),
+            "ledger_expected_range_end": repair_source
+                .and_then(|sample| sample.get("ledger_expected_range_end"))
+                .cloned(),
+            "ledger_expected_count": repair_source
+                .and_then(|sample| sample.get("ledger_expected_count"))
+                .and_then(Value::as_u64),
+            "ledger_completed_count": repair_source
+                .and_then(|sample| sample.get("ledger_completed_count"))
+                .and_then(Value::as_u64),
             "ledger_durable_missing_count": repair_source
                 .and_then(|sample| sample.get("ledger_durable_missing_count"))
                 .and_then(Value::as_u64),
@@ -3999,6 +4138,21 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(|sample| sample.get("ledger_durable_missing_source"))
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!("")),
+            "ledger_durable_missing_derived_from_expected_range": repair_source
+                .and_then(|sample| sample.get("ledger_durable_missing_derived_from_expected_range"))
+                .and_then(Value::as_bool),
+            "ledger_missing_closed_by_receipt_count": repair_source
+                .and_then(|sample| sample.get("ledger_missing_closed_by_receipt_count"))
+                .and_then(Value::as_u64),
+            "ledger_missing_closed_by_canonical_count": repair_source
+                .and_then(|sample| sample.get("ledger_missing_closed_by_canonical_count"))
+                .and_then(Value::as_u64),
+            "ledger_missing_incorrectly_closed_by_received_count": repair_source
+                .and_then(|sample| sample.get("ledger_missing_incorrectly_closed_by_received_count"))
+                .and_then(Value::as_u64),
+            "ledger_missing_incorrectly_closed_by_enqueued_count": repair_source
+                .and_then(|sample| sample.get("ledger_missing_incorrectly_closed_by_enqueued_count"))
+                .and_then(Value::as_u64),
             "ledger_candidate_rehydrated_count": repair_source
                 .and_then(|sample| sample.get("ledger_candidate_rehydrated_count"))
                 .and_then(Value::as_u64),
@@ -4010,6 +4164,12 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(Value::as_u64),
             "ledger_missing_without_retryable_count": repair_source
                 .and_then(|sample| sample.get("ledger_missing_without_retryable_count"))
+                .and_then(Value::as_u64),
+            "ledger_candidate_count_exceeds_durable_missing_invariant_violation_count": repair_source
+                .and_then(|sample| sample.get("ledger_candidate_count_exceeds_durable_missing_invariant_violation_count"))
+                .and_then(Value::as_u64),
+            "ledger_final_missing_without_durable_missing_count": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_without_durable_missing_count"))
                 .and_then(Value::as_u64),
             "ledger_final_missing_candidate_count": repair_source
                 .and_then(|sample| sample.get("ledger_final_missing_candidate_count"))
@@ -4131,6 +4291,18 @@ fn write_synthetic_receiver_failure_report(
             "repair_final_missing_payload_recovered_requeued_count": repair_source
                 .and_then(|sample| sample.get("repair_final_missing_payload_recovered_requeued_count"))
                 .and_then(Value::as_u64),
+            "ledger_expected_range_start": repair_source
+                .and_then(|sample| sample.get("ledger_expected_range_start"))
+                .cloned(),
+            "ledger_expected_range_end": repair_source
+                .and_then(|sample| sample.get("ledger_expected_range_end"))
+                .cloned(),
+            "ledger_expected_count": repair_source
+                .and_then(|sample| sample.get("ledger_expected_count"))
+                .and_then(Value::as_u64),
+            "ledger_completed_count": repair_source
+                .and_then(|sample| sample.get("ledger_completed_count"))
+                .and_then(Value::as_u64),
             "ledger_durable_missing_count": repair_source
                 .and_then(|sample| sample.get("ledger_durable_missing_count"))
                 .and_then(Value::as_u64),
@@ -4145,6 +4317,21 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(|sample| sample.get("ledger_durable_missing_source"))
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!("")),
+            "ledger_durable_missing_derived_from_expected_range": repair_source
+                .and_then(|sample| sample.get("ledger_durable_missing_derived_from_expected_range"))
+                .and_then(Value::as_bool),
+            "ledger_missing_closed_by_receipt_count": repair_source
+                .and_then(|sample| sample.get("ledger_missing_closed_by_receipt_count"))
+                .and_then(Value::as_u64),
+            "ledger_missing_closed_by_canonical_count": repair_source
+                .and_then(|sample| sample.get("ledger_missing_closed_by_canonical_count"))
+                .and_then(Value::as_u64),
+            "ledger_missing_incorrectly_closed_by_received_count": repair_source
+                .and_then(|sample| sample.get("ledger_missing_incorrectly_closed_by_received_count"))
+                .and_then(Value::as_u64),
+            "ledger_missing_incorrectly_closed_by_enqueued_count": repair_source
+                .and_then(|sample| sample.get("ledger_missing_incorrectly_closed_by_enqueued_count"))
+                .and_then(Value::as_u64),
             "ledger_candidate_rehydrated_count": repair_source
                 .and_then(|sample| sample.get("ledger_candidate_rehydrated_count"))
                 .and_then(Value::as_u64),
@@ -4156,6 +4343,12 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(Value::as_u64),
             "ledger_missing_without_retryable_count": repair_source
                 .and_then(|sample| sample.get("ledger_missing_without_retryable_count"))
+                .and_then(Value::as_u64),
+            "ledger_candidate_count_exceeds_durable_missing_invariant_violation_count": repair_source
+                .and_then(|sample| sample.get("ledger_candidate_count_exceeds_durable_missing_invariant_violation_count"))
+                .and_then(Value::as_u64),
+            "ledger_final_missing_without_durable_missing_count": repair_source
+                .and_then(|sample| sample.get("ledger_final_missing_without_durable_missing_count"))
                 .and_then(Value::as_u64),
             "ledger_final_missing_candidate_count": repair_source
                 .and_then(|sample| sample.get("ledger_final_missing_candidate_count"))
@@ -4908,14 +5101,25 @@ fn diagnostics_summary_sample(
         "repair_payload_retention_false_negative_suspected": summary.get("repair_payload_retention_false_negative_suspected").and_then(Value::as_bool).unwrap_or(false),
         "repair_final_missing_payload_recovered_count": summary_u64(summary, "repair_final_missing_payload_recovered_count"),
         "repair_final_missing_payload_recovered_requeued_count": summary_u64(summary, "repair_final_missing_payload_recovered_requeued_count"),
+        "ledger_expected_range_start": summary.get("ledger_expected_range_start").cloned().unwrap_or(Value::Null),
+        "ledger_expected_range_end": summary.get("ledger_expected_range_end").cloned().unwrap_or(Value::Null),
+        "ledger_expected_count": summary_u64(summary, "ledger_expected_count"),
+        "ledger_completed_count": summary_u64(summary, "ledger_completed_count"),
         "ledger_durable_missing_count": summary_u64(summary, "ledger_durable_missing_count"),
         "ledger_durable_missing_ranges_sample": summary.get("ledger_durable_missing_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_durable_missing_bitmap_available": summary.get("ledger_durable_missing_bitmap_available").and_then(Value::as_bool).unwrap_or(false),
         "ledger_durable_missing_source": summary.get("ledger_durable_missing_source").cloned().unwrap_or_else(|| serde_json::json!("")),
+        "ledger_durable_missing_derived_from_expected_range": summary.get("ledger_durable_missing_derived_from_expected_range").and_then(Value::as_bool).unwrap_or(false),
+        "ledger_missing_closed_by_receipt_count": summary_u64(summary, "ledger_missing_closed_by_receipt_count"),
+        "ledger_missing_closed_by_canonical_count": summary_u64(summary, "ledger_missing_closed_by_canonical_count"),
+        "ledger_missing_incorrectly_closed_by_received_count": summary_u64(summary, "ledger_missing_incorrectly_closed_by_received_count"),
+        "ledger_missing_incorrectly_closed_by_enqueued_count": summary_u64(summary, "ledger_missing_incorrectly_closed_by_enqueued_count"),
         "ledger_candidate_rehydrated_count": summary_u64(summary, "ledger_candidate_rehydrated_count"),
         "ledger_candidate_empty_but_durable_missing_count": summary_u64(summary, "ledger_candidate_empty_but_durable_missing_count"),
         "ledger_missing_without_candidate_count": summary_u64(summary, "ledger_missing_without_candidate_count"),
         "ledger_missing_without_retryable_count": summary_u64(summary, "ledger_missing_without_retryable_count"),
+        "ledger_candidate_count_exceeds_durable_missing_invariant_violation_count": summary_u64(summary, "ledger_candidate_count_exceeds_durable_missing_invariant_violation_count"),
+        "ledger_final_missing_without_durable_missing_count": summary_u64(summary, "ledger_final_missing_without_durable_missing_count"),
         "ledger_final_missing_candidate_count": summary_u64(summary, "ledger_final_missing_candidate_count"),
         "ledger_final_missing_candidate_ranges_sample": summary.get("ledger_final_missing_candidate_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_requeued_before_admission_count": summary_u64(summary, "ledger_final_missing_requeued_before_admission_count"),
@@ -7788,14 +7992,25 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "repair_payload_retention_false_negative_suspected": summary.get("repair_payload_retention_false_negative_suspected").and_then(Value::as_bool).unwrap_or(false),
         "repair_final_missing_payload_recovered_count": summary_u64(&summary, "repair_final_missing_payload_recovered_count"),
         "repair_final_missing_payload_recovered_requeued_count": summary_u64(&summary, "repair_final_missing_payload_recovered_requeued_count"),
+        "ledger_expected_range_start": summary.get("ledger_expected_range_start").cloned().unwrap_or(Value::Null),
+        "ledger_expected_range_end": summary.get("ledger_expected_range_end").cloned().unwrap_or(Value::Null),
+        "ledger_expected_count": summary_u64(&summary, "ledger_expected_count"),
+        "ledger_completed_count": summary_u64(&summary, "ledger_completed_count"),
         "ledger_durable_missing_count": summary_u64(&summary, "ledger_durable_missing_count"),
         "ledger_durable_missing_ranges_sample": summary.get("ledger_durable_missing_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_durable_missing_bitmap_available": summary.get("ledger_durable_missing_bitmap_available").and_then(Value::as_bool).unwrap_or(false),
         "ledger_durable_missing_source": summary.get("ledger_durable_missing_source").cloned().unwrap_or_else(|| serde_json::json!("")),
+        "ledger_durable_missing_derived_from_expected_range": summary.get("ledger_durable_missing_derived_from_expected_range").and_then(Value::as_bool).unwrap_or(false),
+        "ledger_missing_closed_by_receipt_count": summary_u64(&summary, "ledger_missing_closed_by_receipt_count"),
+        "ledger_missing_closed_by_canonical_count": summary_u64(&summary, "ledger_missing_closed_by_canonical_count"),
+        "ledger_missing_incorrectly_closed_by_received_count": summary_u64(&summary, "ledger_missing_incorrectly_closed_by_received_count"),
+        "ledger_missing_incorrectly_closed_by_enqueued_count": summary_u64(&summary, "ledger_missing_incorrectly_closed_by_enqueued_count"),
         "ledger_candidate_rehydrated_count": summary_u64(&summary, "ledger_candidate_rehydrated_count"),
         "ledger_candidate_empty_but_durable_missing_count": summary_u64(&summary, "ledger_candidate_empty_but_durable_missing_count"),
         "ledger_missing_without_candidate_count": summary_u64(&summary, "ledger_missing_without_candidate_count"),
         "ledger_missing_without_retryable_count": summary_u64(&summary, "ledger_missing_without_retryable_count"),
+        "ledger_candidate_count_exceeds_durable_missing_invariant_violation_count": summary_u64(&summary, "ledger_candidate_count_exceeds_durable_missing_invariant_violation_count"),
+        "ledger_final_missing_without_durable_missing_count": summary_u64(&summary, "ledger_final_missing_without_durable_missing_count"),
         "ledger_final_missing_candidate_count": summary_u64(&summary, "ledger_final_missing_candidate_count"),
         "ledger_final_missing_candidate_ranges_sample": summary.get("ledger_final_missing_candidate_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_requeued_before_admission_count": summary_u64(&summary, "ledger_final_missing_requeued_before_admission_count"),

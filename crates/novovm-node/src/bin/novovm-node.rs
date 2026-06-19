@@ -34103,14 +34103,25 @@ struct NativeExecutionPipelineAggregateV1 {
     repair_sequence_stale_count: u64,
     repair_sequence_enqueued_count: u64,
     repair_sequence_admitted_to_aoem_count: u64,
+    ledger_expected_range_start: Option<u64>,
+    ledger_expected_range_end: Option<u64>,
+    ledger_expected_count: u64,
+    ledger_completed_count: u64,
     ledger_durable_missing_count: u64,
     ledger_durable_missing_ranges_sample: serde_json::Value,
     ledger_durable_missing_bitmap_available: bool,
     ledger_durable_missing_source: String,
+    ledger_durable_missing_derived_from_expected_range: bool,
+    ledger_missing_closed_by_receipt_count: u64,
+    ledger_missing_closed_by_canonical_count: u64,
+    ledger_missing_incorrectly_closed_by_received_count: u64,
+    ledger_missing_incorrectly_closed_by_enqueued_count: u64,
     ledger_candidate_rehydrated_count: u64,
     ledger_candidate_empty_but_durable_missing_count: u64,
     ledger_missing_without_candidate_count: u64,
     ledger_missing_without_retryable_count: u64,
+    ledger_candidate_count_exceeds_durable_missing_invariant_violation_count: u64,
+    ledger_final_missing_without_durable_missing_count: u64,
     ledger_final_missing_actual_batch_count: u64,
     ledger_final_missing_actual_batch_ranges_sample: serde_json::Value,
     ledger_final_missing_raw_txs_count: u64,
@@ -34234,14 +34245,25 @@ impl NativeExecutionPipelineAggregateV1 {
             repair_sequence_stale_count: 0,
             repair_sequence_enqueued_count: 0,
             repair_sequence_admitted_to_aoem_count: 0,
+            ledger_expected_range_start: None,
+            ledger_expected_range_end: None,
+            ledger_expected_count: 0,
+            ledger_completed_count: 0,
             ledger_durable_missing_count: 0,
             ledger_durable_missing_ranges_sample: serde_json::json!([]),
             ledger_durable_missing_bitmap_available: false,
             ledger_durable_missing_source: String::new(),
+            ledger_durable_missing_derived_from_expected_range: false,
+            ledger_missing_closed_by_receipt_count: 0,
+            ledger_missing_closed_by_canonical_count: 0,
+            ledger_missing_incorrectly_closed_by_received_count: 0,
+            ledger_missing_incorrectly_closed_by_enqueued_count: 0,
             ledger_candidate_rehydrated_count: 0,
             ledger_candidate_empty_but_durable_missing_count: 0,
             ledger_missing_without_candidate_count: 0,
             ledger_missing_without_retryable_count: 0,
+            ledger_candidate_count_exceeds_durable_missing_invariant_violation_count: 0,
+            ledger_final_missing_without_durable_missing_count: 0,
             ledger_final_missing_actual_batch_count: 0,
             ledger_final_missing_actual_batch_ranges_sample: serde_json::json!([]),
             ledger_final_missing_raw_txs_count: 0,
@@ -34733,6 +34755,20 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("repair_final_missing_payload_recovered_requeued_count")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.ledger_expected_range_start = ingress
+            .get("ledger_expected_range_start")
+            .and_then(|value| value.as_u64());
+        self.ledger_expected_range_end = ingress
+            .get("ledger_expected_range_end")
+            .and_then(|value| value.as_u64());
+        self.ledger_expected_count = ingress
+            .get("ledger_expected_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_completed_count = ingress
+            .get("ledger_completed_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
         self.ledger_durable_missing_count = ingress
             .get("ledger_durable_missing_count")
             .and_then(|value| value.as_u64())
@@ -34750,6 +34786,26 @@ impl NativeExecutionPipelineAggregateV1 {
             .and_then(|value| value.as_str())
             .unwrap_or_default()
             .to_string();
+        self.ledger_durable_missing_derived_from_expected_range = ingress
+            .get("ledger_durable_missing_derived_from_expected_range")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        self.ledger_missing_closed_by_receipt_count = ingress
+            .get("ledger_missing_closed_by_receipt_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_missing_closed_by_canonical_count = ingress
+            .get("ledger_missing_closed_by_canonical_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_missing_incorrectly_closed_by_received_count = ingress
+            .get("ledger_missing_incorrectly_closed_by_received_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_missing_incorrectly_closed_by_enqueued_count = ingress
+            .get("ledger_missing_incorrectly_closed_by_enqueued_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
         self.ledger_candidate_rehydrated_count = ingress
             .get("ledger_candidate_rehydrated_count")
             .and_then(|value| value.as_u64())
@@ -34994,6 +35050,22 @@ impl NativeExecutionPipelineAggregateV1 {
             } else {
                 self.ledger_missing_without_retryable_count
             };
+        let candidate_exceeds_durable_missing = if self.ledger_final_missing_candidate_count > 0
+            && self.ledger_durable_missing_count == 0
+        {
+            self.ledger_candidate_count_exceeds_durable_missing_invariant_violation_count
+                .max(self.ledger_final_missing_candidate_count)
+        } else {
+            self.ledger_candidate_count_exceeds_durable_missing_invariant_violation_count
+        };
+        let final_missing_without_durable_missing = if self.ledger_final_missing_candidate_count > 0
+            && self.ledger_durable_missing_count == 0
+        {
+            self.ledger_final_missing_without_durable_missing_count
+                .max(self.ledger_final_missing_candidate_count)
+        } else {
+            self.ledger_final_missing_without_durable_missing_count
+        };
         let mut out = serde_json::Map::new();
         out.insert(
             "method".to_string(),
@@ -35348,6 +35420,22 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.repair_final_missing_payload_recovered_requeued_count),
         );
         out.insert(
+            "ledger_expected_range_start".to_string(),
+            serde_json::json!(self.ledger_expected_range_start),
+        );
+        out.insert(
+            "ledger_expected_range_end".to_string(),
+            serde_json::json!(self.ledger_expected_range_end),
+        );
+        out.insert(
+            "ledger_expected_count".to_string(),
+            serde_json::json!(self.ledger_expected_count),
+        );
+        out.insert(
+            "ledger_completed_count".to_string(),
+            serde_json::json!(self.ledger_completed_count),
+        );
+        out.insert(
             "ledger_durable_missing_count".to_string(),
             serde_json::json!(self.ledger_durable_missing_count),
         );
@@ -35364,6 +35452,26 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.ledger_durable_missing_source),
         );
         out.insert(
+            "ledger_durable_missing_derived_from_expected_range".to_string(),
+            serde_json::json!(self.ledger_durable_missing_derived_from_expected_range),
+        );
+        out.insert(
+            "ledger_missing_closed_by_receipt_count".to_string(),
+            serde_json::json!(self.ledger_missing_closed_by_receipt_count),
+        );
+        out.insert(
+            "ledger_missing_closed_by_canonical_count".to_string(),
+            serde_json::json!(self.ledger_missing_closed_by_canonical_count),
+        );
+        out.insert(
+            "ledger_missing_incorrectly_closed_by_received_count".to_string(),
+            serde_json::json!(self.ledger_missing_incorrectly_closed_by_received_count),
+        );
+        out.insert(
+            "ledger_missing_incorrectly_closed_by_enqueued_count".to_string(),
+            serde_json::json!(self.ledger_missing_incorrectly_closed_by_enqueued_count),
+        );
+        out.insert(
             "ledger_candidate_rehydrated_count".to_string(),
             serde_json::json!(self.ledger_candidate_rehydrated_count),
         );
@@ -35378,6 +35486,14 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "ledger_missing_without_retryable_count".to_string(),
             serde_json::json!(missing_without_retryable_count),
+        );
+        out.insert(
+            "ledger_candidate_count_exceeds_durable_missing_invariant_violation_count".to_string(),
+            serde_json::json!(candidate_exceeds_durable_missing),
+        );
+        out.insert(
+            "ledger_final_missing_without_durable_missing_count".to_string(),
+            serde_json::json!(final_missing_without_durable_missing),
         );
         out.insert(
             "ledger_final_missing_candidate_count".to_string(),
@@ -37193,6 +37309,15 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
         5_000,
     )?;
+    let novorudp_expected_tx_count = u64_env_allow_zero("NOVOVM_NATIVE_PIPELINE_TX_COUNT", 0)?;
+    let novorudp_window_size = u64_env_positive("NOVOVM_NOVORUDP_WINDOW_SIZE", 64)?;
+    if novorudp_expected_tx_count > 0 {
+        novovm_network::ensure_runtime_novorudp_sequence_expected_total_v1(
+            chain_id,
+            novorudp_expected_tx_count,
+            novorudp_window_size,
+        );
+    }
     let mut last_progress_report_at = Instant::now()
         .checked_sub(Duration::from_millis(progress_report_interval_ms))
         .unwrap_or_else(Instant::now);
@@ -37201,6 +37326,13 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     loop {
         if max_ticks > 0 && ticks >= max_ticks {
             break;
+        }
+        if novorudp_expected_tx_count > 0 {
+            novovm_network::ensure_runtime_novorudp_sequence_expected_total_v1(
+                chain_id,
+                novorudp_expected_tx_count,
+                novorudp_window_size,
+            );
         }
         let network_drive_out = match network_drive.as_mut() {
             Some(drive) => drive.drive_once(),

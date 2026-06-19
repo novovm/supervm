@@ -410,6 +410,16 @@ impl NovoRudpSequenceLifecycleLedger {
         }
     }
 
+    pub fn ensure_expected_total(&mut self, expected_total: u64, now_ms: u128, reason: &str) {
+        if expected_total == 0 {
+            return;
+        }
+        if self.expected_total < expected_total {
+            self.expected_total = expected_total;
+        }
+        self.mark_expected_range(0, expected_total.saturating_sub(1), now_ms, reason);
+    }
+
     pub fn observe_repair_received(
         &mut self,
         sequence: u64,

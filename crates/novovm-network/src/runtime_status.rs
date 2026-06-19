@@ -1069,14 +1069,25 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub repair_sequence_stale_count: u64,
     pub repair_sequence_enqueued_count: u64,
     pub repair_sequence_admitted_to_aoem_count: u64,
+    pub ledger_expected_range_start: Option<u64>,
+    pub ledger_expected_range_end: Option<u64>,
+    pub ledger_expected_count: u64,
+    pub ledger_completed_count: u64,
     pub ledger_durable_missing_count: u64,
     pub ledger_durable_missing_ranges_sample: Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
     pub ledger_durable_missing_bitmap_available: bool,
     pub ledger_durable_missing_source: String,
+    pub ledger_durable_missing_derived_from_expected_range: bool,
+    pub ledger_missing_closed_by_receipt_count: u64,
+    pub ledger_missing_closed_by_canonical_count: u64,
+    pub ledger_missing_incorrectly_closed_by_received_count: u64,
+    pub ledger_missing_incorrectly_closed_by_enqueued_count: u64,
     pub ledger_candidate_empty_but_durable_missing_count: u64,
     pub ledger_missing_without_candidate_count: u64,
     pub ledger_missing_without_retryable_count: u64,
     pub ledger_candidate_rehydrated_count: u64,
+    pub ledger_candidate_count_exceeds_durable_missing_invariant_violation_count: u64,
+    pub ledger_final_missing_without_durable_missing_count: u64,
     pub ledger_final_missing_actual_batch_count: u64,
     pub ledger_final_missing_actual_batch_ranges_sample:
         Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
@@ -1440,6 +1451,22 @@ fn observe_novorudp_sequence_repair_received_v1(
     }
 }
 
+pub fn ensure_runtime_novorudp_sequence_expected_total_v1(
+    chain_id: u64,
+    expected_total: u64,
+    window_size: u64,
+) {
+    if expected_total == 0 {
+        return;
+    }
+    if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
+        let ledger = guard.entry(chain_id).or_insert_with(|| {
+            NovoRudpSequenceLifecycleLedger::new(expected_total, window_size.max(1))
+        });
+        ledger.ensure_expected_total(expected_total, now_unix_millis(), "runtime_expected_total");
+    }
+}
+
 fn observe_novorudp_sequence_pending_view_v1(
     chain_id: u64,
     sequence: Option<u64>,
@@ -1712,15 +1739,51 @@ fn apply_novorudp_durable_missing_summary_v1(
     summary: &mut NetworkRuntimeNativePendingTxSummaryV1,
     chain_id: u64,
 ) {
-    let missing_ranges = runtime_novorudp_sequence_ledger_map()
+    let ledger = runtime_novorudp_sequence_ledger_map()
         .lock()
         .ok()
         .and_then(|guard| guard.get(&chain_id).cloned())
-        .map(|ledger| ledger.ack_missing_bitmap())
         .unwrap_or_default();
+    let missing_ranges = ledger.ack_missing_bitmap();
     let durable_missing_count = missing_ranges
         .iter()
         .fold(0u64, |total, range| total.saturating_add(range.count()));
+    let expected_count = ledger.expected_total;
+    let completed_count = (0..ledger.expected_total)
+        .filter(|sequence| {
+            ledger
+                .records
+                .get(sequence)
+                .is_some_and(|record| record.receipt_written || record.canonical_included)
+        })
+        .count()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    let receipt_closed_count = (0..ledger.expected_total)
+        .filter(|sequence| {
+            ledger
+                .records
+                .get(sequence)
+                .is_some_and(|record| record.receipt_written)
+        })
+        .count()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    let canonical_closed_count = (0..ledger.expected_total)
+        .filter(|sequence| {
+            ledger
+                .records
+                .get(sequence)
+                .is_some_and(|record| record.canonical_included)
+        })
+        .count()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    summary.ledger_expected_range_start = (expected_count > 0).then_some(0);
+    summary.ledger_expected_range_end =
+        (expected_count > 0).then_some(expected_count.saturating_sub(1));
+    summary.ledger_expected_count = expected_count;
+    summary.ledger_completed_count = completed_count;
     summary.ledger_durable_missing_count = durable_missing_count;
     summary.ledger_durable_missing_ranges_sample = missing_ranges
         .iter()
@@ -1738,6 +1801,11 @@ fn apply_novorudp_durable_missing_summary_v1(
     } else {
         "none".to_string()
     };
+    summary.ledger_durable_missing_derived_from_expected_range = expected_count > 0;
+    summary.ledger_missing_closed_by_receipt_count = receipt_closed_count;
+    summary.ledger_missing_closed_by_canonical_count = canonical_closed_count;
+    summary.ledger_missing_incorrectly_closed_by_received_count = 0;
+    summary.ledger_missing_incorrectly_closed_by_enqueued_count = 0;
     // Candidate/admission buckets live in a separate snapshot. Keep this
     // runtime summary as the durable ledger view; aggregate/wrapper layers
     // compute candidate-empty diagnostics once both views are available.
