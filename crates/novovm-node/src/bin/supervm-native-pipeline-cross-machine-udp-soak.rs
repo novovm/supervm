@@ -1603,6 +1603,38 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn ledger_ack_missing_bitmap_is_source_of_truth_for_receiver_ack() {
+        let summary = serde_json::json!({
+            "missing_count": 280,
+            "missing_ranges_sample": [{"start": 14120, "end_inclusive": 14399}],
+            "included_canonical_total": 14120,
+            "aoem_executed_total": 14120,
+        });
+        let ack = receiver_ack_report_value_with_summary(14_400, 12_152, 256, 9, Some(&summary));
+
+        assert_eq!(
+            ack.get("missing_bitmap_source").and_then(Value::as_str),
+            Some("progress_summary")
+        );
+        assert_eq!(ack.get("missing_count").and_then(Value::as_u64), Some(280));
+        assert_eq!(
+            ack.get("novorudp_current_window_start")
+                .and_then(Value::as_u64),
+            Some(14_120)
+        );
+        assert_eq!(
+            ack.get("novorudp_current_window_end_inclusive")
+                .and_then(Value::as_u64),
+            Some(14_183)
+        );
+        assert_eq!(
+            ack.get("novorudp_current_window_missing_count")
+                .and_then(Value::as_u64),
+            Some(64)
+        );
+    }
+
+    #[test]
     fn real_sender_rejects_stale_ack_for_repair() {
         let latest_epoch = 500u64;
         let stale_ack = serde_json::json!({
@@ -2675,11 +2707,12 @@ fn run_receiver_node(
                 );
             let sample_limit = ack_sample_limit;
             let final_ack_start_epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
-            emit_receiver_progress_ack(
+            emit_receiver_progress_ack_with_summary(
                 expected_tx_count,
                 final_progress,
                 sample_limit,
                 final_ack_start_epoch,
+                Some(&summary),
             );
             let final_ack_repeat_count =
                 u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_COUNT", 10).unwrap_or(10);
@@ -2725,7 +2758,13 @@ fn run_receiver_node(
                 state.last_canonical,
             );
             let epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
-            emit_receiver_progress_ack(expected_tx_count, stable_progress, ack_sample_limit, epoch);
+            emit_receiver_progress_ack_with_summary(
+                expected_tx_count,
+                stable_progress,
+                ack_sample_limit,
+                epoch,
+                progress_summary.as_ref(),
+            );
             last_ack_progress_at = Instant::now();
         }
 
@@ -2868,7 +2907,13 @@ fn run_receiver_node(
             }
             state.last_canonical = stable_progress;
             let epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
-            emit_receiver_progress_ack(expected_tx_count, stable_progress, ack_sample_limit, epoch);
+            emit_receiver_progress_ack_with_summary(
+                expected_tx_count,
+                stable_progress,
+                ack_sample_limit,
+                epoch,
+                progress_summary.as_ref(),
+            );
             sample["novorudp_ack_progress_interval_ms"] =
                 serde_json::json!(receiver_ack_progress_interval_ms);
             sample["novorudp_ack_epoch_after_sample"] = serde_json::json!(epoch);
@@ -2976,14 +3021,64 @@ fn write_receiver_ack_report(
     write_report(ack_report_path().as_path(), &report)
 }
 
+fn write_receiver_ack_report_with_summary(
+    expected_tx_count: u64,
+    stable_progress: u64,
+    sample_limit: u64,
+    ack_epoch: u64,
+    progress_summary: Option<&Value>,
+) -> Result<()> {
+    let report = receiver_ack_report_value_with_summary(
+        expected_tx_count,
+        stable_progress,
+        sample_limit,
+        ack_epoch,
+        progress_summary,
+    );
+    write_report(ack_report_path().as_path(), &report)
+}
+
 fn receiver_ack_report_value(
     expected_tx_count: u64,
     stable_progress: u64,
     sample_limit: u64,
     ack_epoch: u64,
 ) -> Value {
-    let missing_count = expected_tx_count.saturating_sub(stable_progress);
-    let ranges = missing_ranges_from_progress(stable_progress, expected_tx_count, sample_limit);
+    receiver_ack_report_value_with_summary(
+        expected_tx_count,
+        stable_progress,
+        sample_limit,
+        ack_epoch,
+        None,
+    )
+}
+
+fn receiver_ack_report_value_with_summary(
+    expected_tx_count: u64,
+    stable_progress: u64,
+    sample_limit: u64,
+    ack_epoch: u64,
+    progress_summary: Option<&Value>,
+) -> Value {
+    let summary_ranges = progress_summary
+        .map(|summary| {
+            missing_ranges_from_value_key(summary, "missing_ranges_sample", sample_limit)
+        })
+        .unwrap_or_default();
+    let summary_missing_count = progress_summary
+        .and_then(|summary| summary.get("missing_count"))
+        .and_then(Value::as_u64);
+    let use_summary_missing = summary_missing_count.is_some() && !summary_ranges.is_empty();
+    let missing_count = if use_summary_missing {
+        summary_missing_count.unwrap_or_default()
+    } else {
+        expected_tx_count.saturating_sub(stable_progress)
+    };
+    let ranges = if use_summary_missing {
+        summary_ranges
+    } else {
+        missing_ranges_from_progress(stable_progress, expected_tx_count, sample_limit)
+    };
     let missing_ranges_full_count = ranges.len();
     let transport_profile = TransportProfileV1::from_env();
     let novorudp = NovoRudpConfigV1::from_env(transport_profile).unwrap_or(NovoRudpConfigV1 {
@@ -3025,9 +3120,10 @@ fn receiver_ack_report_value(
         "missing_ranges_full_count": missing_ranges_full_count,
         "missing_ranges_sample_truncated": (missing_ranges_full_count as u64) > sample_limit,
         "missing_ranges_sample": missing_ranges_to_json(ranges.as_slice(), sample_limit),
+        "missing_bitmap_source": if use_summary_missing { "progress_summary" } else { "stable_progress_fallback" },
         "ack_epoch": ack_epoch,
         "timestamp_ms": now_ms(),
-        "receiver_done": stable_progress >= expected_tx_count,
+        "receiver_done": missing_count == 0 && stable_progress >= expected_tx_count,
         "transport_profile": transport_profile.as_str(),
         "novorudp_enabled": novorudp.enabled,
         "novorudp_window_size": novorudp.window_size,
@@ -3051,6 +3147,22 @@ fn send_receiver_udp_ack(
     sample_limit: u64,
     ack_epoch: u64,
 ) {
+    send_receiver_udp_ack_with_summary(
+        expected_tx_count,
+        stable_progress,
+        sample_limit,
+        ack_epoch,
+        None,
+    )
+}
+
+fn send_receiver_udp_ack_with_summary(
+    expected_tx_count: u64,
+    stable_progress: u64,
+    sample_limit: u64,
+    ack_epoch: u64,
+    progress_summary: Option<&Value>,
+) {
     let Some(target_addr) = first_string_env_nonempty(&[
         "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
         "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR",
@@ -3062,8 +3174,13 @@ fn send_receiver_udp_ack(
     if !enabled {
         return;
     }
-    let report =
-        receiver_ack_report_value(expected_tx_count, stable_progress, sample_limit, ack_epoch);
+    let report = receiver_ack_report_value_with_summary(
+        expected_tx_count,
+        stable_progress,
+        sample_limit,
+        ack_epoch,
+        progress_summary,
+    );
     let Ok(payload) = serde_json::to_vec(&report) else {
         return;
     };
@@ -3101,14 +3218,27 @@ fn stable_progress_from_progress_summary(
         .max(fallback_progress)
 }
 
-fn emit_receiver_progress_ack(
+fn emit_receiver_progress_ack_with_summary(
     expected_tx_count: u64,
     stable_progress: u64,
     sample_limit: u64,
     ack_epoch: u64,
+    progress_summary: Option<&Value>,
 ) {
-    let _ = write_receiver_ack_report(expected_tx_count, stable_progress, sample_limit, ack_epoch);
-    send_receiver_udp_ack(expected_tx_count, stable_progress, sample_limit, ack_epoch);
+    let _ = write_receiver_ack_report_with_summary(
+        expected_tx_count,
+        stable_progress,
+        sample_limit,
+        ack_epoch,
+        progress_summary,
+    );
+    send_receiver_udp_ack_with_summary(
+        expected_tx_count,
+        stable_progress,
+        sample_limit,
+        ack_epoch,
+        progress_summary,
+    );
 }
 
 fn repeat_final_receiver_udp_ack(

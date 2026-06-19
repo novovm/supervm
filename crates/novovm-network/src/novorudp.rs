@@ -496,6 +496,88 @@ impl NovoRudpSequenceLifecycleLedger {
     }
 
     #[must_use]
+    pub fn ack_missing_bitmap(&self) -> Vec<NovoRudpRange> {
+        self.missing_ranges()
+    }
+
+    #[must_use]
+    pub fn current_window_missing_bitmap(&self) -> Option<NovoRudpRepairWindow> {
+        select_first_missing_window(
+            self.ack_missing_bitmap().as_slice(),
+            self.expected_total,
+            &NovoRudpWindowConfig {
+                window_size: self.window_size.max(1),
+                ..NovoRudpWindowConfig::default()
+            },
+        )
+    }
+
+    #[must_use]
+    pub fn final_missing_sequences(&self, final_missing_start: Option<u64>) -> Vec<u64> {
+        let Some(start) = final_missing_start else {
+            return Vec::new();
+        };
+        (start..self.expected_total)
+            .filter(|sequence| {
+                !self
+                    .records
+                    .get(sequence)
+                    .is_some_and(|record| record.receipt_written || record.canonical_included)
+            })
+            .collect()
+    }
+
+    #[must_use]
+    pub fn final_missing_with_payload(&self, final_missing_start: Option<u64>) -> Vec<u64> {
+        self.final_missing_sequences(final_missing_start)
+            .into_iter()
+            .filter(|sequence| {
+                self.records
+                    .get(sequence)
+                    .is_some_and(|record| record.payload_retained)
+            })
+            .collect()
+    }
+
+    #[must_use]
+    pub fn final_missing_pending_active(&self, final_missing_start: Option<u64>) -> Vec<u64> {
+        self.final_missing_sequences(final_missing_start)
+            .into_iter()
+            .filter(|sequence| {
+                self.records
+                    .get(sequence)
+                    .is_some_and(|record| record.pending_active)
+            })
+            .collect()
+    }
+
+    #[must_use]
+    pub fn final_missing_admission_candidates(&self, final_missing_start: Option<u64>) -> Vec<u64> {
+        self.admission_buckets(final_missing_start, None)
+            .final_missing_repair_pending
+    }
+
+    #[must_use]
+    pub fn admitted_without_receipt(&self) -> Vec<u64> {
+        self.records
+            .iter()
+            .filter_map(|(sequence, record)| {
+                (record.admitted_to_aoem && !record.receipt_written && !record.canonical_included)
+                    .then_some(*sequence)
+            })
+            .collect()
+    }
+
+    #[must_use]
+    pub fn receipt_missing_after_admission(&self, final_missing_start: Option<u64>) -> Vec<u64> {
+        let start = final_missing_start.unwrap_or(0);
+        self.admitted_without_receipt()
+            .into_iter()
+            .filter(|sequence| *sequence >= start)
+            .collect()
+    }
+
+    #[must_use]
     pub fn final_missing_summary(
         &self,
         final_missing_start: Option<u64>,
@@ -1306,7 +1388,70 @@ mod tests {
         ledger.observe_repair_received(6, hash_for_sequence(6), true, 20);
         ledger.mark_pending_active(6, 21, "repair");
 
-        assert_eq!(ledger.missing_ranges(), vec![NovoRudpRange::new(4, 7)]);
+        assert_eq!(ledger.ack_missing_bitmap(), vec![NovoRudpRange::new(4, 7)]);
+        let window = ledger.current_window_missing_bitmap().expect("window");
+        assert_eq!(window.range, NovoRudpRange::new(4, 7));
+        assert_eq!(window.missing_ranges, vec![NovoRudpRange::new(4, 7)]);
+    }
+
+    #[test]
+    fn ledger_is_single_source_for_repair_window() {
+        let mut ledger = NovoRudpSequenceLifecycleLedger::new(14_400, 64);
+        for sequence in 0..14_120 {
+            ledger.mark_receipt_written(sequence, 1);
+        }
+        ledger.observe_repair_received(14_160, hash_for_sequence(14_160), true, 2);
+        ledger.mark_pending_active(14_160, 3, "repair");
+
+        let window = ledger.current_window_missing_bitmap().expect("window");
+        assert_eq!(window.range, NovoRudpRange::new(14_120, 14_183));
+        assert_eq!(window.missing_count, 64);
+        assert!(
+            window
+                .missing_ranges
+                .iter()
+                .any(|range| range.start == 14_120 && range.end_inclusive == 14_183),
+            "current repair window must be derived from ledger receipt state, not received max"
+        );
+    }
+
+    #[test]
+    fn ledger_is_single_source_for_admission_candidates() {
+        let mut ledger = NovoRudpSequenceLifecycleLedger::new(14_400, 64);
+        ledger.observe_repair_received(14_120, hash_for_sequence(14_120), true, 2);
+        ledger.mark_pending_active(14_120, 3, "repair");
+        ledger.observe_repair_received(12_000, hash_for_sequence(12_000), true, 2);
+        ledger.mark_pending_active(12_000, 3, "old_repair");
+
+        assert_eq!(
+            ledger.final_missing_admission_candidates(Some(14_105)),
+            vec![14_120]
+        );
+        assert_eq!(
+            ledger.final_missing_pending_active(Some(14_105)),
+            vec![14_120]
+        );
+    }
+
+    #[test]
+    fn ledger_receipt_update_closes_sequence() {
+        let mut ledger = NovoRudpSequenceLifecycleLedger::new(14_400, 64);
+        ledger.observe_repair_received(14_120, hash_for_sequence(14_120), true, 2);
+        ledger.mark_pending_active(14_120, 3, "repair");
+        ledger.mark_admitted_to_aoem(14_120, 4);
+        assert_eq!(
+            ledger.receipt_missing_after_admission(Some(14_105)),
+            vec![14_120]
+        );
+
+        ledger.mark_receipt_written(14_120, 5);
+        assert!(ledger
+            .receipt_missing_after_admission(Some(14_105))
+            .is_empty());
+        assert!(!ledger
+            .ack_missing_bitmap()
+            .iter()
+            .any(|range| 14_120 >= range.start && 14_120 <= range.end_inclusive));
     }
 
     #[test]
