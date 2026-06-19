@@ -1069,6 +1069,14 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub repair_sequence_stale_count: u64,
     pub repair_sequence_enqueued_count: u64,
     pub repair_sequence_admitted_to_aoem_count: u64,
+    pub ledger_durable_missing_count: u64,
+    pub ledger_durable_missing_ranges_sample: Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub ledger_durable_missing_bitmap_available: bool,
+    pub ledger_durable_missing_source: String,
+    pub ledger_candidate_empty_but_durable_missing_count: u64,
+    pub ledger_missing_without_candidate_count: u64,
+    pub ledger_missing_without_retryable_count: u64,
+    pub ledger_candidate_rehydrated_count: u64,
     pub ledger_final_missing_actual_batch_count: u64,
     pub ledger_final_missing_actual_batch_ranges_sample:
         Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
@@ -1078,6 +1086,7 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub ledger_final_missing_receipt_missing_after_admission_count: u64,
     pub ledger_final_missing_admitted_but_no_receipt_invariant_violation_count: u64,
     pub ledger_admission_counter_is_actual_batch: bool,
+    pub ledger_admission_counter_mismatch_reason: String,
     pub repair_attempted_unreceipted_count: u64,
     pub repair_attempted_unreceipted_final_missing_overlap_count: u64,
     pub repair_attempted_unreceipted_requeued_count: u64,
@@ -1486,6 +1495,24 @@ fn network_runtime_native_repair_probe_summary_v1(
             ..Default::default()
         };
     };
+    let admitted_seen_count: u64 = state
+        .sequence_admitted_to_aoem_seen
+        .len()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    let actual_batch_count = state.final_missing_actual_batch_count;
+    let (ledger_admission_counter_is_actual_batch, ledger_admission_counter_mismatch_reason) =
+        if admitted_seen_count > 0 && actual_batch_count == 0 {
+            (false, "admitted_counter_without_actual_batch".to_string())
+        } else if actual_batch_count > 0 && admitted_seen_count != actual_batch_count {
+            (
+                false,
+                "admitted_counter_differs_from_actual_batch".to_string(),
+            )
+        } else {
+            (true, String::new())
+        };
+
     NetworkRuntimeNativePendingTxSummaryV1 {
         chain_id,
         repair_packet_received_count: state.packet_received_count,
@@ -1550,7 +1577,8 @@ fn network_runtime_native_repair_probe_summary_v1(
             .count()
             .try_into()
             .unwrap_or(u64::MAX),
-        ledger_admission_counter_is_actual_batch: true,
+        ledger_admission_counter_is_actual_batch,
+        ledger_admission_counter_mismatch_reason,
         repair_attempted_unreceipted_count: state.attempted_unreceipted_count,
         repair_attempted_unreceipted_final_missing_overlap_count: state
             .attempted_unreceipted_final_missing_overlap_count,
@@ -1643,6 +1671,8 @@ fn apply_network_runtime_native_repair_probe_summary_v1(
         repair.ledger_final_missing_admitted_but_no_receipt_invariant_violation_count;
     summary.ledger_admission_counter_is_actual_batch =
         repair.ledger_admission_counter_is_actual_batch;
+    summary.ledger_admission_counter_mismatch_reason =
+        repair.ledger_admission_counter_mismatch_reason.clone();
     summary.repair_attempted_unreceipted_count = repair.repair_attempted_unreceipted_count;
     summary.repair_attempted_unreceipted_final_missing_overlap_count =
         repair.repair_attempted_unreceipted_final_missing_overlap_count;
@@ -1676,6 +1706,41 @@ fn apply_network_runtime_native_repair_probe_summary_v1(
         repair.repair_final_missing_payload_recovered_count;
     summary.repair_final_missing_payload_recovered_requeued_count =
         repair.repair_final_missing_payload_recovered_requeued_count;
+}
+
+fn apply_novorudp_durable_missing_summary_v1(
+    summary: &mut NetworkRuntimeNativePendingTxSummaryV1,
+    chain_id: u64,
+) {
+    let missing_ranges = runtime_novorudp_sequence_ledger_map()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&chain_id).cloned())
+        .map(|ledger| ledger.ack_missing_bitmap())
+        .unwrap_or_default();
+    let durable_missing_count = missing_ranges
+        .iter()
+        .fold(0u64, |total, range| total.saturating_add(range.count()));
+    summary.ledger_durable_missing_count = durable_missing_count;
+    summary.ledger_durable_missing_ranges_sample = missing_ranges
+        .iter()
+        .take(64)
+        .map(|range| NetworkRuntimeNativeRepairSequenceRangeV1 {
+            start: range.start,
+            end_inclusive: range.end_inclusive,
+            count: range.count(),
+        })
+        .collect();
+    summary.ledger_durable_missing_bitmap_available =
+        durable_missing_count > 0 && !summary.ledger_durable_missing_ranges_sample.is_empty();
+    summary.ledger_durable_missing_source = if summary.ledger_durable_missing_bitmap_available {
+        "sequence_lifecycle_ledger".to_string()
+    } else {
+        "none".to_string()
+    };
+    // Candidate/admission buckets live in a separate snapshot. Keep this
+    // runtime summary as the durable ledger view; aggregate/wrapper layers
+    // compute candidate-empty diagnostics once both views are available.
 }
 
 fn network_runtime_native_repair_probe_reject_v1(
@@ -5960,6 +6025,7 @@ pub fn snapshot_network_runtime_native_pending_tx_summary_v1(
             summary.last_broadcast_tx_count = broadcast_runtime.last_broadcast_tx_count;
             summary.last_broadcast_unix_ms = broadcast_runtime.last_updated_unix_ms;
             apply_network_runtime_native_repair_probe_summary_v1(&mut summary, &repair_probe);
+            apply_novorudp_durable_missing_summary_v1(&mut summary, chain_id);
             return summary;
         }
     };
@@ -5980,6 +6046,7 @@ pub fn snapshot_network_runtime_native_pending_tx_summary_v1(
         summary.last_broadcast_tx_count = broadcast_runtime.last_broadcast_tx_count;
         summary.last_broadcast_unix_ms = broadcast_runtime.last_updated_unix_ms;
         apply_network_runtime_native_repair_probe_summary_v1(&mut summary, &repair_probe);
+        apply_novorudp_durable_missing_summary_v1(&mut summary, chain_id);
         return summary;
     };
     let mut summary = runtime_native_pending_tx_summarize_v1(chain_id, chain_txs);
@@ -5995,6 +6062,7 @@ pub fn snapshot_network_runtime_native_pending_tx_summary_v1(
     summary.last_broadcast_tx_count = broadcast_runtime.last_broadcast_tx_count;
     summary.last_broadcast_unix_ms = broadcast_runtime.last_updated_unix_ms;
     apply_network_runtime_native_repair_probe_summary_v1(&mut summary, &repair_probe);
+    apply_novorudp_durable_missing_summary_v1(&mut summary, chain_id);
     summary
 }
 
