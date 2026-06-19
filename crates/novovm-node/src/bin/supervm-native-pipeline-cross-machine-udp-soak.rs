@@ -1136,6 +1136,123 @@ mod novorudp_tests {
         }
     }
 
+    fn ledger_receipt_progress_summary_for_test() -> Value {
+        serde_json::json!({
+            "included_canonical_total": 14112,
+            "aoem_executed_total": 14112,
+            "queue_pending_last": 0,
+            "ledger_final_missing_admitted_count": 1853,
+            "ledger_final_missing_actual_batch_count": 288,
+            "ledger_final_missing_actual_batch_ranges_sample": [
+                {"start": 14112, "end_inclusive": 14399, "count": 288}
+            ],
+            "ledger_final_missing_raw_txs_count": 288,
+            "ledger_final_missing_batch_result_count": 288,
+            "ledger_final_missing_receipt_written_count": 288,
+            "ledger_final_missing_receipt_missing_after_admission_count": 0,
+            "ledger_final_missing_inflight_count": 0,
+            "ledger_final_missing_retryable_count": 0,
+            "ledger_final_missing_requeued_after_no_receipt_count": 0,
+            "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count": 0,
+            "ledger_admission_counter_is_actual_batch": true,
+        })
+    }
+
+    #[test]
+    fn diagnostics_sample_preserves_ledger_receipt_completion_fields() {
+        let summary = ledger_receipt_progress_summary_for_test();
+        let sample = diagnostics_summary_sample(
+            Instant::now(),
+            &summary,
+            serde_json::json!({"line_count": 14112, "bytes": 1}),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            14080,
+        );
+
+        assert_eq!(
+            sample["ledger_final_missing_actual_batch_count"].as_u64(),
+            Some(288)
+        );
+        assert_eq!(
+            sample["ledger_final_missing_receipt_written_count"].as_u64(),
+            Some(288)
+        );
+        assert_eq!(
+            sample["ledger_final_missing_receipt_missing_after_admission_count"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            sample["ledger_receipt_completion_attribution_available"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            sample["ledger_admission_counter_is_actual_batch"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn timeout_synthetic_report_preserves_ledger_receipt_completion_fields() {
+        let source = ledger_receipt_progress_summary_for_test();
+        let mut synthetic_validation = serde_json::json!({});
+        apply_ledger_receipt_completion_fields_v1(&mut synthetic_validation, Some(&source));
+
+        assert_eq!(
+            synthetic_validation["ledger_final_missing_actual_batch_count"].as_u64(),
+            Some(288)
+        );
+        assert_eq!(
+            synthetic_validation["ledger_final_missing_receipt_written_count"].as_u64(),
+            Some(288)
+        );
+        assert_eq!(
+            synthetic_validation
+                ["ledger_final_missing_admitted_but_no_receipt_invariant_violation_count"]
+                .as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            synthetic_validation["ledger_receipt_completion_attribution_available"].as_bool(),
+            Some(true)
+        );
+        assert!(
+            synthetic_validation["ledger_receipt_completion_attribution_missing_reason"].is_null()
+        );
+    }
+
+    #[test]
+    fn wrapper_falls_back_to_progress_summary_for_ledger_receipt_fields() {
+        let source = ledger_receipt_progress_summary_for_test();
+        let last_sample_without_new_fields = serde_json::json!({
+            "repair_packet_received_count": 10224,
+            "ledger_final_missing_admitted_count": 1853,
+        });
+        let repair_source = if last_sample_without_new_fields
+            .get("ledger_final_missing_actual_batch_count")
+            .is_some()
+        {
+            Some(&last_sample_without_new_fields)
+        } else {
+            Some(&source)
+        };
+        let mut report = serde_json::json!({});
+        apply_ledger_receipt_completion_fields_v1(&mut report, repair_source);
+
+        assert_eq!(
+            report["ledger_final_missing_actual_batch_count"].as_u64(),
+            Some(288)
+        );
+        assert_eq!(
+            report["ledger_final_missing_receipt_written_count"].as_u64(),
+            Some(288)
+        );
+        assert_eq!(
+            report["ledger_receipt_completion_attribution_available"].as_bool(),
+            Some(true)
+        );
+    }
+
     #[test]
     fn novorudp_first_missing_window_limits_repair_scope() {
         let ranges = vec![MissingRangeV1 {
@@ -3180,6 +3297,15 @@ fn write_synthetic_receiver_failure_report(
     } else {
         progress_summary_from_path.as_ref()
     };
+    let ledger_receipt_source = if ledger_receipt_completion_attribution_available_v1(repair_source)
+    {
+        repair_source
+    } else {
+        progress_summary_from_path
+            .as_ref()
+            .filter(|summary| ledger_receipt_completion_attribution_available_v1(Some(summary)))
+            .or(repair_source)
+    };
     let ack_snapshot = fs::read_to_string(ack_report_path())
         .ok()
         .and_then(|raw| serde_json::from_str::<Value>(raw.as_str()).ok());
@@ -3278,7 +3404,7 @@ fn write_synthetic_receiver_failure_report(
             serde_json::json!(repair_accepted_but_not_effective_count),
         );
     }
-    let report = serde_json::json!({
+    let mut report = serde_json::json!({
         "schema": REPORT_SCHEMA_V1,
         "role": "receiver",
         "accepted": false,
@@ -3562,6 +3688,13 @@ fn write_synthetic_receiver_failure_report(
             format!("receiver exited before expected_tx_total: progress={stable_progress_total} expected={expected_tx_count}"),
         ],
     });
+    if let Some(validation) = report.get_mut("validation") {
+        apply_ledger_receipt_completion_fields_v1(validation, ledger_receipt_source);
+    }
+    if let Some(receiver_summary) = report.get_mut("receiver_summary") {
+        apply_ledger_receipt_completion_fields_v1(receiver_summary, ledger_receipt_source);
+    }
+    apply_ledger_receipt_completion_fields_v1(&mut report, ledger_receipt_source);
     write_report(report_path("receiver").as_path(), &report)
 }
 
@@ -3871,6 +4004,100 @@ fn post_exit_sample_count(samples: &[Value]) -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+const LEDGER_RECEIPT_COMPLETION_U64_FIELDS_V1: &[&str] = &[
+    "ledger_final_missing_actual_batch_count",
+    "ledger_final_missing_raw_txs_count",
+    "ledger_final_missing_batch_result_count",
+    "ledger_final_missing_receipt_written_count",
+    "ledger_final_missing_receipt_missing_after_admission_count",
+    "ledger_final_missing_inflight_count",
+    "ledger_final_missing_retryable_count",
+    "ledger_final_missing_requeued_after_no_receipt_count",
+    "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count",
+];
+
+const LEDGER_RECEIPT_COMPLETION_ARRAY_FIELDS_V1: &[&str] =
+    &["ledger_final_missing_actual_batch_ranges_sample"];
+
+fn ledger_receipt_completion_attribution_available_v1(source: Option<&Value>) -> bool {
+    source.is_some_and(|value| {
+        value
+            .get("ledger_final_missing_actual_batch_count")
+            .is_some()
+            && value
+                .get("ledger_final_missing_receipt_written_count")
+                .is_some()
+            && value
+                .get("ledger_final_missing_receipt_missing_after_admission_count")
+                .is_some()
+    })
+}
+
+fn ledger_receipt_completion_missing_reason_v1(source: Option<&Value>) -> Option<&'static str> {
+    if source.is_none() {
+        return Some("missing_progress_summary");
+    }
+    let source = source.expect("checked is_some");
+    if source
+        .get("ledger_final_missing_actual_batch_count")
+        .is_none()
+    {
+        return Some("missing_actual_batch_count");
+    }
+    if source
+        .get("ledger_final_missing_receipt_written_count")
+        .is_none()
+    {
+        return Some("missing_receipt_written_count");
+    }
+    if source
+        .get("ledger_final_missing_receipt_missing_after_admission_count")
+        .is_none()
+    {
+        return Some("missing_receipt_missing_after_admission_count");
+    }
+    None
+}
+
+fn apply_ledger_receipt_completion_fields_v1(target: &mut Value, source: Option<&Value>) {
+    let Some(target_obj) = target.as_object_mut() else {
+        return;
+    };
+    for field in LEDGER_RECEIPT_COMPLETION_U64_FIELDS_V1 {
+        target_obj.insert(
+            (*field).to_string(),
+            serde_json::json!(source.map(|value| summary_u64(value, field)).unwrap_or(0)),
+        );
+    }
+    for field in LEDGER_RECEIPT_COMPLETION_ARRAY_FIELDS_V1 {
+        target_obj.insert(
+            (*field).to_string(),
+            source
+                .and_then(|value| value.get(*field))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+        );
+    }
+    target_obj.insert(
+        "ledger_admission_counter_is_actual_batch".to_string(),
+        serde_json::json!(source
+            .and_then(|value| value.get("ledger_admission_counter_is_actual_batch"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)),
+    );
+    let attribution_available = ledger_receipt_completion_attribution_available_v1(source);
+    target_obj.insert(
+        "ledger_receipt_completion_attribution_available".to_string(),
+        serde_json::json!(attribution_available),
+    );
+    target_obj.insert(
+        "ledger_receipt_completion_attribution_missing_reason".to_string(),
+        ledger_receipt_completion_missing_reason_v1(source)
+            .map(|reason| serde_json::json!(reason))
+            .unwrap_or(Value::Null),
+    );
+}
+
 fn diagnostics_summary_sample(
     started_at: Instant,
     summary: &Value,
@@ -4147,6 +4374,19 @@ fn diagnostics_summary_sample(
         "ledger_final_missing_requeued_before_admission_count": summary_u64(summary, "ledger_final_missing_requeued_before_admission_count"),
         "ledger_final_missing_admitted_count": summary_u64(summary, "ledger_final_missing_admitted_count"),
         "ledger_final_missing_admitted_ranges_sample": summary.get("ledger_final_missing_admitted_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "ledger_final_missing_actual_batch_count": summary_u64(summary, "ledger_final_missing_actual_batch_count"),
+        "ledger_final_missing_actual_batch_ranges_sample": summary.get("ledger_final_missing_actual_batch_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "ledger_final_missing_raw_txs_count": summary_u64(summary, "ledger_final_missing_raw_txs_count"),
+        "ledger_final_missing_batch_result_count": summary_u64(summary, "ledger_final_missing_batch_result_count"),
+        "ledger_final_missing_receipt_written_count": summary_u64(summary, "ledger_final_missing_receipt_written_count"),
+        "ledger_final_missing_receipt_missing_after_admission_count": summary_u64(summary, "ledger_final_missing_receipt_missing_after_admission_count"),
+        "ledger_final_missing_inflight_count": summary_u64(summary, "ledger_final_missing_inflight_count"),
+        "ledger_final_missing_retryable_count": summary_u64(summary, "ledger_final_missing_retryable_count"),
+        "ledger_final_missing_requeued_after_no_receipt_count": summary_u64(summary, "ledger_final_missing_requeued_after_no_receipt_count"),
+        "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count": summary_u64(summary, "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count"),
+        "ledger_admission_counter_is_actual_batch": summary.get("ledger_admission_counter_is_actual_batch").and_then(Value::as_bool).unwrap_or(false),
+        "ledger_receipt_completion_attribution_available": ledger_receipt_completion_attribution_available_v1(Some(summary)),
+        "ledger_receipt_completion_attribution_missing_reason": ledger_receipt_completion_missing_reason_v1(Some(summary)),
         "ledger_final_missing_admission_skipped_count": summary_u64(summary, "ledger_final_missing_admission_skipped_count"),
         "ledger_final_missing_admission_skip_reason_counts": summary.get("ledger_final_missing_admission_skip_reason_counts").cloned().unwrap_or_else(|| serde_json::json!({})),
         "admission_used_ledger_final_missing_bucket": summary.get("admission_used_ledger_final_missing_bucket").and_then(Value::as_bool).unwrap_or(false),
