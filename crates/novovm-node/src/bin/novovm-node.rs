@@ -34153,11 +34153,19 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
     );
     for key in [
         "ledger_final_missing_candidate_payload_available_count",
+        "ledger_final_missing_candidate_payload_available_ranges_sample",
         "ledger_final_missing_candidate_payload_missing_count",
         "ledger_final_missing_candidate_tx_hash_mapping_missing_count",
         "ledger_final_missing_candidate_raw_tx_build_error_count",
         "ledger_final_missing_payload_available_selected_count",
+        "ledger_final_missing_payload_available_selected_ranges_sample",
         "ledger_final_missing_payload_available_not_selected_count",
+        "ledger_final_missing_payload_available_selection_skipped_reason",
+        "ledger_final_missing_selectable_count",
+        "ledger_final_missing_selector_input_count",
+        "ledger_final_missing_selector_output_count",
+        "ledger_final_missing_selector_used_durable_bucket",
+        "ledger_final_missing_selector_skipped_by_old_pending_view_count",
         "ledger_final_missing_selected_not_pushed_to_raw_txs_count",
         "ledger_final_missing_raw_txs_push_attempt_count",
         "ledger_final_missing_raw_txs_push_success_count",
@@ -34362,11 +34370,19 @@ struct NativeExecutionPipelineAggregateV1 {
     ledger_final_missing_admitted_count: u64,
     ledger_final_missing_admitted_ranges_sample: serde_json::Value,
     ledger_final_missing_candidate_payload_available_count: u64,
+    ledger_final_missing_candidate_payload_available_ranges_sample: serde_json::Value,
     ledger_final_missing_candidate_payload_missing_count: u64,
     ledger_final_missing_candidate_tx_hash_mapping_missing_count: u64,
     ledger_final_missing_candidate_raw_tx_build_error_count: u64,
     ledger_final_missing_payload_available_selected_count: u64,
+    ledger_final_missing_payload_available_selected_ranges_sample: serde_json::Value,
     ledger_final_missing_payload_available_not_selected_count: u64,
+    ledger_final_missing_payload_available_selection_skipped_reason: String,
+    ledger_final_missing_selectable_count: u64,
+    ledger_final_missing_selector_input_count: u64,
+    ledger_final_missing_selector_output_count: u64,
+    ledger_final_missing_selector_used_durable_bucket: bool,
+    ledger_final_missing_selector_skipped_by_old_pending_view_count: u64,
     ledger_final_missing_selected_not_pushed_to_raw_txs_count: u64,
     ledger_final_missing_raw_txs_push_attempt_count: u64,
     ledger_final_missing_raw_txs_push_success_count: u64,
@@ -34536,11 +34552,19 @@ impl NativeExecutionPipelineAggregateV1 {
             ledger_final_missing_admitted_count: 0,
             ledger_final_missing_admitted_ranges_sample: serde_json::json!([]),
             ledger_final_missing_candidate_payload_available_count: 0,
+            ledger_final_missing_candidate_payload_available_ranges_sample: serde_json::json!([]),
             ledger_final_missing_candidate_payload_missing_count: 0,
             ledger_final_missing_candidate_tx_hash_mapping_missing_count: 0,
             ledger_final_missing_candidate_raw_tx_build_error_count: 0,
             ledger_final_missing_payload_available_selected_count: 0,
+            ledger_final_missing_payload_available_selected_ranges_sample: serde_json::json!([]),
             ledger_final_missing_payload_available_not_selected_count: 0,
+            ledger_final_missing_payload_available_selection_skipped_reason: String::new(),
+            ledger_final_missing_selectable_count: 0,
+            ledger_final_missing_selector_input_count: 0,
+            ledger_final_missing_selector_output_count: 0,
+            ledger_final_missing_selector_used_durable_bucket: false,
+            ledger_final_missing_selector_skipped_by_old_pending_view_count: 0,
             ledger_final_missing_selected_not_pushed_to_raw_txs_count: 0,
             ledger_final_missing_raw_txs_push_attempt_count: 0,
             ledger_final_missing_raw_txs_push_success_count: 0,
@@ -35158,6 +35182,15 @@ impl NativeExecutionPipelineAggregateV1 {
             .or_else(|| ingress.get("ledger_final_missing_candidate_payload_available_count"))
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.ledger_final_missing_candidate_payload_available_ranges_sample = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_candidate_payload_available_ranges_sample")
+            })
+            .or_else(|| {
+                ingress.get("ledger_final_missing_candidate_payload_available_ranges_sample")
+            })
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
         self.ledger_final_missing_candidate_payload_missing_count = tick_batch_result
             .and_then(|value| value.get("ledger_final_missing_candidate_payload_missing_count"))
             .or_else(|| ingress.get("ledger_final_missing_candidate_payload_missing_count"))
@@ -35180,11 +35213,59 @@ impl NativeExecutionPipelineAggregateV1 {
             .or_else(|| ingress.get("ledger_final_missing_payload_available_selected_count"))
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.ledger_final_missing_payload_available_selected_ranges_sample = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_payload_available_selected_ranges_sample")
+            })
+            .or_else(|| {
+                ingress.get("ledger_final_missing_payload_available_selected_ranges_sample")
+            })
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
         self.ledger_final_missing_payload_available_not_selected_count = tick_batch_result
             .and_then(|value| {
                 value.get("ledger_final_missing_payload_available_not_selected_count")
             })
             .or_else(|| ingress.get("ledger_final_missing_payload_available_not_selected_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_payload_available_selection_skipped_reason = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_payload_available_selection_skipped_reason")
+            })
+            .or_else(|| {
+                ingress.get("ledger_final_missing_payload_available_selection_skipped_reason")
+            })
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        self.ledger_final_missing_selectable_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_selectable_count"))
+            .or_else(|| ingress.get("ledger_final_missing_selectable_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_selector_input_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_selector_input_count"))
+            .or_else(|| ingress.get("ledger_final_missing_selector_input_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_selector_output_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_selector_output_count"))
+            .or_else(|| ingress.get("ledger_final_missing_selector_output_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_selector_used_durable_bucket = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_selector_used_durable_bucket"))
+            .or_else(|| ingress.get("ledger_final_missing_selector_used_durable_bucket"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        self.ledger_final_missing_selector_skipped_by_old_pending_view_count = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_selector_skipped_by_old_pending_view_count")
+            })
+            .or_else(|| {
+                ingress.get("ledger_final_missing_selector_skipped_by_old_pending_view_count")
+            })
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
         self.ledger_final_missing_selected_not_pushed_to_raw_txs_count = tick_batch_result
@@ -36087,6 +36168,11 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.ledger_final_missing_candidate_payload_available_count),
         );
         out.insert(
+            "ledger_final_missing_candidate_payload_available_ranges_sample".to_string(),
+            self.ledger_final_missing_candidate_payload_available_ranges_sample
+                .clone(),
+        );
+        out.insert(
             "ledger_final_missing_candidate_payload_missing_count".to_string(),
             serde_json::json!(self.ledger_final_missing_candidate_payload_missing_count),
         );
@@ -36103,8 +36189,37 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.ledger_final_missing_payload_available_selected_count),
         );
         out.insert(
+            "ledger_final_missing_payload_available_selected_ranges_sample".to_string(),
+            self.ledger_final_missing_payload_available_selected_ranges_sample
+                .clone(),
+        );
+        out.insert(
             "ledger_final_missing_payload_available_not_selected_count".to_string(),
             serde_json::json!(self.ledger_final_missing_payload_available_not_selected_count),
+        );
+        out.insert(
+            "ledger_final_missing_payload_available_selection_skipped_reason".to_string(),
+            serde_json::json!(self.ledger_final_missing_payload_available_selection_skipped_reason),
+        );
+        out.insert(
+            "ledger_final_missing_selectable_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_selectable_count),
+        );
+        out.insert(
+            "ledger_final_missing_selector_input_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_selector_input_count),
+        );
+        out.insert(
+            "ledger_final_missing_selector_output_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_selector_output_count),
+        );
+        out.insert(
+            "ledger_final_missing_selector_used_durable_bucket".to_string(),
+            serde_json::json!(self.ledger_final_missing_selector_used_durable_bucket),
+        );
+        out.insert(
+            "ledger_final_missing_selector_skipped_by_old_pending_view_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_selector_skipped_by_old_pending_view_count),
         );
         out.insert(
             "ledger_final_missing_selected_not_pushed_to_raw_txs_count".to_string(),

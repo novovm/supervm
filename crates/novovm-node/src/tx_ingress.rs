@@ -26,6 +26,7 @@ use novovm_network::{
     observe_network_runtime_native_pending_tx_local_native_payload_v1,
     observe_network_runtime_native_pending_tx_rejected_v1,
     observe_network_runtime_native_pending_tx_repair_actual_batch_v1,
+    observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1,
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
     snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1,
     snapshot_network_runtime_native_execution_budget_runtime_summary_v1,
@@ -11306,6 +11307,40 @@ fn final_missing_batch_blocked_reason_v1(inputs: FinalMissingBatchBlockedInputsV
     }
 }
 
+fn sequence_ranges_sample_json_v1(
+    sequences: &BTreeSet<u64>,
+    max_ranges: usize,
+) -> serde_json::Value {
+    let mut ranges = Vec::<serde_json::Value>::new();
+    let mut iter = sequences.iter().copied();
+    let Some(mut start) = iter.next() else {
+        return serde_json::Value::Array(ranges);
+    };
+    let mut end = start;
+    for sequence in iter {
+        if sequence == end.saturating_add(1) {
+            end = sequence;
+            continue;
+        }
+        ranges.push(serde_json::json!({
+            "start": start,
+            "end": end,
+            "count": end.saturating_sub(start).saturating_add(1),
+        }));
+        if ranges.len() >= max_ranges {
+            return serde_json::Value::Array(ranges);
+        }
+        start = sequence;
+        end = sequence;
+    }
+    ranges.push(serde_json::json!({
+        "start": start,
+        "end": end,
+        "count": end.saturating_sub(start).saturating_add(1),
+    }));
+    serde_json::Value::Array(ranges)
+}
+
 pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
@@ -11388,6 +11423,8 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     let mut ledger_final_missing_payload_available_selected_count = 0usize;
     let mut ledger_final_missing_raw_txs_push_attempt_count = 0usize;
     let mut ledger_final_missing_raw_txs_push_success_count = 0usize;
+    let mut ledger_final_missing_payload_available_sequences = BTreeSet::<u64>::new();
+    let mut ledger_final_missing_selected_sequences = BTreeSet::<u64>::new();
     let ledger_final_missing_batch_limit_config = limit as u64;
     let ledger_final_missing_reserved_batch_budget =
         if ledger_final_missing_admission.ledger_final_missing_candidate_count > 0 {
@@ -11440,6 +11477,13 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
                 continue;
             }
         };
+        let native_sequence = match &native_tx.kind {
+            NovTxKindV1::Execute(execute) => execute.nonce.saturating_sub(1),
+            NovTxKindV1::Transfer(_) | NovTxKindV1::Governance(_) => 0,
+        };
+        if is_ledger_final_missing_candidate {
+            ledger_final_missing_payload_available_sequences.insert(native_sequence);
+        }
         if native_tx.chain_id != chain_id {
             skipped_chain_mismatch = skipped_chain_mismatch.saturating_add(1);
             if is_ledger_final_missing_candidate {
@@ -11459,6 +11503,10 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             if is_ledger_final_missing_candidate {
                 ledger_final_missing_candidate_already_receipted_count =
                     ledger_final_missing_candidate_already_receipted_count.saturating_add(1);
+                observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1(
+                    chain_id,
+                    pending_tx.tx_hash,
+                );
             }
             observe_network_runtime_native_pending_tx_dropped_v1(chain_id, pending_tx.tx_hash);
             continue;
@@ -11468,6 +11516,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
                 ledger_final_missing_payload_available_selected_count.saturating_add(1);
             ledger_final_missing_raw_txs_push_attempt_count =
                 ledger_final_missing_raw_txs_push_attempt_count.saturating_add(1);
+            ledger_final_missing_selected_sequences.insert(native_sequence);
         }
         raw_txs.push(serde_json::Value::String(to_hex_prefixed_v1(
             payload.as_slice(),
@@ -11511,6 +11560,24 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             .saturating_sub(ledger_final_missing_raw_txs_push_success_count);
     let ledger_final_missing_raw_txs_nonempty_but_not_submitted_count =
         u64::from(!raw_txs.is_empty() && !ledger_final_missing_batch_nonempty_submitted);
+    let ledger_final_missing_selector_input_count =
+        ledger_final_missing_candidate_payload_available_count as u64;
+    let ledger_final_missing_selector_output_count =
+        ledger_final_missing_payload_available_selected_count as u64;
+    let ledger_final_missing_selectable_count =
+        ledger_final_missing_payload_available_selected_count as u64;
+    let ledger_final_missing_candidate_payload_available_ranges_sample =
+        sequence_ranges_sample_json_v1(&ledger_final_missing_payload_available_sequences, 64);
+    let ledger_final_missing_payload_available_selected_ranges_sample =
+        sequence_ranges_sample_json_v1(&ledger_final_missing_selected_sequences, 64);
+    let ledger_final_missing_payload_available_selection_skipped_reason =
+        if ledger_final_missing_candidate_payload_available_count > 0
+            && ledger_final_missing_payload_available_selected_count == 0
+        {
+            "payload_available_but_not_selected"
+        } else {
+            ""
+        };
 
     if raw_txs.is_empty() {
         let ledger_final_missing_batch_blocked_by_batch_limit_count =
@@ -11610,19 +11677,53 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         );
         report.insert(
             "ledger_final_missing_candidate_selected_ranges_sample".to_string(),
-            serde_json::json!([]),
+            ledger_final_missing_payload_available_selected_ranges_sample.clone(),
         );
         report.insert(
             "ledger_final_missing_candidate_payload_available_count".to_string(),
             serde_json::json!(ledger_final_missing_candidate_payload_available_count),
         );
         report.insert(
+            "ledger_final_missing_candidate_payload_available_ranges_sample".to_string(),
+            ledger_final_missing_candidate_payload_available_ranges_sample.clone(),
+        );
+        report.insert(
             "ledger_final_missing_payload_available_selected_count".to_string(),
             serde_json::json!(ledger_final_missing_payload_available_selected_count),
         );
         report.insert(
+            "ledger_final_missing_payload_available_selected_ranges_sample".to_string(),
+            ledger_final_missing_payload_available_selected_ranges_sample.clone(),
+        );
+        report.insert(
             "ledger_final_missing_payload_available_not_selected_count".to_string(),
             serde_json::json!(ledger_final_missing_payload_available_not_selected_count),
+        );
+        report.insert(
+            "ledger_final_missing_payload_available_selection_skipped_reason".to_string(),
+            serde_json::json!(ledger_final_missing_payload_available_selection_skipped_reason),
+        );
+        report.insert(
+            "ledger_final_missing_selectable_count".to_string(),
+            serde_json::json!(ledger_final_missing_selectable_count),
+        );
+        report.insert(
+            "ledger_final_missing_selector_input_count".to_string(),
+            serde_json::json!(ledger_final_missing_selector_input_count),
+        );
+        report.insert(
+            "ledger_final_missing_selector_output_count".to_string(),
+            serde_json::json!(ledger_final_missing_selector_output_count),
+        );
+        report.insert(
+            "ledger_final_missing_selector_used_durable_bucket".to_string(),
+            serde_json::json!(
+                ledger_final_missing_admission.ledger_final_missing_candidate_count > 0
+            ),
+        );
+        report.insert(
+            "ledger_final_missing_selector_skipped_by_old_pending_view_count".to_string(),
+            serde_json::json!(0),
         );
         report.insert(
             "ledger_final_missing_selected_not_pushed_to_raw_txs_count".to_string(),
@@ -11872,19 +11973,51 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     );
     report.insert(
         "ledger_final_missing_candidate_selected_ranges_sample".to_string(),
-        serde_json::json!([]),
+        ledger_final_missing_payload_available_selected_ranges_sample.clone(),
     );
     report.insert(
         "ledger_final_missing_candidate_payload_available_count".to_string(),
         serde_json::json!(ledger_final_missing_candidate_payload_available_count),
     );
     report.insert(
+        "ledger_final_missing_candidate_payload_available_ranges_sample".to_string(),
+        ledger_final_missing_candidate_payload_available_ranges_sample.clone(),
+    );
+    report.insert(
         "ledger_final_missing_payload_available_selected_count".to_string(),
         serde_json::json!(ledger_final_missing_payload_available_selected_count),
     );
     report.insert(
+        "ledger_final_missing_payload_available_selected_ranges_sample".to_string(),
+        ledger_final_missing_payload_available_selected_ranges_sample.clone(),
+    );
+    report.insert(
         "ledger_final_missing_payload_available_not_selected_count".to_string(),
         serde_json::json!(ledger_final_missing_payload_available_not_selected_count),
+    );
+    report.insert(
+        "ledger_final_missing_payload_available_selection_skipped_reason".to_string(),
+        serde_json::json!(ledger_final_missing_payload_available_selection_skipped_reason),
+    );
+    report.insert(
+        "ledger_final_missing_selectable_count".to_string(),
+        serde_json::json!(ledger_final_missing_selectable_count),
+    );
+    report.insert(
+        "ledger_final_missing_selector_input_count".to_string(),
+        serde_json::json!(ledger_final_missing_selector_input_count),
+    );
+    report.insert(
+        "ledger_final_missing_selector_output_count".to_string(),
+        serde_json::json!(ledger_final_missing_selector_output_count),
+    );
+    report.insert(
+        "ledger_final_missing_selector_used_durable_bucket".to_string(),
+        serde_json::json!(ledger_final_missing_admission.ledger_final_missing_candidate_count > 0),
+    );
+    report.insert(
+        "ledger_final_missing_selector_skipped_by_old_pending_view_count".to_string(),
+        serde_json::json!(0),
     );
     report.insert(
         "ledger_final_missing_selected_not_pushed_to_raw_txs_count".to_string(),
@@ -15617,6 +15750,234 @@ mod tests {
                     assert_eq!(after.repair_sequence_admitted_to_aoem_count, 32);
                     assert_eq!(after.ledger_final_missing_actual_batch_count, 32);
                     assert_eq!(after.ledger_completed_count, 14_112);
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn final_missing_payload_available_candidate_is_selected() {
+        let out = assert_final_missing_candidate_payload_available_v1(
+            88_144,
+            "acct-payload-available-selected",
+        );
+
+        assert!(
+            out["ledger_final_missing_candidate_payload_available_count"]
+                .as_u64()
+                .unwrap_or_default()
+                > 0
+        );
+        assert!(
+            out["ledger_final_missing_payload_available_selected_count"]
+                .as_u64()
+                .unwrap_or_default()
+                > 0
+        );
+        assert_eq!(
+            out["ledger_final_missing_payload_available_not_selected_count"].as_u64(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn final_missing_selection_uses_same_classified_candidates() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_145;
+                    for sequence in 14_112..14_144 {
+                        let _ = ingest_test_native_repair_payload_v1(
+                            chain_id,
+                            sequence,
+                            &format!("acct-same-classified-{sequence}"),
+                            6,
+                        );
+                    }
+
+                    let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
+                        &serde_json::json!({
+                            "chain_id": chain_id,
+                            "limit": 32,
+                            "scan_limit": 1,
+                            "repair_final_missing_sequence_start": 14_112,
+                            "native_execution_store_path": path,
+                        }),
+                    )
+                    .expect("selector must consume the same classified final-missing candidates");
+
+                    assert_eq!(
+                        out["ledger_final_missing_selector_input_count"].as_u64(),
+                        Some(32)
+                    );
+                    assert!(
+                        out["ledger_final_missing_selector_output_count"]
+                            .as_u64()
+                            .unwrap_or_default()
+                            > 0
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_payload_available_not_selected_count"].as_u64(),
+                        Some(0)
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_selector_used_durable_bucket"].as_bool(),
+                        Some(true)
+                    );
+                    assert!(
+                        out["ledger_final_missing_payload_available_selected_ranges_sample"]
+                            .as_array()
+                            .is_some_and(|ranges| !ranges.is_empty())
+                    );
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn final_missing_selection_does_not_depend_on_queue_pending_last() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_146;
+                    let (_raw, tx_hash) = ingest_test_native_repair_payload_v1(
+                        chain_id,
+                        14_112,
+                        "acct-selection-no-queue",
+                        12,
+                    );
+                    novovm_network::observe_network_runtime_native_pending_tx_dropped_v1(
+                        chain_id, tx_hash,
+                    );
+
+                    let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
+                        &serde_json::json!({
+                            "chain_id": chain_id,
+                            "limit": 1,
+                            "scan_limit": 1,
+                            "repair_final_missing_sequence_start": 14_112,
+                            "native_execution_store_path": path,
+                        }),
+                    )
+                    .expect("durable final-missing payload must requeue/select independent of old queue view");
+
+                    assert!(
+                        out["ledger_final_missing_payload_available_selected_count"]
+                            .as_u64()
+                            .unwrap_or_default()
+                            > 0
+                    );
+                    assert_eq!(
+                        out["ledger_final_missing_selector_skipped_by_old_pending_view_count"]
+                            .as_u64(),
+                        Some(0)
+                    );
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn final_missing_selected_candidate_pushes_raw_txs() {
+        let out = assert_final_missing_candidate_payload_available_v1(
+            88_147,
+            "acct-selected-pushes-rawtx",
+        );
+
+        assert!(
+            out["ledger_final_missing_payload_available_selected_count"]
+                .as_u64()
+                .unwrap_or_default()
+                > 0
+        );
+        assert!(
+            out["ledger_final_missing_raw_txs_push_attempt_count"]
+                .as_u64()
+                .unwrap_or_default()
+                > 0
+        );
+        assert!(
+            out["ledger_final_missing_raw_txs_push_success_count"]
+                .as_u64()
+                .unwrap_or_default()
+                > 0
+        );
+        assert!(
+            out["ledger_final_missing_raw_txs_count"]
+                .as_u64()
+                .unwrap_or_default()
+                > 0
+        );
+        assert!(
+            out["ledger_final_missing_actual_batch_count"]
+                .as_u64()
+                .unwrap_or_default()
+                > 0
+        );
+    }
+
+    #[test]
+    fn tail_gap_14112_14399_payload_available_selected_and_batched() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 88_148;
+                    novovm_network::ensure_runtime_novorudp_sequence_expected_total_v1(
+                        chain_id, 14_400, 64,
+                    );
+                    novovm_network::observe_runtime_novorudp_sequence_completion_prefix_v1(
+                        chain_id, 14_112,
+                    );
+                    for sequence in 14_112..14_144 {
+                        let _ = ingest_test_native_repair_payload_v1(
+                            chain_id,
+                            sequence,
+                            &format!("acct-tail-14112-selected-{sequence}"),
+                            10,
+                        );
+                    }
+
+                    let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
+                        &serde_json::json!({
+                            "chain_id": chain_id,
+                            "limit": 32,
+                            "scan_limit": 1,
+                            "repair_final_missing_sequence_start": 14_112,
+                            "native_execution_store_path": path,
+                        }),
+                    )
+                    .expect("tail gap payload-available candidates must select and batch");
+
+                    assert!(
+                        out["ledger_final_missing_payload_available_selected_count"]
+                            .as_u64()
+                            .unwrap_or_default()
+                            > 0
+                    );
+                    assert!(
+                        out["ledger_final_missing_raw_txs_push_success_count"]
+                            .as_u64()
+                            .unwrap_or_default()
+                            > 0
+                    );
+                    assert!(
+                        out["ledger_final_missing_actual_batch_count"]
+                            .as_u64()
+                            .unwrap_or_default()
+                            > 0
+                    );
+                    let ranges = out["ledger_final_missing_actual_batch_ranges_sample"]
+                        .as_array()
+                        .expect("actual batch ranges");
+                    assert!(ranges.iter().any(|range| {
+                        range.get("start").and_then(|value| value.as_u64()) == Some(14_112)
+                    }));
                 })
             },
         )

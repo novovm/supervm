@@ -5217,6 +5217,10 @@ const LEDGER_RECEIPT_COMPLETION_U64_FIELDS_V1: &[&str] = &[
     "ledger_final_missing_candidate_raw_tx_build_error_count",
     "ledger_final_missing_payload_available_selected_count",
     "ledger_final_missing_payload_available_not_selected_count",
+    "ledger_final_missing_selectable_count",
+    "ledger_final_missing_selector_input_count",
+    "ledger_final_missing_selector_output_count",
+    "ledger_final_missing_selector_skipped_by_old_pending_view_count",
     "ledger_final_missing_selected_not_pushed_to_raw_txs_count",
     "ledger_final_missing_raw_txs_push_attempt_count",
     "ledger_final_missing_raw_txs_push_success_count",
@@ -5243,8 +5247,11 @@ const LEDGER_RECEIPT_COMPLETION_U64_FIELDS_V1: &[&str] = &[
     "ledger_final_missing_preempted_normal_pending_count",
 ];
 
-const LEDGER_RECEIPT_COMPLETION_ARRAY_FIELDS_V1: &[&str] =
-    &["ledger_final_missing_actual_batch_ranges_sample"];
+const LEDGER_RECEIPT_COMPLETION_ARRAY_FIELDS_V1: &[&str] = &[
+    "ledger_final_missing_actual_batch_ranges_sample",
+    "ledger_final_missing_candidate_payload_available_ranges_sample",
+    "ledger_final_missing_payload_available_selected_ranges_sample",
+];
 
 fn ledger_receipt_completion_attribution_available_v1(source: Option<&Value>) -> bool {
     source.is_some_and(|value| {
@@ -5318,6 +5325,22 @@ fn apply_ledger_receipt_completion_fields_v1(target: &mut Value, source: Option<
             .and_then(|value| value.get("ledger_final_missing_batch_nonempty_submitted"))
             .and_then(Value::as_bool)
             .unwrap_or(false)),
+    );
+    target_obj.insert(
+        "ledger_final_missing_selector_used_durable_bucket".to_string(),
+        serde_json::json!(source
+            .and_then(|value| value.get("ledger_final_missing_selector_used_durable_bucket"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)),
+    );
+    target_obj.insert(
+        "ledger_final_missing_payload_available_selection_skipped_reason".to_string(),
+        source
+            .and_then(|value| {
+                value.get("ledger_final_missing_payload_available_selection_skipped_reason")
+            })
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!("")),
     );
     target_obj.insert(
         "ledger_admission_counter_mismatch_reason".to_string(),
@@ -5666,11 +5689,19 @@ fn diagnostics_summary_sample(
         "ledger_final_missing_admitted_count": summary_u64(summary, "ledger_final_missing_admitted_count"),
         "ledger_final_missing_admitted_ranges_sample": summary.get("ledger_final_missing_admitted_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_candidate_payload_available_count": summary_u64(summary, "ledger_final_missing_candidate_payload_available_count"),
+        "ledger_final_missing_candidate_payload_available_ranges_sample": summary.get("ledger_final_missing_candidate_payload_available_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_candidate_payload_missing_count": summary_u64(summary, "ledger_final_missing_candidate_payload_missing_count"),
         "ledger_final_missing_candidate_tx_hash_mapping_missing_count": summary_u64(summary, "ledger_final_missing_candidate_tx_hash_mapping_missing_count"),
         "ledger_final_missing_candidate_raw_tx_build_error_count": summary_u64(summary, "ledger_final_missing_candidate_raw_tx_build_error_count"),
         "ledger_final_missing_payload_available_selected_count": summary_u64(summary, "ledger_final_missing_payload_available_selected_count"),
+        "ledger_final_missing_payload_available_selected_ranges_sample": summary.get("ledger_final_missing_payload_available_selected_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_payload_available_not_selected_count": summary_u64(summary, "ledger_final_missing_payload_available_not_selected_count"),
+        "ledger_final_missing_payload_available_selection_skipped_reason": summary.get("ledger_final_missing_payload_available_selection_skipped_reason").cloned().unwrap_or_else(|| serde_json::json!("")),
+        "ledger_final_missing_selectable_count": summary_u64(summary, "ledger_final_missing_selectable_count"),
+        "ledger_final_missing_selector_input_count": summary_u64(summary, "ledger_final_missing_selector_input_count"),
+        "ledger_final_missing_selector_output_count": summary_u64(summary, "ledger_final_missing_selector_output_count"),
+        "ledger_final_missing_selector_used_durable_bucket": summary.get("ledger_final_missing_selector_used_durable_bucket").and_then(Value::as_bool).unwrap_or(false),
+        "ledger_final_missing_selector_skipped_by_old_pending_view_count": summary_u64(summary, "ledger_final_missing_selector_skipped_by_old_pending_view_count"),
         "ledger_final_missing_selected_not_pushed_to_raw_txs_count": summary_u64(summary, "ledger_final_missing_selected_not_pushed_to_raw_txs_count"),
         "ledger_final_missing_raw_txs_push_attempt_count": summary_u64(summary, "ledger_final_missing_raw_txs_push_attempt_count"),
         "ledger_final_missing_raw_txs_push_success_count": summary_u64(summary, "ledger_final_missing_raw_txs_push_success_count"),
@@ -8619,11 +8650,19 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "ledger_final_missing_admitted_count": summary_u64(&summary, "ledger_final_missing_admitted_count"),
         "ledger_final_missing_admitted_ranges_sample": summary.get("ledger_final_missing_admitted_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_candidate_payload_available_count": summary_u64(&summary, "ledger_final_missing_candidate_payload_available_count"),
+        "ledger_final_missing_candidate_payload_available_ranges_sample": summary.get("ledger_final_missing_candidate_payload_available_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_candidate_payload_missing_count": summary_u64(&summary, "ledger_final_missing_candidate_payload_missing_count"),
         "ledger_final_missing_candidate_tx_hash_mapping_missing_count": summary_u64(&summary, "ledger_final_missing_candidate_tx_hash_mapping_missing_count"),
         "ledger_final_missing_candidate_raw_tx_build_error_count": summary_u64(&summary, "ledger_final_missing_candidate_raw_tx_build_error_count"),
         "ledger_final_missing_payload_available_selected_count": summary_u64(&summary, "ledger_final_missing_payload_available_selected_count"),
+        "ledger_final_missing_payload_available_selected_ranges_sample": summary.get("ledger_final_missing_payload_available_selected_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_payload_available_not_selected_count": summary_u64(&summary, "ledger_final_missing_payload_available_not_selected_count"),
+        "ledger_final_missing_payload_available_selection_skipped_reason": summary.get("ledger_final_missing_payload_available_selection_skipped_reason").cloned().unwrap_or_else(|| serde_json::json!("")),
+        "ledger_final_missing_selectable_count": summary_u64(&summary, "ledger_final_missing_selectable_count"),
+        "ledger_final_missing_selector_input_count": summary_u64(&summary, "ledger_final_missing_selector_input_count"),
+        "ledger_final_missing_selector_output_count": summary_u64(&summary, "ledger_final_missing_selector_output_count"),
+        "ledger_final_missing_selector_used_durable_bucket": summary.get("ledger_final_missing_selector_used_durable_bucket").and_then(Value::as_bool).unwrap_or(false),
+        "ledger_final_missing_selector_skipped_by_old_pending_view_count": summary_u64(&summary, "ledger_final_missing_selector_skipped_by_old_pending_view_count"),
         "ledger_final_missing_selected_not_pushed_to_raw_txs_count": summary_u64(&summary, "ledger_final_missing_selected_not_pushed_to_raw_txs_count"),
         "ledger_final_missing_raw_txs_push_attempt_count": summary_u64(&summary, "ledger_final_missing_raw_txs_push_attempt_count"),
         "ledger_final_missing_raw_txs_push_success_count": summary_u64(&summary, "ledger_final_missing_raw_txs_push_success_count"),
