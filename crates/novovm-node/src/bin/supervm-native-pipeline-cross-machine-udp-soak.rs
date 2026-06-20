@@ -322,6 +322,29 @@ fn u64_env_alias(names: &[&str], default: u64) -> Result<u64> {
     Ok(default)
 }
 
+fn u64_seconds_env_alias_ms(names: &[&str], default_ms: u64) -> Result<u64> {
+    for name in names {
+        if let Some(raw) = string_env_nonempty(name) {
+            return raw
+                .parse::<u64>()
+                .map(|seconds| seconds.saturating_mul(1_000))
+                .with_context(|| format!("{name} must be u64 seconds"));
+        }
+    }
+    Ok(default_ms)
+}
+
+fn u64_seconds_or_ms_env(
+    seconds_names: &[&str],
+    ms_names: &[&str],
+    default_ms: u64,
+) -> Result<u64> {
+    if env_any(seconds_names) {
+        return u64_seconds_env_alias_ms(seconds_names, default_ms);
+    }
+    u64_env_alias(ms_names, default_ms)
+}
+
 fn env_any(names: &[&str]) -> bool {
     names.iter().any(|name| string_env_nonempty(name).is_some())
 }
@@ -500,20 +523,35 @@ fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
     let novorudp_enabled = NovoRudpConfigV1::from_env(transport_profile)
         .map(|config| config.enabled)
         .unwrap_or(false);
-    let repair_drain_timeout_ms =
-        u64_env("NOVOVM_NOVORUDP_REPAIR_DRAIN_TIMEOUT_SECONDS", 900)?.saturating_mul(1_000);
+    let is_novorudp_two_hour_profile = novorudp_enabled && sustained_duration_ms >= 7_200_000;
+    let default_repair_drain_timeout_seconds = if is_novorudp_two_hour_profile {
+        5_400
+    } else {
+        900
+    };
+    let repair_drain_timeout_ms = u64_env(
+        "NOVOVM_NOVORUDP_REPAIR_DRAIN_TIMEOUT_SECONDS",
+        default_repair_drain_timeout_seconds,
+    )?
+    .saturating_mul(1_000);
     let final_ack_timeout_ms =
         u64_env("NOVOVM_NOVORUDP_FINAL_ACK_TIMEOUT_SECONDS", 120)?.saturating_mul(1_000);
     let default_absolute_max_ms = if sustained_duration_ms > 0 {
-        sustained_duration_ms.saturating_add(repair_drain_timeout_ms)
+        if is_novorudp_two_hour_profile {
+            12_600_000
+        } else {
+            sustained_duration_ms.saturating_add(repair_drain_timeout_ms)
+        }
     } else {
         0
     };
-    let absolute_max_ms = u64_env(
-        "NOVOVM_NOVORUDP_ABSOLUTE_MAX_SECONDS",
-        default_absolute_max_ms / 1_000,
-    )?
-    .saturating_mul(1_000);
+    let absolute_max_ms = u64_seconds_env_alias_ms(
+        &[
+            "NOVOVM_NOVORUDP_ABSOLUTE_MAX_TIMEOUT_SECONDS",
+            "NOVOVM_NOVORUDP_ABSOLUTE_MAX_SECONDS",
+        ],
+        default_absolute_max_ms,
+    )?;
     let default_max_elapsed_ms = if novorudp_enabled && sustained_duration_ms > 0 {
         absolute_max_ms
     } else if sustained_duration_ms > 0 {
@@ -1051,6 +1089,98 @@ enum NovoRudpSenderTimeoutDecisionV1 {
     AbsoluteTimeout,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NovoRudpSenderRepairBudgetProfileV1 {
+    profile: String,
+    primary_send_duration_seconds: u64,
+    repair_continuation_timeout_ms: u64,
+    repair_no_progress_timeout_ms: u64,
+    absolute_max_timeout_ms: u64,
+    extend_repair_deadline_on_ack_progress: bool,
+}
+
+fn novorudp_default_profile_name(enabled: bool, sustained_duration_seconds: u64) -> &'static str {
+    if !enabled {
+        "udp"
+    } else if sustained_duration_seconds >= 7_200 {
+        "novorudp-2h"
+    } else if sustained_duration_seconds >= 1_800 {
+        "novorudp-30min"
+    } else {
+        "novorudp-custom"
+    }
+}
+
+fn novorudp_sender_repair_budget_profile_v1(
+    novorudp_enabled: bool,
+    sustained_duration_seconds: u64,
+    sender_hard_timeout_ms: u64,
+) -> Result<NovoRudpSenderRepairBudgetProfileV1> {
+    let profile = string_env_nonempty("NOVOVM_NOVORUDP_PROFILE").unwrap_or_else(|| {
+        novorudp_default_profile_name(novorudp_enabled, sustained_duration_seconds).to_string()
+    });
+    let is_two_hour_profile = novorudp_enabled && sustained_duration_seconds >= 7_200;
+    let default_no_progress_timeout_ms = if novorudp_enabled {
+        if is_two_hour_profile {
+            300_000
+        } else {
+            120_000
+        }
+    } else {
+        sender_hard_timeout_ms
+    };
+    let repair_no_progress_timeout_ms = u64_seconds_or_ms_env(
+        &["NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_TIMEOUT_SECONDS"],
+        &["NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_TIMEOUT_MS"],
+        default_no_progress_timeout_ms,
+    )?
+    .max(1);
+    let default_repair_continuation_timeout_ms = if novorudp_enabled {
+        if is_two_hour_profile {
+            3_600_000
+        } else {
+            sender_hard_timeout_ms.saturating_sub(sustained_duration_seconds.saturating_mul(1_000))
+        }
+    } else {
+        0
+    };
+    let repair_continuation_timeout_ms = u64_seconds_env_alias_ms(
+        &["NOVOVM_NOVORUDP_REPAIR_CONTINUATION_TIMEOUT_SECONDS"],
+        default_repair_continuation_timeout_ms,
+    )?;
+    let default_absolute_max_timeout_ms = if novorudp_enabled {
+        if is_two_hour_profile {
+            12_600_000
+        } else {
+            sustained_duration_seconds
+                .saturating_mul(1000)
+                .saturating_add(900_000)
+                .max(sender_hard_timeout_ms)
+        }
+    } else {
+        sender_hard_timeout_ms
+    };
+    let absolute_max_timeout_ms = u64_seconds_or_ms_env(
+        &["NOVOVM_NOVORUDP_ABSOLUTE_MAX_TIMEOUT_SECONDS"],
+        &["NOVOVM_NOVORUDP_ABSOLUTE_SENDER_MAX_TIMEOUT_MS"],
+        default_absolute_max_timeout_ms,
+    )?
+    .max(sender_hard_timeout_ms.max(1));
+    let extend_repair_deadline_on_ack_progress =
+        bool_env("NOVOVM_NOVORUDP_EXTEND_REPAIR_DEADLINE_ON_ACK_PROGRESS")
+            || string_env_nonempty("NOVOVM_NOVORUDP_EXTEND_REPAIR_DEADLINE_ON_ACK_PROGRESS")
+                .is_none();
+
+    Ok(NovoRudpSenderRepairBudgetProfileV1 {
+        profile,
+        primary_send_duration_seconds: sustained_duration_seconds,
+        repair_continuation_timeout_ms,
+        repair_no_progress_timeout_ms,
+        absolute_max_timeout_ms,
+        extend_repair_deadline_on_ack_progress,
+    })
+}
+
 fn novorudp_sender_timeout_decision_v1(
     elapsed_ms: u64,
     no_progress_elapsed_ms: u64,
@@ -1175,6 +1305,130 @@ mod novorudp_tests {
             None => std::env::remove_var(key),
         }
         result
+    }
+
+    fn with_clean_repair_budget_env<T>(run: impl FnOnce() -> T) -> T {
+        with_env_var("NOVOVM_NOVORUDP_PROFILE", None, || {
+            with_env_var(
+                "NOVOVM_NOVORUDP_REPAIR_CONTINUATION_TIMEOUT_SECONDS",
+                None,
+                || {
+                    with_env_var(
+                        "NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_TIMEOUT_SECONDS",
+                        None,
+                        || {
+                            with_env_var(
+                                "NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_TIMEOUT_MS",
+                                None,
+                                || {
+                                    with_env_var(
+                                        "NOVOVM_NOVORUDP_ABSOLUTE_MAX_TIMEOUT_SECONDS",
+                                        None,
+                                        || {
+                                            with_env_var(
+                                                "NOVOVM_NOVORUDP_ABSOLUTE_SENDER_MAX_TIMEOUT_MS",
+                                                None,
+                                                || {
+                                                    with_env_var(
+                                    "NOVOVM_NOVORUDP_EXTEND_REPAIR_DEADLINE_ON_ACK_PROGRESS",
+                                    None,
+                                    run,
+                                )
+                                                },
+                                            )
+                                        },
+                                    )
+                                },
+                            )
+                        },
+                    )
+                },
+            )
+        })
+    }
+
+    #[test]
+    fn two_hour_profile_does_not_use_30min_absolute_timeout() {
+        with_clean_repair_budget_env(|| {
+            let profile = novorudp_sender_repair_budget_profile_v1(true, 7_200, 7_320_000)
+                .expect("2h budget profile");
+
+            assert_eq!(profile.profile, "novorudp-2h");
+            assert_eq!(profile.primary_send_duration_seconds, 7_200);
+            assert_eq!(profile.repair_continuation_timeout_ms, 3_600_000);
+            assert_eq!(profile.repair_no_progress_timeout_ms, 300_000);
+            assert_eq!(profile.absolute_max_timeout_ms, 12_600_000);
+            assert!(profile.extend_repair_deadline_on_ack_progress);
+        });
+    }
+
+    #[test]
+    fn repair_continues_while_ack_missing_progresses() {
+        with_clean_repair_budget_env(|| {
+            let profile = novorudp_sender_repair_budget_profile_v1(true, 7_200, 7_320_000)
+                .expect("2h budget profile");
+            let decision = novorudp_sender_timeout_decision_v1(
+                8_440_784,
+                0,
+                profile.repair_no_progress_timeout_ms,
+                profile.absolute_max_timeout_ms,
+                false,
+                23_432,
+            );
+
+            assert_eq!(decision, NovoRudpSenderTimeoutDecisionV1::Continue);
+        });
+    }
+
+    #[test]
+    fn repair_fails_only_after_no_progress_timeout() {
+        with_clean_repair_budget_env(|| {
+            let profile = novorudp_sender_repair_budget_profile_v1(true, 7_200, 7_320_000)
+                .expect("2h budget profile");
+            let decision = novorudp_sender_timeout_decision_v1(
+                8_000_000,
+                profile.repair_no_progress_timeout_ms,
+                profile.repair_no_progress_timeout_ms,
+                profile.absolute_max_timeout_ms,
+                false,
+                23_432,
+            );
+
+            assert_eq!(decision, NovoRudpSenderTimeoutDecisionV1::NoProgressTimeout);
+        });
+    }
+
+    #[test]
+    fn absolute_timeout_reports_profile_budget() {
+        with_clean_repair_budget_env(|| {
+            with_env_var(
+                "NOVOVM_NOVORUDP_ABSOLUTE_MAX_TIMEOUT_SECONDS",
+                Some("13000"),
+                || {
+                    let profile = novorudp_sender_repair_budget_profile_v1(true, 7_200, 7_320_000)
+                        .expect("2h budget profile");
+                    let decision = novorudp_sender_timeout_decision_v1(
+                        13_000_000,
+                        0,
+                        profile.repair_no_progress_timeout_ms,
+                        profile.absolute_max_timeout_ms,
+                        false,
+                        23_432,
+                    );
+
+                    assert_eq!(profile.absolute_max_timeout_ms, 13_000_000);
+                    assert_eq!(decision, NovoRudpSenderTimeoutDecisionV1::AbsoluteTimeout);
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn receiver_done_ack_ends_repair_before_absolute_timeout() {
+        let decision =
+            novorudp_sender_timeout_decision_v1(12_600_001, 0, 300_000, 12_600_000, true, 0);
+
+        assert_eq!(decision, NovoRudpSenderTimeoutDecisionV1::Continue);
     }
 
     fn receiver_phase_test_config() -> ReceiverDiagnosticsConfigV1 {
@@ -6500,28 +6754,16 @@ fn run_sender(
         "NOVOVM_NATIVE_PIPELINE_SENDER_HARD_TIMEOUT_MS",
         default_sender_hard_timeout_ms,
     )?;
-    let repair_no_progress_timeout_ms = u64_env(
-        "NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_TIMEOUT_MS",
-        if novorudp.enabled {
-            120_000
-        } else {
-            sender_hard_timeout_ms
-        },
-    )?
-    .max(1);
-    let absolute_sender_max_timeout_ms = u64_env(
-        "NOVOVM_NOVORUDP_ABSOLUTE_SENDER_MAX_TIMEOUT_MS",
-        if novorudp.enabled {
-            sustained
-                .duration_seconds
-                .saturating_mul(1000)
-                .saturating_add(900_000)
-                .max(sender_hard_timeout_ms)
-        } else {
-            sender_hard_timeout_ms
-        },
-    )?
-    .max(sender_hard_timeout_ms.max(1));
+    let repair_budget_profile = novorudp_sender_repair_budget_profile_v1(
+        novorudp.enabled,
+        sustained.duration_seconds,
+        sender_hard_timeout_ms,
+    )?;
+    let repair_no_progress_timeout_ms = repair_budget_profile.repair_no_progress_timeout_ms;
+    let absolute_sender_max_timeout_ms = repair_budget_profile.absolute_max_timeout_ms;
+    let repair_continuation_timeout_ms = repair_budget_profile.repair_continuation_timeout_ms;
+    let extend_repair_deadline_on_ack_progress =
+        repair_budget_profile.extend_repair_deadline_on_ack_progress;
     let sender_report_on_timeout = bool_env("NOVOVM_NATIVE_PIPELINE_SENDER_REPORT_ON_TIMEOUT")
         || string_env_nonempty("NOVOVM_NATIVE_PIPELINE_SENDER_REPORT_ON_TIMEOUT").is_none();
     let sender_exit_on_repair_timeout =
@@ -7235,8 +7477,10 @@ fn run_sender(
                     repair_progress_observed_count =
                         repair_progress_observed_count.saturating_add(1);
                     repair_progress_last_observed_ms = sender_started.elapsed().as_millis() as u64;
-                    repair_continuation_deadline_extended_count =
-                        repair_continuation_deadline_extended_count.saturating_add(1);
+                    if extend_repair_deadline_on_ack_progress {
+                        repair_continuation_deadline_extended_count =
+                            repair_continuation_deadline_extended_count.saturating_add(1);
+                    }
                     no_progress_started_at = None;
                     no_progress_elapsed_ms = 0;
                 } else {
@@ -7502,6 +7746,20 @@ fn run_sender(
         "fail_reason": fail_reason,
         "report_written": sender_report_on_timeout || !sender_hard_timeout_reached,
         "elapsed_ms": sender_started.elapsed().as_millis() as u64,
+        "novorudp_profile": repair_budget_profile.profile,
+        "primary_send_duration_seconds": repair_budget_profile.primary_send_duration_seconds,
+        "repair_continuation_timeout_seconds": repair_continuation_timeout_ms / 1_000,
+        "repair_no_progress_timeout_seconds": repair_no_progress_timeout_ms / 1_000,
+        "absolute_max_timeout_seconds": absolute_sender_max_timeout_ms / 1_000,
+        "repair_deadline_extended_count": repair_continuation_deadline_extended_count,
+        "repair_last_progress_observed_at_ms": repair_progress_last_observed_ms,
+        "repair_progress_still_active_at_absolute_timeout": absolute_sender_timeout_reached
+            && repair_progress_observed_count > 0
+            && !sender_repair_no_progress_timeout_reached,
+        "repair_exit_reason": sender_exit_reason,
+        "repair_continuation_budget_exhausted": absolute_sender_timeout_reached
+            && !sender_repair_no_progress_timeout_reached,
+        "repair_no_progress_budget_exhausted": sender_repair_no_progress_timeout_reached,
         "hard_timeout_ms": sender_hard_timeout_ms,
         "sender_hard_timeout_reached": sender_hard_timeout_reached,
         "absolute_sender_max_timeout_ms": absolute_sender_max_timeout_ms,
@@ -7514,6 +7772,8 @@ fn run_sender(
         "repair_continuation_deadline_extended_count": repair_continuation_deadline_extended_count,
         "repair_continuation_deadline_ms": repair_progress_last_observed_ms
             .saturating_add(repair_no_progress_timeout_ms),
+        "repair_continuation_timeout_ms": repair_continuation_timeout_ms,
+        "extend_repair_deadline_on_ack_progress": extend_repair_deadline_on_ack_progress,
         "repair_still_progressing_at_hard_timeout": repair_still_progressing_at_hard_timeout,
         "sender_exit_reason": sender_exit_reason,
         "sender_report_on_timeout": sender_report_on_timeout,
