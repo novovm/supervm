@@ -34156,6 +34156,12 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "ledger_final_missing_candidate_payload_missing_count",
         "ledger_final_missing_candidate_tx_hash_mapping_missing_count",
         "ledger_final_missing_candidate_raw_tx_build_error_count",
+        "ledger_final_missing_payload_available_selected_count",
+        "ledger_final_missing_payload_available_not_selected_count",
+        "ledger_final_missing_selected_not_pushed_to_raw_txs_count",
+        "ledger_final_missing_raw_txs_push_attempt_count",
+        "ledger_final_missing_raw_txs_push_success_count",
+        "ledger_final_missing_raw_txs_nonempty_but_not_submitted_count",
         "ledger_final_missing_batch_blocked_reason",
         "ledger_final_missing_batch_blocked_by_payload_missing_count",
         "ledger_final_missing_batch_blocked_by_stage_filter_count",
@@ -34163,6 +34169,9 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "ledger_final_missing_batch_blocked_by_batch_limit_count",
         "ledger_final_missing_batch_blocked_by_raw_tx_build_error_count",
         "ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count",
+        "ledger_final_missing_batch_blocked_by_payload_available_not_selected_count",
+        "ledger_final_missing_batch_blocked_by_selected_not_pushed_count",
+        "ledger_final_missing_batch_blocked_by_raw_txs_nonempty_not_submitted_count",
         "ledger_final_missing_batch_blocked_by_batch_not_full_count",
         "ledger_final_missing_batch_blocked_by_no_tick_executed_count",
         "ledger_final_missing_batch_blocked_by_classification_path_not_reached_count",
@@ -34356,6 +34365,12 @@ struct NativeExecutionPipelineAggregateV1 {
     ledger_final_missing_candidate_payload_missing_count: u64,
     ledger_final_missing_candidate_tx_hash_mapping_missing_count: u64,
     ledger_final_missing_candidate_raw_tx_build_error_count: u64,
+    ledger_final_missing_payload_available_selected_count: u64,
+    ledger_final_missing_payload_available_not_selected_count: u64,
+    ledger_final_missing_selected_not_pushed_to_raw_txs_count: u64,
+    ledger_final_missing_raw_txs_push_attempt_count: u64,
+    ledger_final_missing_raw_txs_push_success_count: u64,
+    ledger_final_missing_raw_txs_nonempty_but_not_submitted_count: u64,
     ledger_final_missing_batch_blocked_reason: String,
     ledger_final_missing_batch_blocked_by_payload_missing_count: u64,
     ledger_final_missing_batch_blocked_by_stage_filter_count: u64,
@@ -34363,6 +34378,9 @@ struct NativeExecutionPipelineAggregateV1 {
     ledger_final_missing_batch_blocked_by_batch_limit_count: u64,
     ledger_final_missing_batch_blocked_by_raw_tx_build_error_count: u64,
     ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count: u64,
+    ledger_final_missing_batch_blocked_by_payload_available_not_selected_count: u64,
+    ledger_final_missing_batch_blocked_by_selected_not_pushed_count: u64,
+    ledger_final_missing_batch_blocked_by_raw_txs_nonempty_not_submitted_count: u64,
     ledger_final_missing_batch_blocked_by_batch_not_full_count: u64,
     ledger_final_missing_batch_blocked_by_no_tick_executed_count: u64,
     ledger_final_missing_batch_blocked_by_classification_path_not_reached_count: u64,
@@ -34521,6 +34539,12 @@ impl NativeExecutionPipelineAggregateV1 {
             ledger_final_missing_candidate_payload_missing_count: 0,
             ledger_final_missing_candidate_tx_hash_mapping_missing_count: 0,
             ledger_final_missing_candidate_raw_tx_build_error_count: 0,
+            ledger_final_missing_payload_available_selected_count: 0,
+            ledger_final_missing_payload_available_not_selected_count: 0,
+            ledger_final_missing_selected_not_pushed_to_raw_txs_count: 0,
+            ledger_final_missing_raw_txs_push_attempt_count: 0,
+            ledger_final_missing_raw_txs_push_success_count: 0,
+            ledger_final_missing_raw_txs_nonempty_but_not_submitted_count: 0,
             ledger_final_missing_batch_blocked_reason: String::new(),
             ledger_final_missing_batch_blocked_by_payload_missing_count: 0,
             ledger_final_missing_batch_blocked_by_stage_filter_count: 0,
@@ -34528,6 +34552,9 @@ impl NativeExecutionPipelineAggregateV1 {
             ledger_final_missing_batch_blocked_by_batch_limit_count: 0,
             ledger_final_missing_batch_blocked_by_raw_tx_build_error_count: 0,
             ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count: 0,
+            ledger_final_missing_batch_blocked_by_payload_available_not_selected_count: 0,
+            ledger_final_missing_batch_blocked_by_selected_not_pushed_count: 0,
+            ledger_final_missing_batch_blocked_by_raw_txs_nonempty_not_submitted_count: 0,
             ledger_final_missing_batch_blocked_by_batch_not_full_count: 0,
             ledger_final_missing_batch_blocked_by_no_tick_executed_count: 0,
             ledger_final_missing_batch_blocked_by_classification_path_not_reached_count: 0,
@@ -35148,6 +35175,44 @@ impl NativeExecutionPipelineAggregateV1 {
             .or_else(|| ingress.get("ledger_final_missing_candidate_raw_tx_build_error_count"))
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.ledger_final_missing_payload_available_selected_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_payload_available_selected_count"))
+            .or_else(|| ingress.get("ledger_final_missing_payload_available_selected_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_payload_available_not_selected_count = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_payload_available_not_selected_count")
+            })
+            .or_else(|| ingress.get("ledger_final_missing_payload_available_not_selected_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_selected_not_pushed_to_raw_txs_count = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_selected_not_pushed_to_raw_txs_count")
+            })
+            .or_else(|| ingress.get("ledger_final_missing_selected_not_pushed_to_raw_txs_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_raw_txs_push_attempt_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_raw_txs_push_attempt_count"))
+            .or_else(|| ingress.get("ledger_final_missing_raw_txs_push_attempt_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_raw_txs_push_success_count = tick_batch_result
+            .and_then(|value| value.get("ledger_final_missing_raw_txs_push_success_count"))
+            .or_else(|| ingress.get("ledger_final_missing_raw_txs_push_success_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_raw_txs_nonempty_but_not_submitted_count = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_raw_txs_nonempty_but_not_submitted_count")
+            })
+            .or_else(|| {
+                ingress.get("ledger_final_missing_raw_txs_nonempty_but_not_submitted_count")
+            })
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
         self.ledger_final_missing_batch_blocked_reason = tick_batch_result
             .and_then(|value| value.get("ledger_final_missing_batch_blocked_reason"))
             .or_else(|| ingress.get("ledger_final_missing_batch_blocked_reason"))
@@ -35193,6 +35258,43 @@ impl NativeExecutionPipelineAggregateV1 {
                 .or_else(|| {
                     ingress
                         .get("ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count")
+                })
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_payload_available_not_selected_count =
+            tick_batch_result
+                .and_then(|value| {
+                    value.get(
+                        "ledger_final_missing_batch_blocked_by_payload_available_not_selected_count",
+                    )
+                })
+                .or_else(|| {
+                    ingress.get(
+                        "ledger_final_missing_batch_blocked_by_payload_available_not_selected_count",
+                    )
+                })
+                .and_then(|value| value.as_u64())
+                .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_selected_not_pushed_count = tick_batch_result
+            .and_then(|value| {
+                value.get("ledger_final_missing_batch_blocked_by_selected_not_pushed_count")
+            })
+            .or_else(|| {
+                ingress.get("ledger_final_missing_batch_blocked_by_selected_not_pushed_count")
+            })
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_final_missing_batch_blocked_by_raw_txs_nonempty_not_submitted_count =
+            tick_batch_result
+                .and_then(|value| {
+                    value.get(
+                        "ledger_final_missing_batch_blocked_by_raw_txs_nonempty_not_submitted_count",
+                    )
+                })
+                .or_else(|| {
+                    ingress.get(
+                        "ledger_final_missing_batch_blocked_by_raw_txs_nonempty_not_submitted_count",
+                    )
                 })
                 .and_then(|value| value.as_u64())
                 .unwrap_or_default();
@@ -35997,6 +36099,30 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.ledger_final_missing_candidate_raw_tx_build_error_count),
         );
         out.insert(
+            "ledger_final_missing_payload_available_selected_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_payload_available_selected_count),
+        );
+        out.insert(
+            "ledger_final_missing_payload_available_not_selected_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_payload_available_not_selected_count),
+        );
+        out.insert(
+            "ledger_final_missing_selected_not_pushed_to_raw_txs_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_selected_not_pushed_to_raw_txs_count),
+        );
+        out.insert(
+            "ledger_final_missing_raw_txs_push_attempt_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_raw_txs_push_attempt_count),
+        );
+        out.insert(
+            "ledger_final_missing_raw_txs_push_success_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_raw_txs_push_success_count),
+        );
+        out.insert(
+            "ledger_final_missing_raw_txs_nonempty_but_not_submitted_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_raw_txs_nonempty_but_not_submitted_count),
+        );
+        out.insert(
             "ledger_final_missing_batch_blocked_reason".to_string(),
             serde_json::json!(ledger_final_missing_batch_blocked_reason),
         );
@@ -36024,6 +36150,24 @@ impl NativeExecutionPipelineAggregateV1 {
             "ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count".to_string(),
             serde_json::json!(
                 self.ledger_final_missing_batch_blocked_by_tx_hash_mapping_missing_count
+            ),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_payload_available_not_selected_count"
+                .to_string(),
+            serde_json::json!(
+                self.ledger_final_missing_batch_blocked_by_payload_available_not_selected_count
+            ),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_selected_not_pushed_count".to_string(),
+            serde_json::json!(self.ledger_final_missing_batch_blocked_by_selected_not_pushed_count),
+        );
+        out.insert(
+            "ledger_final_missing_batch_blocked_by_raw_txs_nonempty_not_submitted_count"
+                .to_string(),
+            serde_json::json!(
+                self.ledger_final_missing_batch_blocked_by_raw_txs_nonempty_not_submitted_count
             ),
         );
         out.insert(
