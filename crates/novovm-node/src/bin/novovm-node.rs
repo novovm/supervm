@@ -34222,6 +34222,7 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "ledger_final_missing_batch_result_count",
         "ledger_final_missing_receipt_written_count",
         "ledger_final_missing_receipt_missing_after_admission_count",
+        "canonical_projection",
         "novorudp_trace_enabled",
         "trace_success_sequences_sample",
         "trace_failed_sequences_sample",
@@ -34501,6 +34502,10 @@ struct NativeExecutionPipelineAggregateV1 {
     historical_compaction_after_last: u64,
     included_retained_after_compaction: u64,
     dropped_retained_after_compaction: u64,
+    included_canonical_retained_last: u64,
+    included_canonical_projected_total: u64,
+    canonical_projection_success_ticks: u64,
+    included_canonical_total_source: String,
     included_canonical_last: u64,
     included_canonical_total: u64,
     broadcast_candidates_last: u64,
@@ -34720,6 +34725,10 @@ impl NativeExecutionPipelineAggregateV1 {
             historical_compaction_after_last: 0,
             included_retained_after_compaction: 0,
             dropped_retained_after_compaction: 0,
+            included_canonical_retained_last: 0,
+            included_canonical_projected_total: 0,
+            canonical_projection_success_ticks: 0,
+            included_canonical_total_source: "queue_retained_included_canonical".to_string(),
             included_canonical_last: 0,
             included_canonical_total: 0,
             broadcast_candidates_last: 0,
@@ -35864,10 +35873,45 @@ impl NativeExecutionPipelineAggregateV1 {
                 .and_then(|value| value.as_u64())
                 .unwrap_or_default();
         }
-        self.included_canonical_last = egress
+        self.included_canonical_retained_last = egress
             .get("pending_included_canonical")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        let canonical_projection_tx_count = report
+            .pointer("/tick_result/batch_result/canonical_projection")
+            .filter(|projection| {
+                projection
+                    .get("included_canonical")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+            })
+            .and_then(|projection| projection.get("tx_count"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        if canonical_projection_tx_count > 0 {
+            self.canonical_projection_success_ticks =
+                self.canonical_projection_success_ticks.saturating_add(1);
+            self.included_canonical_projected_total = self
+                .included_canonical_projected_total
+                .saturating_add(canonical_projection_tx_count);
+        }
+        let canonical_proof_total = self
+            .ledger_canonical_proof_close_success_count
+            .max(self.ledger_missing_closed_by_canonical_count);
+        if canonical_proof_total >= self.included_canonical_projected_total
+            && canonical_proof_total >= self.included_canonical_retained_last
+        {
+            self.included_canonical_last = canonical_proof_total;
+            self.included_canonical_total_source =
+                "ledger_canonical_proof_close_success_count".to_string();
+        } else if self.included_canonical_projected_total >= self.included_canonical_retained_last {
+            self.included_canonical_last = self.included_canonical_projected_total;
+            self.included_canonical_total_source =
+                "canonical_projection_tx_count_total".to_string();
+        } else {
+            self.included_canonical_last = self.included_canonical_retained_last;
+            self.included_canonical_total_source = "queue_retained_included_canonical".to_string();
+        }
         self.included_canonical_total = self
             .included_canonical_total
             .max(self.included_canonical_last);
@@ -36879,6 +36923,22 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.dropped_retained_after_compaction),
         );
         out.insert(
+            "included_canonical_retained_last".to_string(),
+            serde_json::json!(self.included_canonical_retained_last),
+        );
+        out.insert(
+            "included_canonical_projected_total".to_string(),
+            serde_json::json!(self.included_canonical_projected_total),
+        );
+        out.insert(
+            "canonical_projection_success_ticks".to_string(),
+            serde_json::json!(self.canonical_projection_success_ticks),
+        );
+        out.insert(
+            "included_canonical_total_source".to_string(),
+            serde_json::json!(self.included_canonical_total_source),
+        );
+        out.insert(
             "included_canonical_last".to_string(),
             serde_json::json!(self.included_canonical_last),
         );
@@ -37483,6 +37543,66 @@ mod native_execution_pipeline_tests {
         assert_eq!(
             summary["host_concurrency_policy"].as_str(),
             Some("host_drives_lifecycle_only_no_rust_execution_scheduler")
+        );
+    }
+
+    #[test]
+    fn native_execution_pipeline_aggregate_uses_canonical_projection_total_after_compaction() {
+        let mut report = build_native_execution_pipeline_report_v1(
+            4,
+            serde_json::json!({
+                "enabled": true,
+                "ok": true,
+                "udp": {"received_count": 8u64},
+            }),
+            serde_json::json!({
+                "enabled": true,
+                "ok": true,
+                "submitted": 8u64,
+            }),
+            serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
+                "method": "nov_runNativeExecutionTick",
+                "chain_id": 9_998_884u64,
+                "executed_count": 64u64,
+                "deferred_count": 0u64,
+                "batch_result": {
+                    "selected_count": 64u64,
+                    "canonical_projection": {
+                        "enabled": true,
+                        "included_canonical": true,
+                        "tx_count": 64u64,
+                    }
+                },
+                "lifecycle": {
+                    "commit": "deterministic_sharded_dirty_atomic_commit"
+                }
+            }),
+        );
+        report["lifecycle"]["queue"]["included_canonical"] = serde_json::json!(32u64);
+        report["lifecycle"]["egress"]["pending_included_canonical"] = serde_json::json!(32u64);
+
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+        aggregate
+            .observe(&report)
+            .expect("aggregate pipeline report");
+        let summary = aggregate.to_json();
+
+        assert_eq!(
+            summary["included_canonical_retained_last"].as_u64(),
+            Some(32)
+        );
+        assert_eq!(
+            summary["included_canonical_projected_total"].as_u64(),
+            Some(64)
+        );
+        assert_eq!(summary["included_canonical_total"].as_u64(), Some(64));
+        assert_eq!(
+            summary["included_canonical_total_source"].as_str(),
+            Some("canonical_projection_tx_count_total")
         );
     }
 

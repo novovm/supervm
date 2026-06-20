@@ -1992,6 +1992,80 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn receiver_projection_proof_total_prevents_retained_canonical_false_stall() {
+        let summary = serde_json::json!({
+            "network_received_total": 3744,
+            "ingress_submitted_total": 616,
+            "ingress_total_last": 616,
+            "queue_pending_last": 584,
+            "queue_active_pending_last": 584,
+            "ticks": 538,
+            "nonempty_aoem_batch_ticks": 107,
+            "queue_admitted_total": 3104,
+            "included_canonical_retained_last": 32,
+            "included_canonical_projected_total": 3104,
+            "canonical_projection_success_ticks": 107,
+            "included_canonical_total_source": "ledger_canonical_proof_close_success_count",
+            "included_canonical_total": 3104,
+            "aoem_executed_total": 3104,
+            "ledger_completed_count": 3104,
+            "ledger_missing_closed_by_receipt_count": 3104,
+            "ledger_missing_closed_by_canonical_count": 3104,
+            "ledger_receipt_proof_close_success_count": 3104,
+            "ledger_canonical_proof_close_success_count": 3104,
+        });
+        let mut sample = diagnostics_summary_sample(
+            Instant::now(),
+            &summary,
+            serde_json::json!({"line_count": 3104, "bytes": 1}),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            3072,
+        );
+        let previous = serde_json::json!({
+            "receiver_udp_packet_recv_count": 3704,
+            "received_unique_total": 608,
+            "aoem_executed_total": 3072,
+            "canonical_unique_included_total": 3072,
+            "receiver_ledger_close_count": 3072,
+            "receiver_child_tick_count": 537,
+            "receiver_aoem_tick_count": 106,
+            "receiver_pending_selected_count": 3072,
+            "queue_pending_last": 576,
+        });
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["receiver_canonical_included_count"].as_u64(),
+            Some(3104)
+        );
+        assert_eq!(
+            sample["receiver_canonical_retained_count"].as_u64(),
+            Some(32)
+        );
+        assert_eq!(
+            sample["receiver_summary_canonical_source"].as_str(),
+            Some("ledger_canonical_proof_close_success_count")
+        );
+        assert_eq!(
+            sample["receiver_canonical_projection_stall_reason"].as_str(),
+            Some("queue_retained_summary_lags_projection_proof")
+        );
+        assert_eq!(
+            sample["summary_consistency_violation_count"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            sample["receiver_receipt_canonical_projection_stall"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("progressing")
+        );
+    }
+
+    #[test]
     fn wrapper_final_preserves_runtime_blocked_reason() {
         let source = serde_json::json!({
             "ledger_final_missing_candidate_count": 304,
@@ -6386,12 +6460,26 @@ fn diagnostics_summary_sample(
         "receiver_aoem_batch_submit_count": nonempty_aoem_batch_ticks,
         "receiver_aoem_batch_result_count": aoem,
         "receiver_receipt_written_count": summary_u64(summary, "ledger_receipt_proof_close_success_count").max(summary_u64(summary, "ledger_missing_closed_by_receipt_count")),
+        "receiver_canonical_project_attempt_count": summary_u64(summary, "canonical_projection_success_ticks"),
+        "receiver_canonical_project_success_count": summary_u64(summary, "included_canonical_projected_total"),
         "receiver_canonical_included_count": canonical,
+        "receiver_canonical_retained_count": summary_u64(summary, "included_canonical_retained_last"),
+        "receiver_ledger_close_by_receipt_count": summary_u64(summary, "ledger_missing_closed_by_receipt_count"),
+        "receiver_ledger_close_by_canonical_count": summary_u64(summary, "ledger_missing_closed_by_canonical_count"),
         "receiver_ledger_close_count": ledger_completed,
-        "summary_source_canonical": "child_progress.included_canonical_total",
+        "summary_source_canonical": summary.get("included_canonical_total_source").cloned().unwrap_or_else(|| serde_json::json!("child_progress.included_canonical_total")),
         "summary_source_aoem": "child_progress.aoem_executed_total",
         "summary_source_ledger": "child_progress.ledger_completed_count",
         "summary_source_pending": "child_progress.queue_pending_last",
+        "receiver_summary_canonical_source": summary.get("included_canonical_total_source").cloned().unwrap_or_else(|| serde_json::json!("child_progress.included_canonical_total")),
+        "receiver_summary_ledger_source": "child_progress.ledger_completed_count",
+        "receiver_canonical_projection_stall_reason": if aoem > canonical {
+            "canonical_total_lags_aoem"
+        } else if summary_u64(summary, "included_canonical_retained_last") < canonical {
+            "queue_retained_summary_lags_projection_proof"
+        } else {
+            "none"
+        },
         "summary_consistency_violation_count": summary_consistency_violation_count,
         "summary_consistency_violation_reasons": summary_consistency_reasons,
         "summary_aoem_gt_canonical_lag_count": aoem.saturating_sub(canonical),
