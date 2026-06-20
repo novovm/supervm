@@ -27,6 +27,9 @@ use novovm_network::{
     observe_network_runtime_native_pending_tx_rejected_v1,
     observe_network_runtime_native_pending_tx_repair_actual_batch_v1,
     observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1,
+    observe_runtime_novorudp_canonical_proof_close_v1,
+    observe_runtime_novorudp_receipt_proof_close_v1,
+    observe_runtime_novorudp_sequence_tx_hash_mapping_v1,
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
     snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1,
     snapshot_network_runtime_native_execution_budget_runtime_summary_v1,
@@ -11771,6 +11774,11 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             NovTxKindV1::Execute(execute) => execute.nonce.saturating_sub(1),
             NovTxKindV1::Transfer(_) | NovTxKindV1::Governance(_) => 0,
         };
+        observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
+            chain_id,
+            native_sequence,
+            pending_tx.tx_hash,
+        );
         if is_ledger_final_missing_candidate {
             ledger_final_missing_candidate_sequences.insert(native_sequence);
             ledger_final_missing_payload_available_sequences.insert(native_sequence);
@@ -12237,6 +12245,11 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         selected_hash_bytes.as_slice(),
         selected_raw_payloads.as_slice(),
     );
+    for tx_hash in selected_hash_bytes.iter().copied() {
+        observe_runtime_novorudp_receipt_proof_close_v1(chain_id, tx_hash);
+        observe_runtime_novorudp_canonical_proof_close_v1(chain_id, tx_hash);
+        observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1(chain_id, tx_hash);
+    }
     let post_batch_pending_summary =
         snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
     let trace = novorudp_sequence_lifecycle_trace_diff_v1(

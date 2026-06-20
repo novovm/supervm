@@ -439,6 +439,18 @@ impl NovoRudpSequenceLifecycleLedger {
         record.repair_attempt_count = record.repair_attempt_count.saturating_add(1);
     }
 
+    pub fn observe_tx_hash_mapping(
+        &mut self,
+        sequence: u64,
+        tx_hash: [u8; 32],
+        now_ms: u128,
+        reason: &str,
+    ) {
+        let record = self.record_mut(sequence, now_ms, reason);
+        record.expected = true;
+        record.tx_hash = Some(tx_hash);
+    }
+
     pub fn mark_pending_active(&mut self, sequence: u64, now_ms: u128, reason: &str) {
         let record = self.record_mut(sequence, now_ms, reason);
         record.pending_active = true;
