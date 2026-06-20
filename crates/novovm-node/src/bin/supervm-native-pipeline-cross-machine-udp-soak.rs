@@ -421,6 +421,25 @@ fn report_path(role: &str) -> PathBuf {
     .unwrap_or_else(|| default_report_path(role))
 }
 
+fn sender_progress_report_path() -> PathBuf {
+    if let Some(path) = first_string_env_nonempty(&[
+        "NOVOVM_NATIVE_PIPELINE_SENDER_PROGRESS_REPORT_PATH",
+        "NOVOVM_NATIVE_PIPELINE_SENDER_LIVE_REPORT_PATH",
+    ]) {
+        return PathBuf::from(path);
+    }
+    let report = report_path("sender");
+    let Some(file_name) = report.file_name().and_then(|name| name.to_str()) else {
+        return PathBuf::from("artifacts/native-pipeline/sender-progress-report.json");
+    };
+    let progress_name = if let Some(stem) = file_name.strip_suffix(".json") {
+        format!("{stem}.progress.json")
+    } else {
+        format!("{file_name}.progress.json")
+    };
+    report.with_file_name(progress_name)
+}
+
 fn diagnostics_report_path() -> PathBuf {
     first_string_env_nonempty(&[
         "NOVOVM_NATIVE_PIPELINE_DIAGNOSTICS_REPORT_PATH",
@@ -1429,6 +1448,62 @@ mod novorudp_tests {
             novorudp_sender_timeout_decision_v1(12_600_001, 0, 300_000, 12_600_000, true, 0);
 
         assert_eq!(decision, NovoRudpSenderTimeoutDecisionV1::Continue);
+    }
+
+    #[test]
+    fn sender_progress_report_path_uses_sidecar_by_default() {
+        with_env_var(
+            "NOVOVM_NATIVE_PIPELINE_REPORT_PATH",
+            Some("artifacts/native-pipeline/sender-cross-machine-novorudp-2h-report.json"),
+            || {
+                with_env_var(
+                    "NOVOVM_NATIVE_PIPELINE_SENDER_PROGRESS_REPORT_PATH",
+                    None,
+                    || {
+                        let path = sender_progress_report_path();
+
+                        assert!(path
+                            .to_string_lossy()
+                            .ends_with("sender-cross-machine-novorudp-2h-report.progress.json"));
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn sender_live_progress_report_contains_ack_drain_fields() {
+        let path =
+            std::env::temp_dir().join(format!("novorudp-sender-live-progress-{}.json", now_ms()));
+        write_sender_live_progress_report_v1(
+            path.as_path(),
+            10_000,
+            57_600,
+            80,
+            80,
+            0,
+            12,
+            44,
+            3,
+            9_500,
+            41,
+            Some(57_520),
+            Some(79),
+            false,
+            false,
+        )
+        .expect("write sender live progress");
+        let value = read_json_file(path.as_path()).expect("read sender live progress");
+        let _ = fs::remove_file(path.as_path());
+
+        assert_eq!(
+            value.get("report_type").and_then(Value::as_str),
+            Some("sender_live_progress_v1")
+        );
+        assert_eq!(value["primary_ack_drain_count"].as_u64(), Some(12));
+        assert_eq!(value["primary_ack_received_count"].as_u64(), Some(44));
+        assert_eq!(value["latest_ack_missing_count"].as_u64(), Some(57_520));
+        assert_eq!(value["last_sent_sequence"].as_u64(), Some(79));
     }
 
     fn receiver_phase_test_config() -> ReceiverDiagnosticsConfigV1 {
@@ -4065,6 +4140,60 @@ fn write_receiver_ack_report_with_summary(
         progress_summary,
     );
     write_report(ack_report_path().as_path(), &report)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_sender_live_progress_report_v1(
+    path: &Path,
+    elapsed_ms: u64,
+    tx_count: u64,
+    sent_unique_target: u64,
+    sent_packets: u64,
+    send_failed_count: u64,
+    primary_ack_drain_count: u64,
+    primary_ack_received_count: u64,
+    primary_ack_drain_empty_count: u64,
+    primary_ack_last_consumed_elapsed_ms: u64,
+    latest_ack_epoch: u64,
+    latest_ack_missing_count: Option<u64>,
+    latest_ack_highest_sequence_seen: Option<u64>,
+    latest_ack_receiver_done: bool,
+    sender_completed: bool,
+) -> Result<()> {
+    let elapsed_seconds = elapsed_ms as f64 / 1000.0;
+    let current_send_rate_tps = if elapsed_seconds > 0.0 {
+        sent_unique_target as f64 / elapsed_seconds
+    } else {
+        0.0
+    };
+    let last_sent_sequence = sent_unique_target.checked_sub(1);
+    write_report(
+        path,
+        &serde_json::json!({
+            "schema": REPORT_SCHEMA_V1,
+            "role": "sender",
+            "report_type": "sender_live_progress_v1",
+            "elapsed_ms": elapsed_ms,
+            "tx_count": tx_count,
+            "sender_round_count": sent_unique_target,
+            "primary_sent_count": sent_unique_target,
+            "last_sent_sequence": last_sent_sequence,
+            "send_packet_count": sent_packets,
+            "send_failed_count": send_failed_count,
+            "sender_completed": sender_completed,
+            "sender_hard_timeout_reached": false,
+            "last_send_at_ms": elapsed_ms,
+            "current_send_rate_tps": current_send_rate_tps,
+            "primary_ack_drain_count": primary_ack_drain_count,
+            "primary_ack_received_count": primary_ack_received_count,
+            "primary_ack_drain_empty_count": primary_ack_drain_empty_count,
+            "primary_ack_last_consumed_elapsed_ms": primary_ack_last_consumed_elapsed_ms,
+            "latest_ack_epoch": latest_ack_epoch,
+            "latest_ack_missing_count": latest_ack_missing_count,
+            "latest_ack_highest_sequence_seen": latest_ack_highest_sequence_seen,
+            "latest_ack_receiver_done": latest_ack_receiver_done,
+        }),
+    )
 }
 
 fn receiver_ack_report_value(
@@ -6794,6 +6923,22 @@ fn run_sender(
     let mut latest_ack_highest_sequence_seen: Option<u64> = None;
     let mut latest_ack_receiver_done = false;
     let mut tail_repair_latest_ack_epoch = 0u64;
+    let primary_ack_drain_enabled = novorudp.enabled
+        && udp_ack.enabled
+        && (bool_env("NOVOVM_NOVORUDP_PRIMARY_SEND_ACK_DRAIN_ENABLED")
+            || string_env_nonempty("NOVOVM_NOVORUDP_PRIMARY_SEND_ACK_DRAIN_ENABLED").is_none());
+    let primary_ack_drain_interval_ms =
+        u64_env("NOVOVM_NOVORUDP_PRIMARY_SEND_ACK_DRAIN_INTERVAL_MS", 250)?.max(1);
+    let sender_live_report_interval_ms =
+        u64_env("NOVOVM_NOVORUDP_SENDER_LIVE_REPORT_INTERVAL_MS", 5_000)?;
+    let sender_progress_path = sender_progress_report_path();
+    let mut primary_ack_drain_count = 0u64;
+    let mut primary_ack_received_count = 0u64;
+    let mut primary_ack_drain_empty_count = 0u64;
+    let mut primary_ack_last_consumed_elapsed_ms = 0u64;
+    let mut sender_live_report_write_count = 0u64;
+    let mut sender_live_report_last_elapsed_ms = 0u64;
+    let mut last_sender_live_report_at = Instant::now();
     let mut repair_used_full_missing_ranges = false;
     let mut repair_sequence_sent_ranges = Vec::<MissingRangeV1>::new();
     let mut repair_sequence_sent_count = 0u64;
@@ -6861,6 +7006,86 @@ fn run_sender(
         .as_ref()
         .and_then(|socket| socket.local_addr().ok())
         .map(|addr| addr.to_string());
+    macro_rules! drain_primary_sender_ack {
+        () => {{
+            if primary_ack_drain_enabled {
+                if let Some(socket) = ack_socket.as_ref() {
+                    primary_ack_drain_count = primary_ack_drain_count.saturating_add(1);
+                    let state = drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, 0);
+                    if state.received_count > 0 {
+                        primary_ack_received_count =
+                            primary_ack_received_count.saturating_add(state.received_count);
+                        tail_repair_ack_received_count =
+                            tail_repair_ack_received_count.saturating_add(state.received_count);
+                        tail_repair_udp_ack_received_count =
+                            tail_repair_udp_ack_received_count.saturating_add(state.received_count);
+                        let previous_epoch = tail_repair_latest_ack_epoch;
+                        let previous_highest = latest_ack_highest_sequence_seen;
+                        tail_repair_latest_ack_epoch =
+                            tail_repair_latest_ack_epoch.max(state.latest_epoch);
+                        latest_ack_received_at = Some(Instant::now());
+                        primary_ack_last_consumed_elapsed_ms =
+                            sender_started.elapsed().as_millis() as u64;
+                        latest_ack_missing_count = Some(state.latest_missing_count);
+                        latest_ack_missing_ranges_full_count =
+                            Some(state.missing_ranges_full_count);
+                        latest_ack_highest_sequence_seen = state.highest_sequence_seen;
+                        latest_ack_receiver_done = state.receiver_done;
+                        final_missing_count = state.latest_missing_count;
+                        if novorudp.enabled
+                            && state.latest_epoch > previous_epoch
+                            && state.highest_sequence_seen.unwrap_or_default()
+                                > previous_highest.unwrap_or_default()
+                        {
+                            repair_window_recomputed_count =
+                                repair_window_recomputed_count.saturating_add(1);
+                            repair_window_recomputed_due_to_ack_progress =
+                                repair_window_recomputed_due_to_ack_progress.saturating_add(1);
+                        }
+                    } else {
+                        primary_ack_drain_empty_count =
+                            primary_ack_drain_empty_count.saturating_add(1);
+                    }
+                }
+            }
+        }};
+    }
+    macro_rules! maybe_write_sender_live_progress {
+        ($force:expr, $sent_unique_target:expr) => {{
+            if sender_live_report_interval_ms > 0
+                && ($force
+                    || last_sender_live_report_at.elapsed()
+                        >= Duration::from_millis(sender_live_report_interval_ms))
+            {
+                sender_live_report_last_elapsed_ms = sender_started.elapsed().as_millis() as u64;
+                if write_sender_live_progress_report_v1(
+                    sender_progress_path.as_path(),
+                    sender_live_report_last_elapsed_ms,
+                    tx_count,
+                    $sent_unique_target,
+                    stats.sent_packets,
+                    stats.send_failed_count,
+                    primary_ack_drain_count,
+                    primary_ack_received_count,
+                    primary_ack_drain_empty_count,
+                    primary_ack_last_consumed_elapsed_ms,
+                    tail_repair_latest_ack_epoch,
+                    latest_ack_missing_count,
+                    latest_ack_highest_sequence_seen,
+                    latest_ack_receiver_done,
+                    $sent_unique_target == tx_count && stats.send_failed_count == 0,
+                )
+                .is_ok()
+                {
+                    sender_live_report_write_count =
+                        sender_live_report_write_count.saturating_add(1);
+                    if !$force {
+                        last_sender_live_report_at = Instant::now();
+                    }
+                }
+            }
+        }};
+    }
     let tx_per_round = if sustained.enabled {
         sustained.tx_per_round.max(1)
     } else {
@@ -6894,15 +7119,29 @@ fn run_sender(
         )?;
         sent_unique_target = sent_unique_target.saturating_add(round_tx_count);
         merge_send_stats(&mut stats, round_stats);
+        drain_primary_sender_ack!();
+        maybe_write_sender_live_progress!(false, sent_unique_target);
         if stats.send_failed_count > 0 {
             break;
         }
         if sustained.enabled && round + 1 < rounds && sustained.round_interval_ms > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(
-                sustained.round_interval_ms,
-            ));
+            let mut slept_ms = 0u64;
+            while slept_ms < sustained.round_interval_ms {
+                let remaining_ms = sustained.round_interval_ms.saturating_sub(slept_ms);
+                let sleep_ms = if primary_ack_drain_enabled {
+                    remaining_ms.min(primary_ack_drain_interval_ms)
+                } else {
+                    remaining_ms
+                };
+                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+                slept_ms = slept_ms.saturating_add(sleep_ms);
+                drain_primary_sender_ack!();
+                maybe_write_sender_live_progress!(false, sent_unique_target);
+            }
         }
     }
+    maybe_write_sender_live_progress!(true, sent_unique_target);
+    let _sender_live_report_timer_anchor = last_sender_live_report_at;
     let mut repair_rounds_used = 0u64;
     if stats.send_failed_count == 0 && tail_repair.enabled && tail_repair.rounds > 0 {
         let repair_loop_rounds = if novorudp.enabled {
@@ -7774,6 +8013,16 @@ fn run_sender(
             .saturating_add(repair_no_progress_timeout_ms),
         "repair_continuation_timeout_ms": repair_continuation_timeout_ms,
         "extend_repair_deadline_on_ack_progress": extend_repair_deadline_on_ack_progress,
+        "primary_send_ack_drain_enabled": primary_ack_drain_enabled,
+        "primary_send_ack_drain_interval_ms": primary_ack_drain_interval_ms,
+        "primary_send_ack_drain_count": primary_ack_drain_count,
+        "primary_send_ack_received_count": primary_ack_received_count,
+        "primary_send_ack_drain_empty_count": primary_ack_drain_empty_count,
+        "primary_send_ack_last_consumed_elapsed_ms": primary_ack_last_consumed_elapsed_ms,
+        "sender_live_report_path": sender_progress_path.to_string_lossy(),
+        "sender_live_report_interval_ms": sender_live_report_interval_ms,
+        "sender_live_report_write_count": sender_live_report_write_count,
+        "sender_live_report_last_elapsed_ms": sender_live_report_last_elapsed_ms,
         "repair_still_progressing_at_hard_timeout": repair_still_progressing_at_hard_timeout,
         "sender_exit_reason": sender_exit_reason,
         "sender_report_on_timeout": sender_report_on_timeout,
