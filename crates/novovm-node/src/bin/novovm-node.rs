@@ -34197,6 +34197,16 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "ledger_final_missing_batch_result_count",
         "ledger_final_missing_receipt_written_count",
         "ledger_final_missing_receipt_missing_after_admission_count",
+        "novorudp_trace_enabled",
+        "trace_success_sequences_sample",
+        "trace_failed_sequences_sample",
+        "trace_first_divergence_stage",
+        "trace_first_divergence_sequence",
+        "trace_success_vs_failed_diff_summary",
+        "trace_candidate_payload_available_not_selected_sequences",
+        "trace_selected_not_pushed_sequences",
+        "trace_pushed_not_batched_sequences",
+        "trace_batched_not_receipted_sequences",
     ] {
         compact_batch.insert(
             key.to_string(),
@@ -34409,6 +34419,16 @@ struct NativeExecutionPipelineAggregateV1 {
     ledger_final_missing_batch_limit_zero_count: u64,
     ledger_final_missing_preempted_normal_pending_count: u64,
     ledger_final_missing_batch_nonempty_submitted: bool,
+    novorudp_trace_enabled: bool,
+    trace_success_sequences_sample: serde_json::Value,
+    trace_failed_sequences_sample: serde_json::Value,
+    trace_first_divergence_stage: String,
+    trace_first_divergence_sequence: Option<u64>,
+    trace_success_vs_failed_diff_summary: serde_json::Value,
+    trace_candidate_payload_available_not_selected_sequences: serde_json::Value,
+    trace_selected_not_pushed_sequences: serde_json::Value,
+    trace_pushed_not_batched_sequences: serde_json::Value,
+    trace_batched_not_receipted_sequences: serde_json::Value,
     ledger_final_missing_admission_skipped_count: u64,
     ledger_final_missing_admission_skip_reason_counts: serde_json::Value,
     admission_used_ledger_final_missing_bucket: bool,
@@ -34591,6 +34611,16 @@ impl NativeExecutionPipelineAggregateV1 {
             ledger_final_missing_batch_limit_zero_count: 0,
             ledger_final_missing_preempted_normal_pending_count: 0,
             ledger_final_missing_batch_nonempty_submitted: false,
+            novorudp_trace_enabled: false,
+            trace_success_sequences_sample: serde_json::json!([]),
+            trace_failed_sequences_sample: serde_json::json!([]),
+            trace_first_divergence_stage: String::new(),
+            trace_first_divergence_sequence: None,
+            trace_success_vs_failed_diff_summary: serde_json::json!({}),
+            trace_candidate_payload_available_not_selected_sequences: serde_json::json!([]),
+            trace_selected_not_pushed_sequences: serde_json::json!([]),
+            trace_pushed_not_batched_sequences: serde_json::json!([]),
+            trace_batched_not_receipted_sequences: serde_json::json!([]),
             ledger_final_missing_admission_skipped_count: 0,
             ledger_final_missing_admission_skip_reason_counts: serde_json::json!({}),
             admission_used_ledger_final_missing_bucket: false,
@@ -35467,6 +35497,56 @@ impl NativeExecutionPipelineAggregateV1 {
             .or_else(|| ingress.get("ledger_final_missing_batch_nonempty_submitted"))
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
+        self.novorudp_trace_enabled = tick_batch_result
+            .and_then(|value| value.get("novorudp_trace_enabled"))
+            .or_else(|| ingress.get("novorudp_trace_enabled"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        self.trace_success_sequences_sample = tick_batch_result
+            .and_then(|value| value.get("trace_success_sequences_sample"))
+            .or_else(|| ingress.get("trace_success_sequences_sample"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.trace_failed_sequences_sample = tick_batch_result
+            .and_then(|value| value.get("trace_failed_sequences_sample"))
+            .or_else(|| ingress.get("trace_failed_sequences_sample"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.trace_first_divergence_stage = tick_batch_result
+            .and_then(|value| value.get("trace_first_divergence_stage"))
+            .or_else(|| ingress.get("trace_first_divergence_stage"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        self.trace_first_divergence_sequence = tick_batch_result
+            .and_then(|value| value.get("trace_first_divergence_sequence"))
+            .or_else(|| ingress.get("trace_first_divergence_sequence"))
+            .and_then(|value| value.as_u64());
+        self.trace_success_vs_failed_diff_summary = tick_batch_result
+            .and_then(|value| value.get("trace_success_vs_failed_diff_summary"))
+            .or_else(|| ingress.get("trace_success_vs_failed_diff_summary"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        self.trace_candidate_payload_available_not_selected_sequences = tick_batch_result
+            .and_then(|value| value.get("trace_candidate_payload_available_not_selected_sequences"))
+            .or_else(|| ingress.get("trace_candidate_payload_available_not_selected_sequences"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.trace_selected_not_pushed_sequences = tick_batch_result
+            .and_then(|value| value.get("trace_selected_not_pushed_sequences"))
+            .or_else(|| ingress.get("trace_selected_not_pushed_sequences"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.trace_pushed_not_batched_sequences = tick_batch_result
+            .and_then(|value| value.get("trace_pushed_not_batched_sequences"))
+            .or_else(|| ingress.get("trace_pushed_not_batched_sequences"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.trace_batched_not_receipted_sequences = tick_batch_result
+            .and_then(|value| value.get("trace_batched_not_receipted_sequences"))
+            .or_else(|| ingress.get("trace_batched_not_receipted_sequences"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
         self.ledger_final_missing_admitted_but_no_receipt_invariant_violation_count = ingress
             .get("ledger_final_missing_admitted_but_no_receipt_invariant_violation_count")
             .and_then(|value| value.as_u64())
@@ -36377,6 +36457,49 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "ledger_admission_counter_mismatch_reason".to_string(),
             serde_json::json!(self.ledger_admission_counter_mismatch_reason),
+        );
+        out.insert(
+            "novorudp_trace_enabled".to_string(),
+            serde_json::json!(self.novorudp_trace_enabled),
+        );
+        out.insert(
+            "trace_success_sequences_sample".to_string(),
+            self.trace_success_sequences_sample.clone(),
+        );
+        out.insert(
+            "trace_failed_sequences_sample".to_string(),
+            self.trace_failed_sequences_sample.clone(),
+        );
+        out.insert(
+            "trace_first_divergence_stage".to_string(),
+            serde_json::json!(self.trace_first_divergence_stage),
+        );
+        out.insert(
+            "trace_first_divergence_sequence".to_string(),
+            self.trace_first_divergence_sequence
+                .map(|value| serde_json::json!(value))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        out.insert(
+            "trace_success_vs_failed_diff_summary".to_string(),
+            self.trace_success_vs_failed_diff_summary.clone(),
+        );
+        out.insert(
+            "trace_candidate_payload_available_not_selected_sequences".to_string(),
+            self.trace_candidate_payload_available_not_selected_sequences
+                .clone(),
+        );
+        out.insert(
+            "trace_selected_not_pushed_sequences".to_string(),
+            self.trace_selected_not_pushed_sequences.clone(),
+        );
+        out.insert(
+            "trace_pushed_not_batched_sequences".to_string(),
+            self.trace_pushed_not_batched_sequences.clone(),
+        );
+        out.insert(
+            "trace_batched_not_receipted_sequences".to_string(),
+            self.trace_batched_not_receipted_sequences.clone(),
         );
         out.insert(
             "ledger_final_missing_admission_skipped_count".to_string(),

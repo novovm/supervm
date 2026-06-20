@@ -11341,6 +11341,293 @@ fn sequence_ranges_sample_json_v1(
     serde_json::Value::Array(ranges)
 }
 
+fn novorudp_trace_sample_limit_v1() -> usize {
+    std::env::var("NOVOVM_NOVORUDP_TRACE_SAMPLE_LIMIT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(64)
+        .min(512)
+}
+
+fn novorudp_trace_sequence_entry_v1(
+    sequence: u64,
+    tx_hash: Option<&String>,
+    candidate_sequences: &BTreeSet<u64>,
+    payload_available_sequences: &BTreeSet<u64>,
+    selected_sequences: &BTreeSet<u64>,
+    raw_txs_pushed_sequences: &BTreeSet<u64>,
+    actual_batch_sequences: &BTreeSet<u64>,
+    receipt_sequences: &BTreeSet<u64>,
+    canonical_sequences: &BTreeSet<u64>,
+    durable_missing_closed_sequences: &BTreeSet<u64>,
+    blocked_reason: &str,
+) -> serde_json::Value {
+    let candidate_created = candidate_sequences.contains(&sequence);
+    let payload_available = payload_available_sequences.contains(&sequence);
+    let selected = selected_sequences.contains(&sequence);
+    let raw_txs_push_success = raw_txs_pushed_sequences.contains(&sequence);
+    let actual_batch_included = actual_batch_sequences.contains(&sequence);
+    let receipt_written = receipt_sequences.contains(&sequence);
+    let canonical_included = canonical_sequences.contains(&sequence);
+    let durable_missing_closed = durable_missing_closed_sequences.contains(&sequence);
+    let first_missing_stage = if !candidate_created {
+        "candidate_created"
+    } else if !payload_available {
+        "payload_available"
+    } else if !selected {
+        "selected"
+    } else if !raw_txs_push_success {
+        "raw_txs_push_success"
+    } else if !actual_batch_included {
+        "actual_batch_included"
+    } else if !receipt_written {
+        "receipt_written"
+    } else if !canonical_included {
+        "canonical_included"
+    } else if !durable_missing_closed {
+        "durable_missing_closed"
+    } else {
+        ""
+    };
+    let sequence_blocked_reason = match first_missing_stage {
+        "selected" if !blocked_reason.is_empty() => blocked_reason,
+        "raw_txs_push_success" => "selected_but_not_pushed_to_raw_txs",
+        "actual_batch_included" => "pushed_not_batched",
+        "receipt_written" => "batched_not_receipted",
+        "canonical_included" => "receipt_not_canonical",
+        "durable_missing_closed" => "canonical_not_closed",
+        _ => "",
+    };
+    serde_json::json!({
+        "sequence": sequence,
+        "tx_hash": tx_hash.cloned(),
+        "packet_received": candidate_created || payload_available,
+        "repair_received": candidate_created || payload_available,
+        "accepted": candidate_created || payload_available,
+        "payload_retained": payload_available,
+        "payload_available": payload_available,
+        "candidate_created": candidate_created,
+        "candidate_source": if candidate_created { "ledger_final_missing" } else { "" },
+        "selected": selected,
+        "selected_reason": if selected { "final_missing_payload_available" } else { "" },
+        "raw_txs_push_attempted": selected,
+        "raw_txs_push_success": raw_txs_push_success,
+        "actual_batch_included": actual_batch_included,
+        "aoem_executed": actual_batch_included,
+        "receipt_written": receipt_written,
+        "canonical_included": canonical_included,
+        "durable_missing_closed": durable_missing_closed,
+        "blocked_reason": sequence_blocked_reason,
+        "first_missing_stage": first_missing_stage,
+    })
+}
+
+fn novorudp_trace_first_divergence_stage_v1(
+    payload_available_sequences: &BTreeSet<u64>,
+    selected_sequences: &BTreeSet<u64>,
+    raw_txs_pushed_sequences: &BTreeSet<u64>,
+    actual_batch_sequences: &BTreeSet<u64>,
+    receipt_sequences: &BTreeSet<u64>,
+    canonical_sequences: &BTreeSet<u64>,
+    durable_missing_closed_sequences: &BTreeSet<u64>,
+) -> (&'static str, Option<u64>) {
+    if let Some(sequence) = payload_available_sequences
+        .difference(selected_sequences)
+        .next()
+        .copied()
+    {
+        return ("payload_available_to_selected", Some(sequence));
+    }
+    if let Some(sequence) = selected_sequences
+        .difference(raw_txs_pushed_sequences)
+        .next()
+        .copied()
+    {
+        return ("selected_to_raw_txs_push", Some(sequence));
+    }
+    if let Some(sequence) = raw_txs_pushed_sequences
+        .difference(actual_batch_sequences)
+        .next()
+        .copied()
+    {
+        return ("raw_txs_push_to_actual_batch", Some(sequence));
+    }
+    if let Some(sequence) = actual_batch_sequences
+        .difference(receipt_sequences)
+        .next()
+        .copied()
+    {
+        return ("actual_batch_to_receipt_written", Some(sequence));
+    }
+    if let Some(sequence) = receipt_sequences
+        .difference(canonical_sequences)
+        .next()
+        .copied()
+    {
+        return ("receipt_written_to_canonical_included", Some(sequence));
+    }
+    if let Some(sequence) = canonical_sequences
+        .difference(durable_missing_closed_sequences)
+        .next()
+        .copied()
+    {
+        return (
+            "canonical_included_to_durable_missing_closed",
+            Some(sequence),
+        );
+    }
+    ("", None)
+}
+
+fn novorudp_sequence_lifecycle_trace_diff_v1(
+    summary: &novovm_network::NetworkRuntimeNativePendingTxSummaryV1,
+    repair_final_missing_sequence_start: Option<u64>,
+    candidate_sequences: &BTreeSet<u64>,
+    payload_available_sequences: &BTreeSet<u64>,
+    selected_sequences: &BTreeSet<u64>,
+    raw_txs_pushed_sequences: &BTreeSet<u64>,
+    actual_batch_sequences: &BTreeSet<u64>,
+    receipt_sequences: &BTreeSet<u64>,
+    canonical_sequences: &BTreeSet<u64>,
+    durable_missing_closed_sequences: &BTreeSet<u64>,
+    tx_hash_by_sequence: &BTreeMap<u64, String>,
+    blocked_reason: &str,
+) -> serde_json::Value {
+    let sample_limit = novorudp_trace_sample_limit_v1();
+    let completed_count = summary.ledger_completed_count;
+    let success_sample_count = sample_limit.min(16) as u64;
+    let success_start = completed_count.saturating_sub(success_sample_count);
+    let mut success_sequences = Vec::<serde_json::Value>::new();
+    let mut success_trace_set = BTreeSet::<u64>::new();
+    for sequence in success_start..completed_count {
+        success_trace_set.insert(sequence);
+    }
+    for sequence in success_trace_set.iter().copied() {
+        let mut closed = BTreeSet::new();
+        closed.insert(sequence);
+        success_sequences.push(novorudp_trace_sequence_entry_v1(
+            sequence,
+            tx_hash_by_sequence.get(&sequence),
+            &closed,
+            &closed,
+            &closed,
+            &closed,
+            &closed,
+            &closed,
+            &closed,
+            &closed,
+            "",
+        ));
+    }
+
+    let failed_start = std::env::var("NOVOVM_NOVORUDP_TRACE_SEQUENCE_START")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .or(repair_final_missing_sequence_start)
+        .unwrap_or(completed_count);
+    let default_failed_end = summary.ledger_expected_range_end.unwrap_or_else(|| {
+        failed_start
+            .saturating_add(sample_limit as u64)
+            .saturating_sub(1)
+    });
+    let failed_end = std::env::var("NOVOVM_NOVORUDP_TRACE_SEQUENCE_END")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(default_failed_end);
+    let mut failed_trace_set = BTreeSet::<u64>::new();
+    for sequence in failed_start..=failed_end {
+        failed_trace_set.insert(sequence);
+        if failed_trace_set.len() >= sample_limit {
+            break;
+        }
+    }
+    failed_trace_set.extend(candidate_sequences.iter().copied().take(sample_limit));
+    failed_trace_set.extend(
+        payload_available_sequences
+            .iter()
+            .copied()
+            .take(sample_limit),
+    );
+    failed_trace_set.extend(selected_sequences.iter().copied().take(sample_limit));
+    while failed_trace_set.len() > sample_limit {
+        let Some(last) = failed_trace_set.iter().next_back().copied() else {
+            break;
+        };
+        failed_trace_set.remove(&last);
+    }
+    let mut failed_sequences = Vec::<serde_json::Value>::new();
+    for sequence in failed_trace_set.iter().copied() {
+        failed_sequences.push(novorudp_trace_sequence_entry_v1(
+            sequence,
+            tx_hash_by_sequence.get(&sequence),
+            candidate_sequences,
+            payload_available_sequences,
+            selected_sequences,
+            raw_txs_pushed_sequences,
+            actual_batch_sequences,
+            receipt_sequences,
+            canonical_sequences,
+            durable_missing_closed_sequences,
+            blocked_reason,
+        ));
+    }
+    let (first_divergence_stage, first_divergence_sequence) =
+        novorudp_trace_first_divergence_stage_v1(
+            payload_available_sequences,
+            selected_sequences,
+            raw_txs_pushed_sequences,
+            actual_batch_sequences,
+            receipt_sequences,
+            canonical_sequences,
+            durable_missing_closed_sequences,
+        );
+    serde_json::json!({
+        "novorudp_trace_enabled": true,
+        "trace_success_sequences_sample": success_sequences,
+        "trace_failed_sequences_sample": failed_sequences,
+        "trace_first_divergence_stage": first_divergence_stage,
+        "trace_first_divergence_sequence": first_divergence_sequence,
+        "trace_success_vs_failed_diff_summary": {
+            "completed_sample_count": success_trace_set.len(),
+            "failed_sample_count": failed_trace_set.len(),
+            "first_divergence_stage": first_divergence_stage,
+            "first_divergence_sequence": first_divergence_sequence,
+        },
+        "trace_candidate_payload_available_not_selected_sequences":
+            payload_available_sequences.difference(selected_sequences).copied().take(sample_limit).collect::<Vec<_>>(),
+        "trace_selected_not_pushed_sequences":
+            selected_sequences.difference(raw_txs_pushed_sequences).copied().take(sample_limit).collect::<Vec<_>>(),
+        "trace_pushed_not_batched_sequences":
+            raw_txs_pushed_sequences.difference(actual_batch_sequences).copied().take(sample_limit).collect::<Vec<_>>(),
+        "trace_batched_not_receipted_sequences":
+            actual_batch_sequences.difference(receipt_sequences).copied().take(sample_limit).collect::<Vec<_>>(),
+    })
+}
+
+fn insert_novorudp_sequence_lifecycle_trace_fields_v1(
+    report: &mut serde_json::Map<String, serde_json::Value>,
+    trace: &serde_json::Value,
+) {
+    for key in [
+        "novorudp_trace_enabled",
+        "trace_success_sequences_sample",
+        "trace_failed_sequences_sample",
+        "trace_first_divergence_stage",
+        "trace_first_divergence_sequence",
+        "trace_success_vs_failed_diff_summary",
+        "trace_candidate_payload_available_not_selected_sequences",
+        "trace_selected_not_pushed_sequences",
+        "trace_pushed_not_batched_sequences",
+        "trace_batched_not_receipted_sequences",
+    ] {
+        report.insert(
+            key.to_string(),
+            trace.get(key).cloned().unwrap_or(serde_json::Value::Null),
+        );
+    }
+}
+
 pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
@@ -11423,8 +11710,11 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     let mut ledger_final_missing_payload_available_selected_count = 0usize;
     let mut ledger_final_missing_raw_txs_push_attempt_count = 0usize;
     let mut ledger_final_missing_raw_txs_push_success_count = 0usize;
+    let mut ledger_final_missing_candidate_sequences = BTreeSet::<u64>::new();
     let mut ledger_final_missing_payload_available_sequences = BTreeSet::<u64>::new();
     let mut ledger_final_missing_selected_sequences = BTreeSet::<u64>::new();
+    let mut ledger_final_missing_raw_txs_pushed_sequences = BTreeSet::<u64>::new();
+    let mut ledger_final_missing_tx_hash_by_sequence = BTreeMap::<u64, String>::new();
     let ledger_final_missing_batch_limit_config = limit as u64;
     let ledger_final_missing_reserved_batch_budget =
         if ledger_final_missing_admission.ledger_final_missing_candidate_count > 0 {
@@ -11482,7 +11772,10 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             NovTxKindV1::Transfer(_) | NovTxKindV1::Governance(_) => 0,
         };
         if is_ledger_final_missing_candidate {
+            ledger_final_missing_candidate_sequences.insert(native_sequence);
             ledger_final_missing_payload_available_sequences.insert(native_sequence);
+            ledger_final_missing_tx_hash_by_sequence
+                .insert(native_sequence, to_hex_prefixed_v1(&pending_tx.tx_hash));
         }
         if native_tx.chain_id != chain_id {
             skipped_chain_mismatch = skipped_chain_mismatch.saturating_add(1);
@@ -11529,6 +11822,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
                 ledger_final_missing_candidate_selected_count.saturating_add(1);
             ledger_final_missing_raw_txs_push_success_count =
                 ledger_final_missing_raw_txs_push_success_count.saturating_add(1);
+            ledger_final_missing_raw_txs_pushed_sequences.insert(native_sequence);
             observe_network_runtime_native_pending_tx_repair_actual_batch_v1(
                 chain_id,
                 pending_tx.tx_hash,
@@ -11580,6 +11874,8 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         };
 
     if raw_txs.is_empty() {
+        let pre_batch_pending_summary =
+            snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
         let ledger_final_missing_batch_blocked_by_batch_limit_count =
             if ledger_final_missing_batch_limit_zero_count > 0 {
                 ledger_final_missing_admission.ledger_final_missing_candidate_count
@@ -11631,6 +11927,21 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             });
         let ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count =
             u64::from(ledger_final_missing_batch_blocked_reason == "unknown_invariant_violation");
+        let empty_trace_sequences = BTreeSet::<u64>::new();
+        let trace = novorudp_sequence_lifecycle_trace_diff_v1(
+            &pre_batch_pending_summary,
+            repair_final_missing_sequence_start,
+            &ledger_final_missing_candidate_sequences,
+            &ledger_final_missing_payload_available_sequences,
+            &ledger_final_missing_selected_sequences,
+            &ledger_final_missing_raw_txs_pushed_sequences,
+            &empty_trace_sequences,
+            &empty_trace_sequences,
+            &empty_trace_sequences,
+            &empty_trace_sequences,
+            &ledger_final_missing_tx_hash_by_sequence,
+            ledger_final_missing_batch_blocked_reason,
+        );
         let mut report = serde_json::Map::new();
         report.insert(
             "method".to_string(),
@@ -11878,6 +12189,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             "ledger_admission_counter_is_actual_batch".to_string(),
             serde_json::json!(true),
         );
+        insert_novorudp_sequence_lifecycle_trace_fields_v1(&mut report, &trace);
         report.insert(
             "pending_scanned".to_string(),
             serde_json::json!(pending.len()),
@@ -11927,6 +12239,20 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     );
     let post_batch_pending_summary =
         snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+    let trace = novorudp_sequence_lifecycle_trace_diff_v1(
+        &post_batch_pending_summary,
+        repair_final_missing_sequence_start,
+        &ledger_final_missing_candidate_sequences,
+        &ledger_final_missing_payload_available_sequences,
+        &ledger_final_missing_selected_sequences,
+        &ledger_final_missing_raw_txs_pushed_sequences,
+        &ledger_final_missing_selected_sequences,
+        &ledger_final_missing_selected_sequences,
+        &ledger_final_missing_selected_sequences,
+        &ledger_final_missing_selected_sequences,
+        &ledger_final_missing_tx_hash_by_sequence,
+        "",
+    );
     let mut report = serde_json::Map::new();
     report.insert(
         "method".to_string(),
@@ -12190,6 +12516,7 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         "ledger_admission_counter_is_actual_batch".to_string(),
         serde_json::json!(post_batch_pending_summary.ledger_admission_counter_is_actual_batch),
     );
+    insert_novorudp_sequence_lifecycle_trace_fields_v1(&mut report, &trace);
     report.insert("executed".to_string(), serde_json::json!(true));
     report.insert(
         "canonical_projection".to_string(),
@@ -15981,6 +16308,121 @@ mod tests {
                 })
             },
         )
+    }
+
+    fn test_sequence_set_v1(values: &[u64]) -> BTreeSet<u64> {
+        values.iter().copied().collect()
+    }
+
+    fn test_trace_summary_v1() -> novovm_network::NetworkRuntimeNativePendingTxSummaryV1 {
+        novovm_network::NetworkRuntimeNativePendingTxSummaryV1 {
+            ledger_completed_count: 14_112,
+            ledger_expected_range_start: Some(0),
+            ledger_expected_range_end: Some(14_399),
+            ledger_durable_missing_count: 288,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn novorudp_sequence_lifecycle_trace_records_success_and_failed_sequences() {
+        let summary = test_trace_summary_v1();
+        let candidate = test_sequence_set_v1(&[14_112]);
+        let payload_available = test_sequence_set_v1(&[14_112]);
+        let empty = BTreeSet::<u64>::new();
+        let trace = novorudp_sequence_lifecycle_trace_diff_v1(
+            &summary,
+            Some(14_112),
+            &candidate,
+            &payload_available,
+            &empty,
+            &empty,
+            &empty,
+            &empty,
+            &empty,
+            &empty,
+            &BTreeMap::new(),
+            "payload_available_but_not_selected",
+        );
+
+        assert_eq!(trace["novorudp_trace_enabled"].as_bool(), Some(true));
+        assert!(trace["trace_success_sequences_sample"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()));
+        assert!(trace["trace_failed_sequences_sample"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()));
+        assert_eq!(
+            trace["trace_failed_sequences_sample"][0]["sequence"].as_u64(),
+            Some(14_112)
+        );
+    }
+
+    #[test]
+    fn novorudp_trace_diff_detects_payload_available_not_selected() {
+        let summary = test_trace_summary_v1();
+        let candidate = test_sequence_set_v1(&[14_112]);
+        let payload_available = test_sequence_set_v1(&[14_112]);
+        let empty = BTreeSet::<u64>::new();
+        let trace = novorudp_sequence_lifecycle_trace_diff_v1(
+            &summary,
+            Some(14_112),
+            &candidate,
+            &payload_available,
+            &empty,
+            &empty,
+            &empty,
+            &empty,
+            &empty,
+            &empty,
+            &BTreeMap::new(),
+            "payload_available_but_not_selected",
+        );
+
+        assert_eq!(
+            trace["trace_first_divergence_stage"].as_str(),
+            Some("payload_available_to_selected")
+        );
+        assert_eq!(
+            trace["trace_first_divergence_sequence"].as_u64(),
+            Some(14_112)
+        );
+        assert_eq!(
+            trace["trace_candidate_payload_available_not_selected_sequences"][0].as_u64(),
+            Some(14_112)
+        );
+    }
+
+    #[test]
+    fn novorudp_trace_diff_detects_selected_not_pushed() {
+        let summary = test_trace_summary_v1();
+        let candidate = test_sequence_set_v1(&[14_112]);
+        let payload_available = test_sequence_set_v1(&[14_112]);
+        let selected = test_sequence_set_v1(&[14_112]);
+        let empty = BTreeSet::<u64>::new();
+        let trace = novorudp_sequence_lifecycle_trace_diff_v1(
+            &summary,
+            Some(14_112),
+            &candidate,
+            &payload_available,
+            &selected,
+            &empty,
+            &empty,
+            &empty,
+            &empty,
+            &empty,
+            &BTreeMap::new(),
+            "selected_but_not_pushed_to_raw_txs",
+        );
+
+        assert_eq!(
+            trace["trace_first_divergence_stage"].as_str(),
+            Some("selected_to_raw_txs_push")
+        );
+        assert_eq!(
+            trace["trace_selected_not_pushed_sequences"][0].as_u64(),
+            Some(14_112)
+        );
     }
 
     #[test]

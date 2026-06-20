@@ -5251,6 +5251,12 @@ const LEDGER_RECEIPT_COMPLETION_ARRAY_FIELDS_V1: &[&str] = &[
     "ledger_final_missing_actual_batch_ranges_sample",
     "ledger_final_missing_candidate_payload_available_ranges_sample",
     "ledger_final_missing_payload_available_selected_ranges_sample",
+    "trace_success_sequences_sample",
+    "trace_failed_sequences_sample",
+    "trace_candidate_payload_available_not_selected_sequences",
+    "trace_selected_not_pushed_sequences",
+    "trace_pushed_not_batched_sequences",
+    "trace_batched_not_receipted_sequences",
 ];
 
 fn ledger_receipt_completion_attribution_available_v1(source: Option<&Value>) -> bool {
@@ -5332,6 +5338,34 @@ fn apply_ledger_receipt_completion_fields_v1(target: &mut Value, source: Option<
             .and_then(|value| value.get("ledger_final_missing_selector_used_durable_bucket"))
             .and_then(Value::as_bool)
             .unwrap_or(false)),
+    );
+    target_obj.insert(
+        "novorudp_trace_enabled".to_string(),
+        serde_json::json!(source
+            .and_then(|value| value.get("novorudp_trace_enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)),
+    );
+    target_obj.insert(
+        "trace_first_divergence_stage".to_string(),
+        source
+            .and_then(|value| value.get("trace_first_divergence_stage"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!("")),
+    );
+    target_obj.insert(
+        "trace_first_divergence_sequence".to_string(),
+        source
+            .and_then(|value| value.get("trace_first_divergence_sequence"))
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
+    target_obj.insert(
+        "trace_success_vs_failed_diff_summary".to_string(),
+        source
+            .and_then(|value| value.get("trace_success_vs_failed_diff_summary"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
     );
     target_obj.insert(
         "ledger_final_missing_payload_available_selection_skipped_reason".to_string(),
@@ -5740,6 +5774,16 @@ fn diagnostics_summary_sample(
         "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count": summary_u64(summary, "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count"),
         "ledger_admission_counter_is_actual_batch": summary.get("ledger_admission_counter_is_actual_batch").and_then(Value::as_bool).unwrap_or(false),
         "ledger_admission_counter_mismatch_reason": summary.get("ledger_admission_counter_mismatch_reason").cloned().unwrap_or_else(|| serde_json::json!("")),
+        "novorudp_trace_enabled": summary.get("novorudp_trace_enabled").and_then(Value::as_bool).unwrap_or(false),
+        "trace_success_sequences_sample": summary.get("trace_success_sequences_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "trace_failed_sequences_sample": summary.get("trace_failed_sequences_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "trace_first_divergence_stage": summary.get("trace_first_divergence_stage").cloned().unwrap_or_else(|| serde_json::json!("")),
+        "trace_first_divergence_sequence": summary.get("trace_first_divergence_sequence").cloned().unwrap_or(Value::Null),
+        "trace_success_vs_failed_diff_summary": summary.get("trace_success_vs_failed_diff_summary").cloned().unwrap_or_else(|| serde_json::json!({})),
+        "trace_candidate_payload_available_not_selected_sequences": summary.get("trace_candidate_payload_available_not_selected_sequences").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "trace_selected_not_pushed_sequences": summary.get("trace_selected_not_pushed_sequences").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "trace_pushed_not_batched_sequences": summary.get("trace_pushed_not_batched_sequences").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "trace_batched_not_receipted_sequences": summary.get("trace_batched_not_receipted_sequences").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_receipt_completion_attribution_available": ledger_receipt_completion_attribution_available_v1(Some(summary)),
         "ledger_receipt_completion_attribution_missing_reason": ledger_receipt_completion_missing_reason_v1(Some(summary)),
         "ledger_final_missing_admission_skipped_count": summary_u64(summary, "ledger_final_missing_admission_skipped_count"),
@@ -8698,6 +8742,16 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count": summary_u64(&summary, "ledger_final_missing_admitted_but_no_receipt_invariant_violation_count"),
         "ledger_admission_counter_is_actual_batch": summary.get("ledger_admission_counter_is_actual_batch").and_then(Value::as_bool).unwrap_or(false),
         "ledger_admission_counter_mismatch_reason": summary.get("ledger_admission_counter_mismatch_reason").cloned().unwrap_or_else(|| serde_json::json!("")),
+        "novorudp_trace_enabled": summary.get("novorudp_trace_enabled").and_then(Value::as_bool).unwrap_or(false),
+        "trace_success_sequences_sample": summary.get("trace_success_sequences_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "trace_failed_sequences_sample": summary.get("trace_failed_sequences_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "trace_first_divergence_stage": summary.get("trace_first_divergence_stage").cloned().unwrap_or_else(|| serde_json::json!("")),
+        "trace_first_divergence_sequence": summary.get("trace_first_divergence_sequence").cloned().unwrap_or(Value::Null),
+        "trace_success_vs_failed_diff_summary": summary.get("trace_success_vs_failed_diff_summary").cloned().unwrap_or_else(|| serde_json::json!({})),
+        "trace_candidate_payload_available_not_selected_sequences": summary.get("trace_candidate_payload_available_not_selected_sequences").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "trace_selected_not_pushed_sequences": summary.get("trace_selected_not_pushed_sequences").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "trace_pushed_not_batched_sequences": summary.get("trace_pushed_not_batched_sequences").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "trace_batched_not_receipted_sequences": summary.get("trace_batched_not_receipted_sequences").cloned().unwrap_or_else(|| serde_json::json!([])),
         "ledger_final_missing_admission_skipped_count": summary_u64(&summary, "ledger_final_missing_admission_skipped_count"),
         "ledger_final_missing_admission_skip_reason_counts": summary.get("ledger_final_missing_admission_skip_reason_counts").cloned().unwrap_or_else(|| serde_json::json!({})),
         "admission_used_ledger_final_missing_bucket": summary.get("admission_used_ledger_final_missing_bucket").and_then(Value::as_bool).unwrap_or(false),
