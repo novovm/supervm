@@ -142,6 +142,9 @@ static NETWORK_RUNTIME_NATIVE_REPAIR_PROBE: OnceLock<
 static NETWORK_RUNTIME_NOVORUDP_SEQUENCE_LEDGER: OnceLock<
     Mutex<HashMap<u64, NovoRudpSequenceLifecycleLedger>>,
 > = OnceLock::new();
+static NETWORK_RUNTIME_NOVORUDP_LEDGER_CLOSE_DIAGNOSTICS: OnceLock<
+    Mutex<HashMap<u64, NetworkRuntimeNovoRudpLedgerCloseDiagnosticsV1>>,
+> = OnceLock::new();
 static NETWORK_RUNTIME_NATIVE_EXECUTION_BUDGET_RUNTIME: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeExecutionBudgetRuntimeSummaryV1>>,
 > = OnceLock::new();
@@ -269,6 +272,11 @@ fn runtime_native_repair_probe_map(
 fn runtime_novorudp_sequence_ledger_map(
 ) -> &'static Mutex<HashMap<u64, NovoRudpSequenceLifecycleLedger>> {
     NETWORK_RUNTIME_NOVORUDP_SEQUENCE_LEDGER.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_novorudp_ledger_close_diagnostics_map(
+) -> &'static Mutex<HashMap<u64, NetworkRuntimeNovoRudpLedgerCloseDiagnosticsV1>> {
+    NETWORK_RUNTIME_NOVORUDP_LEDGER_CLOSE_DIAGNOSTICS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_native_execution_budget_runtime_map(
@@ -1011,6 +1019,17 @@ struct NetworkRuntimeNativeRepairProbeStateV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
+pub struct NetworkRuntimeNovoRudpLedgerCloseDiagnosticsV1 {
+    pub ledger_prefix_close_count: u64,
+    pub ledger_synthetic_close_count: u64,
+    pub ledger_close_without_receipt_index_count: u64,
+    pub ledger_close_without_canonical_proof_count: u64,
+    pub ledger_false_completed_invariant_violation_count: u64,
+    pub ledger_false_completed_sequences_sample: Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub chain_id: u64,
     pub tx_count: usize,
@@ -1082,6 +1101,17 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub ledger_missing_closed_by_canonical_count: u64,
     pub ledger_missing_incorrectly_closed_by_received_count: u64,
     pub ledger_missing_incorrectly_closed_by_enqueued_count: u64,
+    pub ledger_close_source: String,
+    pub ledger_receipt_close_proof_count: u64,
+    pub ledger_canonical_close_proof_count: u64,
+    pub ledger_prefix_close_count: u64,
+    pub ledger_synthetic_close_count: u64,
+    pub ledger_close_without_receipt_index_count: u64,
+    pub ledger_close_without_canonical_proof_count: u64,
+    pub ledger_false_completed_invariant_violation_count: u64,
+    pub ledger_false_completed_sequences_sample: Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub ledger_validation_final_missing_overlap_count: u64,
+    pub ledger_durable_missing_validation_mismatch_count: u64,
     pub ledger_candidate_empty_but_durable_missing_count: u64,
     pub ledger_missing_without_candidate_count: u64,
     pub ledger_missing_without_retryable_count: u64,
@@ -1471,6 +1501,7 @@ pub fn observe_runtime_novorudp_sequence_completion_prefix_v1(chain_id: u64, com
     if completed_total == 0 {
         return;
     }
+    let mut expected_total = completed_total;
     if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
         let ledger = guard
             .entry(chain_id)
@@ -1482,9 +1513,31 @@ pub fn observe_runtime_novorudp_sequence_completion_prefix_v1(chain_id: u64, com
                 "runtime_completion_prefix_extend_expected",
             );
         }
-        let now_ms = now_unix_millis();
-        for sequence in 0..completed_total.min(ledger.expected_total) {
-            ledger.mark_canonical_included(sequence, now_ms);
+        expected_total = ledger.expected_total;
+    }
+    if let Ok(mut guard) = runtime_novorudp_ledger_close_diagnostics_map().lock() {
+        let diagnostics = guard.entry(chain_id).or_default();
+        let refused = completed_total.min(expected_total);
+        diagnostics.ledger_prefix_close_count = diagnostics
+            .ledger_prefix_close_count
+            .saturating_add(refused);
+        diagnostics.ledger_synthetic_close_count = diagnostics
+            .ledger_synthetic_close_count
+            .saturating_add(refused);
+        diagnostics.ledger_close_without_receipt_index_count = diagnostics
+            .ledger_close_without_receipt_index_count
+            .saturating_add(refused);
+        diagnostics.ledger_close_without_canonical_proof_count = diagnostics
+            .ledger_close_without_canonical_proof_count
+            .saturating_add(refused);
+        if refused > 0 && diagnostics.ledger_false_completed_sequences_sample.len() < 64 {
+            diagnostics.ledger_false_completed_sequences_sample.push(
+                NetworkRuntimeNativeRepairSequenceRangeV1 {
+                    start: 0,
+                    end_inclusive: refused.saturating_sub(1),
+                    count: refused,
+                },
+            );
         }
     }
 }
@@ -1766,6 +1819,11 @@ fn apply_novorudp_durable_missing_summary_v1(
         .ok()
         .and_then(|guard| guard.get(&chain_id).cloned())
         .unwrap_or_default();
+    let close_diagnostics = runtime_novorudp_ledger_close_diagnostics_map()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&chain_id).cloned())
+        .unwrap_or_default();
     let missing_ranges = ledger.ack_missing_bitmap();
     let durable_missing_count = missing_ranges
         .iter()
@@ -1828,6 +1886,21 @@ fn apply_novorudp_durable_missing_summary_v1(
     summary.ledger_missing_closed_by_canonical_count = canonical_closed_count;
     summary.ledger_missing_incorrectly_closed_by_received_count = 0;
     summary.ledger_missing_incorrectly_closed_by_enqueued_count = 0;
+    summary.ledger_close_source = "receipt_index_or_canonical_body_proof".to_string();
+    summary.ledger_receipt_close_proof_count = receipt_closed_count;
+    summary.ledger_canonical_close_proof_count = canonical_closed_count;
+    summary.ledger_prefix_close_count = close_diagnostics.ledger_prefix_close_count;
+    summary.ledger_synthetic_close_count = close_diagnostics.ledger_synthetic_close_count;
+    summary.ledger_close_without_receipt_index_count =
+        close_diagnostics.ledger_close_without_receipt_index_count;
+    summary.ledger_close_without_canonical_proof_count =
+        close_diagnostics.ledger_close_without_canonical_proof_count;
+    summary.ledger_false_completed_invariant_violation_count =
+        close_diagnostics.ledger_false_completed_invariant_violation_count;
+    summary.ledger_false_completed_sequences_sample =
+        close_diagnostics.ledger_false_completed_sequences_sample;
+    summary.ledger_validation_final_missing_overlap_count = 0;
+    summary.ledger_durable_missing_validation_mismatch_count = 0;
     // Candidate/admission buckets live in a separate snapshot. Keep this
     // runtime summary as the durable ledger view; aggregate/wrapper layers
     // compute candidate-empty diagnostics once both views are available.
@@ -6731,35 +6804,40 @@ mod tests {
         if let Ok(mut guard) = runtime_native_repair_probe_map().lock() {
             guard.remove(&chain_id);
         }
+        if let Ok(mut guard) = runtime_novorudp_ledger_close_diagnostics_map().lock() {
+            guard.remove(&chain_id);
+        }
     }
 
     #[test]
-    fn receipt_write_closes_durable_missing_sequence() {
+    fn receipt_close_requires_receipt_index_proof() {
         let chain_id = 9_998_771;
+        let sequence = 14_072;
         clear_novorudp_sequence_ledger_for_test(chain_id);
         ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 14_400, 64);
-        observe_runtime_novorudp_sequence_completion_prefix_v1(chain_id, 1);
+        observe_runtime_novorudp_sequence_completion_prefix_v1(chain_id, sequence + 1);
 
         let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
         assert_eq!(summary.ledger_expected_count, 14_400);
-        assert_eq!(summary.ledger_completed_count, 1);
-        assert_eq!(summary.ledger_missing_closed_by_receipt_count, 1);
-        assert_eq!(summary.ledger_durable_missing_count, 14_399);
-        assert_eq!(summary.ledger_durable_missing_ranges_sample[0].start, 1);
+        assert_eq!(summary.ledger_completed_count, 0);
+        assert_eq!(summary.ledger_durable_missing_count, 14_400);
+        assert!(summary.ledger_close_without_receipt_index_count > 0);
+        assert_eq!(summary.ledger_prefix_close_count, sequence + 1);
     }
 
     #[test]
-    fn canonical_include_closes_durable_missing_sequence() {
+    fn canonical_close_requires_canonical_body_proof() {
         let chain_id = 9_998_772;
+        let sequence = 14_072;
         clear_novorudp_sequence_ledger_for_test(chain_id);
         ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 14_400, 64);
-        observe_runtime_novorudp_sequence_completion_prefix_v1(chain_id, 1);
+        observe_runtime_novorudp_sequence_completion_prefix_v1(chain_id, sequence + 1);
 
         let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
-        assert_eq!(summary.ledger_completed_count, 1);
-        assert_eq!(summary.ledger_missing_closed_by_canonical_count, 1);
-        assert_eq!(summary.ledger_durable_missing_count, 14_399);
-        assert_eq!(summary.ledger_durable_missing_ranges_sample[0].start, 1);
+        assert_eq!(summary.ledger_completed_count, 0);
+        assert_eq!(summary.ledger_missing_closed_by_canonical_count, 0);
+        assert_eq!(summary.ledger_durable_missing_count, 14_400);
+        assert!(summary.ledger_close_without_canonical_proof_count > 0);
     }
 
     #[test]
@@ -6800,24 +6878,21 @@ mod tests {
     }
 
     #[test]
-    fn ack_window_moves_after_receipt_completion() {
+    fn prefix_progress_cannot_close_unproven_tail() {
         let chain_id = 9_998_775;
         clear_novorudp_sequence_ledger_for_test(chain_id);
         ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 14_400, 64);
         observe_runtime_novorudp_sequence_completion_prefix_v1(chain_id, 14_104);
 
         let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
-        assert_eq!(summary.ledger_completed_count, 14_104);
-        assert_eq!(summary.ledger_durable_missing_count, 296);
-        assert_eq!(
-            summary.ledger_durable_missing_ranges_sample[0].start,
-            14_104
-        );
-        assert_ne!(summary.ledger_durable_missing_ranges_sample[0].start, 0);
+        assert_eq!(summary.ledger_completed_count, 0);
+        assert_eq!(summary.ledger_durable_missing_count, 14_400);
+        assert_eq!(summary.ledger_durable_missing_ranges_sample[0].start, 0);
+        assert_eq!(summary.ledger_prefix_close_count, 14_104);
     }
 
     #[test]
-    fn progress_cannot_exceed_ledger_completed_without_invariant() {
+    fn validation_final_missing_prevents_zero_durable_missing() {
         let chain_id = 9_998_776;
         clear_novorudp_sequence_ledger_for_test(chain_id);
         ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 14_400, 64);
@@ -6834,8 +6909,13 @@ mod tests {
 
         let summary_after_completion =
             snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
-        assert_eq!(summary_after_completion.ledger_completed_count, 14_104);
-        assert_eq!(summary_after_completion.ledger_durable_missing_count, 296);
+        assert_eq!(summary_after_completion.ledger_completed_count, 0);
+        assert_ne!(summary_after_completion.ledger_durable_missing_count, 0);
+        assert_eq!(
+            summary_after_completion.ledger_durable_missing_count,
+            14_400
+        );
+        assert!(summary_after_completion.ledger_close_without_receipt_index_count > 0);
     }
 
     #[test]

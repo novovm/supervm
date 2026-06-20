@@ -4892,6 +4892,66 @@ fn write_synthetic_receiver_failure_report(
         apply_ledger_receipt_completion_fields_v1(receiver_summary, ledger_receipt_source);
     }
     apply_ledger_receipt_completion_fields_v1(&mut report, ledger_receipt_source);
+    let ledger_durable_missing_count = ledger_receipt_source
+        .map(|sample| summary_u64(sample, "ledger_durable_missing_count"))
+        .unwrap_or_default();
+    if final_missing_sequence_count > 0 && ledger_durable_missing_count == 0 {
+        let false_completed_sample = final_missing_ranges_sample.clone();
+        for target in ["validation", "receiver_summary"] {
+            if let Some(obj) = report.get_mut(target).and_then(Value::as_object_mut) {
+                obj.insert(
+                    "ledger_false_completed_invariant_violation_count".to_string(),
+                    serde_json::json!(final_missing_sequence_count),
+                );
+                obj.insert(
+                    "ledger_false_completed_sequences_sample".to_string(),
+                    false_completed_sample.clone(),
+                );
+                obj.insert(
+                    "ledger_validation_final_missing_overlap_count".to_string(),
+                    serde_json::json!(final_missing_sequence_count),
+                );
+                obj.insert(
+                    "ledger_durable_missing_validation_mismatch_count".to_string(),
+                    serde_json::json!(final_missing_sequence_count),
+                );
+                obj.insert(
+                    "trace_first_divergence_stage".to_string(),
+                    serde_json::json!("ledger_false_completed"),
+                );
+                obj.insert(
+                    "trace_false_completed_sequences_sample".to_string(),
+                    false_completed_sample.clone(),
+                );
+            }
+        }
+        if let Some(obj) = report.as_object_mut() {
+            obj.insert(
+                "ledger_false_completed_invariant_violation_count".to_string(),
+                serde_json::json!(final_missing_sequence_count),
+            );
+            obj.insert(
+                "ledger_false_completed_sequences_sample".to_string(),
+                false_completed_sample.clone(),
+            );
+            obj.insert(
+                "ledger_validation_final_missing_overlap_count".to_string(),
+                serde_json::json!(final_missing_sequence_count),
+            );
+            obj.insert(
+                "ledger_durable_missing_validation_mismatch_count".to_string(),
+                serde_json::json!(final_missing_sequence_count),
+            );
+            obj.insert(
+                "trace_first_divergence_stage".to_string(),
+                serde_json::json!("ledger_false_completed"),
+            );
+            obj.insert(
+                "trace_false_completed_sequences_sample".to_string(),
+                false_completed_sample,
+            );
+        }
+    }
     write_report(report_path("receiver").as_path(), &report)
 }
 
@@ -5711,6 +5771,17 @@ fn diagnostics_summary_sample(
         "ledger_missing_closed_by_canonical_count": summary_u64(summary, "ledger_missing_closed_by_canonical_count"),
         "ledger_missing_incorrectly_closed_by_received_count": summary_u64(summary, "ledger_missing_incorrectly_closed_by_received_count"),
         "ledger_missing_incorrectly_closed_by_enqueued_count": summary_u64(summary, "ledger_missing_incorrectly_closed_by_enqueued_count"),
+        "ledger_close_source": summary.get("ledger_close_source").cloned().unwrap_or_else(|| serde_json::json!("")),
+        "ledger_receipt_close_proof_count": summary_u64(summary, "ledger_receipt_close_proof_count"),
+        "ledger_canonical_close_proof_count": summary_u64(summary, "ledger_canonical_close_proof_count"),
+        "ledger_prefix_close_count": summary_u64(summary, "ledger_prefix_close_count"),
+        "ledger_synthetic_close_count": summary_u64(summary, "ledger_synthetic_close_count"),
+        "ledger_close_without_receipt_index_count": summary_u64(summary, "ledger_close_without_receipt_index_count"),
+        "ledger_close_without_canonical_proof_count": summary_u64(summary, "ledger_close_without_canonical_proof_count"),
+        "ledger_false_completed_invariant_violation_count": summary_u64(summary, "ledger_false_completed_invariant_violation_count"),
+        "ledger_false_completed_sequences_sample": summary.get("ledger_false_completed_sequences_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "ledger_validation_final_missing_overlap_count": summary_u64(summary, "ledger_validation_final_missing_overlap_count"),
+        "ledger_durable_missing_validation_mismatch_count": summary_u64(summary, "ledger_durable_missing_validation_mismatch_count"),
         "ledger_candidate_rehydrated_count": summary_u64(summary, "ledger_candidate_rehydrated_count"),
         "ledger_candidate_empty_but_durable_missing_count": summary_u64(summary, "ledger_candidate_empty_but_durable_missing_count"),
         "ledger_missing_without_candidate_count": summary_u64(summary, "ledger_missing_without_candidate_count"),
@@ -8682,6 +8753,17 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "ledger_missing_closed_by_canonical_count": summary_u64(&summary, "ledger_missing_closed_by_canonical_count"),
         "ledger_missing_incorrectly_closed_by_received_count": summary_u64(&summary, "ledger_missing_incorrectly_closed_by_received_count"),
         "ledger_missing_incorrectly_closed_by_enqueued_count": summary_u64(&summary, "ledger_missing_incorrectly_closed_by_enqueued_count"),
+        "ledger_close_source": summary.get("ledger_close_source").cloned().unwrap_or_else(|| serde_json::json!("")),
+        "ledger_receipt_close_proof_count": summary_u64(&summary, "ledger_receipt_close_proof_count"),
+        "ledger_canonical_close_proof_count": summary_u64(&summary, "ledger_canonical_close_proof_count"),
+        "ledger_prefix_close_count": summary_u64(&summary, "ledger_prefix_close_count"),
+        "ledger_synthetic_close_count": summary_u64(&summary, "ledger_synthetic_close_count"),
+        "ledger_close_without_receipt_index_count": summary_u64(&summary, "ledger_close_without_receipt_index_count"),
+        "ledger_close_without_canonical_proof_count": summary_u64(&summary, "ledger_close_without_canonical_proof_count"),
+        "ledger_false_completed_invariant_violation_count": summary_u64(&summary, "ledger_false_completed_invariant_violation_count"),
+        "ledger_false_completed_sequences_sample": summary.get("ledger_false_completed_sequences_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "ledger_validation_final_missing_overlap_count": summary_u64(&summary, "ledger_validation_final_missing_overlap_count"),
+        "ledger_durable_missing_validation_mismatch_count": summary_u64(&summary, "ledger_durable_missing_validation_mismatch_count"),
         "ledger_candidate_rehydrated_count": summary_u64(&summary, "ledger_candidate_rehydrated_count"),
         "ledger_candidate_empty_but_durable_missing_count": summary_u64(&summary, "ledger_candidate_empty_but_durable_missing_count"),
         "ledger_missing_without_candidate_count": summary_u64(&summary, "ledger_missing_without_candidate_count"),

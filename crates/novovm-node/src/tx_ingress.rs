@@ -15513,7 +15513,8 @@ mod tests {
                         Some("")
                     );
                     let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
-                    assert_eq!(summary.ledger_durable_missing_count, 336);
+                    assert_eq!(summary.ledger_completed_count, 0);
+                    assert_eq!(summary.ledger_durable_missing_count, 14_400);
                     assert_eq!(summary.ledger_final_missing_actual_batch_count, 0);
                 })
             },
@@ -15646,7 +15647,8 @@ mod tests {
                     }
 
                     let before = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
-                    assert_eq!(before.ledger_durable_missing_count, 336);
+                    assert_eq!(before.ledger_completed_count, 0);
+                    assert_eq!(before.ledger_durable_missing_count, 14_400);
 
                     let out = run_nov_execute_pending_native_tx_batch_from_params_v1(
                         &serde_json::json!({
@@ -15669,8 +15671,8 @@ mod tests {
                         Some(2)
                     );
                     let after = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
-                    assert_eq!(after.ledger_completed_count, 14_066);
-                    assert_eq!(after.ledger_durable_missing_count, 334);
+                    assert_eq!(after.ledger_completed_count, 2);
+                    assert_eq!(after.ledger_durable_missing_count, 14_398);
                 })
             },
         )
@@ -15912,8 +15914,8 @@ mod tests {
                         Some(0)
                     );
                     let after = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
-                    assert_eq!(after.ledger_completed_count, 14_114);
-                    assert_eq!(after.ledger_durable_missing_count, 286);
+                    assert_eq!(after.ledger_completed_count, 2);
+                    assert_eq!(after.ledger_durable_missing_count, 14_398);
                 })
             },
         )
@@ -16076,7 +16078,7 @@ mod tests {
                     let after = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
                     assert_eq!(after.repair_sequence_admitted_to_aoem_count, 32);
                     assert_eq!(after.ledger_final_missing_actual_batch_count, 32);
-                    assert_eq!(after.ledger_completed_count, 14_112);
+                    assert_eq!(after.ledger_completed_count, 32);
                 })
             },
         )

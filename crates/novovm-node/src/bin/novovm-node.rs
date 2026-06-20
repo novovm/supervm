@@ -33005,6 +33005,17 @@ fn apply_novorudp_runtime_ledger_summary_overlay_v1(
         "ledger_missing_closed_by_canonical_count",
         "ledger_missing_incorrectly_closed_by_received_count",
         "ledger_missing_incorrectly_closed_by_enqueued_count",
+        "ledger_close_source",
+        "ledger_receipt_close_proof_count",
+        "ledger_canonical_close_proof_count",
+        "ledger_prefix_close_count",
+        "ledger_synthetic_close_count",
+        "ledger_close_without_receipt_index_count",
+        "ledger_close_without_canonical_proof_count",
+        "ledger_false_completed_invariant_violation_count",
+        "ledger_false_completed_sequences_sample",
+        "ledger_validation_final_missing_overlap_count",
+        "ledger_durable_missing_validation_mismatch_count",
         "ledger_candidate_rehydrated_count",
         "ledger_candidate_empty_but_durable_missing_count",
         "ledger_missing_without_candidate_count",
@@ -34342,6 +34353,17 @@ struct NativeExecutionPipelineAggregateV1 {
     ledger_missing_closed_by_canonical_count: u64,
     ledger_missing_incorrectly_closed_by_received_count: u64,
     ledger_missing_incorrectly_closed_by_enqueued_count: u64,
+    ledger_close_source: String,
+    ledger_receipt_close_proof_count: u64,
+    ledger_canonical_close_proof_count: u64,
+    ledger_prefix_close_count: u64,
+    ledger_synthetic_close_count: u64,
+    ledger_close_without_receipt_index_count: u64,
+    ledger_close_without_canonical_proof_count: u64,
+    ledger_false_completed_invariant_violation_count: u64,
+    ledger_false_completed_sequences_sample: serde_json::Value,
+    ledger_validation_final_missing_overlap_count: u64,
+    ledger_durable_missing_validation_mismatch_count: u64,
     ledger_candidate_rehydrated_count: u64,
     ledger_candidate_empty_but_durable_missing_count: u64,
     ledger_missing_without_candidate_count: u64,
@@ -34534,6 +34556,17 @@ impl NativeExecutionPipelineAggregateV1 {
             ledger_missing_closed_by_canonical_count: 0,
             ledger_missing_incorrectly_closed_by_received_count: 0,
             ledger_missing_incorrectly_closed_by_enqueued_count: 0,
+            ledger_close_source: String::new(),
+            ledger_receipt_close_proof_count: 0,
+            ledger_canonical_close_proof_count: 0,
+            ledger_prefix_close_count: 0,
+            ledger_synthetic_close_count: 0,
+            ledger_close_without_receipt_index_count: 0,
+            ledger_close_without_canonical_proof_count: 0,
+            ledger_false_completed_invariant_violation_count: 0,
+            ledger_false_completed_sequences_sample: serde_json::json!([]),
+            ledger_validation_final_missing_overlap_count: 0,
+            ledger_durable_missing_validation_mismatch_count: 0,
             ledger_candidate_rehydrated_count: 0,
             ledger_candidate_empty_but_durable_missing_count: 0,
             ledger_missing_without_candidate_count: 0,
@@ -35130,6 +35163,51 @@ impl NativeExecutionPipelineAggregateV1 {
             .unwrap_or_default();
         self.ledger_missing_incorrectly_closed_by_enqueued_count = ingress
             .get("ledger_missing_incorrectly_closed_by_enqueued_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_close_source = ingress
+            .get("ledger_close_source")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        self.ledger_receipt_close_proof_count = ingress
+            .get("ledger_receipt_close_proof_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_canonical_close_proof_count = ingress
+            .get("ledger_canonical_close_proof_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_prefix_close_count = ingress
+            .get("ledger_prefix_close_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_synthetic_close_count = ingress
+            .get("ledger_synthetic_close_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_close_without_receipt_index_count = ingress
+            .get("ledger_close_without_receipt_index_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_close_without_canonical_proof_count = ingress
+            .get("ledger_close_without_canonical_proof_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_false_completed_invariant_violation_count = ingress
+            .get("ledger_false_completed_invariant_violation_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_false_completed_sequences_sample = ingress
+            .get("ledger_false_completed_sequences_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.ledger_validation_final_missing_overlap_count = ingress
+            .get("ledger_validation_final_missing_overlap_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.ledger_durable_missing_validation_mismatch_count = ingress
+            .get("ledger_durable_missing_validation_mismatch_count")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
         self.ledger_candidate_rehydrated_count = ingress
@@ -36198,6 +36276,50 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "ledger_missing_incorrectly_closed_by_enqueued_count".to_string(),
             serde_json::json!(self.ledger_missing_incorrectly_closed_by_enqueued_count),
+        );
+        out.insert(
+            "ledger_close_source".to_string(),
+            serde_json::json!(self.ledger_close_source),
+        );
+        out.insert(
+            "ledger_receipt_close_proof_count".to_string(),
+            serde_json::json!(self.ledger_receipt_close_proof_count),
+        );
+        out.insert(
+            "ledger_canonical_close_proof_count".to_string(),
+            serde_json::json!(self.ledger_canonical_close_proof_count),
+        );
+        out.insert(
+            "ledger_prefix_close_count".to_string(),
+            serde_json::json!(self.ledger_prefix_close_count),
+        );
+        out.insert(
+            "ledger_synthetic_close_count".to_string(),
+            serde_json::json!(self.ledger_synthetic_close_count),
+        );
+        out.insert(
+            "ledger_close_without_receipt_index_count".to_string(),
+            serde_json::json!(self.ledger_close_without_receipt_index_count),
+        );
+        out.insert(
+            "ledger_close_without_canonical_proof_count".to_string(),
+            serde_json::json!(self.ledger_close_without_canonical_proof_count),
+        );
+        out.insert(
+            "ledger_false_completed_invariant_violation_count".to_string(),
+            serde_json::json!(self.ledger_false_completed_invariant_violation_count),
+        );
+        out.insert(
+            "ledger_false_completed_sequences_sample".to_string(),
+            self.ledger_false_completed_sequences_sample.clone(),
+        );
+        out.insert(
+            "ledger_validation_final_missing_overlap_count".to_string(),
+            serde_json::json!(self.ledger_validation_final_missing_overlap_count),
+        );
+        out.insert(
+            "ledger_durable_missing_validation_mismatch_count".to_string(),
+            serde_json::json!(self.ledger_durable_missing_validation_mismatch_count),
         );
         out.insert(
             "ledger_candidate_rehydrated_count".to_string(),
