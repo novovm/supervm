@@ -34297,10 +34297,12 @@ struct NativeExecutionPipelineAggregateV1 {
     network_enabled_ticks: u64,
     network_ok_ticks: u64,
     network_error_ticks: u64,
+    network_received_total: u64,
     ingress_submitted_total: u64,
     product_ingress_submitted_total: u64,
     max_product_ingress_submitted_per_tick: u64,
     max_network_received_per_tick: u64,
+    queue_admitted_total: u64,
     max_queue_admitted_per_tick: u64,
     ingress_error_ticks: u64,
     aoem_executed_total: u64,
@@ -34514,10 +34516,12 @@ impl NativeExecutionPipelineAggregateV1 {
             network_enabled_ticks: 0,
             network_ok_ticks: 0,
             network_error_ticks: 0,
+            network_received_total: 0,
             ingress_submitted_total: 0,
             product_ingress_submitted_total: 0,
             max_product_ingress_submitted_per_tick: 0,
             max_network_received_per_tick: 0,
+            queue_admitted_total: 0,
             max_queue_admitted_per_tick: 0,
             ingress_error_ticks: 0,
             aoem_executed_total: 0,
@@ -34801,6 +34805,9 @@ impl NativeExecutionPipelineAggregateV1 {
             .and_then(|value| value.get("received_count"))
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.network_received_total = self
+            .network_received_total
+            .saturating_add(network_received_this_tick);
         self.max_network_received_per_tick = self
             .max_network_received_per_tick
             .max(network_received_this_tick);
@@ -34841,12 +34848,16 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("executed")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
-        self.max_queue_admitted_per_tick = self.max_queue_admitted_per_tick.max(
-            report
-                .pointer("/tick_result/batch_result/selected_count")
-                .and_then(|value| value.as_u64())
-                .unwrap_or(executed_this_tick),
-        );
+        let queue_admitted_this_tick = report
+            .pointer("/tick_result/batch_result/selected_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(executed_this_tick);
+        self.queue_admitted_total = self
+            .queue_admitted_total
+            .saturating_add(queue_admitted_this_tick);
+        self.max_queue_admitted_per_tick = self
+            .max_queue_admitted_per_tick
+            .max(queue_admitted_this_tick);
         self.aoem_executed_total = self.aoem_executed_total.saturating_add(executed_this_tick);
         self.max_aoem_batch_executed_per_tick = self
             .max_aoem_batch_executed_per_tick
@@ -36128,6 +36139,10 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.network_error_ticks),
         );
         out.insert(
+            "network_received_total".to_string(),
+            serde_json::json!(self.network_received_total),
+        );
+        out.insert(
             "ingress_submitted_total".to_string(),
             serde_json::json!(self.ingress_submitted_total),
         );
@@ -36142,6 +36157,10 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "max_network_received_per_tick".to_string(),
             serde_json::json!(self.max_network_received_per_tick),
+        );
+        out.insert(
+            "queue_admitted_total".to_string(),
+            serde_json::json!(self.queue_admitted_total),
         );
         out.insert(
             "max_queue_admitted_per_tick".to_string(),

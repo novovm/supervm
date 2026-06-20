@@ -1884,6 +1884,114 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn receiver_ingress_drain_attribution_preserves_layered_counters() {
+        let summary = serde_json::json!({
+            "network_received_total": 2520,
+            "ingress_submitted_total": 696,
+            "product_ingress_submitted_total": 696,
+            "ingress_total_last": 696,
+            "queue_pending_last": 664,
+            "queue_active_pending_last": 664,
+            "queue_rejected_last": 0,
+            "ingress_error_ticks": 0,
+            "ticks": 220,
+            "nonempty_aoem_batch_ticks": 118,
+            "queue_admitted_total": 3768,
+            "max_network_received_per_tick": 8,
+            "max_queue_admitted_per_tick": 32,
+            "included_canonical_total": 32,
+            "aoem_executed_total": 3768,
+            "ledger_completed_count": 3768,
+            "ledger_receipt_proof_close_success_count": 3768,
+        });
+        let sample = diagnostics_summary_sample(
+            Instant::now(),
+            &summary,
+            serde_json::json!({"line_count": 3768, "bytes": 1}),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            32,
+        );
+
+        assert_eq!(
+            sample["receiver_udp_packet_recv_count"].as_u64(),
+            Some(2520)
+        );
+        assert_eq!(
+            sample["receiver_udp_packet_decode_ok_count"].as_u64(),
+            Some(696)
+        );
+        assert_eq!(sample["receiver_pending_active_count"].as_u64(), Some(664));
+        assert_eq!(
+            sample["receiver_pending_selected_count"].as_u64(),
+            Some(3768)
+        );
+        assert_eq!(
+            sample["receiver_aoem_batch_result_count"].as_u64(),
+            Some(3768)
+        );
+        assert_eq!(
+            sample["receiver_canonical_included_count"].as_u64(),
+            Some(32)
+        );
+        assert_eq!(
+            sample["receiver_drain_attribution_stage"].as_str(),
+            Some("receipt_canonical_projection_or_summary_lag")
+        );
+        assert_eq!(
+            sample["summary_consistency_violation_count"].as_u64(),
+            Some(2)
+        );
+        assert_eq!(
+            sample["summary_source_ledger"].as_str(),
+            Some("child_progress.ledger_completed_count")
+        );
+    }
+
+    #[test]
+    fn receiver_drain_delta_flags_receipt_canonical_projection_stall() {
+        let mut previous = serde_json::json!({
+            "receiver_udp_packet_recv_count": 100,
+            "received_unique_total": 32,
+            "aoem_executed_total": 32,
+            "canonical_unique_included_total": 32,
+            "receiver_ledger_close_count": 32,
+            "receiver_child_tick_count": 10,
+            "receiver_aoem_tick_count": 1,
+            "receiver_pending_selected_count": 32,
+            "queue_pending_last": 32,
+        });
+        annotate_receiver_ingress_drain_delta_v1(&mut previous, None);
+
+        let mut sample = serde_json::json!({
+            "receiver_udp_packet_recv_count": 140,
+            "received_unique_total": 40,
+            "aoem_executed_total": 64,
+            "canonical_unique_included_total": 32,
+            "receiver_ledger_close_count": 64,
+            "receiver_child_tick_count": 11,
+            "receiver_aoem_tick_count": 2,
+            "receiver_pending_selected_count": 64,
+            "queue_pending_last": 64,
+        });
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["receiver_aoem_executed_delta_raw"].as_u64(),
+            Some(32)
+        );
+        assert_eq!(sample["receiver_canonical_delta_raw"].as_u64(), Some(0));
+        assert_eq!(
+            sample["receiver_receipt_canonical_projection_stall"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("receipt_canonical_projection_stall")
+        );
+    }
+
+    #[test]
     fn wrapper_final_preserves_runtime_blocked_reason() {
         let source = serde_json::json!({
             "ledger_final_missing_candidate_count": 304,
@@ -3718,6 +3826,7 @@ fn run_receiver_node(
                     if let Some(error) = output_artifact_error.as_ref() {
                         sample["output_artifact_error"] = serde_json::json!(error);
                     }
+                    annotate_receiver_ingress_drain_delta_v1(&mut sample, state.samples.last());
                     state.samples.push(sample);
                     if state.samples.len() > 256 {
                         let drop_count = state.samples.len().saturating_sub(256);
@@ -3764,7 +3873,7 @@ fn run_receiver_node(
             } else {
                 serde_json::json!({})
             };
-            let sample = diagnostics_summary_sample(
+            let mut sample = diagnostics_summary_sample(
                 started_at,
                 &summary,
                 ledger_stats,
@@ -3805,6 +3914,7 @@ fn run_receiver_node(
             summary["final_ack_repeat_count"] = serde_json::json!(final_ack_repeat_count);
             summary["final_ack_sent_count"] = serde_json::json!(final_ack_sent_count);
             summary["final_ack_last_epoch"] = serde_json::json!(final_ack_last_epoch);
+            annotate_receiver_ingress_drain_delta_v1(&mut sample, state.samples.last());
             state.samples.push(sample);
             write_diagnostics_report(&diagnostics, &state, true, child_pid, expected_tx_count)?;
             write_receiver_exit_report(
@@ -4021,6 +4131,7 @@ fn run_receiver_node(
             sample["novorudp_ack_progress_interval_ms"] =
                 serde_json::json!(receiver_ack_progress_interval_ms);
             sample["novorudp_ack_epoch_after_sample"] = serde_json::json!(epoch);
+            annotate_receiver_ingress_drain_delta_v1(&mut sample, state.samples.last());
             state.samples.push(sample);
             if state.samples.len() > 256 {
                 let drop_count = state.samples.len().saturating_sub(256);
@@ -5870,6 +5981,138 @@ fn apply_ledger_receipt_completion_fields_v1(target: &mut Value, source: Option<
     );
 }
 
+fn receiver_summary_consistency_reasons_v1(
+    aoem: u64,
+    canonical: u64,
+    ledger_completed: u64,
+) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    if aoem > canonical {
+        reasons.push("aoem_executed_gt_canonical");
+    }
+    if ledger_completed > canonical {
+        reasons.push("ledger_completed_gt_canonical");
+    }
+    if ledger_completed > aoem {
+        reasons.push("ledger_completed_gt_aoem");
+    }
+    reasons
+}
+
+fn receiver_drain_attribution_stage_v1(
+    network_received_total: u64,
+    ingress_submitted_total: u64,
+    pending_last: u64,
+    ticks: u64,
+    queue_admitted_total: u64,
+    nonempty_aoem_batch_ticks: u64,
+    aoem: u64,
+    canonical: u64,
+    ledger_completed: u64,
+) -> &'static str {
+    if network_received_total == 0 && ingress_submitted_total == 0 {
+        "waiting_for_udp"
+    } else if pending_last > 0 && ticks == 0 {
+        "receiver_child_tick_stall"
+    } else if pending_last > 0 && ticks > 0 && queue_admitted_total == 0 {
+        "admission_drain_stall"
+    } else if queue_admitted_total > 0 && nonempty_aoem_batch_ticks == 0 {
+        "batch_submit_stall"
+    } else if aoem > canonical {
+        "receipt_canonical_projection_or_summary_lag"
+    } else if ledger_completed > canonical {
+        "ledger_canonical_summary_lag"
+    } else {
+        "progressing"
+    }
+}
+
+fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option<&Value>) {
+    let Some(previous) = previous else {
+        sample["receiver_ingress_drain_delta_available"] = serde_json::json!(false);
+        sample["receiver_drain_stall_reason"] = serde_json::json!("first_sample");
+        return;
+    };
+
+    let network_received = summary_u64(sample, "receiver_udp_packet_recv_count");
+    let previous_network_received = summary_u64(previous, "receiver_udp_packet_recv_count");
+    let received_unique = summary_u64(sample, "received_unique_total");
+    let previous_received_unique = summary_u64(previous, "received_unique_total");
+    let aoem = summary_u64(sample, "aoem_executed_total");
+    let previous_aoem = summary_u64(previous, "aoem_executed_total");
+    let canonical = summary_u64(sample, "canonical_unique_included_total");
+    let previous_canonical = summary_u64(previous, "canonical_unique_included_total");
+    let ledger_close = summary_u64(sample, "receiver_ledger_close_count");
+    let previous_ledger_close = summary_u64(previous, "receiver_ledger_close_count");
+    let ticks = summary_u64(sample, "receiver_child_tick_count");
+    let previous_ticks = summary_u64(previous, "receiver_child_tick_count");
+    let aoem_ticks = summary_u64(sample, "receiver_aoem_tick_count");
+    let previous_aoem_ticks = summary_u64(previous, "receiver_aoem_tick_count");
+    let pending_selected = summary_u64(sample, "receiver_pending_selected_count");
+    let previous_pending_selected = summary_u64(previous, "receiver_pending_selected_count");
+    let pending_last = summary_u64(sample, "queue_pending_last");
+    let previous_pending_last = summary_u64(previous, "queue_pending_last");
+
+    let network_received_delta = network_received.saturating_sub(previous_network_received);
+    let received_unique_delta = received_unique.saturating_sub(previous_received_unique);
+    let aoem_delta = aoem.saturating_sub(previous_aoem);
+    let canonical_delta = canonical.saturating_sub(previous_canonical);
+    let ledger_close_delta = ledger_close.saturating_sub(previous_ledger_close);
+    let child_tick_delta = ticks.saturating_sub(previous_ticks);
+    let aoem_tick_delta = aoem_ticks.saturating_sub(previous_aoem_ticks);
+    let pending_selected_delta = pending_selected.saturating_sub(previous_pending_selected);
+    let pending_delta_direction = if pending_last > previous_pending_last {
+        "increase"
+    } else if pending_last < previous_pending_last {
+        "decrease"
+    } else {
+        "stable"
+    };
+    let pending_delta_abs = pending_last.abs_diff(previous_pending_last);
+
+    let stall_reason = if pending_last > 0 && child_tick_delta == 0 {
+        "receiver_child_tick_stall"
+    } else if pending_last > 0
+        && child_tick_delta > 0
+        && pending_selected_delta == 0
+        && aoem_delta == 0
+    {
+        "admission_drain_stall"
+    } else if pending_selected_delta > 0 && aoem_delta == 0 {
+        "batch_submit_stall"
+    } else if aoem_delta > 0 && canonical_delta == 0 {
+        "receipt_canonical_projection_stall"
+    } else if ledger_close_delta > 0 && canonical_delta == 0 {
+        "canonical_summary_lag"
+    } else if network_received_delta == 0 && received_unique_delta == 0 && pending_last == 0 {
+        "waiting_for_sender"
+    } else {
+        "progressing"
+    };
+
+    sample["receiver_ingress_drain_delta_available"] = serde_json::json!(true);
+    sample["receiver_udp_packet_recv_delta"] = serde_json::json!(network_received_delta);
+    sample["receiver_sequence_unique_delta"] = serde_json::json!(received_unique_delta);
+    sample["receiver_aoem_executed_delta_raw"] = serde_json::json!(aoem_delta);
+    sample["receiver_canonical_delta_raw"] = serde_json::json!(canonical_delta);
+    sample["receiver_ledger_close_delta_raw"] = serde_json::json!(ledger_close_delta);
+    sample["receiver_child_tick_delta"] = serde_json::json!(child_tick_delta);
+    sample["receiver_aoem_tick_delta"] = serde_json::json!(aoem_tick_delta);
+    sample["receiver_pending_selected_delta"] = serde_json::json!(pending_selected_delta);
+    sample["receiver_pending_delta_abs"] = serde_json::json!(pending_delta_abs);
+    sample["receiver_pending_delta_direction"] = serde_json::json!(pending_delta_direction);
+    sample["receiver_child_tick_stall"] =
+        serde_json::json!(pending_last > 0 && child_tick_delta == 0);
+    sample["receiver_admission_drain_stall"] = serde_json::json!(
+        pending_last > 0 && child_tick_delta > 0 && pending_selected_delta == 0 && aoem_delta == 0
+    );
+    sample["receiver_batch_submit_stall"] =
+        serde_json::json!(pending_selected_delta > 0 && aoem_delta == 0);
+    sample["receiver_receipt_canonical_projection_stall"] =
+        serde_json::json!(aoem_delta > 0 && canonical_delta == 0);
+    sample["receiver_drain_stall_reason"] = serde_json::json!(stall_reason);
+}
+
 fn diagnostics_summary_sample(
     started_at: Instant,
     summary: &Value,
@@ -5880,6 +6123,14 @@ fn diagnostics_summary_sample(
 ) -> Value {
     let canonical = summary_u64(summary, "included_canonical_total");
     let aoem = summary_u64(summary, "aoem_executed_total");
+    let ledger_completed = summary_u64(summary, "ledger_completed_count");
+    let network_received_total = summary_u64(summary, "network_received_total");
+    let ingress_submitted_total = summary_u64(summary, "ingress_submitted_total");
+    let product_ingress_submitted_total = summary_u64(summary, "product_ingress_submitted_total");
+    let queue_admitted_total = summary_u64(summary, "queue_admitted_total");
+    let nonempty_aoem_batch_ticks = summary_u64(summary, "nonempty_aoem_batch_ticks");
+    let pending_last = summary_u64(summary, "queue_pending_last");
+    let active_pending = summary_u64(summary, "queue_active_pending_last");
     let ledger_lines = ledger_stats
         .get("line_count")
         .and_then(Value::as_u64)
@@ -6020,6 +6271,20 @@ fn diagnostics_summary_sample(
         unattributed_private_bytes > attributed_bytes.max(64 * 1024 * 1024);
     let working_set_not_returned_suspected =
         working_set_bytes > private_bytes.saturating_add(256 * 1024 * 1024) && private_bytes > 0;
+    let summary_consistency_reasons =
+        receiver_summary_consistency_reasons_v1(aoem, canonical, ledger_completed);
+    let summary_consistency_violation_count = summary_consistency_reasons.len() as u64;
+    let receiver_drain_attribution_stage = receiver_drain_attribution_stage_v1(
+        network_received_total,
+        ingress_submitted_total,
+        pending_last,
+        ticks,
+        queue_admitted_total,
+        nonempty_aoem_batch_ticks,
+        aoem,
+        canonical,
+        ledger_completed,
+    );
     let mut out = serde_json::json!({
         "elapsed_ms": started_at.elapsed().as_millis() as u64,
         "received_unique_total": summary_u64(summary, "ingress_total_last"),
@@ -6098,9 +6363,40 @@ fn diagnostics_summary_sample(
         "private_bytes_per_1000_tx": private_bytes_per_1000_tx,
         "native_heap_unattributed_bytes_per_1000_tx": native_heap_unattributed_bytes_per_1000_tx,
         "attributed_bytes_per_1000_tx": attributed_bytes_per_1000_tx,
-        "queue_pending_last": summary_u64(summary, "queue_pending_last"),
+        "queue_pending_last": pending_last,
         "queue_dropped_total": summary_u64(summary, "queue_dropped_last"),
         "queue_rejected_total": summary_u64(summary, "queue_rejected_last"),
+        "receiver_udp_packet_recv_count": network_received_total,
+        "receiver_udp_packet_recv_source": "network.udp.received_count_total",
+        "receiver_udp_packet_recv_max_per_tick": max_network_received,
+        "receiver_udp_packet_decode_ok_count": ingress_submitted_total,
+        "receiver_udp_packet_decode_ok_source": "ingress_drive.submitted_total",
+        "receiver_udp_packet_decode_error_count": summary_u64(summary, "ingress_error_ticks"),
+        "receiver_sequence_accepted_count": summary_u64(summary, "ingress_total_last"),
+        "receiver_sequence_duplicate_count": summary_u64(summary, "repair_sequence_duplicate_count"),
+        "receiver_sequence_rejected_count": summary_u64(summary, "queue_rejected_last").saturating_add(summary_u64(summary, "repair_sequence_rejected_count")),
+        "receiver_pending_enqueue_count": product_ingress_submitted_total.max(ingress_submitted_total),
+        "receiver_pending_active_count": active_pending,
+        "receiver_child_tick_count": ticks,
+        "receiver_aoem_tick_count": nonempty_aoem_batch_ticks,
+        "receiver_pending_selected_count": queue_admitted_total,
+        "receiver_raw_txs_count": queue_admitted_total,
+        "receiver_actual_batch_count": nonempty_aoem_batch_ticks,
+        "receiver_actual_batch_tx_count": aoem,
+        "receiver_aoem_batch_submit_count": nonempty_aoem_batch_ticks,
+        "receiver_aoem_batch_result_count": aoem,
+        "receiver_receipt_written_count": summary_u64(summary, "ledger_receipt_proof_close_success_count").max(summary_u64(summary, "ledger_missing_closed_by_receipt_count")),
+        "receiver_canonical_included_count": canonical,
+        "receiver_ledger_close_count": ledger_completed,
+        "summary_source_canonical": "child_progress.included_canonical_total",
+        "summary_source_aoem": "child_progress.aoem_executed_total",
+        "summary_source_ledger": "child_progress.ledger_completed_count",
+        "summary_source_pending": "child_progress.queue_pending_last",
+        "summary_consistency_violation_count": summary_consistency_violation_count,
+        "summary_consistency_violation_reasons": summary_consistency_reasons,
+        "summary_aoem_gt_canonical_lag_count": aoem.saturating_sub(canonical),
+        "summary_ledger_gt_canonical_lag_count": ledger_completed.saturating_sub(canonical),
+        "receiver_drain_attribution_stage": receiver_drain_attribution_stage,
         "repair_packet_received_count": summary_u64(summary, "repair_packet_received_count"),
         "repair_packet_decode_failed_count": summary_u64(summary, "repair_packet_decode_failed_count"),
         "repair_sequence_received_count": summary_u64(summary, "repair_sequence_received_count"),
