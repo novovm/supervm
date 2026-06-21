@@ -1246,6 +1246,105 @@ fn native_aoem_native_tx_batch_compare_enabled_v1() -> bool {
     bool_env_default_v1(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV, false)
 }
 
+#[derive(Debug, Clone)]
+struct TxIngressAoemOwnershipGatesV1 {
+    production_candidate: bool,
+    shadow: bool,
+    compare: bool,
+    source: String,
+    explicit: bool,
+}
+
+fn bool_param_from_object_any_v1(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<bool> {
+    keys.iter()
+        .filter_map(|key| obj.get(*key))
+        .find_map(|value| match value {
+            serde_json::Value::Bool(value) => Some(*value),
+            serde_json::Value::Number(number) => number.as_u64().map(|value| value != 0),
+            serde_json::Value::String(raw) => parse_bool_token_v1(raw),
+            _ => None,
+        })
+}
+
+fn tx_ingress_aoem_ownership_gates_from_params_v1(
+    params: &serde_json::Value,
+) -> TxIngressAoemOwnershipGatesV1 {
+    if let Some(config) = params
+        .get("aoem_owned_gate_config")
+        .and_then(|value| value.as_object())
+    {
+        let source = config
+            .get("source")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("explicit_params")
+            .to_string();
+        return TxIngressAoemOwnershipGatesV1 {
+            production_candidate: bool_param_from_object_any_v1(
+                config,
+                &["production_candidate", "productionCandidate"],
+            )
+            .unwrap_or(false),
+            shadow: bool_param_from_object_any_v1(config, &["shadow"]).unwrap_or(false),
+            compare: bool_param_from_object_any_v1(config, &["compare"]).unwrap_or(false),
+            source,
+            explicit: true,
+        };
+    }
+
+    let production_candidate = bool_param_any_v1(
+        params,
+        &[
+            "tx_ingress_aoem_gate_config_production_candidate",
+            "aoem_gate_production_candidate",
+            "aoem_production_candidate",
+        ],
+    );
+    let shadow = bool_param_any_v1(
+        params,
+        &[
+            "tx_ingress_aoem_gate_config_shadow",
+            "aoem_gate_shadow",
+            "aoem_shadow",
+        ],
+    );
+    let compare = bool_param_any_v1(
+        params,
+        &[
+            "tx_ingress_aoem_gate_config_compare",
+            "aoem_gate_compare",
+            "aoem_compare",
+        ],
+    );
+    if production_candidate.is_some() || shadow.is_some() || compare.is_some() {
+        let source = params
+            .get("tx_ingress_aoem_gate_config_source")
+            .or_else(|| params.get("aoem_gate_config_source"))
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("explicit_params")
+            .to_string();
+        return TxIngressAoemOwnershipGatesV1 {
+            production_candidate: production_candidate.unwrap_or(false),
+            shadow: shadow.unwrap_or(false),
+            compare: compare.unwrap_or(false),
+            source,
+            explicit: true,
+        };
+    }
+
+    TxIngressAoemOwnershipGatesV1 {
+        production_candidate: native_aoem_native_tx_batch_production_candidate_enabled_v1(),
+        shadow: native_aoem_native_tx_batch_shadow_enabled_v1(),
+        compare: native_aoem_native_tx_batch_compare_enabled_v1(),
+        source: "env_fallback".to_string(),
+        explicit: false,
+    }
+}
+
 fn parse_bool_token_v1(raw: &str) -> Option<bool> {
     let value = raw.trim();
     if value == "1"
@@ -11223,10 +11322,14 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     let (aoem_batch_ingress, aoem_batch_chunks) =
         execute_native_raw_tx_batch_chunks_via_aoem_semantic_ingress_v1(raw_payloads.as_slice())?;
     let now_ms = now_unix_millis_v1();
-    let shadow_enabled = native_aoem_native_tx_batch_shadow_enabled_v1();
-    let production_candidate_enabled =
+    let env_shadow_enabled = native_aoem_native_tx_batch_shadow_enabled_v1();
+    let env_production_candidate_enabled =
         native_aoem_native_tx_batch_production_candidate_enabled_v1();
-    let compare_enabled = native_aoem_native_tx_batch_compare_enabled_v1();
+    let env_compare_enabled = native_aoem_native_tx_batch_compare_enabled_v1();
+    let aoem_gate_config = tx_ingress_aoem_ownership_gates_from_params_v1(params);
+    let shadow_enabled = aoem_gate_config.shadow;
+    let production_candidate_enabled = aoem_gate_config.production_candidate;
+    let compare_enabled = aoem_gate_config.compare;
     let native_tx_batch_build_required = shadow_enabled || production_candidate_enabled;
     let mut shadow_mismatch_reasons = Vec::<String>::new();
     let shadow_batch = if native_tx_batch_build_required {
@@ -11623,15 +11726,41 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     );
     out.insert(
         "tx_ingress_env_aoem_production_candidate".to_string(),
-        serde_json::json!(production_candidate_enabled),
+        serde_json::json!(env_production_candidate_enabled),
     );
     out.insert(
         "tx_ingress_env_aoem_shadow".to_string(),
-        serde_json::json!(shadow_enabled),
+        serde_json::json!(env_shadow_enabled),
     );
     out.insert(
         "tx_ingress_env_aoem_compare".to_string(),
+        serde_json::json!(env_compare_enabled),
+    );
+    out.insert(
+        "tx_ingress_aoem_gate_config_source".to_string(),
+        serde_json::json!(aoem_gate_config.source),
+    );
+    out.insert(
+        "tx_ingress_aoem_gate_config_explicit".to_string(),
+        serde_json::json!(aoem_gate_config.explicit),
+    );
+    out.insert(
+        "tx_ingress_aoem_gate_config_production_candidate".to_string(),
+        serde_json::json!(production_candidate_enabled),
+    );
+    out.insert(
+        "tx_ingress_aoem_gate_config_shadow".to_string(),
+        serde_json::json!(shadow_enabled),
+    );
+    out.insert(
+        "tx_ingress_aoem_gate_config_compare".to_string(),
         serde_json::json!(compare_enabled),
+    );
+    out.insert(
+        "aoem_owned_child_runtime_gate_propagated_to_tx_ingress".to_string(),
+        serde_json::json!(
+            aoem_gate_config.source == "receiver_child_runtime" && production_candidate_enabled
+        ),
     );
     out.insert(
         "aoem_native_tx_batch_v1_built".to_string(),
@@ -14138,6 +14267,48 @@ mod tests {
         ])
     }
 
+    fn run_test_native_tx_batch_receiver_child_gate_config_v1() -> serde_json::Value {
+        let raw_txs = vec![
+            build_test_native_execute_raw_hex_v1(1, "acct-child-gate-1", 25),
+            build_test_native_execute_raw_hex_v1(2, "acct-child-gate-2", 35),
+        ];
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_env_override_v1(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, "0", || {
+                    with_env_override_v1(
+                        NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+                        "0",
+                        || {
+                            with_env_override_v1(
+                                NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
+                                "0",
+                                || {
+                                    with_test_native_execution_store_path_v1(|path| {
+                                        run_nov_send_raw_transaction_batch_from_params_v1(
+                                        &serde_json::json!({
+                                            "raw_txs": raw_txs,
+                                            "native_execution_store_path": path,
+                                            "aoem_owned_gate_config": {
+                                                "production_candidate": true,
+                                                "shadow": true,
+                                                "compare": true,
+                                                "source": "receiver_child_runtime",
+                                            },
+                                        }),
+                                    )
+                                    .expect("explicit receiver child gate config should drive tx_ingress")
+                                    })
+                                },
+                            )
+                        },
+                    )
+                })
+            },
+        )
+    }
+
     fn test_aoem_candidate_result_v1(
         receipt_count: usize,
     ) -> novovm_exec::NovovmAoemNativeTxBatchResultV1 {
@@ -14456,6 +14627,62 @@ mod tests {
             Some(false)
         );
         assert_eq!(out["aoem_native_tx_batch_v1_built"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn tx_ingress_uses_explicit_aoem_gate_config_not_env_default() {
+        let out = run_test_native_tx_batch_receiver_child_gate_config_v1();
+        assert_eq!(
+            out["tx_ingress_env_aoem_production_candidate"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(out["tx_ingress_env_aoem_shadow"].as_bool(), Some(false));
+        assert_eq!(out["tx_ingress_env_aoem_compare"].as_bool(), Some(false));
+        assert_eq!(
+            out["tx_ingress_aoem_gate_config_source"].as_str(),
+            Some("receiver_child_runtime")
+        );
+        assert_eq!(
+            out["tx_ingress_aoem_gate_config_explicit"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["tx_ingress_aoem_gate_config_production_candidate"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["tx_ingress_aoem_gate_config_shadow"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["tx_ingress_aoem_gate_config_compare"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["aoem_owned_child_runtime_gate_propagated_to_tx_ingress"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn tx_ingress_selects_aoem_owned_path_when_explicit_gate_true() {
+        let out = run_test_native_tx_batch_receiver_child_gate_config_v1();
+        assert_eq!(
+            out["aoem_native_tx_batch_production_candidate_enabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_candidate_result_ok"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["tx_ingress_selected_path"].as_str(),
+            Some("aoem_runtime_owned_state_persistence")
+        );
+        assert_eq!(
+            out["tx_ingress_production_target"].as_str(),
+            Some("aoem_runtime_owned_state_persistence")
+        );
     }
 
     #[test]

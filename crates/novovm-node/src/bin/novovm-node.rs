@@ -33746,6 +33746,10 @@ fn native_execution_tick_params_from_env_v1() -> Result<serde_json::Value> {
         "NOVOVM_NATIVE_EXECUTION_TICK_SCAN_LIMIT",
         effective_budget.saturating_mul(4).max(effective_budget),
     )?;
+    let aoem_gate_production_candidate =
+        bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV);
+    let aoem_gate_shadow = bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV);
+    let aoem_gate_compare = bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV);
     let mut params = serde_json::json!({
         "chain_id": u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?,
         "hard_budget_per_tick": hard_budget,
@@ -33758,6 +33762,13 @@ fn native_execution_tick_params_from_env_v1() -> Result<serde_json::Value> {
         "scheduler_owner": "novovm-node.native_execution_tick_mode",
         "execution_kernel": "AOEM",
         "aoem_concurrency_owner": "AOEM_runtime",
+        "child_runtime_aoem_gate_config_source": "receiver_child_runtime",
+        "aoem_owned_gate_config": {
+            "production_candidate": aoem_gate_production_candidate,
+            "shadow": aoem_gate_shadow,
+            "compare": aoem_gate_compare,
+            "source": "receiver_child_runtime",
+        },
     });
     if let (Some(path), Some(obj)) = (
         string_env_nonempty("NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH"),
@@ -33992,16 +34003,19 @@ fn build_native_execution_pipeline_report_v1(
         },
         "tick_result": compact_tick_out,
     });
-    report["child_runtime_env_aoem_production_candidate"] =
-        serde_json::json!(bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV));
+    report["child_runtime_env_aoem_production_candidate"] = serde_json::json!(bool_env(
+        NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV
+    ));
     report["child_runtime_env_aoem_shadow"] =
         serde_json::json!(bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV));
     report["child_runtime_env_aoem_compare"] =
         serde_json::json!(bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV));
+    report["child_runtime_aoem_gate_config_source"] = serde_json::json!("receiver_child_runtime");
     report["lifecycle"]["aoem_owned_gate_env"] = serde_json::json!({
         "child_runtime_env_aoem_production_candidate": bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV),
         "child_runtime_env_aoem_shadow": bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV),
         "child_runtime_env_aoem_compare": bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV),
+        "child_runtime_aoem_gate_config_source": "receiver_child_runtime",
     });
     if let Some(ingress) = report
         .pointer_mut("/lifecycle/ingress")
@@ -34250,6 +34264,12 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "tx_ingress_env_aoem_production_candidate",
         "tx_ingress_env_aoem_shadow",
         "tx_ingress_env_aoem_compare",
+        "tx_ingress_aoem_gate_config_source",
+        "tx_ingress_aoem_gate_config_explicit",
+        "tx_ingress_aoem_gate_config_production_candidate",
+        "tx_ingress_aoem_gate_config_shadow",
+        "tx_ingress_aoem_gate_config_compare",
+        "aoem_owned_child_runtime_gate_propagated_to_tx_ingress",
         "tx_ingress_selected_path",
         "tx_ingress_aoem_production_candidate_gate_reason",
         "tx_ingress_legacy_host_transitional_used",
@@ -34549,9 +34569,16 @@ struct NativeExecutionPipelineAggregateV1 {
     child_runtime_env_aoem_production_candidate: bool,
     child_runtime_env_aoem_shadow: bool,
     child_runtime_env_aoem_compare: bool,
+    child_runtime_aoem_gate_config_source: String,
     tx_ingress_env_aoem_production_candidate: bool,
     tx_ingress_env_aoem_shadow: bool,
     tx_ingress_env_aoem_compare: bool,
+    tx_ingress_aoem_gate_config_source: String,
+    tx_ingress_aoem_gate_config_explicit: bool,
+    tx_ingress_aoem_gate_config_production_candidate: bool,
+    tx_ingress_aoem_gate_config_shadow: bool,
+    tx_ingress_aoem_gate_config_compare: bool,
+    aoem_owned_child_runtime_gate_propagated_to_tx_ingress: bool,
     tx_ingress_selected_path: String,
     tx_ingress_production_target: String,
     tx_ingress_legacy_host_transitional_used: bool,
@@ -34799,9 +34826,16 @@ impl NativeExecutionPipelineAggregateV1 {
             ),
             child_runtime_env_aoem_shadow: bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV),
             child_runtime_env_aoem_compare: bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV),
+            child_runtime_aoem_gate_config_source: "receiver_child_runtime".to_string(),
             tx_ingress_env_aoem_production_candidate: false,
             tx_ingress_env_aoem_shadow: false,
             tx_ingress_env_aoem_compare: false,
+            tx_ingress_aoem_gate_config_source: String::new(),
+            tx_ingress_aoem_gate_config_explicit: false,
+            tx_ingress_aoem_gate_config_production_candidate: false,
+            tx_ingress_aoem_gate_config_shadow: false,
+            tx_ingress_aoem_gate_config_compare: false,
+            aoem_owned_child_runtime_gate_propagated_to_tx_ingress: false,
             tx_ingress_selected_path: String::new(),
             tx_ingress_production_target: String::new(),
             tx_ingress_legacy_host_transitional_used: false,
@@ -35449,12 +35483,22 @@ impl NativeExecutionPipelineAggregateV1 {
                 .get("child_runtime_env_aoem_compare")
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false);
+        if let Some(value) = report
+            .get("child_runtime_aoem_gate_config_source")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+        {
+            self.child_runtime_aoem_gate_config_source = value.to_string();
+        }
         if let Some(batch_result) = tick_batch_result {
             let has_aoem_owned_fields = batch_result
                 .get("aoem_native_tx_batch_production_candidate_enabled")
                 .is_some()
                 || batch_result
                     .get("tx_ingress_env_aoem_production_candidate")
+                    .is_some()
+                || batch_result
+                    .get("tx_ingress_aoem_gate_config_production_candidate")
                     .is_some()
                 || batch_result.get("tx_ingress_selected_path").is_some();
             if has_aoem_owned_fields {
@@ -35476,6 +35520,40 @@ impl NativeExecutionPipelineAggregateV1 {
             self.tx_ingress_env_aoem_compare = self.tx_ingress_env_aoem_compare
                 || batch_result
                     .get("tx_ingress_env_aoem_compare")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            if let Some(value) = batch_result
+                .get("tx_ingress_aoem_gate_config_source")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                self.tx_ingress_aoem_gate_config_source = value.to_string();
+            }
+            self.tx_ingress_aoem_gate_config_explicit = self.tx_ingress_aoem_gate_config_explicit
+                || batch_result
+                    .get("tx_ingress_aoem_gate_config_explicit")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.tx_ingress_aoem_gate_config_production_candidate = self
+                .tx_ingress_aoem_gate_config_production_candidate
+                || batch_result
+                    .get("tx_ingress_aoem_gate_config_production_candidate")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.tx_ingress_aoem_gate_config_shadow = self.tx_ingress_aoem_gate_config_shadow
+                || batch_result
+                    .get("tx_ingress_aoem_gate_config_shadow")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.tx_ingress_aoem_gate_config_compare = self.tx_ingress_aoem_gate_config_compare
+                || batch_result
+                    .get("tx_ingress_aoem_gate_config_compare")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.aoem_owned_child_runtime_gate_propagated_to_tx_ingress = self
+                .aoem_owned_child_runtime_gate_propagated_to_tx_ingress
+                || batch_result
+                    .get("aoem_owned_child_runtime_gate_propagated_to_tx_ingress")
                     .and_then(|value| value.as_bool())
                     .unwrap_or(false);
             if let Some(value) = batch_result
@@ -36266,6 +36344,7 @@ impl NativeExecutionPipelineAggregateV1 {
         }
         let aoem_owned_target = "aoem_runtime_owned_state_persistence";
         let aoem_gate_requested = self.child_runtime_env_aoem_production_candidate
+            || self.tx_ingress_aoem_gate_config_production_candidate
             || self.tx_ingress_env_aoem_production_candidate
             || self.aoem_native_tx_batch_production_candidate_enabled;
         let mut aoem_missing_reasons = self
@@ -36276,8 +36355,17 @@ impl NativeExecutionPipelineAggregateV1 {
         if aoem_gate_requested && !self.receiver_final_summary_aoem_fields_present {
             aoem_missing_reasons.push("tx_ingress_aoem_fields_not_observed".to_string());
         }
-        if aoem_gate_requested && !self.tx_ingress_env_aoem_production_candidate {
-            aoem_missing_reasons.push("tx_ingress_env_aoem_production_candidate_false".to_string());
+        if self.child_runtime_env_aoem_production_candidate
+            && !self.tx_ingress_aoem_gate_config_production_candidate
+        {
+            aoem_missing_reasons
+                .push("aoem_owned_child_runtime_gate_not_propagated_to_tx_ingress".to_string());
+        }
+        if self.child_runtime_env_aoem_production_candidate
+            && !self.aoem_owned_child_runtime_gate_propagated_to_tx_ingress
+        {
+            aoem_missing_reasons
+                .push("aoem_owned_child_runtime_gate_propagated_to_tx_ingress=false".to_string());
         }
         if aoem_gate_requested && self.tx_ingress_selected_path != aoem_owned_target {
             aoem_missing_reasons.push(format!(
@@ -36293,6 +36381,14 @@ impl NativeExecutionPipelineAggregateV1 {
             self.aoem_owned_gate_fail_reason.clone()
         } else if aoem_gate_requested && !self.receiver_final_summary_aoem_fields_present {
             "aoem_owned_gate_requested_but_summary_fields_missing".to_string()
+        } else if self.child_runtime_env_aoem_production_candidate
+            && !self.tx_ingress_aoem_gate_config_production_candidate
+        {
+            "aoem_owned_child_runtime_gate_not_propagated_to_tx_ingress".to_string()
+        } else if self.child_runtime_env_aoem_production_candidate
+            && !self.aoem_owned_child_runtime_gate_propagated_to_tx_ingress
+        {
+            "aoem_owned_child_runtime_gate_not_propagated_to_tx_ingress".to_string()
         } else if aoem_gate_requested && self.tx_ingress_selected_path != aoem_owned_target {
             "aoem_owned_gate_requested_but_tx_ingress_not_aoem_owned".to_string()
         } else {
@@ -37238,6 +37334,10 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.child_runtime_env_aoem_compare),
         );
         out.insert(
+            "child_runtime_aoem_gate_config_source".to_string(),
+            serde_json::json!(self.child_runtime_aoem_gate_config_source),
+        );
+        out.insert(
             "tx_ingress_env_aoem_production_candidate".to_string(),
             serde_json::json!(self.tx_ingress_env_aoem_production_candidate),
         );
@@ -37248,6 +37348,30 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "tx_ingress_env_aoem_compare".to_string(),
             serde_json::json!(self.tx_ingress_env_aoem_compare),
+        );
+        out.insert(
+            "tx_ingress_aoem_gate_config_source".to_string(),
+            serde_json::json!(self.tx_ingress_aoem_gate_config_source),
+        );
+        out.insert(
+            "tx_ingress_aoem_gate_config_explicit".to_string(),
+            serde_json::json!(self.tx_ingress_aoem_gate_config_explicit),
+        );
+        out.insert(
+            "tx_ingress_aoem_gate_config_production_candidate".to_string(),
+            serde_json::json!(self.tx_ingress_aoem_gate_config_production_candidate),
+        );
+        out.insert(
+            "tx_ingress_aoem_gate_config_shadow".to_string(),
+            serde_json::json!(self.tx_ingress_aoem_gate_config_shadow),
+        );
+        out.insert(
+            "tx_ingress_aoem_gate_config_compare".to_string(),
+            serde_json::json!(self.tx_ingress_aoem_gate_config_compare),
+        );
+        out.insert(
+            "aoem_owned_child_runtime_gate_propagated_to_tx_ingress".to_string(),
+            serde_json::json!(self.aoem_owned_child_runtime_gate_propagated_to_tx_ingress),
         );
         out.insert(
             "tx_ingress_selected_path".to_string(),
@@ -37872,6 +37996,12 @@ mod native_execution_pipeline_tests {
                     "tx_ingress_env_aoem_production_candidate": true,
                     "tx_ingress_env_aoem_shadow": true,
                     "tx_ingress_env_aoem_compare": true,
+                    "tx_ingress_aoem_gate_config_source": "receiver_child_runtime",
+                    "tx_ingress_aoem_gate_config_explicit": true,
+                    "tx_ingress_aoem_gate_config_production_candidate": true,
+                    "tx_ingress_aoem_gate_config_shadow": true,
+                    "tx_ingress_aoem_gate_config_compare": true,
+                    "aoem_owned_child_runtime_gate_propagated_to_tx_ingress": true,
                     "tx_ingress_selected_path": "aoem_runtime_owned_state_persistence",
                     "tx_ingress_production_target": "aoem_runtime_owned_state_persistence",
                     "tx_ingress_legacy_host_transitional_used": true,
@@ -37910,6 +38040,18 @@ mod native_execution_pipeline_tests {
             Some("aoem_runtime_owned_state_persistence")
         );
         assert_eq!(
+            summary["tx_ingress_aoem_gate_config_source"].as_str(),
+            Some("receiver_child_runtime")
+        );
+        assert_eq!(
+            summary["tx_ingress_aoem_gate_config_production_candidate"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            summary["aoem_owned_child_runtime_gate_propagated_to_tx_ingress"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
             summary["aoem_native_tx_batch_production_receipt_count"].as_u64(),
             Some(4)
         );
@@ -37925,6 +38067,31 @@ mod native_execution_pipeline_tests {
             summary["aoem_native_tx_batch_production_candidate_result_ok"].as_bool(),
             Some(true)
         );
+    }
+
+    #[test]
+    fn final_summary_rejects_defaulted_aoem_gate_fields() {
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+        aggregate.child_runtime_env_aoem_production_candidate = true;
+        aggregate.receiver_final_summary_aoem_fields_present = true;
+        aggregate.receiver_final_summary_aoem_fields_source =
+            "native_execution_tick_batch_result".to_string();
+        let summary = aggregate.to_json();
+
+        assert_eq!(
+            summary["receiver_final_summary_aoem_fields_defaulted"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            summary["aoem_owned_gate_fail_reason"].as_str(),
+            Some("aoem_owned_child_runtime_gate_not_propagated_to_tx_ingress")
+        );
+        let reasons = summary["receiver_final_summary_aoem_fields_missing_reasons"]
+            .as_array()
+            .expect("missing reasons");
+        assert!(reasons.iter().any(|reason| {
+            reason.as_str() == Some("aoem_owned_child_runtime_gate_not_propagated_to_tx_ingress")
+        }));
     }
 
     #[test]
