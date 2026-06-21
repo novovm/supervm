@@ -75,6 +75,58 @@ snapshot metadata
 persistence ownership
 ```
 
+## NovoRUDP Boundary
+
+Phase 3 also freezes the transport/application boundary:
+
+```text
+NovoRUDP = reliable object transport
+AOEM Runtime = algebraic semantic execution / persistence / proof close
+NOVOVM Host = network orchestration / pending / consensus handoff / verification / report
+```
+
+NovoRUDP must not own transaction semantics. Its durable state is transport/object delivery state:
+
+```text
+session_id
+object_id
+chunk / sequence
+ACK range
+missing range
+repair range
+delivery_complete
+```
+
+NovoRUDP must not become the owner of:
+
+```text
+pending business lifecycle
+AOEM batch execution
+receipt projection
+canonical inclusion
+ledger close proof
+application finality
+```
+
+Two ACK planes are intentionally separate:
+
+```text
+Transport ACK:
+NovoRUDP proves an object/chunk/range was delivered.
+
+Application ACK:
+AOEM/NOVOVM proves the delivered semantic object was executed, verified,
+persisted, receipted, canonicalized, or closed by proof.
+```
+
+The 30min NovoRUDP gate remains valuable as a historical transaction-delivery baseline. Future architecture should evolve it into:
+
+```text
+NovoRUDP Reliable Object Transport
++
+AOEM Algebraic Semantic Runtime
+```
+
 The legacy host store remains:
 
 ```text
