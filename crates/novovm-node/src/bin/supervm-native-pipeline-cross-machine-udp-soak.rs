@@ -151,25 +151,34 @@ struct TailRepairConfigV1 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TransportProfileV1 {
-    Udp,
     NovoRudp,
 }
 
 impl TransportProfileV1 {
-    fn from_env() -> Self {
-        match string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TRANSPORT")
-            .unwrap_or_else(|| "udp".to_string())
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "novorudp" | "novo-rudp" | "novo_rudp" => Self::NovoRudp,
-            _ => Self::Udp,
+    fn from_env() -> Result<Self> {
+        let transport = string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TRANSPORT");
+        let legacy_profile = string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TRANSPORT_PROFILE");
+        if legacy_profile.is_some() {
+            bail!(
+                "NOVOVM_NATIVE_PIPELINE_TRANSPORT_PROFILE is not supported; set NOVOVM_NATIVE_PIPELINE_TRANSPORT=novorudp"
+            );
         }
+        Ok(
+            match transport
+                .unwrap_or_else(|| "novorudp".to_string())
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "novorudp" | "novo-rudp" | "novo_rudp" => Self::NovoRudp,
+                other => {
+                    bail!("unsupported NOVOVM_NATIVE_PIPELINE_TRANSPORT={other}; expected novorudp")
+                }
+            },
+        )
     }
 
     fn as_str(self) -> &'static str {
         match self {
-            Self::Udp => "udp",
             Self::NovoRudp => "novorudp",
         }
     }
@@ -549,7 +558,7 @@ fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
         u64_env("NOVOVM_NATIVE_PIPELINE_SUSTAINED_DURATION_SECONDS", 0)?.saturating_mul(1_000);
     let tail_repair_rounds = u64_env("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_ROUNDS", 3)?;
     let tail_repair_interval_ms = u64_env("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_INTERVAL_MS", 1_000)?;
-    let transport_profile = TransportProfileV1::from_env();
+    let transport_profile = TransportProfileV1::from_env()?;
     let novorudp_enabled = NovoRudpConfigV1::from_env(transport_profile)
         .map(|config| config.enabled)
         .unwrap_or(false);
@@ -1173,7 +1182,7 @@ struct NovoRudpSenderRepairBudgetProfileV1 {
 
 fn novorudp_default_profile_name(enabled: bool, sustained_duration_seconds: u64) -> &'static str {
     if !enabled {
-        "udp"
+        "novorudp-custom"
     } else if sustained_duration_seconds >= 7_200 {
         "novorudp-2h"
     } else if sustained_duration_seconds >= 1_800 {
@@ -2570,9 +2579,6 @@ mod novorudp_tests {
         ));
         assert!(!novorudp_receiver_expected_total_missing_v1(
             "novorudp", "sender", 0
-        ));
-        assert!(!novorudp_receiver_expected_total_missing_v1(
-            "udp", "receiver", 0
         ));
         assert!(!novorudp_receiver_expected_total_missing_v1(
             "novorudp", "receiver", 14_400
@@ -4570,6 +4576,46 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn transport_profile_uses_canonical_transport_env() {
+        with_env_var("NOVOVM_NATIVE_PIPELINE_TRANSPORT_PROFILE", None, || {
+            with_env_var("NOVOVM_NATIVE_PIPELINE_TRANSPORT", Some("novorudp"), || {
+                assert_eq!(
+                    TransportProfileV1::from_env().expect("transport profile"),
+                    TransportProfileV1::NovoRudp
+                );
+            })
+        });
+    }
+
+    #[test]
+    fn transport_profile_rejects_legacy_profile_env_for_novorudp() {
+        with_env_var("NOVOVM_NATIVE_PIPELINE_TRANSPORT", None, || {
+            with_env_var(
+                "NOVOVM_NATIVE_PIPELINE_TRANSPORT_PROFILE",
+                Some("novorudp"),
+                || {
+                    let err = TransportProfileV1::from_env().expect_err("legacy profile rejected");
+                    assert!(err
+                        .to_string()
+                        .contains("NOVOVM_NATIVE_PIPELINE_TRANSPORT_PROFILE is not supported"));
+                },
+            )
+        });
+    }
+
+    #[test]
+    fn transport_profile_defaults_to_novorudp() {
+        with_env_var("NOVOVM_NATIVE_PIPELINE_TRANSPORT", None, || {
+            with_env_var("NOVOVM_NATIVE_PIPELINE_TRANSPORT_PROFILE", None, || {
+                assert_eq!(
+                    TransportProfileV1::from_env().expect("default transport profile"),
+                    TransportProfileV1::NovoRudp
+                );
+            })
+        });
+    }
+
+    #[test]
     fn novorudp_sender_extends_repair_deadline_while_ack_progresses() {
         let decision =
             novorudp_sender_timeout_decision_v1(1_920_000, 0, 120_000, 2_700_000, false, 2_248);
@@ -5267,9 +5313,9 @@ fn receiver_child_progress_report_interval_ms() -> u64 {
     let configured = u64_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_SAMPLE_INTERVAL_MS", 5000)
         .unwrap_or(5000)
         .max(1);
-    let profile = TransportProfileV1::from_env();
+    let profile = TransportProfileV1::from_env().unwrap_or(TransportProfileV1::NovoRudp);
     let novorudp = NovoRudpConfigV1::from_env(profile).unwrap_or(NovoRudpConfigV1 {
-        enabled: false,
+        enabled: true,
         window_size: 64,
         packet_copies: 2,
         tail_packet_copies: 3,
@@ -5352,7 +5398,7 @@ fn run_receiver_node(
     let mut last_sample_at = Instant::now()
         .checked_sub(Duration::from_millis(diagnostics.sample_interval_ms))
         .unwrap_or_else(Instant::now);
-    let profile = TransportProfileV1::from_env();
+    let profile = TransportProfileV1::from_env()?;
     let novorudp = NovoRudpConfigV1::from_env(profile)?;
     let receiver_ack_progress_interval_ms = if novorudp.enabled {
         novorudp.ack_progress_interval_ms.max(1)
@@ -6117,9 +6163,9 @@ fn receiver_ack_report_value_with_summary(
         0u64
     };
     let progress_summary_missing_count_value = progress_summary_missing_count.unwrap_or_default();
-    let transport_profile = TransportProfileV1::from_env();
+    let transport_profile = TransportProfileV1::from_env().unwrap_or(TransportProfileV1::NovoRudp);
     let novorudp = NovoRudpConfigV1::from_env(transport_profile).unwrap_or(NovoRudpConfigV1 {
-        enabled: false,
+        enabled: true,
         window_size: 64,
         packet_copies: 2,
         tail_packet_copies: 3,
@@ -11051,7 +11097,7 @@ fn run_sender(
         "receiver_node": receiver_node,
         "sender_addr": sender_addr,
         "receiver_addr": receiver_addr,
-        "transport_profile": if novorudp.enabled { "novorudp" } else { "udp" },
+        "transport_profile": "novorudp",
         "novorudp": {
             "enabled": novorudp.enabled,
             "window_size": novorudp.window_size,
@@ -12019,7 +12065,7 @@ fn main() -> Result<()> {
         ]),
         recv_timeout_ms: u64_env("NOVOVM_NATIVE_PIPELINE_ACK_RECV_TIMEOUT_MS", 250)?,
     };
-    let transport_profile = TransportProfileV1::from_env();
+    let transport_profile = TransportProfileV1::from_env()?;
     let novorudp = NovoRudpConfigV1::from_env(transport_profile)?;
     let sender_node = u64_env_alias(
         &[
