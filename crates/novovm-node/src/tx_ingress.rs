@@ -101,6 +101,7 @@ pub const NOV_NATIVE_AOEM_BATCH_MAX_SIZE_ENV: &str = "NOVOVM_NATIVE_AOEM_BATCH_M
 pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV: &str = "NOVOVM_AOEM_NATIVE_TX_BATCH_SHADOW";
 pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV: &str =
     "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE";
+pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV: &str = "NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE";
 pub const NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV: &str =
     "NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY";
 pub const NOV_NATIVE_CLEARING_ENABLED_ENV: &str = "NOVOVM_NATIVE_CLEARING_ENABLED";
@@ -1239,6 +1240,10 @@ fn native_aoem_native_tx_batch_production_candidate_enabled_v1() -> bool {
         NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
         false,
     )
+}
+
+fn native_aoem_native_tx_batch_compare_enabled_v1() -> bool {
+    bool_env_default_v1(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV, false)
 }
 
 fn parse_bool_token_v1(raw: &str) -> Option<bool> {
@@ -11221,6 +11226,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     let shadow_enabled = native_aoem_native_tx_batch_shadow_enabled_v1();
     let production_candidate_enabled =
         native_aoem_native_tx_batch_production_candidate_enabled_v1();
+    let compare_enabled = native_aoem_native_tx_batch_compare_enabled_v1();
     let native_tx_batch_build_required = shadow_enabled || production_candidate_enabled;
     let mut shadow_mismatch_reasons = Vec::<String>::new();
     let shadow_batch = if native_tx_batch_build_required {
@@ -11331,6 +11337,20 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         shadow_result.as_ref(),
         shadow_mismatch_reasons.as_slice(),
     );
+    let tx_ingress_selected_path = if production_candidate_status.result_ok {
+        "aoem_runtime_owned_state_persistence"
+    } else {
+        production_candidate_status.owner
+    };
+    let tx_ingress_aoem_production_candidate_gate_reason = if !production_candidate_enabled {
+        "production_candidate_not_requested".to_string()
+    } else if production_candidate_status.result_ok {
+        "production_candidate_complete".to_string()
+    } else if production_candidate_status.mismatch_reasons.is_empty() {
+        "production_candidate_incomplete_without_mismatch_reason".to_string()
+    } else {
+        production_candidate_status.mismatch_reasons.join(",")
+    };
     let aoem_chunk_size = native_aoem_batch_max_size_v1();
     let store_path_override = resolve_native_execution_store_path_from_params_v1(params);
     let effective_native_store_path = store_path_override
@@ -11602,6 +11622,18 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         serde_json::json!(shadow_enabled),
     );
     out.insert(
+        "tx_ingress_env_aoem_production_candidate".to_string(),
+        serde_json::json!(production_candidate_enabled),
+    );
+    out.insert(
+        "tx_ingress_env_aoem_shadow".to_string(),
+        serde_json::json!(shadow_enabled),
+    );
+    out.insert(
+        "tx_ingress_env_aoem_compare".to_string(),
+        serde_json::json!(compare_enabled),
+    );
+    out.insert(
         "aoem_native_tx_batch_v1_built".to_string(),
         serde_json::json!(shadow_batch.is_some()),
     );
@@ -11777,6 +11809,14 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     out.insert(
         "tx_ingress_production_target".to_string(),
         serde_json::json!(production_candidate_status.owner),
+    );
+    out.insert(
+        "tx_ingress_selected_path".to_string(),
+        serde_json::json!(tx_ingress_selected_path),
+    );
+    out.insert(
+        "tx_ingress_aoem_production_candidate_gate_reason".to_string(),
+        serde_json::json!(tx_ingress_aoem_production_candidate_gate_reason),
     );
     out.insert(
         "deterministic_commit".to_string(),
@@ -14396,6 +14436,20 @@ mod tests {
         assert_eq!(
             out["tx_ingress_production_target"].as_str(),
             Some("aoem_runtime_owned_state_persistence")
+        );
+        assert_eq!(
+            out["tx_ingress_env_aoem_production_candidate"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(out["tx_ingress_env_aoem_shadow"].as_bool(), Some(false));
+        assert_eq!(out["tx_ingress_env_aoem_compare"].as_bool(), Some(false));
+        assert_eq!(
+            out["tx_ingress_selected_path"].as_str(),
+            Some("aoem_runtime_owned_state_persistence")
+        );
+        assert_eq!(
+            out["tx_ingress_aoem_production_candidate_gate_reason"].as_str(),
+            Some("production_candidate_complete")
         );
         assert_eq!(
             out["aoem_native_tx_batch_shadow_enabled"].as_bool(),

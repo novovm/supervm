@@ -1653,6 +1653,11 @@ mod novorudp_tests {
             "aoem_native_tx_batch_production_candidate_result_ok": true,
             "aoem_native_tx_batch_production_owner": AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1,
             "tx_ingress_production_target": AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1,
+            "tx_ingress_selected_path": AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1,
+            "receiver_final_summary_aoem_fields_present": true,
+            "receiver_final_summary_aoem_fields_defaulted": false,
+            "receiver_final_summary_aoem_fields_missing_reasons": [],
+            "aoem_owned_gate_fail_reason": "",
             "aoem_native_tx_batch_production_receipt_count": tx_count,
             "aoem_native_tx_batch_production_canonical_proof_count": tx_count,
             "aoem_native_tx_batch_production_ledger_close_proof_count": tx_count,
@@ -1711,6 +1716,59 @@ mod novorudp_tests {
 
                 assert!(violations.iter().any(|item| item.contains(
                     "aoem_native_tx_batch_production_candidate_enabled=false expected true"
+                )));
+            },
+        );
+    }
+
+    #[test]
+    fn receiver_final_summary_rejects_defaulted_aoem_fields_when_gate_requested() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let tx_count = 4;
+                let mut summary = receiver_validation_summary_v1(tx_count);
+                summary["receiver_final_summary_aoem_fields_defaulted"] =
+                    serde_json::json!(true);
+                summary["receiver_final_summary_aoem_fields_missing_reasons"] =
+                    serde_json::json!(["tx_ingress_aoem_fields_not_observed"]);
+                summary["aoem_owned_gate_fail_reason"] =
+                    serde_json::json!("aoem_owned_gate_requested_but_summary_fields_missing");
+                let probe = receiver_validation_probe_v1(tx_count);
+                let (_validation, violations) =
+                    validate_receiver_report(&summary, &probe, tx_count);
+
+                assert!(violations.iter().any(|item| item.contains(
+                    "receiver_final_summary_aoem_fields_defaulted=true expected false"
+                )));
+                assert!(violations.iter().any(|item| item.contains(
+                    "aoem_owned_gate_requested_but_summary_fields_missing"
+                )));
+            },
+        );
+    }
+
+    #[test]
+    fn receiver_fails_when_gate_requested_but_tx_ingress_not_aoem_owned() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let tx_count = 4;
+                let mut summary = receiver_validation_summary_v1(tx_count);
+                summary["tx_ingress_selected_path"] = serde_json::json!("legacy_host_transitional");
+                summary["aoem_owned_gate_fail_reason"] =
+                    serde_json::json!("aoem_owned_gate_requested_but_tx_ingress_not_aoem_owned");
+                let probe = receiver_validation_probe_v1(tx_count);
+                let (_validation, violations) =
+                    validate_receiver_report(&summary, &probe, tx_count);
+
+                assert!(violations.iter().any(|item| item.contains(
+                    "tx_ingress_selected_path=legacy_host_transitional expected"
+                )));
+                assert!(violations.iter().any(|item| item.contains(
+                    "aoem_owned_gate_requested_but_tx_ingress_not_aoem_owned"
                 )));
             },
         );
@@ -3897,6 +3955,49 @@ fn receiver_child_aoem_ownership_envs_v1() -> Vec<(&'static str, String)> {
         .iter()
         .filter_map(|name| string_env_nonempty(name).map(|value| (*name, value)))
         .collect()
+}
+
+fn receiver_child_spawn_env_has_v1(name: &str) -> bool {
+    receiver_child_aoem_ownership_envs_v1()
+        .iter()
+        .any(|(key, value)| *key == name && !value.trim().is_empty())
+}
+
+fn annotate_receiver_aoem_gate_trace_v1(summary: &mut Value) {
+    if let Some(map) = summary.as_object_mut() {
+        map.insert(
+            "wrapper_env_aoem_production_candidate".to_string(),
+            serde_json::json!(bool_env(
+                NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV
+            )),
+        );
+        map.insert(
+            "wrapper_env_aoem_shadow".to_string(),
+            serde_json::json!(bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV)),
+        );
+        map.insert(
+            "wrapper_env_aoem_compare".to_string(),
+            serde_json::json!(bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV)),
+        );
+        map.insert(
+            "child_spawn_env_aoem_production_candidate".to_string(),
+            serde_json::json!(receiver_child_spawn_env_has_v1(
+                NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            )),
+        );
+        map.insert(
+            "child_spawn_env_aoem_shadow".to_string(),
+            serde_json::json!(receiver_child_spawn_env_has_v1(
+                NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV,
+            )),
+        );
+        map.insert(
+            "child_spawn_env_aoem_compare".to_string(),
+            serde_json::json!(receiver_child_spawn_env_has_v1(
+                NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
+            )),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -7641,6 +7742,13 @@ fn validate_aoem_production_candidate_summary(
     );
     let owner = summary_str(summary, "aoem_native_tx_batch_production_owner").to_string();
     let target = summary_str(summary, "tx_ingress_production_target").to_string();
+    let selected_path = summary_str(summary, "tx_ingress_selected_path").to_string();
+    let final_summary_fields_present =
+        summary_bool(summary, "receiver_final_summary_aoem_fields_present");
+    let final_summary_fields_defaulted =
+        summary_bool(summary, "receiver_final_summary_aoem_fields_defaulted");
+    let aoem_owned_gate_fail_reason =
+        summary_str(summary, "aoem_owned_gate_fail_reason").to_string();
     let receipt_count = summary_u64(summary, "aoem_native_tx_batch_production_receipt_count");
     let canonical_proof_count =
         summary_u64(summary, "aoem_native_tx_batch_production_canonical_proof_count");
@@ -7663,6 +7771,21 @@ fn validate_aoem_production_candidate_summary(
     );
 
     if bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV) {
+        if !final_summary_fields_present {
+            violations.push(
+                "receiver_final_summary_aoem_fields_present=false expected true".to_string(),
+            );
+        }
+        if final_summary_fields_defaulted {
+            violations.push(
+                "receiver_final_summary_aoem_fields_defaulted=true expected false".to_string(),
+            );
+        }
+        if !aoem_owned_gate_fail_reason.is_empty() {
+            violations.push(format!(
+                "aoem_owned_gate_fail_reason={aoem_owned_gate_fail_reason} expected empty"
+            ));
+        }
         if !enabled {
             violations.push(
                 "aoem_native_tx_batch_production_candidate_enabled=false expected true"
@@ -7683,6 +7806,11 @@ fn validate_aoem_production_candidate_summary(
         if target != AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1 {
             violations.push(format!(
                 "tx_ingress_production_target={target} expected {AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1}"
+            ));
+        }
+        if selected_path != AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1 {
+            violations.push(format!(
+                "tx_ingress_selected_path={selected_path} expected {AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1}"
             ));
         }
         if receipt_count != tx_count {
@@ -7736,6 +7864,14 @@ fn validate_aoem_production_candidate_summary(
         "aoem_native_tx_batch_production_candidate_result_ok": result_ok,
         "aoem_native_tx_batch_production_owner": owner,
         "tx_ingress_production_target": target,
+        "tx_ingress_selected_path": selected_path,
+        "receiver_final_summary_aoem_fields_present": final_summary_fields_present,
+        "receiver_final_summary_aoem_fields_defaulted": final_summary_fields_defaulted,
+        "receiver_final_summary_aoem_fields_missing_reasons": summary
+            .get("receiver_final_summary_aoem_fields_missing_reasons")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([])),
+        "aoem_owned_gate_fail_reason": aoem_owned_gate_fail_reason,
         "aoem_native_tx_batch_production_receipt_count": receipt_count,
         "aoem_native_tx_batch_production_canonical_proof_count": canonical_proof_count,
         "aoem_native_tx_batch_production_ledger_close_proof_count": ledger_close_proof_count,
@@ -9366,7 +9502,7 @@ fn run_receiver(
     recv_budget: u64,
     sustained: SustainedConfigV1,
 ) -> Result<Value> {
-    let receiver_summary = run_receiver_node(
+    let mut receiver_summary = run_receiver_node(
         node_bin,
         chain_id,
         receiver_node,
@@ -9378,6 +9514,7 @@ fn run_receiver(
         batch_budget,
         recv_budget,
     )?;
+    annotate_receiver_aoem_gate_trace_v1(&mut receiver_summary);
     std::env::set_var("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND", "rocksdb");
     let recovery_probe = get_nov_native_execution_store_recovery_probe_v1(store_path)?;
     let (validation, violations) =
@@ -9499,12 +9636,13 @@ fn run_local_smoke(
         udp_ack,
         novorudp,
     )?;
-    let receiver_summary = parse_summary(
+    let mut receiver_summary = parse_summary(
         child
             .wait_with_output()
             .context("wait local cross-machine smoke receiver failed")?,
         "local cross-machine smoke receiver",
     )?;
+    annotate_receiver_aoem_gate_trace_v1(&mut receiver_summary);
     std::env::set_var("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND", "rocksdb");
     let recovery_probe = get_nov_native_execution_store_recovery_probe_v1(store_path)?;
     let (validation, violations) =
@@ -10289,6 +10427,25 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "execution_kernel": summary.get("execution_kernel").cloned().unwrap_or(Value::Null),
         "aoem_concurrency_owner": summary.get("aoem_concurrency_owner").cloned().unwrap_or(Value::Null),
         "host_concurrency_policy": summary.get("host_concurrency_policy").cloned().unwrap_or(Value::Null),
+        "wrapper_env_aoem_production_candidate": summary.get("wrapper_env_aoem_production_candidate").cloned().unwrap_or(Value::Null),
+        "wrapper_env_aoem_shadow": summary.get("wrapper_env_aoem_shadow").cloned().unwrap_or(Value::Null),
+        "wrapper_env_aoem_compare": summary.get("wrapper_env_aoem_compare").cloned().unwrap_or(Value::Null),
+        "child_spawn_env_aoem_production_candidate": summary.get("child_spawn_env_aoem_production_candidate").cloned().unwrap_or(Value::Null),
+        "child_spawn_env_aoem_shadow": summary.get("child_spawn_env_aoem_shadow").cloned().unwrap_or(Value::Null),
+        "child_spawn_env_aoem_compare": summary.get("child_spawn_env_aoem_compare").cloned().unwrap_or(Value::Null),
+        "child_runtime_env_aoem_production_candidate": summary.get("child_runtime_env_aoem_production_candidate").cloned().unwrap_or(Value::Null),
+        "child_runtime_env_aoem_shadow": summary.get("child_runtime_env_aoem_shadow").cloned().unwrap_or(Value::Null),
+        "child_runtime_env_aoem_compare": summary.get("child_runtime_env_aoem_compare").cloned().unwrap_or(Value::Null),
+        "tx_ingress_env_aoem_production_candidate": summary.get("tx_ingress_env_aoem_production_candidate").cloned().unwrap_or(Value::Null),
+        "tx_ingress_env_aoem_shadow": summary.get("tx_ingress_env_aoem_shadow").cloned().unwrap_or(Value::Null),
+        "tx_ingress_env_aoem_compare": summary.get("tx_ingress_env_aoem_compare").cloned().unwrap_or(Value::Null),
+        "tx_ingress_selected_path": summary.get("tx_ingress_selected_path").cloned().unwrap_or(Value::Null),
+        "tx_ingress_aoem_production_candidate_gate_reason": summary.get("tx_ingress_aoem_production_candidate_gate_reason").cloned().unwrap_or(Value::Null),
+        "receiver_final_summary_aoem_fields_source": summary.get("receiver_final_summary_aoem_fields_source").cloned().unwrap_or(Value::Null),
+        "receiver_final_summary_aoem_fields_present": summary.get("receiver_final_summary_aoem_fields_present").cloned().unwrap_or(Value::Null),
+        "receiver_final_summary_aoem_fields_defaulted": summary.get("receiver_final_summary_aoem_fields_defaulted").cloned().unwrap_or(Value::Null),
+        "receiver_final_summary_aoem_fields_missing_reasons": summary.get("receiver_final_summary_aoem_fields_missing_reasons").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "aoem_owned_gate_fail_reason": summary.get("aoem_owned_gate_fail_reason").cloned().unwrap_or(Value::Null),
         "aoem_native_tx_batch_production_candidate_enabled": summary.get("aoem_native_tx_batch_production_candidate_enabled").cloned().unwrap_or(Value::Null),
         "aoem_native_tx_batch_production_candidate_result_ok": summary.get("aoem_native_tx_batch_production_candidate_result_ok").cloned().unwrap_or(Value::Null),
         "aoem_native_tx_batch_production_owner": summary.get("aoem_native_tx_batch_production_owner").cloned().unwrap_or(Value::Null),

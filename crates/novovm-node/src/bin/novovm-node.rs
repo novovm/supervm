@@ -109,6 +109,9 @@ use novovm_node::tx_ingress::{
     native_aoem_semantic_ingress_runtime_reuse_counters_v1, nov_native_execution_store_path_v1,
     run_eth_send_raw_transaction_from_params_v1, run_nov_native_execution_tick_from_params_v1,
     tx_ingress_records_to_adapter_tx_irs, TxIngressRecord, LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
+    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
+    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV,
 };
 use novovm_node::unified_account_surface::{
     default_mainline_unified_account_store_path, is_mainline_unified_account_query_method,
@@ -33989,6 +33992,17 @@ fn build_native_execution_pipeline_report_v1(
         },
         "tick_result": compact_tick_out,
     });
+    report["child_runtime_env_aoem_production_candidate"] =
+        serde_json::json!(bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV));
+    report["child_runtime_env_aoem_shadow"] =
+        serde_json::json!(bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV));
+    report["child_runtime_env_aoem_compare"] =
+        serde_json::json!(bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV));
+    report["lifecycle"]["aoem_owned_gate_env"] = serde_json::json!({
+        "child_runtime_env_aoem_production_candidate": bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV),
+        "child_runtime_env_aoem_shadow": bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV),
+        "child_runtime_env_aoem_compare": bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV),
+    });
     if let Some(ingress) = report
         .pointer_mut("/lifecycle/ingress")
         .and_then(serde_json::Value::as_object_mut)
@@ -34233,6 +34247,27 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "trace_selected_not_pushed_sequences",
         "trace_pushed_not_batched_sequences",
         "trace_batched_not_receipted_sequences",
+        "tx_ingress_env_aoem_production_candidate",
+        "tx_ingress_env_aoem_shadow",
+        "tx_ingress_env_aoem_compare",
+        "tx_ingress_selected_path",
+        "tx_ingress_aoem_production_candidate_gate_reason",
+        "tx_ingress_legacy_host_transitional_used",
+        "tx_ingress_production_target",
+        "aoem_native_tx_batch_production_candidate_enabled",
+        "aoem_native_tx_batch_production_candidate_result_ok",
+        "aoem_native_tx_batch_production_owner",
+        "aoem_native_tx_batch_production_receipt_count",
+        "aoem_native_tx_batch_production_canonical_proof_count",
+        "aoem_native_tx_batch_production_ledger_close_proof_count",
+        "aoem_native_tx_batch_production_state_delta_root_present",
+        "aoem_native_tx_batch_production_snapshot_metadata_present",
+        "aoem_native_tx_batch_production_fallback_used",
+        "aoem_native_tx_batch_production_mismatch_reasons",
+        "aoem_native_tx_batch_production_double_write_legacy_canonical",
+        "aoem_shadow_compare_enabled",
+        "aoem_shadow_compare_result_ok",
+        "aoem_shadow_compare_mismatch_reasons",
     ] {
         compact_batch.insert(
             key.to_string(),
@@ -34511,6 +34546,31 @@ struct NativeExecutionPipelineAggregateV1 {
     broadcast_candidates_last: u64,
     broadcast_dispatch_total_last: u64,
     broadcast_tx_total_last: u64,
+    child_runtime_env_aoem_production_candidate: bool,
+    child_runtime_env_aoem_shadow: bool,
+    child_runtime_env_aoem_compare: bool,
+    tx_ingress_env_aoem_production_candidate: bool,
+    tx_ingress_env_aoem_shadow: bool,
+    tx_ingress_env_aoem_compare: bool,
+    tx_ingress_selected_path: String,
+    tx_ingress_production_target: String,
+    tx_ingress_legacy_host_transitional_used: bool,
+    tx_ingress_aoem_production_candidate_gate_reason: String,
+    aoem_native_tx_batch_production_candidate_enabled: bool,
+    aoem_native_tx_batch_production_candidate_result_ok: bool,
+    aoem_native_tx_batch_production_owner: String,
+    aoem_native_tx_batch_production_receipt_count: u64,
+    aoem_native_tx_batch_production_canonical_proof_count: u64,
+    aoem_native_tx_batch_production_ledger_close_proof_count: u64,
+    aoem_native_tx_batch_production_state_delta_root_present: bool,
+    aoem_native_tx_batch_production_snapshot_metadata_present: bool,
+    aoem_native_tx_batch_production_fallback_used: bool,
+    aoem_native_tx_batch_production_double_write_legacy_canonical: bool,
+    aoem_native_tx_batch_production_mismatch_reasons: HashSet<String>,
+    receiver_final_summary_aoem_fields_source: String,
+    receiver_final_summary_aoem_fields_present: bool,
+    receiver_final_summary_aoem_fields_missing_reasons: HashSet<String>,
+    aoem_owned_gate_fail_reason: String,
 }
 
 impl NativeExecutionPipelineAggregateV1 {
@@ -34734,6 +34794,33 @@ impl NativeExecutionPipelineAggregateV1 {
             broadcast_candidates_last: 0,
             broadcast_dispatch_total_last: 0,
             broadcast_tx_total_last: 0,
+            child_runtime_env_aoem_production_candidate: bool_env(
+                NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            ),
+            child_runtime_env_aoem_shadow: bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV),
+            child_runtime_env_aoem_compare: bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV),
+            tx_ingress_env_aoem_production_candidate: false,
+            tx_ingress_env_aoem_shadow: false,
+            tx_ingress_env_aoem_compare: false,
+            tx_ingress_selected_path: String::new(),
+            tx_ingress_production_target: String::new(),
+            tx_ingress_legacy_host_transitional_used: false,
+            tx_ingress_aoem_production_candidate_gate_reason: String::new(),
+            aoem_native_tx_batch_production_candidate_enabled: false,
+            aoem_native_tx_batch_production_candidate_result_ok: false,
+            aoem_native_tx_batch_production_owner: String::new(),
+            aoem_native_tx_batch_production_receipt_count: 0,
+            aoem_native_tx_batch_production_canonical_proof_count: 0,
+            aoem_native_tx_batch_production_ledger_close_proof_count: 0,
+            aoem_native_tx_batch_production_state_delta_root_present: false,
+            aoem_native_tx_batch_production_snapshot_metadata_present: false,
+            aoem_native_tx_batch_production_fallback_used: false,
+            aoem_native_tx_batch_production_double_write_legacy_canonical: false,
+            aoem_native_tx_batch_production_mismatch_reasons: HashSet::new(),
+            receiver_final_summary_aoem_fields_source: "not_observed".to_string(),
+            receiver_final_summary_aoem_fields_present: false,
+            receiver_final_summary_aoem_fields_missing_reasons: HashSet::new(),
+            aoem_owned_gate_fail_reason: String::new(),
         }
     }
 
@@ -35346,6 +35433,157 @@ impl NativeExecutionPipelineAggregateV1 {
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
         let tick_batch_result = report.pointer("/tick_result/batch_result");
+        self.child_runtime_env_aoem_production_candidate = self
+            .child_runtime_env_aoem_production_candidate
+            || report
+                .get("child_runtime_env_aoem_production_candidate")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+        self.child_runtime_env_aoem_shadow = self.child_runtime_env_aoem_shadow
+            || report
+                .get("child_runtime_env_aoem_shadow")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+        self.child_runtime_env_aoem_compare = self.child_runtime_env_aoem_compare
+            || report
+                .get("child_runtime_env_aoem_compare")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+        if let Some(batch_result) = tick_batch_result {
+            let has_aoem_owned_fields = batch_result
+                .get("aoem_native_tx_batch_production_candidate_enabled")
+                .is_some()
+                || batch_result
+                    .get("tx_ingress_env_aoem_production_candidate")
+                    .is_some()
+                || batch_result.get("tx_ingress_selected_path").is_some();
+            if has_aoem_owned_fields {
+                self.receiver_final_summary_aoem_fields_present = true;
+                self.receiver_final_summary_aoem_fields_source =
+                    "native_execution_tick_batch_result".to_string();
+            }
+            self.tx_ingress_env_aoem_production_candidate = self
+                .tx_ingress_env_aoem_production_candidate
+                || batch_result
+                    .get("tx_ingress_env_aoem_production_candidate")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.tx_ingress_env_aoem_shadow = self.tx_ingress_env_aoem_shadow
+                || batch_result
+                    .get("tx_ingress_env_aoem_shadow")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.tx_ingress_env_aoem_compare = self.tx_ingress_env_aoem_compare
+                || batch_result
+                    .get("tx_ingress_env_aoem_compare")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            if let Some(value) = batch_result
+                .get("tx_ingress_selected_path")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                self.tx_ingress_selected_path = value.to_string();
+            }
+            if let Some(value) = batch_result
+                .get("tx_ingress_production_target")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                self.tx_ingress_production_target = value.to_string();
+            }
+            self.tx_ingress_legacy_host_transitional_used = self
+                .tx_ingress_legacy_host_transitional_used
+                || batch_result
+                    .get("tx_ingress_legacy_host_transitional_used")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            if let Some(value) = batch_result
+                .get("tx_ingress_aoem_production_candidate_gate_reason")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                self.tx_ingress_aoem_production_candidate_gate_reason = value.to_string();
+            }
+            self.aoem_native_tx_batch_production_candidate_enabled = self
+                .aoem_native_tx_batch_production_candidate_enabled
+                || batch_result
+                    .get("aoem_native_tx_batch_production_candidate_enabled")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.aoem_native_tx_batch_production_candidate_result_ok = self
+                .aoem_native_tx_batch_production_candidate_result_ok
+                || batch_result
+                    .get("aoem_native_tx_batch_production_candidate_result_ok")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            if let Some(value) = batch_result
+                .get("aoem_native_tx_batch_production_owner")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                self.aoem_native_tx_batch_production_owner = value.to_string();
+            }
+            self.aoem_native_tx_batch_production_receipt_count = self
+                .aoem_native_tx_batch_production_receipt_count
+                .saturating_add(
+                    batch_result
+                        .get("aoem_native_tx_batch_production_receipt_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_native_tx_batch_production_canonical_proof_count = self
+                .aoem_native_tx_batch_production_canonical_proof_count
+                .saturating_add(
+                    batch_result
+                        .get("aoem_native_tx_batch_production_canonical_proof_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_native_tx_batch_production_ledger_close_proof_count = self
+                .aoem_native_tx_batch_production_ledger_close_proof_count
+                .saturating_add(
+                    batch_result
+                        .get("aoem_native_tx_batch_production_ledger_close_proof_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_native_tx_batch_production_state_delta_root_present = self
+                .aoem_native_tx_batch_production_state_delta_root_present
+                || batch_result
+                    .get("aoem_native_tx_batch_production_state_delta_root_present")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.aoem_native_tx_batch_production_snapshot_metadata_present = self
+                .aoem_native_tx_batch_production_snapshot_metadata_present
+                || batch_result
+                    .get("aoem_native_tx_batch_production_snapshot_metadata_present")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.aoem_native_tx_batch_production_fallback_used = self
+                .aoem_native_tx_batch_production_fallback_used
+                || batch_result
+                    .get("aoem_native_tx_batch_production_fallback_used")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.aoem_native_tx_batch_production_double_write_legacy_canonical = self
+                .aoem_native_tx_batch_production_double_write_legacy_canonical
+                || batch_result
+                    .get("aoem_native_tx_batch_production_double_write_legacy_canonical")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            if let Some(reasons) = batch_result
+                .get("aoem_native_tx_batch_production_mismatch_reasons")
+                .and_then(|value| value.as_array())
+            {
+                for reason in reasons.iter().filter_map(|value| value.as_str()) {
+                    if !reason.is_empty() {
+                        self.aoem_native_tx_batch_production_mismatch_reasons
+                            .insert(reason.to_string());
+                    }
+                }
+            }
+        }
         let ledger_actual_batch_count = ingress
             .get("ledger_final_missing_actual_batch_count")
             .and_then(|value| value.as_u64())
@@ -36026,6 +36264,47 @@ impl NativeExecutionPipelineAggregateV1 {
                 ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count
                     .max(self.ledger_final_missing_candidate_count);
         }
+        let aoem_owned_target = "aoem_runtime_owned_state_persistence";
+        let aoem_gate_requested = self.child_runtime_env_aoem_production_candidate
+            || self.tx_ingress_env_aoem_production_candidate
+            || self.aoem_native_tx_batch_production_candidate_enabled;
+        let mut aoem_missing_reasons = self
+            .receiver_final_summary_aoem_fields_missing_reasons
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        if aoem_gate_requested && !self.receiver_final_summary_aoem_fields_present {
+            aoem_missing_reasons.push("tx_ingress_aoem_fields_not_observed".to_string());
+        }
+        if aoem_gate_requested && !self.tx_ingress_env_aoem_production_candidate {
+            aoem_missing_reasons.push("tx_ingress_env_aoem_production_candidate_false".to_string());
+        }
+        if aoem_gate_requested && self.tx_ingress_selected_path != aoem_owned_target {
+            aoem_missing_reasons.push(format!(
+                "tx_ingress_selected_path={} expected {aoem_owned_target}",
+                self.tx_ingress_selected_path
+            ));
+        }
+        aoem_missing_reasons.sort();
+        aoem_missing_reasons.dedup();
+        let receiver_final_summary_aoem_fields_defaulted =
+            aoem_gate_requested && !aoem_missing_reasons.is_empty();
+        let aoem_owned_gate_fail_reason = if !self.aoem_owned_gate_fail_reason.is_empty() {
+            self.aoem_owned_gate_fail_reason.clone()
+        } else if aoem_gate_requested && !self.receiver_final_summary_aoem_fields_present {
+            "aoem_owned_gate_requested_but_summary_fields_missing".to_string()
+        } else if aoem_gate_requested && self.tx_ingress_selected_path != aoem_owned_target {
+            "aoem_owned_gate_requested_but_tx_ingress_not_aoem_owned".to_string()
+        } else {
+            String::new()
+        };
+        let mut aoem_mismatch_reasons = self
+            .aoem_native_tx_batch_production_mismatch_reasons
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        aoem_mismatch_reasons.sort();
+        aoem_mismatch_reasons.dedup();
         let mut out = serde_json::Map::new();
         out.insert(
             "method".to_string(),
@@ -36947,6 +37226,120 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.included_canonical_total),
         );
         out.insert(
+            "child_runtime_env_aoem_production_candidate".to_string(),
+            serde_json::json!(self.child_runtime_env_aoem_production_candidate),
+        );
+        out.insert(
+            "child_runtime_env_aoem_shadow".to_string(),
+            serde_json::json!(self.child_runtime_env_aoem_shadow),
+        );
+        out.insert(
+            "child_runtime_env_aoem_compare".to_string(),
+            serde_json::json!(self.child_runtime_env_aoem_compare),
+        );
+        out.insert(
+            "tx_ingress_env_aoem_production_candidate".to_string(),
+            serde_json::json!(self.tx_ingress_env_aoem_production_candidate),
+        );
+        out.insert(
+            "tx_ingress_env_aoem_shadow".to_string(),
+            serde_json::json!(self.tx_ingress_env_aoem_shadow),
+        );
+        out.insert(
+            "tx_ingress_env_aoem_compare".to_string(),
+            serde_json::json!(self.tx_ingress_env_aoem_compare),
+        );
+        out.insert(
+            "tx_ingress_selected_path".to_string(),
+            serde_json::json!(self.tx_ingress_selected_path),
+        );
+        out.insert(
+            "tx_ingress_production_target".to_string(),
+            serde_json::json!(self.tx_ingress_production_target),
+        );
+        out.insert(
+            "tx_ingress_legacy_host_transitional_used".to_string(),
+            serde_json::json!(self.tx_ingress_legacy_host_transitional_used),
+        );
+        out.insert(
+            "tx_ingress_aoem_production_candidate_gate_reason".to_string(),
+            serde_json::json!(self.tx_ingress_aoem_production_candidate_gate_reason),
+        );
+        out.insert(
+            "aoem_native_tx_batch_production_candidate_enabled".to_string(),
+            serde_json::json!(self.aoem_native_tx_batch_production_candidate_enabled),
+        );
+        out.insert(
+            "aoem_native_tx_batch_production_candidate_result_ok".to_string(),
+            serde_json::json!(
+                self.aoem_native_tx_batch_production_candidate_result_ok
+                    && aoem_mismatch_reasons.is_empty()
+                    && !receiver_final_summary_aoem_fields_defaulted
+            ),
+        );
+        out.insert(
+            "aoem_native_tx_batch_production_owner".to_string(),
+            serde_json::json!(self.aoem_native_tx_batch_production_owner),
+        );
+        out.insert(
+            "aoem_native_tx_batch_production_receipt_count".to_string(),
+            serde_json::json!(self.aoem_native_tx_batch_production_receipt_count),
+        );
+        out.insert(
+            "aoem_native_tx_batch_production_canonical_proof_count".to_string(),
+            serde_json::json!(self.aoem_native_tx_batch_production_canonical_proof_count),
+        );
+        out.insert(
+            "aoem_native_tx_batch_production_ledger_close_proof_count".to_string(),
+            serde_json::json!(self.aoem_native_tx_batch_production_ledger_close_proof_count),
+        );
+        out.insert(
+            "aoem_native_tx_batch_production_state_delta_root_present".to_string(),
+            serde_json::json!(self.aoem_native_tx_batch_production_state_delta_root_present),
+        );
+        out.insert(
+            "aoem_native_tx_batch_production_snapshot_metadata_present".to_string(),
+            serde_json::json!(self.aoem_native_tx_batch_production_snapshot_metadata_present),
+        );
+        out.insert(
+            "aoem_native_tx_batch_production_fallback_used".to_string(),
+            serde_json::json!(self.aoem_native_tx_batch_production_fallback_used),
+        );
+        out.insert(
+            "aoem_native_tx_batch_production_mismatch_reasons".to_string(),
+            serde_json::json!(aoem_mismatch_reasons),
+        );
+        out.insert(
+            "aoem_native_tx_batch_production_double_write_legacy_canonical".to_string(),
+            serde_json::json!(self.aoem_native_tx_batch_production_double_write_legacy_canonical),
+        );
+        out.insert(
+            "receiver_final_summary_aoem_fields_source".to_string(),
+            serde_json::json!(self.receiver_final_summary_aoem_fields_source),
+        );
+        out.insert(
+            "receiver_final_summary_aoem_fields_present".to_string(),
+            serde_json::json!(self.receiver_final_summary_aoem_fields_present),
+        );
+        out.insert(
+            "receiver_final_summary_aoem_fields_defaulted".to_string(),
+            serde_json::json!(receiver_final_summary_aoem_fields_defaulted),
+        );
+        out.insert(
+            "receiver_final_summary_aoem_fields_missing_reasons".to_string(),
+            serde_json::json!(aoem_missing_reasons),
+        );
+        out.insert(
+            "aoem_owned_gate_fail_reason".to_string(),
+            serde_json::json!(aoem_owned_gate_fail_reason),
+        );
+        if !aoem_owned_gate_fail_reason.is_empty() {
+            out.insert(
+                "fail_reason".to_string(),
+                serde_json::json!(aoem_owned_gate_fail_reason),
+            );
+        }
+        out.insert(
             "broadcast_candidates_last".to_string(),
             serde_json::json!(self.broadcast_candidates_last),
         );
@@ -37446,6 +37839,92 @@ mod native_execution_pipeline_tests {
         assert!(report["lifecycle"]["egress"]["broadcast_candidates"]
             .as_u64()
             .is_some());
+    }
+
+    #[test]
+    fn receiver_final_summary_plumbs_aoem_owned_fields_smoke() {
+        let report = build_native_execution_pipeline_report_v1(
+            1,
+            serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
+                "enabled": true,
+                "ok": true,
+                "submitted": 4u64,
+                "product_ingress": true,
+                "entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
+            }),
+            serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
+                "method": "nov_runNativeExecutionTick",
+                "chain_id": 9_998_882u64,
+                "executed_count": 4u64,
+                "deferred_count": 0u64,
+                "budget": {"effective_budget_per_tick": 4u64},
+                "budget_runtime": {"execution_deferred_count": 0u64},
+                "batch_result": {
+                    "selected_count": 4u64,
+                    "tx_ingress_env_aoem_production_candidate": true,
+                    "tx_ingress_env_aoem_shadow": true,
+                    "tx_ingress_env_aoem_compare": true,
+                    "tx_ingress_selected_path": "aoem_runtime_owned_state_persistence",
+                    "tx_ingress_production_target": "aoem_runtime_owned_state_persistence",
+                    "tx_ingress_legacy_host_transitional_used": true,
+                    "tx_ingress_aoem_production_candidate_gate_reason": "production_candidate_complete",
+                    "aoem_native_tx_batch_production_candidate_enabled": true,
+                    "aoem_native_tx_batch_production_candidate_result_ok": true,
+                    "aoem_native_tx_batch_production_owner": "aoem_runtime_owned_state_persistence",
+                    "aoem_native_tx_batch_production_receipt_count": 4u64,
+                    "aoem_native_tx_batch_production_canonical_proof_count": 4u64,
+                    "aoem_native_tx_batch_production_ledger_close_proof_count": 4u64,
+                    "aoem_native_tx_batch_production_state_delta_root_present": true,
+                    "aoem_native_tx_batch_production_snapshot_metadata_present": true,
+                    "aoem_native_tx_batch_production_fallback_used": false,
+                    "aoem_native_tx_batch_production_mismatch_reasons": [],
+                    "aoem_native_tx_batch_production_double_write_legacy_canonical": false,
+                },
+                "lifecycle": {
+                    "commit": "deterministic_sharded_dirty_atomic_commit"
+                }
+            }),
+        );
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+        aggregate.observe(&report).expect("observe report");
+        let summary = aggregate.to_json();
+
+        assert_eq!(
+            summary["receiver_final_summary_aoem_fields_present"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            summary["receiver_final_summary_aoem_fields_defaulted"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            summary["tx_ingress_selected_path"].as_str(),
+            Some("aoem_runtime_owned_state_persistence")
+        );
+        assert_eq!(
+            summary["aoem_native_tx_batch_production_receipt_count"].as_u64(),
+            Some(4)
+        );
+        assert_eq!(
+            summary["aoem_native_tx_batch_production_canonical_proof_count"].as_u64(),
+            Some(4)
+        );
+        assert_eq!(
+            summary["aoem_native_tx_batch_production_ledger_close_proof_count"].as_u64(),
+            Some(4)
+        );
+        assert_eq!(
+            summary["aoem_native_tx_batch_production_candidate_result_ok"].as_bool(),
+            Some(true)
+        );
     }
 
     #[test]
