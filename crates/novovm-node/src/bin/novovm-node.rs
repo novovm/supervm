@@ -34277,6 +34277,21 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "aoem_owned_regression_signable",
         "aoem_owned_signoff_blocker_reasons",
         "tx_ingress_real_callsite",
+        "receiver_pipeline_mode",
+        "network_receiver_object_ready_count",
+        "network_receiver_calls_production_tx_ingress",
+        "object_assembler_batch_ready_count",
+        "object_assembler_commitment_ok_count",
+        "aoem_runtime_worker_batch_received_count",
+        "aoem_runtime_worker_tx_ingress_call_count",
+        "aoem_runtime_worker_tx_ingress_callsite",
+        "aoem_runtime_worker_result_ready_count",
+        "finality_report_worker_result_verified_count",
+        "finality_report_worker_final_report_written",
+        "tx_ingress_called_by_network_receiver",
+        "tx_ingress_called_by_aoem_runtime_worker",
+        "receiver_pipeline_stage_lag",
+        "receiver_pipeline_backpressure_reason",
         "tx_ingress_called_with_explicit_aoem_gate_config",
         "fail_reason",
         "tx_ingress_selected_path",
@@ -34595,6 +34610,21 @@ struct NativeExecutionPipelineAggregateV1 {
     aoem_owned_regression_signable: bool,
     aoem_owned_signoff_blocker_reasons: HashSet<String>,
     tx_ingress_real_callsite: String,
+    receiver_pipeline_mode: String,
+    network_receiver_object_ready_count: u64,
+    network_receiver_calls_production_tx_ingress: bool,
+    object_assembler_batch_ready_count: u64,
+    object_assembler_commitment_ok_count: u64,
+    aoem_runtime_worker_batch_received_count: u64,
+    aoem_runtime_worker_tx_ingress_call_count: u64,
+    aoem_runtime_worker_tx_ingress_callsite: String,
+    aoem_runtime_worker_result_ready_count: u64,
+    finality_report_worker_result_verified_count: u64,
+    finality_report_worker_final_report_written: bool,
+    tx_ingress_called_by_network_receiver: bool,
+    tx_ingress_called_by_aoem_runtime_worker: bool,
+    receiver_pipeline_stage_lag: serde_json::Value,
+    receiver_pipeline_backpressure_reason: String,
     tx_ingress_called_with_explicit_aoem_gate_config: bool,
     tx_ingress_selected_path: String,
     tx_ingress_production_target: String,
@@ -34860,6 +34890,21 @@ impl NativeExecutionPipelineAggregateV1 {
             aoem_owned_regression_signable: false,
             aoem_owned_signoff_blocker_reasons: HashSet::new(),
             tx_ingress_real_callsite: String::new(),
+            receiver_pipeline_mode: String::new(),
+            network_receiver_object_ready_count: 0,
+            network_receiver_calls_production_tx_ingress: false,
+            object_assembler_batch_ready_count: 0,
+            object_assembler_commitment_ok_count: 0,
+            aoem_runtime_worker_batch_received_count: 0,
+            aoem_runtime_worker_tx_ingress_call_count: 0,
+            aoem_runtime_worker_tx_ingress_callsite: String::new(),
+            aoem_runtime_worker_result_ready_count: 0,
+            finality_report_worker_result_verified_count: 0,
+            finality_report_worker_final_report_written: false,
+            tx_ingress_called_by_network_receiver: false,
+            tx_ingress_called_by_aoem_runtime_worker: false,
+            receiver_pipeline_stage_lag: serde_json::json!({}),
+            receiver_pipeline_backpressure_reason: String::new(),
             tx_ingress_called_with_explicit_aoem_gate_config: false,
             tx_ingress_selected_path: String::new(),
             tx_ingress_production_target: String::new(),
@@ -35626,6 +35671,107 @@ impl NativeExecutionPipelineAggregateV1 {
                 .filter(|value| !value.is_empty())
             {
                 self.tx_ingress_real_callsite = value.to_string();
+            }
+            if let Some(value) = batch_result
+                .get("receiver_pipeline_mode")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                self.receiver_pipeline_mode = value.to_string();
+            }
+            self.network_receiver_object_ready_count =
+                self.network_receiver_object_ready_count.max(
+                    batch_result
+                        .get("network_receiver_object_ready_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.network_receiver_calls_production_tx_ingress = self
+                .network_receiver_calls_production_tx_ingress
+                || batch_result
+                    .get("network_receiver_calls_production_tx_ingress")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.object_assembler_batch_ready_count =
+                self.object_assembler_batch_ready_count.saturating_add(
+                    batch_result
+                        .get("object_assembler_batch_ready_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.object_assembler_commitment_ok_count =
+                self.object_assembler_commitment_ok_count.saturating_add(
+                    batch_result
+                        .get("object_assembler_commitment_ok_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_runtime_worker_batch_received_count = self
+                .aoem_runtime_worker_batch_received_count
+                .saturating_add(
+                    batch_result
+                        .get("aoem_runtime_worker_batch_received_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_runtime_worker_tx_ingress_call_count = self
+                .aoem_runtime_worker_tx_ingress_call_count
+                .saturating_add(
+                    batch_result
+                        .get("aoem_runtime_worker_tx_ingress_call_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            if let Some(value) = batch_result
+                .get("aoem_runtime_worker_tx_ingress_callsite")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                self.aoem_runtime_worker_tx_ingress_callsite = value.to_string();
+            }
+            self.aoem_runtime_worker_result_ready_count =
+                self.aoem_runtime_worker_result_ready_count.saturating_add(
+                    batch_result
+                        .get("aoem_runtime_worker_result_ready_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.finality_report_worker_result_verified_count = self
+                .finality_report_worker_result_verified_count
+                .saturating_add(
+                    batch_result
+                        .get("finality_report_worker_result_verified_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.finality_report_worker_final_report_written = self
+                .finality_report_worker_final_report_written
+                || batch_result
+                    .get("finality_report_worker_final_report_written")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.tx_ingress_called_by_network_receiver = self.tx_ingress_called_by_network_receiver
+                || batch_result
+                    .get("tx_ingress_called_by_network_receiver")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.tx_ingress_called_by_aoem_runtime_worker = self
+                .tx_ingress_called_by_aoem_runtime_worker
+                || batch_result
+                    .get("tx_ingress_called_by_aoem_runtime_worker")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            if let Some(value) = batch_result.get("receiver_pipeline_stage_lag") {
+                if !value.is_null() {
+                    self.receiver_pipeline_stage_lag = value.clone();
+                }
+            }
+            if let Some(value) = batch_result
+                .get("receiver_pipeline_backpressure_reason")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                self.receiver_pipeline_backpressure_reason = value.to_string();
             }
             self.tx_ingress_called_with_explicit_aoem_gate_config = self
                 .tx_ingress_called_with_explicit_aoem_gate_config
@@ -37529,6 +37675,66 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.tx_ingress_real_callsite),
         );
         out.insert(
+            "receiver_pipeline_mode".to_string(),
+            serde_json::json!(self.receiver_pipeline_mode),
+        );
+        out.insert(
+            "network_receiver_object_ready_count".to_string(),
+            serde_json::json!(self.network_receiver_object_ready_count),
+        );
+        out.insert(
+            "network_receiver_calls_production_tx_ingress".to_string(),
+            serde_json::json!(self.network_receiver_calls_production_tx_ingress),
+        );
+        out.insert(
+            "object_assembler_batch_ready_count".to_string(),
+            serde_json::json!(self.object_assembler_batch_ready_count),
+        );
+        out.insert(
+            "object_assembler_commitment_ok_count".to_string(),
+            serde_json::json!(self.object_assembler_commitment_ok_count),
+        );
+        out.insert(
+            "aoem_runtime_worker_batch_received_count".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_batch_received_count),
+        );
+        out.insert(
+            "aoem_runtime_worker_tx_ingress_call_count".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_tx_ingress_call_count),
+        );
+        out.insert(
+            "aoem_runtime_worker_tx_ingress_callsite".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_tx_ingress_callsite),
+        );
+        out.insert(
+            "aoem_runtime_worker_result_ready_count".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_result_ready_count),
+        );
+        out.insert(
+            "finality_report_worker_result_verified_count".to_string(),
+            serde_json::json!(self.finality_report_worker_result_verified_count),
+        );
+        out.insert(
+            "finality_report_worker_final_report_written".to_string(),
+            serde_json::json!(self.finality_report_worker_final_report_written),
+        );
+        out.insert(
+            "tx_ingress_called_by_network_receiver".to_string(),
+            serde_json::json!(self.tx_ingress_called_by_network_receiver),
+        );
+        out.insert(
+            "tx_ingress_called_by_aoem_runtime_worker".to_string(),
+            serde_json::json!(self.tx_ingress_called_by_aoem_runtime_worker),
+        );
+        out.insert(
+            "receiver_pipeline_stage_lag".to_string(),
+            self.receiver_pipeline_stage_lag.clone(),
+        );
+        out.insert(
+            "receiver_pipeline_backpressure_reason".to_string(),
+            serde_json::json!(self.receiver_pipeline_backpressure_reason),
+        );
+        out.insert(
             "tx_ingress_called_with_explicit_aoem_gate_config".to_string(),
             serde_json::json!(self.tx_ingress_called_with_explicit_aoem_gate_config),
         );
@@ -38273,6 +38479,147 @@ mod native_execution_pipeline_tests {
         assert!(reasons.iter().any(|reason| {
             reason.as_str() == Some("aoem_owned_child_runtime_gate_not_propagated_to_tx_ingress")
         }));
+    }
+
+    #[test]
+    fn receiver_pipeline_summary_preserves_stage_counters() {
+        let batch_result = serde_json::json!({
+            "selected_count": 4u64,
+            "tx_ingress_env_aoem_production_candidate": true,
+            "tx_ingress_aoem_gate_config_source": "receiver_child_runtime",
+            "tx_ingress_aoem_gate_config_explicit": true,
+            "tx_ingress_aoem_gate_config_production_candidate": true,
+            "aoem_owned_child_runtime_gate_propagated_to_tx_ingress": true,
+            "aoem_owned_single_path_enforced": true,
+            "legacy_host_transitional_fallback_used": false,
+            "aoem_owned_regression_signable": true,
+            "aoem_owned_signoff_blocker_reasons": [],
+            "tx_ingress_real_callsite": "aoem_runtime_worker",
+            "receiver_pipeline_mode": "aoem_runtime_worker_pipeline",
+            "network_receiver_object_ready_count": 4u64,
+            "network_receiver_calls_production_tx_ingress": false,
+            "object_assembler_batch_ready_count": 1u64,
+            "object_assembler_commitment_ok_count": 1u64,
+            "aoem_runtime_worker_batch_received_count": 1u64,
+            "aoem_runtime_worker_tx_ingress_call_count": 1u64,
+            "aoem_runtime_worker_tx_ingress_callsite": "aoem_runtime_worker",
+            "aoem_runtime_worker_result_ready_count": 1u64,
+            "finality_report_worker_result_verified_count": 1u64,
+            "finality_report_worker_final_report_written": true,
+            "tx_ingress_called_by_network_receiver": false,
+            "tx_ingress_called_by_aoem_runtime_worker": true,
+            "receiver_pipeline_stage_lag": {
+                "network_to_object": 0u64,
+                "object_to_aoem_worker": 0u64,
+                "aoem_worker_to_finality": 0u64,
+            },
+            "receiver_pipeline_backpressure_reason": "none",
+            "tx_ingress_called_with_explicit_aoem_gate_config": true,
+            "tx_ingress_selected_path": "aoem_runtime_owned_state_persistence",
+            "tx_ingress_production_target": "aoem_runtime_owned_state_persistence",
+            "tx_ingress_aoem_production_candidate_gate_reason": "production_candidate_complete",
+            "aoem_native_tx_batch_production_candidate_enabled": true,
+            "aoem_native_tx_batch_production_candidate_result_ok": true,
+            "aoem_native_tx_batch_production_owner": "aoem_runtime_owned_state_persistence",
+            "aoem_native_tx_batch_production_receipt_count": 4u64,
+            "aoem_native_tx_batch_production_canonical_proof_count": 4u64,
+            "aoem_native_tx_batch_production_ledger_close_proof_count": 4u64,
+            "aoem_native_tx_batch_production_state_delta_root_present": true,
+            "aoem_native_tx_batch_production_snapshot_metadata_present": true,
+            "aoem_native_tx_batch_production_fallback_used": false,
+            "aoem_native_tx_batch_production_mismatch_reasons": [],
+            "aoem_native_tx_batch_production_double_write_legacy_canonical": false,
+        });
+        let report = build_native_execution_pipeline_report_v1(
+            1,
+            serde_json::json!({
+                "enabled": true,
+                "ok": true,
+                "connected_peers": 1u64,
+                "ready_peers": 1u64,
+                "header_updates": 1u64,
+                "broadcast_runtime": {"broadcast_tx_total": 0u64}
+            }),
+            serde_json::json!({
+                "enabled": true,
+                "ok": true,
+                "submitted": 4u64,
+                "product_ingress": true,
+                "entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
+            }),
+            serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
+                "method": "nov_runNativeExecutionTick",
+                "chain_id": 9_998_883u64,
+                "executed_count": 4u64,
+                "deferred_count": 0u64,
+                "budget": {"effective_budget_per_tick": 4u64},
+                "budget_runtime": {"execution_deferred_count": 0u64},
+                "batch_result": batch_result,
+                "lifecycle": {
+                    "commit": "deterministic_sharded_dirty_atomic_commit"
+                }
+            }),
+        );
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+        aggregate.observe(&report).expect("observe report");
+        let summary = aggregate.to_json();
+
+        assert_eq!(
+            summary["receiver_pipeline_mode"].as_str(),
+            Some("aoem_runtime_worker_pipeline")
+        );
+        assert_eq!(
+            summary["network_receiver_calls_production_tx_ingress"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            summary["tx_ingress_real_callsite"].as_str(),
+            Some("aoem_runtime_worker")
+        );
+        assert_eq!(
+            summary["tx_ingress_called_by_network_receiver"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            summary["tx_ingress_called_by_aoem_runtime_worker"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            summary["network_receiver_object_ready_count"].as_u64(),
+            Some(4)
+        );
+        assert_eq!(
+            summary["object_assembler_batch_ready_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["aoem_runtime_worker_batch_received_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["aoem_runtime_worker_tx_ingress_call_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["aoem_runtime_worker_result_ready_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["finality_report_worker_result_verified_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["finality_report_worker_final_report_written"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            summary["receiver_pipeline_backpressure_reason"].as_str(),
+            Some("none")
+        );
     }
 
     #[test]
