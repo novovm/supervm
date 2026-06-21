@@ -1934,6 +1934,186 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn mini_tail_missing_ranges_are_reported() {
+        let summary = serde_json::json!({
+            "aoem_executed_total": 464,
+            "included_canonical_total": 464,
+            "ledger_completed_count": 464,
+            "ledger_expected_count": 480,
+            "child_expected_total_from_config": 480,
+            "ledger_durable_missing_count": 16,
+            "ledger_durable_missing_ranges_sample": [
+                {"start": 464, "end_inclusive": 479, "count": 16}
+            ],
+            "queue_pending_last": 0,
+        });
+        let sample = diagnostics_summary_sample(
+            Instant::now() - Duration::from_secs(90),
+            &summary,
+            serde_json::json!({}),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            464,
+        );
+
+        assert_eq!(sample["mini_tail_missing_count"].as_u64(), Some(16));
+        assert_eq!(
+            sample["mini_tail_missing_ranges_sample"][0]["start"].as_u64(),
+            Some(464)
+        );
+        assert_eq!(
+            sample["receiver_durable_missing_ranges_sample"][0]["end_inclusive"].as_u64(),
+            Some(479)
+        );
+    }
+
+    #[test]
+    fn mini_ack_contains_tail_missing_ranges() {
+        let summary = serde_json::json!({
+            "aoem_executed_total": 464,
+            "included_canonical_total": 464,
+            "ledger_completed_count": 464,
+            "ledger_expected_count": 480,
+            "child_expected_total_from_config": 480,
+            "ledger_durable_missing_count": 16,
+            "ledger_durable_missing_ranges_sample": [
+                {"start": 464, "end_inclusive": 479, "count": 16}
+            ],
+            "queue_pending_last": 0,
+        });
+        let sample = diagnostics_summary_sample(
+            Instant::now() - Duration::from_secs(90),
+            &summary,
+            serde_json::json!({}),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            464,
+        );
+
+        assert_eq!(sample["receiver_ack_missing_count"].as_u64(), Some(16));
+        assert_eq!(
+            sample["receiver_latest_ack_missing_ranges_sample"][0]["start"].as_u64(),
+            Some(464)
+        );
+        assert_eq!(
+            sample["receiver_waiting_for_sender_repair"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn sender_tail_repair_covers_ack_missing_ranges() {
+        let ack_missing = vec![MissingRangeV1 {
+            start: 464,
+            end_inclusive: 479,
+        }];
+        let repair_sent = vec![MissingRangeV1 {
+            start: 464,
+            end_inclusive: 479,
+        }];
+        let report = novorudp_sender_repair_coverage_report_v1(
+            ack_missing.as_slice(),
+            repair_sent.as_slice(),
+            480,
+            16,
+            8,
+        );
+
+        assert_eq!(
+            report["sender_repair_sent_overlap_ack_missing_count"].as_u64(),
+            Some(16)
+        );
+        assert_eq!(
+            report["sender_repair_sent_new_missing_coverage_count"].as_u64(),
+            Some(16)
+        );
+        assert_eq!(report["repair_duplicate_waste_ratio_bps"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn receiver_tail_repair_received_overlap_missing() {
+        let summary = serde_json::json!({
+            "aoem_executed_total": 464,
+            "included_canonical_total": 464,
+            "ledger_completed_count": 464,
+            "ledger_expected_count": 480,
+            "child_expected_total_from_config": 480,
+            "ledger_durable_missing_count": 16,
+            "ledger_durable_missing_ranges_sample": [
+                {"start": 464, "end_inclusive": 479, "count": 16}
+            ],
+            "repair_packet_received_count": 4,
+            "repair_sequence_received_count": 16,
+            "repair_sequence_received_ranges_sample": [
+                {"start": 464, "end_inclusive": 479, "count": 16}
+            ],
+            "queue_pending_last": 0,
+        });
+        let sample = diagnostics_summary_sample(
+            Instant::now() - Duration::from_secs(90),
+            &summary,
+            serde_json::json!({}),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            464,
+        );
+
+        assert_eq!(
+            sample["receiver_repair_received_overlap_missing_count"].as_u64(),
+            Some(16)
+        );
+        assert_eq!(
+            sample["receiver_repair_packet_recv_count"].as_u64(),
+            Some(4)
+        );
+        assert_eq!(
+            sample["mini_repair_received_overlap_missing_count"].as_u64(),
+            Some(16)
+        );
+    }
+
+    #[test]
+    fn receiver_tail_repair_executes_and_closes_ledger() {
+        let summary = serde_json::json!({
+            "aoem_executed_total": 480,
+            "included_canonical_total": 480,
+            "ledger_completed_count": 480,
+            "ledger_expected_count": 480,
+            "child_expected_total_from_config": 480,
+            "ledger_durable_missing_count": 0,
+            "repair_packet_received_count": 4,
+            "repair_sequence_received_ranges_sample": [
+                {"start": 464, "end_inclusive": 479, "count": 16}
+            ],
+            "repair_sequence_accepted_ranges_sample": [
+                {"start": 464, "end_inclusive": 479, "count": 16}
+            ],
+            "repair_sequence_admitted_to_aoem_ranges_sample": [
+                {"start": 464, "end_inclusive": 479, "count": 16}
+            ],
+            "queue_pending_last": 0,
+        });
+        let sample = diagnostics_summary_sample(
+            Instant::now() - Duration::from_secs(90),
+            &summary,
+            serde_json::json!({}),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            480,
+        );
+
+        assert_eq!(sample["mini_tail_missing_count"].as_u64(), Some(0));
+        assert_eq!(
+            sample["mini_tail_repair_stall_reason"].as_str(),
+            Some("closed")
+        );
+        assert_eq!(
+            sample["receiver_repair_ledger_closed_overlap_missing_count"].as_u64(),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn mini_receiver_fails_when_tail_missing_not_closed() {
         with_env_var(
             NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
@@ -1973,7 +2153,41 @@ mod novorudp_tests {
     }
 
     #[test]
-    fn mini_receiver_closes_480_without_tail32_stall() {
+    fn mini_fails_when_tail_repair_not_closed() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let mut summary = receiver_validation_summary_v1(464);
+                summary["aoem_executed_total"] = serde_json::json!(464);
+                summary["included_canonical_total"] = serde_json::json!(464);
+                summary["ledger_completed_count"] = serde_json::json!(464);
+                summary["ledger_expected_count"] = serde_json::json!(480);
+                summary["child_expected_total_from_config"] = serde_json::json!(480);
+                summary["ledger_durable_missing_count"] = serde_json::json!(16);
+                summary["ledger_durable_missing_ranges_sample"] =
+                    serde_json::json!([{"start": 464, "end_inclusive": 479, "count": 16}]);
+                summary["queue_pending_last"] = serde_json::json!(0);
+                let sample = diagnostics_summary_sample(
+                    Instant::now() - Duration::from_secs(90),
+                    &summary,
+                    serde_json::json!({}),
+                    serde_json::json!({}),
+                    serde_json::json!({}),
+                    464,
+                );
+
+                assert_eq!(sample["accepted"].as_bool(), Some(false));
+                assert_eq!(
+                    sample["fail_reason"].as_str(),
+                    Some("mini_tail_repair_missing_not_closed")
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn mini_480_closes_after_tail_repair() {
         with_env_var(
             NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
             Some("1"),
@@ -4905,6 +5119,9 @@ fn run_receiver_node(
             sample["novorudp_ack_progress_interval_ms"] =
                 serde_json::json!(receiver_ack_progress_interval_ms);
             sample["novorudp_ack_epoch_after_sample"] = serde_json::json!(epoch);
+            sample["receiver_ack_epoch"] = serde_json::json!(epoch);
+            sample["receiver_ack_sent_count"] =
+                serde_json::json!(sample_u64(&sample, "receiver_ack_sent_count").saturating_add(1));
             annotate_receiver_ingress_drain_delta_v1(&mut sample, state.samples.last());
             state.samples.push(sample);
             if state.samples.len() > 256 {
@@ -7734,9 +7951,15 @@ fn annotate_mini_receiver_tail_repair_diagnostics_v1(sample: &mut Value, summary
     sample["mini_tail_missing_count"] = serde_json::json!(tail_missing_count);
     sample["mini_tail_missing_ranges_sample"] =
         missing_ranges_to_json(tail_missing_ranges.as_slice(), 8);
+    sample["receiver_durable_missing_ranges_sample"] =
+        missing_ranges_to_json(tail_missing_ranges.as_slice(), u64::MAX);
     sample["mini_waiting_for_sender_repair"] =
         serde_json::json!(tail_missing_count > 0 && queue_pending == 0);
+    sample["receiver_waiting_for_sender_repair"] =
+        serde_json::json!(tail_missing_count > 0 && queue_pending == 0);
     sample["mini_latest_ack_missing_count"] =
+        serde_json::json!(summary_u64(summary, "latest_ack_missing_count").max(tail_missing_count));
+    sample["receiver_ack_missing_count"] =
         serde_json::json!(summary_u64(summary, "latest_ack_missing_count").max(tail_missing_count));
     sample["mini_latest_ack_missing_ranges_sample"] =
         if let Some(value) = summary.get("latest_ack_missing_ranges_sample") {
@@ -7744,11 +7967,25 @@ fn annotate_mini_receiver_tail_repair_diagnostics_v1(sample: &mut Value, summary
         } else {
             missing_ranges_to_json(tail_missing_ranges.as_slice(), 8)
         };
+    sample["receiver_latest_ack_missing_ranges_sample"] =
+        sample["mini_latest_ack_missing_ranges_sample"].clone();
+    sample["receiver_ack_epoch"] = summary
+        .get("final_ack_last_epoch")
+        .cloned()
+        .or_else(|| summary.get("ack_epoch").cloned())
+        .unwrap_or(Value::Null);
+    sample["receiver_ack_sent_count"] =
+        serde_json::json!(summary_u64(summary, "final_ack_sent_count")
+            .max(summary_u64(summary, "ack_sent_count")));
+    sample["receiver_repair_packet_recv_count"] =
+        serde_json::json!(summary_u64(summary, "repair_packet_received_count"));
     sample["mini_repair_received_overlap_missing_count"] =
         serde_json::json!(repair_received_overlap);
     sample["mini_repair_accepted_overlap_missing_count"] =
         serde_json::json!(repair_accepted_overlap);
     sample["mini_repair_executed_overlap_missing_count"] =
+        serde_json::json!(repair_executed_overlap);
+    sample["receiver_repair_ledger_closed_overlap_missing_count"] =
         serde_json::json!(repair_executed_overlap);
 
     let stall_reason = if tail_missing_count == 0 {
@@ -7766,7 +8003,7 @@ fn annotate_mini_receiver_tail_repair_diagnostics_v1(sample: &mut Value, summary
         && expected <= 480
         && tail_missing_count > 0
         && queue_pending == 0
-        && elapsed_ms >= 120_000
+        && elapsed_ms >= 90_000
     {
         let mut blockers = sample_string_vec(sample, "aoem_owned_signoff_blocker_reasons");
         push_json_string_unique(&mut blockers, "mini_tail_repair_missing_not_closed");
