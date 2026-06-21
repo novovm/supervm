@@ -7,6 +7,8 @@ use novovm_node::tx_ingress::{
     get_nov_native_execution_store_recovery_probe_v1,
     get_nov_native_execution_store_rocksdb_memory_probe_v1,
     nov_native_execution_store_rocksdb_path_v1, nov_native_tx_to_adapter_tx_ir_v1,
+    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV,
 };
 use novovm_protocol::{
     encode_nov_native_tx_wire_v1, EvmNativeMessage, NodeId, NovExecuteTxV1, NovExecutionModeV1,
@@ -24,6 +26,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const REPORT_SCHEMA_V1: &str = "novovm-native-pipeline-cross-machine-udp-soak-report/v1";
 const MEMORY_BISECT_SCHEMA_V1: &str = "novovm-native-pipeline-memory-bisect-report/v1";
+const AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1: &str = "aoem_runtime_owned_state_persistence";
+const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV: &str = "NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE";
+const RECEIVER_CHILD_AOEM_OWNERSHIP_ENVS_V1: &[&str] = &[
+    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV,
+    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
+];
 const MEMORY_PROBE_TOGGLES_V1: &[(&str, &str, bool)] = &[
     (
         "disable_proof_projection",
@@ -1590,6 +1599,140 @@ mod novorudp_tests {
 
         assert_eq!(tx_count, Some("14400"));
         assert_eq!(expected_total, Some("14400"));
+    }
+
+    #[test]
+    fn receiver_child_inherits_aoem_owned_candidate_envs() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                with_env_var(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, Some("1"), || {
+                    with_env_var(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV, Some("1"), || {
+                        let envs = receiver_child_aoem_ownership_envs_v1();
+
+                        assert!(envs.iter().any(|(key, value)| {
+                            *key == NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV
+                                && value == "1"
+                        }));
+                        assert!(envs.iter().any(|(key, value)| {
+                            *key == NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV && value == "1"
+                        }));
+                        assert!(envs.iter().any(|(key, value)| {
+                            *key == NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV && value == "1"
+                        }));
+                    })
+                })
+            },
+        );
+    }
+
+    fn receiver_validation_probe_v1(tx_count: u64) -> Value {
+        serde_json::json!({
+            "receipt_count": tx_count,
+            "semantic_head": {
+                "sequence": tx_count,
+            },
+            "semantic_head_current_recovered": true,
+            "semantic_head_by_height_recovered": true,
+            "receipt_index_recovered": true,
+        })
+    }
+
+    fn receiver_validation_summary_v1(tx_count: u64) -> Value {
+        serde_json::json!({
+            "accepted": true,
+            "execution_kernel": "AOEM",
+            "aoem_concurrency_owner": "AOEM_runtime",
+            "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
+            "ingress_total_last": tx_count,
+            "aoem_executed_total": tx_count,
+            "included_canonical_total": tx_count,
+            "queue_pending_last": 0,
+            "aoem_native_tx_batch_production_candidate_enabled": true,
+            "aoem_native_tx_batch_production_candidate_result_ok": true,
+            "aoem_native_tx_batch_production_owner": AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1,
+            "tx_ingress_production_target": AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1,
+            "aoem_native_tx_batch_production_receipt_count": tx_count,
+            "aoem_native_tx_batch_production_canonical_proof_count": tx_count,
+            "aoem_native_tx_batch_production_ledger_close_proof_count": tx_count,
+            "aoem_native_tx_batch_production_state_delta_root_present": true,
+            "aoem_native_tx_batch_production_snapshot_metadata_present": true,
+            "aoem_native_tx_batch_production_fallback_used": false,
+            "aoem_native_tx_batch_production_mismatch_reasons": [],
+            "aoem_native_tx_batch_production_double_write_legacy_canonical": false,
+        })
+    }
+
+    #[test]
+    fn receiver_validation_accepts_aoem_owned_production_candidate() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let tx_count = 4;
+                let summary = receiver_validation_summary_v1(tx_count);
+                let probe = receiver_validation_probe_v1(tx_count);
+                let (validation, violations) =
+                    validate_receiver_report(&summary, &probe, tx_count);
+
+                assert!(violations.is_empty(), "{violations:?}");
+                assert_eq!(
+                    validation["aoem_production_candidate"]
+                        ["aoem_native_tx_batch_production_owner"]
+                        .as_str(),
+                    Some(AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1)
+                );
+                assert_eq!(
+                    validation["aoem_production_candidate"]
+                        ["aoem_native_tx_batch_production_fallback_used"]
+                        .as_bool(),
+                    Some(false)
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn receiver_validation_rejects_missing_aoem_owned_candidate_fields_when_gate_on() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let tx_count = 4;
+                let mut summary = receiver_validation_summary_v1(tx_count);
+                summary
+                    .as_object_mut()
+                    .expect("summary object")
+                    .remove("aoem_native_tx_batch_production_candidate_enabled");
+                let probe = receiver_validation_probe_v1(tx_count);
+                let (_validation, violations) =
+                    validate_receiver_report(&summary, &probe, tx_count);
+
+                assert!(violations.iter().any(|item| item.contains(
+                    "aoem_native_tx_batch_production_candidate_enabled=false expected true"
+                )));
+            },
+        );
+    }
+
+    #[test]
+    fn compact_receiver_summary_preserves_aoem_owned_candidate_fields() {
+        let summary = receiver_validation_summary_v1(4);
+        let compact = compact_receiver_summary_for_report(summary);
+
+        assert_eq!(
+            compact["aoem_native_tx_batch_production_candidate_enabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            compact["aoem_native_tx_batch_production_owner"].as_str(),
+            Some(AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1)
+        );
+        assert_eq!(
+            compact["aoem_native_tx_batch_production_receipt_count"].as_u64(),
+            Some(4)
+        );
     }
 
     #[test]
@@ -3749,6 +3892,13 @@ fn receiver_child_expected_total_envs_v1(expected_tx_count: u64) -> [(&'static s
     ]
 }
 
+fn receiver_child_aoem_ownership_envs_v1() -> Vec<(&'static str, String)> {
+    RECEIVER_CHILD_AOEM_OWNERSHIP_ENVS_V1
+        .iter()
+        .filter_map(|name| string_env_nonempty(name).map(|value| (*name, value)))
+        .collect()
+}
+
 #[cfg(test)]
 fn novorudp_receiver_expected_total_missing_v1(
     transport: &str,
@@ -3906,6 +4056,9 @@ fn spawn_receiver_node(
         cmd.env(key, value);
     }
     for (key, value) in receiver_child_expected_total_envs_v1(expected_tx_count) {
+        cmd.env(key, value);
+    }
+    for (key, value) in receiver_child_aoem_ownership_envs_v1() {
         cmd.env(key, value);
     }
     cmd.env("NOVOVM_NATIVE_PIPELINE_ROLE", "receiver");
@@ -4417,6 +4570,64 @@ fn run_receiver_node(
                 state.samples_dropped = state
                     .samples_dropped
                     .saturating_add(drop_count.try_into().unwrap_or(u64::MAX));
+            }
+            if receiver_phase == "completed" {
+                if let Some(mut summary) = progress_summary {
+                    let final_ack_start_epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
+                    emit_receiver_progress_ack_with_summary(
+                        expected_tx_count,
+                        stable_progress,
+                        ack_sample_limit,
+                        final_ack_start_epoch,
+                        Some(&summary),
+                    );
+                    let final_ack_repeat_count =
+                        u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_COUNT", 10)
+                            .unwrap_or(10);
+                    let (final_ack_sent_count, final_ack_last_epoch) =
+                        repeat_final_receiver_udp_ack(
+                            expected_tx_count,
+                            ack_sample_limit,
+                            final_ack_start_epoch,
+                        );
+                    summary["final_ack_repeat_count"] =
+                        serde_json::json!(final_ack_repeat_count);
+                    summary["final_ack_sent_count"] = serde_json::json!(final_ack_sent_count);
+                    summary["final_ack_last_epoch"] = serde_json::json!(final_ack_last_epoch);
+                    let _ = child.kill();
+                    let output = child
+                        .wait_with_output()
+                        .context("wait completed cross-machine receiver failed")?;
+                    let (stdout_path, stderr_path, output_artifact_error) =
+                        persist_child_output_artifacts(&output);
+                    if let Some(error) = output_artifact_error {
+                        if let Some(last) = state.samples.last_mut() {
+                            last["output_artifact_error"] = serde_json::json!(error);
+                        }
+                    }
+                    write_diagnostics_report(
+                        &diagnostics,
+                        &state,
+                        true,
+                        child_pid,
+                        expected_tx_count,
+                    )?;
+                    write_receiver_exit_report(
+                        child_pid,
+                        Some(&output),
+                        stdout_path.as_path(),
+                        stderr_path.as_path(),
+                        diagnostics.report_path.as_path(),
+                        expected_tx_count,
+                        Some(&summary),
+                        &state,
+                        "completed_live_summary",
+                        true,
+                        true,
+                        true,
+                    )?;
+                    return Ok(summary);
+                }
             }
             if let Some(reason) = fail_reason {
                 state.fail_reason = Some(reason.clone());
@@ -7403,6 +7614,142 @@ fn validate_boundaries(summary: &Value, violations: &mut Vec<String>) {
     }
 }
 
+fn summary_bool(summary: &Value, field: &str) -> bool {
+    summary
+        .get(field)
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn summary_array_is_empty(summary: &Value, field: &str) -> bool {
+    summary
+        .get(field)
+        .and_then(Value::as_array)
+        .map(Vec::is_empty)
+        .unwrap_or(false)
+}
+
+fn validate_aoem_production_candidate_summary(
+    summary: &Value,
+    tx_count: u64,
+    violations: &mut Vec<String>,
+) -> Value {
+    let enabled = summary_bool(summary, "aoem_native_tx_batch_production_candidate_enabled");
+    let result_ok = summary_bool(
+        summary,
+        "aoem_native_tx_batch_production_candidate_result_ok",
+    );
+    let owner = summary_str(summary, "aoem_native_tx_batch_production_owner").to_string();
+    let target = summary_str(summary, "tx_ingress_production_target").to_string();
+    let receipt_count = summary_u64(summary, "aoem_native_tx_batch_production_receipt_count");
+    let canonical_proof_count =
+        summary_u64(summary, "aoem_native_tx_batch_production_canonical_proof_count");
+    let ledger_close_proof_count =
+        summary_u64(summary, "aoem_native_tx_batch_production_ledger_close_proof_count");
+    let state_delta_root_present = summary_bool(
+        summary,
+        "aoem_native_tx_batch_production_state_delta_root_present",
+    );
+    let snapshot_metadata_present = summary_bool(
+        summary,
+        "aoem_native_tx_batch_production_snapshot_metadata_present",
+    );
+    let fallback_used = summary_bool(summary, "aoem_native_tx_batch_production_fallback_used");
+    let mismatch_reasons_empty =
+        summary_array_is_empty(summary, "aoem_native_tx_batch_production_mismatch_reasons");
+    let double_write = summary_bool(
+        summary,
+        "aoem_native_tx_batch_production_double_write_legacy_canonical",
+    );
+
+    if bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV) {
+        if !enabled {
+            violations.push(
+                "aoem_native_tx_batch_production_candidate_enabled=false expected true"
+                    .to_string(),
+            );
+        }
+        if !result_ok {
+            violations.push(
+                "aoem_native_tx_batch_production_candidate_result_ok=false expected true"
+                    .to_string(),
+            );
+        }
+        if owner != AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1 {
+            violations.push(format!(
+                "aoem_native_tx_batch_production_owner={owner} expected {AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1}"
+            ));
+        }
+        if target != AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1 {
+            violations.push(format!(
+                "tx_ingress_production_target={target} expected {AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1}"
+            ));
+        }
+        if receipt_count != tx_count {
+            violations.push(format!(
+                "aoem_native_tx_batch_production_receipt_count={receipt_count} expected {tx_count}"
+            ));
+        }
+        if canonical_proof_count != tx_count {
+            violations.push(format!(
+                "aoem_native_tx_batch_production_canonical_proof_count={canonical_proof_count} expected {tx_count}"
+            ));
+        }
+        if ledger_close_proof_count != tx_count {
+            violations.push(format!(
+                "aoem_native_tx_batch_production_ledger_close_proof_count={ledger_close_proof_count} expected {tx_count}"
+            ));
+        }
+        if !state_delta_root_present {
+            violations.push(
+                "aoem_native_tx_batch_production_state_delta_root_present=false expected true"
+                    .to_string(),
+            );
+        }
+        if !snapshot_metadata_present {
+            violations.push(
+                "aoem_native_tx_batch_production_snapshot_metadata_present=false expected true"
+                    .to_string(),
+            );
+        }
+        if fallback_used {
+            violations.push(
+                "aoem_native_tx_batch_production_fallback_used=true expected false".to_string(),
+            );
+        }
+        if !mismatch_reasons_empty {
+            violations.push(
+                "aoem_native_tx_batch_production_mismatch_reasons nonempty expected []"
+                    .to_string(),
+            );
+        }
+        if double_write {
+            violations.push(
+                "aoem_native_tx_batch_production_double_write_legacy_canonical=true expected false"
+                    .to_string(),
+            );
+        }
+    }
+
+    serde_json::json!({
+        "aoem_native_tx_batch_production_candidate_enabled": enabled,
+        "aoem_native_tx_batch_production_candidate_result_ok": result_ok,
+        "aoem_native_tx_batch_production_owner": owner,
+        "tx_ingress_production_target": target,
+        "aoem_native_tx_batch_production_receipt_count": receipt_count,
+        "aoem_native_tx_batch_production_canonical_proof_count": canonical_proof_count,
+        "aoem_native_tx_batch_production_ledger_close_proof_count": ledger_close_proof_count,
+        "aoem_native_tx_batch_production_state_delta_root_present": state_delta_root_present,
+        "aoem_native_tx_batch_production_snapshot_metadata_present": snapshot_metadata_present,
+        "aoem_native_tx_batch_production_fallback_used": fallback_used,
+        "aoem_native_tx_batch_production_mismatch_reasons": summary
+            .get("aoem_native_tx_batch_production_mismatch_reasons")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([])),
+        "aoem_native_tx_batch_production_double_write_legacy_canonical": double_write,
+    })
+}
+
 fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (Value, Vec<String>) {
     let receipt_count = probe_u64(probe, "receipt_count");
     let semantic_sequence = semantic_sequence(probe);
@@ -7493,6 +7840,11 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
     }
     let mut violations = Vec::<String>::new();
     validate_boundaries(summary, &mut violations);
+    let aoem_production_candidate = validate_aoem_production_candidate_summary(
+        summary,
+        tx_count,
+        &mut violations,
+    );
     if received_unique != tx_count {
         violations.push(format!(
             "received_unique={received_unique} expected tx_count={tx_count}"
@@ -7552,6 +7904,7 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
             "repair_accepted_but_not_effective_count": repair_accepted_but_not_effective_count,
             "repair_accepted_but_not_effective_reason_counts": Value::Object(repair_accepted_but_not_effective_reason_counts),
             "repair_accepted_but_not_effective_ranges_sample": missing_ranges_to_json(final_missing_ranges.as_slice(), 256),
+            "aoem_production_candidate": aoem_production_candidate,
         }),
         violations,
     )
@@ -9936,6 +10289,18 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "execution_kernel": summary.get("execution_kernel").cloned().unwrap_or(Value::Null),
         "aoem_concurrency_owner": summary.get("aoem_concurrency_owner").cloned().unwrap_or(Value::Null),
         "host_concurrency_policy": summary.get("host_concurrency_policy").cloned().unwrap_or(Value::Null),
+        "aoem_native_tx_batch_production_candidate_enabled": summary.get("aoem_native_tx_batch_production_candidate_enabled").cloned().unwrap_or(Value::Null),
+        "aoem_native_tx_batch_production_candidate_result_ok": summary.get("aoem_native_tx_batch_production_candidate_result_ok").cloned().unwrap_or(Value::Null),
+        "aoem_native_tx_batch_production_owner": summary.get("aoem_native_tx_batch_production_owner").cloned().unwrap_or(Value::Null),
+        "tx_ingress_production_target": summary.get("tx_ingress_production_target").cloned().unwrap_or(Value::Null),
+        "aoem_native_tx_batch_production_receipt_count": summary_u64(&summary, "aoem_native_tx_batch_production_receipt_count"),
+        "aoem_native_tx_batch_production_canonical_proof_count": summary_u64(&summary, "aoem_native_tx_batch_production_canonical_proof_count"),
+        "aoem_native_tx_batch_production_ledger_close_proof_count": summary_u64(&summary, "aoem_native_tx_batch_production_ledger_close_proof_count"),
+        "aoem_native_tx_batch_production_state_delta_root_present": summary.get("aoem_native_tx_batch_production_state_delta_root_present").cloned().unwrap_or(Value::Null),
+        "aoem_native_tx_batch_production_snapshot_metadata_present": summary.get("aoem_native_tx_batch_production_snapshot_metadata_present").cloned().unwrap_or(Value::Null),
+        "aoem_native_tx_batch_production_fallback_used": summary.get("aoem_native_tx_batch_production_fallback_used").cloned().unwrap_or(Value::Null),
+        "aoem_native_tx_batch_production_mismatch_reasons": summary.get("aoem_native_tx_batch_production_mismatch_reasons").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "aoem_native_tx_batch_production_double_write_legacy_canonical": summary.get("aoem_native_tx_batch_production_double_write_legacy_canonical").cloned().unwrap_or(Value::Null),
         "ticks": summary_u64(&summary, "ticks"),
         "elapsed_ms": summary_u64(&summary, "elapsed_ms"),
         "ticks_per_sec_x1000": summary_u64(&summary, "ticks_per_sec_x1000"),
