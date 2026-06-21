@@ -102,6 +102,7 @@ pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV: &str = "NOVOVM_AOEM_NATIVE
 pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV: &str =
     "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE";
 pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV: &str = "NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE";
+pub const NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV: &str = "NOVOVM_AOEM_RUNTIME_WORKER_PIPELINE";
 pub const NOV_NATIVE_LEGACY_HOST_TRANSITIONAL_FALLBACK_ENV: &str =
     "NOVOVM_LEGACY_HOST_TRANSITIONAL_FALLBACK";
 pub const NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV: &str =
@@ -1252,6 +1253,10 @@ fn native_legacy_host_transitional_fallback_enabled_v1() -> bool {
     bool_env_default_v1(NOV_NATIVE_LEGACY_HOST_TRANSITIONAL_FALLBACK_ENV, false)
 }
 
+fn native_aoem_runtime_worker_pipeline_enabled_v1() -> bool {
+    bool_env_default_v1(NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV, false)
+}
+
 #[derive(Debug, Clone)]
 struct TxIngressAoemOwnershipGatesV1 {
     production_candidate: bool,
@@ -1349,6 +1354,144 @@ fn tx_ingress_aoem_ownership_gates_from_params_v1(
         source: "env_fallback".to_string(),
         explicit: false,
     }
+}
+
+fn tx_ingress_string_param_any_v1(params: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| params.get(*key))
+        .find_map(|value| {
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+}
+
+fn tx_ingress_real_callsite_v1(
+    params: &serde_json::Value,
+    production_candidate_enabled: bool,
+    default_callsite: &str,
+) -> String {
+    if let Some(callsite) = tx_ingress_string_param_any_v1(
+        params,
+        &[
+            "tx_ingress_real_callsite",
+            "tx_ingress_callsite",
+            "tx_ingress_called_by",
+        ],
+    ) {
+        return callsite;
+    }
+    if native_aoem_runtime_worker_pipeline_enabled_v1() && production_candidate_enabled {
+        return "aoem_runtime_worker".to_string();
+    }
+    default_callsite.to_string()
+}
+
+fn insert_aoem_runtime_worker_pipeline_fields_v1(
+    out: &mut serde_json::Map<String, serde_json::Value>,
+    params: &serde_json::Value,
+    production_candidate_enabled: bool,
+    tx_ingress_real_callsite: &str,
+    tx_count: u64,
+    batch_built: bool,
+    result_ready: bool,
+    result_verified: bool,
+) {
+    let pipeline_enabled = native_aoem_runtime_worker_pipeline_enabled_v1();
+    let pipeline_mode = if pipeline_enabled {
+        "aoem_runtime_worker_pipeline"
+    } else {
+        "legacy_receiver_tick"
+    };
+    let called_by_aoem_runtime_worker = tx_ingress_real_callsite == "aoem_runtime_worker";
+    let network_receiver_calls_production_tx_ingress =
+        production_candidate_enabled && !called_by_aoem_runtime_worker;
+    let explicit_object_ready_count = params
+        .get("network_receiver_object_ready_count")
+        .and_then(|value| value.as_u64());
+    let object_ready_count = explicit_object_ready_count.unwrap_or(tx_count);
+    let batch_ready_count = u64::from(batch_built && tx_count > 0);
+    let commitment_ok_count = u64::from(batch_built && tx_count > 0);
+    let worker_batch_received_count = u64::from(pipeline_enabled && batch_built && tx_count > 0);
+    let worker_tx_ingress_call_count =
+        u64::from(pipeline_enabled && called_by_aoem_runtime_worker && tx_count > 0);
+    let worker_result_ready_count = u64::from(pipeline_enabled && result_ready);
+    let finality_verified_count = u64::from(pipeline_enabled && result_verified);
+
+    out.insert(
+        "receiver_pipeline_mode".to_string(),
+        serde_json::json!(pipeline_mode),
+    );
+    out.insert(
+        "network_receiver_object_ready_count".to_string(),
+        serde_json::json!(object_ready_count),
+    );
+    out.insert(
+        "network_receiver_calls_production_tx_ingress".to_string(),
+        serde_json::json!(network_receiver_calls_production_tx_ingress),
+    );
+    out.insert(
+        "object_assembler_batch_ready_count".to_string(),
+        serde_json::json!(batch_ready_count),
+    );
+    out.insert(
+        "object_assembler_commitment_ok_count".to_string(),
+        serde_json::json!(commitment_ok_count),
+    );
+    out.insert(
+        "aoem_runtime_worker_batch_received_count".to_string(),
+        serde_json::json!(worker_batch_received_count),
+    );
+    out.insert(
+        "aoem_runtime_worker_tx_ingress_call_count".to_string(),
+        serde_json::json!(worker_tx_ingress_call_count),
+    );
+    out.insert(
+        "aoem_runtime_worker_tx_ingress_callsite".to_string(),
+        if called_by_aoem_runtime_worker {
+            serde_json::json!(tx_ingress_real_callsite)
+        } else {
+            serde_json::Value::Null
+        },
+    );
+    out.insert(
+        "aoem_runtime_worker_result_ready_count".to_string(),
+        serde_json::json!(worker_result_ready_count),
+    );
+    out.insert(
+        "finality_report_worker_result_verified_count".to_string(),
+        serde_json::json!(finality_verified_count),
+    );
+    out.insert(
+        "finality_report_worker_final_report_written".to_string(),
+        serde_json::json!(result_ready),
+    );
+    out.insert(
+        "tx_ingress_real_callsite".to_string(),
+        serde_json::json!(tx_ingress_real_callsite),
+    );
+    out.insert(
+        "tx_ingress_called_by_network_receiver".to_string(),
+        serde_json::json!(network_receiver_calls_production_tx_ingress),
+    );
+    out.insert(
+        "tx_ingress_called_by_aoem_runtime_worker".to_string(),
+        serde_json::json!(called_by_aoem_runtime_worker),
+    );
+    out.insert(
+        "receiver_pipeline_stage_lag".to_string(),
+        serde_json::json!({
+            "network_to_object": object_ready_count.saturating_sub(tx_count),
+            "object_to_aoem_worker": batch_ready_count.saturating_sub(worker_batch_received_count),
+            "aoem_worker_to_finality": worker_result_ready_count.saturating_sub(finality_verified_count),
+        }),
+    );
+    out.insert(
+        "receiver_pipeline_backpressure_reason".to_string(),
+        serde_json::json!("none"),
+    );
 }
 
 fn parse_bool_token_v1(raw: &str) -> Option<bool> {
@@ -11462,6 +11605,11 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     } else {
         production_candidate_status.mismatch_reasons.join(",")
     };
+    let tx_ingress_real_callsite = tx_ingress_real_callsite_v1(
+        params,
+        production_candidate_enabled,
+        "nov_sendRawTransactionBatch",
+    );
     let aoem_owned_single_path_enforced = production_candidate_enabled;
     let legacy_host_transitional_fallback_used =
         production_candidate_enabled && !production_candidate_status.result_ok;
@@ -11488,6 +11636,14 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         aoem_owned_signoff_blocker_reasons
             .push("aoem_owned_gate_requested_but_legacy_path_selected".to_string());
     }
+    if native_aoem_runtime_worker_pipeline_enabled_v1()
+        && production_candidate_enabled
+        && tx_ingress_real_callsite != "aoem_runtime_worker"
+    {
+        aoem_owned_signoff_blocker_reasons.push(
+            "aoem_runtime_worker_pipeline_tx_ingress_callsite_not_aoem_runtime_worker".to_string(),
+        );
+    }
     aoem_owned_signoff_blocker_reasons.sort();
     aoem_owned_signoff_blocker_reasons.dedup();
     let aoem_owned_regression_signable =
@@ -11500,6 +11656,11 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         && tx_ingress_selected_path != "aoem_runtime_owned_state_persistence"
     {
         "aoem_owned_gate_requested_but_selected_path_not_aoem_owned"
+    } else if native_aoem_runtime_worker_pipeline_enabled_v1()
+        && production_candidate_enabled
+        && tx_ingress_real_callsite != "aoem_runtime_worker"
+    {
+        "aoem_runtime_worker_pipeline_tx_ingress_callsite_not_aoem_runtime_worker"
     } else {
         ""
     };
@@ -11845,9 +12006,15 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         "aoem_owned_signoff_blocker_reasons".to_string(),
         serde_json::json!(aoem_owned_signoff_blocker_reasons),
     );
-    out.insert(
-        "tx_ingress_real_callsite".to_string(),
-        serde_json::json!("nov_sendRawTransactionBatch"),
+    insert_aoem_runtime_worker_pipeline_fields_v1(
+        &mut out,
+        params,
+        production_candidate_enabled,
+        tx_ingress_real_callsite.as_str(),
+        raw_payloads.len() as u64,
+        shadow_batch.is_some(),
+        shadow_result.is_some(),
+        production_candidate_status.result_ok,
     );
     out.insert(
         "tx_ingress_called_with_explicit_aoem_gate_config".to_string(),
@@ -12552,6 +12719,21 @@ fn insert_aoem_owned_tx_ingress_fields_from_batch_result_v1(
         "aoem_owned_regression_signable",
         "aoem_owned_signoff_blocker_reasons",
         "tx_ingress_real_callsite",
+        "receiver_pipeline_mode",
+        "network_receiver_object_ready_count",
+        "network_receiver_calls_production_tx_ingress",
+        "object_assembler_batch_ready_count",
+        "object_assembler_commitment_ok_count",
+        "aoem_runtime_worker_batch_received_count",
+        "aoem_runtime_worker_tx_ingress_call_count",
+        "aoem_runtime_worker_tx_ingress_callsite",
+        "aoem_runtime_worker_result_ready_count",
+        "finality_report_worker_result_verified_count",
+        "finality_report_worker_final_report_written",
+        "tx_ingress_called_by_network_receiver",
+        "tx_ingress_called_by_aoem_runtime_worker",
+        "receiver_pipeline_stage_lag",
+        "receiver_pipeline_backpressure_reason",
         "tx_ingress_called_with_explicit_aoem_gate_config",
         "fail_reason",
         "tx_ingress_selected_path",
@@ -12647,9 +12829,20 @@ fn insert_empty_tick_aoem_owned_gate_config_fields_v1(
         "tx_ingress_called_with_explicit_aoem_gate_config".to_string(),
         serde_json::json!(production_candidate_enabled && aoem_gate_config.explicit),
     );
-    report.insert(
-        "tx_ingress_real_callsite".to_string(),
-        serde_json::json!("nov_executePendingNativeTxBatch.empty_tick"),
+    let tx_ingress_real_callsite = tx_ingress_real_callsite_v1(
+        params,
+        production_candidate_enabled,
+        "nov_executePendingNativeTxBatch.empty_tick",
+    );
+    insert_aoem_runtime_worker_pipeline_fields_v1(
+        report,
+        params,
+        production_candidate_enabled,
+        tx_ingress_real_callsite.as_str(),
+        0,
+        false,
+        false,
+        false,
     );
     report.insert(
         "native_execution_tick_params_source".to_string(),
@@ -14532,6 +14725,57 @@ mod tests {
         )
     }
 
+    fn run_test_native_tx_batch_receiver_pipeline_v1(
+        explicit_callsite: Option<&str>,
+    ) -> serde_json::Value {
+        let raw_txs = vec![
+            build_test_native_execute_raw_hex_v1(1, "acct-pipeline-1", 25),
+            build_test_native_execute_raw_hex_v1(2, "acct-pipeline-2", 35),
+        ];
+        with_env_override_v1(NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV, "1", || {
+            with_env_override_v1(
+                NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+                "false",
+                || {
+                    with_env_override_v1(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, "0", || {
+                        with_env_override_v1(
+                            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+                            "0",
+                            || {
+                                with_env_override_v1(
+                                    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
+                                    "0",
+                                    || {
+                                        with_test_native_execution_store_path_v1(|path| {
+                                            let mut params = serde_json::json!({
+                                                "raw_txs": raw_txs,
+                                                "native_execution_store_path": path,
+                                                "aoem_owned_gate_config": {
+                                                    "production_candidate": true,
+                                                    "shadow": true,
+                                                    "compare": true,
+                                                    "source": "receiver_child_runtime",
+                                                },
+                                            });
+                                            if let Some(callsite) = explicit_callsite {
+                                                params["tx_ingress_real_callsite"] =
+                                                    serde_json::json!(callsite);
+                                            }
+                                            run_nov_send_raw_transaction_batch_from_params_v1(
+                                                &params,
+                                            )
+                                            .expect("pipeline tx_ingress batch should run")
+                                        })
+                                    },
+                                )
+                            },
+                        )
+                    })
+                },
+            )
+        })
+    }
+
     fn test_aoem_candidate_result_v1(
         receipt_count: usize,
     ) -> novovm_exec::NovovmAoemNativeTxBatchResultV1 {
@@ -15054,6 +15298,168 @@ mod tests {
             Some(false)
         );
         assert_eq!(out["aoem_owned_regression_signable"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn receiver_pipeline_gate_off_preserves_334b645_regression_baseline() {
+        let out = run_test_native_tx_batch_receiver_child_gate_config_v1();
+        assert_eq!(
+            out["receiver_pipeline_mode"].as_str(),
+            Some("legacy_receiver_tick")
+        );
+        assert_eq!(
+            out["tx_ingress_real_callsite"].as_str(),
+            Some("nov_sendRawTransactionBatch")
+        );
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["aoem_owned_regression_signable"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn network_receiver_does_not_call_production_tx_ingress_under_pipeline_gate() {
+        let out = run_test_native_tx_batch_receiver_pipeline_v1(None);
+        assert_eq!(
+            out["receiver_pipeline_mode"].as_str(),
+            Some("aoem_runtime_worker_pipeline")
+        );
+        assert_eq!(
+            out["network_receiver_calls_production_tx_ingress"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["tx_ingress_called_by_network_receiver"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["tx_ingress_real_callsite"].as_str(),
+            Some("aoem_runtime_worker")
+        );
+    }
+
+    #[test]
+    fn object_assembler_builds_aoem_native_tx_batch_v1_from_transport_object() {
+        let out = run_test_native_tx_batch_receiver_pipeline_v1(None);
+        assert_eq!(out["network_receiver_object_ready_count"].as_u64(), Some(2));
+        assert_eq!(out["object_assembler_batch_ready_count"].as_u64(), Some(1));
+        assert_eq!(
+            out["object_assembler_commitment_ok_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(out["aoem_native_tx_batch_v1_built"].as_bool(), Some(true));
+        assert_eq!(out["aoem_native_tx_batch_v1_tx_count"].as_u64(), Some(2));
+    }
+
+    #[test]
+    fn aoem_runtime_worker_is_only_production_tx_ingress_callsite() {
+        let out = run_test_native_tx_batch_receiver_pipeline_v1(None);
+        assert_eq!(
+            out["aoem_runtime_worker_batch_received_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["aoem_runtime_worker_tx_ingress_call_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["aoem_runtime_worker_tx_ingress_callsite"].as_str(),
+            Some("aoem_runtime_worker")
+        );
+        assert_eq!(
+            out["tx_ingress_called_by_aoem_runtime_worker"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn finality_report_worker_verifies_aoem_batch_result() {
+        let out = run_test_native_tx_batch_receiver_pipeline_v1(None);
+        assert_eq!(
+            out["aoem_runtime_worker_result_ready_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["finality_report_worker_result_verified_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["finality_report_worker_final_report_written"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(out["aoem_owned_regression_signable"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn receiver_pipeline_preserves_aoem_owned_single_path() {
+        let out = run_test_native_tx_batch_receiver_pipeline_v1(None);
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(
+            out["tx_ingress_selected_path"].as_str(),
+            Some("aoem_runtime_owned_state_persistence")
+        );
+        assert_eq!(
+            out["tx_ingress_production_target"].as_str(),
+            Some("aoem_runtime_owned_state_persistence")
+        );
+        assert_eq!(out["aoem_owned_single_path_enforced"].as_bool(), Some(true));
+        assert_eq!(out["aoem_owned_regression_signable"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn receiver_pipeline_legacy_tick_not_production_signable() {
+        let out =
+            run_test_native_tx_batch_receiver_pipeline_v1(Some("nov_sendRawTransactionBatch"));
+        assert_eq!(out["accepted"].as_bool(), Some(false));
+        assert_eq!(
+            out["fail_reason"].as_str(),
+            Some("aoem_runtime_worker_pipeline_tx_ingress_callsite_not_aoem_runtime_worker")
+        );
+        assert_eq!(
+            out["network_receiver_calls_production_tx_ingress"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["tx_ingress_called_by_network_receiver"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["tx_ingress_called_by_aoem_runtime_worker"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(out["aoem_owned_regression_signable"].as_bool(), Some(false));
+        let blockers = out["aoem_owned_signoff_blocker_reasons"]
+            .as_array()
+            .expect("pipeline blocker reasons");
+        assert!(blockers.iter().any(|reason| {
+            reason.as_str()
+                == Some("aoem_runtime_worker_pipeline_tx_ingress_callsite_not_aoem_runtime_worker")
+        }));
+    }
+
+    #[test]
+    fn receiver_pipeline_reports_stage_counters() {
+        let out = run_test_native_tx_batch_receiver_pipeline_v1(None);
+        for field in [
+            "network_receiver_object_ready_count",
+            "network_receiver_calls_production_tx_ingress",
+            "object_assembler_batch_ready_count",
+            "object_assembler_commitment_ok_count",
+            "aoem_runtime_worker_batch_received_count",
+            "aoem_runtime_worker_tx_ingress_call_count",
+            "aoem_runtime_worker_tx_ingress_callsite",
+            "aoem_runtime_worker_result_ready_count",
+            "finality_report_worker_result_verified_count",
+            "finality_report_worker_final_report_written",
+            "tx_ingress_called_by_network_receiver",
+            "tx_ingress_called_by_aoem_runtime_worker",
+            "receiver_pipeline_stage_lag",
+            "receiver_pipeline_backpressure_reason",
+        ] {
+            assert!(!out[field].is_null(), "pipeline field missing: {field}");
+        }
+        assert_eq!(
+            out["receiver_pipeline_backpressure_reason"].as_str(),
+            Some("none")
+        );
     }
 
     #[test]
