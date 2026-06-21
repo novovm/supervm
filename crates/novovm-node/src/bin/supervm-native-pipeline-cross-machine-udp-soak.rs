@@ -2215,6 +2215,157 @@ mod novorudp_tests {
         );
     }
 
+    fn test_diagnostics_config(report_path: PathBuf) -> ReceiverDiagnosticsConfigV1 {
+        ReceiverDiagnosticsConfigV1 {
+            enabled: true,
+            sample_interval_ms: 5_000,
+            stall_windows: 2,
+            memory_sample_enabled: true,
+            max_working_set_bytes: 0,
+            min_canonical_delta: 0,
+            max_elapsed_ms: 0,
+            primary_send_duration_ms: 60_000,
+            repair_drain_timeout_ms: 60_000,
+            final_ack_timeout_ms: 10_000,
+            absolute_max_ms: 180_000,
+            report_path,
+        }
+    }
+
+    fn write_test_diagnostics_report(
+        stale_live_sample: Value,
+        final_closed_sample: Value,
+    ) -> Value {
+        let path =
+            std::env::temp_dir().join(format!("novovm-mini-final-diagnostics-{}.json", now_ms()));
+        let config = test_diagnostics_config(path.clone());
+        let state = ReceiverDiagnosticsStateV1 {
+            samples: vec![stale_live_sample, final_closed_sample],
+            last_canonical: 480,
+            stall_windows: 0,
+            fail_reason: None,
+            samples_dropped: 0,
+            first_working_set_bytes: Some(1),
+            last_working_set_bytes: Some(1),
+        };
+        write_diagnostics_report(&config, &state, true, 42, 480).unwrap();
+        let report = serde_json::from_slice::<Value>(&fs::read(path.as_path()).unwrap()).unwrap();
+        let _ = fs::remove_file(path);
+        report
+    }
+
+    fn stale_tail_live_sample_for_test() -> Value {
+        serde_json::json!({
+            "elapsed_ms": 99_000,
+            "process_working_set_bytes": 1,
+            "process_private_bytes": 1,
+            "mini_completed_tx_count": 440,
+            "mini_tail_missing_count": 40,
+            "aoem_owned_regression_signable": true,
+            "accepted": false,
+            "fail_reason": "mini_tail_repair_missing_not_closed",
+            "aoem_owned_signoff_blocker_reasons": ["mini_tail_repair_missing_not_closed"]
+        })
+    }
+
+    fn final_closed_sample_for_test() -> Value {
+        serde_json::json!({
+            "elapsed_ms": 103_000,
+            "final_closed_child_sample": true,
+            "final_closed_child_sample_available": true,
+            "receiver_exit_phase": "completed",
+            "mini_completed_tx_count": 480,
+            "mini_tail_missing_count": 0,
+            "aoem_owned_regression_signable": true,
+            "accepted": true,
+            "aoem_owned_signoff_blocker_reasons": []
+        })
+    }
+
+    #[test]
+    fn mini_final_closed_sample_overrides_stale_live_sample() {
+        let report = write_test_diagnostics_report(
+            stale_tail_live_sample_for_test(),
+            final_closed_sample_for_test(),
+        );
+
+        assert_eq!(report["accepted"].as_bool(), Some(true));
+        assert!(report["fail_reason"].is_null());
+        assert_eq!(
+            report["diagnostics_final_sample_mini_completed_tx_count"].as_u64(),
+            Some(480)
+        );
+        assert_eq!(
+            report["diagnostics_final_sample_mini_tail_missing_count"].as_u64(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn mini_final_pass_does_not_leak_stale_tail_fail_reason() {
+        let report = write_test_diagnostics_report(
+            stale_tail_live_sample_for_test(),
+            final_closed_sample_for_test(),
+        );
+
+        assert_eq!(
+            report["stale_live_sample_fail_reason_ignored"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            report["stale_live_sample_fail_reason"].as_str(),
+            Some("mini_tail_repair_missing_not_closed")
+        );
+        assert!(report["fail_reason"].is_null());
+    }
+
+    #[test]
+    fn diagnostics_marks_last_live_child_sample_stale_after_completed() {
+        let report = write_test_diagnostics_report(
+            stale_tail_live_sample_for_test(),
+            final_closed_sample_for_test(),
+        );
+
+        assert_eq!(report["last_live_child_sample_stale"].as_bool(), Some(true));
+        assert_eq!(
+            report["final_closed_child_sample_available"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn diagnostics_signoff_sample_source_is_final_closed_when_available() {
+        let report = write_test_diagnostics_report(
+            stale_tail_live_sample_for_test(),
+            final_closed_sample_for_test(),
+        );
+
+        assert_eq!(
+            report["diagnostics_signoff_sample_source"].as_str(),
+            Some("final_closed_child_sample")
+        );
+        assert_eq!(
+            report["diagnostics_signoff_sample"]["mini_completed_tx_count"].as_u64(),
+            Some(480)
+        );
+    }
+
+    #[test]
+    fn aoem_owned_signable_not_overwritten_by_stale_live_sample() {
+        let mut stale = stale_tail_live_sample_for_test();
+        stale["aoem_owned_regression_signable"] = serde_json::json!(false);
+        let report = write_test_diagnostics_report(stale, final_closed_sample_for_test());
+
+        assert_eq!(
+            report["diagnostics_final_sample_aoem_owned_regression_signable"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            report["diagnostics_signoff_sample"]["aoem_owned_regression_signable"].as_bool(),
+            Some(true)
+        );
+    }
+
     #[test]
     fn mini_receiver_does_not_accept_legacy_close_without_aoem_owned_single_path() {
         with_env_var(
@@ -4902,6 +5053,11 @@ fn run_receiver_node(
             summary["final_ack_repeat_count"] = serde_json::json!(final_ack_repeat_count);
             summary["final_ack_sent_count"] = serde_json::json!(final_ack_sent_count);
             summary["final_ack_last_epoch"] = serde_json::json!(final_ack_last_epoch);
+            sample["final_closed_child_sample"] = serde_json::json!(true);
+            sample["final_closed_child_sample_available"] = serde_json::json!(true);
+            sample["diagnostics_signoff_sample_source"] =
+                serde_json::json!("final_closed_child_sample");
+            sample["receiver_exit_phase"] = serde_json::json!("completed");
             annotate_receiver_ingress_drain_delta_v1(&mut sample, state.samples.last());
             state.samples.push(sample);
             write_diagnostics_report(&diagnostics, &state, true, child_pid, expected_tx_count)?;
@@ -5152,6 +5308,37 @@ fn run_receiver_node(
                     summary["final_ack_repeat_count"] = serde_json::json!(final_ack_repeat_count);
                     summary["final_ack_sent_count"] = serde_json::json!(final_ack_sent_count);
                     summary["final_ack_last_epoch"] = serde_json::json!(final_ack_last_epoch);
+                    let final_ledger_stats = semantic_ledger_stats(ledger_path.as_path());
+                    let final_rocksdb_probe =
+                        live_receiver_child_rocksdb_memory_probe_v1(store_path);
+                    let final_memory_sample = if diagnostics.memory_sample_enabled {
+                        process_memory_sample(child_pid)
+                    } else {
+                        serde_json::json!({})
+                    };
+                    let mut final_sample = diagnostics_summary_sample(
+                        started_at,
+                        &summary,
+                        final_ledger_stats,
+                        final_rocksdb_probe,
+                        final_memory_sample,
+                        state.last_canonical,
+                    );
+                    final_sample["pipeline_progress_report_path"] =
+                        serde_json::json!(progress_path.display().to_string());
+                    final_sample["receiver_exit_phase"] = serde_json::json!("completed");
+                    final_sample["repair_convergence_completed"] = serde_json::json!(true);
+                    final_sample["receiver_drain_completed"] = serde_json::json!(true);
+                    final_sample["final_ack_received"] = serde_json::json!(true);
+                    final_sample["final_closed_child_sample"] = serde_json::json!(true);
+                    final_sample["final_closed_child_sample_available"] = serde_json::json!(true);
+                    final_sample["diagnostics_signoff_sample_source"] =
+                        serde_json::json!("final_closed_child_sample");
+                    annotate_receiver_ingress_drain_delta_v1(
+                        &mut final_sample,
+                        state.samples.last(),
+                    );
+                    state.samples.push(final_sample);
                     let _ = child.kill();
                     let output = child
                         .wait_with_output()
@@ -6780,6 +6967,15 @@ fn last_live_child_sample(samples: &[Value]) -> Option<&Value> {
         .find(|sample| is_live_child_memory_sample(sample))
 }
 
+fn final_closed_child_sample(samples: &[Value]) -> Option<&Value> {
+    samples.iter().rev().find(|sample| {
+        sample
+            .get("final_closed_child_sample")
+            .and_then(Value::as_bool)
+            == Some(true)
+    })
+}
+
 fn first_live_child_sample(samples: &[Value]) -> Option<&Value> {
     samples
         .iter()
@@ -8025,6 +8221,24 @@ fn write_diagnostics_report(
     let last_sample_any = state.samples.last();
     let first_live_sample = first_live_child_sample(state.samples.as_slice());
     let last_live_sample = last_live_child_sample(state.samples.as_slice());
+    let final_closed_sample = final_closed_child_sample(state.samples.as_slice());
+    let signoff_sample = final_closed_sample.or(last_sample_any);
+    let diagnostics_signoff_sample_source = if final_closed_sample.is_some() {
+        "final_closed_child_sample"
+    } else if last_sample_any.is_some() {
+        "last_sample_any"
+    } else {
+        "none"
+    };
+    let last_live_child_sample_stale = final_closed_sample.is_some()
+        && last_live_sample
+            .map(|sample| {
+                sample
+                    .get("final_closed_child_sample")
+                    .and_then(Value::as_bool)
+                    != Some(true)
+            })
+            .unwrap_or(false);
     let peak_live_sample = peak_live_child_sample(state.samples.as_slice());
     let memory_summary_sample = peak_live_sample.or(last_live_sample);
     let post_exit_samples = post_exit_sample_count(state.samples.as_slice());
@@ -8043,16 +8257,35 @@ fn write_diagnostics_report(
     } else {
         "none"
     };
-    let latest_fail_reason = last_sample_any
+    let signoff_fail_reason = signoff_sample
         .and_then(|sample| sample.get("fail_reason"))
         .and_then(Value::as_str)
         .filter(|reason| !reason.trim().is_empty())
         .map(ToOwned::to_owned)
-        .or(state.fail_reason.clone());
-    let latest_blockers = last_sample_any
+        .or_else(|| {
+            if final_closed_sample.is_some() {
+                None
+            } else {
+                state.fail_reason.clone()
+            }
+        });
+    let stale_live_fail_reason = if last_live_child_sample_stale {
+        last_live_sample
+            .and_then(|sample| sample.get("fail_reason"))
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.trim().is_empty())
+            .map(ToOwned::to_owned)
+    } else {
+        None
+    };
+    let stale_live_sample_fail_reason_ignored = final_closed_sample.is_some()
+        && signoff_fail_reason.is_none()
+        && stale_live_fail_reason.is_some();
+    let latest_blockers = signoff_sample
         .map(|sample| sample_string_vec(sample, "aoem_owned_signoff_blocker_reasons"))
         .unwrap_or_default();
-    let effective_accepted = accepted && latest_fail_reason.is_none() && latest_blockers.is_empty();
+    let effective_accepted =
+        accepted && signoff_fail_reason.is_none() && latest_blockers.is_empty();
     let report = serde_json::json!({
         "schema": "novovm-native-pipeline-cross-machine-sustained-diagnostics/v1",
         "accepted": effective_accepted,
@@ -8068,9 +8301,26 @@ fn write_diagnostics_report(
         "repair_drain_timeout_ms": config.repair_drain_timeout_ms,
         "final_ack_timeout_ms": config.final_ack_timeout_ms,
         "absolute_max_ms": config.absolute_max_ms,
-        "fail_reason": latest_fail_reason,
+        "fail_reason": signoff_fail_reason,
         "accepted_input_before_signoff_blocker_check": accepted,
         "aoem_owned_signoff_blocker_reasons": latest_blockers,
+        "final_closed_child_sample_available": final_closed_sample.is_some(),
+        "final_closed_child_sample": final_closed_sample.cloned(),
+        "last_live_child_sample_stale": last_live_child_sample_stale,
+        "diagnostics_signoff_sample_source": diagnostics_signoff_sample_source,
+        "diagnostics_signoff_sample": signoff_sample.cloned(),
+        "diagnostics_final_sample_mini_completed_tx_count": final_closed_sample
+            .map(|sample| sample_u64(sample, "mini_completed_tx_count")),
+        "diagnostics_final_sample_mini_tail_missing_count": final_closed_sample
+            .map(|sample| sample_u64(sample, "mini_tail_missing_count")),
+        "diagnostics_final_sample_aoem_owned_regression_signable": final_closed_sample
+            .and_then(|sample| sample.get("aoem_owned_regression_signable"))
+            .and_then(Value::as_bool),
+        "diagnostics_final_sample_fail_reason": final_closed_sample
+            .and_then(|sample| sample.get("fail_reason"))
+            .and_then(Value::as_str),
+        "stale_live_sample_fail_reason_ignored": stale_live_sample_fail_reason_ignored,
+        "stale_live_sample_fail_reason": stale_live_fail_reason,
         "diagnostics_samples_retained": state.samples.len(),
         "diagnostics_samples_dropped": state.samples_dropped,
         "sample_count": state.samples.len(),
