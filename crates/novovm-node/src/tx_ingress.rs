@@ -99,6 +99,8 @@ pub const NOV_NATIVE_AOEM_CONCURRENT_EXECUTION_ENABLED_ENV: &str =
     "NOVOVM_NATIVE_AOEM_CONCURRENT_EXECUTION_ENABLED";
 pub const NOV_NATIVE_AOEM_BATCH_MAX_SIZE_ENV: &str = "NOVOVM_NATIVE_AOEM_BATCH_MAX_SIZE";
 pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV: &str = "NOVOVM_AOEM_NATIVE_TX_BATCH_SHADOW";
+pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV: &str =
+    "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE";
 pub const NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV: &str =
     "NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY";
 pub const NOV_NATIVE_CLEARING_ENABLED_ENV: &str = "NOVOVM_NATIVE_CLEARING_ENABLED";
@@ -1230,6 +1232,13 @@ fn native_aoem_concurrent_execution_enabled_v1() -> bool {
 
 fn native_aoem_native_tx_batch_shadow_enabled_v1() -> bool {
     bool_env_default_v1(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, false)
+}
+
+fn native_aoem_native_tx_batch_production_candidate_enabled_v1() -> bool {
+    bool_env_default_v1(
+        NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+        false,
+    )
 }
 
 fn parse_bool_token_v1(raw: &str) -> Option<bool> {
@@ -11042,6 +11051,93 @@ fn native_tx_parameter_payload_v1(
     }
 }
 
+#[derive(Debug, Clone)]
+struct AoemNativeTxBatchProductionCandidateStatusV1 {
+    result_ok: bool,
+    owner: &'static str,
+    receipt_count: usize,
+    canonical_proof_count: usize,
+    ledger_close_proof_count: usize,
+    state_delta_root_present: bool,
+    snapshot_metadata_present: bool,
+    fallback_used: bool,
+    mismatch_reasons: Vec<String>,
+}
+
+fn aoem_native_tx_batch_production_candidate_status_v1(
+    enabled: bool,
+    input_tx_count: usize,
+    result: Option<&novovm_exec::NovovmAoemNativeTxBatchResultV1>,
+    inherited_mismatch_reasons: &[String],
+) -> AoemNativeTxBatchProductionCandidateStatusV1 {
+    let receipt_count = result
+        .map(|result| result.per_tx_receipts.len())
+        .unwrap_or_default();
+    let canonical_proof_count = result
+        .map(|result| {
+            if result.canonical_inclusion_proof.is_empty() {
+                0
+            } else {
+                input_tx_count
+            }
+        })
+        .unwrap_or_default();
+    let ledger_close_proof_count = result
+        .map(|result| {
+            if result.durable_ledger_close_proof.is_empty() {
+                0
+            } else {
+                input_tx_count
+            }
+        })
+        .unwrap_or_default();
+    let state_delta_root_present = result
+        .map(|result| !result.state_delta_root.is_empty())
+        .unwrap_or(false);
+    let snapshot_metadata_present = result.is_some();
+    let mut mismatch_reasons = if enabled {
+        inherited_mismatch_reasons.to_vec()
+    } else {
+        Vec::new()
+    };
+    if enabled && result.is_none() {
+        mismatch_reasons.push("aoem_production_result_missing".to_string());
+    }
+    if enabled && receipt_count != input_tx_count {
+        mismatch_reasons.push("production_receipt_count_mismatch".to_string());
+    }
+    if enabled && canonical_proof_count != input_tx_count {
+        mismatch_reasons.push("production_canonical_proof_count_mismatch".to_string());
+    }
+    if enabled && ledger_close_proof_count != input_tx_count {
+        mismatch_reasons.push("production_ledger_close_proof_count_mismatch".to_string());
+    }
+    if enabled && !state_delta_root_present {
+        mismatch_reasons.push("production_state_delta_root_missing".to_string());
+    }
+    if enabled && !snapshot_metadata_present {
+        mismatch_reasons.push("production_snapshot_metadata_missing".to_string());
+    }
+    let result_ok = enabled && mismatch_reasons.is_empty();
+    AoemNativeTxBatchProductionCandidateStatusV1 {
+        result_ok,
+        owner: if result_ok {
+            "aoem_runtime_owned_state_persistence"
+        } else if enabled {
+            "legacy_host_transitional_fallback"
+        } else {
+            "legacy_host_transitional"
+        },
+        receipt_count,
+        canonical_proof_count,
+        ledger_close_proof_count,
+        state_delta_root_present,
+        snapshot_metadata_present,
+        fallback_used: enabled && !result_ok,
+        mismatch_reasons,
+    }
+}
+
 pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
@@ -11123,8 +11219,11 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         execute_native_raw_tx_batch_chunks_via_aoem_semantic_ingress_v1(raw_payloads.as_slice())?;
     let now_ms = now_unix_millis_v1();
     let shadow_enabled = native_aoem_native_tx_batch_shadow_enabled_v1();
+    let production_candidate_enabled =
+        native_aoem_native_tx_batch_production_candidate_enabled_v1();
+    let native_tx_batch_build_required = shadow_enabled || production_candidate_enabled;
     let mut shadow_mismatch_reasons = Vec::<String>::new();
-    let shadow_batch = if shadow_enabled {
+    let shadow_batch = if native_tx_batch_build_required {
         let mut items = Vec::with_capacity(prepared.len());
         for (idx, item) in prepared.iter().enumerate() {
             let parameter_payload = native_tx_parameter_payload_v1(
@@ -11177,7 +11276,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             shadow_mismatch_reasons.push("mixed_chain_id_in_batch".to_string());
         }
         Some(novovm_exec::build_native_tx_batch_v1(
-            format!("novovm-tx-ingress-shadow-{now_ms}"),
+            format!("novovm-tx-ingress-aoem-owned-{now_ms}"),
             chain_id,
             None,
             items,
@@ -11226,6 +11325,12 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             shadow_mismatch_reasons.push("shadow_ledger_close_proof_missing".to_string());
         }
     }
+    let production_candidate_status = aoem_native_tx_batch_production_candidate_status_v1(
+        production_candidate_enabled,
+        raw_payloads.len(),
+        shadow_result.as_ref(),
+        shadow_mismatch_reasons.as_slice(),
+    );
     let aoem_chunk_size = native_aoem_batch_max_size_v1();
     let store_path_override = resolve_native_execution_store_path_from_params_v1(params);
     let effective_native_store_path = store_path_override
@@ -11288,7 +11393,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             "native_receipt": execution_receipt,
         }));
     }
-    let shadow_compare_enabled = shadow_enabled;
+    let shadow_compare_enabled = shadow_enabled || production_candidate_enabled;
     let shadow_compare_input_tx_count = raw_payloads.len();
     let shadow_compare_legacy_receipt_count = results
         .iter()
@@ -11566,6 +11671,50 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         serde_json::json!(false),
     );
     out.insert(
+        "aoem_native_tx_batch_production_candidate_enabled".to_string(),
+        serde_json::json!(production_candidate_enabled),
+    );
+    out.insert(
+        "aoem_native_tx_batch_production_candidate_result_ok".to_string(),
+        serde_json::json!(production_candidate_status.result_ok),
+    );
+    out.insert(
+        "aoem_native_tx_batch_production_owner".to_string(),
+        serde_json::json!(production_candidate_status.owner),
+    );
+    out.insert(
+        "aoem_native_tx_batch_production_receipt_count".to_string(),
+        serde_json::json!(production_candidate_status.receipt_count),
+    );
+    out.insert(
+        "aoem_native_tx_batch_production_canonical_proof_count".to_string(),
+        serde_json::json!(production_candidate_status.canonical_proof_count),
+    );
+    out.insert(
+        "aoem_native_tx_batch_production_ledger_close_proof_count".to_string(),
+        serde_json::json!(production_candidate_status.ledger_close_proof_count),
+    );
+    out.insert(
+        "aoem_native_tx_batch_production_state_delta_root_present".to_string(),
+        serde_json::json!(production_candidate_status.state_delta_root_present),
+    );
+    out.insert(
+        "aoem_native_tx_batch_production_snapshot_metadata_present".to_string(),
+        serde_json::json!(production_candidate_status.snapshot_metadata_present),
+    );
+    out.insert(
+        "aoem_native_tx_batch_production_fallback_used".to_string(),
+        serde_json::json!(production_candidate_status.fallback_used),
+    );
+    out.insert(
+        "aoem_native_tx_batch_production_mismatch_reasons".to_string(),
+        serde_json::json!(production_candidate_status.mismatch_reasons.clone()),
+    );
+    out.insert(
+        "aoem_native_tx_batch_production_double_write_legacy_canonical".to_string(),
+        serde_json::json!(false),
+    );
+    out.insert(
         "aoem_shadow_compare_enabled".to_string(),
         serde_json::json!(shadow_compare_enabled),
     );
@@ -11627,7 +11776,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     );
     out.insert(
         "tx_ingress_production_target".to_string(),
-        serde_json::json!("legacy_host_transitional"),
+        serde_json::json!(production_candidate_status.owner),
     );
     out.insert(
         "deterministic_commit".to_string(),
@@ -13914,6 +14063,71 @@ mod tests {
         ])
     }
 
+    fn run_test_native_tx_batch_production_candidate_with_raws_v1(
+        raw_txs: Vec<String>,
+    ) -> serde_json::Value {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_env_override_v1(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, "0", || {
+                    with_env_override_v1(
+                        NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+                        "1",
+                        || {
+                            with_test_native_execution_store_path_v1(|path| {
+                                run_nov_send_raw_transaction_batch_from_params_v1(
+                                    &serde_json::json!({
+                                        "raw_txs": raw_txs,
+                                        "native_execution_store_path": path,
+                                    }),
+                                )
+                                .expect("production candidate batch should keep legacy fallback")
+                            })
+                        },
+                    )
+                })
+            },
+        )
+    }
+
+    fn run_test_native_tx_batch_production_candidate_v1() -> serde_json::Value {
+        run_test_native_tx_batch_production_candidate_with_raws_v1(vec![
+            build_test_native_execute_raw_hex_v1(1, "acct-prod-1", 25),
+            build_test_native_execute_raw_hex_v1(2, "acct-prod-2", 35),
+        ])
+    }
+
+    fn test_aoem_candidate_result_v1(
+        receipt_count: usize,
+    ) -> novovm_exec::NovovmAoemNativeTxBatchResultV1 {
+        let receipts = (0..receipt_count)
+            .map(|idx| novovm_exec::NovovmAoemNativeTxReceiptV1 {
+                sequence: idx as u64,
+                tx_hash: format!("0x{:064x}", idx + 1),
+                status_ok: true,
+                receipt_commitment: format!("{:064x}", idx + 100),
+                error_class: None,
+            })
+            .collect::<Vec<_>>();
+        novovm_exec::NovovmAoemNativeTxBatchResultV1 {
+            schema: novovm_exec::NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA.to_string(),
+            batch_result_id: "result:test".to_string(),
+            batch_id: "batch:test".to_string(),
+            per_tx_receipts: receipts,
+            state_delta_root: "a".repeat(64),
+            canonical_inclusion_proof: "b".repeat(64),
+            receipt_root: "c".repeat(64),
+            durable_ledger_close_proof: "d".repeat(64),
+            snapshot_metadata: novovm_exec::NovovmAoemSnapshotMetadataV1 {
+                snapshot_version: 1,
+                state_version: 1,
+                backend: "aoem-shadow".to_string(),
+                persistence_owner: "aoem_runtime".to_string(),
+            },
+        }
+    }
+
     #[test]
     fn tx_ingress_builds_native_tx_batch_v1_shadow_smoke() {
         let out = run_test_native_tx_batch_shadow_v1();
@@ -14145,6 +14359,153 @@ mod tests {
                 "comparison report field must be present: {field}"
             );
         }
+    }
+
+    #[test]
+    fn tx_ingress_aoem_production_candidate_gate_off_keeps_legacy_path() {
+        let out = run_test_native_tx_batch_shadow_v1();
+        assert_eq!(
+            out["aoem_native_tx_batch_production_candidate_enabled"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_owner"].as_str(),
+            Some("legacy_host_transitional")
+        );
+        assert_eq!(
+            out["tx_ingress_production_target"].as_str(),
+            Some("legacy_host_transitional")
+        );
+    }
+
+    #[test]
+    fn tx_ingress_aoem_production_candidate_gate_on_uses_aoem_owner() {
+        let out = run_test_native_tx_batch_production_candidate_v1();
+        assert_eq!(
+            out["aoem_native_tx_batch_production_candidate_enabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_candidate_result_ok"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_owner"].as_str(),
+            Some("aoem_runtime_owned_state_persistence")
+        );
+        assert_eq!(
+            out["tx_ingress_production_target"].as_str(),
+            Some("aoem_runtime_owned_state_persistence")
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_shadow_enabled"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(out["aoem_native_tx_batch_v1_built"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn tx_ingress_aoem_production_candidate_receipt_count_required() {
+        let result = test_aoem_candidate_result_v1(1);
+        let status =
+            aoem_native_tx_batch_production_candidate_status_v1(true, 2, Some(&result), &[]);
+        assert!(!status.result_ok);
+        assert!(status.fallback_used);
+        assert!(status
+            .mismatch_reasons
+            .contains(&"production_receipt_count_mismatch".to_string()));
+    }
+
+    #[test]
+    fn tx_ingress_aoem_production_candidate_canonical_proof_required() {
+        let mut result = test_aoem_candidate_result_v1(2);
+        result.canonical_inclusion_proof.clear();
+        let status =
+            aoem_native_tx_batch_production_candidate_status_v1(true, 2, Some(&result), &[]);
+        assert!(!status.result_ok);
+        assert!(status
+            .mismatch_reasons
+            .contains(&"production_canonical_proof_count_mismatch".to_string()));
+    }
+
+    #[test]
+    fn tx_ingress_aoem_production_candidate_ledger_close_proof_required() {
+        let mut result = test_aoem_candidate_result_v1(2);
+        result.durable_ledger_close_proof.clear();
+        let status =
+            aoem_native_tx_batch_production_candidate_status_v1(true, 2, Some(&result), &[]);
+        assert!(!status.result_ok);
+        assert!(status
+            .mismatch_reasons
+            .contains(&"production_ledger_close_proof_count_mismatch".to_string()));
+    }
+
+    #[test]
+    fn tx_ingress_aoem_production_candidate_state_delta_root_required() {
+        let mut result = test_aoem_candidate_result_v1(2);
+        result.state_delta_root.clear();
+        let status =
+            aoem_native_tx_batch_production_candidate_status_v1(true, 2, Some(&result), &[]);
+        assert!(!status.result_ok);
+        assert!(status
+            .mismatch_reasons
+            .contains(&"production_state_delta_root_missing".to_string()));
+    }
+
+    #[test]
+    fn tx_ingress_aoem_production_candidate_does_not_double_write_legacy_canonical() {
+        let out = run_test_native_tx_batch_production_candidate_v1();
+        assert_eq!(
+            out["aoem_native_tx_batch_production_double_write_legacy_canonical"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["native_store_commit"]["production_target"].as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn tx_ingress_aoem_production_candidate_fallback_reports_reason() {
+        let out = run_test_native_tx_batch_production_candidate_with_raws_v1(vec![
+            build_test_native_execute_raw_hex_with_chain_v1(77, 1, "acct-prod-mixed-1", 25),
+            build_test_native_execute_raw_hex_with_chain_v1(78, 2, "acct-prod-mixed-2", 35),
+        ]);
+        assert_eq!(
+            out["aoem_native_tx_batch_production_candidate_enabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_candidate_result_ok"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_fallback_used"].as_bool(),
+            Some(true)
+        );
+        let reasons = out["aoem_native_tx_batch_production_mismatch_reasons"]
+            .as_array()
+            .expect("production mismatch reasons");
+        assert!(reasons
+            .iter()
+            .any(|reason| reason.as_str() == Some("mixed_chain_id_in_batch")));
+    }
+
+    #[test]
+    fn tx_ingress_legacy_host_remains_fallback_not_production_target() {
+        let out = run_test_native_tx_batch_production_candidate_v1();
+        assert_eq!(
+            out["tx_ingress_legacy_host_transitional_used"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["native_store_commit"]["runtime_ownership"].as_str(),
+            Some("legacy_host_transitional")
+        );
+        assert_eq!(
+            out["native_store_commit"]["production_target"].as_bool(),
+            Some(false)
+        );
     }
 
     fn ingest_test_native_repair_payload_v1(
