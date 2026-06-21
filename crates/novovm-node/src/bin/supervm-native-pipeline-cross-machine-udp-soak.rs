@@ -266,6 +266,20 @@ struct UdpAckStateV1 {
     receiver_done: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+struct ReceiverAckSendStatusV1 {
+    enabled: bool,
+    attempted_count: u64,
+    send_ok_count: u64,
+    send_error_count: u64,
+    missing_target_count: u64,
+    bind_error_count: u64,
+    target_addr: Option<String>,
+    bind_addr: Option<String>,
+    local_addr: Option<String>,
+    last_error: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct UdpSendRetryConfigV1 {
     max_retries: u64,
@@ -1386,6 +1400,98 @@ mod novorudp_tests {
             None => std::env::remove_var(key),
         }
         result
+    }
+
+    #[test]
+    fn receiver_ack_backchannel_reports_missing_target_without_silent_success() {
+        let path = std::env::temp_dir().join(format!(
+            "novovm-receiver-ack-missing-target-{}.json",
+            now_ms()
+        ));
+        with_env_var(
+            "NOVOVM_NATIVE_PIPELINE_ACK_REPORT_PATH",
+            path.to_str(),
+            || {
+                with_env_var("NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR", None, || {
+                    with_env_var("NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR", None, || {
+                        let status = send_receiver_udp_ack_with_summary(8, 4, 8, 9, None);
+                        assert_eq!(status.send_ok_count, 0);
+                        assert_eq!(status.missing_target_count, 1);
+                        assert_eq!(status.last_error.as_deref(), Some("ack_target_missing"));
+
+                        let report =
+                            serde_json::from_slice::<Value>(&fs::read(path.as_path()).unwrap())
+                                .unwrap();
+                        assert_eq!(report["receiver_ack_send_ok_count"].as_u64(), Some(0));
+                        assert_eq!(
+                            report["receiver_ack_missing_target_count"].as_u64(),
+                            Some(1)
+                        );
+                        assert_eq!(
+                            report["receiver_ack_last_send_error"].as_str(),
+                            Some("ack_target_missing")
+                        );
+                    })
+                })
+            },
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn receiver_ack_backchannel_send_ok_reaches_sender_socket() {
+        let listener = UdpSocket::bind("127.0.0.1:0").expect("ack listener");
+        listener
+            .set_read_timeout(Some(Duration::from_millis(1_000)))
+            .expect("ack read timeout");
+        let target = listener.local_addr().expect("listener addr").to_string();
+        let path = std::env::temp_dir().join(format!("novovm-receiver-ack-ok-{}.json", now_ms()));
+        with_env_var(
+            "NOVOVM_NATIVE_PIPELINE_ACK_REPORT_PATH",
+            path.to_str(),
+            || {
+                with_env_var(
+                    "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
+                    Some(target.as_str()),
+                    || {
+                        with_env_var("NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR", None, || {
+                            with_env_var(
+                                "NOVOVM_NATIVE_PIPELINE_ACK_BIND_ADDR",
+                                Some("127.0.0.1:0"),
+                                || {
+                                    let status =
+                                        send_receiver_udp_ack_with_summary(8, 4, 8, 10, None);
+                                    assert_eq!(status.attempted_count, 1);
+                                    assert_eq!(status.send_ok_count, 1);
+                                    assert_eq!(status.send_error_count, 0);
+
+                                    let mut buf = [0u8; 4096];
+                                    let (len, _src) =
+                                        listener.recv_from(&mut buf).expect("ack packet");
+                                    let packet =
+                                        serde_json::from_slice::<Value>(&buf[..len]).unwrap();
+                                    assert_eq!(packet["ack_epoch"].as_u64(), Some(10));
+
+                                    let report = serde_json::from_slice::<Value>(
+                                        &fs::read(path.as_path()).unwrap(),
+                                    )
+                                    .unwrap();
+                                    assert_eq!(
+                                        report["receiver_ack_send_ok_count"].as_u64(),
+                                        Some(1)
+                                    );
+                                    assert_eq!(
+                                        report["receiver_ack_target_addr"].as_str(),
+                                        Some(target.as_str())
+                                    );
+                                },
+                            )
+                        })
+                    },
+                )
+            },
+        );
+        let _ = fs::remove_file(path);
     }
 
     fn with_clean_repair_budget_env<T>(run: impl FnOnce() -> T) -> T {
@@ -5528,13 +5634,15 @@ fn run_receiver_node(
                 );
             let sample_limit = ack_sample_limit;
             let final_ack_start_epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
-            emit_receiver_progress_ack_with_summary(
+            let final_ack_status = emit_receiver_progress_ack_with_summary(
                 expected_tx_count,
                 final_progress,
                 sample_limit,
                 final_ack_start_epoch,
                 Some(&summary),
             );
+            annotate_receiver_ack_send_status_v1(&mut summary, &final_ack_status);
+            annotate_receiver_ack_send_status_v1(&mut sample, &final_ack_status);
             let final_ack_repeat_count =
                 u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_COUNT", 10).unwrap_or(10);
             let (final_ack_sent_count, final_ack_last_epoch) =
@@ -5585,7 +5693,7 @@ fn run_receiver_node(
                 state.last_canonical,
             );
             let epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
-            emit_receiver_progress_ack_with_summary(
+            let _ack_status = emit_receiver_progress_ack_with_summary(
                 expected_tx_count,
                 stable_progress,
                 ack_sample_limit,
@@ -5762,7 +5870,7 @@ fn run_receiver_node(
             }
             state.last_canonical = stable_progress;
             let epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
-            emit_receiver_progress_ack_with_summary(
+            let ack_status = emit_receiver_progress_ack_with_summary(
                 expected_tx_count,
                 stable_progress,
                 ack_sample_limit,
@@ -5773,8 +5881,19 @@ fn run_receiver_node(
                 serde_json::json!(receiver_ack_progress_interval_ms);
             sample["novorudp_ack_epoch_after_sample"] = serde_json::json!(epoch);
             sample["receiver_ack_epoch"] = serde_json::json!(epoch);
-            sample["receiver_ack_sent_count"] =
-                serde_json::json!(sample_u64(&sample, "receiver_ack_sent_count").saturating_add(1));
+            annotate_receiver_ack_send_status_v1(&mut sample, &ack_status);
+            sample["receiver_ack_sent_count"] = serde_json::json!(ack_status.send_ok_count);
+            if novorudp.enabled
+                && stable_progress < expected_tx_count
+                && ack_status.send_ok_count == 0
+            {
+                let reason = ack_status
+                    .last_error
+                    .clone()
+                    .unwrap_or_else(|| "ack_send_ok_zero".to_string());
+                sample["receiver_ack_backchannel_fail_reason"] = serde_json::json!(reason.clone());
+                fail_reason = Some(format!("receiver_ack_backchannel_send_failed: {reason}"));
+            }
             annotate_receiver_ingress_drain_delta_v1(&mut sample, state.samples.last());
             state.samples.push(sample);
             if state.samples.len() > 256 {
@@ -5787,13 +5906,14 @@ fn run_receiver_node(
             if receiver_phase == "completed" {
                 if let Some(mut summary) = progress_summary {
                     let final_ack_start_epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
-                    emit_receiver_progress_ack_with_summary(
+                    let final_ack_status = emit_receiver_progress_ack_with_summary(
                         expected_tx_count,
                         stable_progress,
                         ack_sample_limit,
                         final_ack_start_epoch,
                         Some(&summary),
                     );
+                    annotate_receiver_ack_send_status_v1(&mut summary, &final_ack_status);
                     let final_ack_repeat_count =
                         u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_COUNT", 10).unwrap_or(10);
                     let (final_ack_sent_count, final_ack_last_epoch) =
@@ -6239,7 +6359,7 @@ fn send_receiver_udp_ack(
     stable_progress: u64,
     sample_limit: u64,
     ack_epoch: u64,
-) {
+) -> ReceiverAckSendStatusV1 {
     send_receiver_udp_ack_with_summary(
         expected_tx_count,
         stable_progress,
@@ -6255,19 +6375,49 @@ fn send_receiver_udp_ack_with_summary(
     sample_limit: u64,
     ack_epoch: u64,
     progress_summary: Option<&Value>,
-) {
+) -> ReceiverAckSendStatusV1 {
     let Some(target_addr) = first_string_env_nonempty(&[
         "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
         "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR",
     ]) else {
-        return;
+        let status = ReceiverAckSendStatusV1 {
+            enabled: true,
+            missing_target_count: 1,
+            last_error: Some("ack_target_missing".to_string()),
+            ..Default::default()
+        };
+        let mut report = receiver_ack_report_value_with_summary(
+            expected_tx_count,
+            stable_progress,
+            sample_limit,
+            ack_epoch,
+            progress_summary,
+        );
+        annotate_receiver_ack_send_status_v1(&mut report, &status);
+        let _ = write_report(ack_report_path().as_path(), &report);
+        return status;
     };
     let enabled = bool_env("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED")
         || string_env_nonempty("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED").is_none();
     if !enabled {
-        return;
+        let status = ReceiverAckSendStatusV1 {
+            enabled: false,
+            target_addr: Some(target_addr),
+            last_error: Some("ack_disabled".to_string()),
+            ..Default::default()
+        };
+        let mut report = receiver_ack_report_value_with_summary(
+            expected_tx_count,
+            stable_progress,
+            sample_limit,
+            ack_epoch,
+            progress_summary,
+        );
+        annotate_receiver_ack_send_status_v1(&mut report, &status);
+        let _ = write_report(ack_report_path().as_path(), &report);
+        return status;
     }
-    let report = receiver_ack_report_value_with_summary(
+    let mut report = receiver_ack_report_value_with_summary(
         expected_tx_count,
         stable_progress,
         sample_limit,
@@ -6275,14 +6425,80 @@ fn send_receiver_udp_ack_with_summary(
         progress_summary,
     );
     let Ok(payload) = serde_json::to_vec(&report) else {
-        return;
+        let status = ReceiverAckSendStatusV1 {
+            enabled: true,
+            target_addr: Some(target_addr),
+            last_error: Some("ack_payload_encode_failed".to_string()),
+            ..Default::default()
+        };
+        annotate_receiver_ack_send_status_v1(&mut report, &status);
+        let _ = write_report(ack_report_path().as_path(), &report);
+        return status;
     };
     let bind_addr = first_string_env_nonempty(&["NOVOVM_NATIVE_PIPELINE_ACK_BIND_ADDR"])
         .unwrap_or_else(|| "0.0.0.0:0".to_string());
     let Ok(socket) = UdpSocket::bind(bind_addr.as_str()) else {
-        return;
+        let status = ReceiverAckSendStatusV1 {
+            enabled: true,
+            bind_addr: Some(bind_addr),
+            target_addr: Some(target_addr),
+            bind_error_count: 1,
+            last_error: Some("ack_bind_failed".to_string()),
+            ..Default::default()
+        };
+        annotate_receiver_ack_send_status_v1(&mut report, &status);
+        let _ = write_report(ack_report_path().as_path(), &report);
+        return status;
     };
-    let _ = socket.send_to(payload.as_slice(), target_addr.as_str());
+    let local_addr = socket.local_addr().ok().map(|addr| addr.to_string());
+    let mut status = ReceiverAckSendStatusV1 {
+        enabled: true,
+        attempted_count: 1,
+        bind_addr: Some(bind_addr),
+        target_addr: Some(target_addr.clone()),
+        local_addr,
+        ..Default::default()
+    };
+    match socket.send_to(payload.as_slice(), target_addr.as_str()) {
+        Ok(_) => status.send_ok_count = 1,
+        Err(err) => {
+            status.send_error_count = 1;
+            status.last_error = Some(err.to_string());
+        }
+    }
+    annotate_receiver_ack_send_status_v1(&mut report, &status);
+    let _ = write_report(ack_report_path().as_path(), &report);
+    status
+}
+
+fn annotate_receiver_ack_send_status_v1(value: &mut Value, status: &ReceiverAckSendStatusV1) {
+    value["receiver_ack_backchannel_enabled"] = serde_json::json!(status.enabled);
+    value["receiver_ack_target_addr"] = status
+        .target_addr
+        .as_ref()
+        .map(|addr| serde_json::json!(addr))
+        .unwrap_or(Value::Null);
+    value["receiver_ack_bind_addr"] = status
+        .bind_addr
+        .as_ref()
+        .map(|addr| serde_json::json!(addr))
+        .unwrap_or(Value::Null);
+    value["receiver_ack_local_addr"] = status
+        .local_addr
+        .as_ref()
+        .map(|addr| serde_json::json!(addr))
+        .unwrap_or(Value::Null);
+    value["receiver_ack_packet_attempted_count"] = serde_json::json!(status.attempted_count);
+    value["receiver_ack_packet_sent_count"] = serde_json::json!(status.send_ok_count);
+    value["receiver_ack_send_ok_count"] = serde_json::json!(status.send_ok_count);
+    value["receiver_ack_send_error_count"] = serde_json::json!(status.send_error_count);
+    value["receiver_ack_missing_target_count"] = serde_json::json!(status.missing_target_count);
+    value["receiver_ack_bind_error_count"] = serde_json::json!(status.bind_error_count);
+    value["receiver_ack_last_send_error"] = status
+        .last_error
+        .as_ref()
+        .map(|err| serde_json::json!(err))
+        .unwrap_or(Value::Null);
 }
 
 fn next_receiver_ack_epoch(epoch: &mut u64) -> u64 {
@@ -6317,7 +6533,7 @@ fn emit_receiver_progress_ack_with_summary(
     sample_limit: u64,
     ack_epoch: u64,
     progress_summary: Option<&Value>,
-) {
+) -> ReceiverAckSendStatusV1 {
     let _ = write_receiver_ack_report_with_summary(
         expected_tx_count,
         stable_progress,
@@ -6331,7 +6547,7 @@ fn emit_receiver_progress_ack_with_summary(
         sample_limit,
         ack_epoch,
         progress_summary,
-    );
+    )
 }
 
 fn repeat_final_receiver_udp_ack(
@@ -6348,8 +6564,9 @@ fn repeat_final_receiver_udp_ack(
         let epoch = start_epoch.saturating_add(offset).saturating_add(1);
         let _ =
             write_receiver_ack_report(expected_tx_count, expected_tx_count, sample_limit, epoch);
-        send_receiver_udp_ack(expected_tx_count, expected_tx_count, sample_limit, epoch);
-        sent = sent.saturating_add(1);
+        let status =
+            send_receiver_udp_ack(expected_tx_count, expected_tx_count, sample_limit, epoch);
+        sent = sent.saturating_add(status.send_ok_count);
         last_epoch = epoch;
         if repeat_interval_ms > 0 && offset + 1 < repeat_count {
             std::thread::sleep(Duration::from_millis(repeat_interval_ms));
@@ -7455,7 +7672,22 @@ fn mini_tps_below_threshold_v1(actual_x1000: u64, expected_x1000: u64) -> bool {
 }
 
 fn annotate_mini_tps_sync_gate_v1(sample: &mut Value) {
-    let expected = sample_u64(sample, "mini_expected_tx_count");
+    let expected = sample_u64(sample, "mini_expected_tx_count")
+        .max(sample_u64(sample, "mini_completed_tx_count"))
+        .max(sample_u64(sample, "canonical_unique_included_total"))
+        .max(sample_u64(sample, "receiver_ledger_close_count"))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_receipt_count",
+        ))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_canonical_proof_count",
+        ))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_ledger_close_proof_count",
+        ));
     if expected == 0 || expected > 480 {
         sample["mini_tps_sync_gate_applicable"] = serde_json::json!(false);
         return;
@@ -7552,7 +7784,22 @@ fn annotate_mini_final_run_tps_sync_v1(sample: &mut Value, first_progress_elapse
     {
         return;
     }
-    let expected = sample_u64(sample, "mini_expected_tx_count");
+    let expected = sample_u64(sample, "mini_expected_tx_count")
+        .max(sample_u64(sample, "mini_completed_tx_count"))
+        .max(sample_u64(sample, "canonical_unique_included_total"))
+        .max(sample_u64(sample, "receiver_ledger_close_count"))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_receipt_count",
+        ))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_canonical_proof_count",
+        ))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_ledger_close_proof_count",
+        ));
     if expected == 0 || expected > 480 {
         return;
     }
