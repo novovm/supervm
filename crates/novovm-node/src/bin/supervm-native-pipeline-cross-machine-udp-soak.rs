@@ -1818,6 +1818,224 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn mini_receiver_reports_single_path_fields_in_live_diagnostics() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let mut summary = receiver_validation_summary_v1(480);
+                summary["child_expected_total_from_config"] = serde_json::json!(480);
+                summary["ledger_expected_count"] = serde_json::json!(480);
+                let sample = diagnostics_summary_sample(
+                    Instant::now(),
+                    &summary,
+                    serde_json::json!({}),
+                    serde_json::json!({}),
+                    serde_json::json!({}),
+                    480,
+                );
+
+                assert_eq!(
+                    sample["aoem_owned_single_path_enforced"].as_bool(),
+                    Some(true)
+                );
+                assert_eq!(
+                    sample["tx_ingress_called_with_explicit_aoem_gate_config"].as_bool(),
+                    Some(true)
+                );
+                assert_eq!(
+                    sample["tx_ingress_aoem_gate_config_source"].as_str(),
+                    Some("receiver_child_runtime")
+                );
+                assert_eq!(
+                    sample["tx_ingress_selected_path"].as_str(),
+                    Some(AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1)
+                );
+                assert_eq!(
+                    sample["aoem_owned_regression_signable"].as_bool(),
+                    Some(true)
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn mini_receiver_fails_when_single_path_fields_missing_under_gate() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let summary = serde_json::json!({
+                    "ingress_total_last": 480,
+                    "included_canonical_total": 480,
+                    "aoem_executed_total": 480,
+                    "ledger_completed_count": 480,
+                    "ledger_expected_count": 480,
+                    "child_expected_total_from_config": 480,
+                    "queue_pending_last": 0,
+                });
+                let sample = diagnostics_summary_sample(
+                    Instant::now(),
+                    &summary,
+                    serde_json::json!({}),
+                    serde_json::json!({}),
+                    serde_json::json!({}),
+                    480,
+                );
+
+                assert_eq!(sample["accepted"].as_bool(), Some(false));
+                assert_eq!(
+                    sample["fail_reason"].as_str(),
+                    Some("aoem_owned_single_path_diagnostics_missing_under_gate")
+                );
+                assert_eq!(
+                    sample["aoem_owned_single_path_enforced"].as_bool(),
+                    Some(false)
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn mini_receiver_reports_tail_missing_ranges() {
+        let summary = serde_json::json!({
+            "ingress_total_last": 448,
+            "included_canonical_total": 448,
+            "aoem_executed_total": 448,
+            "ledger_completed_count": 448,
+            "ledger_expected_count": 480,
+            "child_expected_total_from_config": 480,
+            "ledger_durable_missing_count": 32,
+            "ledger_durable_missing_ranges_sample": [
+                {"start": 448, "end_inclusive": 479, "count": 32}
+            ],
+            "queue_pending_last": 0,
+        });
+        let sample = diagnostics_summary_sample(
+            Instant::now(),
+            &summary,
+            serde_json::json!({}),
+            serde_json::json!({}),
+            serde_json::json!({}),
+            448,
+        );
+
+        assert_eq!(sample["mini_expected_tx_count"].as_u64(), Some(480));
+        assert_eq!(sample["mini_completed_tx_count"].as_u64(), Some(448));
+        assert_eq!(sample["mini_tail_missing_count"].as_u64(), Some(32));
+        assert_eq!(
+            sample["mini_tail_missing_ranges_sample"][0]["start"].as_u64(),
+            Some(448)
+        );
+        assert_eq!(
+            sample["mini_tail_repair_stall_reason"].as_str(),
+            Some("pending_empty_waiting_for_sender_repair")
+        );
+    }
+
+    #[test]
+    fn mini_receiver_fails_when_tail_missing_not_closed() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let mut summary = receiver_validation_summary_v1(448);
+                summary["ingress_total_last"] = serde_json::json!(448);
+                summary["included_canonical_total"] = serde_json::json!(448);
+                summary["aoem_executed_total"] = serde_json::json!(448);
+                summary["ledger_completed_count"] = serde_json::json!(448);
+                summary["ledger_expected_count"] = serde_json::json!(480);
+                summary["child_expected_total_from_config"] = serde_json::json!(480);
+                summary["ledger_durable_missing_count"] = serde_json::json!(32);
+                summary["ledger_durable_missing_ranges_sample"] =
+                    serde_json::json!([{"start": 448, "end_inclusive": 479, "count": 32}]);
+                summary["queue_pending_last"] = serde_json::json!(0);
+                let sample = diagnostics_summary_sample(
+                    Instant::now() - Duration::from_secs(180),
+                    &summary,
+                    serde_json::json!({}),
+                    serde_json::json!({}),
+                    serde_json::json!({}),
+                    448,
+                );
+
+                assert_eq!(sample["accepted"].as_bool(), Some(false));
+                assert_eq!(
+                    sample["fail_reason"].as_str(),
+                    Some("mini_tail_repair_missing_not_closed")
+                );
+                assert_eq!(
+                    sample["mini_waiting_for_sender_repair"].as_bool(),
+                    Some(true)
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn mini_receiver_closes_480_without_tail32_stall() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let mut summary = receiver_validation_summary_v1(480);
+                summary["child_expected_total_from_config"] = serde_json::json!(480);
+                summary["ledger_expected_count"] = serde_json::json!(480);
+                summary["ledger_durable_missing_count"] = serde_json::json!(0);
+                let sample = diagnostics_summary_sample(
+                    Instant::now() - Duration::from_secs(180),
+                    &summary,
+                    serde_json::json!({}),
+                    serde_json::json!({}),
+                    serde_json::json!({}),
+                    480,
+                );
+
+                assert_eq!(sample["mini_tail_missing_count"].as_u64(), Some(0));
+                assert_eq!(
+                    sample["mini_tail_repair_stall_reason"].as_str(),
+                    Some("closed")
+                );
+                assert!(sample.get("fail_reason").is_none());
+            },
+        );
+    }
+
+    #[test]
+    fn mini_receiver_does_not_accept_legacy_close_without_aoem_owned_single_path() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let summary = serde_json::json!({
+                    "accepted": true,
+                    "ingress_total_last": 480,
+                    "included_canonical_total": 480,
+                    "aoem_executed_total": 480,
+                    "ledger_completed_count": 480,
+                    "ledger_expected_count": 480,
+                    "child_expected_total_from_config": 480,
+                    "queue_pending_last": 0,
+                });
+                let sample = diagnostics_summary_sample(
+                    Instant::now(),
+                    &summary,
+                    serde_json::json!({}),
+                    serde_json::json!({}),
+                    serde_json::json!({}),
+                    480,
+                );
+
+                assert_eq!(sample["accepted"].as_bool(), Some(false));
+                assert_eq!(
+                    sample["fail_reason"].as_str(),
+                    Some("aoem_owned_single_path_diagnostics_missing_under_gate")
+                );
+            },
+        );
+    }
+
+    #[test]
     fn receiver_child_initializes_ledger_expected_range() {
         let summary = serde_json::json!({
             "included_canonical_total": 0,
@@ -7371,7 +7589,193 @@ fn diagnostics_summary_sample(
     out["runtime_current_view_bytes_estimate"] =
         serde_json::json!(summary_u64(summary, "queue_tx_count_last").saturating_mul(256));
     annotate_receiver_repair_range_coverage_v1(&mut out);
+    annotate_aoem_owned_single_path_live_diagnostics_v1(&mut out, summary);
+    annotate_mini_receiver_tail_repair_diagnostics_v1(&mut out, summary);
     out
+}
+
+fn push_json_string_unique(items: &mut Vec<String>, value: &str) {
+    if !items.iter().any(|item| item == value) {
+        items.push(value.to_string());
+    }
+}
+
+fn sample_string_vec(sample: &Value, key: &str) -> Vec<String> {
+    sample
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn expected_tx_count_from_summary_v1(summary: &Value) -> u64 {
+    summary_u64(summary, "child_expected_total_from_config")
+        .max(summary_u64(summary, "child_expected_total_from_env"))
+        .max(summary_u64(summary, "ledger_expected_count"))
+}
+
+fn completed_tx_count_from_summary_v1(summary: &Value) -> u64 {
+    summary_u64(summary, "ledger_completed_count")
+        .max(summary_u64(summary, "aoem_executed_total"))
+        .max(summary_u64(summary, "included_canonical_total"))
+}
+
+fn annotate_aoem_owned_single_path_live_diagnostics_v1(sample: &mut Value, summary: &Value) {
+    let copied_fields = [
+        "aoem_owned_single_path_enforced",
+        "legacy_host_transitional_fallback_gate_enabled",
+        "legacy_host_transitional_fallback_used",
+        "tx_ingress_real_callsite",
+        "tx_ingress_called_with_explicit_aoem_gate_config",
+        "tx_ingress_aoem_gate_config_source",
+        "tx_ingress_aoem_gate_config_production_candidate",
+        "tx_ingress_selected_path",
+        "tx_ingress_production_target",
+        "aoem_owned_regression_signable",
+        "aoem_owned_signoff_blocker_reasons",
+    ];
+    for field in copied_fields {
+        sample[field] = summary.get(field).cloned().unwrap_or(Value::Null);
+    }
+
+    if !bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV) {
+        return;
+    }
+
+    let missing_or_defaulted = summary
+        .get("aoem_owned_single_path_enforced")
+        .and_then(Value::as_bool)
+        != Some(true)
+        || summary
+            .get("tx_ingress_called_with_explicit_aoem_gate_config")
+            .and_then(Value::as_bool)
+            != Some(true)
+        || summary
+            .get("tx_ingress_aoem_gate_config_source")
+            .and_then(Value::as_str)
+            != Some("receiver_child_runtime")
+        || summary
+            .get("tx_ingress_aoem_gate_config_production_candidate")
+            .and_then(Value::as_bool)
+            != Some(true)
+        || summary
+            .get("tx_ingress_selected_path")
+            .and_then(Value::as_str)
+            != Some(AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1)
+        || summary
+            .get("tx_ingress_production_target")
+            .and_then(Value::as_str)
+            != Some(AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1)
+        || summary
+            .get("aoem_owned_regression_signable")
+            .and_then(Value::as_bool)
+            != Some(true);
+
+    if missing_or_defaulted {
+        let mut blockers = sample_string_vec(sample, "aoem_owned_signoff_blocker_reasons");
+        push_json_string_unique(
+            &mut blockers,
+            "aoem_owned_single_path_diagnostics_missing_under_gate",
+        );
+        sample["aoem_owned_signoff_blocker_reasons"] = serde_json::json!(blockers);
+        sample["aoem_owned_single_path_enforced"] = serde_json::json!(false);
+        sample["tx_ingress_called_with_explicit_aoem_gate_config"] = serde_json::json!(false);
+        sample["aoem_owned_regression_signable"] = serde_json::json!(false);
+        sample["accepted"] = serde_json::json!(false);
+        sample["fail_reason"] =
+            serde_json::json!("aoem_owned_single_path_diagnostics_missing_under_gate");
+        sample["aoem_owned_gate_fail_reason"] =
+            serde_json::json!("aoem_owned_single_path_diagnostics_missing_under_gate");
+    }
+}
+
+fn annotate_mini_receiver_tail_repair_diagnostics_v1(sample: &mut Value, summary: &Value) {
+    let expected = expected_tx_count_from_summary_v1(summary);
+    let completed = completed_tx_count_from_summary_v1(summary);
+    let durable_missing_count = summary_u64(summary, "ledger_durable_missing_count");
+    let tail_missing_count = if durable_missing_count > 0 {
+        durable_missing_count
+    } else {
+        expected.saturating_sub(completed)
+    };
+    let mut tail_missing_ranges = missing_ranges_from_json(
+        sample
+            .get("ledger_durable_missing_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+    if tail_missing_ranges.is_empty() && tail_missing_count > 0 && expected > completed {
+        tail_missing_ranges = missing_ranges_from_progress(completed, expected, 1);
+    }
+    let queue_pending = summary_u64(summary, "queue_pending_last");
+    let repair_received_overlap =
+        summary_u64(summary, "receiver_repair_received_overlap_missing_count").max(sample_u64(
+            sample,
+            "receiver_repair_received_overlap_missing_count",
+        ));
+    let repair_accepted_overlap =
+        summary_u64(summary, "receiver_repair_accepted_overlap_missing_count").max(sample_u64(
+            sample,
+            "receiver_repair_accepted_overlap_missing_count",
+        ));
+    let repair_executed_overlap =
+        summary_u64(summary, "receiver_repair_executed_overlap_missing_count").max(sample_u64(
+            sample,
+            "receiver_repair_executed_overlap_missing_count",
+        ));
+
+    sample["mini_expected_tx_count"] = serde_json::json!(expected);
+    sample["mini_completed_tx_count"] = serde_json::json!(completed);
+    sample["mini_tail_missing_count"] = serde_json::json!(tail_missing_count);
+    sample["mini_tail_missing_ranges_sample"] =
+        missing_ranges_to_json(tail_missing_ranges.as_slice(), 8);
+    sample["mini_waiting_for_sender_repair"] =
+        serde_json::json!(tail_missing_count > 0 && queue_pending == 0);
+    sample["mini_latest_ack_missing_count"] =
+        serde_json::json!(summary_u64(summary, "latest_ack_missing_count").max(tail_missing_count));
+    sample["mini_latest_ack_missing_ranges_sample"] =
+        if let Some(value) = summary.get("latest_ack_missing_ranges_sample") {
+            value.clone()
+        } else {
+            missing_ranges_to_json(tail_missing_ranges.as_slice(), 8)
+        };
+    sample["mini_repair_received_overlap_missing_count"] =
+        serde_json::json!(repair_received_overlap);
+    sample["mini_repair_accepted_overlap_missing_count"] =
+        serde_json::json!(repair_accepted_overlap);
+    sample["mini_repair_executed_overlap_missing_count"] =
+        serde_json::json!(repair_executed_overlap);
+
+    let stall_reason = if tail_missing_count == 0 {
+        "closed"
+    } else if queue_pending == 0 {
+        "pending_empty_waiting_for_sender_repair"
+    } else {
+        "pending_not_drained"
+    };
+    sample["mini_tail_repair_stall_reason"] = serde_json::json!(stall_reason);
+
+    let elapsed_ms = sample_u64(sample, "elapsed_ms");
+    if bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV)
+        && expected > 0
+        && expected <= 480
+        && tail_missing_count > 0
+        && queue_pending == 0
+        && elapsed_ms >= 120_000
+    {
+        let mut blockers = sample_string_vec(sample, "aoem_owned_signoff_blocker_reasons");
+        push_json_string_unique(&mut blockers, "mini_tail_repair_missing_not_closed");
+        sample["aoem_owned_signoff_blocker_reasons"] = serde_json::json!(blockers);
+        sample["accepted"] = serde_json::json!(false);
+        if sample.get("fail_reason").and_then(Value::as_str).is_none() {
+            sample["fail_reason"] = serde_json::json!("mini_tail_repair_missing_not_closed");
+        }
+    }
 }
 
 fn write_diagnostics_report(
