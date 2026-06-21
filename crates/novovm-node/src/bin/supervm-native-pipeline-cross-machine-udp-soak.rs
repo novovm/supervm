@@ -7806,9 +7806,19 @@ fn write_diagnostics_report(
     } else {
         "none"
     };
+    let latest_fail_reason = last_sample_any
+        .and_then(|sample| sample.get("fail_reason"))
+        .and_then(Value::as_str)
+        .filter(|reason| !reason.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .or(state.fail_reason.clone());
+    let latest_blockers = last_sample_any
+        .map(|sample| sample_string_vec(sample, "aoem_owned_signoff_blocker_reasons"))
+        .unwrap_or_default();
+    let effective_accepted = accepted && latest_fail_reason.is_none() && latest_blockers.is_empty();
     let report = serde_json::json!({
         "schema": "novovm-native-pipeline-cross-machine-sustained-diagnostics/v1",
-        "accepted": accepted,
+        "accepted": effective_accepted,
         "child_pid": child_pid,
         "expected_tx_count": tx_count,
         "sample_interval_ms": config.sample_interval_ms,
@@ -7821,7 +7831,9 @@ fn write_diagnostics_report(
         "repair_drain_timeout_ms": config.repair_drain_timeout_ms,
         "final_ack_timeout_ms": config.final_ack_timeout_ms,
         "absolute_max_ms": config.absolute_max_ms,
-        "fail_reason": state.fail_reason,
+        "fail_reason": latest_fail_reason,
+        "accepted_input_before_signoff_blocker_check": accepted,
+        "aoem_owned_signoff_blocker_reasons": latest_blockers,
         "diagnostics_samples_retained": state.samples.len(),
         "diagnostics_samples_dropped": state.samples_dropped,
         "sample_count": state.samples.len(),
