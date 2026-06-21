@@ -13303,6 +13303,62 @@ mod tests {
         test_fn()
     }
 
+    #[test]
+    fn native_tx_batch_v1_host_store_not_owner_smoke() {
+        let parameter_payload = serde_json::json!({
+            "from_ref": "acct:alice",
+            "to_ref": "acct:bob",
+            "asset_ref": "asset:NOV",
+            "amount": 9
+        });
+        let canonical_rebuild_commitment = novovm_exec::native_tx_batch_v1_item_commitment(
+            1,
+            "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "identity:alice",
+            Some("signer:alice"),
+            1,
+            "transfer",
+            "TransferV1",
+            &parameter_payload,
+        );
+        let item = novovm_exec::NovovmAoemNativeTxBatchItemV1 {
+            sequence: 1,
+            tx_hash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                .to_string(),
+            sender_identity: "identity:alice".to_string(),
+            signer_identity: Some("signer:alice".to_string()),
+            nonce: 1,
+            intent_type: "transfer".to_string(),
+            semantic_operator: "TransferV1".to_string(),
+            parameter_payload,
+            canonical_rebuild_commitment,
+        };
+        let batch = novovm_exec::build_native_tx_batch_v1("node-batch", 7092, Some(1), vec![item])
+            .expect("native tx batch v1 should build");
+        assert_eq!(
+            batch.schema,
+            novovm_exec::NOVOVM_AOEM_NATIVE_TX_BATCH_V1_SCHEMA
+        );
+        assert_eq!(
+            batch.algebraic_semantic_ir_version,
+            novovm_exec::NOVOVM_AOEM_ALGEBRAIC_SEMANTIC_IR_V1
+        );
+
+        let host_commit_marker = serde_json::json!({
+            "runtime_ownership": "legacy_host_transitional",
+            "production_target": false,
+            "replacement_target": "aoem_runtime_owned_state_persistence"
+        });
+        assert_eq!(
+            host_commit_marker["runtime_ownership"].as_str(),
+            Some("legacy_host_transitional")
+        );
+        assert_eq!(
+            host_commit_marker["production_target"].as_bool(),
+            Some(false)
+        );
+    }
+
     fn ingest_test_native_repair_payload_v1(
         chain_id: u64,
         sequence: u64,

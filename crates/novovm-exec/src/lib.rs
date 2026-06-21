@@ -771,6 +771,262 @@ pub struct AoemBatchExecutionArtifactsV1 {
     pub tx_artifacts: Vec<AoemTxExecutionArtifactV1>,
 }
 
+pub const NOVOVM_AOEM_NATIVE_TX_BATCH_V1_SCHEMA: &str = "novovm-aoem-native-tx-batch/v1";
+pub const NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA: &str =
+    "novovm-aoem-native-tx-batch-result/v1";
+pub const NOVOVM_AOEM_ALGEBRAIC_SEMANTIC_IR_V1: &str = "novovm-algebraic-semantic-ir/v1";
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NovovmAoemNativeTxBatchItemV1 {
+    pub sequence: u64,
+    pub tx_hash: String,
+    pub sender_identity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signer_identity: Option<String>,
+    pub nonce: u64,
+    pub intent_type: String,
+    pub semantic_operator: String,
+    #[serde(default)]
+    pub parameter_payload: serde_json::Value,
+    pub canonical_rebuild_commitment: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NovovmAoemNativeTxBatchV1 {
+    pub schema: String,
+    pub batch_id: String,
+    pub chain_id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height_hint: Option<u64>,
+    pub tx_count: u64,
+    pub tx_sequence_start: u64,
+    pub tx_sequence_end: u64,
+    pub canonical_input_commitment: String,
+    pub algebraic_semantic_ir_version: String,
+    pub tx_items: Vec<NovovmAoemNativeTxBatchItemV1>,
+    pub expected_output_commitment: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NovovmAoemNativeTxReceiptV1 {
+    pub sequence: u64,
+    pub tx_hash: String,
+    pub status_ok: bool,
+    pub receipt_commitment: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_class: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NovovmAoemSnapshotMetadataV1 {
+    pub snapshot_version: u64,
+    pub state_version: u64,
+    pub backend: String,
+    pub persistence_owner: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NovovmAoemNativeTxBatchResultV1 {
+    pub schema: String,
+    pub batch_result_id: String,
+    pub batch_id: String,
+    pub per_tx_receipts: Vec<NovovmAoemNativeTxReceiptV1>,
+    pub state_delta_root: String,
+    pub canonical_inclusion_proof: String,
+    pub receipt_root: String,
+    pub durable_ledger_close_proof: String,
+    pub snapshot_metadata: NovovmAoemSnapshotMetadataV1,
+}
+
+fn native_tx_batch_v1_hash_hex(parts: &[&[u8]]) -> String {
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part);
+    }
+    hex_lower_v1(&hasher.finalize())
+}
+
+fn hex_lower_v1(data: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(data.len() * 2);
+    for byte in data {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+pub fn native_tx_batch_v1_item_commitment(
+    sequence: u64,
+    tx_hash: &str,
+    sender_identity: &str,
+    signer_identity: Option<&str>,
+    nonce: u64,
+    intent_type: &str,
+    semantic_operator: &str,
+    parameter_payload: &serde_json::Value,
+) -> String {
+    let sequence_bytes = sequence.to_be_bytes();
+    let nonce_bytes = nonce.to_be_bytes();
+    let payload_bytes = serde_json::to_vec(parameter_payload).unwrap_or_default();
+    let signer = signer_identity.unwrap_or("");
+    native_tx_batch_v1_hash_hex(&[
+        NOVOVM_AOEM_ALGEBRAIC_SEMANTIC_IR_V1.as_bytes(),
+        sequence_bytes.as_slice(),
+        tx_hash.as_bytes(),
+        sender_identity.as_bytes(),
+        signer.as_bytes(),
+        nonce_bytes.as_slice(),
+        intent_type.as_bytes(),
+        semantic_operator.as_bytes(),
+        payload_bytes.as_slice(),
+    ])
+}
+
+pub fn native_tx_batch_v1_input_commitment(items: &[NovovmAoemNativeTxBatchItemV1]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(NOVOVM_AOEM_NATIVE_TX_BATCH_V1_SCHEMA.as_bytes());
+    for item in items {
+        let item_bytes = serde_json::to_vec(item).unwrap_or_default();
+        hasher.update((item_bytes.len() as u64).to_be_bytes());
+        hasher.update(item_bytes);
+    }
+    hex_lower_v1(&hasher.finalize())
+}
+
+pub fn native_tx_batch_v1_expected_output_commitment(
+    input_commitment: &str,
+    tx_count: u64,
+) -> String {
+    let tx_count_bytes = tx_count.to_be_bytes();
+    native_tx_batch_v1_hash_hex(&[
+        b"novovm-aoem-native-tx-batch-expected-output/v1",
+        input_commitment.as_bytes(),
+        tx_count_bytes.as_slice(),
+    ])
+}
+
+pub fn build_native_tx_batch_v1(
+    batch_id: impl Into<String>,
+    chain_id: u64,
+    height_hint: Option<u64>,
+    tx_items: Vec<NovovmAoemNativeTxBatchItemV1>,
+) -> Result<NovovmAoemNativeTxBatchV1> {
+    if tx_items.is_empty() {
+        bail!("NOVOVM_AOEM_NATIVE_TX_BATCH_V1 requires at least one tx item");
+    }
+    for item in &tx_items {
+        let expected = native_tx_batch_v1_item_commitment(
+            item.sequence,
+            item.tx_hash.as_str(),
+            item.sender_identity.as_str(),
+            item.signer_identity.as_deref(),
+            item.nonce,
+            item.intent_type.as_str(),
+            item.semantic_operator.as_str(),
+            &item.parameter_payload,
+        );
+        if item.canonical_rebuild_commitment != expected {
+            bail!(
+                "invalid canonical_rebuild_commitment for sequence {}",
+                item.sequence
+            );
+        }
+    }
+    let tx_sequence_start = tx_items.iter().map(|item| item.sequence).min().unwrap_or(0);
+    let tx_sequence_end = tx_items.iter().map(|item| item.sequence).max().unwrap_or(0);
+    let tx_count = tx_items.len() as u64;
+    let canonical_input_commitment = native_tx_batch_v1_input_commitment(tx_items.as_slice());
+    let expected_output_commitment = native_tx_batch_v1_expected_output_commitment(
+        canonical_input_commitment.as_str(),
+        tx_count,
+    );
+    Ok(NovovmAoemNativeTxBatchV1 {
+        schema: NOVOVM_AOEM_NATIVE_TX_BATCH_V1_SCHEMA.to_string(),
+        batch_id: batch_id.into(),
+        chain_id,
+        height_hint,
+        tx_count,
+        tx_sequence_start,
+        tx_sequence_end,
+        canonical_input_commitment,
+        algebraic_semantic_ir_version: NOVOVM_AOEM_ALGEBRAIC_SEMANTIC_IR_V1.to_string(),
+        tx_items,
+        expected_output_commitment,
+    })
+}
+
+pub fn native_tx_batch_v1_receipt_commitment(
+    sequence: u64,
+    tx_hash: &str,
+    status_ok: bool,
+) -> String {
+    let sequence_bytes = sequence.to_be_bytes();
+    let status = if status_ok {
+        b"ok".as_slice()
+    } else {
+        b"err".as_slice()
+    };
+    native_tx_batch_v1_hash_hex(&[
+        b"novovm-aoem-native-tx-receipt/v1",
+        sequence_bytes.as_slice(),
+        tx_hash.as_bytes(),
+        status,
+    ])
+}
+
+pub fn build_native_tx_batch_result_shape_v1(
+    batch: &NovovmAoemNativeTxBatchV1,
+    per_tx_receipts: Vec<NovovmAoemNativeTxReceiptV1>,
+) -> Result<NovovmAoemNativeTxBatchResultV1> {
+    if per_tx_receipts.len() != batch.tx_items.len() {
+        bail!("native tx batch result receipt count does not match tx count");
+    }
+    let receipt_bytes = serde_json::to_vec(&per_tx_receipts)?;
+    let state_delta_root = native_tx_batch_v1_hash_hex(&[
+        b"novovm-aoem-native-state-delta-root/v1",
+        batch.canonical_input_commitment.as_bytes(),
+        receipt_bytes.as_slice(),
+    ]);
+    let receipt_root = native_tx_batch_v1_hash_hex(&[
+        b"novovm-aoem-native-receipt-root/v1",
+        receipt_bytes.as_slice(),
+    ]);
+    let canonical_inclusion_proof = native_tx_batch_v1_hash_hex(&[
+        b"novovm-aoem-native-canonical-proof/v1",
+        batch.batch_id.as_bytes(),
+        receipt_root.as_bytes(),
+    ]);
+    let durable_ledger_close_proof = native_tx_batch_v1_hash_hex(&[
+        b"novovm-aoem-native-durable-close-proof/v1",
+        batch.expected_output_commitment.as_bytes(),
+        state_delta_root.as_bytes(),
+        canonical_inclusion_proof.as_bytes(),
+    ]);
+    let batch_result_id = native_tx_batch_v1_hash_hex(&[
+        NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA.as_bytes(),
+        batch.batch_id.as_bytes(),
+        durable_ledger_close_proof.as_bytes(),
+    ]);
+    Ok(NovovmAoemNativeTxBatchResultV1 {
+        schema: NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA.to_string(),
+        batch_result_id,
+        batch_id: batch.batch_id.clone(),
+        per_tx_receipts,
+        state_delta_root,
+        canonical_inclusion_proof,
+        receipt_root,
+        durable_ledger_close_proof,
+        snapshot_metadata: NovovmAoemSnapshotMetadataV1 {
+            snapshot_version: 1,
+            state_version: 1,
+            backend: "aoem".to_string(),
+            persistence_owner: "aoem_runtime".to_string(),
+        },
+    })
+}
+
 pub fn resolve_aoem_block_access_list_hash_v1(
     artifacts: &AoemBatchExecutionArtifactsV1,
 ) -> Option<[u8; 32]> {
@@ -1401,6 +1657,8 @@ pub struct AoemCapabilityContract {
     pub rocksdb_persistence: bool,
     pub persist_delegate_runtime: bool,
     pub runtime_ownership_ready: bool,
+    pub native_tx_batch_v1: bool,
+    pub algebraic_semantic_data_plane_v1: bool,
     pub zkvm_prove: bool,
     pub zkvm_verify: bool,
     pub zkvm_probe_api_present: bool,
@@ -1464,6 +1722,24 @@ impl AoemCapabilityContract {
         let runtime_ownership_ready = execute_ops_wire_v1
             && state_surface_v1
             && (rocksdb_persistence || persist_delegate_runtime);
+        let native_tx_batch_v1 = capability_bool(
+            &raw,
+            &[
+                "native_tx_batch_v1",
+                "novovm.native_tx_batch_v1",
+                "novovm_aoem_native_tx_batch_v1",
+            ],
+        )
+        .unwrap_or(false);
+        let algebraic_semantic_data_plane_v1 = capability_bool(
+            &raw,
+            &[
+                "algebraic_semantic_data_plane_v1",
+                "novovm.algebraic_semantic_data_plane_v1",
+                "aoem.algebraic_semantic_data_plane_v1",
+            ],
+        )
+        .unwrap_or(native_tx_batch_v1);
         let zkvm_prove = capability_bool(
             &raw,
             &[
@@ -1615,6 +1891,8 @@ impl AoemCapabilityContract {
             rocksdb_persistence,
             persist_delegate_runtime,
             runtime_ownership_ready,
+            native_tx_batch_v1,
+            algebraic_semantic_data_plane_v1,
             zkvm_prove,
             zkvm_verify,
             zkvm_probe_api_present: false,
@@ -2224,17 +2502,23 @@ fn _assert_abi_struct_layout(_v: AoemCreateOptionsV1) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        aoem_op_succeeded_v1, classify_failure_from_anchor_v1, current_platform_dir_name,
-        default_dll_path, default_plugin_dir, dynlib_names_by_preference,
+        aoem_op_succeeded_v1, build_native_tx_batch_result_shape_v1, build_native_tx_batch_v1,
+        classify_failure_from_anchor_v1, current_platform_dir_name, default_dll_path,
+        default_plugin_dir, dynlib_names_by_preference,
         failure_class_from_anchor_return_code_name_v1, failure_class_from_anchor_return_code_v1,
-        is_eip7610_rejected_account_v1, pick_plugin_dir_from_candidates, plugin_names_for_variant,
+        is_eip7610_rejected_account_v1, native_tx_batch_v1_input_commitment,
+        native_tx_batch_v1_item_commitment, native_tx_batch_v1_receipt_commitment,
+        pick_plugin_dir_from_candidates, plugin_names_for_variant,
         project_tx_execution_artifacts_v1, reconstruct_tx_execution_artifact_v1,
         resolve_aoem_block_access_list_hash_v1, split_plugin_dir_list,
         AoemBatchExecutionArtifactsV1, AoemCanonicalTxTypeV1, AoemCapabilityContract,
         AoemExecMetrics, AoemExecOutput, AoemExecutionReconstructionInputV1,
         AoemExecutionReconstructionSourcesV1, AoemFailureClassSourceV1, AoemFailureClassV1,
         AoemFailureRecoverabilityV1, AoemProjectedTxExecutionV1, AoemReceiptDerivationRulesV1,
-        AoemRuntimeVariant, AoemTxExecutionAnchorV1, AOEM_LOG_BLOOM_BYTES_V1,
+        AoemRuntimeVariant, AoemTxExecutionAnchorV1, NovovmAoemNativeTxBatchItemV1,
+        NovovmAoemNativeTxBatchResultV1, NovovmAoemNativeTxReceiptV1, AOEM_LOG_BLOOM_BYTES_V1,
+        NOVOVM_AOEM_ALGEBRAIC_SEMANTIC_IR_V1, NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA,
+        NOVOVM_AOEM_NATIVE_TX_BATCH_V1_SCHEMA,
     };
     use aoem_bindings::AoemExecV2Result;
     use novovm_protocol::{evm_block_access_list_hash_v1, EvmBlockAccessListV1};
@@ -2254,6 +2538,121 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("novovm-exec-{name}-{nonce}"));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    fn native_tx_batch_v1_sample_item(sequence: u64) -> NovovmAoemNativeTxBatchItemV1 {
+        let parameter_payload = json!({
+            "from_ref": "acct:alice",
+            "to_ref": "acct:bob",
+            "asset_ref": "asset:NOV",
+            "amount": 7,
+        });
+        let canonical_rebuild_commitment = native_tx_batch_v1_item_commitment(
+            sequence,
+            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "identity:alice",
+            Some("signer:alice"),
+            11,
+            "transfer",
+            "TransferV1",
+            &parameter_payload,
+        );
+        NovovmAoemNativeTxBatchItemV1 {
+            sequence,
+            tx_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .to_string(),
+            sender_identity: "identity:alice".to_string(),
+            signer_identity: Some("signer:alice".to_string()),
+            nonce: 11,
+            intent_type: "transfer".to_string(),
+            semantic_operator: "TransferV1".to_string(),
+            parameter_payload,
+            canonical_rebuild_commitment,
+        }
+    }
+
+    #[test]
+    fn native_tx_batch_v1_schema_smoke() {
+        let batch = build_native_tx_batch_v1(
+            "batch-1",
+            7092,
+            Some(12),
+            vec![native_tx_batch_v1_sample_item(10)],
+        )
+        .expect("build native tx batch");
+        assert_eq!(batch.schema, NOVOVM_AOEM_NATIVE_TX_BATCH_V1_SCHEMA);
+        assert_eq!(
+            batch.algebraic_semantic_ir_version,
+            NOVOVM_AOEM_ALGEBRAIC_SEMANTIC_IR_V1
+        );
+        assert_eq!(batch.tx_count, 1);
+        assert_eq!(batch.tx_sequence_start, 10);
+        assert_eq!(batch.tx_sequence_end, 10);
+    }
+
+    #[test]
+    fn native_tx_batch_v1_canonical_input_commitment_smoke() {
+        let item = native_tx_batch_v1_sample_item(20);
+        let batch_a =
+            build_native_tx_batch_v1("batch-a", 7092, None, vec![item.clone()]).expect("batch a");
+        let batch_b = build_native_tx_batch_v1("batch-b", 7092, None, vec![item]).expect("batch b");
+        assert_eq!(
+            batch_a.canonical_input_commitment,
+            batch_b.canonical_input_commitment
+        );
+        assert_eq!(
+            batch_a.canonical_input_commitment,
+            native_tx_batch_v1_input_commitment(batch_a.tx_items.as_slice())
+        );
+        assert_ne!(
+            batch_a.canonical_input_commitment,
+            batch_a.expected_output_commitment
+        );
+    }
+
+    #[test]
+    fn native_tx_batch_v1_per_tx_receipt_shape_smoke() {
+        let receipt = NovovmAoemNativeTxReceiptV1 {
+            sequence: 1,
+            tx_hash: "0xbb".to_string(),
+            status_ok: true,
+            receipt_commitment: native_tx_batch_v1_receipt_commitment(1, "0xbb", true),
+            error_class: None,
+        };
+        assert!(receipt.status_ok);
+        assert!(receipt.receipt_commitment.len() >= 64);
+    }
+
+    #[test]
+    fn native_tx_batch_v1_state_delta_root_shape_smoke() {
+        let batch = build_native_tx_batch_v1(
+            "batch-result",
+            7092,
+            None,
+            vec![native_tx_batch_v1_sample_item(30)],
+        )
+        .expect("build batch");
+        let receipt = NovovmAoemNativeTxReceiptV1 {
+            sequence: 30,
+            tx_hash: batch.tx_items[0].tx_hash.clone(),
+            status_ok: true,
+            receipt_commitment: native_tx_batch_v1_receipt_commitment(
+                30,
+                batch.tx_items[0].tx_hash.as_str(),
+                true,
+            ),
+            error_class: None,
+        };
+        let result: NovovmAoemNativeTxBatchResultV1 =
+            build_native_tx_batch_result_shape_v1(&batch, vec![receipt]).expect("result shape");
+        assert_eq!(result.schema, NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA);
+        assert_eq!(result.batch_id, batch.batch_id);
+        assert_eq!(result.per_tx_receipts.len(), 1);
+        assert!(result.state_delta_root.len() >= 64);
+        assert!(result.canonical_inclusion_proof.len() >= 64);
+        assert!(result.receipt_root.len() >= 64);
+        assert!(result.durable_ledger_close_proof.len() >= 64);
+        assert_eq!(result.snapshot_metadata.persistence_owner, "aoem_runtime");
     }
 
     #[test]
@@ -2321,6 +2720,25 @@ mod tests {
         });
         let c = AoemCapabilityContract::from_capabilities_json(ready);
         assert!(c.runtime_ownership_ready);
+    }
+
+    #[test]
+    fn novovm_exec_capability_contract_exposes_native_tx_batch_v1_smoke() {
+        let raw = json!({
+            "execute_ops_wire_v1": true,
+            "state_write_v1": true,
+            "state_read_v1": true,
+            "state_snapshot_v1": true,
+            "rocksdb_persistence": true,
+            "novovm": {
+                "native_tx_batch_v1": true,
+                "algebraic_semantic_data_plane_v1": true
+            }
+        });
+        let c = AoemCapabilityContract::from_capabilities_json(raw);
+        assert!(c.runtime_ownership_ready);
+        assert!(c.native_tx_batch_v1);
+        assert!(c.algebraic_semantic_data_plane_v1);
     }
 
     #[test]
