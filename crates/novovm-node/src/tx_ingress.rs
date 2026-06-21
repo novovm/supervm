@@ -14508,6 +14508,102 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tx_ingress_aoem_production_candidate_smoke_success() {
+        let out = run_test_native_tx_batch_production_candidate_v1();
+        assert_eq!(
+            out["aoem_native_tx_batch_production_candidate_enabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_candidate_result_ok"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["tx_ingress_production_target"].as_str(),
+            Some("aoem_runtime_owned_state_persistence")
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_receipt_count"].as_u64(),
+            out["batch_size"].as_u64()
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_canonical_proof_count"].as_u64(),
+            out["batch_size"].as_u64()
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_ledger_close_proof_count"].as_u64(),
+            out["batch_size"].as_u64()
+        );
+    }
+
+    #[test]
+    fn tx_ingress_aoem_production_candidate_no_fallback_on_complete_result() {
+        let out = run_test_native_tx_batch_production_candidate_v1();
+        assert_eq!(
+            out["aoem_native_tx_batch_production_fallback_used"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_mismatch_reasons"]
+                .as_array()
+                .map(Vec::len),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn tx_ingress_aoem_production_candidate_owner_report_smoke() {
+        let out = run_test_native_tx_batch_production_candidate_v1();
+        assert_eq!(
+            out["aoem_native_tx_batch_production_owner"].as_str(),
+            Some("aoem_runtime_owned_state_persistence")
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_state_delta_root_present"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_snapshot_metadata_present"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn tx_ingress_aoem_production_candidate_no_legacy_double_write_smoke() {
+        let out = run_test_native_tx_batch_production_candidate_v1();
+        assert_eq!(
+            out["aoem_native_tx_batch_production_double_write_legacy_canonical"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["native_store_commit"]["production_target"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["native_store_commit"]["runtime_ownership"].as_str(),
+            Some("legacy_host_transitional")
+        );
+    }
+
+    #[test]
+    fn tx_ingress_aoem_production_candidate_fail_closed_on_missing_proof() {
+        let mut result = test_aoem_candidate_result_v1(2);
+        result.canonical_inclusion_proof.clear();
+        result.durable_ledger_close_proof.clear();
+        let status =
+            aoem_native_tx_batch_production_candidate_status_v1(true, 2, Some(&result), &[]);
+        assert!(!status.result_ok);
+        assert!(status.fallback_used);
+        assert_eq!(status.owner, "legacy_host_transitional_fallback");
+        assert!(status
+            .mismatch_reasons
+            .contains(&"production_canonical_proof_count_mismatch".to_string()));
+        assert!(status
+            .mismatch_reasons
+            .contains(&"production_ledger_close_proof_count_mismatch".to_string()));
+    }
+
     fn ingest_test_native_repair_payload_v1(
         chain_id: u64,
         sequence: u64,
