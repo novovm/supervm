@@ -28,6 +28,8 @@ const REPORT_SCHEMA_V1: &str = "novovm-native-pipeline-cross-machine-udp-soak-re
 const MEMORY_BISECT_SCHEMA_V1: &str = "novovm-native-pipeline-memory-bisect-report/v1";
 const AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1: &str = "aoem_runtime_owned_state_persistence";
 const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV: &str = "NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE";
+const NOV_NATIVE_LEGACY_HOST_TRANSITIONAL_FALLBACK_ENV: &str =
+    "NOVOVM_LEGACY_HOST_TRANSITIONAL_FALLBACK";
 const RECEIVER_CHILD_AOEM_OWNERSHIP_ENVS_V1: &[&str] = &[
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV,
@@ -1664,6 +1666,20 @@ mod novorudp_tests {
             "aoem_native_tx_batch_production_owner": AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1,
             "tx_ingress_production_target": AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1,
             "tx_ingress_selected_path": AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1,
+            "child_runtime_aoem_gate_config_source": "receiver_child_runtime",
+            "tx_ingress_aoem_gate_config_source": "receiver_child_runtime",
+            "tx_ingress_aoem_gate_config_production_candidate": true,
+            "tx_ingress_aoem_gate_config_shadow": true,
+            "tx_ingress_aoem_gate_config_compare": true,
+            "aoem_owned_child_runtime_gate_propagated_to_tx_ingress": true,
+            "aoem_owned_single_path_enforced": true,
+            "legacy_host_transitional_fallback_gate_enabled": false,
+            "legacy_host_transitional_fallback_used": false,
+            "legacy_host_transitional_success_suppressed_by_aoem_gate": false,
+            "aoem_owned_regression_signable": true,
+            "aoem_owned_signoff_blocker_reasons": [],
+            "tx_ingress_real_callsite": "nov_sendRawTransactionBatch",
+            "tx_ingress_called_with_explicit_aoem_gate_config": true,
             "receiver_final_summary_aoem_fields_present": true,
             "receiver_final_summary_aoem_fields_defaulted": false,
             "receiver_final_summary_aoem_fields_missing_reasons": [],
@@ -7764,6 +7780,17 @@ fn validate_aoem_production_candidate_summary(
         summary,
         "aoem_owned_child_runtime_gate_propagated_to_tx_ingress",
     );
+    let single_path_enforced = summary_bool(summary, "aoem_owned_single_path_enforced");
+    let legacy_fallback_gate_enabled =
+        summary_bool(summary, "legacy_host_transitional_fallback_gate_enabled");
+    let legacy_fallback_used = summary_bool(summary, "legacy_host_transitional_fallback_used");
+    let legacy_success_suppressed = summary_bool(
+        summary,
+        "legacy_host_transitional_success_suppressed_by_aoem_gate",
+    );
+    let regression_signable = summary_bool(summary, "aoem_owned_regression_signable");
+    let explicit_gate_config =
+        summary_bool(summary, "tx_ingress_called_with_explicit_aoem_gate_config");
     let receipt_count = summary_u64(summary, "aoem_native_tx_batch_production_receipt_count");
     let canonical_proof_count = summary_u64(
         summary,
@@ -7829,6 +7856,35 @@ fn validate_aoem_production_candidate_summary(
             violations.push(
                 "aoem_owned_child_runtime_gate_propagated_to_tx_ingress=false expected true"
                     .to_string(),
+            );
+        }
+        if !single_path_enforced {
+            violations.push("aoem_owned_single_path_enforced=false expected true".to_string());
+        }
+        if legacy_fallback_gate_enabled
+            && !bool_env(NOV_NATIVE_LEGACY_HOST_TRANSITIONAL_FALLBACK_ENV)
+        {
+            violations.push(
+                "legacy_host_transitional_fallback_gate_enabled=true without wrapper fallback env"
+                    .to_string(),
+            );
+        }
+        if legacy_fallback_used {
+            violations
+                .push("legacy_host_transitional_fallback_used=true expected false".to_string());
+        }
+        if legacy_success_suppressed {
+            violations.push(
+                "legacy_host_transitional_success_suppressed_by_aoem_gate=true expected false"
+                    .to_string(),
+            );
+        }
+        if !regression_signable {
+            violations.push("aoem_owned_regression_signable=false expected true".to_string());
+        }
+        if !explicit_gate_config {
+            violations.push(
+                "tx_ingress_called_with_explicit_aoem_gate_config=false expected true".to_string(),
             );
         }
         if !enabled {
@@ -7921,6 +7977,20 @@ fn validate_aoem_production_candidate_summary(
         "tx_ingress_aoem_gate_config_shadow": tx_ingress_gate_shadow,
         "tx_ingress_aoem_gate_config_compare": tx_ingress_gate_compare,
         "aoem_owned_child_runtime_gate_propagated_to_tx_ingress": child_gate_propagated,
+        "aoem_owned_single_path_enforced": single_path_enforced,
+        "legacy_host_transitional_fallback_gate_enabled": legacy_fallback_gate_enabled,
+        "legacy_host_transitional_fallback_used": legacy_fallback_used,
+        "legacy_host_transitional_success_suppressed_by_aoem_gate": legacy_success_suppressed,
+        "aoem_owned_regression_signable": regression_signable,
+        "aoem_owned_signoff_blocker_reasons": summary
+            .get("aoem_owned_signoff_blocker_reasons")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([])),
+        "tx_ingress_real_callsite": summary
+            .get("tx_ingress_real_callsite")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "tx_ingress_called_with_explicit_aoem_gate_config": explicit_gate_config,
         "aoem_native_tx_batch_production_receipt_count": receipt_count,
         "aoem_native_tx_batch_production_canonical_proof_count": canonical_proof_count,
         "aoem_native_tx_batch_production_ledger_close_proof_count": ledger_close_proof_count,
@@ -10492,6 +10562,14 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "tx_ingress_aoem_gate_config_shadow": summary.get("tx_ingress_aoem_gate_config_shadow").cloned().unwrap_or(Value::Null),
         "tx_ingress_aoem_gate_config_compare": summary.get("tx_ingress_aoem_gate_config_compare").cloned().unwrap_or(Value::Null),
         "aoem_owned_child_runtime_gate_propagated_to_tx_ingress": summary.get("aoem_owned_child_runtime_gate_propagated_to_tx_ingress").cloned().unwrap_or(Value::Null),
+        "aoem_owned_single_path_enforced": summary.get("aoem_owned_single_path_enforced").cloned().unwrap_or(Value::Null),
+        "legacy_host_transitional_fallback_gate_enabled": summary.get("legacy_host_transitional_fallback_gate_enabled").cloned().unwrap_or(Value::Null),
+        "legacy_host_transitional_fallback_used": summary.get("legacy_host_transitional_fallback_used").cloned().unwrap_or(Value::Null),
+        "legacy_host_transitional_success_suppressed_by_aoem_gate": summary.get("legacy_host_transitional_success_suppressed_by_aoem_gate").cloned().unwrap_or(Value::Null),
+        "aoem_owned_regression_signable": summary.get("aoem_owned_regression_signable").cloned().unwrap_or(Value::Null),
+        "aoem_owned_signoff_blocker_reasons": summary.get("aoem_owned_signoff_blocker_reasons").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "tx_ingress_real_callsite": summary.get("tx_ingress_real_callsite").cloned().unwrap_or(Value::Null),
+        "tx_ingress_called_with_explicit_aoem_gate_config": summary.get("tx_ingress_called_with_explicit_aoem_gate_config").cloned().unwrap_or(Value::Null),
         "tx_ingress_selected_path": summary.get("tx_ingress_selected_path").cloned().unwrap_or(Value::Null),
         "tx_ingress_aoem_production_candidate_gate_reason": summary.get("tx_ingress_aoem_production_candidate_gate_reason").cloned().unwrap_or(Value::Null),
         "receiver_final_summary_aoem_fields_source": summary.get("receiver_final_summary_aoem_fields_source").cloned().unwrap_or(Value::Null),

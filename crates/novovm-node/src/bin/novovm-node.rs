@@ -34270,6 +34270,15 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "tx_ingress_aoem_gate_config_shadow",
         "tx_ingress_aoem_gate_config_compare",
         "aoem_owned_child_runtime_gate_propagated_to_tx_ingress",
+        "aoem_owned_single_path_enforced",
+        "legacy_host_transitional_fallback_gate_enabled",
+        "legacy_host_transitional_fallback_used",
+        "legacy_host_transitional_success_suppressed_by_aoem_gate",
+        "aoem_owned_regression_signable",
+        "aoem_owned_signoff_blocker_reasons",
+        "tx_ingress_real_callsite",
+        "tx_ingress_called_with_explicit_aoem_gate_config",
+        "fail_reason",
         "tx_ingress_selected_path",
         "tx_ingress_aoem_production_candidate_gate_reason",
         "tx_ingress_legacy_host_transitional_used",
@@ -34579,6 +34588,14 @@ struct NativeExecutionPipelineAggregateV1 {
     tx_ingress_aoem_gate_config_shadow: bool,
     tx_ingress_aoem_gate_config_compare: bool,
     aoem_owned_child_runtime_gate_propagated_to_tx_ingress: bool,
+    aoem_owned_single_path_enforced: bool,
+    legacy_host_transitional_fallback_gate_enabled: bool,
+    legacy_host_transitional_fallback_used: bool,
+    legacy_host_transitional_success_suppressed_by_aoem_gate: bool,
+    aoem_owned_regression_signable: bool,
+    aoem_owned_signoff_blocker_reasons: HashSet<String>,
+    tx_ingress_real_callsite: String,
+    tx_ingress_called_with_explicit_aoem_gate_config: bool,
     tx_ingress_selected_path: String,
     tx_ingress_production_target: String,
     tx_ingress_legacy_host_transitional_used: bool,
@@ -34836,6 +34853,14 @@ impl NativeExecutionPipelineAggregateV1 {
             tx_ingress_aoem_gate_config_shadow: false,
             tx_ingress_aoem_gate_config_compare: false,
             aoem_owned_child_runtime_gate_propagated_to_tx_ingress: false,
+            aoem_owned_single_path_enforced: false,
+            legacy_host_transitional_fallback_gate_enabled: false,
+            legacy_host_transitional_fallback_used: false,
+            legacy_host_transitional_success_suppressed_by_aoem_gate: false,
+            aoem_owned_regression_signable: false,
+            aoem_owned_signoff_blocker_reasons: HashSet::new(),
+            tx_ingress_real_callsite: String::new(),
+            tx_ingress_called_with_explicit_aoem_gate_config: false,
             tx_ingress_selected_path: String::new(),
             tx_ingress_production_target: String::new(),
             tx_ingress_legacy_host_transitional_used: false,
@@ -35556,6 +35581,65 @@ impl NativeExecutionPipelineAggregateV1 {
                     .get("aoem_owned_child_runtime_gate_propagated_to_tx_ingress")
                     .and_then(|value| value.as_bool())
                     .unwrap_or(false);
+            self.aoem_owned_single_path_enforced = self.aoem_owned_single_path_enforced
+                || batch_result
+                    .get("aoem_owned_single_path_enforced")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.legacy_host_transitional_fallback_gate_enabled = self
+                .legacy_host_transitional_fallback_gate_enabled
+                || batch_result
+                    .get("legacy_host_transitional_fallback_gate_enabled")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.legacy_host_transitional_fallback_used = self
+                .legacy_host_transitional_fallback_used
+                || batch_result
+                    .get("legacy_host_transitional_fallback_used")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.legacy_host_transitional_success_suppressed_by_aoem_gate = self
+                .legacy_host_transitional_success_suppressed_by_aoem_gate
+                || batch_result
+                    .get("legacy_host_transitional_success_suppressed_by_aoem_gate")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.aoem_owned_regression_signable = self.aoem_owned_regression_signable
+                || batch_result
+                    .get("aoem_owned_regression_signable")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            if let Some(reasons) = batch_result
+                .get("aoem_owned_signoff_blocker_reasons")
+                .and_then(|value| value.as_array())
+            {
+                for reason in reasons.iter().filter_map(|value| value.as_str()) {
+                    if !reason.is_empty() {
+                        self.aoem_owned_signoff_blocker_reasons
+                            .insert(reason.to_string());
+                    }
+                }
+            }
+            if let Some(value) = batch_result
+                .get("tx_ingress_real_callsite")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                self.tx_ingress_real_callsite = value.to_string();
+            }
+            self.tx_ingress_called_with_explicit_aoem_gate_config = self
+                .tx_ingress_called_with_explicit_aoem_gate_config
+                || batch_result
+                    .get("tx_ingress_called_with_explicit_aoem_gate_config")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            if let Some(value) = batch_result
+                .get("fail_reason")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                self.aoem_owned_gate_fail_reason = value.to_string();
+            }
             if let Some(value) = batch_result
                 .get("tx_ingress_selected_path")
                 .and_then(|value| value.as_str())
@@ -36367,16 +36451,36 @@ impl NativeExecutionPipelineAggregateV1 {
             aoem_missing_reasons
                 .push("aoem_owned_child_runtime_gate_propagated_to_tx_ingress=false".to_string());
         }
+        if aoem_gate_requested && !self.tx_ingress_called_with_explicit_aoem_gate_config {
+            aoem_missing_reasons
+                .push("aoem_owned_gate_requested_but_tx_ingress_config_missing".to_string());
+        }
         if aoem_gate_requested && self.tx_ingress_selected_path != aoem_owned_target {
             aoem_missing_reasons.push(format!(
                 "tx_ingress_selected_path={} expected {aoem_owned_target}",
                 self.tx_ingress_selected_path
             ));
         }
+        if aoem_gate_requested && self.legacy_host_transitional_fallback_used {
+            aoem_missing_reasons
+                .push("aoem_owned_gate_requested_but_legacy_fallback_used".to_string());
+        }
+        if aoem_gate_requested && self.legacy_host_transitional_success_suppressed_by_aoem_gate {
+            aoem_missing_reasons
+                .push("aoem_owned_gate_requested_but_legacy_path_selected".to_string());
+        }
+        for reason in self.aoem_owned_signoff_blocker_reasons.iter() {
+            if !reason.is_empty() {
+                aoem_missing_reasons.push(reason.clone());
+            }
+        }
         aoem_missing_reasons.sort();
         aoem_missing_reasons.dedup();
         let receiver_final_summary_aoem_fields_defaulted =
             aoem_gate_requested && !aoem_missing_reasons.is_empty();
+        let aoem_owned_regression_signable = aoem_gate_requested
+            && self.aoem_owned_regression_signable
+            && !receiver_final_summary_aoem_fields_defaulted;
         let aoem_owned_gate_fail_reason = if !self.aoem_owned_gate_fail_reason.is_empty() {
             self.aoem_owned_gate_fail_reason.clone()
         } else if aoem_gate_requested && !self.receiver_final_summary_aoem_fields_present {
@@ -36389,8 +36493,16 @@ impl NativeExecutionPipelineAggregateV1 {
             && !self.aoem_owned_child_runtime_gate_propagated_to_tx_ingress
         {
             "aoem_owned_child_runtime_gate_not_propagated_to_tx_ingress".to_string()
+        } else if aoem_gate_requested && !self.tx_ingress_called_with_explicit_aoem_gate_config {
+            "aoem_owned_gate_requested_but_tx_ingress_config_missing".to_string()
+        } else if aoem_gate_requested && self.legacy_host_transitional_fallback_used {
+            "aoem_owned_gate_requested_but_legacy_fallback_used".to_string()
+        } else if aoem_gate_requested
+            && self.legacy_host_transitional_success_suppressed_by_aoem_gate
+        {
+            "aoem_owned_gate_requested_but_legacy_path_selected".to_string()
         } else if aoem_gate_requested && self.tx_ingress_selected_path != aoem_owned_target {
-            "aoem_owned_gate_requested_but_tx_ingress_not_aoem_owned".to_string()
+            "aoem_owned_gate_requested_but_selected_path_not_aoem_owned".to_string()
         } else {
             String::new()
         };
@@ -36406,7 +36518,10 @@ impl NativeExecutionPipelineAggregateV1 {
             "method".to_string(),
             serde_json::Value::String("nov_runNativeExecutionPipelineSummary".to_string()),
         );
-        out.insert("accepted".to_string(), serde_json::Value::Bool(true));
+        out.insert(
+            "accepted".to_string(),
+            serde_json::Value::Bool(aoem_owned_gate_fail_reason.is_empty()),
+        );
         out.insert(
             "execution_kernel".to_string(),
             serde_json::Value::String("AOEM".to_string()),
@@ -37374,6 +37489,50 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.aoem_owned_child_runtime_gate_propagated_to_tx_ingress),
         );
         out.insert(
+            "aoem_owned_single_path_enforced".to_string(),
+            serde_json::json!(self.aoem_owned_single_path_enforced),
+        );
+        out.insert(
+            "legacy_host_transitional_fallback_gate_enabled".to_string(),
+            serde_json::json!(self.legacy_host_transitional_fallback_gate_enabled),
+        );
+        out.insert(
+            "legacy_host_transitional_fallback_used".to_string(),
+            serde_json::json!(self.legacy_host_transitional_fallback_used),
+        );
+        out.insert(
+            "legacy_host_transitional_success_suppressed_by_aoem_gate".to_string(),
+            serde_json::json!(self.legacy_host_transitional_success_suppressed_by_aoem_gate),
+        );
+        out.insert(
+            "aoem_owned_regression_signable".to_string(),
+            serde_json::json!(aoem_owned_regression_signable),
+        );
+        let mut aoem_owned_signoff_blocker_reasons = self
+            .aoem_owned_signoff_blocker_reasons
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        for reason in aoem_missing_reasons.iter() {
+            if !reason.is_empty() {
+                aoem_owned_signoff_blocker_reasons.push(reason.clone());
+            }
+        }
+        aoem_owned_signoff_blocker_reasons.sort();
+        aoem_owned_signoff_blocker_reasons.dedup();
+        out.insert(
+            "aoem_owned_signoff_blocker_reasons".to_string(),
+            serde_json::json!(aoem_owned_signoff_blocker_reasons),
+        );
+        out.insert(
+            "tx_ingress_real_callsite".to_string(),
+            serde_json::json!(self.tx_ingress_real_callsite),
+        );
+        out.insert(
+            "tx_ingress_called_with_explicit_aoem_gate_config".to_string(),
+            serde_json::json!(self.tx_ingress_called_with_explicit_aoem_gate_config),
+        );
+        out.insert(
             "tx_ingress_selected_path".to_string(),
             serde_json::json!(self.tx_ingress_selected_path),
         );
@@ -38002,6 +38161,14 @@ mod native_execution_pipeline_tests {
                     "tx_ingress_aoem_gate_config_shadow": true,
                     "tx_ingress_aoem_gate_config_compare": true,
                     "aoem_owned_child_runtime_gate_propagated_to_tx_ingress": true,
+                    "aoem_owned_single_path_enforced": true,
+                    "legacy_host_transitional_fallback_gate_enabled": false,
+                    "legacy_host_transitional_fallback_used": false,
+                    "legacy_host_transitional_success_suppressed_by_aoem_gate": false,
+                    "aoem_owned_regression_signable": true,
+                    "aoem_owned_signoff_blocker_reasons": [],
+                    "tx_ingress_real_callsite": "nov_sendRawTransactionBatch",
+                    "tx_ingress_called_with_explicit_aoem_gate_config": true,
                     "tx_ingress_selected_path": "aoem_runtime_owned_state_persistence",
                     "tx_ingress_production_target": "aoem_runtime_owned_state_persistence",
                     "tx_ingress_legacy_host_transitional_used": true,
@@ -38051,6 +38218,15 @@ mod native_execution_pipeline_tests {
             summary["aoem_owned_child_runtime_gate_propagated_to_tx_ingress"].as_bool(),
             Some(true)
         );
+        assert_eq!(summary["accepted"].as_bool(), Some(true));
+        assert_eq!(
+            summary["aoem_owned_regression_signable"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            summary["tx_ingress_called_with_explicit_aoem_gate_config"].as_bool(),
+            Some(true)
+        );
         assert_eq!(
             summary["aoem_native_tx_batch_production_receipt_count"].as_u64(),
             Some(4)
@@ -38085,6 +38261,11 @@ mod native_execution_pipeline_tests {
         assert_eq!(
             summary["aoem_owned_gate_fail_reason"].as_str(),
             Some("aoem_owned_child_runtime_gate_not_propagated_to_tx_ingress")
+        );
+        assert_eq!(summary["accepted"].as_bool(), Some(false));
+        assert_eq!(
+            summary["aoem_owned_regression_signable"].as_bool(),
+            Some(false)
         );
         let reasons = summary["receiver_final_summary_aoem_fields_missing_reasons"]
             .as_array()

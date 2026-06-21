@@ -102,6 +102,8 @@ pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV: &str = "NOVOVM_AOEM_NATIVE
 pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV: &str =
     "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE";
 pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV: &str = "NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE";
+pub const NOV_NATIVE_LEGACY_HOST_TRANSITIONAL_FALLBACK_ENV: &str =
+    "NOVOVM_LEGACY_HOST_TRANSITIONAL_FALLBACK";
 pub const NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV: &str =
     "NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY";
 pub const NOV_NATIVE_CLEARING_ENABLED_ENV: &str = "NOVOVM_NATIVE_CLEARING_ENABLED";
@@ -1244,6 +1246,10 @@ fn native_aoem_native_tx_batch_production_candidate_enabled_v1() -> bool {
 
 fn native_aoem_native_tx_batch_compare_enabled_v1() -> bool {
     bool_env_default_v1(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV, false)
+}
+
+fn native_legacy_host_transitional_fallback_enabled_v1() -> bool {
+    bool_env_default_v1(NOV_NATIVE_LEGACY_HOST_TRANSITIONAL_FALLBACK_ENV, false)
 }
 
 #[derive(Debug, Clone)]
@@ -11330,6 +11336,8 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     let shadow_enabled = aoem_gate_config.shadow;
     let production_candidate_enabled = aoem_gate_config.production_candidate;
     let compare_enabled = aoem_gate_config.compare;
+    let legacy_host_transitional_fallback_gate_enabled =
+        native_legacy_host_transitional_fallback_enabled_v1();
     let native_tx_batch_build_required = shadow_enabled || production_candidate_enabled;
     let mut shadow_mismatch_reasons = Vec::<String>::new();
     let shadow_batch = if native_tx_batch_build_required {
@@ -11454,6 +11462,48 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     } else {
         production_candidate_status.mismatch_reasons.join(",")
     };
+    let aoem_owned_single_path_enforced = production_candidate_enabled;
+    let legacy_host_transitional_fallback_used =
+        production_candidate_enabled && !production_candidate_status.result_ok;
+    let legacy_host_transitional_success_suppressed_by_aoem_gate =
+        legacy_host_transitional_fallback_used && !legacy_host_transitional_fallback_gate_enabled;
+    let tx_ingress_called_with_explicit_aoem_gate_config =
+        aoem_gate_config.explicit && production_candidate_enabled;
+    let mut aoem_owned_signoff_blocker_reasons = Vec::<String>::new();
+    if production_candidate_enabled && !tx_ingress_called_with_explicit_aoem_gate_config {
+        aoem_owned_signoff_blocker_reasons
+            .push("aoem_owned_gate_requested_but_tx_ingress_config_missing".to_string());
+    }
+    if production_candidate_enabled
+        && tx_ingress_selected_path != "aoem_runtime_owned_state_persistence"
+    {
+        aoem_owned_signoff_blocker_reasons
+            .push("aoem_owned_gate_requested_but_selected_path_not_aoem_owned".to_string());
+    }
+    if legacy_host_transitional_fallback_used {
+        aoem_owned_signoff_blocker_reasons
+            .push("aoem_owned_gate_requested_but_legacy_fallback_used".to_string());
+    }
+    if legacy_host_transitional_success_suppressed_by_aoem_gate {
+        aoem_owned_signoff_blocker_reasons
+            .push("aoem_owned_gate_requested_but_legacy_path_selected".to_string());
+    }
+    aoem_owned_signoff_blocker_reasons.sort();
+    aoem_owned_signoff_blocker_reasons.dedup();
+    let aoem_owned_regression_signable =
+        production_candidate_enabled && aoem_owned_signoff_blocker_reasons.is_empty();
+    let tx_ingress_fail_reason = if legacy_host_transitional_success_suppressed_by_aoem_gate {
+        "aoem_owned_gate_requested_but_legacy_path_selected"
+    } else if production_candidate_enabled && !tx_ingress_called_with_explicit_aoem_gate_config {
+        "aoem_owned_gate_requested_but_tx_ingress_config_missing"
+    } else if production_candidate_enabled
+        && tx_ingress_selected_path != "aoem_runtime_owned_state_persistence"
+    {
+        "aoem_owned_gate_requested_but_selected_path_not_aoem_owned"
+    } else {
+        ""
+    };
+    let tx_ingress_accepted = tx_ingress_fail_reason.is_empty();
     let aoem_chunk_size = native_aoem_batch_max_size_v1();
     let store_path_override = resolve_native_execution_store_path_from_params_v1(params);
     let effective_native_store_path = store_path_override
@@ -11692,7 +11742,16 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         "method".to_string(),
         serde_json::json!("nov_sendRawTransactionBatch"),
     );
-    out.insert("accepted".to_string(), serde_json::json!(true));
+    out.insert(
+        "accepted".to_string(),
+        serde_json::json!(tx_ingress_accepted),
+    );
+    if !tx_ingress_fail_reason.is_empty() {
+        out.insert(
+            "fail_reason".to_string(),
+            serde_json::json!(tx_ingress_fail_reason),
+        );
+    }
     out.insert("execution_kernel".to_string(), serde_json::json!("AOEM"));
     out.insert(
         "concurrent_execution".to_string(),
@@ -11761,6 +11820,38 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         serde_json::json!(
             aoem_gate_config.source == "receiver_child_runtime" && production_candidate_enabled
         ),
+    );
+    out.insert(
+        "aoem_owned_single_path_enforced".to_string(),
+        serde_json::json!(aoem_owned_single_path_enforced),
+    );
+    out.insert(
+        "legacy_host_transitional_fallback_gate_enabled".to_string(),
+        serde_json::json!(legacy_host_transitional_fallback_gate_enabled),
+    );
+    out.insert(
+        "legacy_host_transitional_fallback_used".to_string(),
+        serde_json::json!(legacy_host_transitional_fallback_used),
+    );
+    out.insert(
+        "legacy_host_transitional_success_suppressed_by_aoem_gate".to_string(),
+        serde_json::json!(legacy_host_transitional_success_suppressed_by_aoem_gate),
+    );
+    out.insert(
+        "aoem_owned_regression_signable".to_string(),
+        serde_json::json!(aoem_owned_regression_signable),
+    );
+    out.insert(
+        "aoem_owned_signoff_blocker_reasons".to_string(),
+        serde_json::json!(aoem_owned_signoff_blocker_reasons),
+    );
+    out.insert(
+        "tx_ingress_real_callsite".to_string(),
+        serde_json::json!("nov_sendRawTransactionBatch"),
+    );
+    out.insert(
+        "tx_ingress_called_with_explicit_aoem_gate_config".to_string(),
+        serde_json::json!(tx_ingress_called_with_explicit_aoem_gate_config),
     );
     out.insert(
         "aoem_native_tx_batch_v1_built".to_string(),
@@ -14770,6 +14861,67 @@ mod tests {
         assert!(reasons
             .iter()
             .any(|reason| reason.as_str() == Some("mixed_chain_id_in_batch")));
+    }
+
+    #[test]
+    fn production_candidate_rejects_legacy_success_when_fallback_disabled() {
+        let out = run_test_native_tx_batch_production_candidate_with_raws_v1(vec![
+            build_test_native_execute_raw_hex_with_chain_v1(77, 1, "acct-single-path-1", 25),
+            build_test_native_execute_raw_hex_with_chain_v1(78, 2, "acct-single-path-2", 35),
+        ]);
+        assert_eq!(out["accepted"].as_bool(), Some(false));
+        assert_eq!(
+            out["fail_reason"].as_str(),
+            Some("aoem_owned_gate_requested_but_legacy_path_selected")
+        );
+        assert_eq!(out["aoem_owned_single_path_enforced"].as_bool(), Some(true));
+        assert_eq!(
+            out["legacy_host_transitional_fallback_gate_enabled"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["legacy_host_transitional_fallback_used"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["legacy_host_transitional_success_suppressed_by_aoem_gate"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(out["aoem_owned_regression_signable"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn production_candidate_marks_unsignable_when_legacy_fallback_used() {
+        let out = run_test_native_tx_batch_production_candidate_with_raws_v1(vec![
+            build_test_native_execute_raw_hex_with_chain_v1(77, 1, "acct-fallback-1", 25),
+            build_test_native_execute_raw_hex_with_chain_v1(78, 2, "acct-fallback-2", 35),
+        ]);
+        let blockers = out["aoem_owned_signoff_blocker_reasons"]
+            .as_array()
+            .expect("blocker reasons");
+        assert!(blockers.iter().any(|reason| {
+            reason.as_str() == Some("aoem_owned_gate_requested_but_legacy_fallback_used")
+        }));
+        assert!(blockers.iter().any(|reason| {
+            reason.as_str() == Some("aoem_owned_gate_requested_but_legacy_path_selected")
+        }));
+        assert_eq!(out["aoem_owned_regression_signable"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn production_candidate_gate_forces_aoem_owned_single_path() {
+        let out = run_test_native_tx_batch_receiver_child_gate_config_v1();
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(out["aoem_owned_single_path_enforced"].as_bool(), Some(true));
+        assert_eq!(
+            out["tx_ingress_called_with_explicit_aoem_gate_config"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["legacy_host_transitional_fallback_used"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(out["aoem_owned_regression_signable"].as_bool(), Some(true));
     }
 
     #[test]
