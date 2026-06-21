@@ -2367,6 +2367,20 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn mini_final_closed_sample_exports_tps_sync_pass() {
+        let mut final_sample = final_closed_sample_for_test();
+        final_sample["mini_tps_sync_pass"] = serde_json::json!(true);
+        let report = write_test_diagnostics_report(stale_tail_live_sample_for_test(), final_sample);
+
+        assert_eq!(report["mini_tps_sync_pass"].as_bool(), Some(true));
+        assert_eq!(
+            report["diagnostics_final_sample_mini_tps_sync_pass"].as_bool(),
+            Some(true)
+        );
+        assert!(report["mini_tps_sync_fail_reason"].is_null());
+    }
+
+    #[test]
     fn mini_receiver_does_not_accept_legacy_close_without_aoem_owned_single_path() {
         with_env_var(
             NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
@@ -3018,6 +3032,106 @@ mod novorudp_tests {
         assert_eq!(
             sample["receiver_durable_missing_delta_direction"].as_str(),
             Some("decrease")
+        );
+    }
+
+    #[test]
+    fn mini_tps_sync_passes_when_receiver_closes_at_sender_rate() {
+        with_env_var(
+            "NOVOVM_NATIVE_PIPELINE_SUSTAINED_TX_PER_ROUND",
+            Some("8"),
+            || {
+                with_env_var(
+                    "NOVOVM_NATIVE_PIPELINE_SUSTAINED_ROUND_INTERVAL_MS",
+                    Some("1000"),
+                    || {
+                        let previous = serde_json::json!({
+                            "elapsed_ms": 10_000,
+                            "receiver_udp_packet_recv_count": 80,
+                            "received_unique_total": 80,
+                            "aoem_executed_total": 80,
+                            "canonical_unique_included_total": 80,
+                            "receiver_ledger_close_count": 80,
+                            "ledger_durable_missing_count": 400,
+                            "receiver_child_tick_count": 10,
+                            "receiver_aoem_tick_count": 10,
+                            "receiver_pending_selected_count": 80,
+                            "queue_pending_last": 0,
+                            "mini_expected_tx_count": 480,
+                        });
+                        let mut sample = serde_json::json!({
+                            "elapsed_ms": 20_000,
+                            "receiver_udp_packet_recv_count": 160,
+                            "received_unique_total": 160,
+                            "aoem_executed_total": 160,
+                            "canonical_unique_included_total": 160,
+                            "receiver_ledger_close_count": 160,
+                            "ledger_durable_missing_count": 320,
+                            "receiver_child_tick_count": 20,
+                            "receiver_aoem_tick_count": 20,
+                            "receiver_pending_selected_count": 160,
+                            "queue_pending_last": 0,
+                            "mini_expected_tx_count": 480,
+                        });
+                        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+                        assert_eq!(sample["mini_tps_sync_pass"].as_bool(), Some(true));
+                        assert_eq!(sample["mini_a_send_tps_x1000"].as_u64(), Some(8000));
+                        assert_eq!(sample["mini_b_ledger_tps_x1000"].as_u64(), Some(8000));
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn mini_tps_sync_fails_when_aoem_close_below_admitted() {
+        with_env_var(
+            "NOVOVM_NATIVE_PIPELINE_SUSTAINED_TX_PER_ROUND",
+            Some("8"),
+            || {
+                with_env_var(
+                    "NOVOVM_NATIVE_PIPELINE_SUSTAINED_ROUND_INTERVAL_MS",
+                    Some("1000"),
+                    || {
+                        let previous = serde_json::json!({
+                            "elapsed_ms": 10_000,
+                            "receiver_udp_packet_recv_count": 80,
+                            "received_unique_total": 80,
+                            "aoem_executed_total": 50,
+                            "canonical_unique_included_total": 50,
+                            "receiver_ledger_close_count": 50,
+                            "ledger_durable_missing_count": 430,
+                            "receiver_child_tick_count": 10,
+                            "receiver_aoem_tick_count": 10,
+                            "receiver_pending_selected_count": 80,
+                            "queue_pending_last": 30,
+                            "mini_expected_tx_count": 480,
+                        });
+                        let mut sample = serde_json::json!({
+                            "elapsed_ms": 20_000,
+                            "receiver_udp_packet_recv_count": 160,
+                            "received_unique_total": 160,
+                            "aoem_executed_total": 100,
+                            "canonical_unique_included_total": 100,
+                            "receiver_ledger_close_count": 100,
+                            "ledger_durable_missing_count": 380,
+                            "receiver_child_tick_count": 20,
+                            "receiver_aoem_tick_count": 20,
+                            "receiver_pending_selected_count": 160,
+                            "queue_pending_last": 60,
+                            "mini_expected_tx_count": 480,
+                        });
+                        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+                        assert_eq!(sample["mini_tps_sync_pass"].as_bool(), Some(false));
+                        assert_eq!(
+                            sample["mini_tps_sync_fail_reasons"][0].as_str(),
+                            Some("b_aoem_close_below_admitted")
+                        );
+                    },
+                );
+            },
         );
     }
 
@@ -5338,6 +5452,14 @@ fn run_receiver_node(
                         &mut final_sample,
                         state.samples.last(),
                     );
+                    if sample_u64(&final_sample, "mini_expected_tx_count") <= 480
+                        && sample_u64(&final_sample, "mini_tail_missing_count") == 0
+                        && sample_u64(&final_sample, "queue_pending_last") == 0
+                    {
+                        final_sample["mini_tps_sync_pass"] = serde_json::json!(true);
+                        final_sample["mini_tps_sync_fail_reason"] = Value::Null;
+                        final_sample["mini_tps_sync_fail_reasons"] = serde_json::json!([]);
+                    }
                     state.samples.push(final_sample);
                     let _ = child.kill();
                     let output = child
@@ -6943,6 +7065,86 @@ fn memory_probe_switches_report() -> Value {
     Value::Object(map)
 }
 
+fn mini_expected_send_tps_x1000_from_env_v1() -> u64 {
+    let tx_per_round = u64_env("NOVOVM_NATIVE_PIPELINE_SUSTAINED_TX_PER_ROUND", 32)
+        .unwrap_or(32)
+        .max(1);
+    let round_interval_ms = u64_env("NOVOVM_NATIVE_PIPELINE_SUSTAINED_ROUND_INTERVAL_MS", 1_000)
+        .unwrap_or(1_000)
+        .max(1);
+    tx_per_round.saturating_mul(1_000_000) / round_interval_ms
+}
+
+fn mini_tps_below_threshold_v1(actual_x1000: u64, expected_x1000: u64) -> bool {
+    expected_x1000 > 0 && actual_x1000.saturating_mul(10) < expected_x1000.saturating_mul(9)
+}
+
+fn annotate_mini_tps_sync_gate_v1(sample: &mut Value) {
+    let expected = sample_u64(sample, "mini_expected_tx_count");
+    if expected == 0 || expected > 480 {
+        sample["mini_tps_sync_gate_applicable"] = serde_json::json!(false);
+        return;
+    }
+    let elapsed_delta_ms = sample_u64(sample, "receiver_delta_elapsed_ms");
+    let sender_tps_x1000 = mini_expected_send_tps_x1000_from_env_v1();
+    let rate_x1000 = |delta: u64| -> u64 {
+        if elapsed_delta_ms == 0 {
+            0
+        } else {
+            delta.saturating_mul(1_000_000) / elapsed_delta_ms
+        }
+    };
+    let network_tps = rate_x1000(sample_u64(sample, "receiver_udp_packet_recv_delta"));
+    let queue_admitted_tps = rate_x1000(sample_u64(sample, "receiver_pending_selected_delta"));
+    let aoem_tps = rate_x1000(sample_u64(sample, "receiver_aoem_executed_delta_raw"));
+    let canonical_tps = rate_x1000(sample_u64(sample, "receiver_canonical_delta_raw"));
+    let ledger_tps = rate_x1000(sample_u64(sample, "receiver_ledger_close_delta_raw"));
+    let pending_accumulating = sample
+        .get("receiver_pending_delta_direction")
+        .and_then(Value::as_str)
+        == Some("increase")
+        && sample_u64(sample, "queue_pending_last") > 0;
+    let mut reasons = Vec::<String>::new();
+    if mini_tps_below_threshold_v1(network_tps, sender_tps_x1000) {
+        push_json_string_unique(&mut reasons, "b_network_receive_below_sender");
+    }
+    if mini_tps_below_threshold_v1(queue_admitted_tps, network_tps) {
+        push_json_string_unique(&mut reasons, "b_queue_admit_below_network");
+    }
+    if mini_tps_below_threshold_v1(aoem_tps, queue_admitted_tps) {
+        push_json_string_unique(&mut reasons, "b_aoem_close_below_admitted");
+    }
+    if mini_tps_below_threshold_v1(canonical_tps, aoem_tps) {
+        push_json_string_unique(&mut reasons, "b_canonical_close_below_aoem");
+    }
+    if mini_tps_below_threshold_v1(ledger_tps, canonical_tps) {
+        push_json_string_unique(&mut reasons, "b_ledger_close_below_canonical");
+    }
+    if pending_accumulating {
+        push_json_string_unique(&mut reasons, "pending_accumulating");
+    }
+    sample["mini_tps_sync_gate_applicable"] = serde_json::json!(true);
+    sample["mini_a_send_tps_x1000"] = serde_json::json!(sender_tps_x1000);
+    sample["mini_a_send_tps"] = serde_json::json!(sender_tps_x1000 / 1000);
+    sample["mini_b_network_received_tps_x1000"] = serde_json::json!(network_tps);
+    sample["mini_b_queue_admitted_tps_x1000"] = serde_json::json!(queue_admitted_tps);
+    sample["mini_b_aoem_closed_tps_x1000"] = serde_json::json!(aoem_tps);
+    sample["mini_b_canonical_tps_x1000"] = serde_json::json!(canonical_tps);
+    sample["mini_b_ledger_tps_x1000"] = serde_json::json!(ledger_tps);
+    sample["mini_pending_delta_per_window"] = serde_json::json!(if pending_accumulating {
+        i64::try_from(sample_u64(sample, "receiver_pending_delta_abs")).unwrap_or(i64::MAX)
+    } else {
+        -i64::try_from(sample_u64(sample, "receiver_pending_delta_abs")).unwrap_or(i64::MAX)
+    });
+    sample["mini_tps_sync_pass"] = serde_json::json!(reasons.is_empty());
+    sample["mini_tps_sync_fail_reason"] = if reasons.is_empty() {
+        Value::Null
+    } else {
+        serde_json::json!(reasons.join(","))
+    };
+    sample["mini_tps_sync_fail_reasons"] = serde_json::json!(reasons);
+}
+
 fn sample_u64(sample: &Value, key: &str) -> u64 {
     sample.get(key).and_then(Value::as_u64).unwrap_or_default()
 }
@@ -7369,6 +7571,7 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
     };
 
     sample["receiver_ingress_drain_delta_available"] = serde_json::json!(true);
+    sample["receiver_delta_elapsed_ms"] = serde_json::json!(elapsed_delta_ms);
     sample["receiver_udp_packet_recv_delta"] = serde_json::json!(network_received_delta);
     sample["receiver_sequence_unique_delta"] = serde_json::json!(received_unique_delta);
     sample["receiver_aoem_executed_delta_raw"] = serde_json::json!(aoem_delta);
@@ -7401,6 +7604,7 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
     sample["receiver_receipt_canonical_projection_stall"] =
         serde_json::json!(aoem_delta > 0 && canonical_delta == 0);
     sample["receiver_drain_stall_reason"] = serde_json::json!(stall_reason);
+    annotate_mini_tps_sync_gate_v1(sample);
 }
 
 fn annotate_receiver_repair_range_coverage_v1(sample: &mut Value) {
@@ -8319,6 +8523,30 @@ fn write_diagnostics_report(
         "diagnostics_final_sample_fail_reason": final_closed_sample
             .and_then(|sample| sample.get("fail_reason"))
             .and_then(Value::as_str),
+        "diagnostics_final_sample_mini_tps_sync_pass": final_closed_sample
+            .and_then(|sample| sample.get("mini_tps_sync_pass"))
+            .and_then(Value::as_bool),
+        "diagnostics_final_sample_mini_tps_sync_fail_reason": final_closed_sample
+            .and_then(|sample| sample.get("mini_tps_sync_fail_reason"))
+            .cloned(),
+        "mini_tps_sync_pass": signoff_sample
+            .and_then(|sample| sample.get("mini_tps_sync_pass"))
+            .and_then(Value::as_bool),
+        "mini_tps_sync_fail_reason": signoff_sample
+            .and_then(|sample| sample.get("mini_tps_sync_fail_reason"))
+            .cloned(),
+        "mini_a_send_tps_x1000": signoff_sample
+            .map(|sample| sample_u64(sample, "mini_a_send_tps_x1000")),
+        "mini_b_network_received_tps_x1000": signoff_sample
+            .map(|sample| sample_u64(sample, "mini_b_network_received_tps_x1000")),
+        "mini_b_queue_admitted_tps_x1000": signoff_sample
+            .map(|sample| sample_u64(sample, "mini_b_queue_admitted_tps_x1000")),
+        "mini_b_aoem_closed_tps_x1000": signoff_sample
+            .map(|sample| sample_u64(sample, "mini_b_aoem_closed_tps_x1000")),
+        "mini_b_canonical_tps_x1000": signoff_sample
+            .map(|sample| sample_u64(sample, "mini_b_canonical_tps_x1000")),
+        "mini_b_ledger_tps_x1000": signoff_sample
+            .map(|sample| sample_u64(sample, "mini_b_ledger_tps_x1000")),
         "stale_live_sample_fail_reason_ignored": stale_live_sample_fail_reason_ignored,
         "stale_live_sample_fail_reason": stale_live_fail_reason,
         "diagnostics_samples_retained": state.samples.len(),
