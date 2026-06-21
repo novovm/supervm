@@ -2274,8 +2274,14 @@ mod novorudp_tests {
             "final_closed_child_sample": true,
             "final_closed_child_sample_available": true,
             "receiver_exit_phase": "completed",
+            "received_unique_total": 32,
             "mini_completed_tx_count": 480,
             "mini_tail_missing_count": 0,
+            "canonical_unique_included_total": 480,
+            "receiver_ledger_close_count": 480,
+            "aoem_native_tx_batch_production_receipt_count": 480,
+            "aoem_native_tx_batch_production_canonical_proof_count": 480,
+            "aoem_native_tx_batch_production_ledger_close_proof_count": 480,
             "aoem_owned_regression_signable": true,
             "accepted": true,
             "aoem_owned_signoff_blocker_reasons": []
@@ -2368,9 +2374,10 @@ mod novorudp_tests {
 
     #[test]
     fn mini_final_closed_sample_exports_tps_sync_pass() {
-        let mut final_sample = final_closed_sample_for_test();
-        final_sample["mini_tps_sync_pass"] = serde_json::json!(true);
-        let report = write_test_diagnostics_report(stale_tail_live_sample_for_test(), final_sample);
+        let report = write_test_diagnostics_report(
+            stale_tail_live_sample_for_test(),
+            final_closed_sample_for_test(),
+        );
 
         assert_eq!(report["mini_tps_sync_pass"].as_bool(), Some(true));
         assert_eq!(
@@ -2378,6 +2385,107 @@ mod novorudp_tests {
             Some(true)
         );
         assert!(report["mini_tps_sync_fail_reason"].is_null());
+    }
+
+    #[test]
+    fn mini_final_tps_uses_final_closed_counters_not_retained_view() {
+        let report = write_test_diagnostics_report(
+            stale_tail_live_sample_for_test(),
+            final_closed_sample_for_test(),
+        );
+
+        assert_eq!(
+            report["mini_tps_sync_sample_source"].as_str(),
+            Some("final_closed_child_sample")
+        );
+        assert_eq!(
+            report["final_closed_child_sample_uses_retained_view"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(report["final_run_close_tps_counter"].as_u64(), Some(480));
+        assert_eq!(report["final_completed_tx_count"].as_u64(), Some(480));
+    }
+
+    #[test]
+    fn mini_final_tps_does_not_zero_when_480_closed() {
+        let report = write_test_diagnostics_report(
+            stale_tail_live_sample_for_test(),
+            final_closed_sample_for_test(),
+        );
+
+        assert!(report["final_run_close_tps_x1000"].as_u64().unwrap_or(0) > 0);
+        assert!(
+            report["mini_b_aoem_closed_tx_tps_x1000"]
+                .as_u64()
+                .unwrap_or(0)
+                > 0
+        );
+        assert!(report["mini_b_ledger_tx_tps_x1000"].as_u64().unwrap_or(0) > 0);
+    }
+
+    #[test]
+    fn mini_final_tps_marks_retained_view_not_comparable() {
+        let report = write_test_diagnostics_report(
+            stale_tail_live_sample_for_test(),
+            final_closed_sample_for_test(),
+        );
+
+        assert_eq!(
+            report["mini_tps_sync_comparable_network_source"].as_str(),
+            Some("final_closed_counters")
+        );
+        assert_eq!(
+            report["final_closed_child_sample_counter_source"].as_str(),
+            Some("mini_completed_canonical_ledger_proof_counters")
+        );
+        assert_eq!(
+            report["mini_tps_sync_live_counter_source"].as_str(),
+            Some("live_delta_counters_diagnostic_only")
+        );
+    }
+
+    #[test]
+    fn mini_final_tps_fails_with_sample_source_invalid_when_no_valid_counter() {
+        let mut final_sample = final_closed_sample_for_test();
+        final_sample["mini_completed_tx_count"] = serde_json::json!(0);
+        final_sample["canonical_unique_included_total"] = serde_json::json!(0);
+        final_sample["receiver_ledger_close_count"] = serde_json::json!(0);
+        let report = write_test_diagnostics_report(stale_tail_live_sample_for_test(), final_sample);
+
+        assert_eq!(report["mini_tps_sync_pass"].as_bool(), Some(false));
+        assert_eq!(
+            report["mini_tps_sync_fail_reason"].as_str(),
+            Some("mini_tps_sample_source_invalid")
+        );
+    }
+
+    #[test]
+    fn mini_final_tps_can_fail_when_real_run_tps_below_sender() {
+        let mut stale = stale_tail_live_sample_for_test();
+        stale["elapsed_ms"] = serde_json::json!(1_000);
+        stale["mini_completed_tx_count"] = serde_json::json!(1);
+        let mut final_sample = final_closed_sample_for_test();
+        final_sample["elapsed_ms"] = serde_json::json!(121_000);
+        let report = write_test_diagnostics_report(stale, final_sample);
+
+        assert_eq!(report["mini_tps_sync_pass"].as_bool(), Some(false));
+        assert!(report["final_run_tps_sync_fail_reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason.as_str() == Some("final_run_close_tps_below_sender")));
+    }
+
+    #[test]
+    fn mini_final_tps_passes_when_480_closed_and_run_tps_above_threshold() {
+        let report = write_test_diagnostics_report(
+            stale_tail_live_sample_for_test(),
+            final_closed_sample_for_test(),
+        );
+
+        assert_eq!(report["final_run_tps_sync_pass"].as_bool(), Some(true));
+        assert_eq!(report["mini_tps_sync_pass"].as_bool(), Some(true));
+        assert!(report["final_run_close_tps_x1000"].as_u64().unwrap_or(0) >= 8_000);
     }
 
     #[test]
@@ -7390,6 +7498,131 @@ fn annotate_mini_tps_sync_gate_v1(sample: &mut Value) {
     sample["mini_tps_sync_fail_reasons"] = serde_json::json!(reasons);
 }
 
+fn annotate_mini_final_run_tps_sync_v1(sample: &mut Value, first_progress_elapsed_ms: Option<u64>) {
+    if sample
+        .get("final_closed_child_sample")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return;
+    }
+    let expected = sample_u64(sample, "mini_expected_tx_count");
+    if expected == 0 || expected > 480 {
+        return;
+    }
+    let sender_tps_x1000 = mini_expected_send_tps_x1000_from_env_v1();
+    let final_elapsed_ms = sample_u64(sample, "elapsed_ms");
+    let final_completed = sample_u64(sample, "mini_completed_tx_count");
+    let final_canonical = sample_u64(sample, "canonical_unique_included_total")
+        .max(sample_u64(sample, "receiver_canonical_included_count"))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_canonical_proof_count",
+        ));
+    let final_ledger = sample_u64(sample, "receiver_ledger_close_count")
+        .max(sample_u64(sample, "ledger_completed_count"))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_ledger_close_proof_count",
+        ));
+    let final_proof = sample_u64(sample, "proof_items_total")
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_receipt_count",
+        ))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_canonical_proof_count",
+        ))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_ledger_close_proof_count",
+        ));
+    let window_ms = first_progress_elapsed_ms
+        .and_then(|first| final_elapsed_ms.checked_sub(first))
+        .filter(|window| *window > 0)
+        .unwrap_or(0);
+    let rate_x1000 = |count: u64| -> u64 {
+        if window_ms == 0 {
+            0
+        } else {
+            count.saturating_mul(1_000_000) / window_ms
+        }
+    };
+    let close_tps = rate_x1000(final_completed);
+    let canonical_tps = rate_x1000(final_canonical);
+    let ledger_tps = rate_x1000(final_ledger);
+    let proof_tps = rate_x1000(final_proof);
+    let retained_view_received = sample_u64(sample, "received_unique_total");
+    let uses_retained_view = retained_view_received > 0
+        && final_completed > 0
+        && retained_view_received != final_completed;
+
+    let mut reasons = Vec::<String>::new();
+    let source_valid =
+        window_ms > 0 && final_completed > 0 && final_canonical > 0 && final_ledger > 0;
+    if !source_valid {
+        push_json_string_unique(&mut reasons, "mini_tps_sample_source_invalid");
+    } else {
+        if mini_tps_below_threshold_v1(close_tps, sender_tps_x1000) {
+            push_json_string_unique(&mut reasons, "final_run_close_tps_below_sender");
+        }
+        if mini_tps_below_threshold_v1(canonical_tps, close_tps) {
+            push_json_string_unique(&mut reasons, "b_canonical_close_below_aoem");
+        }
+        if mini_tps_below_threshold_v1(ledger_tps, canonical_tps) {
+            push_json_string_unique(&mut reasons, "b_ledger_close_below_canonical");
+        }
+    }
+
+    sample["mini_tps_sync_sample_source"] = serde_json::json!("final_closed_child_sample");
+    sample["mini_tps_sync_sample_source_valid"] = serde_json::json!(source_valid);
+    sample["mini_tps_sync_final_counter_source"] = serde_json::json!("final_closed_counters");
+    sample["mini_tps_sync_live_counter_source"] =
+        serde_json::json!("live_delta_counters_diagnostic_only");
+    sample["final_closed_child_sample_counter_source"] =
+        serde_json::json!("mini_completed_canonical_ledger_proof_counters");
+    sample["final_closed_child_sample_uses_retained_view"] = serde_json::json!(uses_retained_view);
+    sample["final_run_close_tps_x1000"] = serde_json::json!(close_tps);
+    sample["final_run_close_tps_window_ms"] = serde_json::json!(window_ms);
+    sample["final_run_close_tps_counter"] = serde_json::json!(final_completed);
+    sample["final_completed_tx_count"] = serde_json::json!(final_completed);
+    sample["final_canonical_tx_count"] = serde_json::json!(final_canonical);
+    sample["final_ledger_closed_tx_count"] = serde_json::json!(final_ledger);
+    sample["final_proof_count"] = serde_json::json!(final_proof);
+    sample["final_run_aoem_close_tps_x1000"] = serde_json::json!(close_tps);
+    sample["final_run_canonical_tps_x1000"] = serde_json::json!(canonical_tps);
+    sample["final_run_ledger_tps_x1000"] = serde_json::json!(ledger_tps);
+    sample["final_run_proof_tps_x1000"] = serde_json::json!(proof_tps);
+    sample["final_run_tps_sync_pass"] = serde_json::json!(reasons.is_empty());
+    sample["final_run_tps_sync_fail_reasons"] = serde_json::json!(reasons.clone());
+
+    sample["mini_tps_sync_gate_applicable"] = serde_json::json!(true);
+    sample["mini_tps_sync_metric_units"] =
+        serde_json::json!("x1000_tx_per_second; final_closed_counters");
+    sample["mini_tps_sync_comparable_network_source"] = serde_json::json!("final_closed_counters");
+    sample["mini_a_send_tps_x1000"] = serde_json::json!(sender_tps_x1000);
+    sample["mini_b_transport_object_ready_tps_x1000"] = serde_json::json!(close_tps);
+    sample["mini_b_sequence_unique_tps_x1000"] = serde_json::json!(close_tps);
+    sample["mini_b_tx_object_admitted_tps_x1000"] = serde_json::json!(close_tps);
+    sample["mini_b_queue_admitted_tx_tps_x1000"] = serde_json::json!(close_tps);
+    sample["mini_b_aoem_closed_tx_tps_x1000"] = serde_json::json!(close_tps);
+    sample["mini_b_canonical_tx_tps_x1000"] = serde_json::json!(canonical_tps);
+    sample["mini_b_ledger_tx_tps_x1000"] = serde_json::json!(ledger_tps);
+    sample["mini_b_network_received_tps_x1000"] = serde_json::json!(close_tps);
+    sample["mini_b_queue_admitted_tps_x1000"] = serde_json::json!(close_tps);
+    sample["mini_b_aoem_closed_tps_x1000"] = serde_json::json!(close_tps);
+    sample["mini_b_canonical_tps_x1000"] = serde_json::json!(canonical_tps);
+    sample["mini_b_ledger_tps_x1000"] = serde_json::json!(ledger_tps);
+    sample["mini_tps_sync_pass"] = serde_json::json!(reasons.is_empty());
+    sample["mini_tps_sync_fail_reason"] = if reasons.is_empty() {
+        Value::Null
+    } else {
+        serde_json::json!(reasons.join(","))
+    };
+    sample["mini_tps_sync_fail_reasons"] = serde_json::json!(reasons);
+}
+
 fn sample_u64(sample: &Value, key: &str) -> u64 {
     sample.get(key).and_then(Value::as_u64).unwrap_or_default()
 }
@@ -7421,6 +7654,21 @@ fn final_closed_child_sample(samples: &[Value]) -> Option<&Value> {
             .and_then(Value::as_bool)
             == Some(true)
     })
+}
+
+fn mini_tps_progress_counter_v1(sample: &Value) -> u64 {
+    sample_u64(sample, "mini_completed_tx_count")
+        .max(sample_u64(sample, "received_unique_total"))
+        .max(sample_u64(sample, "aoem_executed_total"))
+        .max(sample_u64(sample, "canonical_unique_included_total"))
+        .max(sample_u64(sample, "receiver_ledger_close_count"))
+}
+
+fn first_mini_tps_progress_elapsed_ms_v1(samples: &[Value]) -> Option<u64> {
+    samples
+        .iter()
+        .find(|sample| mini_tps_progress_counter_v1(sample) > 0)
+        .map(|sample| sample_u64(sample, "elapsed_ms"))
 }
 
 fn first_live_child_sample(samples: &[Value]) -> Option<&Value> {
@@ -8670,9 +8918,18 @@ fn write_diagnostics_report(
     let last_sample_any = state.samples.last();
     let first_live_sample = first_live_child_sample(state.samples.as_slice());
     let last_live_sample = last_live_child_sample(state.samples.as_slice());
-    let final_closed_sample = final_closed_child_sample(state.samples.as_slice());
-    let signoff_sample = final_closed_sample.or(last_sample_any);
-    let diagnostics_signoff_sample_source = if final_closed_sample.is_some() {
+    let final_closed_sample_raw = final_closed_child_sample(state.samples.as_slice());
+    let first_progress_elapsed_ms = first_mini_tps_progress_elapsed_ms_v1(state.samples.as_slice());
+    let mut final_closed_sample_owned = final_closed_sample_raw.cloned();
+    if let Some(sample) = final_closed_sample_owned.as_mut() {
+        annotate_mini_final_run_tps_sync_v1(sample, first_progress_elapsed_ms);
+    }
+    let final_closed_sample = final_closed_sample_owned.as_ref();
+    let signoff_sample_owned = final_closed_sample_owned
+        .clone()
+        .or_else(|| last_sample_any.cloned());
+    let signoff_sample = signoff_sample_owned.as_ref();
+    let diagnostics_signoff_sample_source = if final_closed_sample_raw.is_some() {
         "final_closed_child_sample"
     } else if last_sample_any.is_some() {
         "last_sample_any"
@@ -8779,6 +9036,50 @@ fn write_diagnostics_report(
             .and_then(Value::as_bool),
         "mini_tps_sync_fail_reason": signoff_sample
             .and_then(|sample| sample.get("mini_tps_sync_fail_reason"))
+            .cloned(),
+        "mini_tps_sync_sample_source": signoff_sample
+            .and_then(|sample| sample.get("mini_tps_sync_sample_source"))
+            .cloned(),
+        "mini_tps_sync_sample_source_valid": signoff_sample
+            .and_then(|sample| sample.get("mini_tps_sync_sample_source_valid"))
+            .and_then(Value::as_bool),
+        "mini_tps_sync_final_counter_source": signoff_sample
+            .and_then(|sample| sample.get("mini_tps_sync_final_counter_source"))
+            .cloned(),
+        "mini_tps_sync_live_counter_source": signoff_sample
+            .and_then(|sample| sample.get("mini_tps_sync_live_counter_source"))
+            .cloned(),
+        "final_closed_child_sample_counter_source": signoff_sample
+            .and_then(|sample| sample.get("final_closed_child_sample_counter_source"))
+            .cloned(),
+        "final_closed_child_sample_uses_retained_view": signoff_sample
+            .and_then(|sample| sample.get("final_closed_child_sample_uses_retained_view"))
+            .and_then(Value::as_bool),
+        "final_run_close_tps_x1000": signoff_sample
+            .map(|sample| sample_u64(sample, "final_run_close_tps_x1000")),
+        "final_run_close_tps_window_ms": signoff_sample
+            .map(|sample| sample_u64(sample, "final_run_close_tps_window_ms")),
+        "final_run_close_tps_counter": signoff_sample
+            .map(|sample| sample_u64(sample, "final_run_close_tps_counter")),
+        "final_completed_tx_count": signoff_sample
+            .map(|sample| sample_u64(sample, "final_completed_tx_count")),
+        "final_canonical_tx_count": signoff_sample
+            .map(|sample| sample_u64(sample, "final_canonical_tx_count")),
+        "final_ledger_closed_tx_count": signoff_sample
+            .map(|sample| sample_u64(sample, "final_ledger_closed_tx_count")),
+        "final_proof_count": signoff_sample
+            .map(|sample| sample_u64(sample, "final_proof_count")),
+        "final_run_aoem_close_tps_x1000": signoff_sample
+            .map(|sample| sample_u64(sample, "final_run_aoem_close_tps_x1000")),
+        "final_run_canonical_tps_x1000": signoff_sample
+            .map(|sample| sample_u64(sample, "final_run_canonical_tps_x1000")),
+        "final_run_ledger_tps_x1000": signoff_sample
+            .map(|sample| sample_u64(sample, "final_run_ledger_tps_x1000")),
+        "final_run_tps_sync_pass": signoff_sample
+            .and_then(|sample| sample.get("final_run_tps_sync_pass"))
+            .and_then(Value::as_bool),
+        "final_run_tps_sync_fail_reasons": signoff_sample
+            .and_then(|sample| sample.get("final_run_tps_sync_fail_reasons"))
             .cloned(),
         "mini_a_send_tps_x1000": signoff_sample
             .map(|sample| sample_u64(sample, "mini_a_send_tps_x1000")),
