@@ -98,6 +98,7 @@ pub const NOV_NATIVE_AOEM_SEMANTIC_LEDGER_MIRROR_ENV: &str =
 pub const NOV_NATIVE_AOEM_CONCURRENT_EXECUTION_ENABLED_ENV: &str =
     "NOVOVM_NATIVE_AOEM_CONCURRENT_EXECUTION_ENABLED";
 pub const NOV_NATIVE_AOEM_BATCH_MAX_SIZE_ENV: &str = "NOVOVM_NATIVE_AOEM_BATCH_MAX_SIZE";
+pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV: &str = "NOVOVM_AOEM_NATIVE_TX_BATCH_SHADOW";
 pub const NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV: &str =
     "NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY";
 pub const NOV_NATIVE_CLEARING_ENABLED_ENV: &str = "NOVOVM_NATIVE_CLEARING_ENABLED";
@@ -1225,6 +1226,10 @@ fn native_aoem_semantic_ingress_required_v1() -> bool {
 
 fn native_aoem_concurrent_execution_enabled_v1() -> bool {
     bool_env_default_v1(NOV_NATIVE_AOEM_CONCURRENT_EXECUTION_ENABLED_ENV, true)
+}
+
+fn native_aoem_native_tx_batch_shadow_enabled_v1() -> bool {
+    bool_env_default_v1(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, false)
 }
 
 fn parse_bool_token_v1(raw: &str) -> Option<bool> {
@@ -10953,6 +10958,90 @@ fn native_aoem_batch_item_ingress_meta_v1(
     meta
 }
 
+fn native_tx_kind_label_v1(tx: &NovNativeTxWireV1) -> &'static str {
+    match tx.kind {
+        NovTxKindV1::Transfer(_) => "transfer",
+        NovTxKindV1::Execute(_) => "execute",
+        NovTxKindV1::Governance(_) => "governance",
+    }
+}
+
+fn native_tx_semantic_operator_v1(tx: &NovNativeTxWireV1) -> &'static str {
+    match tx.kind {
+        NovTxKindV1::Transfer(_) => "TransferV1",
+        NovTxKindV1::Execute(_) => "ExecuteV1",
+        NovTxKindV1::Governance(_) => "GovernanceV1",
+    }
+}
+
+fn native_tx_nonce_v1(tx: &NovNativeTxWireV1) -> u64 {
+    match &tx.kind {
+        NovTxKindV1::Transfer(transfer) => transfer.nonce,
+        NovTxKindV1::Execute(execute) => execute.nonce,
+        NovTxKindV1::Governance(governance) => governance.nonce,
+    }
+}
+
+fn native_tx_sender_identity_v1(tx: &NovNativeTxWireV1) -> String {
+    match &tx.kind {
+        NovTxKindV1::Transfer(transfer) => to_hex_prefixed_v1(transfer.from.as_slice()),
+        NovTxKindV1::Execute(execute) => execute
+            .account_id
+            .clone()
+            .unwrap_or_else(|| to_hex_prefixed_v1(execute.caller.as_slice())),
+        NovTxKindV1::Governance(governance) => to_hex_prefixed_v1(governance.proposer.as_slice()),
+    }
+}
+
+fn native_tx_parameter_payload_v1(
+    tx: &NovNativeTxWireV1,
+    ir: &TxIR,
+    execution_request: Option<&NovExecutionRequestV1>,
+    execution_subject: Option<&NovExecutionSubjectMetaV1>,
+    raw_payload: &[u8],
+) -> serde_json::Value {
+    match &tx.kind {
+        NovTxKindV1::Transfer(transfer) => serde_json::json!({
+            "operator_family": "TransferV1",
+            "from_ref": to_hex_prefixed_v1(transfer.from.as_slice()),
+            "to_ref": to_hex_prefixed_v1(transfer.to.as_slice()),
+            "asset_ref": transfer.asset,
+            "amount": transfer.amount.to_string(),
+            "nonce": transfer.nonce,
+            "fee_asset": transfer.fee_policy.pay_asset,
+            "max_fee": transfer.fee_policy.max_pay_amount.to_string(),
+            "raw_payload_digest": to_hex(&sha256_bytes_v1(&[raw_payload])),
+            "tx_ir_type": format!("{:?}", ir.tx_type),
+        }),
+        NovTxKindV1::Execute(execute) => serde_json::json!({
+            "operator_family": "ExecuteV1",
+            "caller_ref": to_hex_prefixed_v1(execute.caller.as_slice()),
+            "account_id": execute.account_id,
+            "target": format!("{:?}", execute.target),
+            "method": execute.method,
+            "args_digest": to_hex(&sha256_bytes_v1(&[execute.args.as_slice()])),
+            "execution_mode": format!("{:?}", execute.execution_mode),
+            "execution_policy": execute.execution_policy.as_str(),
+            "privacy_mode": format!("{:?}", execute.privacy_mode),
+            "verification_mode": format!("{:?}", execute.verification_mode),
+            "nonce": execute.nonce,
+            "execution_request": execution_request,
+            "execution_subject": execution_subject,
+            "raw_payload_digest": to_hex(&sha256_bytes_v1(&[raw_payload])),
+            "tx_ir_type": format!("{:?}", ir.tx_type),
+        }),
+        NovTxKindV1::Governance(governance) => serde_json::json!({
+            "operator_family": "GovernanceV1",
+            "proposer_ref": to_hex_prefixed_v1(governance.proposer.as_slice()),
+            "proposal_type": format!("{:?}", governance.proposal_type),
+            "payload_digest": to_hex(&sha256_bytes_v1(&[governance.payload.as_slice()])),
+            "nonce": governance.nonce,
+            "raw_payload_digest": to_hex(&sha256_bytes_v1(&[raw_payload])),
+            "tx_ir_type": format!("{:?}", ir.tx_type),
+        }),
+    }
+}
+
 pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
@@ -11032,6 +11121,111 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
 
     let (aoem_batch_ingress, aoem_batch_chunks) =
         execute_native_raw_tx_batch_chunks_via_aoem_semantic_ingress_v1(raw_payloads.as_slice())?;
+    let now_ms = now_unix_millis_v1();
+    let shadow_enabled = native_aoem_native_tx_batch_shadow_enabled_v1();
+    let mut shadow_mismatch_reasons = Vec::<String>::new();
+    let shadow_batch = if shadow_enabled {
+        let mut items = Vec::with_capacity(prepared.len());
+        for (idx, item) in prepared.iter().enumerate() {
+            let parameter_payload = native_tx_parameter_payload_v1(
+                &item.native_tx,
+                &item.ir,
+                item.execution_request.as_ref(),
+                item.execution_subject.as_ref(),
+                raw_payloads.get(idx).map(Vec::as_slice).unwrap_or_default(),
+            );
+            let sequence = idx as u64;
+            let tx_hash = to_hex_prefixed_v1(item.tx_hash.as_slice());
+            let sender_identity = native_tx_sender_identity_v1(&item.native_tx);
+            let signer_identity = Some(format!(
+                "signature:{}",
+                to_hex_prefixed_v1(item.native_tx.signature.as_slice())
+            ));
+            let nonce = native_tx_nonce_v1(&item.native_tx);
+            let intent_type = native_tx_kind_label_v1(&item.native_tx).to_string();
+            let semantic_operator = native_tx_semantic_operator_v1(&item.native_tx).to_string();
+            let canonical_rebuild_commitment = novovm_exec::native_tx_batch_v1_item_commitment(
+                sequence,
+                tx_hash.as_str(),
+                sender_identity.as_str(),
+                signer_identity.as_deref(),
+                nonce,
+                intent_type.as_str(),
+                semantic_operator.as_str(),
+                &parameter_payload,
+            );
+            items.push(novovm_exec::NovovmAoemNativeTxBatchItemV1 {
+                sequence,
+                tx_hash,
+                sender_identity,
+                signer_identity,
+                nonce,
+                intent_type,
+                semantic_operator,
+                parameter_payload,
+                canonical_rebuild_commitment,
+            });
+        }
+        let chain_id = prepared
+            .first()
+            .map(|item| item.native_tx.chain_id)
+            .unwrap_or_default();
+        if prepared
+            .iter()
+            .any(|item| item.native_tx.chain_id != chain_id)
+        {
+            shadow_mismatch_reasons.push("mixed_chain_id_in_batch".to_string());
+        }
+        Some(novovm_exec::build_native_tx_batch_v1(
+            format!("novovm-tx-ingress-shadow-{now_ms}"),
+            chain_id,
+            None,
+            items,
+        )?)
+    } else {
+        None
+    };
+    let shadow_result = if let Some(batch) = shadow_batch.as_ref() {
+        let receipts = batch
+            .tx_items
+            .iter()
+            .map(|item| novovm_exec::NovovmAoemNativeTxReceiptV1 {
+                sequence: item.sequence,
+                tx_hash: item.tx_hash.clone(),
+                status_ok: true,
+                receipt_commitment: novovm_exec::native_tx_batch_v1_receipt_commitment(
+                    item.sequence,
+                    item.tx_hash.as_str(),
+                    true,
+                ),
+                error_class: None,
+            })
+            .collect::<Vec<_>>();
+        Some(novovm_exec::build_native_tx_batch_result_shape_v1(
+            batch, receipts,
+        )?)
+    } else {
+        None
+    };
+    if let Some(batch) = shadow_batch.as_ref() {
+        if batch.tx_count != raw_payloads.len() as u64 {
+            shadow_mismatch_reasons.push("shadow_tx_count_mismatch".to_string());
+        }
+    }
+    if let Some(result) = shadow_result.as_ref() {
+        if result.per_tx_receipts.len() != raw_payloads.len() {
+            shadow_mismatch_reasons.push("shadow_receipt_count_mismatch".to_string());
+        }
+        if result.state_delta_root.is_empty() {
+            shadow_mismatch_reasons.push("shadow_state_delta_root_missing".to_string());
+        }
+        if result.canonical_inclusion_proof.is_empty() {
+            shadow_mismatch_reasons.push("shadow_canonical_proof_missing".to_string());
+        }
+        if result.durable_ledger_close_proof.is_empty() {
+            shadow_mismatch_reasons.push("shadow_ledger_close_proof_missing".to_string());
+        }
+    }
     let aoem_chunk_size = native_aoem_batch_max_size_v1();
     let store_path_override = resolve_native_execution_store_path_from_params_v1(params);
     let effective_native_store_path = store_path_override
@@ -11041,7 +11235,6 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         params,
         effective_native_store_path.as_path(),
     );
-    let now_ms = now_unix_millis_v1();
     let _write_lock =
         acquire_nov_native_execution_store_write_lock_v1(effective_native_store_path.as_path())?;
     let mut store = load_nov_native_execution_store_v1(effective_native_store_path.as_path())?;
@@ -11130,6 +11323,38 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             "model": "bounded_ops_wire_chunks_submitted_to_aoem_runtime_no_host_thread_scheduler",
         },
         "aoem_batch_chunks": aoem_batch_chunks,
+        "aoem_native_tx_batch_shadow_enabled": shadow_enabled,
+        "aoem_native_tx_batch_v1_built": shadow_batch.is_some(),
+        "aoem_native_tx_batch_v1_tx_count": shadow_batch
+            .as_ref()
+            .map(|batch| batch.tx_count)
+            .unwrap_or_default(),
+        "aoem_native_tx_batch_v1_input_commitment": shadow_batch
+            .as_ref()
+            .map(|batch| batch.canonical_input_commitment.clone()),
+        "aoem_native_tx_batch_shadow_result_ok": shadow_result.is_some()
+            && shadow_mismatch_reasons.is_empty(),
+        "aoem_native_tx_batch_shadow_receipt_count": shadow_result
+            .as_ref()
+            .map(|result| result.per_tx_receipts.len())
+            .unwrap_or_default(),
+        "aoem_native_tx_batch_shadow_state_delta_root_present": shadow_result
+            .as_ref()
+            .map(|result| !result.state_delta_root.is_empty())
+            .unwrap_or(false),
+        "aoem_native_tx_batch_shadow_canonical_proof_count": shadow_result
+            .as_ref()
+            .map(|result| if result.canonical_inclusion_proof.is_empty() { 0 } else { 1 })
+            .unwrap_or_default(),
+        "aoem_native_tx_batch_shadow_ledger_close_proof_count": shadow_result
+            .as_ref()
+            .map(|result| if result.durable_ledger_close_proof.is_empty() { 0 } else { 1 })
+            .unwrap_or_default(),
+        "aoem_native_tx_batch_shadow_snapshot_metadata_present": shadow_result.is_some(),
+        "aoem_native_tx_batch_shadow_mismatch_reasons": shadow_mismatch_reasons,
+        "aoem_native_tx_batch_shadow_writes_production_canonical": false,
+        "tx_ingress_legacy_host_transitional_used": true,
+        "tx_ingress_production_target": "legacy_host_transitional",
         "deterministic_commit": "post_aoem_batch_precommit_deterministic_sharded_dirty_atomic_commit",
         "native_store_commit": {
             "model": "post_aoem_deterministic_dirty_store_commit",
@@ -13356,6 +13581,174 @@ mod tests {
         assert_eq!(
             host_commit_marker["production_target"].as_bool(),
             Some(false)
+        );
+    }
+
+    fn build_test_native_execute_raw_hex_v1(nonce: u64, account: &str, amount: u64) -> String {
+        let native_tx = NovNativeTxWireV1 {
+            chain_id: 77,
+            kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                caller: vec![nonce as u8; 20],
+                account_id: Some(account.to_string()),
+                fee_owner_account_id: Some(account.to_string()),
+                nonce_owner_account_id: Some(account.to_string()),
+                target: novovm_protocol::NovExecutionTargetV1::NativeModule("treasury".to_string()),
+                method: "deposit_reserve".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset": "USDT",
+                    "amount": amount
+                }))
+                .expect("encode args"),
+                execution_mode: NovExecutionModeV1::Batch,
+                execution_policy: NovExecutionPolicyV1::Standard,
+                privacy_mode: NovPrivacyModeV1::Public,
+                verification_mode: NovVerificationModeV1::Standard,
+                fee_policy: NovFeePolicyV1 {
+                    pay_asset: "USDT".to_string(),
+                    max_pay_amount: 50,
+                    slippage_bps: 100,
+                },
+                gas_like_limit: Some(90_000),
+                nonce,
+            }),
+            signature: [0xabu8; 32],
+        };
+        let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+        to_hex_prefixed_v1(raw.as_slice())
+    }
+
+    fn run_test_native_tx_batch_shadow_v1() -> serde_json::Value {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_env_override_v1(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, "1", || {
+                    with_test_native_execution_store_path_v1(|path| {
+                        run_nov_send_raw_transaction_batch_from_params_v1(&serde_json::json!({
+                            "raw_txs": [
+                                build_test_native_execute_raw_hex_v1(1, "acct-shadow-1", 25),
+                                build_test_native_execute_raw_hex_v1(2, "acct-shadow-2", 35)
+                            ],
+                            "native_execution_store_path": path,
+                        }))
+                        .expect("shadow batch should preserve legacy host path")
+                    })
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn tx_ingress_builds_native_tx_batch_v1_shadow_smoke() {
+        let out = run_test_native_tx_batch_shadow_v1();
+        assert_eq!(
+            out["aoem_native_tx_batch_shadow_enabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(out["aoem_native_tx_batch_v1_built"].as_bool(), Some(true));
+        assert_eq!(out["aoem_native_tx_batch_v1_tx_count"].as_u64(), Some(2));
+        assert!(out["aoem_native_tx_batch_v1_input_commitment"]
+            .as_str()
+            .is_some_and(
+                |value| value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit())
+            ));
+    }
+
+    #[test]
+    fn tx_ingress_shadow_path_does_not_disable_legacy_host_path() {
+        let out = run_test_native_tx_batch_shadow_v1();
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+        assert_eq!(
+            out["tx_ingress_legacy_host_transitional_used"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["tx_ingress_production_target"].as_str(),
+            Some("legacy_host_transitional")
+        );
+        assert_eq!(
+            out["native_store_commit"]["runtime_ownership"].as_str(),
+            Some("legacy_host_transitional")
+        );
+        assert_eq!(
+            out["native_store_commit"]["production_target"].as_bool(),
+            Some(false)
+        );
+        let results = out["results"].as_array().expect("legacy host results");
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|item| {
+            item["native_receipt"]["status"].as_bool() == Some(true)
+                && item["native_receipt"]["module"].as_str() == Some("treasury")
+        }));
+    }
+
+    #[test]
+    fn tx_ingress_shadow_result_shape_smoke() {
+        let out = run_test_native_tx_batch_shadow_v1();
+        assert_eq!(
+            out["aoem_native_tx_batch_shadow_result_ok"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_shadow_state_delta_root_present"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_shadow_canonical_proof_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_shadow_ledger_close_proof_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_shadow_snapshot_metadata_present"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_shadow_mismatch_reasons"]
+                .as_array()
+                .map(Vec::len),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn tx_ingress_shadow_receipt_count_matches_input_count() {
+        let out = run_test_native_tx_batch_shadow_v1();
+        assert_eq!(
+            out["aoem_native_tx_batch_shadow_receipt_count"].as_u64(),
+            out["batch_size"].as_u64()
+        );
+    }
+
+    #[test]
+    fn tx_ingress_shadow_does_not_write_production_canonical() {
+        let out = run_test_native_tx_batch_shadow_v1();
+        assert_eq!(
+            out["aoem_native_tx_batch_shadow_writes_production_canonical"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["tx_ingress_production_target"].as_str(),
+            Some("legacy_host_transitional")
+        );
+    }
+
+    #[test]
+    fn tx_ingress_reports_legacy_host_transitional_not_production_target() {
+        let out = run_test_native_tx_batch_shadow_v1();
+        assert_eq!(
+            out["native_store_commit"]["runtime_ownership"].as_str(),
+            Some("legacy_host_transitional")
+        );
+        assert_eq!(
+            out["native_store_commit"]["production_target"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["native_store_commit"]["replacement_target"].as_str(),
+            Some("aoem_runtime_owned_state_persistence")
         );
     }
 
