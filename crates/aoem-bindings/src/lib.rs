@@ -223,7 +223,10 @@ pub type AoemExecuteOpsV2 =
     unsafe extern "C" fn(*mut c_void, *const AoemOpV2, u32, *mut AoemExecV2Result) -> i32;
 pub type AoemExecuteOpsWireV1 =
     unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut AoemExecV2Result) -> i32;
-pub type AoemStateReadV1 = unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize) -> i32;
+pub type AoemStateJsonV1 = unsafe extern "C" fn(*const u8, usize, *mut *mut u8, *mut usize) -> i32;
+pub type AoemStateWriteV1 = AoemStateJsonV1;
+pub type AoemStateReadV1 = AoemStateJsonV1;
+pub type AoemStateSnapshotV1 = AoemStateJsonV1;
 pub type AoemLastError = unsafe extern "C" fn(*mut c_void) -> *const c_char;
 
 pub struct AoemDyn {
@@ -282,7 +285,9 @@ pub struct AoemDyn {
     free: Option<AoemFree>,
     execute_ops_v2: Option<AoemExecuteOpsV2>,
     execute_ops_wire_v1: Option<AoemExecuteOpsWireV1>,
+    state_write_v1: Option<AoemStateWriteV1>,
     state_read_v1: Option<AoemStateReadV1>,
+    state_snapshot_v1: Option<AoemStateSnapshotV1>,
     last_error: AoemLastError,
 }
 
@@ -566,8 +571,16 @@ impl AoemDyn {
             .get::<AoemExecuteOpsWireV1>(b"aoem_execute_ops_wire_v1")
             .ok()
             .map(|f| *f);
+        let state_write_v1: Option<AoemStateWriteV1> = lib
+            .get::<AoemStateWriteV1>(b"aoem_state_write_v1")
+            .ok()
+            .map(|f| *f);
         let state_read_v1: Option<AoemStateReadV1> = lib
             .get::<AoemStateReadV1>(b"aoem_state_read_v1")
+            .ok()
+            .map(|f| *f);
+        let state_snapshot_v1: Option<AoemStateSnapshotV1> = lib
+            .get::<AoemStateSnapshotV1>(b"aoem_state_snapshot_v1")
             .ok()
             .map(|f| *f);
         let last_error: AoemLastError = *lib.get::<AoemLastError>(b"aoem_last_error")?;
@@ -628,7 +641,9 @@ impl AoemDyn {
             free,
             execute_ops_v2,
             execute_ops_wire_v1,
+            state_write_v1,
             state_read_v1,
+            state_snapshot_v1,
             last_error,
         };
 
@@ -844,21 +859,50 @@ impl AoemDyn {
         self.state_read_v1.is_some() && self.free.is_some()
     }
 
+    pub fn supports_state_write_v1(&self) -> bool {
+        self.state_write_v1.is_some() && self.free.is_some()
+    }
+
+    pub fn supports_state_snapshot_v1(&self) -> bool {
+        self.state_snapshot_v1.is_some() && self.free.is_some()
+    }
+
+    pub fn supports_state_surface_v1(&self) -> bool {
+        self.supports_state_write_v1()
+            && self.supports_state_read_v1()
+            && self.supports_state_snapshot_v1()
+    }
+
+    pub fn supports_rocksdb_persistence_capability(&self) -> Result<bool> {
+        let caps = self.capabilities()?;
+        Ok(
+            json_bool_path(&caps, "rocksdb_persistence").unwrap_or(false)
+                || json_bool_path(&caps, "persistence.rocksdb").unwrap_or(false)
+                || json_bool_path(&caps, "persist.rocksdb").unwrap_or(false)
+                || json_bool_path(&caps, "persist_delegate_runtime").unwrap_or(false),
+        )
+    }
+
     pub fn supports_proof_engine_v1(&self) -> bool {
         self.supports_execute_ops_wire_v1() && self.supports_state_read_v1()
     }
 
-    pub fn state_read_v1(&self, request: &[u8]) -> Result<Vec<u8>> {
-        let Some(state_read_v1) = self.state_read_v1 else {
-            bail!("aoem_state_read_v1 not found in loaded DLL");
+    fn state_json_call_v1(
+        &self,
+        call: Option<AoemStateJsonV1>,
+        request: &[u8],
+        label: &str,
+    ) -> Result<Vec<u8>> {
+        let Some(call) = call else {
+            bail!("{label} not found in loaded DLL");
         };
         if request.is_empty() {
-            bail!("aoem_state_read_v1 request must not be empty");
+            bail!("{label} request must not be empty");
         }
         let mut output_ptr: *mut u8 = ptr::null_mut();
         let mut output_len = 0usize;
         let rc = unsafe {
-            state_read_v1(
+            call(
                 request.as_ptr(),
                 request.len(),
                 &mut output_ptr as *mut *mut u8,
@@ -866,9 +910,36 @@ impl AoemDyn {
             )
         };
         if rc != 0 {
-            bail!("aoem_state_read_v1 failed: rc={rc}");
+            bail!("{label} failed: rc={rc}");
         }
-        self.copy_aoem_owned_bytes(output_ptr, output_len, "aoem_state_read_v1 output")
+        self.copy_aoem_owned_bytes(output_ptr, output_len, label)
+    }
+
+    pub fn state_write_v1(&self, request: &[u8]) -> Result<Vec<u8>> {
+        self.state_json_call_v1(self.state_write_v1, request, "aoem_state_write_v1 output")
+    }
+
+    pub fn state_read_v1(&self, request: &[u8]) -> Result<Vec<u8>> {
+        self.state_json_call_v1(self.state_read_v1, request, "aoem_state_read_v1 output")
+    }
+
+    pub fn state_snapshot_v1(&self, request: &[u8]) -> Result<Vec<u8>> {
+        self.state_json_call_v1(
+            self.state_snapshot_v1,
+            request,
+            "aoem_state_snapshot_v1 output",
+        )
+    }
+
+    pub fn state_write_json_v1(&self, key: &str, value: Value) -> Result<Value> {
+        if key.is_empty() {
+            bail!("aoem_state_write_v1 key must not be empty");
+        }
+        let request = serde_json::json!({ "key": key, "value": value }).to_string();
+        let response = self.state_write_v1(request.as_bytes())?;
+        let text =
+            String::from_utf8(response).context("aoem_state_write_v1 returned non-utf8 json")?;
+        serde_json::from_str(&text).with_context(|| format!("invalid state_write_v1 json: {text}"))
     }
 
     pub fn state_read_json_v1(&self, key: &str) -> Result<Value> {
@@ -880,6 +951,19 @@ impl AoemDyn {
         let text =
             String::from_utf8(response).context("aoem_state_read_v1 returned non-utf8 json")?;
         serde_json::from_str(&text).with_context(|| format!("invalid state_read_v1 json: {text}"))
+    }
+
+    pub fn state_snapshot_json_v1(&self, path: Option<&Path>) -> Result<Value> {
+        let request = match path {
+            Some(path) => serde_json::json!({ "path": path.to_string_lossy() }),
+            None => serde_json::json!({}),
+        }
+        .to_string();
+        let response = self.state_snapshot_v1(request.as_bytes())?;
+        let text =
+            String::from_utf8(response).context("aoem_state_snapshot_v1 returned non-utf8 json")?;
+        serde_json::from_str(&text)
+            .with_context(|| format!("invalid state_snapshot_v1 json: {text}"))
     }
 
     /// True when AOEM FFI exports both zkVM probe symbols.
@@ -2617,6 +2701,14 @@ fn json_is_subset(required: &Value, actual: &Value) -> bool {
     }
 }
 
+fn json_bool_path(root: &Value, path: &str) -> Option<bool> {
+    let mut cur = root;
+    for part in path.split('.') {
+        cur = cur.get(part)?;
+    }
+    cur.as_bool()
+}
+
 fn hardware_threads() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
@@ -3106,4 +3198,76 @@ unsafe fn cstr_to_string(ptr: *const c_char) -> Option<String> {
         return None;
     }
     CStr::from_ptr(ptr).to_str().ok().map(|s| s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path(name: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("aoem-bindings-{name}-{nonce}"))
+    }
+
+    #[test]
+    fn aoem_state_surface_symbol_types_match_json_abi() {
+        assert_eq!(
+            std::mem::size_of::<AoemStateWriteV1>(),
+            std::mem::size_of::<AoemStateReadV1>()
+        );
+        assert_eq!(
+            std::mem::size_of::<AoemStateSnapshotV1>(),
+            std::mem::size_of::<AoemStateReadV1>()
+        );
+    }
+
+    #[test]
+    fn aoem_persistence_capability_paths_are_detectable() {
+        let flat = serde_json::json!({ "rocksdb_persistence": true });
+        assert_eq!(json_bool_path(&flat, "rocksdb_persistence"), Some(true));
+
+        let nested = serde_json::json!({
+            "persistence": { "rocksdb": true },
+            "persist": { "rocksdb": false }
+        });
+        assert_eq!(json_bool_path(&nested, "persistence.rocksdb"), Some(true));
+        assert_eq!(json_bool_path(&nested, "persist.rocksdb"), Some(false));
+        assert_eq!(json_bool_path(&nested, "missing.rocksdb"), None);
+    }
+
+    #[test]
+    fn aoem_state_roundtrip_smoke_is_opt_in() {
+        let Ok(dll) = std::env::var("SUPERVM_AOEM_STATE_ROUNDTRIP_DLL") else {
+            eprintln!("skip: set SUPERVM_AOEM_STATE_ROUNDTRIP_DLL to run AOEM state roundtrip");
+            return;
+        };
+        let persistence_root = temp_path("persistence");
+        std::fs::create_dir_all(&persistence_root).expect("create persistence root");
+        std::env::set_var("AOEM_PERSISTENCE_PATH", &persistence_root);
+        std::env::set_var("AOEM_FFI_PERSIST_BACKEND", "rocksdb");
+
+        let dynlib = unsafe { AoemDyn::load(dll) }.expect("load AOEM dll");
+        assert!(dynlib.supports_state_surface_v1());
+
+        let key = "novovm.phase1.state_roundtrip";
+        let write = dynlib
+            .state_write_json_v1(key, serde_json::json!({ "owner": "aoem", "phase": 1 }))
+            .expect("state write");
+        assert_eq!(write["status"].as_str(), Some("ok"));
+
+        let read = dynlib.state_read_json_v1(key).expect("state read");
+        assert_eq!(read["status"].as_str(), Some("ok"));
+        assert_eq!(read["value"]["found"].as_bool(), Some(true));
+        assert_eq!(read["value"]["value"]["owner"].as_str(), Some("aoem"));
+
+        let snapshot_path = temp_path("snapshot.json");
+        let snapshot = dynlib
+            .state_snapshot_json_v1(Some(snapshot_path.as_path()))
+            .expect("state snapshot");
+        assert_eq!(snapshot["status"].as_str(), Some("ok"));
+        assert!(snapshot_path.exists());
+    }
 }

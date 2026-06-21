@@ -1393,6 +1393,14 @@ pub fn project_tx_execution_artifacts_v1(
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AoemCapabilityContract {
     pub execute_ops_v2: bool,
+    pub execute_ops_wire_v1: bool,
+    pub state_write_v1: bool,
+    pub state_read_v1: bool,
+    pub state_snapshot_v1: bool,
+    pub state_surface_v1: bool,
+    pub rocksdb_persistence: bool,
+    pub persist_delegate_runtime: bool,
+    pub runtime_ownership_ready: bool,
     pub zkvm_prove: bool,
     pub zkvm_verify: bool,
     pub zkvm_probe_api_present: bool,
@@ -1413,6 +1421,49 @@ pub struct AoemCapabilityContract {
 impl AoemCapabilityContract {
     pub fn from_capabilities_json(raw: serde_json::Value) -> Self {
         let execute_ops_v2 = capability_bool(&raw, &["execute_ops_v2"]).unwrap_or(false);
+        let execute_ops_wire_v1 = capability_bool(
+            &raw,
+            &["execute_ops_wire_v1", "runtime.execute_ops_wire_v1"],
+        )
+        .unwrap_or_else(|| capability_exists(&raw, &["execute_ops_wire_v1"]));
+        let state_write_v1 = capability_bool(
+            &raw,
+            &["state_write_v1", "aoem_state_write_v1", "state.write_v1"],
+        )
+        .unwrap_or_else(|| capability_exists(&raw, &["state_write_v1"]));
+        let state_read_v1 = capability_bool(
+            &raw,
+            &["state_read_v1", "aoem_state_read_v1", "state.read_v1"],
+        )
+        .unwrap_or_else(|| capability_exists(&raw, &["state_read_v1"]));
+        let state_snapshot_v1 = capability_bool(
+            &raw,
+            &[
+                "state_snapshot_v1",
+                "aoem_state_snapshot_v1",
+                "state.snapshot_v1",
+            ],
+        )
+        .unwrap_or_else(|| capability_exists(&raw, &["state_snapshot_v1"]));
+        let state_surface_v1 = state_write_v1 && state_read_v1 && state_snapshot_v1;
+        let rocksdb_persistence = capability_bool(
+            &raw,
+            &[
+                "rocksdb_persistence",
+                "persistence.rocksdb",
+                "persist.rocksdb",
+                "storage.rocksdb",
+            ],
+        )
+        .unwrap_or(false);
+        let persist_delegate_runtime = capability_bool(
+            &raw,
+            &["persist_delegate_runtime", "persist.delegate_runtime"],
+        )
+        .unwrap_or(false);
+        let runtime_ownership_ready = execute_ops_wire_v1
+            && state_surface_v1
+            && (rocksdb_persistence || persist_delegate_runtime);
         let zkvm_prove = capability_bool(
             &raw,
             &[
@@ -1556,6 +1607,14 @@ impl AoemCapabilityContract {
 
         Self {
             execute_ops_v2,
+            execute_ops_wire_v1,
+            state_write_v1,
+            state_read_v1,
+            state_snapshot_v1,
+            state_surface_v1,
+            rocksdb_persistence,
+            persist_delegate_runtime,
+            runtime_ownership_ready,
             zkvm_prove,
             zkvm_verify,
             zkvm_probe_api_present: false,
@@ -1610,6 +1669,19 @@ impl AoemExecFacade {
     pub fn capability_contract(&self) -> Result<AoemCapabilityContract> {
         let raw = self.capabilities_json()?;
         let mut contract = AoemCapabilityContract::from_capabilities_json(raw);
+        contract.execute_ops_wire_v1 = self.dynlib.supports_execute_ops_wire_v1();
+        contract.state_write_v1 = self.dynlib.supports_state_write_v1();
+        contract.state_read_v1 = self.dynlib.supports_state_read_v1();
+        contract.state_snapshot_v1 = self.dynlib.supports_state_snapshot_v1();
+        contract.state_surface_v1 = self.dynlib.supports_state_surface_v1();
+        contract.rocksdb_persistence = contract.rocksdb_persistence
+            || self
+                .dynlib
+                .supports_rocksdb_persistence_capability()
+                .unwrap_or(false);
+        contract.runtime_ownership_ready = contract.execute_ops_wire_v1
+            && contract.state_surface_v1
+            && (contract.rocksdb_persistence || contract.persist_delegate_runtime);
         contract.zkvm_probe_api_present = self.dynlib.supports_zkvm_probe();
         contract.zkvm_symbol_supported = self.dynlib.zkvm_supported_flag();
         Ok(contract)
@@ -2188,6 +2260,11 @@ mod tests {
     fn capability_contract_reads_explicit_zk_msm_fields() {
         let raw = json!({
             "execute_ops_v2": true,
+            "execute_ops_wire_v1": true,
+            "state_write_v1": true,
+            "state_read_v1": true,
+            "state_snapshot_v1": true,
+            "rocksdb_persistence": true,
             "zkvm": { "prove": true, "verify": true },
             "msm": {
                 "accel": true,
@@ -2198,6 +2275,10 @@ mod tests {
 
         let c = AoemCapabilityContract::from_capabilities_json(raw);
         assert!(c.execute_ops_v2);
+        assert!(c.execute_ops_wire_v1);
+        assert!(c.state_surface_v1);
+        assert!(c.rocksdb_persistence);
+        assert!(c.runtime_ownership_ready);
         assert!(c.zkvm_prove);
         assert!(c.zkvm_verify);
         assert!(!c.zkvm_probe_api_present);
@@ -2209,6 +2290,37 @@ mod tests {
         assert_eq!(c.fallback_reason_codes.len(), 2);
         assert_eq!(c.fallback_reason.as_deref(), Some("gpu_unavailable"));
         assert!(!c.inferred_from_legacy_fields);
+    }
+
+    #[test]
+    fn capability_contract_requires_state_surface_and_persistence_for_runtime_ownership() {
+        let missing_state = json!({
+            "execute_ops_wire_v1": true,
+            "rocksdb_persistence": true
+        });
+        let c = AoemCapabilityContract::from_capabilities_json(missing_state);
+        assert!(!c.state_surface_v1);
+        assert!(!c.runtime_ownership_ready);
+
+        let missing_persistence = json!({
+            "execute_ops_wire_v1": true,
+            "state_write_v1": true,
+            "state_read_v1": true,
+            "state_snapshot_v1": true
+        });
+        let c = AoemCapabilityContract::from_capabilities_json(missing_persistence);
+        assert!(c.state_surface_v1);
+        assert!(!c.runtime_ownership_ready);
+
+        let ready = json!({
+            "execute_ops_wire_v1": true,
+            "state_write_v1": true,
+            "state_read_v1": true,
+            "state_snapshot_v1": true,
+            "persist": { "rocksdb": true }
+        });
+        let c = AoemCapabilityContract::from_capabilities_json(ready);
+        assert!(c.runtime_ownership_ready);
     }
 
     #[test]

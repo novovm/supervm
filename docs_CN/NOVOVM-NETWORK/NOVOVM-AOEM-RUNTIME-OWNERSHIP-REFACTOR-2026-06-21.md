@@ -155,6 +155,86 @@ failure classification
 
 The output must be sufficient for SUPERVM to update NovoRUDP durable ledger without writing the execution store itself.
 
+## Algebraic Semantic Data Plane
+
+The ownership refactor should also correct the data model. NOVOVM should not treat
+opaque bytes as the business truth after ingress.
+
+The target model is an AOEM-owned algebraic semantic plane:
+
+```text
+canonical algebraic transaction structure
+  -> transport encoding
+  -> AOEM execution IR
+  -> state delta algebra
+  -> receipt/canonical proof algebra
+  -> persistent semantic state
+```
+
+Physical boundaries still carry bytes:
+
+```text
+UDP packets
+FFI buffers
+RocksDB keys/values
+snapshots
+wire reports
+```
+
+But those bytes must be canonical encodings of algebraic semantic structures, not
+independent business state. In other words:
+
+```text
+bytes = deterministic carrier
+algebraic semantic IR = source of truth
+```
+
+NovoRUDP should transport canonical encoded semantic frames. AOEM should decode
+them into structured algebraic IR and execute directly from that IR. RocksDB
+should persist AOEM semantic state/deltas/proofs rather than host-reconstructed
+transaction lifecycle objects.
+
+This prevents the current class of errors:
+
+```text
+network says packet received
+host pending says tx active
+AOEM says batch executed
+canonical summary says not included
+ledger says missing/done based on another view
+```
+
+The correct invariant is:
+
+```text
+one canonical algebraic lifecycle per transaction sequence
+```
+
+Each stage consumes and produces structured semantic objects:
+
+```text
+Transport:
+  sequence, batch_id, semantic_frame_hash, encoded algebraic tx
+
+AOEM runtime:
+  algebraic tx IR, execution graph, state delta, receipt proof
+
+Persistence:
+  versioned semantic state, delta root, receipt/canonical proof, snapshot metadata
+
+SUPERVM:
+  validation, reporting, consensus readback, durable ledger observation
+```
+
+The final architecture should therefore be:
+
+```text
+NOVOVM_AOEM_NATIVE_TX_BATCH_V1
+  = algebraic semantic transaction batch ABI
+```
+
+not a raw byte replay ABI with host-side semantic reconstruction.
+
 ## Migration Plan
 
 ### Phase 0: Freeze Host-Store Expansion
@@ -179,6 +259,18 @@ Add a smoke test proving SUPERVM can create AOEM with persistence enabled and re
 Define the NOVOVM transaction batch wire envelope under AOEM ownership.
 
 Do not route it through host `NovNativeExecutionStoreV1` mutation.
+
+The Phase 2 wire profile must be algebraic semantic first:
+
+```text
+structured tx terms
+deterministic term ordering
+canonical term hash
+state transition operators
+receipt/canonical proof terms
+```
+
+The encoded binary form is only the deterministic carrier for network and FFI.
 
 ### Phase 3: SUPERVM Host Compatibility Adapter
 

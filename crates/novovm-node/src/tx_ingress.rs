@@ -11133,6 +11133,9 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         "deterministic_commit": "post_aoem_batch_precommit_deterministic_sharded_dirty_atomic_commit",
         "native_store_commit": {
             "model": "post_aoem_deterministic_dirty_store_commit",
+            "runtime_ownership": "legacy_host_transitional",
+            "production_target": false,
+            "replacement_target": "aoem_runtime_owned_state_persistence",
             "load_count": 1,
             "save_count": 1,
             "ordered_results": true,
@@ -14173,6 +14176,14 @@ mod tests {
                         out["native_store_commit"]["model"].as_str(),
                         Some("post_aoem_deterministic_dirty_store_commit")
                     );
+                    assert_eq!(
+                        out["native_store_commit"]["runtime_ownership"].as_str(),
+                        Some("legacy_host_transitional")
+                    );
+                    assert_eq!(
+                        out["native_store_commit"]["production_target"].as_bool(),
+                        Some(false)
+                    );
                     assert_eq!(out["native_store_commit"]["load_count"].as_u64(), Some(1));
                     assert_eq!(out["native_store_commit"]["save_count"].as_u64(), Some(1));
                     assert_eq!(
@@ -14363,6 +14374,10 @@ mod tests {
                         assert_eq!(
                             out["native_store_commit"]["model"].as_str(),
                             Some("post_aoem_deterministic_dirty_store_commit")
+                        );
+                        assert_eq!(
+                            out["native_store_commit"]["runtime_ownership"].as_str(),
+                            Some("legacy_host_transitional")
                         );
                         assert_eq!(out["native_store_commit"]["load_count"].as_u64(), Some(1));
                         assert_eq!(out["native_store_commit"]["save_count"].as_u64(), Some(1));
@@ -16528,6 +16543,12 @@ mod tests {
                         out["batch_result"]["batch_result"]["native_store_commit"]["model"]
                             .as_str(),
                         Some("post_aoem_deterministic_dirty_store_commit")
+                    );
+                    assert_eq!(
+                        out["batch_result"]["batch_result"]["native_store_commit"]
+                            ["runtime_ownership"]
+                            .as_str(),
+                        Some("legacy_host_transitional")
                     );
                     assert_eq!(
                         out["batch_result"]["canonical_projection"]["included_canonical"].as_bool(),
