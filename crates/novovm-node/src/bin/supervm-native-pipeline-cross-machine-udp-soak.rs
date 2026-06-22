@@ -305,6 +305,7 @@ struct ReceiverDiagnosticsConfigV1 {
     enabled: bool,
     sample_interval_ms: u64,
     stall_windows: u64,
+    pending_drain_no_progress_timeout_ms: u64,
     memory_sample_enabled: bool,
     max_working_set_bytes: u64,
     min_canonical_delta: u64,
@@ -321,6 +322,7 @@ struct ReceiverDiagnosticsStateV1 {
     samples: Vec<Value>,
     last_canonical: u64,
     stall_windows: u64,
+    pending_drain_no_progress_ms: u64,
     fail_reason: Option<String>,
     samples_dropped: u64,
     first_working_set_bytes: Option<u64>,
@@ -619,6 +621,15 @@ fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
         enabled,
         sample_interval_ms,
         stall_windows,
+        pending_drain_no_progress_timeout_ms: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_PENDING_DRAIN_NO_PROGRESS_TIMEOUT_MS",
+            if is_novorudp_two_hour_profile {
+                180_000
+            } else {
+                sample_interval_ms.saturating_mul(stall_windows).max(30_000)
+            },
+        )?
+        .max(sample_interval_ms),
         memory_sample_enabled,
         max_working_set_bytes: u64_env(
             "NOVOVM_NATIVE_PIPELINE_MEMORY_MAX_WORKING_SET_BYTES",
@@ -1716,6 +1727,7 @@ mod novorudp_tests {
             enabled: true,
             sample_interval_ms: 250,
             stall_windows: 2,
+            pending_drain_no_progress_timeout_ms: 30_000,
             memory_sample_enabled: true,
             max_working_set_bytes: 0,
             min_canonical_delta: 0,
@@ -2372,6 +2384,7 @@ mod novorudp_tests {
             enabled: true,
             sample_interval_ms: 5_000,
             stall_windows: 2,
+            pending_drain_no_progress_timeout_ms: 30_000,
             memory_sample_enabled: true,
             max_working_set_bytes: 0,
             min_canonical_delta: 0,
@@ -2418,6 +2431,7 @@ mod novorudp_tests {
             samples,
             last_canonical: 480,
             stall_windows: 0,
+            pending_drain_no_progress_ms: 0,
             fail_reason: None,
             samples_dropped: 0,
             first_working_set_bytes: Some(1),
@@ -3727,6 +3741,88 @@ mod novorudp_tests {
             sample["receiver_drain_stall_reason"].as_str(),
             Some("waiting_for_sender")
         );
+    }
+
+    #[test]
+    fn pipeline_pending_nonzero_disallows_waiting_for_sender() {
+        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
+        let mut sample = pipeline_liveness_sample(15_000, 96, 10, 100, 4, 4, 4, 4, 4, 100);
+        sample["waiting_for_sender"] = serde_json::json!(true);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["pipeline_pending_drain_stall_reason"].as_str(),
+            Some("pending_drain_callsite_stall")
+        );
+        assert_ne!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("waiting_for_sender")
+        );
+    }
+
+    #[test]
+    fn pipeline_reports_pending_drain_callsite_idle_while_pending() {
+        let previous = pipeline_liveness_sample(10_000, 128, 10, 200, 8, 8, 8, 8, 8, 200);
+        let mut sample = pipeline_liveness_sample(15_000, 128, 10, 200, 8, 8, 8, 8, 8, 200);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(sample["receiver_child_tick_delta"].as_u64(), Some(0));
+        assert_eq!(
+            sample["receiver_child_tick_stall_reason"].as_str(),
+            Some("pending_drain_callsite_stall")
+        );
+        assert_eq!(sample["pending_drain_attempt_delta"].as_u64(), Some(0));
+        assert_eq!(sample["pending_drain_success_delta"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn pipeline_fails_closed_when_pending_nonzero_and_drain_attempt_stops() {
+        let previous =
+            pipeline_liveness_sample(10_000, 2_640, 453, 2_672, 453, 453, 453, 453, 453, 27_936);
+        let mut sample =
+            pipeline_liveness_sample(16_819, 2_640, 453, 2_672, 453, 453, 453, 453, 453, 27_936);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("pending_drain_callsite_stall")
+        );
+        assert_eq!(sample["pipeline_pending_drain_stall"].as_bool(), Some(true));
+        assert_eq!(sample["pending_drain_attempt_delta"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn pipeline_drain_callsite_handoff_to_runtime_worker_smoke() {
+        let previous = pipeline_liveness_sample(10_000, 128, 10, 200, 8, 8, 8, 8, 8, 200);
+        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 232, 9, 9, 9, 9, 9, 232);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["pipeline_pending_drain_stall_reason"].as_str(),
+            Some("none")
+        );
+        assert_eq!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("progressing")
+        );
+        assert_eq!(sample["pending_drain_success_delta"].as_u64(), Some(32));
+    }
+
+    #[test]
+    fn pipeline_pending_drain_recovers_after_idle_window() {
+        let previous = pipeline_liveness_sample(10_000, 128, 10, 200, 8, 8, 8, 8, 8, 200);
+        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 232, 9, 9, 9, 9, 9, 232);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["pipeline_pending_drain_stall"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            sample["pipeline_pending_drain_stall_reason"].as_str(),
+            Some("none")
+        );
+        assert_eq!(sample["receiver_child_tick_stall_ms"].as_u64(), Some(0));
     }
 
     #[test]
@@ -6364,19 +6460,6 @@ fn run_receiver_node(
                 }
             }
             let mut fail_reason = None;
-            if state.stall_windows >= diagnostics.stall_windows {
-                fail_reason = Some("canonical_progress_stall".to_string());
-            }
-            if diagnostics.min_canonical_delta > 0
-                && delta < diagnostics.min_canonical_delta
-                && pending_count > 0
-                && stable_progress < expected_tx_count
-            {
-                fail_reason = Some(format!(
-                    "canonical_progress_below_min_delta: delta={} min={}",
-                    delta, diagnostics.min_canonical_delta
-                ));
-            }
             if diagnostics.max_working_set_bytes > 0
                 && working_set > diagnostics.max_working_set_bytes
             {
@@ -6398,7 +6481,6 @@ fn run_receiver_node(
                     diagnostics.max_elapsed_ms
                 ));
             }
-            state.last_canonical = stable_progress;
             let epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
             let ack_status = emit_receiver_progress_ack_with_summary(
                 expected_tx_count,
@@ -6425,6 +6507,79 @@ fn run_receiver_node(
                 fail_reason = Some(format!("receiver_ack_backchannel_send_failed: {reason}"));
             }
             annotate_receiver_ingress_drain_delta_v1(&mut sample, state.samples.last());
+            let pending_drain_stall_reason = sample
+                .get("pipeline_pending_drain_stall_reason")
+                .and_then(Value::as_str)
+                .unwrap_or("none")
+                .to_string();
+            let pending_drain_active = pending_count > 0
+                && stable_progress < expected_tx_count
+                && pending_drain_stall_reason == "none";
+            let pending_drain_idle_while_pending = pending_count > 0
+                && stable_progress < expected_tx_count
+                && pending_drain_stall_reason == "pending_drain_callsite_stall";
+            let sample_delta_ms = sample_u64(&sample, "receiver_delta_elapsed_ms")
+                .max(diagnostics.sample_interval_ms);
+            if delta == 0 && pending_count > 0 && stable_progress < expected_tx_count {
+                state.pending_drain_no_progress_ms = state
+                    .pending_drain_no_progress_ms
+                    .saturating_add(sample_delta_ms);
+            } else {
+                state.pending_drain_no_progress_ms = 0;
+            }
+            sample["pending_drain_callsite_active"] = serde_json::json!(pending_drain_active);
+            sample["pending_drain_callsite_idle_while_pending"] =
+                serde_json::json!(pending_drain_idle_while_pending);
+            sample["pending_drain_no_progress_ms"] =
+                serde_json::json!(state.pending_drain_no_progress_ms);
+            sample["pending_nonzero_active_drain_enforced"] =
+                serde_json::json!(pending_count > 0 && stable_progress < expected_tx_count);
+            sample["pending_drain_scheduler_state"] =
+                serde_json::json!(if pending_drain_idle_while_pending {
+                    "idle_while_pending"
+                } else if pending_drain_active {
+                    "active"
+                } else if pending_count > 0 {
+                    "pending_backpressured"
+                } else {
+                    "idle_no_pending"
+                });
+            sample["pending_drain_wakeup_source"] = serde_json::json!(if pending_count > 0 {
+                "pending_nonzero"
+            } else {
+                "none"
+            });
+            sample["pending_drain_blocker_reason"] = serde_json::json!(pending_drain_stall_reason);
+            if diagnostics.min_canonical_delta > 0
+                && delta < diagnostics.min_canonical_delta
+                && pending_count > 0
+                && stable_progress < expected_tx_count
+            {
+                fail_reason = Some(format!(
+                    "canonical_progress_below_min_delta: delta={} min={}",
+                    delta, diagnostics.min_canonical_delta
+                ));
+            }
+            if state.stall_windows >= diagnostics.stall_windows
+                && pending_count == 0
+                && stable_progress < expected_tx_count
+            {
+                fail_reason = Some("canonical_progress_stall".to_string());
+            }
+            if state.pending_drain_no_progress_ms
+                >= diagnostics.pending_drain_no_progress_timeout_ms
+                && pending_count > 0
+                && stable_progress < expected_tx_count
+            {
+                fail_reason = Some(format!(
+                    "pipeline_pending_drain_stall:{}",
+                    sample
+                        .get("pipeline_pending_drain_stall_reason")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                ));
+            }
+            state.last_canonical = stable_progress;
             state.samples.push(sample);
             if state.samples.len() > 256 {
                 let drop_count = state.samples.len().saturating_sub(256);
@@ -9347,6 +9502,20 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
     sample["pending_drain_attempt_count"] =
         serde_json::json!(child_tick_delta.max(pending_selected_delta));
     sample["pending_drain_success_count"] = serde_json::json!(pending_selected_delta);
+    sample["pending_drain_attempt_delta"] =
+        serde_json::json!(child_tick_delta.max(pending_selected_delta));
+    sample["pending_drain_success_delta"] = serde_json::json!(pending_selected_delta);
+    sample["pending_drain_callsite_last_attempt_ms"] =
+        if child_tick_delta > 0 || pending_selected_delta > 0 {
+            serde_json::json!(elapsed_ms)
+        } else {
+            Value::Null
+        };
+    sample["pending_drain_callsite_last_success_ms"] = if pending_selected_delta > 0 {
+        serde_json::json!(elapsed_ms)
+    } else {
+        Value::Null
+    };
     sample["pending_drain_zero_count"] =
         serde_json::json!(if pending_last > 0 && pending_selected_delta == 0 {
             child_tick_delta
@@ -10286,6 +10455,8 @@ fn write_diagnostics_report(
         "expected_tx_count": tx_count,
         "sample_interval_ms": config.sample_interval_ms,
         "stall_windows": config.stall_windows,
+        "pending_drain_no_progress_timeout_ms": config.pending_drain_no_progress_timeout_ms,
+        "pending_drain_no_progress_ms": state.pending_drain_no_progress_ms,
         "memory_sample_enabled": config.memory_sample_enabled,
         "max_working_set_bytes": config.max_working_set_bytes,
         "min_canonical_delta": config.min_canonical_delta,
@@ -10412,6 +10583,36 @@ fn write_diagnostics_report(
             .map(|sample| sample_u64(sample, "pending_drain_success_count")),
         "pending_drain_zero_count": signoff_sample
             .map(|sample| sample_u64(sample, "pending_drain_zero_count")),
+        "pending_drain_attempt_delta": signoff_sample
+            .map(|sample| sample_u64(sample, "pending_drain_attempt_delta")),
+        "pending_drain_success_delta": signoff_sample
+            .map(|sample| sample_u64(sample, "pending_drain_success_delta")),
+        "pending_drain_callsite_last_attempt_ms": signoff_sample
+            .and_then(|sample| sample.get("pending_drain_callsite_last_attempt_ms"))
+            .cloned(),
+        "pending_drain_callsite_last_success_ms": signoff_sample
+            .and_then(|sample| sample.get("pending_drain_callsite_last_success_ms"))
+            .cloned(),
+        "pending_drain_callsite_active": signoff_sample
+            .and_then(|sample| sample.get("pending_drain_callsite_active"))
+            .and_then(Value::as_bool),
+        "pending_drain_callsite_idle_while_pending": signoff_sample
+            .and_then(|sample| sample.get("pending_drain_callsite_idle_while_pending"))
+            .and_then(Value::as_bool),
+        "pending_drain_scheduler_state": signoff_sample
+            .and_then(|sample| sample.get("pending_drain_scheduler_state"))
+            .cloned(),
+        "pending_drain_wakeup_source": signoff_sample
+            .and_then(|sample| sample.get("pending_drain_wakeup_source"))
+            .cloned(),
+        "pending_drain_blocker_reason": signoff_sample
+            .and_then(|sample| sample.get("pending_drain_blocker_reason"))
+            .cloned(),
+        "pending_drain_no_progress_ms": signoff_sample
+            .map(|sample| sample_u64(sample, "pending_drain_no_progress_ms")),
+        "pending_nonzero_active_drain_enforced": signoff_sample
+            .and_then(|sample| sample.get("pending_nonzero_active_drain_enforced"))
+            .and_then(Value::as_bool),
         "object_assembler_stall_reason": signoff_sample
             .and_then(|sample| sample.get("object_assembler_stall_reason"))
             .cloned(),
