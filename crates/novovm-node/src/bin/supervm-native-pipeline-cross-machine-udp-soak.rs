@@ -189,6 +189,7 @@ impl TransportProfileV1 {
 struct NovoRudpConfigV1 {
     enabled: bool,
     window_size: u64,
+    repair_windows_per_ack: u64,
     packet_copies: u64,
     tail_packet_copies: u64,
     batch_size: u64,
@@ -209,6 +210,7 @@ impl NovoRudpConfigV1 {
         Ok(Self {
             enabled: profile == TransportProfileV1::NovoRudp,
             window_size: u64_env("NOVOVM_NOVORUDP_REPAIR_WINDOW_SIZE", 64)?.max(1),
+            repair_windows_per_ack: u64_env("NOVOVM_NOVORUDP_REPAIR_WINDOWS_PER_ACK", 8)?.max(1),
             packet_copies: u64_env("NOVOVM_NOVORUDP_REPAIR_PACKET_COPIES", 2)?.max(1),
             tail_packet_copies: u64_env("NOVOVM_NOVORUDP_REPAIR_TAIL_PACKET_COPIES", 3)?.max(1),
             batch_size: u64_env("NOVOVM_NOVORUDP_REPAIR_BATCH_SIZE", 16)?.max(1),
@@ -1114,6 +1116,53 @@ fn first_missing_window_ranges(
     Some((window_id, window, window_ranges))
 }
 
+fn missing_windows_repair_selection(
+    ranges: &[MissingRangeV1],
+    expected: u64,
+    window_size: u64,
+    windows_per_ack: u64,
+    start_at: Option<u64>,
+) -> Option<(u64, MissingRangeV1, Vec<MissingRangeV1>)> {
+    if expected == 0 || window_size == 0 || windows_per_ack == 0 {
+        return None;
+    }
+    let normalized = normalize_missing_ranges(ranges, expected);
+    let mut selected = Vec::<MissingRangeV1>::new();
+    let mut first_window: Option<MissingRangeV1> = None;
+    let mut windows_used = 0u64;
+    let min_start = start_at.unwrap_or_default();
+    for range in normalized {
+        let mut cursor = range.start.max(min_start);
+        if cursor > range.end_inclusive {
+            continue;
+        }
+        while cursor <= range.end_inclusive && windows_used < windows_per_ack {
+            let window_end = cursor
+                .saturating_add(window_size.saturating_sub(1))
+                .min(range.end_inclusive)
+                .min(expected.saturating_sub(1));
+            let window = MissingRangeV1 {
+                start: cursor,
+                end_inclusive: window_end,
+            };
+            if first_window.is_none() {
+                first_window = Some(window);
+            }
+            selected.push(window);
+            windows_used = windows_used.saturating_add(1);
+            if window_end == u64::MAX || window_end >= range.end_inclusive {
+                break;
+            }
+            cursor = window_end.saturating_add(1);
+        }
+        if windows_used >= windows_per_ack {
+            break;
+        }
+    }
+    let first = first_window?;
+    Some((first.start / window_size, first, selected))
+}
+
 #[derive(Debug, Clone)]
 struct NovoRudpRepairSelectionV1 {
     window_id: u64,
@@ -1126,13 +1175,19 @@ fn select_novorudp_repair_ranges_from_ack(
     ranges: &[MissingRangeV1],
     expected: u64,
     window_size: u64,
+    windows_per_ack: u64,
     _latest_missing_count: u64,
     _missing_ranges_full_count: u64,
     _max_window_retries: u64,
 ) -> Option<NovoRudpRepairSelectionV1> {
     let normalized = normalize_missing_ranges(ranges, expected);
-    let (window_id, window, window_ranges) =
-        first_missing_window_ranges(normalized.as_slice(), expected, window_size)?;
+    let (window_id, window, window_ranges) = missing_windows_repair_selection(
+        normalized.as_slice(),
+        expected,
+        window_size,
+        windows_per_ack,
+        None,
+    )?;
     Some(NovoRudpRepairSelectionV1 {
         window_id,
         window,
@@ -1145,6 +1200,7 @@ fn select_novorudp_repair_ranges_from_receiver_ack(
     ack: &UdpAckStateV1,
     expected: u64,
     window_size: u64,
+    windows_per_ack: u64,
     max_window_retries: u64,
 ) -> Option<NovoRudpRepairSelectionV1> {
     if ack.receiver_done || ack.latest_missing_count == 0 {
@@ -1154,7 +1210,7 @@ fn select_novorudp_repair_ranges_from_receiver_ack(
         if ack.novorudp_current_window_missing_count == 0 {
             return None;
         }
-        let window_ranges = if ack.novorudp_current_window_missing_ranges.is_empty() {
+        let mut window_ranges = if ack.novorudp_current_window_missing_ranges.is_empty() {
             missing_ranges_intersection_with_window(
                 ack.latest_ranges.as_slice(),
                 window.start,
@@ -1167,6 +1223,18 @@ fn select_novorudp_repair_ranges_from_receiver_ack(
                 window.end_inclusive,
             )
         };
+        if windows_per_ack > 1 {
+            if let Some((_, _, extra_ranges)) = missing_windows_repair_selection(
+                ack.latest_ranges.as_slice(),
+                expected,
+                window_size,
+                windows_per_ack.saturating_sub(1),
+                Some(window.end_inclusive.saturating_add(1)),
+            ) {
+                window_ranges.extend(extra_ranges);
+                window_ranges = normalize_missing_ranges(window_ranges.as_slice(), expected);
+            }
+        }
         if !window_ranges.is_empty() {
             return Some(NovoRudpRepairSelectionV1 {
                 window_id: ack
@@ -1182,6 +1250,7 @@ fn select_novorudp_repair_ranges_from_receiver_ack(
         ack.latest_ranges.as_slice(),
         expected,
         window_size,
+        windows_per_ack,
         ack.latest_missing_count,
         ack.missing_ranges_full_count,
         max_window_retries,
@@ -1437,6 +1506,7 @@ mod novorudp_tests {
         NovoRudpConfigV1 {
             enabled: true,
             window_size: 64,
+            repair_windows_per_ack: 1,
             packet_copies: 1,
             tail_packet_copies: 1,
             batch_size: 8,
@@ -4496,6 +4566,7 @@ mod novorudp_tests {
             ack_round_1.as_slice(),
             14400,
             config.window_size,
+            config.repair_windows_per_ack,
             82,
             ack_round_1.len() as u64,
             config.tail_window_max_retries,
@@ -4514,6 +4585,7 @@ mod novorudp_tests {
             ack_round_2.as_slice(),
             14400,
             config.window_size,
+            config.repair_windows_per_ack,
             20,
             ack_round_2.len() as u64,
             config.tail_window_max_retries,
@@ -4527,6 +4599,7 @@ mod novorudp_tests {
             ack_round_3.as_slice(),
             14400,
             config.window_size,
+            config.repair_windows_per_ack,
             0,
             0,
             config.tail_window_max_retries,
@@ -4545,6 +4618,7 @@ mod novorudp_tests {
             ranges.as_slice(),
             14400,
             config.window_size,
+            config.repair_windows_per_ack,
             244,
             ranges.len() as u64,
             config.tail_window_max_retries,
@@ -4575,6 +4649,7 @@ mod novorudp_tests {
             old_ack_ranges.as_slice(),
             14400,
             config.window_size,
+            config.repair_windows_per_ack,
             10648,
             old_ack_ranges.len() as u64,
             config.tail_window_max_retries,
@@ -4599,6 +4674,7 @@ mod novorudp_tests {
             new_ack_ranges.as_slice(),
             14400,
             config.window_size,
+            config.repair_windows_per_ack,
             237,
             new_ack_ranges.len() as u64,
             config.tail_window_max_retries,
@@ -4627,6 +4703,7 @@ mod novorudp_tests {
             ranges.as_slice(),
             14400,
             config.window_size,
+            config.repair_windows_per_ack,
             238,
             ranges.len() as u64,
             config.tail_window_max_retries,
@@ -4637,6 +4714,32 @@ mod novorudp_tests {
         assert_eq!(selection.ranges[0].start, 14162);
         assert_eq!(selection.ranges[0].end_inclusive, 14225);
         assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 64);
+    }
+
+    #[test]
+    fn novorudp_sender_can_repair_multiple_missing_windows_per_ack() {
+        let ranges = vec![MissingRangeV1 {
+            start: 10_000,
+            end_inclusive: 10_511,
+        }];
+        let selection = select_novorudp_repair_ranges_from_ack(
+            ranges.as_slice(),
+            57_600,
+            64,
+            8,
+            512,
+            ranges.len() as u64,
+            16,
+        )
+        .expect("multi-window repair selection");
+
+        assert_eq!(selection.window.start, 10_000);
+        assert_eq!(selection.ranges.len(), 8);
+        assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 512);
+        assert_eq!(
+            selection.ranges.last().map(|range| range.end_inclusive),
+            Some(10_511)
+        );
     }
 
     #[test]
@@ -4706,6 +4809,7 @@ mod novorudp_tests {
             early_missing.as_slice(),
             57_600,
             config.window_size,
+            config.repair_windows_per_ack,
             41_692,
             early_missing.len() as u64,
             config.tail_window_max_retries,
@@ -4774,7 +4878,7 @@ mod novorudp_tests {
             "receiver_done": false,
         });
         let ack = parse_ack_value(&ack_value, 256).expect("ack");
-        let selection = select_novorudp_repair_ranges_from_receiver_ack(&ack, 14400, 64, 16)
+        let selection = select_novorudp_repair_ranges_from_receiver_ack(&ack, 14400, 64, 1, 16)
             .expect("selection");
 
         assert_eq!(
@@ -5162,7 +5266,8 @@ mod novorudp_tests {
         assert!(ack.latest_epoch <= latest_epoch);
         assert!(
             ack.latest_epoch > latest_epoch
-                || select_novorudp_repair_ranges_from_receiver_ack(&ack, 14400, 64, 16).is_some()
+                || select_novorudp_repair_ranges_from_receiver_ack(&ack, 14400, 64, 1, 16)
+                    .is_some()
         );
         assert!(
             ack.latest_epoch <= latest_epoch,
@@ -5186,7 +5291,7 @@ mod novorudp_tests {
             "receiver_done": false,
         });
         let ack = parse_ack_value(&ack_value, 256).expect("ack");
-        let selection = select_novorudp_repair_ranges_from_receiver_ack(&ack, 14400, 64, 16)
+        let selection = select_novorudp_repair_ranges_from_receiver_ack(&ack, 14400, 64, 1, 16)
             .expect("selection");
 
         assert_eq!(ack.novorudp_current_window_missing_count, 32);
@@ -5226,7 +5331,7 @@ mod novorudp_tests {
             "receiver_done": false,
         });
         let ack = parse_ack_value(&ack_value, 256).expect("ack");
-        let selection = select_novorudp_repair_ranges_from_receiver_ack(&ack, 14400, 64, 16)
+        let selection = select_novorudp_repair_ranges_from_receiver_ack(&ack, 14400, 64, 1, 16)
             .expect("selection");
 
         assert_eq!(selection.ranges.len(), 2);
@@ -5329,8 +5434,9 @@ mod novorudp_tests {
             fresh_ack.latest_epoch > latest_epoch
                 && fresh_ack.latest_missing_count < stale_ack.latest_missing_count
         );
-        let selection = select_novorudp_repair_ranges_from_receiver_ack(&fresh_ack, 14400, 64, 16)
-            .expect("fresh ack should drive next repair");
+        let selection =
+            select_novorudp_repair_ranges_from_receiver_ack(&fresh_ack, 14400, 64, 1, 16)
+                .expect("fresh ack should drive next repair");
         assert_eq!(selection.window_id, 221);
         assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 54);
     }
@@ -5349,8 +5455,9 @@ mod novorudp_tests {
                 256,
             )
             .expect("ack");
-            let selection = select_novorudp_repair_ranges_from_receiver_ack(&ack, expected, 64, 16)
-                .expect("window repair selection");
+            let selection =
+                select_novorudp_repair_ranges_from_receiver_ack(&ack, expected, 64, 1, 16)
+                    .expect("window repair selection");
             assert_eq!(selection.window.start, progress);
             assert!(missing_ranges_count(selection.ranges.as_slice()) <= 64);
             progress = progress.saturating_add(16).min(14216);
@@ -5494,6 +5601,7 @@ mod novorudp_tests {
             &early_ack,
             14400,
             config.window_size,
+            config.repair_windows_per_ack,
             config.tail_window_max_retries,
         )
         .expect("early selection");
@@ -5501,6 +5609,7 @@ mod novorudp_tests {
             &late_ack,
             14400,
             config.window_size,
+            config.repair_windows_per_ack,
             config.tail_window_max_retries,
         )
         .expect("late selection");
@@ -6191,6 +6300,7 @@ fn receiver_child_progress_report_interval_ms() -> u64 {
     let novorudp = NovoRudpConfigV1::from_env(profile).unwrap_or(NovoRudpConfigV1 {
         enabled: true,
         window_size: 64,
+        repair_windows_per_ack: 8,
         packet_copies: 2,
         tail_packet_copies: 3,
         batch_size: 16,
@@ -7114,6 +7224,7 @@ fn receiver_ack_report_value_with_summary(
     let novorudp = NovoRudpConfigV1::from_env(transport_profile).unwrap_or(NovoRudpConfigV1 {
         enabled: true,
         window_size: 64,
+        repair_windows_per_ack: 8,
         packet_copies: 2,
         tail_packet_copies: 3,
         batch_size: 16,
@@ -7167,6 +7278,7 @@ fn receiver_ack_report_value_with_summary(
         "transport_profile": transport_profile.as_str(),
         "novorudp_enabled": novorudp.enabled,
         "novorudp_window_size": novorudp.window_size,
+        "novorudp_repair_windows_per_ack": novorudp.repair_windows_per_ack,
         "novorudp_current_window_id": current_window.as_ref().map(|(id, _, _)| *id),
         "novorudp_current_window_start": current_window.as_ref().map(|(_, window, _)| window.start),
         "novorudp_current_window_end_inclusive": current_window.as_ref().map(|(_, window, _)| window.end_inclusive),
@@ -12010,6 +12122,7 @@ fn run_sender(
                         state,
                         tx_count,
                         novorudp.window_size,
+                        novorudp.repair_windows_per_ack,
                         novorudp.tail_window_max_retries,
                     ) {
                         novorudp_window_id_this_round = Some(selection.window_id);
@@ -12076,6 +12189,7 @@ fn run_sender(
                         ranges.as_slice(),
                         tx_count,
                         novorudp.window_size,
+                        novorudp.repair_windows_per_ack,
                         missing_count_before,
                         ranges.len().try_into().unwrap_or(u64::MAX),
                         novorudp.tail_window_max_retries,
@@ -12812,6 +12926,7 @@ fn run_sender(
         "novorudp": {
             "enabled": novorudp.enabled,
             "window_size": novorudp.window_size,
+            "repair_windows_per_ack": novorudp.repair_windows_per_ack,
             "packet_copies": novorudp.packet_copies,
             "tail_packet_copies": novorudp.tail_packet_copies,
             "batch_size": novorudp.batch_size,
@@ -13461,6 +13576,7 @@ fn run_memory_bisect_variant(
         NovoRudpConfigV1 {
             enabled: false,
             window_size: 64,
+            repair_windows_per_ack: 8,
             packet_copies: 2,
             tail_packet_copies: 3,
             batch_size: 16,
