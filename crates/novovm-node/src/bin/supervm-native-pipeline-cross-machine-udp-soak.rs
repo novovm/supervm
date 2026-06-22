@@ -940,6 +940,14 @@ fn missing_ranges_count(ranges: &[MissingRangeV1]) -> u64 {
         .sum()
 }
 
+fn missing_ranges_bounds(ranges: &[MissingRangeV1]) -> (Option<u64>, Option<u64>) {
+    let normalized = normalize_missing_ranges(ranges, u64::MAX);
+    (
+        normalized.first().map(|range| range.start),
+        normalized.last().map(|range| range.end_inclusive),
+    )
+}
+
 fn normalize_missing_ranges(ranges: &[MissingRangeV1], expected: u64) -> Vec<MissingRangeV1> {
     if expected == 0 {
         return Vec::new();
@@ -1024,6 +1032,24 @@ fn novorudp_sender_repair_coverage_report_v1(
     let repair_sent_unique_count = missing_ranges_count(repair_sent.as_slice());
     let overlap_ack_missing_count =
         missing_ranges_overlap_count(repair_sent.as_slice(), ack_missing.as_slice());
+    let (latest_ack_missing_range_min, latest_ack_missing_range_max) =
+        missing_ranges_bounds(ack_missing.as_slice());
+    let (repair_selected_range_min, repair_selected_range_max) =
+        missing_ranges_bounds(repair_sent.as_slice());
+    let repair_window_covers_latest_missing =
+        match (latest_ack_missing_range_max, repair_selected_range_max) {
+            (Some(latest_max), Some(repair_max)) => repair_max >= latest_max,
+            (None, _) => true,
+            _ => false,
+        };
+    let repair_coverage_gap_count = if repair_window_covers_latest_missing {
+        0
+    } else {
+        latest_ack_missing_range_max
+            .zip(repair_selected_range_max)
+            .map(|(latest_max, repair_max)| latest_max.saturating_sub(repair_max))
+            .unwrap_or_else(|| missing_ranges_count(ack_missing.as_slice()))
+    };
     let duplicate_sequence_count =
         repair_sequence_sent_count.saturating_sub(repair_sent_unique_count);
     let duplicate_waste_ratio_bps = if repair_sequence_sent_count == 0 {
@@ -1050,6 +1076,13 @@ fn novorudp_sender_repair_coverage_report_v1(
         "sender_repair_sent_new_missing_coverage_count": overlap_ack_missing_count,
         "sender_repair_sent_duplicate_ranges_count": duplicate_sequence_count,
         "sender_repair_sent_duplicate_sequence_count": duplicate_sequence_count,
+        "latest_ack_missing_range_min": latest_ack_missing_range_min,
+        "latest_ack_missing_range_max": latest_ack_missing_range_max,
+        "repair_selected_range_min": repair_selected_range_min,
+        "repair_selected_range_max": repair_selected_range_max,
+        "repair_latest_missing_max": latest_ack_missing_range_max,
+        "repair_window_covers_latest_missing": repair_window_covers_latest_missing,
+        "repair_coverage_gap_count": repair_coverage_gap_count,
         "repair_duplicate_waste_ratio_bps": duplicate_waste_ratio_bps,
     })
 }
@@ -1187,6 +1220,23 @@ fn novorudp_should_send_tail_gap(
 ) -> bool {
     missing_ranges_count(&[gap])
         <= novorudp_tail_gap_coverage_limit(window_size, tail_window_max_retries)
+}
+
+fn bounded_tail_gap_repair_range_from_ack(
+    tx_count: u64,
+    latest_missing_count: Option<u64>,
+    highest_sequence_seen: Option<u64>,
+    window_size: u64,
+) -> Option<MissingRangeV1> {
+    let gap = tail_gap_range_from_ack(tx_count, latest_missing_count, highest_sequence_seen)?;
+    let bounded_end = gap
+        .start
+        .saturating_add(window_size.max(1).saturating_sub(1))
+        .min(gap.end_inclusive);
+    Some(MissingRangeV1 {
+        start: gap.start,
+        end_inclusive: bounded_end,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4587,6 +4637,76 @@ mod novorudp_tests {
             config.window_size,
             config.tail_window_max_retries
         ));
+    }
+
+    #[test]
+    fn novorudp_sender_bounds_large_tail_gap_instead_of_aborting_repair() {
+        let config = sender_timeout_novorudp_config();
+        let raw_tail_gap =
+            tail_gap_range_from_ack(57_600, Some(10_224), Some(47_375)).expect("tail gap");
+        assert_eq!(raw_tail_gap.start, 47_376);
+        assert_eq!(raw_tail_gap.end_inclusive, 57_599);
+        assert!(!novorudp_should_send_tail_gap(
+            raw_tail_gap,
+            config.window_size,
+            config.tail_window_max_retries
+        ));
+
+        let bounded = bounded_tail_gap_repair_range_from_ack(
+            57_600,
+            Some(10_224),
+            Some(47_375),
+            config.window_size,
+        )
+        .expect("bounded tail gap");
+        assert_eq!(
+            bounded,
+            MissingRangeV1 {
+                start: 47_376,
+                end_inclusive: 47_439
+            }
+        );
+        assert!(novorudp_should_send_tail_gap(
+            bounded,
+            config.window_size,
+            config.tail_window_max_retries
+        ));
+    }
+
+    #[test]
+    fn sender_repair_advances_repair_sequence_max_toward_latest_missing_max() {
+        let config = sender_timeout_novorudp_config();
+        let early_missing = vec![MissingRangeV1 {
+            start: 15_908,
+            end_inclusive: 57_599,
+        }];
+        let first = select_novorudp_repair_ranges_from_ack(
+            early_missing.as_slice(),
+            57_600,
+            config.window_size,
+            41_692,
+            early_missing.len() as u64,
+            config.tail_window_max_retries,
+        )
+        .expect("first missing window");
+        assert_eq!(first.window.start, 15_908);
+        assert_eq!(first.window.end_inclusive, 15_971);
+
+        let bounded_tail = bounded_tail_gap_repair_range_from_ack(
+            57_600,
+            Some(10_224),
+            Some(47_375),
+            config.window_size,
+        );
+        let merged =
+            merge_tail_gap_into_repair_ranges(first.ranges.as_slice(), bounded_tail, 57_600);
+        let (_, repair_max) = missing_ranges_bounds(merged.as_slice());
+
+        assert_eq!(repair_max, Some(47_439));
+        assert!(
+            repair_max.unwrap() > 47_375,
+            "repair must follow the latest ACK highest-sequence window"
+        );
     }
 
     #[test]
@@ -11547,7 +11667,9 @@ fn run_sender(
     let mut ack_highest_sequence_seen_at_repair_end: Option<u64> = None;
     let mut repair_window_recomputed_count = 0u64;
     let mut repair_window_recomputed_due_to_ack_progress = 0u64;
-    let mut stale_ack_repair_aborted_count = 0u64;
+    let stale_ack_repair_aborted_count = 0u64;
+    let mut large_tail_gap_bounded_window_count = 0u64;
+    let mut repair_window_no_progress_continue_count = 0u64;
     let moving_window_enabled = novorudp.enabled;
     let mut moving_window_last_range: Option<MissingRangeV1> = None;
     let mut moving_window_last_ack_epoch: Option<u64> = None;
@@ -12044,22 +12166,28 @@ fn run_sender(
                 latest_ack_highest_sequence_seen,
             );
             let tail_gap_this_round = if novorudp.enabled {
-                raw_tail_gap_this_round.filter(|gap| {
-                    novorudp_should_send_tail_gap(
-                        *gap,
+                raw_tail_gap_this_round.map(|gap| {
+                    if novorudp_should_send_tail_gap(
+                        gap,
                         novorudp.window_size,
                         novorudp.tail_window_max_retries,
-                    )
+                    ) {
+                        gap
+                    } else {
+                        large_tail_gap_bounded_window_count =
+                            large_tail_gap_bounded_window_count.saturating_add(1);
+                        bounded_tail_gap_repair_range_from_ack(
+                            tx_count,
+                            latest_ack_missing_count,
+                            latest_ack_highest_sequence_seen,
+                            novorudp.window_size,
+                        )
+                        .unwrap_or(gap)
+                    }
                 })
             } else {
                 raw_tail_gap_this_round
             };
-            if novorudp.enabled
-                && raw_tail_gap_this_round.is_some()
-                && tail_gap_this_round.is_none()
-            {
-                stale_ack_repair_aborted_count = stale_ack_repair_aborted_count.saturating_add(1);
-            }
             let mut tail_gap_sent_count_this_round = 0u64;
             if let Some(gap) = tail_gap_this_round {
                 let gap_count = missing_ranges_count(&[gap]);
@@ -12362,7 +12490,9 @@ fn run_sender(
                     && novorudp.no_progress_backoff
                 {
                     novorudp_window_failed_count = novorudp_window_failed_count.saturating_add(1);
-                    break;
+                    repair_window_no_progress_continue_count =
+                        repair_window_no_progress_continue_count.saturating_add(1);
+                    continue;
                 }
             }
             if repair_rounds_detail_sample.len() < tail_repair.missing_sample_limit as usize {
@@ -12527,6 +12657,29 @@ fn run_sender(
         repair_sequence_sent_count,
         tail_repair.missing_sample_limit,
     );
+    let (latest_ack_missing_range_min, latest_ack_missing_range_max) =
+        missing_ranges_bounds(latest_ack_missing_ranges_sample.as_slice());
+    let (repair_selected_range_min, repair_selected_range_max) =
+        missing_ranges_bounds(repair_sequence_sent_ranges.as_slice());
+    let repair_window_covers_latest_missing = match (
+        latest_ack_missing_range_max,
+        repair_selected_range_max,
+        latest_ack_missing_count,
+        latest_ack_receiver_done,
+    ) {
+        (_, _, Some(0), _) | (_, _, _, true) => true,
+        (Some(latest_max), Some(repair_max), _, _) => repair_max >= latest_max,
+        (None, _, _, _) => true,
+        _ => false,
+    };
+    let repair_coverage_gap_count = if repair_window_covers_latest_missing {
+        0
+    } else {
+        latest_ack_missing_range_max
+            .zip(repair_selected_range_max)
+            .map(|(latest_max, repair_max)| latest_max.saturating_sub(repair_max))
+            .unwrap_or_else(|| latest_ack_missing_count.unwrap_or_default())
+    };
     let accepted = sender_completed && tail_repair_success;
     let fail_reason = if accepted {
         None
@@ -12660,9 +12813,19 @@ fn run_sender(
             "repair_window_recomputed_count": repair_window_recomputed_count,
             "repair_window_recomputed_due_to_ack_progress": repair_window_recomputed_due_to_ack_progress,
             "stale_ack_repair_aborted_count": stale_ack_repair_aborted_count,
+            "large_tail_gap_bounded_window_count": large_tail_gap_bounded_window_count,
+            "repair_window_no_progress_continue_count": repair_window_no_progress_continue_count,
             "moving_window_enabled": moving_window_enabled,
             "moving_window_last_range": missing_ranges_to_json(moving_window_last_range.as_slice(), 1),
             "moving_window_last_ack_epoch": moving_window_last_ack_epoch,
+            "latest_ack_missing_range_min": latest_ack_missing_range_min,
+            "latest_ack_missing_range_max": latest_ack_missing_range_max,
+            "repair_selected_range_min": repair_selected_range_min,
+            "repair_selected_range_max": repair_selected_range_max,
+            "repair_window_latest_ack_epoch": tail_repair_latest_ack_epoch,
+            "repair_window_covers_latest_missing": repair_window_covers_latest_missing,
+            "repair_latest_missing_max": latest_ack_missing_range_max,
+            "repair_coverage_gap_count": repair_coverage_gap_count,
             "windows_detail_sample": novorudp_windows_detail_sample,
         },
         "sender_completed": sender_completed,
@@ -12772,9 +12935,19 @@ fn run_sender(
             "repair_window_recomputed_count": repair_window_recomputed_count,
             "repair_window_recomputed_due_to_ack_progress": repair_window_recomputed_due_to_ack_progress,
             "stale_ack_repair_aborted_count": stale_ack_repair_aborted_count,
+            "large_tail_gap_bounded_window_count": large_tail_gap_bounded_window_count,
+            "repair_window_no_progress_continue_count": repair_window_no_progress_continue_count,
             "moving_window_enabled": moving_window_enabled,
             "moving_window_last_range": missing_ranges_to_json(moving_window_last_range.as_slice(), 1),
             "moving_window_last_ack_epoch": moving_window_last_ack_epoch,
+            "latest_ack_missing_range_min": latest_ack_missing_range_min,
+            "latest_ack_missing_range_max": latest_ack_missing_range_max,
+            "repair_selected_range_min": repair_selected_range_min,
+            "repair_selected_range_max": repair_selected_range_max,
+            "repair_window_latest_ack_epoch": tail_repair_latest_ack_epoch,
+            "repair_window_covers_latest_missing": repair_window_covers_latest_missing,
+            "repair_latest_missing_max": latest_ack_missing_range_max,
+            "repair_coverage_gap_count": repair_coverage_gap_count,
             "receiver_final_missing_count": receiver_final_missing_count,
             "receiver_final_done": receiver_final_done,
             "final_ack_wait_enabled": final_ack_wait_ms > 0,
