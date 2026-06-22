@@ -1406,6 +1406,39 @@ mod novorudp_tests {
         result
     }
 
+    fn pipeline_liveness_sample(
+        elapsed_ms: u64,
+        pending: u64,
+        child_ticks: u64,
+        object_ready: u64,
+        batch_ready: u64,
+        batch_received: u64,
+        tx_ingress_calls: u64,
+        result_ready: u64,
+        result_verified: u64,
+        closed: u64,
+    ) -> Value {
+        serde_json::json!({
+            "elapsed_ms": elapsed_ms,
+            "receiver_udp_packet_recv_count": object_ready,
+            "received_unique_total": object_ready,
+            "aoem_executed_total": closed,
+            "canonical_unique_included_total": closed,
+            "receiver_ledger_close_count": closed,
+            "ledger_durable_missing_count": 57_600u64.saturating_sub(closed),
+            "queue_pending_last": pending,
+            "receiver_child_tick_count": child_ticks,
+            "receiver_aoem_tick_count": tx_ingress_calls,
+            "receiver_pending_selected_count": tx_ingress_calls.saturating_mul(32),
+            "network_receiver_object_ready_count": object_ready,
+            "object_assembler_batch_ready_count": batch_ready,
+            "aoem_runtime_worker_batch_received_count": batch_received,
+            "aoem_runtime_worker_tx_ingress_call_count": tx_ingress_calls,
+            "aoem_runtime_worker_result_ready_count": result_ready,
+            "finality_report_worker_result_verified_count": result_verified,
+        })
+    }
+
     #[test]
     fn receiver_ack_backchannel_reports_missing_target_without_silent_success() {
         let path = std::env::temp_dir().join(format!(
@@ -3556,6 +3589,143 @@ mod novorudp_tests {
         assert_eq!(
             sample["receiver_durable_missing_delta_direction"].as_str(),
             Some("decrease")
+        );
+    }
+
+    #[test]
+    fn pipeline_reports_stage_liveness_counters() {
+        let previous = pipeline_liveness_sample(10_000, 32, 10, 100, 4, 4, 4, 4, 4, 100);
+        let mut sample = pipeline_liveness_sample(15_000, 64, 12, 132, 5, 5, 5, 5, 5, 132);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["network_receiver_object_ready_delta"].as_u64(),
+            Some(32)
+        );
+        assert_eq!(
+            sample["object_assembler_batch_ready_delta"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            sample["aoem_runtime_worker_batch_received_delta"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            sample["aoem_runtime_worker_tx_ingress_call_delta"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            sample["aoem_runtime_worker_result_ready_delta"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            sample["finality_report_worker_result_verified_delta"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(sample["queue_pending_delta"].as_i64(), Some(32));
+        assert_eq!(
+            sample["pipeline_pending_drain_stall"].as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn pipeline_detects_pending_drain_stall_when_pending_nonzero() {
+        let previous =
+            pipeline_liveness_sample(10_000, 1_920, 10, 29_400, 920, 920, 920, 920, 920, 29_400);
+        let mut sample =
+            pipeline_liveness_sample(15_000, 1_952, 10, 29_400, 920, 920, 920, 920, 920, 29_400);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(sample["pipeline_pending_drain_stall"].as_bool(), Some(true));
+        assert_eq!(
+            sample["pipeline_pending_drain_stall_reason"].as_str(),
+            Some("pending_drain_callsite_stall")
+        );
+        assert_eq!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("pending_drain_callsite_stall")
+        );
+        assert_eq!(sample["receiver_child_tick_stall_ms"].as_u64(), Some(5_000));
+    }
+
+    #[test]
+    fn pipeline_reports_assembler_to_runtime_handoff_stall() {
+        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
+        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 4, 4, 4, 4, 100);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("aoem_runtime_worker_input_stall")
+        );
+        assert_eq!(
+            sample["aoem_runtime_worker_stall_reason"].as_str(),
+            Some("batch_ready_not_received")
+        );
+    }
+
+    #[test]
+    fn pipeline_reports_runtime_worker_submit_stall() {
+        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
+        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 5, 4, 4, 4, 100);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("aoem_runtime_worker_submit_stall")
+        );
+        assert_eq!(
+            sample["aoem_runtime_worker_stall_reason"].as_str(),
+            Some("batch_received_not_submitted")
+        );
+    }
+
+    #[test]
+    fn pipeline_reports_result_drain_stall() {
+        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
+        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 5, 5, 4, 4, 100);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("aoem_runtime_worker_result_drain_stall")
+        );
+        assert_eq!(
+            sample["aoem_runtime_worker_stall_reason"].as_str(),
+            Some("tx_ingress_call_without_result")
+        );
+    }
+
+    #[test]
+    fn pipeline_reports_finality_worker_backpressure() {
+        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
+        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 5, 5, 5, 4, 100);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("finality_report_worker_backpressure")
+        );
+        assert_eq!(
+            sample["finality_report_worker_backpressure_reason"].as_str(),
+            Some("result_ready_not_verified")
+        );
+    }
+
+    #[test]
+    fn pipeline_does_not_report_tail_repair_when_pending_nonzero() {
+        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
+        let mut sample = pipeline_liveness_sample(15_000, 96, 10, 100, 4, 4, 4, 4, 4, 100);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("pending_drain_callsite_stall")
+        );
+        assert_ne!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("waiting_for_sender")
         );
     }
 
@@ -8930,6 +9100,20 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
     let previous_pending_last = summary_u64(previous, "queue_pending_last");
     let durable_missing = summary_u64(sample, "ledger_durable_missing_count");
     let previous_durable_missing = summary_u64(previous, "ledger_durable_missing_count");
+    let object_ready = summary_u64(sample, "network_receiver_object_ready_count");
+    let previous_object_ready = summary_u64(previous, "network_receiver_object_ready_count");
+    let batch_ready = summary_u64(sample, "object_assembler_batch_ready_count");
+    let previous_batch_ready = summary_u64(previous, "object_assembler_batch_ready_count");
+    let batch_received = summary_u64(sample, "aoem_runtime_worker_batch_received_count");
+    let previous_batch_received = summary_u64(previous, "aoem_runtime_worker_batch_received_count");
+    let tx_ingress_calls = summary_u64(sample, "aoem_runtime_worker_tx_ingress_call_count");
+    let previous_tx_ingress_calls =
+        summary_u64(previous, "aoem_runtime_worker_tx_ingress_call_count");
+    let result_ready = summary_u64(sample, "aoem_runtime_worker_result_ready_count");
+    let previous_result_ready = summary_u64(previous, "aoem_runtime_worker_result_ready_count");
+    let result_verified = summary_u64(sample, "finality_report_worker_result_verified_count");
+    let previous_result_verified =
+        summary_u64(previous, "finality_report_worker_result_verified_count");
 
     let network_received_delta = network_received.saturating_sub(previous_network_received);
     let received_unique_delta = received_unique.saturating_sub(previous_received_unique);
@@ -8939,6 +9123,21 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
     let child_tick_delta = ticks.saturating_sub(previous_ticks);
     let aoem_tick_delta = aoem_ticks.saturating_sub(previous_aoem_ticks);
     let pending_selected_delta = pending_selected.saturating_sub(previous_pending_selected);
+    let object_ready_delta = object_ready.saturating_sub(previous_object_ready);
+    let batch_ready_delta = batch_ready.saturating_sub(previous_batch_ready);
+    let batch_received_delta = batch_received.saturating_sub(previous_batch_received);
+    let tx_ingress_call_delta = tx_ingress_calls.saturating_sub(previous_tx_ingress_calls);
+    let result_ready_delta = result_ready.saturating_sub(previous_result_ready);
+    let result_verified_delta = result_verified.saturating_sub(previous_result_verified);
+    let pending_delta = if pending_last >= previous_pending_last {
+        pending_last
+            .saturating_sub(previous_pending_last)
+            .min(i64::MAX as u64) as i64
+    } else {
+        -(previous_pending_last
+            .saturating_sub(pending_last)
+            .min(i64::MAX as u64) as i64)
+    };
     let pending_delta_direction = if pending_last > previous_pending_last {
         "increase"
     } else if pending_last < previous_pending_last {
@@ -8973,7 +9172,63 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
         ledger_close_delta.saturating_mul(1000) / network_received_delta
     };
 
-    let stall_reason = if pending_last > 0 && child_tick_delta == 0 {
+    let pipeline_stage_liveness_stalled = pending_last > 0
+        && canonical_delta == 0
+        && ledger_close_delta == 0
+        && (object_ready_delta > 0
+            || batch_ready_delta > 0
+            || batch_received_delta > 0
+            || tx_ingress_call_delta > 0
+            || result_ready_delta > 0
+            || result_verified_delta > 0
+            || child_tick_delta == 0
+            || pending_selected_delta == 0);
+    let all_pipeline_stage_deltas_zero = object_ready_delta == 0
+        && batch_ready_delta == 0
+        && batch_received_delta == 0
+        && tx_ingress_call_delta == 0
+        && result_ready_delta == 0
+        && result_verified_delta == 0;
+    let pipeline_pending_drain_stall_reason = if pending_last > 0 && child_tick_delta == 0 {
+        "pending_drain_callsite_stall"
+    } else if pipeline_stage_liveness_stalled && object_ready_delta > 0 && batch_ready_delta == 0 {
+        "object_assembler_stall"
+    } else if pipeline_stage_liveness_stalled && batch_ready_delta > 0 && batch_received_delta == 0
+    {
+        "aoem_runtime_worker_input_stall"
+    } else if pipeline_stage_liveness_stalled
+        && batch_received_delta > 0
+        && tx_ingress_call_delta == 0
+    {
+        "aoem_runtime_worker_submit_stall"
+    } else if pipeline_stage_liveness_stalled
+        && tx_ingress_call_delta > 0
+        && result_ready_delta == 0
+    {
+        "aoem_runtime_worker_result_drain_stall"
+    } else if pipeline_stage_liveness_stalled
+        && result_ready_delta > 0
+        && result_verified_delta == 0
+    {
+        "finality_report_worker_backpressure"
+    } else if pipeline_stage_liveness_stalled
+        && result_verified_delta > 0
+        && canonical_delta == 0
+        && ledger_close_delta == 0
+    {
+        "proof_close_ledger_projection_stall"
+    } else if pipeline_stage_liveness_stalled && pending_selected_delta == 0 {
+        "pending_drain_callsite_stall"
+    } else if pending_last > 0 && all_pipeline_stage_deltas_zero && canonical_delta == 0 {
+        "pending_drain_callsite_stall"
+    } else {
+        "none"
+    };
+    let pipeline_pending_drain_stall =
+        pending_last > 0 && pipeline_pending_drain_stall_reason != "none";
+    let stall_reason = if pipeline_pending_drain_stall {
+        pipeline_pending_drain_stall_reason
+    } else if pending_last > 0 && child_tick_delta == 0 {
         "receiver_child_tick_stall"
     } else if pending_last > 0
         && child_tick_delta > 0
@@ -9003,6 +9258,14 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
     sample["receiver_child_tick_delta"] = serde_json::json!(child_tick_delta);
     sample["receiver_aoem_tick_delta"] = serde_json::json!(aoem_tick_delta);
     sample["receiver_pending_selected_delta"] = serde_json::json!(pending_selected_delta);
+    sample["network_receiver_object_ready_delta"] = serde_json::json!(object_ready_delta);
+    sample["object_assembler_batch_ready_delta"] = serde_json::json!(batch_ready_delta);
+    sample["aoem_runtime_worker_batch_received_delta"] = serde_json::json!(batch_received_delta);
+    sample["aoem_runtime_worker_tx_ingress_call_delta"] = serde_json::json!(tx_ingress_call_delta);
+    sample["aoem_runtime_worker_result_ready_delta"] = serde_json::json!(result_ready_delta);
+    sample["finality_report_worker_result_verified_delta"] =
+        serde_json::json!(result_verified_delta);
+    sample["queue_pending_delta"] = serde_json::json!(pending_delta);
     sample["receiver_pending_delta_abs"] = serde_json::json!(pending_delta_abs);
     sample["receiver_pending_delta_direction"] = serde_json::json!(pending_delta_direction);
     sample["receiver_durable_missing_delta_abs"] = serde_json::json!(durable_missing_delta_abs);
@@ -9019,6 +9282,23 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
         serde_json::json!(repair_effective_completion_per_1000_packets);
     sample["receiver_child_tick_stall"] =
         serde_json::json!(pending_last > 0 && child_tick_delta == 0);
+    sample["receiver_child_tick_last_progress_ms"] = if child_tick_delta > 0 {
+        serde_json::json!(elapsed_ms)
+    } else {
+        Value::Null
+    };
+    sample["receiver_child_tick_stall_ms"] =
+        serde_json::json!(if pending_last > 0 && child_tick_delta == 0 {
+            elapsed_delta_ms
+        } else {
+            0
+        });
+    sample["receiver_child_tick_stall_reason"] =
+        serde_json::json!(if pending_last > 0 && child_tick_delta == 0 {
+            "pending_drain_callsite_stall"
+        } else {
+            "none"
+        });
     sample["receiver_admission_drain_stall"] = serde_json::json!(
         pending_last > 0 && child_tick_delta > 0 && pending_selected_delta == 0 && aoem_delta == 0
     );
@@ -9026,6 +9306,63 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
         serde_json::json!(pending_selected_delta > 0 && aoem_delta == 0);
     sample["receiver_receipt_canonical_projection_stall"] =
         serde_json::json!(aoem_delta > 0 && canonical_delta == 0);
+    sample["pipeline_stage_liveness_stalled"] = serde_json::json!(pipeline_stage_liveness_stalled);
+    sample["pipeline_pending_drain_stall"] = serde_json::json!(pipeline_pending_drain_stall);
+    sample["pipeline_pending_drain_stall_reason"] =
+        serde_json::json!(pipeline_pending_drain_stall_reason);
+    sample["object_assembler_stall_reason"] = serde_json::json!(
+        if pipeline_pending_drain_stall_reason == "object_assembler_stall" {
+            "object_ready_not_batched"
+        } else {
+            "none"
+        }
+    );
+    sample["aoem_runtime_worker_stall_reason"] =
+        serde_json::json!(if pipeline_pending_drain_stall_reason
+            == "aoem_runtime_worker_input_stall"
+        {
+            "batch_ready_not_received"
+        } else if pipeline_pending_drain_stall_reason == "aoem_runtime_worker_submit_stall" {
+            "batch_received_not_submitted"
+        } else if pipeline_pending_drain_stall_reason == "aoem_runtime_worker_result_drain_stall" {
+            "tx_ingress_call_without_result"
+        } else {
+            "none"
+        });
+    sample["aoem_runtime_worker_backpressure_reason"] = serde_json::json!(
+        if pipeline_pending_drain_stall_reason.starts_with("aoem_runtime_worker") {
+            pipeline_pending_drain_stall_reason
+        } else {
+            "none"
+        }
+    );
+    sample["finality_report_worker_backpressure_reason"] =
+        serde_json::json!(if pipeline_pending_drain_stall_reason
+            == "finality_report_worker_backpressure"
+        {
+            "result_ready_not_verified"
+        } else {
+            "none"
+        });
+    sample["pending_drain_attempt_count"] =
+        serde_json::json!(child_tick_delta.max(pending_selected_delta));
+    sample["pending_drain_success_count"] = serde_json::json!(pending_selected_delta);
+    sample["pending_drain_zero_count"] =
+        serde_json::json!(if pending_last > 0 && pending_selected_delta == 0 {
+            child_tick_delta
+        } else {
+            0
+        });
+    sample["canonical_progress_last_ms"] = if canonical_delta > 0 {
+        serde_json::json!(elapsed_ms)
+    } else {
+        Value::Null
+    };
+    sample["ledger_progress_last_ms"] = if ledger_close_delta > 0 {
+        serde_json::json!(elapsed_ms)
+    } else {
+        Value::Null
+    };
     sample["receiver_drain_stall_reason"] = serde_json::json!(stall_reason);
     annotate_mini_tps_sync_gate_v1(sample);
 }
@@ -10030,6 +10367,68 @@ fn write_diagnostics_report(
             .and_then(Value::as_bool),
         "final_run_tps_sync_fail_reasons": signoff_sample
             .and_then(|sample| sample.get("final_run_tps_sync_fail_reasons"))
+            .cloned(),
+        "receiver_child_tick_count": signoff_sample
+            .map(|sample| sample_u64(sample, "receiver_child_tick_count")),
+        "receiver_child_tick_delta": signoff_sample
+            .map(|sample| sample_u64(sample, "receiver_child_tick_delta")),
+        "receiver_child_tick_stall_ms": signoff_sample
+            .map(|sample| sample_u64(sample, "receiver_child_tick_stall_ms")),
+        "receiver_child_tick_stall_reason": signoff_sample
+            .and_then(|sample| sample.get("receiver_child_tick_stall_reason"))
+            .cloned(),
+        "receiver_drain_stall_reason": signoff_sample
+            .and_then(|sample| sample.get("receiver_drain_stall_reason"))
+            .cloned(),
+        "pipeline_pending_drain_stall": signoff_sample
+            .and_then(|sample| sample.get("pipeline_pending_drain_stall"))
+            .and_then(Value::as_bool),
+        "pipeline_pending_drain_stall_reason": signoff_sample
+            .and_then(|sample| sample.get("pipeline_pending_drain_stall_reason"))
+            .cloned(),
+        "pipeline_stage_liveness_stalled": signoff_sample
+            .and_then(|sample| sample.get("pipeline_stage_liveness_stalled"))
+            .and_then(Value::as_bool),
+        "network_receiver_object_ready_delta": signoff_sample
+            .map(|sample| sample_u64(sample, "network_receiver_object_ready_delta")),
+        "object_assembler_batch_ready_delta": signoff_sample
+            .map(|sample| sample_u64(sample, "object_assembler_batch_ready_delta")),
+        "aoem_runtime_worker_batch_received_delta": signoff_sample
+            .map(|sample| sample_u64(sample, "aoem_runtime_worker_batch_received_delta")),
+        "aoem_runtime_worker_tx_ingress_call_delta": signoff_sample
+            .map(|sample| sample_u64(sample, "aoem_runtime_worker_tx_ingress_call_delta")),
+        "aoem_runtime_worker_result_ready_delta": signoff_sample
+            .map(|sample| sample_u64(sample, "aoem_runtime_worker_result_ready_delta")),
+        "finality_report_worker_result_verified_delta": signoff_sample
+            .map(|sample| sample_u64(sample, "finality_report_worker_result_verified_delta")),
+        "queue_pending_last": signoff_sample
+            .map(|sample| sample_u64(sample, "queue_pending_last")),
+        "queue_pending_delta": signoff_sample
+            .and_then(|sample| sample.get("queue_pending_delta"))
+            .cloned(),
+        "pending_drain_attempt_count": signoff_sample
+            .map(|sample| sample_u64(sample, "pending_drain_attempt_count")),
+        "pending_drain_success_count": signoff_sample
+            .map(|sample| sample_u64(sample, "pending_drain_success_count")),
+        "pending_drain_zero_count": signoff_sample
+            .map(|sample| sample_u64(sample, "pending_drain_zero_count")),
+        "object_assembler_stall_reason": signoff_sample
+            .and_then(|sample| sample.get("object_assembler_stall_reason"))
+            .cloned(),
+        "aoem_runtime_worker_stall_reason": signoff_sample
+            .and_then(|sample| sample.get("aoem_runtime_worker_stall_reason"))
+            .cloned(),
+        "aoem_runtime_worker_backpressure_reason": signoff_sample
+            .and_then(|sample| sample.get("aoem_runtime_worker_backpressure_reason"))
+            .cloned(),
+        "finality_report_worker_backpressure_reason": signoff_sample
+            .and_then(|sample| sample.get("finality_report_worker_backpressure_reason"))
+            .cloned(),
+        "canonical_progress_last_ms": signoff_sample
+            .and_then(|sample| sample.get("canonical_progress_last_ms"))
+            .cloned(),
+        "ledger_progress_last_ms": signoff_sample
+            .and_then(|sample| sample.get("ledger_progress_last_ms"))
             .cloned(),
         "mini_a_send_tps_x1000": signoff_sample
             .map(|sample| sample_u64(sample, "mini_a_send_tps_x1000")),
