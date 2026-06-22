@@ -2352,11 +2352,29 @@ mod novorudp_tests {
         stale_live_sample: Value,
         final_closed_sample: Value,
     ) -> Value {
+        write_test_diagnostics_report_for_tx_count(stale_live_sample, final_closed_sample, 480)
+    }
+
+    fn write_test_diagnostics_report_for_tx_count(
+        stale_live_sample: Value,
+        final_closed_sample: Value,
+        tx_count: u64,
+    ) -> Value {
+        write_test_diagnostics_report_samples_for_tx_count(
+            vec![stale_live_sample, final_closed_sample],
+            tx_count,
+        )
+    }
+
+    fn write_test_diagnostics_report_samples_for_tx_count(
+        samples: Vec<Value>,
+        tx_count: u64,
+    ) -> Value {
         let path =
             std::env::temp_dir().join(format!("novovm-mini-final-diagnostics-{}.json", now_ms()));
         let config = test_diagnostics_config(path.clone());
         let state = ReceiverDiagnosticsStateV1 {
-            samples: vec![stale_live_sample, final_closed_sample],
+            samples,
             last_canonical: 480,
             stall_windows: 0,
             fail_reason: None,
@@ -2364,7 +2382,7 @@ mod novorudp_tests {
             first_working_set_bytes: Some(1),
             last_working_set_bytes: Some(1),
         };
-        write_diagnostics_report(&config, &state, true, 42, 480).unwrap();
+        write_diagnostics_report(&config, &state, true, 42, tx_count).unwrap();
         let report = serde_json::from_slice::<Value>(&fs::read(path.as_path()).unwrap()).unwrap();
         let _ = fs::remove_file(path);
         report
@@ -2602,6 +2620,208 @@ mod novorudp_tests {
         assert_eq!(report["final_run_tps_sync_pass"].as_bool(), Some(true));
         assert_eq!(report["mini_tps_sync_pass"].as_bool(), Some(true));
         assert!(report["final_run_close_tps_x1000"].as_u64().unwrap_or(0) >= 8_000);
+    }
+
+    fn pipeline_14400_live_sample_for_test() -> Value {
+        serde_json::json!({
+            "elapsed_ms": 350_000,
+            "process_working_set_bytes": 1,
+            "process_private_bytes": 1,
+            "received_unique_total": 2_000,
+            "canonical_unique_included_total": 2_000,
+            "receiver_ledger_close_count": 2_000,
+            "aoem_executed_total": 2_000,
+            "network_receiver_object_ready_count": 2_000,
+            "object_assembler_batch_ready_count": 16,
+            "aoem_runtime_worker_batch_received_count": 16,
+            "aoem_runtime_worker_tx_ingress_call_count": 16,
+            "aoem_runtime_worker_result_ready_count": 16,
+            "finality_report_worker_result_verified_count": 16
+        })
+    }
+
+    fn pipeline_14400_final_sample_for_test(elapsed_ms: u64) -> Value {
+        serde_json::json!({
+            "elapsed_ms": elapsed_ms,
+            "final_closed_child_sample": true,
+            "final_closed_child_sample_available": true,
+            "receiver_exit_phase": "completed",
+            "received_unique_total": 14_400,
+            "canonical_unique_included_total": 14_400,
+            "receiver_ledger_close_count": 14_400,
+            "aoem_executed_total": 14_400,
+            "aoem_native_tx_batch_production_receipt_count": 14_400,
+            "aoem_native_tx_batch_production_canonical_proof_count": 14_400,
+            "aoem_native_tx_batch_production_ledger_close_proof_count": 14_400,
+            "network_receiver_object_ready_count": 14_400,
+            "object_assembler_batch_ready_count": 113,
+            "aoem_runtime_worker_batch_received_count": 113,
+            "aoem_runtime_worker_tx_ingress_call_count": 113,
+            "aoem_runtime_worker_result_ready_count": 113,
+            "finality_report_worker_result_verified_count": 113,
+            "receiver_pipeline_backpressure_reason": "none",
+            "aoem_runtime_worker_scheduler": "ready_queue_active_drain",
+            "aoem_runtime_worker_active_sleep_ms": 0,
+            "aoem_runtime_worker_idle_sleep_ms": 10
+        })
+    }
+
+    #[test]
+    fn performance_report_breaks_down_sender_receiver_tail_windows() {
+        let report = write_test_diagnostics_report_for_tx_count(
+            pipeline_14400_live_sample_for_test(),
+            pipeline_14400_final_sample_for_test(1_936_000),
+            14_400,
+        );
+
+        assert_eq!(
+            report["receiver_total_elapsed_ms"].as_u64(),
+            Some(1_936_000)
+        );
+        assert_eq!(report["receiver_first_tx_seen_ms"].as_u64(), Some(350_000));
+        assert_eq!(report["receiver_first_close_ms"].as_u64(), Some(350_000));
+        assert_eq!(report["receiver_last_close_ms"].as_u64(), Some(1_936_000));
+        assert_eq!(
+            report["receiver_active_close_window_ms"].as_u64(),
+            Some(1_586_000)
+        );
+        assert_eq!(report["finalization_tail_ms"].as_u64(), Some(0));
+        assert_eq!(
+            report["performance_wall_clock_breakdown"]["receiver_total_elapsed_ms"].as_u64(),
+            Some(1_936_000)
+        );
+    }
+
+    #[test]
+    fn pipeline_reports_active_close_tps_separately_from_total_elapsed() {
+        let report = write_test_diagnostics_report_for_tx_count(
+            pipeline_14400_live_sample_for_test(),
+            pipeline_14400_final_sample_for_test(1_936_000),
+            14_400,
+        );
+
+        assert_eq!(
+            report["strict_30min_wall_clock_elapsed_ms"].as_u64(),
+            Some(1_936_000)
+        );
+        assert_eq!(
+            report["strict_30min_wall_clock_gap_ms"].as_u64(),
+            Some(136_000)
+        );
+        assert_eq!(
+            report["receiver_active_close_counter_delta"].as_u64(),
+            Some(12_400)
+        );
+        assert!(
+            report["receiver_active_close_tps_x1000"]
+                .as_u64()
+                .unwrap_or(0)
+                > 7_000
+        );
+        assert!(
+            report["receiver_total_close_tps_x1000"]
+                .as_u64()
+                .unwrap_or(0)
+                < 8_000
+        );
+    }
+
+    #[test]
+    fn pipeline_reports_tail_finalization_ms() {
+        let close_sample = pipeline_14400_final_sample_for_test(1_800_000);
+        let report = write_test_diagnostics_report_samples_for_tx_count(
+            vec![
+                pipeline_14400_live_sample_for_test(),
+                close_sample,
+                pipeline_14400_final_sample_for_test(1_936_000),
+            ],
+            14_400,
+        );
+
+        assert_eq!(report["receiver_last_close_ms"].as_u64(), Some(1_800_000));
+        assert_eq!(report["finalization_tail_ms"].as_u64(), Some(136_000));
+    }
+
+    #[test]
+    fn pipeline_reports_worker_batch_size_and_inflight() {
+        let report = write_test_diagnostics_report_for_tx_count(
+            pipeline_14400_live_sample_for_test(),
+            pipeline_14400_final_sample_for_test(1_936_000),
+            14_400,
+        );
+
+        assert_eq!(
+            report["aoem_runtime_worker_tx_ingress_call_count"].as_u64(),
+            Some(113)
+        );
+        assert_eq!(
+            report["aoem_runtime_worker_batch_size_avg"].as_u64(),
+            Some(127)
+        );
+        assert_eq!(
+            report["aoem_runtime_worker_inflight_batch_count"].as_u64(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn pipeline_reports_backpressure_reason_when_stage_lags() {
+        let mut final_sample = pipeline_14400_final_sample_for_test(1_936_000);
+        final_sample["object_assembler_batch_ready_count"] = serde_json::json!(100);
+        final_sample["aoem_runtime_worker_batch_received_count"] = serde_json::json!(100);
+        final_sample["aoem_runtime_worker_tx_ingress_call_count"] = serde_json::json!(100);
+        final_sample["aoem_runtime_worker_result_ready_count"] = serde_json::json!(100);
+        final_sample["finality_report_worker_result_verified_count"] = serde_json::json!(80);
+        let report = write_test_diagnostics_report_for_tx_count(
+            pipeline_14400_live_sample_for_test(),
+            final_sample,
+            14_400,
+        );
+
+        assert_eq!(
+            report["pipeline_backpressure_reason"].as_str(),
+            Some("finality_report_worker_lag")
+        );
+    }
+
+    #[test]
+    fn strict_30min_gate_fails_when_elapsed_exceeds_1800s() {
+        let report = write_test_diagnostics_report_for_tx_count(
+            pipeline_14400_live_sample_for_test(),
+            pipeline_14400_final_sample_for_test(1_936_000),
+            14_400,
+        );
+
+        assert_eq!(
+            report["strict_30min_wall_clock_performance_pass"].as_bool(),
+            Some(false)
+        );
+        assert!(report["strict_30min_wall_clock_fail_reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason.as_str() == Some("receiver_total_elapsed_exceeds_1800s")));
+    }
+
+    #[test]
+    fn strict_30min_gate_can_pass_when_active_close_and_tail_within_budget() {
+        let report = write_test_diagnostics_report_for_tx_count(
+            pipeline_14400_live_sample_for_test(),
+            pipeline_14400_final_sample_for_test(1_790_000),
+            14_400,
+        );
+
+        assert_eq!(
+            report["strict_30min_wall_clock_performance_pass"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            report["strict_30min_wall_clock_fail_reasons"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
     }
 
     #[test]
@@ -8021,6 +8241,237 @@ fn first_mini_tps_progress_elapsed_ms_v1(samples: &[Value]) -> Option<u64> {
         .map(|sample| sample_u64(sample, "elapsed_ms"))
 }
 
+fn receiver_object_ready_counter_v1(sample: &Value) -> u64 {
+    sample_u64(sample, "received_unique_total")
+        .max(sample_u64(sample, "network_receiver_object_ready_count"))
+        .max(sample_u64(sample, "ingress_total_last"))
+        .max(sample_u64(sample, "network_received_total"))
+}
+
+fn receiver_close_counter_v1(sample: &Value) -> u64 {
+    sample_u64(sample, "mini_completed_tx_count")
+        .max(sample_u64(sample, "aoem_executed_total"))
+        .max(sample_u64(sample, "canonical_unique_included_total"))
+        .max(sample_u64(sample, "receiver_ledger_close_count"))
+        .max(sample_u64(sample, "ledger_completed_count"))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_receipt_count",
+        ))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_canonical_proof_count",
+        ))
+        .max(sample_u64(
+            sample,
+            "aoem_native_tx_batch_production_ledger_close_proof_count",
+        ))
+}
+
+fn sample_elapsed_ms_option_v1(sample: &Value) -> Option<u64> {
+    sample.get("elapsed_ms").and_then(Value::as_u64)
+}
+
+fn receiver_first_counter_sample_v1<F>(samples: &[Value], counter: F) -> Option<&Value>
+where
+    F: Fn(&Value) -> u64,
+{
+    samples.iter().find(|sample| counter(sample) > 0)
+}
+
+fn receiver_last_counter_sample_v1<F>(samples: &[Value], counter: F) -> Option<&Value>
+where
+    F: Fn(&Value) -> u64,
+{
+    samples.iter().rev().find(|sample| counter(sample) > 0)
+}
+
+fn receiver_last_counter_progress_sample_v1<F>(samples: &[Value], counter: F) -> Option<&Value>
+where
+    F: Fn(&Value) -> u64,
+{
+    let mut previous = 0u64;
+    let mut last_progress = None;
+    for sample in samples {
+        let current = counter(sample);
+        if current > previous {
+            last_progress = Some(sample);
+        }
+        previous = current;
+    }
+    last_progress
+}
+
+fn rate_x1000_v1(count: u64, elapsed_ms: u64) -> u64 {
+    if elapsed_ms == 0 {
+        0
+    } else {
+        count.saturating_mul(1_000_000) / elapsed_ms
+    }
+}
+
+fn receiver_pipeline_backpressure_reason_v1(signoff_sample: Option<&Value>) -> String {
+    let Some(sample) = signoff_sample else {
+        return "no_signoff_sample".to_string();
+    };
+    let object_ready = sample_u64(sample, "network_receiver_object_ready_count");
+    let batch_ready = sample_u64(sample, "object_assembler_batch_ready_count");
+    let batch_received = sample_u64(sample, "aoem_runtime_worker_batch_received_count");
+    let ingress_calls = sample_u64(sample, "aoem_runtime_worker_tx_ingress_call_count");
+    let result_ready = sample_u64(sample, "aoem_runtime_worker_result_ready_count");
+    let verified = sample_u64(sample, "finality_report_worker_result_verified_count");
+    if object_ready > 0 && batch_ready == 0 {
+        "object_assembler_lag".to_string()
+    } else if batch_ready > batch_received {
+        "aoem_runtime_worker_receive_lag".to_string()
+    } else if batch_received > ingress_calls {
+        "aoem_runtime_worker_submit_lag".to_string()
+    } else if ingress_calls > result_ready {
+        "aoem_runtime_worker_result_drain_lag".to_string()
+    } else if result_ready > verified {
+        "finality_report_worker_lag".to_string()
+    } else {
+        sample
+            .get("receiver_pipeline_backpressure_reason")
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.trim().is_empty())
+            .unwrap_or("none")
+            .to_string()
+    }
+}
+
+fn receiver_wall_clock_performance_breakdown_v1(
+    samples: &[Value],
+    signoff_sample: Option<&Value>,
+    expected_tx_count: u64,
+) -> Value {
+    const STRICT_30MIN_WALL_CLOCK_BUDGET_MS: u64 = 1_800_000;
+    let first_tx_sample =
+        receiver_first_counter_sample_v1(samples, receiver_object_ready_counter_v1);
+    let last_tx_sample =
+        receiver_last_counter_progress_sample_v1(samples, receiver_object_ready_counter_v1)
+            .or_else(|| receiver_last_counter_sample_v1(samples, receiver_object_ready_counter_v1));
+    let first_close_sample = receiver_first_counter_sample_v1(samples, receiver_close_counter_v1);
+    let last_close_sample =
+        receiver_last_counter_progress_sample_v1(samples, receiver_close_counter_v1)
+            .or_else(|| receiver_last_counter_sample_v1(samples, receiver_close_counter_v1));
+    let final_sample = signoff_sample.or_else(|| samples.last());
+
+    let receiver_total_elapsed_ms =
+        final_sample.map_or(0, |sample| sample_u64(sample, "elapsed_ms"));
+    let first_tx_ms = first_tx_sample.and_then(sample_elapsed_ms_option_v1);
+    let last_tx_ms = last_tx_sample.and_then(sample_elapsed_ms_option_v1);
+    let first_close_ms = first_close_sample.and_then(sample_elapsed_ms_option_v1);
+    let last_close_ms = last_close_sample.and_then(sample_elapsed_ms_option_v1);
+    let first_close_count = first_close_sample.map_or(0, receiver_close_counter_v1);
+    let last_close_count = last_close_sample.map_or(0, receiver_close_counter_v1);
+    let total_close_count = final_sample.map_or(0, receiver_close_counter_v1);
+    let active_close_window_ms = first_close_ms
+        .zip(last_close_ms)
+        .map(|(first, last)| last.saturating_sub(first))
+        .unwrap_or(0);
+    let active_close_counter_delta = last_close_count.saturating_sub(first_close_count);
+    let active_close_tps_x1000 = rate_x1000_v1(active_close_counter_delta, active_close_window_ms);
+    let total_close_tps_x1000 = rate_x1000_v1(total_close_count, receiver_total_elapsed_ms);
+    let finalization_tail_ms = last_close_ms
+        .map(|last| receiver_total_elapsed_ms.saturating_sub(last))
+        .unwrap_or(0);
+    let strict_target_tps_x1000 =
+        rate_x1000_v1(expected_tx_count, STRICT_30MIN_WALL_CLOCK_BUDGET_MS);
+    let mut strict_fail_reasons = Vec::<String>::new();
+    if receiver_total_elapsed_ms > STRICT_30MIN_WALL_CLOCK_BUDGET_MS {
+        push_json_string_unique(
+            &mut strict_fail_reasons,
+            "receiver_total_elapsed_exceeds_1800s",
+        );
+    }
+    if expected_tx_count > 0
+        && active_close_window_ms > 0
+        && active_close_tps_x1000 < strict_target_tps_x1000
+    {
+        push_json_string_unique(
+            &mut strict_fail_reasons,
+            "receiver_active_close_tps_below_strict_target",
+        );
+    }
+    if finalization_tail_ms > 60_000 {
+        push_json_string_unique(&mut strict_fail_reasons, "finalization_tail_over_60s");
+    }
+    let object_ready = signoff_sample.map_or(0, |sample| {
+        sample_u64(sample, "network_receiver_object_ready_count")
+    });
+    let batch_ready = signoff_sample.map_or(0, |sample| {
+        sample_u64(sample, "object_assembler_batch_ready_count")
+    });
+    let batch_received = signoff_sample.map_or(0, |sample| {
+        sample_u64(sample, "aoem_runtime_worker_batch_received_count")
+    });
+    let tx_ingress_calls = signoff_sample.map_or(0, |sample| {
+        sample_u64(sample, "aoem_runtime_worker_tx_ingress_call_count")
+    });
+    let result_ready = signoff_sample.map_or(0, |sample| {
+        sample_u64(sample, "aoem_runtime_worker_result_ready_count")
+    });
+    let result_verified = signoff_sample.map_or(0, |sample| {
+        sample_u64(sample, "finality_report_worker_result_verified_count")
+    });
+    let avg_batch_size = if tx_ingress_calls == 0 {
+        0
+    } else {
+        total_close_count / tx_ingress_calls
+    };
+    let backpressure_reason = receiver_pipeline_backpressure_reason_v1(signoff_sample);
+
+    serde_json::json!({
+        "sender_primary_send_elapsed_ms": Value::Null,
+        "sender_primary_send_tps_x1000": Value::Null,
+        "sender_primary_send_completed_at_ms": Value::Null,
+        "sender_wait_after_primary_send_ms": Value::Null,
+        "receiver_total_elapsed_ms": receiver_total_elapsed_ms,
+        "receiver_first_tx_seen_ms": first_tx_ms,
+        "receiver_last_tx_seen_ms": last_tx_ms,
+        "receiver_first_close_ms": first_close_ms,
+        "receiver_last_close_ms": last_close_ms,
+        "receiver_active_close_window_ms": active_close_window_ms,
+        "receiver_active_close_counter_start": first_close_count,
+        "receiver_active_close_counter_end": last_close_count,
+        "receiver_active_close_counter_delta": active_close_counter_delta,
+        "receiver_active_close_tps_x1000": active_close_tps_x1000,
+        "receiver_total_close_tps_x1000": total_close_tps_x1000,
+        "receiver_pre_first_tx_wait_ms": first_tx_ms.unwrap_or(0),
+        "receiver_pre_first_close_wait_ms": first_close_ms.unwrap_or(0),
+        "finalization_tail_ms": finalization_tail_ms,
+        "tail_repair_wait_ms": Value::Null,
+        "receiver_done_ack_wait_ms": Value::Null,
+        "ack_receiver_done_sent_at_ms": Value::Null,
+        "sender_receiver_done_ack_seen_at_ms": Value::Null,
+        "network_receiver_object_ready_count": object_ready,
+        "object_assembler_batch_ready_count": batch_ready,
+        "aoem_runtime_worker_batch_received_count": batch_received,
+        "aoem_runtime_worker_tx_ingress_call_count": tx_ingress_calls,
+        "aoem_runtime_worker_result_ready_count": result_ready,
+        "finality_report_worker_result_verified_count": result_verified,
+        "pipeline_stage_lag_ms": Value::Null,
+        "pipeline_backpressure_reason": backpressure_reason,
+        "aoem_runtime_worker_batch_size_avg": avg_batch_size,
+        "aoem_runtime_worker_batch_size_p50": Value::Null,
+        "aoem_runtime_worker_batch_size_p90": Value::Null,
+        "aoem_runtime_worker_inflight_batch_count": sample_u64(signoff_sample.unwrap_or(&Value::Null), "aoem_runtime_worker_inflight_batch_count"),
+        "aoem_runtime_worker_max_inflight_batches": sample_u64(signoff_sample.unwrap_or(&Value::Null), "aoem_runtime_worker_max_inflight_batches"),
+        "aoem_runtime_worker_submit_elapsed_ms": Value::Null,
+        "aoem_runtime_worker_result_drain_elapsed_ms": Value::Null,
+        "object_assembler_flush_delay_ms": Value::Null,
+        "finality_report_worker_backpressure_ms": Value::Null,
+        "diagnostics_report_write_elapsed_ms": Value::Null,
+        "strict_30min_wall_clock_budget_ms": STRICT_30MIN_WALL_CLOCK_BUDGET_MS,
+        "strict_30min_wall_clock_elapsed_ms": receiver_total_elapsed_ms,
+        "strict_30min_wall_clock_gap_ms": receiver_total_elapsed_ms.saturating_sub(STRICT_30MIN_WALL_CLOCK_BUDGET_MS),
+        "strict_30min_target_close_tps_x1000": strict_target_tps_x1000,
+        "strict_30min_wall_clock_performance_pass": strict_fail_reasons.is_empty(),
+        "strict_30min_wall_clock_fail_reasons": strict_fail_reasons,
+    })
+}
+
 fn first_live_child_sample(samples: &[Value]) -> Option<&Value> {
     samples
         .iter()
@@ -9357,7 +9808,12 @@ fn write_diagnostics_report(
         .unwrap_or_default();
     let effective_accepted =
         accepted && signoff_fail_reason.is_none() && latest_blockers.is_empty();
-    let report = serde_json::json!({
+    let performance_breakdown = receiver_wall_clock_performance_breakdown_v1(
+        state.samples.as_slice(),
+        signoff_sample,
+        tx_count,
+    );
+    let mut report = serde_json::json!({
         "schema": "novovm-native-pipeline-cross-machine-sustained-diagnostics/v1",
         "accepted": effective_accepted,
         "child_pid": child_pid,
@@ -9619,8 +10075,20 @@ fn write_diagnostics_report(
             .and_then(|sample| sample_string(sample, "large_allocation_suspected_stage")),
         "summary_native_heap_source_isolation_confidence": memory_summary_sample
             .and_then(|sample| sample_string(sample, "native_heap_source_isolation_confidence")),
+        "performance_wall_clock_breakdown": performance_breakdown,
         "samples": state.samples,
     });
+    if let Some(performance_fields) = report
+        .get("performance_wall_clock_breakdown")
+        .and_then(Value::as_object)
+        .cloned()
+    {
+        if let Some(report_map) = report.as_object_mut() {
+            for (key, value) in performance_fields {
+                report_map.insert(key, value);
+            }
+        }
+    }
     write_report(config.report_path.as_path(), &report)
 }
 
