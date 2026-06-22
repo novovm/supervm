@@ -5280,6 +5280,12 @@ fn spawn_receiver_node(
     } else {
         250
     };
+    let worker_max_ticks = if pipeline_enabled && worker_tick_interval_ms < tick_interval_ms {
+        let requested_wall_ms = max_ticks.saturating_mul(tick_interval_ms);
+        div_ceil_u64(requested_wall_ms, worker_tick_interval_ms).max(max_ticks)
+    } else {
+        max_ticks
+    };
     cmd.env_clear();
     for (key, value) in std::env::vars() {
         if key == "NOVOVM_NODE_MODE"
@@ -5299,7 +5305,7 @@ fn spawn_receiver_node(
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS",
-            max_ticks.to_string(),
+            worker_max_ticks.to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS",
