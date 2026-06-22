@@ -1317,6 +1317,9 @@ fn merge_tail_gap_into_repair_ranges(
 #[cfg(test)]
 mod novorudp_tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_DIAGNOSTICS_REPORT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn with_sender_hard_timeout_env<T>(timeout_ms: u64, run: impl FnOnce() -> T) -> T {
         let previous_timeout = std::env::var_os("NOVOVM_NATIVE_PIPELINE_SENDER_HARD_TIMEOUT_MS");
@@ -2370,8 +2373,13 @@ mod novorudp_tests {
         samples: Vec<Value>,
         tx_count: u64,
     ) -> Value {
-        let path =
-            std::env::temp_dir().join(format!("novovm-mini-final-diagnostics-{}.json", now_ms()));
+        let unique = TEST_DIAGNOSTICS_REPORT_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "novovm-mini-final-diagnostics-{}-{}-{}.json",
+            std::process::id(),
+            now_ms(),
+            unique
+        ));
         let config = test_diagnostics_config(path.clone());
         let state = ReceiverDiagnosticsStateV1 {
             samples,
@@ -2709,6 +2717,20 @@ mod novorudp_tests {
             Some(136_000)
         );
         assert_eq!(
+            report["performance_window_start_source"].as_str(),
+            Some("first_tx_seen")
+        );
+        assert_eq!(
+            report["performance_window_end_source"].as_str(),
+            Some("final_close")
+        );
+        assert_eq!(
+            report["performance_window_elapsed_ms"].as_u64(),
+            Some(1_586_000)
+        );
+        assert_eq!(report["active_close_tx_count"].as_u64(), Some(14_400));
+        assert!(report["active_close_tps_x1000"].as_u64().unwrap_or(0) > 9_000);
+        assert_eq!(
             report["receiver_active_close_counter_delta"].as_u64(),
             Some(12_400)
         );
@@ -2794,13 +2816,38 @@ mod novorudp_tests {
 
         assert_eq!(
             report["strict_30min_wall_clock_performance_pass"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            report["total_elapsed_exceeded_due_to_pre_first_tx_wait"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            report["strict_30min_wall_clock_fail_reasons"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+    }
+
+    #[test]
+    fn strict_30min_gate_fails_when_active_window_exceeds_1800s() {
+        let report = write_test_diagnostics_report_for_tx_count(
+            pipeline_14400_live_sample_for_test(),
+            pipeline_14400_final_sample_for_test(2_200_000),
+            14_400,
+        );
+
+        assert_eq!(
+            report["strict_30min_wall_clock_performance_pass"].as_bool(),
             Some(false)
         );
         assert!(report["strict_30min_wall_clock_fail_reasons"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|reason| reason.as_str() == Some("receiver_total_elapsed_exceeds_1800s")));
+            .any(|reason| reason.as_str() == Some("active_performance_window_exceeded_30min")));
     }
 
     #[test]
@@ -2822,6 +2869,42 @@ mod novorudp_tests {
                 .len(),
             0
         );
+    }
+
+    #[test]
+    fn performance_window_excludes_pre_first_tx_wait() {
+        let report = write_test_diagnostics_report_for_tx_count(
+            pipeline_14400_live_sample_for_test(),
+            pipeline_14400_final_sample_for_test(1_936_000),
+            14_400,
+        );
+
+        assert_eq!(report["pre_first_tx_wait_ms"].as_u64(), Some(350_000));
+        assert_eq!(
+            report["total_elapsed_exceeded_due_to_pre_first_tx_wait"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            report["strict_30min_performance_gate_window"].as_str(),
+            Some("first_tx_seen_to_final_close")
+        );
+    }
+
+    #[test]
+    fn active_close_tps_uses_active_close_tx_count() {
+        let report = write_test_diagnostics_report_for_tx_count(
+            pipeline_14400_live_sample_for_test(),
+            pipeline_14400_final_sample_for_test(1_936_000),
+            14_400,
+        );
+
+        assert_eq!(report["active_close_tx_count"].as_u64(), Some(14_400));
+        assert_eq!(report["active_close_window_ms"].as_u64(), Some(1_586_000));
+        assert_eq!(
+            report["active_close_tps_x1000"].as_u64(),
+            Some(14_400u64.saturating_mul(1_000_000) / 1_586_000)
+        );
+        assert_eq!(report["total_close_tx_count"].as_u64(), Some(14_400));
     }
 
     #[test]
@@ -8366,27 +8449,47 @@ fn receiver_wall_clock_performance_breakdown_v1(
     let first_close_count = first_close_sample.map_or(0, receiver_close_counter_v1);
     let last_close_count = last_close_sample.map_or(0, receiver_close_counter_v1);
     let total_close_count = final_sample.map_or(0, receiver_close_counter_v1);
-    let active_close_window_ms = first_close_ms
+    let receiver_close_delta_window_ms = first_close_ms
         .zip(last_close_ms)
         .map(|(first, last)| last.saturating_sub(first))
         .unwrap_or(0);
     let active_close_counter_delta = last_close_count.saturating_sub(first_close_count);
-    let active_close_tps_x1000 = rate_x1000_v1(active_close_counter_delta, active_close_window_ms);
+    let receiver_close_delta_tps_x1000 =
+        rate_x1000_v1(active_close_counter_delta, receiver_close_delta_window_ms);
     let total_close_tps_x1000 = rate_x1000_v1(total_close_count, receiver_total_elapsed_ms);
     let finalization_tail_ms = last_close_ms
         .map(|last| receiver_total_elapsed_ms.saturating_sub(last))
         .unwrap_or(0);
+    let performance_window_start_ms = first_tx_ms.or(first_close_ms).unwrap_or(0);
+    let performance_window_start_source = if first_tx_ms.is_some() {
+        "first_tx_seen"
+    } else if first_close_ms.is_some() {
+        "first_close"
+    } else {
+        "receiver_start"
+    };
+    let performance_window_end_ms = last_close_ms.unwrap_or(receiver_total_elapsed_ms);
+    let performance_window_end_source = if last_close_ms.is_some() {
+        "final_close"
+    } else {
+        "receiver_total_elapsed"
+    };
+    let performance_window_elapsed_ms =
+        performance_window_end_ms.saturating_sub(performance_window_start_ms);
+    let active_close_tx_count = last_close_count.max(total_close_count);
+    let active_close_tps_x1000 =
+        rate_x1000_v1(active_close_tx_count, performance_window_elapsed_ms);
     let strict_target_tps_x1000 =
         rate_x1000_v1(expected_tx_count, STRICT_30MIN_WALL_CLOCK_BUDGET_MS);
     let mut strict_fail_reasons = Vec::<String>::new();
-    if receiver_total_elapsed_ms > STRICT_30MIN_WALL_CLOCK_BUDGET_MS {
+    if performance_window_elapsed_ms > STRICT_30MIN_WALL_CLOCK_BUDGET_MS {
         push_json_string_unique(
             &mut strict_fail_reasons,
-            "receiver_total_elapsed_exceeds_1800s",
+            "active_performance_window_exceeded_30min",
         );
     }
     if expected_tx_count > 0
-        && active_close_window_ms > 0
+        && performance_window_elapsed_ms > 0
         && active_close_tps_x1000 < strict_target_tps_x1000
     {
         push_json_string_unique(
@@ -8397,6 +8500,10 @@ fn receiver_wall_clock_performance_breakdown_v1(
     if finalization_tail_ms > 60_000 {
         push_json_string_unique(&mut strict_fail_reasons, "finalization_tail_over_60s");
     }
+    let total_elapsed_exceeded_due_to_pre_first_tx_wait = receiver_total_elapsed_ms
+        > STRICT_30MIN_WALL_CLOCK_BUDGET_MS
+        && performance_window_elapsed_ms <= STRICT_30MIN_WALL_CLOCK_BUDGET_MS
+        && performance_window_start_ms > 0;
     let object_ready = signoff_sample.map_or(0, |sample| {
         sample_u64(sample, "network_receiver_object_ready_count")
     });
@@ -8432,14 +8539,28 @@ fn receiver_wall_clock_performance_breakdown_v1(
         "receiver_last_tx_seen_ms": last_tx_ms,
         "receiver_first_close_ms": first_close_ms,
         "receiver_last_close_ms": last_close_ms,
-        "receiver_active_close_window_ms": active_close_window_ms,
+        "receiver_active_close_window_ms": performance_window_elapsed_ms,
         "receiver_active_close_counter_start": first_close_count,
         "receiver_active_close_counter_end": last_close_count,
         "receiver_active_close_counter_delta": active_close_counter_delta,
         "receiver_active_close_tps_x1000": active_close_tps_x1000,
+        "receiver_close_delta_window_ms": receiver_close_delta_window_ms,
+        "receiver_close_delta_tps_x1000": receiver_close_delta_tps_x1000,
         "receiver_total_close_tps_x1000": total_close_tps_x1000,
+        "performance_window_start_source": performance_window_start_source,
+        "performance_window_start_ms": performance_window_start_ms,
+        "performance_window_end_source": performance_window_end_source,
+        "performance_window_end_ms": performance_window_end_ms,
+        "performance_window_elapsed_ms": performance_window_elapsed_ms,
+        "pre_first_tx_wait_ms": first_tx_ms.unwrap_or(0),
         "receiver_pre_first_tx_wait_ms": first_tx_ms.unwrap_or(0),
         "receiver_pre_first_close_wait_ms": first_close_ms.unwrap_or(0),
+        "active_close_tx_count": active_close_tx_count,
+        "active_close_window_ms": performance_window_elapsed_ms,
+        "active_close_tps_x1000": active_close_tps_x1000,
+        "total_elapsed_ms": receiver_total_elapsed_ms,
+        "total_close_tx_count": total_close_count,
+        "total_close_tps_x1000": total_close_tps_x1000,
         "finalization_tail_ms": finalization_tail_ms,
         "tail_repair_wait_ms": Value::Null,
         "receiver_done_ack_wait_ms": Value::Null,
@@ -8466,6 +8587,14 @@ fn receiver_wall_clock_performance_breakdown_v1(
         "strict_30min_wall_clock_budget_ms": STRICT_30MIN_WALL_CLOCK_BUDGET_MS,
         "strict_30min_wall_clock_elapsed_ms": receiver_total_elapsed_ms,
         "strict_30min_wall_clock_gap_ms": receiver_total_elapsed_ms.saturating_sub(STRICT_30MIN_WALL_CLOCK_BUDGET_MS),
+        "strict_30min_performance_gate_window": "first_tx_seen_to_final_close",
+        "strict_30min_performance_pass": strict_fail_reasons.is_empty(),
+        "strict_30min_performance_fail_reason": if strict_fail_reasons.is_empty() {
+            Value::Null
+        } else {
+            serde_json::json!(strict_fail_reasons.join(","))
+        },
+        "total_elapsed_exceeded_due_to_pre_first_tx_wait": total_elapsed_exceeded_due_to_pre_first_tx_wait,
         "strict_30min_target_close_tps_x1000": strict_target_tps_x1000,
         "strict_30min_wall_clock_performance_pass": strict_fail_reasons.is_empty(),
         "strict_30min_wall_clock_fail_reasons": strict_fail_reasons,
