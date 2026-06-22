@@ -5229,6 +5229,14 @@ fn final_missing_without_expected_ledger_v1(
     final_missing_sequence_count > 0 && ledger_expected_count == 0
 }
 
+fn aoem_runtime_worker_pipeline_enabled_env_v1() -> bool {
+    bool_env("NOVOVM_AOEM_RUNTIME_WORKER_PIPELINE")
+}
+
+fn aoem_runtime_worker_pipeline_u64_env_v1(name: &str, default: u64) -> u64 {
+    u64_env(name, default).unwrap_or(default).max(1)
+}
+
 fn spawn_receiver_node(
     node_bin: &Path,
     chain_id: u64,
@@ -5242,6 +5250,36 @@ fn spawn_receiver_node(
     recv_budget: u64,
 ) -> Result<Child> {
     let mut cmd = Command::new(node_bin);
+    let pipeline_enabled = aoem_runtime_worker_pipeline_enabled_env_v1();
+    let worker_tick_interval_ms = if pipeline_enabled {
+        aoem_runtime_worker_pipeline_u64_env_v1(
+            "NOVOVM_AOEM_RUNTIME_WORKER_LOOP_INTERVAL_MS",
+            tick_interval_ms.min(10),
+        )
+    } else {
+        tick_interval_ms
+    };
+    let worker_batch_budget = if pipeline_enabled {
+        aoem_runtime_worker_pipeline_u64_env_v1(
+            "NOVOVM_AOEM_RUNTIME_WORKER_BATCH_BUDGET",
+            batch_budget.max(128),
+        )
+    } else {
+        batch_budget
+    };
+    let worker_recv_budget = if pipeline_enabled {
+        aoem_runtime_worker_pipeline_u64_env_v1(
+            "NOVOVM_AOEM_RUNTIME_WORKER_RECV_BUDGET",
+            recv_budget.max(512),
+        )
+    } else {
+        recv_budget
+    };
+    let worker_time_slice_ms = if pipeline_enabled {
+        aoem_runtime_worker_pipeline_u64_env_v1("NOVOVM_AOEM_RUNTIME_WORKER_TIME_SLICE_MS", 1_000)
+    } else {
+        250
+    };
     cmd.env_clear();
     for (key, value) in std::env::vars() {
         if key == "NOVOVM_NODE_MODE"
@@ -5265,19 +5303,31 @@ fn spawn_receiver_node(
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS",
-            tick_interval_ms.to_string(),
+            worker_tick_interval_ms.to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_TICK_HARD_BUDGET",
-            batch_budget.to_string(),
+            worker_batch_budget.to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_TICK_TARGET_BUDGET",
-            batch_budget.to_string(),
+            worker_batch_budget.to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET",
-            batch_budget.to_string(),
+            worker_batch_budget.to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_EXECUTION_TICK_HARD_TIME_SLICE_MS",
+            worker_time_slice_ms.to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_EXECUTION_TICK_TARGET_TIME_SLICE_MS",
+            worker_time_slice_ms.to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_TIME_SLICE_MS",
+            worker_time_slice_ms.to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH",
@@ -5309,7 +5359,7 @@ fn spawn_receiver_node(
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_RECV_BUDGET",
-            recv_budget.to_string(),
+            worker_recv_budget.to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_BROADCAST_ENABLED",
@@ -12594,6 +12644,9 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "tx_ingress_called_by_aoem_runtime_worker": summary.get("tx_ingress_called_by_aoem_runtime_worker").cloned().unwrap_or(Value::Null),
         "receiver_pipeline_stage_lag": summary.get("receiver_pipeline_stage_lag").cloned().unwrap_or_else(|| serde_json::json!({})),
         "receiver_pipeline_backpressure_reason": summary.get("receiver_pipeline_backpressure_reason").cloned().unwrap_or(Value::Null),
+        "aoem_runtime_worker_scheduler": summary.get("aoem_runtime_worker_scheduler").cloned().unwrap_or(Value::Null),
+        "aoem_runtime_worker_active_sleep_ms": summary.get("aoem_runtime_worker_active_sleep_ms").cloned().unwrap_or(Value::Null),
+        "aoem_runtime_worker_idle_sleep_ms": summary.get("aoem_runtime_worker_idle_sleep_ms").cloned().unwrap_or(Value::Null),
         "tx_ingress_called_with_explicit_aoem_gate_config": summary.get("tx_ingress_called_with_explicit_aoem_gate_config").cloned().unwrap_or(Value::Null),
         "tx_ingress_selected_path": summary.get("tx_ingress_selected_path").cloned().unwrap_or(Value::Null),
         "tx_ingress_aoem_production_candidate_gate_reason": summary.get("tx_ingress_aoem_production_candidate_gate_reason").cloned().unwrap_or(Value::Null),

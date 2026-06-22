@@ -33782,6 +33782,31 @@ fn native_execution_tick_params_from_env_v1() -> Result<serde_json::Value> {
     Ok(params)
 }
 
+fn decorate_aoem_runtime_worker_scheduler_summary_v1(
+    summary: &mut serde_json::Value,
+    pipeline_enabled: bool,
+    active_sleep_ms: u64,
+    idle_sleep_ms: u64,
+) {
+    if !pipeline_enabled {
+        return;
+    }
+    if let Some(obj) = summary.as_object_mut() {
+        obj.insert(
+            "aoem_runtime_worker_scheduler".to_string(),
+            serde_json::json!("ready_queue_active_drain"),
+        );
+        obj.insert(
+            "aoem_runtime_worker_active_sleep_ms".to_string(),
+            serde_json::json!(active_sleep_ms),
+        );
+        obj.insert(
+            "aoem_runtime_worker_idle_sleep_ms".to_string(),
+            serde_json::json!(idle_sleep_ms),
+        );
+    }
+}
+
 fn apply_native_execution_pipeline_retention_budget_v1(chain_id: u64) -> Result<()> {
     let mut budget = default_eth_fullnode_budget_hooks_v1();
     budget.pending_tx_canonical_retain_depth = u64_env_positive(
@@ -34625,6 +34650,9 @@ struct NativeExecutionPipelineAggregateV1 {
     tx_ingress_called_by_aoem_runtime_worker: bool,
     receiver_pipeline_stage_lag: serde_json::Value,
     receiver_pipeline_backpressure_reason: String,
+    aoem_runtime_worker_scheduler: String,
+    aoem_runtime_worker_active_sleep_ms: u64,
+    aoem_runtime_worker_idle_sleep_ms: u64,
     tx_ingress_called_with_explicit_aoem_gate_config: bool,
     tx_ingress_selected_path: String,
     tx_ingress_production_target: String,
@@ -34905,6 +34933,9 @@ impl NativeExecutionPipelineAggregateV1 {
             tx_ingress_called_by_aoem_runtime_worker: false,
             receiver_pipeline_stage_lag: serde_json::json!({}),
             receiver_pipeline_backpressure_reason: String::new(),
+            aoem_runtime_worker_scheduler: String::new(),
+            aoem_runtime_worker_active_sleep_ms: 0,
+            aoem_runtime_worker_idle_sleep_ms: 0,
             tx_ingress_called_with_explicit_aoem_gate_config: false,
             tx_ingress_selected_path: String::new(),
             tx_ingress_production_target: String::new(),
@@ -35773,6 +35804,27 @@ impl NativeExecutionPipelineAggregateV1 {
             {
                 self.receiver_pipeline_backpressure_reason = value.to_string();
             }
+            if let Some(value) = report
+                .get("aoem_runtime_worker_scheduler")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            {
+                self.aoem_runtime_worker_scheduler = value.to_string();
+            }
+            self.aoem_runtime_worker_active_sleep_ms =
+                self.aoem_runtime_worker_active_sleep_ms.max(
+                    report
+                        .get("aoem_runtime_worker_active_sleep_ms")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_runtime_worker_idle_sleep_ms =
+                self.aoem_runtime_worker_idle_sleep_ms.max(
+                    report
+                        .get("aoem_runtime_worker_idle_sleep_ms")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
             self.tx_ingress_called_with_explicit_aoem_gate_config = self
                 .tx_ingress_called_with_explicit_aoem_gate_config
                 || batch_result
@@ -37733,6 +37785,18 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "receiver_pipeline_backpressure_reason".to_string(),
             serde_json::json!(self.receiver_pipeline_backpressure_reason),
+        );
+        out.insert(
+            "aoem_runtime_worker_scheduler".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_scheduler),
+        );
+        out.insert(
+            "aoem_runtime_worker_active_sleep_ms".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_active_sleep_ms),
+        );
+        out.insert(
+            "aoem_runtime_worker_idle_sleep_ms".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_idle_sleep_ms),
         );
         out.insert(
             "tx_ingress_called_with_explicit_aoem_gate_config".to_string(),
@@ -39939,6 +40003,16 @@ mod native_execution_pipeline_tests {
 fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let max_ticks = u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", 1)?;
     let interval_ms = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", 250)?;
+    let aoem_runtime_worker_pipeline_enabled =
+        bool_env("NOVOVM_AOEM_RUNTIME_WORKER_PIPELINE");
+    let pipeline_active_sleep_ms = u64_env_allow_zero(
+        "NOVOVM_AOEM_RUNTIME_WORKER_ACTIVE_SLEEP_MS",
+        0,
+    )?;
+    let pipeline_idle_sleep_ms = u64_env_allow_zero(
+        "NOVOVM_AOEM_RUNTIME_WORKER_IDLE_SLEEP_MS",
+        interval_ms.min(10),
+    )?;
     let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
     apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
     let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
@@ -40046,13 +40120,38 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
             );
         }
         let out = run_nov_native_execution_tick_from_params_v1(&params)?;
-        let report = build_native_execution_pipeline_report_v1(
+        let mut report = build_native_execution_pipeline_report_v1(
             ticks.saturating_add(1),
             network_drive_out,
             ingress_drive_out,
             broadcast_drive_out,
             out,
         );
+        decorate_aoem_runtime_worker_scheduler_summary_v1(
+            &mut report,
+            aoem_runtime_worker_pipeline_enabled,
+            pipeline_active_sleep_ms,
+            pipeline_idle_sleep_ms,
+        );
+        let tick_aoem_executed = report
+            .get("lifecycle")
+            .and_then(|value| value.get("aoem_batch"))
+            .and_then(|value| value.get("executed"))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default();
+        let tick_aoem_deferred = report
+            .get("lifecycle")
+            .and_then(|value| value.get("aoem_batch"))
+            .and_then(|value| value.get("deferred"))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default();
+        let tick_udp_received = report
+            .get("lifecycle")
+            .and_then(|value| value.get("network"))
+            .and_then(|value| value.get("udp"))
+            .and_then(|value| value.get("received_count"))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default();
         aggregate.observe(&report)?;
         if let Some(report_path) = progress_report_path.as_ref() {
             if last_progress_report_at.elapsed()
@@ -40069,6 +40168,12 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                     }
                 }
                 let mut progress_summary = aggregate.to_json();
+                decorate_aoem_runtime_worker_scheduler_summary_v1(
+                    &mut progress_summary,
+                    aoem_runtime_worker_pipeline_enabled,
+                    pipeline_active_sleep_ms,
+                    pipeline_idle_sleep_ms,
+                );
                 close_novorudp_runtime_ledger_by_progress_v1(
                     chain_id,
                     aggregate
@@ -40129,6 +40234,12 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         ticks = ticks.saturating_add(1);
         if bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID") {
             let mut summary = aggregate.to_json();
+            decorate_aoem_runtime_worker_scheduler_summary_v1(
+                &mut summary,
+                aoem_runtime_worker_pipeline_enabled,
+                pipeline_active_sleep_ms,
+                pipeline_idle_sleep_ms,
+            );
             close_novorudp_runtime_ledger_by_progress_v1(
                 chain_id,
                 aggregate
@@ -40149,9 +40260,32 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         if max_ticks > 0 && ticks >= max_ticks {
             break;
         }
-        std::thread::sleep(Duration::from_millis(interval_ms));
+        let sleep_ms = if aoem_runtime_worker_pipeline_enabled {
+            let active = tick_udp_received > 0
+                || tick_aoem_executed > 0
+                || tick_aoem_deferred > 0
+                || aggregate.queue_pending_last > 0;
+            if active {
+                pipeline_active_sleep_ms
+            } else {
+                pipeline_idle_sleep_ms
+            }
+        } else {
+            interval_ms
+        };
+        if sleep_ms > 0 {
+            std::thread::sleep(Duration::from_millis(sleep_ms));
+        } else {
+            std::thread::yield_now();
+        }
     }
     let mut summary = aggregate.to_json();
+    decorate_aoem_runtime_worker_scheduler_summary_v1(
+        &mut summary,
+        aoem_runtime_worker_pipeline_enabled,
+        pipeline_active_sleep_ms,
+        pipeline_idle_sleep_ms,
+    );
     close_novorudp_runtime_ledger_by_progress_v1(
         chain_id,
         aggregate
