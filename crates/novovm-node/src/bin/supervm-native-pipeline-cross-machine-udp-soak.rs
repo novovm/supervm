@@ -3826,6 +3826,28 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn pipeline_pending_nonzero_with_close_progress_is_active_drain() {
+        let previous =
+            pipeline_liveness_sample(10_000, 584, 100, 17_224, 100, 100, 100, 100, 100, 17_224);
+        let mut sample =
+            pipeline_liveness_sample(15_000, 584, 100, 17_224, 100, 100, 100, 100, 100, 17_352);
+        annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
+
+        assert_eq!(
+            sample["pipeline_pending_drain_stall_reason"].as_str(),
+            Some("none")
+        );
+        assert_eq!(
+            sample["pending_drain_effective_success_delta"].as_u64(),
+            Some(128)
+        );
+        assert_eq!(
+            sample["receiver_drain_stall_reason"].as_str(),
+            Some("progressing")
+        );
+    }
+
+    #[test]
     fn pipeline_fails_closed_when_pending_nonzero_and_drain_attempt_stops() {
         let previous =
             pipeline_liveness_sample(10_000, 2_640, 453, 2_672, 453, 453, 453, 453, 453, 27_936);
@@ -9404,6 +9426,14 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
     let tx_ingress_call_delta = tx_ingress_calls.saturating_sub(previous_tx_ingress_calls);
     let result_ready_delta = result_ready.saturating_sub(previous_result_ready);
     let result_verified_delta = result_verified.saturating_sub(previous_result_verified);
+    let close_progress_delta = aoem_delta
+        .max(canonical_delta)
+        .max(ledger_close_delta)
+        .max(previous_durable_missing.saturating_sub(durable_missing));
+    let pending_drain_effective_success_delta = pending_selected_delta.max(close_progress_delta);
+    let pending_drain_effective_attempt_delta = child_tick_delta
+        .max(pending_selected_delta)
+        .max(close_progress_delta);
     let pending_delta = if pending_last >= previous_pending_last {
         pending_last
             .saturating_sub(previous_pending_last)
@@ -9464,7 +9494,11 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
         && tx_ingress_call_delta == 0
         && result_ready_delta == 0
         && result_verified_delta == 0;
-    let pipeline_pending_drain_stall_reason = if pending_last > 0 && child_tick_delta == 0 {
+    let pipeline_pending_drain_stall_reason = if pending_last > 0
+        && pending_drain_effective_success_delta > 0
+    {
+        "none"
+    } else if pending_last > 0 && child_tick_delta == 0 {
         "pending_drain_callsite_stall"
     } else if pipeline_stage_liveness_stalled && object_ready_delta > 0 && batch_ready_delta == 0 {
         "object_assembler_stall"
@@ -9503,6 +9537,8 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
         pending_last > 0 && pipeline_pending_drain_stall_reason != "none";
     let stall_reason = if pipeline_pending_drain_stall {
         pipeline_pending_drain_stall_reason
+    } else if pending_last > 0 && pending_drain_effective_success_delta > 0 {
+        "progressing"
     } else if pending_last > 0 && child_tick_delta == 0 {
         "receiver_child_tick_stall"
     } else if pending_last > 0
@@ -9620,18 +9656,24 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
             "none"
         });
     sample["pending_drain_attempt_count"] =
-        serde_json::json!(child_tick_delta.max(pending_selected_delta));
-    sample["pending_drain_success_count"] = serde_json::json!(pending_selected_delta);
+        serde_json::json!(pending_drain_effective_attempt_delta);
+    sample["pending_drain_success_count"] =
+        serde_json::json!(pending_drain_effective_success_delta);
     sample["pending_drain_attempt_delta"] =
-        serde_json::json!(child_tick_delta.max(pending_selected_delta));
-    sample["pending_drain_success_delta"] = serde_json::json!(pending_selected_delta);
-    sample["pending_drain_callsite_last_attempt_ms"] =
-        if child_tick_delta > 0 || pending_selected_delta > 0 {
-            serde_json::json!(elapsed_ms)
-        } else {
-            Value::Null
-        };
-    sample["pending_drain_callsite_last_success_ms"] = if pending_selected_delta > 0 {
+        serde_json::json!(pending_drain_effective_attempt_delta);
+    sample["pending_drain_success_delta"] =
+        serde_json::json!(pending_drain_effective_success_delta);
+    sample["pending_drain_close_progress_delta"] = serde_json::json!(close_progress_delta);
+    sample["pending_drain_effective_success_delta"] =
+        serde_json::json!(pending_drain_effective_success_delta);
+    sample["pending_drain_callsite_last_attempt_ms"] = if pending_drain_effective_attempt_delta > 0
+    {
+        serde_json::json!(elapsed_ms)
+    } else {
+        Value::Null
+    };
+    sample["pending_drain_callsite_last_success_ms"] = if pending_drain_effective_success_delta > 0
+    {
         serde_json::json!(elapsed_ms)
     } else {
         Value::Null
