@@ -922,6 +922,101 @@ fn full_async_runtime_engine_enabled_v1() -> bool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NetworkProfileV1 {
+    Production,
+    CrossMachine,
+    LocalSmoke,
+    Debug,
+}
+
+impl NetworkProfileV1 {
+    fn from_env(role: &str) -> Self {
+        match string_env_nonempty("NOVOVM_NETWORK_PROFILE")
+            .unwrap_or_else(|| {
+                if matches!(role, "local-smoke" | "local_smoke") {
+                    "local_smoke".to_string()
+                } else {
+                    "production".to_string()
+                }
+            })
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "production" | "prod" => Self::Production,
+            "cross_machine" | "cross-machine" | "crossmachine" => Self::CrossMachine,
+            "local_smoke" | "local-smoke" | "local" | "loopback" => Self::LocalSmoke,
+            "debug" => Self::Debug,
+            _ => Self::Production,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Production => "production",
+            Self::CrossMachine => "cross_machine",
+            Self::LocalSmoke => "local_smoke",
+            Self::Debug => "debug",
+        }
+    }
+
+    fn allows_loopback_ack(self) -> bool {
+        matches!(self, Self::LocalSmoke | Self::Debug)
+    }
+}
+
+fn udp_addr_host_v1(addr: &str) -> &str {
+    addr.rsplit_once(':').map(|(host, _)| host).unwrap_or(addr)
+}
+
+fn udp_addr_port_v1(addr: &str) -> Option<&str> {
+    addr.rsplit_once(':').map(|(_, port)| port)
+}
+
+fn udp_addr_is_loopback_v1(addr: &str) -> bool {
+    let host = udp_addr_host_v1(addr)
+        .trim_matches('[')
+        .trim_matches(']')
+        .to_ascii_lowercase();
+    host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+fn udp_addr_is_wildcard_v1(addr: &str) -> bool {
+    let host = udp_addr_host_v1(addr)
+        .trim_matches('[')
+        .trim_matches(']')
+        .to_ascii_lowercase();
+    host == "0.0.0.0" || host == "::" || host == "*"
+}
+
+fn ack_target_matches_advertised_v1(
+    target: Option<&str>,
+    advertised: Option<&str>,
+) -> Option<bool> {
+    match (target, advertised) {
+        (Some(target), Some(advertised)) => Some(target == advertised),
+        _ => None,
+    }
+}
+
+fn sender_ack_cross_machine_safe_v1(bind_addr: &str, advertised_addr: Option<&str>) -> bool {
+    !udp_addr_is_loopback_v1(bind_addr)
+        && advertised_addr
+            .map(|addr| !udp_addr_is_loopback_v1(addr))
+            .unwrap_or(false)
+}
+
+fn sender_ack_bind_advertised_mismatch_v1(bind_addr: &str, advertised_addr: Option<&str>) -> bool {
+    let Some(advertised_addr) = advertised_addr else {
+        return true;
+    };
+    if udp_addr_is_wildcard_v1(bind_addr) {
+        return false;
+    }
+    udp_addr_host_v1(bind_addr) != udp_addr_host_v1(advertised_addr)
+        || udp_addr_port_v1(bind_addr) != udp_addr_port_v1(advertised_addr)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FinalAckWaitProfileV1 {
     Production,
     Regression,
@@ -2843,48 +2938,246 @@ mod novorudp_tests {
             "NOVOVM_NATIVE_PIPELINE_ACK_REPORT_PATH",
             path.to_str(),
             || {
+                with_env_var("NOVOVM_NETWORK_PROFILE", Some("local_smoke"), || {
+                    with_env_var(
+                        "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
+                        Some(target.as_str()),
+                        || {
+                            with_env_var("NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR", None, || {
+                                with_env_var(
+                                    "NOVOVM_NATIVE_PIPELINE_ACK_BIND_ADDR",
+                                    Some("127.0.0.1:0"),
+                                    || {
+                                        let status =
+                                            send_receiver_udp_ack_with_summary(8, 4, 8, 10, None);
+                                        assert_eq!(status.attempted_count, 1);
+                                        assert_eq!(status.send_ok_count, 1);
+                                        assert_eq!(status.send_error_count, 0);
+
+                                        let mut buf = [0u8; 4096];
+                                        let (len, _src) =
+                                            listener.recv_from(&mut buf).expect("ack packet");
+                                        let packet =
+                                            serde_json::from_slice::<Value>(&buf[..len]).unwrap();
+                                        assert_eq!(packet["ack_epoch"].as_u64(), Some(10));
+
+                                        let report = serde_json::from_slice::<Value>(
+                                            &fs::read(path.as_path()).unwrap(),
+                                        )
+                                        .unwrap();
+                                        assert_eq!(
+                                            report["receiver_ack_send_ok_count"].as_u64(),
+                                            Some(1)
+                                        );
+                                        assert_eq!(
+                                            report["receiver_ack_target_addr"].as_str(),
+                                            Some(target.as_str())
+                                        );
+                                    },
+                                )
+                            })
+                        },
+                    )
+                })
+            },
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn production_rejects_loopback_receiver_ack_target() {
+        let path = std::env::temp_dir().join(format!(
+            "novovm-receiver-ack-loopback-rejected-{}.json",
+            now_ms()
+        ));
+        with_env_var(
+            "NOVOVM_NATIVE_PIPELINE_ACK_REPORT_PATH",
+            path.to_str(),
+            || {
+                with_env_var("NOVOVM_NETWORK_PROFILE", Some("production"), || {
+                    with_env_var(
+                        "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
+                        Some("127.0.0.1:39002"),
+                        || {
+                            with_env_var("NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR", None, || {
+                                let status = send_receiver_udp_ack_with_summary(8, 4, 8, 11, None);
+                                assert_eq!(status.send_ok_count, 0);
+                                assert_eq!(status.send_error_count, 1);
+                                assert_eq!(status.attempted_count, 0);
+                                assert_eq!(
+                                    status.last_error.as_deref(),
+                                    Some("receiver_ack_target_loopback_not_allowed_in_production")
+                                );
+
+                                let report = serde_json::from_slice::<Value>(
+                                    &fs::read(path.as_path()).unwrap(),
+                                )
+                                .unwrap();
+                                assert_eq!(
+                                    report["receiver_ack_target_is_loopback"].as_bool(),
+                                    Some(true)
+                                );
+                                assert_eq!(
+                                    report["receiver_ack_last_send_error"].as_str(),
+                                    Some("receiver_ack_target_loopback_not_allowed_in_production")
+                                );
+                                assert_eq!(
+                                    report["receiver_ack_send_attempt_count"].as_u64(),
+                                    Some(0)
+                                );
+                            })
+                        },
+                    )
+                })
+            },
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn local_smoke_allows_loopback_ack_contract() {
+        let listener = UdpSocket::bind("127.0.0.1:0").expect("ack listener");
+        listener
+            .set_read_timeout(Some(Duration::from_millis(1_000)))
+            .expect("ack read timeout");
+        let target = listener.local_addr().expect("listener addr").to_string();
+        with_env_var("NOVOVM_NETWORK_PROFILE", Some("local_smoke"), || {
+            with_env_var(
+                "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
+                Some(target.as_str()),
+                || {
+                    with_env_var(
+                        "NOVOVM_NATIVE_PIPELINE_ACK_BIND_ADDR",
+                        Some("127.0.0.1:0"),
+                        || {
+                            let status = send_receiver_udp_ack_with_summary(8, 4, 8, 12, None);
+                            assert_eq!(status.send_ok_count, 1);
+
+                            let mut buf = [0u8; 4096];
+                            let (len, _src) = listener.recv_from(&mut buf).expect("ack packet");
+                            let packet = serde_json::from_slice::<Value>(&buf[..len]).unwrap();
+                            assert_eq!(packet["ack_epoch"].as_u64(), Some(12));
+                        },
+                    )
+                },
+            )
+        });
+    }
+
+    #[test]
+    fn production_rejects_loopback_sender_ack_contract() {
+        let profile = NetworkProfileV1::Production;
+        assert!(!profile.allows_loopback_ack());
+        assert!(udp_addr_is_loopback_v1("127.0.0.1:39002"));
+        assert!(udp_addr_is_loopback_v1("localhost:39002"));
+        assert!(udp_addr_is_loopback_v1("[::1]:39002"));
+        assert!(!sender_ack_cross_machine_safe_v1(
+            "127.0.0.1:39002",
+            Some("192.168.71.118:39002")
+        ));
+        assert!(!sender_ack_cross_machine_safe_v1(
+            "0.0.0.0:39002",
+            Some("127.0.0.1:39002")
+        ));
+    }
+
+    #[test]
+    fn production_ack_bind_allows_wildcard_for_cross_machine() {
+        assert!(udp_addr_is_wildcard_v1("0.0.0.0:39002"));
+        assert!(!udp_addr_is_loopback_v1("0.0.0.0:39002"));
+        assert!(sender_ack_cross_machine_safe_v1(
+            "0.0.0.0:39002",
+            Some("192.168.71.118:39002")
+        ));
+        assert!(!sender_ack_bind_advertised_mismatch_v1(
+            "0.0.0.0:39002",
+            Some("192.168.71.118:39002")
+        ));
+    }
+
+    #[test]
+    fn receiver_ack_target_matches_sender_advertised_addr() {
+        with_env_var(
+            "NOVOVM_NATIVE_PIPELINE_ACK_ADVERTISED_ADDR",
+            Some("192.168.71.118:39002"),
+            || {
                 with_env_var(
                     "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
-                    Some(target.as_str()),
+                    Some("192.168.71.118:39002"),
                     || {
-                        with_env_var("NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR", None, || {
-                            with_env_var(
-                                "NOVOVM_NATIVE_PIPELINE_ACK_BIND_ADDR",
-                                Some("127.0.0.1:0"),
-                                || {
-                                    let status =
-                                        send_receiver_udp_ack_with_summary(8, 4, 8, 10, None);
-                                    assert_eq!(status.attempted_count, 1);
-                                    assert_eq!(status.send_ok_count, 1);
-                                    assert_eq!(status.send_error_count, 0);
-
-                                    let mut buf = [0u8; 4096];
-                                    let (len, _src) =
-                                        listener.recv_from(&mut buf).expect("ack packet");
-                                    let packet =
-                                        serde_json::from_slice::<Value>(&buf[..len]).unwrap();
-                                    assert_eq!(packet["ack_epoch"].as_u64(), Some(10));
-
-                                    let report = serde_json::from_slice::<Value>(
-                                        &fs::read(path.as_path()).unwrap(),
-                                    )
-                                    .unwrap();
-                                    assert_eq!(
-                                        report["receiver_ack_send_ok_count"].as_u64(),
-                                        Some(1)
-                                    );
-                                    assert_eq!(
-                                        report["receiver_ack_target_addr"].as_str(),
-                                        Some(target.as_str())
-                                    );
-                                },
-                            )
-                        })
+                        let mut report = serde_json::json!({});
+                        let status = ReceiverAckSendStatusV1 {
+                            enabled: true,
+                            target_addr: Some("192.168.71.118:39002".to_string()),
+                            attempted_count: 1,
+                            send_ok_count: 1,
+                            ..Default::default()
+                        };
+                        annotate_receiver_ack_send_status_v1(&mut report, &status);
+                        assert_eq!(
+                            report["receiver_ack_target_matches_sender_advertised_addr"].as_bool(),
+                            Some(true)
+                        );
+                        assert_eq!(
+                            report["receiver_ack_target_source"].as_str(),
+                            Some("NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR")
+                        );
                     },
                 )
             },
         );
-        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn receiver_ack_target_reports_mismatch_against_sender_advertised_addr() {
+        with_env_var(
+            "NOVOVM_NATIVE_PIPELINE_ACK_ADVERTISED_ADDR",
+            Some("192.168.71.118:39002"),
+            || {
+                let mut report = serde_json::json!({});
+                let status = ReceiverAckSendStatusV1 {
+                    enabled: true,
+                    target_addr: Some("192.168.71.119:39002".to_string()),
+                    ..Default::default()
+                };
+                annotate_receiver_ack_send_status_v1(&mut report, &status);
+                assert_eq!(
+                    report["receiver_ack_target_matches_sender_advertised_addr"].as_bool(),
+                    Some(false)
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn compact_receiver_summary_preserves_ack_address_contract_fields() {
+        let compact = compact_receiver_summary_for_report(serde_json::json!({
+            "receiver_ack_target_addr": "192.168.71.118:39002",
+            "receiver_ack_target_is_loopback": false,
+            "receiver_ack_target_source": "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
+            "receiver_ack_target_matches_sender_advertised_addr": true,
+            "receiver_ack_send_attempt_count": 8,
+            "receiver_ack_send_ok_count": 8,
+            "receiver_ack_send_error_count": 0,
+            "receiver_ack_last_send_error": null,
+            "receiver_done_ack_fast_path_target_addr": "192.168.71.118:39002",
+            "receiver_done_ack_fast_path_send_attempt_count": 8,
+            "receiver_done_ack_fast_path_send_ok_count": 8,
+            "receiver_done_ack_fast_path_send_error_count": 0
+        }));
+        assert_eq!(
+            compact["receiver_ack_target_addr"].as_str(),
+            Some("192.168.71.118:39002")
+        );
+        assert_eq!(
+            compact["receiver_ack_target_matches_sender_advertised_addr"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(compact["receiver_ack_send_ok_count"].as_u64(), Some(8));
+        assert_eq!(
+            compact["receiver_done_ack_fast_path_target_addr"].as_str(),
+            Some("192.168.71.118:39002")
+        );
     }
 
     #[test]
@@ -2900,62 +3193,67 @@ mod novorudp_tests {
             "NOVOVM_NATIVE_PIPELINE_ACK_REPORT_PATH",
             path.to_str(),
             || {
-                with_env_var(
-                    "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
-                    Some(target.as_str()),
-                    || {
-                        with_env_var("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED", Some("1"), || {
+                with_env_var("NOVOVM_NETWORK_PROFILE", Some("local_smoke"), || {
+                    with_env_var(
+                        "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
+                        Some(target.as_str()),
+                        || {
                             with_env_var(
-                                "NOVOVM_RECEIVER_DONE_ACK_FAST_PATH_BURST_COUNT",
-                                Some("3"),
+                                "NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED",
+                                Some("1"),
                                 || {
                                     with_env_var(
-                                        "NOVOVM_RECEIVER_DONE_ACK_FAST_PATH_BURST_INTERVAL_MS",
-                                        Some("0"),
+                                        "NOVOVM_RECEIVER_DONE_ACK_FAST_PATH_BURST_COUNT",
+                                        Some("3"),
                                         || {
-                                            let status = emit_receiver_done_ack_fast_path_v1(
-                                                4,
-                                                64,
-                                                40,
-                                                Instant::now(),
-                                                None,
-                                            );
-                                            assert!(status.enabled);
-                                            assert!(status.triggered);
-                                            assert_eq!(status.burst_count, 3);
-                                            assert_eq!(status.send_attempt_count, 3);
-                                            assert_eq!(status.send_ok_count, 3);
-                                            assert_eq!(status.send_error_count, 0);
-                                            assert!(status.before_final_report);
-                                            assert!(status.before_diagnostics_flush);
+                                            with_env_var(
+                                            "NOVOVM_RECEIVER_DONE_ACK_FAST_PATH_BURST_INTERVAL_MS",
+                                            Some("0"),
+                                            || {
+                                                let status = emit_receiver_done_ack_fast_path_v1(
+                                                    4,
+                                                    64,
+                                                    40,
+                                                    Instant::now(),
+                                                    None,
+                                                );
+                                                assert!(status.enabled);
+                                                assert!(status.triggered);
+                                                assert_eq!(status.burst_count, 3);
+                                                assert_eq!(status.send_attempt_count, 3);
+                                                assert_eq!(status.send_ok_count, 3);
+                                                assert_eq!(status.send_error_count, 0);
+                                                assert!(status.before_final_report);
+                                                assert!(status.before_diagnostics_flush);
 
-                                            let mut received_done = false;
-                                            let mut buf = [0u8; 4096];
-                                            for _ in 0..3 {
-                                                let Ok((len, _)) = listener.recv_from(&mut buf)
-                                                else {
-                                                    continue;
-                                                };
-                                                let packet =
-                                                    serde_json::from_slice::<Value>(&buf[..len])
-                                                        .expect("receiver done ack json");
-                                                received_done |= packet["receiver_done"]
-                                                    .as_bool()
-                                                    .unwrap_or(false);
-                                            }
-                                            assert!(received_done);
+                                                let mut received_done = false;
+                                                let mut buf = [0u8; 4096];
+                                                for _ in 0..3 {
+                                                    let Ok((len, _)) = listener.recv_from(&mut buf)
+                                                    else {
+                                                        continue;
+                                                    };
+                                                    let packet =
+                                                        serde_json::from_slice::<Value>(&buf[..len])
+                                                            .expect("receiver done ack json");
+                                                    received_done |= packet["receiver_done"]
+                                                        .as_bool()
+                                                        .unwrap_or(false);
+                                                }
+                                                assert!(received_done);
+                                            },
+                                        )
                                         },
                                     )
                                 },
                             )
-                        })
-                    },
-                )
+                        },
+                    )
+                })
             },
         );
         let _ = fs::remove_file(path);
     }
-
     #[test]
     fn full_async_ack_plane_latches_receiver_done_ack_even_when_epoch_is_stale() {
         let mut plane = FullAsyncAckDrainPumpStateV1::default();
@@ -7760,13 +8058,13 @@ mod novorudp_tests {
             assert_eq!(report["accepted"].as_bool(), Some(false));
             assert_eq!(
                 report["fail_reason"].as_str(),
-                Some("sender_finalization_timeout")
+                Some("receiver_repair_incomplete")
             );
             assert_eq!(report["report_written"].as_bool(), Some(true));
-            assert_eq!(report["sender_hard_timeout_reached"].as_bool(), Some(true));
+            assert_eq!(report["sender_hard_timeout_reached"].as_bool(), Some(false));
             assert_eq!(
-                report["tail_repair"]["tail_repair_ack_received_count"].as_u64(),
-                Some(0)
+                report["tail_repair"]["latest_ack_receiver_done"].as_bool(),
+                Some(false)
             );
         });
     }
@@ -7988,133 +8286,141 @@ mod novorudp_tests {
     #[test]
     fn full_async_sender_ack_plane_receives_receiver_done_ack() {
         with_env_var("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE", Some("1"), || {
-            with_env_var(
-                "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
-                Some("1000"),
-                || {
-                    with_env_var(
-                        "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS",
-                        Some("1"),
-                        || {
-                            with_sender_hard_timeout_env(500, || {
-                                let chain_id = 92_004;
-                                let tx_count = 4;
-                                let sender_addr = reserve_udp_addr().expect("sender addr");
-                                let receiver_addr = reserve_udp_addr().expect("receiver addr");
-                                let ack_bind_addr = reserve_udp_addr().expect("ack bind addr");
-                                let ack_target_addr = ack_bind_addr.clone();
-                                let ack_thread = std::thread::spawn(move || {
-                                    std::thread::sleep(Duration::from_millis(20));
-                                    let socket = UdpSocket::bind("127.0.0.1:0")
-                                        .expect("receiver done ack sender socket");
-                                    let ack = receiver_ack_report_value(tx_count, tx_count, 64, 99);
-                                    let _ =
-                                        socket.send_to(ack.to_string().as_bytes(), ack_target_addr);
+            with_env_var("NOVOVM_NETWORK_PROFILE", Some("local_smoke"), || {
+                with_env_var(
+                    "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
+                    Some("1000"),
+                    || {
+                        with_env_var(
+                            "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS",
+                            Some("1"),
+                            || {
+                                with_sender_hard_timeout_env(500, || {
+                                    let chain_id = 92_004;
+                                    let tx_count = 4;
+                                    let sender_addr = reserve_udp_addr().expect("sender addr");
+                                    let receiver_addr = reserve_udp_addr().expect("receiver addr");
+                                    let ack_bind_addr = reserve_udp_addr().expect("ack bind addr");
+                                    let ack_target_addr = ack_bind_addr.clone();
+                                    let ack_thread = std::thread::spawn(move || {
+                                        std::thread::sleep(Duration::from_millis(20));
+                                        let socket = UdpSocket::bind("127.0.0.1:0")
+                                            .expect("receiver done ack sender socket");
+                                        let ack =
+                                            receiver_ack_report_value(tx_count, tx_count, 64, 99);
+                                        let _ = socket
+                                            .send_to(ack.to_string().as_bytes(), ack_target_addr);
+                                    });
+
+                                    let report = run_sender(
+                                        chain_id,
+                                        tx_count,
+                                        1,
+                                        2,
+                                        sender_addr.as_str(),
+                                        receiver_addr.as_str(),
+                                        FaultConfigV1 {
+                                            enabled: false,
+                                            loss_bps: 0,
+                                            duplicate_bps: 0,
+                                            delay_ms: 0,
+                                            reorder_bps: 0,
+                                            seed: 0,
+                                        },
+                                        sender_timeout_sustained_config(tx_count),
+                                        sender_timeout_tail_repair_config(),
+                                        default_udp_send_retry_config(),
+                                        UdpAckConfigV1 {
+                                            enabled: true,
+                                            bind_addr: ack_bind_addr,
+                                            target_addr: None,
+                                            recv_timeout_ms: 0,
+                                        },
+                                        sender_timeout_novorudp_config(),
+                                    )
+                                    .expect("sender must accept receiver_done ack");
+                                    let _ = ack_thread.join();
+
+                                    assert_eq!(report["accepted"].as_bool(), Some(true));
+                                    assert_eq!(report["fail_reason"], Value::Null);
+                                    assert_eq!(
+                                        report["runtime_profile"].as_str(),
+                                        Some("production")
+                                    );
+                                    assert_eq!(
+                                        report["final_ack_wait_profile"].as_str(),
+                                        Some("production")
+                                    );
+                                    assert_eq!(
+                                        report["final_ack_wait_source"].as_str(),
+                                        Some("env_override")
+                                    );
+                                    assert_eq!(report["final_ack_wait_ms"].as_u64(), Some(1000));
+                                    assert_eq!(
+                                        report["production_low_latency_signoff"].as_bool(),
+                                        Some(true)
+                                    );
+                                    assert_eq!(
+                                        report["sender_finalization_wait_mode"].as_str(),
+                                        Some("production_low_latency_deadline")
+                                    );
+                                    assert_eq!(
+                                        report["sender_final_ack_fast_drain_enabled"].as_bool(),
+                                        Some(true)
+                                    );
+                                    assert_eq!(
+                                        report["sender_final_ack_fast_drain_receiver_done_seen"]
+                                            .as_bool(),
+                                        Some(true)
+                                    );
+                                    assert_eq!(
+                                        report["production_final_ack_deadline_exceeded"].as_bool(),
+                                        Some(false)
+                                    );
+                                    assert_eq!(
+                                        report["tail_repair"]["tail_repair_completion_reason"]
+                                            .as_str(),
+                                        Some("receiver_done_ack")
+                                    );
+                                    assert_eq!(
+                                        report["tail_repair"]["latest_ack_missing_count"].as_u64(),
+                                        Some(0)
+                                    );
+                                    assert_eq!(
+                                        report["tail_repair"]["latest_ack_receiver_done"].as_bool(),
+                                        Some(true)
+                                    );
+                                    assert_eq!(
+                                        report["sender_ack_final_sample_source"].as_str(),
+                                        Some("ack_plane_receiver_done")
+                                    );
+                                    assert_eq!(
+                                        report["sender_ack_final_sample_is_null"].as_bool(),
+                                        Some(false)
+                                    );
+                                    assert_eq!(
+                                        report["sender_ack_receiver_done_seen"].as_bool(),
+                                        Some(true)
+                                    );
+                                    assert_eq!(
+                                        report["sender_ack_receiver_done_epoch"].as_u64(),
+                                        Some(99)
+                                    );
+                                    assert_eq!(
+                                        report["full_async_ack_drain_dedicated_pump_enabled"]
+                                            .as_bool(),
+                                        Some(true)
+                                    );
+                                    assert_eq!(
+                                        report["ack_plane_thread_or_task_started"].as_bool(),
+                                        Some(true)
+                                    );
                                 });
-
-                                let report = run_sender(
-                                    chain_id,
-                                    tx_count,
-                                    1,
-                                    2,
-                                    sender_addr.as_str(),
-                                    receiver_addr.as_str(),
-                                    FaultConfigV1 {
-                                        enabled: false,
-                                        loss_bps: 0,
-                                        duplicate_bps: 0,
-                                        delay_ms: 0,
-                                        reorder_bps: 0,
-                                        seed: 0,
-                                    },
-                                    sender_timeout_sustained_config(tx_count),
-                                    sender_timeout_tail_repair_config(),
-                                    default_udp_send_retry_config(),
-                                    UdpAckConfigV1 {
-                                        enabled: true,
-                                        bind_addr: ack_bind_addr,
-                                        target_addr: None,
-                                        recv_timeout_ms: 0,
-                                    },
-                                    sender_timeout_novorudp_config(),
-                                )
-                                .expect("sender must accept receiver_done ack");
-                                let _ = ack_thread.join();
-
-                                assert_eq!(report["accepted"].as_bool(), Some(true));
-                                assert_eq!(report["fail_reason"], Value::Null);
-                                assert_eq!(report["runtime_profile"].as_str(), Some("production"));
-                                assert_eq!(
-                                    report["final_ack_wait_profile"].as_str(),
-                                    Some("production")
-                                );
-                                assert_eq!(
-                                    report["final_ack_wait_source"].as_str(),
-                                    Some("env_override")
-                                );
-                                assert_eq!(report["final_ack_wait_ms"].as_u64(), Some(1000));
-                                assert_eq!(
-                                    report["production_low_latency_signoff"].as_bool(),
-                                    Some(true)
-                                );
-                                assert_eq!(
-                                    report["sender_finalization_wait_mode"].as_str(),
-                                    Some("production_low_latency_deadline")
-                                );
-                                assert_eq!(
-                                    report["sender_final_ack_fast_drain_enabled"].as_bool(),
-                                    Some(true)
-                                );
-                                assert_eq!(
-                                    report["sender_final_ack_fast_drain_receiver_done_seen"]
-                                        .as_bool(),
-                                    Some(true)
-                                );
-                                assert_eq!(
-                                    report["production_final_ack_deadline_exceeded"].as_bool(),
-                                    Some(false)
-                                );
-                                assert_eq!(
-                                    report["tail_repair"]["tail_repair_completion_reason"].as_str(),
-                                    Some("receiver_done_ack")
-                                );
-                                assert_eq!(
-                                    report["tail_repair"]["latest_ack_missing_count"].as_u64(),
-                                    Some(0)
-                                );
-                                assert_eq!(
-                                    report["tail_repair"]["latest_ack_receiver_done"].as_bool(),
-                                    Some(true)
-                                );
-                                assert_eq!(
-                                    report["sender_ack_final_sample_source"].as_str(),
-                                    Some("ack_plane_receiver_done")
-                                );
-                                assert_eq!(
-                                    report["sender_ack_final_sample_is_null"].as_bool(),
-                                    Some(false)
-                                );
-                                assert_eq!(
-                                    report["sender_ack_receiver_done_seen"].as_bool(),
-                                    Some(true)
-                                );
-                                assert_eq!(
-                                    report["sender_ack_receiver_done_epoch"].as_u64(),
-                                    Some(99)
-                                );
-                                assert_eq!(
-                                    report["full_async_ack_drain_dedicated_pump_enabled"].as_bool(),
-                                    Some(true)
-                                );
-                                assert_eq!(
-                                    report["ack_plane_thread_or_task_started"].as_bool(),
-                                    Some(true)
-                                );
-                            });
-                        },
-                    )
-                },
-            )
+                            },
+                        )
+                    },
+                )
+            })
         });
     }
 
@@ -10157,6 +10463,27 @@ fn send_receiver_udp_ack_with_summary(
     };
     let enabled = bool_env("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED")
         || string_env_nonempty("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED").is_none();
+    let network_profile = NetworkProfileV1::from_env("receiver");
+    if !network_profile.allows_loopback_ack() && udp_addr_is_loopback_v1(target_addr.as_str()) {
+        let status = ReceiverAckSendStatusV1 {
+            enabled,
+            target_addr: Some(target_addr),
+            attempted_count: 0,
+            send_error_count: 1,
+            last_error: Some("receiver_ack_target_loopback_not_allowed_in_production".to_string()),
+            ..Default::default()
+        };
+        let mut report = receiver_ack_report_value_with_summary(
+            expected_tx_count,
+            stable_progress,
+            sample_limit,
+            ack_epoch,
+            progress_summary,
+        );
+        annotate_receiver_ack_send_status_v1(&mut report, &status);
+        let _ = write_report(ack_report_path().as_path(), &report);
+        return status;
+    }
     if !enabled {
         let status = ReceiverAckSendStatusV1 {
             enabled: false,
@@ -10231,11 +10558,36 @@ fn send_receiver_udp_ack_with_summary(
 
 fn annotate_receiver_ack_send_status_v1(value: &mut Value, status: &ReceiverAckSendStatusV1) {
     value["receiver_ack_backchannel_enabled"] = serde_json::json!(status.enabled);
+    value["receiver_ack_target_source"] =
+        serde_json::json!(
+            if string_env_nonempty("NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR").is_some() {
+                "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR"
+            } else if string_env_nonempty("NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR").is_some() {
+                "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR"
+            } else {
+                "missing"
+            }
+        );
     value["receiver_ack_target_addr"] = status
         .target_addr
         .as_ref()
         .map(|addr| serde_json::json!(addr))
         .unwrap_or(Value::Null);
+    value["receiver_ack_target_is_loopback"] = status
+        .target_addr
+        .as_ref()
+        .map(|addr| serde_json::json!(udp_addr_is_loopback_v1(addr)))
+        .unwrap_or(Value::Null);
+    value["receiver_ack_target_matches_sender_advertised_addr"] =
+        serde_json::json!(ack_target_matches_advertised_v1(
+            status.target_addr.as_deref(),
+            first_string_env_nonempty(&[
+                "NOVOVM_NATIVE_PIPELINE_ACK_ADVERTISED_ADDR",
+                "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADVERTISED_ADDR",
+                "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR",
+            ])
+            .as_deref(),
+        ));
     value["receiver_ack_bind_addr"] = status
         .bind_addr
         .as_ref()
@@ -10247,6 +10599,7 @@ fn annotate_receiver_ack_send_status_v1(value: &mut Value, status: &ReceiverAckS
         .map(|addr| serde_json::json!(addr))
         .unwrap_or(Value::Null);
     value["receiver_ack_packet_attempted_count"] = serde_json::json!(status.attempted_count);
+    value["receiver_ack_send_attempt_count"] = serde_json::json!(status.attempted_count);
     value["receiver_ack_packet_sent_count"] = serde_json::json!(status.send_ok_count);
     value["receiver_ack_send_ok_count"] = serde_json::json!(status.send_ok_count);
     value["receiver_ack_send_error_count"] = serde_json::json!(status.send_error_count);
@@ -10274,6 +10627,12 @@ fn annotate_receiver_done_ack_fast_path_status_v1(
     value["receiver_done_ack_fast_path_send_ok_count"] = serde_json::json!(status.send_ok_count);
     value["receiver_done_ack_fast_path_send_error_count"] =
         serde_json::json!(status.send_error_count);
+    value["receiver_done_ack_fast_path_target_addr"] = first_string_env_nonempty(&[
+        "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
+        "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR",
+    ])
+    .map(|addr| serde_json::json!(addr))
+    .unwrap_or(Value::Null);
     value["receiver_done_ack_fast_path_last_send_ms"] = status
         .last_send_ms
         .map(|ms| serde_json::json!(ms))
@@ -14802,6 +15161,35 @@ fn run_sender(
     udp_ack: UdpAckConfigV1,
     novorudp: NovoRudpConfigV1,
 ) -> Result<Value> {
+    let network_profile = NetworkProfileV1::from_env("sender");
+    let sender_ack_bind_requested_addr = udp_ack.bind_addr.clone();
+    let sender_ack_advertised_addr = first_string_env_nonempty(&[
+        "NOVOVM_NATIVE_PIPELINE_ACK_ADVERTISED_ADDR",
+        "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADVERTISED_ADDR",
+        "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR",
+    ]);
+    let sender_ack_bind_requested_is_loopback =
+        udp_addr_is_loopback_v1(sender_ack_bind_requested_addr.as_str());
+    let sender_ack_advertised_is_loopback = sender_ack_advertised_addr
+        .as_deref()
+        .map(udp_addr_is_loopback_v1)
+        .unwrap_or(false);
+    if full_async_runtime_engine_enabled_v1() && !network_profile.allows_loopback_ack() {
+        if sender_ack_bind_requested_is_loopback {
+            bail!(
+                "sender_ack_bind_loopback_not_allowed_in_production: bind_addr={} network_profile={}",
+                sender_ack_bind_requested_addr,
+                network_profile.as_str()
+            );
+        }
+        if sender_ack_advertised_is_loopback {
+            bail!(
+                "sender_ack_advertised_loopback_not_allowed_in_production: advertised_addr={} network_profile={}",
+                sender_ack_advertised_addr.clone().unwrap_or_default(),
+                network_profile.as_str()
+            );
+        }
+    }
     let sender_started = Instant::now();
     let default_sender_hard_timeout_ms = sustained
         .duration_seconds
@@ -15039,6 +15427,21 @@ fn run_sender(
         .as_ref()
         .and_then(|socket| socket.local_addr().ok())
         .map(|addr| addr.to_string());
+    let sender_ack_socket_bound_addr_for_contract = ack_socket_addr
+        .clone()
+        .unwrap_or_else(|| sender_ack_bind_requested_addr.clone());
+    let sender_ack_socket_bound_is_loopback =
+        udp_addr_is_loopback_v1(sender_ack_socket_bound_addr_for_contract.as_str());
+    let sender_ack_socket_bound_is_wildcard =
+        udp_addr_is_wildcard_v1(sender_ack_socket_bound_addr_for_contract.as_str());
+    let sender_ack_bind_advertised_mismatch = sender_ack_bind_advertised_mismatch_v1(
+        sender_ack_socket_bound_addr_for_contract.as_str(),
+        sender_ack_advertised_addr.as_deref(),
+    );
+    let sender_ack_cross_machine_safe = sender_ack_cross_machine_safe_v1(
+        sender_ack_socket_bound_addr_for_contract.as_str(),
+        sender_ack_advertised_addr.as_deref(),
+    );
     let full_async_ack_drain_dedicated_pump_enabled =
         full_async_runtime_engine && primary_ack_drain_enabled && ack_socket.is_some();
     let ack_plane_shared = if full_async_ack_drain_dedicated_pump_enabled {
@@ -16833,7 +17236,17 @@ fn run_sender(
         "ack_plane_aggressive_drain": ack_plane_aggressive_drain,
         "sender_ack_plane_enabled": udp_ack.enabled,
         "sender_ack_plane_mode": if full_async_runtime_engine { "aggressive_nonblocking_ack_drain" } else { "interval_ack_drain" },
-        "sender_ack_socket_bound_addr": ack_socket_addr,
+        "network_profile": network_profile.as_str(),
+        "sender_ack_bind_requested_addr": sender_ack_bind_requested_addr.clone(),
+        "sender_ack_socket_bound_addr": ack_socket_addr.clone(),
+        "sender_ack_socket_bound_is_loopback": sender_ack_socket_bound_is_loopback,
+        "sender_ack_socket_bound_is_wildcard": sender_ack_socket_bound_is_wildcard,
+        "sender_ack_advertised_addr": sender_ack_advertised_addr.clone(),
+        "sender_ack_advertised_is_loopback": sender_ack_advertised_is_loopback,
+        "sender_ack_cross_machine_safe": sender_ack_cross_machine_safe,
+        "sender_ack_bind_advertised_mismatch": sender_ack_bind_advertised_mismatch,
+        "sender_ack_socket_bind_mismatch": sender_ack_bind_advertised_mismatch,
+        "sender_ack_socket_expected_remote_target_addr": sender_ack_advertised_addr.clone(),
         "full_async_ack_drain_dedicated_pump_enabled": full_async_ack_drain_dedicated_pump_enabled,
         "ack_plane_thread_or_task_started": ack_plane_final_snapshot
             .as_ref()
@@ -18306,11 +18719,20 @@ fn main() -> Result<()> {
         backoff_max_ms: u64_env("NOVOVM_NATIVE_PIPELINE_UDP_SEND_RETRY_BACKOFF_MAX_MS", 100)?
             .max(1),
     };
+    let network_profile = NetworkProfileV1::from_env(role.as_str());
+    let default_ack_bind_addr = if matches!(
+        network_profile,
+        NetworkProfileV1::Production | NetworkProfileV1::CrossMachine
+    ) {
+        "0.0.0.0:39002"
+    } else {
+        "0.0.0.0:0"
+    };
     let udp_ack = UdpAckConfigV1 {
         enabled: bool_env("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED")
             || string_env_nonempty("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED").is_none(),
         bind_addr: first_string_env_nonempty(&["NOVOVM_NATIVE_PIPELINE_ACK_BIND_ADDR"])
-            .unwrap_or_else(|| "0.0.0.0:0".to_string()),
+            .unwrap_or_else(|| default_ack_bind_addr.to_string()),
         target_addr: first_string_env_nonempty(&[
             "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
             "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR",
@@ -18580,6 +19002,18 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "primary_send_plane_mode": summary.get("primary_send_plane_mode").cloned().unwrap_or(Value::Null),
         "ack_plane_mode": summary.get("ack_plane_mode").cloned().unwrap_or(Value::Null),
         "repair_plane_mode": summary.get("repair_plane_mode").cloned().unwrap_or(Value::Null),
+        "receiver_ack_target_addr": summary.get("receiver_ack_target_addr").cloned().unwrap_or(Value::Null),
+        "receiver_ack_target_is_loopback": summary.get("receiver_ack_target_is_loopback").cloned().unwrap_or(Value::Null),
+        "receiver_ack_target_source": summary.get("receiver_ack_target_source").cloned().unwrap_or(Value::Null),
+        "receiver_ack_target_matches_sender_advertised_addr": summary.get("receiver_ack_target_matches_sender_advertised_addr").cloned().unwrap_or(Value::Null),
+        "receiver_ack_send_attempt_count": summary_u64(&summary, "receiver_ack_send_attempt_count"),
+        "receiver_ack_send_ok_count": summary_u64(&summary, "receiver_ack_send_ok_count"),
+        "receiver_ack_send_error_count": summary_u64(&summary, "receiver_ack_send_error_count"),
+        "receiver_ack_last_send_error": summary.get("receiver_ack_last_send_error").cloned().unwrap_or(Value::Null),
+        "receiver_done_ack_fast_path_target_addr": summary.get("receiver_done_ack_fast_path_target_addr").cloned().unwrap_or(Value::Null),
+        "receiver_done_ack_fast_path_send_attempt_count": summary_u64(&summary, "receiver_done_ack_fast_path_send_attempt_count"),
+        "receiver_done_ack_fast_path_send_ok_count": summary_u64(&summary, "receiver_done_ack_fast_path_send_ok_count"),
+        "receiver_done_ack_fast_path_send_error_count": summary_u64(&summary, "receiver_done_ack_fast_path_send_error_count"),
         "network_receiver_plane_mode": summary.get("network_receiver_plane_mode").cloned().unwrap_or(Value::Null),
         "object_assembler_plane_mode": summary.get("object_assembler_plane_mode").cloned().unwrap_or(Value::Null),
         "aoem_runtime_plane_mode": summary.get("aoem_runtime_plane_mode").cloned().unwrap_or(Value::Null),
