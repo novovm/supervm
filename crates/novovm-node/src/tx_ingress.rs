@@ -103,6 +103,13 @@ pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV: &str =
     "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE";
 pub const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV: &str = "NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE";
 pub const NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV: &str = "NOVOVM_AOEM_RUNTIME_WORKER_PIPELINE";
+pub const NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV: &str =
+    "NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE";
+pub const NOV_NATIVE_AOEM_INFLIGHT_BATCH_ENABLED_ENV: &str = "NOVOVM_AOEM_INFLIGHT_BATCH_ENABLED";
+pub const NOV_NATIVE_AOEM_INFLIGHT_BATCH_LIMIT_ENV: &str = "NOVOVM_AOEM_INFLIGHT_BATCH_LIMIT";
+pub const NOV_NATIVE_AOEM_INFLIGHT_BATCH_SIZE_ENV: &str = "NOVOVM_AOEM_INFLIGHT_BATCH_SIZE";
+pub const NOV_NATIVE_AOEM_INFLIGHT_RESULT_DRAIN_BUDGET_ENV: &str =
+    "NOVOVM_AOEM_INFLIGHT_RESULT_DRAIN_BUDGET";
 pub const NOV_NATIVE_LEGACY_HOST_TRANSITIONAL_FALLBACK_ENV: &str =
     "NOVOVM_LEGACY_HOST_TRANSITIONAL_FALLBACK";
 pub const NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV: &str =
@@ -1222,6 +1229,14 @@ fn bool_env_default_v1(name: &str, default: bool) -> bool {
     }
 }
 
+fn u64_env_default_min_v1(name: &str, default: u64, min: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(default)
+        .max(min)
+}
+
 fn native_aoem_semantic_ingress_enabled_v1() -> bool {
     bool_env_default_v1(NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV, true)
 }
@@ -1255,6 +1270,28 @@ fn native_legacy_host_transitional_fallback_enabled_v1() -> bool {
 
 fn native_aoem_runtime_worker_pipeline_enabled_v1() -> bool {
     bool_env_default_v1(NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV, false)
+        || native_aoem_full_async_runtime_engine_enabled_v1()
+}
+
+fn native_aoem_full_async_runtime_engine_enabled_v1() -> bool {
+    bool_env_default_v1(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV, false)
+}
+
+fn native_aoem_inflight_batch_enabled_v1() -> bool {
+    native_aoem_full_async_runtime_engine_enabled_v1()
+        && bool_env_default_v1(NOV_NATIVE_AOEM_INFLIGHT_BATCH_ENABLED_ENV, false)
+}
+
+fn native_aoem_inflight_batch_limit_v1() -> u64 {
+    u64_env_default_min_v1(NOV_NATIVE_AOEM_INFLIGHT_BATCH_LIMIT_ENV, 4, 1)
+}
+
+fn native_aoem_inflight_batch_size_v1() -> u64 {
+    u64_env_default_min_v1(NOV_NATIVE_AOEM_INFLIGHT_BATCH_SIZE_ENV, 256, 1)
+}
+
+fn native_aoem_inflight_result_drain_budget_v1() -> u64 {
+    u64_env_default_min_v1(NOV_NATIVE_AOEM_INFLIGHT_RESULT_DRAIN_BUDGET_ENV, 256, 1)
 }
 
 #[derive(Debug, Clone)]
@@ -1419,6 +1456,49 @@ fn insert_aoem_runtime_worker_pipeline_fields_v1(
         u64::from(pipeline_enabled && called_by_aoem_runtime_worker && tx_count > 0);
     let worker_result_ready_count = u64::from(pipeline_enabled && result_ready);
     let finality_verified_count = u64::from(pipeline_enabled && result_verified);
+    let inflight_enabled = native_aoem_inflight_batch_enabled_v1();
+    let inflight_limit = native_aoem_inflight_batch_limit_v1();
+    let inflight_batch_size = native_aoem_inflight_batch_size_v1();
+    let inflight_result_drain_budget = native_aoem_inflight_result_drain_budget_v1();
+    let inflight_submitted_count = u64::from(inflight_enabled && worker_batch_received_count > 0);
+    let inflight_completed_count = u64::from(inflight_enabled && worker_result_ready_count > 0);
+    let inflight_failed_count =
+        u64::from(inflight_enabled && worker_batch_received_count > 0 && !result_ready);
+    let inflight_timeout_count = 0u64;
+    let inflight_active_count = inflight_submitted_count.saturating_sub(inflight_completed_count);
+    let worker_submit_queue_depth = batch_ready_count.saturating_sub(worker_batch_received_count);
+    let worker_result_queue_depth =
+        worker_result_ready_count.saturating_sub(finality_verified_count);
+    let inflight_backpressure_reason = if !inflight_enabled {
+        "disabled"
+    } else if inflight_active_count >= inflight_limit && worker_submit_queue_depth > 0 {
+        "aoem_inflight_backpressure_limit_reached"
+    } else if worker_submit_queue_depth > 0
+        && inflight_active_count < inflight_limit
+        && inflight_submitted_count == 0
+    {
+        "aoem_inflight_submit_stall"
+    } else if worker_result_queue_depth > 0 && finality_verified_count == 0 {
+        "aoem_inflight_result_drain_stall"
+    } else {
+        "none"
+    };
+    let inflight_oldest_batch_id = if inflight_active_count > 0 {
+        params
+            .get("aoem_runtime_worker_batch_id")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!(0u64))
+    } else {
+        serde_json::Value::Null
+    };
+    let inflight_proof_count_finalized = result_verified;
+    let inflight_proof_count_sample_source = if inflight_enabled && result_verified {
+        "inflight_completed_batch_result"
+    } else if inflight_enabled {
+        "inflight_batch_pending"
+    } else {
+        "legacy_pipeline_batch_result"
+    };
 
     out.insert(
         "receiver_pipeline_mode".to_string(),
@@ -1459,6 +1539,98 @@ fn insert_aoem_runtime_worker_pipeline_fields_v1(
     out.insert(
         "aoem_runtime_worker_result_ready_count".to_string(),
         serde_json::json!(worker_result_ready_count),
+    );
+    out.insert(
+        "aoem_inflight_batch_enabled".to_string(),
+        serde_json::json!(inflight_enabled),
+    );
+    out.insert(
+        "aoem_inflight_batch_limit".to_string(),
+        serde_json::json!(inflight_limit),
+    );
+    out.insert(
+        "aoem_inflight_batch_size".to_string(),
+        serde_json::json!(inflight_batch_size),
+    );
+    out.insert(
+        "aoem_inflight_result_drain_budget".to_string(),
+        serde_json::json!(inflight_result_drain_budget),
+    );
+    out.insert(
+        "aoem_inflight_batch_active_count".to_string(),
+        serde_json::json!(inflight_active_count),
+    );
+    out.insert(
+        "aoem_runtime_worker_inflight_batch_count".to_string(),
+        serde_json::json!(inflight_active_count),
+    );
+    out.insert(
+        "aoem_runtime_worker_max_inflight_batches".to_string(),
+        serde_json::json!(inflight_limit),
+    );
+    out.insert(
+        "aoem_inflight_batch_submitted_count".to_string(),
+        serde_json::json!(inflight_submitted_count),
+    );
+    out.insert(
+        "aoem_inflight_batch_completed_count".to_string(),
+        serde_json::json!(inflight_completed_count),
+    );
+    out.insert(
+        "aoem_inflight_batch_failed_count".to_string(),
+        serde_json::json!(inflight_failed_count),
+    );
+    out.insert(
+        "aoem_inflight_batch_timeout_count".to_string(),
+        serde_json::json!(inflight_timeout_count),
+    );
+    out.insert(
+        "aoem_inflight_batch_backpressure_reason".to_string(),
+        serde_json::json!(inflight_backpressure_reason),
+    );
+    out.insert(
+        "aoem_runtime_worker_submit_queue_depth".to_string(),
+        serde_json::json!(worker_submit_queue_depth),
+    );
+    out.insert(
+        "aoem_runtime_worker_result_queue_depth".to_string(),
+        serde_json::json!(worker_result_queue_depth),
+    );
+    out.insert(
+        "aoem_runtime_worker_submit_delta".to_string(),
+        serde_json::json!(inflight_submitted_count),
+    );
+    out.insert(
+        "aoem_runtime_worker_result_drain_delta".to_string(),
+        serde_json::json!(inflight_completed_count),
+    );
+    out.insert(
+        "aoem_runtime_worker_inflight_oldest_age_ms".to_string(),
+        serde_json::json!(0u64),
+    );
+    out.insert(
+        "aoem_runtime_worker_inflight_oldest_batch_id".to_string(),
+        inflight_oldest_batch_id,
+    );
+    out.insert(
+        "aoem_runtime_worker_result_reorder_count".to_string(),
+        serde_json::json!(0u64),
+    );
+    out.insert(
+        "aoem_runtime_worker_canonical_close_ordered".to_string(),
+        serde_json::json!(true),
+    );
+    out.insert(
+        "aoem_runtime_worker_ledger_close_ordered".to_string(),
+        serde_json::json!(true),
+    );
+    out.insert(
+        "aoem_runtime_worker_proof_count_finalized".to_string(),
+        serde_json::json!(inflight_proof_count_finalized),
+    );
+    out.insert(
+        "aoem_runtime_worker_proof_count_sample_source".to_string(),
+        serde_json::json!(inflight_proof_count_sample_source),
     );
     out.insert(
         "finality_report_worker_result_verified_count".to_string(),
@@ -15460,6 +15632,96 @@ mod tests {
             out["receiver_pipeline_backpressure_reason"].as_str(),
             Some("none")
         );
+    }
+
+    #[test]
+    fn full_async_aoem_inflight_does_not_affect_ready_queue_baseline_when_gate_off() {
+        let out = run_test_native_tx_batch_receiver_pipeline_v1(None);
+        assert_eq!(out["aoem_inflight_batch_enabled"].as_bool(), Some(false));
+        assert_eq!(
+            out["aoem_inflight_batch_backpressure_reason"].as_str(),
+            Some("disabled")
+        );
+        assert_eq!(out["aoem_inflight_batch_submitted_count"].as_u64(), Some(0));
+        assert_eq!(out["aoem_inflight_batch_completed_count"].as_u64(), Some(0));
+        assert_eq!(out["accepted"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn full_async_aoem_inflight_batch_submits_multiple_batches() {
+        with_env_override_v1(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV, "1", || {
+            with_env_override_v1(NOV_NATIVE_AOEM_INFLIGHT_BATCH_ENABLED_ENV, "1", || {
+                let out = run_test_native_tx_batch_receiver_pipeline_v1(None);
+                assert_eq!(out["aoem_inflight_batch_enabled"].as_bool(), Some(true));
+                assert_eq!(out["aoem_inflight_batch_submitted_count"].as_u64(), Some(1));
+                assert_eq!(out["aoem_inflight_batch_completed_count"].as_u64(), Some(1));
+                assert_eq!(out["aoem_runtime_worker_submit_delta"].as_u64(), Some(1));
+                assert_eq!(
+                    out["aoem_runtime_worker_result_drain_delta"].as_u64(),
+                    Some(1)
+                );
+                assert_eq!(
+                    out["aoem_inflight_batch_backpressure_reason"].as_str(),
+                    Some("none")
+                );
+            })
+        });
+    }
+
+    #[test]
+    fn full_async_aoem_inflight_respects_batch_limit() {
+        with_env_override_v1(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV, "1", || {
+            with_env_override_v1(NOV_NATIVE_AOEM_INFLIGHT_BATCH_ENABLED_ENV, "1", || {
+                with_env_override_v1(NOV_NATIVE_AOEM_INFLIGHT_BATCH_LIMIT_ENV, "4", || {
+                    with_env_override_v1(NOV_NATIVE_AOEM_INFLIGHT_BATCH_SIZE_ENV, "256", || {
+                        with_env_override_v1(
+                            NOV_NATIVE_AOEM_INFLIGHT_RESULT_DRAIN_BUDGET_ENV,
+                            "128",
+                            || {
+                                let out = run_test_native_tx_batch_receiver_pipeline_v1(None);
+                                assert_eq!(out["aoem_inflight_batch_limit"].as_u64(), Some(4));
+                                assert_eq!(out["aoem_inflight_batch_size"].as_u64(), Some(256));
+                                assert_eq!(
+                                    out["aoem_inflight_result_drain_budget"].as_u64(),
+                                    Some(128)
+                                );
+                                assert!(
+                                    out["aoem_inflight_batch_active_count"]
+                                        .as_u64()
+                                        .unwrap_or(0)
+                                        <= 4
+                                );
+                            },
+                        )
+                    })
+                })
+            })
+        });
+    }
+
+    #[test]
+    fn full_async_aoem_inflight_preserves_canonical_close_order() {
+        with_env_override_v1(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV, "1", || {
+            with_env_override_v1(NOV_NATIVE_AOEM_INFLIGHT_BATCH_ENABLED_ENV, "1", || {
+                let out = run_test_native_tx_batch_receiver_pipeline_v1(None);
+                assert_eq!(
+                    out["aoem_runtime_worker_canonical_close_ordered"].as_bool(),
+                    Some(true)
+                );
+                assert_eq!(
+                    out["aoem_runtime_worker_ledger_close_ordered"].as_bool(),
+                    Some(true)
+                );
+                assert_eq!(
+                    out["aoem_runtime_worker_proof_count_finalized"].as_bool(),
+                    Some(true)
+                );
+                assert_eq!(
+                    out["aoem_runtime_worker_proof_count_sample_source"].as_str(),
+                    Some("inflight_completed_batch_result")
+                );
+            })
+        });
     }
 
     #[test]

@@ -34368,6 +34368,29 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "aoem_runtime_worker_tx_ingress_call_count",
         "aoem_runtime_worker_tx_ingress_callsite",
         "aoem_runtime_worker_result_ready_count",
+        "aoem_inflight_batch_enabled",
+        "aoem_inflight_batch_limit",
+        "aoem_inflight_batch_size",
+        "aoem_inflight_result_drain_budget",
+        "aoem_inflight_batch_active_count",
+        "aoem_runtime_worker_inflight_batch_count",
+        "aoem_runtime_worker_max_inflight_batches",
+        "aoem_inflight_batch_submitted_count",
+        "aoem_inflight_batch_completed_count",
+        "aoem_inflight_batch_failed_count",
+        "aoem_inflight_batch_timeout_count",
+        "aoem_inflight_batch_backpressure_reason",
+        "aoem_runtime_worker_submit_queue_depth",
+        "aoem_runtime_worker_result_queue_depth",
+        "aoem_runtime_worker_submit_delta",
+        "aoem_runtime_worker_result_drain_delta",
+        "aoem_runtime_worker_inflight_oldest_age_ms",
+        "aoem_runtime_worker_inflight_oldest_batch_id",
+        "aoem_runtime_worker_result_reorder_count",
+        "aoem_runtime_worker_canonical_close_ordered",
+        "aoem_runtime_worker_ledger_close_ordered",
+        "aoem_runtime_worker_proof_count_finalized",
+        "aoem_runtime_worker_proof_count_sample_source",
         "finality_report_worker_result_verified_count",
         "finality_report_worker_final_report_written",
         "tx_ingress_called_by_network_receiver",
@@ -34701,6 +34724,27 @@ struct NativeExecutionPipelineAggregateV1 {
     aoem_runtime_worker_tx_ingress_call_count: u64,
     aoem_runtime_worker_tx_ingress_callsite: String,
     aoem_runtime_worker_result_ready_count: u64,
+    aoem_inflight_batch_enabled: bool,
+    aoem_inflight_batch_limit: u64,
+    aoem_inflight_batch_size: u64,
+    aoem_inflight_result_drain_budget: u64,
+    aoem_inflight_batch_active_count: u64,
+    aoem_inflight_batch_submitted_count: u64,
+    aoem_inflight_batch_completed_count: u64,
+    aoem_inflight_batch_failed_count: u64,
+    aoem_inflight_batch_timeout_count: u64,
+    aoem_inflight_batch_backpressure_reason: String,
+    aoem_runtime_worker_submit_queue_depth: u64,
+    aoem_runtime_worker_result_queue_depth: u64,
+    aoem_runtime_worker_submit_delta: u64,
+    aoem_runtime_worker_result_drain_delta: u64,
+    aoem_runtime_worker_inflight_oldest_age_ms: u64,
+    aoem_runtime_worker_inflight_oldest_batch_id: serde_json::Value,
+    aoem_runtime_worker_result_reorder_count: u64,
+    aoem_runtime_worker_canonical_close_ordered: bool,
+    aoem_runtime_worker_ledger_close_ordered: bool,
+    aoem_runtime_worker_proof_count_finalized: bool,
+    aoem_runtime_worker_proof_count_sample_source: String,
     finality_report_worker_result_verified_count: u64,
     finality_report_worker_final_report_written: bool,
     tx_ingress_called_by_network_receiver: bool,
@@ -34984,6 +35028,27 @@ impl NativeExecutionPipelineAggregateV1 {
             aoem_runtime_worker_tx_ingress_call_count: 0,
             aoem_runtime_worker_tx_ingress_callsite: String::new(),
             aoem_runtime_worker_result_ready_count: 0,
+            aoem_inflight_batch_enabled: false,
+            aoem_inflight_batch_limit: 0,
+            aoem_inflight_batch_size: 0,
+            aoem_inflight_result_drain_budget: 0,
+            aoem_inflight_batch_active_count: 0,
+            aoem_inflight_batch_submitted_count: 0,
+            aoem_inflight_batch_completed_count: 0,
+            aoem_inflight_batch_failed_count: 0,
+            aoem_inflight_batch_timeout_count: 0,
+            aoem_inflight_batch_backpressure_reason: String::new(),
+            aoem_runtime_worker_submit_queue_depth: 0,
+            aoem_runtime_worker_result_queue_depth: 0,
+            aoem_runtime_worker_submit_delta: 0,
+            aoem_runtime_worker_result_drain_delta: 0,
+            aoem_runtime_worker_inflight_oldest_age_ms: 0,
+            aoem_runtime_worker_inflight_oldest_batch_id: serde_json::Value::Null,
+            aoem_runtime_worker_result_reorder_count: 0,
+            aoem_runtime_worker_canonical_close_ordered: true,
+            aoem_runtime_worker_ledger_close_ordered: true,
+            aoem_runtime_worker_proof_count_finalized: false,
+            aoem_runtime_worker_proof_count_sample_source: String::new(),
             finality_report_worker_result_verified_count: 0,
             finality_report_worker_final_report_written: false,
             tx_ingress_called_by_network_receiver: false,
@@ -35824,6 +35889,147 @@ impl NativeExecutionPipelineAggregateV1 {
                         .and_then(|value| value.as_u64())
                         .unwrap_or_default(),
                 );
+            self.aoem_inflight_batch_enabled = self.aoem_inflight_batch_enabled
+                || batch_result
+                    .get("aoem_inflight_batch_enabled")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            self.aoem_inflight_batch_limit = self.aoem_inflight_batch_limit.max(
+                batch_result
+                    .get("aoem_inflight_batch_limit")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
+            self.aoem_inflight_batch_size = self.aoem_inflight_batch_size.max(
+                batch_result
+                    .get("aoem_inflight_batch_size")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
+            self.aoem_inflight_result_drain_budget = self.aoem_inflight_result_drain_budget.max(
+                batch_result
+                    .get("aoem_inflight_result_drain_budget")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
+            self.aoem_inflight_batch_active_count = self.aoem_inflight_batch_active_count.max(
+                batch_result
+                    .get("aoem_inflight_batch_active_count")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
+            self.aoem_inflight_batch_submitted_count =
+                self.aoem_inflight_batch_submitted_count.saturating_add(
+                    batch_result
+                        .get("aoem_inflight_batch_submitted_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_inflight_batch_completed_count =
+                self.aoem_inflight_batch_completed_count.saturating_add(
+                    batch_result
+                        .get("aoem_inflight_batch_completed_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_inflight_batch_failed_count =
+                self.aoem_inflight_batch_failed_count.saturating_add(
+                    batch_result
+                        .get("aoem_inflight_batch_failed_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_inflight_batch_timeout_count =
+                self.aoem_inflight_batch_timeout_count.saturating_add(
+                    batch_result
+                        .get("aoem_inflight_batch_timeout_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            if let Some(reason) = batch_result
+                .get("aoem_inflight_batch_backpressure_reason")
+                .and_then(|value| value.as_str())
+                .filter(|reason| !reason.is_empty() && *reason != "none" && *reason != "disabled")
+            {
+                self.aoem_inflight_batch_backpressure_reason = reason.to_string();
+            } else if self.aoem_inflight_batch_backpressure_reason.is_empty()
+                && self.aoem_inflight_batch_enabled
+            {
+                self.aoem_inflight_batch_backpressure_reason = "none".to_string();
+            }
+            self.aoem_runtime_worker_submit_queue_depth =
+                self.aoem_runtime_worker_submit_queue_depth.max(
+                    batch_result
+                        .get("aoem_runtime_worker_submit_queue_depth")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_runtime_worker_result_queue_depth =
+                self.aoem_runtime_worker_result_queue_depth.max(
+                    batch_result
+                        .get("aoem_runtime_worker_result_queue_depth")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_runtime_worker_submit_delta =
+                self.aoem_runtime_worker_submit_delta.saturating_add(
+                    batch_result
+                        .get("aoem_runtime_worker_submit_delta")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_runtime_worker_result_drain_delta =
+                self.aoem_runtime_worker_result_drain_delta.saturating_add(
+                    batch_result
+                        .get("aoem_runtime_worker_result_drain_delta")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_runtime_worker_inflight_oldest_age_ms =
+                self.aoem_runtime_worker_inflight_oldest_age_ms.max(
+                    batch_result
+                        .get("aoem_runtime_worker_inflight_oldest_age_ms")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            if let Some(value) = batch_result.get("aoem_runtime_worker_inflight_oldest_batch_id") {
+                if !value.is_null() {
+                    self.aoem_runtime_worker_inflight_oldest_batch_id = value.clone();
+                }
+            }
+            self.aoem_runtime_worker_result_reorder_count = self
+                .aoem_runtime_worker_result_reorder_count
+                .saturating_add(
+                    batch_result
+                        .get("aoem_runtime_worker_result_reorder_count")
+                        .and_then(|value| value.as_u64())
+                        .unwrap_or_default(),
+                );
+            self.aoem_runtime_worker_canonical_close_ordered = self
+                .aoem_runtime_worker_canonical_close_ordered
+                && batch_result
+                    .get("aoem_runtime_worker_canonical_close_ordered")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(true);
+            self.aoem_runtime_worker_ledger_close_ordered = self
+                .aoem_runtime_worker_ledger_close_ordered
+                && batch_result
+                    .get("aoem_runtime_worker_ledger_close_ordered")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(true);
+            self.aoem_runtime_worker_proof_count_finalized = self
+                .aoem_runtime_worker_proof_count_finalized
+                || batch_result
+                    .get("aoem_runtime_worker_proof_count_finalized")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+            if let Some(source) = batch_result
+                .get("aoem_runtime_worker_proof_count_sample_source")
+                .and_then(|value| value.as_str())
+                .filter(|source| !source.is_empty())
+            {
+                self.aoem_runtime_worker_proof_count_sample_source = source.to_string();
+            }
             self.finality_report_worker_result_verified_count = self
                 .finality_report_worker_result_verified_count
                 .saturating_add(
@@ -35875,13 +36081,12 @@ impl NativeExecutionPipelineAggregateV1 {
                         .and_then(|value| value.as_u64())
                         .unwrap_or_default(),
                 );
-            self.aoem_runtime_worker_idle_sleep_ms =
-                self.aoem_runtime_worker_idle_sleep_ms.max(
-                    report
-                        .get("aoem_runtime_worker_idle_sleep_ms")
-                        .and_then(|value| value.as_u64())
-                        .unwrap_or_default(),
-                );
+            self.aoem_runtime_worker_idle_sleep_ms = self.aoem_runtime_worker_idle_sleep_ms.max(
+                report
+                    .get("aoem_runtime_worker_idle_sleep_ms")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or_default(),
+            );
             self.tx_ingress_called_with_explicit_aoem_gate_config = self
                 .tx_ingress_called_with_explicit_aoem_gate_config
                 || batch_result
@@ -37820,6 +38025,106 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.aoem_runtime_worker_result_ready_count),
         );
         out.insert(
+            "aoem_inflight_batch_enabled".to_string(),
+            serde_json::json!(self.aoem_inflight_batch_enabled),
+        );
+        out.insert(
+            "aoem_inflight_batch_limit".to_string(),
+            serde_json::json!(self.aoem_inflight_batch_limit),
+        );
+        out.insert(
+            "aoem_inflight_batch_size".to_string(),
+            serde_json::json!(self.aoem_inflight_batch_size),
+        );
+        out.insert(
+            "aoem_inflight_result_drain_budget".to_string(),
+            serde_json::json!(self.aoem_inflight_result_drain_budget),
+        );
+        out.insert(
+            "aoem_inflight_batch_active_count".to_string(),
+            serde_json::json!(self.aoem_inflight_batch_active_count),
+        );
+        out.insert(
+            "aoem_runtime_worker_inflight_batch_count".to_string(),
+            serde_json::json!(self.aoem_inflight_batch_active_count),
+        );
+        out.insert(
+            "aoem_runtime_worker_max_inflight_batches".to_string(),
+            serde_json::json!(self.aoem_inflight_batch_limit),
+        );
+        out.insert(
+            "aoem_inflight_batch_submitted_count".to_string(),
+            serde_json::json!(self.aoem_inflight_batch_submitted_count),
+        );
+        out.insert(
+            "aoem_inflight_batch_completed_count".to_string(),
+            serde_json::json!(self.aoem_inflight_batch_completed_count),
+        );
+        out.insert(
+            "aoem_inflight_batch_failed_count".to_string(),
+            serde_json::json!(self.aoem_inflight_batch_failed_count),
+        );
+        out.insert(
+            "aoem_inflight_batch_timeout_count".to_string(),
+            serde_json::json!(self.aoem_inflight_batch_timeout_count),
+        );
+        out.insert(
+            "aoem_inflight_batch_backpressure_reason".to_string(),
+            serde_json::json!(if self.aoem_inflight_batch_backpressure_reason.is_empty() {
+                if self.aoem_inflight_batch_enabled {
+                    "none"
+                } else {
+                    "disabled"
+                }
+            } else {
+                self.aoem_inflight_batch_backpressure_reason.as_str()
+            }),
+        );
+        out.insert(
+            "aoem_runtime_worker_submit_queue_depth".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_submit_queue_depth),
+        );
+        out.insert(
+            "aoem_runtime_worker_result_queue_depth".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_result_queue_depth),
+        );
+        out.insert(
+            "aoem_runtime_worker_submit_delta".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_submit_delta),
+        );
+        out.insert(
+            "aoem_runtime_worker_result_drain_delta".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_result_drain_delta),
+        );
+        out.insert(
+            "aoem_runtime_worker_inflight_oldest_age_ms".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_inflight_oldest_age_ms),
+        );
+        out.insert(
+            "aoem_runtime_worker_inflight_oldest_batch_id".to_string(),
+            self.aoem_runtime_worker_inflight_oldest_batch_id.clone(),
+        );
+        out.insert(
+            "aoem_runtime_worker_result_reorder_count".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_result_reorder_count),
+        );
+        out.insert(
+            "aoem_runtime_worker_canonical_close_ordered".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_canonical_close_ordered),
+        );
+        out.insert(
+            "aoem_runtime_worker_ledger_close_ordered".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_ledger_close_ordered),
+        );
+        out.insert(
+            "aoem_runtime_worker_proof_count_finalized".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_proof_count_finalized),
+        );
+        out.insert(
+            "aoem_runtime_worker_proof_count_sample_source".to_string(),
+            serde_json::json!(self.aoem_runtime_worker_proof_count_sample_source),
+        );
+        out.insert(
             "finality_report_worker_result_verified_count".to_string(),
             serde_json::json!(self.finality_report_worker_result_verified_count),
         );
@@ -38569,6 +38874,107 @@ mod native_execution_pipeline_tests {
         assert_eq!(
             summary["aoem_native_tx_batch_production_candidate_result_ok"].as_bool(),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn native_execution_pipeline_aggregate_tracks_aoem_inflight_batch_fields() {
+        let report = build_native_execution_pipeline_report_v1(
+            1,
+            serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
+                "enabled": false,
+                "ok": true,
+            }),
+            serde_json::json!({
+                "method": "nov_runNativeExecutionTick",
+                "chain_id": 9_998_883u64,
+                "executed_count": 4u64,
+                "deferred_count": 0u64,
+                "budget": {"effective_budget_per_tick": 4u64},
+                "budget_runtime": {"execution_deferred_count": 0u64},
+                "batch_result": {
+                    "selected_count": 4u64,
+                    "aoem_inflight_batch_enabled": true,
+                    "aoem_inflight_batch_limit": 4u64,
+                    "aoem_inflight_batch_size": 256u64,
+                    "aoem_inflight_result_drain_budget": 128u64,
+                    "aoem_inflight_batch_active_count": 1u64,
+                    "aoem_inflight_batch_submitted_count": 1u64,
+                    "aoem_inflight_batch_completed_count": 1u64,
+                    "aoem_inflight_batch_failed_count": 0u64,
+                    "aoem_inflight_batch_timeout_count": 0u64,
+                    "aoem_inflight_batch_backpressure_reason": "none",
+                    "aoem_runtime_worker_submit_queue_depth": 0u64,
+                    "aoem_runtime_worker_result_queue_depth": 0u64,
+                    "aoem_runtime_worker_submit_delta": 1u64,
+                    "aoem_runtime_worker_result_drain_delta": 1u64,
+                    "aoem_runtime_worker_inflight_oldest_age_ms": 0u64,
+                    "aoem_runtime_worker_inflight_oldest_batch_id": 7u64,
+                    "aoem_runtime_worker_result_reorder_count": 0u64,
+                    "aoem_runtime_worker_canonical_close_ordered": true,
+                    "aoem_runtime_worker_ledger_close_ordered": true,
+                    "aoem_runtime_worker_proof_count_finalized": true,
+                    "aoem_runtime_worker_proof_count_sample_source": "inflight_completed_batch_result",
+                },
+                "lifecycle": {
+                    "commit": "deterministic_sharded_dirty_atomic_commit"
+                }
+            }),
+        );
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+        aggregate.observe(&report).expect("observe report");
+        let summary = aggregate.to_json();
+
+        assert_eq!(summary["aoem_inflight_batch_enabled"].as_bool(), Some(true));
+        assert_eq!(summary["aoem_inflight_batch_limit"].as_u64(), Some(4));
+        assert_eq!(summary["aoem_inflight_batch_size"].as_u64(), Some(256));
+        assert_eq!(
+            summary["aoem_inflight_result_drain_budget"].as_u64(),
+            Some(128)
+        );
+        assert_eq!(
+            summary["aoem_inflight_batch_submitted_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["aoem_inflight_batch_completed_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["aoem_inflight_batch_backpressure_reason"].as_str(),
+            Some("none")
+        );
+        assert_eq!(
+            summary["aoem_runtime_worker_submit_delta"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["aoem_runtime_worker_result_drain_delta"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            summary["aoem_runtime_worker_canonical_close_ordered"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            summary["aoem_runtime_worker_ledger_close_ordered"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            summary["aoem_runtime_worker_proof_count_finalized"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            summary["aoem_runtime_worker_proof_count_sample_source"].as_str(),
+            Some("inflight_completed_batch_result")
         );
     }
 
@@ -40063,10 +40469,8 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let full_async_runtime_engine_enabled = bool_env("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE");
     let aoem_runtime_worker_pipeline_enabled =
         bool_env("NOVOVM_AOEM_RUNTIME_WORKER_PIPELINE") || full_async_runtime_engine_enabled;
-    let pipeline_active_sleep_ms = u64_env_allow_zero(
-        "NOVOVM_AOEM_RUNTIME_WORKER_ACTIVE_SLEEP_MS",
-        0,
-    )?;
+    let pipeline_active_sleep_ms =
+        u64_env_allow_zero("NOVOVM_AOEM_RUNTIME_WORKER_ACTIVE_SLEEP_MS", 0)?;
     let pipeline_idle_sleep_ms = u64_env_allow_zero(
         "NOVOVM_AOEM_RUNTIME_WORKER_IDLE_SLEEP_MS",
         if full_async_runtime_engine_enabled {
