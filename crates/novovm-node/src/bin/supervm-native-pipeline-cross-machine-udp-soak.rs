@@ -201,6 +201,7 @@ struct NovoRudpConfigV1 {
     tail_window_batch_size: u64,
     tail_window_batch_pause_ms: u64,
     tail_window_ack_wait_ms: u64,
+    repair_round_pause_ms: u64,
     ack_progress_interval_ms: u64,
     no_progress_backoff: bool,
 }
@@ -223,6 +224,7 @@ impl NovoRudpConfigV1 {
             tail_window_batch_size: u64_env("NOVOVM_NOVORUDP_TAIL_WINDOW_BATCH_SIZE", 8)?.max(1),
             tail_window_batch_pause_ms: u64_env("NOVOVM_NOVORUDP_TAIL_WINDOW_BATCH_PAUSE_MS", 20)?,
             tail_window_ack_wait_ms: u64_env("NOVOVM_NOVORUDP_TAIL_WINDOW_ACK_WAIT_MS", 1500)?,
+            repair_round_pause_ms: u64_env("NOVOVM_NOVORUDP_REPAIR_ROUND_PAUSE_MS", 0)?,
             ack_progress_interval_ms: u64_env("NOVOVM_NOVORUDP_ACK_PROGRESS_INTERVAL_MS", 250)?
                 .max(1),
             no_progress_backoff: bool_env("NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_BACKOFF")
@@ -240,7 +242,7 @@ impl NovoRudpConfigV1 {
             batch_size: self.batch_size,
             batch_pause_ms: self.batch_pause_ms,
             tail_batch_pause_ms: self.batch_pause_ms,
-            round_pause_ms: base.round_pause_ms,
+            round_pause_ms: self.repair_round_pause_ms,
             ..base
         }
     }
@@ -1518,6 +1520,7 @@ mod novorudp_tests {
             tail_window_batch_size: 8,
             tail_window_batch_pause_ms: 0,
             tail_window_ack_wait_ms: 10,
+            repair_round_pause_ms: 0,
             ack_progress_interval_ms: 10,
             no_progress_backoff: true,
         }
@@ -4743,6 +4746,18 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn novorudp_repair_config_does_not_inherit_tail_interval_pause() {
+        let mut config = sender_timeout_novorudp_config();
+        config.repair_round_pause_ms = 0;
+        let mut base = sender_timeout_tail_repair_config();
+        base.round_pause_ms = 1_000;
+
+        let repair = config.repair_config(base);
+
+        assert_eq!(repair.round_pause_ms, 0);
+    }
+
+    #[test]
     fn novorudp_sender_does_not_send_huge_tail_gap_from_stale_ack() {
         let config = sender_timeout_novorudp_config();
         let stale_tail_gap =
@@ -6312,6 +6327,7 @@ fn receiver_child_progress_report_interval_ms() -> u64 {
         tail_window_batch_size: 8,
         tail_window_batch_pause_ms: 20,
         tail_window_ack_wait_ms: 1500,
+        repair_round_pause_ms: 0,
         ack_progress_interval_ms: 250,
         no_progress_backoff: true,
     });
@@ -7236,6 +7252,7 @@ fn receiver_ack_report_value_with_summary(
         tail_window_batch_size: 8,
         tail_window_batch_pause_ms: 20,
         tail_window_ack_wait_ms: 1500,
+        repair_round_pause_ms: 0,
         ack_progress_interval_ms: 250,
         no_progress_backoff: true,
     });
@@ -7279,6 +7296,7 @@ fn receiver_ack_report_value_with_summary(
         "novorudp_enabled": novorudp.enabled,
         "novorudp_window_size": novorudp.window_size,
         "novorudp_repair_windows_per_ack": novorudp.repair_windows_per_ack,
+        "novorudp_repair_round_pause_ms": novorudp.repair_round_pause_ms,
         "novorudp_current_window_id": current_window.as_ref().map(|(id, _, _)| *id),
         "novorudp_current_window_start": current_window.as_ref().map(|(_, window, _)| window.start),
         "novorudp_current_window_end_inclusive": current_window.as_ref().map(|(_, window, _)| window.end_inclusive),
@@ -12938,6 +12956,7 @@ fn run_sender(
             "tail_window_batch_size": novorudp.tail_window_batch_size,
             "tail_window_batch_pause_ms": novorudp.tail_window_batch_pause_ms,
             "tail_window_ack_wait_ms": novorudp.tail_window_ack_wait_ms,
+            "repair_round_pause_ms": novorudp.repair_round_pause_ms,
             "ack_progress_interval_ms": novorudp.ack_progress_interval_ms,
             "no_progress_backoff": novorudp.no_progress_backoff,
             "window_round_count": novorudp_window_round_count,
@@ -13588,6 +13607,7 @@ fn run_memory_bisect_variant(
             tail_window_batch_size: 8,
             tail_window_batch_pause_ms: 20,
             tail_window_ack_wait_ms: 1500,
+            repair_round_pause_ms: 0,
             ack_progress_interval_ms: 250,
             no_progress_backoff: true,
         },
