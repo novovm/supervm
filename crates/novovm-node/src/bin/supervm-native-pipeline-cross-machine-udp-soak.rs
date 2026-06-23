@@ -396,6 +396,22 @@ struct ReceiverAckSendStatusV1 {
     last_error: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct ReceiverDoneAckFastPathStatusV1 {
+    enabled: bool,
+    triggered: bool,
+    trigger_ms: Option<u64>,
+    send_attempt_count: u64,
+    send_ok_count: u64,
+    send_error_count: u64,
+    last_send_ms: Option<u64>,
+    last_error: Option<String>,
+    before_final_report: bool,
+    before_diagnostics_flush: bool,
+    burst_count: u64,
+    last_epoch: u64,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct UdpSendRetryConfigV1 {
     max_retries: u64,
@@ -2829,6 +2845,75 @@ mod novorudp_tests {
                                         report["receiver_ack_target_addr"].as_str(),
                                         Some(target.as_str())
                                     );
+                                },
+                            )
+                        })
+                    },
+                )
+            },
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn full_async_receiver_done_ack_fast_path_triggers_before_final_report() {
+        let listener = UdpSocket::bind("127.0.0.1:0").expect("ack listener");
+        listener
+            .set_read_timeout(Some(Duration::from_millis(250)))
+            .expect("ack read timeout");
+        let target = listener.local_addr().expect("listener addr").to_string();
+        let path =
+            std::env::temp_dir().join(format!("novovm-receiver-done-fast-path-{}.json", now_ms()));
+        with_env_var(
+            "NOVOVM_NATIVE_PIPELINE_ACK_REPORT_PATH",
+            path.to_str(),
+            || {
+                with_env_var(
+                    "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
+                    Some(target.as_str()),
+                    || {
+                        with_env_var("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED", Some("1"), || {
+                            with_env_var(
+                                "NOVOVM_RECEIVER_DONE_ACK_FAST_PATH_BURST_COUNT",
+                                Some("3"),
+                                || {
+                                    with_env_var(
+                                        "NOVOVM_RECEIVER_DONE_ACK_FAST_PATH_BURST_INTERVAL_MS",
+                                        Some("0"),
+                                        || {
+                                            let status = emit_receiver_done_ack_fast_path_v1(
+                                                4,
+                                                64,
+                                                40,
+                                                Instant::now(),
+                                                None,
+                                            );
+                                            assert!(status.enabled);
+                                            assert!(status.triggered);
+                                            assert_eq!(status.burst_count, 3);
+                                            assert_eq!(status.send_attempt_count, 3);
+                                            assert_eq!(status.send_ok_count, 3);
+                                            assert_eq!(status.send_error_count, 0);
+                                            assert!(status.before_final_report);
+                                            assert!(status.before_diagnostics_flush);
+
+                                            let mut received_done = false;
+                                            let mut buf = [0u8; 4096];
+                                            for _ in 0..3 {
+                                                let Ok((len, _)) = listener.recv_from(&mut buf)
+                                                else {
+                                                    continue;
+                                                };
+                                                let packet =
+                                                    serde_json::from_slice::<Value>(&buf[..len])
+                                                        .expect("receiver done ack json");
+                                                received_done |= packet["receiver_done"]
+                                                    .as_bool()
+                                                    .unwrap_or(false);
+                                            }
+                                            assert!(received_done);
+                                        },
+                                    )
                                 },
                             )
                         })
@@ -7745,6 +7830,19 @@ mod novorudp_tests {
                                     Some("production_low_latency_deadline")
                                 );
                                 assert_eq!(
+                                    report["sender_final_ack_fast_drain_enabled"].as_bool(),
+                                    Some(true)
+                                );
+                                assert_eq!(
+                                    report["sender_final_ack_fast_drain_receiver_done_seen"]
+                                        .as_bool(),
+                                    Some(true)
+                                );
+                                assert_eq!(
+                                    report["production_final_ack_deadline_exceeded"].as_bool(),
+                                    Some(false)
+                                );
+                                assert_eq!(
                                     report["tail_repair"]["tail_repair_completion_reason"].as_str(),
                                     Some("receiver_done_ack")
                                 );
@@ -8817,6 +8915,24 @@ fn run_receiver_node(
                         .unwrap_or_default(),
                 );
             let sample_limit = ack_sample_limit;
+            let receiver_done_fast_path_start_epoch =
+                next_receiver_ack_epoch(&mut receiver_ack_epoch);
+            let receiver_done_fast_path_status = if final_progress >= expected_tx_count {
+                emit_receiver_done_ack_fast_path_v1(
+                    expected_tx_count,
+                    sample_limit,
+                    receiver_done_fast_path_start_epoch,
+                    started_at,
+                    Some(&summary),
+                )
+            } else {
+                ReceiverDoneAckFastPathStatusV1 {
+                    enabled: bool_env("NOVOVM_RECEIVER_DONE_ACK_FAST_PATH_ENABLED")
+                        || string_env_nonempty("NOVOVM_RECEIVER_DONE_ACK_FAST_PATH_ENABLED")
+                            .is_none(),
+                    ..ReceiverDoneAckFastPathStatusV1::default()
+                }
+            };
             let final_ack_start_epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
             let final_ack_status = emit_receiver_progress_ack_with_summary(
                 expected_tx_count,
@@ -8827,6 +8943,14 @@ fn run_receiver_node(
             );
             annotate_receiver_ack_send_status_v1(&mut summary, &final_ack_status);
             annotate_receiver_ack_send_status_v1(&mut sample, &final_ack_status);
+            annotate_receiver_done_ack_fast_path_status_v1(
+                &mut summary,
+                &receiver_done_fast_path_status,
+            );
+            annotate_receiver_done_ack_fast_path_status_v1(
+                &mut sample,
+                &receiver_done_fast_path_status,
+            );
             let final_ack_repeat_count =
                 u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_REPEAT_COUNT", 10).unwrap_or(10);
             let (final_ack_sent_count, final_ack_last_epoch) =
@@ -9156,6 +9280,19 @@ fn run_receiver_node(
             }
             if receiver_phase == "completed" {
                 if let Some(mut summary) = progress_summary {
+                    let receiver_done_fast_path_start_epoch =
+                        next_receiver_ack_epoch(&mut receiver_ack_epoch);
+                    let receiver_done_fast_path_status = emit_receiver_done_ack_fast_path_v1(
+                        expected_tx_count,
+                        ack_sample_limit,
+                        receiver_done_fast_path_start_epoch,
+                        started_at,
+                        Some(&summary),
+                    );
+                    annotate_receiver_done_ack_fast_path_status_v1(
+                        &mut summary,
+                        &receiver_done_fast_path_status,
+                    );
                     let final_ack_start_epoch = next_receiver_ack_epoch(&mut receiver_ack_epoch);
                     let final_ack_status = emit_receiver_progress_ack_with_summary(
                         expected_tx_count,
@@ -9194,6 +9331,10 @@ fn run_receiver_node(
                     final_sample["pipeline_progress_report_path"] =
                         serde_json::json!(progress_path.display().to_string());
                     final_sample["receiver_exit_phase"] = serde_json::json!("completed");
+                    annotate_receiver_done_ack_fast_path_status_v1(
+                        &mut final_sample,
+                        &receiver_done_fast_path_status,
+                    );
                     final_sample["repair_convergence_completed"] = serde_json::json!(true);
                     final_sample["receiver_drain_completed"] = serde_json::json!(true);
                     final_sample["final_ack_received"] = serde_json::json!(true);
@@ -9887,6 +10028,38 @@ fn annotate_receiver_ack_send_status_v1(value: &mut Value, status: &ReceiverAckS
         .unwrap_or(Value::Null);
 }
 
+fn annotate_receiver_done_ack_fast_path_status_v1(
+    value: &mut Value,
+    status: &ReceiverDoneAckFastPathStatusV1,
+) {
+    value["receiver_done_ack_fast_path_enabled"] = serde_json::json!(status.enabled);
+    value["receiver_done_ack_fast_path_triggered"] = serde_json::json!(status.triggered);
+    value["receiver_done_ack_fast_path_trigger_ms"] = status
+        .trigger_ms
+        .map(|ms| serde_json::json!(ms))
+        .unwrap_or(Value::Null);
+    value["receiver_done_ack_fast_path_send_attempt_count"] =
+        serde_json::json!(status.send_attempt_count);
+    value["receiver_done_ack_fast_path_send_ok_count"] = serde_json::json!(status.send_ok_count);
+    value["receiver_done_ack_fast_path_send_error_count"] =
+        serde_json::json!(status.send_error_count);
+    value["receiver_done_ack_fast_path_last_send_ms"] = status
+        .last_send_ms
+        .map(|ms| serde_json::json!(ms))
+        .unwrap_or(Value::Null);
+    value["receiver_done_ack_fast_path_last_error"] = status
+        .last_error
+        .as_ref()
+        .map(|err| serde_json::json!(err))
+        .unwrap_or(Value::Null);
+    value["receiver_done_ack_fast_path_before_final_report"] =
+        serde_json::json!(status.before_final_report);
+    value["receiver_done_ack_fast_path_before_diagnostics_flush"] =
+        serde_json::json!(status.before_diagnostics_flush);
+    value["receiver_done_ack_fast_path_burst_count"] = serde_json::json!(status.burst_count);
+    value["receiver_done_ack_fast_path_last_epoch"] = serde_json::json!(status.last_epoch);
+}
+
 fn next_receiver_ack_epoch(epoch: &mut u64) -> u64 {
     *epoch = epoch.saturating_add(1);
     *epoch
@@ -9959,6 +10132,69 @@ fn repeat_final_receiver_udp_ack(
         }
     }
     (sent, last_epoch)
+}
+
+fn emit_receiver_done_ack_fast_path_v1(
+    expected_tx_count: u64,
+    sample_limit: u64,
+    start_epoch: u64,
+    started_at: Instant,
+    progress_summary: Option<&Value>,
+) -> ReceiverDoneAckFastPathStatusV1 {
+    let enabled = bool_env("NOVOVM_RECEIVER_DONE_ACK_FAST_PATH_ENABLED")
+        || string_env_nonempty("NOVOVM_RECEIVER_DONE_ACK_FAST_PATH_ENABLED").is_none();
+    let mut status = ReceiverDoneAckFastPathStatusV1 {
+        enabled,
+        triggered: enabled,
+        trigger_ms: Some(started_at.elapsed().as_millis() as u64),
+        before_final_report: enabled,
+        before_diagnostics_flush: enabled,
+        ..ReceiverDoneAckFastPathStatusV1::default()
+    };
+    if !enabled {
+        return status;
+    }
+    let burst_count = u64_env("NOVOVM_RECEIVER_DONE_ACK_FAST_PATH_BURST_COUNT", 8)
+        .unwrap_or(8)
+        .max(1);
+    let burst_interval_ms =
+        u64_env("NOVOVM_RECEIVER_DONE_ACK_FAST_PATH_BURST_INTERVAL_MS", 5).unwrap_or(5);
+    status.burst_count = burst_count;
+    for offset in 0..burst_count {
+        let epoch = start_epoch.saturating_add(offset).saturating_add(1);
+        let send_status = send_receiver_udp_ack_with_summary(
+            expected_tx_count,
+            expected_tx_count,
+            sample_limit,
+            epoch,
+            progress_summary,
+        );
+        status.send_attempt_count = status
+            .send_attempt_count
+            .saturating_add(send_status.attempted_count);
+        status.send_ok_count = status
+            .send_ok_count
+            .saturating_add(send_status.send_ok_count);
+        status.send_error_count = status
+            .send_error_count
+            .saturating_add(send_status.send_error_count);
+        if send_status.last_error.is_some() {
+            status.last_error = send_status.last_error;
+        }
+        status.last_send_ms = Some(started_at.elapsed().as_millis() as u64);
+        status.last_epoch = epoch;
+        let _ = write_receiver_ack_report_with_summary(
+            expected_tx_count,
+            expected_tx_count,
+            sample_limit,
+            epoch,
+            progress_summary,
+        );
+        if burst_interval_ms > 0 && offset + 1 < burst_count {
+            std::thread::sleep(Duration::from_millis(burst_interval_ms));
+        }
+    }
+    status
 }
 
 fn write_artifact_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -14496,13 +14732,29 @@ fn run_sender(
     let mut moving_window_last_ack_epoch: Option<u64> = None;
     let final_ack_wait_config = FinalAckWaitConfigV1::from_env(full_async_runtime_engine)?;
     let final_ack_wait_ms = final_ack_wait_config.wait_ms;
-    let final_ack_poll_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS", 500)?.max(1);
+    let default_final_ack_poll_ms = if full_async_runtime_engine
+        && final_ack_wait_config.profile == FinalAckWaitProfileV1::Production
+    {
+        10
+    } else {
+        500
+    };
+    let final_ack_poll_ms = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS",
+        default_final_ack_poll_ms,
+    )?
+    .max(1);
     let mut final_ack_wait_elapsed_ms = 0u64;
     let mut final_ack_received_after_repair = false;
     let mut final_ack_epoch: Option<u64> = None;
     let mut final_ack_missing_count: Option<u64> = None;
     let mut final_ack_receiver_done: Option<bool> = None;
     let mut final_ack_grace_timeout = false;
+    let sender_final_ack_fast_drain_enabled = full_async_runtime_engine
+        && final_ack_wait_config.profile == FinalAckWaitProfileV1::Production;
+    let mut sender_final_ack_fast_drain_attempt_count = 0u64;
+    let mut sender_final_ack_fast_drain_success_count = 0u64;
+    let mut sender_final_ack_fast_drain_last_recv_ms: Option<u64> = None;
     let ack_socket = if udp_ack.enabled {
         let socket = UdpSocket::bind(udp_ack.bind_addr.as_str())
             .with_context(|| format!("bind sender UDP ack socket failed: {}", udp_ack.bind_addr))?;
@@ -15761,10 +16013,19 @@ fn run_sender(
                     udp_ack.recv_timeout_ms
                 },
             );
+            if sender_final_ack_fast_drain_enabled {
+                sender_final_ack_fast_drain_attempt_count =
+                    sender_final_ack_fast_drain_attempt_count.saturating_add(1);
+            }
             sender_ack_recv_attempt_count = sender_ack_recv_attempt_count.saturating_add(1);
             final_ack_wait_elapsed_ms = started.elapsed().as_millis() as u64;
             if state.received_count == 0 {
                 continue;
+            }
+            if sender_final_ack_fast_drain_enabled {
+                sender_final_ack_fast_drain_success_count =
+                    sender_final_ack_fast_drain_success_count.saturating_add(state.received_count);
+                sender_final_ack_fast_drain_last_recv_ms = Some(final_ack_wait_elapsed_ms);
             }
             tail_repair_ack_received_count =
                 tail_repair_ack_received_count.saturating_add(state.received_count);
@@ -16090,23 +16351,6 @@ fn run_sender(
         "fail_reason": fail_reason,
         "full_async_runtime_engine_enabled": full_async_runtime_engine,
         "runtime_engine_mode": if full_async_runtime_engine { "full_async_multi_plane_v1" } else { "ready_queue_pipeline_v1" },
-        "runtime_profile": final_ack_wait_config.profile.as_str(),
-        "final_ack_wait_profile": final_ack_wait_config.profile.as_str(),
-        "final_ack_wait_profile_source": final_ack_wait_config.profile_source,
-        "final_ack_wait_ms": final_ack_wait_ms,
-        "final_ack_wait_source": final_ack_wait_config.wait_source,
-        "final_ack_wait_production_max_ms": final_ack_wait_config.production_max_ms,
-        "final_ack_wait_within_profile_limit": final_ack_wait_config.within_profile_limit,
-        "final_ack_wait_profile_violation": final_ack_wait_config.profile_violation,
-        "production_low_latency_signoff": final_ack_wait_config.production_low_latency_signoff,
-        "sender_finalization_deadline_ms": final_ack_wait_ms,
-        "sender_finalization_deadline_source": final_ack_wait_config.wait_source,
-        "sender_finalization_deadline_exceeded": production_final_ack_deadline_exceeded,
-        "sender_finalization_wait_mode": if final_ack_wait_config.profile == FinalAckWaitProfileV1::Production {
-            "production_low_latency_deadline"
-        } else {
-            "soak_regression_grace_window"
-        },
         "primary_send_plane_mode": if full_async_runtime_engine { "independent_primary_send_plane" } else { "sustained_sender_loop" },
         "ack_plane_mode": if full_async_runtime_engine { "aggressive_nonblocking_ack_drain" } else { "interval_ack_drain" },
         "repair_plane_mode": if full_async_runtime_engine { "continuous_missing_snapshot_repair_pump" } else { "ack_driven_tail_repair_loop" },
@@ -16545,23 +16789,6 @@ fn run_sender(
             "receiver_final_missing_count": receiver_final_missing_count,
             "receiver_final_done": receiver_final_done,
             "final_ack_wait_enabled": final_ack_wait_ms > 0,
-            "runtime_profile": final_ack_wait_config.profile.as_str(),
-            "final_ack_wait_profile": final_ack_wait_config.profile.as_str(),
-            "final_ack_wait_profile_source": final_ack_wait_config.profile_source,
-            "final_ack_wait_ms": final_ack_wait_ms,
-            "final_ack_wait_source": final_ack_wait_config.wait_source,
-            "final_ack_wait_production_max_ms": final_ack_wait_config.production_max_ms,
-            "final_ack_wait_within_profile_limit": final_ack_wait_config.within_profile_limit,
-            "final_ack_wait_profile_violation": final_ack_wait_config.profile_violation,
-            "production_low_latency_signoff": final_ack_wait_config.production_low_latency_signoff,
-            "sender_finalization_deadline_ms": final_ack_wait_ms,
-            "sender_finalization_deadline_source": final_ack_wait_config.wait_source,
-            "sender_finalization_deadline_exceeded": production_final_ack_deadline_exceeded,
-            "sender_finalization_wait_mode": if final_ack_wait_config.profile == FinalAckWaitProfileV1::Production {
-                "production_low_latency_deadline"
-            } else {
-                "soak_regression_grace_window"
-            },
             "final_ack_poll_ms": final_ack_poll_ms,
             "final_ack_wait_elapsed_ms": final_ack_wait_elapsed_ms,
             "final_ack_received_after_repair": final_ack_received_after_repair,
@@ -16629,6 +16856,163 @@ fn run_sender(
             stats.send_failure_first_error,
         )] },
     });
+    let final_ack_wait_mode = if final_ack_wait_config.profile == FinalAckWaitProfileV1::Production
+    {
+        "production_low_latency_deadline"
+    } else {
+        "soak_regression_grace_window"
+    };
+    let production_final_ack_deadline_source =
+        if final_ack_wait_config.profile == FinalAckWaitProfileV1::Production {
+            final_ack_wait_config.wait_source
+        } else {
+            "not_production"
+        };
+    let final_ack_fast_drain_deadline_ms = if sender_final_ack_fast_drain_enabled {
+        Some(final_ack_wait_ms)
+    } else {
+        None
+    };
+    let receiver_done_ack_finalize_latency_ms = if latest_ack_receiver_done {
+        Some(final_ack_wait_elapsed_ms)
+    } else {
+        None
+    };
+    if let Some(report_map) = report.as_object_mut() {
+        report_map.insert(
+            "runtime_profile".to_string(),
+            serde_json::json!(final_ack_wait_config.profile.as_str()),
+        );
+        report_map.insert(
+            "final_ack_wait_profile".to_string(),
+            serde_json::json!(final_ack_wait_config.profile.as_str()),
+        );
+        report_map.insert(
+            "final_ack_wait_profile_source".to_string(),
+            serde_json::json!(final_ack_wait_config.profile_source),
+        );
+        report_map.insert(
+            "final_ack_wait_ms".to_string(),
+            serde_json::json!(final_ack_wait_ms),
+        );
+        report_map.insert(
+            "final_ack_wait_source".to_string(),
+            serde_json::json!(final_ack_wait_config.wait_source),
+        );
+        report_map.insert(
+            "final_ack_wait_production_max_ms".to_string(),
+            serde_json::json!(final_ack_wait_config.production_max_ms),
+        );
+        report_map.insert(
+            "final_ack_wait_within_profile_limit".to_string(),
+            serde_json::json!(final_ack_wait_config.within_profile_limit),
+        );
+        report_map.insert(
+            "final_ack_wait_profile_violation".to_string(),
+            serde_json::json!(final_ack_wait_config.profile_violation),
+        );
+        report_map.insert(
+            "production_low_latency_signoff".to_string(),
+            serde_json::json!(final_ack_wait_config.production_low_latency_signoff),
+        );
+        report_map.insert(
+            "sender_finalization_deadline_ms".to_string(),
+            serde_json::json!(final_ack_wait_ms),
+        );
+        report_map.insert(
+            "sender_finalization_deadline_source".to_string(),
+            serde_json::json!(final_ack_wait_config.wait_source),
+        );
+        report_map.insert(
+            "sender_finalization_deadline_exceeded".to_string(),
+            serde_json::json!(production_final_ack_deadline_exceeded),
+        );
+        report_map.insert(
+            "production_final_ack_deadline_ms".to_string(),
+            serde_json::json!(final_ack_wait_config.production_max_ms),
+        );
+        report_map.insert(
+            "production_final_ack_deadline_source".to_string(),
+            serde_json::json!(production_final_ack_deadline_source),
+        );
+        report_map.insert(
+            "production_final_ack_deadline_exceeded".to_string(),
+            serde_json::json!(production_final_ack_deadline_exceeded),
+        );
+        report_map.insert(
+            "sender_final_ack_fast_drain_enabled".to_string(),
+            serde_json::json!(sender_final_ack_fast_drain_enabled),
+        );
+        report_map.insert(
+            "sender_final_ack_fast_drain_attempt_count".to_string(),
+            serde_json::json!(sender_final_ack_fast_drain_attempt_count),
+        );
+        report_map.insert(
+            "sender_final_ack_fast_drain_success_count".to_string(),
+            serde_json::json!(sender_final_ack_fast_drain_success_count),
+        );
+        report_map.insert(
+            "sender_final_ack_fast_drain_deadline_ms".to_string(),
+            serde_json::json!(final_ack_fast_drain_deadline_ms),
+        );
+        report_map.insert(
+            "sender_final_ack_fast_drain_last_recv_ms".to_string(),
+            serde_json::json!(sender_final_ack_fast_drain_last_recv_ms),
+        );
+        report_map.insert(
+            "sender_final_ack_fast_drain_receiver_done_seen".to_string(),
+            serde_json::json!(latest_ack_receiver_done),
+        );
+        report_map.insert(
+            "receiver_done_ack_finalize_latency_ms".to_string(),
+            serde_json::json!(receiver_done_ack_finalize_latency_ms),
+        );
+        report_map.insert(
+            "sender_finalization_wait_mode".to_string(),
+            serde_json::json!(final_ack_wait_mode),
+        );
+        let tail_final_ack_fields: Vec<(String, Value)> = [
+            "runtime_profile",
+            "final_ack_wait_profile",
+            "final_ack_wait_profile_source",
+            "final_ack_wait_ms",
+            "final_ack_wait_source",
+            "final_ack_wait_production_max_ms",
+            "final_ack_wait_within_profile_limit",
+            "final_ack_wait_profile_violation",
+            "production_low_latency_signoff",
+            "sender_finalization_deadline_ms",
+            "sender_finalization_deadline_source",
+            "sender_finalization_deadline_exceeded",
+            "production_final_ack_deadline_ms",
+            "production_final_ack_deadline_source",
+            "production_final_ack_deadline_exceeded",
+            "sender_final_ack_fast_drain_enabled",
+            "sender_final_ack_fast_drain_attempt_count",
+            "sender_final_ack_fast_drain_success_count",
+            "sender_final_ack_fast_drain_deadline_ms",
+            "sender_final_ack_fast_drain_last_recv_ms",
+            "sender_final_ack_fast_drain_receiver_done_seen",
+            "receiver_done_ack_finalize_latency_ms",
+            "sender_finalization_wait_mode",
+        ]
+        .into_iter()
+        .filter_map(|key| {
+            report_map
+                .get(key)
+                .cloned()
+                .map(|value| (key.to_string(), value))
+        })
+        .collect();
+        if let Some(tail_repair_map) = report_map
+            .get_mut("tail_repair")
+            .and_then(Value::as_object_mut)
+        {
+            for (key, value) in tail_final_ack_fields {
+                tail_repair_map.insert(key, value);
+            }
+        }
+    }
     if let Some(coverage) = sender_repair_coverage.as_object() {
         if let Some(report_map) = report.as_object_mut() {
             report_map.insert(
