@@ -33785,6 +33785,7 @@ fn native_execution_tick_params_from_env_v1() -> Result<serde_json::Value> {
 fn decorate_aoem_runtime_worker_scheduler_summary_v1(
     summary: &mut serde_json::Value,
     pipeline_enabled: bool,
+    full_async_enabled: bool,
     active_sleep_ms: u64,
     idle_sleep_ms: u64,
 ) {
@@ -33794,7 +33795,63 @@ fn decorate_aoem_runtime_worker_scheduler_summary_v1(
     if let Some(obj) = summary.as_object_mut() {
         obj.insert(
             "aoem_runtime_worker_scheduler".to_string(),
-            serde_json::json!("ready_queue_active_drain"),
+            serde_json::json!(if full_async_enabled {
+                "full_async_multi_plane_active_drain"
+            } else {
+                "ready_queue_active_drain"
+            }),
+        );
+        obj.insert(
+            "full_async_runtime_engine_enabled".to_string(),
+            serde_json::json!(full_async_enabled),
+        );
+        obj.insert(
+            "runtime_engine_mode".to_string(),
+            serde_json::json!(if full_async_enabled {
+                "full_async_multi_plane_v1"
+            } else {
+                "ready_queue_pipeline_v1"
+            }),
+        );
+        obj.insert(
+            "ack_plane_mode".to_string(),
+            serde_json::json!(if full_async_enabled {
+                "aggressive_nonblocking_ack_drain"
+            } else {
+                "interval_ack_drain"
+            }),
+        );
+        obj.insert(
+            "repair_plane_mode".to_string(),
+            serde_json::json!(if full_async_enabled {
+                "continuous_missing_snapshot_repair_pump"
+            } else {
+                "ack_driven_tail_repair_loop"
+            }),
+        );
+        obj.insert(
+            "network_receiver_plane_mode".to_string(),
+            serde_json::json!("novorudp_object_receiver"),
+        );
+        obj.insert(
+            "object_assembler_plane_mode".to_string(),
+            serde_json::json!("transport_object_to_aoem_batch"),
+        );
+        obj.insert(
+            "aoem_runtime_plane_mode".to_string(),
+            serde_json::json!("aoem_runtime_worker_only_tx_ingress_callsite"),
+        );
+        obj.insert(
+            "finality_plane_mode".to_string(),
+            serde_json::json!("proof_verification_and_report"),
+        );
+        obj.insert(
+            "diagnostics_plane_mode".to_string(),
+            serde_json::json!(if full_async_enabled {
+                "out_of_hot_path_summary_only"
+            } else {
+                "inline_report_summary"
+            }),
         );
         obj.insert(
             "aoem_runtime_worker_active_sleep_ms".to_string(),
@@ -40003,15 +40060,20 @@ mod native_execution_pipeline_tests {
 fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let max_ticks = u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", 1)?;
     let interval_ms = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", 250)?;
+    let full_async_runtime_engine_enabled = bool_env("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE");
     let aoem_runtime_worker_pipeline_enabled =
-        bool_env("NOVOVM_AOEM_RUNTIME_WORKER_PIPELINE");
+        bool_env("NOVOVM_AOEM_RUNTIME_WORKER_PIPELINE") || full_async_runtime_engine_enabled;
     let pipeline_active_sleep_ms = u64_env_allow_zero(
         "NOVOVM_AOEM_RUNTIME_WORKER_ACTIVE_SLEEP_MS",
         0,
     )?;
     let pipeline_idle_sleep_ms = u64_env_allow_zero(
         "NOVOVM_AOEM_RUNTIME_WORKER_IDLE_SLEEP_MS",
-        interval_ms.min(10),
+        if full_async_runtime_engine_enabled {
+            interval_ms.min(1)
+        } else {
+            interval_ms.min(10)
+        },
     )?;
     let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
     apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
@@ -40130,6 +40192,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         decorate_aoem_runtime_worker_scheduler_summary_v1(
             &mut report,
             aoem_runtime_worker_pipeline_enabled,
+            full_async_runtime_engine_enabled,
             pipeline_active_sleep_ms,
             pipeline_idle_sleep_ms,
         );
@@ -40171,6 +40234,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                 decorate_aoem_runtime_worker_scheduler_summary_v1(
                     &mut progress_summary,
                     aoem_runtime_worker_pipeline_enabled,
+                    full_async_runtime_engine_enabled,
                     pipeline_active_sleep_ms,
                     pipeline_idle_sleep_ms,
                 );
@@ -40237,6 +40301,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
             decorate_aoem_runtime_worker_scheduler_summary_v1(
                 &mut summary,
                 aoem_runtime_worker_pipeline_enabled,
+                full_async_runtime_engine_enabled,
                 pipeline_active_sleep_ms,
                 pipeline_idle_sleep_ms,
             );
@@ -40283,6 +40348,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     decorate_aoem_runtime_worker_scheduler_summary_v1(
         &mut summary,
         aoem_runtime_worker_pipeline_enabled,
+        full_async_runtime_engine_enabled,
         pipeline_active_sleep_ms,
         pipeline_idle_sleep_ms,
     );

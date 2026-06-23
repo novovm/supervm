@@ -28,6 +28,7 @@ const REPORT_SCHEMA_V1: &str = "novovm-native-pipeline-cross-machine-udp-soak-re
 const MEMORY_BISECT_SCHEMA_V1: &str = "novovm-native-pipeline-memory-bisect-report/v1";
 const AOEM_RUNTIME_OWNED_PRODUCTION_TARGET_V1: &str = "aoem_runtime_owned_state_persistence";
 const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV: &str = "NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE";
+const NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV: &str = "NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE";
 const NOV_NATIVE_LEGACY_HOST_TRANSITIONAL_FALLBACK_ENV: &str =
     "NOVOVM_LEGACY_HOST_TRANSITIONAL_FALLBACK";
 const RECEIVER_CHILD_AOEM_OWNERSHIP_ENVS_V1: &[&str] = &[
@@ -35,6 +36,7 @@ const RECEIVER_CHILD_AOEM_OWNERSHIP_ENVS_V1: &[&str] = &[
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV,
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
     NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV,
+    NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV,
 ];
 const MEMORY_PROBE_TOGGLES_V1: &[(&str, &str, bool)] = &[
     (
@@ -208,27 +210,67 @@ struct NovoRudpConfigV1 {
 
 impl NovoRudpConfigV1 {
     fn from_env(profile: TransportProfileV1) -> Result<Self> {
+        let full_async = full_async_runtime_engine_enabled_v1();
         Ok(Self {
             enabled: profile == TransportProfileV1::NovoRudp,
             window_size: u64_env("NOVOVM_NOVORUDP_REPAIR_WINDOW_SIZE", 64)?.max(1),
-            repair_windows_per_ack: u64_env("NOVOVM_NOVORUDP_REPAIR_WINDOWS_PER_ACK", 8)?.max(1),
+            repair_windows_per_ack: u64_env(
+                "NOVOVM_NOVORUDP_REPAIR_WINDOWS_PER_ACK",
+                if full_async { 64 } else { 8 },
+            )?
+            .max(1),
             packet_copies: u64_env("NOVOVM_NOVORUDP_REPAIR_PACKET_COPIES", 2)?.max(1),
             tail_packet_copies: u64_env("NOVOVM_NOVORUDP_REPAIR_TAIL_PACKET_COPIES", 3)?.max(1),
-            batch_size: u64_env("NOVOVM_NOVORUDP_REPAIR_BATCH_SIZE", 16)?.max(1),
-            batch_pause_ms: u64_env("NOVOVM_NOVORUDP_REPAIR_BATCH_PAUSE_MS", 10)?,
-            window_ack_wait_ms: u64_env("NOVOVM_NOVORUDP_REPAIR_WINDOW_ACK_WAIT_MS", 1000)?,
-            max_window_retries: u64_env("NOVOVM_NOVORUDP_REPAIR_MAX_WINDOW_RETRIES", 8)?.max(1),
-            tail_window_max_retries: u64_env("NOVOVM_NOVORUDP_TAIL_WINDOW_MAX_RETRIES", 16)?.max(1),
+            batch_size: u64_env(
+                "NOVOVM_NOVORUDP_REPAIR_BATCH_SIZE",
+                if full_async { 256 } else { 16 },
+            )?
+            .max(1),
+            batch_pause_ms: u64_env(
+                "NOVOVM_NOVORUDP_REPAIR_BATCH_PAUSE_MS",
+                if full_async { 0 } else { 10 },
+            )?,
+            window_ack_wait_ms: u64_env(
+                "NOVOVM_NOVORUDP_REPAIR_WINDOW_ACK_WAIT_MS",
+                if full_async { 25 } else { 1000 },
+            )?,
+            max_window_retries: u64_env(
+                "NOVOVM_NOVORUDP_REPAIR_MAX_WINDOW_RETRIES",
+                if full_async { 64 } else { 8 },
+            )?
+            .max(1),
+            tail_window_max_retries: u64_env(
+                "NOVOVM_NOVORUDP_TAIL_WINDOW_MAX_RETRIES",
+                if full_async { 128 } else { 16 },
+            )?
+            .max(1),
             tail_window_packet_copies: u64_env("NOVOVM_NOVORUDP_TAIL_WINDOW_PACKET_COPIES", 6)?
                 .max(1),
-            tail_window_batch_size: u64_env("NOVOVM_NOVORUDP_TAIL_WINDOW_BATCH_SIZE", 8)?.max(1),
-            tail_window_batch_pause_ms: u64_env("NOVOVM_NOVORUDP_TAIL_WINDOW_BATCH_PAUSE_MS", 20)?,
-            tail_window_ack_wait_ms: u64_env("NOVOVM_NOVORUDP_TAIL_WINDOW_ACK_WAIT_MS", 1500)?,
+            tail_window_batch_size: u64_env(
+                "NOVOVM_NOVORUDP_TAIL_WINDOW_BATCH_SIZE",
+                if full_async { 256 } else { 8 },
+            )?
+            .max(1),
+            tail_window_batch_pause_ms: u64_env(
+                "NOVOVM_NOVORUDP_TAIL_WINDOW_BATCH_PAUSE_MS",
+                if full_async { 0 } else { 20 },
+            )?,
+            tail_window_ack_wait_ms: u64_env(
+                "NOVOVM_NOVORUDP_TAIL_WINDOW_ACK_WAIT_MS",
+                if full_async { 25 } else { 1500 },
+            )?,
             repair_round_pause_ms: u64_env("NOVOVM_NOVORUDP_REPAIR_ROUND_PAUSE_MS", 0)?,
-            ack_progress_interval_ms: u64_env("NOVOVM_NOVORUDP_ACK_PROGRESS_INTERVAL_MS", 250)?
-                .max(1),
-            no_progress_backoff: bool_env("NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_BACKOFF")
-                || string_env_nonempty("NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_BACKOFF").is_none(),
+            ack_progress_interval_ms: u64_env(
+                "NOVOVM_NOVORUDP_ACK_PROGRESS_INTERVAL_MS",
+                if full_async { 10 } else { 250 },
+            )?
+            .max(1),
+            no_progress_backoff: if full_async {
+                bool_env("NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_BACKOFF")
+            } else {
+                bool_env("NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_BACKOFF")
+                    || string_env_nonempty("NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_BACKOFF").is_none()
+            },
         })
     }
 
@@ -342,6 +384,10 @@ fn string_env_nonempty(name: &str) -> Option<String> {
 
 fn first_string_env_nonempty(names: &[&str]) -> Option<String> {
     names.iter().find_map(|name| string_env_nonempty(name))
+}
+
+fn full_async_runtime_engine_enabled_v1() -> bool {
+    bool_env(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV)
 }
 
 fn u64_env(name: &str, default: u64) -> Result<u64> {
@@ -1922,6 +1968,87 @@ mod novorudp_tests {
                         )
                     },
                 )
+            },
+        );
+    }
+
+    #[test]
+    fn full_async_gate_inherits_and_enables_pipeline_child_envs() {
+        with_env_var(
+            NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV,
+            Some("1"),
+            || {
+                with_env_var(NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV, None, || {
+                    let envs = receiver_child_aoem_ownership_envs_v1();
+
+                    assert!(envs.iter().any(|(key, value)| {
+                        *key == NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV && value == "1"
+                    }));
+                    assert!(envs.iter().any(|(key, value)| {
+                        *key == NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV && value == "1"
+                    }));
+                    assert!(aoem_runtime_worker_pipeline_enabled_env_v1());
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn full_async_novorudp_defaults_use_fast_repair_plane() {
+        with_env_var(
+            NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV,
+            Some("1"),
+            || {
+                with_env_var("NOVOVM_NOVORUDP_REPAIR_WINDOWS_PER_ACK", None, || {
+                    with_env_var("NOVOVM_NOVORUDP_REPAIR_BATCH_SIZE", None, || {
+                        with_env_var("NOVOVM_NOVORUDP_REPAIR_BATCH_PAUSE_MS", None, || {
+                            with_env_var("NOVOVM_NOVORUDP_TAIL_WINDOW_BATCH_SIZE", None, || {
+                                with_env_var(
+                                    "NOVOVM_NOVORUDP_TAIL_WINDOW_BATCH_PAUSE_MS",
+                                    None,
+                                    || {
+                                        with_env_var(
+                                            "NOVOVM_NOVORUDP_ACK_PROGRESS_INTERVAL_MS",
+                                            None,
+                                            || {
+                                                with_env_var(
+                                                    "NOVOVM_NOVORUDP_REPAIR_NO_PROGRESS_BACKOFF",
+                                                    None,
+                                                    || {
+                                                        let config = NovoRudpConfigV1::from_env(
+                                                            TransportProfileV1::NovoRudp,
+                                                        )
+                                                        .expect("full async novorudp config");
+
+                                                        assert_eq!(
+                                                            config.repair_windows_per_ack,
+                                                            64
+                                                        );
+                                                        assert_eq!(config.batch_size, 256);
+                                                        assert_eq!(config.batch_pause_ms, 0);
+                                                        assert_eq!(
+                                                            config.tail_window_batch_size,
+                                                            256
+                                                        );
+                                                        assert_eq!(
+                                                            config.tail_window_batch_pause_ms,
+                                                            0
+                                                        );
+                                                        assert_eq!(
+                                                            config.ack_progress_interval_ms,
+                                                            10
+                                                        );
+                                                        assert!(!config.no_progress_backoff);
+                                                    },
+                                                )
+                                            },
+                                        )
+                                    },
+                                )
+                            })
+                        })
+                    })
+                })
             },
         );
     }
@@ -6102,10 +6229,18 @@ fn receiver_child_expected_total_envs_v1(expected_tx_count: u64) -> [(&'static s
 }
 
 fn receiver_child_aoem_ownership_envs_v1() -> Vec<(&'static str, String)> {
-    RECEIVER_CHILD_AOEM_OWNERSHIP_ENVS_V1
+    let mut envs: Vec<(&'static str, String)> = RECEIVER_CHILD_AOEM_OWNERSHIP_ENVS_V1
         .iter()
         .filter_map(|name| string_env_nonempty(name).map(|value| (*name, value)))
-        .collect()
+        .collect();
+    if full_async_runtime_engine_enabled_v1()
+        && !envs
+            .iter()
+            .any(|(key, _)| *key == NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV)
+    {
+        envs.push((NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV, "1".to_string()));
+    }
+    envs
 }
 
 fn receiver_child_spawn_env_has_v1(name: &str) -> bool {
@@ -6131,6 +6266,10 @@ fn annotate_receiver_aoem_gate_trace_v1(summary: &mut Value) {
             serde_json::json!(bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV)),
         );
         map.insert(
+            "wrapper_env_aoem_full_async_runtime_engine".to_string(),
+            serde_json::json!(full_async_runtime_engine_enabled_v1()),
+        );
+        map.insert(
             "child_spawn_env_aoem_production_candidate".to_string(),
             serde_json::json!(receiver_child_spawn_env_has_v1(
                 NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
@@ -6146,6 +6285,18 @@ fn annotate_receiver_aoem_gate_trace_v1(summary: &mut Value) {
             "child_spawn_env_aoem_compare".to_string(),
             serde_json::json!(receiver_child_spawn_env_has_v1(
                 NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
+            )),
+        );
+        map.insert(
+            "child_spawn_env_aoem_full_async_runtime_engine".to_string(),
+            serde_json::json!(receiver_child_spawn_env_has_v1(
+                NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV,
+            )),
+        );
+        map.insert(
+            "child_spawn_env_aoem_runtime_worker_pipeline".to_string(),
+            serde_json::json!(receiver_child_spawn_env_has_v1(
+                NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV,
             )),
         );
     }
@@ -6170,7 +6321,7 @@ fn final_missing_without_expected_ledger_v1(
 }
 
 fn aoem_runtime_worker_pipeline_enabled_env_v1() -> bool {
-    bool_env("NOVOVM_AOEM_RUNTIME_WORKER_PIPELINE")
+    bool_env("NOVOVM_AOEM_RUNTIME_WORKER_PIPELINE") || full_async_runtime_engine_enabled_v1()
 }
 
 fn aoem_runtime_worker_pipeline_u64_env_v1(name: &str, default: u64) -> u64 {
@@ -12020,6 +12171,7 @@ fn run_sender(
         repair_budget_profile.extend_repair_deadline_on_ack_progress;
     let sender_report_on_timeout = bool_env("NOVOVM_NATIVE_PIPELINE_SENDER_REPORT_ON_TIMEOUT")
         || string_env_nonempty("NOVOVM_NATIVE_PIPELINE_SENDER_REPORT_ON_TIMEOUT").is_none();
+    let full_async_runtime_engine = full_async_runtime_engine_enabled_v1();
     let sender_exit_on_repair_timeout =
         bool_env("NOVOVM_NATIVE_PIPELINE_SENDER_EXIT_ON_REPAIR_TIMEOUT")
             || string_env_nonempty("NOVOVM_NATIVE_PIPELINE_SENDER_EXIT_ON_REPAIR_TIMEOUT")
@@ -12053,8 +12205,13 @@ fn run_sender(
         && udp_ack.enabled
         && (bool_env("NOVOVM_NOVORUDP_PRIMARY_SEND_ACK_DRAIN_ENABLED")
             || string_env_nonempty("NOVOVM_NOVORUDP_PRIMARY_SEND_ACK_DRAIN_ENABLED").is_none());
-    let primary_ack_drain_interval_ms =
-        u64_env("NOVOVM_NOVORUDP_PRIMARY_SEND_ACK_DRAIN_INTERVAL_MS", 250)?.max(1);
+    let primary_ack_drain_interval_ms = u64_env(
+        "NOVOVM_NOVORUDP_PRIMARY_SEND_ACK_DRAIN_INTERVAL_MS",
+        if full_async_runtime_engine { 5 } else { 250 },
+    )?
+    .max(1);
+    let ack_plane_aggressive_drain =
+        full_async_runtime_engine || bool_env("NOVOVM_NOVORUDP_ACK_PLANE_AGGRESSIVE_DRAIN");
     let sender_live_report_interval_ms =
         u64_env("NOVOVM_NOVORUDP_SENDER_LIVE_REPORT_INTERVAL_MS", 5_000)?;
     let sender_progress_path = sender_progress_report_path();
@@ -12335,11 +12492,12 @@ fn run_sender(
                 break;
             }
             let udp_ack_state = ack_socket.as_ref().map(|socket| {
-                drain_udp_ack_socket(
-                    socket,
-                    tail_repair.missing_sample_limit,
-                    udp_ack.recv_timeout_ms,
-                )
+                let ack_drain_wait_ms = if ack_plane_aggressive_drain {
+                    0
+                } else {
+                    udp_ack.recv_timeout_ms
+                };
+                drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, ack_drain_wait_ms)
             });
             let ack_epoch_before = udp_ack_state
                 .as_ref()
@@ -13156,6 +13314,13 @@ fn run_sender(
         "role": "sender",
         "accepted": accepted,
         "fail_reason": fail_reason,
+        "full_async_runtime_engine_enabled": full_async_runtime_engine,
+        "runtime_engine_mode": if full_async_runtime_engine { "full_async_multi_plane_v1" } else { "ready_queue_pipeline_v1" },
+        "primary_send_plane_mode": if full_async_runtime_engine { "independent_primary_send_plane" } else { "sustained_sender_loop" },
+        "ack_plane_mode": if full_async_runtime_engine { "aggressive_nonblocking_ack_drain" } else { "interval_ack_drain" },
+        "repair_plane_mode": if full_async_runtime_engine { "continuous_missing_snapshot_repair_pump" } else { "ack_driven_tail_repair_loop" },
+        "finality_plane_mode": "receiver_done_ack_validation",
+        "diagnostics_plane_mode": if full_async_runtime_engine { "out_of_hot_path_summary_only" } else { "inline_report_summary" },
         "report_written": sender_report_on_timeout || !sender_hard_timeout_reached,
         "elapsed_ms": sender_started.elapsed().as_millis() as u64,
         "novorudp_profile": repair_budget_profile.profile,
@@ -13187,6 +13352,7 @@ fn run_sender(
         "repair_continuation_timeout_ms": repair_continuation_timeout_ms,
         "extend_repair_deadline_on_ack_progress": extend_repair_deadline_on_ack_progress,
         "primary_send_ack_drain_enabled": primary_ack_drain_enabled,
+        "ack_plane_aggressive_drain": ack_plane_aggressive_drain,
         "primary_send_ack_drain_interval_ms": primary_ack_drain_interval_ms,
         "primary_send_ack_drain_count": primary_ack_drain_count,
         "primary_send_ack_received_count": primary_ack_received_count,
@@ -14137,6 +14303,7 @@ fn main() -> Result<()> {
             if fault_enabled { 123 } else { 0 },
         )?,
     };
+    let full_async_runtime_engine = full_async_runtime_engine_enabled_v1();
     let tx_per_round = u64_env("NOVOVM_NATIVE_PIPELINE_SUSTAINED_TX_PER_ROUND", 32)?.max(1);
     let sustained_rounds = div_ceil_u64(tx_count, tx_per_round).max(1);
     let duration_seconds = u64_env(
@@ -14171,7 +14338,11 @@ fn main() -> Result<()> {
         )?,
         interval_ms: u64_env(
             "NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_INTERVAL_MS",
-            if tail_repair_enabled { 1000 } else { 0 },
+            if tail_repair_enabled && !full_async_runtime_engine {
+                1000
+            } else {
+                0
+            },
         )?,
         require_ack: bool_env("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_REQUIRE_ACK"),
         missing_sample_limit: u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256)?,
@@ -14181,15 +14352,29 @@ fn main() -> Result<()> {
         )?,
         packet_copies: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_PACKET_COPIES", 3)?.max(1),
         tail_packet_copies: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_TAIL_PACKET_COPIES", 6)?.max(1),
-        batch_size: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_BATCH_SIZE", 64)?.max(1),
-        batch_pause_ms: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_BATCH_PAUSE_MS", 5)?,
-        tail_batch_pause_ms: u64_env("NOVOVM_NATIVE_PIPELINE_REPAIR_TAIL_BATCH_PAUSE_MS", 10)?,
+        batch_size: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_REPAIR_BATCH_SIZE",
+            if full_async_runtime_engine { 256 } else { 64 },
+        )?
+        .max(1),
+        batch_pause_ms: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_REPAIR_BATCH_PAUSE_MS",
+            if full_async_runtime_engine { 0 } else { 5 },
+        )?,
+        tail_batch_pause_ms: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_REPAIR_TAIL_BATCH_PAUSE_MS",
+            if full_async_runtime_engine { 0 } else { 10 },
+        )?,
         round_pause_ms: u64_env(
             "NOVOVM_NATIVE_PIPELINE_REPAIR_ROUND_PAUSE_MS",
-            u64_env(
-                "NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_INTERVAL_MS",
-                if tail_repair_enabled { 1000 } else { 0 },
-            )?,
+            if full_async_runtime_engine {
+                0
+            } else {
+                u64_env(
+                    "NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_INTERVAL_MS",
+                    if tail_repair_enabled { 1000 } else { 0 },
+                )?
+            },
         )?,
     };
     let udp_send_retry = UdpSendRetryConfigV1 {
@@ -14207,7 +14392,10 @@ fn main() -> Result<()> {
             "NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR",
             "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADDR",
         ]),
-        recv_timeout_ms: u64_env("NOVOVM_NATIVE_PIPELINE_ACK_RECV_TIMEOUT_MS", 250)?,
+        recv_timeout_ms: u64_env(
+            "NOVOVM_NATIVE_PIPELINE_ACK_RECV_TIMEOUT_MS",
+            if full_async_runtime_engine { 0 } else { 250 },
+        )?,
     };
     let transport_profile = TransportProfileV1::from_env()?;
     let novorudp = NovoRudpConfigV1::from_env(transport_profile)?;
@@ -14437,9 +14625,12 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "wrapper_env_aoem_production_candidate": summary.get("wrapper_env_aoem_production_candidate").cloned().unwrap_or(Value::Null),
         "wrapper_env_aoem_shadow": summary.get("wrapper_env_aoem_shadow").cloned().unwrap_or(Value::Null),
         "wrapper_env_aoem_compare": summary.get("wrapper_env_aoem_compare").cloned().unwrap_or(Value::Null),
+        "wrapper_env_aoem_full_async_runtime_engine": summary.get("wrapper_env_aoem_full_async_runtime_engine").cloned().unwrap_or(Value::Null),
         "child_spawn_env_aoem_production_candidate": summary.get("child_spawn_env_aoem_production_candidate").cloned().unwrap_or(Value::Null),
         "child_spawn_env_aoem_shadow": summary.get("child_spawn_env_aoem_shadow").cloned().unwrap_or(Value::Null),
         "child_spawn_env_aoem_compare": summary.get("child_spawn_env_aoem_compare").cloned().unwrap_or(Value::Null),
+        "child_spawn_env_aoem_full_async_runtime_engine": summary.get("child_spawn_env_aoem_full_async_runtime_engine").cloned().unwrap_or(Value::Null),
+        "child_spawn_env_aoem_runtime_worker_pipeline": summary.get("child_spawn_env_aoem_runtime_worker_pipeline").cloned().unwrap_or(Value::Null),
         "child_runtime_env_aoem_production_candidate": summary.get("child_runtime_env_aoem_production_candidate").cloned().unwrap_or(Value::Null),
         "child_runtime_env_aoem_shadow": summary.get("child_runtime_env_aoem_shadow").cloned().unwrap_or(Value::Null),
         "child_runtime_env_aoem_compare": summary.get("child_runtime_env_aoem_compare").cloned().unwrap_or(Value::Null),
@@ -14461,6 +14652,16 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "aoem_owned_signoff_blocker_reasons": summary.get("aoem_owned_signoff_blocker_reasons").cloned().unwrap_or_else(|| serde_json::json!([])),
         "tx_ingress_real_callsite": summary.get("tx_ingress_real_callsite").cloned().unwrap_or(Value::Null),
         "receiver_pipeline_mode": summary.get("receiver_pipeline_mode").cloned().unwrap_or(Value::Null),
+        "full_async_runtime_engine_enabled": summary.get("full_async_runtime_engine_enabled").cloned().unwrap_or(Value::Null),
+        "runtime_engine_mode": summary.get("runtime_engine_mode").cloned().unwrap_or(Value::Null),
+        "primary_send_plane_mode": summary.get("primary_send_plane_mode").cloned().unwrap_or(Value::Null),
+        "ack_plane_mode": summary.get("ack_plane_mode").cloned().unwrap_or(Value::Null),
+        "repair_plane_mode": summary.get("repair_plane_mode").cloned().unwrap_or(Value::Null),
+        "network_receiver_plane_mode": summary.get("network_receiver_plane_mode").cloned().unwrap_or(Value::Null),
+        "object_assembler_plane_mode": summary.get("object_assembler_plane_mode").cloned().unwrap_or(Value::Null),
+        "aoem_runtime_plane_mode": summary.get("aoem_runtime_plane_mode").cloned().unwrap_or(Value::Null),
+        "finality_plane_mode": summary.get("finality_plane_mode").cloned().unwrap_or(Value::Null),
+        "diagnostics_plane_mode": summary.get("diagnostics_plane_mode").cloned().unwrap_or(Value::Null),
         "network_receiver_object_ready_count": summary_u64(&summary, "network_receiver_object_ready_count"),
         "network_receiver_calls_production_tx_ingress": summary.get("network_receiver_calls_production_tx_ingress").cloned().unwrap_or(Value::Null),
         "object_assembler_batch_ready_count": summary_u64(&summary, "object_assembler_batch_ready_count"),
