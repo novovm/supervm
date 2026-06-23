@@ -873,6 +873,126 @@ fn full_async_runtime_engine_enabled_v1() -> bool {
     bool_env(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FinalAckWaitProfileV1 {
+    Production,
+    Regression,
+    Soak,
+    Debug,
+}
+
+impl FinalAckWaitProfileV1 {
+    fn from_env() -> Result<(Self, &'static str)> {
+        if let Some(raw) = string_env_nonempty("NOVOVM_FINAL_ACK_WAIT_PROFILE") {
+            return Ok((Self::parse("NOVOVM_FINAL_ACK_WAIT_PROFILE", &raw)?, "env"));
+        }
+        if let Some(raw) = string_env_nonempty("NOVOVM_RUNTIME_PROFILE") {
+            return Ok((
+                Self::parse("NOVOVM_RUNTIME_PROFILE", &raw)?,
+                "runtime_profile",
+            ));
+        }
+        Ok((Self::Production, "default"))
+    }
+
+    fn parse(name: &str, raw: &str) -> Result<Self> {
+        match raw.to_ascii_lowercase().as_str() {
+            "production" | "prod" | "low_latency" | "low-latency" => Ok(Self::Production),
+            "regression" | "test" => Ok(Self::Regression),
+            "soak" => Ok(Self::Soak),
+            "debug" => Ok(Self::Debug),
+            other => bail!(
+                "{name}={other} is not supported; expected production, regression, soak, or debug"
+            ),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Production => "production",
+            Self::Regression => "regression",
+            Self::Soak => "soak",
+            Self::Debug => "debug",
+        }
+    }
+
+    fn default_wait_ms(self, full_async_runtime_engine: bool) -> u64 {
+        match self {
+            Self::Production => 1_000,
+            Self::Regression | Self::Soak | Self::Debug => {
+                if full_async_runtime_engine {
+                    120_000
+                } else {
+                    10_000
+                }
+            }
+        }
+    }
+
+    fn production_max_ms(self) -> u64 {
+        match self {
+            Self::Production => 1_000,
+            Self::Regression | Self::Soak | Self::Debug => 120_000,
+        }
+    }
+
+    fn low_latency_signoff(self) -> bool {
+        self == Self::Production
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FinalAckWaitConfigV1 {
+    profile: FinalAckWaitProfileV1,
+    profile_source: &'static str,
+    wait_ms: u64,
+    wait_source: &'static str,
+    production_max_ms: u64,
+    within_profile_limit: bool,
+    profile_violation: Option<&'static str>,
+    production_low_latency_signoff: bool,
+}
+
+impl FinalAckWaitConfigV1 {
+    fn from_env(full_async_runtime_engine: bool) -> Result<Self> {
+        let (profile, profile_source) = FinalAckWaitProfileV1::from_env()?;
+        let default_wait_ms = profile.default_wait_ms(full_async_runtime_engine);
+        let env_override = string_env_nonempty("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS");
+        let wait_ms = match env_override.as_deref() {
+            Some(raw) => raw
+                .parse::<u64>()
+                .context("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS must be u64")?,
+            None => default_wait_ms,
+        };
+        let wait_source = if env_override.is_some() {
+            "env_override"
+        } else {
+            "profile_default"
+        };
+        let production_max_ms = profile.production_max_ms();
+        let within_profile_limit = wait_ms <= production_max_ms;
+        let profile_violation =
+            if profile == FinalAckWaitProfileV1::Production && !within_profile_limit {
+                Some("production_final_ack_wait_exceeds_limit")
+            } else {
+                None
+            };
+        if let Some(reason) = profile_violation {
+            bail!("{reason}: final_ack_wait_ms={wait_ms} production_max_ms={production_max_ms}");
+        }
+        Ok(Self {
+            profile,
+            profile_source,
+            wait_ms,
+            wait_source,
+            production_max_ms,
+            within_profile_limit,
+            profile_violation,
+            production_low_latency_signoff: profile.low_latency_signoff(),
+        })
+    }
+}
+
 fn u64_env(name: &str, default: u64) -> Result<u64> {
     let Some(raw) = string_env_nonempty(name) else {
         return Ok(default);
@@ -2443,6 +2563,69 @@ mod novorudp_tests {
             None => std::env::remove_var("NOVOVM_NATIVE_PIPELINE_SENDER_EXIT_ON_REPAIR_TIMEOUT"),
         }
         result
+    }
+
+    fn with_final_ack_profile_env<T>(
+        runtime_profile: Option<&str>,
+        final_ack_profile: Option<&str>,
+        final_ack_wait_ms: Option<&str>,
+        run: impl FnOnce() -> T,
+    ) -> T {
+        with_env_var("NOVOVM_RUNTIME_PROFILE", runtime_profile, || {
+            with_env_var("NOVOVM_FINAL_ACK_WAIT_PROFILE", final_ack_profile, || {
+                with_env_var(
+                    "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
+                    final_ack_wait_ms,
+                    run,
+                )
+            })
+        })
+    }
+
+    #[test]
+    fn final_ack_wait_production_default_is_short() {
+        with_final_ack_profile_env(None, None, None, || {
+            let config = FinalAckWaitConfigV1::from_env(true).expect("production default config");
+            assert_eq!(config.profile, FinalAckWaitProfileV1::Production);
+            assert_eq!(config.wait_ms, 1_000);
+            assert_eq!(config.wait_source, "profile_default");
+            assert_eq!(config.production_max_ms, 1_000);
+            assert!(config.within_profile_limit);
+            assert!(config.production_low_latency_signoff);
+        });
+    }
+
+    #[test]
+    fn final_ack_wait_regression_allows_120s() {
+        with_final_ack_profile_env(None, Some("regression"), None, || {
+            let config = FinalAckWaitConfigV1::from_env(true).expect("regression config");
+            assert_eq!(config.profile, FinalAckWaitProfileV1::Regression);
+            assert_eq!(config.wait_ms, 120_000);
+            assert_eq!(config.wait_source, "profile_default");
+            assert_eq!(config.production_max_ms, 120_000);
+            assert!(!config.production_low_latency_signoff);
+        });
+    }
+
+    #[test]
+    fn final_ack_wait_production_rejects_120s() {
+        with_final_ack_profile_env(None, Some("production"), Some("120000"), || {
+            let err = FinalAckWaitConfigV1::from_env(true).expect_err("production rejects 120s");
+            assert!(err
+                .to_string()
+                .contains("production_final_ack_wait_exceeds_limit"));
+        });
+    }
+
+    #[test]
+    fn final_ack_wait_env_override_reported() {
+        with_final_ack_profile_env(None, Some("soak"), Some("30000"), || {
+            let config = FinalAckWaitConfigV1::from_env(true).expect("soak override config");
+            assert_eq!(config.profile, FinalAckWaitProfileV1::Soak);
+            assert_eq!(config.wait_ms, 30_000);
+            assert_eq!(config.wait_source, "env_override");
+            assert!(!config.production_low_latency_signoff);
+        });
     }
 
     fn sender_timeout_tail_repair_config() -> TailRepairConfigV1 {
@@ -7399,7 +7582,7 @@ mod novorudp_tests {
     }
 
     #[test]
-    fn full_async_sender_fails_with_ack_backchannel_reason_not_repair_timeout_when_ack_null() {
+    fn production_profile_deadline_fail_closed_without_receiver_done() {
         with_env_var("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE", Some("1"), || {
             with_env_var(
                 "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
@@ -7447,7 +7630,15 @@ mod novorudp_tests {
                                 assert_eq!(report["accepted"].as_bool(), Some(false));
                                 assert_eq!(
                                     report["fail_reason"].as_str(),
-                                    Some("full_async_ack_backchannel_not_received")
+                                    Some("production_final_ack_deadline_exceeded")
+                                );
+                                assert_eq!(
+                                    report["final_ack_wait_profile"].as_str(),
+                                    Some("production")
+                                );
+                                assert_eq!(
+                                    report["sender_finalization_deadline_exceeded"].as_bool(),
+                                    Some(true)
                                 );
                                 assert_eq!(
                                     report["sender_ack_plane_mode"].as_str(),
@@ -7463,7 +7654,7 @@ mod novorudp_tests {
                                 );
                                 assert_eq!(
                                     report["sender_finalization_reason"].as_str(),
-                                    Some("full_async_ack_backchannel_not_received")
+                                    Some("production_final_ack_deadline_exceeded")
                                 );
                                 assert_eq!(
                                     report["sender_ack_socket_bound_addr"].as_str(),
@@ -7535,6 +7726,24 @@ mod novorudp_tests {
 
                                 assert_eq!(report["accepted"].as_bool(), Some(true));
                                 assert_eq!(report["fail_reason"], Value::Null);
+                                assert_eq!(report["runtime_profile"].as_str(), Some("production"));
+                                assert_eq!(
+                                    report["final_ack_wait_profile"].as_str(),
+                                    Some("production")
+                                );
+                                assert_eq!(
+                                    report["final_ack_wait_source"].as_str(),
+                                    Some("env_override")
+                                );
+                                assert_eq!(report["final_ack_wait_ms"].as_u64(), Some(1000));
+                                assert_eq!(
+                                    report["production_low_latency_signoff"].as_bool(),
+                                    Some(true)
+                                );
+                                assert_eq!(
+                                    report["sender_finalization_wait_mode"].as_str(),
+                                    Some("production_low_latency_deadline")
+                                );
                                 assert_eq!(
                                     report["tail_repair"]["tail_repair_completion_reason"].as_str(),
                                     Some("receiver_done_ack")
@@ -14285,15 +14494,8 @@ fn run_sender(
     let moving_window_enabled = novorudp.enabled;
     let mut moving_window_last_range: Option<MissingRangeV1> = None;
     let mut moving_window_last_ack_epoch: Option<u64> = None;
-    let default_final_ack_wait_ms = if full_async_runtime_engine {
-        120_000
-    } else {
-        10_000
-    };
-    let final_ack_wait_ms = u64_env(
-        "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
-        default_final_ack_wait_ms,
-    )?;
+    let final_ack_wait_config = FinalAckWaitConfigV1::from_env(full_async_runtime_engine)?;
+    let final_ack_wait_ms = final_ack_wait_config.wait_ms;
     let final_ack_poll_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS", 500)?.max(1);
     let mut final_ack_wait_elapsed_ms = 0u64;
     let mut final_ack_received_after_repair = false;
@@ -15711,7 +15913,13 @@ fn run_sender(
         sender_repair_no_progress_timeout_reached,
         sender_hard_timeout_reached,
     );
-    let fallback_fail_reason = if let Some(reason) = full_async_ack_fail_reason {
+    let production_final_ack_deadline_exceeded = full_async_runtime_engine
+        && final_ack_wait_config.profile == FinalAckWaitProfileV1::Production
+        && final_ack_grace_timeout
+        && !latest_ack_receiver_done;
+    let fallback_fail_reason = if production_final_ack_deadline_exceeded {
+        Some("production_final_ack_deadline_exceeded")
+    } else if let Some(reason) = full_async_ack_fail_reason {
         Some(reason)
     } else if sender_repair_no_progress_timeout_reached {
         Some("sender_repair_no_progress_timeout")
@@ -15882,6 +16090,23 @@ fn run_sender(
         "fail_reason": fail_reason,
         "full_async_runtime_engine_enabled": full_async_runtime_engine,
         "runtime_engine_mode": if full_async_runtime_engine { "full_async_multi_plane_v1" } else { "ready_queue_pipeline_v1" },
+        "runtime_profile": final_ack_wait_config.profile.as_str(),
+        "final_ack_wait_profile": final_ack_wait_config.profile.as_str(),
+        "final_ack_wait_profile_source": final_ack_wait_config.profile_source,
+        "final_ack_wait_ms": final_ack_wait_ms,
+        "final_ack_wait_source": final_ack_wait_config.wait_source,
+        "final_ack_wait_production_max_ms": final_ack_wait_config.production_max_ms,
+        "final_ack_wait_within_profile_limit": final_ack_wait_config.within_profile_limit,
+        "final_ack_wait_profile_violation": final_ack_wait_config.profile_violation,
+        "production_low_latency_signoff": final_ack_wait_config.production_low_latency_signoff,
+        "sender_finalization_deadline_ms": final_ack_wait_ms,
+        "sender_finalization_deadline_source": final_ack_wait_config.wait_source,
+        "sender_finalization_deadline_exceeded": production_final_ack_deadline_exceeded,
+        "sender_finalization_wait_mode": if final_ack_wait_config.profile == FinalAckWaitProfileV1::Production {
+            "production_low_latency_deadline"
+        } else {
+            "soak_regression_grace_window"
+        },
         "primary_send_plane_mode": if full_async_runtime_engine { "independent_primary_send_plane" } else { "sustained_sender_loop" },
         "ack_plane_mode": if full_async_runtime_engine { "aggressive_nonblocking_ack_drain" } else { "interval_ack_drain" },
         "repair_plane_mode": if full_async_runtime_engine { "continuous_missing_snapshot_repair_pump" } else { "ack_driven_tail_repair_loop" },
@@ -16320,7 +16545,23 @@ fn run_sender(
             "receiver_final_missing_count": receiver_final_missing_count,
             "receiver_final_done": receiver_final_done,
             "final_ack_wait_enabled": final_ack_wait_ms > 0,
+            "runtime_profile": final_ack_wait_config.profile.as_str(),
+            "final_ack_wait_profile": final_ack_wait_config.profile.as_str(),
+            "final_ack_wait_profile_source": final_ack_wait_config.profile_source,
             "final_ack_wait_ms": final_ack_wait_ms,
+            "final_ack_wait_source": final_ack_wait_config.wait_source,
+            "final_ack_wait_production_max_ms": final_ack_wait_config.production_max_ms,
+            "final_ack_wait_within_profile_limit": final_ack_wait_config.within_profile_limit,
+            "final_ack_wait_profile_violation": final_ack_wait_config.profile_violation,
+            "production_low_latency_signoff": final_ack_wait_config.production_low_latency_signoff,
+            "sender_finalization_deadline_ms": final_ack_wait_ms,
+            "sender_finalization_deadline_source": final_ack_wait_config.wait_source,
+            "sender_finalization_deadline_exceeded": production_final_ack_deadline_exceeded,
+            "sender_finalization_wait_mode": if final_ack_wait_config.profile == FinalAckWaitProfileV1::Production {
+                "production_low_latency_deadline"
+            } else {
+                "soak_regression_grace_window"
+            },
             "final_ack_poll_ms": final_ack_poll_ms,
             "final_ack_wait_elapsed_ms": final_ack_wait_elapsed_ms,
             "final_ack_received_after_repair": final_ack_received_after_repair,
