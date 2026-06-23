@@ -22,6 +22,11 @@ use std::io::BufRead;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const REPORT_SCHEMA_V1: &str = "novovm-native-pipeline-cross-machine-udp-soak-report/v1";
@@ -311,6 +316,65 @@ struct UdpAckStateV1 {
     novorudp_current_window_missing_count: u64,
     novorudp_current_window_missing_ranges: Vec<MissingRangeV1>,
     receiver_done: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct FullAsyncAckDrainPumpStateV1 {
+    thread_started: bool,
+    recv_attempt_count: u64,
+    recv_success_count: u64,
+    recv_error_count: u64,
+    last_recv_elapsed_ms: Option<u64>,
+    last_epoch: u64,
+    latest_ack: Option<UdpAckStateV1>,
+    coalesced_ack_count: u64,
+    dropped_stale_ack_count: u64,
+    backlog_drain_burst_count: u64,
+    finalization_handoff_count: u64,
+    repair_snapshot_handoff_count: u64,
+}
+
+fn merge_full_async_ack_plane_state_v1(
+    plane: &mut FullAsyncAckDrainPumpStateV1,
+    ack: UdpAckStateV1,
+    elapsed_ms: u64,
+) {
+    if ack.received_count == 0 {
+        return;
+    }
+    plane.recv_success_count = plane.recv_success_count.saturating_add(ack.received_count);
+    plane.last_recv_elapsed_ms = Some(elapsed_ms);
+    if ack.received_count > 1 {
+        plane.backlog_drain_burst_count = plane.backlog_drain_burst_count.saturating_add(1);
+    }
+    let stale = plane.latest_ack.as_ref().is_some_and(|current| {
+        ack.latest_epoch < current.latest_epoch
+            || (ack.latest_epoch == current.latest_epoch
+                && !ack.receiver_done
+                && current.receiver_done)
+    });
+    if stale {
+        plane.dropped_stale_ack_count =
+            plane.dropped_stale_ack_count.saturating_add(ack.received_count);
+        return;
+    }
+    plane.last_epoch = plane.last_epoch.max(ack.latest_epoch);
+    if ack.receiver_done {
+        plane.finalization_handoff_count =
+            plane.finalization_handoff_count.saturating_add(1);
+    }
+    if ack.latest_missing_count > 0 {
+        plane.repair_snapshot_handoff_count =
+            plane.repair_snapshot_handoff_count.saturating_add(1);
+    }
+    plane.coalesced_ack_count = plane.coalesced_ack_count.saturating_add(ack.received_count);
+    plane.latest_ack = Some(ack);
+}
+
+fn snapshot_full_async_ack_plane_state_v1(
+    shared: &Option<Arc<Mutex<FullAsyncAckDrainPumpStateV1>>>,
+) -> Option<FullAsyncAckDrainPumpStateV1> {
+    shared.as_ref()?.lock().ok().map(|state| state.clone())
 }
 
 #[derive(Debug, Clone, Default)]
@@ -6369,12 +6433,100 @@ mod novorudp_tests {
                                     report["sender_ack_receiver_done_epoch"].as_u64(),
                                     Some(99)
                                 );
+                                assert_eq!(
+                                    report["full_async_ack_drain_dedicated_pump_enabled"].as_bool(),
+                                    Some(true)
+                                );
+                                assert_eq!(
+                                    report["ack_plane_thread_or_task_started"].as_bool(),
+                                    Some(true)
+                                );
+                                assert_eq!(
+                                    report["ack_plane_receiver_done_seen"].as_bool(),
+                                    Some(true)
+                                );
+                                assert!(
+                                    report["ack_plane_finalization_handoff_count"]
+                                        .as_u64()
+                                        .unwrap_or_default()
+                                        > 0
+                                );
                             });
                         },
                     )
                 },
             )
         });
+    }
+
+    #[test]
+    fn full_async_ack_plane_coalesces_latest_epoch() {
+        let mut plane = FullAsyncAckDrainPumpStateV1::default();
+        merge_full_async_ack_plane_state_v1(
+            &mut plane,
+            UdpAckStateV1 {
+                received_count: 1,
+                latest_epoch: 10,
+                latest_missing_count: 64,
+                latest_ranges: vec![MissingRangeV1 {
+                    start: 100,
+                    end_inclusive: 163,
+                }],
+                ..UdpAckStateV1::default()
+            },
+            100,
+        );
+        merge_full_async_ack_plane_state_v1(
+            &mut plane,
+            UdpAckStateV1 {
+                received_count: 1,
+                latest_epoch: 9,
+                latest_missing_count: 128,
+                latest_ranges: vec![MissingRangeV1 {
+                    start: 0,
+                    end_inclusive: 127,
+                }],
+                ..UdpAckStateV1::default()
+            },
+            200,
+        );
+
+        assert_eq!(plane.last_epoch, 10);
+        assert_eq!(plane.dropped_stale_ack_count, 1);
+        assert_eq!(
+            plane.latest_ack.as_ref().map(|ack| ack.latest_missing_count),
+            Some(64)
+        );
+    }
+
+    #[test]
+    fn full_async_ack_plane_hands_latest_missing_to_repair_snapshot() {
+        let mut plane = FullAsyncAckDrainPumpStateV1::default();
+        merge_full_async_ack_plane_state_v1(
+            &mut plane,
+            UdpAckStateV1 {
+                received_count: 3,
+                latest_epoch: 12,
+                latest_missing_count: 32,
+                latest_ranges: vec![MissingRangeV1 {
+                    start: 448,
+                    end_inclusive: 479,
+                }],
+                ..UdpAckStateV1::default()
+            },
+            250,
+        );
+
+        assert_eq!(plane.recv_success_count, 3);
+        assert_eq!(plane.backlog_drain_burst_count, 1);
+        assert_eq!(plane.repair_snapshot_handoff_count, 1);
+        assert_eq!(
+            plane.latest_ack.as_ref().map(|ack| ack.latest_ranges.clone()),
+            Some(vec![MissingRangeV1 {
+                start: 448,
+                end_inclusive: 479,
+            }])
+        );
     }
 }
 
@@ -12687,8 +12839,111 @@ fn run_sender(
         .as_ref()
         .and_then(|socket| socket.local_addr().ok())
         .map(|addr| addr.to_string());
+    let full_async_ack_drain_dedicated_pump_enabled =
+        full_async_runtime_engine && primary_ack_drain_enabled && ack_socket.is_some();
+    let ack_plane_shared = if full_async_ack_drain_dedicated_pump_enabled {
+        Some(Arc::new(Mutex::new(FullAsyncAckDrainPumpStateV1 {
+            thread_started: true,
+            ..FullAsyncAckDrainPumpStateV1::default()
+        })))
+    } else {
+        None
+    };
+    let ack_plane_running = if full_async_ack_drain_dedicated_pump_enabled {
+        Some(Arc::new(AtomicBool::new(true)))
+    } else {
+        None
+    };
+    let ack_plane_handle: Option<JoinHandle<()>> = if full_async_ack_drain_dedicated_pump_enabled {
+        let socket = ack_socket
+            .as_ref()
+            .expect("ack socket exists for full async ack pump")
+            .try_clone()
+            .context("clone sender UDP ack socket for full async ack pump failed")?;
+        let shared = ack_plane_shared
+            .as_ref()
+            .expect("ack plane shared state")
+            .clone();
+        let running = ack_plane_running
+            .as_ref()
+            .expect("ack plane running state")
+            .clone();
+        let limit = tail_repair.missing_sample_limit;
+        let started = sender_started;
+        Some(std::thread::spawn(move || {
+            while running.load(Ordering::Relaxed) {
+                if let Ok(mut state) = shared.lock() {
+                    state.recv_attempt_count = state.recv_attempt_count.saturating_add(1);
+                }
+                let ack = drain_udp_ack_socket(&socket, limit, 0);
+                if ack.received_count > 0 {
+                    if let Ok(mut state) = shared.lock() {
+                        merge_full_async_ack_plane_state_v1(
+                            &mut state,
+                            ack,
+                            started.elapsed().as_millis() as u64,
+                        );
+                    }
+                } else {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+        }))
+    } else {
+        None
+    };
+    let mut ack_plane_applied_epoch = 0u64;
+    let mut ack_plane_applied_receiver_done = false;
+    macro_rules! apply_full_async_ack_plane_snapshot {
+        () => {{
+            if full_async_ack_drain_dedicated_pump_enabled {
+                if let Some(snapshot) = snapshot_full_async_ack_plane_state_v1(&ack_plane_shared) {
+                    if let Some(state) = snapshot.latest_ack.as_ref() {
+                        let should_apply = state.latest_epoch > ack_plane_applied_epoch
+                            || (state.receiver_done && !ack_plane_applied_receiver_done);
+                        if should_apply {
+                            let previous_epoch = tail_repair_latest_ack_epoch;
+                            let previous_highest = latest_ack_highest_sequence_seen;
+                            ack_plane_applied_epoch = state.latest_epoch;
+                            ack_plane_applied_receiver_done =
+                                ack_plane_applied_receiver_done || state.receiver_done;
+                            tail_repair_ack_received_count =
+                                tail_repair_ack_received_count.saturating_add(1);
+                            tail_repair_udp_ack_received_count =
+                                tail_repair_udp_ack_received_count.saturating_add(1);
+                            primary_ack_received_count =
+                                primary_ack_received_count.saturating_add(1);
+                            tail_repair_latest_ack_epoch =
+                                tail_repair_latest_ack_epoch.max(state.latest_epoch);
+                            latest_ack_received_at = Some(Instant::now());
+                            primary_ack_last_consumed_elapsed_ms =
+                                sender_started.elapsed().as_millis() as u64;
+                            latest_ack_missing_count = Some(state.latest_missing_count);
+                            latest_ack_missing_ranges_sample = state.latest_ranges.clone();
+                            latest_ack_missing_ranges_full_count =
+                                Some(state.missing_ranges_full_count);
+                            latest_ack_highest_sequence_seen = state.highest_sequence_seen;
+                            latest_ack_receiver_done = state.receiver_done;
+                            final_missing_count = state.latest_missing_count;
+                            if novorudp.enabled
+                                && state.latest_epoch > previous_epoch
+                                && state.highest_sequence_seen.unwrap_or_default()
+                                    > previous_highest.unwrap_or_default()
+                            {
+                                repair_window_recomputed_count =
+                                    repair_window_recomputed_count.saturating_add(1);
+                                repair_window_recomputed_due_to_ack_progress =
+                                    repair_window_recomputed_due_to_ack_progress.saturating_add(1);
+                            }
+                        }
+                    }
+                }
+            }
+        }};
+    }
     macro_rules! drain_primary_sender_ack {
         () => {{
+            apply_full_async_ack_plane_snapshot!();
             if primary_ack_drain_enabled {
                 if let Some(socket) = ack_socket.as_ref() {
                     primary_ack_drain_count = primary_ack_drain_count.saturating_add(1);
@@ -12837,6 +13092,7 @@ fn run_sender(
         };
         let repair_send_config = novorudp.repair_config(tail_repair);
         for repair_round in 0..repair_loop_rounds {
+            apply_full_async_ack_plane_snapshot!();
             if novorudp.enabled {
                 let elapsed_ms = sender_started.elapsed().as_millis() as u64;
                 no_progress_elapsed_ms = no_progress_started_at
@@ -12889,6 +13145,7 @@ fn run_sender(
                 break;
             }
             let udp_ack_state = ack_socket.as_ref().map(|socket| {
+                apply_full_async_ack_plane_snapshot!();
                 let ack_drain_wait_ms = if ack_plane_aggressive_drain {
                     0
                 } else {
@@ -12945,6 +13202,7 @@ fn run_sender(
                     }
                 }
             }
+            apply_full_async_ack_plane_snapshot!();
             let udp_ack_for_repair = udp_ack_state
                 .as_ref()
                 .filter(|state| state.received_count > 0 && state.latest_missing_count > 0);
@@ -13443,6 +13701,7 @@ fn run_sender(
                 udp_ack.recv_timeout_ms
             };
             let ack_after = ack_socket.as_ref().map(|socket| {
+                apply_full_async_ack_plane_snapshot!();
                 sender_ack_recv_attempt_count = sender_ack_recv_attempt_count.saturating_add(1);
                 drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, ack_wait_ms)
             });
@@ -13634,6 +13893,14 @@ fn run_sender(
     {
         let started = Instant::now();
         loop {
+            apply_full_async_ack_plane_snapshot!();
+            if latest_ack_receiver_done && latest_ack_missing_count == Some(0) {
+                final_ack_received_after_repair = true;
+                final_ack_epoch = Some(tail_repair_latest_ack_epoch);
+                final_ack_missing_count = Some(0);
+                final_ack_receiver_done = Some(true);
+                break;
+            }
             if started.elapsed() >= Duration::from_millis(final_ack_wait_ms) {
                 final_ack_grace_timeout = true;
                 break;
@@ -13682,6 +13949,16 @@ fn run_sender(
             final_ack_wait_elapsed_ms = started.elapsed().as_millis() as u64;
         }
     }
+    apply_full_async_ack_plane_snapshot!();
+    if let Some(running) = ack_plane_running.as_ref() {
+        running.store(false, Ordering::Relaxed);
+    }
+    if let Some(handle) = ack_plane_handle {
+        let _ = handle.join();
+    }
+    apply_full_async_ack_plane_snapshot!();
+    let _ack_plane_final_applied_epoch = ack_plane_applied_epoch;
+    let _ack_plane_final_applied_receiver_done = ack_plane_applied_receiver_done;
     if tail_repair_ack_received_count == 0 {
         final_missing_count = tx_count.saturating_sub(stats.sent_unique);
     }
@@ -13835,6 +14112,74 @@ fn run_sender(
     };
     let sender_finalization_last_ack_age_ms =
         latest_ack_received_at.map(|received_at| received_at.elapsed().as_millis() as u64);
+    let ack_plane_final_snapshot = snapshot_full_async_ack_plane_state_v1(&ack_plane_shared);
+    let ack_plane_recv_attempt_count = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.recv_attempt_count)
+        .unwrap_or(sender_ack_recv_attempt_count);
+    let ack_plane_recv_success_count = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.recv_success_count)
+        .unwrap_or(tail_repair_udp_ack_received_count);
+    let ack_plane_recv_error_count = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.recv_error_count)
+        .unwrap_or(0);
+    let ack_plane_last_recv_ms = ack_plane_final_snapshot
+        .as_ref()
+        .and_then(|state| state.last_recv_elapsed_ms)
+        .or_else(|| {
+            if primary_ack_last_consumed_elapsed_ms > 0 {
+                Some(primary_ack_last_consumed_elapsed_ms)
+            } else {
+                None
+            }
+        });
+    let ack_plane_last_epoch = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.last_epoch)
+        .unwrap_or(tail_repair_latest_ack_epoch);
+    let ack_plane_latest_missing_count = ack_plane_final_snapshot
+        .as_ref()
+        .and_then(|state| state.latest_ack.as_ref())
+        .map(|ack| ack.latest_missing_count)
+        .or(latest_ack_missing_count);
+    let (ack_plane_latest_missing_range_min, ack_plane_latest_missing_range_max) =
+        ack_plane_final_snapshot
+            .as_ref()
+            .and_then(|state| state.latest_ack.as_ref())
+            .map(|ack| missing_ranges_bounds(ack.latest_ranges.as_slice()))
+            .unwrap_or_else(|| missing_ranges_bounds(latest_ack_missing_ranges_sample.as_slice()));
+    let ack_plane_receiver_done_seen = ack_plane_final_snapshot
+        .as_ref()
+        .and_then(|state| state.latest_ack.as_ref())
+        .map(|ack| ack.receiver_done)
+        .unwrap_or(latest_ack_receiver_done);
+    let ack_plane_receiver_done_epoch = if ack_plane_receiver_done_seen {
+        Some(ack_plane_last_epoch)
+    } else {
+        None
+    };
+    let ack_plane_coalesced_ack_count = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.coalesced_ack_count)
+        .unwrap_or_default();
+    let ack_plane_dropped_stale_ack_count = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.dropped_stale_ack_count)
+        .unwrap_or_default();
+    let ack_plane_backlog_drain_burst_count = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.backlog_drain_burst_count)
+        .unwrap_or_default();
+    let ack_plane_finalization_handoff_count = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.finalization_handoff_count)
+        .unwrap_or_default();
+    let ack_plane_repair_snapshot_handoff_count = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.repair_snapshot_handoff_count)
+        .unwrap_or_default();
     let repair_pump_stopped_after_receiver_done =
         latest_ack_receiver_done && latest_ack_missing_count == Some(0);
     let repair_pump_stop_reason = if repair_pump_stopped_after_receiver_done {
@@ -13904,10 +14249,31 @@ fn run_sender(
         "sender_ack_plane_enabled": udp_ack.enabled,
         "sender_ack_plane_mode": if full_async_runtime_engine { "aggressive_nonblocking_ack_drain" } else { "interval_ack_drain" },
         "sender_ack_socket_bound_addr": ack_socket_addr,
-        "sender_ack_recv_attempt_count": sender_ack_recv_attempt_count,
-        "sender_ack_recv_success_count": tail_repair_udp_ack_received_count,
-        "sender_ack_recv_error_count": 0u64,
-        "sender_ack_last_recv_ms": if primary_ack_last_consumed_elapsed_ms > 0 { Some(primary_ack_last_consumed_elapsed_ms) } else { None },
+        "full_async_ack_drain_dedicated_pump_enabled": full_async_ack_drain_dedicated_pump_enabled,
+        "ack_plane_thread_or_task_started": ack_plane_final_snapshot
+            .as_ref()
+            .map(|state| state.thread_started)
+            .unwrap_or(false),
+        "ack_plane_recv_attempt_count": ack_plane_recv_attempt_count,
+        "ack_plane_recv_success_count": ack_plane_recv_success_count,
+        "ack_plane_recv_error_count": ack_plane_recv_error_count,
+        "ack_plane_last_recv_ms": ack_plane_last_recv_ms,
+        "ack_plane_last_epoch": ack_plane_last_epoch,
+        "ack_plane_latest_missing_count": ack_plane_latest_missing_count,
+        "ack_plane_latest_missing_range_min": ack_plane_latest_missing_range_min,
+        "ack_plane_latest_missing_range_max": ack_plane_latest_missing_range_max,
+        "ack_plane_receiver_done_seen": ack_plane_receiver_done_seen,
+        "ack_plane_receiver_done_epoch": ack_plane_receiver_done_epoch,
+        "ack_plane_coalesced_ack_count": ack_plane_coalesced_ack_count,
+        "ack_plane_dropped_stale_ack_count": ack_plane_dropped_stale_ack_count,
+        "ack_plane_recv_queue_backlog_detected": ack_plane_backlog_drain_burst_count > 0,
+        "ack_plane_backlog_drain_burst_count": ack_plane_backlog_drain_burst_count,
+        "ack_plane_finalization_handoff_count": ack_plane_finalization_handoff_count,
+        "ack_plane_repair_snapshot_handoff_count": ack_plane_repair_snapshot_handoff_count,
+        "sender_ack_recv_attempt_count": ack_plane_recv_attempt_count,
+        "sender_ack_recv_success_count": ack_plane_recv_success_count,
+        "sender_ack_recv_error_count": ack_plane_recv_error_count,
+        "sender_ack_last_recv_ms": ack_plane_last_recv_ms,
         "sender_ack_last_decode_error": Value::Null,
         "sender_ack_receiver_done_seen": latest_ack_receiver_done,
         "sender_ack_receiver_done_epoch": if latest_ack_receiver_done { Some(tail_repair_latest_ack_epoch) } else { None },
