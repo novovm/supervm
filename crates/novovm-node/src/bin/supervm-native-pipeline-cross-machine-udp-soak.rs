@@ -1593,12 +1593,13 @@ fn suppress_repair_ranges_for_missing_snapshot_v1(
     expected: u64,
     active_missing_snapshot: &mut Vec<MissingRangeV1>,
     sent_ranges_for_snapshot: &mut Vec<MissingRangeV1>,
-) -> (Vec<MissingRangeV1>, u64) {
+    retry_due: bool,
+) -> (Vec<MissingRangeV1>, u64, bool) {
     let latest_missing = normalize_missing_ranges(latest_missing_ranges, expected);
     if latest_missing.is_empty() {
         active_missing_snapshot.clear();
         sent_ranges_for_snapshot.clear();
-        return (Vec::new(), missing_ranges_count(selected_ranges));
+        return (Vec::new(), missing_ranges_count(selected_ranges), false);
     }
     if *active_missing_snapshot != latest_missing {
         *active_missing_snapshot = latest_missing.clone();
@@ -1610,17 +1611,31 @@ fn suppress_repair_ranges_for_missing_snapshot_v1(
     );
     let suppressed_duplicate_sequence_count =
         missing_ranges_overlap_count(selected.as_slice(), sent_ranges_for_snapshot.as_slice());
-    let filtered = missing_ranges_subtract(
-        selected.as_slice(),
-        sent_ranges_for_snapshot.as_slice(),
-        expected,
-    );
+    let retry_sent_latest_missing = retry_due && !selected.is_empty();
+    let filtered = if retry_sent_latest_missing {
+        selected.clone()
+    } else {
+        missing_ranges_subtract(
+            selected.as_slice(),
+            sent_ranges_for_snapshot.as_slice(),
+            expected,
+        )
+    };
+    let suppressed_duplicate_sequence_count = if retry_sent_latest_missing {
+        0
+    } else {
+        suppressed_duplicate_sequence_count
+    };
     if !filtered.is_empty() {
         sent_ranges_for_snapshot.extend(filtered.iter().copied());
         *sent_ranges_for_snapshot =
             normalize_missing_ranges(sent_ranges_for_snapshot.as_slice(), expected);
     }
-    (filtered, suppressed_duplicate_sequence_count)
+    (
+        filtered,
+        suppressed_duplicate_sequence_count,
+        retry_sent_latest_missing,
+    )
 }
 
 #[cfg(test)]
@@ -5550,25 +5565,61 @@ mod novorudp_tests {
             start: 300,
             end_inclusive: 363,
         }];
-        let (first, first_suppressed) = suppress_repair_ranges_for_missing_snapshot_v1(
-            missing.as_slice(),
-            missing.as_slice(),
-            1_000,
-            &mut active_snapshot,
-            &mut sent_ranges,
-        );
-        let (second, second_suppressed) = suppress_repair_ranges_for_missing_snapshot_v1(
-            missing.as_slice(),
-            missing.as_slice(),
-            1_000,
-            &mut active_snapshot,
-            &mut sent_ranges,
-        );
+        let (first, first_suppressed, first_retry_sent) =
+            suppress_repair_ranges_for_missing_snapshot_v1(
+                missing.as_slice(),
+                missing.as_slice(),
+                1_000,
+                &mut active_snapshot,
+                &mut sent_ranges,
+                true,
+            );
+        let (second, second_suppressed, second_retry_sent) =
+            suppress_repair_ranges_for_missing_snapshot_v1(
+                missing.as_slice(),
+                missing.as_slice(),
+                1_000,
+                &mut active_snapshot,
+                &mut sent_ranges,
+                false,
+            );
 
         assert_eq!(first, missing);
         assert_eq!(first_suppressed, 0);
+        assert!(first_retry_sent);
         assert!(second.is_empty());
         assert_eq!(second_suppressed, 64);
+        assert!(!second_retry_sent);
+    }
+
+    #[test]
+    fn full_async_repair_retries_latest_missing_after_retry_cadence() {
+        let mut active_snapshot = Vec::<MissingRangeV1>::new();
+        let mut sent_ranges = Vec::<MissingRangeV1>::new();
+        let missing = vec![MissingRangeV1 {
+            start: 300,
+            end_inclusive: 363,
+        }];
+        let _ = suppress_repair_ranges_for_missing_snapshot_v1(
+            missing.as_slice(),
+            missing.as_slice(),
+            1_000,
+            &mut active_snapshot,
+            &mut sent_ranges,
+            true,
+        );
+        let (retry, suppressed, retry_sent) = suppress_repair_ranges_for_missing_snapshot_v1(
+            missing.as_slice(),
+            missing.as_slice(),
+            1_000,
+            &mut active_snapshot,
+            &mut sent_ranges,
+            true,
+        );
+
+        assert_eq!(retry, missing);
+        assert_eq!(suppressed, 0);
+        assert!(retry_sent);
     }
 
     #[test]
@@ -5585,21 +5636,24 @@ mod novorudp_tests {
             1_000,
             &mut active_snapshot,
             &mut sent_ranges,
+            true,
         );
         let next_missing = vec![MissingRangeV1 {
             start: 340,
             end_inclusive: 363,
         }];
-        let (filtered, suppressed) = suppress_repair_ranges_for_missing_snapshot_v1(
+        let (filtered, suppressed, retry_sent) = suppress_repair_ranges_for_missing_snapshot_v1(
             next_missing.as_slice(),
             next_missing.as_slice(),
             1_000,
             &mut active_snapshot,
             &mut sent_ranges,
+            true,
         );
 
         assert_eq!(suppressed, 0);
         assert_eq!(filtered, next_missing);
+        assert!(retry_sent);
     }
 
     #[test]
@@ -13742,6 +13796,15 @@ fn run_sender(
             || string_env_nonempty("NOVOVM_NOVORUDP_REPAIR_SUPPRESS_COMPLETED_RANGES").is_none());
     let mut repair_suppression_active_missing_snapshot = Vec::<MissingRangeV1>::new();
     let mut repair_suppression_sent_ranges_for_snapshot = Vec::<MissingRangeV1>::new();
+    let repair_latest_missing_retry_cadence_ms = u64_env(
+        "NOVOVM_NOVORUDP_REPAIR_LATEST_MISSING_RETRY_CADENCE_MS",
+        250,
+    )?
+    .max(1);
+    let mut repair_suppression_last_retry_at: Option<Instant> = None;
+    let mut repair_suppression_blocked_for_latest_missing_count = 0u64;
+    let mut repair_latest_missing_retry_due_count = 0u64;
+    let mut repair_latest_missing_retry_suppressed_count = 0u64;
     let mut repair_suppressed_completed_sequence_count = 0u64;
     let mut repair_suppressed_duplicate_sequence_count = 0u64;
     let mut repair_suppressed_not_in_latest_missing_count = 0u64;
@@ -14292,20 +14355,51 @@ fn run_sender(
                     state.latest_ranges.as_slice(),
                 );
                 if repair_suppress_completed_ranges_enabled {
-                    let (filtered_ranges, suppressed_duplicate_count) =
+                    let normalized_latest_missing =
+                        normalize_missing_ranges(state.latest_ranges.as_slice(), tx_count);
+                    let retry_due = repair_suppression_active_missing_snapshot
+                        != normalized_latest_missing
+                        || repair_suppression_last_retry_at
+                            .map(|last| {
+                                last.elapsed()
+                                    >= Duration::from_millis(repair_latest_missing_retry_cadence_ms)
+                            })
+                            .unwrap_or(true);
+                    if retry_due {
+                        repair_latest_missing_retry_due_count =
+                            repair_latest_missing_retry_due_count.saturating_add(
+                                missing_ranges_count(normalized_latest_missing.as_slice()),
+                            );
+                    } else {
+                        repair_latest_missing_retry_suppressed_count =
+                            repair_latest_missing_retry_suppressed_count.saturating_add(
+                                missing_ranges_overlap_count(
+                                    selected_ranges.as_slice(),
+                                    normalized_latest_missing.as_slice(),
+                                ),
+                            );
+                    }
+                    let (filtered_ranges, suppressed_duplicate_count, retry_sent_latest_missing) =
                         suppress_repair_ranges_for_missing_snapshot_v1(
                             selected_ranges.as_slice(),
                             state.latest_ranges.as_slice(),
                             tx_count,
                             &mut repair_suppression_active_missing_snapshot,
                             &mut repair_suppression_sent_ranges_for_snapshot,
+                            retry_due,
                         );
                     repair_suppressed_duplicate_sequence_count =
                         repair_suppressed_duplicate_sequence_count
                             .saturating_add(suppressed_duplicate_count);
+                    repair_suppression_blocked_for_latest_missing_count =
+                        repair_suppression_blocked_for_latest_missing_count
+                            .saturating_add(suppressed_duplicate_count);
                     repair_suppressed_completed_sequence_count =
                         repair_suppressed_completed_sequence_count
                             .saturating_add(suppressed_duplicate_count);
+                    if retry_sent_latest_missing {
+                        repair_suppression_last_retry_at = Some(Instant::now());
+                    }
                     selected_ranges = filtered_ranges;
                 }
                 repair_selected_latest_missing_sequence_count =
@@ -14416,20 +14510,51 @@ fn run_sender(
                 selected_ranges =
                     missing_ranges_intersection_many(selected_ranges.as_slice(), ranges.as_slice());
                 if repair_suppress_completed_ranges_enabled {
-                    let (filtered_ranges, suppressed_duplicate_count) =
+                    let normalized_latest_missing =
+                        normalize_missing_ranges(ranges.as_slice(), tx_count);
+                    let retry_due = repair_suppression_active_missing_snapshot
+                        != normalized_latest_missing
+                        || repair_suppression_last_retry_at
+                            .map(|last| {
+                                last.elapsed()
+                                    >= Duration::from_millis(repair_latest_missing_retry_cadence_ms)
+                            })
+                            .unwrap_or(true);
+                    if retry_due {
+                        repair_latest_missing_retry_due_count =
+                            repair_latest_missing_retry_due_count.saturating_add(
+                                missing_ranges_count(normalized_latest_missing.as_slice()),
+                            );
+                    } else {
+                        repair_latest_missing_retry_suppressed_count =
+                            repair_latest_missing_retry_suppressed_count.saturating_add(
+                                missing_ranges_overlap_count(
+                                    selected_ranges.as_slice(),
+                                    normalized_latest_missing.as_slice(),
+                                ),
+                            );
+                    }
+                    let (filtered_ranges, suppressed_duplicate_count, retry_sent_latest_missing) =
                         suppress_repair_ranges_for_missing_snapshot_v1(
                             selected_ranges.as_slice(),
                             ranges.as_slice(),
                             tx_count,
                             &mut repair_suppression_active_missing_snapshot,
                             &mut repair_suppression_sent_ranges_for_snapshot,
+                            retry_due,
                         );
                     repair_suppressed_duplicate_sequence_count =
                         repair_suppressed_duplicate_sequence_count
                             .saturating_add(suppressed_duplicate_count);
+                    repair_suppression_blocked_for_latest_missing_count =
+                        repair_suppression_blocked_for_latest_missing_count
+                            .saturating_add(suppressed_duplicate_count);
                     repair_suppressed_completed_sequence_count =
                         repair_suppressed_completed_sequence_count
                             .saturating_add(suppressed_duplicate_count);
+                    if retry_sent_latest_missing {
+                        repair_suppression_last_retry_at = Some(Instant::now());
+                    }
                     selected_ranges = filtered_ranges;
                 }
                 repair_selected_latest_missing_sequence_count =
@@ -14584,20 +14709,51 @@ fn run_sender(
                     } else {
                         gap_ranges_to_send.as_slice()
                     };
-                    let (filtered_ranges, suppressed_duplicate_count) =
+                    let normalized_latest_missing =
+                        normalize_missing_ranges(latest_missing_for_gap, tx_count);
+                    let retry_due = repair_suppression_active_missing_snapshot
+                        != normalized_latest_missing
+                        || repair_suppression_last_retry_at
+                            .map(|last| {
+                                last.elapsed()
+                                    >= Duration::from_millis(repair_latest_missing_retry_cadence_ms)
+                            })
+                            .unwrap_or(true);
+                    if retry_due {
+                        repair_latest_missing_retry_due_count =
+                            repair_latest_missing_retry_due_count.saturating_add(
+                                missing_ranges_count(normalized_latest_missing.as_slice()),
+                            );
+                    } else {
+                        repair_latest_missing_retry_suppressed_count =
+                            repair_latest_missing_retry_suppressed_count.saturating_add(
+                                missing_ranges_overlap_count(
+                                    gap_ranges_to_send.as_slice(),
+                                    normalized_latest_missing.as_slice(),
+                                ),
+                            );
+                    }
+                    let (filtered_ranges, suppressed_duplicate_count, retry_sent_latest_missing) =
                         suppress_repair_ranges_for_missing_snapshot_v1(
                             gap_ranges_to_send.as_slice(),
                             latest_missing_for_gap,
                             tx_count,
                             &mut repair_suppression_active_missing_snapshot,
                             &mut repair_suppression_sent_ranges_for_snapshot,
+                            retry_due,
                         );
                     repair_suppressed_duplicate_sequence_count =
                         repair_suppressed_duplicate_sequence_count
                             .saturating_add(suppressed_duplicate_count);
+                    repair_suppression_blocked_for_latest_missing_count =
+                        repair_suppression_blocked_for_latest_missing_count
+                            .saturating_add(suppressed_duplicate_count);
                     repair_suppressed_completed_sequence_count =
                         repair_suppressed_completed_sequence_count
                             .saturating_add(suppressed_duplicate_count);
+                    if retry_sent_latest_missing {
+                        repair_suppression_last_retry_at = Some(Instant::now());
+                    }
                     gap_ranges_to_send = filtered_ranges;
                 }
                 let gap_send_count = missing_ranges_count(gap_ranges_to_send.as_slice());
@@ -15387,6 +15543,14 @@ fn run_sender(
         "full_async_sender_finalization_ack_source": if full_async_runtime_engine { sender_ack_final_sample_source } else { "legacy_sender_ack_sample" },
         "repair_suppress_completed_ranges_enabled": repair_suppress_completed_ranges_enabled,
         "full_async_repair_completed_range_suppress_enabled": repair_suppress_completed_ranges_enabled,
+        "repair_suppression_preserves_latest_missing": repair_suppress_did_not_create_coverage_gap,
+        "repair_suppression_blocked_for_latest_missing_count": repair_suppression_blocked_for_latest_missing_count,
+        "repair_latest_missing_retry_cadence_ms": repair_latest_missing_retry_cadence_ms,
+        "repair_latest_missing_retry_due_count": repair_latest_missing_retry_due_count,
+        "repair_latest_missing_retry_suppressed_count": repair_latest_missing_retry_suppressed_count,
+        "repair_latest_missing_retry_due_sequence_count": repair_latest_missing_retry_due_count,
+        "repair_latest_missing_retry_suppressed_sequence_count": repair_latest_missing_retry_suppressed_count,
+        "repair_suppression_decision_source": if repair_suppress_completed_ranges_enabled { "latest_missing_snapshot_with_retry_cadence" } else { "disabled" },
         "full_async_repair_snapshot_scheduler_enabled": full_async_repair_snapshot_scheduler_enabled,
         "repair_snapshot_source": repair_snapshot_source,
         "repair_snapshot_epoch": repair_snapshot_epoch,
@@ -15493,6 +15657,14 @@ fn run_sender(
             "moving_window_last_ack_epoch": moving_window_last_ack_epoch,
             "repair_suppress_completed_ranges_enabled": repair_suppress_completed_ranges_enabled,
             "full_async_repair_completed_range_suppress_enabled": repair_suppress_completed_ranges_enabled,
+            "repair_suppression_preserves_latest_missing": repair_suppress_did_not_create_coverage_gap,
+            "repair_suppression_blocked_for_latest_missing_count": repair_suppression_blocked_for_latest_missing_count,
+            "repair_latest_missing_retry_cadence_ms": repair_latest_missing_retry_cadence_ms,
+            "repair_latest_missing_retry_due_count": repair_latest_missing_retry_due_count,
+            "repair_latest_missing_retry_suppressed_count": repair_latest_missing_retry_suppressed_count,
+            "repair_latest_missing_retry_due_sequence_count": repair_latest_missing_retry_due_count,
+            "repair_latest_missing_retry_suppressed_sequence_count": repair_latest_missing_retry_suppressed_count,
+            "repair_suppression_decision_source": if repair_suppress_completed_ranges_enabled { "latest_missing_snapshot_with_retry_cadence" } else { "disabled" },
             "full_async_repair_snapshot_scheduler_enabled": full_async_repair_snapshot_scheduler_enabled,
             "repair_snapshot_source": repair_snapshot_source,
             "repair_snapshot_epoch": repair_snapshot_epoch,
@@ -15523,6 +15695,14 @@ fn run_sender(
         "repair_selected_unique_sequence_count": repair_selected_unique_sequence_count,
         "repair_selected_duplicate_sequence_count": repair_selected_duplicate_sequence_count,
         "repair_suppress_did_not_create_coverage_gap": repair_suppress_did_not_create_coverage_gap,
+        "repair_suppression_preserves_latest_missing": repair_suppress_did_not_create_coverage_gap,
+        "repair_suppression_blocked_for_latest_missing_count": repair_suppression_blocked_for_latest_missing_count,
+        "repair_latest_missing_retry_cadence_ms": repair_latest_missing_retry_cadence_ms,
+        "repair_latest_missing_retry_due_count": repair_latest_missing_retry_due_count,
+        "repair_latest_missing_retry_suppressed_count": repair_latest_missing_retry_suppressed_count,
+        "repair_latest_missing_retry_due_sequence_count": repair_latest_missing_retry_due_count,
+        "repair_latest_missing_retry_suppressed_sequence_count": repair_latest_missing_retry_suppressed_count,
+        "repair_suppression_decision_source": if repair_suppress_completed_ranges_enabled { "latest_missing_snapshot_with_retry_cadence" } else { "disabled" },
         "repair_pump_stopped_after_receiver_done": repair_pump_stopped_after_receiver_done,
             "repair_pump_stop_reason": repair_pump_stop_reason,
             "latest_ack_missing_range_min": latest_ack_missing_range_min,
