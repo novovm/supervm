@@ -2993,6 +2993,34 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn receiver_validation_does_not_require_host_recovery_rocksdb_for_memory_first_boundary() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let tx_count = 480;
+                let summary = receiver_validation_summary_v1(tx_count);
+                let mut probe = receiver_validation_probe_v1(tx_count);
+                probe["host_recovery_store_is_production_truth"] = serde_json::json!(false);
+                probe["rocksdb_probe_allowed"] = serde_json::json!(false);
+                probe["semantic_head_current_recovered"] = serde_json::json!(false);
+                probe["semantic_head_by_height_recovered"] = serde_json::json!(false);
+                probe["receipt_index_recovered"] = serde_json::json!(false);
+
+                let (validation, violations) = validate_receiver_report(&summary, &probe, tx_count);
+
+                assert!(violations.is_empty(), "{violations:?}");
+                assert_eq!(
+                    validation["host_recovery_store_signoff_required"].as_bool(),
+                    Some(false)
+                );
+                assert_eq!(validation["semantic_head_monotonic"].as_bool(), Some(true));
+                assert_eq!(validation["receipt_index_consistent"].as_bool(), Some(true));
+            },
+        );
+    }
+
+    #[test]
     fn pipeline_final_report_uses_completed_sample_for_aoem_proof_counts() {
         with_env_var(
             NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
@@ -13755,20 +13783,38 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
         .max(semantic_sequence);
     let duplicate_canonical_included = canonical_unique_included.saturating_sub(tx_count);
     let duplicate_receipt = receipt_count.saturating_sub(tx_count);
-    let semantic_head_monotonic = probe
-        .get("semantic_head_current_recovered")
+    let host_recovery_store_is_production_truth = probe
+        .get("host_recovery_store_is_production_truth")
         .and_then(Value::as_bool)
-        == Some(true)
-        && probe
-            .get("semantic_head_by_height_recovered")
+        .unwrap_or(true);
+    let rocksdb_probe_allowed = probe
+        .get("rocksdb_probe_allowed")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let host_recovery_store_signoff_required =
+        host_recovery_store_is_production_truth || rocksdb_probe_allowed;
+    let semantic_head_monotonic = if host_recovery_store_signoff_required {
+        probe
+            .get("semantic_head_current_recovered")
             .and_then(Value::as_bool)
             == Some(true)
-        && semantic_sequence >= canonical_unique_included;
-    let receipt_index_consistent = probe
-        .get("receipt_index_recovered")
-        .and_then(Value::as_bool)
-        == Some(true)
-        && receipt_count == tx_count;
+            && probe
+                .get("semantic_head_by_height_recovered")
+                .and_then(Value::as_bool)
+                == Some(true)
+            && semantic_sequence >= canonical_unique_included
+    } else {
+        semantic_sequence >= canonical_unique_included
+    };
+    let receipt_index_consistent = if host_recovery_store_signoff_required {
+        probe
+            .get("receipt_index_recovered")
+            .and_then(Value::as_bool)
+            == Some(true)
+            && receipt_count == tx_count
+    } else {
+        receipt_count == tx_count
+    };
     let final_missing_sequence_count = tx_count.saturating_sub(received_unique.min(tx_count));
     let final_missing_ranges = missing_ranges_from_progress(received_unique, tx_count, 1);
     let repair_received_ranges = missing_ranges_from_json(
@@ -13875,6 +13921,9 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
             "queue_pending_last": summary_u64(summary, "queue_pending_last"),
             "semantic_head_monotonic": semantic_head_monotonic,
             "receipt_index_consistent": receipt_index_consistent,
+            "host_recovery_store_signoff_required": host_recovery_store_signoff_required,
+            "host_recovery_store_is_production_truth": host_recovery_store_is_production_truth,
+            "rocksdb_probe_allowed": rocksdb_probe_allowed,
             "aoem_concurrency_owner": summary_str(summary, "aoem_concurrency_owner"),
             "final_missing_sequence_count": final_missing_sequence_count,
             "final_missing_ranges_sample": missing_ranges_to_json(final_missing_ranges.as_slice(), 256),
