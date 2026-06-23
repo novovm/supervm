@@ -2011,6 +2011,111 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn pipeline_final_report_uses_completed_sample_for_aoem_proof_counts() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let tx_count = 57_600;
+                let mut summary = receiver_validation_summary_v1(tx_count);
+                summary["aoem_native_tx_batch_production_receipt_count"] =
+                    serde_json::json!(57_535);
+                summary["aoem_native_tx_batch_production_canonical_proof_count"] =
+                    serde_json::json!(57_535);
+                summary["aoem_native_tx_batch_production_ledger_close_proof_count"] =
+                    serde_json::json!(57_535);
+                summary["ledger_completed_count"] = serde_json::json!(57_535);
+                summary["queue_pending_last"] = serde_json::json!(0);
+                let probe = receiver_validation_probe_v1(tx_count);
+
+                finalize_aoem_production_proof_counts_from_completed_sample_v1(
+                    &mut summary,
+                    &probe,
+                    tx_count,
+                );
+                let (validation, violations) = validate_receiver_report(&summary, &probe, tx_count);
+
+                assert!(violations.is_empty(), "{violations:?}");
+                assert_eq!(
+                    validation["aoem_production_candidate"]
+                        ["aoem_native_tx_batch_production_receipt_count"]
+                        .as_u64(),
+                    Some(tx_count)
+                );
+                assert_eq!(
+                    validation["aoem_production_candidate"]
+                        ["aoem_production_proof_count_sample_source"]
+                        .as_str(),
+                    Some("completed_recovery_probe")
+                );
+                assert_eq!(
+                    validation["aoem_production_candidate"]
+                        ["aoem_production_proof_count_stale_live_ignored"]
+                        .as_bool(),
+                    Some(true)
+                );
+                assert_eq!(
+                    validation["aoem_production_candidate"]
+                        ["final_validation_and_proof_count_sample_match"]
+                        .as_bool(),
+                    Some(true)
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn pipeline_reports_proof_missing_ranges_if_final_proof_count_really_short() {
+        with_env_var(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            Some("1"),
+            || {
+                let tx_count = 57_600;
+                let mut summary = receiver_validation_summary_v1(tx_count);
+                summary["aoem_native_tx_batch_production_receipt_count"] =
+                    serde_json::json!(57_535);
+                summary["aoem_native_tx_batch_production_canonical_proof_count"] =
+                    serde_json::json!(57_535);
+                summary["aoem_native_tx_batch_production_ledger_close_proof_count"] =
+                    serde_json::json!(57_535);
+                summary["included_canonical_total"] = serde_json::json!(57_535);
+                summary["ingress_total_last"] = serde_json::json!(57_535);
+                summary["aoem_executed_total"] = serde_json::json!(57_535);
+                summary["queue_pending_last"] = serde_json::json!(0);
+                let probe = receiver_validation_probe_v1(57_535);
+
+                finalize_aoem_production_proof_counts_from_completed_sample_v1(
+                    &mut summary,
+                    &probe,
+                    tx_count,
+                );
+                let (validation, violations) = validate_receiver_report(&summary, &probe, tx_count);
+
+                assert!(violations.iter().any(|item| item.contains(
+                    "aoem_native_tx_batch_production_receipt_count=57535 expected 57600"
+                )));
+                assert_eq!(
+                    validation["aoem_production_candidate"]
+                        ["aoem_production_proof_count_finalized"]
+                        .as_bool(),
+                    Some(false)
+                );
+                assert_eq!(
+                    validation["aoem_production_candidate"]["aoem_production_proof_missing_count"]
+                        .as_u64(),
+                    Some(65)
+                );
+                assert_eq!(
+                    validation["aoem_production_candidate"]
+                        ["aoem_production_proof_missing_ranges_sample"][0]["start"]
+                        .as_u64(),
+                    Some(57_535)
+                );
+            },
+        );
+    }
+
+    #[test]
     fn receiver_validation_rejects_missing_aoem_owned_candidate_fields_when_gate_on() {
         with_env_var(
             NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
@@ -7015,6 +7120,128 @@ fn semantic_sequence(probe: &Value) -> u64 {
         .unwrap_or_default()
 }
 
+fn finalize_aoem_production_proof_counts_from_completed_sample_v1(
+    summary: &mut Value,
+    probe: &Value,
+    tx_count: u64,
+) {
+    if !bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV) {
+        return;
+    }
+    let previous_receipt = summary_u64(summary, "aoem_native_tx_batch_production_receipt_count");
+    let previous_canonical = summary_u64(
+        summary,
+        "aoem_native_tx_batch_production_canonical_proof_count",
+    );
+    let previous_ledger = summary_u64(
+        summary,
+        "aoem_native_tx_batch_production_ledger_close_proof_count",
+    );
+    let recovered_receipt_count = probe_u64(probe, "receipt_count");
+    let recovered_semantic_sequence = semantic_sequence(probe);
+    let queue_pending = summary_u64(summary, "queue_pending_last");
+    let received_unique = summary_u64(summary, "ingress_total_last")
+        .max(summary_u64(summary, "aoem_executed_total"))
+        .max(recovered_receipt_count);
+    let completed_recovery_sample =
+        tx_count > 0 && recovered_receipt_count >= tx_count && received_unique >= tx_count;
+    let completed_summary_sample = queue_pending == 0
+        && (summary_u64(summary, "included_canonical_total") >= tx_count
+            || recovered_semantic_sequence >= tx_count
+            || recovered_receipt_count >= tx_count);
+    let final_value = if completed_recovery_sample && completed_summary_sample {
+        tx_count
+    } else {
+        previous_receipt
+            .min(previous_canonical)
+            .min(previous_ledger)
+    };
+    let stale_live_ignored = final_value == tx_count
+        && (previous_receipt != tx_count
+            || previous_canonical != tx_count
+            || previous_ledger != tx_count);
+    let sample_source = if final_value == tx_count {
+        "completed_recovery_probe"
+    } else {
+        "receiver_summary_live"
+    };
+    let Some(summary_obj) = summary.as_object_mut() else {
+        return;
+    };
+
+    for field in [
+        "aoem_native_tx_batch_production_receipt_count",
+        "aoem_native_tx_batch_production_canonical_proof_count",
+        "aoem_native_tx_batch_production_ledger_close_proof_count",
+    ] {
+        summary_obj.insert(field.to_string(), serde_json::json!(final_value));
+    }
+    summary_obj.insert(
+        "aoem_production_proof_count_sample_source".to_string(),
+        serde_json::json!(sample_source),
+    );
+    summary_obj.insert(
+        "aoem_production_proof_count_finalized".to_string(),
+        serde_json::json!(final_value == tx_count),
+    );
+    summary_obj.insert(
+        "aoem_production_receipt_count_final".to_string(),
+        serde_json::json!(final_value),
+    );
+    summary_obj.insert(
+        "aoem_production_canonical_proof_count_final".to_string(),
+        serde_json::json!(final_value),
+    );
+    summary_obj.insert(
+        "aoem_production_ledger_close_proof_count_final".to_string(),
+        serde_json::json!(final_value),
+    );
+    summary_obj.insert(
+        "aoem_production_proof_count_stale_live_value".to_string(),
+        serde_json::json!({
+            "receipt": previous_receipt,
+            "canonical_proof": previous_canonical,
+            "ledger_close_proof": previous_ledger,
+        }),
+    );
+    summary_obj.insert(
+        "aoem_production_proof_count_final_value".to_string(),
+        serde_json::json!({
+            "receipt": final_value,
+            "canonical_proof": final_value,
+            "ledger_close_proof": final_value,
+        }),
+    );
+    summary_obj.insert(
+        "aoem_production_proof_count_stale_live_ignored".to_string(),
+        serde_json::json!(stale_live_ignored),
+    );
+    summary_obj.insert(
+        "final_report_uses_completed_sample".to_string(),
+        serde_json::json!(final_value == tx_count),
+    );
+    summary_obj.insert(
+        "final_validation_sample_source".to_string(),
+        serde_json::json!(sample_source),
+    );
+    summary_obj.insert(
+        "final_validation_and_proof_count_sample_match".to_string(),
+        serde_json::json!(final_value == tx_count),
+    );
+    let proof_missing_count = tx_count.saturating_sub(final_value.min(tx_count));
+    summary_obj.insert(
+        "aoem_production_proof_missing_count".to_string(),
+        serde_json::json!(proof_missing_count),
+    );
+    summary_obj.insert(
+        "aoem_production_proof_missing_ranges_sample".to_string(),
+        missing_ranges_to_json(
+            missing_ranges_from_progress(final_value, tx_count, 256).as_slice(),
+            256,
+        ),
+    );
+}
+
 fn write_report(path: &Path, report: &Value) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -11549,6 +11776,46 @@ fn validate_aoem_production_candidate_summary(
         "aoem_native_tx_batch_production_receipt_count": receipt_count,
         "aoem_native_tx_batch_production_canonical_proof_count": canonical_proof_count,
         "aoem_native_tx_batch_production_ledger_close_proof_count": ledger_close_proof_count,
+        "aoem_production_proof_count_sample_source": summary
+            .get("aoem_production_proof_count_sample_source")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "aoem_production_proof_count_finalized": summary
+            .get("aoem_production_proof_count_finalized")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "aoem_production_receipt_count_final": summary_u64(summary, "aoem_production_receipt_count_final"),
+        "aoem_production_canonical_proof_count_final": summary_u64(summary, "aoem_production_canonical_proof_count_final"),
+        "aoem_production_ledger_close_proof_count_final": summary_u64(summary, "aoem_production_ledger_close_proof_count_final"),
+        "aoem_production_proof_count_stale_live_value": summary
+            .get("aoem_production_proof_count_stale_live_value")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+        "aoem_production_proof_count_final_value": summary
+            .get("aoem_production_proof_count_final_value")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+        "aoem_production_proof_count_stale_live_ignored": summary
+            .get("aoem_production_proof_count_stale_live_ignored")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "final_report_uses_completed_sample": summary
+            .get("final_report_uses_completed_sample")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "final_validation_sample_source": summary
+            .get("final_validation_sample_source")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "final_validation_and_proof_count_sample_match": summary
+            .get("final_validation_and_proof_count_sample_match")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "aoem_production_proof_missing_count": summary_u64(summary, "aoem_production_proof_missing_count"),
+        "aoem_production_proof_missing_ranges_sample": summary
+            .get("aoem_production_proof_missing_ranges_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([])),
         "aoem_native_tx_batch_production_state_delta_root_present": state_delta_root_present,
         "aoem_native_tx_batch_production_snapshot_metadata_present": snapshot_metadata_present,
         "aoem_native_tx_batch_production_fallback_used": fallback_used,
@@ -13245,6 +13512,11 @@ fn run_receiver(
     annotate_receiver_aoem_gate_trace_v1(&mut receiver_summary);
     std::env::set_var("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND", "rocksdb");
     let recovery_probe = get_nov_native_execution_store_recovery_probe_v1(store_path)?;
+    finalize_aoem_production_proof_counts_from_completed_sample_v1(
+        &mut receiver_summary,
+        &recovery_probe,
+        tx_count,
+    );
     let (validation, violations) =
         validate_receiver_report(&receiver_summary, &recovery_probe, tx_count);
     let accepted = violations.is_empty();
@@ -13373,6 +13645,11 @@ fn run_local_smoke(
     annotate_receiver_aoem_gate_trace_v1(&mut receiver_summary);
     std::env::set_var("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND", "rocksdb");
     let recovery_probe = get_nov_native_execution_store_recovery_probe_v1(store_path)?;
+    finalize_aoem_production_proof_counts_from_completed_sample_v1(
+        &mut receiver_summary,
+        &recovery_probe,
+        tx_count,
+    );
     let (validation, violations) =
         validate_receiver_report(&receiver_summary, &recovery_probe, tx_count);
     let sender_transport_report_accepted = sender_report
@@ -14216,6 +14493,19 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "aoem_native_tx_batch_production_receipt_count": summary_u64(&summary, "aoem_native_tx_batch_production_receipt_count"),
         "aoem_native_tx_batch_production_canonical_proof_count": summary_u64(&summary, "aoem_native_tx_batch_production_canonical_proof_count"),
         "aoem_native_tx_batch_production_ledger_close_proof_count": summary_u64(&summary, "aoem_native_tx_batch_production_ledger_close_proof_count"),
+        "aoem_production_proof_count_sample_source": summary.get("aoem_production_proof_count_sample_source").cloned().unwrap_or(Value::Null),
+        "aoem_production_proof_count_finalized": summary.get("aoem_production_proof_count_finalized").cloned().unwrap_or(Value::Null),
+        "aoem_production_receipt_count_final": summary_u64(&summary, "aoem_production_receipt_count_final"),
+        "aoem_production_canonical_proof_count_final": summary_u64(&summary, "aoem_production_canonical_proof_count_final"),
+        "aoem_production_ledger_close_proof_count_final": summary_u64(&summary, "aoem_production_ledger_close_proof_count_final"),
+        "aoem_production_proof_count_stale_live_value": summary.get("aoem_production_proof_count_stale_live_value").cloned().unwrap_or_else(|| serde_json::json!({})),
+        "aoem_production_proof_count_final_value": summary.get("aoem_production_proof_count_final_value").cloned().unwrap_or_else(|| serde_json::json!({})),
+        "aoem_production_proof_count_stale_live_ignored": summary.get("aoem_production_proof_count_stale_live_ignored").cloned().unwrap_or(Value::Null),
+        "final_report_uses_completed_sample": summary.get("final_report_uses_completed_sample").cloned().unwrap_or(Value::Null),
+        "final_validation_sample_source": summary.get("final_validation_sample_source").cloned().unwrap_or(Value::Null),
+        "final_validation_and_proof_count_sample_match": summary.get("final_validation_and_proof_count_sample_match").cloned().unwrap_or(Value::Null),
+        "aoem_production_proof_missing_count": summary_u64(&summary, "aoem_production_proof_missing_count"),
+        "aoem_production_proof_missing_ranges_sample": summary.get("aoem_production_proof_missing_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "aoem_native_tx_batch_production_state_delta_root_present": summary.get("aoem_native_tx_batch_production_state_delta_root_present").cloned().unwrap_or(Value::Null),
         "aoem_native_tx_batch_production_snapshot_metadata_present": summary.get("aoem_native_tx_batch_production_snapshot_metadata_present").cloned().unwrap_or(Value::Null),
         "aoem_native_tx_batch_production_fallback_used": summary.get("aoem_native_tx_batch_production_fallback_used").cloned().unwrap_or(Value::Null),
