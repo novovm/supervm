@@ -2246,6 +2246,7 @@ pub fn get_nov_native_execution_store_recovery_probe_v1(path: &Path) -> Result<s
     let store = load_nov_native_execution_store_v1(path)?;
     let sequence = store.module_state.aoem_semantic_ledger_sequence;
     let head = store.module_state.aoem_semantic_ledger_head.clone();
+    let backend = nov_native_execution_store_backend_v1();
     let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(path);
     let include_full_receipt_hashes = bool_env_default_v1(
         "NOVOVM_NATIVE_EXECUTION_RECOVERY_PROBE_INCLUDE_FULL_RECEIPT_HASHES",
@@ -2265,7 +2266,8 @@ pub fn get_nov_native_execution_store_recovery_probe_v1(path: &Path) -> Result<s
     let mut receipt_by_height_hash_samples = Vec::<String>::new();
     let mut rocksdb_opened = false;
 
-    if rocksdb_path.exists() {
+    let rocksdb_probe_allowed = native_execution_store_backend_reads_rocksdb_v1(backend.as_str());
+    if rocksdb_probe_allowed && rocksdb_path.exists() {
         let db = open_nov_native_execution_store_rocksdb_v1(rocksdb_path.as_path())?;
         rocksdb_opened = true;
         semantic_head_current_recovered = db
@@ -2369,9 +2371,21 @@ pub fn get_nov_native_execution_store_recovery_probe_v1(path: &Path) -> Result<s
     Ok(serde_json::json!({
         "method": "nov_getNativeExecutionStoreRecoveryProbe",
         "store_path": path.display().to_string(),
+        "host_recovery_store_backend": backend,
+        "host_recovery_store_probe_role": "diagnostics_only",
+        "host_recovery_store_is_production_truth": false,
+        "aoem_production_persistence_owner": "aoem_runtime",
+        "aoem_production_persistence_is_truth": true,
         "rocksdb_path": rocksdb_path.display().to_string(),
         "rocksdb_exists": rocksdb_path.exists(),
         "rocksdb_opened": rocksdb_opened,
+        "rocksdb_probe_allowed": rocksdb_probe_allowed,
+        "rocksdb_probe_skipped": !rocksdb_probe_allowed,
+        "rocksdb_probe_skipped_reason": if rocksdb_probe_allowed {
+            serde_json::Value::Null
+        } else {
+            serde_json::json!("host_recovery_store_memory_first_backend")
+        },
         "semantic_head_current_recovered": semantic_head_current_recovered,
         "semantic_head_by_height_recovered": semantic_head_by_height_recovered,
         "snapshot_meta_current_recovered": snapshot_meta_current_recovered,
@@ -3768,7 +3782,7 @@ fn open_nov_native_execution_store_rocksdb_v1(path: &Path) -> Result<RocksDb> {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).with_context(|| {
                 format!(
-                    "create nov native execution rocksdb parent dir failed: {}",
+                    "create host recovery rocksdb parent dir failed: {}",
                     parent.display()
                 )
             })?;
@@ -3776,12 +3790,8 @@ fn open_nov_native_execution_store_rocksdb_v1(path: &Path) -> Result<RocksDb> {
     }
     let mut opts = RocksDbOptions::default();
     opts.create_if_missing(true);
-    RocksDb::open(&opts, path).with_context(|| {
-        format!(
-            "open nov native execution rocksdb failed: {}",
-            path.display()
-        )
-    })
+    RocksDb::open(&opts, path)
+        .with_context(|| format!("open host recovery rocksdb failed: {}", path.display()))
 }
 
 fn rocksdb_property_u64_v1(db: &RocksDb, property: &str) -> Option<u64> {
@@ -4456,7 +4466,7 @@ fn load_nov_native_execution_store_rocksdb_v1(path: &Path) -> Result<NovNativeEx
         .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_SNAPSHOT_META_CURRENT_V1)
         .with_context(|| {
             format!(
-                "read nov native execution rocksdb snapshot meta failed: {}",
+                "read host recovery rocksdb snapshot meta failed: {}",
                 path.display()
             )
         })?
@@ -4469,7 +4479,7 @@ fn load_nov_native_execution_store_rocksdb_v1(path: &Path) -> Result<NovNativeEx
         .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_SNAPSHOT_V1)
         .with_context(|| {
             format!(
-                "read legacy nov native execution rocksdb snapshot failed: {}",
+                "read legacy host recovery rocksdb snapshot failed: {}",
                 path.display()
             )
         })?;
@@ -4477,7 +4487,7 @@ fn load_nov_native_execution_store_rocksdb_v1(path: &Path) -> Result<NovNativeEx
         let mut store: NovNativeExecutionStoreV1 = serde_json::from_slice(raw.as_slice())
             .with_context(|| {
                 format!(
-                    "parse legacy nov native execution rocksdb snapshot failed: {}",
+                    "parse legacy host recovery rocksdb snapshot failed: {}",
                     path.display()
                 )
             })?;
@@ -4525,7 +4535,7 @@ impl NovNativeExecutionReceiptLookupV1 {
                     .get(receipt_key.as_slice())
                     .with_context(|| {
                         format!(
-                            "read nov native execution rocksdb receipt failed: store={} tx_hash={key}",
+                            "read host recovery rocksdb receipt failed: store={} tx_hash={key}",
                             path.display()
                         )
                     })?
@@ -4545,7 +4555,7 @@ fn materialize_nov_native_execution_store_from_rocksdb_v1(
     for (key, shard) in native_rocksdb_module_state_shard_keys_v1() {
         if let Some(raw) = db.get(key).with_context(|| {
             format!(
-                "read nov native execution rocksdb module_state/{shard} failed: {}",
+                "read host recovery rocksdb module_state/{shard} failed: {}",
                 path.display()
             )
         })? {
@@ -4558,14 +4568,14 @@ fn materialize_nov_native_execution_store_from_rocksdb_v1(
             .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_CORE_V1)
             .with_context(|| {
                 format!(
-                    "read nov native execution rocksdb module_state/core failed: {}",
+                    "read host recovery rocksdb module_state/core failed: {}",
                     path.display()
                 )
             })? {
             Some(raw) => serde_json::from_slice::<NovNativeExecutionModuleStateV1>(raw.as_slice())
                 .with_context(|| {
                     format!(
-                        "parse nov native execution rocksdb module_state/core failed: {}",
+                        "parse host recovery rocksdb module_state/core failed: {}",
                         path.display()
                     )
                 })?,
@@ -4584,7 +4594,7 @@ fn materialize_nov_native_execution_store_from_rocksdb_v1(
         .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_SNAPSHOT_META_CURRENT_V1)
         .with_context(|| {
             format!(
-                "read nov native execution rocksdb snapshot_meta/current failed: {}",
+                "read host recovery rocksdb snapshot_meta/current failed: {}",
                 path.display()
             )
         })?
@@ -4592,7 +4602,7 @@ fn materialize_nov_native_execution_store_from_rocksdb_v1(
         let meta: NovNativeExecutionStoreSnapshotMetaV1 = serde_json::from_slice(raw.as_slice())
             .with_context(|| {
                 format!(
-                    "parse nov native execution rocksdb snapshot_meta/current failed: {}",
+                    "parse host recovery rocksdb snapshot_meta/current failed: {}",
                     path.display()
                 )
             })?;
@@ -4607,7 +4617,7 @@ fn materialize_nov_native_execution_store_from_rocksdb_v1(
     ) {
         let (key, raw) = item.with_context(|| {
             format!(
-                "iterate nov native execution rocksdb account asset keys failed: {}",
+                "iterate host recovery rocksdb account asset keys failed: {}",
                 path.display()
             )
         })?;
@@ -4617,7 +4627,7 @@ fn materialize_nov_native_execution_store_from_rocksdb_v1(
         };
         let amount: u128 = serde_json::from_slice(raw.as_ref()).with_context(|| {
             format!(
-                "parse nov native execution rocksdb account asset failed: key={}",
+                "parse host recovery rocksdb account asset failed: key={}",
                 String::from_utf8_lossy(key.as_ref())
             )
         })?;
@@ -4635,14 +4645,14 @@ fn materialize_nov_native_execution_store_from_rocksdb_v1(
     {
         let (key, raw) = item.with_context(|| {
             format!(
-                "iterate nov native execution rocksdb receipt keys failed: {}",
+                "iterate host recovery rocksdb receipt keys failed: {}",
                 path.display()
             )
         })?;
         let receipt: NovNativeExecutionReceiptV1 = serde_json::from_slice(raw.as_ref())
             .with_context(|| {
                 format!(
-                    "parse nov native execution rocksdb receipt failed: key={}",
+                    "parse host recovery rocksdb receipt failed: key={}",
                     String::from_utf8_lossy(key.as_ref())
                 )
             })?;
@@ -4722,7 +4732,7 @@ fn save_nov_native_execution_store_rocksdb_v1(
         .get(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_MODULE_STATE_CORE_V1)
         .with_context(|| {
             format!(
-                "read nov native execution rocksdb module_state/core migration marker failed: {}",
+                "read host recovery rocksdb module_state/core migration marker failed: {}",
                 path.display()
             )
         })?
@@ -4740,7 +4750,7 @@ fn save_nov_native_execution_store_rocksdb_v1(
         native_execution_store_dirty_set_v1(previous_ref, store, legacy_module_state_core_exists)?;
     let meta = native_rocksdb_snapshot_meta_v1(store);
     let meta_encoded = serde_json::to_vec(&meta)
-        .context("serialize nov native execution rocksdb snapshot meta failed")?;
+        .context("serialize host recovery rocksdb snapshot meta failed")?;
     let mut batch = RocksDbWriteBatch::default();
     batch.delete(NOV_NATIVE_EXECUTION_STORE_ROCKSDB_KEY_SNAPSHOT_V1);
     if !dirty.module_state_shards.is_empty() {
@@ -4831,7 +4841,7 @@ fn save_nov_native_execution_store_rocksdb_v1(
     }
     db.write(batch).with_context(|| {
         format!(
-            "write nov native execution rocksdb atomic batch failed: {}",
+            "write host recovery rocksdb atomic batch failed: {}",
             path.display()
         )
     })?;

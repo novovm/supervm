@@ -33447,6 +33447,11 @@ impl NativeExecutionPipelineUdpDriveV1 {
         if !bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED") {
             return Ok(None);
         }
+        if !novorudp_child_receiver_mode_v1() {
+            bail!(
+                "plain_udp_pipeline_removed: set NOVOVM_NATIVE_PIPELINE_TRANSPORT=novorudp; UDP is only the NovoRUDP underlay"
+            );
+        }
         let local_node = NodeId(u64_env_allow_zero(
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_LOCAL_NODE",
             9_990_001,
@@ -33501,7 +33506,9 @@ impl NativeExecutionPipelineUdpDriveV1 {
                     return serde_json::json!({
                         "enabled": true,
                         "ok": false,
-                        "transport": "udp",
+                        "transport": "novorudp",
+                        "transport_underlay": "udp",
+                        "transport_role": "novorudp_reliable_object_underlay",
                         "local_node": self.local_node.0,
                         "error": err.to_string(),
                     });
@@ -33550,7 +33557,9 @@ impl NativeExecutionPipelineUdpDriveV1 {
         serde_json::json!({
             "enabled": true,
             "ok": broadcast_error_count == 0,
-            "transport": "udp",
+            "transport": "novorudp",
+            "transport_underlay": "udp",
+            "transport_role": "novorudp_reliable_object_underlay",
             "local_node": self.local_node.0,
             "local_addr": local_addr,
             "peer_count": self.peers.len() as u64,
@@ -39852,6 +39861,33 @@ mod native_execution_pipeline_tests {
         assert_eq!(summary.pending_count, 0);
         assert_eq!(summary.broadcast_tx_total, 1);
         let _ = fs::remove_file(&store_path);
+    }
+
+    #[test]
+    fn native_execution_pipeline_udp_drive_requires_novorudp_transport() {
+        let enabled_key = "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED";
+        let transport_key = "NOVOVM_NATIVE_PIPELINE_TRANSPORT";
+        let previous_enabled = std::env::var(enabled_key).ok();
+        let previous_transport = std::env::var(transport_key).ok();
+        std::env::set_var(enabled_key, "1");
+        std::env::remove_var(transport_key);
+
+        let err = match NativeExecutionPipelineUdpDriveV1::from_env(9_998_890) {
+            Ok(_) => panic!("plain UDP pipeline must be removed"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("plain_udp_pipeline_removed"));
+
+        if let Some(value) = previous_enabled {
+            std::env::set_var(enabled_key, value);
+        } else {
+            std::env::remove_var(enabled_key);
+        }
+        if let Some(value) = previous_transport {
+            std::env::set_var(transport_key, value);
+        } else {
+            std::env::remove_var(transport_key);
+        }
     }
 
     #[test]

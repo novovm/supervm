@@ -4,9 +4,7 @@
 use anyhow::{bail, Context, Result};
 use novovm_network::{Transport, UdpTransport};
 use novovm_node::tx_ingress::{
-    get_nov_native_execution_store_recovery_probe_v1,
-    get_nov_native_execution_store_rocksdb_memory_probe_v1,
-    nov_native_execution_store_rocksdb_path_v1, nov_native_tx_to_adapter_tx_ir_v1,
+    get_nov_native_execution_store_recovery_probe_v1, nov_native_tx_to_adapter_tx_ir_v1,
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV,
 };
@@ -37,6 +35,10 @@ const NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV: &str = "NOVOVM_AOEM_NATIVE_TX
 const NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV: &str = "NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE";
 const NOV_NATIVE_LEGACY_HOST_TRANSITIONAL_FALLBACK_ENV: &str =
     "NOVOVM_LEGACY_HOST_TRANSITIONAL_FALLBACK";
+const HOST_RECOVERY_STORE_MODE_MEMORY_V1: &str = "memory";
+const HOST_RECOVERY_STORE_BACKEND_JSON_V1: &str = "json";
+const HOST_RECOVERY_STORE_ROLE_V1: &str = "transport_replay_diagnostics_only";
+const AOEM_PRODUCTION_PERSISTENCE_OWNER_V1: &str = "aoem_runtime";
 const RECEIVER_CHILD_AOEM_OWNERSHIP_ENVS_V1: &[&str] = &[
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV,
@@ -1070,6 +1072,186 @@ fn store_path(chain_id: u64, role: &str) -> PathBuf {
     ])
     .map(PathBuf::from)
     .unwrap_or_else(|| temp_store_path(chain_id, role))
+}
+
+fn host_recovery_store_mode_v1() -> String {
+    HOST_RECOVERY_STORE_MODE_MEMORY_V1.to_string()
+}
+
+fn host_recovery_store_backend_v1() -> &'static str {
+    HOST_RECOVERY_STORE_BACKEND_JSON_V1
+}
+
+fn host_recovery_store_enabled_v1() -> bool {
+    true
+}
+
+fn host_recovery_store_boundary_json_v1(store_path: &Path) -> Value {
+    let mode = host_recovery_store_mode_v1();
+    let backend = host_recovery_store_backend_v1();
+    serde_json::json!({
+        "aoem_production_persistence_owner": AOEM_PRODUCTION_PERSISTENCE_OWNER_V1,
+        "aoem_production_persistence_is_truth": true,
+        "aoem_production_state_surface_owner": "aoem_runtime_state_surface",
+        "host_recovery_store_owner": "novovm_host",
+        "host_recovery_store_role": HOST_RECOVERY_STORE_ROLE_V1,
+        "host_recovery_store_is_production_truth": false,
+        "host_recovery_store_mode": mode,
+        "host_recovery_store_backend": backend,
+        "host_recovery_store_enabled": host_recovery_store_enabled_v1(),
+        "host_recovery_store_path": store_path.display().to_string(),
+    })
+}
+
+fn annotate_host_recovery_store_boundary_v1(value: &mut Value, store_path: &Path) {
+    let boundary = host_recovery_store_boundary_json_v1(store_path);
+    if let (Some(target), Some(source)) = (value.as_object_mut(), boundary.as_object()) {
+        for (key, item) in source {
+            target.insert(key.clone(), item.clone());
+        }
+        target.insert("host_recovery_store_boundary".to_string(), boundary);
+    }
+}
+
+fn host_recovery_store_probe_v1(store_path: &Path) -> Value {
+    serde_json::json!({
+        "method": "nov_getHostRecoveryStoreProbe",
+        "host_recovery_store_opened": false,
+        "host_recovery_store_probe_skipped": true,
+        "host_recovery_store_probe_skipped_reason": "host_recovery_store_is_memory_first",
+        "host_recovery_store_mode": HOST_RECOVERY_STORE_MODE_MEMORY_V1,
+        "host_recovery_store_is_production_truth": false,
+        "host_recovery_store_path": store_path.display().to_string(),
+        "aoem_production_persistence_owner": AOEM_PRODUCTION_PERSISTENCE_OWNER_V1,
+        "host_recovery_store_total_estimated_memory_bytes": 0u64,
+        "host_recovery_store_cache_estimated_bytes": 0u64,
+        "host_recovery_store_memtable_estimated_bytes": 0u64,
+        "host_recovery_store_index_filter_estimated_bytes": 0u64,
+        "host_recovery_store_probe_supported": false,
+    })
+}
+
+fn get_host_recovery_store_recovery_probe_v1(store_path: &Path) -> Result<Value> {
+    let backend = host_recovery_store_backend_v1();
+    let previous_backend = std::env::var_os("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND");
+    std::env::set_var("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND", backend);
+    let result = get_nov_native_execution_store_recovery_probe_v1(store_path);
+    match previous_backend {
+        Some(value) => std::env::set_var("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND", value),
+        None => std::env::remove_var("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND"),
+    }
+    let mut probe = result?;
+    annotate_host_recovery_store_boundary_v1(&mut probe, store_path);
+    Ok(probe)
+}
+
+#[cfg(test)]
+fn restore_env_var_v1(name: &str, value: Option<std::ffi::OsString>) {
+    match value {
+        Some(raw) => std::env::set_var(name, raw),
+        None => std::env::remove_var(name),
+    }
+}
+
+#[cfg(test)]
+fn nonzero_output_with_stderr_v1(stderr: &[u8]) -> Output {
+    let mut output = if cfg!(windows) {
+        Command::new("cmd")
+            .args(["/C", "exit 1"])
+            .output()
+            .expect("spawn cmd")
+    } else {
+        Command::new("sh")
+            .args(["-c", "exit 1"])
+            .output()
+            .expect("spawn sh")
+    };
+    output.stderr = stderr.to_vec();
+    output
+}
+
+#[test]
+fn full_async_host_recovery_store_defaults_to_memory_not_rocksdb() {
+    let prev_full_async = std::env::var_os(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV);
+    std::env::set_var(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV, "1");
+
+    let mode = host_recovery_store_mode_v1();
+    assert_eq!(mode, HOST_RECOVERY_STORE_MODE_MEMORY_V1);
+    assert_eq!(host_recovery_store_backend_v1(), "json");
+
+    restore_env_var_v1(
+        NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV,
+        prev_full_async,
+    );
+}
+
+#[test]
+fn host_recovery_store_has_no_rocksdb_mode_gate() {
+    let prev_full_async = std::env::var_os(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV);
+    std::env::set_var(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV, "1");
+
+    let mode = host_recovery_store_mode_v1();
+    let probe = host_recovery_store_probe_v1(Path::new("receiver-store.json"));
+    assert_eq!(mode, HOST_RECOVERY_STORE_MODE_MEMORY_V1);
+    assert_eq!(host_recovery_store_backend_v1(), "json");
+    assert_eq!(probe["host_recovery_store_opened"].as_bool(), Some(false));
+    assert_eq!(
+        probe["host_recovery_store_probe_skipped"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        probe["host_recovery_store_probe_skipped_reason"].as_str(),
+        Some("host_recovery_store_is_memory_first")
+    );
+
+    restore_env_var_v1(
+        NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV,
+        prev_full_async,
+    );
+}
+
+#[test]
+fn host_recovery_store_boundary_marks_host_truth_false_and_aoem_truth_true() {
+    let prev_full_async = std::env::var_os(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV);
+    std::env::set_var(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV, "1");
+
+    let boundary = host_recovery_store_boundary_json_v1(Path::new("receiver-store.json"));
+    assert_eq!(
+        boundary["aoem_production_persistence_owner"].as_str(),
+        Some(AOEM_PRODUCTION_PERSISTENCE_OWNER_V1)
+    );
+    assert_eq!(
+        boundary["aoem_production_persistence_is_truth"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        boundary["host_recovery_store_role"].as_str(),
+        Some(HOST_RECOVERY_STORE_ROLE_V1)
+    );
+    assert_eq!(
+        boundary["host_recovery_store_is_production_truth"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        boundary["host_recovery_store_mode"].as_str(),
+        Some(HOST_RECOVERY_STORE_MODE_MEMORY_V1)
+    );
+
+    restore_env_var_v1(
+        NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV,
+        prev_full_async,
+    );
+}
+
+#[test]
+fn host_recovery_store_open_error_is_not_aoem_persistence_failure() {
+    let output = nonzero_output_with_stderr_v1(
+        b"open host recovery rocksdb failed: receiver-store.json.rocksdb\nFailed to rename CURRENT: access is denied",
+    );
+    assert_eq!(
+        classify_child_exit_failure(&output, None),
+        "host_recovery_store_open_failed"
+    );
 }
 
 fn semantic_ledger_mirror_path(store_path: &Path) -> PathBuf {
@@ -7833,6 +8015,7 @@ fn spawn_receiver_node(
     } else {
         250
     };
+    let host_recovery_store_backend = host_recovery_store_backend_v1().to_string();
     let worker_max_ticks = if pipeline_enabled && worker_tick_interval_ms < tick_interval_ms {
         let requested_wall_ms = max_ticks.saturating_mul(tick_interval_ms);
         div_ceil_u64(requested_wall_ms, worker_tick_interval_ms).max(max_ticks)
@@ -7894,20 +8077,33 @@ fn spawn_receiver_node(
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_STORE_BACKEND",
-            "rocksdb".to_string(),
+            host_recovery_store_backend,
+        ),
+        (
+            "NOVOVM_HOST_RECOVERY_STORE_ROLE",
+            HOST_RECOVERY_STORE_ROLE_V1.to_string(),
+        ),
+        (
+            "NOVOVM_HOST_RECOVERY_STORE_IS_PRODUCTION_TRUTH",
+            "false".to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_PRODUCTION_PERSISTENCE_OWNER",
+            AOEM_PRODUCTION_PERSISTENCE_OWNER_V1.to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_PRODUCTION_PERSISTENCE_IS_TRUTH",
+            "true".to_string(),
         ),
         (
             "NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY",
             "true".to_string(),
         ),
         (
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_ROCKSDB_STORE",
-            "false".to_string(),
-        ),
-        (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED",
             "true".to_string(),
         ),
+        ("NOVOVM_NATIVE_PIPELINE_TRANSPORT", "novorudp".to_string()),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_LISTEN_ADDR",
             listen_addr.to_string(),
@@ -7983,9 +8179,6 @@ fn spawn_receiver_node(
         cmd.env(key, value);
     }
     cmd.env("NOVOVM_NATIVE_PIPELINE_ROLE", "receiver");
-    if let Some(transport) = string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TRANSPORT") {
-        cmd.env("NOVOVM_NATIVE_PIPELINE_TRANSPORT", transport);
-    }
     for (_, env_name, _) in MEMORY_PROBE_TOGGLES_V1 {
         if let Some(value) = string_env_nonempty(env_name) {
             cmd.env(env_name, value);
@@ -8150,8 +8343,7 @@ fn run_receiver_node(
                 Ok(summary) => summary,
                 Err(err) => {
                     let ledger_stats = semantic_ledger_stats(ledger_path.as_path());
-                    let rocksdb_probe =
-                        get_nov_native_execution_store_rocksdb_memory_probe_v1(store_path);
+                    let host_recovery_probe = host_recovery_store_probe_v1(store_path);
                     let memory_sample = if diagnostics.memory_sample_enabled {
                         process_memory_sample(child_pid)
                     } else {
@@ -8163,7 +8355,7 @@ fn run_receiver_node(
                             started_at,
                             progress,
                             ledger_stats,
-                            rocksdb_probe,
+                            host_recovery_probe,
                             memory_sample,
                             state.last_canonical,
                         )
@@ -8174,11 +8366,12 @@ fn run_receiver_node(
                             "aoem_executed_total": 0u64,
                             "queue_pending_last": 0u64,
                             "semantic_ledger_mirror": ledger_stats,
-                            "rocksdb_memory_probe": rocksdb_probe,
+                            "host_recovery_store_probe": host_recovery_probe,
                             "process_memory": memory_sample,
                         })
                     };
                     sample["child_exit_parse_error"] = serde_json::json!(err.to_string());
+                    annotate_host_recovery_store_boundary_v1(&mut sample, store_path);
                     if let Some(error) = output_artifact_error.as_ref() {
                         sample["output_artifact_error"] = serde_json::json!(error);
                     }
@@ -8224,7 +8417,7 @@ fn run_receiver_node(
                 }
             };
             let ledger_stats = semantic_ledger_stats(ledger_path.as_path());
-            let rocksdb_probe = get_nov_native_execution_store_rocksdb_memory_probe_v1(store_path);
+            let host_recovery_probe = host_recovery_store_probe_v1(store_path);
             let memory_sample = if diagnostics.memory_sample_enabled {
                 process_memory_sample(child_pid)
             } else {
@@ -8234,10 +8427,11 @@ fn run_receiver_node(
                 started_at,
                 &summary,
                 ledger_stats,
-                rocksdb_probe,
+                host_recovery_probe,
                 memory_sample,
                 state.last_canonical,
             );
+            annotate_host_recovery_store_boundary_v1(&mut sample, store_path);
             let final_progress = summary_u64(&summary, "aoem_executed_total")
                 .max(summary_u64(&summary, "included_canonical_total"))
                 .max(
@@ -8327,7 +8521,7 @@ fn run_receiver_node(
 
         if last_sample_at.elapsed() >= Duration::from_millis(diagnostics.sample_interval_ms) {
             let ledger_stats = semantic_ledger_stats(ledger_path.as_path());
-            let rocksdb_probe = live_receiver_child_rocksdb_memory_probe_v1(store_path);
+            let host_recovery_probe = host_recovery_store_probe_v1(store_path);
             let memory_sample = if diagnostics.memory_sample_enabled {
                 process_memory_sample(child_pid)
             } else {
@@ -8358,7 +8552,7 @@ fn run_receiver_node(
                     started_at,
                     summary,
                     ledger_stats,
-                    rocksdb_probe,
+                    host_recovery_probe,
                     memory_sample,
                     state.last_canonical,
                 )
@@ -8388,12 +8582,12 @@ fn run_receiver_node(
                 "proof_elapsed_ms": null,
                 "commit_items_total": null,
                 "commit_delta": null,
-                "rocksdb_read_elapsed_ms": null,
-                "rocksdb_write_elapsed_ms": null,
+                "host_recovery_store_read_elapsed_ms": null,
+                "host_recovery_store_write_elapsed_ms": null,
                 "semantic_head_height": stable_progress,
                 "semantic_head_monotonic": true,
                 "semantic_ledger_mirror": ledger_stats,
-                "rocksdb_memory_probe": rocksdb_probe,
+                "host_recovery_store_probe": host_recovery_probe,
                 "process_memory": memory_sample,
                 "queue_pending_last": null,
                 "queue_dropped_total": null,
@@ -8503,6 +8697,7 @@ fn run_receiver_node(
                 fail_reason = Some(format!("receiver_ack_backchannel_send_failed: {reason}"));
             }
             annotate_receiver_ingress_drain_delta_v1(&mut sample, state.samples.last());
+            annotate_host_recovery_store_boundary_v1(&mut sample, store_path);
             let pending_drain_stall_reason = sample
                 .get("pipeline_pending_drain_stall_reason")
                 .and_then(Value::as_str)
@@ -8607,8 +8802,7 @@ fn run_receiver_node(
                     summary["final_ack_sent_count"] = serde_json::json!(final_ack_sent_count);
                     summary["final_ack_last_epoch"] = serde_json::json!(final_ack_last_epoch);
                     let final_ledger_stats = semantic_ledger_stats(ledger_path.as_path());
-                    let final_rocksdb_probe =
-                        live_receiver_child_rocksdb_memory_probe_v1(store_path);
+                    let final_host_recovery_probe = host_recovery_store_probe_v1(store_path);
                     let final_memory_sample = if diagnostics.memory_sample_enabled {
                         process_memory_sample(child_pid)
                     } else {
@@ -8618,7 +8812,7 @@ fn run_receiver_node(
                         started_at,
                         &summary,
                         final_ledger_stats,
-                        final_rocksdb_probe,
+                        final_host_recovery_probe,
                         final_memory_sample,
                         state.last_canonical,
                     );
@@ -8636,6 +8830,7 @@ fn run_receiver_node(
                         &mut final_sample,
                         state.samples.last(),
                     );
+                    annotate_host_recovery_store_boundary_v1(&mut final_sample, store_path);
                     state.samples.push(final_sample);
                     let _ = child.kill();
                     let output = child
@@ -9432,10 +9627,17 @@ fn classify_child_exit_failure(output: &Output, parse_error: Option<&anyhow::Err
         && stderr.contains("rocksdb")
         && stderr.contains("lock")
     {
-        return "rocksdb_lock_conflict".to_string();
+        return "host_recovery_store_lock_conflict".to_string();
     }
-    if stderr.contains("open nov native execution rocksdb failed") && stderr.contains("lock") {
-        return "rocksdb_lock_conflict".to_string();
+    if stderr.contains("open host recovery rocksdb failed") && stderr.contains("lock") {
+        return "host_recovery_store_lock_conflict".to_string();
+    }
+    if stderr.contains("open host recovery rocksdb failed")
+        || (stderr.contains("rocksdb") && stderr.contains("failed to rename"))
+        || (stderr.contains("rocksdb") && stderr.contains("access is denied"))
+        || (stderr.contains("rocksdb") && stderr.contains("拒绝访问"))
+    {
+        return "host_recovery_store_open_failed".to_string();
     }
     if !output.status.success() {
         return "child_nonzero_exit".to_string();
@@ -9452,23 +9654,6 @@ fn output_stderr_tail(output: Option<&Output>, max_chars: usize) -> Option<Strin
         let chars: Vec<char> = stderr.chars().collect();
         let start = chars.len().saturating_sub(max_chars);
         chars[start..].iter().collect::<String>()
-    })
-}
-
-fn live_receiver_child_rocksdb_memory_probe_v1(store_path: &Path) -> Value {
-    let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(store_path);
-    serde_json::json!({
-        "method": "nov_getNativeExecutionStoreRocksDbMemoryProbe",
-        "rocksdb_path": rocksdb_path.display().to_string(),
-        "rocksdb_exists": rocksdb_path.exists(),
-        "rocksdb_opened": false,
-        "rocksdb_probe_skipped": true,
-        "rocksdb_probe_skipped_reason": "live_receiver_child_holds_lock",
-        "rocksdb_total_estimated_memory_bytes": 0u64,
-        "rocksdb_block_cache_estimated_bytes": 0u64,
-        "rocksdb_memtable_estimated_bytes": 0u64,
-        "rocksdb_index_filter_estimated_bytes": 0u64,
-        "rocksdb_memory_probe_supported": false,
     })
 }
 
@@ -9522,6 +9707,25 @@ fn write_receiver_exit_report(
         "diagnostics_path": diagnostics_path.display().to_string(),
         "final_report_written": final_report_written,
         "diagnostics_report_written": diagnostics_report_written,
+        "aoem_production_persistence_owner": AOEM_PRODUCTION_PERSISTENCE_OWNER_V1,
+        "aoem_production_persistence_is_truth": true,
+        "host_recovery_store_owner": "novovm_host",
+        "host_recovery_store_role": HOST_RECOVERY_STORE_ROLE_V1,
+        "host_recovery_store_is_production_truth": false,
+        "host_recovery_store_mode": last_sample
+            .and_then(|sample| sample.get("host_recovery_store_mode"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!(host_recovery_store_mode_v1())),
+        "host_recovery_store_backend": last_sample
+            .and_then(|sample| sample.get("host_recovery_store_backend"))
+            .cloned()
+            .unwrap_or_else(|| {
+                serde_json::json!(host_recovery_store_backend_v1())
+            }),
+        "host_recovery_store_boundary": last_sample
+            .and_then(|sample| sample.get("host_recovery_store_boundary"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
         "stable_progress_total": stable_progress_total,
         "expected_tx_total": expected_tx_count,
         "aoem_executed_total": aoem_executed_total,
@@ -11753,7 +11957,7 @@ fn diagnostics_summary_sample(
     started_at: Instant,
     summary: &Value,
     ledger_stats: Value,
-    rocksdb_probe: Value,
+    host_recovery_probe: Value,
     memory_sample: Value,
     previous_canonical: u64,
 ) -> Value {
@@ -11806,20 +12010,20 @@ fn diagnostics_summary_sample(
         .get("bytes")
         .and_then(Value::as_u64)
         .unwrap_or_default();
-    let rocksdb_total_estimated_memory_bytes = rocksdb_probe
-        .get("rocksdb_total_estimated_memory_bytes")
+    let host_recovery_store_total_estimated_memory_bytes = host_recovery_probe
+        .get("host_recovery_store_total_estimated_memory_bytes")
         .and_then(Value::as_u64)
         .unwrap_or_default();
-    let rocksdb_block_cache_estimated_bytes = rocksdb_probe
-        .get("rocksdb_block_cache_estimated_bytes")
+    let host_recovery_store_cache_estimated_bytes = host_recovery_probe
+        .get("host_recovery_store_cache_estimated_bytes")
         .and_then(Value::as_u64)
         .unwrap_or_default();
-    let rocksdb_memtable_estimated_bytes = rocksdb_probe
-        .get("rocksdb_memtable_estimated_bytes")
+    let host_recovery_store_memtable_estimated_bytes = host_recovery_probe
+        .get("host_recovery_store_memtable_estimated_bytes")
         .and_then(Value::as_u64)
         .unwrap_or_default();
-    let rocksdb_index_filter_estimated_bytes = rocksdb_probe
-        .get("rocksdb_index_filter_estimated_bytes")
+    let host_recovery_store_index_filter_estimated_bytes = host_recovery_probe
+        .get("host_recovery_store_index_filter_estimated_bytes")
         .and_then(Value::as_u64)
         .unwrap_or_default();
     let native_store_materialized_bytes =
@@ -11830,8 +12034,8 @@ fn diagnostics_summary_sample(
         .saturating_add(semantic_ledger_mirror_bytes)
         .saturating_add(native_store_materialized_bytes)
         .saturating_add(native_store_clone_bytes);
-    let attributed_bytes =
-        rust_estimated_retained_bytes.saturating_add(rocksdb_total_estimated_memory_bytes);
+    let attributed_bytes = rust_estimated_retained_bytes
+        .saturating_add(host_recovery_store_total_estimated_memory_bytes);
     let unattributed_working_set_bytes = working_set_bytes.saturating_sub(attributed_bytes);
     let unattributed_private_bytes = private_bytes.saturating_sub(attributed_bytes);
     let native_heap_unattributed_bytes = unattributed_private_bytes;
@@ -11946,12 +12150,12 @@ fn diagnostics_summary_sample(
         "proof_elapsed_ms": null,
         "commit_items_total": commit,
         "commit_delta": null,
-        "rocksdb_read_elapsed_ms": null,
-        "rocksdb_write_elapsed_ms": null,
+        "host_recovery_store_read_elapsed_ms": null,
+        "host_recovery_store_write_elapsed_ms": null,
         "semantic_head_height": canonical,
         "semantic_head_monotonic": true,
         "semantic_ledger_mirror": ledger_stats,
-        "rocksdb_memory_probe": rocksdb_probe,
+        "host_recovery_store_probe": host_recovery_probe,
         "process_memory": memory_sample,
         "process_working_set_bytes": working_set_bytes,
         "process_private_bytes": private_bytes,
@@ -11973,7 +12177,7 @@ fn diagnostics_summary_sample(
         "blocking_task_spawn_count": 0u64,
         "std_thread_spawn_count": 0u64,
         "aoem_worker_pool_created_count": 0u64,
-        "rocksdb_probe_thread_count": 0u64,
+        "host_recovery_store_probe_thread_count": 0u64,
         "diagnostics_thread_count": 0u64,
         "report_writer_thread_count": 0u64,
         "rust_estimated_retained_bytes": rust_estimated_retained_bytes,
@@ -11984,10 +12188,10 @@ fn diagnostics_summary_sample(
         "jsonl_writer_buffer_bytes": 0u64,
         "native_store_materialized_estimated_bytes": native_store_materialized_bytes,
         "native_store_previous_clone_estimated_bytes": native_store_clone_bytes,
-        "rocksdb_total_estimated_memory_bytes": rocksdb_total_estimated_memory_bytes,
-        "rocksdb_block_cache_estimated_bytes": rocksdb_block_cache_estimated_bytes,
-        "rocksdb_memtable_estimated_bytes": rocksdb_memtable_estimated_bytes,
-        "rocksdb_index_filter_estimated_bytes": rocksdb_index_filter_estimated_bytes,
+        "host_recovery_store_total_estimated_memory_bytes": host_recovery_store_total_estimated_memory_bytes,
+        "host_recovery_store_cache_estimated_bytes": host_recovery_store_cache_estimated_bytes,
+        "host_recovery_store_memtable_estimated_bytes": host_recovery_store_memtable_estimated_bytes,
+        "host_recovery_store_index_filter_estimated_bytes": host_recovery_store_index_filter_estimated_bytes,
         "native_heap_unattributed_bytes": native_heap_unattributed_bytes,
         "unattributed_private_bytes": unattributed_private_bytes,
         "unattributed_working_set_bytes": unattributed_working_set_bytes,
@@ -12901,8 +13105,8 @@ fn build_diagnostics_report(
             .map(|sample| sample_u64(sample, "native_heap_unattributed_bytes")),
         "last_unattributed_working_set_bytes": last_live_sample
             .map(|sample| sample_u64(sample, "unattributed_working_set_bytes")),
-        "last_rocksdb_total_estimated_memory_bytes": last_live_sample
-            .map(|sample| sample_u64(sample, "rocksdb_total_estimated_memory_bytes")),
+        "last_host_recovery_store_total_estimated_memory_bytes": last_live_sample
+            .map(|sample| sample_u64(sample, "host_recovery_store_total_estimated_memory_bytes")),
         "last_working_set_bytes_per_1000_tx": last_live_sample
             .map(|sample| sample_u64(sample, "working_set_bytes_per_1000_tx")),
         "last_private_bytes_per_1000_tx": last_live_sample
@@ -15987,8 +16191,8 @@ fn run_receiver(
         recv_budget,
     )?;
     annotate_receiver_aoem_gate_trace_v1(&mut receiver_summary);
-    std::env::set_var("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND", "rocksdb");
-    let recovery_probe = get_nov_native_execution_store_recovery_probe_v1(store_path)?;
+    annotate_host_recovery_store_boundary_v1(&mut receiver_summary, store_path);
+    let recovery_probe = get_host_recovery_store_recovery_probe_v1(store_path)?;
     finalize_aoem_production_proof_counts_from_completed_sample_v1(
         &mut receiver_summary,
         &recovery_probe,
@@ -16023,6 +16227,12 @@ fn run_receiver(
             "lifecycle_structure": "frozen",
             "execution_kernel": "AOEM",
             "aoem_concurrency_owner": "AOEM_runtime",
+            "aoem_production_persistence_owner": AOEM_PRODUCTION_PERSISTENCE_OWNER_V1,
+            "aoem_production_persistence_is_truth": true,
+            "host_recovery_store_owner": "novovm_host",
+            "host_recovery_store_role": HOST_RECOVERY_STORE_ROLE_V1,
+            "host_recovery_store_is_production_truth": false,
+            "host_recovery_store_mode": host_recovery_store_mode_v1(),
             "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
             "product_entry": "pending_only",
             "receipt_state_source": "AOEM_tick_lifecycle",
@@ -16120,8 +16330,8 @@ fn run_local_smoke(
         "local cross-machine smoke receiver",
     )?;
     annotate_receiver_aoem_gate_trace_v1(&mut receiver_summary);
-    std::env::set_var("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND", "rocksdb");
-    let recovery_probe = get_nov_native_execution_store_recovery_probe_v1(store_path)?;
+    annotate_host_recovery_store_boundary_v1(&mut receiver_summary, store_path);
+    let recovery_probe = get_host_recovery_store_recovery_probe_v1(store_path)?;
     finalize_aoem_production_proof_counts_from_completed_sample_v1(
         &mut receiver_summary,
         &recovery_probe,
