@@ -7782,75 +7782,202 @@ mod novorudp_tests {
                         "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS",
                         Some("1"),
                         || {
-                            with_sender_hard_timeout_env(160, || {
-                                let chain_id = 92_003;
-                                let tx_count = 4;
-                                let sender_addr = reserve_udp_addr().expect("sender addr");
-                                let receiver_addr = reserve_udp_addr().expect("receiver addr");
-                                let ack_bind_addr = reserve_udp_addr().expect("ack bind addr");
+                            with_env_var(
+                                "NOVOVM_NATIVE_PIPELINE_RECEIVER_PROGRESS_DEADLINE_MS",
+                                Some("30"),
+                                || {
+                                    with_sender_hard_timeout_env(160, || {
+                                        let chain_id = 92_003;
+                                        let tx_count = 4;
+                                        let sender_addr = reserve_udp_addr().expect("sender addr");
+                                        let receiver_addr =
+                                            reserve_udp_addr().expect("receiver addr");
+                                        let ack_bind_addr =
+                                            reserve_udp_addr().expect("ack bind addr");
 
-                                let report = run_sender(
-                                    chain_id,
-                                    tx_count,
-                                    1,
-                                    2,
-                                    sender_addr.as_str(),
-                                    receiver_addr.as_str(),
-                                    FaultConfigV1 {
-                                        enabled: false,
-                                        loss_bps: 0,
-                                        duplicate_bps: 0,
-                                        delay_ms: 0,
-                                        reorder_bps: 0,
-                                        seed: 0,
-                                    },
-                                    sender_timeout_sustained_config(tx_count),
-                                    sender_timeout_tail_repair_config(),
-                                    default_udp_send_retry_config(),
-                                    UdpAckConfigV1 {
-                                        enabled: true,
-                                        bind_addr: ack_bind_addr.clone(),
-                                        target_addr: None,
-                                        recv_timeout_ms: 0,
-                                    },
-                                    sender_timeout_novorudp_config(),
-                                )
-                                .expect("sender must return a full async ACK fail report");
+                                        let report = run_sender(
+                                            chain_id,
+                                            tx_count,
+                                            1,
+                                            2,
+                                            sender_addr.as_str(),
+                                            receiver_addr.as_str(),
+                                            FaultConfigV1 {
+                                                enabled: false,
+                                                loss_bps: 0,
+                                                duplicate_bps: 0,
+                                                delay_ms: 0,
+                                                reorder_bps: 0,
+                                                seed: 0,
+                                            },
+                                            sender_timeout_sustained_config(tx_count),
+                                            sender_timeout_tail_repair_config(),
+                                            default_udp_send_retry_config(),
+                                            UdpAckConfigV1 {
+                                                enabled: true,
+                                                bind_addr: ack_bind_addr.clone(),
+                                                target_addr: None,
+                                                recv_timeout_ms: 0,
+                                            },
+                                            sender_timeout_novorudp_config(),
+                                        )
+                                        .expect("sender must return a full async ACK fail report");
 
-                                assert_eq!(report["accepted"].as_bool(), Some(false));
-                                assert_eq!(
-                                    report["fail_reason"].as_str(),
-                                    Some("production_final_ack_deadline_exceeded")
-                                );
-                                assert_eq!(
-                                    report["final_ack_wait_profile"].as_str(),
-                                    Some("production")
-                                );
-                                assert_eq!(
-                                    report["sender_finalization_deadline_exceeded"].as_bool(),
-                                    Some(true)
-                                );
-                                assert_eq!(
-                                    report["sender_ack_plane_mode"].as_str(),
-                                    Some("aggressive_nonblocking_ack_drain")
-                                );
-                                assert_eq!(
-                                    report["sender_ack_final_sample_is_null"].as_bool(),
-                                    Some(true)
-                                );
-                                assert_eq!(
-                                    report["full_async_sender_ack_drain_integrated"].as_bool(),
-                                    Some(true)
-                                );
-                                assert_eq!(
-                                    report["sender_finalization_reason"].as_str(),
-                                    Some("production_final_ack_deadline_exceeded")
-                                );
-                                assert_eq!(
-                                    report["sender_ack_socket_bound_addr"].as_str(),
-                                    Some(ack_bind_addr.as_str())
-                                );
-                            });
+                                        assert_eq!(report["accepted"].as_bool(), Some(false));
+                                        assert_eq!(
+                                            report["fail_reason"].as_str(),
+                                            Some("production_receiver_progress_deadline_exceeded")
+                                        );
+                                        assert_eq!(
+                                            report["final_ack_wait_profile"].as_str(),
+                                            Some("production")
+                                        );
+                                        assert_eq!(
+                                            report["sender_finalization_deadline_exceeded"]
+                                                .as_bool(),
+                                            Some(true)
+                                        );
+                                        assert_eq!(
+                                            report["sender_ack_plane_mode"].as_str(),
+                                            Some("aggressive_nonblocking_ack_drain")
+                                        );
+                                        assert_eq!(
+                                            report["sender_ack_final_sample_is_null"].as_bool(),
+                                            Some(true)
+                                        );
+                                        assert_eq!(
+                                            report["full_async_sender_ack_drain_integrated"]
+                                                .as_bool(),
+                                            Some(true)
+                                        );
+                                        assert_eq!(
+                                            report["sender_finalization_reason"].as_str(),
+                                            Some("production_receiver_progress_deadline_exceeded")
+                                        );
+                                        assert_eq!(
+                                            report["receiver_progress_deadline_exceeded"].as_bool(),
+                                            Some(true)
+                                        );
+                                        assert_eq!(
+                                            report["final_ack_deadline_exceeded_after_progress"]
+                                                .as_bool(),
+                                            Some(false)
+                                        );
+                                        assert_eq!(
+                                            report["sender_receiver_progress_seen"].as_bool(),
+                                            Some(false)
+                                        );
+                                        assert_eq!(
+                                            report["sender_ack_socket_bound_addr"].as_str(),
+                                            Some(ack_bind_addr.as_str())
+                                        );
+                                    })
+                                },
+                            );
+                        },
+                    )
+                },
+            )
+        });
+    }
+
+    #[test]
+    fn production_sender_starts_done_deadline_after_seen_all() {
+        with_env_var("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE", Some("1"), || {
+            with_env_var(
+                "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
+                Some("50"),
+                || {
+                    with_env_var(
+                        "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS",
+                        Some("1"),
+                        || {
+                            with_env_var(
+                                "NOVOVM_NATIVE_PIPELINE_RECEIVER_PROGRESS_DEADLINE_MS",
+                                Some("500"),
+                                || {
+                                    with_sender_hard_timeout_env(800, || {
+                                        let chain_id = 92_033;
+                                        let tx_count = 4;
+                                        let sender_addr = reserve_udp_addr().expect("sender addr");
+                                        let receiver_addr =
+                                            reserve_udp_addr().expect("receiver addr");
+                                        let ack_bind_addr =
+                                            reserve_udp_addr().expect("ack bind addr");
+                                        let ack_target_addr = ack_bind_addr.clone();
+                                        let ack_thread = std::thread::spawn(move || {
+                                            std::thread::sleep(Duration::from_millis(20));
+                                            let socket = UdpSocket::bind("127.0.0.1:0")
+                                                .expect("progress ack sender socket");
+                                            let mut ack = receiver_ack_report_value(
+                                                tx_count, tx_count, 64, 41,
+                                            );
+                                            ack["receiver_done"] = serde_json::json!(false);
+                                            let _ = socket.send_to(
+                                                ack.to_string().as_bytes(),
+                                                ack_target_addr,
+                                            );
+                                        });
+
+                                        let report = run_sender(
+                                            chain_id,
+                                            tx_count,
+                                            1,
+                                            2,
+                                            sender_addr.as_str(),
+                                            receiver_addr.as_str(),
+                                            FaultConfigV1 {
+                                                enabled: false,
+                                                loss_bps: 0,
+                                                duplicate_bps: 0,
+                                                delay_ms: 0,
+                                                reorder_bps: 0,
+                                                seed: 0,
+                                            },
+                                            sender_timeout_sustained_config(tx_count),
+                                            sender_timeout_tail_repair_config(),
+                                            default_udp_send_retry_config(),
+                                            UdpAckConfigV1 {
+                                                enabled: true,
+                                                bind_addr: ack_bind_addr,
+                                                target_addr: None,
+                                                recv_timeout_ms: 0,
+                                            },
+                                            sender_timeout_novorudp_config(),
+                                        )
+                                        .expect("sender must return final done deadline report");
+                                        let _ = ack_thread.join();
+
+                                        assert_eq!(report["accepted"].as_bool(), Some(false));
+                                        assert_eq!(
+                                            report["fail_reason"].as_str(),
+                                            Some("production_final_ack_deadline_exceeded")
+                                        );
+                                        assert_eq!(
+                                            report["sender_receiver_progress_seen"].as_bool(),
+                                            Some(true)
+                                        );
+                                        assert_eq!(
+                                            report["sender_receiver_progress_seen_all"].as_bool(),
+                                            Some(true)
+                                        );
+                                        assert_eq!(
+                                            report["receiver_progress_deadline_exceeded"].as_bool(),
+                                            Some(false)
+                                        );
+                                        assert_eq!(
+                                            report["final_ack_deadline_exceeded_after_progress"]
+                                                .as_bool(),
+                                            Some(true)
+                                        );
+                                        assert_eq!(
+                                            report["sender_final_done_ack_deadline_start_reason"]
+                                                .as_str(),
+                                            Some("latest_ack_missing_zero")
+                                        );
+                                    })
+                                },
+                            );
                         },
                     )
                 },
@@ -14854,6 +14981,45 @@ fn run_sender(
     let mut final_ack_missing_count: Option<u64> = None;
     let mut final_ack_receiver_done: Option<bool> = None;
     let mut final_ack_grace_timeout = false;
+    let sender_receiver_progress_deadline_ms = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_RECEIVER_PROGRESS_DEADLINE_MS",
+        if full_async_runtime_engine
+            && final_ack_wait_config.profile == FinalAckWaitProfileV1::Production
+        {
+            60_000
+        } else {
+            final_ack_wait_ms
+        },
+    )?
+    .max(1);
+    let sender_receiver_progress_deadline_source =
+        if string_env_nonempty("NOVOVM_NATIVE_PIPELINE_RECEIVER_PROGRESS_DEADLINE_MS").is_some() {
+            "env_override"
+        } else if full_async_runtime_engine
+            && final_ack_wait_config.profile == FinalAckWaitProfileV1::Production
+        {
+            "production_profile_default"
+        } else {
+            "final_ack_wait"
+        };
+    let mut sender_receiver_progress_seen = latest_ack_missing_count.is_some()
+        || latest_ack_receiver_done
+        || latest_ack_highest_sequence_seen.is_some();
+    let mut sender_receiver_progress_first_ack_ms: Option<u64> = None;
+    let mut sender_receiver_progress_latest_ack_ms: Option<u64> = None;
+    let mut sender_receiver_progress_highest_sequence_seen = latest_ack_highest_sequence_seen;
+    let mut sender_receiver_progress_missing_count = latest_ack_missing_count;
+    let mut sender_receiver_progress_seen_all = latest_ack_receiver_done
+        || latest_ack_missing_count == Some(0)
+        || latest_ack_highest_sequence_seen
+            .map(|highest| highest.saturating_add(1) >= tx_count)
+            .unwrap_or(false);
+    let mut sender_final_done_ack_deadline_started_ms: Option<u64> = None;
+    let mut sender_final_done_ack_deadline_start_reason = "not_started".to_string();
+    let mut sender_finalization_phase = "primary_send".to_string();
+    let mut sender_finalization_phase_failure_reason: Option<String> = None;
+    let mut receiver_progress_deadline_exceeded = false;
+    let mut final_ack_deadline_exceeded_after_progress = false;
     let sender_final_ack_fast_drain_enabled = full_async_runtime_engine
         && final_ack_wait_config.profile == FinalAckWaitProfileV1::Production;
     let mut sender_final_ack_fast_drain_attempt_count = 0u64;
@@ -16118,6 +16284,9 @@ fn run_sender(
         && final_ack_wait_ms > 0
     {
         let started = Instant::now();
+        let production_phase_split = full_async_runtime_engine
+            && final_ack_wait_config.profile == FinalAckWaitProfileV1::Production;
+        let mut done_ack_deadline_started_at: Option<Instant> = None;
         loop {
             apply_full_async_ack_plane_snapshot!();
             if latest_ack_receiver_done && latest_ack_missing_count == Some(0) {
@@ -16125,15 +16294,90 @@ fn run_sender(
                 final_ack_epoch = Some(tail_repair_latest_ack_epoch);
                 final_ack_missing_count = Some(0);
                 final_ack_receiver_done = Some(true);
+                sender_finalization_phase = "completed".to_string();
                 break;
             }
-            if started.elapsed() >= Duration::from_millis(final_ack_wait_ms) {
+            if production_phase_split {
+                sender_receiver_progress_seen = latest_ack_missing_count.is_some()
+                    || latest_ack_receiver_done
+                    || latest_ack_highest_sequence_seen.is_some();
+                sender_receiver_progress_highest_sequence_seen = latest_ack_highest_sequence_seen;
+                sender_receiver_progress_missing_count = latest_ack_missing_count;
+                sender_receiver_progress_seen_all = latest_ack_receiver_done
+                    || latest_ack_missing_count == Some(0)
+                    || latest_ack_highest_sequence_seen
+                        .map(|highest| highest.saturating_add(1) >= tx_count)
+                        .unwrap_or(false);
+                if sender_receiver_progress_seen && sender_receiver_progress_first_ack_ms.is_none()
+                {
+                    sender_receiver_progress_first_ack_ms =
+                        Some(sender_started.elapsed().as_millis() as u64);
+                }
+                if sender_receiver_progress_seen {
+                    sender_receiver_progress_latest_ack_ms =
+                        Some(sender_started.elapsed().as_millis() as u64);
+                }
+                if !sender_receiver_progress_seen {
+                    if started.elapsed()
+                        >= Duration::from_millis(sender_receiver_progress_deadline_ms)
+                    {
+                        receiver_progress_deadline_exceeded = true;
+                        final_ack_grace_timeout = true;
+                        sender_finalization_phase = "failed".to_string();
+                        sender_finalization_phase_failure_reason =
+                            Some("production_receiver_progress_deadline_exceeded".to_string());
+                        break;
+                    }
+                } else if !sender_receiver_progress_seen_all {
+                    if started.elapsed()
+                        >= Duration::from_millis(sender_receiver_progress_deadline_ms)
+                    {
+                        receiver_progress_deadline_exceeded = true;
+                        final_ack_grace_timeout = true;
+                        sender_finalization_phase = "failed".to_string();
+                        sender_finalization_phase_failure_reason =
+                            Some("production_receiver_not_caught_up".to_string());
+                        break;
+                    }
+                } else {
+                    if done_ack_deadline_started_at.is_none() {
+                        let now_elapsed = sender_started.elapsed().as_millis() as u64;
+                        done_ack_deadline_started_at = Some(Instant::now());
+                        sender_final_done_ack_deadline_started_ms = Some(now_elapsed);
+                        sender_final_done_ack_deadline_start_reason =
+                            if latest_ack_missing_count == Some(0) {
+                                "latest_ack_missing_zero".to_string()
+                            } else {
+                                "receiver_seen_all".to_string()
+                            };
+                    }
+                    if done_ack_deadline_started_at
+                        .map(|deadline| {
+                            deadline.elapsed() >= Duration::from_millis(final_ack_wait_ms)
+                        })
+                        .unwrap_or(false)
+                    {
+                        final_ack_deadline_exceeded_after_progress = true;
+                        final_ack_grace_timeout = true;
+                        sender_finalization_phase = "failed".to_string();
+                        sender_finalization_phase_failure_reason =
+                            Some("production_final_ack_deadline_exceeded".to_string());
+                        break;
+                    }
+                }
+            } else if started.elapsed() >= Duration::from_millis(final_ack_wait_ms) {
                 final_ack_grace_timeout = true;
+                sender_finalization_phase = "failed".to_string();
+                sender_finalization_phase_failure_reason =
+                    Some("final_ack_grace_timeout".to_string());
                 break;
             }
             std::thread::sleep(Duration::from_millis(final_ack_poll_ms));
             let Some(socket) = ack_socket.as_ref() else {
                 final_ack_grace_timeout = true;
+                sender_finalization_phase = "failed".to_string();
+                sender_finalization_phase_failure_reason =
+                    Some("sender_ack_socket_unavailable".to_string());
                 break;
             };
             let state = drain_udp_ack_socket(
@@ -16172,16 +16416,34 @@ fn run_sender(
             latest_ack_highest_sequence_seen = state.highest_sequence_seen;
             latest_ack_receiver_done = state.receiver_done;
             final_missing_count = state.latest_missing_count;
+            sender_receiver_progress_seen = true;
+            let now_elapsed = sender_started.elapsed().as_millis() as u64;
+            if sender_receiver_progress_first_ack_ms.is_none() {
+                sender_receiver_progress_first_ack_ms = Some(now_elapsed);
+            }
+            sender_receiver_progress_latest_ack_ms = Some(now_elapsed);
+            sender_receiver_progress_highest_sequence_seen = state.highest_sequence_seen;
+            sender_receiver_progress_missing_count = Some(state.latest_missing_count);
+            sender_receiver_progress_seen_all = state.receiver_done
+                || state.latest_missing_count == 0
+                || state
+                    .highest_sequence_seen
+                    .map(|highest| highest.saturating_add(1) >= tx_count)
+                    .unwrap_or(false);
             if state.receiver_done && state.latest_missing_count == 0 {
                 final_ack_received_after_repair = true;
                 final_ack_epoch = Some(state.latest_epoch);
                 final_ack_missing_count = Some(0);
                 final_ack_receiver_done = Some(true);
+                sender_finalization_phase = "completed".to_string();
                 break;
             }
         }
         if final_ack_wait_elapsed_ms == 0 {
             final_ack_wait_elapsed_ms = started.elapsed().as_millis() as u64;
+        }
+        if let Some(deadline_started_at) = done_ack_deadline_started_at {
+            final_ack_wait_elapsed_ms = deadline_started_at.elapsed().as_millis() as u64;
         }
     }
     apply_full_async_ack_plane_snapshot!();
@@ -16309,8 +16571,16 @@ fn run_sender(
     let production_final_ack_deadline_exceeded = full_async_runtime_engine
         && final_ack_wait_config.profile == FinalAckWaitProfileV1::Production
         && final_ack_grace_timeout
+        && final_ack_deadline_exceeded_after_progress
         && !latest_ack_receiver_done;
-    let fallback_fail_reason = if production_final_ack_deadline_exceeded {
+    let fallback_fail_reason = if receiver_progress_deadline_exceeded
+        && tail_repair_udp_ack_received_count == 0
+        && !sender_receiver_progress_seen
+    {
+        Some("production_receiver_progress_deadline_exceeded")
+    } else if receiver_progress_deadline_exceeded && !sender_receiver_progress_seen_all {
+        Some("production_receiver_not_caught_up")
+    } else if production_final_ack_deadline_exceeded {
         Some("production_final_ack_deadline_exceeded")
     } else if let Some(reason) = full_async_ack_fail_reason {
         Some(reason)
@@ -17107,7 +17377,69 @@ fn run_sender(
         );
         report_map.insert(
             "sender_finalization_deadline_exceeded".to_string(),
-            serde_json::json!(production_final_ack_deadline_exceeded),
+            serde_json::json!(
+                receiver_progress_deadline_exceeded || production_final_ack_deadline_exceeded
+            ),
+        );
+        report_map.insert(
+            "sender_receiver_progress_deadline_ms".to_string(),
+            serde_json::json!(sender_receiver_progress_deadline_ms),
+        );
+        report_map.insert(
+            "sender_receiver_progress_deadline_source".to_string(),
+            serde_json::json!(sender_receiver_progress_deadline_source),
+        );
+        report_map.insert(
+            "sender_receiver_progress_seen".to_string(),
+            serde_json::json!(sender_receiver_progress_seen),
+        );
+        report_map.insert(
+            "sender_receiver_progress_first_ack_ms".to_string(),
+            serde_json::json!(sender_receiver_progress_first_ack_ms),
+        );
+        report_map.insert(
+            "sender_receiver_progress_latest_ack_ms".to_string(),
+            serde_json::json!(sender_receiver_progress_latest_ack_ms),
+        );
+        report_map.insert(
+            "sender_receiver_progress_highest_sequence_seen".to_string(),
+            serde_json::json!(sender_receiver_progress_highest_sequence_seen),
+        );
+        report_map.insert(
+            "sender_receiver_progress_missing_count".to_string(),
+            serde_json::json!(sender_receiver_progress_missing_count),
+        );
+        report_map.insert(
+            "sender_receiver_progress_seen_all".to_string(),
+            serde_json::json!(sender_receiver_progress_seen_all),
+        );
+        report_map.insert(
+            "sender_final_done_ack_deadline_ms".to_string(),
+            serde_json::json!(final_ack_wait_ms),
+        );
+        report_map.insert(
+            "sender_final_done_ack_deadline_started_ms".to_string(),
+            serde_json::json!(sender_final_done_ack_deadline_started_ms),
+        );
+        report_map.insert(
+            "sender_final_done_ack_deadline_start_reason".to_string(),
+            serde_json::json!(sender_final_done_ack_deadline_start_reason),
+        );
+        report_map.insert(
+            "sender_finalization_phase".to_string(),
+            serde_json::json!(sender_finalization_phase),
+        );
+        report_map.insert(
+            "sender_finalization_phase_failure_reason".to_string(),
+            serde_json::json!(sender_finalization_phase_failure_reason),
+        );
+        report_map.insert(
+            "receiver_progress_deadline_exceeded".to_string(),
+            serde_json::json!(receiver_progress_deadline_exceeded),
+        );
+        report_map.insert(
+            "final_ack_deadline_exceeded_after_progress".to_string(),
+            serde_json::json!(final_ack_deadline_exceeded_after_progress),
         );
         report_map.insert(
             "production_final_ack_deadline_ms".to_string(),
@@ -17166,6 +17498,21 @@ fn run_sender(
             "sender_finalization_deadline_ms",
             "sender_finalization_deadline_source",
             "sender_finalization_deadline_exceeded",
+            "sender_receiver_progress_deadline_ms",
+            "sender_receiver_progress_deadline_source",
+            "sender_receiver_progress_seen",
+            "sender_receiver_progress_first_ack_ms",
+            "sender_receiver_progress_latest_ack_ms",
+            "sender_receiver_progress_highest_sequence_seen",
+            "sender_receiver_progress_missing_count",
+            "sender_receiver_progress_seen_all",
+            "sender_final_done_ack_deadline_ms",
+            "sender_final_done_ack_deadline_started_ms",
+            "sender_final_done_ack_deadline_start_reason",
+            "sender_finalization_phase",
+            "sender_finalization_phase_failure_reason",
+            "receiver_progress_deadline_exceeded",
+            "final_ack_deadline_exceeded_after_progress",
             "production_final_ack_deadline_ms",
             "production_final_ack_deadline_source",
             "production_final_ack_deadline_exceeded",
