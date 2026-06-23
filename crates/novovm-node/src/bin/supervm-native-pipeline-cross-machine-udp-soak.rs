@@ -1475,6 +1475,31 @@ fn novorudp_sender_timeout_decision_v1(
     NovoRudpSenderTimeoutDecisionV1::Continue
 }
 
+fn full_async_sender_ack_finalization_fail_reason_v1(
+    full_async_runtime_engine: bool,
+    primary_ack_drain_enabled: bool,
+    latest_ack_missing_count: Option<u64>,
+    latest_ack_receiver_done: bool,
+    sender_completed: bool,
+    sender_repair_no_progress_timeout_reached: bool,
+    sender_hard_timeout_reached: bool,
+) -> Option<&'static str> {
+    if !full_async_runtime_engine {
+        return None;
+    }
+    if !primary_ack_drain_enabled {
+        return Some("sender_ack_drain_not_integrated");
+    }
+    if sender_completed
+        && latest_ack_missing_count.is_none()
+        && !latest_ack_receiver_done
+        && (sender_repair_no_progress_timeout_reached || sender_hard_timeout_reached)
+    {
+        return Some("full_async_ack_backchannel_not_received");
+    }
+    None
+}
+
 #[cfg(test)]
 fn merge_tail_gap_into_repair_ranges(
     selected_ranges: &[MissingRangeV1],
@@ -5989,6 +6014,179 @@ mod novorudp_tests {
                 report["tail_repair"]["tail_repair_ack_received_count"].as_u64(),
                 Some(0)
             );
+        });
+    }
+
+    #[test]
+    fn full_async_sender_fails_with_ack_backchannel_reason_not_repair_timeout_when_ack_null() {
+        with_env_var("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE", Some("1"), || {
+            with_env_var(
+                "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
+                Some("5"),
+                || {
+                    with_env_var(
+                        "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS",
+                        Some("1"),
+                        || {
+                            with_sender_hard_timeout_env(160, || {
+                                let chain_id = 92_003;
+                                let tx_count = 4;
+                                let sender_addr = reserve_udp_addr().expect("sender addr");
+                                let receiver_addr = reserve_udp_addr().expect("receiver addr");
+                                let ack_bind_addr = reserve_udp_addr().expect("ack bind addr");
+
+                                let report = run_sender(
+                                    chain_id,
+                                    tx_count,
+                                    1,
+                                    2,
+                                    sender_addr.as_str(),
+                                    receiver_addr.as_str(),
+                                    FaultConfigV1 {
+                                        enabled: false,
+                                        loss_bps: 0,
+                                        duplicate_bps: 0,
+                                        delay_ms: 0,
+                                        reorder_bps: 0,
+                                        seed: 0,
+                                    },
+                                    sender_timeout_sustained_config(tx_count),
+                                    sender_timeout_tail_repair_config(),
+                                    default_udp_send_retry_config(),
+                                    UdpAckConfigV1 {
+                                        enabled: true,
+                                        bind_addr: ack_bind_addr.clone(),
+                                        target_addr: None,
+                                        recv_timeout_ms: 0,
+                                    },
+                                    sender_timeout_novorudp_config(),
+                                )
+                                .expect("sender must return a full async ACK fail report");
+
+                                assert_eq!(report["accepted"].as_bool(), Some(false));
+                                assert_eq!(
+                                    report["fail_reason"].as_str(),
+                                    Some("full_async_ack_backchannel_not_received")
+                                );
+                                assert_eq!(
+                                    report["sender_ack_plane_mode"].as_str(),
+                                    Some("aggressive_nonblocking_ack_drain")
+                                );
+                                assert_eq!(
+                                    report["sender_ack_final_sample_is_null"].as_bool(),
+                                    Some(true)
+                                );
+                                assert_eq!(
+                                    report["full_async_sender_ack_drain_integrated"].as_bool(),
+                                    Some(true)
+                                );
+                                assert_eq!(
+                                    report["sender_finalization_reason"].as_str(),
+                                    Some("full_async_ack_backchannel_not_received")
+                                );
+                                assert_eq!(
+                                    report["sender_ack_socket_bound_addr"].as_str(),
+                                    Some(ack_bind_addr.as_str())
+                                );
+                            });
+                        },
+                    )
+                },
+            )
+        });
+    }
+
+    #[test]
+    fn full_async_sender_ack_plane_receives_receiver_done_ack() {
+        with_env_var("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE", Some("1"), || {
+            with_env_var(
+                "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
+                Some("1000"),
+                || {
+                    with_env_var(
+                        "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS",
+                        Some("1"),
+                        || {
+                            with_sender_hard_timeout_env(500, || {
+                                let chain_id = 92_004;
+                                let tx_count = 4;
+                                let sender_addr = reserve_udp_addr().expect("sender addr");
+                                let receiver_addr = reserve_udp_addr().expect("receiver addr");
+                                let ack_bind_addr = reserve_udp_addr().expect("ack bind addr");
+                                let ack_target_addr = ack_bind_addr.clone();
+                                let ack_thread = std::thread::spawn(move || {
+                                    std::thread::sleep(Duration::from_millis(20));
+                                    let socket = UdpSocket::bind("127.0.0.1:0")
+                                        .expect("receiver done ack sender socket");
+                                    let ack = receiver_ack_report_value(tx_count, tx_count, 64, 99);
+                                    let _ =
+                                        socket.send_to(ack.to_string().as_bytes(), ack_target_addr);
+                                });
+
+                                let report = run_sender(
+                                    chain_id,
+                                    tx_count,
+                                    1,
+                                    2,
+                                    sender_addr.as_str(),
+                                    receiver_addr.as_str(),
+                                    FaultConfigV1 {
+                                        enabled: false,
+                                        loss_bps: 0,
+                                        duplicate_bps: 0,
+                                        delay_ms: 0,
+                                        reorder_bps: 0,
+                                        seed: 0,
+                                    },
+                                    sender_timeout_sustained_config(tx_count),
+                                    sender_timeout_tail_repair_config(),
+                                    default_udp_send_retry_config(),
+                                    UdpAckConfigV1 {
+                                        enabled: true,
+                                        bind_addr: ack_bind_addr,
+                                        target_addr: None,
+                                        recv_timeout_ms: 0,
+                                    },
+                                    sender_timeout_novorudp_config(),
+                                )
+                                .expect("sender must accept receiver_done ack");
+                                let _ = ack_thread.join();
+
+                                assert_eq!(report["accepted"].as_bool(), Some(true));
+                                assert_eq!(report["fail_reason"], Value::Null);
+                                assert_eq!(
+                                    report["tail_repair"]["tail_repair_completion_reason"].as_str(),
+                                    Some("receiver_done_ack")
+                                );
+                                assert_eq!(
+                                    report["tail_repair"]["latest_ack_missing_count"].as_u64(),
+                                    Some(0)
+                                );
+                                assert_eq!(
+                                    report["tail_repair"]["latest_ack_receiver_done"].as_bool(),
+                                    Some(true)
+                                );
+                                assert_eq!(
+                                    report["sender_ack_final_sample_source"].as_str(),
+                                    Some("ack_plane_receiver_done")
+                                );
+                                assert_eq!(
+                                    report["sender_ack_final_sample_is_null"].as_bool(),
+                                    Some(false)
+                                );
+                                assert_eq!(
+                                    report["sender_ack_receiver_done_seen"].as_bool(),
+                                    Some(true)
+                                );
+                                assert_eq!(
+                                    report["sender_ack_receiver_done_epoch"].as_u64(),
+                                    Some(99)
+                                );
+                            });
+                        },
+                    )
+                },
+            )
         });
     }
 }
@@ -12219,6 +12417,7 @@ fn run_sender(
     let mut primary_ack_received_count = 0u64;
     let mut primary_ack_drain_empty_count = 0u64;
     let mut primary_ack_last_consumed_elapsed_ms = 0u64;
+    let mut sender_ack_recv_attempt_count = 0u64;
     let mut sender_live_report_write_count = 0u64;
     let mut sender_live_report_last_elapsed_ms = 0u64;
     let mut last_sender_live_report_at = Instant::now();
@@ -12296,6 +12495,7 @@ fn run_sender(
             if primary_ack_drain_enabled {
                 if let Some(socket) = ack_socket.as_ref() {
                     primary_ack_drain_count = primary_ack_drain_count.saturating_add(1);
+                    sender_ack_recv_attempt_count = sender_ack_recv_attempt_count.saturating_add(1);
                     let state = drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, 0);
                     if state.received_count > 0 {
                         primary_ack_received_count =
@@ -12497,6 +12697,7 @@ fn run_sender(
                 } else {
                     udp_ack.recv_timeout_ms
                 };
+                sender_ack_recv_attempt_count = sender_ack_recv_attempt_count.saturating_add(1);
                 drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, ack_drain_wait_ms)
             });
             let ack_epoch_before = udp_ack_state
@@ -12521,6 +12722,8 @@ fn run_sender(
                     tail_repair_latest_ack_epoch =
                         tail_repair_latest_ack_epoch.max(state.latest_epoch);
                     latest_ack_received_at = Some(Instant::now());
+                    primary_ack_last_consumed_elapsed_ms =
+                        sender_started.elapsed().as_millis() as u64;
                     ack_epoch_at_repair_start = Some(state.latest_epoch);
                     ack_highest_sequence_seen_at_repair_start = state.highest_sequence_seen;
                     if novorudp.enabled
@@ -12946,6 +13149,7 @@ fn run_sender(
                 udp_ack.recv_timeout_ms
             };
             let ack_after = ack_socket.as_ref().map(|socket| {
+                sender_ack_recv_attempt_count = sender_ack_recv_attempt_count.saturating_add(1);
                 drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, ack_wait_ms)
             });
             let mut missing_count_after = latest_ack_missing_count.unwrap_or(final_missing_count);
@@ -12961,6 +13165,8 @@ fn run_sender(
                     tail_repair_latest_ack_epoch =
                         tail_repair_latest_ack_epoch.max(state.latest_epoch);
                     latest_ack_received_at = Some(Instant::now());
+                    primary_ack_last_consumed_elapsed_ms =
+                        sender_started.elapsed().as_millis() as u64;
                     latest_ack_missing_count = Some(state.latest_missing_count);
                     latest_ack_missing_ranges_sample = state.latest_ranges.clone();
                     latest_ack_missing_ranges_full_count = Some(state.missing_ranges_full_count);
@@ -13128,7 +13334,7 @@ fn run_sender(
     let sender_completed = stats.sent_unique == tx_count && stats.send_failed_count == 0;
     if tail_repair.enabled
         && sender_completed
-        && !sender_hard_timeout_reached
+        && (!sender_hard_timeout_reached || full_async_runtime_engine)
         && !(latest_ack_receiver_done && latest_ack_missing_count == Some(0))
         && final_ack_wait_ms > 0
     {
@@ -13146,8 +13352,13 @@ fn run_sender(
             let state = drain_udp_ack_socket(
                 socket,
                 tail_repair.missing_sample_limit,
-                udp_ack.recv_timeout_ms,
+                if ack_plane_aggressive_drain {
+                    0
+                } else {
+                    udp_ack.recv_timeout_ms
+                },
             );
+            sender_ack_recv_attempt_count = sender_ack_recv_attempt_count.saturating_add(1);
             final_ack_wait_elapsed_ms = started.elapsed().as_millis() as u64;
             if state.received_count == 0 {
                 continue;
@@ -13158,6 +13369,7 @@ fn run_sender(
                 tail_repair_udp_ack_received_count.saturating_add(state.received_count);
             tail_repair_latest_ack_epoch = tail_repair_latest_ack_epoch.max(state.latest_epoch);
             latest_ack_received_at = Some(Instant::now());
+            primary_ack_last_consumed_elapsed_ms = sender_started.elapsed().as_millis() as u64;
             latest_ack_missing_count = Some(state.latest_missing_count);
             latest_ack_missing_ranges_sample = state.latest_ranges.clone();
             latest_ack_missing_ranges_full_count = Some(state.missing_ranges_full_count);
@@ -13280,8 +13492,19 @@ fn run_sender(
             .unwrap_or_else(|| latest_ack_missing_count.unwrap_or_default())
     };
     let accepted = sender_completed && tail_repair_success;
+    let full_async_ack_fail_reason = full_async_sender_ack_finalization_fail_reason_v1(
+        full_async_runtime_engine,
+        primary_ack_drain_enabled,
+        latest_ack_missing_count,
+        latest_ack_receiver_done,
+        sender_completed,
+        sender_repair_no_progress_timeout_reached,
+        sender_hard_timeout_reached,
+    );
     let fail_reason = if accepted {
         None
+    } else if let Some(reason) = full_async_ack_fail_reason {
+        Some(reason)
     } else if sender_repair_no_progress_timeout_reached {
         Some("sender_repair_no_progress_timeout")
     } else if absolute_sender_timeout_reached {
@@ -13302,6 +13525,22 @@ fn run_sender(
     } else {
         Some("receiver_repair_incomplete")
     };
+    let sender_ack_final_sample_is_null =
+        latest_ack_missing_count.is_none() && !latest_ack_receiver_done;
+    let sender_ack_final_sample_source = if latest_ack_receiver_done {
+        "ack_plane_receiver_done"
+    } else if latest_ack_missing_count.is_some() {
+        "ack_plane_latest_sample"
+    } else {
+        "ack_plane_null_sample"
+    };
+    let sender_finalization_reason = if accepted {
+        tail_repair_completion_reason
+    } else {
+        fail_reason.unwrap_or("receiver_repair_incomplete")
+    };
+    let sender_finalization_last_ack_age_ms =
+        latest_ack_received_at.map(|received_at| received_at.elapsed().as_millis() as u64);
     if accepted && sender_exit_reason == "not_finished" {
         sender_exit_reason = "accepted".to_string();
     } else if !accepted && sender_exit_reason == "not_finished" {
@@ -13353,9 +13592,27 @@ fn run_sender(
         "extend_repair_deadline_on_ack_progress": extend_repair_deadline_on_ack_progress,
         "primary_send_ack_drain_enabled": primary_ack_drain_enabled,
         "ack_plane_aggressive_drain": ack_plane_aggressive_drain,
+        "sender_ack_plane_enabled": udp_ack.enabled,
+        "sender_ack_plane_mode": if full_async_runtime_engine { "aggressive_nonblocking_ack_drain" } else { "interval_ack_drain" },
+        "sender_ack_socket_bound_addr": ack_socket_addr,
+        "sender_ack_recv_attempt_count": sender_ack_recv_attempt_count,
+        "sender_ack_recv_success_count": tail_repair_udp_ack_received_count,
+        "sender_ack_recv_error_count": 0u64,
+        "sender_ack_last_recv_ms": if primary_ack_last_consumed_elapsed_ms > 0 { Some(primary_ack_last_consumed_elapsed_ms) } else { None },
+        "sender_ack_last_decode_error": Value::Null,
+        "sender_ack_receiver_done_seen": latest_ack_receiver_done,
+        "sender_ack_receiver_done_epoch": if latest_ack_receiver_done { Some(tail_repair_latest_ack_epoch) } else { None },
+        "sender_ack_final_sample_source": sender_ack_final_sample_source,
+        "sender_ack_final_sample_is_null": sender_ack_final_sample_is_null,
+        "sender_finalization_waiting_for_receiver_done": !latest_ack_receiver_done,
+        "sender_finalization_last_ack_age_ms": sender_finalization_last_ack_age_ms,
+        "sender_finalization_reason": sender_finalization_reason,
+        "full_async_sender_ack_drain_integrated": full_async_runtime_engine && primary_ack_drain_enabled,
+        "full_async_sender_finalization_ack_source": if full_async_runtime_engine { sender_ack_final_sample_source } else { "legacy_sender_ack_sample" },
         "primary_send_ack_drain_interval_ms": primary_ack_drain_interval_ms,
         "primary_send_ack_drain_count": primary_ack_drain_count,
         "primary_send_ack_received_count": primary_ack_received_count,
+        "primary_ack_received_count": primary_ack_received_count,
         "primary_send_ack_drain_empty_count": primary_ack_drain_empty_count,
         "primary_send_ack_last_consumed_elapsed_ms": primary_ack_last_consumed_elapsed_ms,
         "sender_live_report_path": sender_progress_path.to_string_lossy(),
