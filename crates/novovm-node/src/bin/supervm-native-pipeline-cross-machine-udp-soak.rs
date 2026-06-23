@@ -1587,6 +1587,43 @@ fn missing_ranges_subtract(
     normalize_missing_ranges(out.as_slice(), expected)
 }
 
+fn suppress_repair_ranges_for_missing_snapshot_v1(
+    selected_ranges: &[MissingRangeV1],
+    latest_missing_ranges: &[MissingRangeV1],
+    expected: u64,
+    active_missing_snapshot: &mut Vec<MissingRangeV1>,
+    sent_ranges_for_snapshot: &mut Vec<MissingRangeV1>,
+) -> (Vec<MissingRangeV1>, u64) {
+    let latest_missing = normalize_missing_ranges(latest_missing_ranges, expected);
+    if latest_missing.is_empty() {
+        active_missing_snapshot.clear();
+        sent_ranges_for_snapshot.clear();
+        return (Vec::new(), missing_ranges_count(selected_ranges));
+    }
+    if *active_missing_snapshot != latest_missing {
+        *active_missing_snapshot = latest_missing.clone();
+        sent_ranges_for_snapshot.clear();
+    }
+    let selected = missing_ranges_intersection_many(
+        normalize_missing_ranges(selected_ranges, expected).as_slice(),
+        latest_missing.as_slice(),
+    );
+    let suppressed_duplicate_sequence_count =
+        missing_ranges_overlap_count(selected.as_slice(), sent_ranges_for_snapshot.as_slice());
+    let filtered = missing_ranges_subtract(
+        selected.as_slice(),
+        sent_ranges_for_snapshot.as_slice(),
+        expected,
+    );
+    if !filtered.is_empty() {
+        sent_ranges_for_snapshot.extend(filtered.iter().copied());
+        *sent_ranges_for_snapshot =
+            normalize_missing_ranges(sent_ranges_for_snapshot.as_slice(), expected);
+    }
+    (filtered, suppressed_duplicate_sequence_count)
+}
+
+#[cfg(test)]
 fn suppress_repair_ranges_for_ack_epoch_v1(
     selected_ranges: &[MissingRangeV1],
     expected: u64,
@@ -5503,6 +5540,66 @@ mod novorudp_tests {
 
         assert_eq!(suppressed, 0);
         assert_eq!(filtered, missing);
+    }
+
+    #[test]
+    fn full_async_repair_suppresses_same_missing_snapshot_across_ack_epochs() {
+        let mut active_snapshot = Vec::<MissingRangeV1>::new();
+        let mut sent_ranges = Vec::<MissingRangeV1>::new();
+        let missing = vec![MissingRangeV1 {
+            start: 300,
+            end_inclusive: 363,
+        }];
+        let (first, first_suppressed) = suppress_repair_ranges_for_missing_snapshot_v1(
+            missing.as_slice(),
+            missing.as_slice(),
+            1_000,
+            &mut active_snapshot,
+            &mut sent_ranges,
+        );
+        let (second, second_suppressed) = suppress_repair_ranges_for_missing_snapshot_v1(
+            missing.as_slice(),
+            missing.as_slice(),
+            1_000,
+            &mut active_snapshot,
+            &mut sent_ranges,
+        );
+
+        assert_eq!(first, missing);
+        assert_eq!(first_suppressed, 0);
+        assert!(second.is_empty());
+        assert_eq!(second_suppressed, 64);
+    }
+
+    #[test]
+    fn full_async_repair_snapshot_change_allows_remaining_latest_missing() {
+        let mut active_snapshot = Vec::<MissingRangeV1>::new();
+        let mut sent_ranges = Vec::<MissingRangeV1>::new();
+        let first_missing = vec![MissingRangeV1 {
+            start: 300,
+            end_inclusive: 363,
+        }];
+        let _ = suppress_repair_ranges_for_missing_snapshot_v1(
+            first_missing.as_slice(),
+            first_missing.as_slice(),
+            1_000,
+            &mut active_snapshot,
+            &mut sent_ranges,
+        );
+        let next_missing = vec![MissingRangeV1 {
+            start: 340,
+            end_inclusive: 363,
+        }];
+        let (filtered, suppressed) = suppress_repair_ranges_for_missing_snapshot_v1(
+            next_missing.as_slice(),
+            next_missing.as_slice(),
+            1_000,
+            &mut active_snapshot,
+            &mut sent_ranges,
+        );
+
+        assert_eq!(suppressed, 0);
+        assert_eq!(filtered, next_missing);
     }
 
     #[test]
@@ -13643,8 +13740,8 @@ fn run_sender(
         && full_async_runtime_engine
         && (bool_env("NOVOVM_NOVORUDP_REPAIR_SUPPRESS_COMPLETED_RANGES")
             || string_env_nonempty("NOVOVM_NOVORUDP_REPAIR_SUPPRESS_COMPLETED_RANGES").is_none());
-    let mut repair_suppression_active_ack_epoch: Option<u64> = None;
-    let mut repair_suppression_sent_ranges_for_epoch = Vec::<MissingRangeV1>::new();
+    let mut repair_suppression_active_missing_snapshot = Vec::<MissingRangeV1>::new();
+    let mut repair_suppression_sent_ranges_for_snapshot = Vec::<MissingRangeV1>::new();
     let mut repair_suppressed_completed_sequence_count = 0u64;
     let mut repair_suppressed_duplicate_sequence_count = 0u64;
     let mut repair_suppressed_not_in_latest_missing_count = 0u64;
@@ -14196,12 +14293,12 @@ fn run_sender(
                 );
                 if repair_suppress_completed_ranges_enabled {
                     let (filtered_ranges, suppressed_duplicate_count) =
-                        suppress_repair_ranges_for_ack_epoch_v1(
+                        suppress_repair_ranges_for_missing_snapshot_v1(
                             selected_ranges.as_slice(),
+                            state.latest_ranges.as_slice(),
                             tx_count,
-                            state.latest_epoch,
-                            &mut repair_suppression_active_ack_epoch,
-                            &mut repair_suppression_sent_ranges_for_epoch,
+                            &mut repair_suppression_active_missing_snapshot,
+                            &mut repair_suppression_sent_ranges_for_snapshot,
                         );
                     repair_suppressed_duplicate_sequence_count =
                         repair_suppressed_duplicate_sequence_count
@@ -14320,12 +14417,12 @@ fn run_sender(
                     missing_ranges_intersection_many(selected_ranges.as_slice(), ranges.as_slice());
                 if repair_suppress_completed_ranges_enabled {
                     let (filtered_ranges, suppressed_duplicate_count) =
-                        suppress_repair_ranges_for_ack_epoch_v1(
+                        suppress_repair_ranges_for_missing_snapshot_v1(
                             selected_ranges.as_slice(),
+                            ranges.as_slice(),
                             tx_count,
-                            tail_repair_latest_ack_epoch,
-                            &mut repair_suppression_active_ack_epoch,
-                            &mut repair_suppression_sent_ranges_for_epoch,
+                            &mut repair_suppression_active_missing_snapshot,
+                            &mut repair_suppression_sent_ranges_for_snapshot,
                         );
                     repair_suppressed_duplicate_sequence_count =
                         repair_suppressed_duplicate_sequence_count
@@ -14482,13 +14579,18 @@ fn run_sender(
                 );
                 let mut gap_ranges_to_send = vec![gap];
                 if repair_suppress_completed_ranges_enabled {
+                    let latest_missing_for_gap = if !latest_ack_missing_ranges_sample.is_empty() {
+                        latest_ack_missing_ranges_sample.as_slice()
+                    } else {
+                        gap_ranges_to_send.as_slice()
+                    };
                     let (filtered_ranges, suppressed_duplicate_count) =
-                        suppress_repair_ranges_for_ack_epoch_v1(
+                        suppress_repair_ranges_for_missing_snapshot_v1(
                             gap_ranges_to_send.as_slice(),
+                            latest_missing_for_gap,
                             tx_count,
-                            tail_repair_latest_ack_epoch,
-                            &mut repair_suppression_active_ack_epoch,
-                            &mut repair_suppression_sent_ranges_for_epoch,
+                            &mut repair_suppression_active_missing_snapshot,
+                            &mut repair_suppression_sent_ranges_for_snapshot,
                         );
                     repair_suppressed_duplicate_sequence_count =
                         repair_suppressed_duplicate_sequence_count
@@ -15175,6 +15277,20 @@ fn run_sender(
                 / latest_missing_count
         }
     };
+    let repair_pump_latest_missing_coverage_ratio_bps =
+        repair_pump_latest_missing_coverage_ratio_x1000.saturating_mul(10);
+    let repair_over_repair_ratio_bps = if repair_pump_sent_sequence_count == 0 {
+        0
+    } else {
+        repair_pump_sent_duplicate_sequence_count.saturating_mul(10_000)
+            / repair_pump_sent_sequence_count
+    };
+    let repair_selected_unique_sequence_count = missing_ranges_count(
+        normalize_missing_ranges(repair_sequence_sent_ranges.as_slice(), tx_count).as_slice(),
+    );
+    let repair_selected_duplicate_sequence_count =
+        repair_sequence_sent_count.saturating_sub(repair_selected_unique_sequence_count);
+    let repair_suppress_did_not_create_coverage_gap = repair_coverage_gap_count == 0;
     if accepted && sender_exit_reason == "not_finished" {
         sender_exit_reason = "accepted".to_string();
     } else if !accepted && sender_exit_reason == "not_finished" {
@@ -15270,6 +15386,7 @@ fn run_sender(
         "full_async_sender_ack_drain_integrated": full_async_runtime_engine && primary_ack_drain_enabled,
         "full_async_sender_finalization_ack_source": if full_async_runtime_engine { sender_ack_final_sample_source } else { "legacy_sender_ack_sample" },
         "repair_suppress_completed_ranges_enabled": repair_suppress_completed_ranges_enabled,
+        "full_async_repair_completed_range_suppress_enabled": repair_suppress_completed_ranges_enabled,
         "full_async_repair_snapshot_scheduler_enabled": full_async_repair_snapshot_scheduler_enabled,
         "repair_snapshot_source": repair_snapshot_source,
         "repair_snapshot_epoch": repair_snapshot_epoch,
@@ -15375,6 +15492,7 @@ fn run_sender(
             "moving_window_last_range": missing_ranges_to_json(moving_window_last_range.as_slice(), 1),
             "moving_window_last_ack_epoch": moving_window_last_ack_epoch,
             "repair_suppress_completed_ranges_enabled": repair_suppress_completed_ranges_enabled,
+            "full_async_repair_completed_range_suppress_enabled": repair_suppress_completed_ranges_enabled,
             "full_async_repair_snapshot_scheduler_enabled": full_async_repair_snapshot_scheduler_enabled,
             "repair_snapshot_source": repair_snapshot_source,
             "repair_snapshot_epoch": repair_snapshot_epoch,
@@ -15390,16 +15508,22 @@ fn run_sender(
             "repair_pump_selected_sequence_count": repair_pump_selected_sequence_count,
             "repair_pump_suppressed_sequence_count": repair_pump_suppressed_sequence_count,
             "repair_pump_sent_sequence_count": repair_pump_sent_sequence_count,
-            "repair_pump_sent_unique_sequence_count": repair_pump_sent_unique_sequence_count,
-            "repair_pump_sent_duplicate_sequence_count": repair_pump_sent_duplicate_sequence_count,
-            "repair_pump_latest_missing_coverage_ratio_x1000": repair_pump_latest_missing_coverage_ratio_x1000,
-            "repair_pump_selected_empty_count": repair_pump_selected_empty_count,
-            "repair_selection_empty_reason": repair_selection_empty_reason,
-            "repair_suppressed_completed_sequence_count": repair_suppressed_completed_sequence_count,
-            "repair_suppressed_duplicate_sequence_count": repair_suppressed_duplicate_sequence_count,
-            "repair_suppressed_not_in_latest_missing_count": repair_suppressed_not_in_latest_missing_count,
-            "repair_selected_latest_missing_sequence_count": repair_selected_latest_missing_sequence_count,
-            "repair_pump_stopped_after_receiver_done": repair_pump_stopped_after_receiver_done,
+        "repair_pump_sent_unique_sequence_count": repair_pump_sent_unique_sequence_count,
+        "repair_pump_sent_duplicate_sequence_count": repair_pump_sent_duplicate_sequence_count,
+        "repair_pump_latest_missing_coverage_ratio_x1000": repair_pump_latest_missing_coverage_ratio_x1000,
+        "repair_pump_latest_missing_coverage_ratio_bps": repair_pump_latest_missing_coverage_ratio_bps,
+        "repair_over_repair_ratio_bps": repair_over_repair_ratio_bps,
+        "repair_latest_missing_coverage_ratio_bps": repair_pump_latest_missing_coverage_ratio_bps,
+        "repair_pump_selected_empty_count": repair_pump_selected_empty_count,
+        "repair_selection_empty_reason": repair_selection_empty_reason,
+        "repair_suppressed_completed_sequence_count": repair_suppressed_completed_sequence_count,
+        "repair_suppressed_duplicate_sequence_count": repair_suppressed_duplicate_sequence_count,
+        "repair_suppressed_not_in_latest_missing_count": repair_suppressed_not_in_latest_missing_count,
+        "repair_selected_latest_missing_sequence_count": repair_selected_latest_missing_sequence_count,
+        "repair_selected_unique_sequence_count": repair_selected_unique_sequence_count,
+        "repair_selected_duplicate_sequence_count": repair_selected_duplicate_sequence_count,
+        "repair_suppress_did_not_create_coverage_gap": repair_suppress_did_not_create_coverage_gap,
+        "repair_pump_stopped_after_receiver_done": repair_pump_stopped_after_receiver_done,
             "repair_pump_stop_reason": repair_pump_stop_reason,
             "latest_ack_missing_range_min": latest_ack_missing_range_min,
             "latest_ack_missing_range_max": latest_ack_missing_range_max,
@@ -15542,12 +15666,18 @@ fn run_sender(
             "repair_pump_sent_unique_sequence_count": repair_pump_sent_unique_sequence_count,
             "repair_pump_sent_duplicate_sequence_count": repair_pump_sent_duplicate_sequence_count,
             "repair_pump_latest_missing_coverage_ratio_x1000": repair_pump_latest_missing_coverage_ratio_x1000,
+            "repair_pump_latest_missing_coverage_ratio_bps": repair_pump_latest_missing_coverage_ratio_bps,
+            "repair_over_repair_ratio_bps": repair_over_repair_ratio_bps,
+            "repair_latest_missing_coverage_ratio_bps": repair_pump_latest_missing_coverage_ratio_bps,
             "repair_pump_selected_empty_count": repair_pump_selected_empty_count,
             "repair_selection_empty_reason": repair_selection_empty_reason,
             "repair_suppressed_completed_sequence_count": repair_suppressed_completed_sequence_count,
             "repair_suppressed_duplicate_sequence_count": repair_suppressed_duplicate_sequence_count,
             "repair_suppressed_not_in_latest_missing_count": repair_suppressed_not_in_latest_missing_count,
             "repair_selected_latest_missing_sequence_count": repair_selected_latest_missing_sequence_count,
+            "repair_selected_unique_sequence_count": repair_selected_unique_sequence_count,
+            "repair_selected_duplicate_sequence_count": repair_selected_duplicate_sequence_count,
+            "repair_suppress_did_not_create_coverage_gap": repair_suppress_did_not_create_coverage_gap,
             "repair_pump_stopped_after_receiver_done": repair_pump_stopped_after_receiver_done,
             "repair_pump_stop_reason": repair_pump_stop_reason,
             "latest_ack_missing_range_min": latest_ack_missing_range_min,
