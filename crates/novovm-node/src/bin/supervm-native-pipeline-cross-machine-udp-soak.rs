@@ -37,8 +37,11 @@ const NOV_NATIVE_LEGACY_HOST_TRANSITIONAL_FALLBACK_ENV: &str =
     "NOVOVM_LEGACY_HOST_TRANSITIONAL_FALLBACK";
 const HOST_RECOVERY_STORE_MODE_MEMORY_V1: &str = "memory";
 const HOST_RECOVERY_STORE_BACKEND_JSON_V1: &str = "json";
-const HOST_RECOVERY_STORE_ROLE_V1: &str = "transport_replay_diagnostics_only";
-const AOEM_PRODUCTION_PERSISTENCE_OWNER_V1: &str = "aoem_runtime";
+const NETWORK_RECOVERY_CHECKPOINT_ROLE_DIAGNOSTICS_ONLY_V1: &str = "diagnostics_only";
+const NETWORK_RECOVERY_CHECKPOINT_SIGNOFF_SCOPE_V1: &str = "transport_recovery_only";
+const NETWORK_TRANSPORT_COMPLETION_SOURCE_V1: &str = "novorudp_receiver_done_ack";
+const TRANSACTION_FINALITY_SOURCE_AOEM_PROOF_V1: &str = "aoem_proof";
+const AOEM_EXECUTION_PERSISTENCE_OWNER_V1: &str = "aoem_runtime";
 const RECEIVER_CHILD_AOEM_OWNERSHIP_ENVS_V1: &[&str] = &[
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV,
@@ -1090,16 +1093,19 @@ fn host_recovery_store_boundary_json_v1(store_path: &Path) -> Value {
     let mode = host_recovery_store_mode_v1();
     let backend = host_recovery_store_backend_v1();
     serde_json::json!({
-        "aoem_production_persistence_owner": AOEM_PRODUCTION_PERSISTENCE_OWNER_V1,
-        "aoem_production_persistence_is_truth": true,
-        "aoem_production_state_surface_owner": "aoem_runtime_state_surface",
-        "host_recovery_store_owner": "novovm_host",
-        "host_recovery_store_role": HOST_RECOVERY_STORE_ROLE_V1,
-        "host_recovery_store_is_production_truth": false,
-        "host_recovery_store_mode": mode,
-        "host_recovery_store_backend": backend,
-        "host_recovery_store_enabled": host_recovery_store_enabled_v1(),
-        "host_recovery_store_path": store_path.display().to_string(),
+        "network_recovery_checkpoint_owner": "novovm_host",
+        "network_recovery_checkpoint_enabled": host_recovery_store_enabled_v1(),
+        "network_recovery_checkpoint_mode": mode,
+        "network_recovery_checkpoint_backend": backend,
+        "network_recovery_checkpoint_role": NETWORK_RECOVERY_CHECKPOINT_ROLE_DIAGNOSTICS_ONLY_V1,
+        "network_recovery_checkpoint_is_transaction_truth": false,
+        "network_recovery_checkpoint_signoff_scope": NETWORK_RECOVERY_CHECKPOINT_SIGNOFF_SCOPE_V1,
+        "network_recovery_checkpoint_path": store_path.display().to_string(),
+        "network_transport_completion_source": NETWORK_TRANSPORT_COMPLETION_SOURCE_V1,
+        "transaction_finality_source": TRANSACTION_FINALITY_SOURCE_AOEM_PROOF_V1,
+        "aoem_execution_persistence_owner": AOEM_EXECUTION_PERSISTENCE_OWNER_V1,
+        "aoem_execution_persistence_is_truth": true,
+        "aoem_state_surface_owner": "aoem_runtime_state_surface",
     })
 }
 
@@ -1109,25 +1115,32 @@ fn annotate_host_recovery_store_boundary_v1(value: &mut Value, store_path: &Path
         for (key, item) in source {
             target.insert(key.clone(), item.clone());
         }
-        target.insert("host_recovery_store_boundary".to_string(), boundary);
+        target.insert("network_recovery_checkpoint_boundary".to_string(), boundary);
     }
 }
 
 fn host_recovery_store_probe_v1(store_path: &Path) -> Value {
     serde_json::json!({
-        "method": "nov_getHostRecoveryStoreProbe",
-        "host_recovery_store_opened": false,
-        "host_recovery_store_probe_skipped": true,
-        "host_recovery_store_probe_skipped_reason": "host_recovery_store_is_memory_first",
-        "host_recovery_store_mode": HOST_RECOVERY_STORE_MODE_MEMORY_V1,
-        "host_recovery_store_is_production_truth": false,
-        "host_recovery_store_path": store_path.display().to_string(),
-        "aoem_production_persistence_owner": AOEM_PRODUCTION_PERSISTENCE_OWNER_V1,
-        "host_recovery_store_total_estimated_memory_bytes": 0u64,
-        "host_recovery_store_cache_estimated_bytes": 0u64,
-        "host_recovery_store_memtable_estimated_bytes": 0u64,
-        "host_recovery_store_index_filter_estimated_bytes": 0u64,
-        "host_recovery_store_probe_supported": false,
+        "method": "nov_getNetworkRecoveryCheckpointProbe",
+        "network_recovery_checkpoint_opened": false,
+        "network_recovery_checkpoint_probe_skipped": true,
+        "network_recovery_checkpoint_probe_skipped_reason": "network_recovery_checkpoint_is_memory_first",
+        "network_recovery_checkpoint_enabled": host_recovery_store_enabled_v1(),
+        "network_recovery_checkpoint_mode": HOST_RECOVERY_STORE_MODE_MEMORY_V1,
+        "network_recovery_checkpoint_backend": HOST_RECOVERY_STORE_BACKEND_JSON_V1,
+        "network_recovery_checkpoint_role": NETWORK_RECOVERY_CHECKPOINT_ROLE_DIAGNOSTICS_ONLY_V1,
+        "network_recovery_checkpoint_is_transaction_truth": false,
+        "network_recovery_checkpoint_signoff_scope": NETWORK_RECOVERY_CHECKPOINT_SIGNOFF_SCOPE_V1,
+        "network_recovery_checkpoint_path": store_path.display().to_string(),
+        "network_transport_completion_source": NETWORK_TRANSPORT_COMPLETION_SOURCE_V1,
+        "transaction_finality_source": TRANSACTION_FINALITY_SOURCE_AOEM_PROOF_V1,
+        "aoem_execution_persistence_owner": AOEM_EXECUTION_PERSISTENCE_OWNER_V1,
+        "aoem_execution_persistence_is_truth": true,
+        "network_recovery_checkpoint_total_estimated_memory_bytes": 0u64,
+        "network_recovery_checkpoint_cache_estimated_bytes": 0u64,
+        "network_recovery_checkpoint_memtable_estimated_bytes": 0u64,
+        "network_recovery_checkpoint_index_filter_estimated_bytes": 0u64,
+        "network_recovery_checkpoint_probe_supported": false,
     })
 }
 
@@ -1194,14 +1207,17 @@ fn host_recovery_store_has_no_rocksdb_mode_gate() {
     let probe = host_recovery_store_probe_v1(Path::new("receiver-store.json"));
     assert_eq!(mode, HOST_RECOVERY_STORE_MODE_MEMORY_V1);
     assert_eq!(host_recovery_store_backend_v1(), "json");
-    assert_eq!(probe["host_recovery_store_opened"].as_bool(), Some(false));
     assert_eq!(
-        probe["host_recovery_store_probe_skipped"].as_bool(),
+        probe["network_recovery_checkpoint_opened"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        probe["network_recovery_checkpoint_probe_skipped"].as_bool(),
         Some(true)
     );
     assert_eq!(
-        probe["host_recovery_store_probe_skipped_reason"].as_str(),
-        Some("host_recovery_store_is_memory_first")
+        probe["network_recovery_checkpoint_probe_skipped_reason"].as_str(),
+        Some("network_recovery_checkpoint_is_memory_first")
     );
 
     restore_env_var_v1(
@@ -1217,23 +1233,27 @@ fn host_recovery_store_boundary_marks_host_truth_false_and_aoem_truth_true() {
 
     let boundary = host_recovery_store_boundary_json_v1(Path::new("receiver-store.json"));
     assert_eq!(
-        boundary["aoem_production_persistence_owner"].as_str(),
-        Some(AOEM_PRODUCTION_PERSISTENCE_OWNER_V1)
+        boundary["aoem_execution_persistence_owner"].as_str(),
+        Some(AOEM_EXECUTION_PERSISTENCE_OWNER_V1)
     );
     assert_eq!(
-        boundary["aoem_production_persistence_is_truth"].as_bool(),
+        boundary["aoem_execution_persistence_is_truth"].as_bool(),
         Some(true)
     );
     assert_eq!(
-        boundary["host_recovery_store_role"].as_str(),
-        Some(HOST_RECOVERY_STORE_ROLE_V1)
+        boundary["transaction_finality_source"].as_str(),
+        Some(TRANSACTION_FINALITY_SOURCE_AOEM_PROOF_V1)
     );
     assert_eq!(
-        boundary["host_recovery_store_is_production_truth"].as_bool(),
+        boundary["network_recovery_checkpoint_role"].as_str(),
+        Some(NETWORK_RECOVERY_CHECKPOINT_ROLE_DIAGNOSTICS_ONLY_V1)
+    );
+    assert_eq!(
+        boundary["network_recovery_checkpoint_is_transaction_truth"].as_bool(),
         Some(false)
     );
     assert_eq!(
-        boundary["host_recovery_store_mode"].as_str(),
+        boundary["network_recovery_checkpoint_mode"].as_str(),
         Some(HOST_RECOVERY_STORE_MODE_MEMORY_V1)
     );
 
@@ -1244,13 +1264,13 @@ fn host_recovery_store_boundary_marks_host_truth_false_and_aoem_truth_true() {
 }
 
 #[test]
-fn host_recovery_store_open_error_is_not_aoem_persistence_failure() {
+fn network_recovery_checkpoint_open_error_is_not_aoem_persistence_failure() {
     let output = nonzero_output_with_stderr_v1(
         b"open host recovery rocksdb failed: receiver-store.json.rocksdb\nFailed to rename CURRENT: access is denied",
     );
     assert_eq!(
         classify_child_exit_failure(&output, None),
-        "host_recovery_store_open_failed"
+        "network_recovery_checkpoint_open_failed"
     );
 }
 
@@ -2993,7 +3013,7 @@ mod novorudp_tests {
     }
 
     #[test]
-    fn receiver_validation_does_not_require_host_recovery_rocksdb_for_memory_first_boundary() {
+    fn network_recovery_checkpoint_memory_does_not_require_rocksdb_probe() {
         with_env_var(
             NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
             Some("1"),
@@ -3001,8 +3021,10 @@ mod novorudp_tests {
                 let tx_count = 480;
                 let summary = receiver_validation_summary_v1(tx_count);
                 let mut probe = receiver_validation_probe_v1(tx_count);
-                probe["host_recovery_store_is_production_truth"] = serde_json::json!(false);
-                probe["rocksdb_probe_allowed"] = serde_json::json!(false);
+                probe["network_recovery_checkpoint_mode"] = serde_json::json!("memory");
+                probe["network_recovery_checkpoint_role"] = serde_json::json!("diagnostics_only");
+                probe["network_recovery_checkpoint_is_transaction_truth"] =
+                    serde_json::json!(false);
                 probe["semantic_head_current_recovered"] = serde_json::json!(false);
                 probe["semantic_head_by_height_recovered"] = serde_json::json!(false);
                 probe["receipt_index_recovered"] = serde_json::json!(false);
@@ -3011,8 +3033,12 @@ mod novorudp_tests {
 
                 assert!(violations.is_empty(), "{violations:?}");
                 assert_eq!(
-                    validation["host_recovery_store_signoff_required"].as_bool(),
+                    validation["network_recovery_checkpoint_validation_required"].as_bool(),
                     Some(false)
+                );
+                assert_eq!(
+                    validation["transaction_finality_source"].as_str(),
+                    Some(TRANSACTION_FINALITY_SOURCE_AOEM_PROOF_V1)
                 );
                 assert_eq!(validation["semantic_head_monotonic"].as_bool(), Some(true));
                 assert_eq!(validation["receipt_index_consistent"].as_bool(), Some(true));
@@ -8108,20 +8134,16 @@ fn spawn_receiver_node(
             host_recovery_store_backend,
         ),
         (
-            "NOVOVM_HOST_RECOVERY_STORE_ROLE",
-            HOST_RECOVERY_STORE_ROLE_V1.to_string(),
+            "NOVOVM_NETWORK_RECOVERY_CHECKPOINT_MODE",
+            host_recovery_store_mode_v1(),
         ),
         (
-            "NOVOVM_HOST_RECOVERY_STORE_IS_PRODUCTION_TRUTH",
-            "false".to_string(),
+            "NOVOVM_NETWORK_RECOVERY_CHECKPOINT_ROLE",
+            NETWORK_RECOVERY_CHECKPOINT_ROLE_DIAGNOSTICS_ONLY_V1.to_string(),
         ),
         (
-            "NOVOVM_AOEM_PRODUCTION_PERSISTENCE_OWNER",
-            AOEM_PRODUCTION_PERSISTENCE_OWNER_V1.to_string(),
-        ),
-        (
-            "NOVOVM_AOEM_PRODUCTION_PERSISTENCE_IS_TRUTH",
-            "true".to_string(),
+            "NOVOVM_AOEM_EXECUTION_PERSISTENCE_OWNER",
+            AOEM_EXECUTION_PERSISTENCE_OWNER_V1.to_string(),
         ),
         (
             "NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY",
@@ -8394,7 +8416,7 @@ fn run_receiver_node(
                             "aoem_executed_total": 0u64,
                             "queue_pending_last": 0u64,
                             "semantic_ledger_mirror": ledger_stats,
-                            "host_recovery_store_probe": host_recovery_probe,
+                            "network_recovery_checkpoint_probe": host_recovery_probe,
                             "process_memory": memory_sample,
                         })
                     };
@@ -8610,12 +8632,12 @@ fn run_receiver_node(
                 "proof_elapsed_ms": null,
                 "commit_items_total": null,
                 "commit_delta": null,
-                "host_recovery_store_read_elapsed_ms": null,
-                "host_recovery_store_write_elapsed_ms": null,
+                "network_recovery_checkpoint_read_elapsed_ms": null,
+                "network_recovery_checkpoint_write_elapsed_ms": null,
                 "semantic_head_height": stable_progress,
                 "semantic_head_monotonic": true,
                 "semantic_ledger_mirror": ledger_stats,
-                "host_recovery_store_probe": host_recovery_probe,
+                "network_recovery_checkpoint_probe": host_recovery_probe,
                 "process_memory": memory_sample,
                 "queue_pending_last": null,
                 "queue_dropped_total": null,
@@ -9655,17 +9677,17 @@ fn classify_child_exit_failure(output: &Output, parse_error: Option<&anyhow::Err
         && stderr.contains("rocksdb")
         && stderr.contains("lock")
     {
-        return "host_recovery_store_lock_conflict".to_string();
+        return "network_recovery_checkpoint_lock_denied".to_string();
     }
     if stderr.contains("open host recovery rocksdb failed") && stderr.contains("lock") {
-        return "host_recovery_store_lock_conflict".to_string();
+        return "network_recovery_checkpoint_lock_denied".to_string();
     }
     if stderr.contains("open host recovery rocksdb failed")
         || (stderr.contains("rocksdb") && stderr.contains("failed to rename"))
         || (stderr.contains("rocksdb") && stderr.contains("access is denied"))
         || (stderr.contains("rocksdb") && stderr.contains("拒绝访问"))
     {
-        return "host_recovery_store_open_failed".to_string();
+        return "network_recovery_checkpoint_open_failed".to_string();
     }
     if !output.status.success() {
         return "child_nonzero_exit".to_string();
@@ -9735,23 +9757,26 @@ fn write_receiver_exit_report(
         "diagnostics_path": diagnostics_path.display().to_string(),
         "final_report_written": final_report_written,
         "diagnostics_report_written": diagnostics_report_written,
-        "aoem_production_persistence_owner": AOEM_PRODUCTION_PERSISTENCE_OWNER_V1,
-        "aoem_production_persistence_is_truth": true,
-        "host_recovery_store_owner": "novovm_host",
-        "host_recovery_store_role": HOST_RECOVERY_STORE_ROLE_V1,
-        "host_recovery_store_is_production_truth": false,
-        "host_recovery_store_mode": last_sample
-            .and_then(|sample| sample.get("host_recovery_store_mode"))
+        "network_recovery_checkpoint_owner": "novovm_host",
+        "network_recovery_checkpoint_mode": last_sample
+            .and_then(|sample| sample.get("network_recovery_checkpoint_mode"))
             .cloned()
             .unwrap_or_else(|| serde_json::json!(host_recovery_store_mode_v1())),
-        "host_recovery_store_backend": last_sample
-            .and_then(|sample| sample.get("host_recovery_store_backend"))
+        "network_recovery_checkpoint_backend": last_sample
+            .and_then(|sample| sample.get("network_recovery_checkpoint_backend"))
             .cloned()
             .unwrap_or_else(|| {
                 serde_json::json!(host_recovery_store_backend_v1())
             }),
-        "host_recovery_store_boundary": last_sample
-            .and_then(|sample| sample.get("host_recovery_store_boundary"))
+        "network_recovery_checkpoint_role": NETWORK_RECOVERY_CHECKPOINT_ROLE_DIAGNOSTICS_ONLY_V1,
+        "network_recovery_checkpoint_is_transaction_truth": false,
+        "network_recovery_checkpoint_signoff_scope": NETWORK_RECOVERY_CHECKPOINT_SIGNOFF_SCOPE_V1,
+        "network_transport_completion_source": NETWORK_TRANSPORT_COMPLETION_SOURCE_V1,
+        "transaction_finality_source": TRANSACTION_FINALITY_SOURCE_AOEM_PROOF_V1,
+        "aoem_execution_persistence_owner": AOEM_EXECUTION_PERSISTENCE_OWNER_V1,
+        "aoem_execution_persistence_is_truth": true,
+        "network_recovery_checkpoint_boundary": last_sample
+            .and_then(|sample| sample.get("network_recovery_checkpoint_boundary"))
             .cloned()
             .unwrap_or_else(|| serde_json::json!({})),
         "stable_progress_total": stable_progress_total,
@@ -12038,20 +12063,20 @@ fn diagnostics_summary_sample(
         .get("bytes")
         .and_then(Value::as_u64)
         .unwrap_or_default();
-    let host_recovery_store_total_estimated_memory_bytes = host_recovery_probe
-        .get("host_recovery_store_total_estimated_memory_bytes")
+    let network_recovery_checkpoint_total_estimated_memory_bytes = host_recovery_probe
+        .get("network_recovery_checkpoint_total_estimated_memory_bytes")
         .and_then(Value::as_u64)
         .unwrap_or_default();
-    let host_recovery_store_cache_estimated_bytes = host_recovery_probe
-        .get("host_recovery_store_cache_estimated_bytes")
+    let network_recovery_checkpoint_cache_estimated_bytes = host_recovery_probe
+        .get("network_recovery_checkpoint_cache_estimated_bytes")
         .and_then(Value::as_u64)
         .unwrap_or_default();
-    let host_recovery_store_memtable_estimated_bytes = host_recovery_probe
-        .get("host_recovery_store_memtable_estimated_bytes")
+    let network_recovery_checkpoint_memtable_estimated_bytes = host_recovery_probe
+        .get("network_recovery_checkpoint_memtable_estimated_bytes")
         .and_then(Value::as_u64)
         .unwrap_or_default();
-    let host_recovery_store_index_filter_estimated_bytes = host_recovery_probe
-        .get("host_recovery_store_index_filter_estimated_bytes")
+    let network_recovery_checkpoint_index_filter_estimated_bytes = host_recovery_probe
+        .get("network_recovery_checkpoint_index_filter_estimated_bytes")
         .and_then(Value::as_u64)
         .unwrap_or_default();
     let native_store_materialized_bytes =
@@ -12063,7 +12088,7 @@ fn diagnostics_summary_sample(
         .saturating_add(native_store_materialized_bytes)
         .saturating_add(native_store_clone_bytes);
     let attributed_bytes = rust_estimated_retained_bytes
-        .saturating_add(host_recovery_store_total_estimated_memory_bytes);
+        .saturating_add(network_recovery_checkpoint_total_estimated_memory_bytes);
     let unattributed_working_set_bytes = working_set_bytes.saturating_sub(attributed_bytes);
     let unattributed_private_bytes = private_bytes.saturating_sub(attributed_bytes);
     let native_heap_unattributed_bytes = unattributed_private_bytes;
@@ -12178,12 +12203,12 @@ fn diagnostics_summary_sample(
         "proof_elapsed_ms": null,
         "commit_items_total": commit,
         "commit_delta": null,
-        "host_recovery_store_read_elapsed_ms": null,
-        "host_recovery_store_write_elapsed_ms": null,
+        "network_recovery_checkpoint_read_elapsed_ms": null,
+        "network_recovery_checkpoint_write_elapsed_ms": null,
         "semantic_head_height": canonical,
         "semantic_head_monotonic": true,
         "semantic_ledger_mirror": ledger_stats,
-        "host_recovery_store_probe": host_recovery_probe,
+        "network_recovery_checkpoint_probe": host_recovery_probe,
         "process_memory": memory_sample,
         "process_working_set_bytes": working_set_bytes,
         "process_private_bytes": private_bytes,
@@ -12205,7 +12230,7 @@ fn diagnostics_summary_sample(
         "blocking_task_spawn_count": 0u64,
         "std_thread_spawn_count": 0u64,
         "aoem_worker_pool_created_count": 0u64,
-        "host_recovery_store_probe_thread_count": 0u64,
+        "network_recovery_checkpoint_probe_thread_count": 0u64,
         "diagnostics_thread_count": 0u64,
         "report_writer_thread_count": 0u64,
         "rust_estimated_retained_bytes": rust_estimated_retained_bytes,
@@ -12216,10 +12241,10 @@ fn diagnostics_summary_sample(
         "jsonl_writer_buffer_bytes": 0u64,
         "native_store_materialized_estimated_bytes": native_store_materialized_bytes,
         "native_store_previous_clone_estimated_bytes": native_store_clone_bytes,
-        "host_recovery_store_total_estimated_memory_bytes": host_recovery_store_total_estimated_memory_bytes,
-        "host_recovery_store_cache_estimated_bytes": host_recovery_store_cache_estimated_bytes,
-        "host_recovery_store_memtable_estimated_bytes": host_recovery_store_memtable_estimated_bytes,
-        "host_recovery_store_index_filter_estimated_bytes": host_recovery_store_index_filter_estimated_bytes,
+        "network_recovery_checkpoint_total_estimated_memory_bytes": network_recovery_checkpoint_total_estimated_memory_bytes,
+        "network_recovery_checkpoint_cache_estimated_bytes": network_recovery_checkpoint_cache_estimated_bytes,
+        "network_recovery_checkpoint_memtable_estimated_bytes": network_recovery_checkpoint_memtable_estimated_bytes,
+        "network_recovery_checkpoint_index_filter_estimated_bytes": network_recovery_checkpoint_index_filter_estimated_bytes,
         "native_heap_unattributed_bytes": native_heap_unattributed_bytes,
         "unattributed_private_bytes": unattributed_private_bytes,
         "unattributed_working_set_bytes": unattributed_working_set_bytes,
@@ -13133,8 +13158,8 @@ fn build_diagnostics_report(
             .map(|sample| sample_u64(sample, "native_heap_unattributed_bytes")),
         "last_unattributed_working_set_bytes": last_live_sample
             .map(|sample| sample_u64(sample, "unattributed_working_set_bytes")),
-        "last_host_recovery_store_total_estimated_memory_bytes": last_live_sample
-            .map(|sample| sample_u64(sample, "host_recovery_store_total_estimated_memory_bytes")),
+        "last_network_recovery_checkpoint_total_estimated_memory_bytes": last_live_sample
+            .map(|sample| sample_u64(sample, "network_recovery_checkpoint_total_estimated_memory_bytes")),
         "last_working_set_bytes_per_1000_tx": last_live_sample
             .map(|sample| sample_u64(sample, "working_set_bytes_per_1000_tx")),
         "last_private_bytes_per_1000_tx": last_live_sample
@@ -13783,17 +13808,32 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
         .max(semantic_sequence);
     let duplicate_canonical_included = canonical_unique_included.saturating_sub(tx_count);
     let duplicate_receipt = receipt_count.saturating_sub(tx_count);
-    let host_recovery_store_is_production_truth = probe
-        .get("host_recovery_store_is_production_truth")
+    let network_recovery_checkpoint_mode = probe
+        .get("network_recovery_checkpoint_mode")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            probe
+                .get("network_recovery_checkpoint_backend")
+                .and_then(Value::as_str)
+        })
+        .unwrap_or(HOST_RECOVERY_STORE_MODE_MEMORY_V1);
+    let network_recovery_checkpoint_role = probe
+        .get("network_recovery_checkpoint_role")
+        .and_then(Value::as_str)
+        .unwrap_or(NETWORK_RECOVERY_CHECKPOINT_ROLE_DIAGNOSTICS_ONLY_V1);
+    let network_recovery_checkpoint_is_transaction_truth = probe
+        .get("network_recovery_checkpoint_is_transaction_truth")
         .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let rocksdb_probe_allowed = probe
-        .get("rocksdb_probe_allowed")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let host_recovery_store_signoff_required =
-        host_recovery_store_is_production_truth || rocksdb_probe_allowed;
-    let semantic_head_monotonic = if host_recovery_store_signoff_required {
+        .unwrap_or(false);
+    let network_recovery_checkpoint_uses_rocksdb =
+        matches!(
+            network_recovery_checkpoint_mode,
+            "rocksdb" | "dual" | "recovery_rocksdb" | "evidence_rocksdb"
+        ) || probe.get("rocksdb_opened").and_then(Value::as_bool) == Some(true);
+    let network_recovery_checkpoint_validation_required = network_recovery_checkpoint_uses_rocksdb
+        && (network_recovery_checkpoint_role.contains("resume")
+            || network_recovery_checkpoint_role.contains("evidence"));
+    let semantic_head_monotonic = if network_recovery_checkpoint_validation_required {
         probe
             .get("semantic_head_current_recovered")
             .and_then(Value::as_bool)
@@ -13806,7 +13846,7 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
     } else {
         semantic_sequence >= canonical_unique_included
     };
-    let receipt_index_consistent = if host_recovery_store_signoff_required {
+    let receipt_index_consistent = if network_recovery_checkpoint_validation_required {
         probe
             .get("receipt_index_recovered")
             .and_then(Value::as_bool)
@@ -13921,9 +13961,15 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
             "queue_pending_last": summary_u64(summary, "queue_pending_last"),
             "semantic_head_monotonic": semantic_head_monotonic,
             "receipt_index_consistent": receipt_index_consistent,
-            "host_recovery_store_signoff_required": host_recovery_store_signoff_required,
-            "host_recovery_store_is_production_truth": host_recovery_store_is_production_truth,
-            "rocksdb_probe_allowed": rocksdb_probe_allowed,
+            "network_recovery_checkpoint_validation_required": network_recovery_checkpoint_validation_required,
+            "network_recovery_checkpoint_mode": network_recovery_checkpoint_mode,
+            "network_recovery_checkpoint_role": network_recovery_checkpoint_role,
+            "network_recovery_checkpoint_is_transaction_truth": network_recovery_checkpoint_is_transaction_truth,
+            "network_recovery_checkpoint_signoff_scope": NETWORK_RECOVERY_CHECKPOINT_SIGNOFF_SCOPE_V1,
+            "network_transport_completion_source": NETWORK_TRANSPORT_COMPLETION_SOURCE_V1,
+            "transaction_finality_source": TRANSACTION_FINALITY_SOURCE_AOEM_PROOF_V1,
+            "aoem_execution_persistence_owner": AOEM_EXECUTION_PERSISTENCE_OWNER_V1,
+            "aoem_execution_persistence_is_truth": true,
             "aoem_concurrency_owner": summary_str(summary, "aoem_concurrency_owner"),
             "final_missing_sequence_count": final_missing_sequence_count,
             "final_missing_ranges_sample": missing_ranges_to_json(final_missing_ranges.as_slice(), 256),
@@ -16276,12 +16322,15 @@ fn run_receiver(
             "lifecycle_structure": "frozen",
             "execution_kernel": "AOEM",
             "aoem_concurrency_owner": "AOEM_runtime",
-            "aoem_production_persistence_owner": AOEM_PRODUCTION_PERSISTENCE_OWNER_V1,
-            "aoem_production_persistence_is_truth": true,
-            "host_recovery_store_owner": "novovm_host",
-            "host_recovery_store_role": HOST_RECOVERY_STORE_ROLE_V1,
-            "host_recovery_store_is_production_truth": false,
-            "host_recovery_store_mode": host_recovery_store_mode_v1(),
+            "transaction_finality_source": TRANSACTION_FINALITY_SOURCE_AOEM_PROOF_V1,
+            "aoem_execution_persistence_owner": AOEM_EXECUTION_PERSISTENCE_OWNER_V1,
+            "aoem_execution_persistence_is_truth": true,
+            "network_recovery_checkpoint_owner": "novovm_host",
+            "network_recovery_checkpoint_role": NETWORK_RECOVERY_CHECKPOINT_ROLE_DIAGNOSTICS_ONLY_V1,
+            "network_recovery_checkpoint_is_transaction_truth": false,
+            "network_recovery_checkpoint_mode": host_recovery_store_mode_v1(),
+            "network_recovery_checkpoint_signoff_scope": NETWORK_RECOVERY_CHECKPOINT_SIGNOFF_SCOPE_V1,
+            "network_transport_completion_source": NETWORK_TRANSPORT_COMPLETION_SOURCE_V1,
             "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
             "product_entry": "pending_only",
             "receipt_state_source": "AOEM_tick_lifecycle",

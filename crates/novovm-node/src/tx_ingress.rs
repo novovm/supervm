@@ -2266,8 +2266,9 @@ pub fn get_nov_native_execution_store_recovery_probe_v1(path: &Path) -> Result<s
     let mut receipt_by_height_hash_samples = Vec::<String>::new();
     let mut rocksdb_opened = false;
 
-    let rocksdb_probe_allowed = native_execution_store_backend_reads_rocksdb_v1(backend.as_str());
-    if rocksdb_probe_allowed && rocksdb_path.exists() {
+    let network_checkpoint_uses_rocksdb =
+        native_execution_store_backend_reads_rocksdb_v1(backend.as_str());
+    if network_checkpoint_uses_rocksdb && rocksdb_path.exists() {
         let db = open_nov_native_execution_store_rocksdb_v1(rocksdb_path.as_path())?;
         rocksdb_opened = true;
         semantic_head_current_recovered = db
@@ -2371,20 +2372,27 @@ pub fn get_nov_native_execution_store_recovery_probe_v1(path: &Path) -> Result<s
     Ok(serde_json::json!({
         "method": "nov_getNativeExecutionStoreRecoveryProbe",
         "store_path": path.display().to_string(),
-        "host_recovery_store_backend": backend,
-        "host_recovery_store_probe_role": "diagnostics_only",
-        "host_recovery_store_is_production_truth": false,
-        "aoem_production_persistence_owner": "aoem_runtime",
-        "aoem_production_persistence_is_truth": true,
+        "network_recovery_checkpoint_mode": if network_checkpoint_uses_rocksdb {
+            serde_json::json!("rocksdb")
+        } else {
+            serde_json::json!("memory")
+        },
+        "network_recovery_checkpoint_backend": backend,
+        "network_recovery_checkpoint_role": "diagnostics_only",
+        "network_recovery_checkpoint_is_transaction_truth": false,
+        "network_recovery_checkpoint_signoff_scope": "transport_recovery_only",
+        "network_transport_completion_source": "novorudp_receiver_done_ack",
+        "transaction_finality_source": "aoem_proof",
+        "aoem_execution_persistence_owner": "aoem_runtime",
+        "aoem_execution_persistence_is_truth": true,
         "rocksdb_path": rocksdb_path.display().to_string(),
         "rocksdb_exists": rocksdb_path.exists(),
         "rocksdb_opened": rocksdb_opened,
-        "rocksdb_probe_allowed": rocksdb_probe_allowed,
-        "rocksdb_probe_skipped": !rocksdb_probe_allowed,
-        "rocksdb_probe_skipped_reason": if rocksdb_probe_allowed {
+        "network_recovery_checkpoint_probe_skipped": !network_checkpoint_uses_rocksdb,
+        "network_recovery_checkpoint_probe_skipped_reason": if network_checkpoint_uses_rocksdb {
             serde_json::Value::Null
         } else {
-            serde_json::json!("host_recovery_store_memory_first_backend")
+            serde_json::json!("network_recovery_checkpoint_memory_first_backend")
         },
         "semantic_head_current_recovered": semantic_head_current_recovered,
         "semantic_head_by_height_recovered": semantic_head_by_height_recovered,
