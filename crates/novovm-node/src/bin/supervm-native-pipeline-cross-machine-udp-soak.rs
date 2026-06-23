@@ -2317,6 +2317,76 @@ fn full_async_sender_ack_finalization_fail_reason_v1(
     None
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SenderFinalAckReconciliationV1 {
+    accepted: bool,
+    receiver_done_ack_seen: bool,
+    final_missing_count: Option<u64>,
+    repair_coverage_gap_blocks_final: bool,
+    repair_coverage_gap_ignored_after_receiver_done: bool,
+    receiver_done_ack_overrides_repair_incomplete: bool,
+    final_sample_source: &'static str,
+    finalization_reason: &'static str,
+    fail_reason: Option<&'static str>,
+}
+
+fn reconcile_sender_final_ack_with_latest_missing_v1(
+    sender_completed: bool,
+    tail_repair_enabled: bool,
+    latest_ack_receiver_done: bool,
+    latest_ack_missing_count: Option<u64>,
+    repair_coverage_gap_count: u64,
+    final_ack_received_after_repair: bool,
+    fallback_fail_reason: Option<&'static str>,
+) -> SenderFinalAckReconciliationV1 {
+    let receiver_done_ack_seen = latest_ack_receiver_done;
+    let receiver_done_complete = latest_ack_receiver_done && latest_ack_missing_count == Some(0);
+    let repair_coverage_gap_blocks_final =
+        tail_repair_enabled && !receiver_done_complete && repair_coverage_gap_count > 0;
+    let repair_coverage_gap_ignored_after_receiver_done =
+        receiver_done_complete && repair_coverage_gap_count > 0;
+    let accepted = sender_completed && (!tail_repair_enabled || receiver_done_complete);
+    let final_missing_count = if receiver_done_complete {
+        Some(0)
+    } else {
+        latest_ack_missing_count
+    };
+    let final_sample_source = if receiver_done_complete {
+        "ack_plane_receiver_done"
+    } else if latest_ack_missing_count.is_some() {
+        "ack_plane_latest_sample"
+    } else {
+        "ack_plane_null_sample"
+    };
+    let finalization_reason = if accepted {
+        if final_ack_received_after_repair {
+            "receiver_done_ack_after_grace"
+        } else {
+            "receiver_done_ack"
+        }
+    } else {
+        fallback_fail_reason.unwrap_or("final_ack_drain_no_receiver_done")
+    };
+    let fail_reason = if accepted {
+        None
+    } else {
+        Some(finalization_reason)
+    };
+
+    SenderFinalAckReconciliationV1 {
+        accepted,
+        receiver_done_ack_seen,
+        final_missing_count,
+        repair_coverage_gap_blocks_final,
+        repair_coverage_gap_ignored_after_receiver_done,
+        receiver_done_ack_overrides_repair_incomplete: accepted
+            && repair_coverage_gap_ignored_after_receiver_done,
+        final_sample_source,
+        finalization_reason,
+        fail_reason,
+    }
+}
+
 #[cfg(test)]
 fn merge_tail_gap_into_repair_ranges(
     selected_ranges: &[MissingRangeV1],
@@ -7517,6 +7587,52 @@ mod novorudp_tests {
                 },
             )
         });
+    }
+
+    #[test]
+    fn full_async_sender_final_ack_overrides_stale_missing_sample() {
+        let result = reconcile_sender_final_ack_with_latest_missing_v1(
+            true,
+            true,
+            true,
+            Some(0),
+            1708,
+            true,
+            Some("receiver_repair_incomplete"),
+        );
+
+        assert!(result.accepted);
+        assert!(result.receiver_done_ack_seen);
+        assert_eq!(result.final_missing_count, Some(0));
+        assert_eq!(result.final_sample_source, "ack_plane_receiver_done");
+        assert_eq!(result.finalization_reason, "receiver_done_ack_after_grace");
+        assert_eq!(result.fail_reason, None);
+        assert!(!result.repair_coverage_gap_blocks_final);
+        assert!(result.repair_coverage_gap_ignored_after_receiver_done);
+        assert!(result.receiver_done_ack_overrides_repair_incomplete);
+    }
+
+    #[test]
+    fn full_async_repair_coverage_gap_blocks_when_receiver_done_missing() {
+        let result = reconcile_sender_final_ack_with_latest_missing_v1(
+            true,
+            true,
+            false,
+            Some(1708),
+            1708,
+            false,
+            Some("receiver_repair_incomplete"),
+        );
+
+        assert!(!result.accepted);
+        assert!(!result.receiver_done_ack_seen);
+        assert_eq!(result.final_missing_count, Some(1708));
+        assert_eq!(result.final_sample_source, "ack_plane_latest_sample");
+        assert_eq!(result.finalization_reason, "receiver_repair_incomplete");
+        assert_eq!(result.fail_reason, Some("receiver_repair_incomplete"));
+        assert!(result.repair_coverage_gap_blocks_final);
+        assert!(!result.repair_coverage_gap_ignored_after_receiver_done);
+        assert!(!result.receiver_done_ack_overrides_repair_incomplete);
     }
 
     #[test]
@@ -14169,7 +14285,15 @@ fn run_sender(
     let moving_window_enabled = novorudp.enabled;
     let mut moving_window_last_range: Option<MissingRangeV1> = None;
     let mut moving_window_last_ack_epoch: Option<u64> = None;
-    let final_ack_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS", 10_000)?;
+    let default_final_ack_wait_ms = if full_async_runtime_engine {
+        120_000
+    } else {
+        10_000
+    };
+    let final_ack_wait_ms = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
+        default_final_ack_wait_ms,
+    )?;
     let final_ack_poll_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS", 500)?.max(1);
     let mut final_ack_wait_elapsed_ms = 0u64;
     let mut final_ack_received_after_repair = false;
@@ -15578,7 +15702,6 @@ fn run_sender(
             .map(|(latest_max, repair_max)| latest_max.saturating_sub(repair_max))
             .unwrap_or_else(|| latest_ack_missing_count.unwrap_or_default())
     };
-    let accepted = sender_completed && tail_repair_success;
     let full_async_ack_fail_reason = full_async_sender_ack_finalization_fail_reason_v1(
         full_async_runtime_engine,
         primary_ack_drain_enabled,
@@ -15588,9 +15711,7 @@ fn run_sender(
         sender_repair_no_progress_timeout_reached,
         sender_hard_timeout_reached,
     );
-    let fail_reason = if accepted {
-        None
-    } else if let Some(reason) = full_async_ack_fail_reason {
+    let fallback_fail_reason = if let Some(reason) = full_async_ack_fail_reason {
         Some(reason)
     } else if sender_repair_no_progress_timeout_reached {
         Some("sender_repair_no_progress_timeout")
@@ -15612,20 +15733,21 @@ fn run_sender(
     } else {
         Some("receiver_repair_incomplete")
     };
+    let sender_final_ack_reconciliation = reconcile_sender_final_ack_with_latest_missing_v1(
+        sender_completed,
+        tail_repair.enabled,
+        latest_ack_receiver_done,
+        latest_ack_missing_count,
+        repair_coverage_gap_count,
+        final_ack_received_after_repair,
+        fallback_fail_reason,
+    );
+    let accepted = sender_final_ack_reconciliation.accepted;
+    let fail_reason = sender_final_ack_reconciliation.fail_reason;
     let sender_ack_final_sample_is_null =
         latest_ack_missing_count.is_none() && !latest_ack_receiver_done;
-    let sender_ack_final_sample_source = if latest_ack_receiver_done {
-        "ack_plane_receiver_done"
-    } else if latest_ack_missing_count.is_some() {
-        "ack_plane_latest_sample"
-    } else {
-        "ack_plane_null_sample"
-    };
-    let sender_finalization_reason = if accepted {
-        tail_repair_completion_reason
-    } else {
-        fail_reason.unwrap_or("receiver_repair_incomplete")
-    };
+    let sender_ack_final_sample_source = sender_final_ack_reconciliation.final_sample_source;
+    let sender_finalization_reason = sender_final_ack_reconciliation.finalization_reason;
     let sender_finalization_last_ack_age_ms =
         latest_ack_received_at.map(|received_at| received_at.elapsed().as_millis() as u64);
     let ack_plane_final_snapshot = snapshot_full_async_ack_plane_state_v1(&ack_plane_shared);
@@ -15835,6 +15957,34 @@ fn run_sender(
         "sender_ack_receiver_done_epoch": if latest_ack_receiver_done { Some(tail_repair_latest_ack_epoch) } else { None },
         "sender_ack_final_sample_source": sender_ack_final_sample_source,
         "sender_ack_final_sample_is_null": sender_ack_final_sample_is_null,
+        "sender_final_ack_drain_attempt_count": ack_plane_recv_attempt_count,
+        "sender_final_ack_drain_success_count": ack_plane_recv_success_count,
+        "sender_final_ack_receiver_done_seen": sender_final_ack_reconciliation.receiver_done_ack_seen,
+        "sender_final_ack_receiver_done_epoch": if sender_final_ack_reconciliation.receiver_done_ack_seen { Some(tail_repair_latest_ack_epoch) } else { None },
+        "sender_final_ack_reconciled_with_latest_missing": sender_final_ack_reconciliation.accepted || latest_ack_missing_count.is_some(),
+        "sender_final_ack_priority_applied": sender_final_ack_reconciliation.receiver_done_ack_seen,
+        "sender_latest_missing_sample_stale_at_finalization": sender_final_ack_reconciliation.repair_coverage_gap_ignored_after_receiver_done,
+        "sender_repair_coverage_gap_ignored_after_receiver_done": sender_final_ack_reconciliation.repair_coverage_gap_ignored_after_receiver_done,
+        "sender_final_ack_not_reconciled_reason": if sender_final_ack_reconciliation.accepted {
+            Value::Null
+        } else if full_async_ack_fail_reason.is_some() {
+            serde_json::json!(full_async_ack_fail_reason)
+        } else if sender_final_ack_reconciliation.repair_coverage_gap_blocks_final {
+            serde_json::json!("latest_missing_coverage_gap_without_receiver_done")
+        } else {
+            serde_json::json!("final_ack_drain_no_receiver_done")
+        },
+        "sender_finalization_blocker_source": if sender_final_ack_reconciliation.accepted {
+            "none"
+        } else if sender_final_ack_reconciliation.repair_coverage_gap_blocks_final {
+            "latest_missing_repair_coverage"
+        } else if latest_ack_missing_count.is_some() {
+            "latest_ack_missing_sample"
+        } else {
+            "ack_plane_final_sample"
+        },
+        "sender_finalization_state_source": sender_ack_final_sample_source,
+        "receiver_done_ack_overrides_repair_incomplete": sender_final_ack_reconciliation.receiver_done_ack_overrides_repair_incomplete,
         "sender_finalization_waiting_for_receiver_done": !latest_ack_receiver_done,
         "sender_finalization_last_ack_age_ms": sender_finalization_last_ack_age_ms,
         "sender_finalization_reason": sender_finalization_reason,
