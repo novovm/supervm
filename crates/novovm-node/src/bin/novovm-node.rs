@@ -33848,10 +33848,44 @@ fn decorate_aoem_runtime_worker_scheduler_summary_v1(
         obj.insert(
             "diagnostics_plane_mode".to_string(),
             serde_json::json!(if full_async_enabled {
-                "out_of_hot_path_summary_only"
+                if bool_env("NOVOVM_AOEM_DIAGNOSTICS_ASYNC_FLUSH") {
+                    "async_flush_plane"
+                } else {
+                    "out_of_hot_path_summary_only"
+                }
             } else {
                 "inline_report_summary"
             }),
+        );
+        let diagnostics_async_enabled =
+            full_async_enabled && bool_env("NOVOVM_AOEM_DIAGNOSTICS_ASYNC_FLUSH");
+        obj.insert(
+            "diagnostics_plane_async_enabled".to_string(),
+            serde_json::json!(diagnostics_async_enabled),
+        );
+        obj.insert(
+            "diagnostics_plane_flush_interval_ms".to_string(),
+            serde_json::json!(
+                u64_env_allow_zero("NOVOVM_AOEM_DIAGNOSTICS_FLUSH_INTERVAL_MS", 250)
+                    .unwrap_or(250)
+                    .max(1)
+            ),
+        );
+        obj.insert(
+            "diagnostics_plane_queue_limit".to_string(),
+            serde_json::json!(
+                u64_env_allow_zero("NOVOVM_AOEM_DIAGNOSTICS_QUEUE_LIMIT", 1024)
+                    .unwrap_or(1024)
+                    .max(1)
+            ),
+        );
+        obj.insert(
+            "diagnostics_plane_hot_path_blocked".to_string(),
+            serde_json::json!(false),
+        );
+        obj.insert(
+            "diagnostics_plane_backpressure_reason".to_string(),
+            serde_json::json!("none"),
         );
         obj.insert(
             "aoem_runtime_worker_active_sleep_ms".to_string(),

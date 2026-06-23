@@ -22,6 +22,7 @@ use std::io::BufRead;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -436,6 +437,420 @@ struct ReceiverDiagnosticsStateV1 {
     samples_dropped: u64,
     first_working_set_bytes: Option<u64>,
     last_working_set_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct DiagnosticsPlaneMetricsV1 {
+    async_enabled: bool,
+    mode: String,
+    flush_interval_ms: u64,
+    queue_depth: u64,
+    queue_limit: u64,
+    enqueued_count: u64,
+    flushed_count: u64,
+    dropped_live_count: u64,
+    coalesced_live_count: u64,
+    final_flush_count: u64,
+    final_flush_completed: bool,
+    last_flush_ms: Option<u64>,
+    flush_error_count: u64,
+    last_flush_error: Option<String>,
+    hot_path_blocked: bool,
+    hot_path_block_ms: u64,
+    backpressure_reason: String,
+    final_sample_source: String,
+    stale_live_ignored: bool,
+}
+
+impl DiagnosticsPlaneMetricsV1 {
+    fn inline() -> Self {
+        let full_async = full_async_runtime_engine_enabled_v1();
+        Self {
+            async_enabled: false,
+            mode: if full_async {
+                "inline_full_async_diagnostics".to_string()
+            } else {
+                "inline_report_summary".to_string()
+            },
+            flush_interval_ms: diagnostics_flush_interval_ms_v1(),
+            queue_depth: 0,
+            queue_limit: diagnostics_queue_limit_v1(),
+            enqueued_count: 0,
+            flushed_count: 0,
+            dropped_live_count: 0,
+            coalesced_live_count: 0,
+            final_flush_count: 0,
+            final_flush_completed: false,
+            last_flush_ms: None,
+            flush_error_count: 0,
+            last_flush_error: None,
+            hot_path_blocked: false,
+            hot_path_block_ms: 0,
+            backpressure_reason: "none".to_string(),
+            final_sample_source: "inline_report_write".to_string(),
+            stale_live_ignored: false,
+        }
+    }
+
+    fn async_plane(flush_interval_ms: u64, queue_limit: u64) -> Self {
+        Self {
+            async_enabled: true,
+            mode: "async_flush_plane".to_string(),
+            flush_interval_ms,
+            queue_depth: 0,
+            queue_limit,
+            enqueued_count: 0,
+            flushed_count: 0,
+            dropped_live_count: 0,
+            coalesced_live_count: 0,
+            final_flush_count: 0,
+            final_flush_completed: false,
+            last_flush_ms: None,
+            flush_error_count: 0,
+            last_flush_error: None,
+            hot_path_blocked: false,
+            hot_path_block_ms: 0,
+            backpressure_reason: "none".to_string(),
+            final_sample_source: "async_flush_plane".to_string(),
+            stale_live_ignored: false,
+        }
+    }
+}
+
+enum DiagnosticsFlushJobV1 {
+    Live(Value),
+    Shutdown,
+}
+
+struct DiagnosticsAsyncFlushPlaneV1 {
+    enabled: bool,
+    report_path: PathBuf,
+    sender: Option<SyncSender<DiagnosticsFlushJobV1>>,
+    metrics: Arc<Mutex<DiagnosticsPlaneMetricsV1>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl DiagnosticsAsyncFlushPlaneV1 {
+    fn from_env(report_path: PathBuf) -> Result<Self> {
+        let enabled = full_async_runtime_engine_enabled_v1()
+            && bool_env("NOVOVM_AOEM_DIAGNOSTICS_ASYNC_FLUSH");
+        let flush_interval_ms = diagnostics_flush_interval_ms_v1();
+        let queue_limit = diagnostics_queue_limit_v1();
+        let metrics = Arc::new(Mutex::new(if enabled {
+            DiagnosticsPlaneMetricsV1::async_plane(flush_interval_ms, queue_limit)
+        } else {
+            DiagnosticsPlaneMetricsV1::inline()
+        }));
+        if !enabled {
+            return Ok(Self {
+                enabled,
+                report_path,
+                sender: None,
+                metrics,
+                handle: None,
+            });
+        }
+        let live_coalesce = string_env_nonempty("NOVOVM_AOEM_DIAGNOSTICS_LIVE_COALESCE")
+            .map(|value| {
+                let lower = value.to_ascii_lowercase();
+                lower == "1" || lower == "true" || lower == "yes" || lower == "on"
+            })
+            .unwrap_or(true);
+        let (sender, receiver) = sync_channel(queue_limit as usize);
+        let worker_path = report_path.clone();
+        let worker_metrics = Arc::clone(&metrics);
+        let handle = std::thread::spawn(move || {
+            diagnostics_async_flush_worker_v1(
+                worker_path,
+                receiver,
+                worker_metrics,
+                Duration::from_millis(flush_interval_ms),
+                live_coalesce,
+            )
+        });
+        Ok(Self {
+            enabled,
+            report_path,
+            sender: Some(sender),
+            metrics,
+            handle: Some(handle),
+        })
+    }
+
+    fn snapshot_metrics(&self) -> DiagnosticsPlaneMetricsV1 {
+        self.metrics
+            .lock()
+            .map(|metrics| metrics.clone())
+            .unwrap_or_else(|_| DiagnosticsPlaneMetricsV1::inline())
+    }
+
+    fn enqueue_live(&mut self, report: Value) {
+        if !self.enabled {
+            return;
+        }
+        let Some(sender) = self.sender.as_ref() else {
+            return;
+        };
+        match sender.try_send(DiagnosticsFlushJobV1::Live(report)) {
+            Ok(()) => {
+                if let Ok(mut metrics) = self.metrics.lock() {
+                    metrics.enqueued_count = metrics.enqueued_count.saturating_add(1);
+                    metrics.queue_depth = metrics.queue_depth.saturating_add(1);
+                    metrics.backpressure_reason = "none".to_string();
+                }
+            }
+            Err(TrySendError::Full(_)) => {
+                if let Ok(mut metrics) = self.metrics.lock() {
+                    metrics.dropped_live_count = metrics.dropped_live_count.saturating_add(1);
+                    metrics.backpressure_reason = "queue_full_live_dropped".to_string();
+                }
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                if let Ok(mut metrics) = self.metrics.lock() {
+                    metrics.dropped_live_count = metrics.dropped_live_count.saturating_add(1);
+                    metrics.flush_error_count = metrics.flush_error_count.saturating_add(1);
+                    metrics.last_flush_error =
+                        Some("diagnostics_flush_worker_disconnected".to_string());
+                    metrics.backpressure_reason = "flush_worker_disconnected".to_string();
+                }
+            }
+        }
+    }
+
+    fn shutdown_live_worker(&mut self) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(sender) = self.sender.take() {
+            let _ = sender.try_send(DiagnosticsFlushJobV1::Shutdown);
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+
+    fn flush_final(&mut self, mut report: Value) -> Result<()> {
+        if self.enabled {
+            self.shutdown_live_worker();
+        }
+        let mut metrics = self.snapshot_metrics();
+        metrics.final_flush_count = metrics.final_flush_count.saturating_add(1);
+        metrics.final_flush_completed = true;
+        metrics.final_sample_source = "final_completed_sample".to_string();
+        metrics.stale_live_ignored = report
+            .get("stale_live_sample_fail_reason_ignored")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        annotate_diagnostics_plane_fields_v1(&mut report, &metrics);
+        let start = Instant::now();
+        let result = write_report(self.report_path.as_path(), &report);
+        if let Ok(mut locked) = self.metrics.lock() {
+            *locked = metrics.clone();
+            locked.last_flush_ms = Some(start.elapsed().as_millis() as u64);
+            if let Err(error) = result.as_ref() {
+                locked.final_flush_completed = false;
+                locked.flush_error_count = locked.flush_error_count.saturating_add(1);
+                locked.last_flush_error = Some(error.to_string());
+                locked.backpressure_reason = "final_flush_failed".to_string();
+            }
+        }
+        result
+    }
+}
+
+impl Drop for DiagnosticsAsyncFlushPlaneV1 {
+    fn drop(&mut self) {
+        self.shutdown_live_worker();
+    }
+}
+
+fn diagnostics_flush_interval_ms_v1() -> u64 {
+    u64_env("NOVOVM_AOEM_DIAGNOSTICS_FLUSH_INTERVAL_MS", 250)
+        .unwrap_or(250)
+        .max(1)
+}
+
+fn diagnostics_queue_limit_v1() -> u64 {
+    u64_env("NOVOVM_AOEM_DIAGNOSTICS_QUEUE_LIMIT", 1024)
+        .unwrap_or(1024)
+        .max(1)
+}
+
+fn diagnostics_async_flush_worker_v1(
+    path: PathBuf,
+    receiver: std::sync::mpsc::Receiver<DiagnosticsFlushJobV1>,
+    metrics: Arc<Mutex<DiagnosticsPlaneMetricsV1>>,
+    flush_interval: Duration,
+    live_coalesce: bool,
+) {
+    let mut pending_live: Option<Value> = None;
+    loop {
+        match receiver.recv_timeout(flush_interval) {
+            Ok(DiagnosticsFlushJobV1::Shutdown) => {
+                if let Some(report) = pending_live.take() {
+                    diagnostics_worker_flush_live_v1(&path, report, &metrics);
+                }
+                return;
+            }
+            Ok(DiagnosticsFlushJobV1::Live(report)) => {
+                if let Ok(mut locked) = metrics.lock() {
+                    locked.queue_depth = locked.queue_depth.saturating_sub(1);
+                    if live_coalesce && pending_live.is_some() {
+                        locked.coalesced_live_count = locked.coalesced_live_count.saturating_add(1);
+                    }
+                }
+                if live_coalesce {
+                    pending_live = Some(report);
+                } else {
+                    diagnostics_worker_flush_live_v1(&path, report, &metrics);
+                }
+                while let Ok(job) = receiver.try_recv() {
+                    match job {
+                        DiagnosticsFlushJobV1::Live(report) => {
+                            if let Ok(mut locked) = metrics.lock() {
+                                locked.queue_depth = locked.queue_depth.saturating_sub(1);
+                                if live_coalesce && pending_live.is_some() {
+                                    locked.coalesced_live_count =
+                                        locked.coalesced_live_count.saturating_add(1);
+                                }
+                            }
+                            if live_coalesce {
+                                pending_live = Some(report);
+                            } else {
+                                diagnostics_worker_flush_live_v1(&path, report, &metrics);
+                            }
+                        }
+                        DiagnosticsFlushJobV1::Shutdown => {
+                            if let Some(report) = pending_live.take() {
+                                diagnostics_worker_flush_live_v1(&path, report, &metrics);
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if let Some(report) = pending_live.take() {
+                    diagnostics_worker_flush_live_v1(&path, report, &metrics);
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                if let Some(report) = pending_live.take() {
+                    diagnostics_worker_flush_live_v1(&path, report, &metrics);
+                }
+                return;
+            }
+        }
+    }
+}
+
+fn diagnostics_worker_flush_live_v1(
+    path: &Path,
+    mut report: Value,
+    metrics: &Arc<Mutex<DiagnosticsPlaneMetricsV1>>,
+) {
+    let mut snapshot = metrics
+        .lock()
+        .map(|locked| locked.clone())
+        .unwrap_or_else(|_| DiagnosticsPlaneMetricsV1::inline());
+    snapshot.final_sample_source = "live_async_sample".to_string();
+    annotate_diagnostics_plane_fields_v1(&mut report, &snapshot);
+    let start = Instant::now();
+    let result = write_report(path, &report);
+    if let Ok(mut locked) = metrics.lock() {
+        locked.last_flush_ms = Some(start.elapsed().as_millis() as u64);
+        match result {
+            Ok(()) => {
+                locked.flushed_count = locked.flushed_count.saturating_add(1);
+            }
+            Err(error) => {
+                locked.flush_error_count = locked.flush_error_count.saturating_add(1);
+                locked.last_flush_error = Some(error.to_string());
+                locked.backpressure_reason = "live_flush_failed".to_string();
+            }
+        }
+    }
+}
+
+fn annotate_diagnostics_plane_fields_v1(report: &mut Value, metrics: &DiagnosticsPlaneMetricsV1) {
+    if let Some(obj) = report.as_object_mut() {
+        obj.insert(
+            "diagnostics_plane_async_enabled".to_string(),
+            serde_json::json!(metrics.async_enabled),
+        );
+        obj.insert(
+            "diagnostics_plane_mode".to_string(),
+            serde_json::json!(metrics.mode),
+        );
+        obj.insert(
+            "diagnostics_plane_flush_interval_ms".to_string(),
+            serde_json::json!(metrics.flush_interval_ms),
+        );
+        obj.insert(
+            "diagnostics_plane_queue_depth".to_string(),
+            serde_json::json!(metrics.queue_depth),
+        );
+        obj.insert(
+            "diagnostics_plane_queue_limit".to_string(),
+            serde_json::json!(metrics.queue_limit),
+        );
+        obj.insert(
+            "diagnostics_plane_enqueued_count".to_string(),
+            serde_json::json!(metrics.enqueued_count),
+        );
+        obj.insert(
+            "diagnostics_plane_flushed_count".to_string(),
+            serde_json::json!(metrics.flushed_count),
+        );
+        obj.insert(
+            "diagnostics_plane_dropped_live_count".to_string(),
+            serde_json::json!(metrics.dropped_live_count),
+        );
+        obj.insert(
+            "diagnostics_plane_coalesced_live_count".to_string(),
+            serde_json::json!(metrics.coalesced_live_count),
+        );
+        obj.insert(
+            "diagnostics_plane_final_flush_count".to_string(),
+            serde_json::json!(metrics.final_flush_count),
+        );
+        obj.insert(
+            "diagnostics_plane_final_flush_completed".to_string(),
+            serde_json::json!(metrics.final_flush_completed),
+        );
+        obj.insert(
+            "diagnostics_plane_last_flush_ms".to_string(),
+            serde_json::json!(metrics.last_flush_ms),
+        );
+        obj.insert(
+            "diagnostics_plane_flush_error_count".to_string(),
+            serde_json::json!(metrics.flush_error_count),
+        );
+        obj.insert(
+            "diagnostics_plane_last_flush_error".to_string(),
+            serde_json::json!(metrics.last_flush_error),
+        );
+        obj.insert(
+            "diagnostics_plane_hot_path_blocked".to_string(),
+            serde_json::json!(metrics.hot_path_blocked),
+        );
+        obj.insert(
+            "diagnostics_plane_hot_path_block_ms".to_string(),
+            serde_json::json!(metrics.hot_path_block_ms),
+        );
+        obj.insert(
+            "diagnostics_plane_backpressure_reason".to_string(),
+            serde_json::json!(metrics.backpressure_reason),
+        );
+        obj.insert(
+            "diagnostics_plane_final_sample_source".to_string(),
+            serde_json::json!(metrics.final_sample_source),
+        );
+        obj.insert(
+            "diagnostics_plane_stale_live_ignored".to_string(),
+            serde_json::json!(metrics.stale_live_ignored),
+        );
+    }
 }
 
 fn string_env_nonempty(name: &str) -> Option<String> {
@@ -1759,6 +2174,39 @@ mod novorudp_tests {
         result
     }
 
+    fn with_full_async_diagnostics_env<T>(run: impl FnOnce() -> T) -> T {
+        with_env_var(
+            NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV,
+            Some("1"),
+            || {
+                with_env_var("NOVOVM_AOEM_DIAGNOSTICS_ASYNC_FLUSH", Some("1"), || {
+                    with_env_var(
+                        "NOVOVM_AOEM_DIAGNOSTICS_FLUSH_INTERVAL_MS",
+                        Some("10"),
+                        || {
+                            with_env_var("NOVOVM_AOEM_DIAGNOSTICS_QUEUE_LIMIT", Some("8"), || {
+                                with_env_var(
+                                    "NOVOVM_AOEM_DIAGNOSTICS_LIVE_COALESCE",
+                                    Some("1"),
+                                    run,
+                                )
+                            })
+                        },
+                    )
+                })
+            },
+        )
+    }
+
+    fn temp_diagnostics_path(name: &str) -> PathBuf {
+        let unique = TEST_DIAGNOSTICS_REPORT_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "novovm-{name}-{}-{}-{unique}.json",
+            std::process::id(),
+            now_ms()
+        ))
+    }
+
     fn pipeline_liveness_sample(
         elapsed_ms: u64,
         pending: u64,
@@ -2969,6 +3417,232 @@ mod novorudp_tests {
         let report = serde_json::from_slice::<Value>(&fs::read(path.as_path()).unwrap()).unwrap();
         let _ = fs::remove_file(path);
         report
+    }
+
+    #[test]
+    fn full_async_diagnostics_async_flush_starts() {
+        with_full_async_diagnostics_env(|| {
+            let path = temp_diagnostics_path("diagnostics-async-start");
+            let mut plane = DiagnosticsAsyncFlushPlaneV1::from_env(path.clone()).unwrap();
+            assert!(plane.enabled);
+            let metrics = plane.snapshot_metrics();
+            assert!(metrics.async_enabled);
+            assert_eq!(metrics.mode, "async_flush_plane");
+            assert_eq!(metrics.flush_interval_ms, 10);
+            assert_eq!(metrics.queue_limit, 8);
+            assert_eq!(metrics.hot_path_blocked, false);
+            plane.shutdown_live_worker();
+            let _ = fs::remove_file(path);
+        });
+    }
+
+    #[test]
+    fn full_async_diagnostics_live_samples_are_coalesced() {
+        with_full_async_diagnostics_env(|| {
+            let path = temp_diagnostics_path("diagnostics-live-coalesce");
+            let mut plane = DiagnosticsAsyncFlushPlaneV1::from_env(path.clone()).unwrap();
+            for index in 0..32u64 {
+                plane.enqueue_live(serde_json::json!({
+                    "schema": "test",
+                    "sample_index": index
+                }));
+            }
+            std::thread::sleep(Duration::from_millis(40));
+            plane.shutdown_live_worker();
+            let metrics = plane.snapshot_metrics();
+            assert!(metrics.enqueued_count > 0);
+            assert!(metrics.flushed_count > 0);
+            assert!(metrics.coalesced_live_count > 0 || metrics.dropped_live_count > 0);
+            let report =
+                serde_json::from_slice::<Value>(&fs::read(path.as_path()).unwrap()).unwrap();
+            assert_eq!(
+                report["diagnostics_plane_async_enabled"].as_bool(),
+                Some(true)
+            );
+            assert_eq!(
+                report["diagnostics_plane_mode"].as_str(),
+                Some("async_flush_plane")
+            );
+            let _ = fs::remove_file(path);
+        });
+    }
+
+    #[test]
+    fn full_async_diagnostics_drops_live_when_queue_full_without_blocking_hot_path() {
+        with_env_var(
+            NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV,
+            Some("1"),
+            || {
+                with_env_var("NOVOVM_AOEM_DIAGNOSTICS_ASYNC_FLUSH", Some("1"), || {
+                    with_env_var(
+                        "NOVOVM_AOEM_DIAGNOSTICS_FLUSH_INTERVAL_MS",
+                        Some("1000"),
+                        || {
+                            with_env_var("NOVOVM_AOEM_DIAGNOSTICS_QUEUE_LIMIT", Some("1"), || {
+                                with_env_var(
+                                    "NOVOVM_AOEM_DIAGNOSTICS_LIVE_COALESCE",
+                                    Some("1"),
+                                    || {
+                                        let path = temp_diagnostics_path("diagnostics-live-drop");
+                                        let mut plane =
+                                            DiagnosticsAsyncFlushPlaneV1::from_env(path.clone())
+                                                .unwrap();
+                                        for index in 0..512u64 {
+                                            plane.enqueue_live(serde_json::json!({
+                                                "schema": "test",
+                                                "sample_index": index
+                                            }));
+                                        }
+                                        let metrics = plane.snapshot_metrics();
+                                        assert_eq!(metrics.hot_path_blocked, false);
+                                        assert_eq!(metrics.hot_path_block_ms, 0);
+                                        assert!(metrics.dropped_live_count > 0);
+                                        plane.shutdown_live_worker();
+                                        let _ = fs::remove_file(path);
+                                    },
+                                )
+                            })
+                        },
+                    )
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn full_async_diagnostics_final_sample_must_flush() {
+        with_full_async_diagnostics_env(|| {
+            let path = temp_diagnostics_path("diagnostics-final-flush");
+            let config = test_diagnostics_config(path.clone());
+            let state = ReceiverDiagnosticsStateV1 {
+                samples: vec![
+                    stale_tail_live_sample_for_test(),
+                    final_closed_sample_for_test(),
+                ],
+                last_canonical: 480,
+                stall_windows: 0,
+                pending_drain_no_progress_ms: 0,
+                fail_reason: None,
+                samples_dropped: 0,
+                first_working_set_bytes: Some(1),
+                last_working_set_bytes: Some(1),
+            };
+            let mut plane = DiagnosticsAsyncFlushPlaneV1::from_env(path.clone()).unwrap();
+            emit_diagnostics_report(&config, &state, true, 42, 480, &mut plane).unwrap();
+            let report =
+                serde_json::from_slice::<Value>(&fs::read(path.as_path()).unwrap()).unwrap();
+            assert_eq!(
+                report["diagnostics_plane_final_flush_completed"].as_bool(),
+                Some(true)
+            );
+            assert_eq!(
+                report["diagnostics_plane_final_flush_count"].as_u64(),
+                Some(1)
+            );
+            assert_eq!(
+                report["diagnostics_plane_final_sample_source"].as_str(),
+                Some("final_completed_sample")
+            );
+            assert_eq!(report["accepted"].as_bool(), Some(true));
+            let _ = fs::remove_file(path);
+        });
+    }
+
+    #[test]
+    fn full_async_diagnostics_final_sample_overrides_stale_live() {
+        with_full_async_diagnostics_env(|| {
+            let path = temp_diagnostics_path("diagnostics-final-overrides-live");
+            let config = test_diagnostics_config(path.clone());
+            let state = ReceiverDiagnosticsStateV1 {
+                samples: vec![
+                    stale_tail_live_sample_for_test(),
+                    final_closed_sample_for_test(),
+                ],
+                last_canonical: 480,
+                stall_windows: 0,
+                pending_drain_no_progress_ms: 0,
+                fail_reason: None,
+                samples_dropped: 0,
+                first_working_set_bytes: Some(1),
+                last_working_set_bytes: Some(1),
+            };
+            let mut plane = DiagnosticsAsyncFlushPlaneV1::from_env(path.clone()).unwrap();
+            emit_diagnostics_report(&config, &state, true, 42, 480, &mut plane).unwrap();
+            let report =
+                serde_json::from_slice::<Value>(&fs::read(path.as_path()).unwrap()).unwrap();
+            assert_eq!(report["accepted"].as_bool(), Some(true));
+            assert_eq!(report["fail_reason"], Value::Null);
+            assert_eq!(
+                report["diagnostics_signoff_sample_source"].as_str(),
+                Some("final_closed_child_sample")
+            );
+            assert_eq!(
+                report["diagnostics_plane_stale_live_ignored"].as_bool(),
+                Some(true)
+            );
+            let _ = fs::remove_file(path);
+        });
+    }
+
+    #[test]
+    fn full_async_diagnostics_does_not_block_ack_plane() {
+        with_full_async_diagnostics_env(|| {
+            let path = temp_diagnostics_path("diagnostics-ack-nonblocking");
+            let mut plane = DiagnosticsAsyncFlushPlaneV1::from_env(path.clone()).unwrap();
+            for index in 0..64u64 {
+                plane.enqueue_live(serde_json::json!({
+                    "schema": "test",
+                    "ack_plane_mode": "aggressive_nonblocking_ack_drain",
+                    "sample_index": index
+                }));
+            }
+            let metrics = plane.snapshot_metrics();
+            assert_eq!(metrics.hot_path_blocked, false);
+            assert_ne!(
+                metrics.backpressure_reason,
+                "ack_plane_blocked_by_diagnostics"
+            );
+            plane.shutdown_live_worker();
+            let _ = fs::remove_file(path);
+        });
+    }
+
+    #[test]
+    fn full_async_diagnostics_does_not_block_repair_plane() {
+        with_full_async_diagnostics_env(|| {
+            let path = temp_diagnostics_path("diagnostics-repair-nonblocking");
+            let mut plane = DiagnosticsAsyncFlushPlaneV1::from_env(path.clone()).unwrap();
+            for index in 0..64u64 {
+                plane.enqueue_live(serde_json::json!({
+                    "schema": "test",
+                    "repair_plane_mode": "continuous_missing_snapshot_repair_pump",
+                    "sample_index": index
+                }));
+            }
+            let metrics = plane.snapshot_metrics();
+            assert_eq!(metrics.hot_path_blocked, false);
+            assert_ne!(
+                metrics.backpressure_reason,
+                "repair_plane_blocked_by_diagnostics"
+            );
+            plane.shutdown_live_worker();
+            let _ = fs::remove_file(path);
+        });
+    }
+
+    #[test]
+    fn full_async_diagnostics_does_not_affect_ready_queue_baseline_when_gate_off() {
+        with_env_var(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV, None, || {
+            with_env_var("NOVOVM_AOEM_DIAGNOSTICS_ASYNC_FLUSH", Some("1"), || {
+                let path = temp_diagnostics_path("diagnostics-gate-off");
+                let plane = DiagnosticsAsyncFlushPlaneV1::from_env(path.clone()).unwrap();
+                assert!(!plane.enabled);
+                let metrics = plane.snapshot_metrics();
+                assert!(!metrics.async_enabled);
+                assert_eq!(metrics.mode, "inline_report_summary");
+                let _ = fs::remove_file(path);
+            })
+        });
     }
 
     fn stale_tail_live_sample_for_test() -> Value {
@@ -7305,6 +7979,8 @@ fn run_receiver_node(
         u64_env("NOVOVM_NATIVE_PIPELINE_MISSING_SAMPLE_LIMIT", 256).unwrap_or(256);
     let mut receiver_ack_epoch = 0u64;
     let mut state = ReceiverDiagnosticsStateV1::default();
+    let mut diagnostics_plane =
+        DiagnosticsAsyncFlushPlaneV1::from_env(diagnostics.report_path.clone())?;
     let ledger_path = semantic_ledger_mirror_path(store_path);
     let progress_path = pipeline_progress_report_path(store_path);
     loop {
@@ -7366,12 +8042,13 @@ fn run_receiver_node(
                     }
                     let reason = classify_child_exit_failure(&output, Some(&err));
                     state.fail_reason = Some(reason.clone());
-                    write_diagnostics_report(
+                    emit_diagnostics_report(
                         &diagnostics,
                         &state,
                         false,
                         child_pid,
                         expected_tx_count,
+                        &mut diagnostics_plane,
                     )?;
                     write_synthetic_receiver_failure_report(
                         expected_tx_count,
@@ -7452,7 +8129,14 @@ fn run_receiver_node(
             sample["receiver_exit_phase"] = serde_json::json!("completed");
             annotate_receiver_ingress_drain_delta_v1(&mut sample, state.samples.last());
             state.samples.push(sample);
-            write_diagnostics_report(&diagnostics, &state, true, child_pid, expected_tx_count)?;
+            emit_diagnostics_report(
+                &diagnostics,
+                &state,
+                true,
+                child_pid,
+                expected_tx_count,
+                &mut diagnostics_plane,
+            )?;
             write_receiver_exit_report(
                 child_pid,
                 Some(&output),
@@ -7813,12 +8497,13 @@ fn run_receiver_node(
                             last["output_artifact_error"] = serde_json::json!(error);
                         }
                     }
-                    write_diagnostics_report(
+                    emit_diagnostics_report(
                         &diagnostics,
                         &state,
                         true,
                         child_pid,
                         expected_tx_count,
+                        &mut diagnostics_plane,
                     )?;
                     write_receiver_exit_report(
                         child_pid,
@@ -7850,12 +8535,13 @@ fn run_receiver_node(
                         last["output_artifact_error"] = serde_json::json!(error);
                     }
                 }
-                write_diagnostics_report(
+                emit_diagnostics_report(
                     &diagnostics,
                     &state,
                     false,
                     child_pid,
                     expected_tx_count,
+                    &mut diagnostics_plane,
                 )?;
                 write_synthetic_receiver_failure_report(
                     expected_tx_count,
@@ -7878,7 +8564,14 @@ fn run_receiver_node(
                 )?;
                 bail!("cross-machine receiver diagnostics failed: {reason}");
             }
-            write_diagnostics_report(&diagnostics, &state, false, child_pid, expected_tx_count)?;
+            emit_diagnostics_report(
+                &diagnostics,
+                &state,
+                false,
+                child_pid,
+                expected_tx_count,
+                &mut diagnostics_plane,
+            )?;
             last_sample_at = Instant::now();
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -11689,13 +12382,13 @@ fn annotate_mini_receiver_tail_repair_diagnostics_v1(sample: &mut Value, summary
     }
 }
 
-fn write_diagnostics_report(
+fn build_diagnostics_report(
     config: &ReceiverDiagnosticsConfigV1,
     state: &ReceiverDiagnosticsStateV1,
     accepted: bool,
     child_pid: u32,
     tx_count: u64,
-) -> Result<()> {
+) -> Value {
     let last_sample_any = state.samples.last();
     let first_live_sample = first_live_child_sample(state.samples.as_slice());
     let last_live_sample = last_live_child_sample(state.samples.as_slice());
@@ -12148,7 +12841,65 @@ fn write_diagnostics_report(
             }
         }
     }
+    report
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn write_diagnostics_report(
+    config: &ReceiverDiagnosticsConfigV1,
+    state: &ReceiverDiagnosticsStateV1,
+    accepted: bool,
+    child_pid: u32,
+    tx_count: u64,
+) -> Result<()> {
+    let mut report = build_diagnostics_report(config, state, accepted, child_pid, tx_count);
+    let mut metrics = DiagnosticsPlaneMetricsV1::inline();
+    metrics.final_sample_source = if accepted {
+        "final_completed_sample"
+    } else {
+        "inline_report_write"
+    }
+    .to_string();
+    metrics.stale_live_ignored = report
+        .get("stale_live_sample_fail_reason_ignored")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    annotate_diagnostics_plane_fields_v1(&mut report, &metrics);
     write_report(config.report_path.as_path(), &report)
+}
+
+fn emit_diagnostics_report(
+    config: &ReceiverDiagnosticsConfigV1,
+    state: &ReceiverDiagnosticsStateV1,
+    accepted: bool,
+    child_pid: u32,
+    tx_count: u64,
+    diagnostics_plane: &mut DiagnosticsAsyncFlushPlaneV1,
+) -> Result<()> {
+    let mut report = build_diagnostics_report(config, state, accepted, child_pid, tx_count);
+    if accepted {
+        return diagnostics_plane.flush_final(report);
+    }
+    if diagnostics_plane.enabled {
+        let mut metrics = diagnostics_plane.snapshot_metrics();
+        metrics.final_sample_source = "live_async_sample".to_string();
+        metrics.stale_live_ignored = report
+            .get("stale_live_sample_fail_reason_ignored")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        annotate_diagnostics_plane_fields_v1(&mut report, &metrics);
+        diagnostics_plane.enqueue_live(report);
+        Ok(())
+    } else {
+        let mut metrics = diagnostics_plane.snapshot_metrics();
+        metrics.final_sample_source = "inline_report_write".to_string();
+        metrics.stale_live_ignored = report
+            .get("stale_live_sample_fail_reason_ignored")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        annotate_diagnostics_plane_fields_v1(&mut report, &metrics);
+        write_report(config.report_path.as_path(), &report)
+    }
 }
 
 fn send_scheduled_batch(
@@ -14442,7 +15193,12 @@ fn run_sender(
         "ack_plane_mode": if full_async_runtime_engine { "aggressive_nonblocking_ack_drain" } else { "interval_ack_drain" },
         "repair_plane_mode": if full_async_runtime_engine { "continuous_missing_snapshot_repair_pump" } else { "ack_driven_tail_repair_loop" },
         "finality_plane_mode": "receiver_done_ack_validation",
-        "diagnostics_plane_mode": if full_async_runtime_engine { "out_of_hot_path_summary_only" } else { "inline_report_summary" },
+        "diagnostics_plane_async_enabled": full_async_runtime_engine && bool_env("NOVOVM_AOEM_DIAGNOSTICS_ASYNC_FLUSH"),
+        "diagnostics_plane_mode": if full_async_runtime_engine && bool_env("NOVOVM_AOEM_DIAGNOSTICS_ASYNC_FLUSH") { "async_flush_plane" } else if full_async_runtime_engine { "out_of_hot_path_summary_only" } else { "inline_report_summary" },
+        "diagnostics_plane_flush_interval_ms": diagnostics_flush_interval_ms_v1(),
+        "diagnostics_plane_queue_limit": diagnostics_queue_limit_v1(),
+        "diagnostics_plane_hot_path_blocked": false,
+        "diagnostics_plane_backpressure_reason": "none",
         "report_written": sender_report_on_timeout || !sender_hard_timeout_reached,
         "elapsed_ms": sender_started.elapsed().as_millis() as u64,
         "novorudp_profile": repair_budget_profile.profile,
