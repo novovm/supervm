@@ -1553,17 +1553,11 @@ fn pipeline_progress_report_path(store_path: &Path) -> PathBuf {
 }
 
 fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
-    let enabled = bool_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_WATCHDOG_ENABLED")
+    let requested_enabled = bool_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_WATCHDOG_ENABLED")
         || bool_env("NOVOVM_NATIVE_PIPELINE_DIAGNOSTICS_ENABLED");
     let sample_interval_ms =
         u64_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_SAMPLE_INTERVAL_MS", 5_000)?.max(250);
     let stall_windows = u64_env("NOVOVM_NATIVE_PIPELINE_PROGRESS_STALL_WINDOWS", 3)?.max(1);
-    let memory_sample_enabled = bool_env("NOVOVM_NATIVE_PIPELINE_MEMORY_SAMPLE_ENABLED") || enabled;
-    let default_max_working_set = if memory_sample_enabled {
-        8 * 1024 * 1024 * 1024u64
-    } else {
-        0
-    };
     let sustained_duration_ms =
         u64_env("NOVOVM_NATIVE_PIPELINE_SUSTAINED_DURATION_SECONDS", 0)?.saturating_mul(1_000);
     let tail_repair_rounds = u64_env("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_ROUNDS", 3)?;
@@ -1572,6 +1566,14 @@ fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
     let novorudp_enabled = NovoRudpConfigV1::from_env(transport_profile)
         .map(|config| config.enabled)
         .unwrap_or(false);
+    let enabled = requested_enabled || novorudp_enabled;
+    let memory_sample_enabled =
+        bool_env("NOVOVM_NATIVE_PIPELINE_MEMORY_SAMPLE_ENABLED") || requested_enabled;
+    let default_max_working_set = if memory_sample_enabled {
+        8 * 1024 * 1024 * 1024u64
+    } else {
+        0
+    };
     let is_novorudp_two_hour_profile = novorudp_enabled && sustained_duration_ms >= 7_200_000;
     let default_repair_drain_timeout_seconds = if is_novorudp_two_hour_profile {
         5_400
@@ -9868,6 +9870,7 @@ fn run_receiver_node(
                     final_sample["pipeline_progress_report_path"] =
                         serde_json::json!(progress_path.display().to_string());
                     final_sample["receiver_exit_phase"] = serde_json::json!("completed");
+                    annotate_receiver_ack_send_status_v1(&mut final_sample, &final_ack_status);
                     annotate_receiver_done_ack_fast_path_status_v1(
                         &mut final_sample,
                         &receiver_done_fast_path_status,
