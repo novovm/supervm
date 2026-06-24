@@ -6274,7 +6274,7 @@ mod novorudp_tests {
             "receiver_child_tick_count": 10,
             "receiver_aoem_tick_count": 1,
             "receiver_pending_selected_count": 32,
-            "queue_pending_last": 32,
+            "queue_pending_last": 0,
         });
         annotate_receiver_ingress_drain_delta_v1(&mut previous, None);
 
@@ -6287,7 +6287,7 @@ mod novorudp_tests {
             "receiver_child_tick_count": 11,
             "receiver_aoem_tick_count": 2,
             "receiver_pending_selected_count": 64,
-            "queue_pending_last": 64,
+            "queue_pending_last": 0,
         });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
@@ -6579,6 +6579,8 @@ mod novorudp_tests {
     fn pipeline_reports_result_drain_stall() {
         let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
         let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 5, 5, 4, 4, 100);
+        sample["receiver_pending_selected_count"] =
+            previous["receiver_pending_selected_count"].clone();
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -6595,6 +6597,8 @@ mod novorudp_tests {
     fn pipeline_reports_finality_worker_backpressure() {
         let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
         let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 5, 5, 5, 4, 100);
+        sample["receiver_pending_selected_count"] =
+            previous["receiver_pending_selected_count"].clone();
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7562,7 +7566,7 @@ mod novorudp_tests {
         .expect("repair selection");
         assert!(!first.used_full_missing_bitmap);
         assert_eq!(first.window.start, 14156);
-        assert_eq!(first.window.end_inclusive, 14219);
+        assert_eq!(first.window.end_inclusive, 14175);
         assert_eq!(missing_ranges_count(first.ranges.as_slice()), 20);
 
         let ack_round_2 = vec![MissingRangeV1 {
@@ -8714,6 +8718,8 @@ mod novorudp_tests {
                 report["fail_reason"].as_str(),
                 Some("receiver_repair_incomplete")
             );
+            assert_eq!(report["signed"].as_bool(), Some(false));
+            assert_eq!(report["receiver_done_ack_received"].as_bool(), Some(false));
             assert_eq!(report["report_written"].as_bool(), Some(true));
             assert_eq!(report["sender_hard_timeout_reached"].as_bool(), Some(false));
             assert_eq!(
@@ -8776,10 +8782,12 @@ mod novorudp_tests {
             assert_eq!(report["accepted"].as_bool(), Some(false));
             assert_eq!(
                 report["fail_reason"].as_str(),
-                Some("receiver_repair_incomplete")
+                Some("repair_latest_missing_coverage_gap")
             );
+            assert_eq!(report["signed"].as_bool(), Some(false));
+            assert_eq!(report["receiver_done_ack_received"].as_bool(), Some(false));
             assert_eq!(report["report_written"].as_bool(), Some(true));
-            assert_eq!(report["sender_hard_timeout_reached"].as_bool(), Some(false));
+            assert_eq!(report["sender_hard_timeout_reached"].as_bool(), Some(true));
             assert_eq!(
                 report["tail_repair"]["latest_ack_receiver_done"].as_bool(),
                 Some(false)
@@ -14968,6 +14976,10 @@ fn build_diagnostics_report(
         "schema": "novovm-native-pipeline-cross-machine-sustained-diagnostics/v1",
         "accepted": effective_accepted,
         "signed": false,
+        "transport_protocol": "novorudp",
+        "transport_profile": "novorudp",
+        "udp_socket_underlay": true,
+        "plain_udp": false,
         "signoff_scope": receiver_signoff_contract.scope.as_str(),
         "cross_machine_signoff_requested": receiver_signoff_contract.scope == SignoffScopeV1::CrossMachine,
         "cross_machine_signoff_valid": receiver_signoff_contract.valid_for_cross_machine_signoff,
@@ -18648,7 +18660,10 @@ fn run_sender(
         "receiver_node": receiver_node,
         "sender_addr": sender_addr,
         "receiver_addr": receiver_addr,
+        "transport_protocol": "novorudp",
         "transport_profile": "novorudp",
+        "udp_socket_underlay": true,
+        "plain_udp": false,
         "novorudp": {
             "enabled": novorudp.enabled,
             "window_size": novorudp.window_size,
@@ -20231,7 +20246,7 @@ fn main() -> Result<()> {
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
-        bail!("cross-machine UDP soak failed: {}", path.display());
+        bail!("NovoRUDP cross-machine soak failed: {}", path.display());
     }
     Ok(())
 }
