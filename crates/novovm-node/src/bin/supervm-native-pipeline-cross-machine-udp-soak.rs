@@ -7526,6 +7526,44 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn receiver_done_ack_frame_ignores_stale_summary_missing_when_progress_complete() {
+        let summary = serde_json::json!({
+            "missing_count": 117,
+            "missing_ranges_sample": [{"start": 14283, "end_inclusive": 14399}],
+            "ledger_durable_missing_count": 117,
+            "ledger_durable_missing_ranges_sample": [{"start": 14283, "end_inclusive": 14399}],
+            "ledger_durable_missing_bitmap_available": true,
+        });
+        let ack = receiver_ack_report_value_with_summary(14_400, 14_400, 256, 18, Some(&summary));
+
+        assert_eq!(ack.get("missing_count").and_then(Value::as_u64), Some(0));
+        assert_eq!(
+            ack.get("missing_ranges_sample")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
+        assert_eq!(
+            ack.get("receiver_done").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            ack.get("missing_bitmap_source").and_then(Value::as_str),
+            Some("receiver_done_terminal_progress")
+        );
+        assert_eq!(
+            ack.get("receiver_done_ack_frame_terminal_override")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            ack.get("receiver_done_ack_frame_summary_ignored_for_terminal")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
     fn tail_gap_14072_14399_uses_durable_missing_window() {
         let summary = serde_json::json!({
             "ledger_durable_missing_count": 328,
@@ -10375,6 +10413,7 @@ fn receiver_ack_report_value_with_summary(
     ack_epoch: u64,
     progress_summary: Option<&Value>,
 ) -> Value {
+    let terminal_progress = expected_tx_count > 0 && stable_progress >= expected_tx_count;
     let progress_summary_ranges = progress_summary
         .map(|summary| {
             missing_ranges_from_value_key(summary, "missing_ranges_sample", sample_limit)
@@ -10498,6 +10537,24 @@ fn receiver_ack_report_value_with_summary(
         ack_progress_interval_ms: 250,
         no_progress_backoff: true,
     });
+    let (ranges, missing_count, missing_bitmap_source, fallback_reason, source_reason) =
+        if terminal_progress {
+            (
+                Vec::new(),
+                0,
+                "receiver_done_terminal_progress",
+                Value::Null,
+                "receiver_done_terminal_progress",
+            )
+        } else {
+            (
+                ranges,
+                missing_count,
+                missing_bitmap_source,
+                fallback_reason,
+                source_reason,
+            )
+        };
     let current_window = first_missing_window_ranges(
         ranges.as_slice(),
         expected_tx_count,
@@ -10529,6 +10586,9 @@ fn receiver_ack_report_value_with_summary(
         "ack_used_durable_ledger_missing_bitmap": missing_bitmap_source == "ledger",
         "ack_fallback_due_to_candidate_empty_count": ack_fallback_due_to_candidate_empty_count,
         "ack_source_selection_reason": source_reason,
+        "receiver_done_ack_frame_terminal_override": terminal_progress,
+        "receiver_done_ack_frame_terminal_source": if terminal_progress { "stable_progress_complete" } else { "missing_bitmap_selection" },
+        "receiver_done_ack_frame_summary_ignored_for_terminal": terminal_progress && progress_summary_available,
         "ledger_final_missing_count": ledger_final_missing_count,
         "progress_summary_missing_count": progress_summary_missing_count_value,
         "ack_epoch": ack_epoch,
