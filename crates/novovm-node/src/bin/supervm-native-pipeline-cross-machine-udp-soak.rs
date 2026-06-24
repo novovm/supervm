@@ -7544,6 +7544,10 @@ mod novorudp_tests {
             Some(0)
         );
         assert_eq!(
+            ack.get("missing_ranges_full_count").and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
             ack.get("receiver_done").and_then(Value::as_bool),
             Some(true)
         );
@@ -10490,7 +10494,7 @@ fn receiver_ack_report_value_with_summary(
                 "stable_progress_fallback",
             )
         };
-    let missing_ranges_full_count = ranges.len();
+    let raw_missing_ranges_full_count = ranges.len();
     let progress_summary_last_updated_ms = progress_summary
         .and_then(|summary| {
             summary
@@ -10537,24 +10541,32 @@ fn receiver_ack_report_value_with_summary(
         ack_progress_interval_ms: 250,
         no_progress_backoff: true,
     });
-    let (ranges, missing_count, missing_bitmap_source, fallback_reason, source_reason) =
-        if terminal_progress {
-            (
-                Vec::new(),
-                0,
-                "receiver_done_terminal_progress",
-                Value::Null,
-                "receiver_done_terminal_progress",
-            )
-        } else {
-            (
-                ranges,
-                missing_count,
-                missing_bitmap_source,
-                fallback_reason,
-                source_reason,
-            )
-        };
+    let (
+        ranges,
+        missing_count,
+        missing_bitmap_source,
+        missing_ranges_full_count,
+        fallback_reason,
+        source_reason,
+    ) = if terminal_progress {
+        (
+            Vec::new(),
+            0,
+            "receiver_done_terminal_progress",
+            0usize,
+            Value::Null,
+            "receiver_done_terminal_progress",
+        )
+    } else {
+        (
+            ranges,
+            missing_count,
+            missing_bitmap_source,
+            raw_missing_ranges_full_count,
+            fallback_reason,
+            source_reason,
+        )
+    };
     let current_window = first_missing_window_ranges(
         ranges.as_slice(),
         expected_tx_count,
