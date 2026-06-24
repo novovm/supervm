@@ -2641,7 +2641,7 @@ fn reconcile_sender_final_ack_with_latest_missing_v1(
     fallback_fail_reason: Option<&'static str>,
 ) -> SenderFinalAckReconciliationV1 {
     let receiver_done_ack_seen = latest_ack_receiver_done;
-    let receiver_done_complete = latest_ack_receiver_done && latest_ack_missing_count == Some(0);
+    let receiver_done_complete = latest_ack_receiver_done;
     let repair_coverage_gap_blocks_final =
         tail_repair_enabled && !receiver_done_complete && repair_coverage_gap_count > 0;
     let repair_coverage_gap_ignored_after_receiver_done =
@@ -3323,7 +3323,13 @@ mod novorudp_tests {
         );
 
         assert!(plane.receiver_done_latched);
+        assert!(plane.caught_up_latched);
         assert_eq!(plane.receiver_done_latch_epoch, Some(19));
+        assert_eq!(
+            plane.caught_up_latch_source.as_deref(),
+            Some("receiver_done_ack")
+        );
+        assert_eq!(plane.caught_up_latch_missing_count, Some(0));
         assert_eq!(plane.receiver_done_stale_drop_count, 1);
         assert_eq!(
             plane
@@ -8546,6 +8552,29 @@ mod novorudp_tests {
         assert_eq!(result.final_missing_count, Some(0));
         assert_eq!(result.final_sample_source, "ack_plane_receiver_done");
         assert_eq!(result.finalization_reason, "receiver_done_ack_after_grace");
+        assert_eq!(result.fail_reason, None);
+        assert!(!result.repair_coverage_gap_blocks_final);
+        assert!(result.repair_coverage_gap_ignored_after_receiver_done);
+        assert!(result.receiver_done_ack_overrides_repair_incomplete);
+    }
+
+    #[test]
+    fn receiver_done_ack_latches_caught_up_even_with_stale_missing_gap() {
+        let result = reconcile_sender_final_ack_with_latest_missing_v1(
+            true,
+            true,
+            true,
+            Some(81),
+            1966,
+            false,
+            Some("ack_caught_up_latch_missing"),
+        );
+
+        assert!(result.accepted);
+        assert!(result.receiver_done_ack_seen);
+        assert_eq!(result.final_missing_count, Some(0));
+        assert_eq!(result.final_sample_source, "ack_plane_receiver_done");
+        assert_eq!(result.finalization_reason, "receiver_done_ack");
         assert_eq!(result.fail_reason, None);
         assert!(!result.repair_coverage_gap_blocks_final);
         assert!(result.repair_coverage_gap_ignored_after_receiver_done);
@@ -15700,7 +15729,7 @@ fn run_sender(
                             }
                         }
                     }
-                    if snapshot.receiver_done_latched && !ack_plane_applied_receiver_done {
+                    if snapshot.receiver_done_latched {
                         let state = snapshot
                             .receiver_done_sticky_sample
                             .as_ref()
@@ -17193,7 +17222,13 @@ fn run_sender(
     );
     let repair_latest_missing_uncovered_sequence_count =
         missing_ranges_count(repair_latest_missing_uncovered_ranges.as_slice());
-    let repair_window_covers_latest_missing = latest_ack_receiver_done
+    let repair_coverage_terminal_override = latest_ack_receiver_done;
+    let repair_coverage_terminal_source = if repair_coverage_terminal_override {
+        "receiver_done_ack"
+    } else {
+        "none"
+    };
+    let repair_window_covers_latest_missing = repair_coverage_terminal_override
         || latest_ack_missing_count == Some(0)
         || repair_latest_missing_uncovered_sequence_count == 0;
     let repair_coverage_gap_count = repair_latest_missing_uncovered_sequence_count;
@@ -17409,6 +17444,18 @@ fn run_sender(
         .as_ref()
         .map(|state| state.repair_snapshot_handoff_count)
         .unwrap_or_default();
+    let sender_ack_receiver_done_effective_latched =
+        latest_ack_receiver_done || ack_plane_receiver_done_latched;
+    let sender_ack_receiver_done_effective_epoch = if sender_ack_receiver_done_effective_latched {
+        ack_plane_receiver_done_epoch.or(Some(tail_repair_latest_ack_epoch))
+    } else {
+        None
+    };
+    let sender_ack_receiver_done_effective_source = if sender_ack_receiver_done_effective_latched {
+        "receiver_done_ack"
+    } else {
+        "none"
+    };
     let repair_pump_stopped_after_receiver_done =
         latest_ack_receiver_done && latest_ack_missing_count == Some(0);
     let repair_pump_stop_reason = if repair_pump_stopped_after_receiver_done {
@@ -17578,8 +17625,14 @@ fn run_sender(
         "sender_ack_recv_error_count": ack_plane_recv_error_count,
         "sender_ack_last_recv_ms": ack_plane_last_recv_ms,
         "sender_ack_last_decode_error": Value::Null,
-        "sender_ack_receiver_done_seen": latest_ack_receiver_done,
-        "sender_ack_receiver_done_epoch": if latest_ack_receiver_done { Some(tail_repair_latest_ack_epoch) } else { None },
+        "sender_ack_receiver_done_seen": sender_ack_receiver_done_effective_latched,
+        "sender_ack_receiver_done_latched": sender_ack_receiver_done_effective_latched,
+        "sender_ack_receiver_done_latch_source": sender_ack_receiver_done_effective_source,
+        "sender_ack_receiver_done_latch_epoch": sender_ack_receiver_done_effective_epoch,
+        "sender_ack_receiver_done_latch_sequence": if sender_ack_receiver_done_effective_latched { Some(tx_count.saturating_sub(1)) } else { None },
+        "receiver_done_ack_delivery_or_decode_missing": !sender_ack_receiver_done_effective_latched,
+        "receiver_done_ack_latch_overwritten_count": ack_plane_receiver_done_overwritten_count,
+        "sender_ack_receiver_done_epoch": sender_ack_receiver_done_effective_epoch,
         "sender_ack_caught_up_latched": sender_ack_caught_up_latched || ack_plane_caught_up_latched,
         "sender_ack_caught_up_latch_source": if sender_ack_caught_up_latched { sender_ack_caught_up_latch_source.clone() } else { ack_plane_caught_up_latch_source.clone() },
         "sender_ack_caught_up_latch_epoch": sender_ack_caught_up_latch_epoch.or(ack_plane_caught_up_latch_epoch),
@@ -17589,8 +17642,8 @@ fn run_sender(
         "sender_ack_missing_zero_latched": sender_ack_missing_zero_latched || ack_plane_missing_zero_latched,
         "sender_ack_latch_overwritten_by_stale_ack_count": ack_plane_caught_up_overwritten_by_stale_ack_count,
         "sender_ack_stale_missing_sample_ignored_count": ack_plane_stale_missing_sample_ignored_count,
-        "sender_finalization_caught_up_source": if sender_ack_caught_up_latched || ack_plane_caught_up_latched { "sticky_caught_up_latch" } else { "latest_ack_sample" },
-        "sender_receiver_done_ack_missing_after_caught_up": (sender_ack_caught_up_latched || ack_plane_caught_up_latched) && !latest_ack_receiver_done,
+        "sender_finalization_caught_up_source": if sender_ack_receiver_done_effective_latched { "receiver_done_ack" } else if sender_ack_caught_up_latched || ack_plane_caught_up_latched { "sticky_caught_up_latch" } else { "latest_ack_sample" },
+        "sender_receiver_done_ack_missing_after_caught_up": (sender_ack_caught_up_latched || ack_plane_caught_up_latched) && !sender_ack_receiver_done_effective_latched,
         "sender_finalization_checked_receiver_done_latch": full_async_ack_drain_dedicated_pump_enabled,
         "sender_finalization_receiver_done_latch_seen": ack_plane_receiver_done_latched,
         "sender_finalization_ack_latch_handoff_ms": ack_plane_receiver_done_latch_ms,
@@ -17624,7 +17677,7 @@ fn run_sender(
         },
         "sender_finalization_state_source": sender_ack_final_sample_source,
         "receiver_done_ack_overrides_repair_incomplete": sender_final_ack_reconciliation.receiver_done_ack_overrides_repair_incomplete,
-        "sender_finalization_waiting_for_receiver_done": !latest_ack_receiver_done,
+        "sender_finalization_waiting_for_receiver_done": !sender_ack_receiver_done_effective_latched,
         "sender_finalization_last_ack_age_ms": sender_finalization_last_ack_age_ms,
         "sender_finalization_reason": sender_finalization_reason,
         "full_async_sender_ack_drain_integrated": full_async_runtime_engine && primary_ack_drain_enabled,
@@ -17671,6 +17724,8 @@ fn run_sender(
             repair_latest_missing_uncovered_ranges.as_slice(),
             tail_repair.missing_sample_limit,
         ),
+        "repair_coverage_terminal_override": repair_coverage_terminal_override,
+        "repair_coverage_terminal_source": repair_coverage_terminal_source,
         "repair_suppress_blocked_required_coverage_count": repair_suppression_blocked_for_latest_missing_count,
         "repair_suppress_required_coverage_bypass_count": repair_latest_missing_retry_due_count,
         "repair_retry_cadence_trigger_count": repair_latest_missing_retry_due_count,
@@ -17820,6 +17875,8 @@ fn run_sender(
                 repair_latest_missing_uncovered_ranges.as_slice(),
                 tail_repair.missing_sample_limit,
             ),
+            "repair_coverage_terminal_override": repair_coverage_terminal_override,
+            "repair_coverage_terminal_source": repair_coverage_terminal_source,
             "windows_detail_sample": novorudp_windows_detail_sample,
         },
         "sender_completed": sender_completed,
@@ -17996,6 +18053,8 @@ fn run_sender(
                 repair_latest_missing_uncovered_ranges.as_slice(),
                 tail_repair.missing_sample_limit,
             ),
+            "repair_coverage_terminal_override": repair_coverage_terminal_override,
+            "repair_coverage_terminal_source": repair_coverage_terminal_source,
             "receiver_final_missing_count": receiver_final_missing_count,
             "receiver_final_done": receiver_final_done,
             "final_ack_wait_enabled": final_ack_wait_ms > 0,
