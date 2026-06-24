@@ -14,6 +14,7 @@ use novovm_protocol::{
     NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1, ProtocolMessage,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::BufRead;
@@ -956,6 +957,88 @@ fn string_env_nonempty(name: &str) -> Option<String> {
 
 fn first_string_env_nonempty(names: &[&str]) -> Option<String> {
     names.iter().find_map(|name| string_env_nonempty(name))
+}
+
+fn control_frame_auth_key_v1() -> Option<String> {
+    first_string_env_nonempty(&[
+        "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY",
+        "NOVOVM_NETWORK_CONTROL_FRAME_AUTH_KEY",
+    ])
+}
+
+fn control_frame_auth_required_v1() -> bool {
+    bool_env("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED")
+        || bool_env("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED")
+}
+
+fn ack_control_frame_auth_material_v1(value: &Value) -> String {
+    let field = |key: &str| -> String {
+        value
+            .get(key)
+            .map(|item| {
+                if let Some(raw) = item.as_str() {
+                    raw.to_string()
+                } else {
+                    item.to_string()
+                }
+            })
+            .unwrap_or_default()
+    };
+    [
+        "novovm-novorudp-ack-control-frame-auth-v1".to_string(),
+        field("schema"),
+        field("packet_type"),
+        field("expected_tx_total"),
+        field("received_unique_count"),
+        field("highest_sequence_seen"),
+        field("missing_count"),
+        field("missing_ranges_full_count"),
+        field("missing_ranges_sample"),
+        field("ack_epoch"),
+        field("receiver_done"),
+        field("novorudp_current_window_id"),
+        field("novorudp_current_window_start"),
+        field("novorudp_current_window_end_inclusive"),
+        field("novorudp_current_window_missing_count"),
+        field("novorudp_current_window_missing_ranges_sample"),
+    ]
+    .join("|")
+}
+
+fn ack_control_frame_auth_tag_v1(value: &Value, key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-novorudp-control-frame-auth-keyed-sha256-v1");
+    hasher.update(key.as_bytes());
+    hasher.update(b"|");
+    hasher.update(ack_control_frame_auth_material_v1(value).as_bytes());
+    hex_lower(hasher.finalize().as_slice())
+}
+
+fn sign_ack_control_frame_v1(value: &mut Value) {
+    let required = control_frame_auth_required_v1();
+    let key = control_frame_auth_key_v1();
+    value["control_frame_auth_scheme"] = serde_json::json!("keyed_sha256_v1");
+    value["control_frame_auth_required"] = serde_json::json!(required);
+    value["control_frame_auth_key_present"] = serde_json::json!(key.is_some());
+    value["control_frame_auth_enabled"] = serde_json::json!(key.is_some());
+    value["control_frame_auth_domain"] = serde_json::json!("novorudp_ack_v1");
+    if let Some(key) = key {
+        value["control_frame_auth_tag"] =
+            serde_json::json!(ack_control_frame_auth_tag_v1(value, key.as_str()));
+    } else {
+        value["control_frame_auth_tag"] = Value::Null;
+    }
+}
+
+fn verify_ack_control_frame_auth_v1(value: &Value) -> bool {
+    let required = control_frame_auth_required_v1();
+    let Some(key) = control_frame_auth_key_v1() else {
+        return !required;
+    };
+    let Some(tag) = value.get("control_frame_auth_tag").and_then(Value::as_str) else {
+        return false;
+    };
+    ack_control_frame_auth_tag_v1(value, key.as_str()) == tag
 }
 
 fn full_async_runtime_engine_enabled_v1() -> bool {
@@ -8733,6 +8816,102 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn ack_control_frame_auth_accepts_signed_receiver_done() {
+        with_env_var("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_KEY", None, || {
+            with_env_var("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED", None, || {
+                with_env_var(
+                    "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY",
+                    Some("dev-secret"),
+                    || {
+                        with_env_var(
+                            "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED",
+                            Some("1"),
+                            || {
+                                let ack = receiver_ack_report_value(8, 8, 64, 10);
+
+                                assert_eq!(
+                                    ack.get("control_frame_auth_enabled")
+                                        .and_then(Value::as_bool),
+                                    Some(true)
+                                );
+                                assert!(ack
+                                    .get("control_frame_auth_tag")
+                                    .and_then(Value::as_str)
+                                    .is_some());
+
+                                let parsed = parse_ack_value(&ack, 64).unwrap();
+                                assert!(parsed.receiver_done);
+                                assert_eq!(parsed.latest_missing_count, 0);
+                            },
+                        )
+                    },
+                )
+            })
+        });
+    }
+
+    #[test]
+    fn ack_control_frame_auth_rejects_spoofed_receiver_done() {
+        with_env_var("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_KEY", None, || {
+            with_env_var("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED", None, || {
+                with_env_var(
+                    "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY",
+                    Some("dev-secret"),
+                    || {
+                        with_env_var(
+                            "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED",
+                            Some("1"),
+                            || {
+                                let mut ack = receiver_ack_report_value(8, 4, 64, 10);
+                                ack["receiver_done"] = serde_json::json!(true);
+                                ack["missing_count"] = serde_json::json!(0);
+                                ack["missing_ranges_full_count"] = serde_json::json!(0);
+                                ack["missing_ranges_sample"] = serde_json::json!([]);
+
+                                assert!(parse_ack_value(&ack, 64).is_none());
+                            },
+                        )
+                    },
+                )
+            })
+        });
+    }
+
+    #[test]
+    fn ack_control_frame_auth_required_rejects_unsigned_frame() {
+        with_env_var("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_KEY", None, || {
+            with_env_var("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED", None, || {
+                with_env_var(
+                    "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY",
+                    Some("dev-secret"),
+                    || {
+                        with_env_var(
+                            "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED",
+                            Some("1"),
+                            || {
+                                let unsigned = serde_json::json!({
+                                    "schema": "novovm-native-pipeline-cross-machine-sustained-ack/v1",
+                                    "packet_type": "native_pipeline_ack_v1",
+                                    "expected_tx_total": 8,
+                                    "received_unique_count": 8,
+                                    "highest_sequence_seen": 7,
+                                    "missing_count": 0,
+                                    "missing_ranges_full_count": 0,
+                                    "missing_ranges_sample": [],
+                                    "ack_epoch": 1,
+                                    "receiver_done": true
+                                });
+
+                                assert!(parse_ack_value(&unsigned, 64).is_none());
+                            },
+                        )
+                    },
+                )
+            })
+        });
+    }
+
+    #[test]
     fn full_async_ack_plane_hands_latest_missing_to_repair_snapshot() {
         let mut plane = FullAsyncAckDrainPumpStateV1::default();
         merge_full_async_ack_plane_state_v1(
@@ -8915,6 +9094,9 @@ fn parse_ack_value(value: &Value, limit: u64) -> Option<UdpAckStateV1> {
         && value.get("schema").and_then(Value::as_str)
             != Some("novovm-native-pipeline-cross-machine-sustained-ack/v1")
     {
+        return None;
+    }
+    if !verify_ack_control_frame_auth_v1(value) {
         return None;
     }
     let ranges = missing_ranges_from_value_key(value, "missing_ranges_sample", limit);
@@ -10622,7 +10804,7 @@ fn receiver_ack_report_value_with_summary(
     } else {
         serde_json::json!(stable_progress.saturating_sub(1))
     };
-    serde_json::json!({
+    let mut report = serde_json::json!({
         "schema": "novovm-native-pipeline-cross-machine-sustained-ack/v1",
         "packet_type": "native_pipeline_ack_v1",
         "expected_tx_total": expected_tx_count,
@@ -10667,7 +10849,9 @@ fn receiver_ack_report_value_with_summary(
             .as_ref()
             .map(|(_, _, window_ranges)| missing_ranges_to_json(window_ranges.as_slice(), sample_limit))
             .unwrap_or_else(|| serde_json::json!([])),
-    })
+    });
+    sign_ack_control_frame_v1(&mut report);
+    report
 }
 
 fn send_receiver_udp_ack(
@@ -17699,6 +17883,10 @@ fn run_sender(
         "ack_plane_aggressive_drain": ack_plane_aggressive_drain,
         "sender_ack_plane_enabled": udp_ack.enabled,
         "sender_ack_plane_mode": if full_async_runtime_engine { "aggressive_nonblocking_ack_drain" } else { "interval_ack_drain" },
+        "ack_control_frame_auth_required": control_frame_auth_required_v1(),
+        "ack_control_frame_auth_key_present": control_frame_auth_key_v1().is_some(),
+        "ack_control_frame_auth_enabled": control_frame_auth_key_v1().is_some(),
+        "ack_control_frame_auth_scheme": "keyed_sha256_v1",
         "network_profile": network_profile.as_str(),
         "ack_bind_addr": sender_ack_bind_requested_addr.clone(),
         "sender_ack_bind_addr": sender_ack_bind_requested_addr.clone(),
