@@ -8850,6 +8850,76 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn full_async_sender_waits_progress_deadline_without_tail_repair() {
+        with_env_var("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE", Some("1"), || {
+            with_env_var("NOVOVM_NETWORK_PROFILE", Some("local_smoke"), || {
+                with_env_var(
+                    "NOVOVM_NATIVE_PIPELINE_RECEIVER_PROGRESS_DEADLINE_MS",
+                    Some("20"),
+                    || {
+                        with_sender_hard_timeout_env(200, || {
+                            let chain_id = 92_002_1;
+                            let tx_count = 4;
+                            let sender_addr = reserve_udp_addr().expect("sender addr");
+                            let receiver_addr = reserve_udp_addr().expect("receiver addr");
+                            let ack_bind_addr = reserve_udp_addr().expect("ack bind addr");
+                            let mut tail_repair = sender_timeout_tail_repair_config();
+                            tail_repair.enabled = false;
+                            tail_repair.rounds = 0;
+
+                            let report = run_sender(
+                                chain_id,
+                                tx_count,
+                                1,
+                                2,
+                                sender_addr.as_str(),
+                                receiver_addr.as_str(),
+                                FaultConfigV1 {
+                                    enabled: false,
+                                    loss_bps: 0,
+                                    duplicate_bps: 0,
+                                    delay_ms: 0,
+                                    reorder_bps: 0,
+                                    seed: 0,
+                                },
+                                sender_timeout_sustained_config(tx_count),
+                                tail_repair,
+                                default_udp_send_retry_config(),
+                                UdpAckConfigV1 {
+                                    enabled: true,
+                                    bind_addr: ack_bind_addr,
+                                    target_addr: None,
+                                    recv_timeout_ms: 0,
+                                },
+                                sender_timeout_novorudp_config(),
+                            )
+                            .expect("sender must wait progress deadline and return fail report");
+
+                            assert_eq!(report["accepted"].as_bool(), Some(false));
+                            assert_eq!(
+                                report["fail_reason"].as_str(),
+                                Some("production_receiver_progress_deadline_exceeded")
+                            );
+                            assert_eq!(
+                                report["sender_finalization_wait_enabled"].as_bool(),
+                                Some(true)
+                            );
+                            assert_eq!(
+                                report["sender_receiver_progress_deadline_elapsed"].as_bool(),
+                                Some(true)
+                            );
+                            assert!(
+                                report["elapsed_ms"].as_u64().unwrap_or_default() >= 20,
+                                "sender must not exit immediately without waiting for progress"
+                            );
+                        });
+                    },
+                )
+            })
+        });
+    }
+
+    #[test]
     fn production_profile_deadline_fail_closed_without_receiver_done() {
         with_env_var("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE", Some("1"), || {
             with_env_var("NOVOVM_NETWORK_PROFILE", Some("local_smoke"), || {
@@ -17965,7 +18035,8 @@ fn run_sender(
         }]
     };
     let sender_completed = primary_send_completed;
-    if tail_repair.enabled
+    let sender_finalization_wait_enabled = tail_repair.enabled || full_async_runtime_engine;
+    if sender_finalization_wait_enabled
         && sender_completed
         && (!sender_hard_timeout_reached || full_async_runtime_engine)
         && !(latest_ack_receiver_done && latest_ack_missing_count == Some(0))
@@ -17986,26 +18057,7 @@ fn run_sender(
                 break;
             }
             if production_phase_split {
-                sender_receiver_progress_seen = latest_ack_missing_count.is_some()
-                    || latest_ack_receiver_done
-                    || latest_ack_highest_sequence_seen.is_some();
-                sender_receiver_progress_highest_sequence_seen = latest_ack_highest_sequence_seen;
-                sender_receiver_progress_missing_count = latest_ack_missing_count;
-                sender_receiver_progress_seen_all = latest_ack_receiver_done
-                    || latest_ack_missing_count == Some(0)
-                    || latest_ack_highest_sequence_seen
-                        .map(|highest| highest.saturating_add(1) >= tx_count)
-                        .unwrap_or(false)
-                    || sender_ack_caught_up_latched;
-                if sender_receiver_progress_seen && sender_receiver_progress_first_ack_ms.is_none()
-                {
-                    sender_receiver_progress_first_ack_ms =
-                        Some(sender_started.elapsed().as_millis() as u64);
-                }
-                if sender_receiver_progress_seen {
-                    sender_receiver_progress_latest_ack_ms =
-                        Some(sender_started.elapsed().as_millis() as u64);
-                }
+                record_sender_ack_progress_snapshot!();
                 if !sender_receiver_progress_seen {
                     if started.elapsed()
                         >= Duration::from_millis(sender_receiver_progress_deadline_ms)
@@ -18359,18 +18411,19 @@ fn run_sender(
     } else {
         "unknown"
     };
-    let tail_repair_success = if tail_repair.enabled {
+    let tail_repair_success = if sender_finalization_wait_enabled {
         receiver_final_done == Some(true) && receiver_final_missing_count == Some(0)
     } else {
         true
     };
-    let repair_budget_exhausted =
-        tail_repair.enabled && repair_rounds_used >= tail_repair.rounds && !tail_repair_success;
-    let repair_waited_for_receiver_done = tail_repair.enabled;
+    let repair_budget_exhausted = !tail_repair_success
+        && ((tail_repair.enabled && repair_rounds_used >= tail_repair.rounds)
+            || sender_repair_continuation_deadline_elapsed);
+    let repair_waited_for_receiver_done = sender_finalization_wait_enabled;
     if receiver_final_missing_count.is_some() {
         final_missing_count = receiver_final_missing_count.unwrap_or(final_missing_count);
     }
-    let tail_repair_completion_reason = if !tail_repair.enabled {
+    let tail_repair_completion_reason = if !sender_finalization_wait_enabled {
         "tail_repair_disabled"
     } else if tail_repair_success {
         if final_ack_received_after_repair {
@@ -19357,6 +19410,7 @@ fn run_sender(
             "tail_repair_completion_reason": tail_repair_completion_reason,
             "repair_budget_exhausted": repair_budget_exhausted,
             "repair_waited_for_receiver_done": repair_waited_for_receiver_done,
+            "sender_finalization_wait_enabled": sender_finalization_wait_enabled,
             "tail_repair_missing_ranges_seen": tail_repair_missing_ranges_seen,
             "tail_repair_fallback_used_count": tail_repair_fallback_used_count,
             "tail_repair_file_ack_used_count": tail_repair_file_ack_used_count,
@@ -19486,6 +19540,10 @@ fn run_sender(
             serde_json::json!(
                 receiver_progress_deadline_exceeded || production_final_ack_deadline_exceeded
             ),
+        );
+        report_map.insert(
+            "sender_finalization_wait_enabled".to_string(),
+            serde_json::json!(sender_finalization_wait_enabled),
         );
         report_map.insert(
             "sender_receiver_progress_deadline_ms".to_string(),
