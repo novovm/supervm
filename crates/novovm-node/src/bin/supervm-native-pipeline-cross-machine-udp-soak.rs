@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-#![recursion_limit = "1024"]
+#![recursion_limit = "2048"]
 
 use anyhow::{bail, Context, Result};
 use novovm_network::{Transport, UdpTransport};
@@ -347,6 +347,16 @@ struct FullAsyncAckDrainPumpStateV1 {
     receiver_done_overwritten_count: u64,
     receiver_done_handoff_count: u64,
     receiver_done_sticky_sample: Option<UdpAckStateV1>,
+    caught_up_latched: bool,
+    caught_up_latch_epoch: Option<u64>,
+    caught_up_latch_ms: Option<u64>,
+    caught_up_latch_missing_count: Option<u64>,
+    caught_up_latch_sequence: Option<u64>,
+    caught_up_latch_source: Option<String>,
+    seen_all_latched: bool,
+    missing_zero_latched: bool,
+    stale_missing_sample_ignored_count: u64,
+    caught_up_overwritten_by_stale_ack_count: u64,
 }
 
 fn merge_full_async_ack_plane_state_v1(
@@ -374,6 +384,32 @@ fn merge_full_async_ack_plane_state_v1(
         plane.receiver_done_latch_ms = Some(elapsed_ms);
         plane.receiver_done_handoff_count = plane.receiver_done_handoff_count.saturating_add(1);
         plane.receiver_done_sticky_sample = Some(ack.clone());
+    }
+    let ack_seen_all = false;
+    let ack_missing_zero = ack.latest_missing_count == 0;
+    let ack_caught_up = ack.receiver_done || ack_missing_zero || ack_seen_all;
+    if ack_caught_up {
+        plane.caught_up_latched = true;
+        plane.caught_up_latch_epoch = Some(ack.latest_epoch);
+        plane.caught_up_latch_ms = Some(elapsed_ms);
+        plane.caught_up_latch_missing_count = Some(ack.latest_missing_count);
+        plane.caught_up_latch_sequence = ack.highest_sequence_seen;
+        plane.caught_up_latch_source = Some(if ack.receiver_done {
+            "receiver_done_ack".to_string()
+        } else if ack_missing_zero {
+            "latest_ack_missing_zero".to_string()
+        } else {
+            "highest_sequence_seen_all".to_string()
+        });
+        plane.seen_all_latched |= ack_seen_all || ack.receiver_done;
+        plane.missing_zero_latched |= ack_missing_zero || ack.receiver_done;
+    } else if plane.caught_up_latched {
+        plane.caught_up_overwritten_by_stale_ack_count = plane
+            .caught_up_overwritten_by_stale_ack_count
+            .saturating_add(ack.received_count);
+        plane.stale_missing_sample_ignored_count = plane
+            .stale_missing_sample_ignored_count
+            .saturating_add(ack.received_count);
     }
     let stale = plane.latest_ack.as_ref().is_some_and(|current| {
         ack.latest_epoch < current.latest_epoch
@@ -3303,6 +3339,46 @@ mod novorudp_tests {
                 .map(|ack| ack.latest_missing_count),
             Some(4)
         );
+    }
+
+    #[test]
+    fn full_async_ack_plane_latches_missing_zero_and_ignores_later_partial_ack() {
+        let mut plane = FullAsyncAckDrainPumpStateV1::default();
+        merge_full_async_ack_plane_state_v1(
+            &mut plane,
+            UdpAckStateV1 {
+                received_count: 1,
+                latest_epoch: 30,
+                latest_missing_count: 0,
+                receiver_done: false,
+                highest_sequence_seen: Some(479),
+                ..UdpAckStateV1::default()
+            },
+            200,
+        );
+        merge_full_async_ack_plane_state_v1(
+            &mut plane,
+            UdpAckStateV1 {
+                received_count: 1,
+                latest_epoch: 31,
+                latest_missing_count: 16,
+                latest_ranges: vec![MissingRangeV1 {
+                    start: 464,
+                    end_inclusive: 479,
+                }],
+                receiver_done: false,
+                highest_sequence_seen: Some(463),
+                ..UdpAckStateV1::default()
+            },
+            210,
+        );
+
+        assert!(plane.caught_up_latched);
+        assert!(plane.missing_zero_latched);
+        assert_eq!(plane.caught_up_latch_epoch, Some(30));
+        assert_eq!(plane.caught_up_latch_missing_count, Some(0));
+        assert_eq!(plane.stale_missing_sample_ignored_count, 1);
+        assert_eq!(plane.caught_up_overwritten_by_stale_ack_count, 1);
     }
 
     #[test]
@@ -6664,6 +6740,33 @@ mod novorudp_tests {
             Some(true)
         );
         assert_eq!(report["repair_coverage_gap_count"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn repair_latest_missing_uncovered_ranges_report_real_coverage_gap() {
+        let latest_missing = vec![MissingRangeV1 {
+            start: 100,
+            end_inclusive: 199,
+        }];
+        let repair_sent = vec![MissingRangeV1 {
+            start: 100,
+            end_inclusive: 149,
+        }];
+        let uncovered =
+            missing_ranges_subtract(latest_missing.as_slice(), repair_sent.as_slice(), 1_000);
+
+        assert_eq!(
+            uncovered,
+            vec![MissingRangeV1 {
+                start: 150,
+                end_inclusive: 199,
+            }]
+        );
+        assert_eq!(missing_ranges_count(uncovered.as_slice()), 50);
+        assert_eq!(
+            missing_ranges_overlap_count(latest_missing.as_slice(), repair_sent.as_slice()),
+            50
+        );
     }
 
     #[test]
@@ -15405,6 +15508,21 @@ fn run_sender(
         || latest_ack_highest_sequence_seen
             .map(|highest| highest.saturating_add(1) >= tx_count)
             .unwrap_or(false);
+    let mut sender_ack_caught_up_latched = sender_receiver_progress_seen_all;
+    let mut sender_ack_caught_up_latch_source = if latest_ack_receiver_done {
+        "receiver_done_ack".to_string()
+    } else if latest_ack_missing_count == Some(0) {
+        "latest_ack_missing_zero".to_string()
+    } else if sender_receiver_progress_seen_all {
+        "highest_sequence_seen_all".to_string()
+    } else {
+        "none".to_string()
+    };
+    let mut sender_ack_caught_up_latch_epoch: Option<u64> = None;
+    let mut sender_ack_caught_up_latch_missing_count = latest_ack_missing_count;
+    let mut sender_ack_caught_up_latch_sequence = latest_ack_highest_sequence_seen;
+    let mut sender_ack_seen_all_latched = sender_receiver_progress_seen_all;
+    let mut sender_ack_missing_zero_latched = latest_ack_missing_count == Some(0);
     let mut sender_final_done_ack_deadline_started_ms: Option<u64> = None;
     let mut sender_final_done_ack_deadline_start_reason = "not_started".to_string();
     let mut sender_finalization_phase = "primary_send".to_string();
@@ -15531,6 +15649,45 @@ fn run_sender(
                             latest_ack_highest_sequence_seen = state.highest_sequence_seen;
                             latest_ack_receiver_done = state.receiver_done;
                             final_missing_count = state.latest_missing_count;
+                            let state_seen_all = state
+                                .highest_sequence_seen
+                                .map(|highest| highest.saturating_add(1) >= tx_count)
+                                .unwrap_or(false);
+                            if state.receiver_done
+                                || state.latest_missing_count == 0
+                                || state_seen_all
+                            {
+                                sender_ack_caught_up_latched = true;
+                                sender_ack_caught_up_latch_source = if state.receiver_done {
+                                    "receiver_done_ack".to_string()
+                                } else if state.latest_missing_count == 0 {
+                                    "latest_ack_missing_zero".to_string()
+                                } else {
+                                    "highest_sequence_seen_all".to_string()
+                                };
+                                sender_ack_caught_up_latch_epoch = Some(state.latest_epoch);
+                                sender_ack_caught_up_latch_missing_count =
+                                    Some(state.latest_missing_count);
+                                sender_ack_caught_up_latch_sequence = state.highest_sequence_seen;
+                                sender_ack_seen_all_latched |=
+                                    state_seen_all || state.receiver_done;
+                                sender_ack_missing_zero_latched |=
+                                    state.latest_missing_count == 0 || state.receiver_done;
+                            }
+                            if snapshot.caught_up_latched {
+                                sender_ack_caught_up_latched = true;
+                                sender_ack_caught_up_latch_source = snapshot
+                                    .caught_up_latch_source
+                                    .clone()
+                                    .unwrap_or_else(|| "ack_plane_caught_up_latch".to_string());
+                                sender_ack_caught_up_latch_epoch = snapshot.caught_up_latch_epoch;
+                                sender_ack_caught_up_latch_missing_count =
+                                    snapshot.caught_up_latch_missing_count;
+                                sender_ack_caught_up_latch_sequence =
+                                    snapshot.caught_up_latch_sequence;
+                                sender_ack_seen_all_latched |= snapshot.seen_all_latched;
+                                sender_ack_missing_zero_latched |= snapshot.missing_zero_latched;
+                            }
                             if novorudp.enabled
                                 && state.latest_epoch > previous_epoch
                                 && state.highest_sequence_seen.unwrap_or_default()
@@ -15569,6 +15726,13 @@ fn run_sender(
                             latest_ack_highest_sequence_seen = Some(tx_count.saturating_sub(1));
                             latest_ack_receiver_done = true;
                             final_missing_count = 0;
+                            sender_ack_caught_up_latched = true;
+                            sender_ack_caught_up_latch_source = "receiver_done_ack".to_string();
+                            sender_ack_caught_up_latch_epoch = Some(state.latest_epoch);
+                            sender_ack_caught_up_latch_missing_count = Some(0);
+                            sender_ack_caught_up_latch_sequence = Some(tx_count.saturating_sub(1));
+                            sender_ack_seen_all_latched = true;
+                            sender_ack_missing_zero_latched = true;
                         }
                     }
                 }
@@ -15604,6 +15768,28 @@ fn run_sender(
                         latest_ack_highest_sequence_seen = state.highest_sequence_seen;
                         latest_ack_receiver_done = state.receiver_done;
                         final_missing_count = state.latest_missing_count;
+                        let state_seen_all = state
+                            .highest_sequence_seen
+                            .map(|highest| highest.saturating_add(1) >= tx_count)
+                            .unwrap_or(false);
+                        if state.receiver_done || state.latest_missing_count == 0 || state_seen_all
+                        {
+                            sender_ack_caught_up_latched = true;
+                            sender_ack_caught_up_latch_source = if state.receiver_done {
+                                "receiver_done_ack".to_string()
+                            } else if state.latest_missing_count == 0 {
+                                "latest_ack_missing_zero".to_string()
+                            } else {
+                                "highest_sequence_seen_all".to_string()
+                            };
+                            sender_ack_caught_up_latch_epoch = Some(state.latest_epoch);
+                            sender_ack_caught_up_latch_missing_count =
+                                Some(state.latest_missing_count);
+                            sender_ack_caught_up_latch_sequence = state.highest_sequence_seen;
+                            sender_ack_seen_all_latched |= state_seen_all || state.receiver_done;
+                            sender_ack_missing_zero_latched |=
+                                state.latest_missing_count == 0 || state.receiver_done;
+                        }
                         if novorudp.enabled
                             && state.latest_epoch > previous_epoch
                             && state.highest_sequence_seen.unwrap_or_default()
@@ -16727,7 +16913,8 @@ fn run_sender(
                     || latest_ack_missing_count == Some(0)
                     || latest_ack_highest_sequence_seen
                         .map(|highest| highest.saturating_add(1) >= tx_count)
-                        .unwrap_or(false);
+                        .unwrap_or(false)
+                    || sender_ack_caught_up_latched;
                 if sender_receiver_progress_seen && sender_receiver_progress_first_ack_ms.is_none()
                 {
                     sender_receiver_progress_first_ack_ms =
@@ -16850,6 +17037,26 @@ fn run_sender(
                     .highest_sequence_seen
                     .map(|highest| highest.saturating_add(1) >= tx_count)
                     .unwrap_or(false);
+            if sender_receiver_progress_seen_all {
+                sender_ack_caught_up_latched = true;
+                sender_ack_caught_up_latch_source = if state.receiver_done {
+                    "receiver_done_ack".to_string()
+                } else if state.latest_missing_count == 0 {
+                    "latest_ack_missing_zero".to_string()
+                } else {
+                    "highest_sequence_seen_all".to_string()
+                };
+                sender_ack_caught_up_latch_epoch = Some(state.latest_epoch);
+                sender_ack_caught_up_latch_missing_count = Some(state.latest_missing_count);
+                sender_ack_caught_up_latch_sequence = state.highest_sequence_seen;
+                sender_ack_seen_all_latched |= state.receiver_done
+                    || state
+                        .highest_sequence_seen
+                        .map(|highest| highest.saturating_add(1) >= tx_count)
+                        .unwrap_or(false);
+                sender_ack_missing_zero_latched |=
+                    state.receiver_done || state.latest_missing_count == 0;
+            }
             if state.receiver_done && state.latest_missing_count == 0 {
                 final_ack_received_after_repair = true;
                 final_ack_epoch = Some(state.latest_epoch);
@@ -16876,6 +17083,14 @@ fn run_sender(
     apply_full_async_ack_plane_snapshot!();
     let _ack_plane_final_applied_epoch = ack_plane_applied_epoch;
     let _ack_plane_final_applied_receiver_done = ack_plane_applied_receiver_done;
+    sender_receiver_progress_seen_all |= sender_ack_caught_up_latched;
+    if sender_ack_caught_up_latched {
+        sender_receiver_progress_seen = true;
+        sender_receiver_progress_highest_sequence_seen =
+            sender_receiver_progress_highest_sequence_seen.or(sender_ack_caught_up_latch_sequence);
+        sender_receiver_progress_missing_count =
+            sender_receiver_progress_missing_count.or(sender_ack_caught_up_latch_missing_count);
+    }
     if tail_repair_ack_received_count == 0 {
         final_missing_count = tx_count.saturating_sub(stats.sent_unique);
     }
@@ -16960,25 +17175,28 @@ fn run_sender(
         missing_ranges_bounds(latest_ack_missing_ranges_sample.as_slice());
     let (repair_selected_range_min, repair_selected_range_max) =
         missing_ranges_bounds(repair_sequence_sent_ranges.as_slice());
-    let repair_window_covers_latest_missing = match (
-        latest_ack_missing_range_max,
-        repair_selected_range_max,
-        latest_ack_missing_count,
-        latest_ack_receiver_done,
-    ) {
-        (_, _, Some(0), _) | (_, _, _, true) => true,
-        (Some(latest_max), Some(repair_max), _, _) => repair_max >= latest_max,
-        (None, _, _, _) => true,
-        _ => false,
-    };
-    let repair_coverage_gap_count = if repair_window_covers_latest_missing {
-        0
-    } else {
-        latest_ack_missing_range_max
-            .zip(repair_selected_range_max)
-            .map(|(latest_max, repair_max)| latest_max.saturating_sub(repair_max))
-            .unwrap_or_else(|| latest_ack_missing_count.unwrap_or_default())
-    };
+    let latest_missing_snapshot_ranges =
+        normalize_missing_ranges(latest_ack_missing_ranges_sample.as_slice(), tx_count);
+    let repair_sent_normalized =
+        normalize_missing_ranges(repair_sequence_sent_ranges.as_slice(), tx_count);
+    let repair_latest_missing_snapshot_sequence_count =
+        missing_ranges_count(latest_missing_snapshot_ranges.as_slice());
+    let repair_latest_missing_snapshot_range_count = latest_missing_snapshot_ranges.len() as u64;
+    let repair_latest_missing_covered_sequence_count = missing_ranges_overlap_count(
+        latest_missing_snapshot_ranges.as_slice(),
+        repair_sent_normalized.as_slice(),
+    );
+    let repair_latest_missing_uncovered_ranges = missing_ranges_subtract(
+        latest_missing_snapshot_ranges.as_slice(),
+        repair_sent_normalized.as_slice(),
+        tx_count,
+    );
+    let repair_latest_missing_uncovered_sequence_count =
+        missing_ranges_count(repair_latest_missing_uncovered_ranges.as_slice());
+    let repair_window_covers_latest_missing = latest_ack_receiver_done
+        || latest_ack_missing_count == Some(0)
+        || repair_latest_missing_uncovered_sequence_count == 0;
+    let repair_coverage_gap_count = repair_latest_missing_uncovered_sequence_count;
     let full_async_ack_fail_reason = full_async_sender_ack_finalization_fail_reason_v1(
         full_async_runtime_engine,
         primary_ack_drain_enabled,
@@ -16999,7 +17217,14 @@ fn run_sender(
     {
         Some("production_receiver_progress_deadline_exceeded")
     } else if receiver_progress_deadline_exceeded && !sender_receiver_progress_seen_all {
-        Some("production_receiver_not_caught_up")
+        Some("ack_caught_up_latch_missing")
+    } else if sender_receiver_progress_seen_all
+        && !latest_ack_receiver_done
+        && final_ack_grace_timeout
+    {
+        Some("receiver_done_ack_not_observed_after_caught_up")
+    } else if repair_coverage_gap_count > 0 && !latest_ack_receiver_done {
+        Some("repair_latest_missing_coverage_gap")
     } else if production_final_ack_deadline_exceeded {
         Some("production_final_ack_deadline_exceeded")
     } else if let Some(reason) = full_async_ack_fail_reason {
@@ -17124,6 +17349,45 @@ fn run_sender(
     let ack_plane_receiver_done_handoff_count = ack_plane_final_snapshot
         .as_ref()
         .map(|state| state.receiver_done_handoff_count)
+        .unwrap_or_default();
+    let ack_plane_caught_up_latched = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.caught_up_latched)
+        .unwrap_or(sender_ack_caught_up_latched);
+    let ack_plane_caught_up_latch_epoch = ack_plane_final_snapshot
+        .as_ref()
+        .and_then(|state| state.caught_up_latch_epoch)
+        .or(sender_ack_caught_up_latch_epoch);
+    let ack_plane_caught_up_latch_ms = ack_plane_final_snapshot
+        .as_ref()
+        .and_then(|state| state.caught_up_latch_ms);
+    let ack_plane_caught_up_latch_source = ack_plane_final_snapshot
+        .as_ref()
+        .and_then(|state| state.caught_up_latch_source.clone())
+        .unwrap_or_else(|| sender_ack_caught_up_latch_source.clone());
+    let ack_plane_caught_up_latch_missing_count = ack_plane_final_snapshot
+        .as_ref()
+        .and_then(|state| state.caught_up_latch_missing_count)
+        .or(sender_ack_caught_up_latch_missing_count);
+    let ack_plane_caught_up_latch_sequence = ack_plane_final_snapshot
+        .as_ref()
+        .and_then(|state| state.caught_up_latch_sequence)
+        .or(sender_ack_caught_up_latch_sequence);
+    let ack_plane_seen_all_latched = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.seen_all_latched)
+        .unwrap_or(sender_ack_seen_all_latched);
+    let ack_plane_missing_zero_latched = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.missing_zero_latched)
+        .unwrap_or(sender_ack_missing_zero_latched);
+    let ack_plane_stale_missing_sample_ignored_count = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.stale_missing_sample_ignored_count)
+        .unwrap_or_default();
+    let ack_plane_caught_up_overwritten_by_stale_ack_count = ack_plane_final_snapshot
+        .as_ref()
+        .map(|state| state.caught_up_overwritten_by_stale_ack_count)
         .unwrap_or_default();
     let ack_plane_coalesced_ack_count = ack_plane_final_snapshot
         .as_ref()
@@ -17290,6 +17554,16 @@ fn run_sender(
         "ack_plane_receiver_done_stale_drop_count": ack_plane_receiver_done_stale_drop_count,
         "ack_plane_receiver_done_overwritten_count": ack_plane_receiver_done_overwritten_count,
         "ack_plane_receiver_done_handoff_count": ack_plane_receiver_done_handoff_count,
+        "ack_plane_caught_up_latched": ack_plane_caught_up_latched,
+        "ack_plane_caught_up_latch_epoch": ack_plane_caught_up_latch_epoch,
+        "ack_plane_caught_up_latch_ms": ack_plane_caught_up_latch_ms,
+        "ack_plane_caught_up_latch_source": ack_plane_caught_up_latch_source,
+        "ack_plane_caught_up_latch_missing_count": ack_plane_caught_up_latch_missing_count,
+        "ack_plane_caught_up_latch_sequence": ack_plane_caught_up_latch_sequence,
+        "ack_plane_seen_all_latched": ack_plane_seen_all_latched,
+        "ack_plane_missing_zero_latched": ack_plane_missing_zero_latched,
+        "ack_plane_stale_missing_sample_ignored_count": ack_plane_stale_missing_sample_ignored_count,
+        "ack_plane_caught_up_overwritten_by_stale_ack_count": ack_plane_caught_up_overwritten_by_stale_ack_count,
         "ack_plane_latest_sample_epoch": ack_plane_last_epoch,
         "ack_plane_terminal_sample_source": if ack_plane_receiver_done_latched { "receiver_done_sticky_sample" } else { "latest_ack_sample" },
         "ack_plane_receiver_done_sticky_sample_source": if ack_plane_receiver_done_latched { "receiver_done_ack" } else { "none" },
@@ -17306,6 +17580,17 @@ fn run_sender(
         "sender_ack_last_decode_error": Value::Null,
         "sender_ack_receiver_done_seen": latest_ack_receiver_done,
         "sender_ack_receiver_done_epoch": if latest_ack_receiver_done { Some(tail_repair_latest_ack_epoch) } else { None },
+        "sender_ack_caught_up_latched": sender_ack_caught_up_latched || ack_plane_caught_up_latched,
+        "sender_ack_caught_up_latch_source": if sender_ack_caught_up_latched { sender_ack_caught_up_latch_source.clone() } else { ack_plane_caught_up_latch_source.clone() },
+        "sender_ack_caught_up_latch_epoch": sender_ack_caught_up_latch_epoch.or(ack_plane_caught_up_latch_epoch),
+        "sender_ack_caught_up_latch_missing_count": sender_ack_caught_up_latch_missing_count.or(ack_plane_caught_up_latch_missing_count),
+        "sender_ack_caught_up_latch_sequence": sender_ack_caught_up_latch_sequence.or(ack_plane_caught_up_latch_sequence),
+        "sender_ack_seen_all_latched": sender_ack_seen_all_latched || ack_plane_seen_all_latched,
+        "sender_ack_missing_zero_latched": sender_ack_missing_zero_latched || ack_plane_missing_zero_latched,
+        "sender_ack_latch_overwritten_by_stale_ack_count": ack_plane_caught_up_overwritten_by_stale_ack_count,
+        "sender_ack_stale_missing_sample_ignored_count": ack_plane_stale_missing_sample_ignored_count,
+        "sender_finalization_caught_up_source": if sender_ack_caught_up_latched || ack_plane_caught_up_latched { "sticky_caught_up_latch" } else { "latest_ack_sample" },
+        "sender_receiver_done_ack_missing_after_caught_up": (sender_ack_caught_up_latched || ack_plane_caught_up_latched) && !latest_ack_receiver_done,
         "sender_finalization_checked_receiver_done_latch": full_async_ack_drain_dedicated_pump_enabled,
         "sender_finalization_receiver_done_latch_seen": ack_plane_receiver_done_latched,
         "sender_finalization_ack_latch_handoff_ms": ack_plane_receiver_done_latch_ms,
@@ -17378,6 +17663,17 @@ fn run_sender(
         "repair_suppressed_duplicate_sequence_count": repair_suppressed_duplicate_sequence_count,
         "repair_suppressed_not_in_latest_missing_count": repair_suppressed_not_in_latest_missing_count,
         "repair_selected_latest_missing_sequence_count": repair_selected_latest_missing_sequence_count,
+        "repair_latest_missing_snapshot_sequence_count": repair_latest_missing_snapshot_sequence_count,
+        "repair_latest_missing_snapshot_range_count": repair_latest_missing_snapshot_range_count,
+        "repair_latest_missing_covered_sequence_count": repair_latest_missing_covered_sequence_count,
+        "repair_latest_missing_uncovered_sequence_count": repair_latest_missing_uncovered_sequence_count,
+        "repair_latest_missing_uncovered_ranges_sample": missing_ranges_to_json(
+            repair_latest_missing_uncovered_ranges.as_slice(),
+            tail_repair.missing_sample_limit,
+        ),
+        "repair_suppress_blocked_required_coverage_count": repair_suppression_blocked_for_latest_missing_count,
+        "repair_suppress_required_coverage_bypass_count": repair_latest_missing_retry_due_count,
+        "repair_retry_cadence_trigger_count": repair_latest_missing_retry_due_count,
         "repair_selected_unique_sequence_count": missing_ranges_count(
             normalize_missing_ranges(repair_sequence_sent_ranges.as_slice(), tx_count).as_slice(),
         ),
@@ -17516,6 +17812,14 @@ fn run_sender(
             "repair_window_covers_latest_missing": repair_window_covers_latest_missing,
             "repair_latest_missing_max": latest_ack_missing_range_max,
             "repair_coverage_gap_count": repair_coverage_gap_count,
+            "repair_latest_missing_snapshot_sequence_count": repair_latest_missing_snapshot_sequence_count,
+            "repair_latest_missing_snapshot_range_count": repair_latest_missing_snapshot_range_count,
+            "repair_latest_missing_covered_sequence_count": repair_latest_missing_covered_sequence_count,
+            "repair_latest_missing_uncovered_sequence_count": repair_latest_missing_uncovered_sequence_count,
+            "repair_latest_missing_uncovered_ranges_sample": missing_ranges_to_json(
+                repair_latest_missing_uncovered_ranges.as_slice(),
+                tail_repair.missing_sample_limit,
+            ),
             "windows_detail_sample": novorudp_windows_detail_sample,
         },
         "sender_completed": sender_completed,
@@ -17684,6 +17988,14 @@ fn run_sender(
             "repair_window_covers_latest_missing": repair_window_covers_latest_missing,
             "repair_latest_missing_max": latest_ack_missing_range_max,
             "repair_coverage_gap_count": repair_coverage_gap_count,
+            "repair_latest_missing_snapshot_sequence_count": repair_latest_missing_snapshot_sequence_count,
+            "repair_latest_missing_snapshot_range_count": repair_latest_missing_snapshot_range_count,
+            "repair_latest_missing_covered_sequence_count": repair_latest_missing_covered_sequence_count,
+            "repair_latest_missing_uncovered_sequence_count": repair_latest_missing_uncovered_sequence_count,
+            "repair_latest_missing_uncovered_ranges_sample": missing_ranges_to_json(
+                repair_latest_missing_uncovered_ranges.as_slice(),
+                tail_repair.missing_sample_limit,
+            ),
             "receiver_final_missing_count": receiver_final_missing_count,
             "receiver_final_done": receiver_final_done,
             "final_ack_wait_enabled": final_ack_wait_ms > 0,
