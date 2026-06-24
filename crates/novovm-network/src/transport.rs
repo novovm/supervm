@@ -139,14 +139,15 @@ use crate::{
     ETH_RLPX_SNAP_TRIE_NODES_MSG,
 };
 use dashmap::DashMap;
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use novovm_protocol::{
     decode as protocol_decode, decode_block_header_wire_v1, encode as protocol_encode,
     encode_block_header_wire_v1,
     protocol_catalog::distributed_occc::gossip::MessageType as DistributedOcccMessageType,
     BlockHeaderWireV1, ConsensusPluginBindingV1, EvmNativeBlockBodyWireV1,
     EvmNativeBlockHeaderWireV1, EvmNativeMessage, EvmNativeTransactionFrameAuthV1, FinalityMessage,
-    GossipMessage as ProtocolGossipMessage, NodeId, PacemakerMessage, ProtocolMessage,
-    TwoPcMessage, CONSENSUS_PLUGIN_CLASS_CODE,
+    GossipMessage as ProtocolGossipMessage, NodeEndpointRecord, NodeId, PacemakerMessage,
+    ProtocolMessage, TwoPcMessage, CONSENSUS_PLUGIN_CLASS_CODE,
 };
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -199,6 +200,22 @@ struct ReceiverRateLimitBucketV1 {
 fn receiver_rate_limit_buckets_v1() -> &'static Mutex<HashMap<String, ReceiverRateLimitBucketV1>> {
     static BUCKETS: OnceLock<Mutex<HashMap<String, ReceiverRateLimitBucketV1>>> = OnceLock::new();
     BUCKETS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct SourcePinKeyV1 {
+    chain_id: u64,
+    node_id: u64,
+    run_id: String,
+}
+
+#[derive(Debug, Clone)]
+struct SourcePinStateV1 {
+    source_addr: SocketAddr,
+    session_id: String,
+    sequence: u64,
+    rebind_count: u64,
+    last_rebind_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8758,6 +8775,42 @@ fn transaction_frame_expected_run_id_v1() -> Option<String> {
         })
 }
 
+fn source_pinning_enabled_v1() -> bool {
+    parse_env_bool_v1("NOVOVM_NOVORUDP_SOURCE_PINNING_ENABLED")
+        || parse_env_bool_v1("NOVOVM_NETWORK_SOURCE_PINNING_ENABLED")
+}
+
+fn source_pinning_required_v1() -> bool {
+    parse_env_bool_v1("NOVOVM_NOVORUDP_SOURCE_PINNING_REQUIRED")
+        || parse_env_bool_v1("NOVOVM_NETWORK_SOURCE_PINNING_REQUIRED")
+}
+
+fn endpoint_record_required_v1() -> bool {
+    parse_env_bool_v1("NOVOVM_NOVORUDP_ENDPOINT_RECORD_REQUIRED")
+        || parse_env_bool_v1("NOVOVM_NETWORK_ENDPOINT_RECORD_REQUIRED")
+}
+
+fn source_rebind_allowed_v1() -> bool {
+    parse_env_bool_v1("NOVOVM_NOVORUDP_SOURCE_REBIND_ALLOWED")
+        || parse_env_bool_v1("NOVOVM_NETWORK_SOURCE_REBIND_ALLOWED")
+        || parse_env_bool_v1("NOVOVM_NOVORUDP_ADAPTIVE_ENDPOINT_ENABLED")
+        || parse_env_bool_v1("NOVOVM_NETWORK_ADAPTIVE_ENDPOINT_ENABLED")
+}
+
+fn source_rebind_max_per_run_v1() -> u64 {
+    parse_env_u64("NOVOVM_NOVORUDP_SOURCE_REBIND_MAX_PER_RUN", 4)
+        .max(1)
+        .min(1_000)
+}
+
+fn source_rebind_min_interval_ms_v1() -> u64 {
+    parse_env_u64(
+        "NOVOVM_NOVORUDP_SOURCE_REBIND_MIN_INTERVAL_MS",
+        parse_env_u64("NOVOVM_NOVORUDP_ENDPOINT_MIGRATION_MIN_INTERVAL_MS", 250),
+    )
+    .min(60_000)
+}
+
 fn receiver_rate_limit_enabled_v1() -> bool {
     parse_env_bool_v1("NOVOVM_NOVORUDP_RECEIVER_RATE_LIMIT_ENABLED")
         || parse_env_bool_v1("NOVOVM_NETWORK_RECEIVER_RATE_LIMIT_ENABLED")
@@ -8953,6 +9006,234 @@ fn verify_transaction_frame_auth_v1(
     ) == meta.tag
 }
 
+fn endpoint_record_signature_material_v1(record: &NodeEndpointRecord) -> String {
+    [
+        "NOVOVM_ENDPOINT_RECORD_V1".to_string(),
+        format!("node={}", record.node_id.0),
+        format!("chain={}", record.chain_id),
+        format!("run={}", record.run_id),
+        format!("session={}", record.session_id),
+        format!("data={}", record.data_endpoint),
+        format!("ack={}", record.ack_endpoint),
+        format!("relay={}", record.relay_endpoints.join(",")),
+        format!("transport={}", record.transport_profile),
+        format!("ttl={}", record.ttl_ms),
+        format!("sequence={}", record.sequence),
+        format!("issued={}", record.issued_at_ms),
+    ]
+    .join("|")
+}
+
+fn verify_endpoint_record_signature_v1(record: &NodeEndpointRecord) -> bool {
+    let Ok(public_key_bytes) = <[u8; 32]>::try_from(record.node_public_key.as_slice()) else {
+        return false;
+    };
+    let Ok(signature_bytes) = <[u8; 64]>::try_from(record.signature.as_slice()) else {
+        return false;
+    };
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&public_key_bytes) else {
+        return false;
+    };
+    let signature = Signature::from_bytes(&signature_bytes);
+    verifying_key
+        .verify(
+            endpoint_record_signature_material_v1(record).as_bytes(),
+            &signature,
+        )
+        .is_ok()
+}
+
+fn endpoint_record_time_valid_v1(record: &NodeEndpointRecord, now_ms: u64) -> bool {
+    if record.ttl_ms == 0 {
+        return false;
+    }
+    record
+        .issued_at_ms
+        .checked_add(record.ttl_ms)
+        .map(|expires_at| now_ms <= expires_at)
+        .unwrap_or(false)
+}
+
+fn endpoint_record_data_addr_matches_source_v1(
+    record: &NodeEndpointRecord,
+    src: SocketAddr,
+) -> bool {
+    record
+        .data_endpoint
+        .parse::<SocketAddr>()
+        .map(|advertised| advertised == src)
+        .unwrap_or(false)
+}
+
+fn expected_run_matches_v1(run_id: &str) -> bool {
+    transaction_frame_expected_run_id_v1()
+        .map(|expected| expected == run_id)
+        .unwrap_or(true)
+}
+
+fn source_pin_key_v1(chain_id: u64, node_id: NodeId, run_id: &str) -> SourcePinKeyV1 {
+    SourcePinKeyV1 {
+        chain_id,
+        node_id: node_id.0,
+        run_id: run_id.to_string(),
+    }
+}
+
+fn validate_endpoint_record_for_source_pin_v1(
+    pins: &DashMap<SourcePinKeyV1, SourcePinStateV1>,
+    local_chain_id: u64,
+    src: SocketAddr,
+    from: NodeId,
+    record: &NodeEndpointRecord,
+    now_ms: u64,
+) -> bool {
+    if record.node_id != from || record.chain_id != local_chain_id {
+        return false;
+    }
+    if !expected_run_matches_v1(record.run_id.as_str()) {
+        return false;
+    }
+    if !endpoint_record_time_valid_v1(record, now_ms) {
+        return false;
+    }
+    if !endpoint_record_data_addr_matches_source_v1(record, src) {
+        return false;
+    }
+    if !verify_endpoint_record_signature_v1(record) {
+        return false;
+    }
+
+    let key = source_pin_key_v1(record.chain_id, record.node_id, record.run_id.as_str());
+    if let Some(existing) = pins.get(&key) {
+        if record.sequence <= existing.sequence {
+            return false;
+        }
+        if record.session_id != existing.session_id {
+            return false;
+        }
+        if src != existing.source_addr {
+            if !source_rebind_allowed_v1() {
+                return false;
+            }
+            if existing.rebind_count >= source_rebind_max_per_run_v1() {
+                return false;
+            }
+            if now_ms.saturating_sub(existing.last_rebind_ms) < source_rebind_min_interval_ms_v1() {
+                return false;
+            }
+            let next = SourcePinStateV1 {
+                source_addr: src,
+                session_id: existing.session_id.clone(),
+                sequence: record.sequence,
+                rebind_count: existing.rebind_count.saturating_add(1),
+                last_rebind_ms: now_ms,
+            };
+            drop(existing);
+            pins.insert(key, next);
+            return true;
+        }
+        let next = SourcePinStateV1 {
+            source_addr: src,
+            session_id: existing.session_id.clone(),
+            sequence: record.sequence,
+            rebind_count: existing.rebind_count,
+            last_rebind_ms: existing.last_rebind_ms,
+        };
+        drop(existing);
+        pins.insert(key, next);
+        return true;
+    }
+
+    pins.insert(
+        key,
+        SourcePinStateV1 {
+            source_addr: src,
+            session_id: record.session_id.clone(),
+            sequence: record.sequence,
+            rebind_count: 0,
+            last_rebind_ms: now_ms,
+        },
+    );
+    true
+}
+
+fn transaction_source_pin_identity_v1(msg: &ProtocolMessage) -> Option<(NodeId, u64, String)> {
+    let ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+        from,
+        chain_id,
+        transport_auth,
+        ..
+    }) = msg
+    else {
+        return None;
+    };
+    let run_id = transport_auth
+        .as_ref()
+        .map(|meta| meta.run_id.clone())
+        .or_else(transaction_frame_expected_run_id_v1)?;
+    Some((*from, *chain_id, run_id))
+}
+
+fn validate_transaction_source_pin_v1(
+    pins: &DashMap<SourcePinKeyV1, SourcePinStateV1>,
+    src: SocketAddr,
+    from: NodeId,
+    chain_id: u64,
+    run_id: &str,
+) -> bool {
+    if !expected_run_matches_v1(run_id) {
+        return false;
+    }
+    let key = source_pin_key_v1(chain_id, from, run_id);
+    if let Some(existing) = pins.get(&key) {
+        return existing.source_addr == src;
+    }
+    if endpoint_record_required_v1() || source_pinning_required_v1() {
+        return false;
+    }
+    if source_pinning_enabled_v1() {
+        pins.insert(
+            key,
+            SourcePinStateV1 {
+                source_addr: src,
+                session_id: "implicit-first-observed-source".to_string(),
+                sequence: 0,
+                rebind_count: 0,
+                last_rebind_ms: now_millis_v1(),
+            },
+        );
+    }
+    true
+}
+
+fn validate_udp_source_contract_v1(
+    pins: &DashMap<SourcePinKeyV1, SourcePinStateV1>,
+    local_chain_id: u64,
+    src: SocketAddr,
+    msg: &ProtocolMessage,
+) -> bool {
+    if !source_pinning_enabled_v1()
+        && !source_pinning_required_v1()
+        && !endpoint_record_required_v1()
+    {
+        return true;
+    }
+    if let ProtocolMessage::EvmNative(EvmNativeMessage::EndpointRecord { from, record }) = msg {
+        return validate_endpoint_record_for_source_pin_v1(
+            pins,
+            local_chain_id,
+            src,
+            *from,
+            record,
+            now_millis_v1(),
+        );
+    }
+    if let Some((from, chain_id, run_id)) = transaction_source_pin_identity_v1(msg) {
+        return validate_transaction_source_pin_v1(pins, src, from, chain_id, run_id.as_str());
+    }
+    !(source_pinning_required_v1() || endpoint_record_required_v1())
+}
+
 fn runtime_sync_pull_followup_fanout_max() -> usize {
     *RUNTIME_SYNC_PULL_FOLLOWUP_FANOUT_MAX_CACHE.get_or_init(|| {
         parse_env_usize(
@@ -9045,6 +9326,7 @@ pub struct UdpTransport {
     peer_addr_index: Arc<DashMap<SocketAddr, NodeId>>,
     peer_ip_hint_index: Arc<DashMap<IpAddr, u64>>,
     runtime_peer_registered: Arc<DashMap<NodeId, ()>>,
+    source_pins: Arc<DashMap<SourcePinKeyV1, SourcePinStateV1>>,
     recv_buf: Arc<Mutex<Vec<u8>>>,
 }
 
@@ -9308,6 +9590,7 @@ impl UdpTransport {
             peer_addr_index: Arc::new(DashMap::new()),
             peer_ip_hint_index: Arc::new(DashMap::new()),
             runtime_peer_registered: Arc::new(DashMap::new()),
+            source_pins: Arc::new(DashMap::new()),
             recv_buf: Arc::new(Mutex::new(vec![0u8; max_packet_size.max(1024)])),
         })
     }
@@ -9577,6 +9860,9 @@ fn maybe_update_runtime_sync_from_protocol_message_with_context(
                 let _ = register_network_runtime_peer(chain_id, from.0);
                 observe_eth_native_snap_response(chain_id);
             }
+            EvmNativeMessage::EndpointRecord { from, .. } => {
+                let _ = register_network_runtime_peer(chain_id, from.0);
+            }
         },
         ProtocolMessage::Finality(FinalityMessage::Vote { id, from, .. }) => {
             let _ =
@@ -9689,6 +9975,7 @@ fn maybe_update_runtime_sync_local_progress_from_send(
                 }
             }
             EvmNativeMessage::NewBlockHashes { .. } => {}
+            EvmNativeMessage::EndpointRecord { .. } => {}
             EvmNativeMessage::Transactions { from, tx_hash, .. } => {
                 if *from == local_node {
                     observe_network_runtime_native_pending_tx_propagated_v1(chain_id, *tx_hash);
@@ -10454,6 +10741,7 @@ fn runtime_peer_id_from_protocol_message(msg: &ProtocolMessage) -> Option<u64> {
             | EvmNativeMessage::Status { from, .. }
             | EvmNativeMessage::NewBlockHashes { from, .. }
             | EvmNativeMessage::Transactions { from, .. }
+            | EvmNativeMessage::EndpointRecord { from, .. }
             | EvmNativeMessage::GetBlockHeaders { from, .. }
             | EvmNativeMessage::BlockHeaders { from, .. }
             | EvmNativeMessage::GetBlockBodies { from, .. }
@@ -10627,6 +10915,9 @@ impl Transport for UdpTransport {
             Ok(None) => return Ok(None),
             Err(e) => return Err(e),
         };
+        if !validate_udp_source_contract_v1(&self.source_pins, self.chain_id, src, &decoded) {
+            return Ok(None);
+        }
         let msg_peer_id = runtime_peer_id_from_protocol_message(&decoded);
         let source_peer_id_hint = if msg_peer_id.is_none() {
             infer_peer_id_from_src_addr_with_index(
@@ -10906,6 +11197,7 @@ mod tests {
         NetworkRuntimeNativePendingTxLifecycleStageV1, NetworkRuntimeNativePendingTxOriginV1,
         NetworkRuntimeSyncStatus,
     };
+    use ed25519_dalek::{Signer, SigningKey};
     use novovm_protocol::{
         encode_block_header_wire_v1,
         protocol_catalog::distributed_occc::gossip::{
@@ -10987,6 +11279,39 @@ mod tests {
             "dev-secret",
         );
         meta
+    }
+
+    fn signed_endpoint_record_test_v1(
+        signing_key: &SigningKey,
+        node_id: NodeId,
+        chain_id: u64,
+        run_id: &str,
+        session_id: &str,
+        data_endpoint: &str,
+        sequence: u64,
+        issued_at_ms: u64,
+        ttl_ms: u64,
+    ) -> NodeEndpointRecord {
+        let mut record = NodeEndpointRecord {
+            node_id,
+            node_public_key: signing_key.verifying_key().to_bytes().to_vec(),
+            chain_id,
+            run_id: run_id.to_string(),
+            session_id: session_id.to_string(),
+            data_endpoint: data_endpoint.to_string(),
+            ack_endpoint: "127.0.0.1:39002".to_string(),
+            relay_endpoints: Vec::new(),
+            transport_profile: "novorudp".to_string(),
+            ttl_ms,
+            sequence,
+            issued_at_ms,
+            signature: Vec::new(),
+        };
+        record.signature = signing_key
+            .sign(endpoint_record_signature_material_v1(&record).as_bytes())
+            .to_bytes()
+            .to_vec();
+        record
     }
 
     #[test]
@@ -11167,6 +11492,244 @@ mod tests {
             from,
             Some(&repair),
             2
+        ));
+    }
+
+    #[test]
+    fn source_pin_signed_endpoint_record_accepts_valid_record() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _record_required = set_test_env_var_v1("NOVOVM_NOVORUDP_ENDPOINT_RECORD_REQUIRED", "1");
+        let _run_id = set_test_env_var_v1("NOVOVM_NOVORUDP_RUN_ID", "run-a");
+        let pins = DashMap::new();
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let src: SocketAddr = "127.0.0.1:41001".parse().unwrap();
+        let record = signed_endpoint_record_test_v1(
+            &signing_key,
+            NodeId(41),
+            9001,
+            "run-a",
+            "session-a",
+            "127.0.0.1:41001",
+            1,
+            now_millis_v1(),
+            60_000,
+        );
+
+        assert!(validate_endpoint_record_for_source_pin_v1(
+            &pins,
+            9001,
+            src,
+            NodeId(41),
+            &record,
+            now_millis_v1(),
+        ));
+        let key = source_pin_key_v1(9001, NodeId(41), "run-a");
+        assert_eq!(pins.get(&key).map(|pin| pin.source_addr), Some(src));
+    }
+
+    #[test]
+    fn source_pin_signed_endpoint_record_rejects_invalid_signature() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let pins = DashMap::new();
+        let signing_key = SigningKey::from_bytes(&[8u8; 32]);
+        let src: SocketAddr = "127.0.0.1:41002".parse().unwrap();
+        let mut record = signed_endpoint_record_test_v1(
+            &signing_key,
+            NodeId(42),
+            9002,
+            "run-b",
+            "session-b",
+            "127.0.0.1:41002",
+            1,
+            now_millis_v1(),
+            60_000,
+        );
+        record.data_endpoint = "127.0.0.1:41003".to_string();
+
+        assert!(!validate_endpoint_record_for_source_pin_v1(
+            &pins,
+            9002,
+            src,
+            NodeId(42),
+            &record,
+            now_millis_v1(),
+        ));
+    }
+
+    #[test]
+    fn source_pin_signed_endpoint_record_rejects_sequence_replay() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let pins = DashMap::new();
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let src: SocketAddr = "127.0.0.1:41004".parse().unwrap();
+        let record = signed_endpoint_record_test_v1(
+            &signing_key,
+            NodeId(43),
+            9003,
+            "run-c",
+            "session-c",
+            "127.0.0.1:41004",
+            3,
+            now_millis_v1(),
+            60_000,
+        );
+
+        assert!(validate_endpoint_record_for_source_pin_v1(
+            &pins,
+            9003,
+            src,
+            NodeId(43),
+            &record,
+            now_millis_v1(),
+        ));
+        assert!(!validate_endpoint_record_for_source_pin_v1(
+            &pins,
+            9003,
+            src,
+            NodeId(43),
+            &record,
+            now_millis_v1(),
+        ));
+    }
+
+    #[test]
+    fn source_pin_required_rejects_unrecorded_transaction() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _source_required = set_test_env_var_v1("NOVOVM_NOVORUDP_SOURCE_PINNING_REQUIRED", "1");
+        let pins = DashMap::new();
+        let src: SocketAddr = "127.0.0.1:41005".parse().unwrap();
+
+        assert!(!validate_transaction_source_pin_v1(
+            &pins,
+            src,
+            NodeId(44),
+            9004,
+            "run-d",
+        ));
+    }
+
+    #[test]
+    fn source_pin_enabled_learns_first_observed_transaction_source() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _source_enabled = set_test_env_var_v1("NOVOVM_NOVORUDP_SOURCE_PINNING_ENABLED", "1");
+        let pins = DashMap::new();
+        let src: SocketAddr = "127.0.0.1:41006".parse().unwrap();
+
+        assert!(validate_transaction_source_pin_v1(
+            &pins,
+            src,
+            NodeId(45),
+            9005,
+            "run-e",
+        ));
+        assert!(!validate_transaction_source_pin_v1(
+            &pins,
+            "127.0.0.1:41007".parse().unwrap(),
+            NodeId(45),
+            9005,
+            "run-e",
+        ));
+    }
+
+    #[test]
+    fn source_pin_signed_endpoint_rebind_accepts_higher_sequence_same_session() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _rebind = set_test_env_var_v1("NOVOVM_NOVORUDP_SOURCE_REBIND_ALLOWED", "1");
+        let _interval = set_test_env_var_v1("NOVOVM_NOVORUDP_SOURCE_REBIND_MIN_INTERVAL_MS", "0");
+        let pins = DashMap::new();
+        let signing_key = SigningKey::from_bytes(&[10u8; 32]);
+        let src_a: SocketAddr = "127.0.0.1:41008".parse().unwrap();
+        let src_b: SocketAddr = "127.0.0.1:41009".parse().unwrap();
+        let first = signed_endpoint_record_test_v1(
+            &signing_key,
+            NodeId(46),
+            9006,
+            "run-f",
+            "session-f",
+            "127.0.0.1:41008",
+            1,
+            now_millis_v1(),
+            60_000,
+        );
+        let second = signed_endpoint_record_test_v1(
+            &signing_key,
+            NodeId(46),
+            9006,
+            "run-f",
+            "session-f",
+            "127.0.0.1:41009",
+            2,
+            now_millis_v1(),
+            60_000,
+        );
+
+        assert!(validate_endpoint_record_for_source_pin_v1(
+            &pins,
+            9006,
+            src_a,
+            NodeId(46),
+            &first,
+            now_millis_v1(),
+        ));
+        assert!(validate_endpoint_record_for_source_pin_v1(
+            &pins,
+            9006,
+            src_b,
+            NodeId(46),
+            &second,
+            now_millis_v1(),
+        ));
+        let key = source_pin_key_v1(9006, NodeId(46), "run-f");
+        assert_eq!(pins.get(&key).map(|pin| pin.source_addr), Some(src_b));
+    }
+
+    #[test]
+    fn source_pin_signed_endpoint_rebind_rejects_wrong_session() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _rebind = set_test_env_var_v1("NOVOVM_NOVORUDP_SOURCE_REBIND_ALLOWED", "1");
+        let _interval = set_test_env_var_v1("NOVOVM_NOVORUDP_SOURCE_REBIND_MIN_INTERVAL_MS", "0");
+        let pins = DashMap::new();
+        let signing_key = SigningKey::from_bytes(&[11u8; 32]);
+        let src_a: SocketAddr = "127.0.0.1:41010".parse().unwrap();
+        let src_b: SocketAddr = "127.0.0.1:41011".parse().unwrap();
+        let first = signed_endpoint_record_test_v1(
+            &signing_key,
+            NodeId(47),
+            9007,
+            "run-g",
+            "session-g",
+            "127.0.0.1:41010",
+            1,
+            now_millis_v1(),
+            60_000,
+        );
+        let wrong_session = signed_endpoint_record_test_v1(
+            &signing_key,
+            NodeId(47),
+            9007,
+            "run-g",
+            "session-other",
+            "127.0.0.1:41011",
+            2,
+            now_millis_v1(),
+            60_000,
+        );
+
+        assert!(validate_endpoint_record_for_source_pin_v1(
+            &pins,
+            9007,
+            src_a,
+            NodeId(47),
+            &first,
+            now_millis_v1(),
+        ));
+        assert!(!validate_endpoint_record_for_source_pin_v1(
+            &pins,
+            9007,
+            src_b,
+            NodeId(47),
+            &wrong_session,
+            now_millis_v1(),
         ));
     }
 

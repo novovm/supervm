@@ -131,6 +131,24 @@ pub struct EvmNativeBlockBodyWireV1 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeEndpointRecord {
+    pub node_id: NodeId,
+    pub node_public_key: Vec<u8>,
+    pub chain_id: u64,
+    pub run_id: String,
+    pub session_id: String,
+    pub data_endpoint: String,
+    pub ack_endpoint: String,
+    #[serde(default)]
+    pub relay_endpoints: Vec<String>,
+    pub transport_profile: String,
+    pub ttl_ms: u64,
+    pub sequence: u64,
+    pub issued_at_ms: u64,
+    pub signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EvmNativeMessage {
     DiscoveryPing {
         from: NodeId,
@@ -192,6 +210,10 @@ pub enum EvmNativeMessage {
         payload: Vec<u8>,
         #[serde(default)]
         transport_auth: Option<EvmNativeTransactionFrameAuthV1>,
+    },
+    EndpointRecord {
+        from: NodeId,
+        record: NodeEndpointRecord,
     },
     GetBlockHeaders {
         from: NodeId,
