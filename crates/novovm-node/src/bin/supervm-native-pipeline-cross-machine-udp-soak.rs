@@ -362,6 +362,7 @@ struct FullAsyncAckDrainPumpStateV1 {
 fn merge_full_async_ack_plane_state_v1(
     plane: &mut FullAsyncAckDrainPumpStateV1,
     ack: UdpAckStateV1,
+    expected_tx_count: u64,
     elapsed_ms: u64,
 ) {
     if ack.received_count == 0 {
@@ -385,7 +386,11 @@ fn merge_full_async_ack_plane_state_v1(
         plane.receiver_done_handoff_count = plane.receiver_done_handoff_count.saturating_add(1);
         plane.receiver_done_sticky_sample = Some(ack.clone());
     }
-    let ack_seen_all = false;
+    let ack_seen_all = expected_tx_count > 0
+        && ack
+            .highest_sequence_seen
+            .map(|highest| highest.saturating_add(1) >= expected_tx_count)
+            .unwrap_or(false);
     let ack_missing_zero = ack.latest_missing_count == 0;
     let ack_caught_up = ack.receiver_done || ack_missing_zero || ack_seen_all;
     if ack_caught_up {
@@ -3308,6 +3313,7 @@ mod novorudp_tests {
                 receiver_done: false,
                 ..UdpAckStateV1::default()
             },
+            480,
             100,
         );
         merge_full_async_ack_plane_state_v1(
@@ -3319,6 +3325,7 @@ mod novorudp_tests {
                 receiver_done: true,
                 ..UdpAckStateV1::default()
             },
+            480,
             110,
         );
 
@@ -3360,6 +3367,7 @@ mod novorudp_tests {
                 highest_sequence_seen: Some(479),
                 ..UdpAckStateV1::default()
             },
+            480,
             200,
         );
         merge_full_async_ack_plane_state_v1(
@@ -3376,6 +3384,7 @@ mod novorudp_tests {
                 highest_sequence_seen: Some(463),
                 ..UdpAckStateV1::default()
             },
+            480,
             210,
         );
 
@@ -3385,6 +3394,38 @@ mod novorudp_tests {
         assert_eq!(plane.caught_up_latch_missing_count, Some(0));
         assert_eq!(plane.stale_missing_sample_ignored_count, 1);
         assert_eq!(plane.caught_up_overwritten_by_stale_ack_count, 1);
+    }
+
+    #[test]
+    fn full_async_ack_plane_latches_seen_all_from_highest_sequence() {
+        let mut plane = FullAsyncAckDrainPumpStateV1::default();
+        merge_full_async_ack_plane_state_v1(
+            &mut plane,
+            UdpAckStateV1 {
+                received_count: 1,
+                latest_epoch: 40,
+                latest_missing_count: 16,
+                latest_ranges: vec![MissingRangeV1 {
+                    start: 464,
+                    end_inclusive: 479,
+                }],
+                receiver_done: false,
+                highest_sequence_seen: Some(479),
+                ..UdpAckStateV1::default()
+            },
+            480,
+            300,
+        );
+
+        assert!(plane.caught_up_latched);
+        assert!(plane.seen_all_latched);
+        assert!(!plane.missing_zero_latched);
+        assert_eq!(plane.caught_up_latch_epoch, Some(40));
+        assert_eq!(
+            plane.caught_up_latch_source.as_deref(),
+            Some("highest_sequence_seen_all")
+        );
+        assert_eq!(plane.caught_up_latch_sequence, Some(479));
     }
 
     #[test]
@@ -8661,6 +8702,7 @@ mod novorudp_tests {
                 }],
                 ..UdpAckStateV1::default()
             },
+            480,
             100,
         );
         merge_full_async_ack_plane_state_v1(
@@ -8675,6 +8717,7 @@ mod novorudp_tests {
                 }],
                 ..UdpAckStateV1::default()
             },
+            480,
             200,
         );
 
@@ -8704,6 +8747,7 @@ mod novorudp_tests {
                 }],
                 ..UdpAckStateV1::default()
             },
+            480,
             250,
         );
 
@@ -8739,6 +8783,7 @@ mod novorudp_tests {
                 }],
                 ..UdpAckStateV1::default()
             },
+            4096,
             500,
         );
 
@@ -15706,6 +15751,7 @@ fn run_sender(
                         merge_full_async_ack_plane_state_v1(
                             &mut state,
                             ack,
+                            tx_count,
                             started.elapsed().as_millis() as u64,
                         );
                     }
@@ -15843,7 +15889,7 @@ fn run_sender(
     macro_rules! drain_primary_sender_ack {
         () => {{
             apply_full_async_ack_plane_snapshot!();
-            if primary_ack_drain_enabled {
+            if primary_ack_drain_enabled && !full_async_ack_drain_dedicated_pump_enabled {
                 if let Some(socket) = ack_socket.as_ref() {
                     primary_ack_drain_count = primary_ack_drain_count.saturating_add(1);
                     sender_ack_recv_attempt_count = sender_ack_recv_attempt_count.saturating_add(1);
@@ -16065,16 +16111,25 @@ fn run_sender(
                 sender_exit_reason = "sender_finalization_timeout".to_string();
                 break;
             }
-            let udp_ack_state = ack_socket.as_ref().map(|socket| {
+            let udp_ack_state = if full_async_ack_drain_dedicated_pump_enabled {
                 apply_full_async_ack_plane_snapshot!();
-                let ack_drain_wait_ms = if ack_plane_aggressive_drain {
-                    0
-                } else {
-                    udp_ack.recv_timeout_ms
-                };
-                sender_ack_recv_attempt_count = sender_ack_recv_attempt_count.saturating_add(1);
-                drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, ack_drain_wait_ms)
-            });
+                None
+            } else {
+                ack_socket.as_ref().map(|socket| {
+                    apply_full_async_ack_plane_snapshot!();
+                    let ack_drain_wait_ms = if ack_plane_aggressive_drain {
+                        0
+                    } else {
+                        udp_ack.recv_timeout_ms
+                    };
+                    sender_ack_recv_attempt_count = sender_ack_recv_attempt_count.saturating_add(1);
+                    drain_udp_ack_socket(
+                        socket,
+                        tail_repair.missing_sample_limit,
+                        ack_drain_wait_ms,
+                    )
+                })
+            };
             let ack_epoch_before = udp_ack_state
                 .as_ref()
                 .filter(|state| state.received_count > 0)
@@ -16785,11 +16840,16 @@ fn run_sender(
             } else {
                 udp_ack.recv_timeout_ms
             };
-            let ack_after = ack_socket.as_ref().map(|socket| {
+            let ack_after = if full_async_ack_drain_dedicated_pump_enabled {
                 apply_full_async_ack_plane_snapshot!();
-                sender_ack_recv_attempt_count = sender_ack_recv_attempt_count.saturating_add(1);
-                drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, ack_wait_ms)
-            });
+                None
+            } else {
+                ack_socket.as_ref().map(|socket| {
+                    apply_full_async_ack_plane_snapshot!();
+                    sender_ack_recv_attempt_count = sender_ack_recv_attempt_count.saturating_add(1);
+                    drain_udp_ack_socket(socket, tail_repair.missing_sample_limit, ack_wait_ms)
+                })
+            };
             let mut missing_count_after = latest_ack_missing_count.unwrap_or(final_missing_count);
             let mut ack_epoch_after = tail_repair_latest_ack_epoch;
             if let Some(state) = ack_after.as_ref() {
@@ -17081,6 +17141,14 @@ fn run_sender(
                 break;
             }
             std::thread::sleep(Duration::from_millis(final_ack_poll_ms));
+            if sender_final_ack_fast_drain_enabled {
+                sender_final_ack_fast_drain_attempt_count =
+                    sender_final_ack_fast_drain_attempt_count.saturating_add(1);
+            }
+            final_ack_wait_elapsed_ms = started.elapsed().as_millis() as u64;
+            if full_async_ack_drain_dedicated_pump_enabled {
+                continue;
+            }
             let Some(socket) = ack_socket.as_ref() else {
                 final_ack_grace_timeout = true;
                 sender_finalization_phase = "failed".to_string();
@@ -17097,12 +17165,7 @@ fn run_sender(
                     udp_ack.recv_timeout_ms
                 },
             );
-            if sender_final_ack_fast_drain_enabled {
-                sender_final_ack_fast_drain_attempt_count =
-                    sender_final_ack_fast_drain_attempt_count.saturating_add(1);
-            }
             sender_ack_recv_attempt_count = sender_ack_recv_attempt_count.saturating_add(1);
-            final_ack_wait_elapsed_ms = started.elapsed().as_millis() as u64;
             if state.received_count == 0 {
                 continue;
             }
@@ -17651,6 +17714,8 @@ fn run_sender(
         "sender_ack_socket_expected_remote_target_addr": sender_ack_advertised_addr.clone(),
         "sender_ack_bind_contract_complete": sender_ack_cross_machine_safe && !sender_ack_bind_advertised_mismatch,
         "full_async_ack_drain_dedicated_pump_enabled": full_async_ack_drain_dedicated_pump_enabled,
+        "ack_plane_single_consumer_enforced": full_async_ack_drain_dedicated_pump_enabled,
+        "sender_direct_ack_socket_drain_disabled_under_dedicated_pump": full_async_ack_drain_dedicated_pump_enabled,
         "ack_plane_thread_or_task_started": ack_plane_final_snapshot
             .as_ref()
             .map(|state| state.thread_started)
