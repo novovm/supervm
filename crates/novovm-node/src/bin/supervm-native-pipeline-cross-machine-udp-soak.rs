@@ -1317,6 +1317,116 @@ impl NetworkProfileV1 {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignoffScopeV1 {
+    CrossMachine,
+    LocalSmoke,
+}
+
+impl SignoffScopeV1 {
+    fn from_env(network_profile: NetworkProfileV1) -> Self {
+        match string_env_nonempty("NOVOVM_NATIVE_PIPELINE_SIGNOFF_SCOPE")
+            .or_else(|| string_env_nonempty("NOVOVM_SIGNOFF_SCOPE"))
+            .unwrap_or_else(|| match network_profile {
+                NetworkProfileV1::Production | NetworkProfileV1::CrossMachine => {
+                    "cross_machine".to_string()
+                }
+                NetworkProfileV1::LocalSmoke | NetworkProfileV1::Debug => "local_smoke".to_string(),
+            })
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "cross_machine" | "cross-machine" | "crossmachine" | "production" => Self::CrossMachine,
+            "local_smoke" | "local-smoke" | "local" | "same_host" | "same-host" | "debug" => {
+                Self::LocalSmoke
+            }
+            _ => match network_profile {
+                NetworkProfileV1::Production | NetworkProfileV1::CrossMachine => Self::CrossMachine,
+                NetworkProfileV1::LocalSmoke | NetworkProfileV1::Debug => Self::LocalSmoke,
+            },
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CrossMachine => "cross_machine",
+            Self::LocalSmoke => "local_smoke",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CrossMachineSignoffContractV1 {
+    scope: SignoffScopeV1,
+    a_lan_ip: Option<String>,
+    b_lan_ip: Option<String>,
+    same_host_two_process_smoke_detected: bool,
+    valid_for_cross_machine_signoff: bool,
+    fail_reason: Option<&'static str>,
+}
+
+fn lan_ip_from_env_v1(names: &[&str]) -> Option<String> {
+    first_string_env_nonempty(names).map(|value| value.trim().to_string())
+}
+
+fn normalized_host_token_v1(value: &str) -> String {
+    udp_addr_host_v1(value)
+        .trim()
+        .trim_matches('[')
+        .trim_matches(']')
+        .to_ascii_lowercase()
+}
+
+fn signoff_contract_from_env_v1(
+    network_profile: NetworkProfileV1,
+) -> CrossMachineSignoffContractV1 {
+    let scope = SignoffScopeV1::from_env(network_profile);
+    let a_lan_ip = lan_ip_from_env_v1(&[
+        "A_LAN_IP",
+        "NOVOVM_A_LAN_IP",
+        "NOVOVM_NATIVE_PIPELINE_A_LAN_IP",
+        "NOVOVM_NATIVE_PIPELINE_SENDER_LAN_IP",
+    ]);
+    let b_lan_ip = lan_ip_from_env_v1(&[
+        "B_LAN_IP",
+        "NOVOVM_B_LAN_IP",
+        "NOVOVM_NATIVE_PIPELINE_B_LAN_IP",
+        "NOVOVM_NATIVE_PIPELINE_RECEIVER_LAN_IP",
+    ]);
+    let same_host_two_process_smoke_detected = match (a_lan_ip.as_deref(), b_lan_ip.as_deref()) {
+        (Some(a), Some(b)) => normalized_host_token_v1(a) == normalized_host_token_v1(b),
+        _ => false,
+    };
+    let fail_reason = if scope == SignoffScopeV1::CrossMachine && a_lan_ip.is_none() {
+        Some("cross_machine_signoff_missing_a_lan_ip")
+    } else if scope == SignoffScopeV1::CrossMachine && b_lan_ip.is_none() {
+        Some("cross_machine_signoff_missing_b_lan_ip")
+    } else if scope == SignoffScopeV1::CrossMachine && same_host_two_process_smoke_detected {
+        Some("cross_machine_signoff_same_host_not_allowed")
+    } else {
+        None
+    };
+    CrossMachineSignoffContractV1 {
+        scope,
+        a_lan_ip,
+        b_lan_ip,
+        same_host_two_process_smoke_detected,
+        valid_for_cross_machine_signoff: scope == SignoffScopeV1::CrossMachine
+            && fail_reason.is_none(),
+        fail_reason,
+    }
+}
+
+fn ensure_cross_machine_signoff_contract_v1(
+    network_profile: NetworkProfileV1,
+) -> Result<CrossMachineSignoffContractV1> {
+    let contract = signoff_contract_from_env_v1(network_profile);
+    if let Some(reason) = contract.fail_reason {
+        bail!("{reason}");
+    }
+    Ok(contract)
+}
+
 fn udp_addr_host_v1(addr: &str) -> &str {
     addr.rsplit_once(':').map(|(host, _)| host).unwrap_or(addr)
 }
@@ -2955,6 +3065,7 @@ struct SenderFinalAckReconciliationV1 {
 fn reconcile_sender_final_ack_with_latest_missing_v1(
     sender_completed: bool,
     tail_repair_enabled: bool,
+    receiver_done_ack_required: bool,
     latest_ack_receiver_done: bool,
     latest_ack_missing_count: Option<u64>,
     repair_coverage_gap_count: u64,
@@ -2967,7 +3078,12 @@ fn reconcile_sender_final_ack_with_latest_missing_v1(
         tail_repair_enabled && !receiver_done_complete && repair_coverage_gap_count > 0;
     let repair_coverage_gap_ignored_after_receiver_done =
         receiver_done_complete && repair_coverage_gap_count > 0;
-    let accepted = sender_completed && (!tail_repair_enabled || receiver_done_complete);
+    let accepted = sender_completed
+        && if receiver_done_ack_required {
+            receiver_done_complete
+        } else {
+            !tail_repair_enabled || receiver_done_complete
+        };
     let final_missing_count = if receiver_done_complete {
         Some(0)
     } else {
@@ -2981,10 +3097,12 @@ fn reconcile_sender_final_ack_with_latest_missing_v1(
         "ack_plane_null_sample"
     };
     let finalization_reason = if accepted {
-        if final_ack_received_after_repair {
+        if receiver_done_complete && final_ack_received_after_repair {
             "receiver_done_ack_after_grace"
-        } else {
+        } else if receiver_done_complete {
             "receiver_done_ack"
+        } else {
+            "sender_completed_ack_not_required"
         }
     } else {
         fallback_fail_reason.unwrap_or("final_ack_drain_no_receiver_done")
@@ -3181,6 +3299,96 @@ mod novorudp_tests {
             None => std::env::remove_var(key),
         }
         result
+    }
+
+    fn with_cross_machine_signoff_env<T>(
+        scope: Option<&str>,
+        a_lan_ip: Option<&str>,
+        b_lan_ip: Option<&str>,
+        run: impl FnOnce() -> T,
+    ) -> T {
+        with_env_var("NOVOVM_NATIVE_PIPELINE_SIGNOFF_SCOPE", scope, || {
+            with_env_var("NOVOVM_SIGNOFF_SCOPE", None, || {
+                with_env_var("A_LAN_IP", a_lan_ip, || {
+                    with_env_var("NOVOVM_A_LAN_IP", None, || {
+                        with_env_var("NOVOVM_NATIVE_PIPELINE_A_LAN_IP", None, || {
+                            with_env_var("NOVOVM_NATIVE_PIPELINE_SENDER_LAN_IP", None, || {
+                                with_env_var("B_LAN_IP", b_lan_ip, || {
+                                    with_env_var("NOVOVM_B_LAN_IP", None, || {
+                                        with_env_var(
+                                            "NOVOVM_NATIVE_PIPELINE_B_LAN_IP",
+                                            None,
+                                            || {
+                                                with_env_var(
+                                                    "NOVOVM_NATIVE_PIPELINE_RECEIVER_LAN_IP",
+                                                    None,
+                                                    run,
+                                                )
+                                            },
+                                        )
+                                    })
+                                })
+                            })
+                        })
+                    })
+                })
+            })
+        })
+    }
+
+    #[test]
+    fn cross_machine_signoff_missing_a_lan_ip_fails_closed() {
+        with_cross_machine_signoff_env(Some("cross_machine"), None, Some("192.168.71.117"), || {
+            let err = ensure_cross_machine_signoff_contract_v1(NetworkProfileV1::Production)
+                .expect_err("missing A_LAN_IP must fail closed");
+            assert!(err
+                .to_string()
+                .contains("cross_machine_signoff_missing_a_lan_ip"));
+        });
+    }
+
+    #[test]
+    fn cross_machine_signoff_missing_b_lan_ip_fails_closed() {
+        with_cross_machine_signoff_env(Some("cross_machine"), Some("192.168.71.118"), None, || {
+            let err = ensure_cross_machine_signoff_contract_v1(NetworkProfileV1::Production)
+                .expect_err("missing B_LAN_IP must fail closed");
+            assert!(err
+                .to_string()
+                .contains("cross_machine_signoff_missing_b_lan_ip"));
+        });
+    }
+
+    #[test]
+    fn cross_machine_signoff_rejects_same_host_smoke() {
+        with_cross_machine_signoff_env(
+            Some("cross_machine"),
+            Some("192.168.71.117"),
+            Some("192.168.71.117"),
+            || {
+                let err = ensure_cross_machine_signoff_contract_v1(NetworkProfileV1::Production)
+                    .expect_err("same-host cross-machine signoff must fail closed");
+                assert!(err
+                    .to_string()
+                    .contains("cross_machine_signoff_same_host_not_allowed"));
+            },
+        );
+    }
+
+    #[test]
+    fn local_smoke_allows_same_host_but_is_not_cross_machine_signoff() {
+        with_cross_machine_signoff_env(
+            Some("local_smoke"),
+            Some("192.168.71.117"),
+            Some("192.168.71.117"),
+            || {
+                let contract =
+                    ensure_cross_machine_signoff_contract_v1(NetworkProfileV1::LocalSmoke)
+                        .expect("local smoke can use same host");
+                assert_eq!(contract.scope, SignoffScopeV1::LocalSmoke);
+                assert!(contract.same_host_two_process_smoke_detected);
+                assert!(!contract.valid_for_cross_machine_signoff);
+            },
+        );
     }
 
     fn with_full_async_diagnostics_env<T>(run: impl FnOnce() -> T) -> T {
@@ -8582,214 +8790,230 @@ mod novorudp_tests {
     #[test]
     fn production_profile_deadline_fail_closed_without_receiver_done() {
         with_env_var("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE", Some("1"), || {
-            with_env_var(
-                "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
-                Some("5"),
-                || {
-                    with_env_var(
-                        "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS",
-                        Some("1"),
-                        || {
-                            with_env_var(
-                                "NOVOVM_NATIVE_PIPELINE_RECEIVER_PROGRESS_DEADLINE_MS",
-                                Some("30"),
-                                || {
-                                    with_sender_hard_timeout_env(160, || {
-                                        let chain_id = 92_003;
-                                        let tx_count = 4;
-                                        let sender_addr = reserve_udp_addr().expect("sender addr");
-                                        let receiver_addr =
-                                            reserve_udp_addr().expect("receiver addr");
-                                        let ack_bind_addr =
-                                            reserve_udp_addr().expect("ack bind addr");
+            with_env_var("NOVOVM_NETWORK_PROFILE", Some("local_smoke"), || {
+                with_env_var(
+                    "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
+                    Some("5"),
+                    || {
+                        with_env_var(
+                            "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS",
+                            Some("1"),
+                            || {
+                                with_env_var(
+                                    "NOVOVM_NATIVE_PIPELINE_RECEIVER_PROGRESS_DEADLINE_MS",
+                                    Some("30"),
+                                    || {
+                                        with_sender_hard_timeout_env(160, || {
+                                            let chain_id = 92_003;
+                                            let tx_count = 4;
+                                            let sender_addr =
+                                                reserve_udp_addr().expect("sender addr");
+                                            let receiver_addr =
+                                                reserve_udp_addr().expect("receiver addr");
+                                            let ack_bind_addr =
+                                                reserve_udp_addr().expect("ack bind addr");
 
-                                        let report = run_sender(
-                                            chain_id,
-                                            tx_count,
-                                            1,
-                                            2,
-                                            sender_addr.as_str(),
-                                            receiver_addr.as_str(),
-                                            FaultConfigV1 {
-                                                enabled: false,
-                                                loss_bps: 0,
-                                                duplicate_bps: 0,
-                                                delay_ms: 0,
-                                                reorder_bps: 0,
-                                                seed: 0,
-                                            },
-                                            sender_timeout_sustained_config(tx_count),
-                                            sender_timeout_tail_repair_config(),
-                                            default_udp_send_retry_config(),
-                                            UdpAckConfigV1 {
-                                                enabled: true,
-                                                bind_addr: ack_bind_addr.clone(),
-                                                target_addr: None,
-                                                recv_timeout_ms: 0,
-                                            },
-                                            sender_timeout_novorudp_config(),
-                                        )
-                                        .expect("sender must return a full async ACK fail report");
+                                            let report = run_sender(
+                                                chain_id,
+                                                tx_count,
+                                                1,
+                                                2,
+                                                sender_addr.as_str(),
+                                                receiver_addr.as_str(),
+                                                FaultConfigV1 {
+                                                    enabled: false,
+                                                    loss_bps: 0,
+                                                    duplicate_bps: 0,
+                                                    delay_ms: 0,
+                                                    reorder_bps: 0,
+                                                    seed: 0,
+                                                },
+                                                sender_timeout_sustained_config(tx_count),
+                                                sender_timeout_tail_repair_config(),
+                                                default_udp_send_retry_config(),
+                                                UdpAckConfigV1 {
+                                                    enabled: true,
+                                                    bind_addr: ack_bind_addr.clone(),
+                                                    target_addr: None,
+                                                    recv_timeout_ms: 0,
+                                                },
+                                                sender_timeout_novorudp_config(),
+                                            )
+                                            .expect(
+                                                "sender must return a full async ACK fail report",
+                                            );
 
-                                        assert_eq!(report["accepted"].as_bool(), Some(false));
-                                        assert_eq!(
+                                            assert_eq!(report["accepted"].as_bool(), Some(false));
+                                            assert_eq!(
                                             report["fail_reason"].as_str(),
                                             Some("production_receiver_progress_deadline_exceeded")
                                         );
-                                        assert_eq!(
-                                            report["final_ack_wait_profile"].as_str(),
-                                            Some("production")
-                                        );
-                                        assert_eq!(
-                                            report["sender_finalization_deadline_exceeded"]
-                                                .as_bool(),
-                                            Some(true)
-                                        );
-                                        assert_eq!(
-                                            report["sender_ack_plane_mode"].as_str(),
-                                            Some("aggressive_nonblocking_ack_drain")
-                                        );
-                                        assert_eq!(
-                                            report["sender_ack_final_sample_is_null"].as_bool(),
-                                            Some(true)
-                                        );
-                                        assert_eq!(
-                                            report["full_async_sender_ack_drain_integrated"]
-                                                .as_bool(),
-                                            Some(true)
-                                        );
-                                        assert_eq!(
+                                            assert_eq!(
+                                                report["final_ack_wait_profile"].as_str(),
+                                                Some("production")
+                                            );
+                                            assert_eq!(
+                                                report["sender_finalization_deadline_exceeded"]
+                                                    .as_bool(),
+                                                Some(true)
+                                            );
+                                            assert_eq!(
+                                                report["sender_ack_plane_mode"].as_str(),
+                                                Some("aggressive_nonblocking_ack_drain")
+                                            );
+                                            assert_eq!(
+                                                report["sender_ack_final_sample_is_null"].as_bool(),
+                                                Some(true)
+                                            );
+                                            assert_eq!(
+                                                report["full_async_sender_ack_drain_integrated"]
+                                                    .as_bool(),
+                                                Some(true)
+                                            );
+                                            assert_eq!(
                                             report["sender_finalization_reason"].as_str(),
                                             Some("production_receiver_progress_deadline_exceeded")
                                         );
-                                        assert_eq!(
-                                            report["receiver_progress_deadline_exceeded"].as_bool(),
-                                            Some(true)
-                                        );
-                                        assert_eq!(
-                                            report["final_ack_deadline_exceeded_after_progress"]
-                                                .as_bool(),
-                                            Some(false)
-                                        );
-                                        assert_eq!(
-                                            report["sender_receiver_progress_seen"].as_bool(),
-                                            Some(false)
-                                        );
-                                        assert_eq!(
-                                            report["sender_ack_socket_bound_addr"].as_str(),
-                                            Some(ack_bind_addr.as_str())
-                                        );
-                                    })
-                                },
-                            );
-                        },
-                    )
-                },
-            )
+                                            assert_eq!(
+                                                report["receiver_progress_deadline_exceeded"]
+                                                    .as_bool(),
+                                                Some(true)
+                                            );
+                                            assert_eq!(
+                                                report
+                                                    ["final_ack_deadline_exceeded_after_progress"]
+                                                    .as_bool(),
+                                                Some(false)
+                                            );
+                                            assert_eq!(
+                                                report["sender_receiver_progress_seen"].as_bool(),
+                                                Some(false)
+                                            );
+                                            assert_eq!(
+                                                report["sender_ack_socket_bound_addr"].as_str(),
+                                                Some(ack_bind_addr.as_str())
+                                            );
+                                        })
+                                    },
+                                );
+                            },
+                        )
+                    },
+                )
+            })
         });
     }
 
     #[test]
     fn production_sender_starts_done_deadline_after_seen_all() {
         with_env_var("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE", Some("1"), || {
-            with_env_var(
-                "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
-                Some("50"),
-                || {
-                    with_env_var(
-                        "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS",
-                        Some("1"),
-                        || {
-                            with_env_var(
-                                "NOVOVM_NATIVE_PIPELINE_RECEIVER_PROGRESS_DEADLINE_MS",
-                                Some("500"),
-                                || {
-                                    with_sender_hard_timeout_env(800, || {
-                                        let chain_id = 92_033;
-                                        let tx_count = 4;
-                                        let sender_addr = reserve_udp_addr().expect("sender addr");
-                                        let receiver_addr =
-                                            reserve_udp_addr().expect("receiver addr");
-                                        let ack_bind_addr =
-                                            reserve_udp_addr().expect("ack bind addr");
-                                        let ack_target_addr = ack_bind_addr.clone();
-                                        let ack_thread = std::thread::spawn(move || {
-                                            std::thread::sleep(Duration::from_millis(20));
-                                            let socket = UdpSocket::bind("127.0.0.1:0")
-                                                .expect("progress ack sender socket");
-                                            let mut ack = receiver_ack_report_value(
-                                                tx_count, tx_count, 64, 41,
-                                            );
-                                            ack["receiver_done"] = serde_json::json!(false);
-                                            let _ = socket.send_to(
-                                                ack.to_string().as_bytes(),
-                                                ack_target_addr,
-                                            );
-                                        });
+            with_env_var("NOVOVM_NETWORK_PROFILE", Some("local_smoke"), || {
+                with_env_var(
+                    "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_WAIT_MS",
+                    Some("50"),
+                    || {
+                        with_env_var(
+                            "NOVOVM_NATIVE_PIPELINE_FINAL_ACK_POLL_MS",
+                            Some("1"),
+                            || {
+                                with_env_var(
+                                    "NOVOVM_NATIVE_PIPELINE_RECEIVER_PROGRESS_DEADLINE_MS",
+                                    Some("500"),
+                                    || {
+                                        with_sender_hard_timeout_env(800, || {
+                                            let chain_id = 92_033;
+                                            let tx_count = 4;
+                                            let sender_addr =
+                                                reserve_udp_addr().expect("sender addr");
+                                            let receiver_addr =
+                                                reserve_udp_addr().expect("receiver addr");
+                                            let ack_bind_addr =
+                                                reserve_udp_addr().expect("ack bind addr");
+                                            let ack_target_addr = ack_bind_addr.clone();
+                                            let ack_thread = std::thread::spawn(move || {
+                                                std::thread::sleep(Duration::from_millis(20));
+                                                let socket = UdpSocket::bind("127.0.0.1:0")
+                                                    .expect("progress ack sender socket");
+                                                let mut ack = receiver_ack_report_value(
+                                                    tx_count, tx_count, 64, 41,
+                                                );
+                                                ack["receiver_done"] = serde_json::json!(false);
+                                                let _ = socket.send_to(
+                                                    ack.to_string().as_bytes(),
+                                                    ack_target_addr,
+                                                );
+                                            });
 
-                                        let report = run_sender(
-                                            chain_id,
-                                            tx_count,
-                                            1,
-                                            2,
-                                            sender_addr.as_str(),
-                                            receiver_addr.as_str(),
-                                            FaultConfigV1 {
-                                                enabled: false,
-                                                loss_bps: 0,
-                                                duplicate_bps: 0,
-                                                delay_ms: 0,
-                                                reorder_bps: 0,
-                                                seed: 0,
-                                            },
-                                            sender_timeout_sustained_config(tx_count),
-                                            sender_timeout_tail_repair_config(),
-                                            default_udp_send_retry_config(),
-                                            UdpAckConfigV1 {
-                                                enabled: true,
-                                                bind_addr: ack_bind_addr,
-                                                target_addr: None,
-                                                recv_timeout_ms: 0,
-                                            },
-                                            sender_timeout_novorudp_config(),
-                                        )
-                                        .expect("sender must return final done deadline report");
-                                        let _ = ack_thread.join();
+                                            let report = run_sender(
+                                                chain_id,
+                                                tx_count,
+                                                1,
+                                                2,
+                                                sender_addr.as_str(),
+                                                receiver_addr.as_str(),
+                                                FaultConfigV1 {
+                                                    enabled: false,
+                                                    loss_bps: 0,
+                                                    duplicate_bps: 0,
+                                                    delay_ms: 0,
+                                                    reorder_bps: 0,
+                                                    seed: 0,
+                                                },
+                                                sender_timeout_sustained_config(tx_count),
+                                                sender_timeout_tail_repair_config(),
+                                                default_udp_send_retry_config(),
+                                                UdpAckConfigV1 {
+                                                    enabled: true,
+                                                    bind_addr: ack_bind_addr,
+                                                    target_addr: None,
+                                                    recv_timeout_ms: 0,
+                                                },
+                                                sender_timeout_novorudp_config(),
+                                            )
+                                            .expect(
+                                                "sender must return final done deadline report",
+                                            );
+                                            let _ = ack_thread.join();
 
-                                        assert_eq!(report["accepted"].as_bool(), Some(false));
-                                        assert_eq!(
+                                            assert_eq!(report["accepted"].as_bool(), Some(false));
+                                            assert_eq!(
                                             report["fail_reason"].as_str(),
-                                            Some("production_final_ack_deadline_exceeded")
+                                            Some("receiver_done_ack_not_observed_after_caught_up")
                                         );
-                                        assert_eq!(
-                                            report["sender_receiver_progress_seen"].as_bool(),
-                                            Some(true)
-                                        );
-                                        assert_eq!(
-                                            report["sender_receiver_progress_seen_all"].as_bool(),
-                                            Some(true)
-                                        );
-                                        assert_eq!(
-                                            report["receiver_progress_deadline_exceeded"].as_bool(),
-                                            Some(false)
-                                        );
-                                        assert_eq!(
-                                            report["final_ack_deadline_exceeded_after_progress"]
-                                                .as_bool(),
-                                            Some(true)
-                                        );
-                                        assert_eq!(
-                                            report["sender_final_done_ack_deadline_start_reason"]
-                                                .as_str(),
-                                            Some("latest_ack_missing_zero")
-                                        );
-                                    })
-                                },
-                            );
-                        },
-                    )
-                },
-            )
+                                            assert_eq!(
+                                                report["sender_receiver_progress_seen"].as_bool(),
+                                                Some(true)
+                                            );
+                                            assert_eq!(
+                                                report["sender_receiver_progress_seen_all"]
+                                                    .as_bool(),
+                                                Some(true)
+                                            );
+                                            assert_eq!(
+                                                report["receiver_progress_deadline_exceeded"]
+                                                    .as_bool(),
+                                                Some(false)
+                                            );
+                                            assert_eq!(
+                                                report
+                                                    ["final_ack_deadline_exceeded_after_progress"]
+                                                    .as_bool(),
+                                                Some(true)
+                                            );
+                                            assert_eq!(
+                                                report
+                                                    ["sender_final_done_ack_deadline_start_reason"]
+                                                    .as_str(),
+                                                Some("latest_ack_missing_zero")
+                                            );
+                                        })
+                                    },
+                                );
+                            },
+                        )
+                    },
+                )
+            })
         });
     }
 
@@ -8940,6 +9164,7 @@ mod novorudp_tests {
             true,
             true,
             true,
+            true,
             Some(0),
             1708,
             true,
@@ -8960,6 +9185,7 @@ mod novorudp_tests {
     #[test]
     fn receiver_done_ack_latches_caught_up_even_with_stale_missing_gap() {
         let result = reconcile_sender_final_ack_with_latest_missing_v1(
+            true,
             true,
             true,
             true,
@@ -8985,6 +9211,7 @@ mod novorudp_tests {
         let result = reconcile_sender_final_ack_with_latest_missing_v1(
             true,
             true,
+            true,
             false,
             Some(1708),
             1708,
@@ -9001,6 +9228,42 @@ mod novorudp_tests {
         assert!(result.repair_coverage_gap_blocks_final);
         assert!(!result.repair_coverage_gap_ignored_after_receiver_done);
         assert!(!result.receiver_done_ack_overrides_repair_incomplete);
+    }
+
+    #[test]
+    fn full_async_sender_requires_receiver_done_ack_even_without_tail_repair() {
+        let result = reconcile_sender_final_ack_with_latest_missing_v1(
+            true,
+            false,
+            true,
+            false,
+            None,
+            0,
+            false,
+            Some("receiver_repair_no_ack"),
+        );
+
+        assert!(!result.accepted);
+        assert!(!result.receiver_done_ack_seen);
+        assert_eq!(result.final_sample_source, "ack_plane_null_sample");
+        assert_eq!(result.finalization_reason, "receiver_repair_no_ack");
+        assert_eq!(result.fail_reason, Some("receiver_repair_no_ack"));
+    }
+
+    #[test]
+    fn legacy_sender_can_complete_without_receiver_done_ack_when_not_required() {
+        let result = reconcile_sender_final_ack_with_latest_missing_v1(
+            true, false, false, false, None, 0, false, None,
+        );
+
+        assert!(result.accepted);
+        assert!(!result.receiver_done_ack_seen);
+        assert_eq!(result.final_sample_source, "ack_plane_null_sample");
+        assert_eq!(
+            result.finalization_reason,
+            "sender_completed_ack_not_required"
+        );
+        assert_eq!(result.fail_reason, None);
     }
 
     #[test]
@@ -14694,6 +14957,8 @@ fn build_diagnostics_report(
         .unwrap_or_default();
     let effective_accepted =
         accepted && signoff_fail_reason.is_none() && latest_blockers.is_empty();
+    let receiver_signoff_contract =
+        signoff_contract_from_env_v1(NetworkProfileV1::from_env("receiver"));
     let performance_breakdown = receiver_wall_clock_performance_breakdown_v1(
         state.samples.as_slice(),
         signoff_sample,
@@ -14702,6 +14967,15 @@ fn build_diagnostics_report(
     let mut report = serde_json::json!({
         "schema": "novovm-native-pipeline-cross-machine-sustained-diagnostics/v1",
         "accepted": effective_accepted,
+        "signed": false,
+        "signoff_scope": receiver_signoff_contract.scope.as_str(),
+        "cross_machine_signoff_requested": receiver_signoff_contract.scope == SignoffScopeV1::CrossMachine,
+        "cross_machine_signoff_valid": receiver_signoff_contract.valid_for_cross_machine_signoff,
+        "cross_machine_signoff_fail_reason": receiver_signoff_contract.fail_reason,
+        "same_host_two_process_smoke_detected": receiver_signoff_contract.same_host_two_process_smoke_detected,
+        "local_two_process_smoke": receiver_signoff_contract.scope == SignoffScopeV1::LocalSmoke,
+        "a_lan_ip": receiver_signoff_contract.a_lan_ip.clone(),
+        "b_lan_ip": receiver_signoff_contract.b_lan_ip.clone(),
         "child_pid": child_pid,
         "expected_tx_count": tx_count,
         "sample_interval_ms": config.sample_interval_ms,
@@ -17876,6 +18150,7 @@ fn run_sender(
     let sender_final_ack_reconciliation = reconcile_sender_final_ack_with_latest_missing_v1(
         sender_completed,
         tail_repair.enabled,
+        tail_repair.enabled || full_async_runtime_engine,
         latest_ack_receiver_done,
         latest_ack_missing_count,
         repair_coverage_gap_count,
@@ -18095,6 +18370,11 @@ fn run_sender(
     let repair_selected_duplicate_sequence_count =
         repair_sequence_sent_count.saturating_sub(repair_selected_unique_sequence_count);
     let repair_suppress_did_not_create_coverage_gap = repair_coverage_gap_count == 0;
+    let sender_signoff_contract = signoff_contract_from_env_v1(network_profile);
+    let receiver_done_ack_received = sender_ack_receiver_done_effective_latched;
+    let signed = accepted
+        && receiver_done_ack_received
+        && sender_signoff_contract.valid_for_cross_machine_signoff;
     if accepted && sender_exit_reason == "not_finished" {
         sender_exit_reason = "accepted".to_string();
     } else if !accepted && sender_exit_reason == "not_finished" {
@@ -18106,6 +18386,17 @@ fn run_sender(
         "schema": REPORT_SCHEMA_V1,
         "role": "sender",
         "accepted": accepted,
+        "signed": signed,
+        "signoff_scope": sender_signoff_contract.scope.as_str(),
+        "cross_machine_signoff_requested": sender_signoff_contract.scope == SignoffScopeV1::CrossMachine,
+        "cross_machine_signoff_valid": sender_signoff_contract.valid_for_cross_machine_signoff,
+        "cross_machine_signoff_fail_reason": sender_signoff_contract.fail_reason,
+        "same_host_two_process_smoke_detected": sender_signoff_contract.same_host_two_process_smoke_detected,
+        "local_two_process_smoke": sender_signoff_contract.scope == SignoffScopeV1::LocalSmoke,
+        "a_lan_ip": sender_signoff_contract.a_lan_ip.clone(),
+        "b_lan_ip": sender_signoff_contract.b_lan_ip.clone(),
+        "a_lan_ip_present": sender_signoff_contract.a_lan_ip.is_some(),
+        "b_lan_ip_present": sender_signoff_contract.b_lan_ip.is_some(),
         "fail_reason": fail_reason,
         "full_async_runtime_engine_enabled": full_async_runtime_engine,
         "runtime_engine_mode": if full_async_runtime_engine { "full_async_multi_plane_v1" } else { "ready_queue_pipeline_v1" },
@@ -18227,6 +18518,7 @@ fn run_sender(
         "sender_ack_last_recv_ms": ack_plane_last_recv_ms,
         "sender_ack_last_decode_error": Value::Null,
         "sender_ack_receiver_done_seen": sender_ack_receiver_done_effective_latched,
+        "receiver_done_ack_received": receiver_done_ack_received,
         "sender_ack_receiver_done_latched": sender_ack_receiver_done_effective_latched,
         "sender_ack_receiver_done_latch_source": sender_ack_receiver_done_effective_source,
         "sender_ack_receiver_done_latch_epoch": sender_ack_receiver_done_effective_epoch,
@@ -19751,6 +20043,7 @@ fn main() -> Result<()> {
             if full_async_runtime_engine { 0 } else { 250 },
         )?,
     };
+    let signoff_contract = ensure_cross_machine_signoff_contract_v1(network_profile)?;
     let transport_profile = TransportProfileV1::from_env()?;
     let novorudp = NovoRudpConfigV1::from_env(transport_profile)?;
     let sender_node = u64_env_alias(
@@ -19817,6 +20110,29 @@ fn main() -> Result<()> {
                 "NOVOVM_NATIVE_PIPELINE_RECEIVER_LISTEN_ADDR",
             ])
             .unwrap_or_else(|| "0.0.0.0:39001".to_string());
+            let sender_data_advertised = first_string_env_nonempty(&[
+                "NOVOVM_NOVORUDP_ENDPOINT_RECORD_DATA_ENDPOINT",
+                "NOVOVM_NETWORK_ENDPOINT_RECORD_DATA_ENDPOINT",
+                "NOVOVM_NATIVE_PIPELINE_SENDER_DATA_ADVERTISED_ADDR",
+                "NOVOVM_NATIVE_PIPELINE_SENDER_ADDR_ADVERTISED",
+            ]);
+            let sender_ack_advertised = first_string_env_nonempty(&[
+                "NOVOVM_NOVORUDP_ENDPOINT_RECORD_ACK_ENDPOINT",
+                "NOVOVM_NETWORK_ENDPOINT_RECORD_ACK_ENDPOINT",
+                "NOVOVM_NATIVE_PIPELINE_ACK_ADVERTISED_ADDR",
+                "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADVERTISED_ADDR",
+            ]);
+            eprintln!(
+                "novovm network config role=receiver network_profile={} signoff_scope={} A_LAN_IP={} B_LAN_IP={} B_listen={} A_data_advertised={} A_ack_advertised={} same_host_smoke={}",
+                network_profile.as_str(),
+                signoff_contract.scope.as_str(),
+                signoff_contract.a_lan_ip.as_deref().unwrap_or("<missing>"),
+                signoff_contract.b_lan_ip.as_deref().unwrap_or("<missing>"),
+                listen_addr,
+                sender_data_advertised.as_deref().unwrap_or("<missing>"),
+                sender_ack_advertised.as_deref().unwrap_or("<missing>"),
+                signoff_contract.same_host_two_process_smoke_detected,
+            );
             run_receiver(
                 chain_id,
                 tx_count,
@@ -19846,6 +20162,31 @@ fn main() -> Result<()> {
                 "NOVOVM_NATIVE_PIPELINE_SENDER_LISTEN_ADDR",
             ])
             .unwrap_or_else(|| "0.0.0.0:0".to_string());
+            let sender_data_advertised = first_string_env_nonempty(&[
+                "NOVOVM_NOVORUDP_ENDPOINT_RECORD_DATA_ENDPOINT",
+                "NOVOVM_NETWORK_ENDPOINT_RECORD_DATA_ENDPOINT",
+                "NOVOVM_NATIVE_PIPELINE_SENDER_DATA_ADVERTISED_ADDR",
+                "NOVOVM_NATIVE_PIPELINE_SENDER_ADDR_ADVERTISED",
+            ]);
+            let sender_ack_advertised = first_string_env_nonempty(&[
+                "NOVOVM_NOVORUDP_ENDPOINT_RECORD_ACK_ENDPOINT",
+                "NOVOVM_NETWORK_ENDPOINT_RECORD_ACK_ENDPOINT",
+                "NOVOVM_NATIVE_PIPELINE_ACK_ADVERTISED_ADDR",
+                "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADVERTISED_ADDR",
+            ]);
+            eprintln!(
+                "novovm network config role=sender network_profile={} signoff_scope={} A_LAN_IP={} B_LAN_IP={} A_data_bind={} A_data_advertised={} A_ack_bind={} A_ack_advertised={} B_peer_target={} same_host_smoke={}",
+                network_profile.as_str(),
+                signoff_contract.scope.as_str(),
+                signoff_contract.a_lan_ip.as_deref().unwrap_or("<missing>"),
+                signoff_contract.b_lan_ip.as_deref().unwrap_or("<missing>"),
+                sender_addr,
+                sender_data_advertised.as_deref().unwrap_or("<missing>"),
+                udp_ack.bind_addr,
+                sender_ack_advertised.as_deref().unwrap_or("<missing>"),
+                receiver_addr,
+                signoff_contract.same_host_two_process_smoke_detected,
+            );
             run_sender(
                 chain_id,
                 tx_count,
