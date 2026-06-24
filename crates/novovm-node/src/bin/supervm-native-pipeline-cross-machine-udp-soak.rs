@@ -2760,6 +2760,162 @@ fn missing_windows_repair_selection(
     Some((first.start / window_size, first, selected))
 }
 
+#[derive(Debug, Clone, Default)]
+struct RepairRotationStateV1 {
+    latest_missing_ranges: Vec<MissingRangeV1>,
+    cursor_sequence: Option<u64>,
+    wrap_count: u64,
+    reset_count: u64,
+    reset_reason_sample: Option<String>,
+    full_scan_completed: bool,
+    full_scan_count: u64,
+}
+
+fn first_missing_sequence_v1(ranges: &[MissingRangeV1]) -> Option<u64> {
+    normalize_missing_ranges(ranges, u64::MAX)
+        .first()
+        .map(|range| range.start)
+}
+
+fn next_missing_sequence_after_v1(ranges: &[MissingRangeV1], sequence: u64) -> Option<u64> {
+    let next = sequence.saturating_add(1);
+    for range in normalize_missing_ranges(ranges, u64::MAX) {
+        if next <= range.end_inclusive {
+            return Some(next.max(range.start));
+        }
+    }
+    None
+}
+
+fn repair_rotation_cursor_range_index_v1(
+    ranges: &[MissingRangeV1],
+    cursor_sequence: Option<u64>,
+) -> Option<u64> {
+    let cursor = cursor_sequence?;
+    normalize_missing_ranges(ranges, u64::MAX)
+        .iter()
+        .position(|range| cursor >= range.start && cursor <= range.end_inclusive)
+        .and_then(|idx| idx.try_into().ok())
+}
+
+fn select_novorudp_repair_ranges_with_rotation_v1(
+    ranges: &[MissingRangeV1],
+    expected: u64,
+    window_size: u64,
+    windows_per_ack: u64,
+    state: &mut RepairRotationStateV1,
+) -> Option<NovoRudpRepairSelectionV1> {
+    let normalized = normalize_missing_ranges(ranges, expected);
+    if normalized.is_empty() {
+        state.latest_missing_ranges.clear();
+        state.cursor_sequence = None;
+        state.full_scan_completed = false;
+        return None;
+    }
+    if state.latest_missing_ranges != normalized {
+        state.reset_count = state.reset_count.saturating_add(1);
+        state.reset_reason_sample = Some(if state.latest_missing_ranges.is_empty() {
+            "initial_snapshot".to_string()
+        } else {
+            "snapshot_changed".to_string()
+        });
+        state.latest_missing_ranges = normalized.clone();
+        state.cursor_sequence = first_missing_sequence_v1(normalized.as_slice());
+        state.full_scan_completed = false;
+    }
+    let start_at = state
+        .cursor_sequence
+        .or_else(|| first_missing_sequence_v1(normalized.as_slice()));
+    let selection = missing_windows_repair_selection(
+        normalized.as_slice(),
+        expected,
+        window_size,
+        windows_per_ack,
+        start_at,
+    )
+    .or_else(|| {
+        state.wrap_count = state.wrap_count.saturating_add(1);
+        state.full_scan_completed = true;
+        state.full_scan_count = state.full_scan_count.saturating_add(1);
+        state.cursor_sequence = first_missing_sequence_v1(normalized.as_slice());
+        missing_windows_repair_selection(
+            normalized.as_slice(),
+            expected,
+            window_size,
+            windows_per_ack,
+            state.cursor_sequence,
+        )
+    })?;
+    let last_selected_end = selection
+        .2
+        .last()
+        .map(|range| range.end_inclusive)
+        .unwrap_or(selection.1.end_inclusive);
+    if let Some(next) = next_missing_sequence_after_v1(normalized.as_slice(), last_selected_end) {
+        state.cursor_sequence = Some(next);
+    } else {
+        state.wrap_count = state.wrap_count.saturating_add(1);
+        state.full_scan_completed = true;
+        state.full_scan_count = state.full_scan_count.saturating_add(1);
+        state.cursor_sequence = first_missing_sequence_v1(normalized.as_slice());
+    }
+    Some(NovoRudpRepairSelectionV1 {
+        window_id: selection.0,
+        window: selection.1,
+        ranges: selection.2,
+        used_full_missing_bitmap: false,
+    })
+}
+
+fn missing_ranges_overlap_with_window_v1(
+    ranges: &[MissingRangeV1],
+    start: u64,
+    end_inclusive: u64,
+) -> u64 {
+    if end_inclusive < start {
+        return 0;
+    }
+    missing_ranges_overlap_count(
+        ranges,
+        &[MissingRangeV1 {
+            start,
+            end_inclusive,
+        }],
+    )
+}
+
+fn accumulate_repair_selection_position_counts_v1(
+    ranges: &[MissingRangeV1],
+    expected: u64,
+    head_count: &mut u64,
+    middle_count: &mut u64,
+    tail_count: &mut u64,
+) {
+    if expected == 0 {
+        return;
+    }
+    let last = expected.saturating_sub(1);
+    let middle_start = expected / 3;
+    let tail_start = expected.saturating_mul(2) / 3;
+    if middle_start > 0 {
+        *head_count = head_count.saturating_add(missing_ranges_overlap_with_window_v1(
+            ranges,
+            0,
+            middle_start.saturating_sub(1),
+        ));
+    }
+    if tail_start > middle_start {
+        *middle_count = middle_count.saturating_add(missing_ranges_overlap_with_window_v1(
+            ranges,
+            middle_start,
+            tail_start.saturating_sub(1),
+        ));
+    }
+    *tail_count = tail_count.saturating_add(missing_ranges_overlap_with_window_v1(
+        ranges, tail_start, last,
+    ));
+}
+
 #[derive(Debug, Clone)]
 struct NovoRudpRepairSelectionV1 {
     window_id: u64,
@@ -7756,6 +7912,108 @@ mod novorudp_tests {
         assert_eq!(selection.ranges[0].start, 14162);
         assert_eq!(selection.ranges[0].end_inclusive, 14225);
         assert_eq!(missing_ranges_count(selection.ranges.as_slice()), 64);
+    }
+
+    #[test]
+    fn novorudp_repair_large_missing_window_rotates_beyond_first_budget() {
+        let ranges = vec![MissingRangeV1 {
+            start: 0,
+            end_inclusive: 14_399,
+        }];
+        let mut state = RepairRotationStateV1::default();
+        let first = select_novorudp_repair_ranges_with_rotation_v1(
+            ranges.as_slice(),
+            14_400,
+            64,
+            64,
+            &mut state,
+        )
+        .expect("first repair selection");
+        assert_eq!(first.ranges.first().map(|range| range.start), Some(0));
+        assert_eq!(
+            first.ranges.last().map(|range| range.end_inclusive),
+            Some(4_095)
+        );
+
+        let second = select_novorudp_repair_ranges_with_rotation_v1(
+            ranges.as_slice(),
+            14_400,
+            64,
+            64,
+            &mut state,
+        )
+        .expect("second repair selection");
+        assert_eq!(second.ranges.first().map(|range| range.start), Some(4_096));
+        assert_eq!(
+            second.ranges.last().map(|range| range.end_inclusive),
+            Some(8_191)
+        );
+
+        let third = select_novorudp_repair_ranges_with_rotation_v1(
+            ranges.as_slice(),
+            14_400,
+            64,
+            64,
+            &mut state,
+        )
+        .expect("third repair selection");
+        assert_eq!(third.ranges.first().map(|range| range.start), Some(8_192));
+        assert_eq!(
+            third.ranges.last().map(|range| range.end_inclusive),
+            Some(12_287)
+        );
+
+        let fourth = select_novorudp_repair_ranges_with_rotation_v1(
+            ranges.as_slice(),
+            14_400,
+            64,
+            64,
+            &mut state,
+        )
+        .expect("fourth repair selection");
+        assert_eq!(fourth.ranges.first().map(|range| range.start), Some(12_288));
+        assert_eq!(
+            fourth.ranges.last().map(|range| range.end_inclusive),
+            Some(14_399)
+        );
+        assert!(state.full_scan_completed);
+        assert_eq!(state.full_scan_count, 1);
+        assert_eq!(state.cursor_sequence, Some(0));
+    }
+
+    #[test]
+    fn novorudp_repair_rotation_covers_tail_range_from_large_missing_snapshot() {
+        let ranges = vec![MissingRangeV1 {
+            start: 1_846,
+            end_inclusive: 14_399,
+        }];
+        let mut state = RepairRotationStateV1::default();
+        let mut sent = Vec::<MissingRangeV1>::new();
+        for _ in 0..4 {
+            let selection = select_novorudp_repair_ranges_with_rotation_v1(
+                ranges.as_slice(),
+                14_400,
+                64,
+                64,
+                &mut state,
+            )
+            .expect("repair selection");
+            sent.extend(selection.ranges);
+        }
+        let sent = normalize_missing_ranges(sent.as_slice(), 14_400);
+        let tail_missing = vec![MissingRangeV1 {
+            start: 9_600,
+            end_inclusive: 14_399,
+        }];
+        assert_eq!(
+            missing_ranges_overlap_count(sent.as_slice(), ranges.as_slice()),
+            missing_ranges_count(ranges.as_slice())
+        );
+        assert_eq!(
+            missing_ranges_overlap_count(sent.as_slice(), tail_missing.as_slice()),
+            missing_ranges_count(tail_missing.as_slice())
+        );
+        assert!(state.full_scan_completed);
     }
 
     #[test]
@@ -16426,6 +16684,16 @@ fn run_sender(
     let mut repair_suppressed_duplicate_sequence_count = 0u64;
     let mut repair_suppressed_not_in_latest_missing_count = 0u64;
     let mut repair_selected_latest_missing_sequence_count = 0u64;
+    let repair_large_missing_rotation_enabled = full_async_runtime_engine
+        && novorudp.enabled
+        && (bool_env("NOVOVM_NOVORUDP_REPAIR_LARGE_MISSING_ROTATION_ENABLED")
+            || string_env_nonempty("NOVOVM_NOVORUDP_REPAIR_LARGE_MISSING_ROTATION_ENABLED")
+                .is_none());
+    let mut repair_rotation_state = RepairRotationStateV1::default();
+    let mut repair_selected_from_head_count = 0u64;
+    let mut repair_selected_from_middle_count = 0u64;
+    let mut repair_selected_from_tail_count = 0u64;
+    let repair_duplicate_suppress_bypassed_for_tail_count = 0u64;
     let full_async_repair_snapshot_scheduler_enabled =
         full_async_runtime_engine && novorudp.enabled && primary_ack_drain_enabled;
     let repair_snapshot_stale_threshold_ms =
@@ -16582,7 +16850,6 @@ fn run_sender(
     let mut sender_repair_pump_tail_range_uncovered_count = 0u64;
     let mut repair_latest_missing_snapshot_initial_count: Option<u64> = None;
     let mut repair_latest_missing_snapshot_final_count: Option<u64> = None;
-    let mut repair_tail_missing_range_sample = Vec::<MissingRangeV1>::new();
     let mut repair_tail_missing_covered_sequence_count = 0u64;
     let mut repair_tail_missing_uncovered_sequence_count = 0u64;
     let mut repair_continuation_attempt_count = 0u64;
@@ -17229,13 +17496,24 @@ fn run_sender(
                 }
                 tail_repair_udp_ack_used_count = tail_repair_udp_ack_used_count.saturating_add(1);
                 let mut selected_ranges = if novorudp.enabled {
-                    if let Some(selection) = select_novorudp_repair_ranges_from_receiver_ack(
-                        state,
-                        tx_count,
-                        novorudp.window_size,
-                        novorudp.repair_windows_per_ack,
-                        novorudp.tail_window_max_retries,
-                    ) {
+                    let selection = if repair_large_missing_rotation_enabled {
+                        select_novorudp_repair_ranges_with_rotation_v1(
+                            state.latest_ranges.as_slice(),
+                            tx_count,
+                            novorudp.window_size,
+                            novorudp.repair_windows_per_ack,
+                            &mut repair_rotation_state,
+                        )
+                    } else {
+                        select_novorudp_repair_ranges_from_receiver_ack(
+                            state,
+                            tx_count,
+                            novorudp.window_size,
+                            novorudp.repair_windows_per_ack,
+                            novorudp.tail_window_max_retries,
+                        )
+                    };
+                    if let Some(selection) = selection {
                         novorudp_window_id_this_round = Some(selection.window_id);
                         novorudp_window_range_this_round = Some(selection.window);
                         novorudp_used_full_missing_bitmap_this_round =
@@ -17315,6 +17593,13 @@ fn run_sender(
                     }
                     selected_ranges = filtered_ranges;
                 }
+                accumulate_repair_selection_position_counts_v1(
+                    selected_ranges.as_slice(),
+                    tx_count,
+                    &mut repair_selected_from_head_count,
+                    &mut repair_selected_from_middle_count,
+                    &mut repair_selected_from_tail_count,
+                );
                 repair_selected_latest_missing_sequence_count =
                     repair_selected_latest_missing_sequence_count.saturating_add(
                         missing_ranges_overlap_count(
@@ -17384,15 +17669,26 @@ fn run_sender(
                 tail_repair_file_ack_used_count = tail_repair_file_ack_used_count.saturating_add(1);
                 tail_repair_ack_received_count = tail_repair_ack_received_count.saturating_add(1);
                 let mut selected_ranges = if novorudp.enabled {
-                    if let Some(selection) = select_novorudp_repair_ranges_from_ack(
-                        ranges.as_slice(),
-                        tx_count,
-                        novorudp.window_size,
-                        novorudp.repair_windows_per_ack,
-                        missing_count_before,
-                        ranges.len().try_into().unwrap_or(u64::MAX),
-                        novorudp.tail_window_max_retries,
-                    ) {
+                    let selection = if repair_large_missing_rotation_enabled {
+                        select_novorudp_repair_ranges_with_rotation_v1(
+                            ranges.as_slice(),
+                            tx_count,
+                            novorudp.window_size,
+                            novorudp.repair_windows_per_ack,
+                            &mut repair_rotation_state,
+                        )
+                    } else {
+                        select_novorudp_repair_ranges_from_ack(
+                            ranges.as_slice(),
+                            tx_count,
+                            novorudp.window_size,
+                            novorudp.repair_windows_per_ack,
+                            missing_count_before,
+                            ranges.len().try_into().unwrap_or(u64::MAX),
+                            novorudp.tail_window_max_retries,
+                        )
+                    };
+                    if let Some(selection) = selection {
                         novorudp_window_id_this_round = Some(selection.window_id);
                         novorudp_window_range_this_round = Some(selection.window);
                         novorudp_used_full_missing_bitmap_this_round =
@@ -17470,6 +17766,13 @@ fn run_sender(
                     }
                     selected_ranges = filtered_ranges;
                 }
+                accumulate_repair_selection_position_counts_v1(
+                    selected_ranges.as_slice(),
+                    tx_count,
+                    &mut repair_selected_from_head_count,
+                    &mut repair_selected_from_middle_count,
+                    &mut repair_selected_from_tail_count,
+                );
                 repair_selected_latest_missing_sequence_count =
                     repair_selected_latest_missing_sequence_count.saturating_add(
                         missing_ranges_overlap_count(selected_ranges.as_slice(), ranges.as_slice()),
@@ -18153,7 +18456,6 @@ fn run_sender(
                             .unwrap_or(true);
                         repair_pump_active = true;
                         repair_pump_iteration_count = repair_pump_iteration_count.saturating_add(1);
-                        repair_tail_missing_range_sample = latest_ack_missing_ranges_sample.clone();
                         sender_repair_pump_latest_missing_range =
                             latest_ack_missing_ranges_sample.clone();
                         let ack_state = UdpAckStateV1 {
@@ -18173,13 +18475,23 @@ fn run_sender(
                             ..UdpAckStateV1::default()
                         };
                         let mut selected_ranges = if novorudp.enabled {
-                            select_novorudp_repair_ranges_from_receiver_ack(
-                                &ack_state,
-                                tx_count,
-                                novorudp.window_size,
-                                novorudp.repair_windows_per_ack,
-                                novorudp.tail_window_max_retries,
-                            )
+                            if repair_large_missing_rotation_enabled {
+                                select_novorudp_repair_ranges_with_rotation_v1(
+                                    ack_state.latest_ranges.as_slice(),
+                                    tx_count,
+                                    novorudp.window_size,
+                                    novorudp.repair_windows_per_ack,
+                                    &mut repair_rotation_state,
+                                )
+                            } else {
+                                select_novorudp_repair_ranges_from_receiver_ack(
+                                    &ack_state,
+                                    tx_count,
+                                    novorudp.window_size,
+                                    novorudp.repair_windows_per_ack,
+                                    novorudp.tail_window_max_retries,
+                                )
+                            }
                             .map(|selection| selection.ranges)
                             .unwrap_or_else(|| latest_ack_missing_ranges_sample.clone())
                         } else {
@@ -18188,6 +18500,13 @@ fn run_sender(
                         selected_ranges = missing_ranges_intersection_many(
                             selected_ranges.as_slice(),
                             latest_ack_missing_ranges_sample.as_slice(),
+                        );
+                        accumulate_repair_selection_position_counts_v1(
+                            selected_ranges.as_slice(),
+                            tx_count,
+                            &mut repair_selected_from_head_count,
+                            &mut repair_selected_from_middle_count,
+                            &mut repair_selected_from_tail_count,
                         );
                         let selected_sequence_count =
                             missing_ranges_count(selected_ranges.as_slice());
@@ -18484,6 +18803,37 @@ fn run_sender(
     );
     let repair_latest_missing_uncovered_sequence_count =
         missing_ranges_count(repair_latest_missing_uncovered_ranges.as_slice());
+    let repair_tail_region_start = tx_count.saturating_mul(2) / 3;
+    let repair_tail_missing_range_sample_report = if tx_count > 0 {
+        missing_ranges_intersection_with_window(
+            latest_missing_snapshot_ranges.as_slice(),
+            repair_tail_region_start,
+            tx_count.saturating_sub(1),
+        )
+    } else {
+        Vec::new()
+    };
+    let repair_tail_covered_sequence_count = missing_ranges_overlap_count(
+        repair_tail_missing_range_sample_report.as_slice(),
+        repair_sent_normalized.as_slice(),
+    );
+    let repair_tail_uncovered_ranges = missing_ranges_subtract(
+        repair_tail_missing_range_sample_report.as_slice(),
+        repair_sent_normalized.as_slice(),
+        tx_count,
+    );
+    let repair_tail_uncovered_sequence_count =
+        missing_ranges_count(repair_tail_uncovered_ranges.as_slice());
+    let repair_latest_missing_full_scan_completed = repair_rotation_state.full_scan_completed;
+    let repair_latest_missing_full_scan_count = repair_rotation_state.full_scan_count;
+    let repair_coverage_gap_after_full_scan = repair_latest_missing_uncovered_sequence_count > 0
+        && !latest_ack_receiver_done
+        && repair_latest_missing_full_scan_completed;
+    let repair_required_tail_coverage_blocked_count = if latest_ack_receiver_done {
+        0
+    } else {
+        repair_tail_uncovered_sequence_count
+    };
     let repair_coverage_terminal_override = latest_ack_receiver_done;
     let repair_coverage_terminal_source = if repair_coverage_terminal_override {
         "receiver_done_ack"
@@ -19059,6 +19409,32 @@ fn run_sender(
             repair_latest_missing_uncovered_ranges.as_slice(),
             tail_repair.missing_sample_limit,
         ),
+        "repair_large_missing_rotation_enabled": repair_large_missing_rotation_enabled,
+        "repair_latest_missing_epoch": tail_repair_latest_ack_epoch,
+        "repair_latest_missing_range_count": repair_latest_missing_snapshot_range_count,
+        "repair_latest_missing_sequence_count": repair_latest_missing_snapshot_sequence_count,
+        "repair_rotation_cursor_range_index": repair_rotation_cursor_range_index_v1(
+            repair_rotation_state.latest_missing_ranges.as_slice(),
+            repair_rotation_state.cursor_sequence,
+        ),
+        "repair_rotation_cursor_sequence": repair_rotation_state.cursor_sequence,
+        "repair_rotation_wrap_count": repair_rotation_state.wrap_count,
+        "repair_rotation_reset_count": repair_rotation_state.reset_count,
+        "repair_rotation_reset_reason_sample": repair_rotation_state.reset_reason_sample.clone(),
+        "repair_selected_from_tail_count": repair_selected_from_tail_count,
+        "repair_selected_from_middle_count": repair_selected_from_middle_count,
+        "repair_selected_from_head_count": repair_selected_from_head_count,
+        "repair_tail_missing_range_sample": missing_ranges_to_json(
+            repair_tail_missing_range_sample_report.as_slice(),
+            tail_repair.missing_sample_limit,
+        ),
+        "repair_tail_covered_sequence_count": repair_tail_covered_sequence_count,
+        "repair_tail_uncovered_sequence_count": repair_tail_uncovered_sequence_count,
+        "repair_latest_missing_full_scan_completed": repair_latest_missing_full_scan_completed,
+        "repair_latest_missing_full_scan_count": repair_latest_missing_full_scan_count,
+        "repair_required_tail_coverage_blocked_count": repair_required_tail_coverage_blocked_count,
+        "repair_duplicate_suppress_bypassed_for_tail_count": repair_duplicate_suppress_bypassed_for_tail_count,
+        "repair_coverage_gap_after_full_scan": repair_coverage_gap_after_full_scan,
         "repair_coverage_terminal_override": repair_coverage_terminal_override,
         "repair_coverage_terminal_source": repair_coverage_terminal_source,
         "repair_suppress_blocked_required_coverage_count": repair_suppression_blocked_for_latest_missing_count,
@@ -19213,6 +19589,32 @@ fn run_sender(
                 repair_latest_missing_uncovered_ranges.as_slice(),
                 tail_repair.missing_sample_limit,
             ),
+            "repair_large_missing_rotation_enabled": repair_large_missing_rotation_enabled,
+            "repair_latest_missing_epoch": tail_repair_latest_ack_epoch,
+            "repair_latest_missing_range_count": repair_latest_missing_snapshot_range_count,
+            "repair_latest_missing_sequence_count": repair_latest_missing_snapshot_sequence_count,
+            "repair_rotation_cursor_range_index": repair_rotation_cursor_range_index_v1(
+                repair_rotation_state.latest_missing_ranges.as_slice(),
+                repair_rotation_state.cursor_sequence,
+            ),
+            "repair_rotation_cursor_sequence": repair_rotation_state.cursor_sequence,
+            "repair_rotation_wrap_count": repair_rotation_state.wrap_count,
+            "repair_rotation_reset_count": repair_rotation_state.reset_count,
+            "repair_rotation_reset_reason_sample": repair_rotation_state.reset_reason_sample.clone(),
+            "repair_selected_from_tail_count": repair_selected_from_tail_count,
+            "repair_selected_from_middle_count": repair_selected_from_middle_count,
+            "repair_selected_from_head_count": repair_selected_from_head_count,
+            "repair_tail_missing_range_sample": missing_ranges_to_json(
+                repair_tail_missing_range_sample_report.as_slice(),
+                tail_repair.missing_sample_limit,
+            ),
+            "repair_tail_covered_sequence_count": repair_tail_covered_sequence_count,
+            "repair_tail_uncovered_sequence_count": repair_tail_uncovered_sequence_count,
+            "repair_latest_missing_full_scan_completed": repair_latest_missing_full_scan_completed,
+            "repair_latest_missing_full_scan_count": repair_latest_missing_full_scan_count,
+            "repair_required_tail_coverage_blocked_count": repair_required_tail_coverage_blocked_count,
+            "repair_duplicate_suppress_bypassed_for_tail_count": repair_duplicate_suppress_bypassed_for_tail_count,
+            "repair_coverage_gap_after_full_scan": repair_coverage_gap_after_full_scan,
             "repair_coverage_terminal_override": repair_coverage_terminal_override,
             "repair_coverage_terminal_source": repair_coverage_terminal_source,
             "windows_detail_sample": novorudp_windows_detail_sample,
@@ -19679,7 +20081,7 @@ fn run_sender(
         report_map.insert(
             "repair_tail_missing_range_sample".to_string(),
             missing_ranges_to_json(
-                repair_tail_missing_range_sample.as_slice(),
+                repair_tail_missing_range_sample_report.as_slice(),
                 tail_repair.missing_sample_limit,
             ),
         );
@@ -19690,6 +20092,85 @@ fn run_sender(
         report_map.insert(
             "repair_tail_missing_uncovered_sequence_count".to_string(),
             serde_json::json!(repair_tail_missing_uncovered_sequence_count),
+        );
+        report_map.insert(
+            "repair_large_missing_rotation_enabled".to_string(),
+            serde_json::json!(repair_large_missing_rotation_enabled),
+        );
+        report_map.insert(
+            "repair_latest_missing_epoch".to_string(),
+            serde_json::json!(tail_repair_latest_ack_epoch),
+        );
+        report_map.insert(
+            "repair_latest_missing_range_count".to_string(),
+            serde_json::json!(repair_latest_missing_snapshot_range_count),
+        );
+        report_map.insert(
+            "repair_latest_missing_sequence_count".to_string(),
+            serde_json::json!(repair_latest_missing_snapshot_sequence_count),
+        );
+        report_map.insert(
+            "repair_rotation_cursor_range_index".to_string(),
+            serde_json::json!(repair_rotation_cursor_range_index_v1(
+                repair_rotation_state.latest_missing_ranges.as_slice(),
+                repair_rotation_state.cursor_sequence,
+            )),
+        );
+        report_map.insert(
+            "repair_rotation_cursor_sequence".to_string(),
+            serde_json::json!(repair_rotation_state.cursor_sequence),
+        );
+        report_map.insert(
+            "repair_rotation_wrap_count".to_string(),
+            serde_json::json!(repair_rotation_state.wrap_count),
+        );
+        report_map.insert(
+            "repair_rotation_reset_count".to_string(),
+            serde_json::json!(repair_rotation_state.reset_count),
+        );
+        report_map.insert(
+            "repair_rotation_reset_reason_sample".to_string(),
+            serde_json::json!(repair_rotation_state.reset_reason_sample.clone()),
+        );
+        report_map.insert(
+            "repair_selected_from_tail_count".to_string(),
+            serde_json::json!(repair_selected_from_tail_count),
+        );
+        report_map.insert(
+            "repair_selected_from_middle_count".to_string(),
+            serde_json::json!(repair_selected_from_middle_count),
+        );
+        report_map.insert(
+            "repair_selected_from_head_count".to_string(),
+            serde_json::json!(repair_selected_from_head_count),
+        );
+        report_map.insert(
+            "repair_tail_covered_sequence_count".to_string(),
+            serde_json::json!(repair_tail_covered_sequence_count),
+        );
+        report_map.insert(
+            "repair_tail_uncovered_sequence_count".to_string(),
+            serde_json::json!(repair_tail_uncovered_sequence_count),
+        );
+        report_map.insert(
+            "repair_latest_missing_full_scan_completed".to_string(),
+            serde_json::json!(repair_latest_missing_full_scan_completed),
+        );
+        report_map.insert(
+            "repair_latest_missing_full_scan_count".to_string(),
+            serde_json::json!(repair_latest_missing_full_scan_count),
+        );
+        report_map.insert(
+            "repair_required_tail_coverage_blocked_count".to_string(),
+            serde_json::json!(repair_required_tail_coverage_blocked_count),
+        );
+        report_map.insert(
+            "repair_duplicate_suppress_bypassed_for_tail_count".to_string(),
+            serde_json::json!(repair_duplicate_suppress_bypassed_for_tail_count),
+        );
+        report_map.insert(
+            "repair_coverage_gap_after_full_scan".to_string(),
+            serde_json::json!(repair_coverage_gap_after_full_scan),
         );
         report_map.insert(
             "repair_continuation_attempt_count".to_string(),
@@ -19798,6 +20279,26 @@ fn run_sender(
             "sender_final_ack_fast_drain_receiver_done_seen",
             "receiver_done_ack_finalize_latency_ms",
             "sender_finalization_wait_mode",
+            "repair_large_missing_rotation_enabled",
+            "repair_latest_missing_epoch",
+            "repair_latest_missing_range_count",
+            "repair_latest_missing_sequence_count",
+            "repair_rotation_cursor_range_index",
+            "repair_rotation_cursor_sequence",
+            "repair_rotation_wrap_count",
+            "repair_rotation_reset_count",
+            "repair_rotation_reset_reason_sample",
+            "repair_selected_from_tail_count",
+            "repair_selected_from_middle_count",
+            "repair_selected_from_head_count",
+            "repair_tail_missing_range_sample",
+            "repair_tail_covered_sequence_count",
+            "repair_tail_uncovered_sequence_count",
+            "repair_latest_missing_full_scan_completed",
+            "repair_latest_missing_full_scan_count",
+            "repair_required_tail_coverage_blocked_count",
+            "repair_duplicate_suppress_bypassed_for_tail_count",
+            "repair_coverage_gap_after_full_scan",
         ]
         .into_iter()
         .filter_map(|key| {
