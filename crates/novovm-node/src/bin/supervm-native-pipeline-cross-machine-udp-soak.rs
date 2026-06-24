@@ -3127,6 +3127,56 @@ fn reconcile_sender_final_ack_with_latest_missing_v1(
     }
 }
 
+fn sender_ack_progress_source_v1(
+    expected_tx_count: u64,
+    initial_missing_count: Option<u64>,
+    min_missing_count: Option<u64>,
+    latest_missing_count: Option<u64>,
+    highest_sequence_seen: Option<u64>,
+    receiver_done: bool,
+) -> &'static str {
+    if receiver_done {
+        return "receiver_done_ack";
+    }
+    let Some(missing_count) = latest_missing_count else {
+        return "none";
+    };
+    if missing_count == 0 {
+        return "latest_ack_missing_zero";
+    }
+    if expected_tx_count > 0 && missing_count < expected_tx_count {
+        return "latest_ack_missing_below_expected";
+    }
+    if initial_missing_count
+        .map(|initial| missing_count < initial)
+        .unwrap_or(false)
+    {
+        return "latest_ack_missing_decreased";
+    }
+    if min_missing_count
+        .map(|min_seen| missing_count < min_seen)
+        .unwrap_or(false)
+    {
+        return "latest_ack_missing_decreased";
+    }
+    if highest_sequence_seen.is_some() {
+        return "highest_sequence_seen";
+    }
+    "none"
+}
+
+fn sender_ack_is_early_all_missing_v1(
+    expected_tx_count: u64,
+    latest_missing_count: Option<u64>,
+    highest_sequence_seen: Option<u64>,
+    receiver_done: bool,
+) -> bool {
+    expected_tx_count > 0
+        && latest_missing_count == Some(expected_tx_count)
+        && highest_sequence_seen.is_none()
+        && !receiver_done
+}
+
 #[cfg(test)]
 fn merge_tail_gap_into_repair_ranges(
     selected_ranges: &[MissingRangeV1],
@@ -8782,7 +8832,11 @@ mod novorudp_tests {
             assert_eq!(report["accepted"].as_bool(), Some(false));
             assert_eq!(
                 report["fail_reason"].as_str(),
-                Some("repair_latest_missing_coverage_gap")
+                Some("repair_latest_missing_coverage_gap_after_deadline")
+            );
+            assert_eq!(
+                report["sender_final_fail_sample_source"].as_str(),
+                Some("latest_missing_after_deadline")
             );
             assert_eq!(report["signed"].as_bool(), Some(false));
             assert_eq!(report["receiver_done_ack_received"].as_bool(), Some(false));
@@ -9236,6 +9290,32 @@ mod novorudp_tests {
         assert!(result.repair_coverage_gap_blocks_final);
         assert!(!result.repair_coverage_gap_ignored_after_receiver_done);
         assert!(!result.receiver_done_ack_overrides_repair_incomplete);
+    }
+
+    #[test]
+    fn sender_does_not_treat_initial_all_missing_ack_as_progress() {
+        assert!(sender_ack_is_early_all_missing_v1(
+            480,
+            Some(480),
+            None,
+            false
+        ));
+        assert_eq!(
+            sender_ack_progress_source_v1(480, Some(480), Some(480), Some(480), None, false),
+            "none"
+        );
+    }
+
+    #[test]
+    fn sender_uses_latest_progress_not_initial_all_missing_sample() {
+        assert_eq!(
+            sender_ack_progress_source_v1(480, Some(480), Some(480), Some(132), None, false),
+            "latest_ack_missing_below_expected"
+        );
+        assert_eq!(
+            sender_ack_progress_source_v1(480, Some(480), Some(132), Some(132), None, true),
+            "receiver_done_ack"
+        );
     }
 
     #[test]
@@ -16378,9 +16458,24 @@ fn run_sender(
         } else {
             "final_ack_wait"
         };
-    let mut sender_receiver_progress_seen = latest_ack_missing_count.is_some()
-        || latest_ack_receiver_done
-        || latest_ack_highest_sequence_seen.is_some();
+    let mut sender_latest_ack_missing_initial_count: Option<u64> = None;
+    let mut sender_latest_ack_missing_final_count: Option<u64> = None;
+    let mut sender_ack_missing_count_min_observed: Option<u64> = None;
+    let mut sender_ack_missing_count_decreased = false;
+    let mut sender_early_missing_ack_seen = false;
+    let mut sender_early_missing_ack_count = 0u64;
+    let mut sender_early_missing_ack_deferred = false;
+    let mut sender_receiver_progress_observed_count = 0u64;
+    let mut sender_receiver_progress_source = "none".to_string();
+    let initial_progress_source = sender_ack_progress_source_v1(
+        tx_count,
+        sender_latest_ack_missing_initial_count,
+        sender_ack_missing_count_min_observed,
+        latest_ack_missing_count,
+        latest_ack_highest_sequence_seen,
+        latest_ack_receiver_done,
+    );
+    let mut sender_receiver_progress_seen = initial_progress_source != "none";
     let mut sender_receiver_progress_first_ack_ms: Option<u64> = None;
     let mut sender_receiver_progress_latest_ack_ms: Option<u64> = None;
     let mut sender_receiver_progress_highest_sequence_seen = latest_ack_highest_sequence_seen;
@@ -16410,6 +16505,21 @@ fn run_sender(
     let mut sender_finalization_phase = "primary_send".to_string();
     let mut sender_finalization_phase_failure_reason: Option<String> = None;
     let mut receiver_progress_deadline_exceeded = false;
+    let mut sender_repair_continuation_deadline_elapsed = false;
+    let mut sender_repair_pump_continued_after_primary = false;
+    let mut sender_repair_pump_latest_missing_range = Vec::<MissingRangeV1>::new();
+    let mut sender_repair_pump_tail_range_covered_count = 0u64;
+    let mut sender_repair_pump_tail_range_uncovered_count = 0u64;
+    let mut repair_latest_missing_snapshot_initial_count: Option<u64> = None;
+    let mut repair_latest_missing_snapshot_final_count: Option<u64> = None;
+    let mut repair_tail_missing_range_sample = Vec::<MissingRangeV1>::new();
+    let mut repair_tail_missing_covered_sequence_count = 0u64;
+    let mut repair_tail_missing_uncovered_sequence_count = 0u64;
+    let mut repair_continuation_attempt_count = 0u64;
+    let mut repair_continuation_sent_sequence_count = 0u64;
+    let mut repair_continuation_sent_ranges = Vec::<MissingRangeV1>::new();
+    let mut repair_continuation_stopped_reason = "not_started".to_string();
+    let mut sender_post_primary_repair_last_at: Option<Instant> = None;
     let mut final_ack_deadline_exceeded_after_progress = false;
     let sender_final_ack_fast_drain_enabled = full_async_runtime_engine
         && final_ack_wait_config.profile == FinalAckWaitProfileV1::Production;
@@ -16501,6 +16611,72 @@ fn run_sender(
     };
     let mut ack_plane_applied_epoch = 0u64;
     let mut ack_plane_applied_receiver_done = false;
+    macro_rules! record_sender_ack_progress_snapshot {
+        () => {{
+            if let Some(missing_count) = latest_ack_missing_count {
+                if sender_latest_ack_missing_initial_count.is_none() {
+                    sender_latest_ack_missing_initial_count = Some(missing_count);
+                    repair_latest_missing_snapshot_initial_count = Some(missing_count);
+                }
+                sender_latest_ack_missing_final_count = Some(missing_count);
+                repair_latest_missing_snapshot_final_count = Some(missing_count);
+                let previous_min = sender_ack_missing_count_min_observed;
+                if previous_min
+                    .map(|min_seen| missing_count < min_seen)
+                    .unwrap_or(false)
+                    || sender_latest_ack_missing_initial_count
+                        .map(|initial| missing_count < initial)
+                        .unwrap_or(false)
+                {
+                    sender_ack_missing_count_decreased = true;
+                }
+                sender_ack_missing_count_min_observed = Some(
+                    previous_min
+                        .map(|min_seen| min_seen.min(missing_count))
+                        .unwrap_or(missing_count),
+                );
+                if sender_ack_is_early_all_missing_v1(
+                    tx_count,
+                    latest_ack_missing_count,
+                    latest_ack_highest_sequence_seen,
+                    latest_ack_receiver_done,
+                ) {
+                    sender_early_missing_ack_seen = true;
+                    sender_early_missing_ack_count =
+                        sender_early_missing_ack_count.saturating_add(1);
+                    sender_early_missing_ack_deferred = true;
+                }
+            }
+            let progress_source = sender_ack_progress_source_v1(
+                tx_count,
+                sender_latest_ack_missing_initial_count,
+                sender_ack_missing_count_min_observed,
+                latest_ack_missing_count,
+                latest_ack_highest_sequence_seen,
+                latest_ack_receiver_done,
+            );
+            if progress_source != "none" {
+                if !sender_receiver_progress_seen {
+                    sender_receiver_progress_first_ack_ms =
+                        Some(sender_started.elapsed().as_millis() as u64);
+                }
+                sender_receiver_progress_seen = true;
+                sender_receiver_progress_observed_count =
+                    sender_receiver_progress_observed_count.saturating_add(1);
+                sender_receiver_progress_source = progress_source.to_string();
+                sender_receiver_progress_latest_ack_ms =
+                    Some(sender_started.elapsed().as_millis() as u64);
+            }
+            sender_receiver_progress_highest_sequence_seen = latest_ack_highest_sequence_seen;
+            sender_receiver_progress_missing_count = latest_ack_missing_count;
+            sender_receiver_progress_seen_all = latest_ack_receiver_done
+                || latest_ack_missing_count == Some(0)
+                || latest_ack_highest_sequence_seen
+                    .map(|highest| highest.saturating_add(1) >= tx_count)
+                    .unwrap_or(false)
+                || sender_ack_caught_up_latched;
+        }};
+    }
     macro_rules! apply_full_async_ack_plane_snapshot {
         () => {{
             if full_async_ack_drain_dedicated_pump_enabled {
@@ -16581,6 +16757,7 @@ fn run_sender(
                                 repair_window_recomputed_due_to_ack_progress =
                                     repair_window_recomputed_due_to_ack_progress.saturating_add(1);
                             }
+                            record_sender_ack_progress_snapshot!();
                         }
                     }
                     if snapshot.receiver_done_latched {
@@ -16616,6 +16793,7 @@ fn run_sender(
                             sender_ack_caught_up_latch_sequence = Some(tx_count.saturating_sub(1));
                             sender_ack_seen_all_latched = true;
                             sender_ack_missing_zero_latched = true;
+                            record_sender_ack_progress_snapshot!();
                         }
                     }
                 }
@@ -16683,6 +16861,7 @@ fn run_sender(
                             repair_window_recomputed_due_to_ack_progress =
                                 repair_window_recomputed_due_to_ack_progress.saturating_add(1);
                         }
+                        record_sender_ack_progress_snapshot!();
                     } else {
                         primary_ack_drain_empty_count =
                             primary_ack_drain_empty_count.saturating_add(1);
@@ -16912,6 +17091,7 @@ fn run_sender(
                     latest_ack_highest_sequence_seen = state.highest_sequence_seen;
                     latest_ack_receiver_done = state.receiver_done;
                     final_missing_count = state.latest_missing_count;
+                    record_sender_ack_progress_snapshot!();
                     if state.receiver_done && state.latest_missing_count == 0 {
                         repair_rounds_used = repair_rounds_used.saturating_add(1);
                         break;
@@ -17612,6 +17792,7 @@ fn run_sender(
                     latest_ack_receiver_done = state.receiver_done;
                     ack_epoch_at_repair_end = Some(state.latest_epoch);
                     ack_highest_sequence_seen_at_repair_end = state.highest_sequence_seen;
+                    record_sender_ack_progress_snapshot!();
                     if novorudp.enabled
                         && state.latest_epoch > previous_epoch
                         && state.highest_sequence_seen.unwrap_or_default()
@@ -17880,6 +18061,172 @@ fn run_sender(
                     Some("final_ack_grace_timeout".to_string());
                 break;
             }
+            if full_async_repair_snapshot_scheduler_enabled
+                && !latest_ack_receiver_done
+                && latest_ack_missing_count.unwrap_or_default() > 0
+                && !latest_ack_missing_ranges_sample.is_empty()
+            {
+                let continuation_elapsed_ms = started.elapsed().as_millis() as u64;
+                if continuation_elapsed_ms >= repair_continuation_timeout_ms {
+                    sender_repair_continuation_deadline_elapsed = true;
+                    if repair_continuation_stopped_reason == "not_started" {
+                        repair_continuation_stopped_reason =
+                            "repair_continuation_timeout".to_string();
+                    }
+                } else {
+                    let repair_due = sender_post_primary_repair_last_at
+                        .map(|last| {
+                            last.elapsed()
+                                >= Duration::from_millis(repair_latest_missing_retry_cadence_ms)
+                        })
+                        .unwrap_or(true);
+                    if repair_due {
+                        sender_finalization_phase = "wait_receiver_progress_or_repair".to_string();
+                        sender_repair_pump_continued_after_primary = true;
+                        repair_continuation_attempt_count =
+                            repair_continuation_attempt_count.saturating_add(1);
+                        repair_snapshot_refresh_count =
+                            repair_snapshot_refresh_count.saturating_add(1);
+                        repair_snapshot_source = "post_primary_ack_plane_latest_missing_snapshot";
+                        repair_snapshot_epoch = tail_repair_latest_ack_epoch;
+                        repair_snapshot_missing_count = latest_ack_missing_count;
+                        let (range_min, range_max) =
+                            missing_ranges_bounds(latest_ack_missing_ranges_sample.as_slice());
+                        repair_snapshot_missing_range_min = range_min;
+                        repair_snapshot_missing_range_max = range_max;
+                        repair_snapshot_age_ms = latest_ack_received_at
+                            .map(|received_at| received_at.elapsed().as_millis() as u64);
+                        repair_snapshot_stale = repair_snapshot_age_ms
+                            .map(|age| age > repair_snapshot_stale_threshold_ms)
+                            .unwrap_or(true);
+                        repair_pump_active = true;
+                        repair_pump_iteration_count = repair_pump_iteration_count.saturating_add(1);
+                        repair_tail_missing_range_sample = latest_ack_missing_ranges_sample.clone();
+                        sender_repair_pump_latest_missing_range =
+                            latest_ack_missing_ranges_sample.clone();
+                        let ack_state = UdpAckStateV1 {
+                            received_count: 1,
+                            latest_epoch: tail_repair_latest_ack_epoch,
+                            latest_missing_count: latest_ack_missing_count.unwrap_or_default(),
+                            missing_ranges_full_count: latest_ack_missing_ranges_full_count
+                                .unwrap_or_else(|| {
+                                    latest_ack_missing_ranges_sample
+                                        .len()
+                                        .try_into()
+                                        .unwrap_or(u64::MAX)
+                                }),
+                            highest_sequence_seen: latest_ack_highest_sequence_seen,
+                            latest_ranges: latest_ack_missing_ranges_sample.clone(),
+                            receiver_done: latest_ack_receiver_done,
+                            ..UdpAckStateV1::default()
+                        };
+                        let mut selected_ranges = if novorudp.enabled {
+                            select_novorudp_repair_ranges_from_receiver_ack(
+                                &ack_state,
+                                tx_count,
+                                novorudp.window_size,
+                                novorudp.repair_windows_per_ack,
+                                novorudp.tail_window_max_retries,
+                            )
+                            .map(|selection| selection.ranges)
+                            .unwrap_or_else(|| latest_ack_missing_ranges_sample.clone())
+                        } else {
+                            latest_ack_missing_ranges_sample.clone()
+                        };
+                        selected_ranges = missing_ranges_intersection_many(
+                            selected_ranges.as_slice(),
+                            latest_ack_missing_ranges_sample.as_slice(),
+                        );
+                        let selected_sequence_count =
+                            missing_ranges_count(selected_ranges.as_slice());
+                        repair_pump_selected_range_count = repair_pump_selected_range_count
+                            .saturating_add(selected_ranges.len().try_into().unwrap_or(u64::MAX));
+                        repair_pump_selected_sequence_count = repair_pump_selected_sequence_count
+                            .saturating_add(selected_sequence_count);
+                        if selected_sequence_count == 0 {
+                            repair_pump_selected_empty_count =
+                                repair_pump_selected_empty_count.saturating_add(1);
+                            repair_selection_empty_reason =
+                                serde_json::json!("post_primary_repair_selection_empty");
+                        } else {
+                            let covered = missing_ranges_overlap_count(
+                                latest_ack_missing_ranges_sample.as_slice(),
+                                selected_ranges.as_slice(),
+                            );
+                            let uncovered_ranges = missing_ranges_subtract(
+                                latest_ack_missing_ranges_sample.as_slice(),
+                                selected_ranges.as_slice(),
+                                tx_count,
+                            );
+                            let uncovered = missing_ranges_count(uncovered_ranges.as_slice());
+                            sender_repair_pump_tail_range_covered_count =
+                                sender_repair_pump_tail_range_covered_count.saturating_add(covered);
+                            sender_repair_pump_tail_range_uncovered_count = uncovered;
+                            repair_tail_missing_covered_sequence_count =
+                                repair_tail_missing_covered_sequence_count.saturating_add(covered);
+                            repair_tail_missing_uncovered_sequence_count = uncovered;
+                            repair_selected_latest_missing_sequence_count =
+                                repair_selected_latest_missing_sequence_count
+                                    .saturating_add(covered);
+                            repair_pump_sent_sequence_count = repair_pump_sent_sequence_count
+                                .saturating_add(selected_sequence_count);
+                            repair_sequence_sent_count =
+                                repair_sequence_sent_count.saturating_add(selected_sequence_count);
+                            repair_continuation_sent_sequence_count =
+                                repair_continuation_sent_sequence_count
+                                    .saturating_add(selected_sequence_count);
+                            repair_continuation_sent_ranges.extend(selected_ranges.iter().copied());
+                            repair_sequence_sent_ranges.extend(selected_ranges.iter().copied());
+                            for range in &selected_ranges {
+                                repair_sequence_sent_min = Some(
+                                    repair_sequence_sent_min
+                                        .map(|current| current.min(range.start))
+                                        .unwrap_or(range.start),
+                                );
+                                repair_sequence_sent_max = Some(
+                                    repair_sequence_sent_max
+                                        .map(|current| current.max(range.end_inclusive))
+                                        .unwrap_or(range.end_inclusive),
+                                );
+                            }
+                            let txs = build_tail_repair_payloads_from_ranges(
+                                chain_id,
+                                selected_ranges.as_slice(),
+                                repair_rounds_used,
+                            )?;
+                            let continuation_config = if novorudp.enabled {
+                                novorudp.repair_config(tail_repair)
+                            } else {
+                                tail_repair
+                            };
+                            let round_stats = send_repair_payloads_paced(
+                                chain_id,
+                                sender_node,
+                                receiver_node,
+                                sender_addr,
+                                receiver_addr,
+                                txs.as_slice(),
+                                repair_rounds_used,
+                                continuation_config,
+                                None,
+                                None,
+                                None,
+                                udp_send_retry,
+                            )?;
+                            merge_send_stats(&mut repair_stats, round_stats);
+                            repair_rounds_used = repair_rounds_used.saturating_add(1);
+                            sender_post_primary_repair_last_at = Some(Instant::now());
+                            repair_continuation_stopped_reason =
+                                "waiting_for_receiver_done_ack".to_string();
+                            if repair_stats.send_failed_count > 0 {
+                                sender_hard_timeout_reached = true;
+                                sender_exit_reason = "post_primary_repair_send_failed".to_string();
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
             std::thread::sleep(Duration::from_millis(final_ack_poll_ms));
             if sender_final_ack_fast_drain_enabled {
                 sender_final_ack_fast_drain_attempt_count =
@@ -17927,20 +18274,7 @@ fn run_sender(
             latest_ack_highest_sequence_seen = state.highest_sequence_seen;
             latest_ack_receiver_done = state.receiver_done;
             final_missing_count = state.latest_missing_count;
-            sender_receiver_progress_seen = true;
-            let now_elapsed = sender_started.elapsed().as_millis() as u64;
-            if sender_receiver_progress_first_ack_ms.is_none() {
-                sender_receiver_progress_first_ack_ms = Some(now_elapsed);
-            }
-            sender_receiver_progress_latest_ack_ms = Some(now_elapsed);
-            sender_receiver_progress_highest_sequence_seen = state.highest_sequence_seen;
-            sender_receiver_progress_missing_count = Some(state.latest_missing_count);
-            sender_receiver_progress_seen_all = state.receiver_done
-                || state.latest_missing_count == 0
-                || state
-                    .highest_sequence_seen
-                    .map(|highest| highest.saturating_add(1) >= tx_count)
-                    .unwrap_or(false);
+            record_sender_ack_progress_snapshot!();
             if sender_receiver_progress_seen_all {
                 sender_ack_caught_up_latched = true;
                 sender_ack_caught_up_latch_source = if state.receiver_done {
@@ -18121,20 +18455,42 @@ fn run_sender(
         && final_ack_grace_timeout
         && final_ack_deadline_exceeded_after_progress
         && !latest_ack_receiver_done;
+    let sender_receiver_progress_deadline_elapsed = receiver_progress_deadline_exceeded;
+    let repair_coverage_gap_after_deadline = repair_coverage_gap_count > 0
+        && !latest_ack_receiver_done
+        && (receiver_progress_deadline_exceeded
+            || sender_repair_continuation_deadline_elapsed
+            || sender_repair_no_progress_timeout_reached
+            || absolute_sender_timeout_reached
+            || sender_hard_timeout_reached
+            || final_ack_grace_timeout);
+    let sender_final_fail_sample_source = if latest_ack_receiver_done {
+        "receiver_done_ack".to_string()
+    } else if repair_coverage_gap_after_deadline {
+        "latest_missing_after_deadline".to_string()
+    } else if sender_early_missing_ack_seen && !sender_receiver_progress_seen {
+        "early_missing_ack_deferred".to_string()
+    } else if latest_ack_missing_count.is_some() {
+        "latest_ack_sample".to_string()
+    } else {
+        "ack_plane_null_sample".to_string()
+    };
     let fallback_fail_reason = if receiver_progress_deadline_exceeded
         && tail_repair_udp_ack_received_count == 0
         && !sender_receiver_progress_seen
     {
         Some("production_receiver_progress_deadline_exceeded")
+    } else if receiver_progress_deadline_exceeded && !sender_receiver_progress_seen {
+        Some("receiver_progress_timeout_without_data")
     } else if receiver_progress_deadline_exceeded && !sender_receiver_progress_seen_all {
-        Some("ack_caught_up_latch_missing")
+        Some("receiver_progress_observed_tail_missing")
     } else if sender_receiver_progress_seen_all
         && !latest_ack_receiver_done
         && final_ack_grace_timeout
     {
         Some("receiver_done_ack_not_observed_after_caught_up")
-    } else if repair_coverage_gap_count > 0 && !latest_ack_receiver_done {
-        Some("repair_latest_missing_coverage_gap")
+    } else if repair_coverage_gap_after_deadline {
+        Some("repair_latest_missing_coverage_gap_after_deadline")
     } else if production_final_ack_deadline_exceeded {
         Some("production_final_ack_deadline_exceeded")
     } else if let Some(reason) = full_async_ack_fail_reason {
@@ -18332,6 +18688,27 @@ fn run_sender(
     } else {
         "none"
     };
+    let repair_continuation_sent_unique_sequence_count = missing_ranges_count(
+        normalize_missing_ranges(repair_continuation_sent_ranges.as_slice(), tx_count).as_slice(),
+    );
+    if latest_ack_receiver_done && latest_ack_missing_count == Some(0) {
+        repair_continuation_stopped_reason = "receiver_done_ack".to_string();
+    } else if sender_repair_continuation_deadline_elapsed
+        && repair_continuation_stopped_reason != "repair_continuation_timeout"
+    {
+        repair_continuation_stopped_reason = "repair_continuation_timeout".to_string();
+    } else if repair_continuation_attempt_count == 0
+        && repair_continuation_stopped_reason == "not_started"
+    {
+        repair_continuation_stopped_reason = if latest_ack_missing_count.unwrap_or_default() == 0 {
+            "missing_zero"
+        } else if latest_ack_missing_ranges_sample.is_empty() {
+            "no_latest_missing_snapshot"
+        } else {
+            "not_started"
+        }
+        .to_string();
+    }
     let repair_pump_stopped_after_receiver_done =
         latest_ack_receiver_done && latest_ack_missing_count == Some(0);
     let repair_pump_stop_reason = if repair_pump_stopped_after_receiver_done {
@@ -19119,6 +19496,46 @@ fn run_sender(
             serde_json::json!(sender_receiver_progress_deadline_source),
         );
         report_map.insert(
+            "sender_receiver_progress_deadline_elapsed".to_string(),
+            serde_json::json!(sender_receiver_progress_deadline_elapsed),
+        );
+        report_map.insert(
+            "sender_early_missing_ack_seen".to_string(),
+            serde_json::json!(sender_early_missing_ack_seen),
+        );
+        report_map.insert(
+            "sender_early_missing_ack_count".to_string(),
+            serde_json::json!(sender_early_missing_ack_count),
+        );
+        report_map.insert(
+            "sender_early_missing_ack_deferred".to_string(),
+            serde_json::json!(sender_early_missing_ack_deferred),
+        );
+        report_map.insert(
+            "sender_latest_ack_missing_initial_count".to_string(),
+            serde_json::json!(sender_latest_ack_missing_initial_count),
+        );
+        report_map.insert(
+            "sender_latest_ack_missing_final_count".to_string(),
+            serde_json::json!(sender_latest_ack_missing_final_count),
+        );
+        report_map.insert(
+            "sender_ack_missing_count_min_observed".to_string(),
+            serde_json::json!(sender_ack_missing_count_min_observed),
+        );
+        report_map.insert(
+            "sender_ack_missing_count_decreased".to_string(),
+            serde_json::json!(sender_ack_missing_count_decreased),
+        );
+        report_map.insert(
+            "sender_receiver_progress_observed_count".to_string(),
+            serde_json::json!(sender_receiver_progress_observed_count),
+        );
+        report_map.insert(
+            "sender_receiver_progress_source".to_string(),
+            serde_json::json!(sender_receiver_progress_source),
+        );
+        report_map.insert(
             "sender_receiver_progress_seen".to_string(),
             serde_json::json!(sender_receiver_progress_seen),
         );
@@ -19161,6 +19578,76 @@ fn run_sender(
         report_map.insert(
             "sender_finalization_phase_failure_reason".to_string(),
             serde_json::json!(sender_finalization_phase_failure_reason),
+        );
+        report_map.insert(
+            "sender_repair_continuation_deadline_ms".to_string(),
+            serde_json::json!(repair_continuation_timeout_ms),
+        );
+        report_map.insert(
+            "sender_repair_continuation_deadline_elapsed".to_string(),
+            serde_json::json!(sender_repair_continuation_deadline_elapsed),
+        );
+        report_map.insert(
+            "sender_repair_pump_continued_after_primary".to_string(),
+            serde_json::json!(sender_repair_pump_continued_after_primary),
+        );
+        report_map.insert(
+            "sender_repair_pump_latest_missing_range".to_string(),
+            missing_ranges_to_json(
+                sender_repair_pump_latest_missing_range.as_slice(),
+                tail_repair.missing_sample_limit,
+            ),
+        );
+        report_map.insert(
+            "sender_repair_pump_tail_range_covered_count".to_string(),
+            serde_json::json!(sender_repair_pump_tail_range_covered_count),
+        );
+        report_map.insert(
+            "sender_repair_pump_tail_range_uncovered_count".to_string(),
+            serde_json::json!(sender_repair_pump_tail_range_uncovered_count),
+        );
+        report_map.insert(
+            "sender_final_fail_sample_source".to_string(),
+            serde_json::json!(sender_final_fail_sample_source),
+        );
+        report_map.insert(
+            "repair_latest_missing_snapshot_initial_count".to_string(),
+            serde_json::json!(repair_latest_missing_snapshot_initial_count),
+        );
+        report_map.insert(
+            "repair_latest_missing_snapshot_final_count".to_string(),
+            serde_json::json!(repair_latest_missing_snapshot_final_count),
+        );
+        report_map.insert(
+            "repair_tail_missing_range_sample".to_string(),
+            missing_ranges_to_json(
+                repair_tail_missing_range_sample.as_slice(),
+                tail_repair.missing_sample_limit,
+            ),
+        );
+        report_map.insert(
+            "repair_tail_missing_covered_sequence_count".to_string(),
+            serde_json::json!(repair_tail_missing_covered_sequence_count),
+        );
+        report_map.insert(
+            "repair_tail_missing_uncovered_sequence_count".to_string(),
+            serde_json::json!(repair_tail_missing_uncovered_sequence_count),
+        );
+        report_map.insert(
+            "repair_continuation_attempt_count".to_string(),
+            serde_json::json!(repair_continuation_attempt_count),
+        );
+        report_map.insert(
+            "repair_continuation_sent_sequence_count".to_string(),
+            serde_json::json!(repair_continuation_sent_sequence_count),
+        );
+        report_map.insert(
+            "repair_continuation_sent_unique_sequence_count".to_string(),
+            serde_json::json!(repair_continuation_sent_unique_sequence_count),
+        );
+        report_map.insert(
+            "repair_continuation_stopped_reason".to_string(),
+            serde_json::json!(repair_continuation_stopped_reason),
         );
         report_map.insert(
             "receiver_progress_deadline_exceeded".to_string(),
