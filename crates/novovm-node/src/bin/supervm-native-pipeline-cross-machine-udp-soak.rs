@@ -9,9 +9,9 @@ use novovm_node::tx_ingress::{
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV,
 };
 use novovm_protocol::{
-    encode_nov_native_tx_wire_v1, EvmNativeMessage, NodeId, NovExecuteTxV1, NovExecutionModeV1,
-    NovExecutionPolicyV1, NovExecutionTargetV1, NovFeePolicyV1, NovNativeTxWireV1,
-    NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1, ProtocolMessage,
+    encode_nov_native_tx_wire_v1, EvmNativeMessage, EvmNativeTransactionFrameAuthV1, NodeId,
+    NovExecuteTxV1, NovExecutionModeV1, NovExecutionPolicyV1, NovExecutionTargetV1, NovFeePolicyV1,
+    NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1, ProtocolMessage,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -971,6 +971,11 @@ fn control_frame_auth_required_v1() -> bool {
         || bool_env("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED")
 }
 
+fn transaction_frame_run_id_v1(fallback: &str) -> String {
+    first_string_env_nonempty(&["NOVOVM_NOVORUDP_RUN_ID", "NOVOVM_NETWORK_RUN_ID"])
+        .unwrap_or_else(|| fallback.to_string())
+}
+
 fn ack_control_frame_auth_material_v1(value: &Value) -> String {
     let field = |key: &str| -> String {
         value
@@ -1039,6 +1044,77 @@ fn verify_ack_control_frame_auth_v1(value: &Value) -> bool {
         return false;
     };
     ack_control_frame_auth_tag_v1(value, key.as_str()) == tag
+}
+
+fn transaction_frame_auth_material_v1(
+    from: NodeId,
+    chain_id: u64,
+    tx_hash: &[u8; 32],
+    tx_count: u64,
+    payload: &[u8],
+    meta: &EvmNativeTransactionFrameAuthV1,
+) -> String {
+    let mut payload_hasher = Sha256::new();
+    payload_hasher.update(payload);
+    [
+        "novovm-novorudp-transaction-frame-auth-v1".to_string(),
+        from.0.to_string(),
+        chain_id.to_string(),
+        hex_lower(tx_hash),
+        tx_count.to_string(),
+        hex_lower(payload_hasher.finalize().as_slice()),
+        meta.frame_kind.clone(),
+        meta.run_id.clone(),
+        meta.sequence.to_string(),
+        meta.copy_index.to_string(),
+    ]
+    .join("|")
+}
+
+fn transaction_frame_auth_tag_v1(
+    from: NodeId,
+    chain_id: u64,
+    tx_hash: &[u8; 32],
+    tx_count: u64,
+    payload: &[u8],
+    meta: &EvmNativeTransactionFrameAuthV1,
+    key: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-novorudp-control-frame-auth-keyed-sha256-v1");
+    hasher.update(key.as_bytes());
+    hasher.update(b"|");
+    hasher.update(
+        transaction_frame_auth_material_v1(from, chain_id, tx_hash, tx_count, payload, meta)
+            .as_bytes(),
+    );
+    hex_lower(hasher.finalize().as_slice())
+}
+
+fn sign_transaction_frame_auth_v1(
+    from: NodeId,
+    chain_id: u64,
+    tx_hash: &[u8; 32],
+    tx_count: u64,
+    payload: &[u8],
+    frame_kind: &str,
+    run_id: &str,
+    sequence: u64,
+    copy_index: u64,
+) -> Option<EvmNativeTransactionFrameAuthV1> {
+    let key = control_frame_auth_key_v1()?;
+    let mut meta = EvmNativeTransactionFrameAuthV1 {
+        scheme: "keyed_sha256_v1".to_string(),
+        domain: "novorudp_transaction_v1".to_string(),
+        frame_kind: frame_kind.to_string(),
+        run_id: run_id.to_string(),
+        sequence,
+        copy_index,
+        tag: String::new(),
+    };
+    meta.tag =
+        transaction_frame_auth_tag_v1(from, chain_id, tx_hash, tx_count, payload, &meta, &key);
+    Some(meta)
 }
 
 fn full_async_runtime_engine_enabled_v1() -> bool {
@@ -14906,6 +14982,8 @@ fn send_scheduled_batch(
     txs: &[NativeFixtureTxV1],
     delay_ms: u64,
     retry: UdpSendRetryConfigV1,
+    frame_kind: &str,
+    run_id: &str,
 ) -> Result<SendScheduleStatsV1> {
     let sender = UdpTransport::bind_for_chain(NodeId(sender_node), sender_addr, chain_id)
         .with_context(|| format!("bind cross-machine sender UDP failed: {sender_addr}"))?;
@@ -14941,6 +15019,17 @@ fn send_scheduled_batch(
             tx_hash: tx.tx_hash,
             tx_count: tx.copy_index.saturating_add(1).max(1),
             payload: tx.payload.clone(),
+            transport_auth: sign_transaction_frame_auth_v1(
+                NodeId(sender_node),
+                chain_id,
+                &tx.tx_hash,
+                tx.copy_index.saturating_add(1).max(1),
+                tx.payload.as_slice(),
+                frame_kind,
+                run_id,
+                tx.index,
+                tx.copy_index,
+            ),
         });
         match safe_send_with_retry(&sender, NodeId(receiver_node), msg, retry) {
             Ok(retry_stats) => {
@@ -15040,6 +15129,10 @@ fn send_repair_payloads_paced(
                 chunk_txs.as_slice(),
                 0,
                 retry,
+                "repair",
+                &transaction_frame_run_id_v1(&format!(
+                    "{chain_id}:{sender_node}:{receiver_node}:repair"
+                )),
             )?;
             merge_send_stats(&mut out, stats);
             if out.send_failed_count > 0 {
@@ -16205,6 +16298,10 @@ fn run_sender(
             scheduled.as_slice(),
             fault.delay_ms,
             udp_send_retry,
+            "primary",
+            &transaction_frame_run_id_v1(&format!(
+                "{chain_id}:{sender_node}:{receiver_node}:{tx_count}"
+            )),
         )?;
         sent_unique_target = sent_unique_target.saturating_add(round_tx_count);
         merge_send_stats(&mut stats, round_stats);
@@ -17887,6 +17984,12 @@ fn run_sender(
         "ack_control_frame_auth_key_present": control_frame_auth_key_v1().is_some(),
         "ack_control_frame_auth_enabled": control_frame_auth_key_v1().is_some(),
         "ack_control_frame_auth_scheme": "keyed_sha256_v1",
+        "transaction_frame_auth_required": control_frame_auth_required_v1(),
+        "transaction_frame_auth_key_present": control_frame_auth_key_v1().is_some(),
+        "transaction_frame_auth_enabled": control_frame_auth_key_v1().is_some(),
+        "transaction_frame_auth_scheme": "keyed_sha256_v1",
+        "transaction_frame_auth_domain": "novorudp_transaction_v1",
+        "transaction_frame_run_id_configured": first_string_env_nonempty(&["NOVOVM_NOVORUDP_RUN_ID", "NOVOVM_NETWORK_RUN_ID"]).is_some(),
         "network_profile": network_profile.as_str(),
         "ack_bind_addr": sender_ack_bind_requested_addr.clone(),
         "sender_ack_bind_addr": sender_ack_bind_requested_addr.clone(),

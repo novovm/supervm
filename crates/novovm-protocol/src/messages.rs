@@ -190,6 +190,8 @@ pub enum EvmNativeMessage {
         tx_hash: [u8; 32],
         tx_count: u64,
         payload: Vec<u8>,
+        #[serde(default)]
+        transport_auth: Option<EvmNativeTransactionFrameAuthV1>,
     },
     GetBlockHeaders {
         from: NodeId,
@@ -221,6 +223,17 @@ pub enum EvmNativeMessage {
         account_count: u64,
         proof_node_count: u64,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvmNativeTransactionFrameAuthV1 {
+    pub scheme: String,
+    pub domain: String,
+    pub frame_kind: String,
+    pub run_id: String,
+    pub sequence: u64,
+    pub copy_index: u64,
+    pub tag: String,
 }
 
 /// Unified protocol message.

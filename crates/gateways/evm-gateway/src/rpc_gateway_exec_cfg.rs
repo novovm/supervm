@@ -924,6 +924,7 @@ fn gateway_eth_native_send_parallel(
                 tx_hash,
                 tx_count: 1,
                 payload: payload_bytes.to_vec(),
+                transport_auth: None,
             });
             match broadcaster.send(*peer, msg) {
                 Ok(_) => *outcome.success = outcome.success.saturating_add(1),
@@ -947,6 +948,7 @@ fn gateway_eth_native_send_parallel(
                     tx_hash,
                     tx_count: 1,
                     payload: payload_bytes.to_vec(),
+                    transport_auth: None,
                 });
                 handles.push(scope.spawn(move || {
                     let res = broadcaster.send(peer, msg);

@@ -369,6 +369,7 @@ fn send_duplicate_rounds(
                 tx_hash: tx.tx_hash,
                 tx_count: 1,
                 payload: tx.payload.clone(),
+                transport_auth: None,
             });
             sender.send(NodeId(receiver_node), msg).with_context(|| {
                 format!(

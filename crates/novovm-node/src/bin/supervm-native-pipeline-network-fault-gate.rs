@@ -462,6 +462,7 @@ fn main() -> Result<()> {
             tx_hash: packet.tx_hash,
             tx_count: 1,
             payload: packet.payload.clone(),
+            transport_auth: None,
         });
         sender.send(NodeId(receiver_node), msg).with_context(|| {
             format!(

@@ -144,10 +144,11 @@ use novovm_protocol::{
     encode_block_header_wire_v1,
     protocol_catalog::distributed_occc::gossip::MessageType as DistributedOcccMessageType,
     BlockHeaderWireV1, ConsensusPluginBindingV1, EvmNativeBlockBodyWireV1,
-    EvmNativeBlockHeaderWireV1, EvmNativeMessage, FinalityMessage,
+    EvmNativeBlockHeaderWireV1, EvmNativeMessage, EvmNativeTransactionFrameAuthV1, FinalityMessage,
     GossipMessage as ProtocolGossipMessage, NodeId, PacemakerMessage, ProtocolMessage,
     TwoPcMessage, CONSENSUS_PLUGIN_CLASS_CODE,
 };
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
@@ -8276,6 +8277,7 @@ pub fn dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1<T: T
             tx_hash: candidate.tx_hash,
             tx_count: 1,
             payload: candidate.tx_payload.clone(),
+            transport_auth: None,
         });
         if let Err(err) = transport.send(peer, msg) {
             observe_network_runtime_native_pending_tx_propagation_failure_v1(
@@ -8701,6 +8703,137 @@ fn parse_env_u64(name: &str, fallback: u64) -> u64 {
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .unwrap_or(fallback)
+}
+
+fn parse_env_bool_v1(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|raw| {
+            matches!(
+                raw.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn control_frame_auth_key_v1() -> Option<String> {
+    [
+        "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY",
+        "NOVOVM_NETWORK_CONTROL_FRAME_AUTH_KEY",
+    ]
+    .iter()
+    .find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|raw| raw.trim().to_string())
+            .filter(|raw| !raw.is_empty())
+    })
+}
+
+fn control_frame_auth_required_v1() -> bool {
+    parse_env_bool_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED")
+        || parse_env_bool_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED")
+}
+
+fn transaction_frame_expected_run_id_v1() -> Option<String> {
+    ["NOVOVM_NOVORUDP_RUN_ID", "NOVOVM_NETWORK_RUN_ID"]
+        .iter()
+        .find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|raw| raw.trim().to_string())
+                .filter(|raw| !raw.is_empty())
+        })
+}
+
+fn bytes_hex_lower_v1(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn transaction_frame_auth_material_v1(
+    from: NodeId,
+    chain_id: u64,
+    tx_hash: &[u8; 32],
+    tx_count: u64,
+    payload: &[u8],
+    meta: &EvmNativeTransactionFrameAuthV1,
+) -> String {
+    let mut payload_hasher = Sha256::new();
+    payload_hasher.update(payload);
+    [
+        "novovm-novorudp-transaction-frame-auth-v1".to_string(),
+        from.0.to_string(),
+        chain_id.to_string(),
+        bytes_hex_lower_v1(tx_hash),
+        tx_count.to_string(),
+        bytes_hex_lower_v1(payload_hasher.finalize().as_slice()),
+        meta.frame_kind.clone(),
+        meta.run_id.clone(),
+        meta.sequence.to_string(),
+        meta.copy_index.to_string(),
+    ]
+    .join("|")
+}
+
+fn transaction_frame_auth_tag_v1(
+    from: NodeId,
+    chain_id: u64,
+    tx_hash: &[u8; 32],
+    tx_count: u64,
+    payload: &[u8],
+    meta: &EvmNativeTransactionFrameAuthV1,
+    key: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-novorudp-control-frame-auth-keyed-sha256-v1");
+    hasher.update(key.as_bytes());
+    hasher.update(b"|");
+    hasher.update(
+        transaction_frame_auth_material_v1(from, chain_id, tx_hash, tx_count, payload, meta)
+            .as_bytes(),
+    );
+    bytes_hex_lower_v1(hasher.finalize().as_slice())
+}
+
+fn verify_transaction_frame_auth_v1(
+    from: NodeId,
+    chain_id: u64,
+    tx_hash: &[u8; 32],
+    tx_count: u64,
+    payload: &[u8],
+    transport_auth: Option<&EvmNativeTransactionFrameAuthV1>,
+) -> bool {
+    let required = control_frame_auth_required_v1();
+    let Some(key) = control_frame_auth_key_v1() else {
+        return !required;
+    };
+    let Some(meta) = transport_auth else {
+        return false;
+    };
+    if meta.scheme != "keyed_sha256_v1" || meta.domain != "novorudp_transaction_v1" {
+        return false;
+    }
+    if let Some(expected_run_id) = transaction_frame_expected_run_id_v1() {
+        if meta.run_id != expected_run_id {
+            return false;
+        }
+    }
+    transaction_frame_auth_tag_v1(
+        from,
+        chain_id,
+        tx_hash,
+        tx_count,
+        payload,
+        meta,
+        key.as_str(),
+    ) == meta.tag
 }
 
 fn runtime_sync_pull_followup_fanout_max() -> usize {
@@ -9254,9 +9387,20 @@ fn maybe_update_runtime_sync_from_protocol_message_with_context(
                 tx_hash,
                 tx_count,
                 payload,
+                transport_auth,
                 ..
             } => {
                 let _ = register_network_runtime_peer(chain_id, from.0);
+                if !verify_transaction_frame_auth_v1(
+                    *from,
+                    chain_id,
+                    tx_hash,
+                    *tx_count,
+                    payload.as_slice(),
+                    transport_auth.as_ref(),
+                ) {
+                    return;
+                }
                 if *tx_count > 1 {
                     observe_network_runtime_native_pending_tx_repair_probe_v1(
                         chain_id,
@@ -10690,6 +10834,129 @@ mod tests {
         "enode://2b252ab6a1d0f971d9722cb839a42cb81db019ba44c08754628ab4a823487071b5695317c8ccd085219c3a03af063495b2f1da8d18218da2d6a82981b45e6ffc@65.108.70.101:30303",
         "enode://4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052@157.90.35.166:30303",
     ];
+
+    fn signed_test_transaction_meta_v1(
+        from: NodeId,
+        chain_id: u64,
+        tx_hash: &[u8; 32],
+        tx_count: u64,
+        payload: &[u8],
+        frame_kind: &str,
+    ) -> EvmNativeTransactionFrameAuthV1 {
+        let mut meta = EvmNativeTransactionFrameAuthV1 {
+            scheme: "keyed_sha256_v1".to_string(),
+            domain: "novorudp_transaction_v1".to_string(),
+            frame_kind: frame_kind.to_string(),
+            run_id: "test-run".to_string(),
+            sequence: 7,
+            copy_index: tx_count.saturating_sub(1),
+            tag: String::new(),
+        };
+        meta.tag = transaction_frame_auth_tag_v1(
+            from,
+            chain_id,
+            tx_hash,
+            tx_count,
+            payload,
+            &meta,
+            "dev-secret",
+        );
+        meta
+    }
+
+    #[test]
+    fn transaction_frame_auth_accepts_signed_primary_or_repair() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _network_key = clear_test_env_var_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_KEY");
+        let _network_required = clear_test_env_var_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED");
+        let _network_run_id = clear_test_env_var_v1("NOVOVM_NETWORK_RUN_ID");
+        let _run_id = clear_test_env_var_v1("NOVOVM_NOVORUDP_RUN_ID");
+        let _key = set_test_env_var_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY", "dev-secret");
+        let _required = set_test_env_var_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED", "1");
+
+        let from = NodeId(11);
+        let chain_id = 42;
+        let tx_hash = [0x44; 32];
+        let payload = b"payload";
+        let primary =
+            signed_test_transaction_meta_v1(from, chain_id, &tx_hash, 1, payload, "primary");
+        let repair =
+            signed_test_transaction_meta_v1(from, chain_id, &tx_hash, 3, payload, "repair");
+
+        assert!(verify_transaction_frame_auth_v1(
+            from,
+            chain_id,
+            &tx_hash,
+            1,
+            payload,
+            Some(&primary)
+        ));
+        assert!(verify_transaction_frame_auth_v1(
+            from,
+            chain_id,
+            &tx_hash,
+            3,
+            payload,
+            Some(&repair)
+        ));
+    }
+
+    #[test]
+    fn transaction_frame_auth_required_rejects_unsigned_or_tampered_payload() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _network_key = clear_test_env_var_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_KEY");
+        let _network_required = clear_test_env_var_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED");
+        let _network_run_id = clear_test_env_var_v1("NOVOVM_NETWORK_RUN_ID");
+        let _run_id = clear_test_env_var_v1("NOVOVM_NOVORUDP_RUN_ID");
+        let _key = set_test_env_var_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY", "dev-secret");
+        let _required = set_test_env_var_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED", "1");
+
+        let from = NodeId(11);
+        let chain_id = 42;
+        let tx_hash = [0x44; 32];
+        let payload = b"payload";
+        let meta = signed_test_transaction_meta_v1(from, chain_id, &tx_hash, 1, payload, "primary");
+
+        assert!(!verify_transaction_frame_auth_v1(
+            from, chain_id, &tx_hash, 1, payload, None
+        ));
+        assert!(!verify_transaction_frame_auth_v1(
+            from,
+            chain_id,
+            &tx_hash,
+            1,
+            b"tampered",
+            Some(&meta)
+        ));
+    }
+
+    #[test]
+    fn transaction_frame_auth_rejects_wrong_run_id_replay() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _network_key = clear_test_env_var_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_KEY");
+        let _network_required = clear_test_env_var_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED");
+        let _network_run_id = clear_test_env_var_v1("NOVOVM_NETWORK_RUN_ID");
+        let _key = set_test_env_var_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY", "dev-secret");
+        let _required = set_test_env_var_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED", "1");
+        let _run_id = set_test_env_var_v1("NOVOVM_NOVORUDP_RUN_ID", "current-run");
+
+        let from = NodeId(11);
+        let chain_id = 42;
+        let tx_hash = [0x44; 32];
+        let payload = b"payload";
+        let replayed =
+            signed_test_transaction_meta_v1(from, chain_id, &tx_hash, 1, payload, "primary");
+
+        assert_eq!(replayed.run_id, "test-run");
+        assert!(!verify_transaction_frame_auth_v1(
+            from,
+            chain_id,
+            &tx_hash,
+            1,
+            payload,
+            Some(&replayed)
+        ));
+    }
 
     #[test]
     fn native_runtime_snapshot_bounds_peer_detail_payload_v1() {
@@ -15936,6 +16203,7 @@ mod tests {
                 tx_hash: observed_hash,
                 tx_count,
                 payload: observed_payload,
+                transport_auth: _,
             }) => {
                 assert_eq!(*from, local);
                 assert_eq!(*c, chain_id);

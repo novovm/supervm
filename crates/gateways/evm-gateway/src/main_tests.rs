@@ -16327,6 +16327,7 @@ fn maybe_execute_public_broadcast_falls_back_to_native_udp() {
                 tx_hash: got_hash,
                 tx_count,
                 payload,
+                transport_auth: _,
             }) => {
                 assert_eq!(from, NodeId(1));
                 assert_eq!(chain_id, 1);
