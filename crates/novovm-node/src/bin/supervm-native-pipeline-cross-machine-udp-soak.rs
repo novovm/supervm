@@ -16679,7 +16679,21 @@ fn run_sender(
         }
         merge_send_stats(&mut stats, repair_stats.clone());
     }
-    let sender_completed = stats.sent_unique == tx_count && stats.send_failed_count == 0;
+    let primary_sent_count = sent_unique_target.min(tx_count);
+    let primary_send_failed_count = stats
+        .send_failed_count
+        .saturating_sub(repair_stats.send_failed_count);
+    let primary_send_completed = primary_sent_count == tx_count && primary_send_failed_count == 0;
+    let primary_send_missing_count = tx_count.saturating_sub(primary_sent_count);
+    let primary_send_missing_ranges = if primary_send_missing_count == 0 {
+        Vec::<MissingRangeV1>::new()
+    } else {
+        vec![MissingRangeV1 {
+            start: primary_sent_count,
+            end_inclusive: tx_count.saturating_sub(1),
+        }]
+    };
+    let sender_completed = primary_send_completed;
     if tail_repair.enabled
         && sender_completed
         && (!sender_hard_timeout_reached || full_async_runtime_engine)
@@ -17237,6 +17251,8 @@ fn run_sender(
         "sender_ack_plane_enabled": udp_ack.enabled,
         "sender_ack_plane_mode": if full_async_runtime_engine { "aggressive_nonblocking_ack_drain" } else { "interval_ack_drain" },
         "network_profile": network_profile.as_str(),
+        "ack_bind_addr": sender_ack_bind_requested_addr.clone(),
+        "sender_ack_bind_addr": sender_ack_bind_requested_addr.clone(),
         "sender_ack_bind_requested_addr": sender_ack_bind_requested_addr.clone(),
         "sender_ack_socket_bound_addr": ack_socket_addr.clone(),
         "sender_ack_socket_bound_is_loopback": sender_ack_socket_bound_is_loopback,
@@ -17247,6 +17263,7 @@ fn run_sender(
         "sender_ack_bind_advertised_mismatch": sender_ack_bind_advertised_mismatch,
         "sender_ack_socket_bind_mismatch": sender_ack_bind_advertised_mismatch,
         "sender_ack_socket_expected_remote_target_addr": sender_ack_advertised_addr.clone(),
+        "sender_ack_bind_contract_complete": sender_ack_cross_machine_safe && !sender_ack_bind_advertised_mismatch,
         "full_async_ack_drain_dedicated_pump_enabled": full_async_ack_drain_dedicated_pump_enabled,
         "ack_plane_thread_or_task_started": ack_plane_final_snapshot
             .as_ref()
@@ -17499,6 +17516,17 @@ fn run_sender(
             "windows_detail_sample": novorudp_windows_detail_sample,
         },
         "sender_completed": sender_completed,
+        "primary_send_completed": primary_send_completed,
+        "primary_send_completion_source": if primary_send_completed { "primary_sent_count" } else { "primary_send_missing_ranges" },
+        "primary_sent_count": primary_sent_count,
+        "expected_tx_count": tx_count,
+        "last_sent_sequence": primary_sent_count.checked_sub(1),
+        "primary_send_missing_sequence_count": primary_send_missing_count,
+        "primary_send_missing_ranges_sample": missing_ranges_to_json(
+            primary_send_missing_ranges.as_slice(),
+            tail_repair.missing_sample_limit,
+        ),
+        "primary_send_failed_count": primary_send_failed_count,
         "sent_packets": stats.sent_packets,
         "send_retry_count": stats.send_retry_count,
         "send_would_block_count": stats.send_would_block_count,
@@ -17544,7 +17572,9 @@ fn run_sender(
             "rounds": rounds,
             "tx_per_round": tx_per_round,
             "round_interval_ms": sustained.round_interval_ms,
-            "tx_submitted_total": stats.sent_unique,
+            "tx_submitted_total": primary_sent_count,
+            "primary_tx_submitted_total": primary_sent_count,
+            "combined_send_unique_total": stats.sent_unique,
             "tx_target_total": tx_count,
             "sender_completed": sender_completed,
         },
@@ -17709,9 +17739,9 @@ fn run_sender(
         "violations": if accepted { Vec::<String>::new() } else { vec![format!(
             "{}: tx_submitted_total={} expected={} send_failed_count={} latest_ack_missing_count={:?} latest_ack_receiver_done={} receiver_final_done={:?} final_missing_count={} first_failure_index={:?} first_failure_copy={:?} first_failure_error={:?}",
             fail_reason.unwrap_or("sender_send_incomplete"),
-            stats.sent_unique,
+            primary_sent_count,
             tx_count,
-            stats.send_failed_count,
+            primary_send_failed_count,
             latest_ack_missing_count,
             latest_ack_receiver_done,
             receiver_final_done,
