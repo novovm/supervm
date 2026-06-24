@@ -2,6 +2,7 @@
 #![recursion_limit = "2048"]
 
 use anyhow::{bail, Context, Result};
+use ed25519_dalek::{Signer, SigningKey};
 use novovm_network::{Transport, UdpTransport};
 use novovm_node::tx_ingress::{
     get_nov_native_execution_store_recovery_probe_v1, nov_native_tx_to_adapter_tx_ir_v1,
@@ -9,9 +10,10 @@ use novovm_node::tx_ingress::{
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV,
 };
 use novovm_protocol::{
-    encode_nov_native_tx_wire_v1, EvmNativeMessage, EvmNativeTransactionFrameAuthV1, NodeId,
-    NovExecuteTxV1, NovExecutionModeV1, NovExecutionPolicyV1, NovExecutionTargetV1, NovFeePolicyV1,
-    NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1, ProtocolMessage,
+    encode_nov_native_tx_wire_v1, EvmNativeMessage, EvmNativeTransactionFrameAuthV1,
+    NodeEndpointRecord, NodeId, NovExecuteTxV1, NovExecutionModeV1, NovExecutionPolicyV1,
+    NovExecutionTargetV1, NovFeePolicyV1, NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1,
+    NovVerificationModeV1, ProtocolMessage,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -137,6 +139,7 @@ struct SendScheduleStatsV1 {
     send_failure_first_index: Option<u64>,
     send_failure_first_copy_index: Option<u64>,
     send_failure_first_error: Option<String>,
+    endpoint_record_sent_count: u64,
     sent_by_hash: BTreeMap<String, u64>,
 }
 
@@ -1117,6 +1120,156 @@ fn sign_transaction_frame_auth_v1(
     Some(meta)
 }
 
+fn endpoint_record_required_v1() -> bool {
+    bool_env("NOVOVM_NOVORUDP_ENDPOINT_RECORD_REQUIRED")
+        || bool_env("NOVOVM_NETWORK_ENDPOINT_RECORD_REQUIRED")
+}
+
+fn source_pinning_required_v1() -> bool {
+    bool_env("NOVOVM_NOVORUDP_SOURCE_PINNING_REQUIRED")
+        || bool_env("NOVOVM_NETWORK_SOURCE_PINNING_REQUIRED")
+}
+
+fn decode_hex_32_v1(raw: &str) -> Option<[u8; 32]> {
+    let text = raw.trim().strip_prefix("0x").unwrap_or(raw.trim());
+    if text.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for index in 0..32 {
+        let start = index * 2;
+        let byte = u8::from_str_radix(&text[start..start + 2], 16).ok()?;
+        out[index] = byte;
+    }
+    Some(out)
+}
+
+fn endpoint_record_signing_key_v1() -> Option<SigningKey> {
+    [
+        "NOVOVM_NOVORUDP_ENDPOINT_RECORD_SIGNING_KEY_HEX",
+        "NOVOVM_NETWORK_ENDPOINT_RECORD_SIGNING_KEY_HEX",
+    ]
+    .iter()
+    .find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .and_then(|raw| decode_hex_32_v1(raw.as_str()))
+            .map(|bytes| SigningKey::from_bytes(&bytes))
+    })
+}
+
+fn endpoint_record_signature_material_v1(record: &NodeEndpointRecord) -> String {
+    [
+        "NOVOVM_ENDPOINT_RECORD_V1".to_string(),
+        format!("node={}", record.node_id.0),
+        format!("chain={}", record.chain_id),
+        format!("run={}", record.run_id),
+        format!("session={}", record.session_id),
+        format!("data={}", record.data_endpoint),
+        format!("ack={}", record.ack_endpoint),
+        format!("relay={}", record.relay_endpoints.join(",")),
+        format!("transport={}", record.transport_profile),
+        format!("ttl={}", record.ttl_ms),
+        format!("sequence={}", record.sequence),
+        format!("issued={}", record.issued_at_ms),
+    ]
+    .join("|")
+}
+
+fn endpoint_record_data_endpoint_v1(
+    sender_addr: &str,
+    network_profile: NetworkProfileV1,
+) -> Result<String> {
+    if let Some(endpoint) = first_string_env_nonempty(&[
+        "NOVOVM_NOVORUDP_ENDPOINT_RECORD_DATA_ENDPOINT",
+        "NOVOVM_NETWORK_ENDPOINT_RECORD_DATA_ENDPOINT",
+        "NOVOVM_NATIVE_PIPELINE_SENDER_DATA_ADVERTISED_ADDR",
+        "NOVOVM_NATIVE_PIPELINE_SENDER_ADDR_ADVERTISED",
+    ]) {
+        return Ok(endpoint);
+    }
+    if network_profile.allows_loopback_ack() {
+        return Ok(sender_addr.to_string());
+    }
+    bail!(
+        "endpoint_record_data_endpoint_missing: production/cross-machine requires explicit NOVOVM_NOVORUDP_ENDPOINT_RECORD_DATA_ENDPOINT"
+    )
+}
+
+fn endpoint_record_ack_endpoint_v1(network_profile: NetworkProfileV1) -> Result<String> {
+    if let Some(endpoint) = first_string_env_nonempty(&[
+        "NOVOVM_NOVORUDP_ENDPOINT_RECORD_ACK_ENDPOINT",
+        "NOVOVM_NETWORK_ENDPOINT_RECORD_ACK_ENDPOINT",
+        "NOVOVM_NATIVE_PIPELINE_ACK_ADVERTISED_ADDR",
+        "NOVOVM_NATIVE_PIPELINE_SENDER_ACK_ADVERTISED_ADDR",
+    ]) {
+        return Ok(endpoint);
+    }
+    if network_profile.allows_loopback_ack() {
+        return Ok("127.0.0.1:39002".to_string());
+    }
+    bail!(
+        "endpoint_record_ack_endpoint_missing: production/cross-machine requires explicit ACK advertised endpoint"
+    )
+}
+
+fn send_sender_endpoint_record_v1(
+    sender: &UdpTransport,
+    receiver_node: NodeId,
+    chain_id: u64,
+    sender_node: NodeId,
+    sender_addr: &str,
+    run_id: &str,
+    network_profile: NetworkProfileV1,
+) -> Result<bool> {
+    if !(endpoint_record_required_v1() || source_pinning_required_v1()) {
+        return Ok(false);
+    }
+    let signing_key = endpoint_record_signing_key_v1().context(
+        "endpoint_record_signing_key_missing: set NOVOVM_NOVORUDP_ENDPOINT_RECORD_SIGNING_KEY_HEX",
+    )?;
+    let issued_at_ms = now_ms();
+    let ttl_ms = u64_env("NOVOVM_NOVORUDP_ENDPOINT_RECORD_TTL_MS", 300_000)?.max(1);
+    let sequence = u64_env("NOVOVM_NOVORUDP_ENDPOINT_RECORD_SEQUENCE", issued_at_ms)?;
+    let session_id = first_string_env_nonempty(&[
+        "NOVOVM_NOVORUDP_SESSION_ID",
+        "NOVOVM_NETWORK_SESSION_ID",
+        "NOVOVM_NOVORUDP_ENDPOINT_RECORD_SESSION_ID",
+    ])
+    .unwrap_or_else(|| run_id.to_string());
+    let data_endpoint = endpoint_record_data_endpoint_v1(sender_addr, network_profile)?;
+    let ack_endpoint = endpoint_record_ack_endpoint_v1(network_profile)?;
+    let mut record = NodeEndpointRecord {
+        node_id: sender_node,
+        node_public_key: signing_key.verifying_key().to_bytes().to_vec(),
+        chain_id,
+        run_id: run_id.to_string(),
+        session_id,
+        data_endpoint,
+        ack_endpoint,
+        relay_endpoints: Vec::new(),
+        transport_profile: "novorudp".to_string(),
+        ttl_ms,
+        sequence,
+        issued_at_ms,
+        signature: Vec::new(),
+    };
+    record.signature = signing_key
+        .sign(endpoint_record_signature_material_v1(&record).as_bytes())
+        .to_bytes()
+        .to_vec();
+    sender
+        .send(
+            receiver_node,
+            ProtocolMessage::EvmNative(EvmNativeMessage::EndpointRecord {
+                from: sender_node,
+                record,
+            }),
+        )
+        .context("send signed endpoint record failed")?;
+    Ok(true)
+}
+
 fn full_async_runtime_engine_enabled_v1() -> bool {
     bool_env(NOV_NATIVE_AOEM_FULL_ASYNC_RUNTIME_ENGINE_ENV)
 }
@@ -1965,6 +2118,9 @@ fn merge_send_stats(target: &mut SendScheduleStatsV1, next: SendScheduleStatsV1)
         target.send_failure_first_copy_index = next.send_failure_first_copy_index;
         target.send_failure_first_error = next.send_failure_first_error;
     }
+    target.endpoint_record_sent_count = target
+        .endpoint_record_sent_count
+        .saturating_add(next.endpoint_record_sent_count);
     for (hash, count) in next.sent_by_hash {
         *target.sent_by_hash.entry(hash).or_default() += count;
     }
@@ -1991,6 +2147,7 @@ fn empty_send_stats() -> SendScheduleStatsV1 {
         send_failure_first_index: None,
         send_failure_first_copy_index: None,
         send_failure_first_error: None,
+        endpoint_record_sent_count: 0,
         sent_by_hash: BTreeMap::new(),
     }
 }
@@ -14990,6 +15147,20 @@ fn send_scheduled_batch(
     sender
         .register_peer(NodeId(receiver_node), receiver_addr)
         .with_context(|| format!("register cross-machine receiver peer failed: {receiver_addr}"))?;
+    let mut endpoint_record_sent_count = 0u64;
+    if frame_kind == "primary"
+        && send_sender_endpoint_record_v1(
+            &sender,
+            NodeId(receiver_node),
+            chain_id,
+            NodeId(sender_node),
+            sender_addr,
+            run_id,
+            NetworkProfileV1::from_env("sender"),
+        )?
+    {
+        endpoint_record_sent_count = endpoint_record_sent_count.saturating_add(1);
+    }
     let mut sent_by_hash = BTreeMap::<String, u64>::new();
     let mut sent_unique = BTreeSet::<String>::new();
     let mut sent_packets = 0u64;
@@ -15065,6 +15236,7 @@ fn send_scheduled_batch(
                     send_failure_first_index: Some(tx.index),
                     send_failure_first_copy_index: Some(tx.copy_index),
                     send_failure_first_error: Some(error),
+                    endpoint_record_sent_count,
                     sent_by_hash,
                 });
             }
@@ -15084,6 +15256,7 @@ fn send_scheduled_batch(
         send_failure_first_index: None,
         send_failure_first_copy_index: None,
         send_failure_first_error: None,
+        endpoint_record_sent_count,
         sent_by_hash,
     })
 }
@@ -18319,6 +18492,10 @@ fn run_sender(
             tail_repair.missing_sample_limit,
         ),
         "primary_send_failed_count": primary_send_failed_count,
+        "endpoint_record_required": endpoint_record_required_v1(),
+        "source_pinning_required": source_pinning_required_v1(),
+        "endpoint_record_sent_count": stats.endpoint_record_sent_count,
+        "endpoint_record_sender_signing_key_present": endpoint_record_signing_key_v1().is_some(),
         "sent_packets": stats.sent_packets,
         "send_retry_count": stats.send_retry_count,
         "send_would_block_count": stats.send_would_block_count,
