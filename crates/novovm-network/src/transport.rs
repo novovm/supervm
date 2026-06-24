@@ -190,6 +190,17 @@ pub trait Transport: Send + Sync {
     fn try_recv(&self, me: NodeId) -> Result<Option<ProtocolMessage>, NetworkError>;
 }
 
+#[derive(Debug, Clone)]
+struct ReceiverRateLimitBucketV1 {
+    tokens: u64,
+    last_refill_ms: u64,
+}
+
+fn receiver_rate_limit_buckets_v1() -> &'static Mutex<HashMap<String, ReceiverRateLimitBucketV1>> {
+    static BUCKETS: OnceLock<Mutex<HashMap<String, ReceiverRateLimitBucketV1>>> = OnceLock::new();
+    BUCKETS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EthFullnodeNativePeerWorkerConfigV1 {
     pub chain_id: u64,
@@ -8747,6 +8758,112 @@ fn transaction_frame_expected_run_id_v1() -> Option<String> {
         })
 }
 
+fn receiver_rate_limit_enabled_v1() -> bool {
+    parse_env_bool_v1("NOVOVM_NOVORUDP_RECEIVER_RATE_LIMIT_ENABLED")
+        || parse_env_bool_v1("NOVOVM_NETWORK_RECEIVER_RATE_LIMIT_ENABLED")
+}
+
+fn receiver_token_bucket_capacity_v1() -> u64 {
+    parse_env_u64("NOVOVM_NOVORUDP_RECEIVER_TOKEN_BUCKET_CAPACITY", 4096)
+        .max(1)
+        .min(1_000_000)
+}
+
+fn receiver_token_bucket_refill_per_sec_v1() -> u64 {
+    parse_env_u64("NOVOVM_NOVORUDP_RECEIVER_TOKEN_BUCKET_REFILL_PER_SEC", 4096)
+        .max(1)
+        .min(1_000_000)
+}
+
+fn receiver_repair_token_bucket_capacity_v1() -> u64 {
+    parse_env_u64(
+        "NOVOVM_NOVORUDP_RECEIVER_REPAIR_TOKEN_BUCKET_CAPACITY",
+        receiver_token_bucket_capacity_v1() / 2,
+    )
+    .max(1)
+    .min(1_000_000)
+}
+
+fn receiver_repair_token_bucket_refill_per_sec_v1() -> u64 {
+    parse_env_u64(
+        "NOVOVM_NOVORUDP_RECEIVER_REPAIR_TOKEN_BUCKET_REFILL_PER_SEC",
+        receiver_token_bucket_refill_per_sec_v1() / 2,
+    )
+    .max(1)
+    .min(1_000_000)
+}
+
+fn now_millis_v1() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn receiver_token_bucket_allow_v1(
+    key: String,
+    capacity: u64,
+    refill_per_sec: u64,
+    now_ms: u64,
+) -> bool {
+    let Ok(mut buckets) = receiver_rate_limit_buckets_v1().lock() else {
+        return false;
+    };
+    let bucket = buckets.entry(key).or_insert(ReceiverRateLimitBucketV1 {
+        tokens: capacity,
+        last_refill_ms: now_ms,
+    });
+    let elapsed_ms = now_ms.saturating_sub(bucket.last_refill_ms);
+    if elapsed_ms > 0 {
+        let refill = elapsed_ms.saturating_mul(refill_per_sec) / 1_000;
+        if refill > 0 {
+            bucket.tokens = bucket.tokens.saturating_add(refill).min(capacity);
+            bucket.last_refill_ms = now_ms;
+        }
+    }
+    if bucket.tokens == 0 {
+        return false;
+    }
+    bucket.tokens = bucket.tokens.saturating_sub(1);
+    true
+}
+
+fn receiver_transaction_frame_rate_limit_allow_v1(
+    chain_id: u64,
+    from: NodeId,
+    transport_auth: Option<&EvmNativeTransactionFrameAuthV1>,
+    tx_count: u64,
+) -> bool {
+    if !receiver_rate_limit_enabled_v1() {
+        return true;
+    }
+    let frame_kind = transport_auth
+        .map(|meta| meta.frame_kind.as_str())
+        .unwrap_or("unsigned");
+    let run_id = transport_auth
+        .map(|meta| meta.run_id.as_str())
+        .unwrap_or("no_run_id");
+    let now_ms = now_millis_v1();
+    let is_repair = frame_kind == "repair" || tx_count > 1;
+    let (capacity, refill_per_sec) = if is_repair {
+        (
+            receiver_repair_token_bucket_capacity_v1(),
+            receiver_repair_token_bucket_refill_per_sec_v1(),
+        )
+    } else {
+        (
+            receiver_token_bucket_capacity_v1(),
+            receiver_token_bucket_refill_per_sec_v1(),
+        )
+    };
+    receiver_token_bucket_allow_v1(
+        format!("{chain_id}:{}:{run_id}:{frame_kind}", from.0),
+        capacity,
+        refill_per_sec,
+        now_ms,
+    )
+}
+
 fn bytes_hex_lower_v1(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len().saturating_mul(2));
@@ -9398,6 +9515,14 @@ fn maybe_update_runtime_sync_from_protocol_message_with_context(
                     *tx_count,
                     payload.as_slice(),
                     transport_auth.as_ref(),
+                ) {
+                    return;
+                }
+                if !receiver_transaction_frame_rate_limit_allow_v1(
+                    chain_id,
+                    *from,
+                    transport_auth.as_ref(),
+                    *tx_count,
                 ) {
                     return;
                 }
@@ -10955,6 +11080,93 @@ mod tests {
             1,
             payload,
             Some(&replayed)
+        ));
+    }
+
+    #[test]
+    fn receiver_token_bucket_limits_authenticated_primary_by_source_run_and_kind() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _enabled = set_test_env_var_v1("NOVOVM_NOVORUDP_RECEIVER_RATE_LIMIT_ENABLED", "1");
+        let _capacity = set_test_env_var_v1("NOVOVM_NOVORUDP_RECEIVER_TOKEN_BUCKET_CAPACITY", "1");
+        let _refill =
+            set_test_env_var_v1("NOVOVM_NOVORUDP_RECEIVER_TOKEN_BUCKET_REFILL_PER_SEC", "1");
+        let from = NodeId(77);
+        let meta = EvmNativeTransactionFrameAuthV1 {
+            scheme: "keyed_sha256_v1".to_string(),
+            domain: "novorudp_transaction_v1".to_string(),
+            frame_kind: "primary".to_string(),
+            run_id: format!("rate-limit-test-{}", now_millis_v1()),
+            sequence: 1,
+            copy_index: 0,
+            tag: "unused".to_string(),
+        };
+
+        assert!(receiver_transaction_frame_rate_limit_allow_v1(
+            9_001,
+            from,
+            Some(&meta),
+            1
+        ));
+        assert!(!receiver_transaction_frame_rate_limit_allow_v1(
+            9_001,
+            from,
+            Some(&meta),
+            1
+        ));
+    }
+
+    #[test]
+    fn receiver_token_bucket_uses_separate_repair_budget() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _enabled = set_test_env_var_v1("NOVOVM_NOVORUDP_RECEIVER_RATE_LIMIT_ENABLED", "1");
+        let _primary_capacity =
+            set_test_env_var_v1("NOVOVM_NOVORUDP_RECEIVER_TOKEN_BUCKET_CAPACITY", "1");
+        let _primary_refill =
+            set_test_env_var_v1("NOVOVM_NOVORUDP_RECEIVER_TOKEN_BUCKET_REFILL_PER_SEC", "1");
+        let _repair_capacity =
+            set_test_env_var_v1("NOVOVM_NOVORUDP_RECEIVER_REPAIR_TOKEN_BUCKET_CAPACITY", "1");
+        let _repair_refill = set_test_env_var_v1(
+            "NOVOVM_NOVORUDP_RECEIVER_REPAIR_TOKEN_BUCKET_REFILL_PER_SEC",
+            "1",
+        );
+        let from = NodeId(78);
+        let run_id = format!("repair-rate-limit-test-{}", now_millis_v1());
+        let primary = EvmNativeTransactionFrameAuthV1 {
+            scheme: "keyed_sha256_v1".to_string(),
+            domain: "novorudp_transaction_v1".to_string(),
+            frame_kind: "primary".to_string(),
+            run_id: run_id.clone(),
+            sequence: 1,
+            copy_index: 0,
+            tag: "unused".to_string(),
+        };
+        let repair = EvmNativeTransactionFrameAuthV1 {
+            scheme: "keyed_sha256_v1".to_string(),
+            domain: "novorudp_transaction_v1".to_string(),
+            frame_kind: "repair".to_string(),
+            run_id,
+            sequence: 1,
+            copy_index: 1,
+            tag: "unused".to_string(),
+        };
+
+        assert!(receiver_transaction_frame_rate_limit_allow_v1(
+            9_002,
+            from,
+            Some(&primary),
+            1
+        ));
+        assert!(receiver_transaction_frame_rate_limit_allow_v1(
+            9_002,
+            from,
+            Some(&repair),
+            2
+        ));
+        assert!(!receiver_transaction_frame_rate_limit_allow_v1(
+            9_002,
+            from,
+            Some(&repair),
+            2
         ));
     }
 
