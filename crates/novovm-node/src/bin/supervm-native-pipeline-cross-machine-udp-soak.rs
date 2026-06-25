@@ -321,6 +321,10 @@ struct UdpAckStateV1 {
     missing_ranges_full_count: u64,
     highest_sequence_seen: Option<u64>,
     latest_ranges: Vec<MissingRangeV1>,
+    latest_ranges_sample: Vec<MissingRangeV1>,
+    latest_ranges_materialized_from_full: bool,
+    latest_ranges_source: String,
+    latest_ranges_sample_truncated: bool,
     novorudp_current_window_id: Option<u64>,
     novorudp_current_window: Option<MissingRangeV1>,
     novorudp_current_window_missing_count: u64,
@@ -1001,6 +1005,9 @@ fn ack_control_frame_auth_material_v1(value: &Value) -> String {
         field("highest_sequence_seen"),
         field("missing_count"),
         field("missing_ranges_full_count"),
+        field("missing_ranges_full_materialized"),
+        field("missing_ranges_full_sequence_count"),
+        field("missing_ranges_full"),
         field("missing_ranges_sample"),
         field("ack_epoch"),
         field("receiver_done"),
@@ -2374,6 +2381,40 @@ fn missing_ranges_from_json(value: &Value) -> Vec<MissingRangeV1> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+fn materialize_full_missing_ranges_for_ack_v1(
+    ranges: &[MissingRangeV1],
+    missing_count: u64,
+    expected: u64,
+    stable_progress: u64,
+) -> (Vec<MissingRangeV1>, bool, &'static str) {
+    if missing_count == 0 || expected == 0 {
+        return (Vec::new(), true, "missing_zero");
+    }
+    let normalized = normalize_missing_ranges(ranges, expected);
+    let known_sequence_count = missing_ranges_count(normalized.as_slice());
+    if known_sequence_count >= missing_count {
+        return (normalized, true, "source_ranges_complete");
+    }
+    let start = normalized
+        .first()
+        .map(|range| range.start)
+        .or_else(|| (stable_progress < expected).then_some(stable_progress));
+    let Some(start) = start else {
+        return (normalized, false, "unmaterialized_no_missing_start");
+    };
+    if start >= expected {
+        return (Vec::new(), false, "unmaterialized_start_past_expected");
+    }
+    (
+        vec![MissingRangeV1 {
+            start,
+            end_inclusive: expected.saturating_sub(1),
+        }],
+        true,
+        "expanded_from_truncated_missing_sample",
+    )
 }
 
 fn missing_ranges_overlap_count(a: &[MissingRangeV1], b: &[MissingRangeV1]) -> u64 {
@@ -8017,6 +8058,103 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn receiver_ack_materializes_truncated_missing_sample_for_repair_planner() {
+        let summary = serde_json::json!({
+            "missing_count": 8_423,
+            "missing_ranges_sample": [{"start": 667, "end_inclusive": 1927}],
+            "included_canonical_total": 5_977,
+            "aoem_executed_total": 5_977,
+        });
+        let ack = receiver_ack_report_value_with_summary(14_400, 5_977, 64, 777, Some(&summary));
+
+        assert_eq!(
+            ack.get("missing_ranges_full_materialized")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            ack.get("missing_ranges_full_materialization_source")
+                .and_then(Value::as_str),
+            Some("expanded_from_truncated_missing_sample")
+        );
+        assert_eq!(
+            ack.get("missing_ranges_sample_truncated")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(ack["missing_ranges_full"][0]["start"].as_u64(), Some(667));
+        assert_eq!(
+            ack["missing_ranges_full"][0]["end_inclusive"].as_u64(),
+            Some(14_399)
+        );
+
+        let parsed = parse_ack_value(&ack, 64).expect("ack");
+        assert_eq!(parsed.latest_ranges_source, "missing_ranges_full");
+        assert!(parsed.latest_ranges_materialized_from_full);
+        assert_eq!(
+            parsed.latest_ranges,
+            vec![MissingRangeV1 {
+                start: 667,
+                end_inclusive: 14_399
+            }]
+        );
+        assert_eq!(
+            parsed.latest_ranges_sample,
+            vec![MissingRangeV1 {
+                start: 667,
+                end_inclusive: 1927
+            }]
+        );
+    }
+
+    #[test]
+    fn sender_repair_rotation_uses_materialized_full_missing_not_head_sample() {
+        let ack = serde_json::json!({
+            "schema": "novovm-native-pipeline-cross-machine-sustained-ack/v1",
+            "packet_type": "native_pipeline_ack_v1",
+            "expected_tx_total": 14_400,
+            "received_unique_count": 5_977,
+            "highest_sequence_seen": 5_976,
+            "missing_count": 8_423,
+            "missing_ranges_full_count": 1,
+            "missing_ranges_full_materialized": true,
+            "missing_ranges_full_sequence_count": 13_733,
+            "missing_ranges_full": [{"start": 667, "end_inclusive": 14399}],
+            "missing_ranges_sample_truncated": true,
+            "missing_ranges_sample": [{"start": 667, "end_inclusive": 1927}],
+            "ack_epoch": 778,
+            "receiver_done": false,
+        });
+        let parsed = parse_ack_value(&ack, 64).expect("ack");
+        let mut state = RepairRotationStateV1::default();
+        let mut sent = Vec::<MissingRangeV1>::new();
+        for _ in 0..4 {
+            let selection = select_novorudp_repair_ranges_with_rotation_v1(
+                parsed.latest_ranges.as_slice(),
+                14_400,
+                64,
+                64,
+                &mut state,
+            )
+            .expect("repair selection");
+            sent.extend(selection.ranges);
+        }
+        let sent = normalize_missing_ranges(sent.as_slice(), 14_400);
+        let tail = vec![MissingRangeV1 {
+            start: 9_600,
+            end_inclusive: 14_399,
+        }];
+
+        assert_eq!(parsed.latest_ranges_source, "missing_ranges_full");
+        assert!(
+            missing_ranges_overlap_count(sent.as_slice(), tail.as_slice())
+                == missing_ranges_count(tail.as_slice()),
+            "materialized full range must allow rotation into tail"
+        );
+        assert!(state.full_scan_completed);
+    }
+
+    #[test]
     fn novorudp_sender_can_repair_multiple_missing_windows_per_ack() {
         let ranges = vec![MissingRangeV1 {
             start: 10_000,
@@ -9957,24 +10095,25 @@ mod novorudp_tests {
 fn read_missing_ranges_from_ack(path: &Path, limit: u64) -> Option<Vec<MissingRangeV1>> {
     let raw = fs::read_to_string(path).ok()?;
     let value = serde_json::from_str::<Value>(raw.as_str()).ok()?;
-    let ranges = value
-        .get("missing_ranges_sample")
-        .and_then(Value::as_array)?
-        .iter()
-        .filter_map(|item| {
-            let start = item.get("start").and_then(Value::as_u64)?;
-            let end_inclusive = item.get("end_inclusive").and_then(Value::as_u64)?;
-            if end_inclusive < start {
-                return None;
-            }
-            Some(MissingRangeV1 {
-                start,
-                end_inclusive,
-            })
-        })
-        .take(limit as usize)
-        .collect::<Vec<_>>();
-    Some(ranges)
+    let full_ranges = missing_ranges_from_value_key(&value, "missing_ranges_full", u64::MAX);
+    if !full_ranges.is_empty()
+        || value
+            .get("missing_ranges_full_materialized")
+            .and_then(Value::as_bool)
+            == Some(true)
+            && value
+                .get("missing_count")
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+                == 0
+    {
+        return Some(full_ranges);
+    }
+    Some(missing_ranges_from_value_key(
+        &value,
+        "missing_ranges_sample",
+        limit,
+    ))
 }
 
 fn missing_ranges_from_value_key(value: &Value, key: &str, limit: u64) -> Vec<MissingRangeV1> {
@@ -10011,7 +10150,43 @@ fn parse_ack_value(value: &Value, limit: u64) -> Option<UdpAckStateV1> {
     if !verify_ack_control_frame_auth_v1(value) {
         return None;
     }
-    let ranges = missing_ranges_from_value_key(value, "missing_ranges_sample", limit);
+    let sample_ranges = missing_ranges_from_value_key(value, "missing_ranges_sample", limit);
+    let full_ranges = missing_ranges_from_value_key(value, "missing_ranges_full", u64::MAX);
+    let latest_missing_count = value
+        .get("missing_count")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let declared_full_count = value
+        .get("missing_ranges_full_count")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| sample_ranges.len().try_into().unwrap_or(u64::MAX));
+    let full_materialized = value
+        .get("missing_ranges_full_materialized")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let sample_is_complete = declared_full_count
+        <= sample_ranges.len().try_into().unwrap_or(u64::MAX)
+        && missing_ranges_count(sample_ranges.as_slice()) >= latest_missing_count;
+    let (ranges, ranges_source, ranges_materialized_from_full) =
+        if !full_ranges.is_empty() || (full_materialized && latest_missing_count == 0) {
+            (
+                full_ranges,
+                "missing_ranges_full".to_string(),
+                full_materialized,
+            )
+        } else if sample_is_complete {
+            (
+                sample_ranges.clone(),
+                "missing_ranges_sample_complete".to_string(),
+                false,
+            )
+        } else {
+            (
+                sample_ranges.clone(),
+                "missing_ranges_sample_truncated".to_string(),
+                false,
+            )
+        };
     let current_window_missing_ranges = missing_ranges_from_value_key(
         value,
         "novorudp_current_window_missing_ranges_sample",
@@ -10037,16 +10212,20 @@ fn parse_ack_value(value: &Value, limit: u64) -> Option<UdpAckStateV1> {
             .get("ack_epoch")
             .and_then(Value::as_u64)
             .unwrap_or_default(),
-        latest_missing_count: value
-            .get("missing_count")
-            .and_then(Value::as_u64)
-            .unwrap_or_default(),
+        latest_missing_count,
         missing_ranges_full_count: value
             .get("missing_ranges_full_count")
             .and_then(Value::as_u64)
             .unwrap_or_else(|| ranges.len().try_into().unwrap_or(u64::MAX)),
         highest_sequence_seen: value.get("highest_sequence_seen").and_then(Value::as_u64),
         latest_ranges: ranges,
+        latest_ranges_sample: sample_ranges,
+        latest_ranges_materialized_from_full: ranges_materialized_from_full,
+        latest_ranges_source: ranges_source,
+        latest_ranges_sample_truncated: value
+            .get("missing_ranges_sample_truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(!sample_is_complete),
         novorudp_current_window_id: value
             .get("novorudp_current_window_id")
             .and_then(Value::as_u64),
@@ -11633,7 +11812,6 @@ fn receiver_ack_report_value_with_summary(
                 "stable_progress_fallback",
             )
         };
-    let raw_missing_ranges_full_count = ranges.len();
     let progress_summary_last_updated_ms = progress_summary
         .and_then(|summary| {
             summary
@@ -11680,34 +11858,39 @@ fn receiver_ack_report_value_with_summary(
         ack_progress_interval_ms: 250,
         no_progress_backoff: true,
     });
+    let (ranges, missing_count, missing_bitmap_source, fallback_reason, source_reason) =
+        if terminal_progress {
+            (
+                Vec::new(),
+                0,
+                "receiver_done_terminal_progress",
+                Value::Null,
+                "receiver_done_terminal_progress",
+            )
+        } else {
+            (
+                ranges,
+                missing_count,
+                missing_bitmap_source,
+                fallback_reason,
+                source_reason,
+            )
+        };
+    let source_missing_ranges_sequence_count = missing_ranges_count(ranges.as_slice());
     let (
-        ranges,
-        missing_count,
-        missing_bitmap_source,
-        missing_ranges_full_count,
-        fallback_reason,
-        source_reason,
-    ) = if terminal_progress {
-        (
-            Vec::new(),
-            0,
-            "receiver_done_terminal_progress",
-            0usize,
-            Value::Null,
-            "receiver_done_terminal_progress",
-        )
-    } else {
-        (
-            ranges,
-            missing_count,
-            missing_bitmap_source,
-            raw_missing_ranges_full_count,
-            fallback_reason,
-            source_reason,
-        )
-    };
-    let current_window = first_missing_window_ranges(
+        full_missing_ranges,
+        missing_ranges_full_materialized,
+        missing_ranges_materialization_source,
+    ) = materialize_full_missing_ranges_for_ack_v1(
         ranges.as_slice(),
+        missing_count,
+        expected_tx_count,
+        stable_progress,
+    );
+    let missing_ranges_full_count = full_missing_ranges.len();
+    let missing_ranges_full_sequence_count = missing_ranges_count(full_missing_ranges.as_slice());
+    let current_window = first_missing_window_ranges(
+        full_missing_ranges.as_slice(),
         expected_tx_count,
         novorudp.window_size.max(1),
     );
@@ -11726,7 +11909,14 @@ fn receiver_ack_report_value_with_summary(
         "highest_sequence_seen": highest_sequence_seen,
         "missing_count": missing_count,
         "missing_ranges_full_count": missing_ranges_full_count,
-        "missing_ranges_sample_truncated": (missing_ranges_full_count as u64) > sample_limit,
+        "missing_ranges_full_materialized": missing_ranges_full_materialized,
+        "missing_ranges_full_sequence_count": missing_ranges_full_sequence_count,
+        "missing_ranges_full_materialization_source": missing_ranges_materialization_source,
+        "missing_ranges_full": missing_ranges_to_json(full_missing_ranges.as_slice(), u64::MAX),
+        "missing_ranges_source_sample_sequence_count": source_missing_ranges_sequence_count,
+        "missing_ranges_sample_count": ranges.len().min(sample_limit as usize),
+        "missing_ranges_sample_truncated": (missing_ranges_full_count as u64) > sample_limit
+            || source_missing_ranges_sequence_count < missing_count,
         "missing_ranges_sample": missing_ranges_to_json(ranges.as_slice(), sample_limit),
         "missing_bitmap_source": missing_bitmap_source,
         "missing_bitmap_fallback_reason": fallback_reason,
@@ -16635,6 +16825,10 @@ fn run_sender(
     let mut latest_ack_missing_count: Option<u64> = None;
     let mut latest_ack_missing_ranges_sample = Vec::<MissingRangeV1>::new();
     let mut latest_ack_missing_ranges_full_count: Option<u64> = None;
+    let mut latest_ack_missing_ranges_source = "none".to_string();
+    let mut latest_ack_missing_ranges_materialized_from_full = false;
+    let mut latest_ack_missing_ranges_sample_truncated = false;
+    let mut latest_ack_missing_ranges_sample_count: Option<u64> = None;
     let mut latest_ack_highest_sequence_seen: Option<u64> = None;
     let mut latest_ack_receiver_done = false;
     let mut tail_repair_latest_ack_epoch = 0u64;
@@ -17042,6 +17236,18 @@ fn run_sender(
                             latest_ack_missing_ranges_sample = state.latest_ranges.clone();
                             latest_ack_missing_ranges_full_count =
                                 Some(state.missing_ranges_full_count);
+                            latest_ack_missing_ranges_source = state.latest_ranges_source.clone();
+                            latest_ack_missing_ranges_materialized_from_full =
+                                state.latest_ranges_materialized_from_full;
+                            latest_ack_missing_ranges_sample_truncated =
+                                state.latest_ranges_sample_truncated;
+                            latest_ack_missing_ranges_sample_count = Some(
+                                state
+                                    .latest_ranges_sample
+                                    .len()
+                                    .try_into()
+                                    .unwrap_or(u64::MAX),
+                            );
                             latest_ack_highest_sequence_seen = state.highest_sequence_seen;
                             latest_ack_receiver_done = state.receiver_done;
                             final_missing_count = state.latest_missing_count;
@@ -17163,6 +17369,18 @@ fn run_sender(
                         latest_ack_missing_ranges_sample = state.latest_ranges.clone();
                         latest_ack_missing_ranges_full_count =
                             Some(state.missing_ranges_full_count);
+                        latest_ack_missing_ranges_source = state.latest_ranges_source.clone();
+                        latest_ack_missing_ranges_materialized_from_full =
+                            state.latest_ranges_materialized_from_full;
+                        latest_ack_missing_ranges_sample_truncated =
+                            state.latest_ranges_sample_truncated;
+                        latest_ack_missing_ranges_sample_count = Some(
+                            state
+                                .latest_ranges_sample
+                                .len()
+                                .try_into()
+                                .unwrap_or(u64::MAX),
+                        );
                         latest_ack_highest_sequence_seen = state.highest_sequence_seen;
                         latest_ack_receiver_done = state.receiver_done;
                         final_missing_count = state.latest_missing_count;
@@ -17425,6 +17643,18 @@ fn run_sender(
                     latest_ack_missing_count = Some(state.latest_missing_count);
                     latest_ack_missing_ranges_sample = state.latest_ranges.clone();
                     latest_ack_missing_ranges_full_count = Some(state.missing_ranges_full_count);
+                    latest_ack_missing_ranges_source = state.latest_ranges_source.clone();
+                    latest_ack_missing_ranges_materialized_from_full =
+                        state.latest_ranges_materialized_from_full;
+                    latest_ack_missing_ranges_sample_truncated =
+                        state.latest_ranges_sample_truncated;
+                    latest_ack_missing_ranges_sample_count = Some(
+                        state
+                            .latest_ranges_sample
+                            .len()
+                            .try_into()
+                            .unwrap_or(u64::MAX),
+                    );
                     latest_ack_highest_sequence_seen = state.highest_sequence_seen;
                     latest_ack_receiver_done = state.receiver_done;
                     final_missing_count = state.latest_missing_count;
@@ -17469,6 +17699,11 @@ fn run_sender(
                     ),
                     highest_sequence_seen: latest_ack_highest_sequence_seen,
                     latest_ranges: latest_ack_missing_ranges_sample.clone(),
+                    latest_ranges_sample: latest_ack_missing_ranges_sample.clone(),
+                    latest_ranges_materialized_from_full:
+                        latest_ack_missing_ranges_materialized_from_full,
+                    latest_ranges_source: latest_ack_missing_ranges_source.clone(),
+                    latest_ranges_sample_truncated: latest_ack_missing_ranges_sample_truncated,
                     receiver_done: latest_ack_receiver_done,
                     ..UdpAckStateV1::default()
                 })
@@ -17622,7 +17857,10 @@ fn run_sender(
                     }
                 }
                 repair_used_full_missing_ranges = if novorudp.enabled {
-                    repair_used_full_missing_ranges || novorudp_used_full_missing_bitmap_this_round
+                    repair_used_full_missing_ranges
+                        || novorudp_used_full_missing_bitmap_this_round
+                        || state.latest_ranges_materialized_from_full
+                        || state.latest_ranges_source == "missing_ranges_full"
                 } else {
                     state.missing_ranges_full_count
                         <= state.latest_ranges.len().try_into().unwrap_or(u64::MAX)
@@ -17780,6 +18018,13 @@ fn run_sender(
                 tail_repair_missing_ranges_seen = tail_repair_missing_ranges_seen
                     .saturating_add(ranges.len().try_into().unwrap_or(u64::MAX));
                 latest_ack_missing_ranges_sample = ranges.clone();
+                latest_ack_missing_ranges_full_count =
+                    Some(ranges.len().try_into().unwrap_or(u64::MAX));
+                latest_ack_missing_ranges_source = "ack_report_file".to_string();
+                latest_ack_missing_ranges_materialized_from_full = true;
+                latest_ack_missing_ranges_sample_truncated = false;
+                latest_ack_missing_ranges_sample_count =
+                    Some(ranges.len().try_into().unwrap_or(u64::MAX));
                 final_missing_count = missing_ranges_count(selected_ranges.as_slice());
                 repair_sequence_sent_count =
                     repair_sequence_sent_count.saturating_add(final_missing_count);
@@ -18161,6 +18406,18 @@ fn run_sender(
                     latest_ack_missing_count = Some(state.latest_missing_count);
                     latest_ack_missing_ranges_sample = state.latest_ranges.clone();
                     latest_ack_missing_ranges_full_count = Some(state.missing_ranges_full_count);
+                    latest_ack_missing_ranges_source = state.latest_ranges_source.clone();
+                    latest_ack_missing_ranges_materialized_from_full =
+                        state.latest_ranges_materialized_from_full;
+                    latest_ack_missing_ranges_sample_truncated =
+                        state.latest_ranges_sample_truncated;
+                    latest_ack_missing_ranges_sample_count = Some(
+                        state
+                            .latest_ranges_sample
+                            .len()
+                            .try_into()
+                            .unwrap_or(u64::MAX),
+                    );
                     latest_ack_highest_sequence_seen = state.highest_sequence_seen;
                     latest_ack_receiver_done = state.receiver_done;
                     ack_epoch_at_repair_end = Some(state.latest_epoch);
@@ -18471,10 +18728,20 @@ fn run_sender(
                                 }),
                             highest_sequence_seen: latest_ack_highest_sequence_seen,
                             latest_ranges: latest_ack_missing_ranges_sample.clone(),
+                            latest_ranges_sample: latest_ack_missing_ranges_sample.clone(),
+                            latest_ranges_materialized_from_full:
+                                latest_ack_missing_ranges_materialized_from_full,
+                            latest_ranges_source: latest_ack_missing_ranges_source.clone(),
+                            latest_ranges_sample_truncated:
+                                latest_ack_missing_ranges_sample_truncated,
                             receiver_done: latest_ack_receiver_done,
                             ..UdpAckStateV1::default()
                         };
                         let mut selected_ranges = if novorudp.enabled {
+                            repair_used_full_missing_ranges = repair_used_full_missing_ranges
+                                || ack_state.latest_ranges_materialized_from_full
+                                || ack_state.latest_ranges_source == "missing_ranges_full"
+                                || ack_state.latest_ranges_source == "ack_report_file";
                             if repair_large_missing_rotation_enabled {
                                 select_novorudp_repair_ranges_with_rotation_v1(
                                     ack_state.latest_ranges.as_slice(),
@@ -18642,6 +18909,17 @@ fn run_sender(
             latest_ack_missing_count = Some(state.latest_missing_count);
             latest_ack_missing_ranges_sample = state.latest_ranges.clone();
             latest_ack_missing_ranges_full_count = Some(state.missing_ranges_full_count);
+            latest_ack_missing_ranges_source = state.latest_ranges_source.clone();
+            latest_ack_missing_ranges_materialized_from_full =
+                state.latest_ranges_materialized_from_full;
+            latest_ack_missing_ranges_sample_truncated = state.latest_ranges_sample_truncated;
+            latest_ack_missing_ranges_sample_count = Some(
+                state
+                    .latest_ranges_sample
+                    .len()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            );
             latest_ack_highest_sequence_seen = state.highest_sequence_seen;
             latest_ack_receiver_done = state.receiver_done;
             final_missing_count = state.latest_missing_count;
@@ -19708,6 +19986,21 @@ fn run_sender(
             "latest_ack_epoch": tail_repair_latest_ack_epoch,
             "latest_ack_missing_count": latest_ack_missing_count,
             "latest_ack_missing_ranges_full_count": latest_ack_missing_ranges_full_count,
+            "latest_ack_missing_ranges_source": latest_ack_missing_ranges_source.clone(),
+            "latest_ack_missing_ranges_materialized_from_full": latest_ack_missing_ranges_materialized_from_full,
+            "latest_ack_missing_ranges_sample_count": latest_ack_missing_ranges_sample_count,
+            "latest_ack_missing_ranges_sample_truncated": latest_ack_missing_ranges_sample_truncated,
+            "latest_ack_missing_ranges_planner_sequence_count": missing_ranges_count(latest_ack_missing_ranges_sample.as_slice()),
+            "latest_ack_missing_ranges_planner_range_count": latest_ack_missing_ranges_sample.len(),
+            "repair_planner_used_full_missing_ranges": latest_ack_missing_ranges_materialized_from_full
+                || latest_ack_missing_ranges_source.as_str() == "missing_ranges_full"
+                || latest_ack_missing_ranges_source.as_str() == "ack_report_file",
+            "repair_planner_used_sample_ranges": latest_ack_missing_ranges_source.as_str() == "missing_ranges_sample_truncated",
+            "repair_missing_range_not_materialized_count": if latest_ack_missing_ranges_source.as_str() == "missing_ranges_sample_truncated" {
+                latest_ack_missing_count.unwrap_or_default()
+            } else {
+                0
+            },
             "latest_ack_highest_sequence_seen": latest_ack_highest_sequence_seen,
             "latest_ack_receiver_done": latest_ack_receiver_done,
             "repair_used_full_missing_ranges": repair_used_full_missing_ranges,
