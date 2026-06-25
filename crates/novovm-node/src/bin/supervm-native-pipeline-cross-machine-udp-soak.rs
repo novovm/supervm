@@ -6992,6 +6992,50 @@ mod novorudp_tests {
     }
 
     #[test]
+    fn receiver_repair_lifecycle_uses_final_missing_fallback_ranges() {
+        let mut sample = serde_json::json!({
+            "ledger_durable_missing_count": 178,
+            "final_missing_sequence_count": 178,
+            "final_missing_ranges_sample": [
+                {"start": 2222, "end_inclusive": 2399, "count": 178}
+            ],
+            "repair_sequence_received_ranges_sample": [
+                {"start": 1200, "end_inclusive": 1600, "count": 401}
+            ],
+            "repair_sequence_accepted_ranges_sample": [
+                {"start": 1200, "end_inclusive": 1600, "count": 401}
+            ],
+            "repair_sequence_enqueued_ranges_sample": [
+                {"start": 1200, "end_inclusive": 1600, "count": 401}
+            ],
+            "repair_sequence_admitted_to_aoem_ranges_sample": [
+                {"start": 1200, "end_inclusive": 1600, "count": 401}
+            ],
+            "ledger_final_missing_actual_batch_ranges_sample": [],
+            "ledger_completed_ranges_sample": []
+        });
+
+        annotate_receiver_repair_lifecycle_close_v1(&mut sample);
+
+        assert_eq!(
+            sample["receiver_repair_lifecycle_blocked_stage"].as_str(),
+            Some("repair_not_received_for_final_missing")
+        );
+        assert_eq!(
+            sample["receiver_repair_final_missing_count"].as_u64(),
+            Some(178)
+        );
+        assert_eq!(
+            sample["receiver_repair_target_missing_intersection_count"].as_u64(),
+            Some(178)
+        );
+        assert_eq!(
+            sample["receiver_repair_received_for_final_missing_count"].as_u64(),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn receiver_delta_reports_repair_convergence_rate() {
         let mut previous = serde_json::json!({
             "elapsed_ms": 60_000,
@@ -15281,11 +15325,18 @@ fn annotate_receiver_repair_range_coverage_v1(sample: &mut Value) {
 }
 
 fn annotate_receiver_repair_lifecycle_close_v1(sample: &mut Value) {
-    let final_missing = missing_ranges_from_json(
+    let mut final_missing = missing_ranges_from_json(
         sample
             .get("ledger_durable_missing_ranges_sample")
             .unwrap_or(&Value::Null),
     );
+    if final_missing.is_empty() {
+        final_missing = missing_ranges_from_json(
+            sample
+                .get("final_missing_ranges_sample")
+                .unwrap_or(&Value::Null),
+        );
+    }
     let repair_received = missing_ranges_from_json(
         sample
             .get("repair_sequence_received_ranges_sample")
@@ -15318,8 +15369,9 @@ fn annotate_receiver_repair_lifecycle_close_v1(sample: &mut Value) {
     );
 
     let final_missing_count_from_ranges = missing_ranges_count(final_missing.as_slice());
-    let final_missing_count =
-        sample_u64(sample, "ledger_durable_missing_count").max(final_missing_count_from_ranges);
+    let final_missing_count = sample_u64(sample, "ledger_durable_missing_count")
+        .max(sample_u64(sample, "final_missing_sequence_count"))
+        .max(final_missing_count_from_ranges);
     let received =
         missing_ranges_overlap_count(final_missing.as_slice(), repair_received.as_slice());
     let accepted =
