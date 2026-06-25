@@ -2659,6 +2659,77 @@ fn same_snapshot_unique_coverage_blocks_retry_v1(
         && missing_ranges_subtract(normalized_latest_missing, covered_snapshot, expected).is_empty()
 }
 
+fn missing_ranges_digest_v1(ranges: &[MissingRangeV1], expected: u64) -> String {
+    let normalized = normalize_missing_ranges(ranges, expected);
+    let mut digest = RollingDigestV1::default();
+    for range in normalized {
+        digest.update(format!("{}..{}", range.start, range.end_inclusive).as_bytes());
+    }
+    digest.finish_hex()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RepairSnapshotFreezeKeyV1 {
+    ack_epoch: u64,
+    missing_digest: String,
+}
+
+#[derive(Debug, Default)]
+struct RepairSnapshotHardFreezeV1 {
+    key: Option<RepairSnapshotFreezeKeyV1>,
+    snapshot: Vec<MissingRangeV1>,
+}
+
+impl RepairSnapshotHardFreezeV1 {
+    fn freeze(&mut self, ack_epoch: u64, snapshot: &[MissingRangeV1], expected: u64) {
+        self.key = Some(RepairSnapshotFreezeKeyV1 {
+            ack_epoch,
+            missing_digest: missing_ranges_digest_v1(snapshot, expected),
+        });
+        self.snapshot = normalize_missing_ranges(snapshot, expected);
+    }
+
+    fn key_matches(&self, ack_epoch: u64, snapshot: &[MissingRangeV1], expected: u64) -> bool {
+        self.key
+            .as_ref()
+            .map(|key| {
+                key.ack_epoch == ack_epoch
+                    && key.missing_digest == missing_ranges_digest_v1(snapshot, expected)
+            })
+            .unwrap_or(false)
+    }
+
+    fn filter_final_send(
+        &self,
+        selected_ranges: &[MissingRangeV1],
+        ack_epoch: u64,
+        snapshot: &[MissingRangeV1],
+        expected: u64,
+    ) -> (Vec<MissingRangeV1>, u64) {
+        let selected = normalize_missing_ranges(selected_ranges, expected);
+        if !self.key_matches(ack_epoch, snapshot, expected) {
+            return (selected, 0);
+        }
+        let blocked = missing_ranges_overlap_count(selected.as_slice(), self.snapshot.as_slice());
+        (
+            missing_ranges_subtract(selected.as_slice(), self.snapshot.as_slice(), expected),
+            blocked,
+        )
+    }
+
+    fn ack_epoch(&self) -> Option<u64> {
+        self.key.as_ref().map(|key| key.ack_epoch)
+    }
+
+    fn missing_digest(&self) -> Option<&str> {
+        self.key.as_ref().map(|key| key.missing_digest.as_str())
+    }
+
+    fn sequence_count(&self) -> u64 {
+        missing_ranges_count(self.snapshot.as_slice())
+    }
+}
+
 #[cfg(test)]
 fn suppress_repair_ranges_for_ack_epoch_v1(
     selected_ranges: &[MissingRangeV1],
@@ -7628,6 +7699,41 @@ mod novorudp_tests {
             Some(9),
             480,
         ));
+    }
+
+    #[test]
+    fn full_async_repair_hard_freeze_blocks_same_snapshot_final_send() {
+        let snapshot = vec![MissingRangeV1 {
+            start: 0,
+            end_inclusive: 479,
+        }];
+        let mut freeze = RepairSnapshotHardFreezeV1::default();
+        freeze.freeze(12, snapshot.as_slice(), 480);
+
+        let (filtered, blocked) =
+            freeze.filter_final_send(snapshot.as_slice(), 12, snapshot.as_slice(), 480);
+
+        assert!(filtered.is_empty());
+        assert_eq!(blocked, 480);
+        assert_eq!(freeze.sequence_count(), 480);
+        assert_eq!(freeze.ack_epoch(), Some(12));
+        assert!(freeze.missing_digest().is_some());
+    }
+
+    #[test]
+    fn full_async_repair_hard_freeze_allows_refreshed_ack_epoch() {
+        let snapshot = vec![MissingRangeV1 {
+            start: 0,
+            end_inclusive: 479,
+        }];
+        let mut freeze = RepairSnapshotHardFreezeV1::default();
+        freeze.freeze(12, snapshot.as_slice(), 480);
+
+        let (filtered, blocked) =
+            freeze.filter_final_send(snapshot.as_slice(), 13, snapshot.as_slice(), 480);
+
+        assert_eq!(filtered, snapshot);
+        assert_eq!(blocked, 0);
     }
 
     #[test]
@@ -17017,6 +17123,7 @@ fn run_sender(
     let mut repair_suppression_sent_ranges_for_snapshot = Vec::<MissingRangeV1>::new();
     let mut repair_suppression_unique_coverage_snapshot = Vec::<MissingRangeV1>::new();
     let mut repair_suppression_unique_coverage_ack_epoch: Option<u64> = None;
+    let mut repair_same_snapshot_hard_freeze = RepairSnapshotHardFreezeV1::default();
     let repair_latest_missing_retry_cadence_ms = u64_env(
         "NOVOVM_NOVORUDP_REPAIR_LATEST_MISSING_RETRY_CADENCE_MS",
         250,
@@ -17034,6 +17141,11 @@ fn run_sender(
     let mut repair_ack_refresh_wait_count = 0u64;
     let mut repair_same_snapshot_unique_coverage_suppressed_count = 0u64;
     let mut repair_same_snapshot_unique_coverage_wait_count = 0u64;
+    let mut repair_same_snapshot_hard_freeze_count = 0u64;
+    let mut repair_same_snapshot_hard_freeze_post_primary_count = 0u64;
+    let mut repair_same_snapshot_hard_freeze_repair_pump_count = 0u64;
+    let mut repair_same_snapshot_hard_freeze_final_send_block_count = 0u64;
+    let repair_same_snapshot_hard_freeze_snapshot_change_count = 0u64;
     let mut repair_suppressed_completed_sequence_count = 0u64;
     let mut repair_suppressed_duplicate_sequence_count = 0u64;
     let mut repair_suppressed_not_in_latest_missing_count = 0u64;
@@ -18049,6 +18161,25 @@ fn run_sender(
                         repair_suppression_retry_count_for_snapshot =
                             repair_suppression_retry_count_for_snapshot.saturating_add(1);
                     }
+                    let (hard_freeze_filtered_ranges, hard_freeze_blocked_count) =
+                        repair_same_snapshot_hard_freeze.filter_final_send(
+                            filtered_ranges.as_slice(),
+                            tail_repair_latest_ack_epoch,
+                            normalized_latest_missing.as_slice(),
+                            tx_count,
+                        );
+                    if hard_freeze_blocked_count > 0 {
+                        repair_same_snapshot_hard_freeze_count =
+                            repair_same_snapshot_hard_freeze_count
+                                .saturating_add(hard_freeze_blocked_count);
+                        repair_same_snapshot_hard_freeze_repair_pump_count =
+                            repair_same_snapshot_hard_freeze_repair_pump_count
+                                .saturating_add(hard_freeze_blocked_count);
+                        repair_same_snapshot_hard_freeze_final_send_block_count =
+                            repair_same_snapshot_hard_freeze_final_send_block_count
+                                .saturating_add(hard_freeze_blocked_count);
+                    }
+                    let filtered_ranges = hard_freeze_filtered_ranges;
                     if repair_snapshot_fully_covered_v1(
                         repair_suppression_active_missing_snapshot.as_slice(),
                         repair_suppression_sent_ranges_for_snapshot.as_slice(),
@@ -18058,6 +18189,11 @@ fn run_sender(
                             Some(tail_repair_latest_ack_epoch);
                         repair_suppression_unique_coverage_snapshot =
                             repair_suppression_active_missing_snapshot.clone();
+                        repair_same_snapshot_hard_freeze.freeze(
+                            tail_repair_latest_ack_epoch,
+                            repair_suppression_active_missing_snapshot.as_slice(),
+                            tx_count,
+                        );
                     }
                     selected_ranges = filtered_ranges;
                 }
@@ -18312,6 +18448,25 @@ fn run_sender(
                         repair_suppression_retry_count_for_snapshot =
                             repair_suppression_retry_count_for_snapshot.saturating_add(1);
                     }
+                    let (hard_freeze_filtered_ranges, hard_freeze_blocked_count) =
+                        repair_same_snapshot_hard_freeze.filter_final_send(
+                            filtered_ranges.as_slice(),
+                            tail_repair_latest_ack_epoch,
+                            normalized_latest_missing.as_slice(),
+                            tx_count,
+                        );
+                    if hard_freeze_blocked_count > 0 {
+                        repair_same_snapshot_hard_freeze_count =
+                            repair_same_snapshot_hard_freeze_count
+                                .saturating_add(hard_freeze_blocked_count);
+                        repair_same_snapshot_hard_freeze_repair_pump_count =
+                            repair_same_snapshot_hard_freeze_repair_pump_count
+                                .saturating_add(hard_freeze_blocked_count);
+                        repair_same_snapshot_hard_freeze_final_send_block_count =
+                            repair_same_snapshot_hard_freeze_final_send_block_count
+                                .saturating_add(hard_freeze_blocked_count);
+                    }
+                    let filtered_ranges = hard_freeze_filtered_ranges;
                     if repair_snapshot_fully_covered_v1(
                         repair_suppression_active_missing_snapshot.as_slice(),
                         repair_suppression_sent_ranges_for_snapshot.as_slice(),
@@ -18321,6 +18476,11 @@ fn run_sender(
                             Some(tail_repair_latest_ack_epoch);
                         repair_suppression_unique_coverage_snapshot =
                             repair_suppression_active_missing_snapshot.clone();
+                        repair_same_snapshot_hard_freeze.freeze(
+                            tail_repair_latest_ack_epoch,
+                            repair_suppression_active_missing_snapshot.as_slice(),
+                            tx_count,
+                        );
                     }
                     selected_ranges = filtered_ranges;
                 }
@@ -18605,6 +18765,25 @@ fn run_sender(
                         repair_suppression_retry_count_for_snapshot =
                             repair_suppression_retry_count_for_snapshot.saturating_add(1);
                     }
+                    let (hard_freeze_filtered_ranges, hard_freeze_blocked_count) =
+                        repair_same_snapshot_hard_freeze.filter_final_send(
+                            filtered_ranges.as_slice(),
+                            tail_repair_latest_ack_epoch,
+                            normalized_latest_missing.as_slice(),
+                            tx_count,
+                        );
+                    if hard_freeze_blocked_count > 0 {
+                        repair_same_snapshot_hard_freeze_count =
+                            repair_same_snapshot_hard_freeze_count
+                                .saturating_add(hard_freeze_blocked_count);
+                        repair_same_snapshot_hard_freeze_repair_pump_count =
+                            repair_same_snapshot_hard_freeze_repair_pump_count
+                                .saturating_add(hard_freeze_blocked_count);
+                        repair_same_snapshot_hard_freeze_final_send_block_count =
+                            repair_same_snapshot_hard_freeze_final_send_block_count
+                                .saturating_add(hard_freeze_blocked_count);
+                    }
+                    let filtered_ranges = hard_freeze_filtered_ranges;
                     if repair_snapshot_fully_covered_v1(
                         repair_suppression_active_missing_snapshot.as_slice(),
                         repair_suppression_sent_ranges_for_snapshot.as_slice(),
@@ -18614,6 +18793,11 @@ fn run_sender(
                             Some(tail_repair_latest_ack_epoch);
                         repair_suppression_unique_coverage_snapshot =
                             repair_suppression_active_missing_snapshot.clone();
+                        repair_same_snapshot_hard_freeze.freeze(
+                            tail_repair_latest_ack_epoch,
+                            repair_suppression_active_missing_snapshot.as_slice(),
+                            tx_count,
+                        );
                     }
                     gap_ranges_to_send = filtered_ranges;
                 }
@@ -19293,6 +19477,25 @@ fn run_sender(
                                 repair_suppression_retry_count_for_snapshot =
                                     repair_suppression_retry_count_for_snapshot.saturating_add(1);
                             }
+                            let (hard_freeze_filtered_ranges, hard_freeze_blocked_count) =
+                                repair_same_snapshot_hard_freeze.filter_final_send(
+                                    filtered_ranges.as_slice(),
+                                    tail_repair_latest_ack_epoch,
+                                    normalized_latest_missing.as_slice(),
+                                    tx_count,
+                                );
+                            if hard_freeze_blocked_count > 0 {
+                                repair_same_snapshot_hard_freeze_count =
+                                    repair_same_snapshot_hard_freeze_count
+                                        .saturating_add(hard_freeze_blocked_count);
+                                repair_same_snapshot_hard_freeze_post_primary_count =
+                                    repair_same_snapshot_hard_freeze_post_primary_count
+                                        .saturating_add(hard_freeze_blocked_count);
+                                repair_same_snapshot_hard_freeze_final_send_block_count =
+                                    repair_same_snapshot_hard_freeze_final_send_block_count
+                                        .saturating_add(hard_freeze_blocked_count);
+                            }
+                            let filtered_ranges = hard_freeze_filtered_ranges;
                             if repair_snapshot_fully_covered_v1(
                                 repair_suppression_active_missing_snapshot.as_slice(),
                                 repair_suppression_sent_ranges_for_snapshot.as_slice(),
@@ -19302,6 +19505,11 @@ fn run_sender(
                                     Some(tail_repair_latest_ack_epoch);
                                 repair_suppression_unique_coverage_snapshot =
                                     repair_suppression_active_missing_snapshot.clone();
+                                repair_same_snapshot_hard_freeze.freeze(
+                                    tail_repair_latest_ack_epoch,
+                                    repair_suppression_active_missing_snapshot.as_slice(),
+                                    tx_count,
+                                );
                             }
                             selected_ranges = filtered_ranges;
                         }
@@ -20051,6 +20259,12 @@ fn run_sender(
         repair_sequence_sent_count.saturating_sub(repair_selected_unique_sequence_count);
     let repair_unique_coverage_snapshot_sequence_count =
         missing_ranges_count(repair_suppression_unique_coverage_snapshot.as_slice());
+    let repair_same_snapshot_hard_freeze_ack_epoch = repair_same_snapshot_hard_freeze.ack_epoch();
+    let repair_same_snapshot_hard_freeze_missing_digest = repair_same_snapshot_hard_freeze
+        .missing_digest()
+        .map(str::to_string);
+    let repair_same_snapshot_hard_freeze_snapshot_sequence_count =
+        repair_same_snapshot_hard_freeze.sequence_count();
     let repair_suppress_did_not_create_coverage_gap = repair_coverage_gap_count == 0;
     let sender_signoff_contract = signoff_contract_from_env_v1(network_profile);
     let receiver_done_ack_received = sender_ack_receiver_done_effective_latched;
@@ -20159,6 +20373,14 @@ fn run_sender(
             "repair_same_snapshot_unique_coverage_wait_count": repair_same_snapshot_unique_coverage_wait_count,
             "repair_unique_coverage_ack_epoch": repair_suppression_unique_coverage_ack_epoch,
             "repair_unique_coverage_snapshot_sequence_count": repair_unique_coverage_snapshot_sequence_count,
+            "repair_same_snapshot_hard_freeze_count": repair_same_snapshot_hard_freeze_count,
+            "repair_same_snapshot_hard_freeze_post_primary_count": repair_same_snapshot_hard_freeze_post_primary_count,
+            "repair_same_snapshot_hard_freeze_repair_pump_count": repair_same_snapshot_hard_freeze_repair_pump_count,
+            "repair_same_snapshot_hard_freeze_final_send_block_count": repair_same_snapshot_hard_freeze_final_send_block_count,
+            "repair_same_snapshot_hard_freeze_snapshot_change_count": repair_same_snapshot_hard_freeze_snapshot_change_count,
+            "repair_snapshot_key_ack_epoch": repair_same_snapshot_hard_freeze_ack_epoch,
+            "repair_snapshot_key_missing_digest": repair_same_snapshot_hard_freeze_missing_digest.clone(),
+            "repair_same_snapshot_hard_freeze_snapshot_sequence_count": repair_same_snapshot_hard_freeze_snapshot_sequence_count,
             "repair_retry_cooldown_ms": repair_latest_missing_retry_cadence_ms,
             "repair_same_snapshot_retry_cap": repair_same_snapshot_retry_cap,
             "repair_same_snapshot_retry_count": repair_suppression_retry_count_for_snapshot,
@@ -20736,6 +20958,14 @@ fn run_sender(
             "repair_same_snapshot_unique_coverage_wait_count": repair_same_snapshot_unique_coverage_wait_count,
             "repair_unique_coverage_ack_epoch": repair_suppression_unique_coverage_ack_epoch,
             "repair_unique_coverage_snapshot_sequence_count": repair_unique_coverage_snapshot_sequence_count,
+            "repair_same_snapshot_hard_freeze_count": repair_same_snapshot_hard_freeze_count,
+            "repair_same_snapshot_hard_freeze_post_primary_count": repair_same_snapshot_hard_freeze_post_primary_count,
+            "repair_same_snapshot_hard_freeze_repair_pump_count": repair_same_snapshot_hard_freeze_repair_pump_count,
+            "repair_same_snapshot_hard_freeze_final_send_block_count": repair_same_snapshot_hard_freeze_final_send_block_count,
+            "repair_same_snapshot_hard_freeze_snapshot_change_count": repair_same_snapshot_hard_freeze_snapshot_change_count,
+            "repair_snapshot_key_ack_epoch": repair_same_snapshot_hard_freeze_ack_epoch,
+            "repair_snapshot_key_missing_digest": repair_same_snapshot_hard_freeze_missing_digest.clone(),
+            "repair_same_snapshot_hard_freeze_snapshot_sequence_count": repair_same_snapshot_hard_freeze_snapshot_sequence_count,
             "repair_retry_cooldown_ms": repair_latest_missing_retry_cadence_ms,
             "repair_same_snapshot_retry_cap": repair_same_snapshot_retry_cap,
             "repair_same_snapshot_retry_count": repair_suppression_retry_count_for_snapshot,
