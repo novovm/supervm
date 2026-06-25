@@ -2728,6 +2728,33 @@ fn missing_digest_delta_v1(
     }
 }
 
+fn monotonic_shrink_retry_delta_v1(
+    previous_ranges: &[MissingRangeV1],
+    current_ranges: &[MissingRangeV1],
+    covered_ranges: &[MissingRangeV1],
+    expected: u64,
+    min_overlap_bps: u64,
+) -> Option<MissingDigestDeltaV1> {
+    let previous = normalize_missing_ranges(previous_ranges, expected);
+    let current = normalize_missing_ranges(current_ranges, expected);
+    if previous.is_empty() || current.is_empty() {
+        return None;
+    }
+    if !repair_snapshot_fully_covered_v1(previous.as_slice(), covered_ranges, expected) {
+        return None;
+    }
+    let delta = missing_digest_delta_v1(previous.as_slice(), current.as_slice(), expected);
+    if delta.added_count == 0
+        && delta.removed_count > 0
+        && delta.overlap_count > 0
+        && delta.overlap_ratio_bps >= min_overlap_bps
+    {
+        Some(delta)
+    } else {
+        None
+    }
+}
+
 fn percentile_nearest_rank_u64(values: &[u64], percentile: u64) -> u64 {
     if values.is_empty() {
         return 0;
@@ -7810,6 +7837,53 @@ mod novorudp_tests {
         assert_eq!(delta.jaccard_bps, 3_333);
         assert!(!delta.same_sequence_set);
         assert!(!delta.same_min_max);
+    }
+
+    #[test]
+    fn monotonic_shrink_retry_delta_requires_prior_coverage_and_no_added_sequences() {
+        let previous = vec![MissingRangeV1 {
+            start: 0,
+            end_inclusive: 99,
+        }];
+        let current = vec![MissingRangeV1 {
+            start: 0,
+            end_inclusive: 79,
+        }];
+        let covered = previous.clone();
+
+        let delta = monotonic_shrink_retry_delta_v1(
+            previous.as_slice(),
+            current.as_slice(),
+            covered.as_slice(),
+            480,
+            8_000,
+        )
+        .expect("high-overlap shrink with prior coverage should be gated");
+
+        assert_eq!(delta.added_count, 0);
+        assert_eq!(delta.removed_count, 20);
+        assert_eq!(delta.overlap_ratio_bps, 10_000);
+        assert!(monotonic_shrink_retry_delta_v1(
+            previous.as_slice(),
+            current.as_slice(),
+            &[],
+            480,
+            8_000,
+        )
+        .is_none());
+
+        let expanded = vec![MissingRangeV1 {
+            start: 0,
+            end_inclusive: 119,
+        }];
+        assert!(monotonic_shrink_retry_delta_v1(
+            previous.as_slice(),
+            expanded.as_slice(),
+            covered.as_slice(),
+            480,
+            8_000,
+        )
+        .is_none());
     }
 
     #[test]
@@ -17352,6 +17426,11 @@ fn run_sender(
         1_000,
     )?
     .max(1);
+    let repair_monotonic_shrink_min_overlap_bps = u64_env(
+        "NOVOVM_NOVORUDP_REPAIR_MONOTONIC_SHRINK_MIN_OVERLAP_BPS",
+        8_000,
+    )?
+    .min(10_000);
     let repair_same_snapshot_retry_cap =
         u64_env("NOVOVM_NOVORUDP_REPAIR_SAME_SNAPSHOT_RETRY_CAP", 1)?;
     let mut repair_suppression_last_retry_at: Option<Instant> = None;
@@ -17421,6 +17500,61 @@ fn run_sender(
     let mut repair_digest_changed_high_overlap_count = 0u64;
     let mut repair_digest_changed_last_overlap_ratio_bps = 0u64;
     let mut repair_digest_changed_last_jaccard_bps = 0u64;
+    let mut repair_monotonic_shrink_detected_count = 0u64;
+    let mut repair_monotonic_shrink_suppressed_count = 0u64;
+    let mut repair_monotonic_shrink_controlled_retry_count = 0u64;
+    let mut repair_monotonic_shrink_added_sequence_count = 0u64;
+    let mut repair_monotonic_shrink_removed_sequence_count = 0u64;
+    let mut repair_monotonic_shrink_overlap_bps_sum = 0u64;
+    let mut repair_monotonic_shrink_event_count = 0u64;
+    let mut repair_monotonic_shrink_wait_ack_count = 0u64;
+    let mut repair_monotonic_shrink_timeout_escape_count = 0u64;
+    let mut repair_monotonic_shrink_last_overlap_bps = 0u64;
+    macro_rules! monotonic_shrink_retry_blocked {
+        ($current_ranges:expr) => {{
+            let escape_retry_due = repair_same_snapshot_hard_freeze.escape_retry_due(
+                Duration::from_millis(repair_missing_digest_freeze_escape_after_ms),
+            );
+            let shrink_delta = monotonic_shrink_retry_delta_v1(
+                repair_suppression_active_missing_snapshot.as_slice(),
+                $current_ranges,
+                repair_suppression_sent_ranges_for_snapshot.as_slice(),
+                tx_count,
+                repair_monotonic_shrink_min_overlap_bps,
+            );
+            if let Some(delta) = shrink_delta {
+                let current_count = missing_ranges_count($current_ranges);
+                repair_monotonic_shrink_detected_count =
+                    repair_monotonic_shrink_detected_count.saturating_add(current_count);
+                repair_monotonic_shrink_event_count =
+                    repair_monotonic_shrink_event_count.saturating_add(1);
+                repair_monotonic_shrink_added_sequence_count =
+                    repair_monotonic_shrink_added_sequence_count.saturating_add(delta.added_count);
+                repair_monotonic_shrink_removed_sequence_count =
+                    repair_monotonic_shrink_removed_sequence_count
+                        .saturating_add(delta.removed_count);
+                repair_monotonic_shrink_overlap_bps_sum =
+                    repair_monotonic_shrink_overlap_bps_sum.saturating_add(delta.overlap_ratio_bps);
+                repair_monotonic_shrink_last_overlap_bps = delta.overlap_ratio_bps;
+                if escape_retry_due {
+                    repair_monotonic_shrink_controlled_retry_count =
+                        repair_monotonic_shrink_controlled_retry_count
+                            .saturating_add(current_count);
+                    repair_monotonic_shrink_timeout_escape_count =
+                        repair_monotonic_shrink_timeout_escape_count.saturating_add(1);
+                    false
+                } else {
+                    repair_monotonic_shrink_suppressed_count =
+                        repair_monotonic_shrink_suppressed_count.saturating_add(current_count);
+                    repair_monotonic_shrink_wait_ack_count =
+                        repair_monotonic_shrink_wait_ack_count.saturating_add(1);
+                    true
+                }
+            } else {
+                false
+            }
+        }};
+    }
     macro_rules! record_repair_selection_gating_delta {
         ($selected_ranges:expr, $snapshot_ranges:expr, $ack_epoch:expr, $path:expr, $base_retry_due:expr, $retry_due:expr, $unique_coverage_blocks_retry:expr) => {{
             let selected_count = missing_ranges_count($selected_ranges);
@@ -18604,7 +18738,11 @@ fn run_sender(
                             repair_suppression_unique_coverage_ack_epoch,
                             tx_count,
                         );
-                    let retry_due = base_retry_due && !unique_coverage_blocks_retry;
+                    let monotonic_shrink_blocks_retry =
+                        monotonic_shrink_retry_blocked!(normalized_latest_missing.as_slice());
+                    let retry_due = base_retry_due
+                        && !unique_coverage_blocks_retry
+                        && !monotonic_shrink_blocks_retry;
                     record_repair_selection_gating_delta!(
                         selected_ranges.as_slice(),
                         normalized_latest_missing.as_slice(),
@@ -18913,7 +19051,11 @@ fn run_sender(
                             repair_suppression_unique_coverage_ack_epoch,
                             tx_count,
                         );
-                    let retry_due = base_retry_due && !unique_coverage_blocks_retry;
+                    let monotonic_shrink_blocks_retry =
+                        monotonic_shrink_retry_blocked!(normalized_latest_missing.as_slice());
+                    let retry_due = base_retry_due
+                        && !unique_coverage_blocks_retry
+                        && !monotonic_shrink_blocks_retry;
                     record_repair_selection_gating_delta!(
                         selected_ranges.as_slice(),
                         normalized_latest_missing.as_slice(),
@@ -19252,7 +19394,11 @@ fn run_sender(
                             repair_suppression_unique_coverage_ack_epoch,
                             tx_count,
                         );
-                    let retry_due = base_retry_due && !unique_coverage_blocks_retry;
+                    let monotonic_shrink_blocks_retry =
+                        monotonic_shrink_retry_blocked!(normalized_latest_missing.as_slice());
+                    let retry_due = base_retry_due
+                        && !unique_coverage_blocks_retry
+                        && !monotonic_shrink_blocks_retry;
                     record_repair_selection_gating_delta!(
                         gap_ranges_to_send.as_slice(),
                         normalized_latest_missing.as_slice(),
@@ -19980,7 +20126,12 @@ fn run_sender(
                                     repair_suppression_unique_coverage_ack_epoch,
                                     tx_count,
                                 );
-                            let retry_due = base_retry_due && !unique_coverage_blocks_retry;
+                            let monotonic_shrink_blocks_retry = monotonic_shrink_retry_blocked!(
+                                normalized_latest_missing.as_slice()
+                            );
+                            let retry_due = base_retry_due
+                                && !unique_coverage_blocks_retry
+                                && !monotonic_shrink_blocks_retry;
                             record_repair_selection_gating_delta!(
                                 selected_ranges.as_slice(),
                                 normalized_latest_missing.as_slice(),
@@ -20887,6 +21038,11 @@ fn run_sender(
     } else {
         repair_digest_changed_jaccard_bps_sum / repair_digest_changed_event_count
     };
+    let repair_monotonic_shrink_overlap_bps = if repair_monotonic_shrink_event_count == 0 {
+        0
+    } else {
+        repair_monotonic_shrink_overlap_bps_sum / repair_monotonic_shrink_event_count
+    };
     let repair_suppress_did_not_create_coverage_gap = repair_coverage_gap_count == 0;
     let sender_signoff_contract = signoff_contract_from_env_v1(network_profile);
     let receiver_done_ack_received = sender_ack_receiver_done_effective_latched;
@@ -21057,6 +21213,17 @@ fn run_sender(
             "repair_digest_changed_last_jaccard_bps": repair_digest_changed_last_jaccard_bps,
             "repair_digest_changed_high_overlap_count": repair_digest_changed_high_overlap_count,
             "repair_digest_changed_event_count": repair_digest_changed_event_count,
+            "repair_monotonic_shrink_min_overlap_bps": repair_monotonic_shrink_min_overlap_bps,
+            "repair_monotonic_shrink_detected_count": repair_monotonic_shrink_detected_count,
+            "repair_monotonic_shrink_suppressed_count": repair_monotonic_shrink_suppressed_count,
+            "repair_monotonic_shrink_controlled_retry_count": repair_monotonic_shrink_controlled_retry_count,
+            "repair_monotonic_shrink_added_sequence_count": repair_monotonic_shrink_added_sequence_count,
+            "repair_monotonic_shrink_removed_sequence_count": repair_monotonic_shrink_removed_sequence_count,
+            "repair_monotonic_shrink_overlap_bps": repair_monotonic_shrink_overlap_bps,
+            "repair_monotonic_shrink_last_overlap_bps": repair_monotonic_shrink_last_overlap_bps,
+            "repair_monotonic_shrink_wait_ack_count": repair_monotonic_shrink_wait_ack_count,
+            "repair_monotonic_shrink_timeout_escape_count": repair_monotonic_shrink_timeout_escape_count,
+            "repair_monotonic_shrink_event_count": repair_monotonic_shrink_event_count,
             "repair_snapshot_key_ack_epoch": repair_same_snapshot_hard_freeze_ack_epoch,
             "repair_snapshot_key_missing_digest": repair_same_snapshot_hard_freeze_missing_digest.clone(),
             "repair_same_snapshot_hard_freeze_snapshot_sequence_count": repair_same_snapshot_hard_freeze_snapshot_sequence_count,
@@ -21699,6 +21866,17 @@ fn run_sender(
             "repair_digest_changed_last_jaccard_bps": repair_digest_changed_last_jaccard_bps,
             "repair_digest_changed_high_overlap_count": repair_digest_changed_high_overlap_count,
             "repair_digest_changed_event_count": repair_digest_changed_event_count,
+            "repair_monotonic_shrink_min_overlap_bps": repair_monotonic_shrink_min_overlap_bps,
+            "repair_monotonic_shrink_detected_count": repair_monotonic_shrink_detected_count,
+            "repair_monotonic_shrink_suppressed_count": repair_monotonic_shrink_suppressed_count,
+            "repair_monotonic_shrink_controlled_retry_count": repair_monotonic_shrink_controlled_retry_count,
+            "repair_monotonic_shrink_added_sequence_count": repair_monotonic_shrink_added_sequence_count,
+            "repair_monotonic_shrink_removed_sequence_count": repair_monotonic_shrink_removed_sequence_count,
+            "repair_monotonic_shrink_overlap_bps": repair_monotonic_shrink_overlap_bps,
+            "repair_monotonic_shrink_last_overlap_bps": repair_monotonic_shrink_last_overlap_bps,
+            "repair_monotonic_shrink_wait_ack_count": repair_monotonic_shrink_wait_ack_count,
+            "repair_monotonic_shrink_timeout_escape_count": repair_monotonic_shrink_timeout_escape_count,
+            "repair_monotonic_shrink_event_count": repair_monotonic_shrink_event_count,
             "repair_snapshot_key_ack_epoch": repair_same_snapshot_hard_freeze_ack_epoch,
             "repair_snapshot_key_missing_digest": repair_same_snapshot_hard_freeze_missing_digest.clone(),
             "repair_same_snapshot_hard_freeze_snapshot_sequence_count": repair_same_snapshot_hard_freeze_snapshot_sequence_count,
