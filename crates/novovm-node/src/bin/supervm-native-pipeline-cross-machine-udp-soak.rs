@@ -6914,9 +6914,16 @@ mod novorudp_tests {
             "repair_sequence_accepted_ranges_sample": [
                 {"start": 160, "end_inclusive": 170, "count": 11}
             ],
+            "repair_sequence_enqueued_ranges_sample": [
+                {"start": 170, "end_inclusive": 190, "count": 21}
+            ],
             "repair_sequence_admitted_to_aoem_ranges_sample": [
                 {"start": 180, "end_inclusive": 190, "count": 11}
             ],
+            "ledger_final_missing_actual_batch_ranges_sample": [
+                {"start": 185, "end_inclusive": 190, "count": 6}
+            ],
+            "ledger_completed_ranges_sample": [],
             "repair_sequence_duplicate_ranges_sample": [
                 {"start": 240, "end_inclusive": 249, "count": 10}
             ],
@@ -6949,6 +6956,34 @@ mod novorudp_tests {
         assert_eq!(
             sample["receiver_repair_duplicate_ranges_count"].as_u64(),
             Some(10)
+        );
+        assert_eq!(
+            sample["receiver_repair_lifecycle_blocked_stage"].as_str(),
+            Some("repair_not_ledger_closed_for_final_missing")
+        );
+        assert_eq!(
+            sample["receiver_repair_received_for_final_missing_count"].as_u64(),
+            Some(50)
+        );
+        assert_eq!(
+            sample["receiver_repair_accepted_for_final_missing_count"].as_u64(),
+            Some(11)
+        );
+        assert_eq!(
+            sample["receiver_repair_enqueued_for_final_missing_count"].as_u64(),
+            Some(21)
+        );
+        assert_eq!(
+            sample["receiver_repair_aoem_submitted_for_final_missing_count"].as_u64(),
+            Some(11)
+        );
+        assert_eq!(
+            sample["receiver_repair_aoem_executed_for_final_missing_count"].as_u64(),
+            Some(6)
+        );
+        assert_eq!(
+            sample["receiver_repair_ledger_closed_for_final_missing_count"].as_u64(),
+            Some(0)
         );
         assert_eq!(
             sample["repair_duplicate_waste_ratio_bps"].as_u64(),
@@ -13637,11 +13672,14 @@ fn write_synthetic_receiver_failure_report(
     });
     if let Some(validation) = report.get_mut("validation") {
         apply_ledger_receipt_completion_fields_v1(validation, ledger_receipt_source);
+        annotate_receiver_repair_lifecycle_close_v1(validation);
     }
     if let Some(receiver_summary) = report.get_mut("receiver_summary") {
         apply_ledger_receipt_completion_fields_v1(receiver_summary, ledger_receipt_source);
+        annotate_receiver_repair_lifecycle_close_v1(receiver_summary);
     }
     apply_ledger_receipt_completion_fields_v1(&mut report, ledger_receipt_source);
+    annotate_receiver_repair_lifecycle_close_v1(&mut report);
     let ledger_durable_missing_count = ledger_receipt_source
         .map(|sample| summary_u64(sample, "ledger_durable_missing_count"))
         .unwrap_or_default();
@@ -15239,6 +15277,136 @@ fn annotate_receiver_repair_range_coverage_v1(sample: &mut Value) {
     sample["receiver_repair_duplicate_ranges_count"] = serde_json::json!(duplicate_sequence_count);
     sample["repair_duplicate_waste_ratio"] = serde_json::json!(duplicate_waste_ratio_bps);
     sample["repair_duplicate_waste_ratio_bps"] = serde_json::json!(duplicate_waste_ratio_bps);
+    annotate_receiver_repair_lifecycle_close_v1(sample);
+}
+
+fn annotate_receiver_repair_lifecycle_close_v1(sample: &mut Value) {
+    let final_missing = missing_ranges_from_json(
+        sample
+            .get("ledger_durable_missing_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+    let repair_received = missing_ranges_from_json(
+        sample
+            .get("repair_sequence_received_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+    let repair_accepted = missing_ranges_from_json(
+        sample
+            .get("repair_sequence_accepted_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+    let repair_enqueued = missing_ranges_from_json(
+        sample
+            .get("repair_sequence_enqueued_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+    let repair_admitted = missing_ranges_from_json(
+        sample
+            .get("repair_sequence_admitted_to_aoem_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+    let ledger_actual_batch = missing_ranges_from_json(
+        sample
+            .get("ledger_final_missing_actual_batch_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+    let ledger_completed = missing_ranges_from_json(
+        sample
+            .get("ledger_completed_ranges_sample")
+            .unwrap_or(&Value::Null),
+    );
+
+    let final_missing_count_from_ranges = missing_ranges_count(final_missing.as_slice());
+    let final_missing_count =
+        sample_u64(sample, "ledger_durable_missing_count").max(final_missing_count_from_ranges);
+    let received =
+        missing_ranges_overlap_count(final_missing.as_slice(), repair_received.as_slice());
+    let accepted =
+        missing_ranges_overlap_count(final_missing.as_slice(), repair_accepted.as_slice());
+    let enqueued =
+        missing_ranges_overlap_count(final_missing.as_slice(), repair_enqueued.as_slice());
+    let admitted =
+        missing_ranges_overlap_count(final_missing.as_slice(), repair_admitted.as_slice());
+    let actual_batch =
+        missing_ranges_overlap_count(final_missing.as_slice(), ledger_actual_batch.as_slice());
+    let ledger_closed =
+        missing_ranges_overlap_count(final_missing.as_slice(), ledger_completed.as_slice());
+    let (final_missing_min, final_missing_max) = missing_ranges_bounds(final_missing.as_slice());
+    let range_sample_complete =
+        final_missing_count == 0 || final_missing_count_from_ranges >= final_missing_count;
+    let queue_pending_last = sample_u64(sample, "queue_pending_last");
+    let queue_max_depth = queue_pending_last
+        .max(sample_u64(sample, "queue_active_pending_last"))
+        .max(sample_u64(sample, "receiver_pending_active_count"));
+    let worker_drain_count = sample_u64(sample, "receiver_pending_selected_count")
+        .max(sample_u64(sample, "queue_admitted_total"));
+    let worker_error_count = sample_u64(sample, "queue_rejected_total")
+        .saturating_add(sample_u64(sample, "repair_sequence_rejected_count"));
+
+    let blocked_stage = if final_missing_count == 0 {
+        "closed"
+    } else if final_missing.is_empty() {
+        "final_missing_ranges_unavailable"
+    } else if received == 0 {
+        "repair_not_received_for_final_missing"
+    } else if accepted == 0 {
+        "repair_not_accepted_for_final_missing"
+    } else if enqueued == 0 {
+        "repair_not_enqueued_for_final_missing"
+    } else if admitted == 0 {
+        "repair_not_dequeued_or_submitted_to_aoem"
+    } else if actual_batch == 0 {
+        "repair_not_aoem_executed_for_final_missing"
+    } else if ledger_closed == 0 {
+        "repair_not_ledger_closed_for_final_missing"
+    } else {
+        "missing_index_not_removed_or_receiver_done_not_reached"
+    };
+
+    sample["receiver_repair_lifecycle_attribution_available"] =
+        serde_json::json!(!final_missing.is_empty() || final_missing_count == 0);
+    sample["receiver_repair_lifecycle_attribution_source"] =
+        serde_json::json!("ledger_durable_missing_ranges_sample");
+    sample["receiver_repair_lifecycle_range_sample_complete"] =
+        serde_json::json!(range_sample_complete);
+    sample["receiver_repair_lifecycle_blocked_stage"] = serde_json::json!(blocked_stage);
+    sample["receiver_repair_target_missing_intersection_count"] =
+        serde_json::json!(final_missing_count_from_ranges);
+    sample["receiver_repair_final_missing_count"] = serde_json::json!(final_missing_count);
+    sample["receiver_final_missing_min_sequence"] = final_missing_min
+        .map(|value| serde_json::json!(value))
+        .unwrap_or(Value::Null);
+    sample["receiver_final_missing_max_sequence"] = final_missing_max
+        .map(|value| serde_json::json!(value))
+        .unwrap_or(Value::Null);
+    sample["receiver_final_missing_sample_sequences"] =
+        missing_ranges_to_json(final_missing.as_slice(), 16);
+    sample["receiver_repair_received_for_final_missing_count"] = serde_json::json!(received);
+    sample["receiver_repair_accepted_for_final_missing_count"] = serde_json::json!(accepted);
+    sample["receiver_repair_enqueued_for_final_missing_count"] = serde_json::json!(enqueued);
+    sample["receiver_repair_dequeued_for_final_missing_count"] = serde_json::json!(admitted);
+    sample["receiver_repair_aoem_submitted_for_final_missing_count"] = serde_json::json!(admitted);
+    sample["receiver_repair_aoem_executed_for_final_missing_count"] =
+        serde_json::json!(actual_batch);
+    sample["receiver_repair_canonical_included_for_final_missing_count"] =
+        serde_json::json!(ledger_closed);
+    sample["receiver_repair_ledger_closed_for_final_missing_count"] =
+        serde_json::json!(ledger_closed);
+    sample["receiver_repair_missing_removed_for_final_missing_count"] =
+        serde_json::json!(ledger_closed);
+    sample["receiver_repair_queue_pending_last"] = serde_json::json!(queue_pending_last);
+    sample["receiver_repair_queue_max_depth"] = serde_json::json!(queue_max_depth);
+    sample["receiver_repair_queue_dropped_count"] =
+        serde_json::json!(sample_u64(sample, "queue_dropped_total"));
+    sample["receiver_repair_worker_drain_count"] = serde_json::json!(worker_drain_count);
+    sample["receiver_repair_worker_idle_count"] =
+        serde_json::json!(if queue_pending_last > 0 && worker_drain_count == 0 {
+            1u64
+        } else {
+            0u64
+        });
+    sample["receiver_repair_worker_error_count"] = serde_json::json!(worker_error_count);
 }
 
 fn diagnostics_summary_sample(
@@ -23502,7 +23670,7 @@ fn compact_probe_for_report(mut probe: Value) -> Value {
 }
 
 fn compact_receiver_summary_for_report(summary: Value) -> Value {
-    serde_json::json!({
+    let mut out = serde_json::json!({
         "accepted": summary.get("accepted").cloned().unwrap_or(Value::Null),
         "execution_kernel": summary.get("execution_kernel").cloned().unwrap_or(Value::Null),
         "aoem_concurrency_owner": summary.get("aoem_concurrency_owner").cloned().unwrap_or(Value::Null),
@@ -23842,7 +24010,9 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "tick_result_omitted": summary.get("tick_result").is_some(),
         "lifecycle_omitted": summary.get("lifecycle").is_some(),
         "raw_runtime_summary_omitted": true,
-    })
+    });
+    annotate_receiver_repair_lifecycle_close_v1(&mut out);
+    out
 }
 
 fn compact_sender_report_for_report(mut report: Value) -> Value {
