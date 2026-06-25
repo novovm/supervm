@@ -38679,6 +38679,29 @@ fn require_summary_min(summary: &serde_json::Value, field: &str, min: u64) -> Re
     Ok(())
 }
 
+fn native_execution_pipeline_earliest_durable_missing_sequence_v1(
+    ranges: &serde_json::Value,
+) -> Option<u64> {
+    ranges
+        .as_array()?
+        .iter()
+        .filter_map(|range| range.get("start").and_then(serde_json::Value::as_u64))
+        .min()
+}
+
+fn native_execution_pipeline_repair_final_missing_sequence_start_v1(
+    aggregate: &NativeExecutionPipelineAggregateV1,
+) -> u64 {
+    let progress_start = aggregate
+        .aoem_executed_total
+        .max(aggregate.included_canonical_total);
+    native_execution_pipeline_earliest_durable_missing_sequence_v1(
+        &aggregate.ledger_durable_missing_ranges_sample,
+    )
+    .map(|earliest| progress_start.min(earliest))
+    .unwrap_or(progress_start)
+}
+
 #[cfg(test)]
 mod native_execution_pipeline_tests {
     use super::*;
@@ -39347,6 +39370,35 @@ mod native_execution_pipeline_tests {
         assert_eq!(
             summary["included_canonical_total_source"].as_str(),
             Some("canonical_projection_tx_count_total")
+        );
+    }
+
+    #[test]
+    fn native_execution_pipeline_repair_start_uses_earliest_durable_missing_before_progress() {
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+        aggregate.aoem_executed_total = 9_410;
+        aggregate.included_canonical_total = 9_410;
+        aggregate.ledger_durable_missing_ranges_sample = serde_json::json!([
+            {"start": 744u64, "end_inclusive": 751u64, "count": 8u64},
+            {"start": 1_120u64, "end_inclusive": 1_127u64, "count": 8u64}
+        ]);
+
+        assert_eq!(
+            native_execution_pipeline_repair_final_missing_sequence_start_v1(&aggregate),
+            744
+        );
+    }
+
+    #[test]
+    fn native_execution_pipeline_repair_start_uses_progress_without_durable_missing() {
+        let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+        aggregate.aoem_executed_total = 9_410;
+        aggregate.included_canonical_total = 9_500;
+        aggregate.ledger_durable_missing_ranges_sample = serde_json::json!([]);
+
+        assert_eq!(
+            native_execution_pipeline_repair_final_missing_sequence_start_v1(&aggregate),
+            9_500
         );
     }
 
@@ -40647,9 +40699,8 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         let broadcast_drive_out = broadcast_drive.drive_once();
         let mut params = native_execution_tick_params_from_env_v1()?;
         if let Some(obj) = params.as_object_mut() {
-            let repair_final_missing_sequence_start = aggregate
-                .aoem_executed_total
-                .max(aggregate.included_canonical_total);
+            let repair_final_missing_sequence_start =
+                native_execution_pipeline_repair_final_missing_sequence_start_v1(&aggregate);
             obj.insert(
                 "repair_final_missing_sequence_start".to_string(),
                 serde_json::json!(repair_final_missing_sequence_start),
