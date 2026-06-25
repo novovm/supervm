@@ -2668,6 +2668,66 @@ fn missing_ranges_digest_v1(ranges: &[MissingRangeV1], expected: u64) -> String 
     digest.finish_hex()
 }
 
+#[derive(Debug, Clone, Copy)]
+struct MissingDigestDeltaV1 {
+    previous_count: u64,
+    current_count: u64,
+    added_count: u64,
+    removed_count: u64,
+    overlap_count: u64,
+    overlap_ratio_bps: u64,
+    jaccard_bps: u64,
+    same_range_set: bool,
+    same_sequence_set: bool,
+    same_min_max: bool,
+}
+
+fn missing_digest_delta_v1(
+    previous_ranges: &[MissingRangeV1],
+    current_ranges: &[MissingRangeV1],
+    expected: u64,
+) -> MissingDigestDeltaV1 {
+    let previous = normalize_missing_ranges(previous_ranges, expected);
+    let current = normalize_missing_ranges(current_ranges, expected);
+    let previous_count = missing_ranges_count(previous.as_slice());
+    let current_count = missing_ranges_count(current.as_slice());
+    let added_count = missing_ranges_count(
+        missing_ranges_subtract(current.as_slice(), previous.as_slice(), expected).as_slice(),
+    );
+    let removed_count = missing_ranges_count(
+        missing_ranges_subtract(previous.as_slice(), current.as_slice(), expected).as_slice(),
+    );
+    let overlap_count = missing_ranges_overlap_count(previous.as_slice(), current.as_slice());
+    let overlap_denominator = current_count.max(1);
+    let overlap_ratio_bps =
+        overlap_count.min(current_count).saturating_mul(10_000) / overlap_denominator;
+    let union_count = previous_count
+        .saturating_add(current_count)
+        .saturating_sub(overlap_count);
+    let jaccard_bps = if union_count == 0 {
+        10_000
+    } else {
+        overlap_count.saturating_mul(10_000) / union_count
+    };
+    let same_range_set = previous == current;
+    let same_sequence_set = added_count == 0 && removed_count == 0;
+    let same_min_max =
+        missing_ranges_bounds(previous.as_slice()) == missing_ranges_bounds(current.as_slice());
+
+    MissingDigestDeltaV1 {
+        previous_count,
+        current_count,
+        added_count,
+        removed_count,
+        overlap_count,
+        overlap_ratio_bps,
+        jaccard_bps,
+        same_range_set,
+        same_sequence_set,
+        same_min_max,
+    }
+}
+
 fn percentile_nearest_rank_u64(values: &[u64], percentile: u64) -> u64 {
     if values.is_empty() {
         return 0;
@@ -7699,6 +7759,57 @@ mod novorudp_tests {
         assert_eq!(percentile_nearest_rank_u64(values.as_slice(), 90), 50);
         assert_eq!(percentile_nearest_rank_u64(values.as_slice(), 99), 50);
         assert_eq!(percentile_nearest_rank_u64(&[], 50), 0);
+    }
+
+    #[test]
+    fn missing_digest_delta_classifies_canonical_same_sequence_set() {
+        let previous = vec![
+            MissingRangeV1 {
+                start: 10,
+                end_inclusive: 19,
+            },
+            MissingRangeV1 {
+                start: 20,
+                end_inclusive: 29,
+            },
+        ];
+        let current = vec![MissingRangeV1 {
+            start: 10,
+            end_inclusive: 29,
+        }];
+
+        let delta = missing_digest_delta_v1(previous.as_slice(), current.as_slice(), 100);
+
+        assert_eq!(delta.added_count, 0);
+        assert_eq!(delta.removed_count, 0);
+        assert_eq!(delta.overlap_count, 20);
+        assert_eq!(delta.jaccard_bps, 10_000);
+        assert!(delta.same_range_set);
+        assert!(delta.same_sequence_set);
+    }
+
+    #[test]
+    fn missing_digest_delta_reports_real_missing_change() {
+        let previous = vec![MissingRangeV1 {
+            start: 10,
+            end_inclusive: 29,
+        }];
+        let current = vec![MissingRangeV1 {
+            start: 20,
+            end_inclusive: 39,
+        }];
+
+        let delta = missing_digest_delta_v1(previous.as_slice(), current.as_slice(), 100);
+
+        assert_eq!(delta.previous_count, 20);
+        assert_eq!(delta.current_count, 20);
+        assert_eq!(delta.added_count, 10);
+        assert_eq!(delta.removed_count, 10);
+        assert_eq!(delta.overlap_count, 10);
+        assert_eq!(delta.overlap_ratio_bps, 5_000);
+        assert_eq!(delta.jaccard_bps, 3_333);
+        assert!(!delta.same_sequence_set);
+        assert!(!delta.same_min_max);
     }
 
     #[test]
@@ -17289,7 +17400,27 @@ fn run_sender(
     let mut repair_digest_identity_changed_count = 0u64;
     let mut repair_digest_identity_stable_count = 0u64;
     let mut repair_last_selection_digest: Option<String> = None;
+    let mut repair_last_selection_ranges = Vec::<MissingRangeV1>::new();
     let mut repair_last_selection_ack_epoch: Option<u64> = None;
+    let mut repair_digest_changed_after_coverage_count = 0u64;
+    let mut repair_digest_changed_same_missing_count = 0u64;
+    let mut repair_digest_changed_same_min_max_count = 0u64;
+    let mut repair_digest_changed_same_range_set_count = 0u64;
+    let mut repair_digest_changed_same_sequence_set_count = 0u64;
+    let mut repair_digest_changed_order_only_count = 0u64;
+    let mut repair_digest_changed_metadata_only_count = 0u64;
+    let mut repair_digest_changed_real_missing_delta_count = 0u64;
+    let mut repair_digest_changed_previous_sequence_count = 0u64;
+    let mut repair_digest_changed_current_sequence_count = 0u64;
+    let mut repair_digest_changed_added_sequence_count = 0u64;
+    let mut repair_digest_changed_removed_sequence_count = 0u64;
+    let mut repair_digest_changed_overlap_sequence_count = 0u64;
+    let mut repair_digest_changed_overlap_ratio_bps_sum = 0u64;
+    let mut repair_digest_changed_jaccard_bps_sum = 0u64;
+    let mut repair_digest_changed_event_count = 0u64;
+    let mut repair_digest_changed_high_overlap_count = 0u64;
+    let mut repair_digest_changed_last_overlap_ratio_bps = 0u64;
+    let mut repair_digest_changed_last_jaccard_bps = 0u64;
     macro_rules! record_repair_selection_gating_delta {
         ($selected_ranges:expr, $snapshot_ranges:expr, $ack_epoch:expr, $path:expr, $base_retry_due:expr, $retry_due:expr, $unique_coverage_blocks_retry:expr) => {{
             let selected_count = missing_ranges_count($selected_ranges);
@@ -17297,6 +17428,7 @@ fn run_sender(
                 repair_selected_missing_total =
                     repair_selected_missing_total.saturating_add(selected_count);
                 repair_selected_missing_per_round_counts.push(selected_count);
+                let normalized_snapshot = normalize_missing_ranges($snapshot_ranges, tx_count);
                 let digest = missing_ranges_digest_v1($snapshot_ranges, tx_count);
                 if repair_last_selection_digest.as_deref() == Some(digest.as_str()) {
                     repair_digest_identity_stable_count =
@@ -17308,7 +17440,89 @@ fn run_sender(
                 } else {
                     repair_digest_identity_changed_count =
                         repair_digest_identity_changed_count.saturating_add(selected_count);
+                    repair_digest_changed_event_count =
+                        repair_digest_changed_event_count.saturating_add(1);
+                    if repair_snapshot_fully_covered_v1(
+                        normalized_snapshot.as_slice(),
+                        repair_suppression_unique_coverage_snapshot.as_slice(),
+                        tx_count,
+                    ) || $unique_coverage_blocks_retry
+                    {
+                        repair_digest_changed_after_coverage_count =
+                            repair_digest_changed_after_coverage_count
+                                .saturating_add(selected_count);
+                    }
+                    if repair_last_selection_digest.is_some() {
+                        let delta = missing_digest_delta_v1(
+                            repair_last_selection_ranges.as_slice(),
+                            normalized_snapshot.as_slice(),
+                            tx_count,
+                        );
+                        repair_digest_changed_previous_sequence_count =
+                            repair_digest_changed_previous_sequence_count
+                                .saturating_add(delta.previous_count);
+                        repair_digest_changed_current_sequence_count =
+                            repair_digest_changed_current_sequence_count
+                                .saturating_add(delta.current_count);
+                        repair_digest_changed_added_sequence_count =
+                            repair_digest_changed_added_sequence_count
+                                .saturating_add(delta.added_count);
+                        repair_digest_changed_removed_sequence_count =
+                            repair_digest_changed_removed_sequence_count
+                                .saturating_add(delta.removed_count);
+                        repair_digest_changed_overlap_sequence_count =
+                            repair_digest_changed_overlap_sequence_count
+                                .saturating_add(delta.overlap_count);
+                        repair_digest_changed_overlap_ratio_bps_sum =
+                            repair_digest_changed_overlap_ratio_bps_sum
+                                .saturating_add(delta.overlap_ratio_bps);
+                        repair_digest_changed_jaccard_bps_sum =
+                            repair_digest_changed_jaccard_bps_sum.saturating_add(delta.jaccard_bps);
+                        repair_digest_changed_last_overlap_ratio_bps = delta.overlap_ratio_bps;
+                        repair_digest_changed_last_jaccard_bps = delta.jaccard_bps;
+                        if delta.same_range_set {
+                            repair_digest_changed_same_range_set_count =
+                                repair_digest_changed_same_range_set_count
+                                    .saturating_add(selected_count);
+                        }
+                        if delta.same_sequence_set {
+                            repair_digest_changed_same_sequence_set_count =
+                                repair_digest_changed_same_sequence_set_count
+                                    .saturating_add(selected_count);
+                            repair_digest_changed_same_missing_count =
+                                repair_digest_changed_same_missing_count
+                                    .saturating_add(selected_count);
+                        }
+                        if delta.same_min_max {
+                            repair_digest_changed_same_min_max_count =
+                                repair_digest_changed_same_min_max_count
+                                    .saturating_add(selected_count);
+                        }
+                        if delta.same_sequence_set && !delta.same_range_set {
+                            repair_digest_changed_order_only_count =
+                                repair_digest_changed_order_only_count
+                                    .saturating_add(selected_count);
+                        }
+                        if delta.same_sequence_set
+                            && repair_last_selection_ack_epoch != Some($ack_epoch)
+                        {
+                            repair_digest_changed_metadata_only_count =
+                                repair_digest_changed_metadata_only_count
+                                    .saturating_add(selected_count);
+                        }
+                        if delta.added_count > 0 || delta.removed_count > 0 {
+                            repair_digest_changed_real_missing_delta_count =
+                                repair_digest_changed_real_missing_delta_count
+                                    .saturating_add(selected_count);
+                        }
+                        if delta.jaccard_bps >= 9_000 {
+                            repair_digest_changed_high_overlap_count =
+                                repair_digest_changed_high_overlap_count
+                                    .saturating_add(selected_count);
+                        }
+                    }
                     repair_last_selection_digest = Some(digest);
+                    repair_last_selection_ranges = normalized_snapshot;
                 }
                 repair_last_selection_ack_epoch = Some($ack_epoch);
 
@@ -20663,6 +20877,16 @@ fn run_sender(
         percentile_nearest_rank_u64(repair_selected_missing_per_round_counts.as_slice(), 90);
     let repair_selected_missing_per_round_p99 =
         percentile_nearest_rank_u64(repair_selected_missing_per_round_counts.as_slice(), 99);
+    let repair_digest_changed_overlap_ratio_bps = if repair_digest_changed_event_count == 0 {
+        0
+    } else {
+        repair_digest_changed_overlap_ratio_bps_sum / repair_digest_changed_event_count
+    };
+    let repair_digest_changed_jaccard_bps = if repair_digest_changed_event_count == 0 {
+        0
+    } else {
+        repair_digest_changed_jaccard_bps_sum / repair_digest_changed_event_count
+    };
     let repair_suppress_did_not_create_coverage_gap = repair_coverage_gap_count == 0;
     let sender_signoff_contract = signoff_contract_from_env_v1(network_profile);
     let receiver_done_ack_received = sender_ack_receiver_done_effective_latched;
@@ -20814,6 +21038,25 @@ fn run_sender(
             "repair_ack_refresh_before_retry_count": repair_ack_refresh_before_retry_count,
             "repair_digest_identity_changed_count": repair_digest_identity_changed_count,
             "repair_digest_identity_stable_count": repair_digest_identity_stable_count,
+            "repair_digest_changed_after_coverage_count": repair_digest_changed_after_coverage_count,
+            "repair_digest_changed_same_missing_count": repair_digest_changed_same_missing_count,
+            "repair_digest_changed_same_min_max_count": repair_digest_changed_same_min_max_count,
+            "repair_digest_changed_same_range_set_count": repair_digest_changed_same_range_set_count,
+            "repair_digest_changed_same_sequence_set_count": repair_digest_changed_same_sequence_set_count,
+            "repair_digest_changed_order_only_count": repair_digest_changed_order_only_count,
+            "repair_digest_changed_metadata_only_count": repair_digest_changed_metadata_only_count,
+            "repair_digest_changed_real_missing_delta_count": repair_digest_changed_real_missing_delta_count,
+            "repair_digest_changed_previous_sequence_count": repair_digest_changed_previous_sequence_count,
+            "repair_digest_changed_current_sequence_count": repair_digest_changed_current_sequence_count,
+            "repair_digest_changed_added_sequence_count": repair_digest_changed_added_sequence_count,
+            "repair_digest_changed_removed_sequence_count": repair_digest_changed_removed_sequence_count,
+            "repair_digest_changed_overlap_sequence_count": repair_digest_changed_overlap_sequence_count,
+            "repair_digest_changed_overlap_ratio_bps": repair_digest_changed_overlap_ratio_bps,
+            "repair_digest_changed_jaccard_bps": repair_digest_changed_jaccard_bps,
+            "repair_digest_changed_last_overlap_ratio_bps": repair_digest_changed_last_overlap_ratio_bps,
+            "repair_digest_changed_last_jaccard_bps": repair_digest_changed_last_jaccard_bps,
+            "repair_digest_changed_high_overlap_count": repair_digest_changed_high_overlap_count,
+            "repair_digest_changed_event_count": repair_digest_changed_event_count,
             "repair_snapshot_key_ack_epoch": repair_same_snapshot_hard_freeze_ack_epoch,
             "repair_snapshot_key_missing_digest": repair_same_snapshot_hard_freeze_missing_digest.clone(),
             "repair_same_snapshot_hard_freeze_snapshot_sequence_count": repair_same_snapshot_hard_freeze_snapshot_sequence_count,
@@ -21437,6 +21680,25 @@ fn run_sender(
             "repair_ack_refresh_before_retry_count": repair_ack_refresh_before_retry_count,
             "repair_digest_identity_changed_count": repair_digest_identity_changed_count,
             "repair_digest_identity_stable_count": repair_digest_identity_stable_count,
+            "repair_digest_changed_after_coverage_count": repair_digest_changed_after_coverage_count,
+            "repair_digest_changed_same_missing_count": repair_digest_changed_same_missing_count,
+            "repair_digest_changed_same_min_max_count": repair_digest_changed_same_min_max_count,
+            "repair_digest_changed_same_range_set_count": repair_digest_changed_same_range_set_count,
+            "repair_digest_changed_same_sequence_set_count": repair_digest_changed_same_sequence_set_count,
+            "repair_digest_changed_order_only_count": repair_digest_changed_order_only_count,
+            "repair_digest_changed_metadata_only_count": repair_digest_changed_metadata_only_count,
+            "repair_digest_changed_real_missing_delta_count": repair_digest_changed_real_missing_delta_count,
+            "repair_digest_changed_previous_sequence_count": repair_digest_changed_previous_sequence_count,
+            "repair_digest_changed_current_sequence_count": repair_digest_changed_current_sequence_count,
+            "repair_digest_changed_added_sequence_count": repair_digest_changed_added_sequence_count,
+            "repair_digest_changed_removed_sequence_count": repair_digest_changed_removed_sequence_count,
+            "repair_digest_changed_overlap_sequence_count": repair_digest_changed_overlap_sequence_count,
+            "repair_digest_changed_overlap_ratio_bps": repair_digest_changed_overlap_ratio_bps,
+            "repair_digest_changed_jaccard_bps": repair_digest_changed_jaccard_bps,
+            "repair_digest_changed_last_overlap_ratio_bps": repair_digest_changed_last_overlap_ratio_bps,
+            "repair_digest_changed_last_jaccard_bps": repair_digest_changed_last_jaccard_bps,
+            "repair_digest_changed_high_overlap_count": repair_digest_changed_high_overlap_count,
+            "repair_digest_changed_event_count": repair_digest_changed_event_count,
             "repair_snapshot_key_ack_epoch": repair_same_snapshot_hard_freeze_ack_epoch,
             "repair_snapshot_key_missing_digest": repair_same_snapshot_hard_freeze_missing_digest.clone(),
             "repair_same_snapshot_hard_freeze_snapshot_sequence_count": repair_same_snapshot_hard_freeze_snapshot_sequence_count,
