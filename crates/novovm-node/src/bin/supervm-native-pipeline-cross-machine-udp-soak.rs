@@ -2623,6 +2623,15 @@ fn suppress_repair_ranges_for_missing_snapshot_v1(
     )
 }
 
+fn same_snapshot_repair_retry_due_v1(
+    snapshot_changed: bool,
+    retry_cooldown_due: bool,
+    retry_count_for_snapshot: u64,
+    retry_cap: u64,
+) -> bool {
+    snapshot_changed || (retry_cooldown_due && retry_count_for_snapshot < retry_cap)
+}
+
 #[cfg(test)]
 fn suppress_repair_ranges_for_ack_epoch_v1(
     selected_ranges: &[MissingRangeV1],
@@ -7526,6 +7535,14 @@ mod novorudp_tests {
         assert_eq!(retry, missing);
         assert_eq!(suppressed, 0);
         assert!(retry_sent);
+    }
+
+    #[test]
+    fn full_async_repair_retry_cap_waits_for_ack_refresh_by_default() {
+        assert!(same_snapshot_repair_retry_due_v1(true, true, 0, 1));
+        assert!(!same_snapshot_repair_retry_due_v1(false, true, 1, 1));
+        assert!(same_snapshot_repair_retry_due_v1(false, true, 1, 2));
+        assert!(!same_snapshot_repair_retry_due_v1(false, false, 0, 2));
     }
 
     #[test]
@@ -16916,10 +16933,16 @@ fn run_sender(
         250,
     )?
     .max(1);
+    let repair_same_snapshot_retry_cap =
+        u64_env("NOVOVM_NOVORUDP_REPAIR_SAME_SNAPSHOT_RETRY_CAP", 1)?;
     let mut repair_suppression_last_retry_at: Option<Instant> = None;
+    let mut repair_suppression_retry_count_for_snapshot = 0u64;
     let mut repair_suppression_blocked_for_latest_missing_count = 0u64;
     let mut repair_latest_missing_retry_due_count = 0u64;
     let mut repair_latest_missing_retry_suppressed_count = 0u64;
+    let mut repair_suppressed_inflight_count = 0u64;
+    let mut repair_suppressed_cooldown_count = 0u64;
+    let mut repair_ack_refresh_wait_count = 0u64;
     let mut repair_suppressed_completed_sequence_count = 0u64;
     let mut repair_suppressed_duplicate_sequence_count = 0u64;
     let mut repair_suppressed_not_in_latest_missing_count = 0u64;
@@ -17836,14 +17859,23 @@ fn run_sender(
                 if repair_suppress_completed_ranges_enabled {
                     let normalized_latest_missing =
                         normalize_missing_ranges(state.latest_ranges.as_slice(), tx_count);
-                    let retry_due = repair_suppression_active_missing_snapshot
-                        != normalized_latest_missing
-                        || repair_suppression_last_retry_at
-                            .map(|last| {
-                                last.elapsed()
-                                    >= Duration::from_millis(repair_latest_missing_retry_cadence_ms)
-                            })
-                            .unwrap_or(true);
+                    let snapshot_changed =
+                        repair_suppression_active_missing_snapshot != normalized_latest_missing;
+                    if snapshot_changed {
+                        repair_suppression_retry_count_for_snapshot = 0;
+                    }
+                    let retry_cooldown_due = repair_suppression_last_retry_at
+                        .map(|last| {
+                            last.elapsed()
+                                >= Duration::from_millis(repair_latest_missing_retry_cadence_ms)
+                        })
+                        .unwrap_or(true);
+                    let retry_due = same_snapshot_repair_retry_due_v1(
+                        snapshot_changed,
+                        retry_cooldown_due,
+                        repair_suppression_retry_count_for_snapshot,
+                        repair_same_snapshot_retry_cap,
+                    );
                     if retry_due {
                         repair_latest_missing_retry_due_count =
                             repair_latest_missing_retry_due_count.saturating_add(
@@ -17870,6 +17902,14 @@ fn run_sender(
                     repair_suppressed_duplicate_sequence_count =
                         repair_suppressed_duplicate_sequence_count
                             .saturating_add(suppressed_duplicate_count);
+                    repair_suppressed_inflight_count =
+                        repair_suppressed_inflight_count.saturating_add(suppressed_duplicate_count);
+                    if suppressed_duplicate_count > 0 && !retry_due {
+                        repair_suppressed_cooldown_count = repair_suppressed_cooldown_count
+                            .saturating_add(suppressed_duplicate_count);
+                        repair_ack_refresh_wait_count =
+                            repair_ack_refresh_wait_count.saturating_add(1);
+                    }
                     repair_suppression_blocked_for_latest_missing_count =
                         repair_suppression_blocked_for_latest_missing_count
                             .saturating_add(suppressed_duplicate_count);
@@ -17878,6 +17918,8 @@ fn run_sender(
                             .saturating_add(suppressed_duplicate_count);
                     if retry_sent_latest_missing {
                         repair_suppression_last_retry_at = Some(Instant::now());
+                        repair_suppression_retry_count_for_snapshot =
+                            repair_suppression_retry_count_for_snapshot.saturating_add(1);
                     }
                     selected_ranges = filtered_ranges;
                 }
@@ -18030,14 +18072,23 @@ fn run_sender(
                 if repair_suppress_completed_ranges_enabled {
                     let normalized_latest_missing =
                         normalize_missing_ranges(ranges.as_slice(), tx_count);
-                    let retry_due = repair_suppression_active_missing_snapshot
-                        != normalized_latest_missing
-                        || repair_suppression_last_retry_at
-                            .map(|last| {
-                                last.elapsed()
-                                    >= Duration::from_millis(repair_latest_missing_retry_cadence_ms)
-                            })
-                            .unwrap_or(true);
+                    let snapshot_changed =
+                        repair_suppression_active_missing_snapshot != normalized_latest_missing;
+                    if snapshot_changed {
+                        repair_suppression_retry_count_for_snapshot = 0;
+                    }
+                    let retry_cooldown_due = repair_suppression_last_retry_at
+                        .map(|last| {
+                            last.elapsed()
+                                >= Duration::from_millis(repair_latest_missing_retry_cadence_ms)
+                        })
+                        .unwrap_or(true);
+                    let retry_due = same_snapshot_repair_retry_due_v1(
+                        snapshot_changed,
+                        retry_cooldown_due,
+                        repair_suppression_retry_count_for_snapshot,
+                        repair_same_snapshot_retry_cap,
+                    );
                     if retry_due {
                         repair_latest_missing_retry_due_count =
                             repair_latest_missing_retry_due_count.saturating_add(
@@ -18064,6 +18115,14 @@ fn run_sender(
                     repair_suppressed_duplicate_sequence_count =
                         repair_suppressed_duplicate_sequence_count
                             .saturating_add(suppressed_duplicate_count);
+                    repair_suppressed_inflight_count =
+                        repair_suppressed_inflight_count.saturating_add(suppressed_duplicate_count);
+                    if suppressed_duplicate_count > 0 && !retry_due {
+                        repair_suppressed_cooldown_count = repair_suppressed_cooldown_count
+                            .saturating_add(suppressed_duplicate_count);
+                        repair_ack_refresh_wait_count =
+                            repair_ack_refresh_wait_count.saturating_add(1);
+                    }
                     repair_suppression_blocked_for_latest_missing_count =
                         repair_suppression_blocked_for_latest_missing_count
                             .saturating_add(suppressed_duplicate_count);
@@ -18072,6 +18131,8 @@ fn run_sender(
                             .saturating_add(suppressed_duplicate_count);
                     if retry_sent_latest_missing {
                         repair_suppression_last_retry_at = Some(Instant::now());
+                        repair_suppression_retry_count_for_snapshot =
+                            repair_suppression_retry_count_for_snapshot.saturating_add(1);
                     }
                     selected_ranges = filtered_ranges;
                 }
@@ -18849,6 +18910,80 @@ fn run_sender(
                             selected_ranges.as_slice(),
                             latest_ack_missing_ranges_sample.as_slice(),
                         );
+                        if repair_suppress_completed_ranges_enabled {
+                            let normalized_latest_missing = normalize_missing_ranges(
+                                latest_ack_missing_ranges_sample.as_slice(),
+                                tx_count,
+                            );
+                            let snapshot_changed = repair_suppression_active_missing_snapshot
+                                != normalized_latest_missing;
+                            if snapshot_changed {
+                                repair_suppression_retry_count_for_snapshot = 0;
+                            }
+                            let retry_cooldown_due = repair_suppression_last_retry_at
+                                .map(|last| {
+                                    last.elapsed()
+                                        >= Duration::from_millis(
+                                            repair_latest_missing_retry_cadence_ms,
+                                        )
+                                })
+                                .unwrap_or(true);
+                            let retry_due = same_snapshot_repair_retry_due_v1(
+                                snapshot_changed,
+                                retry_cooldown_due,
+                                repair_suppression_retry_count_for_snapshot,
+                                repair_same_snapshot_retry_cap,
+                            );
+                            if retry_due {
+                                repair_latest_missing_retry_due_count =
+                                    repair_latest_missing_retry_due_count.saturating_add(
+                                        missing_ranges_count(normalized_latest_missing.as_slice()),
+                                    );
+                            } else {
+                                let suppressed = missing_ranges_overlap_count(
+                                    selected_ranges.as_slice(),
+                                    normalized_latest_missing.as_slice(),
+                                );
+                                repair_latest_missing_retry_suppressed_count =
+                                    repair_latest_missing_retry_suppressed_count
+                                        .saturating_add(suppressed);
+                            }
+                            let (
+                                filtered_ranges,
+                                suppressed_duplicate_count,
+                                retry_sent_latest_missing,
+                            ) = suppress_repair_ranges_for_missing_snapshot_v1(
+                                selected_ranges.as_slice(),
+                                latest_ack_missing_ranges_sample.as_slice(),
+                                tx_count,
+                                &mut repair_suppression_active_missing_snapshot,
+                                &mut repair_suppression_sent_ranges_for_snapshot,
+                                retry_due,
+                            );
+                            repair_suppressed_duplicate_sequence_count =
+                                repair_suppressed_duplicate_sequence_count
+                                    .saturating_add(suppressed_duplicate_count);
+                            repair_suppressed_inflight_count = repair_suppressed_inflight_count
+                                .saturating_add(suppressed_duplicate_count);
+                            if suppressed_duplicate_count > 0 && !retry_due {
+                                repair_suppressed_cooldown_count = repair_suppressed_cooldown_count
+                                    .saturating_add(suppressed_duplicate_count);
+                                repair_ack_refresh_wait_count =
+                                    repair_ack_refresh_wait_count.saturating_add(1);
+                            }
+                            repair_suppression_blocked_for_latest_missing_count =
+                                repair_suppression_blocked_for_latest_missing_count
+                                    .saturating_add(suppressed_duplicate_count);
+                            repair_suppressed_completed_sequence_count =
+                                repair_suppressed_completed_sequence_count
+                                    .saturating_add(suppressed_duplicate_count);
+                            if retry_sent_latest_missing {
+                                repair_suppression_last_retry_at = Some(Instant::now());
+                                repair_suppression_retry_count_for_snapshot =
+                                    repair_suppression_retry_count_for_snapshot.saturating_add(1);
+                            }
+                            selected_ranges = filtered_ranges;
+                        }
                         accumulate_repair_selection_position_counts_v1(
                             selected_ranges.as_slice(),
                             tx_count,
@@ -19653,6 +19788,12 @@ fn run_sender(
             "repair_after_missing_zero_count": repair_sent_after_missing_zero_count,
             "repair_sent_from_stale_snapshot_count": repair_sent_from_stale_snapshot_count,
             "repair_sent_from_stale_snapshot_round_count": repair_sent_from_stale_snapshot_round_count,
+            "repair_suppressed_inflight_count": repair_suppressed_inflight_count,
+            "repair_suppressed_cooldown_count": repair_suppressed_cooldown_count,
+            "repair_ack_refresh_wait_count": repair_ack_refresh_wait_count,
+            "repair_retry_cooldown_ms": repair_latest_missing_retry_cadence_ms,
+            "repair_same_snapshot_retry_cap": repair_same_snapshot_retry_cap,
+            "repair_same_snapshot_retry_count": repair_suppression_retry_count_for_snapshot,
             "repair_sent_overlap_latest_missing_final_count": repair_sent_overlap_latest_missing_final_count,
             "repair_sent_outside_latest_missing_final_count": repair_sent_outside_latest_missing_final_count,
             "repair_stop_reason": repair_pump_stop_reason,
@@ -20220,6 +20361,12 @@ fn run_sender(
             "repair_suppressed_completed_sequence_count": repair_suppressed_completed_sequence_count,
             "repair_suppressed_duplicate_sequence_count": repair_suppressed_duplicate_sequence_count,
             "repair_suppressed_not_in_latest_missing_count": repair_suppressed_not_in_latest_missing_count,
+            "repair_suppressed_inflight_count": repair_suppressed_inflight_count,
+            "repair_suppressed_cooldown_count": repair_suppressed_cooldown_count,
+            "repair_ack_refresh_wait_count": repair_ack_refresh_wait_count,
+            "repair_retry_cooldown_ms": repair_latest_missing_retry_cadence_ms,
+            "repair_same_snapshot_retry_cap": repair_same_snapshot_retry_cap,
+            "repair_same_snapshot_retry_count": repair_suppression_retry_count_for_snapshot,
             "repair_selected_latest_missing_sequence_count": repair_selected_latest_missing_sequence_count,
             "repair_selected_missing_count": repair_selected_latest_missing_sequence_count,
             "repair_selected_already_acked_count": repair_selected_already_acked_count,
