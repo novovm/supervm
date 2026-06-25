@@ -2699,6 +2699,27 @@ impl RepairSnapshotHardFreezeV1 {
             .unwrap_or(false)
     }
 
+    fn miss_reason(
+        &self,
+        ack_epoch: u64,
+        snapshot: &[MissingRangeV1],
+        expected: u64,
+    ) -> &'static str {
+        let Some(key) = self.key.as_ref() else {
+            return "no_coverage";
+        };
+        if self.snapshot.is_empty() {
+            return "no_coverage";
+        }
+        if key.ack_epoch != ack_epoch {
+            return "ack_epoch_changed";
+        }
+        if key.missing_digest != missing_ranges_digest_v1(snapshot, expected) {
+            return "snapshot_changed";
+        }
+        "no_overlap"
+    }
+
     fn filter_final_send(
         &self,
         selected_ranges: &[MissingRangeV1],
@@ -7734,6 +7755,39 @@ mod novorudp_tests {
 
         assert_eq!(filtered, snapshot);
         assert_eq!(blocked, 0);
+    }
+
+    #[test]
+    fn full_async_repair_hard_freeze_reports_miss_reason() {
+        let snapshot = vec![MissingRangeV1 {
+            start: 0,
+            end_inclusive: 127,
+        }];
+        let next_snapshot = vec![MissingRangeV1 {
+            start: 128,
+            end_inclusive: 255,
+        }];
+        let mut freeze = RepairSnapshotHardFreezeV1::default();
+
+        assert_eq!(
+            freeze.miss_reason(1, snapshot.as_slice(), 480),
+            "no_coverage"
+        );
+
+        freeze.freeze(7, snapshot.as_slice(), 480);
+
+        assert_eq!(
+            freeze.miss_reason(8, snapshot.as_slice(), 480),
+            "ack_epoch_changed"
+        );
+        assert_eq!(
+            freeze.miss_reason(7, next_snapshot.as_slice(), 480),
+            "snapshot_changed"
+        );
+        assert_eq!(
+            freeze.miss_reason(7, snapshot.as_slice(), 480),
+            "no_overlap"
+        );
     }
 
     #[test]
@@ -17146,6 +17200,87 @@ fn run_sender(
     let mut repair_same_snapshot_hard_freeze_repair_pump_count = 0u64;
     let mut repair_same_snapshot_hard_freeze_final_send_block_count = 0u64;
     let repair_same_snapshot_hard_freeze_snapshot_change_count = 0u64;
+    let mut repair_hard_freeze_eval_count = 0u64;
+    let mut repair_hard_freeze_hit_count = 0u64;
+    let mut repair_hard_freeze_miss_count = 0u64;
+    let mut repair_hard_freeze_miss_reason_no_coverage = 0u64;
+    let mut repair_hard_freeze_miss_reason_snapshot_changed = 0u64;
+    let mut repair_hard_freeze_miss_reason_ack_epoch_changed = 0u64;
+    let mut repair_hard_freeze_miss_reason_path_not_checked = 0u64;
+    let mut repair_hard_freeze_miss_reason_no_overlap = 0u64;
+    let mut repair_hard_freeze_final_send_eval_count = 0u64;
+    let mut repair_hard_freeze_final_send_allowed_count = 0u64;
+    let mut repair_hard_freeze_final_send_blocked_count = 0u64;
+    let mut repair_hard_freeze_post_primary_eval_count = 0u64;
+    let mut repair_hard_freeze_repair_pump_eval_count = 0u64;
+    macro_rules! record_hard_freeze_final_send_diagnostics {
+        ($selected_ranges:expr, $snapshot_ranges:expr, $ack_epoch:expr, $path:expr, $blocked_count:expr) => {{
+            let selected_count = missing_ranges_count($selected_ranges);
+            if selected_count > 0 {
+                repair_hard_freeze_eval_count =
+                    repair_hard_freeze_eval_count.saturating_add(selected_count);
+                repair_hard_freeze_final_send_eval_count =
+                    repair_hard_freeze_final_send_eval_count.saturating_add(selected_count);
+                match $path {
+                    "post_primary" => {
+                        repair_hard_freeze_post_primary_eval_count =
+                            repair_hard_freeze_post_primary_eval_count
+                                .saturating_add(selected_count);
+                    }
+                    "repair_pump" => {
+                        repair_hard_freeze_repair_pump_eval_count =
+                            repair_hard_freeze_repair_pump_eval_count
+                                .saturating_add(selected_count);
+                    }
+                    _ => {
+                        repair_hard_freeze_miss_reason_path_not_checked =
+                            repair_hard_freeze_miss_reason_path_not_checked
+                                .saturating_add(selected_count);
+                    }
+                }
+                if $blocked_count > 0 {
+                    repair_hard_freeze_hit_count =
+                        repair_hard_freeze_hit_count.saturating_add($blocked_count);
+                    repair_hard_freeze_final_send_blocked_count =
+                        repair_hard_freeze_final_send_blocked_count.saturating_add($blocked_count);
+                    repair_hard_freeze_final_send_allowed_count =
+                        repair_hard_freeze_final_send_allowed_count
+                            .saturating_add(selected_count.saturating_sub($blocked_count));
+                } else {
+                    repair_hard_freeze_miss_count =
+                        repair_hard_freeze_miss_count.saturating_add(selected_count);
+                    repair_hard_freeze_final_send_allowed_count =
+                        repair_hard_freeze_final_send_allowed_count.saturating_add(selected_count);
+                    match repair_same_snapshot_hard_freeze.miss_reason(
+                        $ack_epoch,
+                        $snapshot_ranges,
+                        tx_count,
+                    ) {
+                        "no_coverage" => {
+                            repair_hard_freeze_miss_reason_no_coverage =
+                                repair_hard_freeze_miss_reason_no_coverage
+                                    .saturating_add(selected_count);
+                        }
+                        "snapshot_changed" => {
+                            repair_hard_freeze_miss_reason_snapshot_changed =
+                                repair_hard_freeze_miss_reason_snapshot_changed
+                                    .saturating_add(selected_count);
+                        }
+                        "ack_epoch_changed" => {
+                            repair_hard_freeze_miss_reason_ack_epoch_changed =
+                                repair_hard_freeze_miss_reason_ack_epoch_changed
+                                    .saturating_add(selected_count);
+                        }
+                        _ => {
+                            repair_hard_freeze_miss_reason_no_overlap =
+                                repair_hard_freeze_miss_reason_no_overlap
+                                    .saturating_add(selected_count);
+                        }
+                    }
+                }
+            }
+        }};
+    }
     let mut repair_suppressed_completed_sequence_count = 0u64;
     let mut repair_suppressed_duplicate_sequence_count = 0u64;
     let mut repair_suppressed_not_in_latest_missing_count = 0u64;
@@ -18168,6 +18303,13 @@ fn run_sender(
                             normalized_latest_missing.as_slice(),
                             tx_count,
                         );
+                    record_hard_freeze_final_send_diagnostics!(
+                        filtered_ranges.as_slice(),
+                        normalized_latest_missing.as_slice(),
+                        tail_repair_latest_ack_epoch,
+                        "repair_pump",
+                        hard_freeze_blocked_count
+                    );
                     if hard_freeze_blocked_count > 0 {
                         repair_same_snapshot_hard_freeze_count =
                             repair_same_snapshot_hard_freeze_count
@@ -18455,6 +18597,13 @@ fn run_sender(
                             normalized_latest_missing.as_slice(),
                             tx_count,
                         );
+                    record_hard_freeze_final_send_diagnostics!(
+                        filtered_ranges.as_slice(),
+                        normalized_latest_missing.as_slice(),
+                        tail_repair_latest_ack_epoch,
+                        "repair_pump",
+                        hard_freeze_blocked_count
+                    );
                     if hard_freeze_blocked_count > 0 {
                         repair_same_snapshot_hard_freeze_count =
                             repair_same_snapshot_hard_freeze_count
@@ -18772,6 +18921,13 @@ fn run_sender(
                             normalized_latest_missing.as_slice(),
                             tx_count,
                         );
+                    record_hard_freeze_final_send_diagnostics!(
+                        filtered_ranges.as_slice(),
+                        normalized_latest_missing.as_slice(),
+                        tail_repair_latest_ack_epoch,
+                        "repair_pump",
+                        hard_freeze_blocked_count
+                    );
                     if hard_freeze_blocked_count > 0 {
                         repair_same_snapshot_hard_freeze_count =
                             repair_same_snapshot_hard_freeze_count
@@ -19484,6 +19640,13 @@ fn run_sender(
                                     normalized_latest_missing.as_slice(),
                                     tx_count,
                                 );
+                            record_hard_freeze_final_send_diagnostics!(
+                                filtered_ranges.as_slice(),
+                                normalized_latest_missing.as_slice(),
+                                tail_repair_latest_ack_epoch,
+                                "post_primary",
+                                hard_freeze_blocked_count
+                            );
                             if hard_freeze_blocked_count > 0 {
                                 repair_same_snapshot_hard_freeze_count =
                                     repair_same_snapshot_hard_freeze_count
@@ -20378,6 +20541,19 @@ fn run_sender(
             "repair_same_snapshot_hard_freeze_repair_pump_count": repair_same_snapshot_hard_freeze_repair_pump_count,
             "repair_same_snapshot_hard_freeze_final_send_block_count": repair_same_snapshot_hard_freeze_final_send_block_count,
             "repair_same_snapshot_hard_freeze_snapshot_change_count": repair_same_snapshot_hard_freeze_snapshot_change_count,
+            "repair_hard_freeze_eval_count": repair_hard_freeze_eval_count,
+            "repair_hard_freeze_hit_count": repair_hard_freeze_hit_count,
+            "repair_hard_freeze_miss_count": repair_hard_freeze_miss_count,
+            "repair_hard_freeze_miss_reason_no_coverage": repair_hard_freeze_miss_reason_no_coverage,
+            "repair_hard_freeze_miss_reason_snapshot_changed": repair_hard_freeze_miss_reason_snapshot_changed,
+            "repair_hard_freeze_miss_reason_ack_epoch_changed": repair_hard_freeze_miss_reason_ack_epoch_changed,
+            "repair_hard_freeze_miss_reason_path_not_checked": repair_hard_freeze_miss_reason_path_not_checked,
+            "repair_hard_freeze_miss_reason_no_overlap": repair_hard_freeze_miss_reason_no_overlap,
+            "repair_hard_freeze_final_send_eval_count": repair_hard_freeze_final_send_eval_count,
+            "repair_hard_freeze_final_send_allowed_count": repair_hard_freeze_final_send_allowed_count,
+            "repair_hard_freeze_final_send_blocked_count": repair_hard_freeze_final_send_blocked_count,
+            "repair_hard_freeze_post_primary_eval_count": repair_hard_freeze_post_primary_eval_count,
+            "repair_hard_freeze_repair_pump_eval_count": repair_hard_freeze_repair_pump_eval_count,
             "repair_snapshot_key_ack_epoch": repair_same_snapshot_hard_freeze_ack_epoch,
             "repair_snapshot_key_missing_digest": repair_same_snapshot_hard_freeze_missing_digest.clone(),
             "repair_same_snapshot_hard_freeze_snapshot_sequence_count": repair_same_snapshot_hard_freeze_snapshot_sequence_count,
@@ -20963,6 +21139,19 @@ fn run_sender(
             "repair_same_snapshot_hard_freeze_repair_pump_count": repair_same_snapshot_hard_freeze_repair_pump_count,
             "repair_same_snapshot_hard_freeze_final_send_block_count": repair_same_snapshot_hard_freeze_final_send_block_count,
             "repair_same_snapshot_hard_freeze_snapshot_change_count": repair_same_snapshot_hard_freeze_snapshot_change_count,
+            "repair_hard_freeze_eval_count": repair_hard_freeze_eval_count,
+            "repair_hard_freeze_hit_count": repair_hard_freeze_hit_count,
+            "repair_hard_freeze_miss_count": repair_hard_freeze_miss_count,
+            "repair_hard_freeze_miss_reason_no_coverage": repair_hard_freeze_miss_reason_no_coverage,
+            "repair_hard_freeze_miss_reason_snapshot_changed": repair_hard_freeze_miss_reason_snapshot_changed,
+            "repair_hard_freeze_miss_reason_ack_epoch_changed": repair_hard_freeze_miss_reason_ack_epoch_changed,
+            "repair_hard_freeze_miss_reason_path_not_checked": repair_hard_freeze_miss_reason_path_not_checked,
+            "repair_hard_freeze_miss_reason_no_overlap": repair_hard_freeze_miss_reason_no_overlap,
+            "repair_hard_freeze_final_send_eval_count": repair_hard_freeze_final_send_eval_count,
+            "repair_hard_freeze_final_send_allowed_count": repair_hard_freeze_final_send_allowed_count,
+            "repair_hard_freeze_final_send_blocked_count": repair_hard_freeze_final_send_blocked_count,
+            "repair_hard_freeze_post_primary_eval_count": repair_hard_freeze_post_primary_eval_count,
+            "repair_hard_freeze_repair_pump_eval_count": repair_hard_freeze_repair_pump_eval_count,
             "repair_snapshot_key_ack_epoch": repair_same_snapshot_hard_freeze_ack_epoch,
             "repair_snapshot_key_missing_digest": repair_same_snapshot_hard_freeze_missing_digest.clone(),
             "repair_same_snapshot_hard_freeze_snapshot_sequence_count": repair_same_snapshot_hard_freeze_snapshot_sequence_count,
