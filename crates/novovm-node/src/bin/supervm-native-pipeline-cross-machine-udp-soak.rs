@@ -2678,6 +2678,7 @@ struct RepairSnapshotFreezeKeyV1 {
 struct RepairSnapshotHardFreezeV1 {
     key: Option<RepairSnapshotFreezeKeyV1>,
     snapshot: Vec<MissingRangeV1>,
+    frozen_at: Option<Instant>,
 }
 
 impl RepairSnapshotHardFreezeV1 {
@@ -2687,15 +2688,13 @@ impl RepairSnapshotHardFreezeV1 {
             missing_digest: missing_ranges_digest_v1(snapshot, expected),
         });
         self.snapshot = normalize_missing_ranges(snapshot, expected);
+        self.frozen_at = Some(Instant::now());
     }
 
-    fn key_matches(&self, ack_epoch: u64, snapshot: &[MissingRangeV1], expected: u64) -> bool {
+    fn key_matches(&self, _ack_epoch: u64, snapshot: &[MissingRangeV1], expected: u64) -> bool {
         self.key
             .as_ref()
-            .map(|key| {
-                key.ack_epoch == ack_epoch
-                    && key.missing_digest == missing_ranges_digest_v1(snapshot, expected)
-            })
+            .map(|key| key.missing_digest == missing_ranges_digest_v1(snapshot, expected))
             .unwrap_or(false)
     }
 
@@ -2711,11 +2710,11 @@ impl RepairSnapshotHardFreezeV1 {
         if self.snapshot.is_empty() {
             return "no_coverage";
         }
-        if key.ack_epoch != ack_epoch {
-            return "ack_epoch_changed";
-        }
         if key.missing_digest != missing_ranges_digest_v1(snapshot, expected) {
             return "snapshot_changed";
+        }
+        if key.ack_epoch != ack_epoch {
+            return "ack_epoch_ignored";
         }
         "no_overlap"
     }
@@ -2726,9 +2725,13 @@ impl RepairSnapshotHardFreezeV1 {
         ack_epoch: u64,
         snapshot: &[MissingRangeV1],
         expected: u64,
+        allow_escape_retry: bool,
     ) -> (Vec<MissingRangeV1>, u64) {
         let selected = normalize_missing_ranges(selected_ranges, expected);
         if !self.key_matches(ack_epoch, snapshot, expected) {
+            return (selected, 0);
+        }
+        if allow_escape_retry {
             return (selected, 0);
         }
         let blocked = missing_ranges_overlap_count(selected.as_slice(), self.snapshot.as_slice());
@@ -2736,6 +2739,12 @@ impl RepairSnapshotHardFreezeV1 {
             missing_ranges_subtract(selected.as_slice(), self.snapshot.as_slice(), expected),
             blocked,
         )
+    }
+
+    fn escape_retry_due(&self, after: Duration) -> bool {
+        self.frozen_at
+            .map(|frozen_at| frozen_at.elapsed() >= after)
+            .unwrap_or(false)
     }
 
     fn ack_epoch(&self) -> Option<u64> {
@@ -7732,7 +7741,7 @@ mod novorudp_tests {
         freeze.freeze(12, snapshot.as_slice(), 480);
 
         let (filtered, blocked) =
-            freeze.filter_final_send(snapshot.as_slice(), 12, snapshot.as_slice(), 480);
+            freeze.filter_final_send(snapshot.as_slice(), 12, snapshot.as_slice(), 480, false);
 
         assert!(filtered.is_empty());
         assert_eq!(blocked, 480);
@@ -7742,7 +7751,7 @@ mod novorudp_tests {
     }
 
     #[test]
-    fn full_async_repair_hard_freeze_allows_refreshed_ack_epoch() {
+    fn full_async_repair_hard_freeze_keeps_same_digest_frozen_across_ack_epoch() {
         let snapshot = vec![MissingRangeV1 {
             start: 0,
             end_inclusive: 479,
@@ -7751,7 +7760,23 @@ mod novorudp_tests {
         freeze.freeze(12, snapshot.as_slice(), 480);
 
         let (filtered, blocked) =
-            freeze.filter_final_send(snapshot.as_slice(), 13, snapshot.as_slice(), 480);
+            freeze.filter_final_send(snapshot.as_slice(), 13, snapshot.as_slice(), 480, false);
+
+        assert!(filtered.is_empty());
+        assert_eq!(blocked, 480);
+    }
+
+    #[test]
+    fn full_async_repair_hard_freeze_escape_retry_allows_same_digest() {
+        let snapshot = vec![MissingRangeV1 {
+            start: 0,
+            end_inclusive: 479,
+        }];
+        let mut freeze = RepairSnapshotHardFreezeV1::default();
+        freeze.freeze(12, snapshot.as_slice(), 480);
+
+        let (filtered, blocked) =
+            freeze.filter_final_send(snapshot.as_slice(), 13, snapshot.as_slice(), 480, true);
 
         assert_eq!(filtered, snapshot);
         assert_eq!(blocked, 0);
@@ -7778,7 +7803,7 @@ mod novorudp_tests {
 
         assert_eq!(
             freeze.miss_reason(8, snapshot.as_slice(), 480),
-            "ack_epoch_changed"
+            "ack_epoch_ignored"
         );
         assert_eq!(
             freeze.miss_reason(7, next_snapshot.as_slice(), 480),
@@ -17183,6 +17208,11 @@ fn run_sender(
         250,
     )?
     .max(1);
+    let repair_missing_digest_freeze_escape_after_ms = u64_env(
+        "NOVOVM_NOVORUDP_REPAIR_MISSING_DIGEST_FREEZE_ESCAPE_AFTER_MS",
+        1_000,
+    )?
+    .max(1);
     let repair_same_snapshot_retry_cap =
         u64_env("NOVOVM_NOVORUDP_REPAIR_SAME_SNAPSHOT_RETRY_CAP", 1)?;
     let mut repair_suppression_last_retry_at: Option<Instant> = None;
@@ -17206,6 +17236,7 @@ fn run_sender(
     let mut repair_hard_freeze_miss_reason_no_coverage = 0u64;
     let mut repair_hard_freeze_miss_reason_snapshot_changed = 0u64;
     let mut repair_hard_freeze_miss_reason_ack_epoch_changed = 0u64;
+    let mut repair_missing_digest_freeze_ack_epoch_ignored_count = 0u64;
     let mut repair_hard_freeze_miss_reason_path_not_checked = 0u64;
     let mut repair_hard_freeze_miss_reason_no_overlap = 0u64;
     let mut repair_hard_freeze_final_send_eval_count = 0u64;
@@ -17213,8 +17244,12 @@ fn run_sender(
     let mut repair_hard_freeze_final_send_blocked_count = 0u64;
     let mut repair_hard_freeze_post_primary_eval_count = 0u64;
     let mut repair_hard_freeze_repair_pump_eval_count = 0u64;
+    let mut repair_missing_digest_freeze_block_count = 0u64;
+    let mut repair_missing_digest_freeze_allow_new_digest_count = 0u64;
+    let mut repair_missing_digest_freeze_escape_retry_count = 0u64;
+    let mut repair_missing_digest_stable_ack_refresh_count = 0u64;
     macro_rules! record_hard_freeze_final_send_diagnostics {
-        ($selected_ranges:expr, $snapshot_ranges:expr, $ack_epoch:expr, $path:expr, $blocked_count:expr) => {{
+        ($selected_ranges:expr, $snapshot_ranges:expr, $ack_epoch:expr, $path:expr, $blocked_count:expr, $escape_retry_due:expr) => {{
             let selected_count = missing_ranges_count($selected_ranges);
             if selected_count > 0 {
                 repair_hard_freeze_eval_count =
@@ -17241,11 +17276,25 @@ fn run_sender(
                 if $blocked_count > 0 {
                     repair_hard_freeze_hit_count =
                         repair_hard_freeze_hit_count.saturating_add($blocked_count);
+                    repair_missing_digest_freeze_block_count =
+                        repair_missing_digest_freeze_block_count.saturating_add($blocked_count);
                     repair_hard_freeze_final_send_blocked_count =
                         repair_hard_freeze_final_send_blocked_count.saturating_add($blocked_count);
                     repair_hard_freeze_final_send_allowed_count =
                         repair_hard_freeze_final_send_allowed_count
                             .saturating_add(selected_count.saturating_sub($blocked_count));
+                } else if $escape_retry_due
+                    && repair_same_snapshot_hard_freeze.key_matches(
+                        $ack_epoch,
+                        $snapshot_ranges,
+                        tx_count,
+                    )
+                {
+                    repair_missing_digest_freeze_escape_retry_count =
+                        repair_missing_digest_freeze_escape_retry_count
+                            .saturating_add(selected_count);
+                    repair_hard_freeze_final_send_allowed_count =
+                        repair_hard_freeze_final_send_allowed_count.saturating_add(selected_count);
                 } else {
                     repair_hard_freeze_miss_count =
                         repair_hard_freeze_miss_count.saturating_add(selected_count);
@@ -17265,10 +17314,24 @@ fn run_sender(
                             repair_hard_freeze_miss_reason_snapshot_changed =
                                 repair_hard_freeze_miss_reason_snapshot_changed
                                     .saturating_add(selected_count);
+                            repair_missing_digest_freeze_allow_new_digest_count =
+                                repair_missing_digest_freeze_allow_new_digest_count
+                                    .saturating_add(selected_count);
                         }
                         "ack_epoch_changed" => {
                             repair_hard_freeze_miss_reason_ack_epoch_changed =
                                 repair_hard_freeze_miss_reason_ack_epoch_changed
+                                    .saturating_add(selected_count);
+                        }
+                        "ack_epoch_ignored" => {
+                            repair_missing_digest_freeze_ack_epoch_ignored_count =
+                                repair_missing_digest_freeze_ack_epoch_ignored_count
+                                    .saturating_add(selected_count);
+                            repair_missing_digest_stable_ack_refresh_count =
+                                repair_missing_digest_stable_ack_refresh_count
+                                    .saturating_add(selected_count);
+                            repair_hard_freeze_miss_reason_no_overlap =
+                                repair_hard_freeze_miss_reason_no_overlap
                                     .saturating_add(selected_count);
                         }
                         _ => {
@@ -18296,19 +18359,25 @@ fn run_sender(
                         repair_suppression_retry_count_for_snapshot =
                             repair_suppression_retry_count_for_snapshot.saturating_add(1);
                     }
+                    let hard_freeze_escape_retry_due = repair_same_snapshot_hard_freeze
+                        .escape_retry_due(Duration::from_millis(
+                            repair_missing_digest_freeze_escape_after_ms,
+                        ));
                     let (hard_freeze_filtered_ranges, hard_freeze_blocked_count) =
                         repair_same_snapshot_hard_freeze.filter_final_send(
                             filtered_ranges.as_slice(),
                             tail_repair_latest_ack_epoch,
                             normalized_latest_missing.as_slice(),
                             tx_count,
+                            hard_freeze_escape_retry_due,
                         );
                     record_hard_freeze_final_send_diagnostics!(
                         filtered_ranges.as_slice(),
                         normalized_latest_missing.as_slice(),
                         tail_repair_latest_ack_epoch,
                         "repair_pump",
-                        hard_freeze_blocked_count
+                        hard_freeze_blocked_count,
+                        hard_freeze_escape_retry_due
                     );
                     if hard_freeze_blocked_count > 0 {
                         repair_same_snapshot_hard_freeze_count =
@@ -18590,19 +18659,25 @@ fn run_sender(
                         repair_suppression_retry_count_for_snapshot =
                             repair_suppression_retry_count_for_snapshot.saturating_add(1);
                     }
+                    let hard_freeze_escape_retry_due = repair_same_snapshot_hard_freeze
+                        .escape_retry_due(Duration::from_millis(
+                            repair_missing_digest_freeze_escape_after_ms,
+                        ));
                     let (hard_freeze_filtered_ranges, hard_freeze_blocked_count) =
                         repair_same_snapshot_hard_freeze.filter_final_send(
                             filtered_ranges.as_slice(),
                             tail_repair_latest_ack_epoch,
                             normalized_latest_missing.as_slice(),
                             tx_count,
+                            hard_freeze_escape_retry_due,
                         );
                     record_hard_freeze_final_send_diagnostics!(
                         filtered_ranges.as_slice(),
                         normalized_latest_missing.as_slice(),
                         tail_repair_latest_ack_epoch,
                         "repair_pump",
-                        hard_freeze_blocked_count
+                        hard_freeze_blocked_count,
+                        hard_freeze_escape_retry_due
                     );
                     if hard_freeze_blocked_count > 0 {
                         repair_same_snapshot_hard_freeze_count =
@@ -18914,19 +18989,25 @@ fn run_sender(
                         repair_suppression_retry_count_for_snapshot =
                             repair_suppression_retry_count_for_snapshot.saturating_add(1);
                     }
+                    let hard_freeze_escape_retry_due = repair_same_snapshot_hard_freeze
+                        .escape_retry_due(Duration::from_millis(
+                            repair_missing_digest_freeze_escape_after_ms,
+                        ));
                     let (hard_freeze_filtered_ranges, hard_freeze_blocked_count) =
                         repair_same_snapshot_hard_freeze.filter_final_send(
                             filtered_ranges.as_slice(),
                             tail_repair_latest_ack_epoch,
                             normalized_latest_missing.as_slice(),
                             tx_count,
+                            hard_freeze_escape_retry_due,
                         );
                     record_hard_freeze_final_send_diagnostics!(
                         filtered_ranges.as_slice(),
                         normalized_latest_missing.as_slice(),
                         tail_repair_latest_ack_epoch,
                         "repair_pump",
-                        hard_freeze_blocked_count
+                        hard_freeze_blocked_count,
+                        hard_freeze_escape_retry_due
                     );
                     if hard_freeze_blocked_count > 0 {
                         repair_same_snapshot_hard_freeze_count =
@@ -19633,19 +19714,25 @@ fn run_sender(
                                 repair_suppression_retry_count_for_snapshot =
                                     repair_suppression_retry_count_for_snapshot.saturating_add(1);
                             }
+                            let hard_freeze_escape_retry_due = repair_same_snapshot_hard_freeze
+                                .escape_retry_due(Duration::from_millis(
+                                    repair_missing_digest_freeze_escape_after_ms,
+                                ));
                             let (hard_freeze_filtered_ranges, hard_freeze_blocked_count) =
                                 repair_same_snapshot_hard_freeze.filter_final_send(
                                     filtered_ranges.as_slice(),
                                     tail_repair_latest_ack_epoch,
                                     normalized_latest_missing.as_slice(),
                                     tx_count,
+                                    hard_freeze_escape_retry_due,
                                 );
                             record_hard_freeze_final_send_diagnostics!(
                                 filtered_ranges.as_slice(),
                                 normalized_latest_missing.as_slice(),
                                 tail_repair_latest_ack_epoch,
                                 "post_primary",
-                                hard_freeze_blocked_count
+                                hard_freeze_blocked_count,
+                                hard_freeze_escape_retry_due
                             );
                             if hard_freeze_blocked_count > 0 {
                                 repair_same_snapshot_hard_freeze_count =
@@ -20426,6 +20513,11 @@ fn run_sender(
     let repair_same_snapshot_hard_freeze_missing_digest = repair_same_snapshot_hard_freeze
         .missing_digest()
         .map(str::to_string);
+    let repair_missing_digest_current_digest =
+        missing_ranges_digest_v1(latest_ack_missing_ranges_sample.as_slice(), tx_count);
+    let repair_missing_digest_previous_digest =
+        repair_same_snapshot_hard_freeze_missing_digest.clone();
+    let repair_missing_digest_changed_count = repair_missing_digest_freeze_allow_new_digest_count;
     let repair_same_snapshot_hard_freeze_snapshot_sequence_count =
         repair_same_snapshot_hard_freeze.sequence_count();
     let repair_suppress_did_not_create_coverage_gap = repair_coverage_gap_count == 0;
@@ -20554,6 +20646,16 @@ fn run_sender(
             "repair_hard_freeze_final_send_blocked_count": repair_hard_freeze_final_send_blocked_count,
             "repair_hard_freeze_post_primary_eval_count": repair_hard_freeze_post_primary_eval_count,
             "repair_hard_freeze_repair_pump_eval_count": repair_hard_freeze_repair_pump_eval_count,
+            "repair_missing_digest_freeze_hit_count": repair_hard_freeze_hit_count,
+            "repair_missing_digest_freeze_block_count": repair_missing_digest_freeze_block_count,
+            "repair_missing_digest_freeze_allow_new_digest_count": repair_missing_digest_freeze_allow_new_digest_count,
+            "repair_missing_digest_freeze_ack_epoch_ignored_count": repair_missing_digest_freeze_ack_epoch_ignored_count,
+            "repair_missing_digest_freeze_escape_retry_count": repair_missing_digest_freeze_escape_retry_count,
+            "repair_missing_digest_current_digest": repair_missing_digest_current_digest.clone(),
+            "repair_missing_digest_previous_digest": repair_missing_digest_previous_digest.clone(),
+            "repair_missing_digest_changed_count": repair_missing_digest_changed_count,
+            "repair_missing_digest_stable_ack_refresh_count": repair_missing_digest_stable_ack_refresh_count,
+            "repair_missing_digest_freeze_escape_after_ms": repair_missing_digest_freeze_escape_after_ms,
             "repair_snapshot_key_ack_epoch": repair_same_snapshot_hard_freeze_ack_epoch,
             "repair_snapshot_key_missing_digest": repair_same_snapshot_hard_freeze_missing_digest.clone(),
             "repair_same_snapshot_hard_freeze_snapshot_sequence_count": repair_same_snapshot_hard_freeze_snapshot_sequence_count,
@@ -21152,6 +21254,16 @@ fn run_sender(
             "repair_hard_freeze_final_send_blocked_count": repair_hard_freeze_final_send_blocked_count,
             "repair_hard_freeze_post_primary_eval_count": repair_hard_freeze_post_primary_eval_count,
             "repair_hard_freeze_repair_pump_eval_count": repair_hard_freeze_repair_pump_eval_count,
+            "repair_missing_digest_freeze_hit_count": repair_hard_freeze_hit_count,
+            "repair_missing_digest_freeze_block_count": repair_missing_digest_freeze_block_count,
+            "repair_missing_digest_freeze_allow_new_digest_count": repair_missing_digest_freeze_allow_new_digest_count,
+            "repair_missing_digest_freeze_ack_epoch_ignored_count": repair_missing_digest_freeze_ack_epoch_ignored_count,
+            "repair_missing_digest_freeze_escape_retry_count": repair_missing_digest_freeze_escape_retry_count,
+            "repair_missing_digest_current_digest": repair_missing_digest_current_digest.clone(),
+            "repair_missing_digest_previous_digest": repair_missing_digest_previous_digest.clone(),
+            "repair_missing_digest_changed_count": repair_missing_digest_changed_count,
+            "repair_missing_digest_stable_ack_refresh_count": repair_missing_digest_stable_ack_refresh_count,
+            "repair_missing_digest_freeze_escape_after_ms": repair_missing_digest_freeze_escape_after_ms,
             "repair_snapshot_key_ack_epoch": repair_same_snapshot_hard_freeze_ack_epoch,
             "repair_snapshot_key_missing_digest": repair_same_snapshot_hard_freeze_missing_digest.clone(),
             "repair_same_snapshot_hard_freeze_snapshot_sequence_count": repair_same_snapshot_hard_freeze_snapshot_sequence_count,
