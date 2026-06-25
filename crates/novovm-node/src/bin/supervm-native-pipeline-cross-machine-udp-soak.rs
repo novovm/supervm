@@ -539,6 +539,7 @@ struct ReceiverDiagnosticsStateV1 {
     samples_dropped: u64,
     first_working_set_bytes: Option<u64>,
     last_working_set_bytes: Option<u64>,
+    first_progress_elapsed_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -2133,6 +2134,15 @@ fn receiver_completion_phase_v1(
         return "receiver_drain";
     }
     "final_ack_wait"
+}
+
+fn receiver_active_elapsed_ms_v1(
+    total_elapsed_ms: u64,
+    first_progress_elapsed_ms: Option<u64>,
+) -> u64 {
+    first_progress_elapsed_ms
+        .map(|first| total_elapsed_ms.saturating_sub(first))
+        .unwrap_or(0)
 }
 
 fn novovm_node_bin() -> PathBuf {
@@ -5337,6 +5347,7 @@ mod novorudp_tests {
             samples_dropped: 0,
             first_working_set_bytes: Some(1),
             last_working_set_bytes: Some(1),
+            first_progress_elapsed_ms: Some(0),
         };
         write_diagnostics_report(&config, &state, true, 42, tx_count).unwrap();
         let report = serde_json::from_slice::<Value>(&fs::read(path.as_path()).unwrap()).unwrap();
@@ -5451,6 +5462,7 @@ mod novorudp_tests {
                 samples_dropped: 0,
                 first_working_set_bytes: Some(1),
                 last_working_set_bytes: Some(1),
+                first_progress_elapsed_ms: Some(0),
             };
             let mut plane = DiagnosticsAsyncFlushPlaneV1::from_env(path.clone()).unwrap();
             emit_diagnostics_report(&config, &state, true, 42, 480, &mut plane).unwrap();
@@ -5490,6 +5502,7 @@ mod novorudp_tests {
                 samples_dropped: 0,
                 first_working_set_bytes: Some(1),
                 last_working_set_bytes: Some(1),
+                first_progress_elapsed_ms: Some(0),
             };
             let mut plane = DiagnosticsAsyncFlushPlaneV1::from_env(path.clone()).unwrap();
             emit_diagnostics_report(&config, &state, true, 42, 480, &mut plane).unwrap();
@@ -6224,6 +6237,22 @@ mod novorudp_tests {
             receiver_completion_phase_v1(&config, 1_900_000, 14_400, 14_400, 0),
             "completed"
         );
+    }
+
+    #[test]
+    fn receiver_sustained_timeout_clock_starts_at_first_progress() {
+        let config = receiver_phase_test_config();
+        let total_elapsed_ms = 2_700_000;
+        let first_progress_elapsed_ms = Some(900_000);
+        let active_elapsed_ms =
+            receiver_active_elapsed_ms_v1(total_elapsed_ms, first_progress_elapsed_ms);
+
+        assert_eq!(active_elapsed_ms, 1_800_000);
+        assert_eq!(
+            receiver_completion_phase_v1(&config, active_elapsed_ms, 5_793, 14_400, 0),
+            "repair_convergence"
+        );
+        assert_eq!(receiver_active_elapsed_ms_v1(total_elapsed_ms, None), 0);
     }
 
     fn sender_timeout_sustained_config(tx_count: u64) -> SustainedConfigV1 {
@@ -11130,24 +11159,39 @@ fn run_receiver_node(
                 .get("pending_count")
                 .and_then(Value::as_u64)
                 .unwrap_or_default();
+            let total_elapsed_ms = started_at.elapsed().as_millis() as u64;
+            let receiver_activity_count =
+                stable_progress.max(receiver_object_ready_counter_v1(&sample));
+            if receiver_activity_count > 0 && state.first_progress_elapsed_ms.is_none() {
+                state.first_progress_elapsed_ms = Some(total_elapsed_ms);
+            }
+            let active_elapsed_ms =
+                receiver_active_elapsed_ms_v1(total_elapsed_ms, state.first_progress_elapsed_ms);
             let waiting_for_sender = pending_count == 0 && stable_progress < expected_tx_count;
-            let elapsed_ms = started_at.elapsed().as_millis() as u64;
             let receiver_phase = receiver_completion_phase_v1(
                 &diagnostics,
-                elapsed_ms,
+                active_elapsed_ms,
                 stable_progress,
                 expected_tx_count,
                 pending_count,
             );
+            sample["receiver_total_elapsed_ms"] = serde_json::json!(total_elapsed_ms);
+            sample["receiver_active_elapsed_ms"] = serde_json::json!(active_elapsed_ms);
+            sample["receiver_first_progress_elapsed_ms"] =
+                serde_json::json!(state.first_progress_elapsed_ms);
+            sample["receiver_pre_first_progress_wait_ms"] =
+                serde_json::json!(state.first_progress_elapsed_ms.unwrap_or(total_elapsed_ms));
+            sample["receiver_timeout_clock_source"] =
+                serde_json::json!("first_progress_elapsed_ms");
             sample["waiting_for_sender"] = serde_json::json!(waiting_for_sender);
             sample["receiver_exit_phase"] = serde_json::json!(receiver_phase);
             sample["primary_send_completed"] = serde_json::json!(
                 diagnostics.primary_send_duration_ms > 0
-                    && elapsed_ms >= diagnostics.primary_send_duration_ms
+                    && active_elapsed_ms >= diagnostics.primary_send_duration_ms
             );
             sample["repair_convergence_started"] = serde_json::json!(
                 diagnostics.primary_send_duration_ms > 0
-                    && elapsed_ms >= diagnostics.primary_send_duration_ms
+                    && active_elapsed_ms >= diagnostics.primary_send_duration_ms
                     && stable_progress < expected_tx_count
             );
             sample["repair_convergence_completed"] =
@@ -11157,7 +11201,7 @@ fn run_receiver_node(
             sample["final_ack_received"] =
                 serde_json::json!(stable_progress >= expected_tx_count && pending_count == 0);
             sample["absolute_timeout_reached"] = serde_json::json!(
-                diagnostics.max_elapsed_ms > 0 && elapsed_ms >= diagnostics.max_elapsed_ms
+                diagnostics.max_elapsed_ms > 0 && active_elapsed_ms >= diagnostics.max_elapsed_ms
             );
             sample["no_progress_timeout_reached"] = serde_json::json!(false);
             if delta == 0 && pending_count > 0 && stable_progress < expected_tx_count {
@@ -11189,15 +11233,17 @@ fn run_receiver_node(
                 ));
             }
             if diagnostics.max_elapsed_ms > 0
-                && elapsed_ms >= diagnostics.max_elapsed_ms
+                && active_elapsed_ms >= diagnostics.max_elapsed_ms
                 && stable_progress < expected_tx_count
                 && pending_count == 0
             {
                 fail_reason = Some(format!(
-                    "receiver_expected_tx_timeout: phase=failed_absolute_timeout progress={} expected={} elapsed_ms={} max_elapsed_ms={}",
+                    "receiver_expected_tx_timeout: phase=failed_absolute_timeout progress={} expected={} active_elapsed_ms={} total_elapsed_ms={} first_progress_elapsed_ms={:?} max_elapsed_ms={}",
                     stable_progress,
                     expected_tx_count,
-                    elapsed_ms,
+                    active_elapsed_ms,
+                    total_elapsed_ms,
+                    state.first_progress_elapsed_ms,
                     diagnostics.max_elapsed_ms
                 ));
             }
