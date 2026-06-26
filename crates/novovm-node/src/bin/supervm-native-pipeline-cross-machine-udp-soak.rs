@@ -2954,6 +2954,12 @@ fn novorudp_sender_repair_coverage_report_v1(
         ),
         "sender_latest_ack_missing_ranges_full_count": ack_missing.len(),
         "sender_latest_ack_missing_sequence_count": missing_ranges_count(ack_missing.as_slice()),
+        "sender_latest_ack_missing_digest": missing_ranges_digest_v1(ack_missing.as_slice(), expected),
+        "sender_latest_ack_missing_count": missing_ranges_count(ack_missing.as_slice()),
+        "sender_latest_ack_missing_sample": missing_ranges_to_json(
+            ack_missing.as_slice(),
+            sample_limit,
+        ),
         "sender_repair_sent_ranges_sample": missing_ranges_to_json(
             repair_sent.as_slice(),
             sample_limit,
@@ -2965,6 +2971,12 @@ fn novorudp_sender_repair_coverage_report_v1(
         "sender_repair_sent_new_missing_coverage_count": overlap_ack_missing_count,
         "sender_repair_sent_duplicate_ranges_count": duplicate_sequence_count,
         "sender_repair_sent_duplicate_sequence_count": duplicate_sequence_count,
+        "sender_final_repair_sent_digest": missing_ranges_digest_v1(repair_sent.as_slice(), expected),
+        "sender_final_repair_sent_count": repair_sent_unique_count,
+        "sender_final_repair_sent_sample": missing_ranges_to_json(
+            repair_sent.as_slice(),
+            sample_limit,
+        ),
         "latest_ack_missing_range_min": latest_ack_missing_range_min,
         "latest_ack_missing_range_max": latest_ack_missing_range_max,
         "repair_selected_range_min": repair_selected_range_min,
@@ -2977,6 +2989,112 @@ fn novorudp_sender_repair_coverage_report_v1(
         "repair_duplicate_ratio_x1000": repair_duplicate_ratio_x1000,
         "repair_latest_missing_coverage_ratio_x1000": repair_latest_missing_coverage_ratio_x1000,
     })
+}
+
+fn annotate_ab_final_missing_set_parity_v1(sample: &mut Value) {
+    let expected = sample_u64(sample, "tx_count")
+        .max(sample_u64(sample, "expected_tx_total"))
+        .max(sample_u64(sample, "ledger_expected_count"));
+    let sender_latest_ack_missing = missing_ranges_from_json(
+        sample
+            .get("sender_latest_ack_missing_sample")
+            .or_else(|| sample.get("sender_latest_ack_missing_ranges_sample"))
+            .unwrap_or(&Value::Null),
+    );
+    let sender_final_repair_sent = missing_ranges_from_json(
+        sample
+            .get("sender_final_repair_sent_sample")
+            .or_else(|| sample.get("sender_repair_sent_ranges_sample"))
+            .or_else(|| sample.get("repair_sequence_sent_ranges_sample"))
+            .unwrap_or(&Value::Null),
+    );
+    let receiver_final_missing = missing_ranges_from_json(
+        sample
+            .get("receiver_final_missing_sample")
+            .or_else(|| sample.get("receiver_final_missing_sample_sequences"))
+            .or_else(|| sample.get("final_missing_ranges_sample"))
+            .or_else(|| sample.get("ledger_durable_missing_ranges_sample"))
+            .unwrap_or(&Value::Null),
+    );
+    let expected_for_norm = expected.max(
+        missing_ranges_bounds(receiver_final_missing.as_slice())
+            .1
+            .map(|max| max.saturating_add(1))
+            .unwrap_or_default(),
+    );
+    let sender_latest_ack_missing =
+        normalize_missing_ranges(sender_latest_ack_missing.as_slice(), expected_for_norm);
+    let sender_final_repair_sent =
+        normalize_missing_ranges(sender_final_repair_sent.as_slice(), expected_for_norm);
+    let receiver_final_missing =
+        normalize_missing_ranges(receiver_final_missing.as_slice(), expected_for_norm);
+
+    let mut missing_reasons = Vec::<&str>::new();
+    if sender_latest_ack_missing.is_empty() {
+        missing_reasons.push("sender_latest_ack_missing_unavailable");
+    }
+    if sender_final_repair_sent.is_empty() {
+        missing_reasons.push("sender_final_repair_sent_unavailable");
+    }
+    if receiver_final_missing.is_empty()
+        && sample_u64(sample, "receiver_final_missing_count")
+            .max(sample_u64(sample, "final_missing_sequence_count"))
+            .max(sample_u64(sample, "ledger_durable_missing_count"))
+            > 0
+    {
+        missing_reasons.push("receiver_final_missing_unavailable");
+    }
+
+    let parity_available = !sender_latest_ack_missing.is_empty()
+        && !sender_final_repair_sent.is_empty()
+        && !receiver_final_missing.is_empty();
+    sample["ab_final_missing_parity_available"] = serde_json::json!(parity_available);
+    sample["ab_final_missing_parity_missing_reason"] = if missing_reasons.is_empty() {
+        Value::Null
+    } else {
+        serde_json::json!(missing_reasons.join(","))
+    };
+    if !parity_available {
+        sample["ab_latest_ack_vs_receiver_final_intersection_count"] = Value::Null;
+        sample["sender_repair_vs_receiver_final_missing_intersection_count"] = Value::Null;
+        sample["receiver_final_missing_not_repaired_by_sender_count"] = Value::Null;
+        sample["sender_repaired_not_in_receiver_final_missing_count"] = Value::Null;
+        return;
+    }
+
+    let latest_vs_receiver = missing_ranges_overlap_count(
+        sender_latest_ack_missing.as_slice(),
+        receiver_final_missing.as_slice(),
+    );
+    let repair_vs_receiver = missing_ranges_overlap_count(
+        sender_final_repair_sent.as_slice(),
+        receiver_final_missing.as_slice(),
+    );
+    let receiver_not_repaired = missing_ranges_count(
+        missing_ranges_subtract(
+            receiver_final_missing.as_slice(),
+            sender_final_repair_sent.as_slice(),
+            expected_for_norm,
+        )
+        .as_slice(),
+    );
+    let sender_repaired_not_final = missing_ranges_count(
+        missing_ranges_subtract(
+            sender_final_repair_sent.as_slice(),
+            receiver_final_missing.as_slice(),
+            expected_for_norm,
+        )
+        .as_slice(),
+    );
+
+    sample["ab_latest_ack_vs_receiver_final_intersection_count"] =
+        serde_json::json!(latest_vs_receiver);
+    sample["sender_repair_vs_receiver_final_missing_intersection_count"] =
+        serde_json::json!(repair_vs_receiver);
+    sample["receiver_final_missing_not_repaired_by_sender_count"] =
+        serde_json::json!(receiver_not_repaired);
+    sample["sender_repaired_not_in_receiver_final_missing_count"] =
+        serde_json::json!(sender_repaired_not_final);
 }
 
 fn first_missing_window_ranges(
@@ -7025,6 +7143,18 @@ mod novorudp_tests {
             sample["receiver_repair_final_missing_count"].as_u64(),
             Some(178)
         );
+        assert_eq!(sample["receiver_final_missing_count"].as_u64(), Some(178));
+        let expected_receiver_digest = missing_ranges_digest_v1(
+            &[MissingRangeV1 {
+                start: 2222,
+                end_inclusive: 2399,
+            }],
+            2400,
+        );
+        assert_eq!(
+            sample["receiver_final_missing_digest"].as_str(),
+            Some(expected_receiver_digest.as_str())
+        );
         assert_eq!(
             sample["receiver_repair_target_missing_intersection_count"].as_u64(),
             Some(178)
@@ -7032,6 +7162,14 @@ mod novorudp_tests {
         assert_eq!(
             sample["receiver_repair_received_for_final_missing_count"].as_u64(),
             Some(0)
+        );
+        assert_eq!(
+            sample["receiver_final_missing_repair_received_count"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            sample["receiver_final_missing_repair_not_received_count"].as_u64(),
+            Some(178)
         );
     }
 
@@ -7696,8 +7834,26 @@ mod novorudp_tests {
             Some(200)
         );
         assert_eq!(
+            report["sender_latest_ack_missing_count"].as_u64(),
+            Some(200)
+        );
+        let expected_latest_digest = missing_ranges_digest_v1(latest_ack_missing.as_slice(), 1_000);
+        assert_eq!(
+            report["sender_latest_ack_missing_digest"].as_str(),
+            Some(expected_latest_digest.as_str())
+        );
+        assert_eq!(
             report["sender_repair_sent_unique_sequence_count"].as_u64(),
             Some(100)
+        );
+        assert_eq!(report["sender_final_repair_sent_count"].as_u64(), Some(100));
+        let expected_repair_digest = missing_ranges_digest_v1(
+            normalize_missing_ranges(repair_sent.as_slice(), 1_000).as_slice(),
+            1_000,
+        );
+        assert_eq!(
+            report["sender_final_repair_sent_digest"].as_str(),
+            Some(expected_repair_digest.as_str())
         );
         assert_eq!(
             report["sender_repair_sent_overlap_ack_missing_count"].as_u64(),
@@ -7715,6 +7871,45 @@ mod novorudp_tests {
         assert_eq!(
             report["repair_latest_missing_coverage_ratio_x1000"].as_u64(),
             Some(250)
+        );
+    }
+
+    #[test]
+    fn ab_final_missing_parity_computes_cross_report_intersections() {
+        let mut sample = serde_json::json!({
+            "tx_count": 2400,
+            "sender_latest_ack_missing_sample": [
+                {"start": 1900, "end_inclusive": 2399, "count": 500}
+            ],
+            "sender_final_repair_sent_sample": [
+                {"start": 2000, "end_inclusive": 2221, "count": 222}
+            ],
+            "receiver_final_missing_sample": [
+                {"start": 2222, "end_inclusive": 2399, "count": 178}
+            ]
+        });
+
+        annotate_ab_final_missing_set_parity_v1(&mut sample);
+
+        assert_eq!(
+            sample["ab_final_missing_parity_available"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            sample["ab_latest_ack_vs_receiver_final_intersection_count"].as_u64(),
+            Some(178)
+        );
+        assert_eq!(
+            sample["sender_repair_vs_receiver_final_missing_intersection_count"].as_u64(),
+            Some(0)
+        );
+        assert_eq!(
+            sample["receiver_final_missing_not_repaired_by_sender_count"].as_u64(),
+            Some(178)
+        );
+        assert_eq!(
+            sample["sender_repaired_not_in_receiver_final_missing_count"].as_u64(),
+            Some(222)
         );
     }
 
@@ -15385,6 +15580,14 @@ fn annotate_receiver_repair_lifecycle_close_v1(sample: &mut Value) {
     let ledger_closed =
         missing_ranges_overlap_count(final_missing.as_slice(), ledger_completed.as_slice());
     let (final_missing_min, final_missing_max) = missing_ranges_bounds(final_missing.as_slice());
+    let expected_for_digest = sample_u64(sample, "tx_count")
+        .max(sample_u64(sample, "expected_tx_total"))
+        .max(sample_u64(sample, "ledger_expected_count"))
+        .max(
+            final_missing_max
+                .map(|value| value.saturating_add(1))
+                .unwrap_or_default(),
+        );
     let range_sample_complete =
         final_missing_count == 0 || final_missing_count_from_ranges >= final_missing_count;
     let queue_pending_last = sample_u64(sample, "queue_pending_last");
@@ -15426,6 +15629,12 @@ fn annotate_receiver_repair_lifecycle_close_v1(sample: &mut Value) {
     sample["receiver_repair_target_missing_intersection_count"] =
         serde_json::json!(final_missing_count_from_ranges);
     sample["receiver_repair_final_missing_count"] = serde_json::json!(final_missing_count);
+    sample["receiver_final_missing_digest"] = serde_json::json!(missing_ranges_digest_v1(
+        final_missing.as_slice(),
+        expected_for_digest
+    ));
+    sample["receiver_final_missing_count"] = serde_json::json!(final_missing_count);
+    sample["receiver_final_missing_sample"] = missing_ranges_to_json(final_missing.as_slice(), 256);
     sample["receiver_final_missing_min_sequence"] = final_missing_min
         .map(|value| serde_json::json!(value))
         .unwrap_or(Value::Null);
@@ -15447,6 +15656,9 @@ fn annotate_receiver_repair_lifecycle_close_v1(sample: &mut Value) {
         serde_json::json!(ledger_closed);
     sample["receiver_repair_missing_removed_for_final_missing_count"] =
         serde_json::json!(ledger_closed);
+    sample["receiver_final_missing_repair_received_count"] = serde_json::json!(received);
+    sample["receiver_final_missing_repair_not_received_count"] =
+        serde_json::json!(final_missing_count.saturating_sub(received.min(final_missing_count)));
     sample["receiver_repair_queue_pending_last"] = serde_json::json!(queue_pending_last);
     sample["receiver_repair_queue_max_depth"] = serde_json::json!(queue_max_depth);
     sample["receiver_repair_queue_dropped_count"] =
@@ -15459,6 +15671,7 @@ fn annotate_receiver_repair_lifecycle_close_v1(sample: &mut Value) {
             0u64
         });
     sample["receiver_repair_worker_error_count"] = serde_json::json!(worker_error_count);
+    annotate_ab_final_missing_set_parity_v1(sample);
 }
 
 fn diagnostics_summary_sample(
@@ -22685,6 +22898,7 @@ fn run_sender(
             }
         }
     }
+    annotate_ab_final_missing_set_parity_v1(&mut report);
     Ok(compact_sender_report_for_report(report))
 }
 
