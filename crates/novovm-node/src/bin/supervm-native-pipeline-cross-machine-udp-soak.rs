@@ -524,6 +524,7 @@ struct ReceiverDiagnosticsConfigV1 {
     max_elapsed_ms: u64,
     primary_send_duration_ms: u64,
     repair_drain_timeout_ms: u64,
+    finalization_watchdog_timeout_ms: u64,
     final_ack_timeout_ms: u64,
     absolute_max_ms: u64,
     report_path: PathBuf,
@@ -535,6 +536,7 @@ struct ReceiverDiagnosticsStateV1 {
     last_canonical: u64,
     stall_windows: u64,
     pending_drain_no_progress_ms: u64,
+    receiver_finalization_no_progress_ms: u64,
     fail_reason: Option<String>,
     samples_dropped: u64,
     first_working_set_bytes: Option<u64>,
@@ -2056,6 +2058,24 @@ fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
         default_repair_drain_timeout_seconds,
     )?
     .saturating_mul(1_000);
+    let default_finalization_watchdog_timeout_ms = if is_novorudp_two_hour_profile {
+        repair_drain_timeout_ms.min(600_000)
+    } else if novorudp_enabled && sustained_duration_ms > 0 {
+        repair_drain_timeout_ms.min(120_000)
+    } else {
+        repair_drain_timeout_ms
+    };
+    let finalization_watchdog_timeout_ms = u64_seconds_or_ms_env(
+        &[
+            "NOVOVM_NOVORUDP_RECEIVER_FINALIZATION_WATCHDOG_TIMEOUT_SECONDS",
+            "NOVOVM_NATIVE_PIPELINE_RECEIVER_FINALIZATION_WATCHDOG_TIMEOUT_SECONDS",
+        ],
+        &[
+            "NOVOVM_NOVORUDP_RECEIVER_FINALIZATION_WATCHDOG_TIMEOUT_MS",
+            "NOVOVM_NATIVE_PIPELINE_RECEIVER_FINALIZATION_WATCHDOG_TIMEOUT_MS",
+        ],
+        default_finalization_watchdog_timeout_ms,
+    )?;
     let final_ack_timeout_ms =
         u64_env("NOVOVM_NOVORUDP_FINAL_ACK_TIMEOUT_SECONDS", 120)?.saturating_mul(1_000);
     let default_absolute_max_ms = if sustained_duration_ms > 0 {
@@ -2108,6 +2128,7 @@ fn receiver_diagnostics_config() -> Result<ReceiverDiagnosticsConfigV1> {
         )?,
         primary_send_duration_ms: sustained_duration_ms,
         repair_drain_timeout_ms,
+        finalization_watchdog_timeout_ms,
         final_ack_timeout_ms,
         absolute_max_ms,
         report_path: diagnostics_report_path(),
@@ -4785,6 +4806,7 @@ mod novorudp_tests {
             max_elapsed_ms: 2_700_000,
             primary_send_duration_ms: 1_800_000,
             repair_drain_timeout_ms: 900_000,
+            finalization_watchdog_timeout_ms: 120_000,
             final_ack_timeout_ms: 120_000,
             absolute_max_ms: 2_700_000,
             report_path: PathBuf::from("unused.json"),
@@ -5662,6 +5684,7 @@ mod novorudp_tests {
             max_elapsed_ms: 0,
             primary_send_duration_ms: 60_000,
             repair_drain_timeout_ms: 60_000,
+            finalization_watchdog_timeout_ms: 60_000,
             final_ack_timeout_ms: 10_000,
             absolute_max_ms: 180_000,
             report_path,
@@ -5703,6 +5726,7 @@ mod novorudp_tests {
             last_canonical: 480,
             stall_windows: 0,
             pending_drain_no_progress_ms: 0,
+            receiver_finalization_no_progress_ms: 0,
             fail_reason: None,
             samples_dropped: 0,
             first_working_set_bytes: Some(1),
@@ -5818,6 +5842,7 @@ mod novorudp_tests {
                 last_canonical: 480,
                 stall_windows: 0,
                 pending_drain_no_progress_ms: 0,
+                receiver_finalization_no_progress_ms: 0,
                 fail_reason: None,
                 samples_dropped: 0,
                 first_working_set_bytes: Some(1),
@@ -5858,6 +5883,7 @@ mod novorudp_tests {
                 last_canonical: 480,
                 stall_windows: 0,
                 pending_drain_no_progress_ms: 0,
+                receiver_finalization_no_progress_ms: 0,
                 fail_reason: None,
                 samples_dropped: 0,
                 first_working_set_bytes: Some(1),
@@ -12068,6 +12094,53 @@ fn run_receiver_node(
             } else {
                 state.pending_drain_no_progress_ms = 0;
             }
+            let receiver_finalization_tail_elapsed_ms = active_elapsed_ms
+                .saturating_sub(diagnostics.primary_send_duration_ms);
+            let receiver_finalization_watchdog_active = diagnostics.primary_send_duration_ms > 0
+                && active_elapsed_ms >= diagnostics.primary_send_duration_ms
+                && stable_progress < expected_tx_count;
+            if receiver_finalization_watchdog_active && delta == 0 {
+                state.receiver_finalization_no_progress_ms = state
+                    .receiver_finalization_no_progress_ms
+                    .saturating_add(sample_delta_ms);
+            } else if stable_progress >= expected_tx_count || delta > 0 {
+                state.receiver_finalization_no_progress_ms = 0;
+            }
+            let receiver_finalization_watchdog_triggered =
+                receiver_finalization_watchdog_active
+                    && diagnostics.finalization_watchdog_timeout_ms > 0
+                    && receiver_finalization_tail_elapsed_ms
+                        >= diagnostics.finalization_watchdog_timeout_ms;
+            let receiver_finalization_watchdog_reason =
+                if receiver_finalization_watchdog_triggered {
+                    if pending_count > 0 {
+                        "repair_drain_timeout"
+                    } else {
+                        "final_missing_stable_timeout"
+                    }
+                } else {
+                    "none"
+                };
+            sample["receiver_finalization_watchdog_triggered"] =
+                serde_json::json!(receiver_finalization_watchdog_triggered);
+            sample["receiver_finalization_watchdog_reason"] =
+                serde_json::json!(receiver_finalization_watchdog_reason);
+            sample["receiver_finalization_no_progress_ms"] =
+                serde_json::json!(state.receiver_finalization_no_progress_ms);
+            sample["receiver_finalization_missing_stable_ms"] =
+                serde_json::json!(state.receiver_finalization_no_progress_ms);
+            sample["receiver_finalization_last_progress_ms"] =
+                serde_json::json!(if delta > 0 { Some(active_elapsed_ms) } else { None });
+            sample["receiver_finalization_active_elapsed_ms"] =
+                serde_json::json!(active_elapsed_ms);
+            sample["receiver_finalization_tail_elapsed_ms"] =
+                serde_json::json!(receiver_finalization_tail_elapsed_ms);
+            sample["receiver_finalization_timeout_limit_ms"] =
+                serde_json::json!(diagnostics.finalization_watchdog_timeout_ms);
+            sample["receiver_final_report_forced_write"] =
+                serde_json::json!(receiver_finalization_watchdog_triggered);
+            sample["receiver_exit_reason"] =
+                serde_json::json!(receiver_finalization_watchdog_reason);
             sample["pending_drain_callsite_active"] = serde_json::json!(pending_drain_active);
             sample["pending_drain_callsite_idle_while_pending"] =
                 serde_json::json!(pending_drain_idle_while_pending);
@@ -12118,6 +12191,18 @@ fn run_receiver_node(
                         .get("pipeline_pending_drain_stall_reason")
                         .and_then(Value::as_str)
                         .unwrap_or("unknown")
+                ));
+            }
+            if receiver_finalization_watchdog_triggered && stable_progress < expected_tx_count {
+                fail_reason = Some(format!(
+                    "receiver_finalization_watchdog_timeout: reason={} progress={} expected={} active_elapsed_ms={} tail_elapsed_ms={} timeout_limit_ms={} pending_count={}",
+                    receiver_finalization_watchdog_reason,
+                    stable_progress,
+                    expected_tx_count,
+                    active_elapsed_ms,
+                    receiver_finalization_tail_elapsed_ms,
+                    diagnostics.finalization_watchdog_timeout_ms,
+                    pending_count,
                 ));
             }
             state.last_canonical = stable_progress;
@@ -13316,6 +13401,33 @@ fn write_receiver_exit_report(
         "no_progress_timeout_reached": last_sample
             .and_then(|sample| sample.get("no_progress_timeout_reached"))
             .cloned(),
+        "receiver_finalization_watchdog_triggered": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_watchdog_triggered"))
+            .cloned(),
+        "receiver_finalization_watchdog_reason": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_watchdog_reason"))
+            .cloned(),
+        "receiver_finalization_no_progress_ms": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_no_progress_ms"))
+            .cloned(),
+        "receiver_finalization_missing_stable_ms": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_missing_stable_ms"))
+            .cloned(),
+        "receiver_finalization_active_elapsed_ms": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_active_elapsed_ms"))
+            .cloned(),
+        "receiver_finalization_tail_elapsed_ms": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_tail_elapsed_ms"))
+            .cloned(),
+        "receiver_finalization_timeout_limit_ms": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_timeout_limit_ms"))
+            .cloned(),
+        "receiver_final_report_forced_write": last_sample
+            .and_then(|sample| sample.get("receiver_final_report_forced_write"))
+            .cloned(),
+        "receiver_exit_reason": last_sample
+            .and_then(|sample| sample.get("receiver_exit_reason"))
+            .cloned(),
         "last_sample_elapsed_ms": last_sample
             .and_then(|sample| sample.get("elapsed_ms"))
             .and_then(Value::as_u64),
@@ -13483,6 +13595,33 @@ fn write_synthetic_receiver_failure_report(
             .cloned(),
         "no_progress_timeout_reached": last_sample
             .and_then(|sample| sample.get("no_progress_timeout_reached"))
+            .cloned(),
+        "receiver_finalization_watchdog_triggered": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_watchdog_triggered"))
+            .cloned(),
+        "receiver_finalization_watchdog_reason": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_watchdog_reason"))
+            .cloned(),
+        "receiver_finalization_no_progress_ms": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_no_progress_ms"))
+            .cloned(),
+        "receiver_finalization_missing_stable_ms": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_missing_stable_ms"))
+            .cloned(),
+        "receiver_finalization_active_elapsed_ms": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_active_elapsed_ms"))
+            .cloned(),
+        "receiver_finalization_tail_elapsed_ms": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_tail_elapsed_ms"))
+            .cloned(),
+        "receiver_finalization_timeout_limit_ms": last_sample
+            .and_then(|sample| sample.get("receiver_finalization_timeout_limit_ms"))
+            .cloned(),
+        "receiver_final_report_forced_write": last_sample
+            .and_then(|sample| sample.get("receiver_final_report_forced_write"))
+            .cloned(),
+        "receiver_exit_reason": last_sample
+            .and_then(|sample| sample.get("receiver_exit_reason"))
             .cloned(),
         "tx_count": expected_tx_count,
         "validation": {
@@ -16632,6 +16771,7 @@ fn build_diagnostics_report(
         "max_elapsed_ms": config.max_elapsed_ms,
         "primary_send_duration_ms": config.primary_send_duration_ms,
         "repair_drain_timeout_ms": config.repair_drain_timeout_ms,
+        "receiver_finalization_watchdog_timeout_ms": config.finalization_watchdog_timeout_ms,
         "final_ack_timeout_ms": config.final_ack_timeout_ms,
         "absolute_max_ms": config.absolute_max_ms,
         "fail_reason": signoff_fail_reason,
