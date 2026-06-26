@@ -78,6 +78,7 @@ use crate::{
     observe_network_runtime_native_pending_tx_remote_native_payload_v1,
     observe_network_runtime_native_pending_tx_repair_probe_v1, observe_network_runtime_peer_head,
     observe_network_runtime_peer_head_with_local_head_max,
+    observe_network_runtime_receiver_udp_packet_classifier_v1,
     observe_network_runtime_receiver_udp_packet_decode_attempt_v1,
     observe_network_runtime_receiver_udp_packet_decode_error_v1,
     observe_network_runtime_receiver_udp_packet_decode_ok_v1,
@@ -10907,6 +10908,19 @@ impl Transport for UdpTransport {
                 match protocol_decode(packet) {
                     Ok(decoded) => {
                         observe_network_runtime_receiver_udp_packet_decode_ok_v1(self.chain_id);
+                        let frame_kind = match &decoded {
+                            ProtocolMessage::EvmNative(EvmNativeMessage::EndpointRecord {
+                                ..
+                            }) => "endpoint_record",
+                            ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+                                ..
+                            }) => "transaction_frame",
+                            _ => "unknown",
+                        };
+                        observe_network_runtime_receiver_udp_packet_classifier_v1(
+                            self.chain_id,
+                            frame_kind,
+                        );
                         Ok(Some((decoded, src)))
                     }
                     Err(e) => {

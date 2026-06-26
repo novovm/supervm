@@ -34146,6 +34146,168 @@ fn build_native_execution_pipeline_report_v1(
         .pointer_mut("/lifecycle/ingress")
         .and_then(serde_json::Value::as_object_mut)
     {
+        for (key, value) in [
+            (
+                "receiver_udp_packet_recv_count",
+                serde_json::json!(pending_summary.receiver_udp_packet_recv_count),
+            ),
+            (
+                "receiver_udp_packet_recv_bytes_total",
+                serde_json::json!(pending_summary.receiver_udp_packet_recv_bytes_total),
+            ),
+            (
+                "receiver_udp_packet_decode_attempt_count",
+                serde_json::json!(pending_summary.receiver_udp_packet_decode_attempt_count),
+            ),
+            (
+                "receiver_udp_packet_decode_ok_count",
+                serde_json::json!(pending_summary.receiver_udp_packet_decode_ok_count),
+            ),
+            (
+                "receiver_udp_packet_decode_error_count",
+                serde_json::json!(pending_summary.receiver_udp_packet_decode_error_count),
+            ),
+            (
+                "receiver_udp_packet_predecode_drop_count",
+                serde_json::json!(pending_summary.receiver_udp_packet_predecode_drop_count),
+            ),
+            (
+                "receiver_classifier_endpoint_record_count",
+                serde_json::json!(pending_summary.receiver_classifier_endpoint_record_count),
+            ),
+            (
+                "receiver_classifier_transaction_frame_count",
+                serde_json::json!(pending_summary.receiver_classifier_transaction_frame_count),
+            ),
+            (
+                "receiver_classifier_repair_frame_count",
+                serde_json::json!(pending_summary.receiver_classifier_repair_frame_count),
+            ),
+            (
+                "receiver_classifier_unknown_count",
+                serde_json::json!(pending_summary.receiver_classifier_unknown_count),
+            ),
+            (
+                "receiver_udp_packet_source_addr_sample",
+                serde_json::json!(pending_summary.receiver_udp_packet_source_addr_sample),
+            ),
+            (
+                "receiver_udp_packet_len_min",
+                serde_json::json!(pending_summary.receiver_udp_packet_len_min),
+            ),
+            (
+                "receiver_udp_packet_len_p50",
+                serde_json::json!(pending_summary.receiver_udp_packet_len_p50),
+            ),
+            (
+                "receiver_udp_packet_len_p90",
+                serde_json::json!(pending_summary.receiver_udp_packet_len_p90),
+            ),
+            (
+                "receiver_udp_packet_len_max",
+                serde_json::json!(pending_summary.receiver_udp_packet_len_max),
+            ),
+            (
+                "receiver_udp_packet_first_bytes_hex_sample",
+                serde_json::json!(pending_summary.receiver_udp_packet_first_bytes_hex_sample),
+            ),
+            (
+                "receiver_udp_packet_decode_stage_sample",
+                serde_json::json!(pending_summary.receiver_udp_packet_decode_stage_sample),
+            ),
+            (
+                "receiver_udp_packet_drop_reason_sample",
+                serde_json::json!(pending_summary.receiver_udp_packet_drop_reason_sample),
+            ),
+            (
+                "native_receiver_socket_recv_count",
+                serde_json::json!(pending_summary.receiver_udp_packet_recv_count),
+            ),
+            (
+                "native_receiver_socket_recv_bytes_total",
+                serde_json::json!(pending_summary.receiver_udp_packet_recv_bytes_total),
+            ),
+            (
+                "native_receiver_socket_source_addr_sample",
+                serde_json::json!(pending_summary.receiver_udp_packet_source_addr_sample),
+            ),
+            (
+                "native_receiver_socket_first_bytes_hex_sample",
+                serde_json::json!(pending_summary.receiver_udp_packet_first_bytes_hex_sample),
+            ),
+            (
+                "native_receiver_classifier_attempt_count",
+                serde_json::json!(pending_summary.receiver_udp_packet_decode_attempt_count),
+            ),
+            (
+                "native_receiver_classifier_endpoint_record_count",
+                serde_json::json!(pending_summary.receiver_classifier_endpoint_record_count),
+            ),
+            (
+                "native_receiver_classifier_data_frame_count",
+                serde_json::json!(pending_summary.receiver_classifier_transaction_frame_count),
+            ),
+            (
+                "native_receiver_classifier_repair_frame_count",
+                serde_json::json!(pending_summary.receiver_classifier_repair_frame_count),
+            ),
+            (
+                "native_receiver_classifier_unknown_count",
+                serde_json::json!(pending_summary.receiver_classifier_unknown_count),
+            ),
+            (
+                "native_receiver_classifier_drop_count",
+                serde_json::json!(pending_summary.receiver_udp_packet_predecode_drop_count),
+            ),
+            (
+                "native_receiver_classifier_drop_reason_sample",
+                serde_json::json!(pending_summary.receiver_udp_packet_drop_reason_sample),
+            ),
+            (
+                "native_receiver_endpoint_record_decode_ok_count",
+                serde_json::json!(pending_summary.receiver_classifier_endpoint_record_count),
+            ),
+            (
+                "native_receiver_endpoint_record_decode_error_count",
+                serde_json::json!(pending_summary.receiver_endpoint_record_decode_error_count),
+            ),
+            (
+                "native_receiver_data_frame_decode_ok_count",
+                serde_json::json!(pending_summary.receiver_classifier_transaction_frame_count),
+            ),
+            (
+                "native_receiver_data_frame_decode_error_count",
+                serde_json::json!(pending_summary.receiver_transaction_frame_decode_error_count),
+            ),
+            (
+                "native_receiver_repair_frame_decode_ok_count",
+                serde_json::json!(pending_summary.receiver_classifier_repair_frame_count),
+            ),
+            (
+                "native_receiver_repair_frame_decode_error_count",
+                serde_json::json!(pending_summary.receiver_repair_frame_decode_error_count),
+            ),
+            (
+                "native_receiver_source_pin_drop_count",
+                serde_json::json!(
+                    pending_summary.receiver_udp_packet_predecode_drop_reason_source_pin_count
+                ),
+            ),
+            (
+                "native_receiver_auth_drop_count",
+                serde_json::json!(pending_summary.receiver_frame_auth_key_mismatch_count),
+            ),
+            (
+                "native_receiver_run_id_mismatch_count",
+                serde_json::json!(pending_summary.receiver_frame_run_id_mismatch_count),
+            ),
+            (
+                "native_receiver_session_id_mismatch_count",
+                serde_json::json!(pending_summary.receiver_frame_session_id_mismatch_count),
+            ),
+        ] {
+            ingress.insert(key.to_string(), value);
+        }
         ingress.insert(
             "repair_sequence_admitted_to_aoem_ranges_sample".to_string(),
             serde_json::to_value(
@@ -34561,6 +34723,34 @@ struct NativeExecutionPipelineAggregateV1 {
     proof_ticks: u64,
     commit_ticks: u64,
     ingress_total_last: u64,
+    receiver_udp_packet_recv_count: u64,
+    receiver_udp_packet_recv_bytes_total: u64,
+    receiver_udp_packet_decode_attempt_count: u64,
+    receiver_udp_packet_decode_ok_count: u64,
+    receiver_udp_packet_decode_error_count: u64,
+    receiver_udp_packet_predecode_drop_count: u64,
+    receiver_classifier_endpoint_record_count: u64,
+    receiver_classifier_transaction_frame_count: u64,
+    receiver_classifier_repair_frame_count: u64,
+    receiver_classifier_unknown_count: u64,
+    native_receiver_endpoint_record_decode_ok_count: u64,
+    native_receiver_endpoint_record_decode_error_count: u64,
+    native_receiver_data_frame_decode_ok_count: u64,
+    native_receiver_data_frame_decode_error_count: u64,
+    native_receiver_repair_frame_decode_ok_count: u64,
+    native_receiver_repair_frame_decode_error_count: u64,
+    native_receiver_source_pin_drop_count: u64,
+    native_receiver_auth_drop_count: u64,
+    native_receiver_run_id_mismatch_count: u64,
+    native_receiver_session_id_mismatch_count: u64,
+    receiver_udp_packet_source_addr_sample: serde_json::Value,
+    receiver_udp_packet_len_min: Option<u64>,
+    receiver_udp_packet_len_p50: Option<u64>,
+    receiver_udp_packet_len_p90: Option<u64>,
+    receiver_udp_packet_len_max: Option<u64>,
+    receiver_udp_packet_first_bytes_hex_sample: serde_json::Value,
+    receiver_udp_packet_decode_stage_sample: serde_json::Value,
+    receiver_udp_packet_drop_reason_sample: serde_json::Value,
     repair_packet_received_count: u64,
     repair_packet_decode_failed_count: u64,
     repair_sequence_received_count: u64,
@@ -34863,6 +35053,34 @@ impl NativeExecutionPipelineAggregateV1 {
             proof_ticks: 0,
             commit_ticks: 0,
             ingress_total_last: 0,
+            receiver_udp_packet_recv_count: 0,
+            receiver_udp_packet_recv_bytes_total: 0,
+            receiver_udp_packet_decode_attempt_count: 0,
+            receiver_udp_packet_decode_ok_count: 0,
+            receiver_udp_packet_decode_error_count: 0,
+            receiver_udp_packet_predecode_drop_count: 0,
+            receiver_classifier_endpoint_record_count: 0,
+            receiver_classifier_transaction_frame_count: 0,
+            receiver_classifier_repair_frame_count: 0,
+            receiver_classifier_unknown_count: 0,
+            native_receiver_endpoint_record_decode_ok_count: 0,
+            native_receiver_endpoint_record_decode_error_count: 0,
+            native_receiver_data_frame_decode_ok_count: 0,
+            native_receiver_data_frame_decode_error_count: 0,
+            native_receiver_repair_frame_decode_ok_count: 0,
+            native_receiver_repair_frame_decode_error_count: 0,
+            native_receiver_source_pin_drop_count: 0,
+            native_receiver_auth_drop_count: 0,
+            native_receiver_run_id_mismatch_count: 0,
+            native_receiver_session_id_mismatch_count: 0,
+            receiver_udp_packet_source_addr_sample: serde_json::json!([]),
+            receiver_udp_packet_len_min: None,
+            receiver_udp_packet_len_p50: None,
+            receiver_udp_packet_len_p90: None,
+            receiver_udp_packet_len_max: None,
+            receiver_udp_packet_first_bytes_hex_sample: serde_json::json!([]),
+            receiver_udp_packet_decode_stage_sample: serde_json::json!([]),
+            receiver_udp_packet_drop_reason_sample: serde_json::json!([]),
             repair_packet_received_count: 0,
             repair_packet_decode_failed_count: 0,
             repair_sequence_received_count: 0,
@@ -35405,6 +35623,114 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("total")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.receiver_udp_packet_recv_count = ingress
+            .get("receiver_udp_packet_recv_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_udp_packet_recv_bytes_total = ingress
+            .get("receiver_udp_packet_recv_bytes_total")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_udp_packet_decode_attempt_count = ingress
+            .get("receiver_udp_packet_decode_attempt_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_udp_packet_decode_ok_count = ingress
+            .get("receiver_udp_packet_decode_ok_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_udp_packet_decode_error_count = ingress
+            .get("receiver_udp_packet_decode_error_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_udp_packet_predecode_drop_count = ingress
+            .get("receiver_udp_packet_predecode_drop_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_classifier_endpoint_record_count = ingress
+            .get("receiver_classifier_endpoint_record_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_classifier_transaction_frame_count = ingress
+            .get("receiver_classifier_transaction_frame_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_classifier_repair_frame_count = ingress
+            .get("receiver_classifier_repair_frame_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_classifier_unknown_count = ingress
+            .get("receiver_classifier_unknown_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.native_receiver_endpoint_record_decode_ok_count = ingress
+            .get("native_receiver_endpoint_record_decode_ok_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.native_receiver_endpoint_record_decode_error_count = ingress
+            .get("native_receiver_endpoint_record_decode_error_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.native_receiver_data_frame_decode_ok_count = ingress
+            .get("native_receiver_data_frame_decode_ok_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.native_receiver_data_frame_decode_error_count = ingress
+            .get("native_receiver_data_frame_decode_error_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.native_receiver_repair_frame_decode_ok_count = ingress
+            .get("native_receiver_repair_frame_decode_ok_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.native_receiver_repair_frame_decode_error_count = ingress
+            .get("native_receiver_repair_frame_decode_error_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.native_receiver_source_pin_drop_count = ingress
+            .get("native_receiver_source_pin_drop_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.native_receiver_auth_drop_count = ingress
+            .get("native_receiver_auth_drop_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.native_receiver_run_id_mismatch_count = ingress
+            .get("native_receiver_run_id_mismatch_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.native_receiver_session_id_mismatch_count = ingress
+            .get("native_receiver_session_id_mismatch_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_udp_packet_source_addr_sample = ingress
+            .get("receiver_udp_packet_source_addr_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.receiver_udp_packet_len_min = ingress
+            .get("receiver_udp_packet_len_min")
+            .and_then(|value| value.as_u64());
+        self.receiver_udp_packet_len_p50 = ingress
+            .get("receiver_udp_packet_len_p50")
+            .and_then(|value| value.as_u64());
+        self.receiver_udp_packet_len_p90 = ingress
+            .get("receiver_udp_packet_len_p90")
+            .and_then(|value| value.as_u64());
+        self.receiver_udp_packet_len_max = ingress
+            .get("receiver_udp_packet_len_max")
+            .and_then(|value| value.as_u64());
+        self.receiver_udp_packet_first_bytes_hex_sample = ingress
+            .get("receiver_udp_packet_first_bytes_hex_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.receiver_udp_packet_decode_stage_sample = ingress
+            .get("receiver_udp_packet_decode_stage_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.receiver_udp_packet_drop_reason_sample = ingress
+            .get("receiver_udp_packet_drop_reason_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
         self.repair_packet_received_count = ingress
             .get("repair_packet_received_count")
             .and_then(|value| value.as_u64())
@@ -37218,6 +37544,162 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "ingress_total_last".to_string(),
             serde_json::json!(self.ingress_total_last),
+        );
+        out.insert(
+            "receiver_udp_packet_recv_count".to_string(),
+            serde_json::json!(self.receiver_udp_packet_recv_count),
+        );
+        out.insert(
+            "receiver_udp_packet_recv_bytes_total".to_string(),
+            serde_json::json!(self.receiver_udp_packet_recv_bytes_total),
+        );
+        out.insert(
+            "receiver_udp_packet_decode_attempt_count".to_string(),
+            serde_json::json!(self.receiver_udp_packet_decode_attempt_count),
+        );
+        out.insert(
+            "receiver_udp_packet_decode_ok_count".to_string(),
+            serde_json::json!(self.receiver_udp_packet_decode_ok_count),
+        );
+        out.insert(
+            "receiver_udp_packet_decode_error_count".to_string(),
+            serde_json::json!(self.receiver_udp_packet_decode_error_count),
+        );
+        out.insert(
+            "receiver_udp_packet_predecode_drop_count".to_string(),
+            serde_json::json!(self.receiver_udp_packet_predecode_drop_count),
+        );
+        out.insert(
+            "receiver_classifier_endpoint_record_count".to_string(),
+            serde_json::json!(self.receiver_classifier_endpoint_record_count),
+        );
+        out.insert(
+            "receiver_classifier_transaction_frame_count".to_string(),
+            serde_json::json!(self.receiver_classifier_transaction_frame_count),
+        );
+        out.insert(
+            "receiver_classifier_repair_frame_count".to_string(),
+            serde_json::json!(self.receiver_classifier_repair_frame_count),
+        );
+        out.insert(
+            "receiver_classifier_unknown_count".to_string(),
+            serde_json::json!(self.receiver_classifier_unknown_count),
+        );
+        out.insert(
+            "receiver_udp_packet_source_addr_sample".to_string(),
+            self.receiver_udp_packet_source_addr_sample.clone(),
+        );
+        out.insert(
+            "receiver_udp_packet_len_min".to_string(),
+            serde_json::json!(self.receiver_udp_packet_len_min),
+        );
+        out.insert(
+            "receiver_udp_packet_len_p50".to_string(),
+            serde_json::json!(self.receiver_udp_packet_len_p50),
+        );
+        out.insert(
+            "receiver_udp_packet_len_p90".to_string(),
+            serde_json::json!(self.receiver_udp_packet_len_p90),
+        );
+        out.insert(
+            "receiver_udp_packet_len_max".to_string(),
+            serde_json::json!(self.receiver_udp_packet_len_max),
+        );
+        out.insert(
+            "receiver_udp_packet_first_bytes_hex_sample".to_string(),
+            self.receiver_udp_packet_first_bytes_hex_sample.clone(),
+        );
+        out.insert(
+            "receiver_udp_packet_decode_stage_sample".to_string(),
+            self.receiver_udp_packet_decode_stage_sample.clone(),
+        );
+        out.insert(
+            "receiver_udp_packet_drop_reason_sample".to_string(),
+            self.receiver_udp_packet_drop_reason_sample.clone(),
+        );
+        out.insert(
+            "native_receiver_socket_recv_count".to_string(),
+            serde_json::json!(self.receiver_udp_packet_recv_count),
+        );
+        out.insert(
+            "native_receiver_socket_recv_bytes_total".to_string(),
+            serde_json::json!(self.receiver_udp_packet_recv_bytes_total),
+        );
+        out.insert(
+            "native_receiver_socket_source_addr_sample".to_string(),
+            self.receiver_udp_packet_source_addr_sample.clone(),
+        );
+        out.insert(
+            "native_receiver_socket_first_bytes_hex_sample".to_string(),
+            self.receiver_udp_packet_first_bytes_hex_sample.clone(),
+        );
+        out.insert(
+            "native_receiver_classifier_attempt_count".to_string(),
+            serde_json::json!(self.receiver_udp_packet_decode_attempt_count),
+        );
+        out.insert(
+            "native_receiver_classifier_endpoint_record_count".to_string(),
+            serde_json::json!(self.receiver_classifier_endpoint_record_count),
+        );
+        out.insert(
+            "native_receiver_classifier_data_frame_count".to_string(),
+            serde_json::json!(self.receiver_classifier_transaction_frame_count),
+        );
+        out.insert(
+            "native_receiver_classifier_repair_frame_count".to_string(),
+            serde_json::json!(self.receiver_classifier_repair_frame_count),
+        );
+        out.insert(
+            "native_receiver_classifier_unknown_count".to_string(),
+            serde_json::json!(self.receiver_classifier_unknown_count),
+        );
+        out.insert(
+            "native_receiver_classifier_drop_count".to_string(),
+            serde_json::json!(self.receiver_udp_packet_predecode_drop_count),
+        );
+        out.insert(
+            "native_receiver_classifier_drop_reason_sample".to_string(),
+            self.receiver_udp_packet_drop_reason_sample.clone(),
+        );
+        out.insert(
+            "native_receiver_endpoint_record_decode_ok_count".to_string(),
+            serde_json::json!(self.native_receiver_endpoint_record_decode_ok_count),
+        );
+        out.insert(
+            "native_receiver_endpoint_record_decode_error_count".to_string(),
+            serde_json::json!(self.native_receiver_endpoint_record_decode_error_count),
+        );
+        out.insert(
+            "native_receiver_data_frame_decode_ok_count".to_string(),
+            serde_json::json!(self.native_receiver_data_frame_decode_ok_count),
+        );
+        out.insert(
+            "native_receiver_data_frame_decode_error_count".to_string(),
+            serde_json::json!(self.native_receiver_data_frame_decode_error_count),
+        );
+        out.insert(
+            "native_receiver_repair_frame_decode_ok_count".to_string(),
+            serde_json::json!(self.native_receiver_repair_frame_decode_ok_count),
+        );
+        out.insert(
+            "native_receiver_repair_frame_decode_error_count".to_string(),
+            serde_json::json!(self.native_receiver_repair_frame_decode_error_count),
+        );
+        out.insert(
+            "native_receiver_source_pin_drop_count".to_string(),
+            serde_json::json!(self.native_receiver_source_pin_drop_count),
+        );
+        out.insert(
+            "native_receiver_auth_drop_count".to_string(),
+            serde_json::json!(self.native_receiver_auth_drop_count),
+        );
+        out.insert(
+            "native_receiver_run_id_mismatch_count".to_string(),
+            serde_json::json!(self.native_receiver_run_id_mismatch_count),
+        );
+        out.insert(
+            "native_receiver_session_id_mismatch_count".to_string(),
+            serde_json::json!(self.native_receiver_session_id_mismatch_count),
         );
         out.insert(
             "repair_packet_received_count".to_string(),
