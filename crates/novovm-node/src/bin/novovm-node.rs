@@ -32929,6 +32929,33 @@ fn novorudp_child_receiver_mode_v1() -> bool {
             .is_some_and(|value| value.eq_ignore_ascii_case("receiver"))
 }
 
+fn decorate_native_receiver_attribution_summary_v1(
+    summary: &mut serde_json::Value,
+    source: &str,
+) {
+    let Some(obj) = summary.as_object_mut() else {
+        return;
+    };
+    let fields_present = obj.contains_key("native_receiver_socket_recv_count")
+        || obj.contains_key("receiver_udp_packet_recv_count");
+    obj.insert(
+        "native_receiver_attribution_available".to_string(),
+        serde_json::json!(fields_present),
+    );
+    obj.insert(
+        "native_receiver_summary_source".to_string(),
+        serde_json::json!(if fields_present { source } else { "unavailable" }),
+    );
+    obj.insert(
+        "native_receiver_attribution_missing_reason".to_string(),
+        serde_json::json!(if fields_present {
+            ""
+        } else {
+            "native_receiver_fields_missing_from_child_summary"
+        }),
+    );
+}
+
 fn decorate_novorudp_child_expected_summary_v1(
     summary: &mut serde_json::Value,
     raw_expected: Option<&str>,
@@ -41258,6 +41285,10 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                     novorudp_expected_tx_count,
                     novorudp_window_size,
                 );
+                decorate_native_receiver_attribution_summary_v1(
+                    &mut progress_summary,
+                    "child_progress_summary",
+                );
                 let progress_report = serde_json::json!({
                     "schema": "novovm-native-execution-pipeline-progress-report/v1",
                     "summary": progress_summary,
@@ -41325,6 +41356,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                 novorudp_expected_tx_count,
                 novorudp_window_size,
             );
+            decorate_native_receiver_attribution_summary_v1(&mut summary, "child_exit_summary");
             if soak_gate.validate_summary(&summary).is_ok() {
                 break;
             }
@@ -41372,6 +41404,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         novorudp_expected_tx_count,
         novorudp_window_size,
     );
+    decorate_native_receiver_attribution_summary_v1(&mut summary, "child_final_summary");
     if let Some(path) = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH")
     {
         let report_path = PathBuf::from(path);

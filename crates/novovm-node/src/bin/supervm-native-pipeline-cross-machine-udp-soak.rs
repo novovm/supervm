@@ -14048,7 +14048,18 @@ fn write_synthetic_receiver_failure_report(
             format!("receiver exited before expected_tx_total: progress={stable_progress_total} expected={expected_tx_count}"),
         ],
     });
+    let native_attribution_source = last_sample.or(progress_summary_from_path.as_ref());
+    copy_native_receiver_attribution_fields_v1(
+        native_attribution_source,
+        &mut report,
+        "synthetic_failure_last_sample",
+    );
     if let Some(validation) = report.get_mut("validation") {
+        copy_native_receiver_attribution_fields_v1(
+            native_attribution_source,
+            validation,
+            "synthetic_failure_last_sample",
+        );
         apply_ledger_receipt_completion_fields_v1(validation, ledger_receipt_source);
         annotate_receiver_repair_lifecycle_close_v1(validation);
     }
@@ -14151,6 +14162,84 @@ fn read_pipeline_progress_summary(path: &Path) -> Option<Value> {
     let raw = fs::read_to_string(path).ok()?;
     let value = serde_json::from_str::<Value>(raw.as_str()).ok()?;
     value.get("summary").cloned()
+}
+
+fn copy_native_receiver_attribution_fields_v1(
+    source: Option<&Value>,
+    target: &mut Value,
+    summary_source: &str,
+) {
+    let Some(target_obj) = target.as_object_mut() else {
+        return;
+    };
+    let native_keys = [
+        "receiver_udp_packet_recv_count",
+        "receiver_udp_packet_recv_bytes_total",
+        "receiver_udp_packet_decode_attempt_count",
+        "receiver_udp_packet_decode_ok_count",
+        "receiver_udp_packet_decode_error_count",
+        "receiver_udp_packet_predecode_drop_count",
+        "receiver_classifier_endpoint_record_count",
+        "receiver_classifier_transaction_frame_count",
+        "receiver_classifier_repair_frame_count",
+        "receiver_classifier_unknown_count",
+        "receiver_udp_packet_source_addr_sample",
+        "receiver_udp_packet_len_min",
+        "receiver_udp_packet_len_p50",
+        "receiver_udp_packet_len_p90",
+        "receiver_udp_packet_len_max",
+        "receiver_udp_packet_first_bytes_hex_sample",
+        "receiver_udp_packet_decode_stage_sample",
+        "receiver_udp_packet_drop_reason_sample",
+        "native_receiver_socket_recv_count",
+        "native_receiver_socket_recv_bytes_total",
+        "native_receiver_socket_source_addr_sample",
+        "native_receiver_socket_first_bytes_hex_sample",
+        "native_receiver_classifier_attempt_count",
+        "native_receiver_classifier_endpoint_record_count",
+        "native_receiver_classifier_data_frame_count",
+        "native_receiver_classifier_repair_frame_count",
+        "native_receiver_classifier_unknown_count",
+        "native_receiver_classifier_drop_count",
+        "native_receiver_classifier_drop_reason_sample",
+        "native_receiver_endpoint_record_decode_ok_count",
+        "native_receiver_endpoint_record_decode_error_count",
+        "native_receiver_data_frame_decode_ok_count",
+        "native_receiver_data_frame_decode_error_count",
+        "native_receiver_repair_frame_decode_ok_count",
+        "native_receiver_repair_frame_decode_error_count",
+        "native_receiver_source_pin_drop_count",
+        "native_receiver_auth_drop_count",
+        "native_receiver_run_id_mismatch_count",
+        "native_receiver_session_id_mismatch_count",
+    ];
+    let mut copied = 0usize;
+    if let Some(source) = source {
+        for key in native_keys {
+            if let Some(value) = source.get(key).cloned() {
+                target_obj.insert(key.to_string(), value);
+                copied = copied.saturating_add(1);
+            }
+        }
+    }
+    target_obj.insert(
+        "native_receiver_attribution_available".to_string(),
+        serde_json::json!(copied > 0),
+    );
+    target_obj.insert(
+        "native_receiver_summary_source".to_string(),
+        serde_json::json!(if copied > 0 { summary_source } else { "unavailable" }),
+    );
+    target_obj.insert(
+        "native_receiver_attribution_missing_reason".to_string(),
+        serde_json::json!(if copied > 0 {
+            ""
+        } else if source.is_some() {
+            "native_receiver_fields_missing_from_source"
+        } else {
+            "native_receiver_source_unavailable"
+        }),
+    );
 }
 
 #[cfg(windows)]
@@ -24473,6 +24562,9 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "raw_runtime_summary_omitted": true,
     });
     for key in [
+        "native_receiver_attribution_available",
+        "native_receiver_attribution_missing_reason",
+        "native_receiver_summary_source",
         "receiver_udp_packet_recv_count",
         "receiver_udp_packet_recv_bytes_total",
         "receiver_udp_packet_decode_attempt_count",
