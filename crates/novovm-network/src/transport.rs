@@ -77,7 +77,12 @@ use crate::{
     observe_network_runtime_native_pending_tx_propagation_failure_v1,
     observe_network_runtime_native_pending_tx_remote_native_payload_v1,
     observe_network_runtime_native_pending_tx_repair_probe_v1, observe_network_runtime_peer_head,
-    observe_network_runtime_peer_head_with_local_head_max, plan_network_runtime_sync_pull_window,
+    observe_network_runtime_peer_head_with_local_head_max,
+    observe_network_runtime_receiver_udp_packet_decode_attempt_v1,
+    observe_network_runtime_receiver_udp_packet_decode_error_v1,
+    observe_network_runtime_receiver_udp_packet_decode_ok_v1,
+    observe_network_runtime_receiver_udp_packet_predecode_drop_v1,
+    observe_network_runtime_receiver_udp_packet_recv_v1, plan_network_runtime_sync_pull_window,
     register_network_runtime_peer, resolve_eth_chain_config_v1,
     resolve_eth_fullnode_native_runtime_config_v1, route::PluginPeerEndpoint,
     select_eth_fullnode_native_bootstrap_candidates_v1, select_eth_fullnode_native_sync_targets_v1,
@@ -10895,9 +10900,27 @@ impl Transport for UdpTransport {
         }
         let recv_outcome = self.socket.recv_from(recv_buf.as_mut_slice());
         let decode_outcome = match recv_outcome {
-            Ok((n, src)) => protocol_decode(&recv_buf[..n])
-                .map(|decoded| Some((decoded, src)))
-                .map_err(|e| NetworkError::Decode(e.to_string())),
+            Ok((n, src)) => {
+                let packet = &recv_buf[..n];
+                observe_network_runtime_receiver_udp_packet_recv_v1(self.chain_id, src, packet);
+                observe_network_runtime_receiver_udp_packet_decode_attempt_v1(self.chain_id);
+                match protocol_decode(packet) {
+                    Ok(decoded) => {
+                        observe_network_runtime_receiver_udp_packet_decode_ok_v1(self.chain_id);
+                        Ok(Some((decoded, src)))
+                    }
+                    Err(e) => {
+                        let error = e.to_string();
+                        observe_network_runtime_receiver_udp_packet_decode_error_v1(
+                            self.chain_id,
+                            src,
+                            packet,
+                            &error,
+                        );
+                        Err(NetworkError::Decode(error))
+                    }
+                }
+            }
             Err(e)
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut
@@ -10916,6 +10939,12 @@ impl Transport for UdpTransport {
             Err(e) => return Err(e),
         };
         if !validate_udp_source_contract_v1(&self.source_pins, self.chain_id, src, &decoded) {
+            observe_network_runtime_receiver_udp_packet_predecode_drop_v1(
+                self.chain_id,
+                src,
+                &[],
+                "source_pin",
+            );
             return Ok(None);
         }
         let msg_peer_id = runtime_peer_id_from_protocol_message(&decoded);

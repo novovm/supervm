@@ -11,6 +11,7 @@ use crate::{
 use novovm_protocol::{decode_nov_native_tx_wire_v1, NovTxKindV1};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -138,6 +139,9 @@ static NETWORK_RUNTIME_NATIVE_PENDING_TX_BROADCAST_RUNTIME: OnceLock<
 > = OnceLock::new();
 static NETWORK_RUNTIME_NATIVE_REPAIR_PROBE: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNativeRepairProbeStateV1>>,
+> = OnceLock::new();
+static NETWORK_RUNTIME_RECEIVER_DECODE_ATTRIBUTION: OnceLock<
+    Mutex<HashMap<u64, NetworkRuntimeReceiverDecodeAttributionV1>>,
 > = OnceLock::new();
 static NETWORK_RUNTIME_NOVORUDP_SEQUENCE_LEDGER: OnceLock<
     Mutex<HashMap<u64, NovoRudpSequenceLifecycleLedger>>,
@@ -267,6 +271,11 @@ fn runtime_native_pending_tx_broadcast_runtime_map(
 fn runtime_native_repair_probe_map(
 ) -> &'static Mutex<HashMap<u64, NetworkRuntimeNativeRepairProbeStateV1>> {
     NETWORK_RUNTIME_NATIVE_REPAIR_PROBE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_receiver_decode_attribution_map(
+) -> &'static Mutex<HashMap<u64, NetworkRuntimeReceiverDecodeAttributionV1>> {
+    NETWORK_RUNTIME_RECEIVER_DECODE_ATTRIBUTION.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_novorudp_sequence_ledger_map(
@@ -1039,6 +1048,44 @@ pub struct NetworkRuntimeNovoRudpLedgerCloseDiagnosticsV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
+pub struct NetworkRuntimeReceiverDecodeAttributionV1 {
+    pub receiver_udp_packet_recv_count: u64,
+    pub receiver_udp_packet_decode_attempt_count: u64,
+    pub receiver_udp_packet_decode_ok_count: u64,
+    pub receiver_udp_packet_decode_error_count: u64,
+    pub receiver_udp_packet_predecode_drop_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_too_short_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_magic_absent_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_plain_udp_disabled_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_unknown_transport_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_rate_limit_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_source_pin_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_endpoint_required_count: u64,
+    pub receiver_frame_magic_mismatch_count: u64,
+    pub receiver_frame_version_mismatch_count: u64,
+    pub receiver_frame_length_invalid_count: u64,
+    pub receiver_frame_checksum_invalid_count: u64,
+    pub receiver_frame_auth_domain_mismatch_count: u64,
+    pub receiver_frame_auth_key_mismatch_count: u64,
+    pub receiver_frame_run_id_mismatch_count: u64,
+    pub receiver_frame_session_id_mismatch_count: u64,
+    pub receiver_endpoint_record_decode_error_count: u64,
+    pub receiver_transaction_frame_decode_error_count: u64,
+    pub receiver_repair_frame_decode_error_count: u64,
+    pub receiver_non_novorudp_packet_count: u64,
+    pub receiver_udp_packet_source_addr_sample: Vec<String>,
+    pub receiver_udp_packet_len_samples: Vec<u64>,
+    pub receiver_udp_packet_len_min: Option<u64>,
+    pub receiver_udp_packet_len_p50: Option<u64>,
+    pub receiver_udp_packet_len_p90: Option<u64>,
+    pub receiver_udp_packet_len_max: Option<u64>,
+    pub receiver_udp_packet_first_bytes_hex_sample: Vec<String>,
+    pub receiver_udp_packet_decode_stage_sample: Vec<String>,
+    pub receiver_udp_packet_drop_reason_sample: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub chain_id: u64,
     pub tx_count: usize,
@@ -1072,6 +1119,38 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub last_broadcast_candidate_count: u64,
     pub last_broadcast_tx_count: u64,
     pub last_broadcast_unix_ms: Option<u128>,
+    pub receiver_udp_packet_recv_count: u64,
+    pub receiver_udp_packet_decode_attempt_count: u64,
+    pub receiver_udp_packet_decode_ok_count: u64,
+    pub receiver_udp_packet_decode_error_count: u64,
+    pub receiver_udp_packet_predecode_drop_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_too_short_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_magic_absent_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_plain_udp_disabled_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_unknown_transport_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_rate_limit_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_source_pin_count: u64,
+    pub receiver_udp_packet_predecode_drop_reason_endpoint_required_count: u64,
+    pub receiver_frame_magic_mismatch_count: u64,
+    pub receiver_frame_version_mismatch_count: u64,
+    pub receiver_frame_length_invalid_count: u64,
+    pub receiver_frame_checksum_invalid_count: u64,
+    pub receiver_frame_auth_domain_mismatch_count: u64,
+    pub receiver_frame_auth_key_mismatch_count: u64,
+    pub receiver_frame_run_id_mismatch_count: u64,
+    pub receiver_frame_session_id_mismatch_count: u64,
+    pub receiver_endpoint_record_decode_error_count: u64,
+    pub receiver_transaction_frame_decode_error_count: u64,
+    pub receiver_repair_frame_decode_error_count: u64,
+    pub receiver_non_novorudp_packet_count: u64,
+    pub receiver_udp_packet_source_addr_sample: Vec<String>,
+    pub receiver_udp_packet_len_min: Option<u64>,
+    pub receiver_udp_packet_len_p50: Option<u64>,
+    pub receiver_udp_packet_len_p90: Option<u64>,
+    pub receiver_udp_packet_len_max: Option<u64>,
+    pub receiver_udp_packet_first_bytes_hex_sample: Vec<String>,
+    pub receiver_udp_packet_decode_stage_sample: Vec<String>,
+    pub receiver_udp_packet_drop_reason_sample: Vec<String>,
     pub repair_packet_received_count: u64,
     pub repair_packet_decode_failed_count: u64,
     pub repair_sequence_received_count: u64,
@@ -1484,6 +1563,271 @@ fn network_runtime_native_repair_sequence_ranges_sample_v1(
         });
     }
     out
+}
+
+const RECEIVER_DECODE_ATTRIBUTION_SAMPLE_LIMIT_V1: usize = 16;
+
+fn receiver_decode_attribution_sample_push_v1<T>(sample: &mut Vec<T>, value: T) {
+    if sample.len() < RECEIVER_DECODE_ATTRIBUTION_SAMPLE_LIMIT_V1 {
+        sample.push(value);
+    }
+}
+
+fn receiver_decode_attribution_first_bytes_hex_v1(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn receiver_decode_attribution_percentile_v1(samples: &[u64], percentile: u64) -> Option<u64> {
+    if samples.is_empty() {
+        return None;
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    let len = sorted.len().saturating_sub(1) as u64;
+    let index = len.saturating_mul(percentile).saturating_add(99) / 100;
+    sorted.get(index as usize).copied()
+}
+
+fn receiver_decode_attribution_observe_packet_sample_v1(
+    state: &mut NetworkRuntimeReceiverDecodeAttributionV1,
+    source: SocketAddr,
+    packet: &[u8],
+    stage: &str,
+) {
+    let len = packet.len() as u64;
+    state.receiver_udp_packet_len_min = Some(
+        state
+            .receiver_udp_packet_len_min
+            .map_or(len, |current| current.min(len)),
+    );
+    state.receiver_udp_packet_len_max = Some(
+        state
+            .receiver_udp_packet_len_max
+            .map_or(len, |current| current.max(len)),
+    );
+    receiver_decode_attribution_sample_push_v1(
+        &mut state.receiver_udp_packet_source_addr_sample,
+        source.to_string(),
+    );
+    receiver_decode_attribution_sample_push_v1(&mut state.receiver_udp_packet_len_samples, len);
+    receiver_decode_attribution_sample_push_v1(
+        &mut state.receiver_udp_packet_first_bytes_hex_sample,
+        receiver_decode_attribution_first_bytes_hex_v1(packet),
+    );
+    receiver_decode_attribution_sample_push_v1(
+        &mut state.receiver_udp_packet_decode_stage_sample,
+        stage.to_string(),
+    );
+}
+
+fn receiver_decode_attribution_refresh_len_percentiles_v1(
+    state: &mut NetworkRuntimeReceiverDecodeAttributionV1,
+) {
+    state.receiver_udp_packet_len_p50 =
+        receiver_decode_attribution_percentile_v1(&state.receiver_udp_packet_len_samples, 50);
+    state.receiver_udp_packet_len_p90 =
+        receiver_decode_attribution_percentile_v1(&state.receiver_udp_packet_len_samples, 90);
+}
+
+fn receiver_decode_attribution_classify_decode_error_v1(
+    state: &mut NetworkRuntimeReceiverDecodeAttributionV1,
+    error: &str,
+) {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("magic") {
+        state.receiver_frame_magic_mismatch_count =
+            state.receiver_frame_magic_mismatch_count.saturating_add(1);
+        state.receiver_udp_packet_predecode_drop_reason_magic_absent_count = state
+            .receiver_udp_packet_predecode_drop_reason_magic_absent_count
+            .saturating_add(1);
+    }
+    if lower.contains("version") {
+        state.receiver_frame_version_mismatch_count = state
+            .receiver_frame_version_mismatch_count
+            .saturating_add(1);
+    }
+    if lower.contains("length")
+        || lower.contains("len")
+        || lower.contains("short")
+        || lower.contains("eof")
+        || lower.contains("unexpected end")
+        || lower.contains("invalid value")
+    {
+        state.receiver_frame_length_invalid_count =
+            state.receiver_frame_length_invalid_count.saturating_add(1);
+    }
+    if lower.contains("checksum") || lower.contains("crc") {
+        state.receiver_frame_checksum_invalid_count = state
+            .receiver_frame_checksum_invalid_count
+            .saturating_add(1);
+    }
+    if lower.contains("auth domain") {
+        state.receiver_frame_auth_domain_mismatch_count = state
+            .receiver_frame_auth_domain_mismatch_count
+            .saturating_add(1);
+    }
+    if lower.contains("auth key") || lower.contains("signature") || lower.contains("signing") {
+        state.receiver_frame_auth_key_mismatch_count = state
+            .receiver_frame_auth_key_mismatch_count
+            .saturating_add(1);
+    }
+    if lower.contains("run_id") || lower.contains("run id") {
+        state.receiver_frame_run_id_mismatch_count =
+            state.receiver_frame_run_id_mismatch_count.saturating_add(1);
+    }
+    if lower.contains("session_id") || lower.contains("session id") {
+        state.receiver_frame_session_id_mismatch_count = state
+            .receiver_frame_session_id_mismatch_count
+            .saturating_add(1);
+    }
+    if lower.contains("endpoint") {
+        state.receiver_endpoint_record_decode_error_count = state
+            .receiver_endpoint_record_decode_error_count
+            .saturating_add(1);
+    }
+    if lower.contains("transaction") {
+        state.receiver_transaction_frame_decode_error_count = state
+            .receiver_transaction_frame_decode_error_count
+            .saturating_add(1);
+    }
+    if lower.contains("repair") {
+        state.receiver_repair_frame_decode_error_count = state
+            .receiver_repair_frame_decode_error_count
+            .saturating_add(1);
+    }
+    if !lower.contains("endpoint")
+        && !lower.contains("transaction")
+        && !lower.contains("repair")
+        && !lower.contains("run")
+        && !lower.contains("session")
+        && !lower.contains("auth")
+    {
+        state.receiver_non_novorudp_packet_count =
+            state.receiver_non_novorudp_packet_count.saturating_add(1);
+    }
+}
+
+pub fn observe_network_runtime_receiver_udp_packet_recv_v1(
+    chain_id: u64,
+    source: SocketAddr,
+    packet: &[u8],
+) {
+    let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
+        return;
+    };
+    let state = guard.entry(chain_id).or_default();
+    state.receiver_udp_packet_recv_count = state.receiver_udp_packet_recv_count.saturating_add(1);
+    receiver_decode_attribution_observe_packet_sample_v1(state, source, packet, "udp_recv");
+    receiver_decode_attribution_refresh_len_percentiles_v1(state);
+}
+
+pub fn observe_network_runtime_receiver_udp_packet_decode_attempt_v1(chain_id: u64) {
+    let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
+        return;
+    };
+    let state = guard.entry(chain_id).or_default();
+    state.receiver_udp_packet_decode_attempt_count = state
+        .receiver_udp_packet_decode_attempt_count
+        .saturating_add(1);
+}
+
+pub fn observe_network_runtime_receiver_udp_packet_decode_ok_v1(chain_id: u64) {
+    let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
+        return;
+    };
+    let state = guard.entry(chain_id).or_default();
+    state.receiver_udp_packet_decode_ok_count =
+        state.receiver_udp_packet_decode_ok_count.saturating_add(1);
+}
+
+pub fn observe_network_runtime_receiver_udp_packet_decode_error_v1(
+    chain_id: u64,
+    source: SocketAddr,
+    packet: &[u8],
+    error: &str,
+) {
+    let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
+        return;
+    };
+    let state = guard.entry(chain_id).or_default();
+    state.receiver_udp_packet_decode_error_count = state
+        .receiver_udp_packet_decode_error_count
+        .saturating_add(1);
+    receiver_decode_attribution_observe_packet_sample_v1(state, source, packet, "decode_error");
+    receiver_decode_attribution_sample_push_v1(
+        &mut state.receiver_udp_packet_drop_reason_sample,
+        error.to_string(),
+    );
+    receiver_decode_attribution_classify_decode_error_v1(state, error);
+    receiver_decode_attribution_refresh_len_percentiles_v1(state);
+}
+
+pub fn observe_network_runtime_receiver_udp_packet_predecode_drop_v1(
+    chain_id: u64,
+    source: SocketAddr,
+    packet: &[u8],
+    reason: &str,
+) {
+    let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
+        return;
+    };
+    let state = guard.entry(chain_id).or_default();
+    state.receiver_udp_packet_predecode_drop_count = state
+        .receiver_udp_packet_predecode_drop_count
+        .saturating_add(1);
+    match reason {
+        "too_short" => {
+            state.receiver_udp_packet_predecode_drop_reason_too_short_count = state
+                .receiver_udp_packet_predecode_drop_reason_too_short_count
+                .saturating_add(1);
+        }
+        "magic_absent" => {
+            state.receiver_udp_packet_predecode_drop_reason_magic_absent_count = state
+                .receiver_udp_packet_predecode_drop_reason_magic_absent_count
+                .saturating_add(1);
+        }
+        "plain_udp_disabled" => {
+            state.receiver_udp_packet_predecode_drop_reason_plain_udp_disabled_count = state
+                .receiver_udp_packet_predecode_drop_reason_plain_udp_disabled_count
+                .saturating_add(1);
+        }
+        "unknown_transport" => {
+            state.receiver_udp_packet_predecode_drop_reason_unknown_transport_count = state
+                .receiver_udp_packet_predecode_drop_reason_unknown_transport_count
+                .saturating_add(1);
+        }
+        "rate_limit" => {
+            state.receiver_udp_packet_predecode_drop_reason_rate_limit_count = state
+                .receiver_udp_packet_predecode_drop_reason_rate_limit_count
+                .saturating_add(1);
+        }
+        "source_pin" => {
+            state.receiver_udp_packet_predecode_drop_reason_source_pin_count = state
+                .receiver_udp_packet_predecode_drop_reason_source_pin_count
+                .saturating_add(1);
+        }
+        "endpoint_required" => {
+            state.receiver_udp_packet_predecode_drop_reason_endpoint_required_count = state
+                .receiver_udp_packet_predecode_drop_reason_endpoint_required_count
+                .saturating_add(1);
+        }
+        _ => {
+            state.receiver_udp_packet_predecode_drop_reason_unknown_transport_count = state
+                .receiver_udp_packet_predecode_drop_reason_unknown_transport_count
+                .saturating_add(1);
+        }
+    }
+    receiver_decode_attribution_observe_packet_sample_v1(state, source, packet, reason);
+    receiver_decode_attribution_sample_push_v1(
+        &mut state.receiver_udp_packet_drop_reason_sample,
+        reason.to_string(),
+    );
+    receiver_decode_attribution_refresh_len_percentiles_v1(state);
 }
 
 fn observe_novorudp_sequence_repair_received_v1(
@@ -1973,6 +2317,67 @@ fn apply_network_runtime_native_repair_probe_summary_v1(
         repair.repair_final_missing_payload_recovered_count;
     summary.repair_final_missing_payload_recovered_requeued_count =
         repair.repair_final_missing_payload_recovered_requeued_count;
+}
+
+fn apply_network_runtime_receiver_decode_attribution_summary_v1(
+    summary: &mut NetworkRuntimeNativePendingTxSummaryV1,
+    chain_id: u64,
+) {
+    let decode = runtime_receiver_decode_attribution_map()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&chain_id).cloned())
+        .unwrap_or_default();
+    summary.receiver_udp_packet_recv_count = decode.receiver_udp_packet_recv_count;
+    summary.receiver_udp_packet_decode_attempt_count =
+        decode.receiver_udp_packet_decode_attempt_count;
+    summary.receiver_udp_packet_decode_ok_count = decode.receiver_udp_packet_decode_ok_count;
+    summary.receiver_udp_packet_decode_error_count = decode.receiver_udp_packet_decode_error_count;
+    summary.receiver_udp_packet_predecode_drop_count =
+        decode.receiver_udp_packet_predecode_drop_count;
+    summary.receiver_udp_packet_predecode_drop_reason_too_short_count =
+        decode.receiver_udp_packet_predecode_drop_reason_too_short_count;
+    summary.receiver_udp_packet_predecode_drop_reason_magic_absent_count =
+        decode.receiver_udp_packet_predecode_drop_reason_magic_absent_count;
+    summary.receiver_udp_packet_predecode_drop_reason_plain_udp_disabled_count =
+        decode.receiver_udp_packet_predecode_drop_reason_plain_udp_disabled_count;
+    summary.receiver_udp_packet_predecode_drop_reason_unknown_transport_count =
+        decode.receiver_udp_packet_predecode_drop_reason_unknown_transport_count;
+    summary.receiver_udp_packet_predecode_drop_reason_rate_limit_count =
+        decode.receiver_udp_packet_predecode_drop_reason_rate_limit_count;
+    summary.receiver_udp_packet_predecode_drop_reason_source_pin_count =
+        decode.receiver_udp_packet_predecode_drop_reason_source_pin_count;
+    summary.receiver_udp_packet_predecode_drop_reason_endpoint_required_count =
+        decode.receiver_udp_packet_predecode_drop_reason_endpoint_required_count;
+    summary.receiver_frame_magic_mismatch_count = decode.receiver_frame_magic_mismatch_count;
+    summary.receiver_frame_version_mismatch_count = decode.receiver_frame_version_mismatch_count;
+    summary.receiver_frame_length_invalid_count = decode.receiver_frame_length_invalid_count;
+    summary.receiver_frame_checksum_invalid_count = decode.receiver_frame_checksum_invalid_count;
+    summary.receiver_frame_auth_domain_mismatch_count =
+        decode.receiver_frame_auth_domain_mismatch_count;
+    summary.receiver_frame_auth_key_mismatch_count = decode.receiver_frame_auth_key_mismatch_count;
+    summary.receiver_frame_run_id_mismatch_count = decode.receiver_frame_run_id_mismatch_count;
+    summary.receiver_frame_session_id_mismatch_count =
+        decode.receiver_frame_session_id_mismatch_count;
+    summary.receiver_endpoint_record_decode_error_count =
+        decode.receiver_endpoint_record_decode_error_count;
+    summary.receiver_transaction_frame_decode_error_count =
+        decode.receiver_transaction_frame_decode_error_count;
+    summary.receiver_repair_frame_decode_error_count =
+        decode.receiver_repair_frame_decode_error_count;
+    summary.receiver_non_novorudp_packet_count = decode.receiver_non_novorudp_packet_count;
+    summary.receiver_udp_packet_source_addr_sample =
+        decode.receiver_udp_packet_source_addr_sample.clone();
+    summary.receiver_udp_packet_len_min = decode.receiver_udp_packet_len_min;
+    summary.receiver_udp_packet_len_p50 = decode.receiver_udp_packet_len_p50;
+    summary.receiver_udp_packet_len_p90 = decode.receiver_udp_packet_len_p90;
+    summary.receiver_udp_packet_len_max = decode.receiver_udp_packet_len_max;
+    summary.receiver_udp_packet_first_bytes_hex_sample =
+        decode.receiver_udp_packet_first_bytes_hex_sample.clone();
+    summary.receiver_udp_packet_decode_stage_sample =
+        decode.receiver_udp_packet_decode_stage_sample.clone();
+    summary.receiver_udp_packet_drop_reason_sample =
+        decode.receiver_udp_packet_drop_reason_sample.clone();
 }
 
 fn apply_novorudp_durable_missing_summary_v1(
@@ -6402,6 +6807,7 @@ pub fn snapshot_network_runtime_native_pending_tx_summary_v1(
             summary.last_broadcast_tx_count = broadcast_runtime.last_broadcast_tx_count;
             summary.last_broadcast_unix_ms = broadcast_runtime.last_updated_unix_ms;
             apply_network_runtime_native_repair_probe_summary_v1(&mut summary, &repair_probe);
+            apply_network_runtime_receiver_decode_attribution_summary_v1(&mut summary, chain_id);
             apply_novorudp_durable_missing_summary_v1(&mut summary, chain_id);
             return summary;
         }
@@ -6423,6 +6829,7 @@ pub fn snapshot_network_runtime_native_pending_tx_summary_v1(
         summary.last_broadcast_tx_count = broadcast_runtime.last_broadcast_tx_count;
         summary.last_broadcast_unix_ms = broadcast_runtime.last_updated_unix_ms;
         apply_network_runtime_native_repair_probe_summary_v1(&mut summary, &repair_probe);
+        apply_network_runtime_receiver_decode_attribution_summary_v1(&mut summary, chain_id);
         apply_novorudp_durable_missing_summary_v1(&mut summary, chain_id);
         return summary;
     };
@@ -6439,6 +6846,7 @@ pub fn snapshot_network_runtime_native_pending_tx_summary_v1(
     summary.last_broadcast_tx_count = broadcast_runtime.last_broadcast_tx_count;
     summary.last_broadcast_unix_ms = broadcast_runtime.last_updated_unix_ms;
     apply_network_runtime_native_repair_probe_summary_v1(&mut summary, &repair_probe);
+    apply_network_runtime_receiver_decode_attribution_summary_v1(&mut summary, chain_id);
     apply_novorudp_durable_missing_summary_v1(&mut summary, chain_id);
     summary
 }
