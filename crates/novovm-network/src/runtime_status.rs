@@ -1080,7 +1080,13 @@ pub struct NetworkRuntimeReceiverDecodeAttributionV1 {
     pub receiver_classifier_unknown_count: u64,
     pub receiver_classifier_data_frame_repair_like_count: u64,
     pub receiver_data_frame_repair_sequence_like_count: u64,
+    pub receiver_data_frame_repair_like_sequence_min: Option<u64>,
+    pub receiver_data_frame_repair_like_sequence_max: Option<u64>,
+    pub receiver_data_frame_repair_like_sequence_ranges_sample:
+        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
     pub receiver_data_frame_repair_kind_sample: Vec<String>,
+    #[serde(skip)]
+    pub receiver_data_frame_repair_like_sequence_seen: HashSet<u64>,
     pub receiver_udp_packet_source_addr_sample: Vec<String>,
     pub receiver_udp_packet_len_samples: Vec<u64>,
     pub receiver_udp_packet_len_min: Option<u64>,
@@ -1158,6 +1164,10 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub receiver_classifier_unknown_count: u64,
     pub receiver_classifier_data_frame_repair_like_count: u64,
     pub receiver_data_frame_repair_sequence_like_count: u64,
+    pub receiver_data_frame_repair_like_sequence_min: Option<u64>,
+    pub receiver_data_frame_repair_like_sequence_max: Option<u64>,
+    pub receiver_data_frame_repair_like_sequence_ranges_sample:
+        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
     pub receiver_data_frame_repair_kind_sample: Vec<String>,
     pub receiver_udp_packet_source_addr_sample: Vec<String>,
     pub receiver_udp_packet_len_min: Option<u64>,
@@ -1795,6 +1805,7 @@ pub fn observe_network_runtime_receiver_udp_packet_classifier_v1(chain_id: u64, 
 pub fn observe_network_runtime_receiver_data_frame_repair_like_v1(
     chain_id: u64,
     frame_kind: Option<&str>,
+    sequence: Option<u64>,
     tx_count: u64,
 ) {
     let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
@@ -1809,9 +1820,34 @@ pub fn observe_network_runtime_receiver_data_frame_repair_like_v1(
             .receiver_data_frame_repair_sequence_like_count
             .saturating_add(1);
     }
+    if let Some(sequence) = sequence {
+        state
+            .receiver_data_frame_repair_like_sequence_seen
+            .insert(sequence);
+        state.receiver_data_frame_repair_like_sequence_min = Some(
+            state
+                .receiver_data_frame_repair_like_sequence_min
+                .map(|current| current.min(sequence))
+                .unwrap_or(sequence),
+        );
+        state.receiver_data_frame_repair_like_sequence_max = Some(
+            state
+                .receiver_data_frame_repair_like_sequence_max
+                .map(|current| current.max(sequence))
+                .unwrap_or(sequence),
+        );
+        state.receiver_data_frame_repair_like_sequence_ranges_sample =
+            network_runtime_native_repair_sequence_ranges_sample_v1(
+                &state.receiver_data_frame_repair_like_sequence_seen,
+                64,
+            );
+    }
     let sample = format!(
-        "frame_kind={} tx_count={}",
+        "frame_kind={} sequence={} tx_count={}",
         frame_kind.unwrap_or("missing"),
+        sequence
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "missing".to_string()),
         tx_count
     );
     receiver_decode_attribution_sample_push_v1(
@@ -2452,6 +2488,13 @@ fn apply_network_runtime_receiver_decode_attribution_summary_v1(
         decode.receiver_classifier_data_frame_repair_like_count;
     summary.receiver_data_frame_repair_sequence_like_count =
         decode.receiver_data_frame_repair_sequence_like_count;
+    summary.receiver_data_frame_repair_like_sequence_min =
+        decode.receiver_data_frame_repair_like_sequence_min;
+    summary.receiver_data_frame_repair_like_sequence_max =
+        decode.receiver_data_frame_repair_like_sequence_max;
+    summary.receiver_data_frame_repair_like_sequence_ranges_sample = decode
+        .receiver_data_frame_repair_like_sequence_ranges_sample
+        .clone();
     summary.receiver_data_frame_repair_kind_sample =
         decode.receiver_data_frame_repair_kind_sample.clone();
     summary.receiver_udp_packet_source_addr_sample =

@@ -34224,6 +34224,20 @@ fn build_native_execution_pipeline_report_v1(
                 serde_json::json!(pending_summary.receiver_data_frame_repair_sequence_like_count),
             ),
             (
+                "receiver_data_frame_repair_like_sequence_min",
+                serde_json::json!(pending_summary.receiver_data_frame_repair_like_sequence_min),
+            ),
+            (
+                "receiver_data_frame_repair_like_sequence_max",
+                serde_json::json!(pending_summary.receiver_data_frame_repair_like_sequence_max),
+            ),
+            (
+                "receiver_data_frame_repair_like_sequence_ranges_sample",
+                serde_json::json!(
+                    pending_summary.receiver_data_frame_repair_like_sequence_ranges_sample
+                ),
+            ),
+            (
                 "receiver_data_frame_repair_kind_sample",
                 serde_json::json!(pending_summary.receiver_data_frame_repair_kind_sample),
             ),
@@ -34302,6 +34316,20 @@ fn build_native_execution_pipeline_report_v1(
             (
                 "native_receiver_data_frame_repair_sequence_like_count",
                 serde_json::json!(pending_summary.receiver_data_frame_repair_sequence_like_count),
+            ),
+            (
+                "native_receiver_data_frame_repair_like_sequence_min",
+                serde_json::json!(pending_summary.receiver_data_frame_repair_like_sequence_min),
+            ),
+            (
+                "native_receiver_data_frame_repair_like_sequence_max",
+                serde_json::json!(pending_summary.receiver_data_frame_repair_like_sequence_max),
+            ),
+            (
+                "native_receiver_data_frame_repair_like_sequence_ranges_sample",
+                serde_json::json!(
+                    pending_summary.receiver_data_frame_repair_like_sequence_ranges_sample
+                ),
             ),
             (
                 "native_receiver_data_frame_repair_kind_sample",
@@ -34787,6 +34815,9 @@ struct NativeExecutionPipelineAggregateV1 {
     receiver_classifier_unknown_count: u64,
     receiver_classifier_data_frame_repair_like_count: u64,
     receiver_data_frame_repair_sequence_like_count: u64,
+    receiver_data_frame_repair_like_sequence_min: Option<u64>,
+    receiver_data_frame_repair_like_sequence_max: Option<u64>,
+    receiver_data_frame_repair_like_sequence_ranges_sample: serde_json::Value,
     receiver_data_frame_repair_kind_sample: serde_json::Value,
     native_receiver_endpoint_record_decode_ok_count: u64,
     native_receiver_endpoint_record_decode_error_count: u64,
@@ -35120,6 +35151,9 @@ impl NativeExecutionPipelineAggregateV1 {
             receiver_classifier_unknown_count: 0,
             receiver_classifier_data_frame_repair_like_count: 0,
             receiver_data_frame_repair_sequence_like_count: 0,
+            receiver_data_frame_repair_like_sequence_min: None,
+            receiver_data_frame_repair_like_sequence_max: None,
+            receiver_data_frame_repair_like_sequence_ranges_sample: serde_json::json!([]),
             receiver_data_frame_repair_kind_sample: serde_json::json!([]),
             native_receiver_endpoint_record_decode_ok_count: 0,
             native_receiver_endpoint_record_decode_error_count: 0,
@@ -35729,6 +35763,16 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("receiver_data_frame_repair_sequence_like_count")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.receiver_data_frame_repair_like_sequence_min = ingress
+            .get("receiver_data_frame_repair_like_sequence_min")
+            .and_then(|value| value.as_u64());
+        self.receiver_data_frame_repair_like_sequence_max = ingress
+            .get("receiver_data_frame_repair_like_sequence_max")
+            .and_then(|value| value.as_u64());
+        self.receiver_data_frame_repair_like_sequence_ranges_sample = ingress
+            .get("receiver_data_frame_repair_like_sequence_ranges_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
         self.receiver_data_frame_repair_kind_sample = ingress
             .get("receiver_data_frame_repair_kind_sample")
             .cloned()
@@ -37664,6 +37708,19 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.receiver_data_frame_repair_sequence_like_count),
         );
         out.insert(
+            "receiver_data_frame_repair_like_sequence_min".to_string(),
+            serde_json::json!(self.receiver_data_frame_repair_like_sequence_min),
+        );
+        out.insert(
+            "receiver_data_frame_repair_like_sequence_max".to_string(),
+            serde_json::json!(self.receiver_data_frame_repair_like_sequence_max),
+        );
+        out.insert(
+            "receiver_data_frame_repair_like_sequence_ranges_sample".to_string(),
+            self.receiver_data_frame_repair_like_sequence_ranges_sample
+                .clone(),
+        );
+        out.insert(
             "receiver_data_frame_repair_kind_sample".to_string(),
             self.receiver_data_frame_repair_kind_sample.clone(),
         );
@@ -37742,6 +37799,19 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "native_receiver_data_frame_repair_sequence_like_count".to_string(),
             serde_json::json!(self.receiver_data_frame_repair_sequence_like_count),
+        );
+        out.insert(
+            "native_receiver_data_frame_repair_like_sequence_min".to_string(),
+            serde_json::json!(self.receiver_data_frame_repair_like_sequence_min),
+        );
+        out.insert(
+            "native_receiver_data_frame_repair_like_sequence_max".to_string(),
+            serde_json::json!(self.receiver_data_frame_repair_like_sequence_max),
+        );
+        out.insert(
+            "native_receiver_data_frame_repair_like_sequence_ranges_sample".to_string(),
+            self.receiver_data_frame_repair_like_sequence_ranges_sample
+                .clone(),
         );
         out.insert(
             "native_receiver_data_frame_repair_kind_sample".to_string(),

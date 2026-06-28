@@ -10930,10 +10930,12 @@ impl Transport for UdpTransport {
                         {
                             let auth_frame_kind =
                                 transport_auth.as_ref().map(|meta| meta.frame_kind.as_str());
+                            let auth_sequence = transport_auth.as_ref().map(|meta| meta.sequence);
                             if auth_frame_kind == Some("repair") || *tx_count > 1 {
                                 observe_network_runtime_receiver_data_frame_repair_like_v1(
                                     self.chain_id,
                                     auth_frame_kind,
+                                    auth_sequence,
                                     *tx_count,
                                 );
                             }
