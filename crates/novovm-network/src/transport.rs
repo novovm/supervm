@@ -78,6 +78,7 @@ use crate::{
     observe_network_runtime_native_pending_tx_remote_native_payload_v1,
     observe_network_runtime_native_pending_tx_repair_probe_v1, observe_network_runtime_peer_head,
     observe_network_runtime_peer_head_with_local_head_max,
+    observe_network_runtime_receiver_data_frame_repair_like_v1,
     observe_network_runtime_receiver_udp_packet_classifier_v1,
     observe_network_runtime_receiver_udp_packet_decode_attempt_v1,
     observe_network_runtime_receiver_udp_packet_decode_error_v1,
@@ -10921,6 +10922,22 @@ impl Transport for UdpTransport {
                             self.chain_id,
                             frame_kind,
                         );
+                        if let ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+                            tx_count,
+                            transport_auth,
+                            ..
+                        }) = &decoded
+                        {
+                            let auth_frame_kind =
+                                transport_auth.as_ref().map(|meta| meta.frame_kind.as_str());
+                            if auth_frame_kind == Some("repair") || *tx_count > 1 {
+                                observe_network_runtime_receiver_data_frame_repair_like_v1(
+                                    self.chain_id,
+                                    auth_frame_kind,
+                                    *tx_count,
+                                );
+                            }
+                        }
                         Ok(Some((decoded, src)))
                     }
                     Err(e) => {

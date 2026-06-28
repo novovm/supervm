@@ -12094,8 +12094,8 @@ fn run_receiver_node(
             } else {
                 state.pending_drain_no_progress_ms = 0;
             }
-            let receiver_finalization_tail_elapsed_ms = active_elapsed_ms
-                .saturating_sub(diagnostics.primary_send_duration_ms);
+            let receiver_finalization_tail_elapsed_ms =
+                active_elapsed_ms.saturating_sub(diagnostics.primary_send_duration_ms);
             let receiver_finalization_watchdog_active = diagnostics.primary_send_duration_ms > 0
                 && active_elapsed_ms >= diagnostics.primary_send_duration_ms
                 && stable_progress < expected_tx_count;
@@ -12106,21 +12106,20 @@ fn run_receiver_node(
             } else if stable_progress >= expected_tx_count || delta > 0 {
                 state.receiver_finalization_no_progress_ms = 0;
             }
-            let receiver_finalization_watchdog_triggered =
-                receiver_finalization_watchdog_active
-                    && diagnostics.finalization_watchdog_timeout_ms > 0
-                    && receiver_finalization_tail_elapsed_ms
-                        >= diagnostics.finalization_watchdog_timeout_ms;
-            let receiver_finalization_watchdog_reason =
-                if receiver_finalization_watchdog_triggered {
-                    if pending_count > 0 {
-                        "repair_drain_timeout"
-                    } else {
-                        "final_missing_stable_timeout"
-                    }
+            let receiver_finalization_watchdog_triggered = receiver_finalization_watchdog_active
+                && diagnostics.finalization_watchdog_timeout_ms > 0
+                && receiver_finalization_tail_elapsed_ms
+                    >= diagnostics.finalization_watchdog_timeout_ms;
+            let receiver_finalization_watchdog_reason = if receiver_finalization_watchdog_triggered
+            {
+                if pending_count > 0 {
+                    "repair_drain_timeout"
                 } else {
-                    "none"
-                };
+                    "final_missing_stable_timeout"
+                }
+            } else {
+                "none"
+            };
             sample["receiver_finalization_watchdog_triggered"] =
                 serde_json::json!(receiver_finalization_watchdog_triggered);
             sample["receiver_finalization_watchdog_reason"] =
@@ -12129,8 +12128,11 @@ fn run_receiver_node(
                 serde_json::json!(state.receiver_finalization_no_progress_ms);
             sample["receiver_finalization_missing_stable_ms"] =
                 serde_json::json!(state.receiver_finalization_no_progress_ms);
-            sample["receiver_finalization_last_progress_ms"] =
-                serde_json::json!(if delta > 0 { Some(active_elapsed_ms) } else { None });
+            sample["receiver_finalization_last_progress_ms"] = serde_json::json!(if delta > 0 {
+                Some(active_elapsed_ms)
+            } else {
+                None
+            });
             sample["receiver_finalization_active_elapsed_ms"] =
                 serde_json::json!(active_elapsed_ms);
             sample["receiver_finalization_tail_elapsed_ms"] =
@@ -14183,6 +14185,9 @@ fn copy_native_receiver_attribution_fields_v1(
         "receiver_classifier_transaction_frame_count",
         "receiver_classifier_repair_frame_count",
         "receiver_classifier_unknown_count",
+        "receiver_classifier_data_frame_repair_like_count",
+        "receiver_data_frame_repair_sequence_like_count",
+        "receiver_data_frame_repair_kind_sample",
         "receiver_udp_packet_source_addr_sample",
         "receiver_udp_packet_len_min",
         "receiver_udp_packet_len_p50",
@@ -14200,6 +14205,9 @@ fn copy_native_receiver_attribution_fields_v1(
         "native_receiver_classifier_data_frame_count",
         "native_receiver_classifier_repair_frame_count",
         "native_receiver_classifier_unknown_count",
+        "native_receiver_data_frame_repair_like_count",
+        "native_receiver_data_frame_repair_sequence_like_count",
+        "native_receiver_data_frame_repair_kind_sample",
         "native_receiver_classifier_drop_count",
         "native_receiver_classifier_drop_reason_sample",
         "native_receiver_endpoint_record_decode_ok_count",
@@ -14228,7 +14236,11 @@ fn copy_native_receiver_attribution_fields_v1(
     );
     target_obj.insert(
         "native_receiver_summary_source".to_string(),
-        serde_json::json!(if copied > 0 { summary_source } else { "unavailable" }),
+        serde_json::json!(if copied > 0 {
+            summary_source
+        } else {
+            "unavailable"
+        }),
     );
     target_obj.insert(
         "native_receiver_attribution_missing_reason".to_string(),
@@ -16187,6 +16199,9 @@ fn diagnostics_summary_sample(
         "receiver_classifier_transaction_frame_count": summary_u64(summary, "receiver_classifier_transaction_frame_count"),
         "receiver_classifier_repair_frame_count": summary_u64(summary, "receiver_classifier_repair_frame_count"),
         "receiver_classifier_unknown_count": summary_u64(summary, "receiver_classifier_unknown_count"),
+        "receiver_classifier_data_frame_repair_like_count": summary_u64(summary, "receiver_classifier_data_frame_repair_like_count"),
+        "receiver_data_frame_repair_sequence_like_count": summary_u64(summary, "receiver_data_frame_repair_sequence_like_count"),
+        "receiver_data_frame_repair_kind_sample": summary.get("receiver_data_frame_repair_kind_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "receiver_udp_packet_source_addr_sample": summary.get("receiver_udp_packet_source_addr_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "receiver_udp_packet_len_min": summary.get("receiver_udp_packet_len_min").cloned().unwrap_or(Value::Null),
         "receiver_udp_packet_len_p50": summary.get("receiver_udp_packet_len_p50").cloned().unwrap_or(Value::Null),
@@ -16204,6 +16219,9 @@ fn diagnostics_summary_sample(
         "native_receiver_classifier_data_frame_count": summary_u64(summary, "native_receiver_classifier_data_frame_count").max(summary_u64(summary, "receiver_classifier_transaction_frame_count")),
         "native_receiver_classifier_repair_frame_count": summary_u64(summary, "native_receiver_classifier_repair_frame_count").max(summary_u64(summary, "receiver_classifier_repair_frame_count")),
         "native_receiver_classifier_unknown_count": summary_u64(summary, "native_receiver_classifier_unknown_count").max(summary_u64(summary, "receiver_classifier_unknown_count")),
+        "native_receiver_data_frame_repair_like_count": summary_u64(summary, "native_receiver_data_frame_repair_like_count").max(summary_u64(summary, "receiver_classifier_data_frame_repair_like_count")),
+        "native_receiver_data_frame_repair_sequence_like_count": summary_u64(summary, "native_receiver_data_frame_repair_sequence_like_count").max(summary_u64(summary, "receiver_data_frame_repair_sequence_like_count")),
+        "native_receiver_data_frame_repair_kind_sample": summary.get("native_receiver_data_frame_repair_kind_sample").or_else(|| summary.get("receiver_data_frame_repair_kind_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
         "native_receiver_classifier_drop_count": summary_u64(summary, "native_receiver_classifier_drop_count").max(summary_u64(summary, "receiver_udp_packet_predecode_drop_count")),
         "native_receiver_classifier_drop_reason_sample": summary.get("native_receiver_classifier_drop_reason_sample").or_else(|| summary.get("receiver_udp_packet_drop_reason_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
         "native_receiver_endpoint_record_decode_ok_count": summary_u64(summary, "native_receiver_endpoint_record_decode_ok_count").max(summary_u64(summary, "receiver_classifier_endpoint_record_count")),
@@ -21844,6 +21862,18 @@ fn run_sender(
             "repair_selected_missing_count": repair_selected_latest_missing_sequence_count,
             "repair_selected_already_acked_count": repair_selected_already_acked_count,
             "repair_sent_count": repair_sequence_sent_count,
+            "sender_repair_wire_frame_emit_count": repair_sequence_sent_count,
+            "sender_repair_wire_frame_send_ok_count": repair_sequence_sent_count
+                .saturating_sub(repair_stats.send_failed_count),
+            "sender_repair_wire_frame_send_error_count": repair_stats.send_failed_count,
+            "sender_repair_wire_frame_kind_sample": [
+                "ProtocolMessage::EvmNative::Transactions",
+                "transport_auth.frame_kind=repair"
+            ],
+            "sender_repair_wire_frame_target_addr_sample": [receiver_addr],
+            "sender_repair_encoded_as_data_frame_count": repair_sequence_sent_count,
+            "sender_repair_encoded_as_repair_frame_count": 0u64,
+            "sender_repair_wire_frame_first_bytes_hex_sample": [],
             "repair_sent_unique_count": repair_selected_unique_sequence_count,
             "repair_duplicate_sequence_count": repair_selected_duplicate_sequence_count,
             "repair_duplicate_same_round_count": repair_duplicate_same_round_count,
@@ -24592,6 +24622,9 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "native_receiver_classifier_data_frame_count",
         "native_receiver_classifier_repair_frame_count",
         "native_receiver_classifier_unknown_count",
+        "native_receiver_data_frame_repair_like_count",
+        "native_receiver_data_frame_repair_sequence_like_count",
+        "native_receiver_data_frame_repair_kind_sample",
         "native_receiver_classifier_drop_count",
         "native_receiver_classifier_drop_reason_sample",
         "native_receiver_endpoint_record_decode_ok_count",

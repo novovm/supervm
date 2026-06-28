@@ -32929,10 +32929,7 @@ fn novorudp_child_receiver_mode_v1() -> bool {
             .is_some_and(|value| value.eq_ignore_ascii_case("receiver"))
 }
 
-fn decorate_native_receiver_attribution_summary_v1(
-    summary: &mut serde_json::Value,
-    source: &str,
-) {
+fn decorate_native_receiver_attribution_summary_v1(summary: &mut serde_json::Value, source: &str) {
     let Some(obj) = summary.as_object_mut() else {
         return;
     };
@@ -32944,7 +32941,11 @@ fn decorate_native_receiver_attribution_summary_v1(
     );
     obj.insert(
         "native_receiver_summary_source".to_string(),
-        serde_json::json!(if fields_present { source } else { "unavailable" }),
+        serde_json::json!(if fields_present {
+            source
+        } else {
+            "unavailable"
+        }),
     );
     obj.insert(
         "native_receiver_attribution_missing_reason".to_string(),
@@ -34215,6 +34216,18 @@ fn build_native_execution_pipeline_report_v1(
                 serde_json::json!(pending_summary.receiver_classifier_unknown_count),
             ),
             (
+                "receiver_classifier_data_frame_repair_like_count",
+                serde_json::json!(pending_summary.receiver_classifier_data_frame_repair_like_count),
+            ),
+            (
+                "receiver_data_frame_repair_sequence_like_count",
+                serde_json::json!(pending_summary.receiver_data_frame_repair_sequence_like_count),
+            ),
+            (
+                "receiver_data_frame_repair_kind_sample",
+                serde_json::json!(pending_summary.receiver_data_frame_repair_kind_sample),
+            ),
+            (
                 "receiver_udp_packet_source_addr_sample",
                 serde_json::json!(pending_summary.receiver_udp_packet_source_addr_sample),
             ),
@@ -34281,6 +34294,18 @@ fn build_native_execution_pipeline_report_v1(
             (
                 "native_receiver_classifier_unknown_count",
                 serde_json::json!(pending_summary.receiver_classifier_unknown_count),
+            ),
+            (
+                "native_receiver_data_frame_repair_like_count",
+                serde_json::json!(pending_summary.receiver_classifier_data_frame_repair_like_count),
+            ),
+            (
+                "native_receiver_data_frame_repair_sequence_like_count",
+                serde_json::json!(pending_summary.receiver_data_frame_repair_sequence_like_count),
+            ),
+            (
+                "native_receiver_data_frame_repair_kind_sample",
+                serde_json::json!(pending_summary.receiver_data_frame_repair_kind_sample),
             ),
             (
                 "native_receiver_classifier_drop_count",
@@ -34760,6 +34785,9 @@ struct NativeExecutionPipelineAggregateV1 {
     receiver_classifier_transaction_frame_count: u64,
     receiver_classifier_repair_frame_count: u64,
     receiver_classifier_unknown_count: u64,
+    receiver_classifier_data_frame_repair_like_count: u64,
+    receiver_data_frame_repair_sequence_like_count: u64,
+    receiver_data_frame_repair_kind_sample: serde_json::Value,
     native_receiver_endpoint_record_decode_ok_count: u64,
     native_receiver_endpoint_record_decode_error_count: u64,
     native_receiver_data_frame_decode_ok_count: u64,
@@ -35090,6 +35118,9 @@ impl NativeExecutionPipelineAggregateV1 {
             receiver_classifier_transaction_frame_count: 0,
             receiver_classifier_repair_frame_count: 0,
             receiver_classifier_unknown_count: 0,
+            receiver_classifier_data_frame_repair_like_count: 0,
+            receiver_data_frame_repair_sequence_like_count: 0,
+            receiver_data_frame_repair_kind_sample: serde_json::json!([]),
             native_receiver_endpoint_record_decode_ok_count: 0,
             native_receiver_endpoint_record_decode_error_count: 0,
             native_receiver_data_frame_decode_ok_count: 0,
@@ -35690,6 +35721,18 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("receiver_classifier_unknown_count")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.receiver_classifier_data_frame_repair_like_count = ingress
+            .get("receiver_classifier_data_frame_repair_like_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_data_frame_repair_sequence_like_count = ingress
+            .get("receiver_data_frame_repair_sequence_like_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_data_frame_repair_kind_sample = ingress
+            .get("receiver_data_frame_repair_kind_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
         self.native_receiver_endpoint_record_decode_ok_count = ingress
             .get("native_receiver_endpoint_record_decode_ok_count")
             .and_then(|value| value.as_u64())
@@ -37613,6 +37656,18 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.receiver_classifier_unknown_count),
         );
         out.insert(
+            "receiver_classifier_data_frame_repair_like_count".to_string(),
+            serde_json::json!(self.receiver_classifier_data_frame_repair_like_count),
+        );
+        out.insert(
+            "receiver_data_frame_repair_sequence_like_count".to_string(),
+            serde_json::json!(self.receiver_data_frame_repair_sequence_like_count),
+        );
+        out.insert(
+            "receiver_data_frame_repair_kind_sample".to_string(),
+            self.receiver_data_frame_repair_kind_sample.clone(),
+        );
+        out.insert(
             "receiver_udp_packet_source_addr_sample".to_string(),
             self.receiver_udp_packet_source_addr_sample.clone(),
         );
@@ -37679,6 +37734,18 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "native_receiver_classifier_unknown_count".to_string(),
             serde_json::json!(self.receiver_classifier_unknown_count),
+        );
+        out.insert(
+            "native_receiver_data_frame_repair_like_count".to_string(),
+            serde_json::json!(self.receiver_classifier_data_frame_repair_like_count),
+        );
+        out.insert(
+            "native_receiver_data_frame_repair_sequence_like_count".to_string(),
+            serde_json::json!(self.receiver_data_frame_repair_sequence_like_count),
+        );
+        out.insert(
+            "native_receiver_data_frame_repair_kind_sample".to_string(),
+            self.receiver_data_frame_repair_kind_sample.clone(),
         );
         out.insert(
             "native_receiver_classifier_drop_count".to_string(),

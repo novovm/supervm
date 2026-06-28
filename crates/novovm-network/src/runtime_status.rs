@@ -1078,6 +1078,9 @@ pub struct NetworkRuntimeReceiverDecodeAttributionV1 {
     pub receiver_classifier_transaction_frame_count: u64,
     pub receiver_classifier_repair_frame_count: u64,
     pub receiver_classifier_unknown_count: u64,
+    pub receiver_classifier_data_frame_repair_like_count: u64,
+    pub receiver_data_frame_repair_sequence_like_count: u64,
+    pub receiver_data_frame_repair_kind_sample: Vec<String>,
     pub receiver_udp_packet_source_addr_sample: Vec<String>,
     pub receiver_udp_packet_len_samples: Vec<u64>,
     pub receiver_udp_packet_len_min: Option<u64>,
@@ -1153,6 +1156,9 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub receiver_classifier_transaction_frame_count: u64,
     pub receiver_classifier_repair_frame_count: u64,
     pub receiver_classifier_unknown_count: u64,
+    pub receiver_classifier_data_frame_repair_like_count: u64,
+    pub receiver_data_frame_repair_sequence_like_count: u64,
+    pub receiver_data_frame_repair_kind_sample: Vec<String>,
     pub receiver_udp_packet_source_addr_sample: Vec<String>,
     pub receiver_udp_packet_len_min: Option<u64>,
     pub receiver_udp_packet_len_p50: Option<u64>,
@@ -1786,6 +1792,34 @@ pub fn observe_network_runtime_receiver_udp_packet_classifier_v1(chain_id: u64, 
     }
 }
 
+pub fn observe_network_runtime_receiver_data_frame_repair_like_v1(
+    chain_id: u64,
+    frame_kind: Option<&str>,
+    tx_count: u64,
+) {
+    let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
+        return;
+    };
+    let state = guard.entry(chain_id).or_default();
+    state.receiver_classifier_data_frame_repair_like_count = state
+        .receiver_classifier_data_frame_repair_like_count
+        .saturating_add(1);
+    if tx_count > 1 {
+        state.receiver_data_frame_repair_sequence_like_count = state
+            .receiver_data_frame_repair_sequence_like_count
+            .saturating_add(1);
+    }
+    let sample = format!(
+        "frame_kind={} tx_count={}",
+        frame_kind.unwrap_or("missing"),
+        tx_count
+    );
+    receiver_decode_attribution_sample_push_v1(
+        &mut state.receiver_data_frame_repair_kind_sample,
+        sample,
+    );
+}
+
 pub fn observe_network_runtime_receiver_udp_packet_decode_error_v1(
     chain_id: u64,
     source: SocketAddr,
@@ -2414,6 +2448,12 @@ fn apply_network_runtime_receiver_decode_attribution_summary_v1(
         decode.receiver_classifier_transaction_frame_count;
     summary.receiver_classifier_repair_frame_count = decode.receiver_classifier_repair_frame_count;
     summary.receiver_classifier_unknown_count = decode.receiver_classifier_unknown_count;
+    summary.receiver_classifier_data_frame_repair_like_count =
+        decode.receiver_classifier_data_frame_repair_like_count;
+    summary.receiver_data_frame_repair_sequence_like_count =
+        decode.receiver_data_frame_repair_sequence_like_count;
+    summary.receiver_data_frame_repair_kind_sample =
+        decode.receiver_data_frame_repair_kind_sample.clone();
     summary.receiver_udp_packet_source_addr_sample =
         decode.receiver_udp_packet_source_addr_sample.clone();
     summary.receiver_udp_packet_len_min = decode.receiver_udp_packet_len_min;
