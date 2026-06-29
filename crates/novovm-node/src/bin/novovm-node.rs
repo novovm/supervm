@@ -34224,6 +34224,24 @@ fn build_native_execution_pipeline_report_v1(
                 serde_json::json!(pending_summary.receiver_data_frame_repair_sequence_like_count),
             ),
             (
+                "receiver_data_frame_repair_like_sequence_observed_count",
+                serde_json::json!(
+                    pending_summary.receiver_data_frame_repair_like_sequence_observed_count
+                ),
+            ),
+            (
+                "receiver_data_frame_repair_like_sequence_unique_count",
+                serde_json::json!(
+                    pending_summary.receiver_data_frame_repair_like_sequence_unique_count
+                ),
+            ),
+            (
+                "receiver_data_frame_repair_like_sequence_missing_count",
+                serde_json::json!(
+                    pending_summary.receiver_data_frame_repair_like_sequence_missing_count
+                ),
+            ),
+            (
                 "receiver_data_frame_repair_like_sequence_min",
                 serde_json::json!(pending_summary.receiver_data_frame_repair_like_sequence_min),
             ),
@@ -34240,6 +34258,58 @@ fn build_native_execution_pipeline_report_v1(
             (
                 "receiver_data_frame_repair_kind_sample",
                 serde_json::json!(pending_summary.receiver_data_frame_repair_kind_sample),
+            ),
+            (
+                "receiver_source_pin_drop_decoded_data_frame_count",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_decoded_data_frame_count
+                ),
+            ),
+            (
+                "receiver_source_pin_drop_decoded_repair_like_count",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_decoded_repair_like_count
+                ),
+            ),
+            (
+                "receiver_source_pin_drop_decoded_endpoint_record_count",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_decoded_endpoint_record_count
+                ),
+            ),
+            (
+                "receiver_source_pin_drop_decoded_unknown_count",
+                serde_json::json!(pending_summary.receiver_source_pin_drop_decoded_unknown_count),
+            ),
+            (
+                "receiver_source_pin_drop_repair_like_sequence_observed_count",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_repair_like_sequence_observed_count
+                ),
+            ),
+            (
+                "receiver_source_pin_drop_repair_like_sequence_unique_count",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_repair_like_sequence_unique_count
+                ),
+            ),
+            (
+                "receiver_source_pin_drop_repair_like_sequence_min",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_repair_like_sequence_min
+                ),
+            ),
+            (
+                "receiver_source_pin_drop_repair_like_sequence_max",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_repair_like_sequence_max
+                ),
+            ),
+            (
+                "receiver_source_pin_drop_repair_like_sequence_ranges_sample",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_repair_like_sequence_ranges_sample
+                ),
             ),
             (
                 "receiver_udp_packet_source_addr_sample",
@@ -34318,6 +34388,24 @@ fn build_native_execution_pipeline_report_v1(
                 serde_json::json!(pending_summary.receiver_data_frame_repair_sequence_like_count),
             ),
             (
+                "native_receiver_data_frame_repair_like_sequence_observed_count",
+                serde_json::json!(
+                    pending_summary.receiver_data_frame_repair_like_sequence_observed_count
+                ),
+            ),
+            (
+                "native_receiver_data_frame_repair_like_sequence_unique_count",
+                serde_json::json!(
+                    pending_summary.receiver_data_frame_repair_like_sequence_unique_count
+                ),
+            ),
+            (
+                "native_receiver_data_frame_repair_like_sequence_missing_count",
+                serde_json::json!(
+                    pending_summary.receiver_data_frame_repair_like_sequence_missing_count
+                ),
+            ),
+            (
                 "native_receiver_data_frame_repair_like_sequence_min",
                 serde_json::json!(pending_summary.receiver_data_frame_repair_like_sequence_min),
             ),
@@ -34334,6 +34422,58 @@ fn build_native_execution_pipeline_report_v1(
             (
                 "native_receiver_data_frame_repair_kind_sample",
                 serde_json::json!(pending_summary.receiver_data_frame_repair_kind_sample),
+            ),
+            (
+                "native_receiver_source_pin_drop_decoded_data_frame_count",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_decoded_data_frame_count
+                ),
+            ),
+            (
+                "native_receiver_source_pin_drop_decoded_repair_like_count",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_decoded_repair_like_count
+                ),
+            ),
+            (
+                "native_receiver_source_pin_drop_decoded_endpoint_record_count",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_decoded_endpoint_record_count
+                ),
+            ),
+            (
+                "native_receiver_source_pin_drop_decoded_unknown_count",
+                serde_json::json!(pending_summary.receiver_source_pin_drop_decoded_unknown_count),
+            ),
+            (
+                "native_receiver_source_pin_drop_repair_like_sequence_observed_count",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_repair_like_sequence_observed_count
+                ),
+            ),
+            (
+                "native_receiver_source_pin_drop_repair_like_sequence_unique_count",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_repair_like_sequence_unique_count
+                ),
+            ),
+            (
+                "native_receiver_source_pin_drop_repair_like_sequence_min",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_repair_like_sequence_min
+                ),
+            ),
+            (
+                "native_receiver_source_pin_drop_repair_like_sequence_max",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_repair_like_sequence_max
+                ),
+            ),
+            (
+                "native_receiver_source_pin_drop_repair_like_sequence_ranges_sample",
+                serde_json::json!(
+                    pending_summary.receiver_source_pin_drop_repair_like_sequence_ranges_sample
+                ),
             ),
             (
                 "native_receiver_classifier_drop_count",
@@ -34815,10 +34955,22 @@ struct NativeExecutionPipelineAggregateV1 {
     receiver_classifier_unknown_count: u64,
     receiver_classifier_data_frame_repair_like_count: u64,
     receiver_data_frame_repair_sequence_like_count: u64,
+    receiver_data_frame_repair_like_sequence_observed_count: u64,
+    receiver_data_frame_repair_like_sequence_unique_count: u64,
+    receiver_data_frame_repair_like_sequence_missing_count: u64,
     receiver_data_frame_repair_like_sequence_min: Option<u64>,
     receiver_data_frame_repair_like_sequence_max: Option<u64>,
     receiver_data_frame_repair_like_sequence_ranges_sample: serde_json::Value,
     receiver_data_frame_repair_kind_sample: serde_json::Value,
+    receiver_source_pin_drop_decoded_data_frame_count: u64,
+    receiver_source_pin_drop_decoded_repair_like_count: u64,
+    receiver_source_pin_drop_decoded_endpoint_record_count: u64,
+    receiver_source_pin_drop_decoded_unknown_count: u64,
+    receiver_source_pin_drop_repair_like_sequence_observed_count: u64,
+    receiver_source_pin_drop_repair_like_sequence_unique_count: u64,
+    receiver_source_pin_drop_repair_like_sequence_min: Option<u64>,
+    receiver_source_pin_drop_repair_like_sequence_max: Option<u64>,
+    receiver_source_pin_drop_repair_like_sequence_ranges_sample: serde_json::Value,
     native_receiver_endpoint_record_decode_ok_count: u64,
     native_receiver_endpoint_record_decode_error_count: u64,
     native_receiver_data_frame_decode_ok_count: u64,
@@ -35151,10 +35303,22 @@ impl NativeExecutionPipelineAggregateV1 {
             receiver_classifier_unknown_count: 0,
             receiver_classifier_data_frame_repair_like_count: 0,
             receiver_data_frame_repair_sequence_like_count: 0,
+            receiver_data_frame_repair_like_sequence_observed_count: 0,
+            receiver_data_frame_repair_like_sequence_unique_count: 0,
+            receiver_data_frame_repair_like_sequence_missing_count: 0,
             receiver_data_frame_repair_like_sequence_min: None,
             receiver_data_frame_repair_like_sequence_max: None,
             receiver_data_frame_repair_like_sequence_ranges_sample: serde_json::json!([]),
             receiver_data_frame_repair_kind_sample: serde_json::json!([]),
+            receiver_source_pin_drop_decoded_data_frame_count: 0,
+            receiver_source_pin_drop_decoded_repair_like_count: 0,
+            receiver_source_pin_drop_decoded_endpoint_record_count: 0,
+            receiver_source_pin_drop_decoded_unknown_count: 0,
+            receiver_source_pin_drop_repair_like_sequence_observed_count: 0,
+            receiver_source_pin_drop_repair_like_sequence_unique_count: 0,
+            receiver_source_pin_drop_repair_like_sequence_min: None,
+            receiver_source_pin_drop_repair_like_sequence_max: None,
+            receiver_source_pin_drop_repair_like_sequence_ranges_sample: serde_json::json!([]),
             native_receiver_endpoint_record_decode_ok_count: 0,
             native_receiver_endpoint_record_decode_error_count: 0,
             native_receiver_data_frame_decode_ok_count: 0,
@@ -35763,6 +35927,18 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("receiver_data_frame_repair_sequence_like_count")
             .and_then(|value| value.as_u64())
             .unwrap_or_default();
+        self.receiver_data_frame_repair_like_sequence_observed_count = ingress
+            .get("receiver_data_frame_repair_like_sequence_observed_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_data_frame_repair_like_sequence_unique_count = ingress
+            .get("receiver_data_frame_repair_like_sequence_unique_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_data_frame_repair_like_sequence_missing_count = ingress
+            .get("receiver_data_frame_repair_like_sequence_missing_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
         self.receiver_data_frame_repair_like_sequence_min = ingress
             .get("receiver_data_frame_repair_like_sequence_min")
             .and_then(|value| value.as_u64());
@@ -35775,6 +35951,40 @@ impl NativeExecutionPipelineAggregateV1 {
             .unwrap_or_else(|| serde_json::json!([]));
         self.receiver_data_frame_repair_kind_sample = ingress
             .get("receiver_data_frame_repair_kind_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.receiver_source_pin_drop_decoded_data_frame_count = ingress
+            .get("receiver_source_pin_drop_decoded_data_frame_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_source_pin_drop_decoded_repair_like_count = ingress
+            .get("receiver_source_pin_drop_decoded_repair_like_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_source_pin_drop_decoded_endpoint_record_count = ingress
+            .get("receiver_source_pin_drop_decoded_endpoint_record_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_source_pin_drop_decoded_unknown_count = ingress
+            .get("receiver_source_pin_drop_decoded_unknown_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_source_pin_drop_repair_like_sequence_observed_count = ingress
+            .get("receiver_source_pin_drop_repair_like_sequence_observed_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_source_pin_drop_repair_like_sequence_unique_count = ingress
+            .get("receiver_source_pin_drop_repair_like_sequence_unique_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_source_pin_drop_repair_like_sequence_min = ingress
+            .get("receiver_source_pin_drop_repair_like_sequence_min")
+            .and_then(|value| value.as_u64());
+        self.receiver_source_pin_drop_repair_like_sequence_max = ingress
+            .get("receiver_source_pin_drop_repair_like_sequence_max")
+            .and_then(|value| value.as_u64());
+        self.receiver_source_pin_drop_repair_like_sequence_ranges_sample = ingress
+            .get("receiver_source_pin_drop_repair_like_sequence_ranges_sample")
             .cloned()
             .unwrap_or_else(|| serde_json::json!([]));
         self.native_receiver_endpoint_record_decode_ok_count = ingress
@@ -37708,6 +37918,18 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.receiver_data_frame_repair_sequence_like_count),
         );
         out.insert(
+            "receiver_data_frame_repair_like_sequence_observed_count".to_string(),
+            serde_json::json!(self.receiver_data_frame_repair_like_sequence_observed_count),
+        );
+        out.insert(
+            "receiver_data_frame_repair_like_sequence_unique_count".to_string(),
+            serde_json::json!(self.receiver_data_frame_repair_like_sequence_unique_count),
+        );
+        out.insert(
+            "receiver_data_frame_repair_like_sequence_missing_count".to_string(),
+            serde_json::json!(self.receiver_data_frame_repair_like_sequence_missing_count),
+        );
+        out.insert(
             "receiver_data_frame_repair_like_sequence_min".to_string(),
             serde_json::json!(self.receiver_data_frame_repair_like_sequence_min),
         );
@@ -37723,6 +37945,43 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "receiver_data_frame_repair_kind_sample".to_string(),
             self.receiver_data_frame_repair_kind_sample.clone(),
+        );
+        out.insert(
+            "receiver_source_pin_drop_decoded_data_frame_count".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_decoded_data_frame_count),
+        );
+        out.insert(
+            "receiver_source_pin_drop_decoded_repair_like_count".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_decoded_repair_like_count),
+        );
+        out.insert(
+            "receiver_source_pin_drop_decoded_endpoint_record_count".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_decoded_endpoint_record_count),
+        );
+        out.insert(
+            "receiver_source_pin_drop_decoded_unknown_count".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_decoded_unknown_count),
+        );
+        out.insert(
+            "receiver_source_pin_drop_repair_like_sequence_observed_count".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_repair_like_sequence_observed_count),
+        );
+        out.insert(
+            "receiver_source_pin_drop_repair_like_sequence_unique_count".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_repair_like_sequence_unique_count),
+        );
+        out.insert(
+            "receiver_source_pin_drop_repair_like_sequence_min".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_repair_like_sequence_min),
+        );
+        out.insert(
+            "receiver_source_pin_drop_repair_like_sequence_max".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_repair_like_sequence_max),
+        );
+        out.insert(
+            "receiver_source_pin_drop_repair_like_sequence_ranges_sample".to_string(),
+            self.receiver_source_pin_drop_repair_like_sequence_ranges_sample
+                .clone(),
         );
         out.insert(
             "receiver_udp_packet_source_addr_sample".to_string(),
@@ -37801,6 +38060,18 @@ impl NativeExecutionPipelineAggregateV1 {
             serde_json::json!(self.receiver_data_frame_repair_sequence_like_count),
         );
         out.insert(
+            "native_receiver_data_frame_repair_like_sequence_observed_count".to_string(),
+            serde_json::json!(self.receiver_data_frame_repair_like_sequence_observed_count),
+        );
+        out.insert(
+            "native_receiver_data_frame_repair_like_sequence_unique_count".to_string(),
+            serde_json::json!(self.receiver_data_frame_repair_like_sequence_unique_count),
+        );
+        out.insert(
+            "native_receiver_data_frame_repair_like_sequence_missing_count".to_string(),
+            serde_json::json!(self.receiver_data_frame_repair_like_sequence_missing_count),
+        );
+        out.insert(
             "native_receiver_data_frame_repair_like_sequence_min".to_string(),
             serde_json::json!(self.receiver_data_frame_repair_like_sequence_min),
         );
@@ -37816,6 +38087,43 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "native_receiver_data_frame_repair_kind_sample".to_string(),
             self.receiver_data_frame_repair_kind_sample.clone(),
+        );
+        out.insert(
+            "native_receiver_source_pin_drop_decoded_data_frame_count".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_decoded_data_frame_count),
+        );
+        out.insert(
+            "native_receiver_source_pin_drop_decoded_repair_like_count".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_decoded_repair_like_count),
+        );
+        out.insert(
+            "native_receiver_source_pin_drop_decoded_endpoint_record_count".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_decoded_endpoint_record_count),
+        );
+        out.insert(
+            "native_receiver_source_pin_drop_decoded_unknown_count".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_decoded_unknown_count),
+        );
+        out.insert(
+            "native_receiver_source_pin_drop_repair_like_sequence_observed_count".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_repair_like_sequence_observed_count),
+        );
+        out.insert(
+            "native_receiver_source_pin_drop_repair_like_sequence_unique_count".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_repair_like_sequence_unique_count),
+        );
+        out.insert(
+            "native_receiver_source_pin_drop_repair_like_sequence_min".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_repair_like_sequence_min),
+        );
+        out.insert(
+            "native_receiver_source_pin_drop_repair_like_sequence_max".to_string(),
+            serde_json::json!(self.receiver_source_pin_drop_repair_like_sequence_max),
+        );
+        out.insert(
+            "native_receiver_source_pin_drop_repair_like_sequence_ranges_sample".to_string(),
+            self.receiver_source_pin_drop_repair_like_sequence_ranges_sample
+                .clone(),
         );
         out.insert(
             "native_receiver_classifier_drop_count".to_string(),

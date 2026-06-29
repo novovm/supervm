@@ -79,6 +79,7 @@ use crate::{
     observe_network_runtime_native_pending_tx_repair_probe_v1, observe_network_runtime_peer_head,
     observe_network_runtime_peer_head_with_local_head_max,
     observe_network_runtime_receiver_data_frame_repair_like_v1,
+    observe_network_runtime_receiver_source_pin_drop_decoded_v1,
     observe_network_runtime_receiver_udp_packet_classifier_v1,
     observe_network_runtime_receiver_udp_packet_decode_attempt_v1,
     observe_network_runtime_receiver_udp_packet_decode_error_v1,
@@ -10972,6 +10973,31 @@ impl Transport for UdpTransport {
             Err(e) => return Err(e),
         };
         if !validate_udp_source_contract_v1(&self.source_pins, self.chain_id, src, &decoded) {
+            let (decoded_frame_kind, decoded_sequence) = match &decoded {
+                ProtocolMessage::EvmNative(EvmNativeMessage::EndpointRecord { .. }) => {
+                    ("endpoint_record", None)
+                }
+                ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+                    transport_auth,
+                    ..
+                }) => {
+                    let auth_sequence = transport_auth.as_ref().map(|meta| meta.sequence);
+                    let is_repair_like = transport_auth
+                        .as_ref()
+                        .is_some_and(|meta| meta.frame_kind == "repair");
+                    if is_repair_like {
+                        ("repair_like_data_frame", auth_sequence)
+                    } else {
+                        ("transaction_frame", auth_sequence)
+                    }
+                }
+                _ => ("unknown", None),
+            };
+            observe_network_runtime_receiver_source_pin_drop_decoded_v1(
+                self.chain_id,
+                decoded_frame_kind,
+                decoded_sequence,
+            );
             observe_network_runtime_receiver_udp_packet_predecode_drop_v1(
                 self.chain_id,
                 src,
