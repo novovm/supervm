@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![recursion_limit = "256"]
 
 use anyhow::{bail, Context, Result};
 use novovm_network::{NovoRudpRange, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0};
@@ -22,6 +23,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const DEFAULT_TX_COUNT: u64 = 2400;
 const DEFAULT_TIMEOUT_MS: u64 = 420_000;
 const DEFAULT_ACK_INTERVAL_PACKETS: u64 = 32;
+const BATCH_NATIVE_TX_PAYLOAD_MAGIC_V0: &[u8] = b"NOVRUDP-BTXS-V0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NetworkOnlyAckV0 {
@@ -111,9 +113,12 @@ impl LossInjectionConfigV0 {
 struct ReceiverExecutionSummaryV0 {
     business_decode_count: u64,
     business_decode_error_count: u64,
+    business_transactions_decoded_count: u64,
     aoem_executed_total: u64,
     aoem_execution_error_count: u64,
+    aoem_transactions_executed_total: u64,
     ledger_completed_count: u64,
+    ledger_transactions_completed_count: u64,
     business_decode_elapsed_ms: u64,
     aoem_execute_elapsed_ms: u64,
     ledger_close_elapsed_ms: u64,
@@ -138,6 +143,7 @@ fn run_receiver() -> Result<()> {
     let tx_count = env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_TX_COUNT", DEFAULT_TX_COUNT);
     let payload_mode = PayloadModeV0::from_env();
     let execute_aoem = env_bool("NOVOVM_NOVORUDP_NETWORK_ONLY_EXECUTE_AOEM");
+    let txs_per_payload = env_u64("NOVOVM_NOVORUDP_TXS_PER_PAYLOAD", 1).max(1);
     let timeout = Duration::from_millis(env_u64(
         "NOVOVM_NOVORUDP_NETWORK_ONLY_TIMEOUT_MS",
         DEFAULT_TIMEOUT_MS,
@@ -255,6 +261,8 @@ fn run_receiver() -> Result<()> {
         "transport_frame_v0_enabled": true,
         "network_only_gate_enabled": true,
         "business_payload_mode": payload_mode.as_str(),
+        "txs_per_payload": txs_per_payload,
+        "transport_payloads_delivered": receiver_transport_unique_delivered_count,
         "receiver_transport_data_received_count": stats.data_received,
         "receiver_transport_repair_received_count": stats.repair_received,
         "receiver_transport_unique_delivered_count": receiver_transport_unique_delivered_count,
@@ -283,9 +291,14 @@ fn run_receiver() -> Result<()> {
         "aoem_execution_mode": if execute_aoem { "adapter_projection_v0" } else { "disabled" },
         "business_decode_count": execution.business_decode_count,
         "business_decode_error_count": execution.business_decode_error_count,
+        "business_transactions_decoded_count": execution.business_transactions_decoded_count,
         "aoem_executed_total": execution.aoem_executed_total,
         "aoem_execution_error_count": execution.aoem_execution_error_count,
+        "aoem_transactions_executed_total": execution.aoem_transactions_executed_total,
         "ledger_completed_count": execution.ledger_completed_count,
+        "ledger_transactions_completed_count": execution.ledger_transactions_completed_count,
+        "business_transactions_per_sec": rate_per_sec_v0(execution.business_transactions_decoded_count, receiver_transport_delivery_elapsed_ms),
+        "ledger_transactions_per_sec": rate_per_sec_v0(execution.ledger_transactions_completed_count, receiver_transport_delivery_elapsed_ms),
         "decode_error_count": stats.decode_error_count,
         "elapsed_ms": elapsed_ms,
     });
@@ -309,6 +322,7 @@ fn run_sender() -> Result<()> {
         .unwrap_or_else(|| "artifacts/native-pipeline/novorudp-network-only-sender.json".into());
     let tx_count = env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_TX_COUNT", DEFAULT_TX_COUNT);
     let payload_mode = PayloadModeV0::from_env();
+    let txs_per_payload = env_u64("NOVOVM_NOVORUDP_TXS_PER_PAYLOAD", 1).max(1);
     let loss = LossInjectionConfigV0::from_env();
     let data_pacing_chunk_size = env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_DATA_PACING_CHUNK_SIZE", 32);
     let data_pacing_chunk_gap_ms =
@@ -335,7 +349,7 @@ fn run_sender() -> Result<()> {
         end_inclusive: tx_count.saturating_sub(1),
     }];
     let payloads = (0..tx_count)
-        .map(|sequence| payload_for_sequence_v0(payload_mode, sequence))
+        .map(|sequence| payload_for_sequence_v0(payload_mode, sequence, txs_per_payload))
         .collect::<Result<Vec<_>>>()?;
 
     for sequence in 0..tx_count {
@@ -438,6 +452,9 @@ fn run_sender() -> Result<()> {
         "transport_frame_v0_enabled": true,
         "network_only_gate_enabled": true,
         "business_payload_mode": payload_mode.as_str(),
+        "txs_per_payload": txs_per_payload,
+        "transport_payloads_sent": stats.data_sent,
+        "business_transactions_sent_count": stats.data_sent.saturating_mul(txs_per_payload),
         "transport_loss_injection_enabled": loss.enabled(),
         "transport_loss_injection_data_loss_bps": loss.data_loss_bps,
         "transport_loss_injection_seed": loss.seed,
@@ -453,6 +470,7 @@ fn run_sender() -> Result<()> {
         "sender_data_bytes_per_sec": rate_per_sec_v0(sender_data_payload_bytes_total, elapsed_ms),
         "sender_ack_count": stats.ack_received,
         "sender_repair_amplification_bps": bps_v0(stats.repair_sent, stats.data_loss_injected),
+        "sender_business_transactions_per_sec": rate_per_sec_v0(stats.data_sent.saturating_mul(txs_per_payload), elapsed_ms),
         "sender_transport_data_sent_count": stats.data_sent,
         "sender_transport_repair_sent_count": stats.repair_sent,
         "sender_transport_ack_received_count": stats.ack_received,
@@ -583,16 +601,20 @@ fn opaque_payload_v0(sequence: u64) -> Vec<u8> {
     out
 }
 
-fn payload_for_sequence_v0(mode: PayloadModeV0, sequence: u64) -> Result<Vec<u8>> {
+fn payload_for_sequence_v0(
+    mode: PayloadModeV0,
+    sequence: u64,
+    txs_per_payload: u64,
+) -> Result<Vec<u8>> {
     match mode {
         PayloadModeV0::Opaque => Ok(opaque_payload_v0(sequence)),
         PayloadModeV0::EvmTransactions => {
-            let native_payload = native_tx_payload_for_sequence_v0(sequence)?;
+            let native_payload = native_tx_payloads_for_payload_v0(sequence, txs_per_payload)?;
             let msg = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
                 from: NodeId(1),
                 chain_id: 1,
                 tx_hash: tx_hash_for_sequence_v0(sequence),
-                tx_count: 1,
+                tx_count: txs_per_payload,
                 payload: native_payload,
                 transport_auth: None,
             });
@@ -619,27 +641,43 @@ fn receiver_execution_summary_v0(
         match decoded {
             Ok(ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
                 payload: native_payload,
+                tx_count,
                 ..
             })) => {
                 summary.business_decode_count = summary.business_decode_count.saturating_add(1);
+                let native_txs = match decode_native_tx_payloads_for_payload_v0(
+                    native_payload.as_slice(),
+                    tx_count,
+                ) {
+                    Ok(native_txs) => native_txs,
+                    Err(_) => {
+                        summary.business_decode_error_count =
+                            summary.business_decode_error_count.saturating_add(1);
+                        continue;
+                    }
+                };
+                summary.business_transactions_decoded_count = summary
+                    .business_transactions_decoded_count
+                    .saturating_add(native_txs.len() as u64);
                 if execute_aoem {
                     let aoem_start = Instant::now();
-                    match decode_nov_native_tx_wire_v1(native_payload.as_slice()) {
-                        Ok(native_tx) => match nov_native_tx_to_adapter_tx_ir_v1(&native_tx) {
+                    for native_tx in native_txs {
+                        match nov_native_tx_to_adapter_tx_ir_v1(&native_tx) {
                             Ok(_) => {
                                 summary.aoem_executed_total =
                                     summary.aoem_executed_total.saturating_add(1);
+                                summary.aoem_transactions_executed_total =
+                                    summary.aoem_transactions_executed_total.saturating_add(1);
                                 summary.ledger_completed_count =
                                     summary.ledger_completed_count.saturating_add(1);
+                                summary.ledger_transactions_completed_count = summary
+                                    .ledger_transactions_completed_count
+                                    .saturating_add(1);
                             }
                             Err(_) => {
                                 summary.aoem_execution_error_count =
                                     summary.aoem_execution_error_count.saturating_add(1);
                             }
-                        },
-                        Err(_) => {
-                            summary.aoem_execution_error_count =
-                                summary.aoem_execution_error_count.saturating_add(1);
                         }
                     }
                     summary.aoem_execute_elapsed_ms = summary
@@ -690,6 +728,65 @@ fn native_tx_payload_for_sequence_v0(sequence: u64) -> Result<Vec<u8>> {
     };
     encode_nov_native_tx_wire_v1(&tx)
         .map_err(|err| anyhow::anyhow!("encode network-only native tx wire failed: {err}"))
+}
+
+fn native_tx_payloads_for_payload_v0(sequence: u64, txs_per_payload: u64) -> Result<Vec<u8>> {
+    if txs_per_payload <= 1 {
+        return native_tx_payload_for_sequence_v0(sequence);
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(BATCH_NATIVE_TX_PAYLOAD_MAGIC_V0);
+    out.extend_from_slice(&txs_per_payload.to_le_bytes());
+    for tx_index in 0..txs_per_payload {
+        let tx_sequence = sequence
+            .saturating_mul(txs_per_payload)
+            .saturating_add(tx_index);
+        let tx = native_tx_payload_for_sequence_v0(tx_sequence)?;
+        let len = u32::try_from(tx.len()).context("batch native tx payload too large")?;
+        out.extend_from_slice(&len.to_le_bytes());
+        out.extend_from_slice(tx.as_slice());
+    }
+    Ok(out)
+}
+
+fn decode_native_tx_payloads_for_payload_v0(
+    payload: &[u8],
+    tx_count: u64,
+) -> Result<Vec<NovNativeTxWireV1>> {
+    if !payload.starts_with(BATCH_NATIVE_TX_PAYLOAD_MAGIC_V0) {
+        return Ok(vec![decode_nov_native_tx_wire_v1(payload).map_err(
+            |err| anyhow::anyhow!("decode native tx wire failed: {err}"),
+        )?]);
+    }
+    let mut offset = BATCH_NATIVE_TX_PAYLOAD_MAGIC_V0.len();
+    if payload.len() < offset + 8 {
+        bail!("batch native tx payload missing count");
+    }
+    let encoded_count = u64::from_le_bytes(payload[offset..offset + 8].try_into()?);
+    offset += 8;
+    if encoded_count != tx_count {
+        bail!("batch native tx count mismatch: encoded={encoded_count} message={tx_count}");
+    }
+    let mut out = Vec::with_capacity(encoded_count as usize);
+    for _ in 0..encoded_count {
+        if payload.len() < offset + 4 {
+            bail!("batch native tx payload missing item length");
+        }
+        let len = u32::from_le_bytes(payload[offset..offset + 4].try_into()?) as usize;
+        offset += 4;
+        let end = offset.saturating_add(len);
+        if end > payload.len() {
+            bail!("batch native tx payload item length out of bounds");
+        }
+        let tx = decode_nov_native_tx_wire_v1(&payload[offset..end])
+            .map_err(|err| anyhow::anyhow!("decode batch native tx wire failed: {err}"))?;
+        out.push(tx);
+        offset = end;
+    }
+    if offset != payload.len() {
+        bail!("batch native tx payload has trailing bytes");
+    }
+    Ok(out)
 }
 
 fn tx_hash_for_sequence_v0(sequence: u64) -> [u8; 32] {
@@ -792,7 +889,8 @@ mod tests {
         for sequence in 0..4 {
             delivered.insert(
                 sequence,
-                payload_for_sequence_v0(PayloadModeV0::EvmTransactions, sequence).expect("payload"),
+                payload_for_sequence_v0(PayloadModeV0::EvmTransactions, sequence, 1)
+                    .expect("payload"),
             );
         }
 
@@ -816,7 +914,8 @@ mod tests {
         for sequence in 0..4 {
             delivered.insert(
                 sequence,
-                payload_for_sequence_v0(PayloadModeV0::EvmTransactions, sequence).expect("payload"),
+                payload_for_sequence_v0(PayloadModeV0::EvmTransactions, sequence, 1)
+                    .expect("payload"),
             );
         }
 
@@ -827,6 +926,28 @@ mod tests {
         assert_eq!(summary.aoem_executed_total, 4);
         assert_eq!(summary.aoem_execution_error_count, 0);
         assert_eq!(summary.ledger_completed_count, 4);
+    }
+
+    #[test]
+    fn evm_transactions_payload_mode_supports_batched_native_txs() {
+        let mut delivered = BTreeMap::new();
+        for sequence in 0..2 {
+            delivered.insert(
+                sequence,
+                payload_for_sequence_v0(PayloadModeV0::EvmTransactions, sequence, 3)
+                    .expect("payload"),
+            );
+        }
+
+        let summary =
+            receiver_execution_summary_v0(PayloadModeV0::EvmTransactions, true, &delivered);
+        assert_eq!(summary.business_decode_count, 2);
+        assert_eq!(summary.business_decode_error_count, 0);
+        assert_eq!(summary.business_transactions_decoded_count, 6);
+        assert_eq!(summary.aoem_executed_total, 6);
+        assert_eq!(summary.aoem_transactions_executed_total, 6);
+        assert_eq!(summary.ledger_completed_count, 6);
+        assert_eq!(summary.ledger_transactions_completed_count, 6);
     }
 
     #[test]
