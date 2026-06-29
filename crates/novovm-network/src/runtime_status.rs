@@ -1078,19 +1078,6 @@ pub struct NetworkRuntimeReceiverDecodeAttributionV1 {
     pub receiver_classifier_transaction_frame_count: u64,
     pub receiver_classifier_repair_frame_count: u64,
     pub receiver_classifier_unknown_count: u64,
-    pub receiver_classifier_data_frame_repair_like_count: u64,
-    pub receiver_data_frame_repair_sequence_like_count: u64,
-    pub receiver_data_frame_repair_like_sequence_observed_count: u64,
-    pub receiver_data_frame_repair_like_sequence_unique_count: u64,
-    pub receiver_data_frame_repair_like_sequence_missing_count: u64,
-    pub receiver_data_frame_repair_like_sequence_min: Option<u64>,
-    pub receiver_data_frame_repair_like_sequence_max: Option<u64>,
-    pub receiver_data_frame_repair_like_sequence_ranges_sample:
-        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
-    pub receiver_data_frame_repair_kind_sample: Vec<String>,
-    pub receiver_data_frame_repair_like_source_addr_sample: Vec<String>,
-    #[serde(skip)]
-    pub receiver_data_frame_repair_like_sequence_seen: HashSet<u64>,
     pub receiver_rcvbuf_requested_bytes: Option<u64>,
     pub receiver_rcvbuf_effective_bytes: Option<u64>,
     pub receiver_drain_first_enabled: bool,
@@ -1098,20 +1085,6 @@ pub struct NetworkRuntimeReceiverDecodeAttributionV1 {
     pub receiver_drain_queue_dequeued_count: u64,
     pub receiver_drain_queue_max_depth: u64,
     pub receiver_drain_loop_batch_max: u64,
-    pub receiver_drain_queue_repair_like_count: u64,
-    pub receiver_drain_queue_repair_like_sequence_observed_count: u64,
-    pub receiver_drain_queue_repair_like_sequence_unique_count: u64,
-    pub receiver_drain_queue_repair_like_sequence_missing_count: u64,
-    pub receiver_drain_queue_repair_like_sequence_min: Option<u64>,
-    pub receiver_drain_queue_repair_like_sequence_max: Option<u64>,
-    pub receiver_drain_queue_repair_like_sequence_ranges_sample:
-        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
-    pub receiver_drain_queue_repair_like_source_addr_sample: Vec<String>,
-    pub receiver_direct_path_repair_like_count: u64,
-    pub receiver_queued_path_repair_like_count: u64,
-    pub receiver_repair_like_classification_path: String,
-    #[serde(skip)]
-    pub receiver_drain_queue_repair_like_sequence_seen: HashSet<u64>,
     pub receiver_socket_recv_buffer_bytes: Option<u64>,
     pub receiver_recv_loop_iteration_count: u64,
     pub receiver_recv_success_during_repair_window_count: u64,
@@ -1138,17 +1111,8 @@ pub struct NetworkRuntimeReceiverDecodeAttributionV1 {
     pub receiver_udp_packet_decode_stage_sample: Vec<String>,
     pub receiver_udp_packet_drop_reason_sample: Vec<String>,
     pub receiver_source_pin_drop_decoded_data_frame_count: u64,
-    pub receiver_source_pin_drop_decoded_repair_like_count: u64,
     pub receiver_source_pin_drop_decoded_endpoint_record_count: u64,
     pub receiver_source_pin_drop_decoded_unknown_count: u64,
-    pub receiver_source_pin_drop_repair_like_sequence_observed_count: u64,
-    pub receiver_source_pin_drop_repair_like_sequence_unique_count: u64,
-    pub receiver_source_pin_drop_repair_like_sequence_min: Option<u64>,
-    pub receiver_source_pin_drop_repair_like_sequence_max: Option<u64>,
-    pub receiver_source_pin_drop_repair_like_sequence_ranges_sample:
-        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
-    #[serde(skip)]
-    pub receiver_source_pin_drop_repair_like_sequence_seen: HashSet<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1215,17 +1179,6 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub receiver_classifier_transaction_frame_count: u64,
     pub receiver_classifier_repair_frame_count: u64,
     pub receiver_classifier_unknown_count: u64,
-    pub receiver_classifier_data_frame_repair_like_count: u64,
-    pub receiver_data_frame_repair_sequence_like_count: u64,
-    pub receiver_data_frame_repair_like_sequence_observed_count: u64,
-    pub receiver_data_frame_repair_like_sequence_unique_count: u64,
-    pub receiver_data_frame_repair_like_sequence_missing_count: u64,
-    pub receiver_data_frame_repair_like_sequence_min: Option<u64>,
-    pub receiver_data_frame_repair_like_sequence_max: Option<u64>,
-    pub receiver_data_frame_repair_like_sequence_ranges_sample:
-        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
-    pub receiver_data_frame_repair_kind_sample: Vec<String>,
-    pub receiver_data_frame_repair_like_source_addr_sample: Vec<String>,
     pub receiver_rcvbuf_requested_bytes: Option<u64>,
     pub receiver_rcvbuf_effective_bytes: Option<u64>,
     pub receiver_drain_first_enabled: bool,
@@ -1233,18 +1186,6 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub receiver_drain_queue_dequeued_count: u64,
     pub receiver_drain_queue_max_depth: u64,
     pub receiver_drain_loop_batch_max: u64,
-    pub receiver_drain_queue_repair_like_count: u64,
-    pub receiver_drain_queue_repair_like_sequence_observed_count: u64,
-    pub receiver_drain_queue_repair_like_sequence_unique_count: u64,
-    pub receiver_drain_queue_repair_like_sequence_missing_count: u64,
-    pub receiver_drain_queue_repair_like_sequence_min: Option<u64>,
-    pub receiver_drain_queue_repair_like_sequence_max: Option<u64>,
-    pub receiver_drain_queue_repair_like_sequence_ranges_sample:
-        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
-    pub receiver_drain_queue_repair_like_source_addr_sample: Vec<String>,
-    pub receiver_direct_path_repair_like_count: u64,
-    pub receiver_queued_path_repair_like_count: u64,
-    pub receiver_repair_like_classification_path: String,
     pub receiver_socket_recv_buffer_bytes: Option<u64>,
     pub receiver_recv_loop_iteration_count: u64,
     pub receiver_recv_success_during_repair_window_count: u64,
@@ -1264,15 +1205,8 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub receiver_udp_packet_decode_stage_sample: Vec<String>,
     pub receiver_udp_packet_drop_reason_sample: Vec<String>,
     pub receiver_source_pin_drop_decoded_data_frame_count: u64,
-    pub receiver_source_pin_drop_decoded_repair_like_count: u64,
     pub receiver_source_pin_drop_decoded_endpoint_record_count: u64,
     pub receiver_source_pin_drop_decoded_unknown_count: u64,
-    pub receiver_source_pin_drop_repair_like_sequence_observed_count: u64,
-    pub receiver_source_pin_drop_repair_like_sequence_unique_count: u64,
-    pub receiver_source_pin_drop_repair_like_sequence_min: Option<u64>,
-    pub receiver_source_pin_drop_repair_like_sequence_max: Option<u64>,
-    pub receiver_source_pin_drop_repair_like_sequence_ranges_sample:
-        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
     pub repair_packet_received_count: u64,
     pub repair_packet_decode_failed_count: u64,
     pub repair_sequence_received_count: u64,
@@ -1996,167 +1930,9 @@ pub fn observe_network_runtime_receiver_udp_packet_classifier_v1(chain_id: u64, 
     }
 }
 
-pub fn observe_network_runtime_receiver_data_frame_repair_like_v1(
-    chain_id: u64,
-    source: Option<SocketAddr>,
-    frame_kind: Option<&str>,
-    sequence: Option<u64>,
-    tx_count: u64,
-    classification_path: &str,
-) {
-    let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
-        return;
-    };
-    let state = guard.entry(chain_id).or_default();
-    let now_ms = network_runtime_now_ms_v1();
-    if !state.receiver_repair_window_active {
-        state.receiver_repair_window_active = true;
-        state.receiver_repair_window_first_seen_ms = Some(now_ms);
-        state.receiver_recv_success_during_repair_window_count = state
-            .receiver_recv_success_during_repair_window_count
-            .saturating_add(1);
-        state.receiver_repair_window_socket_recv_count = state
-            .receiver_repair_window_socket_recv_count
-            .saturating_add(1);
-        state.receiver_repair_window_data_frame_count = state
-            .receiver_repair_window_data_frame_count
-            .saturating_add(1);
-    }
-    state.receiver_repair_window_last_seen_ms = Some(now_ms);
-    state.receiver_classifier_data_frame_repair_like_count = state
-        .receiver_classifier_data_frame_repair_like_count
-        .saturating_add(1);
-    match classification_path {
-        "queued" => {
-            state.receiver_queued_path_repair_like_count = state
-                .receiver_queued_path_repair_like_count
-                .saturating_add(1);
-            state.receiver_drain_queue_repair_like_count = state
-                .receiver_drain_queue_repair_like_count
-                .saturating_add(1);
-        }
-        _ => {
-            state.receiver_direct_path_repair_like_count = state
-                .receiver_direct_path_repair_like_count
-                .saturating_add(1);
-        }
-    }
-    state.receiver_repair_like_classification_path = if state.receiver_direct_path_repair_like_count
-        > 0
-        && state.receiver_queued_path_repair_like_count > 0
-    {
-        "mixed".to_string()
-    } else if state.receiver_queued_path_repair_like_count > 0 {
-        "queued".to_string()
-    } else if state.receiver_direct_path_repair_like_count > 0 {
-        "direct".to_string()
-    } else {
-        String::new()
-    };
-    if tx_count > 1 {
-        state.receiver_data_frame_repair_sequence_like_count = state
-            .receiver_data_frame_repair_sequence_like_count
-            .saturating_add(1);
-    }
-    if let Some(sequence) = sequence {
-        state.receiver_data_frame_repair_like_sequence_observed_count = state
-            .receiver_data_frame_repair_like_sequence_observed_count
-            .saturating_add(1);
-        state
-            .receiver_data_frame_repair_like_sequence_seen
-            .insert(sequence);
-        state.receiver_data_frame_repair_like_sequence_unique_count = state
-            .receiver_data_frame_repair_like_sequence_seen
-            .len()
-            .try_into()
-            .unwrap_or(u64::MAX);
-        state.receiver_data_frame_repair_like_sequence_min = Some(
-            state
-                .receiver_data_frame_repair_like_sequence_min
-                .map(|current| current.min(sequence))
-                .unwrap_or(sequence),
-        );
-        state.receiver_data_frame_repair_like_sequence_max = Some(
-            state
-                .receiver_data_frame_repair_like_sequence_max
-                .map(|current| current.max(sequence))
-                .unwrap_or(sequence),
-        );
-        state.receiver_data_frame_repair_like_sequence_ranges_sample =
-            network_runtime_native_repair_sequence_ranges_sample_v1(
-                &state.receiver_data_frame_repair_like_sequence_seen,
-                64,
-            );
-        if classification_path == "queued" {
-            state.receiver_drain_queue_repair_like_sequence_observed_count = state
-                .receiver_drain_queue_repair_like_sequence_observed_count
-                .saturating_add(1);
-            state
-                .receiver_drain_queue_repair_like_sequence_seen
-                .insert(sequence);
-            state.receiver_drain_queue_repair_like_sequence_unique_count = state
-                .receiver_drain_queue_repair_like_sequence_seen
-                .len()
-                .try_into()
-                .unwrap_or(u64::MAX);
-            state.receiver_drain_queue_repair_like_sequence_min = Some(
-                state
-                    .receiver_drain_queue_repair_like_sequence_min
-                    .map(|current| current.min(sequence))
-                    .unwrap_or(sequence),
-            );
-            state.receiver_drain_queue_repair_like_sequence_max = Some(
-                state
-                    .receiver_drain_queue_repair_like_sequence_max
-                    .map(|current| current.max(sequence))
-                    .unwrap_or(sequence),
-            );
-            state.receiver_drain_queue_repair_like_sequence_ranges_sample =
-                network_runtime_native_repair_sequence_ranges_sample_v1(
-                    &state.receiver_drain_queue_repair_like_sequence_seen,
-                    64,
-                );
-        }
-    } else {
-        state.receiver_data_frame_repair_like_sequence_missing_count = state
-            .receiver_data_frame_repair_like_sequence_missing_count
-            .saturating_add(1);
-        if classification_path == "queued" {
-            state.receiver_drain_queue_repair_like_sequence_missing_count = state
-                .receiver_drain_queue_repair_like_sequence_missing_count
-                .saturating_add(1);
-        }
-    }
-    let sample = format!(
-        "frame_kind={} sequence={} tx_count={}",
-        frame_kind.unwrap_or("missing"),
-        sequence
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "missing".to_string()),
-        tx_count
-    );
-    receiver_decode_attribution_sample_push_v1(
-        &mut state.receiver_data_frame_repair_kind_sample,
-        sample,
-    );
-    if let Some(source) = source {
-        receiver_decode_attribution_sample_push_v1(
-            &mut state.receiver_data_frame_repair_like_source_addr_sample,
-            source.to_string(),
-        );
-        if classification_path == "queued" {
-            receiver_decode_attribution_sample_push_v1(
-                &mut state.receiver_drain_queue_repair_like_source_addr_sample,
-                source.to_string(),
-            );
-        }
-    }
-}
-
 pub fn observe_network_runtime_receiver_source_pin_drop_decoded_v1(
     chain_id: u64,
     frame_kind: &str,
-    sequence: Option<u64>,
 ) {
     let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
         return;
@@ -2172,44 +1948,6 @@ pub fn observe_network_runtime_receiver_source_pin_drop_decoded_v1(
             state.receiver_source_pin_drop_decoded_data_frame_count = state
                 .receiver_source_pin_drop_decoded_data_frame_count
                 .saturating_add(1);
-        }
-        "repair_like_data_frame" => {
-            state.receiver_source_pin_drop_decoded_data_frame_count = state
-                .receiver_source_pin_drop_decoded_data_frame_count
-                .saturating_add(1);
-            state.receiver_source_pin_drop_decoded_repair_like_count = state
-                .receiver_source_pin_drop_decoded_repair_like_count
-                .saturating_add(1);
-            if let Some(sequence) = sequence {
-                state.receiver_source_pin_drop_repair_like_sequence_observed_count = state
-                    .receiver_source_pin_drop_repair_like_sequence_observed_count
-                    .saturating_add(1);
-                state
-                    .receiver_source_pin_drop_repair_like_sequence_seen
-                    .insert(sequence);
-                state.receiver_source_pin_drop_repair_like_sequence_unique_count = state
-                    .receiver_source_pin_drop_repair_like_sequence_seen
-                    .len()
-                    .try_into()
-                    .unwrap_or(u64::MAX);
-                state.receiver_source_pin_drop_repair_like_sequence_min = Some(
-                    state
-                        .receiver_source_pin_drop_repair_like_sequence_min
-                        .map(|current| current.min(sequence))
-                        .unwrap_or(sequence),
-                );
-                state.receiver_source_pin_drop_repair_like_sequence_max = Some(
-                    state
-                        .receiver_source_pin_drop_repair_like_sequence_max
-                        .map(|current| current.max(sequence))
-                        .unwrap_or(sequence),
-                );
-                state.receiver_source_pin_drop_repair_like_sequence_ranges_sample =
-                    network_runtime_native_repair_sequence_ranges_sample_v1(
-                        &state.receiver_source_pin_drop_repair_like_sequence_seen,
-                        64,
-                    );
-            }
         }
         _ => {
             state.receiver_source_pin_drop_decoded_unknown_count = state
@@ -2847,28 +2585,6 @@ fn apply_network_runtime_receiver_decode_attribution_summary_v1(
         decode.receiver_classifier_transaction_frame_count;
     summary.receiver_classifier_repair_frame_count = decode.receiver_classifier_repair_frame_count;
     summary.receiver_classifier_unknown_count = decode.receiver_classifier_unknown_count;
-    summary.receiver_classifier_data_frame_repair_like_count =
-        decode.receiver_classifier_data_frame_repair_like_count;
-    summary.receiver_data_frame_repair_sequence_like_count =
-        decode.receiver_data_frame_repair_sequence_like_count;
-    summary.receiver_data_frame_repair_like_sequence_observed_count =
-        decode.receiver_data_frame_repair_like_sequence_observed_count;
-    summary.receiver_data_frame_repair_like_sequence_unique_count =
-        decode.receiver_data_frame_repair_like_sequence_unique_count;
-    summary.receiver_data_frame_repair_like_sequence_missing_count =
-        decode.receiver_data_frame_repair_like_sequence_missing_count;
-    summary.receiver_data_frame_repair_like_sequence_min =
-        decode.receiver_data_frame_repair_like_sequence_min;
-    summary.receiver_data_frame_repair_like_sequence_max =
-        decode.receiver_data_frame_repair_like_sequence_max;
-    summary.receiver_data_frame_repair_like_sequence_ranges_sample = decode
-        .receiver_data_frame_repair_like_sequence_ranges_sample
-        .clone();
-    summary.receiver_data_frame_repair_kind_sample =
-        decode.receiver_data_frame_repair_kind_sample.clone();
-    summary.receiver_data_frame_repair_like_source_addr_sample = decode
-        .receiver_data_frame_repair_like_source_addr_sample
-        .clone();
     summary.receiver_rcvbuf_requested_bytes = decode.receiver_rcvbuf_requested_bytes;
     summary.receiver_rcvbuf_effective_bytes = decode.receiver_rcvbuf_effective_bytes;
     summary.receiver_drain_first_enabled = decode.receiver_drain_first_enabled;
@@ -2876,27 +2592,6 @@ fn apply_network_runtime_receiver_decode_attribution_summary_v1(
     summary.receiver_drain_queue_dequeued_count = decode.receiver_drain_queue_dequeued_count;
     summary.receiver_drain_queue_max_depth = decode.receiver_drain_queue_max_depth;
     summary.receiver_drain_loop_batch_max = decode.receiver_drain_loop_batch_max;
-    summary.receiver_drain_queue_repair_like_count = decode.receiver_drain_queue_repair_like_count;
-    summary.receiver_drain_queue_repair_like_sequence_observed_count =
-        decode.receiver_drain_queue_repair_like_sequence_observed_count;
-    summary.receiver_drain_queue_repair_like_sequence_unique_count =
-        decode.receiver_drain_queue_repair_like_sequence_unique_count;
-    summary.receiver_drain_queue_repair_like_sequence_missing_count =
-        decode.receiver_drain_queue_repair_like_sequence_missing_count;
-    summary.receiver_drain_queue_repair_like_sequence_min =
-        decode.receiver_drain_queue_repair_like_sequence_min;
-    summary.receiver_drain_queue_repair_like_sequence_max =
-        decode.receiver_drain_queue_repair_like_sequence_max;
-    summary.receiver_drain_queue_repair_like_sequence_ranges_sample = decode
-        .receiver_drain_queue_repair_like_sequence_ranges_sample
-        .clone();
-    summary.receiver_drain_queue_repair_like_source_addr_sample = decode
-        .receiver_drain_queue_repair_like_source_addr_sample
-        .clone();
-    summary.receiver_direct_path_repair_like_count = decode.receiver_direct_path_repair_like_count;
-    summary.receiver_queued_path_repair_like_count = decode.receiver_queued_path_repair_like_count;
-    summary.receiver_repair_like_classification_path =
-        decode.receiver_repair_like_classification_path.clone();
     summary.receiver_socket_recv_buffer_bytes = decode.receiver_socket_recv_buffer_bytes;
     summary.receiver_recv_loop_iteration_count = decode.receiver_recv_loop_iteration_count;
     summary.receiver_recv_success_during_repair_window_count =
@@ -2924,23 +2619,10 @@ fn apply_network_runtime_receiver_decode_attribution_summary_v1(
         decode.receiver_udp_packet_drop_reason_sample.clone();
     summary.receiver_source_pin_drop_decoded_data_frame_count =
         decode.receiver_source_pin_drop_decoded_data_frame_count;
-    summary.receiver_source_pin_drop_decoded_repair_like_count =
-        decode.receiver_source_pin_drop_decoded_repair_like_count;
     summary.receiver_source_pin_drop_decoded_endpoint_record_count =
         decode.receiver_source_pin_drop_decoded_endpoint_record_count;
     summary.receiver_source_pin_drop_decoded_unknown_count =
         decode.receiver_source_pin_drop_decoded_unknown_count;
-    summary.receiver_source_pin_drop_repair_like_sequence_observed_count =
-        decode.receiver_source_pin_drop_repair_like_sequence_observed_count;
-    summary.receiver_source_pin_drop_repair_like_sequence_unique_count =
-        decode.receiver_source_pin_drop_repair_like_sequence_unique_count;
-    summary.receiver_source_pin_drop_repair_like_sequence_min =
-        decode.receiver_source_pin_drop_repair_like_sequence_min;
-    summary.receiver_source_pin_drop_repair_like_sequence_max =
-        decode.receiver_source_pin_drop_repair_like_sequence_max;
-    summary.receiver_source_pin_drop_repair_like_sequence_ranges_sample = decode
-        .receiver_source_pin_drop_repair_like_sequence_ranges_sample
-        .clone();
 }
 
 fn apply_novorudp_durable_missing_summary_v1(

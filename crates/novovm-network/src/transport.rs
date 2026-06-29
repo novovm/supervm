@@ -78,7 +78,6 @@ use crate::{
     observe_network_runtime_native_pending_tx_remote_native_payload_v1,
     observe_network_runtime_native_pending_tx_repair_probe_v1, observe_network_runtime_peer_head,
     observe_network_runtime_peer_head_with_local_head_max,
-    observe_network_runtime_receiver_data_frame_repair_like_v1,
     observe_network_runtime_receiver_drain_first_config_v1,
     observe_network_runtime_receiver_drain_first_dequeue_v1,
     observe_network_runtime_receiver_drain_first_enqueue_v1,
@@ -11027,32 +11026,6 @@ impl Transport for UdpTransport {
                     self.chain_id,
                     frame_kind,
                 );
-                if let ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
-                    tx_count,
-                    transport_auth,
-                    ..
-                }) = &decoded
-                {
-                    // Legacy mixed-layer attribution only. NOVORUDP repair must move to
-                    // explicit transport frames; do not extend business-frame repair routing.
-                    let auth_frame_kind =
-                        transport_auth.as_ref().map(|meta| meta.frame_kind.as_str());
-                    let auth_sequence = transport_auth.as_ref().map(|meta| meta.sequence);
-                    if auth_frame_kind == Some("repair") || *tx_count > 1 {
-                        observe_network_runtime_receiver_data_frame_repair_like_v1(
-                            self.chain_id,
-                            Some(src),
-                            auth_frame_kind,
-                            auth_sequence,
-                            *tx_count,
-                            if self.drain_first_enabled {
-                                "queued"
-                            } else {
-                                "direct"
-                            },
-                        );
-                    }
-                }
                 decoded
             }
             Err(e) => {
@@ -11067,30 +11040,18 @@ impl Transport for UdpTransport {
             }
         };
         if !validate_udp_source_contract_v1(&self.source_pins, self.chain_id, src, &decoded) {
-            let (decoded_frame_kind, decoded_sequence) = match &decoded {
+            let decoded_frame_kind = match &decoded {
                 ProtocolMessage::EvmNative(EvmNativeMessage::EndpointRecord { .. }) => {
-                    ("endpoint_record", None)
+                    "endpoint_record"
                 }
-                ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
-                    transport_auth,
-                    ..
-                }) => {
-                    let auth_sequence = transport_auth.as_ref().map(|meta| meta.sequence);
-                    let is_repair_like = transport_auth
-                        .as_ref()
-                        .is_some_and(|meta| meta.frame_kind == "repair");
-                    if is_repair_like {
-                        ("repair_like_data_frame", auth_sequence)
-                    } else {
-                        ("transaction_frame", auth_sequence)
-                    }
+                ProtocolMessage::EvmNative(EvmNativeMessage::Transactions { .. }) => {
+                    "transaction_frame"
                 }
-                _ => ("unknown", None),
+                _ => "unknown",
             };
             observe_network_runtime_receiver_source_pin_drop_decoded_v1(
                 self.chain_id,
                 decoded_frame_kind,
-                decoded_sequence,
             );
             observe_network_runtime_receiver_udp_packet_predecode_drop_v1(
                 self.chain_id,

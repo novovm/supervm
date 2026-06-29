@@ -13857,22 +13857,6 @@ fn write_synthetic_receiver_failure_report(
         .and_then(|sample| sample.get("repair_sequence_admitted_to_aoem_ranges_sample"))
         .map(missing_ranges_from_json)
         .unwrap_or_default();
-    let data_frame_repair_like_ranges = repair_source
-        .and_then(|sample| {
-            sample
-                .get("native_receiver_data_frame_repair_like_sequence_ranges_sample")
-                .or_else(|| sample.get("receiver_data_frame_repair_like_sequence_ranges_sample"))
-        })
-        .map(missing_ranges_from_json)
-        .unwrap_or_default();
-    let drain_queue_repair_like_ranges = repair_source
-        .and_then(|sample| {
-            sample
-                .get("native_receiver_drain_queue_repair_like_ranges_sample")
-                .or_else(|| sample.get("receiver_drain_queue_repair_like_sequence_ranges_sample"))
-        })
-        .map(missing_ranges_from_json)
-        .unwrap_or_default();
     let repair_packet_received_count = repair_source
         .and_then(|sample| sample.get("repair_packet_received_count"))
         .and_then(Value::as_u64);
@@ -13900,14 +13884,6 @@ fn write_synthetic_receiver_failure_report(
     let repair_admitted_to_aoem_final_missing_overlap_count = missing_ranges_overlap_count(
         final_missing_ranges.as_slice(),
         repair_admitted_to_aoem_ranges.as_slice(),
-    );
-    let data_frame_repair_like_final_missing_overlap_count = missing_ranges_overlap_count(
-        final_missing_ranges.as_slice(),
-        data_frame_repair_like_ranges.as_slice(),
-    );
-    let drain_queue_repair_like_final_missing_overlap_count = missing_ranges_overlap_count(
-        final_missing_ranges.as_slice(),
-        drain_queue_repair_like_ranges.as_slice(),
     );
     let receipt_index_false_positive_suspected =
         repair_already_receipted_final_missing_overlap_count > 0;
@@ -14067,66 +14043,6 @@ fn write_synthetic_receiver_failure_report(
             "repair_sequence_payload_index_final_missing_overlap_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_payload_index_final_missing_overlap_count"))
                 .and_then(Value::as_u64),
-            "receiver_data_frame_repair_like_final_missing_overlap_count": data_frame_repair_like_final_missing_overlap_count,
-            "native_receiver_data_frame_repair_like_final_missing_overlap_count": data_frame_repair_like_final_missing_overlap_count,
-            "native_receiver_drain_queue_repair_like_final_missing_overlap_count": drain_queue_repair_like_final_missing_overlap_count,
-            "receiver_drain_queue_repair_like_final_missing_overlap_count": drain_queue_repair_like_final_missing_overlap_count,
-            "receiver_data_frame_repair_like_sequence_observed_count": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_observed_count"))
-                .and_then(Value::as_u64),
-            "receiver_data_frame_repair_like_sequence_unique_count": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_unique_count"))
-                .and_then(Value::as_u64),
-            "receiver_data_frame_repair_like_sequence_missing_count": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_missing_count"))
-                .and_then(Value::as_u64),
-            "receiver_data_frame_repair_like_sequence_min": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_min"))
-                .cloned(),
-            "receiver_data_frame_repair_like_sequence_max": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_max"))
-                .cloned(),
-            "receiver_data_frame_repair_like_sequence_ranges_sample": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_ranges_sample"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-            "receiver_data_frame_repair_like_source_addr_sample": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_source_addr_sample"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-            "native_receiver_drain_queue_repair_like_count": repair_source
-                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_count"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_count")))
-                .and_then(Value::as_u64),
-            "native_receiver_drain_queue_repair_like_sequence_unique_count": repair_source
-                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_sequence_unique_count"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_unique_count")))
-                .and_then(Value::as_u64),
-            "native_receiver_drain_queue_repair_like_sequence_min": repair_source
-                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_sequence_min"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_min")))
-                .cloned(),
-            "native_receiver_drain_queue_repair_like_sequence_max": repair_source
-                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_sequence_max"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_max")))
-                .cloned(),
-            "native_receiver_drain_queue_repair_like_ranges_sample": repair_source
-                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_ranges_sample"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_ranges_sample")))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-            "native_receiver_queued_path_repair_like_count": repair_source
-                .and_then(|sample| sample.get("native_receiver_queued_path_repair_like_count"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_queued_path_repair_like_count")))
-                .and_then(Value::as_u64),
-            "native_receiver_direct_path_repair_like_count": repair_source
-                .and_then(|sample| sample.get("native_receiver_direct_path_repair_like_count"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_direct_path_repair_like_count")))
-                .and_then(Value::as_u64),
-            "native_receiver_repair_like_classification_path": repair_source
-                .and_then(|sample| sample.get("native_receiver_repair_like_classification_path"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_repair_like_classification_path")))
-                .cloned(),
             "receiver_socket_recv_buffer_bytes": repair_source
                 .and_then(|sample| sample.get("receiver_socket_recv_buffer_bytes"))
                 .cloned(),
@@ -14151,24 +14067,6 @@ fn write_synthetic_receiver_failure_report(
             "receiver_udp_drop_or_overrun_suspected": repair_source
                 .and_then(|sample| sample.get("receiver_udp_drop_or_overrun_suspected"))
                 .and_then(Value::as_bool),
-            "native_receiver_data_frame_repair_like_sequence_min": repair_source
-                .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_sequence_min"))
-                .cloned(),
-            "native_receiver_data_frame_repair_like_sequence_max": repair_source
-                .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_sequence_max"))
-                .cloned(),
-            "native_receiver_data_frame_repair_like_sequence_ranges_sample": repair_source
-                .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_sequence_ranges_sample"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-            "native_receiver_data_frame_repair_like_source_addr_sample": repair_source
-                .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_source_addr_sample"))
-                .or_else(|| {
-                    repair_source
-                        .and_then(|sample| sample.get("receiver_data_frame_repair_like_source_addr_sample"))
-                })
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
             "native_receiver_socket_recv_buffer_bytes": repair_source
                 .and_then(|sample| sample.get("native_receiver_socket_recv_buffer_bytes"))
                 .or_else(|| repair_source.and_then(|sample| sample.get("receiver_socket_recv_buffer_bytes")))
@@ -14201,26 +14099,6 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(|sample| sample.get("native_receiver_udp_drop_or_overrun_suspected"))
                 .or_else(|| repair_source.and_then(|sample| sample.get("receiver_udp_drop_or_overrun_suspected")))
                 .and_then(Value::as_bool),
-            "receiver_source_pin_drop_decoded_repair_like_count": repair_source
-                .and_then(|sample| sample.get("receiver_source_pin_drop_decoded_repair_like_count"))
-                .and_then(Value::as_u64),
-            "receiver_source_pin_drop_repair_like_sequence_unique_count": repair_source
-                .and_then(|sample| sample.get("receiver_source_pin_drop_repair_like_sequence_unique_count"))
-                .and_then(Value::as_u64),
-            "receiver_source_pin_drop_repair_like_sequence_ranges_sample": repair_source
-                .and_then(|sample| sample.get("receiver_source_pin_drop_repair_like_sequence_ranges_sample"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-            "native_receiver_source_pin_drop_decoded_repair_like_count": repair_source
-                .and_then(|sample| sample.get("native_receiver_source_pin_drop_decoded_repair_like_count"))
-                .and_then(Value::as_u64),
-            "native_receiver_source_pin_drop_repair_like_sequence_unique_count": repair_source
-                .and_then(|sample| sample.get("native_receiver_source_pin_drop_repair_like_sequence_unique_count"))
-                .and_then(Value::as_u64),
-            "native_receiver_source_pin_drop_repair_like_sequence_ranges_sample": repair_source
-                .and_then(|sample| sample.get("native_receiver_source_pin_drop_repair_like_sequence_ranges_sample"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
             "repair_sequence_payload_index_evicted_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_payload_index_evicted_count"))
                 .and_then(Value::as_u64),
@@ -14425,66 +14303,6 @@ fn write_synthetic_receiver_failure_report(
             "repair_sequence_payload_index_final_missing_overlap_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_payload_index_final_missing_overlap_count"))
                 .and_then(Value::as_u64),
-            "receiver_data_frame_repair_like_final_missing_overlap_count": data_frame_repair_like_final_missing_overlap_count,
-            "native_receiver_data_frame_repair_like_final_missing_overlap_count": data_frame_repair_like_final_missing_overlap_count,
-            "native_receiver_drain_queue_repair_like_final_missing_overlap_count": drain_queue_repair_like_final_missing_overlap_count,
-            "receiver_drain_queue_repair_like_final_missing_overlap_count": drain_queue_repair_like_final_missing_overlap_count,
-            "receiver_data_frame_repair_like_sequence_observed_count": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_observed_count"))
-                .and_then(Value::as_u64),
-            "receiver_data_frame_repair_like_sequence_unique_count": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_unique_count"))
-                .and_then(Value::as_u64),
-            "receiver_data_frame_repair_like_sequence_missing_count": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_missing_count"))
-                .and_then(Value::as_u64),
-            "receiver_data_frame_repair_like_sequence_min": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_min"))
-                .cloned(),
-            "receiver_data_frame_repair_like_sequence_max": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_max"))
-                .cloned(),
-            "receiver_data_frame_repair_like_sequence_ranges_sample": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_ranges_sample"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-            "receiver_data_frame_repair_like_source_addr_sample": repair_source
-                .and_then(|sample| sample.get("receiver_data_frame_repair_like_source_addr_sample"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-            "native_receiver_drain_queue_repair_like_count": repair_source
-                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_count"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_count")))
-                .and_then(Value::as_u64),
-            "native_receiver_drain_queue_repair_like_sequence_unique_count": repair_source
-                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_sequence_unique_count"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_unique_count")))
-                .and_then(Value::as_u64),
-            "native_receiver_drain_queue_repair_like_sequence_min": repair_source
-                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_sequence_min"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_min")))
-                .cloned(),
-            "native_receiver_drain_queue_repair_like_sequence_max": repair_source
-                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_sequence_max"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_max")))
-                .cloned(),
-            "native_receiver_drain_queue_repair_like_ranges_sample": repair_source
-                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_ranges_sample"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_ranges_sample")))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-            "native_receiver_queued_path_repair_like_count": repair_source
-                .and_then(|sample| sample.get("native_receiver_queued_path_repair_like_count"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_queued_path_repair_like_count")))
-                .and_then(Value::as_u64),
-            "native_receiver_direct_path_repair_like_count": repair_source
-                .and_then(|sample| sample.get("native_receiver_direct_path_repair_like_count"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_direct_path_repair_like_count")))
-                .and_then(Value::as_u64),
-            "native_receiver_repair_like_classification_path": repair_source
-                .and_then(|sample| sample.get("native_receiver_repair_like_classification_path"))
-                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_repair_like_classification_path")))
-                .cloned(),
             "receiver_socket_recv_buffer_bytes": repair_source
                 .and_then(|sample| sample.get("receiver_socket_recv_buffer_bytes"))
                 .cloned(),
@@ -14509,24 +14327,6 @@ fn write_synthetic_receiver_failure_report(
             "receiver_udp_drop_or_overrun_suspected": repair_source
                 .and_then(|sample| sample.get("receiver_udp_drop_or_overrun_suspected"))
                 .and_then(Value::as_bool),
-            "native_receiver_data_frame_repair_like_sequence_min": repair_source
-                .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_sequence_min"))
-                .cloned(),
-            "native_receiver_data_frame_repair_like_sequence_max": repair_source
-                .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_sequence_max"))
-                .cloned(),
-            "native_receiver_data_frame_repair_like_sequence_ranges_sample": repair_source
-                .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_sequence_ranges_sample"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-            "native_receiver_data_frame_repair_like_source_addr_sample": repair_source
-                .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_source_addr_sample"))
-                .or_else(|| {
-                    repair_source
-                        .and_then(|sample| sample.get("receiver_data_frame_repair_like_source_addr_sample"))
-                })
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
             "native_receiver_socket_recv_buffer_bytes": repair_source
                 .and_then(|sample| sample.get("native_receiver_socket_recv_buffer_bytes"))
                 .or_else(|| repair_source.and_then(|sample| sample.get("receiver_socket_recv_buffer_bytes")))
@@ -14559,26 +14359,6 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(|sample| sample.get("native_receiver_udp_drop_or_overrun_suspected"))
                 .or_else(|| repair_source.and_then(|sample| sample.get("receiver_udp_drop_or_overrun_suspected")))
                 .and_then(Value::as_bool),
-            "receiver_source_pin_drop_decoded_repair_like_count": repair_source
-                .and_then(|sample| sample.get("receiver_source_pin_drop_decoded_repair_like_count"))
-                .and_then(Value::as_u64),
-            "receiver_source_pin_drop_repair_like_sequence_unique_count": repair_source
-                .and_then(|sample| sample.get("receiver_source_pin_drop_repair_like_sequence_unique_count"))
-                .and_then(Value::as_u64),
-            "receiver_source_pin_drop_repair_like_sequence_ranges_sample": repair_source
-                .and_then(|sample| sample.get("receiver_source_pin_drop_repair_like_sequence_ranges_sample"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
-            "native_receiver_source_pin_drop_decoded_repair_like_count": repair_source
-                .and_then(|sample| sample.get("native_receiver_source_pin_drop_decoded_repair_like_count"))
-                .and_then(Value::as_u64),
-            "native_receiver_source_pin_drop_repair_like_sequence_unique_count": repair_source
-                .and_then(|sample| sample.get("native_receiver_source_pin_drop_repair_like_sequence_unique_count"))
-                .and_then(Value::as_u64),
-            "native_receiver_source_pin_drop_repair_like_sequence_ranges_sample": repair_source
-                .and_then(|sample| sample.get("native_receiver_source_pin_drop_repair_like_sequence_ranges_sample"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!([])),
             "repair_sequence_payload_index_evicted_count": repair_source
                 .and_then(|sample| sample.get("repair_sequence_payload_index_evicted_count"))
                 .and_then(Value::as_u64),
@@ -14848,16 +14628,6 @@ fn copy_native_receiver_attribution_fields_v1(
         "receiver_classifier_transaction_frame_count",
         "receiver_classifier_repair_frame_count",
         "receiver_classifier_unknown_count",
-        "receiver_classifier_data_frame_repair_like_count",
-        "receiver_data_frame_repair_sequence_like_count",
-        "receiver_data_frame_repair_like_sequence_observed_count",
-        "receiver_data_frame_repair_like_sequence_unique_count",
-        "receiver_data_frame_repair_like_sequence_missing_count",
-        "receiver_data_frame_repair_like_sequence_min",
-        "receiver_data_frame_repair_like_sequence_max",
-        "receiver_data_frame_repair_like_sequence_ranges_sample",
-        "receiver_data_frame_repair_kind_sample",
-        "receiver_data_frame_repair_like_source_addr_sample",
         "receiver_rcvbuf_requested_bytes",
         "receiver_rcvbuf_effective_bytes",
         "receiver_drain_first_enabled",
@@ -14865,17 +14635,6 @@ fn copy_native_receiver_attribution_fields_v1(
         "receiver_drain_queue_dequeued_count",
         "receiver_drain_queue_max_depth",
         "receiver_drain_loop_batch_max",
-        "receiver_drain_queue_repair_like_count",
-        "receiver_drain_queue_repair_like_sequence_observed_count",
-        "receiver_drain_queue_repair_like_sequence_unique_count",
-        "receiver_drain_queue_repair_like_sequence_missing_count",
-        "receiver_drain_queue_repair_like_sequence_min",
-        "receiver_drain_queue_repair_like_sequence_max",
-        "receiver_drain_queue_repair_like_sequence_ranges_sample",
-        "receiver_drain_queue_repair_like_source_addr_sample",
-        "receiver_direct_path_repair_like_count",
-        "receiver_queued_path_repair_like_count",
-        "receiver_repair_like_classification_path",
         "receiver_socket_recv_buffer_bytes",
         "receiver_recv_loop_iteration_count",
         "receiver_recv_success_during_repair_window_count",
@@ -14887,14 +14646,8 @@ fn copy_native_receiver_attribution_fields_v1(
         "receiver_repair_window_last_seen_ms",
         "receiver_udp_drop_or_overrun_suspected",
         "receiver_source_pin_drop_decoded_data_frame_count",
-        "receiver_source_pin_drop_decoded_repair_like_count",
         "receiver_source_pin_drop_decoded_endpoint_record_count",
         "receiver_source_pin_drop_decoded_unknown_count",
-        "receiver_source_pin_drop_repair_like_sequence_observed_count",
-        "receiver_source_pin_drop_repair_like_sequence_unique_count",
-        "receiver_source_pin_drop_repair_like_sequence_min",
-        "receiver_source_pin_drop_repair_like_sequence_max",
-        "receiver_source_pin_drop_repair_like_sequence_ranges_sample",
         "receiver_udp_packet_source_addr_sample",
         "receiver_udp_packet_len_min",
         "receiver_udp_packet_len_p50",
@@ -14912,16 +14665,6 @@ fn copy_native_receiver_attribution_fields_v1(
         "native_receiver_classifier_data_frame_count",
         "native_receiver_classifier_repair_frame_count",
         "native_receiver_classifier_unknown_count",
-        "native_receiver_data_frame_repair_like_count",
-        "native_receiver_data_frame_repair_sequence_like_count",
-        "native_receiver_data_frame_repair_like_sequence_observed_count",
-        "native_receiver_data_frame_repair_like_sequence_unique_count",
-        "native_receiver_data_frame_repair_like_sequence_missing_count",
-        "native_receiver_data_frame_repair_like_sequence_min",
-        "native_receiver_data_frame_repair_like_sequence_max",
-        "native_receiver_data_frame_repair_like_sequence_ranges_sample",
-        "native_receiver_data_frame_repair_kind_sample",
-        "native_receiver_data_frame_repair_like_source_addr_sample",
         "native_receiver_rcvbuf_requested_bytes",
         "native_receiver_rcvbuf_effective_bytes",
         "native_receiver_drain_first_enabled",
@@ -14929,17 +14672,6 @@ fn copy_native_receiver_attribution_fields_v1(
         "native_receiver_drain_queue_dequeued_count",
         "native_receiver_drain_queue_max_depth",
         "native_receiver_drain_loop_batch_max",
-        "native_receiver_drain_queue_repair_like_count",
-        "native_receiver_drain_queue_repair_like_sequence_observed_count",
-        "native_receiver_drain_queue_repair_like_sequence_unique_count",
-        "native_receiver_drain_queue_repair_like_sequence_missing_count",
-        "native_receiver_drain_queue_repair_like_sequence_min",
-        "native_receiver_drain_queue_repair_like_sequence_max",
-        "native_receiver_drain_queue_repair_like_ranges_sample",
-        "native_receiver_drain_queue_repair_like_source_addr_sample",
-        "native_receiver_direct_path_repair_like_count",
-        "native_receiver_queued_path_repair_like_count",
-        "native_receiver_repair_like_classification_path",
         "native_receiver_socket_recv_buffer_bytes",
         "native_receiver_recv_loop_iteration_count",
         "native_receiver_recv_success_during_repair_window_count",
@@ -14951,14 +14683,8 @@ fn copy_native_receiver_attribution_fields_v1(
         "native_receiver_repair_window_last_seen_ms",
         "native_receiver_udp_drop_or_overrun_suspected",
         "native_receiver_source_pin_drop_decoded_data_frame_count",
-        "native_receiver_source_pin_drop_decoded_repair_like_count",
         "native_receiver_source_pin_drop_decoded_endpoint_record_count",
         "native_receiver_source_pin_drop_decoded_unknown_count",
-        "native_receiver_source_pin_drop_repair_like_sequence_observed_count",
-        "native_receiver_source_pin_drop_repair_like_sequence_unique_count",
-        "native_receiver_source_pin_drop_repair_like_sequence_min",
-        "native_receiver_source_pin_drop_repair_like_sequence_max",
-        "native_receiver_source_pin_drop_repair_like_sequence_ranges_sample",
         "native_receiver_classifier_drop_count",
         "native_receiver_classifier_drop_reason_sample",
         "native_receiver_endpoint_record_decode_ok_count",
@@ -16950,16 +16676,6 @@ fn diagnostics_summary_sample(
         "receiver_classifier_transaction_frame_count": summary_u64(summary, "receiver_classifier_transaction_frame_count"),
         "receiver_classifier_repair_frame_count": summary_u64(summary, "receiver_classifier_repair_frame_count"),
         "receiver_classifier_unknown_count": summary_u64(summary, "receiver_classifier_unknown_count"),
-        "receiver_classifier_data_frame_repair_like_count": summary_u64(summary, "receiver_classifier_data_frame_repair_like_count"),
-        "receiver_data_frame_repair_sequence_like_count": summary_u64(summary, "receiver_data_frame_repair_sequence_like_count"),
-        "receiver_data_frame_repair_like_sequence_observed_count": summary_u64(summary, "receiver_data_frame_repair_like_sequence_observed_count"),
-        "receiver_data_frame_repair_like_sequence_unique_count": summary_u64(summary, "receiver_data_frame_repair_like_sequence_unique_count"),
-        "receiver_data_frame_repair_like_sequence_missing_count": summary_u64(summary, "receiver_data_frame_repair_like_sequence_missing_count"),
-        "receiver_data_frame_repair_like_sequence_min": summary.get("receiver_data_frame_repair_like_sequence_min").cloned().unwrap_or(Value::Null),
-        "receiver_data_frame_repair_like_sequence_max": summary.get("receiver_data_frame_repair_like_sequence_max").cloned().unwrap_or(Value::Null),
-        "receiver_data_frame_repair_like_sequence_ranges_sample": summary.get("receiver_data_frame_repair_like_sequence_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
-        "receiver_data_frame_repair_kind_sample": summary.get("receiver_data_frame_repair_kind_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
-        "receiver_data_frame_repair_like_source_addr_sample": summary.get("receiver_data_frame_repair_like_source_addr_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "receiver_socket_recv_buffer_bytes": summary.get("receiver_socket_recv_buffer_bytes").cloned().unwrap_or(Value::Null),
         "receiver_recv_loop_iteration_count": summary_u64(summary, "receiver_recv_loop_iteration_count"),
         "receiver_recv_success_during_repair_window_count": summary_u64(summary, "receiver_recv_success_during_repair_window_count"),
@@ -16971,14 +16687,8 @@ fn diagnostics_summary_sample(
         "receiver_repair_window_last_seen_ms": summary.get("receiver_repair_window_last_seen_ms").cloned().unwrap_or(Value::Null),
         "receiver_udp_drop_or_overrun_suspected": summary.get("receiver_udp_drop_or_overrun_suspected").and_then(Value::as_bool).unwrap_or(false),
         "receiver_source_pin_drop_decoded_data_frame_count": summary_u64(summary, "receiver_source_pin_drop_decoded_data_frame_count"),
-        "receiver_source_pin_drop_decoded_repair_like_count": summary_u64(summary, "receiver_source_pin_drop_decoded_repair_like_count"),
         "receiver_source_pin_drop_decoded_endpoint_record_count": summary_u64(summary, "receiver_source_pin_drop_decoded_endpoint_record_count"),
         "receiver_source_pin_drop_decoded_unknown_count": summary_u64(summary, "receiver_source_pin_drop_decoded_unknown_count"),
-        "receiver_source_pin_drop_repair_like_sequence_observed_count": summary_u64(summary, "receiver_source_pin_drop_repair_like_sequence_observed_count"),
-        "receiver_source_pin_drop_repair_like_sequence_unique_count": summary_u64(summary, "receiver_source_pin_drop_repair_like_sequence_unique_count"),
-        "receiver_source_pin_drop_repair_like_sequence_min": summary.get("receiver_source_pin_drop_repair_like_sequence_min").cloned().unwrap_or(Value::Null),
-        "receiver_source_pin_drop_repair_like_sequence_max": summary.get("receiver_source_pin_drop_repair_like_sequence_max").cloned().unwrap_or(Value::Null),
-        "receiver_source_pin_drop_repair_like_sequence_ranges_sample": summary.get("receiver_source_pin_drop_repair_like_sequence_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "receiver_udp_packet_source_addr_sample": summary.get("receiver_udp_packet_source_addr_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "receiver_udp_packet_len_min": summary.get("receiver_udp_packet_len_min").cloned().unwrap_or(Value::Null),
         "receiver_udp_packet_len_p50": summary.get("receiver_udp_packet_len_p50").cloned().unwrap_or(Value::Null),
@@ -16996,16 +16706,6 @@ fn diagnostics_summary_sample(
         "native_receiver_classifier_data_frame_count": summary_u64(summary, "native_receiver_classifier_data_frame_count").max(summary_u64(summary, "receiver_classifier_transaction_frame_count")),
         "native_receiver_classifier_repair_frame_count": summary_u64(summary, "native_receiver_classifier_repair_frame_count").max(summary_u64(summary, "receiver_classifier_repair_frame_count")),
         "native_receiver_classifier_unknown_count": summary_u64(summary, "native_receiver_classifier_unknown_count").max(summary_u64(summary, "receiver_classifier_unknown_count")),
-        "native_receiver_data_frame_repair_like_count": summary_u64(summary, "native_receiver_data_frame_repair_like_count").max(summary_u64(summary, "receiver_classifier_data_frame_repair_like_count")),
-        "native_receiver_data_frame_repair_sequence_like_count": summary_u64(summary, "native_receiver_data_frame_repair_sequence_like_count").max(summary_u64(summary, "receiver_data_frame_repair_sequence_like_count")),
-        "native_receiver_data_frame_repair_like_sequence_observed_count": summary_u64(summary, "native_receiver_data_frame_repair_like_sequence_observed_count").max(summary_u64(summary, "receiver_data_frame_repair_like_sequence_observed_count")),
-        "native_receiver_data_frame_repair_like_sequence_unique_count": summary_u64(summary, "native_receiver_data_frame_repair_like_sequence_unique_count").max(summary_u64(summary, "receiver_data_frame_repair_like_sequence_unique_count")),
-        "native_receiver_data_frame_repair_like_sequence_missing_count": summary_u64(summary, "native_receiver_data_frame_repair_like_sequence_missing_count").max(summary_u64(summary, "receiver_data_frame_repair_like_sequence_missing_count")),
-        "native_receiver_data_frame_repair_like_sequence_min": summary.get("native_receiver_data_frame_repair_like_sequence_min").or_else(|| summary.get("receiver_data_frame_repair_like_sequence_min")).cloned().unwrap_or(Value::Null),
-        "native_receiver_data_frame_repair_like_sequence_max": summary.get("native_receiver_data_frame_repair_like_sequence_max").or_else(|| summary.get("receiver_data_frame_repair_like_sequence_max")).cloned().unwrap_or(Value::Null),
-        "native_receiver_data_frame_repair_like_sequence_ranges_sample": summary.get("native_receiver_data_frame_repair_like_sequence_ranges_sample").or_else(|| summary.get("receiver_data_frame_repair_like_sequence_ranges_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
-        "native_receiver_data_frame_repair_kind_sample": summary.get("native_receiver_data_frame_repair_kind_sample").or_else(|| summary.get("receiver_data_frame_repair_kind_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
-        "native_receiver_data_frame_repair_like_source_addr_sample": summary.get("native_receiver_data_frame_repair_like_source_addr_sample").or_else(|| summary.get("receiver_data_frame_repair_like_source_addr_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
         "native_receiver_socket_recv_buffer_bytes": summary.get("native_receiver_socket_recv_buffer_bytes").or_else(|| summary.get("receiver_socket_recv_buffer_bytes")).cloned().unwrap_or(Value::Null),
         "native_receiver_recv_loop_iteration_count": summary_u64(summary, "native_receiver_recv_loop_iteration_count").max(summary_u64(summary, "receiver_recv_loop_iteration_count")),
         "native_receiver_recv_success_during_repair_window_count": summary_u64(summary, "native_receiver_recv_success_during_repair_window_count").max(summary_u64(summary, "receiver_recv_success_during_repair_window_count")),
@@ -17017,14 +16717,8 @@ fn diagnostics_summary_sample(
         "native_receiver_repair_window_last_seen_ms": summary.get("native_receiver_repair_window_last_seen_ms").or_else(|| summary.get("receiver_repair_window_last_seen_ms")).cloned().unwrap_or(Value::Null),
         "native_receiver_udp_drop_or_overrun_suspected": summary.get("native_receiver_udp_drop_or_overrun_suspected").or_else(|| summary.get("receiver_udp_drop_or_overrun_suspected")).and_then(Value::as_bool).unwrap_or(false),
         "native_receiver_source_pin_drop_decoded_data_frame_count": summary_u64(summary, "native_receiver_source_pin_drop_decoded_data_frame_count").max(summary_u64(summary, "receiver_source_pin_drop_decoded_data_frame_count")),
-        "native_receiver_source_pin_drop_decoded_repair_like_count": summary_u64(summary, "native_receiver_source_pin_drop_decoded_repair_like_count").max(summary_u64(summary, "receiver_source_pin_drop_decoded_repair_like_count")),
         "native_receiver_source_pin_drop_decoded_endpoint_record_count": summary_u64(summary, "native_receiver_source_pin_drop_decoded_endpoint_record_count").max(summary_u64(summary, "receiver_source_pin_drop_decoded_endpoint_record_count")),
         "native_receiver_source_pin_drop_decoded_unknown_count": summary_u64(summary, "native_receiver_source_pin_drop_decoded_unknown_count").max(summary_u64(summary, "receiver_source_pin_drop_decoded_unknown_count")),
-        "native_receiver_source_pin_drop_repair_like_sequence_observed_count": summary_u64(summary, "native_receiver_source_pin_drop_repair_like_sequence_observed_count").max(summary_u64(summary, "receiver_source_pin_drop_repair_like_sequence_observed_count")),
-        "native_receiver_source_pin_drop_repair_like_sequence_unique_count": summary_u64(summary, "native_receiver_source_pin_drop_repair_like_sequence_unique_count").max(summary_u64(summary, "receiver_source_pin_drop_repair_like_sequence_unique_count")),
-        "native_receiver_source_pin_drop_repair_like_sequence_min": summary.get("native_receiver_source_pin_drop_repair_like_sequence_min").or_else(|| summary.get("receiver_source_pin_drop_repair_like_sequence_min")).cloned().unwrap_or(Value::Null),
-        "native_receiver_source_pin_drop_repair_like_sequence_max": summary.get("native_receiver_source_pin_drop_repair_like_sequence_max").or_else(|| summary.get("receiver_source_pin_drop_repair_like_sequence_max")).cloned().unwrap_or(Value::Null),
-        "native_receiver_source_pin_drop_repair_like_sequence_ranges_sample": summary.get("native_receiver_source_pin_drop_repair_like_sequence_ranges_sample").or_else(|| summary.get("receiver_source_pin_drop_repair_like_sequence_ranges_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
         "native_receiver_classifier_drop_count": summary_u64(summary, "native_receiver_classifier_drop_count").max(summary_u64(summary, "receiver_udp_packet_predecode_drop_count")),
         "native_receiver_classifier_drop_reason_sample": summary.get("native_receiver_classifier_drop_reason_sample").or_else(|| summary.get("receiver_udp_packet_drop_reason_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
         "native_receiver_endpoint_record_decode_ok_count": summary_u64(summary, "native_receiver_endpoint_record_decode_ok_count").max(summary_u64(summary, "receiver_classifier_endpoint_record_count")),
@@ -22858,11 +22552,6 @@ fn run_sender(
             "sender_repair_wire_frame_send_ok_count": repair_sequence_sent_count
                 .saturating_sub(repair_stats.send_failed_count),
             "sender_repair_wire_frame_send_error_count": repair_stats.send_failed_count,
-            "sender_repair_wire_frame_boundary_status": "legacy_mixed_layer_attribution_only",
-            "sender_repair_wire_frame_kind_sample": [
-                "ProtocolMessage::EvmNative::Transactions",
-                "transport_auth.frame_kind=repair"
-            ],
             "sender_repair_wire_frame_target_addr_sample": [receiver_addr],
             "sender_repair_udp_local_addr_sample": repair_stats
                 .sender_udp_local_addr
@@ -22896,8 +22585,6 @@ fn run_sender(
             "sender_repair_pacing_chunk_count": repair_stats.sender_repair_pacing_chunk_count,
             "sender_repair_pacing_backoff_count": repair_stats.sender_repair_pacing_backoff_count,
             "sender_repair_pacing_would_block_backoff_ms": repair_stats.sender_repair_pacing_would_block_backoff_ms,
-            "sender_repair_encoded_as_data_frame_count": repair_sequence_sent_count,
-            "sender_repair_encoded_as_repair_frame_count": 0u64,
             "sender_repair_wire_frame_first_bytes_hex_sample": [],
             "repair_sent_unique_count": repair_selected_unique_sequence_count,
             "repair_duplicate_sequence_count": repair_selected_duplicate_sequence_count,
@@ -25673,9 +25360,6 @@ fn compact_receiver_summary_for_report(summary: Value) -> Value {
         "native_receiver_classifier_data_frame_count",
         "native_receiver_classifier_repair_frame_count",
         "native_receiver_classifier_unknown_count",
-        "native_receiver_data_frame_repair_like_count",
-        "native_receiver_data_frame_repair_sequence_like_count",
-        "native_receiver_data_frame_repair_kind_sample",
         "native_receiver_classifier_drop_count",
         "native_receiver_classifier_drop_reason_sample",
         "native_receiver_endpoint_record_decode_ok_count",
