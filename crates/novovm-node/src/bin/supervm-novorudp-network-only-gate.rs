@@ -114,6 +114,9 @@ struct ReceiverExecutionSummaryV0 {
     aoem_executed_total: u64,
     aoem_execution_error_count: u64,
     ledger_completed_count: u64,
+    business_decode_elapsed_ms: u64,
+    aoem_execute_elapsed_ms: u64,
+    ledger_close_elapsed_ms: u64,
 }
 
 fn main() -> Result<()> {
@@ -158,10 +161,14 @@ fn run_receiver() -> Result<()> {
     let mut ack_epoch = 0u64;
     let mut packet_since_ack = 0u64;
     let mut buf = vec![0u8; 128 * 1024];
+    let mut first_packet_ms = None::<u64>;
+    let mut last_packet_ms = None::<u64>;
+    let mut transport_done_ms = None::<u64>;
 
     while start.elapsed() < timeout {
         match socket.recv_from(buf.as_mut_slice()) {
             Ok((n, src)) => {
+                let recv_ms = start.elapsed().as_millis() as u64;
                 let frame = match NovoRudpTransportFrameV0::decode(&buf[..n]) {
                     Ok(frame) => frame,
                     Err(_) => {
@@ -172,6 +179,8 @@ fn run_receiver() -> Result<()> {
                 if frame.session_id != session_id {
                     continue;
                 }
+                first_packet_ms.get_or_insert(recv_ms);
+                last_packet_ms = Some(recv_ms);
                 last_peer = Some(src);
                 match frame.kind {
                     NovoRudpTransportFrameKindV0::Data => {
@@ -201,6 +210,7 @@ fn run_receiver() -> Result<()> {
                     }
                 }
                 if done {
+                    transport_done_ms = Some(start.elapsed().as_millis() as u64);
                     break;
                 }
             }
@@ -232,6 +242,12 @@ fn run_receiver() -> Result<()> {
     });
     let receiver_transport_unique_delivered_count = delivered.len() as u64;
     let receiver_transport_final_missing_count = missing_count(&missing);
+    let first_packet_ms = first_packet_ms.unwrap_or(0);
+    let last_packet_ms = last_packet_ms.unwrap_or(first_packet_ms);
+    let transport_done_ms = transport_done_ms.unwrap_or(last_packet_ms);
+    let receiver_transport_delivery_elapsed_ms = transport_done_ms.saturating_sub(first_packet_ms);
+    let receiver_idle_wait_elapsed_ms = first_packet_ms;
+    let receiver_finalization_elapsed_ms = elapsed_ms.saturating_sub(transport_done_ms);
     let report = json!({
         "schema": "novorudp-network-only-gate-v0",
         "role": "receiver",
@@ -248,6 +264,16 @@ fn run_receiver() -> Result<()> {
         "receiver_transport_final_missing_ranges": missing,
         "receiver_transport_done": receiver_transport_unique_delivered_count == tx_count,
         "receiver_elapsed_ms": elapsed_ms,
+        "receiver_first_packet_ms": first_packet_ms,
+        "receiver_last_packet_ms": last_packet_ms,
+        "receiver_transport_done_ms": transport_done_ms,
+        "receiver_transport_delivery_elapsed_ms": receiver_transport_delivery_elapsed_ms,
+        "receiver_business_decode_elapsed_ms": execution.business_decode_elapsed_ms,
+        "receiver_aoem_execute_elapsed_ms": execution.aoem_execute_elapsed_ms,
+        "receiver_ledger_close_elapsed_ms": execution.ledger_close_elapsed_ms,
+        "receiver_finalization_elapsed_ms": receiver_finalization_elapsed_ms,
+        "receiver_report_write_elapsed_ms": 0u64,
+        "receiver_idle_wait_elapsed_ms": receiver_idle_wait_elapsed_ms,
         "receiver_payload_bytes_total": receiver_payload_bytes_total,
         "receiver_payloads_per_sec": rate_per_sec_v0(receiver_transport_unique_delivered_count, elapsed_ms),
         "receiver_bytes_per_sec": rate_per_sec_v0(receiver_payload_bytes_total, elapsed_ms),
@@ -585,13 +611,19 @@ fn receiver_execution_summary_v0(
     }
     let mut summary = ReceiverExecutionSummaryV0::default();
     for payload in delivered.values() {
-        match business_decode_v0(payload.as_slice()) {
+        let business_decode_start = Instant::now();
+        let decoded = business_decode_v0(payload.as_slice());
+        summary.business_decode_elapsed_ms = summary
+            .business_decode_elapsed_ms
+            .saturating_add(business_decode_start.elapsed().as_millis() as u64);
+        match decoded {
             Ok(ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
                 payload: native_payload,
                 ..
             })) => {
                 summary.business_decode_count = summary.business_decode_count.saturating_add(1);
                 if execute_aoem {
+                    let aoem_start = Instant::now();
                     match decode_nov_native_tx_wire_v1(native_payload.as_slice()) {
                         Ok(native_tx) => match nov_native_tx_to_adapter_tx_ir_v1(&native_tx) {
                             Ok(_) => {
@@ -610,6 +642,9 @@ fn receiver_execution_summary_v0(
                                 summary.aoem_execution_error_count.saturating_add(1);
                         }
                     }
+                    summary.aoem_execute_elapsed_ms = summary
+                        .aoem_execute_elapsed_ms
+                        .saturating_add(aoem_start.elapsed().as_millis() as u64);
                 }
             }
             Ok(_) | Err(_) => {
@@ -618,6 +653,7 @@ fn receiver_execution_summary_v0(
             }
         }
     }
+    summary.ledger_close_elapsed_ms = summary.aoem_execute_elapsed_ms;
     summary
 }
 
