@@ -2018,6 +2018,30 @@ fn host_recovery_store_boundary_marks_host_truth_false_and_aoem_truth_true() {
 }
 
 #[test]
+fn novorudp_transport_boundary_rules_are_documented() {
+    let boundary = include_str!("../../../../docs/NOVORUDP_BOUNDARY.md");
+
+    for required in [
+        "NOVORUDP must be an independent transport layer.",
+        "Transport frames must not depend on `EvmNative::Transactions`.",
+        "Repair must not be encoded as a business transaction frame.",
+        "Business payloads must not participate in repair classification.",
+        "Transport ACK must confirm packet/object delivery only.",
+        "Transport ACK must not depend on AOEM ledger close.",
+        "AOEM may consume delivered payloads, but AOEM must not drive transport receive accounting.",
+        "Network-only delivery sustained.",
+        "Business payload delivery sustained.",
+        "AOEM ledger sustained.",
+        "legacy compatibility or attribution only",
+    ] {
+        assert!(
+            boundary.contains(required),
+            "NOVORUDP boundary document is missing required rule: {required}"
+        );
+    }
+}
+
+#[test]
 fn network_recovery_checkpoint_open_error_is_not_aoem_persistence_failure() {
     let output = nonzero_output_with_stderr_v1(
         b"open host recovery rocksdb failed: receiver-store.json.rocksdb\nFailed to rename CURRENT: access is denied",
@@ -22655,6 +22679,7 @@ fn run_sender(
             "sender_repair_wire_frame_send_ok_count": repair_sequence_sent_count
                 .saturating_sub(repair_stats.send_failed_count),
             "sender_repair_wire_frame_send_error_count": repair_stats.send_failed_count,
+            "sender_repair_wire_frame_boundary_status": "legacy_mixed_layer_attribution_only",
             "sender_repair_wire_frame_kind_sample": [
                 "ProtocolMessage::EvmNative::Transactions",
                 "transport_auth.frame_kind=repair"

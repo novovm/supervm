@@ -11033,6 +11033,8 @@ impl Transport for UdpTransport {
                     ..
                 }) = &decoded
                 {
+                    // Legacy mixed-layer attribution only. NOVORUDP repair must move to
+                    // explicit transport frames; do not extend business-frame repair routing.
                     let auth_frame_kind =
                         transport_auth.as_ref().map(|meta| meta.frame_kind.as_str());
                     let auth_sequence = transport_auth.as_ref().map(|meta| meta.sequence);
