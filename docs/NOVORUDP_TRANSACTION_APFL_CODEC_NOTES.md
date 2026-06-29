@@ -465,6 +465,102 @@ batch authorization
 
 Those are not part of v0.
 
+## Single Payload APFL Density Rule
+
+APFL should be applied inside each batch payload, not only across payloads.
+
+The important unit is:
+
+```text
+1 NOVORUDP payload = one APFL-encoded transaction batch
+```
+
+The incorrect high-throughput model is:
+
+```text
+1 payload = 1 fully expanded transaction
+```
+
+The correct high-throughput model is:
+
+```text
+1 payload = N transactions represented as shared algebraic structure
+```
+
+Expanded batch payload:
+
+```text
+tx1 full wire
+tx2 full wire
+tx3 full wire
+...
+txN full wire
+```
+
+APFL batch payload:
+
+```text
+shared_header
+chain_id
+tx_family / template_id
+nonce_base + nonce_delta[]
+value_or_amount_column[]
+receiver_column[]
+signature_stream[]
+residual_stream[]
+commitment
+```
+
+This matters because the current bottleneck is not only payload count. It is:
+
+```text
+payload size
+serialization
+copy
+socket write
+receiver decode
+AOEM / ledger per-tx materialization
+```
+
+Reducing `bytes_per_tx` directly reduces:
+
+```text
+sender byte pressure
+socket write pressure
+receiver decode/copy pressure
+cache misses
+batch AOEM execution cost
+```
+
+For v0, do not remove signatures:
+
+```text
+keep original per-transaction signature field
+do not perform signature aggregation
+do not change authorization semantics
+```
+
+The compression comes from:
+
+```text
+shared fields
+repeated structure
+nonce delta
+common gas / fee / method params
+address or account columns
+amount / value columns
+template id
+reduced repeated envelope / length / type metadata
+```
+
+Therefore the next million-TPS path is not more single-payload pacing. It is:
+
+```text
+stable payload/s
+* higher tx density per payload
+* lower bytes_per_tx inside each payload
+```
+
 ## Future Implementation Target
 
 When implementation starts, the first real task should be:

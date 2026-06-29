@@ -37,7 +37,7 @@ Batch payload correctness is signed, but expanded batch throughput is not final.
 
 ## Current Implementation Target
 
-The next implementation target is narrow and testable:
+The current implementation target is narrow and testable:
 
 ```text
 native_transfer_batch_v0
@@ -62,6 +62,38 @@ canonical_tx_hash_match_count = tx_count
 signature_verify_error_count = 0
 ledger completed = tx_count
 transport final_missing = 0
+```
+
+Current v0 implementation:
+
+```text
+Commit: 08ad5d8
+Mode: native_transfer_apfl_v0
+Transport ABI: unchanged NovoRudpTransportFrameV0 opaque payload bytes
+Receiver path: APFL compact payload -> canonical native tx reconstruction -> existing AOEM adapter
+```
+
+Local smoke result:
+
+```text
+64 payload x 128 tx = 8192 tx
+transport delivered = 64
+final_missing = 0
+business decoded = 8192
+ledger tx completed = 8192
+apfl_bytes_per_tx = 32
+legacy_bytes_per_tx = 233
+apfl savings = 8599 bps
+canonical hash match = 8192
+canonical mismatch = 0
+signature errors = 0
+```
+
+This confirms the first APFL density rule:
+
+```text
+use one NOVORUDP payload as an APFL algebraic batch object,
+not as a container of fully expanded transaction wires.
 ```
 
 Primary documents:
