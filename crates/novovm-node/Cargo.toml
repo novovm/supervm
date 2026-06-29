@@ -108,3 +108,7 @@ path = "src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs"
 [[bin]]
 name = "supervm-native-pipeline-memory-bisect-gate"
 path = "src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs"
+
+[[bin]]
+name = "supervm-novorudp-network-only-gate"
+path = "src/bin/supervm-novorudp-network-only-gate.rs"
