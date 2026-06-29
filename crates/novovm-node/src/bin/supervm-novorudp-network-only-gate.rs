@@ -2,6 +2,10 @@
 
 use anyhow::{bail, Context, Result};
 use novovm_network::{NovoRudpRange, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0};
+use novovm_protocol::{
+    decode as business_decode_v0, encode as business_encode_v0, EvmNativeMessage, NodeId,
+    ProtocolMessage,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::Digest;
@@ -33,6 +37,31 @@ struct ReceiverStats {
     decode_error_count: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PayloadModeV0 {
+    Opaque,
+    EvmTransactions,
+}
+
+impl PayloadModeV0 {
+    fn from_env() -> Self {
+        match env_string("NOVOVM_NOVORUDP_NETWORK_ONLY_PAYLOAD_MODE")
+            .unwrap_or_else(|| "opaque".to_string())
+            .as_str()
+        {
+            "evm_transactions" => Self::EvmTransactions,
+            _ => Self::Opaque,
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Opaque => "opaque",
+            Self::EvmTransactions => "evm_transactions",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct SenderStats {
     data_sent: u64,
@@ -59,6 +88,7 @@ fn run_receiver() -> Result<()> {
     let report_path = env_string("NOVOVM_NOVORUDP_NETWORK_ONLY_REPORT_PATH")
         .unwrap_or_else(|| "artifacts/native-pipeline/novorudp-network-only-receiver.json".into());
     let tx_count = env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_TX_COUNT", DEFAULT_TX_COUNT);
+    let payload_mode = PayloadModeV0::from_env();
     let timeout = Duration::from_millis(env_u64(
         "NOVOVM_NOVORUDP_NETWORK_ONLY_TIMEOUT_MS",
         DEFAULT_TIMEOUT_MS,
@@ -149,12 +179,15 @@ fn run_receiver() -> Result<()> {
     }
 
     let missing = missing_ranges(tx_count, &delivered);
+    let (business_decode_count, business_decode_error_count) =
+        business_decode_summary_v0(payload_mode, &delivered);
     let report = json!({
         "schema": "novorudp-network-only-gate-v0",
         "role": "receiver",
         "accepted": missing.is_empty(),
         "transport_frame_v0_enabled": true,
         "network_only_gate_enabled": true,
+        "business_payload_mode": payload_mode.as_str(),
         "receiver_transport_data_received_count": stats.data_received,
         "receiver_transport_repair_received_count": stats.repair_received,
         "receiver_transport_unique_delivered_count": delivered.len() as u64,
@@ -163,7 +196,8 @@ fn run_receiver() -> Result<()> {
         "receiver_transport_final_missing_count": missing_count(&missing),
         "receiver_transport_final_missing_ranges": missing,
         "receiver_transport_done": delivered.len() as u64 == tx_count,
-        "business_decode_count": 0u64,
+        "business_decode_count": business_decode_count,
+        "business_decode_error_count": business_decode_error_count,
         "aoem_executed_total": 0u64,
         "ledger_completed_count": 0u64,
         "decode_error_count": stats.decode_error_count,
@@ -188,6 +222,7 @@ fn run_sender() -> Result<()> {
     let report_path = env_string("NOVOVM_NOVORUDP_NETWORK_ONLY_REPORT_PATH")
         .unwrap_or_else(|| "artifacts/native-pipeline/novorudp-network-only-sender.json".into());
     let tx_count = env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_TX_COUNT", DEFAULT_TX_COUNT);
+    let payload_mode = PayloadModeV0::from_env();
     let timeout = Duration::from_millis(env_u64(
         "NOVOVM_NOVORUDP_NETWORK_ONLY_TIMEOUT_MS",
         DEFAULT_TIMEOUT_MS,
@@ -210,8 +245,8 @@ fn run_sender() -> Result<()> {
         end_inclusive: tx_count.saturating_sub(1),
     }];
     let payloads = (0..tx_count)
-        .map(|sequence| opaque_payload_v0(sequence))
-        .collect::<Vec<_>>();
+        .map(|sequence| payload_for_sequence_v0(payload_mode, sequence))
+        .collect::<Result<Vec<_>>>()?;
 
     for sequence in 0..tx_count {
         send_transport_frame(
@@ -295,6 +330,7 @@ fn run_sender() -> Result<()> {
         "accepted": done,
         "transport_frame_v0_enabled": true,
         "network_only_gate_enabled": true,
+        "business_payload_mode": payload_mode.as_str(),
         "sender_transport_data_sent_count": stats.data_sent,
         "sender_transport_repair_sent_count": stats.repair_sent,
         "sender_transport_ack_received_count": stats.ack_received,
@@ -302,6 +338,7 @@ fn run_sender() -> Result<()> {
         "sender_transport_missing_final_count": final_missing,
         "sender_transport_final_missing_ranges": latest_missing,
         "business_decode_count": 0u64,
+        "business_decode_error_count": 0u64,
         "aoem_executed_total": 0u64,
         "ledger_completed_count": 0u64,
         "decode_error_count": stats.decode_error_count,
@@ -416,6 +453,52 @@ fn opaque_payload_v0(sequence: u64) -> Vec<u8> {
     out
 }
 
+fn payload_for_sequence_v0(mode: PayloadModeV0, sequence: u64) -> Result<Vec<u8>> {
+    match mode {
+        PayloadModeV0::Opaque => Ok(opaque_payload_v0(sequence)),
+        PayloadModeV0::EvmTransactions => {
+            let msg = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+                from: NodeId(1),
+                chain_id: 1,
+                tx_hash: tx_hash_for_sequence_v0(sequence),
+                tx_count: 1,
+                payload: opaque_payload_v0(sequence),
+                transport_auth: None,
+            });
+            business_encode_v0(&msg).context("encode evm transaction business payload")
+        }
+    }
+}
+
+fn business_decode_summary_v0(
+    mode: PayloadModeV0,
+    delivered: &BTreeMap<u64, Vec<u8>>,
+) -> (u64, u64) {
+    if mode != PayloadModeV0::EvmTransactions {
+        return (0, 0);
+    }
+    let mut ok = 0u64;
+    let mut err = 0u64;
+    for payload in delivered.values() {
+        match business_decode_v0(payload.as_slice()) {
+            Ok(ProtocolMessage::EvmNative(EvmNativeMessage::Transactions { .. })) => {
+                ok = ok.saturating_add(1);
+            }
+            Ok(_) | Err(_) => {
+                err = err.saturating_add(1);
+            }
+        }
+    }
+    (ok, err)
+}
+
+fn tx_hash_for_sequence_v0(sequence: u64) -> [u8; 32] {
+    let digest = sha2::Sha256::digest(sequence.to_le_bytes());
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    out
+}
+
 fn session_id_v0() -> [u8; 16] {
     let source = env_string("NOVOVM_NOVORUDP_NETWORK_ONLY_SESSION_ID")
         .or_else(|| env_string("NOVOVM_NOVORUDP_SESSION_ID"))
@@ -481,6 +564,27 @@ mod tests {
                     end_inclusive: 5
                 }
             ]
+        );
+    }
+
+    #[test]
+    fn evm_transactions_payload_mode_decodes_after_transport_delivery_only() {
+        let mut delivered = BTreeMap::new();
+        for sequence in 0..4 {
+            delivered.insert(
+                sequence,
+                payload_for_sequence_v0(PayloadModeV0::EvmTransactions, sequence).expect("payload"),
+            );
+        }
+
+        assert_eq!(
+            business_decode_summary_v0(PayloadModeV0::EvmTransactions, &delivered),
+            (4, 0)
+        );
+        assert_eq!(
+            business_decode_summary_v0(PayloadModeV0::Opaque, &delivered),
+            (0, 0),
+            "transport-only mode must not decode business payloads"
         );
     }
 }
