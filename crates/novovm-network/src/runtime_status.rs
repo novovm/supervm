@@ -1098,6 +1098,20 @@ pub struct NetworkRuntimeReceiverDecodeAttributionV1 {
     pub receiver_drain_queue_dequeued_count: u64,
     pub receiver_drain_queue_max_depth: u64,
     pub receiver_drain_loop_batch_max: u64,
+    pub receiver_drain_queue_repair_like_count: u64,
+    pub receiver_drain_queue_repair_like_sequence_observed_count: u64,
+    pub receiver_drain_queue_repair_like_sequence_unique_count: u64,
+    pub receiver_drain_queue_repair_like_sequence_missing_count: u64,
+    pub receiver_drain_queue_repair_like_sequence_min: Option<u64>,
+    pub receiver_drain_queue_repair_like_sequence_max: Option<u64>,
+    pub receiver_drain_queue_repair_like_sequence_ranges_sample:
+        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub receiver_drain_queue_repair_like_source_addr_sample: Vec<String>,
+    pub receiver_direct_path_repair_like_count: u64,
+    pub receiver_queued_path_repair_like_count: u64,
+    pub receiver_repair_like_classification_path: String,
+    #[serde(skip)]
+    pub receiver_drain_queue_repair_like_sequence_seen: HashSet<u64>,
     pub receiver_socket_recv_buffer_bytes: Option<u64>,
     pub receiver_recv_loop_iteration_count: u64,
     pub receiver_recv_success_during_repair_window_count: u64,
@@ -1219,6 +1233,18 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub receiver_drain_queue_dequeued_count: u64,
     pub receiver_drain_queue_max_depth: u64,
     pub receiver_drain_loop_batch_max: u64,
+    pub receiver_drain_queue_repair_like_count: u64,
+    pub receiver_drain_queue_repair_like_sequence_observed_count: u64,
+    pub receiver_drain_queue_repair_like_sequence_unique_count: u64,
+    pub receiver_drain_queue_repair_like_sequence_missing_count: u64,
+    pub receiver_drain_queue_repair_like_sequence_min: Option<u64>,
+    pub receiver_drain_queue_repair_like_sequence_max: Option<u64>,
+    pub receiver_drain_queue_repair_like_sequence_ranges_sample:
+        Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
+    pub receiver_drain_queue_repair_like_source_addr_sample: Vec<String>,
+    pub receiver_direct_path_repair_like_count: u64,
+    pub receiver_queued_path_repair_like_count: u64,
+    pub receiver_repair_like_classification_path: String,
     pub receiver_socket_recv_buffer_bytes: Option<u64>,
     pub receiver_recv_loop_iteration_count: u64,
     pub receiver_recv_success_during_repair_window_count: u64,
@@ -1976,6 +2002,7 @@ pub fn observe_network_runtime_receiver_data_frame_repair_like_v1(
     frame_kind: Option<&str>,
     sequence: Option<u64>,
     tx_count: u64,
+    classification_path: &str,
 ) {
     let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
         return;
@@ -1999,6 +2026,33 @@ pub fn observe_network_runtime_receiver_data_frame_repair_like_v1(
     state.receiver_classifier_data_frame_repair_like_count = state
         .receiver_classifier_data_frame_repair_like_count
         .saturating_add(1);
+    match classification_path {
+        "queued" => {
+            state.receiver_queued_path_repair_like_count = state
+                .receiver_queued_path_repair_like_count
+                .saturating_add(1);
+            state.receiver_drain_queue_repair_like_count = state
+                .receiver_drain_queue_repair_like_count
+                .saturating_add(1);
+        }
+        _ => {
+            state.receiver_direct_path_repair_like_count = state
+                .receiver_direct_path_repair_like_count
+                .saturating_add(1);
+        }
+    }
+    state.receiver_repair_like_classification_path = if state.receiver_direct_path_repair_like_count
+        > 0
+        && state.receiver_queued_path_repair_like_count > 0
+    {
+        "mixed".to_string()
+    } else if state.receiver_queued_path_repair_like_count > 0 {
+        "queued".to_string()
+    } else if state.receiver_direct_path_repair_like_count > 0 {
+        "direct".to_string()
+    } else {
+        String::new()
+    };
     if tx_count > 1 {
         state.receiver_data_frame_repair_sequence_like_count = state
             .receiver_data_frame_repair_sequence_like_count
@@ -2033,10 +2087,45 @@ pub fn observe_network_runtime_receiver_data_frame_repair_like_v1(
                 &state.receiver_data_frame_repair_like_sequence_seen,
                 64,
             );
+        if classification_path == "queued" {
+            state.receiver_drain_queue_repair_like_sequence_observed_count = state
+                .receiver_drain_queue_repair_like_sequence_observed_count
+                .saturating_add(1);
+            state
+                .receiver_drain_queue_repair_like_sequence_seen
+                .insert(sequence);
+            state.receiver_drain_queue_repair_like_sequence_unique_count = state
+                .receiver_drain_queue_repair_like_sequence_seen
+                .len()
+                .try_into()
+                .unwrap_or(u64::MAX);
+            state.receiver_drain_queue_repair_like_sequence_min = Some(
+                state
+                    .receiver_drain_queue_repair_like_sequence_min
+                    .map(|current| current.min(sequence))
+                    .unwrap_or(sequence),
+            );
+            state.receiver_drain_queue_repair_like_sequence_max = Some(
+                state
+                    .receiver_drain_queue_repair_like_sequence_max
+                    .map(|current| current.max(sequence))
+                    .unwrap_or(sequence),
+            );
+            state.receiver_drain_queue_repair_like_sequence_ranges_sample =
+                network_runtime_native_repair_sequence_ranges_sample_v1(
+                    &state.receiver_drain_queue_repair_like_sequence_seen,
+                    64,
+                );
+        }
     } else {
         state.receiver_data_frame_repair_like_sequence_missing_count = state
             .receiver_data_frame_repair_like_sequence_missing_count
             .saturating_add(1);
+        if classification_path == "queued" {
+            state.receiver_drain_queue_repair_like_sequence_missing_count = state
+                .receiver_drain_queue_repair_like_sequence_missing_count
+                .saturating_add(1);
+        }
     }
     let sample = format!(
         "frame_kind={} sequence={} tx_count={}",
@@ -2055,6 +2144,12 @@ pub fn observe_network_runtime_receiver_data_frame_repair_like_v1(
             &mut state.receiver_data_frame_repair_like_source_addr_sample,
             source.to_string(),
         );
+        if classification_path == "queued" {
+            receiver_decode_attribution_sample_push_v1(
+                &mut state.receiver_drain_queue_repair_like_source_addr_sample,
+                source.to_string(),
+            );
+        }
     }
 }
 
@@ -2781,6 +2876,27 @@ fn apply_network_runtime_receiver_decode_attribution_summary_v1(
     summary.receiver_drain_queue_dequeued_count = decode.receiver_drain_queue_dequeued_count;
     summary.receiver_drain_queue_max_depth = decode.receiver_drain_queue_max_depth;
     summary.receiver_drain_loop_batch_max = decode.receiver_drain_loop_batch_max;
+    summary.receiver_drain_queue_repair_like_count = decode.receiver_drain_queue_repair_like_count;
+    summary.receiver_drain_queue_repair_like_sequence_observed_count =
+        decode.receiver_drain_queue_repair_like_sequence_observed_count;
+    summary.receiver_drain_queue_repair_like_sequence_unique_count =
+        decode.receiver_drain_queue_repair_like_sequence_unique_count;
+    summary.receiver_drain_queue_repair_like_sequence_missing_count =
+        decode.receiver_drain_queue_repair_like_sequence_missing_count;
+    summary.receiver_drain_queue_repair_like_sequence_min =
+        decode.receiver_drain_queue_repair_like_sequence_min;
+    summary.receiver_drain_queue_repair_like_sequence_max =
+        decode.receiver_drain_queue_repair_like_sequence_max;
+    summary.receiver_drain_queue_repair_like_sequence_ranges_sample = decode
+        .receiver_drain_queue_repair_like_sequence_ranges_sample
+        .clone();
+    summary.receiver_drain_queue_repair_like_source_addr_sample = decode
+        .receiver_drain_queue_repair_like_source_addr_sample
+        .clone();
+    summary.receiver_direct_path_repair_like_count = decode.receiver_direct_path_repair_like_count;
+    summary.receiver_queued_path_repair_like_count = decode.receiver_queued_path_repair_like_count;
+    summary.receiver_repair_like_classification_path =
+        decode.receiver_repair_like_classification_path.clone();
     summary.receiver_socket_recv_buffer_bytes = decode.receiver_socket_recv_buffer_bytes;
     summary.receiver_recv_loop_iteration_count = decode.receiver_recv_loop_iteration_count;
     summary.receiver_recv_success_during_repair_window_count =

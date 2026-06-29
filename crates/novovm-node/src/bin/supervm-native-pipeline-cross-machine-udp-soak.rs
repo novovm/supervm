@@ -13662,6 +13662,14 @@ fn write_synthetic_receiver_failure_report(
         })
         .map(missing_ranges_from_json)
         .unwrap_or_default();
+    let drain_queue_repair_like_ranges = repair_source
+        .and_then(|sample| {
+            sample
+                .get("native_receiver_drain_queue_repair_like_ranges_sample")
+                .or_else(|| sample.get("receiver_drain_queue_repair_like_sequence_ranges_sample"))
+        })
+        .map(missing_ranges_from_json)
+        .unwrap_or_default();
     let repair_packet_received_count = repair_source
         .and_then(|sample| sample.get("repair_packet_received_count"))
         .and_then(Value::as_u64);
@@ -13693,6 +13701,10 @@ fn write_synthetic_receiver_failure_report(
     let data_frame_repair_like_final_missing_overlap_count = missing_ranges_overlap_count(
         final_missing_ranges.as_slice(),
         data_frame_repair_like_ranges.as_slice(),
+    );
+    let drain_queue_repair_like_final_missing_overlap_count = missing_ranges_overlap_count(
+        final_missing_ranges.as_slice(),
+        drain_queue_repair_like_ranges.as_slice(),
     );
     let receipt_index_false_positive_suspected =
         repair_already_receipted_final_missing_overlap_count > 0;
@@ -13854,6 +13866,8 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(Value::as_u64),
             "receiver_data_frame_repair_like_final_missing_overlap_count": data_frame_repair_like_final_missing_overlap_count,
             "native_receiver_data_frame_repair_like_final_missing_overlap_count": data_frame_repair_like_final_missing_overlap_count,
+            "native_receiver_drain_queue_repair_like_final_missing_overlap_count": drain_queue_repair_like_final_missing_overlap_count,
+            "receiver_drain_queue_repair_like_final_missing_overlap_count": drain_queue_repair_like_final_missing_overlap_count,
             "receiver_data_frame_repair_like_sequence_observed_count": repair_source
                 .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_observed_count"))
                 .and_then(Value::as_u64),
@@ -13877,6 +13891,39 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(|sample| sample.get("receiver_data_frame_repair_like_source_addr_sample"))
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
+            "native_receiver_drain_queue_repair_like_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_drain_queue_repair_like_sequence_unique_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_sequence_unique_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_unique_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_drain_queue_repair_like_sequence_min": repair_source
+                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_sequence_min"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_min")))
+                .cloned(),
+            "native_receiver_drain_queue_repair_like_sequence_max": repair_source
+                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_sequence_max"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_max")))
+                .cloned(),
+            "native_receiver_drain_queue_repair_like_ranges_sample": repair_source
+                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_ranges_sample"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_ranges_sample")))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "native_receiver_queued_path_repair_like_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_queued_path_repair_like_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_queued_path_repair_like_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_direct_path_repair_like_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_direct_path_repair_like_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_direct_path_repair_like_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_repair_like_classification_path": repair_source
+                .and_then(|sample| sample.get("native_receiver_repair_like_classification_path"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_repair_like_classification_path")))
+                .cloned(),
             "receiver_socket_recv_buffer_bytes": repair_source
                 .and_then(|sample| sample.get("receiver_socket_recv_buffer_bytes"))
                 .cloned(),
@@ -14177,6 +14224,8 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(Value::as_u64),
             "receiver_data_frame_repair_like_final_missing_overlap_count": data_frame_repair_like_final_missing_overlap_count,
             "native_receiver_data_frame_repair_like_final_missing_overlap_count": data_frame_repair_like_final_missing_overlap_count,
+            "native_receiver_drain_queue_repair_like_final_missing_overlap_count": drain_queue_repair_like_final_missing_overlap_count,
+            "receiver_drain_queue_repair_like_final_missing_overlap_count": drain_queue_repair_like_final_missing_overlap_count,
             "receiver_data_frame_repair_like_sequence_observed_count": repair_source
                 .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_observed_count"))
                 .and_then(Value::as_u64),
@@ -14200,6 +14249,39 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(|sample| sample.get("receiver_data_frame_repair_like_source_addr_sample"))
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
+            "native_receiver_drain_queue_repair_like_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_drain_queue_repair_like_sequence_unique_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_sequence_unique_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_unique_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_drain_queue_repair_like_sequence_min": repair_source
+                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_sequence_min"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_min")))
+                .cloned(),
+            "native_receiver_drain_queue_repair_like_sequence_max": repair_source
+                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_sequence_max"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_max")))
+                .cloned(),
+            "native_receiver_drain_queue_repair_like_ranges_sample": repair_source
+                .and_then(|sample| sample.get("native_receiver_drain_queue_repair_like_ranges_sample"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_drain_queue_repair_like_sequence_ranges_sample")))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "native_receiver_queued_path_repair_like_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_queued_path_repair_like_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_queued_path_repair_like_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_direct_path_repair_like_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_direct_path_repair_like_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_direct_path_repair_like_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_repair_like_classification_path": repair_source
+                .and_then(|sample| sample.get("native_receiver_repair_like_classification_path"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_repair_like_classification_path")))
+                .cloned(),
             "receiver_socket_recv_buffer_bytes": repair_source
                 .and_then(|sample| sample.get("receiver_socket_recv_buffer_bytes"))
                 .cloned(),
@@ -14580,6 +14662,17 @@ fn copy_native_receiver_attribution_fields_v1(
         "receiver_drain_queue_dequeued_count",
         "receiver_drain_queue_max_depth",
         "receiver_drain_loop_batch_max",
+        "receiver_drain_queue_repair_like_count",
+        "receiver_drain_queue_repair_like_sequence_observed_count",
+        "receiver_drain_queue_repair_like_sequence_unique_count",
+        "receiver_drain_queue_repair_like_sequence_missing_count",
+        "receiver_drain_queue_repair_like_sequence_min",
+        "receiver_drain_queue_repair_like_sequence_max",
+        "receiver_drain_queue_repair_like_sequence_ranges_sample",
+        "receiver_drain_queue_repair_like_source_addr_sample",
+        "receiver_direct_path_repair_like_count",
+        "receiver_queued_path_repair_like_count",
+        "receiver_repair_like_classification_path",
         "receiver_socket_recv_buffer_bytes",
         "receiver_recv_loop_iteration_count",
         "receiver_recv_success_during_repair_window_count",
@@ -14633,6 +14726,17 @@ fn copy_native_receiver_attribution_fields_v1(
         "native_receiver_drain_queue_dequeued_count",
         "native_receiver_drain_queue_max_depth",
         "native_receiver_drain_loop_batch_max",
+        "native_receiver_drain_queue_repair_like_count",
+        "native_receiver_drain_queue_repair_like_sequence_observed_count",
+        "native_receiver_drain_queue_repair_like_sequence_unique_count",
+        "native_receiver_drain_queue_repair_like_sequence_missing_count",
+        "native_receiver_drain_queue_repair_like_sequence_min",
+        "native_receiver_drain_queue_repair_like_sequence_max",
+        "native_receiver_drain_queue_repair_like_ranges_sample",
+        "native_receiver_drain_queue_repair_like_source_addr_sample",
+        "native_receiver_direct_path_repair_like_count",
+        "native_receiver_queued_path_repair_like_count",
+        "native_receiver_repair_like_classification_path",
         "native_receiver_socket_recv_buffer_bytes",
         "native_receiver_recv_loop_iteration_count",
         "native_receiver_recv_success_during_repair_window_count",

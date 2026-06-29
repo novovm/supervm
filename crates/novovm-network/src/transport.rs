@@ -11043,6 +11043,11 @@ impl Transport for UdpTransport {
                             auth_frame_kind,
                             auth_sequence,
                             *tx_count,
+                            if self.drain_first_enabled {
+                                "queued"
+                            } else {
+                                "direct"
+                            },
                         );
                     }
                 }
