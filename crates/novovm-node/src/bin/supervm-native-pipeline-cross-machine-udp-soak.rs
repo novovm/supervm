@@ -146,6 +146,12 @@ struct SendScheduleStatsV1 {
     sender_udp_sequence_min: Option<u64>,
     sender_udp_sequence_max: Option<u64>,
     sender_udp_sequence_sample: Vec<u64>,
+    sender_udp_burst_elapsed_ms: Option<u64>,
+    sender_udp_inter_send_gap_min_us: Option<u64>,
+    sender_udp_inter_send_gap_p50_us: Option<u64>,
+    sender_udp_inter_send_gap_p95_us: Option<u64>,
+    sender_udp_inter_send_gap_max_us: Option<u64>,
+    sender_udp_bytes_per_second_estimate: Option<u64>,
     sent_by_hash: BTreeMap<String, u64>,
 }
 
@@ -2304,6 +2310,51 @@ fn merge_send_stats(target: &mut SendScheduleStatsV1, next: SendScheduleStatsV1)
         }
         target.sender_udp_sequence_sample.push(sequence);
     }
+    target.sender_udp_burst_elapsed_ms = match (
+        target.sender_udp_burst_elapsed_ms,
+        next.sender_udp_burst_elapsed_ms,
+    ) {
+        (Some(current), Some(next)) => Some(current.saturating_add(next)),
+        (Some(current), None) => Some(current),
+        (None, Some(next)) => Some(next),
+        (None, None) => None,
+    };
+    target.sender_udp_inter_send_gap_min_us = match (
+        target.sender_udp_inter_send_gap_min_us,
+        next.sender_udp_inter_send_gap_min_us,
+    ) {
+        (Some(current), Some(next)) => Some(current.min(next)),
+        (Some(current), None) => Some(current),
+        (None, Some(next)) => Some(next),
+        (None, None) => None,
+    };
+    target.sender_udp_inter_send_gap_max_us = match (
+        target.sender_udp_inter_send_gap_max_us,
+        next.sender_udp_inter_send_gap_max_us,
+    ) {
+        (Some(current), Some(next)) => Some(current.max(next)),
+        (Some(current), None) => Some(current),
+        (None, Some(next)) => Some(next),
+        (None, None) => None,
+    };
+    target.sender_udp_inter_send_gap_p50_us = target
+        .sender_udp_inter_send_gap_p50_us
+        .or(next.sender_udp_inter_send_gap_p50_us);
+    target.sender_udp_inter_send_gap_p95_us = target
+        .sender_udp_inter_send_gap_p95_us
+        .or(next.sender_udp_inter_send_gap_p95_us);
+    target.sender_udp_bytes_per_second_estimate = match (
+        target.sender_udp_bytes_total,
+        target.sender_udp_burst_elapsed_ms,
+    ) {
+        (bytes, Some(elapsed_ms)) if bytes > 0 && elapsed_ms > 0 => {
+            Some(bytes.saturating_mul(1_000) / elapsed_ms)
+        }
+        (bytes, Some(_)) if bytes > 0 => Some(bytes),
+        _ => target
+            .sender_udp_bytes_per_second_estimate
+            .or(next.sender_udp_bytes_per_second_estimate),
+    };
     for (hash, count) in next.sent_by_hash {
         *target.sent_by_hash.entry(hash).or_default() += count;
     }
@@ -2337,6 +2388,12 @@ fn empty_send_stats() -> SendScheduleStatsV1 {
         sender_udp_sequence_min: None,
         sender_udp_sequence_max: None,
         sender_udp_sequence_sample: Vec::new(),
+        sender_udp_burst_elapsed_ms: None,
+        sender_udp_inter_send_gap_min_us: None,
+        sender_udp_inter_send_gap_p50_us: None,
+        sender_udp_inter_send_gap_p95_us: None,
+        sender_udp_inter_send_gap_max_us: None,
+        sender_udp_bytes_per_second_estimate: None,
         sent_by_hash: BTreeMap::new(),
     }
 }
@@ -13790,6 +13847,30 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(|sample| sample.get("receiver_data_frame_repair_like_source_addr_sample"))
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
+            "receiver_socket_recv_buffer_bytes": repair_source
+                .and_then(|sample| sample.get("receiver_socket_recv_buffer_bytes"))
+                .cloned(),
+            "receiver_recv_loop_iteration_count": repair_source
+                .and_then(|sample| sample.get("receiver_recv_loop_iteration_count"))
+                .and_then(Value::as_u64),
+            "receiver_recv_success_during_repair_window_count": repair_source
+                .and_then(|sample| sample.get("receiver_recv_success_during_repair_window_count"))
+                .and_then(Value::as_u64),
+            "receiver_recv_gap_max_ms": repair_source
+                .and_then(|sample| sample.get("receiver_recv_gap_max_ms"))
+                .cloned(),
+            "receiver_recv_gap_p95_ms": repair_source
+                .and_then(|sample| sample.get("receiver_recv_gap_p95_ms"))
+                .cloned(),
+            "receiver_repair_window_socket_recv_count": repair_source
+                .and_then(|sample| sample.get("receiver_repair_window_socket_recv_count"))
+                .and_then(Value::as_u64),
+            "receiver_repair_window_data_frame_count": repair_source
+                .and_then(|sample| sample.get("receiver_repair_window_data_frame_count"))
+                .and_then(Value::as_u64),
+            "receiver_udp_drop_or_overrun_suspected": repair_source
+                .and_then(|sample| sample.get("receiver_udp_drop_or_overrun_suspected"))
+                .and_then(Value::as_bool),
             "native_receiver_data_frame_repair_like_sequence_min": repair_source
                 .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_sequence_min"))
                 .cloned(),
@@ -13808,6 +13889,38 @@ fn write_synthetic_receiver_failure_report(
                 })
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
+            "native_receiver_socket_recv_buffer_bytes": repair_source
+                .and_then(|sample| sample.get("native_receiver_socket_recv_buffer_bytes"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_socket_recv_buffer_bytes")))
+                .cloned(),
+            "native_receiver_recv_loop_iteration_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_recv_loop_iteration_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_recv_loop_iteration_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_recv_success_during_repair_window_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_recv_success_during_repair_window_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_recv_success_during_repair_window_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_recv_gap_max_ms": repair_source
+                .and_then(|sample| sample.get("native_receiver_recv_gap_max_ms"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_recv_gap_max_ms")))
+                .cloned(),
+            "native_receiver_recv_gap_p95_ms": repair_source
+                .and_then(|sample| sample.get("native_receiver_recv_gap_p95_ms"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_recv_gap_p95_ms")))
+                .cloned(),
+            "native_receiver_repair_window_socket_recv_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_repair_window_socket_recv_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_repair_window_socket_recv_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_repair_window_data_frame_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_repair_window_data_frame_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_repair_window_data_frame_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_udp_drop_or_overrun_suspected": repair_source
+                .and_then(|sample| sample.get("native_receiver_udp_drop_or_overrun_suspected"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_udp_drop_or_overrun_suspected")))
+                .and_then(Value::as_bool),
             "receiver_source_pin_drop_decoded_repair_like_count": repair_source
                 .and_then(|sample| sample.get("receiver_source_pin_drop_decoded_repair_like_count"))
                 .and_then(Value::as_u64),
@@ -14057,6 +14170,30 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(|sample| sample.get("receiver_data_frame_repair_like_source_addr_sample"))
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
+            "receiver_socket_recv_buffer_bytes": repair_source
+                .and_then(|sample| sample.get("receiver_socket_recv_buffer_bytes"))
+                .cloned(),
+            "receiver_recv_loop_iteration_count": repair_source
+                .and_then(|sample| sample.get("receiver_recv_loop_iteration_count"))
+                .and_then(Value::as_u64),
+            "receiver_recv_success_during_repair_window_count": repair_source
+                .and_then(|sample| sample.get("receiver_recv_success_during_repair_window_count"))
+                .and_then(Value::as_u64),
+            "receiver_recv_gap_max_ms": repair_source
+                .and_then(|sample| sample.get("receiver_recv_gap_max_ms"))
+                .cloned(),
+            "receiver_recv_gap_p95_ms": repair_source
+                .and_then(|sample| sample.get("receiver_recv_gap_p95_ms"))
+                .cloned(),
+            "receiver_repair_window_socket_recv_count": repair_source
+                .and_then(|sample| sample.get("receiver_repair_window_socket_recv_count"))
+                .and_then(Value::as_u64),
+            "receiver_repair_window_data_frame_count": repair_source
+                .and_then(|sample| sample.get("receiver_repair_window_data_frame_count"))
+                .and_then(Value::as_u64),
+            "receiver_udp_drop_or_overrun_suspected": repair_source
+                .and_then(|sample| sample.get("receiver_udp_drop_or_overrun_suspected"))
+                .and_then(Value::as_bool),
             "native_receiver_data_frame_repair_like_sequence_min": repair_source
                 .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_sequence_min"))
                 .cloned(),
@@ -14075,6 +14212,38 @@ fn write_synthetic_receiver_failure_report(
                 })
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
+            "native_receiver_socket_recv_buffer_bytes": repair_source
+                .and_then(|sample| sample.get("native_receiver_socket_recv_buffer_bytes"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_socket_recv_buffer_bytes")))
+                .cloned(),
+            "native_receiver_recv_loop_iteration_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_recv_loop_iteration_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_recv_loop_iteration_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_recv_success_during_repair_window_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_recv_success_during_repair_window_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_recv_success_during_repair_window_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_recv_gap_max_ms": repair_source
+                .and_then(|sample| sample.get("native_receiver_recv_gap_max_ms"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_recv_gap_max_ms")))
+                .cloned(),
+            "native_receiver_recv_gap_p95_ms": repair_source
+                .and_then(|sample| sample.get("native_receiver_recv_gap_p95_ms"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_recv_gap_p95_ms")))
+                .cloned(),
+            "native_receiver_repair_window_socket_recv_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_repair_window_socket_recv_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_repair_window_socket_recv_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_repair_window_data_frame_count": repair_source
+                .and_then(|sample| sample.get("native_receiver_repair_window_data_frame_count"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_repair_window_data_frame_count")))
+                .and_then(Value::as_u64),
+            "native_receiver_udp_drop_or_overrun_suspected": repair_source
+                .and_then(|sample| sample.get("native_receiver_udp_drop_or_overrun_suspected"))
+                .or_else(|| repair_source.and_then(|sample| sample.get("receiver_udp_drop_or_overrun_suspected")))
+                .and_then(Value::as_bool),
             "receiver_source_pin_drop_decoded_repair_like_count": repair_source
                 .and_then(|sample| sample.get("receiver_source_pin_drop_decoded_repair_like_count"))
                 .and_then(Value::as_u64),
@@ -14374,6 +14543,16 @@ fn copy_native_receiver_attribution_fields_v1(
         "receiver_data_frame_repair_like_sequence_ranges_sample",
         "receiver_data_frame_repair_kind_sample",
         "receiver_data_frame_repair_like_source_addr_sample",
+        "receiver_socket_recv_buffer_bytes",
+        "receiver_recv_loop_iteration_count",
+        "receiver_recv_success_during_repair_window_count",
+        "receiver_recv_gap_max_ms",
+        "receiver_recv_gap_p95_ms",
+        "receiver_repair_window_socket_recv_count",
+        "receiver_repair_window_data_frame_count",
+        "receiver_repair_window_first_seen_ms",
+        "receiver_repair_window_last_seen_ms",
+        "receiver_udp_drop_or_overrun_suspected",
         "receiver_source_pin_drop_decoded_data_frame_count",
         "receiver_source_pin_drop_decoded_repair_like_count",
         "receiver_source_pin_drop_decoded_endpoint_record_count",
@@ -14410,6 +14589,16 @@ fn copy_native_receiver_attribution_fields_v1(
         "native_receiver_data_frame_repair_like_sequence_ranges_sample",
         "native_receiver_data_frame_repair_kind_sample",
         "native_receiver_data_frame_repair_like_source_addr_sample",
+        "native_receiver_socket_recv_buffer_bytes",
+        "native_receiver_recv_loop_iteration_count",
+        "native_receiver_recv_success_during_repair_window_count",
+        "native_receiver_recv_gap_max_ms",
+        "native_receiver_recv_gap_p95_ms",
+        "native_receiver_repair_window_socket_recv_count",
+        "native_receiver_repair_window_data_frame_count",
+        "native_receiver_repair_window_first_seen_ms",
+        "native_receiver_repair_window_last_seen_ms",
+        "native_receiver_udp_drop_or_overrun_suspected",
         "native_receiver_source_pin_drop_decoded_data_frame_count",
         "native_receiver_source_pin_drop_decoded_repair_like_count",
         "native_receiver_source_pin_drop_decoded_endpoint_record_count",
@@ -16420,6 +16609,16 @@ fn diagnostics_summary_sample(
         "receiver_data_frame_repair_like_sequence_ranges_sample": summary.get("receiver_data_frame_repair_like_sequence_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "receiver_data_frame_repair_kind_sample": summary.get("receiver_data_frame_repair_kind_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "receiver_data_frame_repair_like_source_addr_sample": summary.get("receiver_data_frame_repair_like_source_addr_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "receiver_socket_recv_buffer_bytes": summary.get("receiver_socket_recv_buffer_bytes").cloned().unwrap_or(Value::Null),
+        "receiver_recv_loop_iteration_count": summary_u64(summary, "receiver_recv_loop_iteration_count"),
+        "receiver_recv_success_during_repair_window_count": summary_u64(summary, "receiver_recv_success_during_repair_window_count"),
+        "receiver_recv_gap_max_ms": summary.get("receiver_recv_gap_max_ms").cloned().unwrap_or(Value::Null),
+        "receiver_recv_gap_p95_ms": summary.get("receiver_recv_gap_p95_ms").cloned().unwrap_or(Value::Null),
+        "receiver_repair_window_socket_recv_count": summary_u64(summary, "receiver_repair_window_socket_recv_count"),
+        "receiver_repair_window_data_frame_count": summary_u64(summary, "receiver_repair_window_data_frame_count"),
+        "receiver_repair_window_first_seen_ms": summary.get("receiver_repair_window_first_seen_ms").cloned().unwrap_or(Value::Null),
+        "receiver_repair_window_last_seen_ms": summary.get("receiver_repair_window_last_seen_ms").cloned().unwrap_or(Value::Null),
+        "receiver_udp_drop_or_overrun_suspected": summary.get("receiver_udp_drop_or_overrun_suspected").and_then(Value::as_bool).unwrap_or(false),
         "receiver_source_pin_drop_decoded_data_frame_count": summary_u64(summary, "receiver_source_pin_drop_decoded_data_frame_count"),
         "receiver_source_pin_drop_decoded_repair_like_count": summary_u64(summary, "receiver_source_pin_drop_decoded_repair_like_count"),
         "receiver_source_pin_drop_decoded_endpoint_record_count": summary_u64(summary, "receiver_source_pin_drop_decoded_endpoint_record_count"),
@@ -16456,6 +16655,16 @@ fn diagnostics_summary_sample(
         "native_receiver_data_frame_repair_like_sequence_ranges_sample": summary.get("native_receiver_data_frame_repair_like_sequence_ranges_sample").or_else(|| summary.get("receiver_data_frame_repair_like_sequence_ranges_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
         "native_receiver_data_frame_repair_kind_sample": summary.get("native_receiver_data_frame_repair_kind_sample").or_else(|| summary.get("receiver_data_frame_repair_kind_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
         "native_receiver_data_frame_repair_like_source_addr_sample": summary.get("native_receiver_data_frame_repair_like_source_addr_sample").or_else(|| summary.get("receiver_data_frame_repair_like_source_addr_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
+        "native_receiver_socket_recv_buffer_bytes": summary.get("native_receiver_socket_recv_buffer_bytes").or_else(|| summary.get("receiver_socket_recv_buffer_bytes")).cloned().unwrap_or(Value::Null),
+        "native_receiver_recv_loop_iteration_count": summary_u64(summary, "native_receiver_recv_loop_iteration_count").max(summary_u64(summary, "receiver_recv_loop_iteration_count")),
+        "native_receiver_recv_success_during_repair_window_count": summary_u64(summary, "native_receiver_recv_success_during_repair_window_count").max(summary_u64(summary, "receiver_recv_success_during_repair_window_count")),
+        "native_receiver_recv_gap_max_ms": summary.get("native_receiver_recv_gap_max_ms").or_else(|| summary.get("receiver_recv_gap_max_ms")).cloned().unwrap_or(Value::Null),
+        "native_receiver_recv_gap_p95_ms": summary.get("native_receiver_recv_gap_p95_ms").or_else(|| summary.get("receiver_recv_gap_p95_ms")).cloned().unwrap_or(Value::Null),
+        "native_receiver_repair_window_socket_recv_count": summary_u64(summary, "native_receiver_repair_window_socket_recv_count").max(summary_u64(summary, "receiver_repair_window_socket_recv_count")),
+        "native_receiver_repair_window_data_frame_count": summary_u64(summary, "native_receiver_repair_window_data_frame_count").max(summary_u64(summary, "receiver_repair_window_data_frame_count")),
+        "native_receiver_repair_window_first_seen_ms": summary.get("native_receiver_repair_window_first_seen_ms").or_else(|| summary.get("receiver_repair_window_first_seen_ms")).cloned().unwrap_or(Value::Null),
+        "native_receiver_repair_window_last_seen_ms": summary.get("native_receiver_repair_window_last_seen_ms").or_else(|| summary.get("receiver_repair_window_last_seen_ms")).cloned().unwrap_or(Value::Null),
+        "native_receiver_udp_drop_or_overrun_suspected": summary.get("native_receiver_udp_drop_or_overrun_suspected").or_else(|| summary.get("receiver_udp_drop_or_overrun_suspected")).and_then(Value::as_bool).unwrap_or(false),
         "native_receiver_source_pin_drop_decoded_data_frame_count": summary_u64(summary, "native_receiver_source_pin_drop_decoded_data_frame_count").max(summary_u64(summary, "receiver_source_pin_drop_decoded_data_frame_count")),
         "native_receiver_source_pin_drop_decoded_repair_like_count": summary_u64(summary, "native_receiver_source_pin_drop_decoded_repair_like_count").max(summary_u64(summary, "receiver_source_pin_drop_decoded_repair_like_count")),
         "native_receiver_source_pin_drop_decoded_endpoint_record_count": summary_u64(summary, "native_receiver_source_pin_drop_decoded_endpoint_record_count").max(summary_u64(summary, "receiver_source_pin_drop_decoded_endpoint_record_count")),
@@ -17581,6 +17790,9 @@ fn send_scheduled_batch(
     let mut sender_udp_sequence_min: Option<u64> = None;
     let mut sender_udp_sequence_max: Option<u64> = None;
     let mut sender_udp_sequence_sample = Vec::<u64>::new();
+    let mut sender_udp_first_send_at: Option<Instant> = None;
+    let mut sender_udp_last_send_at: Option<Instant> = None;
+    let mut sender_udp_inter_send_gap_samples_us = Vec::<u64>::new();
     let duplicated_packets = txs
         .iter()
         .filter(|tx| tx.copy_index > 0)
@@ -17621,6 +17833,7 @@ fn send_scheduled_batch(
             .unwrap_or(0);
         match safe_send_with_retry(&sender, NodeId(receiver_node), msg, retry) {
             Ok(retry_stats) => {
+                let now = Instant::now();
                 send_retry_count = send_retry_count.saturating_add(retry_stats.retry_count);
                 send_would_block_count =
                     send_would_block_count.saturating_add(retry_stats.would_block_count);
@@ -17642,6 +17855,18 @@ fn send_scheduled_batch(
                 if sender_udp_sequence_sample.len() < 16 {
                     sender_udp_sequence_sample.push(tx.index);
                 }
+                if let Some(previous) = sender_udp_last_send_at {
+                    let gap_us = now
+                        .saturating_duration_since(previous)
+                        .as_micros()
+                        .try_into()
+                        .unwrap_or(u64::MAX);
+                    sender_udp_inter_send_gap_samples_us.push(gap_us);
+                }
+                if sender_udp_first_send_at.is_none() {
+                    sender_udp_first_send_at = Some(now);
+                }
+                sender_udp_last_send_at = Some(now);
                 if delay_ms > 0 {
                     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                 }
@@ -17674,6 +17899,33 @@ fn send_scheduled_batch(
                     sender_udp_sequence_min,
                     sender_udp_sequence_max,
                     sender_udp_sequence_sample,
+                    sender_udp_burst_elapsed_ms: sender_udp_burst_elapsed_ms_v1(
+                        sender_udp_first_send_at,
+                        sender_udp_last_send_at,
+                    ),
+                    sender_udp_inter_send_gap_min_us: sender_udp_inter_send_gap_samples_us
+                        .iter()
+                        .copied()
+                        .min(),
+                    sender_udp_inter_send_gap_p50_us: Some(percentile_nearest_rank_u64(
+                        sender_udp_inter_send_gap_samples_us.as_slice(),
+                        50,
+                    ))
+                    .filter(|_| !sender_udp_inter_send_gap_samples_us.is_empty()),
+                    sender_udp_inter_send_gap_p95_us: Some(percentile_nearest_rank_u64(
+                        sender_udp_inter_send_gap_samples_us.as_slice(),
+                        95,
+                    ))
+                    .filter(|_| !sender_udp_inter_send_gap_samples_us.is_empty()),
+                    sender_udp_inter_send_gap_max_us: sender_udp_inter_send_gap_samples_us
+                        .iter()
+                        .copied()
+                        .max(),
+                    sender_udp_bytes_per_second_estimate: sender_udp_bytes_per_second_estimate_v1(
+                        sender_udp_bytes_total,
+                        sender_udp_first_send_at,
+                        sender_udp_last_send_at,
+                    ),
                     sent_by_hash,
                 });
             }
@@ -17700,8 +17952,62 @@ fn send_scheduled_batch(
         sender_udp_sequence_min,
         sender_udp_sequence_max,
         sender_udp_sequence_sample,
+        sender_udp_burst_elapsed_ms: sender_udp_burst_elapsed_ms_v1(
+            sender_udp_first_send_at,
+            sender_udp_last_send_at,
+        ),
+        sender_udp_inter_send_gap_min_us: sender_udp_inter_send_gap_samples_us
+            .iter()
+            .copied()
+            .min(),
+        sender_udp_inter_send_gap_p50_us: Some(percentile_nearest_rank_u64(
+            sender_udp_inter_send_gap_samples_us.as_slice(),
+            50,
+        ))
+        .filter(|_| !sender_udp_inter_send_gap_samples_us.is_empty()),
+        sender_udp_inter_send_gap_p95_us: Some(percentile_nearest_rank_u64(
+            sender_udp_inter_send_gap_samples_us.as_slice(),
+            95,
+        ))
+        .filter(|_| !sender_udp_inter_send_gap_samples_us.is_empty()),
+        sender_udp_inter_send_gap_max_us: sender_udp_inter_send_gap_samples_us
+            .iter()
+            .copied()
+            .max(),
+        sender_udp_bytes_per_second_estimate: sender_udp_bytes_per_second_estimate_v1(
+            sender_udp_bytes_total,
+            sender_udp_first_send_at,
+            sender_udp_last_send_at,
+        ),
         sent_by_hash,
     })
+}
+
+fn sender_udp_burst_elapsed_ms_v1(first: Option<Instant>, last: Option<Instant>) -> Option<u64> {
+    match (first, last) {
+        (Some(first), Some(last)) => Some(
+            last.saturating_duration_since(first)
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
+        ),
+        _ => None,
+    }
+}
+
+fn sender_udp_bytes_per_second_estimate_v1(
+    bytes_total: u64,
+    first: Option<Instant>,
+    last: Option<Instant>,
+) -> Option<u64> {
+    let elapsed_ms = sender_udp_burst_elapsed_ms_v1(first, last)?;
+    if bytes_total == 0 {
+        return Some(0);
+    }
+    if elapsed_ms == 0 {
+        return Some(bytes_total);
+    }
+    Some(bytes_total.saturating_mul(1_000) / elapsed_ms)
 }
 
 fn send_repair_payloads_paced(
@@ -22163,6 +22469,18 @@ fn run_sender(
             "sender_repair_udp_sequence_min": repair_stats.sender_udp_sequence_min,
             "sender_repair_udp_sequence_max": repair_stats.sender_udp_sequence_max,
             "sender_repair_udp_sequence_sample": repair_stats.sender_udp_sequence_sample.clone(),
+            "sender_repair_udp_burst_count": u64::from(repair_sequence_sent_count > 0),
+            "sender_repair_udp_burst_elapsed_ms": repair_stats.sender_udp_burst_elapsed_ms,
+            "sender_repair_udp_inter_send_gap_min_us": repair_stats.sender_udp_inter_send_gap_min_us,
+            "sender_repair_udp_inter_send_gap_p50_us": repair_stats.sender_udp_inter_send_gap_p50_us,
+            "sender_repair_udp_inter_send_gap_p95_us": repair_stats.sender_udp_inter_send_gap_p95_us,
+            "sender_repair_udp_inter_send_gap_max_us": repair_stats.sender_udp_inter_send_gap_max_us,
+            "sender_repair_udp_bytes_per_second_estimate": repair_stats.sender_udp_bytes_per_second_estimate,
+            "sender_repair_udp_send_would_block_count": repair_stats.send_would_block_count,
+            "sender_repair_udp_send_error_count": repair_stats.send_failed_count,
+            "sender_repair_udp_socket_send_buffer_bytes": Value::Null,
+            "sender_repair_udp_burst_sequence_min": repair_stats.sender_udp_sequence_min,
+            "sender_repair_udp_burst_sequence_max": repair_stats.sender_udp_sequence_max,
             "sender_repair_encoded_as_data_frame_count": repair_sequence_sent_count,
             "sender_repair_encoded_as_repair_frame_count": 0u64,
             "sender_repair_wire_frame_first_bytes_hex_sample": [],

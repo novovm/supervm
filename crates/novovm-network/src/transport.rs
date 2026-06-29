@@ -79,6 +79,7 @@ use crate::{
     observe_network_runtime_native_pending_tx_repair_probe_v1, observe_network_runtime_peer_head,
     observe_network_runtime_peer_head_with_local_head_max,
     observe_network_runtime_receiver_data_frame_repair_like_v1,
+    observe_network_runtime_receiver_recv_loop_iteration_v1,
     observe_network_runtime_receiver_source_pin_drop_decoded_v1,
     observe_network_runtime_receiver_udp_packet_classifier_v1,
     observe_network_runtime_receiver_udp_packet_decode_attempt_v1,
@@ -10890,6 +10891,7 @@ impl Transport for UdpTransport {
                 got: me,
             });
         }
+        observe_network_runtime_receiver_recv_loop_iteration_v1(self.chain_id);
 
         let mut recv_buf = {
             let mut shared = self

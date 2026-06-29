@@ -34266,6 +34266,46 @@ fn build_native_execution_pipeline_report_v1(
                 ),
             ),
             (
+                "receiver_socket_recv_buffer_bytes",
+                serde_json::json!(pending_summary.receiver_socket_recv_buffer_bytes),
+            ),
+            (
+                "receiver_recv_loop_iteration_count",
+                serde_json::json!(pending_summary.receiver_recv_loop_iteration_count),
+            ),
+            (
+                "receiver_recv_success_during_repair_window_count",
+                serde_json::json!(pending_summary.receiver_recv_success_during_repair_window_count),
+            ),
+            (
+                "receiver_recv_gap_max_ms",
+                serde_json::json!(pending_summary.receiver_recv_gap_max_ms),
+            ),
+            (
+                "receiver_recv_gap_p95_ms",
+                serde_json::json!(pending_summary.receiver_recv_gap_p95_ms),
+            ),
+            (
+                "receiver_repair_window_socket_recv_count",
+                serde_json::json!(pending_summary.receiver_repair_window_socket_recv_count),
+            ),
+            (
+                "receiver_repair_window_data_frame_count",
+                serde_json::json!(pending_summary.receiver_repair_window_data_frame_count),
+            ),
+            (
+                "receiver_repair_window_first_seen_ms",
+                serde_json::json!(pending_summary.receiver_repair_window_first_seen_ms),
+            ),
+            (
+                "receiver_repair_window_last_seen_ms",
+                serde_json::json!(pending_summary.receiver_repair_window_last_seen_ms),
+            ),
+            (
+                "receiver_udp_drop_or_overrun_suspected",
+                serde_json::json!(pending_summary.receiver_udp_drop_or_overrun_suspected),
+            ),
+            (
                 "receiver_source_pin_drop_decoded_data_frame_count",
                 serde_json::json!(
                     pending_summary.receiver_source_pin_drop_decoded_data_frame_count
@@ -34434,6 +34474,46 @@ fn build_native_execution_pipeline_report_v1(
                 serde_json::json!(
                     pending_summary.receiver_data_frame_repair_like_source_addr_sample
                 ),
+            ),
+            (
+                "native_receiver_socket_recv_buffer_bytes",
+                serde_json::json!(pending_summary.receiver_socket_recv_buffer_bytes),
+            ),
+            (
+                "native_receiver_recv_loop_iteration_count",
+                serde_json::json!(pending_summary.receiver_recv_loop_iteration_count),
+            ),
+            (
+                "native_receiver_recv_success_during_repair_window_count",
+                serde_json::json!(pending_summary.receiver_recv_success_during_repair_window_count),
+            ),
+            (
+                "native_receiver_recv_gap_max_ms",
+                serde_json::json!(pending_summary.receiver_recv_gap_max_ms),
+            ),
+            (
+                "native_receiver_recv_gap_p95_ms",
+                serde_json::json!(pending_summary.receiver_recv_gap_p95_ms),
+            ),
+            (
+                "native_receiver_repair_window_socket_recv_count",
+                serde_json::json!(pending_summary.receiver_repair_window_socket_recv_count),
+            ),
+            (
+                "native_receiver_repair_window_data_frame_count",
+                serde_json::json!(pending_summary.receiver_repair_window_data_frame_count),
+            ),
+            (
+                "native_receiver_repair_window_first_seen_ms",
+                serde_json::json!(pending_summary.receiver_repair_window_first_seen_ms),
+            ),
+            (
+                "native_receiver_repair_window_last_seen_ms",
+                serde_json::json!(pending_summary.receiver_repair_window_last_seen_ms),
+            ),
+            (
+                "native_receiver_udp_drop_or_overrun_suspected",
+                serde_json::json!(pending_summary.receiver_udp_drop_or_overrun_suspected),
             ),
             (
                 "native_receiver_source_pin_drop_decoded_data_frame_count",
@@ -34975,6 +35055,16 @@ struct NativeExecutionPipelineAggregateV1 {
     receiver_data_frame_repair_like_sequence_ranges_sample: serde_json::Value,
     receiver_data_frame_repair_kind_sample: serde_json::Value,
     receiver_data_frame_repair_like_source_addr_sample: serde_json::Value,
+    receiver_socket_recv_buffer_bytes: Option<u64>,
+    receiver_recv_loop_iteration_count: u64,
+    receiver_recv_success_during_repair_window_count: u64,
+    receiver_recv_gap_max_ms: Option<u64>,
+    receiver_recv_gap_p95_ms: Option<u64>,
+    receiver_repair_window_socket_recv_count: u64,
+    receiver_repair_window_data_frame_count: u64,
+    receiver_repair_window_first_seen_ms: Option<u64>,
+    receiver_repair_window_last_seen_ms: Option<u64>,
+    receiver_udp_drop_or_overrun_suspected: bool,
     receiver_source_pin_drop_decoded_data_frame_count: u64,
     receiver_source_pin_drop_decoded_repair_like_count: u64,
     receiver_source_pin_drop_decoded_endpoint_record_count: u64,
@@ -35324,6 +35414,16 @@ impl NativeExecutionPipelineAggregateV1 {
             receiver_data_frame_repair_like_sequence_ranges_sample: serde_json::json!([]),
             receiver_data_frame_repair_kind_sample: serde_json::json!([]),
             receiver_data_frame_repair_like_source_addr_sample: serde_json::json!([]),
+            receiver_socket_recv_buffer_bytes: None,
+            receiver_recv_loop_iteration_count: 0,
+            receiver_recv_success_during_repair_window_count: 0,
+            receiver_recv_gap_max_ms: None,
+            receiver_recv_gap_p95_ms: None,
+            receiver_repair_window_socket_recv_count: 0,
+            receiver_repair_window_data_frame_count: 0,
+            receiver_repair_window_first_seen_ms: None,
+            receiver_repair_window_last_seen_ms: None,
+            receiver_udp_drop_or_overrun_suspected: false,
             receiver_source_pin_drop_decoded_data_frame_count: 0,
             receiver_source_pin_drop_decoded_repair_like_count: 0,
             receiver_source_pin_drop_decoded_endpoint_record_count: 0,
@@ -35971,6 +36071,41 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("receiver_data_frame_repair_like_source_addr_sample")
             .cloned()
             .unwrap_or_else(|| serde_json::json!([]));
+        self.receiver_socket_recv_buffer_bytes = ingress
+            .get("receiver_socket_recv_buffer_bytes")
+            .and_then(|value| value.as_u64());
+        self.receiver_recv_loop_iteration_count = ingress
+            .get("receiver_recv_loop_iteration_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_recv_success_during_repair_window_count = ingress
+            .get("receiver_recv_success_during_repair_window_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_recv_gap_max_ms = ingress
+            .get("receiver_recv_gap_max_ms")
+            .and_then(|value| value.as_u64());
+        self.receiver_recv_gap_p95_ms = ingress
+            .get("receiver_recv_gap_p95_ms")
+            .and_then(|value| value.as_u64());
+        self.receiver_repair_window_socket_recv_count = ingress
+            .get("receiver_repair_window_socket_recv_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_repair_window_data_frame_count = ingress
+            .get("receiver_repair_window_data_frame_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_repair_window_first_seen_ms = ingress
+            .get("receiver_repair_window_first_seen_ms")
+            .and_then(|value| value.as_u64());
+        self.receiver_repair_window_last_seen_ms = ingress
+            .get("receiver_repair_window_last_seen_ms")
+            .and_then(|value| value.as_u64());
+        self.receiver_udp_drop_or_overrun_suspected = ingress
+            .get("receiver_udp_drop_or_overrun_suspected")
+            .and_then(|value| value.as_bool())
+            .unwrap_or_default();
         self.receiver_source_pin_drop_decoded_data_frame_count = ingress
             .get("receiver_source_pin_drop_decoded_data_frame_count")
             .and_then(|value| value.as_u64())
@@ -37970,6 +38105,46 @@ impl NativeExecutionPipelineAggregateV1 {
                 .clone(),
         );
         out.insert(
+            "receiver_socket_recv_buffer_bytes".to_string(),
+            serde_json::json!(self.receiver_socket_recv_buffer_bytes),
+        );
+        out.insert(
+            "receiver_recv_loop_iteration_count".to_string(),
+            serde_json::json!(self.receiver_recv_loop_iteration_count),
+        );
+        out.insert(
+            "receiver_recv_success_during_repair_window_count".to_string(),
+            serde_json::json!(self.receiver_recv_success_during_repair_window_count),
+        );
+        out.insert(
+            "receiver_recv_gap_max_ms".to_string(),
+            serde_json::json!(self.receiver_recv_gap_max_ms),
+        );
+        out.insert(
+            "receiver_recv_gap_p95_ms".to_string(),
+            serde_json::json!(self.receiver_recv_gap_p95_ms),
+        );
+        out.insert(
+            "receiver_repair_window_socket_recv_count".to_string(),
+            serde_json::json!(self.receiver_repair_window_socket_recv_count),
+        );
+        out.insert(
+            "receiver_repair_window_data_frame_count".to_string(),
+            serde_json::json!(self.receiver_repair_window_data_frame_count),
+        );
+        out.insert(
+            "receiver_repair_window_first_seen_ms".to_string(),
+            serde_json::json!(self.receiver_repair_window_first_seen_ms),
+        );
+        out.insert(
+            "receiver_repair_window_last_seen_ms".to_string(),
+            serde_json::json!(self.receiver_repair_window_last_seen_ms),
+        );
+        out.insert(
+            "receiver_udp_drop_or_overrun_suspected".to_string(),
+            serde_json::json!(self.receiver_udp_drop_or_overrun_suspected),
+        );
+        out.insert(
             "receiver_source_pin_drop_decoded_data_frame_count".to_string(),
             serde_json::json!(self.receiver_source_pin_drop_decoded_data_frame_count),
         );
@@ -38115,6 +38290,46 @@ impl NativeExecutionPipelineAggregateV1 {
             "native_receiver_data_frame_repair_like_source_addr_sample".to_string(),
             self.receiver_data_frame_repair_like_source_addr_sample
                 .clone(),
+        );
+        out.insert(
+            "native_receiver_socket_recv_buffer_bytes".to_string(),
+            serde_json::json!(self.receiver_socket_recv_buffer_bytes),
+        );
+        out.insert(
+            "native_receiver_recv_loop_iteration_count".to_string(),
+            serde_json::json!(self.receiver_recv_loop_iteration_count),
+        );
+        out.insert(
+            "native_receiver_recv_success_during_repair_window_count".to_string(),
+            serde_json::json!(self.receiver_recv_success_during_repair_window_count),
+        );
+        out.insert(
+            "native_receiver_recv_gap_max_ms".to_string(),
+            serde_json::json!(self.receiver_recv_gap_max_ms),
+        );
+        out.insert(
+            "native_receiver_recv_gap_p95_ms".to_string(),
+            serde_json::json!(self.receiver_recv_gap_p95_ms),
+        );
+        out.insert(
+            "native_receiver_repair_window_socket_recv_count".to_string(),
+            serde_json::json!(self.receiver_repair_window_socket_recv_count),
+        );
+        out.insert(
+            "native_receiver_repair_window_data_frame_count".to_string(),
+            serde_json::json!(self.receiver_repair_window_data_frame_count),
+        );
+        out.insert(
+            "native_receiver_repair_window_first_seen_ms".to_string(),
+            serde_json::json!(self.receiver_repair_window_first_seen_ms),
+        );
+        out.insert(
+            "native_receiver_repair_window_last_seen_ms".to_string(),
+            serde_json::json!(self.receiver_repair_window_last_seen_ms),
+        );
+        out.insert(
+            "native_receiver_udp_drop_or_overrun_suspected".to_string(),
+            serde_json::json!(self.receiver_udp_drop_or_overrun_suspected),
         );
         out.insert(
             "native_receiver_source_pin_drop_decoded_data_frame_count".to_string(),

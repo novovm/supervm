@@ -1091,6 +1091,22 @@ pub struct NetworkRuntimeReceiverDecodeAttributionV1 {
     pub receiver_data_frame_repair_like_source_addr_sample: Vec<String>,
     #[serde(skip)]
     pub receiver_data_frame_repair_like_sequence_seen: HashSet<u64>,
+    pub receiver_socket_recv_buffer_bytes: Option<u64>,
+    pub receiver_recv_loop_iteration_count: u64,
+    pub receiver_recv_success_during_repair_window_count: u64,
+    pub receiver_recv_gap_max_ms: Option<u64>,
+    pub receiver_recv_gap_p95_ms: Option<u64>,
+    pub receiver_repair_window_socket_recv_count: u64,
+    pub receiver_repair_window_data_frame_count: u64,
+    pub receiver_repair_window_first_seen_ms: Option<u64>,
+    pub receiver_repair_window_last_seen_ms: Option<u64>,
+    pub receiver_udp_drop_or_overrun_suspected: bool,
+    #[serde(skip)]
+    pub receiver_last_recv_ms: Option<u64>,
+    #[serde(skip)]
+    pub receiver_recv_gap_samples_ms: Vec<u64>,
+    #[serde(skip)]
+    pub receiver_repair_window_active: bool,
     pub receiver_udp_packet_source_addr_sample: Vec<String>,
     pub receiver_udp_packet_len_samples: Vec<u64>,
     pub receiver_udp_packet_len_min: Option<u64>,
@@ -1189,6 +1205,16 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
         Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
     pub receiver_data_frame_repair_kind_sample: Vec<String>,
     pub receiver_data_frame_repair_like_source_addr_sample: Vec<String>,
+    pub receiver_socket_recv_buffer_bytes: Option<u64>,
+    pub receiver_recv_loop_iteration_count: u64,
+    pub receiver_recv_success_during_repair_window_count: u64,
+    pub receiver_recv_gap_max_ms: Option<u64>,
+    pub receiver_recv_gap_p95_ms: Option<u64>,
+    pub receiver_repair_window_socket_recv_count: u64,
+    pub receiver_repair_window_data_frame_count: u64,
+    pub receiver_repair_window_first_seen_ms: Option<u64>,
+    pub receiver_repair_window_last_seen_ms: Option<u64>,
+    pub receiver_udp_drop_or_overrun_suspected: bool,
     pub receiver_udp_packet_source_addr_sample: Vec<String>,
     pub receiver_udp_packet_len_min: Option<u64>,
     pub receiver_udp_packet_len_p50: Option<u64>,
@@ -1649,6 +1675,13 @@ fn receiver_decode_attribution_percentile_v1(samples: &[u64], percentile: u64) -
     sorted.get(index as usize).copied()
 }
 
+fn network_runtime_now_ms_v1() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().try_into().unwrap_or(u64::MAX))
+        .unwrap_or_default()
+}
+
 fn receiver_decode_attribution_observe_packet_sample_v1(
     state: &mut NetworkRuntimeReceiverDecodeAttributionV1,
     source: SocketAddr,
@@ -1688,6 +1721,13 @@ fn receiver_decode_attribution_refresh_len_percentiles_v1(
         receiver_decode_attribution_percentile_v1(&state.receiver_udp_packet_len_samples, 50);
     state.receiver_udp_packet_len_p90 =
         receiver_decode_attribution_percentile_v1(&state.receiver_udp_packet_len_samples, 90);
+}
+
+fn receiver_decode_attribution_refresh_recv_gap_percentiles_v1(
+    state: &mut NetworkRuntimeReceiverDecodeAttributionV1,
+) {
+    state.receiver_recv_gap_p95_ms =
+        receiver_decode_attribution_percentile_v1(&state.receiver_recv_gap_samples_ms, 95);
 }
 
 fn receiver_decode_attribution_classify_decode_error_v1(
@@ -1777,12 +1817,45 @@ pub fn observe_network_runtime_receiver_udp_packet_recv_v1(
         return;
     };
     let state = guard.entry(chain_id).or_default();
+    let now_ms = network_runtime_now_ms_v1();
+    if let Some(previous_ms) = state.receiver_last_recv_ms {
+        let gap_ms = now_ms.saturating_sub(previous_ms);
+        receiver_decode_attribution_sample_push_v1(&mut state.receiver_recv_gap_samples_ms, gap_ms);
+        state.receiver_recv_gap_max_ms = Some(
+            state
+                .receiver_recv_gap_max_ms
+                .map(|current| current.max(gap_ms))
+                .unwrap_or(gap_ms),
+        );
+        if state.receiver_repair_window_active && gap_ms >= 100 {
+            state.receiver_udp_drop_or_overrun_suspected = true;
+        }
+        receiver_decode_attribution_refresh_recv_gap_percentiles_v1(state);
+    }
+    state.receiver_last_recv_ms = Some(now_ms);
+    if state.receiver_repair_window_active {
+        state.receiver_recv_success_during_repair_window_count = state
+            .receiver_recv_success_during_repair_window_count
+            .saturating_add(1);
+        state.receiver_repair_window_socket_recv_count = state
+            .receiver_repair_window_socket_recv_count
+            .saturating_add(1);
+    }
     state.receiver_udp_packet_recv_count = state.receiver_udp_packet_recv_count.saturating_add(1);
     state.receiver_udp_packet_recv_bytes_total = state
         .receiver_udp_packet_recv_bytes_total
         .saturating_add(packet.len().try_into().unwrap_or(u64::MAX));
     receiver_decode_attribution_observe_packet_sample_v1(state, source, packet, "udp_recv");
     receiver_decode_attribution_refresh_len_percentiles_v1(state);
+}
+
+pub fn observe_network_runtime_receiver_recv_loop_iteration_v1(chain_id: u64) {
+    let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
+        return;
+    };
+    let state = guard.entry(chain_id).or_default();
+    state.receiver_recv_loop_iteration_count =
+        state.receiver_recv_loop_iteration_count.saturating_add(1);
 }
 
 pub fn observe_network_runtime_receiver_udp_packet_decode_attempt_v1(chain_id: u64) {
@@ -1819,6 +1892,11 @@ pub fn observe_network_runtime_receiver_udp_packet_classifier_v1(chain_id: u64, 
             state.receiver_classifier_transaction_frame_count = state
                 .receiver_classifier_transaction_frame_count
                 .saturating_add(1);
+            if state.receiver_repair_window_active {
+                state.receiver_repair_window_data_frame_count = state
+                    .receiver_repair_window_data_frame_count
+                    .saturating_add(1);
+            }
         }
         "repair_frame" => {
             state.receiver_classifier_repair_frame_count = state
@@ -1843,6 +1921,21 @@ pub fn observe_network_runtime_receiver_data_frame_repair_like_v1(
         return;
     };
     let state = guard.entry(chain_id).or_default();
+    let now_ms = network_runtime_now_ms_v1();
+    if !state.receiver_repair_window_active {
+        state.receiver_repair_window_active = true;
+        state.receiver_repair_window_first_seen_ms = Some(now_ms);
+        state.receiver_recv_success_during_repair_window_count = state
+            .receiver_recv_success_during_repair_window_count
+            .saturating_add(1);
+        state.receiver_repair_window_socket_recv_count = state
+            .receiver_repair_window_socket_recv_count
+            .saturating_add(1);
+        state.receiver_repair_window_data_frame_count = state
+            .receiver_repair_window_data_frame_count
+            .saturating_add(1);
+    }
+    state.receiver_repair_window_last_seen_ms = Some(now_ms);
     state.receiver_classifier_data_frame_repair_like_count = state
         .receiver_classifier_data_frame_repair_like_count
         .saturating_add(1);
@@ -2621,6 +2714,19 @@ fn apply_network_runtime_receiver_decode_attribution_summary_v1(
     summary.receiver_data_frame_repair_like_source_addr_sample = decode
         .receiver_data_frame_repair_like_source_addr_sample
         .clone();
+    summary.receiver_socket_recv_buffer_bytes = decode.receiver_socket_recv_buffer_bytes;
+    summary.receiver_recv_loop_iteration_count = decode.receiver_recv_loop_iteration_count;
+    summary.receiver_recv_success_during_repair_window_count =
+        decode.receiver_recv_success_during_repair_window_count;
+    summary.receiver_recv_gap_max_ms = decode.receiver_recv_gap_max_ms;
+    summary.receiver_recv_gap_p95_ms = decode.receiver_recv_gap_p95_ms;
+    summary.receiver_repair_window_socket_recv_count =
+        decode.receiver_repair_window_socket_recv_count;
+    summary.receiver_repair_window_data_frame_count =
+        decode.receiver_repair_window_data_frame_count;
+    summary.receiver_repair_window_first_seen_ms = decode.receiver_repair_window_first_seen_ms;
+    summary.receiver_repair_window_last_seen_ms = decode.receiver_repair_window_last_seen_ms;
+    summary.receiver_udp_drop_or_overrun_suspected = decode.receiver_udp_drop_or_overrun_suspected;
     summary.receiver_udp_packet_source_addr_sample =
         decode.receiver_udp_packet_source_addr_sample.clone();
     summary.receiver_udp_packet_len_min = decode.receiver_udp_packet_len_min;
