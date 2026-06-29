@@ -1088,6 +1088,7 @@ pub struct NetworkRuntimeReceiverDecodeAttributionV1 {
     pub receiver_data_frame_repair_like_sequence_ranges_sample:
         Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
     pub receiver_data_frame_repair_kind_sample: Vec<String>,
+    pub receiver_data_frame_repair_like_source_addr_sample: Vec<String>,
     #[serde(skip)]
     pub receiver_data_frame_repair_like_sequence_seen: HashSet<u64>,
     pub receiver_udp_packet_source_addr_sample: Vec<String>,
@@ -1187,6 +1188,7 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
     pub receiver_data_frame_repair_like_sequence_ranges_sample:
         Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
     pub receiver_data_frame_repair_kind_sample: Vec<String>,
+    pub receiver_data_frame_repair_like_source_addr_sample: Vec<String>,
     pub receiver_udp_packet_source_addr_sample: Vec<String>,
     pub receiver_udp_packet_len_min: Option<u64>,
     pub receiver_udp_packet_len_p50: Option<u64>,
@@ -1832,6 +1834,7 @@ pub fn observe_network_runtime_receiver_udp_packet_classifier_v1(chain_id: u64, 
 
 pub fn observe_network_runtime_receiver_data_frame_repair_like_v1(
     chain_id: u64,
+    source: Option<SocketAddr>,
     frame_kind: Option<&str>,
     sequence: Option<u64>,
     tx_count: u64,
@@ -1894,6 +1897,12 @@ pub fn observe_network_runtime_receiver_data_frame_repair_like_v1(
         &mut state.receiver_data_frame_repair_kind_sample,
         sample,
     );
+    if let Some(source) = source {
+        receiver_decode_attribution_sample_push_v1(
+            &mut state.receiver_data_frame_repair_like_source_addr_sample,
+            source.to_string(),
+        );
+    }
 }
 
 pub fn observe_network_runtime_receiver_source_pin_drop_decoded_v1(
@@ -2609,6 +2618,9 @@ fn apply_network_runtime_receiver_decode_attribution_summary_v1(
         .clone();
     summary.receiver_data_frame_repair_kind_sample =
         decode.receiver_data_frame_repair_kind_sample.clone();
+    summary.receiver_data_frame_repair_like_source_addr_sample = decode
+        .receiver_data_frame_repair_like_source_addr_sample
+        .clone();
     summary.receiver_udp_packet_source_addr_sample =
         decode.receiver_udp_packet_source_addr_sample.clone();
     summary.receiver_udp_packet_len_min = decode.receiver_udp_packet_len_min;

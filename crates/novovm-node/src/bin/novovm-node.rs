@@ -34260,6 +34260,12 @@ fn build_native_execution_pipeline_report_v1(
                 serde_json::json!(pending_summary.receiver_data_frame_repair_kind_sample),
             ),
             (
+                "receiver_data_frame_repair_like_source_addr_sample",
+                serde_json::json!(
+                    pending_summary.receiver_data_frame_repair_like_source_addr_sample
+                ),
+            ),
+            (
                 "receiver_source_pin_drop_decoded_data_frame_count",
                 serde_json::json!(
                     pending_summary.receiver_source_pin_drop_decoded_data_frame_count
@@ -34422,6 +34428,12 @@ fn build_native_execution_pipeline_report_v1(
             (
                 "native_receiver_data_frame_repair_kind_sample",
                 serde_json::json!(pending_summary.receiver_data_frame_repair_kind_sample),
+            ),
+            (
+                "native_receiver_data_frame_repair_like_source_addr_sample",
+                serde_json::json!(
+                    pending_summary.receiver_data_frame_repair_like_source_addr_sample
+                ),
             ),
             (
                 "native_receiver_source_pin_drop_decoded_data_frame_count",
@@ -34962,6 +34974,7 @@ struct NativeExecutionPipelineAggregateV1 {
     receiver_data_frame_repair_like_sequence_max: Option<u64>,
     receiver_data_frame_repair_like_sequence_ranges_sample: serde_json::Value,
     receiver_data_frame_repair_kind_sample: serde_json::Value,
+    receiver_data_frame_repair_like_source_addr_sample: serde_json::Value,
     receiver_source_pin_drop_decoded_data_frame_count: u64,
     receiver_source_pin_drop_decoded_repair_like_count: u64,
     receiver_source_pin_drop_decoded_endpoint_record_count: u64,
@@ -35310,6 +35323,7 @@ impl NativeExecutionPipelineAggregateV1 {
             receiver_data_frame_repair_like_sequence_max: None,
             receiver_data_frame_repair_like_sequence_ranges_sample: serde_json::json!([]),
             receiver_data_frame_repair_kind_sample: serde_json::json!([]),
+            receiver_data_frame_repair_like_source_addr_sample: serde_json::json!([]),
             receiver_source_pin_drop_decoded_data_frame_count: 0,
             receiver_source_pin_drop_decoded_repair_like_count: 0,
             receiver_source_pin_drop_decoded_endpoint_record_count: 0,
@@ -35951,6 +35965,10 @@ impl NativeExecutionPipelineAggregateV1 {
             .unwrap_or_else(|| serde_json::json!([]));
         self.receiver_data_frame_repair_kind_sample = ingress
             .get("receiver_data_frame_repair_kind_sample")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        self.receiver_data_frame_repair_like_source_addr_sample = ingress
+            .get("receiver_data_frame_repair_like_source_addr_sample")
             .cloned()
             .unwrap_or_else(|| serde_json::json!([]));
         self.receiver_source_pin_drop_decoded_data_frame_count = ingress
@@ -37947,6 +37965,11 @@ impl NativeExecutionPipelineAggregateV1 {
             self.receiver_data_frame_repair_kind_sample.clone(),
         );
         out.insert(
+            "receiver_data_frame_repair_like_source_addr_sample".to_string(),
+            self.receiver_data_frame_repair_like_source_addr_sample
+                .clone(),
+        );
+        out.insert(
             "receiver_source_pin_drop_decoded_data_frame_count".to_string(),
             serde_json::json!(self.receiver_source_pin_drop_decoded_data_frame_count),
         );
@@ -38087,6 +38110,11 @@ impl NativeExecutionPipelineAggregateV1 {
         out.insert(
             "native_receiver_data_frame_repair_kind_sample".to_string(),
             self.receiver_data_frame_repair_kind_sample.clone(),
+        );
+        out.insert(
+            "native_receiver_data_frame_repair_like_source_addr_sample".to_string(),
+            self.receiver_data_frame_repair_like_source_addr_sample
+                .clone(),
         );
         out.insert(
             "native_receiver_source_pin_drop_decoded_data_frame_count".to_string(),

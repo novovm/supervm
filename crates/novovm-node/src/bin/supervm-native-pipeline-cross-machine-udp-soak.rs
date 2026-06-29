@@ -10,10 +10,10 @@ use novovm_node::tx_ingress::{
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV,
 };
 use novovm_protocol::{
-    encode_nov_native_tx_wire_v1, EvmNativeMessage, EvmNativeTransactionFrameAuthV1,
-    NodeEndpointRecord, NodeId, NovExecuteTxV1, NovExecutionModeV1, NovExecutionPolicyV1,
-    NovExecutionTargetV1, NovFeePolicyV1, NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1,
-    NovVerificationModeV1, ProtocolMessage,
+    encode as protocol_encode, encode_nov_native_tx_wire_v1, EvmNativeMessage,
+    EvmNativeTransactionFrameAuthV1, NodeEndpointRecord, NodeId, NovExecuteTxV1,
+    NovExecutionModeV1, NovExecutionPolicyV1, NovExecutionTargetV1, NovFeePolicyV1,
+    NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1, ProtocolMessage,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -140,6 +140,12 @@ struct SendScheduleStatsV1 {
     send_failure_first_copy_index: Option<u64>,
     send_failure_first_error: Option<String>,
     endpoint_record_sent_count: u64,
+    sender_udp_local_addr: Option<String>,
+    sender_udp_target_addr: Option<String>,
+    sender_udp_bytes_total: u64,
+    sender_udp_sequence_min: Option<u64>,
+    sender_udp_sequence_max: Option<u64>,
+    sender_udp_sequence_sample: Vec<u64>,
     sent_by_hash: BTreeMap<String, u64>,
 }
 
@@ -2269,6 +2275,35 @@ fn merge_send_stats(target: &mut SendScheduleStatsV1, next: SendScheduleStatsV1)
     target.endpoint_record_sent_count = target
         .endpoint_record_sent_count
         .saturating_add(next.endpoint_record_sent_count);
+    if target.sender_udp_local_addr.is_none() {
+        target.sender_udp_local_addr = next.sender_udp_local_addr;
+    }
+    if target.sender_udp_target_addr.is_none() {
+        target.sender_udp_target_addr = next.sender_udp_target_addr;
+    }
+    target.sender_udp_bytes_total = target
+        .sender_udp_bytes_total
+        .saturating_add(next.sender_udp_bytes_total);
+    target.sender_udp_sequence_min =
+        match (target.sender_udp_sequence_min, next.sender_udp_sequence_min) {
+            (Some(current), Some(next)) => Some(current.min(next)),
+            (Some(current), None) => Some(current),
+            (None, Some(next)) => Some(next),
+            (None, None) => None,
+        };
+    target.sender_udp_sequence_max =
+        match (target.sender_udp_sequence_max, next.sender_udp_sequence_max) {
+            (Some(current), Some(next)) => Some(current.max(next)),
+            (Some(current), None) => Some(current),
+            (None, Some(next)) => Some(next),
+            (None, None) => None,
+        };
+    for sequence in next.sender_udp_sequence_sample {
+        if target.sender_udp_sequence_sample.len() >= 16 {
+            break;
+        }
+        target.sender_udp_sequence_sample.push(sequence);
+    }
     for (hash, count) in next.sent_by_hash {
         *target.sent_by_hash.entry(hash).or_default() += count;
     }
@@ -2296,6 +2331,12 @@ fn empty_send_stats() -> SendScheduleStatsV1 {
         send_failure_first_copy_index: None,
         send_failure_first_error: None,
         endpoint_record_sent_count: 0,
+        sender_udp_local_addr: None,
+        sender_udp_target_addr: None,
+        sender_udp_bytes_total: 0,
+        sender_udp_sequence_min: None,
+        sender_udp_sequence_max: None,
+        sender_udp_sequence_sample: Vec::new(),
         sent_by_hash: BTreeMap::new(),
     }
 }
@@ -13745,6 +13786,10 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_ranges_sample"))
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
+            "receiver_data_frame_repair_like_source_addr_sample": repair_source
+                .and_then(|sample| sample.get("receiver_data_frame_repair_like_source_addr_sample"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
             "native_receiver_data_frame_repair_like_sequence_min": repair_source
                 .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_sequence_min"))
                 .cloned(),
@@ -13753,6 +13798,14 @@ fn write_synthetic_receiver_failure_report(
                 .cloned(),
             "native_receiver_data_frame_repair_like_sequence_ranges_sample": repair_source
                 .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_sequence_ranges_sample"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "native_receiver_data_frame_repair_like_source_addr_sample": repair_source
+                .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_source_addr_sample"))
+                .or_else(|| {
+                    repair_source
+                        .and_then(|sample| sample.get("receiver_data_frame_repair_like_source_addr_sample"))
+                })
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
             "receiver_source_pin_drop_decoded_repair_like_count": repair_source
@@ -14000,6 +14053,10 @@ fn write_synthetic_receiver_failure_report(
                 .and_then(|sample| sample.get("receiver_data_frame_repair_like_sequence_ranges_sample"))
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
+            "receiver_data_frame_repair_like_source_addr_sample": repair_source
+                .and_then(|sample| sample.get("receiver_data_frame_repair_like_source_addr_sample"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
             "native_receiver_data_frame_repair_like_sequence_min": repair_source
                 .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_sequence_min"))
                 .cloned(),
@@ -14008,6 +14065,14 @@ fn write_synthetic_receiver_failure_report(
                 .cloned(),
             "native_receiver_data_frame_repair_like_sequence_ranges_sample": repair_source
                 .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_sequence_ranges_sample"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+            "native_receiver_data_frame_repair_like_source_addr_sample": repair_source
+                .and_then(|sample| sample.get("native_receiver_data_frame_repair_like_source_addr_sample"))
+                .or_else(|| {
+                    repair_source
+                        .and_then(|sample| sample.get("receiver_data_frame_repair_like_source_addr_sample"))
+                })
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!([])),
             "receiver_source_pin_drop_decoded_repair_like_count": repair_source
@@ -14308,6 +14373,7 @@ fn copy_native_receiver_attribution_fields_v1(
         "receiver_data_frame_repair_like_sequence_max",
         "receiver_data_frame_repair_like_sequence_ranges_sample",
         "receiver_data_frame_repair_kind_sample",
+        "receiver_data_frame_repair_like_source_addr_sample",
         "receiver_source_pin_drop_decoded_data_frame_count",
         "receiver_source_pin_drop_decoded_repair_like_count",
         "receiver_source_pin_drop_decoded_endpoint_record_count",
@@ -14343,6 +14409,7 @@ fn copy_native_receiver_attribution_fields_v1(
         "native_receiver_data_frame_repair_like_sequence_max",
         "native_receiver_data_frame_repair_like_sequence_ranges_sample",
         "native_receiver_data_frame_repair_kind_sample",
+        "native_receiver_data_frame_repair_like_source_addr_sample",
         "native_receiver_source_pin_drop_decoded_data_frame_count",
         "native_receiver_source_pin_drop_decoded_repair_like_count",
         "native_receiver_source_pin_drop_decoded_endpoint_record_count",
@@ -16352,6 +16419,7 @@ fn diagnostics_summary_sample(
         "receiver_data_frame_repair_like_sequence_max": summary.get("receiver_data_frame_repair_like_sequence_max").cloned().unwrap_or(Value::Null),
         "receiver_data_frame_repair_like_sequence_ranges_sample": summary.get("receiver_data_frame_repair_like_sequence_ranges_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "receiver_data_frame_repair_kind_sample": summary.get("receiver_data_frame_repair_kind_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "receiver_data_frame_repair_like_source_addr_sample": summary.get("receiver_data_frame_repair_like_source_addr_sample").cloned().unwrap_or_else(|| serde_json::json!([])),
         "receiver_source_pin_drop_decoded_data_frame_count": summary_u64(summary, "receiver_source_pin_drop_decoded_data_frame_count"),
         "receiver_source_pin_drop_decoded_repair_like_count": summary_u64(summary, "receiver_source_pin_drop_decoded_repair_like_count"),
         "receiver_source_pin_drop_decoded_endpoint_record_count": summary_u64(summary, "receiver_source_pin_drop_decoded_endpoint_record_count"),
@@ -16387,6 +16455,7 @@ fn diagnostics_summary_sample(
         "native_receiver_data_frame_repair_like_sequence_max": summary.get("native_receiver_data_frame_repair_like_sequence_max").or_else(|| summary.get("receiver_data_frame_repair_like_sequence_max")).cloned().unwrap_or(Value::Null),
         "native_receiver_data_frame_repair_like_sequence_ranges_sample": summary.get("native_receiver_data_frame_repair_like_sequence_ranges_sample").or_else(|| summary.get("receiver_data_frame_repair_like_sequence_ranges_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
         "native_receiver_data_frame_repair_kind_sample": summary.get("native_receiver_data_frame_repair_kind_sample").or_else(|| summary.get("receiver_data_frame_repair_kind_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
+        "native_receiver_data_frame_repair_like_source_addr_sample": summary.get("native_receiver_data_frame_repair_like_source_addr_sample").or_else(|| summary.get("receiver_data_frame_repair_like_source_addr_sample")).cloned().unwrap_or_else(|| serde_json::json!([])),
         "native_receiver_source_pin_drop_decoded_data_frame_count": summary_u64(summary, "native_receiver_source_pin_drop_decoded_data_frame_count").max(summary_u64(summary, "receiver_source_pin_drop_decoded_data_frame_count")),
         "native_receiver_source_pin_drop_decoded_repair_like_count": summary_u64(summary, "native_receiver_source_pin_drop_decoded_repair_like_count").max(summary_u64(summary, "receiver_source_pin_drop_decoded_repair_like_count")),
         "native_receiver_source_pin_drop_decoded_endpoint_record_count": summary_u64(summary, "native_receiver_source_pin_drop_decoded_endpoint_record_count").max(summary_u64(summary, "receiver_source_pin_drop_decoded_endpoint_record_count")),
@@ -17486,6 +17555,8 @@ fn send_scheduled_batch(
     sender
         .register_peer(NodeId(receiver_node), receiver_addr)
         .with_context(|| format!("register cross-machine receiver peer failed: {receiver_addr}"))?;
+    let sender_udp_local_addr = sender.local_addr().ok().map(|addr| addr.to_string());
+    let sender_udp_target_addr = Some(receiver_addr.to_string());
     let mut endpoint_record_sent_count = 0u64;
     if frame_kind == "primary"
         && send_sender_endpoint_record_v1(
@@ -17506,6 +17577,10 @@ fn send_scheduled_batch(
     let mut dropped_packets = 0u64;
     let mut send_retry_count = 0u64;
     let mut send_would_block_count = 0u64;
+    let mut sender_udp_bytes_total = 0u64;
+    let mut sender_udp_sequence_min: Option<u64> = None;
+    let mut sender_udp_sequence_max: Option<u64> = None;
+    let mut sender_udp_sequence_sample = Vec::<u64>::new();
     let duplicated_packets = txs
         .iter()
         .filter(|tx| tx.copy_index > 0)
@@ -17541,6 +17616,9 @@ fn send_scheduled_batch(
                 tx.copy_index,
             ),
         });
+        let encoded_len = protocol_encode(&msg)
+            .map(|encoded| encoded.len().try_into().unwrap_or(u64::MAX))
+            .unwrap_or(0);
         match safe_send_with_retry(&sender, NodeId(receiver_node), msg, retry) {
             Ok(retry_stats) => {
                 send_retry_count = send_retry_count.saturating_add(retry_stats.retry_count);
@@ -17550,6 +17628,20 @@ fn send_scheduled_batch(
                 let hash = hex_lower(&tx.tx_hash);
                 sent_unique.insert(hash.clone());
                 *sent_by_hash.entry(hash).or_default() += 1;
+                sender_udp_bytes_total = sender_udp_bytes_total.saturating_add(encoded_len);
+                sender_udp_sequence_min = Some(
+                    sender_udp_sequence_min
+                        .map(|current| current.min(tx.index))
+                        .unwrap_or(tx.index),
+                );
+                sender_udp_sequence_max = Some(
+                    sender_udp_sequence_max
+                        .map(|current| current.max(tx.index))
+                        .unwrap_or(tx.index),
+                );
+                if sender_udp_sequence_sample.len() < 16 {
+                    sender_udp_sequence_sample.push(tx.index);
+                }
                 if delay_ms > 0 {
                     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                 }
@@ -17576,6 +17668,12 @@ fn send_scheduled_batch(
                     send_failure_first_copy_index: Some(tx.copy_index),
                     send_failure_first_error: Some(error),
                     endpoint_record_sent_count,
+                    sender_udp_local_addr,
+                    sender_udp_target_addr,
+                    sender_udp_bytes_total,
+                    sender_udp_sequence_min,
+                    sender_udp_sequence_max,
+                    sender_udp_sequence_sample,
                     sent_by_hash,
                 });
             }
@@ -17596,6 +17694,12 @@ fn send_scheduled_batch(
         send_failure_first_copy_index: None,
         send_failure_first_error: None,
         endpoint_record_sent_count,
+        sender_udp_local_addr,
+        sender_udp_target_addr,
+        sender_udp_bytes_total,
+        sender_udp_sequence_min,
+        sender_udp_sequence_max,
+        sender_udp_sequence_sample,
         sent_by_hash,
     })
 }
@@ -22045,6 +22149,20 @@ fn run_sender(
                 "transport_auth.frame_kind=repair"
             ],
             "sender_repair_wire_frame_target_addr_sample": [receiver_addr],
+            "sender_repair_udp_local_addr_sample": repair_stats
+                .sender_udp_local_addr
+                .as_ref()
+                .map(|addr| vec![addr.clone()])
+                .unwrap_or_default(),
+            "sender_repair_udp_target_addr_sample": repair_stats
+                .sender_udp_target_addr
+                .as_ref()
+                .map(|addr| vec![addr.clone()])
+                .unwrap_or_else(|| vec![receiver_addr.to_string()]),
+            "sender_repair_udp_bytes_total": repair_stats.sender_udp_bytes_total,
+            "sender_repair_udp_sequence_min": repair_stats.sender_udp_sequence_min,
+            "sender_repair_udp_sequence_max": repair_stats.sender_udp_sequence_max,
+            "sender_repair_udp_sequence_sample": repair_stats.sender_udp_sequence_sample.clone(),
             "sender_repair_encoded_as_data_frame_count": repair_sequence_sent_count,
             "sender_repair_encoded_as_repair_frame_count": 0u64,
             "sender_repair_wire_frame_first_bytes_hex_sample": [],

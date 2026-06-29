@@ -10935,6 +10935,7 @@ impl Transport for UdpTransport {
                             if auth_frame_kind == Some("repair") || *tx_count > 1 {
                                 observe_network_runtime_receiver_data_frame_repair_like_v1(
                                     self.chain_id,
+                                    Some(src),
                                     auth_frame_kind,
                                     auth_sequence,
                                     *tx_count,
