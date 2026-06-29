@@ -1091,6 +1091,13 @@ pub struct NetworkRuntimeReceiverDecodeAttributionV1 {
     pub receiver_data_frame_repair_like_source_addr_sample: Vec<String>,
     #[serde(skip)]
     pub receiver_data_frame_repair_like_sequence_seen: HashSet<u64>,
+    pub receiver_rcvbuf_requested_bytes: Option<u64>,
+    pub receiver_rcvbuf_effective_bytes: Option<u64>,
+    pub receiver_drain_first_enabled: bool,
+    pub receiver_drain_queue_enqueued_count: u64,
+    pub receiver_drain_queue_dequeued_count: u64,
+    pub receiver_drain_queue_max_depth: u64,
+    pub receiver_drain_loop_batch_max: u64,
     pub receiver_socket_recv_buffer_bytes: Option<u64>,
     pub receiver_recv_loop_iteration_count: u64,
     pub receiver_recv_success_during_repair_window_count: u64,
@@ -1205,6 +1212,13 @@ pub struct NetworkRuntimeNativePendingTxSummaryV1 {
         Vec<NetworkRuntimeNativeRepairSequenceRangeV1>,
     pub receiver_data_frame_repair_kind_sample: Vec<String>,
     pub receiver_data_frame_repair_like_source_addr_sample: Vec<String>,
+    pub receiver_rcvbuf_requested_bytes: Option<u64>,
+    pub receiver_rcvbuf_effective_bytes: Option<u64>,
+    pub receiver_drain_first_enabled: bool,
+    pub receiver_drain_queue_enqueued_count: u64,
+    pub receiver_drain_queue_dequeued_count: u64,
+    pub receiver_drain_queue_max_depth: u64,
+    pub receiver_drain_loop_batch_max: u64,
     pub receiver_socket_recv_buffer_bytes: Option<u64>,
     pub receiver_recv_loop_iteration_count: u64,
     pub receiver_recv_success_during_repair_window_count: u64,
@@ -1856,6 +1870,52 @@ pub fn observe_network_runtime_receiver_recv_loop_iteration_v1(chain_id: u64) {
     let state = guard.entry(chain_id).or_default();
     state.receiver_recv_loop_iteration_count =
         state.receiver_recv_loop_iteration_count.saturating_add(1);
+}
+
+pub fn observe_network_runtime_receiver_drain_first_config_v1(
+    chain_id: u64,
+    enabled: bool,
+    batch_max: u64,
+    rcvbuf_requested_bytes: Option<u64>,
+    rcvbuf_effective_bytes: Option<u64>,
+) {
+    let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
+        return;
+    };
+    let state = guard.entry(chain_id).or_default();
+    state.receiver_drain_first_enabled = enabled;
+    state.receiver_drain_loop_batch_max = state.receiver_drain_loop_batch_max.max(batch_max);
+    if state.receiver_rcvbuf_requested_bytes.is_none() {
+        state.receiver_rcvbuf_requested_bytes = rcvbuf_requested_bytes;
+    }
+    if state.receiver_rcvbuf_effective_bytes.is_none() {
+        state.receiver_rcvbuf_effective_bytes = rcvbuf_effective_bytes;
+        state.receiver_socket_recv_buffer_bytes = rcvbuf_effective_bytes;
+    }
+}
+
+pub fn observe_network_runtime_receiver_drain_first_enqueue_v1(
+    chain_id: u64,
+    enqueued_count: u64,
+    queue_depth: u64,
+) {
+    let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
+        return;
+    };
+    let state = guard.entry(chain_id).or_default();
+    state.receiver_drain_queue_enqueued_count = state
+        .receiver_drain_queue_enqueued_count
+        .saturating_add(enqueued_count);
+    state.receiver_drain_queue_max_depth = state.receiver_drain_queue_max_depth.max(queue_depth);
+}
+
+pub fn observe_network_runtime_receiver_drain_first_dequeue_v1(chain_id: u64) {
+    let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
+        return;
+    };
+    let state = guard.entry(chain_id).or_default();
+    state.receiver_drain_queue_dequeued_count =
+        state.receiver_drain_queue_dequeued_count.saturating_add(1);
 }
 
 pub fn observe_network_runtime_receiver_udp_packet_decode_attempt_v1(chain_id: u64) {
@@ -2714,6 +2774,13 @@ fn apply_network_runtime_receiver_decode_attribution_summary_v1(
     summary.receiver_data_frame_repair_like_source_addr_sample = decode
         .receiver_data_frame_repair_like_source_addr_sample
         .clone();
+    summary.receiver_rcvbuf_requested_bytes = decode.receiver_rcvbuf_requested_bytes;
+    summary.receiver_rcvbuf_effective_bytes = decode.receiver_rcvbuf_effective_bytes;
+    summary.receiver_drain_first_enabled = decode.receiver_drain_first_enabled;
+    summary.receiver_drain_queue_enqueued_count = decode.receiver_drain_queue_enqueued_count;
+    summary.receiver_drain_queue_dequeued_count = decode.receiver_drain_queue_dequeued_count;
+    summary.receiver_drain_queue_max_depth = decode.receiver_drain_queue_max_depth;
+    summary.receiver_drain_loop_batch_max = decode.receiver_drain_loop_batch_max;
     summary.receiver_socket_recv_buffer_bytes = decode.receiver_socket_recv_buffer_bytes;
     summary.receiver_recv_loop_iteration_count = decode.receiver_recv_loop_iteration_count;
     summary.receiver_recv_success_during_repair_window_count =

@@ -34266,6 +34266,34 @@ fn build_native_execution_pipeline_report_v1(
                 ),
             ),
             (
+                "receiver_rcvbuf_requested_bytes",
+                serde_json::json!(pending_summary.receiver_rcvbuf_requested_bytes),
+            ),
+            (
+                "receiver_rcvbuf_effective_bytes",
+                serde_json::json!(pending_summary.receiver_rcvbuf_effective_bytes),
+            ),
+            (
+                "receiver_drain_first_enabled",
+                serde_json::json!(pending_summary.receiver_drain_first_enabled),
+            ),
+            (
+                "receiver_drain_queue_enqueued_count",
+                serde_json::json!(pending_summary.receiver_drain_queue_enqueued_count),
+            ),
+            (
+                "receiver_drain_queue_dequeued_count",
+                serde_json::json!(pending_summary.receiver_drain_queue_dequeued_count),
+            ),
+            (
+                "receiver_drain_queue_max_depth",
+                serde_json::json!(pending_summary.receiver_drain_queue_max_depth),
+            ),
+            (
+                "receiver_drain_loop_batch_max",
+                serde_json::json!(pending_summary.receiver_drain_loop_batch_max),
+            ),
+            (
                 "receiver_socket_recv_buffer_bytes",
                 serde_json::json!(pending_summary.receiver_socket_recv_buffer_bytes),
             ),
@@ -34474,6 +34502,34 @@ fn build_native_execution_pipeline_report_v1(
                 serde_json::json!(
                     pending_summary.receiver_data_frame_repair_like_source_addr_sample
                 ),
+            ),
+            (
+                "native_receiver_rcvbuf_requested_bytes",
+                serde_json::json!(pending_summary.receiver_rcvbuf_requested_bytes),
+            ),
+            (
+                "native_receiver_rcvbuf_effective_bytes",
+                serde_json::json!(pending_summary.receiver_rcvbuf_effective_bytes),
+            ),
+            (
+                "native_receiver_drain_first_enabled",
+                serde_json::json!(pending_summary.receiver_drain_first_enabled),
+            ),
+            (
+                "native_receiver_drain_queue_enqueued_count",
+                serde_json::json!(pending_summary.receiver_drain_queue_enqueued_count),
+            ),
+            (
+                "native_receiver_drain_queue_dequeued_count",
+                serde_json::json!(pending_summary.receiver_drain_queue_dequeued_count),
+            ),
+            (
+                "native_receiver_drain_queue_max_depth",
+                serde_json::json!(pending_summary.receiver_drain_queue_max_depth),
+            ),
+            (
+                "native_receiver_drain_loop_batch_max",
+                serde_json::json!(pending_summary.receiver_drain_loop_batch_max),
             ),
             (
                 "native_receiver_socket_recv_buffer_bytes",
@@ -35055,6 +35111,13 @@ struct NativeExecutionPipelineAggregateV1 {
     receiver_data_frame_repair_like_sequence_ranges_sample: serde_json::Value,
     receiver_data_frame_repair_kind_sample: serde_json::Value,
     receiver_data_frame_repair_like_source_addr_sample: serde_json::Value,
+    receiver_rcvbuf_requested_bytes: Option<u64>,
+    receiver_rcvbuf_effective_bytes: Option<u64>,
+    receiver_drain_first_enabled: bool,
+    receiver_drain_queue_enqueued_count: u64,
+    receiver_drain_queue_dequeued_count: u64,
+    receiver_drain_queue_max_depth: u64,
+    receiver_drain_loop_batch_max: u64,
     receiver_socket_recv_buffer_bytes: Option<u64>,
     receiver_recv_loop_iteration_count: u64,
     receiver_recv_success_during_repair_window_count: u64,
@@ -35414,6 +35477,13 @@ impl NativeExecutionPipelineAggregateV1 {
             receiver_data_frame_repair_like_sequence_ranges_sample: serde_json::json!([]),
             receiver_data_frame_repair_kind_sample: serde_json::json!([]),
             receiver_data_frame_repair_like_source_addr_sample: serde_json::json!([]),
+            receiver_rcvbuf_requested_bytes: None,
+            receiver_rcvbuf_effective_bytes: None,
+            receiver_drain_first_enabled: false,
+            receiver_drain_queue_enqueued_count: 0,
+            receiver_drain_queue_dequeued_count: 0,
+            receiver_drain_queue_max_depth: 0,
+            receiver_drain_loop_batch_max: 0,
             receiver_socket_recv_buffer_bytes: None,
             receiver_recv_loop_iteration_count: 0,
             receiver_recv_success_during_repair_window_count: 0,
@@ -36071,6 +36141,32 @@ impl NativeExecutionPipelineAggregateV1 {
             .get("receiver_data_frame_repair_like_source_addr_sample")
             .cloned()
             .unwrap_or_else(|| serde_json::json!([]));
+        self.receiver_rcvbuf_requested_bytes = ingress
+            .get("receiver_rcvbuf_requested_bytes")
+            .and_then(|value| value.as_u64());
+        self.receiver_rcvbuf_effective_bytes = ingress
+            .get("receiver_rcvbuf_effective_bytes")
+            .and_then(|value| value.as_u64());
+        self.receiver_drain_first_enabled = ingress
+            .get("receiver_drain_first_enabled")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        self.receiver_drain_queue_enqueued_count = ingress
+            .get("receiver_drain_queue_enqueued_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_drain_queue_dequeued_count = ingress
+            .get("receiver_drain_queue_dequeued_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_drain_queue_max_depth = ingress
+            .get("receiver_drain_queue_max_depth")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        self.receiver_drain_loop_batch_max = ingress
+            .get("receiver_drain_loop_batch_max")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
         self.receiver_socket_recv_buffer_bytes = ingress
             .get("receiver_socket_recv_buffer_bytes")
             .and_then(|value| value.as_u64());
@@ -38105,6 +38201,34 @@ impl NativeExecutionPipelineAggregateV1 {
                 .clone(),
         );
         out.insert(
+            "receiver_rcvbuf_requested_bytes".to_string(),
+            serde_json::json!(self.receiver_rcvbuf_requested_bytes),
+        );
+        out.insert(
+            "receiver_rcvbuf_effective_bytes".to_string(),
+            serde_json::json!(self.receiver_rcvbuf_effective_bytes),
+        );
+        out.insert(
+            "receiver_drain_first_enabled".to_string(),
+            serde_json::json!(self.receiver_drain_first_enabled),
+        );
+        out.insert(
+            "receiver_drain_queue_enqueued_count".to_string(),
+            serde_json::json!(self.receiver_drain_queue_enqueued_count),
+        );
+        out.insert(
+            "receiver_drain_queue_dequeued_count".to_string(),
+            serde_json::json!(self.receiver_drain_queue_dequeued_count),
+        );
+        out.insert(
+            "receiver_drain_queue_max_depth".to_string(),
+            serde_json::json!(self.receiver_drain_queue_max_depth),
+        );
+        out.insert(
+            "receiver_drain_loop_batch_max".to_string(),
+            serde_json::json!(self.receiver_drain_loop_batch_max),
+        );
+        out.insert(
             "receiver_socket_recv_buffer_bytes".to_string(),
             serde_json::json!(self.receiver_socket_recv_buffer_bytes),
         );
@@ -38290,6 +38414,34 @@ impl NativeExecutionPipelineAggregateV1 {
             "native_receiver_data_frame_repair_like_source_addr_sample".to_string(),
             self.receiver_data_frame_repair_like_source_addr_sample
                 .clone(),
+        );
+        out.insert(
+            "native_receiver_rcvbuf_requested_bytes".to_string(),
+            serde_json::json!(self.receiver_rcvbuf_requested_bytes),
+        );
+        out.insert(
+            "native_receiver_rcvbuf_effective_bytes".to_string(),
+            serde_json::json!(self.receiver_rcvbuf_effective_bytes),
+        );
+        out.insert(
+            "native_receiver_drain_first_enabled".to_string(),
+            serde_json::json!(self.receiver_drain_first_enabled),
+        );
+        out.insert(
+            "native_receiver_drain_queue_enqueued_count".to_string(),
+            serde_json::json!(self.receiver_drain_queue_enqueued_count),
+        );
+        out.insert(
+            "native_receiver_drain_queue_dequeued_count".to_string(),
+            serde_json::json!(self.receiver_drain_queue_dequeued_count),
+        );
+        out.insert(
+            "native_receiver_drain_queue_max_depth".to_string(),
+            serde_json::json!(self.receiver_drain_queue_max_depth),
+        );
+        out.insert(
+            "native_receiver_drain_loop_batch_max".to_string(),
+            serde_json::json!(self.receiver_drain_loop_batch_max),
         );
         out.insert(
             "native_receiver_socket_recv_buffer_bytes".to_string(),

@@ -79,6 +79,9 @@ use crate::{
     observe_network_runtime_native_pending_tx_repair_probe_v1, observe_network_runtime_peer_head,
     observe_network_runtime_peer_head_with_local_head_max,
     observe_network_runtime_receiver_data_frame_repair_like_v1,
+    observe_network_runtime_receiver_drain_first_config_v1,
+    observe_network_runtime_receiver_drain_first_dequeue_v1,
+    observe_network_runtime_receiver_drain_first_enqueue_v1,
     observe_network_runtime_receiver_recv_loop_iteration_v1,
     observe_network_runtime_receiver_source_pin_drop_decoded_v1,
     observe_network_runtime_receiver_udp_packet_classifier_v1,
@@ -9337,6 +9340,12 @@ pub struct UdpTransport {
     runtime_peer_registered: Arc<DashMap<NodeId, ()>>,
     source_pins: Arc<DashMap<SourcePinKeyV1, SourcePinStateV1>>,
     recv_buf: Arc<Mutex<Vec<u8>>>,
+    drain_queue: Arc<Mutex<VecDeque<(Vec<u8>, SocketAddr)>>>,
+    drain_first_enabled: bool,
+    drain_batch_max: usize,
+    drain_queue_limit: usize,
+    rcvbuf_requested_bytes: Option<u64>,
+    rcvbuf_effective_bytes: Option<u64>,
 }
 
 /// TCP transport for multi-process / multi-host cluster probes.
@@ -9591,6 +9600,23 @@ impl UdpTransport {
         socket
             .set_nonblocking(true)
             .map_err(|e| NetworkError::Io(e.to_string()))?;
+        let drain_first_enabled =
+            !parse_env_bool_v1("NOVOVM_NOVORUDP_RECEIVER_DRAIN_FIRST_DISABLED");
+        let drain_batch_max =
+            parse_env_usize("NOVOVM_NOVORUDP_RECEIVER_DRAIN_FIRST_BATCH_MAX", 4096).max(1);
+        let drain_queue_limit =
+            parse_env_usize("NOVOVM_NOVORUDP_RECEIVER_DRAIN_FIRST_QUEUE_LIMIT", 65_536).max(1);
+        let rcvbuf_requested_bytes = Some(parse_env_u64(
+            "NOVOVM_NOVORUDP_RECEIVER_RCVBUF_BYTES",
+            16 * 1024 * 1024,
+        ));
+        observe_network_runtime_receiver_drain_first_config_v1(
+            chain_id,
+            drain_first_enabled,
+            drain_batch_max.try_into().unwrap_or(u64::MAX),
+            rcvbuf_requested_bytes,
+            None,
+        );
         Ok(Self {
             node,
             chain_id,
@@ -9601,6 +9627,12 @@ impl UdpTransport {
             runtime_peer_registered: Arc::new(DashMap::new()),
             source_pins: Arc::new(DashMap::new()),
             recv_buf: Arc::new(Mutex::new(vec![0u8; max_packet_size.max(1024)])),
+            drain_queue: Arc::new(Mutex::new(VecDeque::new())),
+            drain_first_enabled,
+            drain_batch_max,
+            drain_queue_limit,
+            rcvbuf_requested_bytes,
+            rcvbuf_effective_bytes: None,
         })
     }
 
@@ -10892,88 +10924,140 @@ impl Transport for UdpTransport {
             });
         }
         observe_network_runtime_receiver_recv_loop_iteration_v1(self.chain_id);
+        observe_network_runtime_receiver_drain_first_config_v1(
+            self.chain_id,
+            self.drain_first_enabled,
+            self.drain_batch_max.try_into().unwrap_or(u64::MAX),
+            self.rcvbuf_requested_bytes,
+            self.rcvbuf_effective_bytes,
+        );
 
-        let mut recv_buf = {
-            let mut shared = self
-                .recv_buf
+        let packet_capacity = self
+            .recv_buf
+            .lock()
+            .map(|shared| shared.len().max(1024))
+            .unwrap_or(64 * 1024);
+        let packet_input = if self.drain_first_enabled {
+            let mut queue = self
+                .drain_queue
                 .lock()
-                .map_err(|_| NetworkError::Io("udp recv buffer lock poisoned".to_string()))?;
-            std::mem::take(&mut *shared)
-        };
-        if recv_buf.is_empty() {
-            recv_buf.resize(1024, 0);
-        }
-        let recv_outcome = self.socket.recv_from(recv_buf.as_mut_slice());
-        let decode_outcome = match recv_outcome {
-            Ok((n, src)) => {
-                let packet = &recv_buf[..n];
-                observe_network_runtime_receiver_udp_packet_recv_v1(self.chain_id, src, packet);
-                observe_network_runtime_receiver_udp_packet_decode_attempt_v1(self.chain_id);
-                match protocol_decode(packet) {
-                    Ok(decoded) => {
-                        observe_network_runtime_receiver_udp_packet_decode_ok_v1(self.chain_id);
-                        let frame_kind = match &decoded {
-                            ProtocolMessage::EvmNative(EvmNativeMessage::EndpointRecord {
-                                ..
-                            }) => "endpoint_record",
-                            ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
-                                ..
-                            }) => "transaction_frame",
-                            _ => "unknown",
-                        };
-                        observe_network_runtime_receiver_udp_packet_classifier_v1(
-                            self.chain_id,
-                            frame_kind,
-                        );
-                        if let ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
-                            tx_count,
-                            transport_auth,
-                            ..
-                        }) = &decoded
-                        {
-                            let auth_frame_kind =
-                                transport_auth.as_ref().map(|meta| meta.frame_kind.as_str());
-                            let auth_sequence = transport_auth.as_ref().map(|meta| meta.sequence);
-                            if auth_frame_kind == Some("repair") || *tx_count > 1 {
-                                observe_network_runtime_receiver_data_frame_repair_like_v1(
-                                    self.chain_id,
-                                    Some(src),
-                                    auth_frame_kind,
-                                    auth_sequence,
-                                    *tx_count,
-                                );
-                            }
-                        }
-                        Ok(Some((decoded, src)))
-                    }
-                    Err(e) => {
-                        let error = e.to_string();
-                        observe_network_runtime_receiver_udp_packet_decode_error_v1(
+                .map_err(|_| NetworkError::Io("udp drain queue lock poisoned".to_string()))?;
+            let mut drained = 0u64;
+            while queue.len() < self.drain_queue_limit
+                && drained < self.drain_batch_max.try_into().unwrap_or(u64::MAX)
+            {
+                let mut packet = vec![0u8; packet_capacity];
+                match self.socket.recv_from(packet.as_mut_slice()) {
+                    Ok((n, src)) => {
+                        packet.truncate(n);
+                        observe_network_runtime_receiver_udp_packet_recv_v1(
                             self.chain_id,
                             src,
-                            packet,
-                            &error,
+                            packet.as_slice(),
                         );
-                        Err(NetworkError::Decode(error))
+                        queue.push_back((packet, src));
+                        drained = drained.saturating_add(1);
+                    }
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::WouldBlock
+                            || e.kind() == std::io::ErrorKind::TimedOut
+                            || e.raw_os_error() == Some(10054) =>
+                    {
+                        break;
+                    }
+                    Err(e) => {
+                        if queue.is_empty() {
+                            return Err(NetworkError::Io(e.to_string()));
+                        }
+                        break;
                     }
                 }
             }
-            Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut
-                    || e.raw_os_error() == Some(10054) =>
-            {
-                Ok(None)
+            if drained > 0 {
+                observe_network_runtime_receiver_drain_first_enqueue_v1(
+                    self.chain_id,
+                    drained,
+                    queue.len().try_into().unwrap_or(u64::MAX),
+                );
             }
-            Err(e) => Err(NetworkError::Io(e.to_string())),
+            let popped = queue.pop_front();
+            if popped.is_some() {
+                observe_network_runtime_receiver_drain_first_dequeue_v1(self.chain_id);
+            }
+            popped
+        } else {
+            let mut packet = vec![0u8; packet_capacity];
+            match self.socket.recv_from(packet.as_mut_slice()) {
+                Ok((n, src)) => {
+                    packet.truncate(n);
+                    observe_network_runtime_receiver_udp_packet_recv_v1(
+                        self.chain_id,
+                        src,
+                        packet.as_slice(),
+                    );
+                    Some((packet, src))
+                }
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut
+                        || e.raw_os_error() == Some(10054) =>
+                {
+                    None
+                }
+                Err(e) => return Err(NetworkError::Io(e.to_string())),
+            }
         };
-        let _ = self.recv_buf.lock().map(|mut shared| {
-            *shared = recv_buf;
-        });
-        let (decoded, src) = match decode_outcome {
-            Ok(Some(v)) => v,
-            Ok(None) => return Ok(None),
-            Err(e) => return Err(e),
+        let Some((packet, src)) = packet_input else {
+            return Ok(None);
+        };
+        observe_network_runtime_receiver_udp_packet_decode_attempt_v1(self.chain_id);
+        let decoded = match protocol_decode(packet.as_slice()) {
+            Ok(decoded) => {
+                observe_network_runtime_receiver_udp_packet_decode_ok_v1(self.chain_id);
+                let frame_kind = match &decoded {
+                    ProtocolMessage::EvmNative(EvmNativeMessage::EndpointRecord { .. }) => {
+                        "endpoint_record"
+                    }
+                    ProtocolMessage::EvmNative(EvmNativeMessage::Transactions { .. }) => {
+                        "transaction_frame"
+                    }
+                    _ => "unknown",
+                };
+                observe_network_runtime_receiver_udp_packet_classifier_v1(
+                    self.chain_id,
+                    frame_kind,
+                );
+                if let ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+                    tx_count,
+                    transport_auth,
+                    ..
+                }) = &decoded
+                {
+                    let auth_frame_kind =
+                        transport_auth.as_ref().map(|meta| meta.frame_kind.as_str());
+                    let auth_sequence = transport_auth.as_ref().map(|meta| meta.sequence);
+                    if auth_frame_kind == Some("repair") || *tx_count > 1 {
+                        observe_network_runtime_receiver_data_frame_repair_like_v1(
+                            self.chain_id,
+                            Some(src),
+                            auth_frame_kind,
+                            auth_sequence,
+                            *tx_count,
+                        );
+                    }
+                }
+                decoded
+            }
+            Err(e) => {
+                let error = e.to_string();
+                observe_network_runtime_receiver_udp_packet_decode_error_v1(
+                    self.chain_id,
+                    src,
+                    packet.as_slice(),
+                    &error,
+                );
+                return Err(NetworkError::Decode(error));
+            }
         };
         if !validate_udp_source_contract_v1(&self.source_pins, self.chain_id, src, &decoded) {
             let (decoded_frame_kind, decoded_sequence) = match &decoded {
