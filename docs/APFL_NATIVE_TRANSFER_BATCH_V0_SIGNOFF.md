@@ -216,6 +216,72 @@ AOEM / ledger close = VALIDATED
 NOVORUDP transport ABI = unchanged
 ```
 
+## Throughput Interpretation
+
+This signoff is not a million TPS signoff.
+
+Observed large-sample throughput:
+
+```text
+614400 tx / 4.332s ~= 141828 TPS
+```
+
+Previous expanded batch baseline:
+
+```text
+~18933 TPS
+```
+
+Observed throughput improvement:
+
+```text
+141828 / 18933 ~= 7.49x
+```
+
+This closely matches the byte reduction:
+
+```text
+legacy_bytes_per_tx = 242 B
+apfl_binary_bytes_per_tx = 32 B
+242 / 32 ~= 7.56x
+```
+
+Conclusion:
+
+```text
+APFL is effective.
+Throughput improvement is currently dominated by byte density improvement.
+```
+
+The remaining gap to one million TPS is not a correctness issue and not a sign that APFL failed.
+
+At `32 B / tx`, one million TPS requires at least:
+
+```text
+~32 MB/s effective transaction bytes throughput
+```
+
+The signed large sample achieved approximately:
+
+```text
+32 B/tx * 614400 tx / 4.332s ~= 4.5 MB/s
+```
+
+Therefore the next bottleneck moved to:
+
+```text
+effective bytes/sec
+sender encode / copy / socket send
+receiver APFL decode
+canonical reconstruction
+AOEM adapter_projection_v0 execution
+ledger close
+debug vs release runtime
+single lane / single socket limits
+```
+
+The next optimization stage should measure these costs before changing APFL semantics.
+
 ## Next Work
 
 Do not broaden to generic EVM calls immediately.
@@ -225,7 +291,9 @@ Recommended next steps:
 ```text
 1. Record this as the native transfer APFL baseline.
 2. Tune the low repair count later if needed.
-3. Measure release-mode throughput.
-4. Add payload size / encode / decode attribution if more bottleneck data is needed.
-5. Only then consider zero-copy columnar view or broader transaction families.
+3. Add sender/receiver timing attribution for encode/copy/socket/decode/reconstruction/AOEM/ledger.
+4. Measure release-mode throughput.
+5. Explore zero-copy columnar view only after timing attribution identifies copy/decode as bottlenecks.
+6. Explore multi-lane / multi-socket only after single-lane release baseline is measured.
+7. Only then consider broader transaction families.
 ```
