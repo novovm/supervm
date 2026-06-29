@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::net::{SocketAddr, UdpSocket};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_TX_COUNT: u64 = 2400;
@@ -69,6 +70,7 @@ impl PayloadModeV0 {
 struct SenderStats {
     data_send_attempt: u64,
     data_sent: u64,
+    data_pacing_sleep_count: u64,
     repair_sent: u64,
     duplicate_sent: u64,
     ack_received: u64,
@@ -270,6 +272,9 @@ fn run_sender() -> Result<()> {
     let tx_count = env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_TX_COUNT", DEFAULT_TX_COUNT);
     let payload_mode = PayloadModeV0::from_env();
     let loss = LossInjectionConfigV0::from_env();
+    let data_pacing_chunk_size = env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_DATA_PACING_CHUNK_SIZE", 32);
+    let data_pacing_chunk_gap_ms =
+        env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_DATA_PACING_CHUNK_GAP_MS", 5);
     let timeout = Duration::from_millis(env_u64(
         "NOVOVM_NOVORUDP_NETWORK_ONLY_TIMEOUT_MS",
         DEFAULT_TIMEOUT_MS,
@@ -314,6 +319,14 @@ fn run_sender() -> Result<()> {
             stats.duplicate_sent = stats.duplicate_sent.saturating_add(1);
         }
         stats.data_sent = stats.data_sent.saturating_add(1);
+        if data_pacing_chunk_size > 0
+            && data_pacing_chunk_gap_ms > 0
+            && stats.data_sent % data_pacing_chunk_size == 0
+            && sequence + 1 < tx_count
+        {
+            stats.data_pacing_sleep_count = stats.data_pacing_sleep_count.saturating_add(1);
+            thread::sleep(Duration::from_millis(data_pacing_chunk_gap_ms));
+        }
     }
 
     let mut buf = vec![0u8; 128 * 1024];
@@ -386,6 +399,10 @@ fn run_sender() -> Result<()> {
         "transport_loss_injection_enabled": loss.enabled(),
         "transport_loss_injection_data_loss_bps": loss.data_loss_bps,
         "transport_loss_injection_seed": loss.seed,
+        "sender_transport_data_pacing_enabled": data_pacing_chunk_size > 0 && data_pacing_chunk_gap_ms > 0,
+        "sender_transport_data_pacing_chunk_size": data_pacing_chunk_size,
+        "sender_transport_data_pacing_chunk_gap_ms": data_pacing_chunk_gap_ms,
+        "sender_transport_data_pacing_sleep_count": stats.data_pacing_sleep_count,
         "sender_transport_data_send_attempt_count": stats.data_send_attempt,
         "sender_transport_data_loss_injected_count": stats.data_loss_injected,
         "sender_transport_data_sent_count": stats.data_sent,
