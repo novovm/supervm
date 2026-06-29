@@ -67,11 +67,42 @@ impl PayloadModeV0 {
 
 #[derive(Debug, Clone, Default)]
 struct SenderStats {
+    data_send_attempt: u64,
     data_sent: u64,
     repair_sent: u64,
     duplicate_sent: u64,
     ack_received: u64,
     decode_error_count: u64,
+    data_loss_injected: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LossInjectionConfigV0 {
+    data_loss_bps: u64,
+    seed: u64,
+}
+
+impl LossInjectionConfigV0 {
+    fn from_env() -> Self {
+        Self {
+            data_loss_bps: env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_DATA_LOSS_BPS", 0).min(10_000),
+            seed: env_u64(
+                "NOVOVM_NOVORUDP_NETWORK_ONLY_LOSS_SEED",
+                0x9e37_79b9_7f4a_7c15,
+            ),
+        }
+    }
+
+    const fn enabled(self) -> bool {
+        self.data_loss_bps > 0
+    }
+
+    fn drops_data_sequence(self, sequence: u64) -> bool {
+        if !self.enabled() {
+            return false;
+        }
+        loss_roll_bps_v0(self.seed, sequence) < self.data_loss_bps
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -238,6 +269,7 @@ fn run_sender() -> Result<()> {
         .unwrap_or_else(|| "artifacts/native-pipeline/novorudp-network-only-sender.json".into());
     let tx_count = env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_TX_COUNT", DEFAULT_TX_COUNT);
     let payload_mode = PayloadModeV0::from_env();
+    let loss = LossInjectionConfigV0::from_env();
     let timeout = Duration::from_millis(env_u64(
         "NOVOVM_NOVORUDP_NETWORK_ONLY_TIMEOUT_MS",
         DEFAULT_TIMEOUT_MS,
@@ -264,6 +296,11 @@ fn run_sender() -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
 
     for sequence in 0..tx_count {
+        stats.data_send_attempt = stats.data_send_attempt.saturating_add(1);
+        if loss.drops_data_sequence(sequence) {
+            stats.data_loss_injected = stats.data_loss_injected.saturating_add(1);
+            continue;
+        }
         send_transport_frame(
             &socket,
             target,
@@ -346,6 +383,11 @@ fn run_sender() -> Result<()> {
         "transport_frame_v0_enabled": true,
         "network_only_gate_enabled": true,
         "business_payload_mode": payload_mode.as_str(),
+        "transport_loss_injection_enabled": loss.enabled(),
+        "transport_loss_injection_data_loss_bps": loss.data_loss_bps,
+        "transport_loss_injection_seed": loss.seed,
+        "sender_transport_data_send_attempt_count": stats.data_send_attempt,
+        "sender_transport_data_loss_injected_count": stats.data_loss_injected,
         "sender_transport_data_sent_count": stats.data_sent,
         "sender_transport_repair_sent_count": stats.repair_sent,
         "sender_transport_ack_received_count": stats.ack_received,
@@ -574,6 +616,16 @@ fn tx_hash_for_sequence_v0(sequence: u64) -> [u8; 32] {
     out
 }
 
+fn loss_roll_bps_v0(seed: u64, sequence: u64) -> u64 {
+    let mut value = seed ^ sequence.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ sequence.rotate_left(17);
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^= value >> 31;
+    value % 10_000
+}
+
 fn session_id_v0() -> [u8; 16] {
     let source = env_string("NOVOVM_NOVORUDP_NETWORK_ONLY_SESSION_ID")
         .or_else(|| env_string("NOVOVM_NOVORUDP_SESSION_ID"))
@@ -692,5 +744,31 @@ mod tests {
         assert_eq!(summary.aoem_executed_total, 4);
         assert_eq!(summary.aoem_execution_error_count, 0);
         assert_eq!(summary.ledger_completed_count, 4);
+    }
+
+    #[test]
+    fn data_loss_injection_is_deterministic_and_disabled_by_zero_bps() {
+        let disabled = LossInjectionConfigV0 {
+            data_loss_bps: 0,
+            seed: 7,
+        };
+        assert!(!disabled.enabled());
+        assert!(!(0..128).any(|sequence| disabled.drops_data_sequence(sequence)));
+
+        let enabled = LossInjectionConfigV0 {
+            data_loss_bps: 500,
+            seed: 7,
+        };
+        let first = (0..2400)
+            .filter(|sequence| enabled.drops_data_sequence(*sequence))
+            .collect::<Vec<_>>();
+        let second = (0..2400)
+            .filter(|sequence| enabled.drops_data_sequence(*sequence))
+            .collect::<Vec<_>>();
+        assert_eq!(first, second);
+        assert!(
+            !first.is_empty(),
+            "5% deterministic loss should drop at least one packet in 2400 sequences"
+        );
     }
 }
