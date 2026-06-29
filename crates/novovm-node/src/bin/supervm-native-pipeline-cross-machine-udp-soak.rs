@@ -1682,6 +1682,188 @@ fn bool_env(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn novorudp_network_only_gate_bin_v0() -> PathBuf {
+    if let Some(path) = string_env_nonempty("NOVOVM_NOVORUDP_TRANSPORT_FRAME_V0_GATE_BIN") {
+        return PathBuf::from(path);
+    }
+    let Ok(current) = std::env::current_exe() else {
+        return PathBuf::from("supervm-novorudp-network-only-gate");
+    };
+    let Some(dir) = current.parent() else {
+        return PathBuf::from("supervm-novorudp-network-only-gate");
+    };
+    let exe = if cfg!(windows) {
+        "supervm-novorudp-network-only-gate.exe"
+    } else {
+        "supervm-novorudp-network-only-gate"
+    };
+    dir.join(exe)
+}
+
+fn production_sustained_transport_frame_v0_enabled(sustained_enabled: bool) -> bool {
+    if bool_env("NOVOVM_NATIVE_PIPELINE_LEGACY_MIXED_SUSTAINED") {
+        return false;
+    }
+    sustained_enabled || bool_env("NOVOVM_NATIVE_PIPELINE_TRANSPORT_FRAME_V0")
+}
+
+fn transport_frame_v0_session_id() -> String {
+    first_string_env_nonempty(&[
+        "NOVOVM_NOVORUDP_NETWORK_ONLY_SESSION_ID",
+        "NOVOVM_NOVORUDP_SESSION_ID",
+        "NOVOVM_NOVORUDP_RUN_ID",
+        "NOVOVM_NETWORK_RUN_ID",
+    ])
+    .unwrap_or_else(|| "novorudp-production-sustained-transport-frame-v0".to_string())
+}
+
+fn run_production_sustained_transport_frame_v0_bridge(
+    role: &str,
+    tx_count: u64,
+    sustained: SustainedConfigV1,
+    report_path: &Path,
+) -> Result<Value> {
+    let gate_bin = novorudp_network_only_gate_bin_v0();
+    if !gate_bin.exists() {
+        bail!(
+            "transport frame v0 gate binary not found: {}; build with `cargo build -p novovm-node --bins` or set NOVOVM_NOVORUDP_TRANSPORT_FRAME_V0_GATE_BIN",
+            gate_bin.display()
+        );
+    }
+
+    let timeout_ms = if sustained.enabled && sustained.duration_seconds > 0 {
+        sustained
+            .duration_seconds
+            .saturating_mul(1_000)
+            .saturating_add(120_000)
+    } else {
+        420_000
+    };
+    let session_id = transport_frame_v0_session_id();
+    let mut cmd = Command::new(gate_bin.as_path());
+    cmd.env("NOVOVM_NOVORUDP_NETWORK_ONLY_ROLE", role)
+        .env(
+            "NOVOVM_NOVORUDP_NETWORK_ONLY_TX_COUNT",
+            tx_count.to_string(),
+        )
+        .env(
+            "NOVOVM_NOVORUDP_NETWORK_ONLY_TIMEOUT_MS",
+            timeout_ms.to_string(),
+        )
+        .env(
+            "NOVOVM_NOVORUDP_NETWORK_ONLY_PAYLOAD_MODE",
+            "evm_transactions",
+        )
+        .env("NOVOVM_NOVORUDP_NETWORK_ONLY_EXECUTE_AOEM", "1")
+        .env(
+            "NOVOVM_NOVORUDP_NETWORK_ONLY_SESSION_ID",
+            session_id.as_str(),
+        )
+        .env("NOVOVM_NOVORUDP_SESSION_ID", session_id.as_str())
+        .env(
+            "NOVOVM_NOVORUDP_NETWORK_ONLY_REPORT_PATH",
+            report_path.display().to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    match role {
+        "receiver" => {
+            let listen_addr = first_string_env_nonempty(&[
+                "NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR",
+                "NOVOVM_NATIVE_PIPELINE_RECEIVER_LISTEN_ADDR",
+            ])
+            .unwrap_or_else(|| "0.0.0.0:39001".to_string());
+            cmd.env("NOVOVM_NOVORUDP_NETWORK_ONLY_LISTEN_ADDR", listen_addr);
+        }
+        "sender" => {
+            let receiver_addr = first_string_env_nonempty(&[
+                "NOVOVM_NATIVE_PIPELINE_RECEIVER_ADDR",
+                "NOVOVM_NATIVE_PIPELINE_PEER_ADDR",
+            ])
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "sender role requires NOVOVM_NATIVE_PIPELINE_RECEIVER_ADDR=host:port"
+                )
+            })?;
+            let sender_addr = first_string_env_nonempty(&[
+                "NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR",
+                "NOVOVM_NATIVE_PIPELINE_SENDER_LISTEN_ADDR",
+            ])
+            .unwrap_or_else(|| "0.0.0.0:39000".to_string());
+            cmd.env("NOVOVM_NOVORUDP_NETWORK_ONLY_RECEIVER_ADDR", receiver_addr)
+                .env("NOVOVM_NOVORUDP_NETWORK_ONLY_SENDER_BIND_ADDR", sender_addr);
+        }
+        other => bail!("transport frame v0 bridge does not support role={other}"),
+    }
+
+    let output = cmd.output().with_context(|| {
+        format!(
+            "run transport frame v0 production sustained bridge failed: {}",
+            gate_bin.display()
+        )
+    })?;
+
+    let mut report = if report_path.exists() {
+        let raw = fs::read(report_path).with_context(|| {
+            format!("read transport frame v0 report: {}", report_path.display())
+        })?;
+        serde_json::from_slice::<Value>(&raw).with_context(|| {
+            format!(
+                "decode transport frame v0 report JSON: {}",
+                report_path.display()
+            )
+        })?
+    } else {
+        serde_json::json!({
+            "schema": "novorudp-production-sustained-transport-frame-v0-bridge/v1",
+            "role": role,
+            "accepted": false,
+            "fail_reason": "transport_frame_v0_child_report_missing",
+            "child_status_success": output.status.success(),
+            "child_stdout": String::from_utf8_lossy(&output.stdout).to_string(),
+            "child_stderr": String::from_utf8_lossy(&output.stderr).to_string(),
+        })
+    };
+    if let Some(obj) = report.as_object_mut() {
+        obj.insert(
+            "production_sustained_transport_frame_v0_migration".to_string(),
+            serde_json::json!(true),
+        );
+        obj.insert(
+            "production_sustained_runner_migrated_to_transport_frame_v0".to_string(),
+            serde_json::json!(true),
+        );
+        obj.insert(
+            "legacy_mixed_repair_used".to_string(),
+            serde_json::json!(false),
+        );
+        obj.insert(
+            "legacy_mixed_path_status".to_string(),
+            serde_json::json!("compatibility_only"),
+        );
+        obj.insert(
+            "transport_frame_v0_child_status_success".to_string(),
+            serde_json::json!(output.status.success()),
+        );
+        if !output.status.success() {
+            obj.insert(
+                "transport_frame_v0_child_stderr".to_string(),
+                serde_json::json!(String::from_utf8_lossy(&output.stderr).to_string()),
+            );
+        }
+    }
+    write_report(report_path, &report)?;
+    if !output.status.success() {
+        bail!(
+            "transport frame v0 production sustained child failed: status={} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(report)
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -24748,6 +24930,33 @@ fn main() -> Result<()> {
             default_round_interval_ms,
         )?,
     };
+    let path = report_path(role.as_str());
+    if matches!(role.as_str(), "receiver" | "sender")
+        && production_sustained_transport_frame_v0_enabled(sustained.enabled)
+    {
+        let report = run_production_sustained_transport_frame_v0_bridge(
+            role.as_str(),
+            tx_count,
+            sustained,
+            path.as_path(),
+        )?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .context("encode transport frame v0 production sustained report failed")?
+        );
+        if !report
+            .get("accepted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            bail!(
+                "NovoRUDP transport frame v0 production sustained failed: {}",
+                path.display()
+            );
+        }
+        return Ok(());
+    }
     let tail_repair_enabled = bool_env("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_ENABLED")
         || (sustained.enabled
             && string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TAIL_REPAIR_ENABLED").is_none());
@@ -24844,7 +25053,6 @@ fn main() -> Result<()> {
         ],
         9_991_941,
     )?;
-    let path = report_path(role.as_str());
     let node_bin = novovm_node_bin();
     let store = store_path(chain_id, role.as_str());
     if memory_bisect_binary {
