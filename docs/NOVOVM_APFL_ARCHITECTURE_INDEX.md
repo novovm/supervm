@@ -48,6 +48,7 @@ Confirmed constraints:
 ```text
 only native_transfer_batch_v0
 no generic EVM contract call codec
+no APFL transform for external EVM plugin / passthrough transactions
 keep per-transaction original signatures
 canonical hash uses current NOVOVM native tx hash rule
 receiver reconstructs canonical tx before existing AOEM execution
@@ -315,10 +316,19 @@ APFL defines the structure encoded in those bytes.
 AOEM executes the structure.
 ```
 
+External EVM boundary:
+
+```text
+APFL is only for NOVOVM-native / AOEM-executed transaction structures.
+External Ethereum-compatible plugin traffic must remain standard EVM wire / RPC payload.
+External EVM nodes cannot decode APFL IR.
+```
+
 Do not:
 
 ```text
 make NOVORUDP interpret APFL or transactions
+APFL-transform external EVM plugin passthrough traffic
 create AOEM v2
 change canonical tx hash semantics
 change signature semantics

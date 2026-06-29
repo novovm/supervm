@@ -82,6 +82,39 @@ The APFL transaction codec belongs here:
 business payload codec layer
 ```
 
+## External EVM Compatibility Boundary
+
+APFL is for NOVOVM-owned transaction structure and NOVOVM/AOEM execution paths.
+
+It must not be applied to plugin traffic that must be forwarded to external Ethereum / EVM nodes as standard EVM transactions.
+
+Reason:
+
+```text
+external Ethereum nodes do not understand APFL IR
+external EVM RPC endpoints expect standard EVM wire formats
+APFL compact payloads are not valid external EVM transactions
+```
+
+Therefore the system must distinguish:
+
+```text
+NOVOVM-native / AOEM-executed transaction
+  -> APFL eligible
+
+external EVM plugin / passthrough transaction
+  -> APFL not eligible
+  -> preserve standard EVM transaction bytes / RPC format
+```
+
+Hard rule:
+
+```text
+Do not APFL-transform any transaction whose destination is an external Ethereum-compatible node.
+```
+
+APFL may still be used for internal NOVOVM execution records, local projections, or AOEM-native transaction families where NOVOVM controls both encoding and decoding.
+
 Expected layering:
 
 ```text
