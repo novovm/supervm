@@ -4,7 +4,7 @@ This document is a hard boundary rule for NOVORUDP work.
 
 ## Current Status
 
-The current sustained repair path is frozen as a mixed-layer legacy path. It proved useful for attribution, but it must not be extended as the target architecture.
+The old sustained repair path is frozen as a mixed-layer historical path. It proved useful for attribution, but it must not be extended or used as a production runtime path.
 
 Known legacy coupling:
 
@@ -12,7 +12,7 @@ Known legacy coupling:
 - Repair classification is currently inferred from `transport_auth.frame_kind=repair`.
 - Some ACK/missing/repair observations are tied to AOEM ledger progress.
 
-These facts are compatibility debt, not the NOVORUDP design.
+These facts are historical debt, not the NOVORUDP design.
 
 ## Boundary Rules
 
@@ -59,8 +59,8 @@ Sustained validation must be split into three gates:
    - Delivered business payloads enter AOEM.
    - Ledger completion and receiver_done are validated here.
 
-## Legacy Compatibility Rule
+## Legacy Historical Rule
 
-Any remaining use of `ProtocolMessage::EvmNative::Transactions` plus `transport_auth.frame_kind=repair` must be treated as legacy compatibility or attribution only.
+Any remaining reference to `ProtocolMessage::EvmNative::Transactions` plus `transport_auth.frame_kind=repair` must be treated as historical attribution only.
 
-New behavior fixes must not deepen this mixed-layer path. If a change needs transport repair behavior, it must target explicit NOVORUDP transport frames or a clearly marked boundary-reset implementation.
+New behavior fixes must not deepen this mixed-layer path. If a change needs transport repair behavior, it must target explicit NOVORUDP transport frames. Production sustained signoff must not use the mixed-layer path.

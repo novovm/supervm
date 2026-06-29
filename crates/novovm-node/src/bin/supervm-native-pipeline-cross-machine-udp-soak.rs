@@ -1701,9 +1701,6 @@ fn novorudp_network_only_gate_bin_v0() -> PathBuf {
 }
 
 fn production_sustained_transport_frame_v0_enabled(sustained_enabled: bool) -> bool {
-    if bool_env("NOVOVM_NATIVE_PIPELINE_LEGACY_MIXED_SUSTAINED") {
-        return false;
-    }
     sustained_enabled || bool_env("NOVOVM_NATIVE_PIPELINE_TRANSPORT_FRAME_V0")
 }
 
@@ -1840,7 +1837,7 @@ fn run_production_sustained_transport_frame_v0_bridge(
         );
         obj.insert(
             "legacy_mixed_path_status".to_string(),
-            serde_json::json!("compatibility_only"),
+            serde_json::json!("removed_from_production_sustained"),
         );
         obj.insert(
             "transport_frame_v0_child_status_success".to_string(),

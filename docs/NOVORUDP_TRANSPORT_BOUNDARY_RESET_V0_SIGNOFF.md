@@ -80,7 +80,7 @@ The previous sustained path using:
 ProtocolMessage::EvmNative::Transactions + transport_auth.frame_kind=repair
 ```
 
-is frozen as legacy mixed-layer attribution/compatibility only.
+is historical attribution only. It is not a compatibility runtime path and must not be used for production sustained signoff.
 
 It must not be used as the target architecture for new NOVORUDP behavior fixes because it couples:
 
@@ -106,11 +106,32 @@ Not allowed as target architecture:
 - using AOEM/ledger progress as transport receive accounting
 - adding behavior fixes to deepen the legacy mixed repair path
 
-## Next Migration Decision
+## Production Sustained Migration
 
-The next engineering decision is whether to:
+Commit: `d4a78a3`
 
-- retire the legacy mixed sustained path,
-- keep it only behind a compatibility flag,
-- or migrate production sustained execution onto `NovoRudpTransportFrameV0`.
+Status: `PASS / SIGNED`
 
+Result:
+
+- `production_sustained_transport_frame_v0_migration = true`
+- `legacy_mixed_repair_used = false`
+- `receiver_transport_unique_delivered_count = 2400`
+- `receiver_transport_final_missing_count = 0`
+- `business_decode_count = 2400`
+- `business_decode_error_count = 0`
+- `aoem_executed_total = 2400`
+- `aoem_execution_error_count = 0`
+- `ledger_completed_count = 2400`
+
+Meaning:
+
+Production sustained execution has moved to the transport-native three-layer path. The old mixed repair path is no longer a production proof path.
+
+## Next Cleanup Decision
+
+The remaining cleanup is to:
+
+- remove mixed-layer repair-like runtime attribution fields that are no longer needed,
+- keep boundary/signoff docs as historical evidence,
+- keep production sustained on `NovoRudpTransportFrameV0`.
