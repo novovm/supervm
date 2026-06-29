@@ -226,6 +226,12 @@ fn run_receiver() -> Result<()> {
 
     let missing = missing_ranges(tx_count, &delivered);
     let execution = receiver_execution_summary_v0(payload_mode, execute_aoem, &delivered);
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+    let receiver_payload_bytes_total = delivered.values().fold(0u64, |acc, payload| {
+        acc.saturating_add(payload.len() as u64)
+    });
+    let receiver_transport_unique_delivered_count = delivered.len() as u64;
+    let receiver_transport_final_missing_count = missing_count(&missing);
     let report = json!({
         "schema": "novorudp-network-only-gate-v0",
         "role": "receiver",
@@ -235,12 +241,18 @@ fn run_receiver() -> Result<()> {
         "business_payload_mode": payload_mode.as_str(),
         "receiver_transport_data_received_count": stats.data_received,
         "receiver_transport_repair_received_count": stats.repair_received,
-        "receiver_transport_unique_delivered_count": delivered.len() as u64,
+        "receiver_transport_unique_delivered_count": receiver_transport_unique_delivered_count,
         "receiver_transport_duplicate_received_count": stats.duplicate_received,
         "receiver_transport_ack_sent_count": stats.ack_sent,
-        "receiver_transport_final_missing_count": missing_count(&missing),
+        "receiver_transport_final_missing_count": receiver_transport_final_missing_count,
         "receiver_transport_final_missing_ranges": missing,
-        "receiver_transport_done": delivered.len() as u64 == tx_count,
+        "receiver_transport_done": receiver_transport_unique_delivered_count == tx_count,
+        "receiver_elapsed_ms": elapsed_ms,
+        "receiver_payload_bytes_total": receiver_payload_bytes_total,
+        "receiver_payloads_per_sec": rate_per_sec_v0(receiver_transport_unique_delivered_count, elapsed_ms),
+        "receiver_bytes_per_sec": rate_per_sec_v0(receiver_payload_bytes_total, elapsed_ms),
+        "receiver_missing_rate_bps": bps_v0(receiver_transport_final_missing_count, tx_count),
+        "receiver_duplicate_bps": bps_v0(stats.duplicate_received, receiver_transport_unique_delivered_count),
         "aoem_execute_enabled": execute_aoem,
         "aoem_execution_mode": if execute_aoem { "adapter_projection_v0" } else { "disabled" },
         "business_decode_count": execution.business_decode_count,
@@ -249,7 +261,7 @@ fn run_receiver() -> Result<()> {
         "aoem_execution_error_count": execution.aoem_execution_error_count,
         "ledger_completed_count": execution.ledger_completed_count,
         "decode_error_count": stats.decode_error_count,
-        "elapsed_ms": start.elapsed().as_millis() as u64,
+        "elapsed_ms": elapsed_ms,
     });
     write_json_report(&report_path, &report)?;
     if report["accepted"].as_bool() == Some(true) {
@@ -389,6 +401,10 @@ fn run_sender() -> Result<()> {
     }
 
     let final_missing = missing_count(&latest_missing);
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+    let sender_data_payload_bytes_total = payloads.iter().fold(0u64, |acc, payload| {
+        acc.saturating_add(payload.len() as u64)
+    });
     let report = json!({
         "schema": "novorudp-network-only-gate-v0",
         "role": "sender",
@@ -405,6 +421,12 @@ fn run_sender() -> Result<()> {
         "sender_transport_data_pacing_sleep_count": stats.data_pacing_sleep_count,
         "sender_transport_data_send_attempt_count": stats.data_send_attempt,
         "sender_transport_data_loss_injected_count": stats.data_loss_injected,
+        "sender_elapsed_ms": elapsed_ms,
+        "sender_data_payload_bytes_total": sender_data_payload_bytes_total,
+        "sender_data_frames_per_sec": rate_per_sec_v0(stats.data_sent, elapsed_ms),
+        "sender_data_bytes_per_sec": rate_per_sec_v0(sender_data_payload_bytes_total, elapsed_ms),
+        "sender_ack_count": stats.ack_received,
+        "sender_repair_amplification_bps": bps_v0(stats.repair_sent, stats.data_loss_injected),
         "sender_transport_data_sent_count": stats.data_sent,
         "sender_transport_repair_sent_count": stats.repair_sent,
         "sender_transport_ack_received_count": stats.ack_received,
@@ -416,7 +438,7 @@ fn run_sender() -> Result<()> {
         "aoem_executed_total": 0u64,
         "ledger_completed_count": 0u64,
         "decode_error_count": stats.decode_error_count,
-        "elapsed_ms": start.elapsed().as_millis() as u64,
+        "elapsed_ms": elapsed_ms,
     });
     write_json_report(&report_path, &report)?;
     if done {
@@ -518,6 +540,14 @@ fn missing_count(ranges: &[NovoRudpRange]) -> u64 {
                 .saturating_add(1),
         )
     })
+}
+
+fn rate_per_sec_v0(count: u64, elapsed_ms: u64) -> u64 {
+    count.saturating_mul(1000) / elapsed_ms.max(1)
+}
+
+fn bps_v0(numerator: u64, denominator: u64) -> u64 {
+    numerator.saturating_mul(10_000) / denominator.max(1)
 }
 
 fn opaque_payload_v0(sequence: u64) -> Vec<u8> {
