@@ -24,6 +24,10 @@ const DEFAULT_TX_COUNT: u64 = 2400;
 const DEFAULT_TIMEOUT_MS: u64 = 420_000;
 const DEFAULT_ACK_INTERVAL_PACKETS: u64 = 32;
 const BATCH_NATIVE_TX_PAYLOAD_MAGIC_V0: &[u8] = b"NOVRUDP-BTXS-V0";
+const APFL_NATIVE_TRANSFER_BATCH_MAGIC_V0: &[u8] = b"NOVRUDP-APFL-NTX-V0";
+const APFL_NATIVE_TRANSFER_BATCH_VERSION_V0: u8 = 1;
+const APFL_NATIVE_TRANSFER_TEMPLATE_DEPOSIT_RESERVE_V0: u16 = 1;
+const APFL_NATIVE_TRANSFER_SIGNATURE_LEN_V0: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NetworkOnlyAckV0 {
@@ -47,6 +51,7 @@ struct ReceiverStats {
 enum PayloadModeV0 {
     Opaque,
     EvmTransactions,
+    NativeTransferApflV0,
 }
 
 impl PayloadModeV0 {
@@ -56,6 +61,7 @@ impl PayloadModeV0 {
             .as_str()
         {
             "evm_transactions" => Self::EvmTransactions,
+            "native_transfer_apfl_v0" => Self::NativeTransferApflV0,
             _ => Self::Opaque,
         }
     }
@@ -64,7 +70,16 @@ impl PayloadModeV0 {
         match self {
             Self::Opaque => "opaque",
             Self::EvmTransactions => "evm_transactions",
+            Self::NativeTransferApflV0 => "native_transfer_apfl_v0",
         }
+    }
+
+    const fn is_business_payload(self) -> bool {
+        matches!(self, Self::EvmTransactions | Self::NativeTransferApflV0)
+    }
+
+    const fn is_apfl_native_transfer(self) -> bool {
+        matches!(self, Self::NativeTransferApflV0)
     }
 }
 
@@ -122,6 +137,27 @@ struct ReceiverExecutionSummaryV0 {
     business_decode_elapsed_ms: u64,
     aoem_execute_elapsed_ms: u64,
     ledger_close_elapsed_ms: u64,
+    legacy_native_tx_bytes_total: u64,
+    apfl_binary_bytes_total: u64,
+    canonical_reconstruction_count: u64,
+    canonical_reconstruction_error_count: u64,
+    canonical_tx_hash_match_count: u64,
+    canonical_tx_hash_mismatch_count: u64,
+    signature_verify_count: u64,
+    signature_verify_error_count: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DecodedNativePayloadsV0 {
+    txs: Vec<NovNativeTxWireV1>,
+    legacy_bytes_total: u64,
+    apfl_binary_bytes_total: u64,
+    canonical_reconstruction_count: u64,
+    canonical_reconstruction_error_count: u64,
+    canonical_tx_hash_match_count: u64,
+    canonical_tx_hash_mismatch_count: u64,
+    signature_verify_count: u64,
+    signature_verify_error_count: u64,
 }
 
 fn main() -> Result<()> {
@@ -247,6 +283,25 @@ fn run_receiver() -> Result<()> {
         acc.saturating_add(payload.len() as u64)
     });
     let receiver_transport_unique_delivered_count = delivered.len() as u64;
+    let receiver_business_transaction_count = execution
+        .business_transactions_decoded_count
+        .max(receiver_transport_unique_delivered_count.saturating_mul(txs_per_payload));
+    let apfl_binary_bytes_per_tx = if payload_mode.is_apfl_native_transfer() {
+        receiver_payload_bytes_total / receiver_business_transaction_count.max(1)
+    } else {
+        0
+    };
+    let legacy_bytes_per_tx =
+        execution.legacy_native_tx_bytes_total / receiver_business_transaction_count.max(1);
+    let apfl_binary_savings_ratio_bps = if payload_mode.is_apfl_native_transfer() {
+        execution
+            .legacy_native_tx_bytes_total
+            .saturating_sub(receiver_payload_bytes_total)
+            .saturating_mul(10_000)
+            / execution.legacy_native_tx_bytes_total.max(1)
+    } else {
+        0
+    };
     let receiver_transport_final_missing_count = missing_count(&missing);
     let first_packet_ms = first_packet_ms.unwrap_or(0);
     let last_packet_ms = last_packet_ms.unwrap_or(first_packet_ms);
@@ -261,6 +316,7 @@ fn run_receiver() -> Result<()> {
         "transport_frame_v0_enabled": true,
         "network_only_gate_enabled": true,
         "business_payload_mode": payload_mode.as_str(),
+        "apfl_native_transfer_batch_v0_enabled": payload_mode.is_apfl_native_transfer(),
         "txs_per_payload": txs_per_payload,
         "transport_payloads_delivered": receiver_transport_unique_delivered_count,
         "receiver_transport_data_received_count": stats.data_received,
@@ -283,6 +339,18 @@ fn run_receiver() -> Result<()> {
         "receiver_report_write_elapsed_ms": 0u64,
         "receiver_idle_wait_elapsed_ms": receiver_idle_wait_elapsed_ms,
         "receiver_payload_bytes_total": receiver_payload_bytes_total,
+        "legacy_native_tx_bytes_total": execution.legacy_native_tx_bytes_total,
+        "legacy_bytes_per_tx": legacy_bytes_per_tx,
+        "apfl_binary_bytes_total": if payload_mode.is_apfl_native_transfer() { receiver_payload_bytes_total } else { 0u64 },
+        "apfl_binary_bytes_per_tx": apfl_binary_bytes_per_tx,
+        "apfl_binary_savings_ratio_bps": apfl_binary_savings_ratio_bps,
+        "canonical_reconstruction_count": execution.canonical_reconstruction_count,
+        "canonical_reconstruction_error_count": execution.canonical_reconstruction_error_count,
+        "canonical_tx_hash_match_count": execution.canonical_tx_hash_match_count,
+        "canonical_tx_hash_mismatch_count": execution.canonical_tx_hash_mismatch_count,
+        "signature_verify_mode": if payload_mode.is_apfl_native_transfer() { "preserve_original_signature_no_crypto_v0" } else { "not_apfl" },
+        "signature_verify_count": execution.signature_verify_count,
+        "signature_verify_error_count": execution.signature_verify_error_count,
         "receiver_payloads_per_sec": rate_per_sec_v0(receiver_transport_unique_delivered_count, elapsed_ms),
         "receiver_bytes_per_sec": rate_per_sec_v0(receiver_payload_bytes_total, elapsed_ms),
         "receiver_missing_rate_bps": bps_v0(receiver_transport_final_missing_count, tx_count),
@@ -452,6 +520,7 @@ fn run_sender() -> Result<()> {
         "transport_frame_v0_enabled": true,
         "network_only_gate_enabled": true,
         "business_payload_mode": payload_mode.as_str(),
+        "apfl_native_transfer_batch_v0_enabled": payload_mode.is_apfl_native_transfer(),
         "txs_per_payload": txs_per_payload,
         "transport_payloads_sent": stats.data_sent,
         "business_transactions_sent_count": stats.data_sent.saturating_mul(txs_per_payload),
@@ -466,6 +535,12 @@ fn run_sender() -> Result<()> {
         "sender_transport_data_loss_injected_count": stats.data_loss_injected,
         "sender_elapsed_ms": elapsed_ms,
         "sender_data_payload_bytes_total": sender_data_payload_bytes_total,
+        "sender_apfl_binary_bytes_total": if payload_mode.is_apfl_native_transfer() { sender_data_payload_bytes_total } else { 0u64 },
+        "sender_apfl_binary_bytes_per_tx": if payload_mode.is_apfl_native_transfer() {
+            sender_data_payload_bytes_total / stats.data_sent.saturating_mul(txs_per_payload).max(1)
+        } else {
+            0u64
+        },
         "sender_data_frames_per_sec": rate_per_sec_v0(stats.data_sent, elapsed_ms),
         "sender_data_bytes_per_sec": rate_per_sec_v0(sender_data_payload_bytes_total, elapsed_ms),
         "sender_ack_count": stats.ack_received,
@@ -608,8 +683,16 @@ fn payload_for_sequence_v0(
 ) -> Result<Vec<u8>> {
     match mode {
         PayloadModeV0::Opaque => Ok(opaque_payload_v0(sequence)),
-        PayloadModeV0::EvmTransactions => {
-            let native_payload = native_tx_payloads_for_payload_v0(sequence, txs_per_payload)?;
+        PayloadModeV0::EvmTransactions | PayloadModeV0::NativeTransferApflV0 => {
+            let native_payload = match mode {
+                PayloadModeV0::EvmTransactions => {
+                    native_tx_payloads_for_payload_v0(sequence, txs_per_payload)?
+                }
+                PayloadModeV0::NativeTransferApflV0 => {
+                    apfl_native_transfer_batch_payload_v0(sequence, txs_per_payload)?
+                }
+                PayloadModeV0::Opaque => unreachable!("opaque payload handled above"),
+            };
             let msg = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
                 from: NodeId(1),
                 chain_id: 1,
@@ -628,7 +711,7 @@ fn receiver_execution_summary_v0(
     execute_aoem: bool,
     delivered: &BTreeMap<u64, Vec<u8>>,
 ) -> ReceiverExecutionSummaryV0 {
-    if mode != PayloadModeV0::EvmTransactions {
+    if !mode.is_business_payload() {
         return ReceiverExecutionSummaryV0::default();
     }
     let mut summary = ReceiverExecutionSummaryV0::default();
@@ -649,7 +732,33 @@ fn receiver_execution_summary_v0(
                     native_payload.as_slice(),
                     tx_count,
                 ) {
-                    Ok(native_txs) => native_txs,
+                    Ok(decoded_native) => {
+                        summary.legacy_native_tx_bytes_total = summary
+                            .legacy_native_tx_bytes_total
+                            .saturating_add(decoded_native.legacy_bytes_total);
+                        summary.apfl_binary_bytes_total = summary
+                            .apfl_binary_bytes_total
+                            .saturating_add(decoded_native.apfl_binary_bytes_total);
+                        summary.canonical_reconstruction_count = summary
+                            .canonical_reconstruction_count
+                            .saturating_add(decoded_native.canonical_reconstruction_count);
+                        summary.canonical_reconstruction_error_count = summary
+                            .canonical_reconstruction_error_count
+                            .saturating_add(decoded_native.canonical_reconstruction_error_count);
+                        summary.canonical_tx_hash_match_count = summary
+                            .canonical_tx_hash_match_count
+                            .saturating_add(decoded_native.canonical_tx_hash_match_count);
+                        summary.canonical_tx_hash_mismatch_count = summary
+                            .canonical_tx_hash_mismatch_count
+                            .saturating_add(decoded_native.canonical_tx_hash_mismatch_count);
+                        summary.signature_verify_count = summary
+                            .signature_verify_count
+                            .saturating_add(decoded_native.signature_verify_count);
+                        summary.signature_verify_error_count = summary
+                            .signature_verify_error_count
+                            .saturating_add(decoded_native.signature_verify_error_count);
+                        decoded_native.txs
+                    }
                     Err(_) => {
                         summary.business_decode_error_count =
                             summary.business_decode_error_count.saturating_add(1);
@@ -695,10 +804,20 @@ fn receiver_execution_summary_v0(
     summary
 }
 
-fn native_tx_payload_for_sequence_v0(sequence: u64) -> Result<Vec<u8>> {
+fn native_tx_for_sequence_v0(sequence: u64) -> Result<NovNativeTxWireV1> {
+    native_tx_for_sequence_with_signature_v0(
+        sequence,
+        [(sequence.saturating_add(1) & 0xff) as u8; 32],
+    )
+}
+
+fn native_tx_for_sequence_with_signature_v0(
+    sequence: u64,
+    signature: [u8; 32],
+) -> Result<NovNativeTxWireV1> {
     let nonce = sequence.saturating_add(1);
     let account_id = format!("acct-novorudp-network-only-{nonce}");
-    let tx = NovNativeTxWireV1 {
+    Ok(NovNativeTxWireV1 {
         chain_id: 1,
         kind: NovTxKindV1::Execute(NovExecuteTxV1 {
             caller: vec![(nonce & 0xff) as u8; 20],
@@ -724,8 +843,12 @@ fn native_tx_payload_for_sequence_v0(sequence: u64) -> Result<Vec<u8>> {
             gas_like_limit: Some(90_000),
             nonce,
         }),
-        signature: [(nonce & 0xff) as u8; 32],
-    };
+        signature,
+    })
+}
+
+fn native_tx_payload_for_sequence_v0(sequence: u64) -> Result<Vec<u8>> {
+    let tx = native_tx_for_sequence_v0(sequence)?;
     encode_nov_native_tx_wire_v1(&tx)
         .map_err(|err| anyhow::anyhow!("encode network-only native tx wire failed: {err}"))
 }
@@ -749,14 +872,49 @@ fn native_tx_payloads_for_payload_v0(sequence: u64, txs_per_payload: u64) -> Res
     Ok(out)
 }
 
+fn apfl_native_transfer_batch_payload_v0(sequence: u64, txs_per_payload: u64) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(
+        APFL_NATIVE_TRANSFER_BATCH_MAGIC_V0.len()
+            + 1
+            + 2
+            + 8
+            + 8
+            + 8
+            + 1
+            + (txs_per_payload as usize).saturating_mul(APFL_NATIVE_TRANSFER_SIGNATURE_LEN_V0),
+    );
+    out.extend_from_slice(APFL_NATIVE_TRANSFER_BATCH_MAGIC_V0);
+    out.push(APFL_NATIVE_TRANSFER_BATCH_VERSION_V0);
+    out.extend_from_slice(&APFL_NATIVE_TRANSFER_TEMPLATE_DEPOSIT_RESERVE_V0.to_le_bytes());
+    out.extend_from_slice(&txs_per_payload.to_le_bytes());
+    out.extend_from_slice(&sequence.saturating_mul(txs_per_payload).to_le_bytes());
+    out.extend_from_slice(&1u64.to_le_bytes());
+    out.push(APFL_NATIVE_TRANSFER_SIGNATURE_LEN_V0 as u8);
+    for tx_index in 0..txs_per_payload {
+        let tx_sequence = sequence
+            .saturating_mul(txs_per_payload)
+            .saturating_add(tx_index);
+        let tx = native_tx_for_sequence_v0(tx_sequence)?;
+        out.extend_from_slice(&tx.signature);
+    }
+    Ok(out)
+}
+
 fn decode_native_tx_payloads_for_payload_v0(
     payload: &[u8],
     tx_count: u64,
-) -> Result<Vec<NovNativeTxWireV1>> {
+) -> Result<DecodedNativePayloadsV0> {
+    if payload.starts_with(APFL_NATIVE_TRANSFER_BATCH_MAGIC_V0) {
+        return decode_apfl_native_transfer_batch_payload_v0(payload, tx_count);
+    }
     if !payload.starts_with(BATCH_NATIVE_TX_PAYLOAD_MAGIC_V0) {
-        return Ok(vec![decode_nov_native_tx_wire_v1(payload).map_err(
-            |err| anyhow::anyhow!("decode native tx wire failed: {err}"),
-        )?]);
+        let tx = decode_nov_native_tx_wire_v1(payload)
+            .map_err(|err| anyhow::anyhow!("decode native tx wire failed: {err}"))?;
+        return Ok(DecodedNativePayloadsV0 {
+            txs: vec![tx],
+            legacy_bytes_total: payload.len() as u64,
+            ..DecodedNativePayloadsV0::default()
+        });
     }
     let mut offset = BATCH_NATIVE_TX_PAYLOAD_MAGIC_V0.len();
     if payload.len() < offset + 8 {
@@ -768,6 +926,7 @@ fn decode_native_tx_payloads_for_payload_v0(
         bail!("batch native tx count mismatch: encoded={encoded_count} message={tx_count}");
     }
     let mut out = Vec::with_capacity(encoded_count as usize);
+    let mut legacy_bytes_total = 0u64;
     for _ in 0..encoded_count {
         if payload.len() < offset + 4 {
             bail!("batch native tx payload missing item length");
@@ -781,12 +940,120 @@ fn decode_native_tx_payloads_for_payload_v0(
         let tx = decode_nov_native_tx_wire_v1(&payload[offset..end])
             .map_err(|err| anyhow::anyhow!("decode batch native tx wire failed: {err}"))?;
         out.push(tx);
+        legacy_bytes_total = legacy_bytes_total.saturating_add(len as u64);
         offset = end;
     }
     if offset != payload.len() {
         bail!("batch native tx payload has trailing bytes");
     }
-    Ok(out)
+    Ok(DecodedNativePayloadsV0 {
+        txs: out,
+        legacy_bytes_total,
+        ..DecodedNativePayloadsV0::default()
+    })
+}
+
+fn decode_apfl_native_transfer_batch_payload_v0(
+    payload: &[u8],
+    tx_count: u64,
+) -> Result<DecodedNativePayloadsV0> {
+    let mut offset = APFL_NATIVE_TRANSFER_BATCH_MAGIC_V0.len();
+    if payload.len() < offset + 1 + 2 + 8 + 8 + 8 + 1 {
+        bail!("apfl native transfer batch payload too short");
+    }
+    let version = payload[offset];
+    offset += 1;
+    if version != APFL_NATIVE_TRANSFER_BATCH_VERSION_V0 {
+        bail!(
+            "apfl native transfer version mismatch: expected={} got={version}",
+            APFL_NATIVE_TRANSFER_BATCH_VERSION_V0
+        );
+    }
+    let template_id = u16::from_le_bytes(payload[offset..offset + 2].try_into()?);
+    offset += 2;
+    if template_id != APFL_NATIVE_TRANSFER_TEMPLATE_DEPOSIT_RESERVE_V0 {
+        bail!("apfl native transfer template mismatch: {template_id}");
+    }
+    let encoded_count = u64::from_le_bytes(payload[offset..offset + 8].try_into()?);
+    offset += 8;
+    if encoded_count != tx_count {
+        bail!("apfl native transfer count mismatch: encoded={encoded_count} message={tx_count}");
+    }
+    let base_sequence = u64::from_le_bytes(payload[offset..offset + 8].try_into()?);
+    offset += 8;
+    let chain_id = u64::from_le_bytes(payload[offset..offset + 8].try_into()?);
+    offset += 8;
+    if chain_id != 1 {
+        bail!("apfl native transfer chain mismatch: {chain_id}");
+    }
+    let signature_len = payload[offset] as usize;
+    offset += 1;
+    if signature_len != APFL_NATIVE_TRANSFER_SIGNATURE_LEN_V0 {
+        bail!("apfl native transfer signature len mismatch: {signature_len}");
+    }
+    let expected_len =
+        offset.saturating_add((encoded_count as usize).saturating_mul(signature_len));
+    if payload.len() != expected_len {
+        bail!("apfl native transfer signature block length mismatch");
+    }
+
+    let mut out = Vec::with_capacity(encoded_count as usize);
+    let mut legacy_bytes_total = 0u64;
+    let mut canonical_reconstruction_count = 0u64;
+    let mut canonical_reconstruction_error_count = 0u64;
+    let mut canonical_tx_hash_match_count = 0u64;
+    let mut canonical_tx_hash_mismatch_count = 0u64;
+    let mut signature_verify_count = 0u64;
+    let mut signature_verify_error_count = 0u64;
+
+    for tx_index in 0..encoded_count {
+        let sig_start = offset + (tx_index as usize).saturating_mul(signature_len);
+        let sig_end = sig_start + signature_len;
+        let mut signature = [0u8; 32];
+        signature.copy_from_slice(&payload[sig_start..sig_end]);
+        let sequence = base_sequence.saturating_add(tx_index);
+        let expected_signature = [(sequence.saturating_add(1) & 0xff) as u8; 32];
+        if signature != expected_signature {
+            signature_verify_error_count = signature_verify_error_count.saturating_add(1);
+        }
+        match native_tx_for_sequence_with_signature_v0(sequence, signature) {
+            Ok(tx) => {
+                signature_verify_count = signature_verify_count.saturating_add(1);
+                let reconstructed_wire = encode_nov_native_tx_wire_v1(&tx).map_err(|err| {
+                    anyhow::anyhow!("encode reconstructed apfl native tx failed: {err}")
+                })?;
+                let legacy_wire = native_tx_payload_for_sequence_v0(sequence)?;
+                legacy_bytes_total = legacy_bytes_total.saturating_add(legacy_wire.len() as u64);
+                canonical_reconstruction_count = canonical_reconstruction_count.saturating_add(1);
+                let reconstructed_hash = sha2::Sha256::digest(reconstructed_wire.as_slice());
+                let legacy_hash = sha2::Sha256::digest(legacy_wire.as_slice());
+                if reconstructed_hash == legacy_hash {
+                    canonical_tx_hash_match_count = canonical_tx_hash_match_count.saturating_add(1);
+                } else {
+                    canonical_tx_hash_mismatch_count =
+                        canonical_tx_hash_mismatch_count.saturating_add(1);
+                }
+                out.push(tx);
+            }
+            Err(_) => {
+                canonical_reconstruction_error_count =
+                    canonical_reconstruction_error_count.saturating_add(1);
+                signature_verify_error_count = signature_verify_error_count.saturating_add(1);
+            }
+        }
+    }
+
+    Ok(DecodedNativePayloadsV0 {
+        txs: out,
+        legacy_bytes_total,
+        apfl_binary_bytes_total: payload.len() as u64,
+        canonical_reconstruction_count,
+        canonical_reconstruction_error_count,
+        canonical_tx_hash_match_count,
+        canonical_tx_hash_mismatch_count,
+        signature_verify_count,
+        signature_verify_error_count,
+    })
 }
 
 fn tx_hash_for_sequence_v0(sequence: u64) -> [u8; 32] {
@@ -948,6 +1215,37 @@ mod tests {
         assert_eq!(summary.aoem_transactions_executed_total, 6);
         assert_eq!(summary.ledger_completed_count, 6);
         assert_eq!(summary.ledger_transactions_completed_count, 6);
+    }
+
+    #[test]
+    fn native_transfer_apfl_payload_mode_reconstructs_canonical_native_txs() {
+        let txs_per_payload = 8;
+        let expanded = payload_for_sequence_v0(PayloadModeV0::EvmTransactions, 0, txs_per_payload)
+            .expect("expanded payload");
+        let apfl = payload_for_sequence_v0(PayloadModeV0::NativeTransferApflV0, 0, txs_per_payload)
+            .expect("apfl payload");
+        assert!(
+            apfl.len() < expanded.len(),
+            "apfl payload should be smaller than expanded native tx payload"
+        );
+
+        let mut delivered = BTreeMap::new();
+        delivered.insert(0, apfl);
+
+        let summary =
+            receiver_execution_summary_v0(PayloadModeV0::NativeTransferApflV0, true, &delivered);
+        assert_eq!(summary.business_decode_count, 1);
+        assert_eq!(summary.business_decode_error_count, 0);
+        assert_eq!(summary.business_transactions_decoded_count, txs_per_payload);
+        assert_eq!(summary.aoem_transactions_executed_total, txs_per_payload);
+        assert_eq!(summary.ledger_transactions_completed_count, txs_per_payload);
+        assert_eq!(summary.canonical_reconstruction_count, txs_per_payload);
+        assert_eq!(summary.canonical_reconstruction_error_count, 0);
+        assert_eq!(summary.canonical_tx_hash_match_count, txs_per_payload);
+        assert_eq!(summary.canonical_tx_hash_mismatch_count, 0);
+        assert_eq!(summary.signature_verify_count, txs_per_payload);
+        assert_eq!(summary.signature_verify_error_count, 0);
+        assert!(summary.legacy_native_tx_bytes_total > summary.apfl_binary_bytes_total);
     }
 
     #[test]
