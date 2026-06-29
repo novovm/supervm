@@ -55,6 +55,18 @@ ledger_completed_count = 4800
   approximate delivery rate = 10,000 payload/s
   sender_data_frames_per_sec = 8,988
 
+128 / 0ms:
+  receiver_transport_delivery_elapsed_ms = 617
+  approximate delivery rate = 7,779 payload/s
+  sender_data_frames_per_sec = 7,111
+  note = clean but slower; gap 0ms disables pacing in the current implementation
+
+192 / 1ms:
+  receiver_transport_delivery_elapsed_ms = 613
+  approximate delivery rate = 7,830 payload/s
+  sender_data_frames_per_sec = 7,121
+  note = clean but slower
+
 256 / 1ms:
   receiver_transport_delivery_elapsed_ms = 638
   approximate delivery rate = 7,524 payload/s
@@ -72,10 +84,22 @@ Current best fixed pacing tier:
 Clean but regressive tier:
 
 ```text
+128 / 0ms
+192 / 1ms
 256 / 1ms
 ```
 
-The `256 / 1ms` tier remained correct but was slower than `128 / 1ms`, so larger chunks should not be assumed to improve throughput. The observed regression likely comes from local burst shape, ACK cadence, socket drain, or scheduler effects.
+The `128 / 0ms`, `192 / 1ms`, and `256 / 1ms` tiers remained correct but were slower than `128 / 1ms`, so larger chunks or removing the gap should not be assumed to improve throughput. The observed regression likely comes from local burst shape, ACK cadence, socket drain, or scheduler effects.
+
+Important current implementation detail:
+
+```text
+chunk_gap_ms = 0
+=> sender_transport_data_pacing_enabled = false
+=> this behaves as pacing disabled / burst-like send
+```
+
+Therefore `128 / 0ms` is not recommended as a default even though it is clean.
 
 ## Current Default Recommendation
 
@@ -85,19 +109,19 @@ Do not replace it with `256 / 1ms` as a default despite correctness passing.
 
 ## Future Experiments
 
-Possible follow-up experiments:
+Single-payload fixed pacing has a clear current best tier. Future throughput work should move to batch payload density instead of continuing to tune only payload/s.
 
 ```text
-128 / 0ms
-192 / 1ms
+NOVORUDP Batch Payload Throughput v0
 ```
 
-These are exploratory only and must not replace the current baseline unless they pass with:
+The next stage should measure:
 
 ```text
-repair = 0
-duplicate = 0
-final_missing = 0
-ledger_completed = tx_count
-receiver_transport_delivery_elapsed_ms < 480
+transport_payloads_per_sec
+txs_per_payload
+business_transactions_per_sec
+aoem_batches_executed
+aoem_transactions_executed
+ledger_transactions_completed
 ```
