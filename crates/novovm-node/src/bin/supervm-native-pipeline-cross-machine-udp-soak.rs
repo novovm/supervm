@@ -152,6 +152,12 @@ struct SendScheduleStatsV1 {
     sender_udp_inter_send_gap_p95_us: Option<u64>,
     sender_udp_inter_send_gap_max_us: Option<u64>,
     sender_udp_bytes_per_second_estimate: Option<u64>,
+    sender_repair_pacing_enabled: bool,
+    sender_repair_pacing_chunk_size: u64,
+    sender_repair_pacing_chunk_gap_ms: u64,
+    sender_repair_pacing_chunk_count: u64,
+    sender_repair_pacing_backoff_count: u64,
+    sender_repair_pacing_would_block_backoff_ms: u64,
     sent_by_hash: BTreeMap<String, u64>,
 }
 
@@ -2355,6 +2361,24 @@ fn merge_send_stats(target: &mut SendScheduleStatsV1, next: SendScheduleStatsV1)
             .sender_udp_bytes_per_second_estimate
             .or(next.sender_udp_bytes_per_second_estimate),
     };
+    target.sender_repair_pacing_enabled =
+        target.sender_repair_pacing_enabled || next.sender_repair_pacing_enabled;
+    if target.sender_repair_pacing_chunk_size == 0 {
+        target.sender_repair_pacing_chunk_size = next.sender_repair_pacing_chunk_size;
+    }
+    if target.sender_repair_pacing_chunk_gap_ms == 0 {
+        target.sender_repair_pacing_chunk_gap_ms = next.sender_repair_pacing_chunk_gap_ms;
+    }
+    target.sender_repair_pacing_chunk_count = target
+        .sender_repair_pacing_chunk_count
+        .saturating_add(next.sender_repair_pacing_chunk_count);
+    target.sender_repair_pacing_backoff_count = target
+        .sender_repair_pacing_backoff_count
+        .saturating_add(next.sender_repair_pacing_backoff_count);
+    if target.sender_repair_pacing_would_block_backoff_ms == 0 {
+        target.sender_repair_pacing_would_block_backoff_ms =
+            next.sender_repair_pacing_would_block_backoff_ms;
+    }
     for (hash, count) in next.sent_by_hash {
         *target.sent_by_hash.entry(hash).or_default() += count;
     }
@@ -2394,6 +2418,12 @@ fn empty_send_stats() -> SendScheduleStatsV1 {
         sender_udp_inter_send_gap_p95_us: None,
         sender_udp_inter_send_gap_max_us: None,
         sender_udp_bytes_per_second_estimate: None,
+        sender_repair_pacing_enabled: false,
+        sender_repair_pacing_chunk_size: 0,
+        sender_repair_pacing_chunk_gap_ms: 0,
+        sender_repair_pacing_chunk_count: 0,
+        sender_repair_pacing_backoff_count: 0,
+        sender_repair_pacing_would_block_backoff_ms: 0,
         sent_by_hash: BTreeMap::new(),
     }
 }
@@ -17793,6 +17823,30 @@ fn send_scheduled_batch(
     let mut sender_udp_first_send_at: Option<Instant> = None;
     let mut sender_udp_last_send_at: Option<Instant> = None;
     let mut sender_udp_inter_send_gap_samples_us = Vec::<u64>::new();
+    let repair_pacing_disabled = string_env_nonempty("NOVOVM_NOVORUDP_REPAIR_PACING_ENABLED")
+        .map(|value| {
+            let lower = value.to_ascii_lowercase();
+            lower == "0" || lower == "false" || lower == "no" || lower == "off"
+        })
+        .unwrap_or(false);
+    let sender_repair_pacing_enabled = frame_kind == "repair" && !repair_pacing_disabled;
+    let sender_repair_pacing_chunk_size = if sender_repair_pacing_enabled {
+        u64_env("NOVOVM_NOVORUDP_REPAIR_PACING_CHUNK_SIZE", 32)?.max(1)
+    } else {
+        0
+    };
+    let sender_repair_pacing_chunk_gap_ms = if sender_repair_pacing_enabled {
+        u64_env("NOVOVM_NOVORUDP_REPAIR_PACING_CHUNK_GAP_MS", 10)?
+    } else {
+        0
+    };
+    let sender_repair_pacing_would_block_backoff_ms = if sender_repair_pacing_enabled {
+        u64_env("NOVOVM_NOVORUDP_REPAIR_WOULD_BLOCK_BACKOFF_MS", 20)?
+    } else {
+        0
+    };
+    let mut sender_repair_pacing_chunk_count = 0u64;
+    let mut sender_repair_pacing_backoff_count = 0u64;
     let duplicated_packets = txs
         .iter()
         .filter(|tx| tx.copy_index > 0)
@@ -17870,6 +17924,27 @@ fn send_scheduled_batch(
                 if delay_ms > 0 {
                     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                 }
+                if sender_repair_pacing_enabled {
+                    if retry_stats.would_block_count > 0
+                        && sender_repair_pacing_would_block_backoff_ms > 0
+                    {
+                        sender_repair_pacing_backoff_count =
+                            sender_repair_pacing_backoff_count.saturating_add(1);
+                        std::thread::sleep(Duration::from_millis(
+                            sender_repair_pacing_would_block_backoff_ms,
+                        ));
+                    }
+                    if sender_repair_pacing_chunk_gap_ms > 0
+                        && sender_repair_pacing_chunk_size > 0
+                        && sent_packets % sender_repair_pacing_chunk_size == 0
+                    {
+                        sender_repair_pacing_chunk_count =
+                            sender_repair_pacing_chunk_count.saturating_add(1);
+                        std::thread::sleep(Duration::from_millis(
+                            sender_repair_pacing_chunk_gap_ms,
+                        ));
+                    }
+                }
                 continue;
             }
             Err(error) => {
@@ -17926,6 +18001,12 @@ fn send_scheduled_batch(
                         sender_udp_first_send_at,
                         sender_udp_last_send_at,
                     ),
+                    sender_repair_pacing_enabled,
+                    sender_repair_pacing_chunk_size,
+                    sender_repair_pacing_chunk_gap_ms,
+                    sender_repair_pacing_chunk_count,
+                    sender_repair_pacing_backoff_count,
+                    sender_repair_pacing_would_block_backoff_ms,
                     sent_by_hash,
                 });
             }
@@ -17979,6 +18060,12 @@ fn send_scheduled_batch(
             sender_udp_first_send_at,
             sender_udp_last_send_at,
         ),
+        sender_repair_pacing_enabled,
+        sender_repair_pacing_chunk_size,
+        sender_repair_pacing_chunk_gap_ms,
+        sender_repair_pacing_chunk_count,
+        sender_repair_pacing_backoff_count,
+        sender_repair_pacing_would_block_backoff_ms,
         sent_by_hash,
     })
 }
@@ -22481,6 +22568,12 @@ fn run_sender(
             "sender_repair_udp_socket_send_buffer_bytes": Value::Null,
             "sender_repair_udp_burst_sequence_min": repair_stats.sender_udp_sequence_min,
             "sender_repair_udp_burst_sequence_max": repair_stats.sender_udp_sequence_max,
+            "sender_repair_pacing_enabled": repair_stats.sender_repair_pacing_enabled,
+            "sender_repair_pacing_chunk_size": repair_stats.sender_repair_pacing_chunk_size,
+            "sender_repair_pacing_chunk_gap_ms": repair_stats.sender_repair_pacing_chunk_gap_ms,
+            "sender_repair_pacing_chunk_count": repair_stats.sender_repair_pacing_chunk_count,
+            "sender_repair_pacing_backoff_count": repair_stats.sender_repair_pacing_backoff_count,
+            "sender_repair_pacing_would_block_backoff_ms": repair_stats.sender_repair_pacing_would_block_backoff_ms,
             "sender_repair_encoded_as_data_frame_count": repair_sequence_sent_count,
             "sender_repair_encoded_as_repair_frame_count": 0u64,
             "sender_repair_wire_frame_first_bytes_hex_sample": [],
