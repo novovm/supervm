@@ -83,35 +83,6 @@ impl PayloadModeV0 {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ApflExecutionModeV0 {
-    CanonicalMaterialized,
-    StructuralNativeTransfer,
-}
-
-impl ApflExecutionModeV0 {
-    fn from_env() -> Self {
-        match env_string("NOVOVM_NOVORUDP_APFL_EXECUTION_MODE")
-            .unwrap_or_else(|| "canonical_materialized_v0".to_string())
-            .as_str()
-        {
-            "structural_native_transfer_v0" => Self::StructuralNativeTransfer,
-            _ => Self::CanonicalMaterialized,
-        }
-    }
-
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::CanonicalMaterialized => "canonical_materialized_v0",
-            Self::StructuralNativeTransfer => "structural_native_transfer_v0",
-        }
-    }
-
-    const fn lazy_materialization_enabled(self) -> bool {
-        matches!(self, Self::StructuralNativeTransfer)
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 struct SenderStats {
     data_send_attempt: u64,
@@ -174,57 +145,27 @@ struct ReceiverExecutionSummaryV0 {
     apfl_binary_bytes_total: u64,
     apfl_decode_elapsed_ms: u64,
     canonical_reconstruction_elapsed_ms: u64,
-    canonical_audit_sample_count: u64,
     canonical_reconstruction_count: u64,
     canonical_reconstruction_error_count: u64,
     canonical_tx_hash_match_count: u64,
     canonical_tx_hash_mismatch_count: u64,
     signature_verify_count: u64,
     signature_verify_error_count: u64,
-    structural_native_transfer_execute_count: u64,
-    structural_execution_elapsed_ms: u64,
 }
 
 #[derive(Debug, Clone, Default)]
 struct DecodedNativePayloadsV0 {
     txs: Vec<NovNativeTxWireV1>,
-    decoded_tx_count: u64,
     legacy_bytes_total: u64,
     apfl_binary_bytes_total: u64,
     apfl_decode_elapsed_ms: u64,
     canonical_reconstruction_elapsed_ms: u64,
-    canonical_audit_sample_count: u64,
     canonical_reconstruction_count: u64,
     canonical_reconstruction_error_count: u64,
     canonical_tx_hash_match_count: u64,
     canonical_tx_hash_mismatch_count: u64,
     signature_verify_count: u64,
     signature_verify_error_count: u64,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct NativeTransferApflBatchViewV0<'a> {
-    base_sequence: u64,
-    tx_count: u64,
-    chain_id: u64,
-    template_id: u16,
-    signature_len: usize,
-    signature_block: &'a [u8],
-    payload_len: usize,
-    apfl_decode_elapsed_ms: u64,
-}
-
-impl<'a> NativeTransferApflBatchViewV0<'a> {
-    fn signature_for_index(self, tx_index: u64) -> Result<[u8; 32]> {
-        let sig_start = (tx_index as usize).saturating_mul(self.signature_len);
-        let sig_end = sig_start.saturating_add(self.signature_len);
-        if sig_end > self.signature_block.len() {
-            bail!("apfl native transfer signature index out of bounds");
-        }
-        let mut signature = [0u8; 32];
-        signature.copy_from_slice(&self.signature_block[sig_start..sig_end]);
-        Ok(signature)
-    }
 }
 
 fn main() -> Result<()> {
@@ -245,17 +186,8 @@ fn run_receiver() -> Result<()> {
         .unwrap_or_else(|| "artifacts/native-pipeline/novorudp-network-only-receiver.json".into());
     let tx_count = env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_TX_COUNT", DEFAULT_TX_COUNT);
     let payload_mode = PayloadModeV0::from_env();
-    let apfl_execution_mode = ApflExecutionModeV0::from_env();
     let execute_aoem = env_bool("NOVOVM_NOVORUDP_NETWORK_ONLY_EXECUTE_AOEM");
     let txs_per_payload = env_u64("NOVOVM_NOVORUDP_TXS_PER_PAYLOAD", 1).max(1);
-    let canonical_audit_sample_count = env_u64(
-        "NOVOVM_NOVORUDP_APFL_CANONICAL_AUDIT_SAMPLE_COUNT",
-        if apfl_execution_mode.lazy_materialization_enabled() {
-            32
-        } else {
-            0
-        },
-    );
     let timeout = Duration::from_millis(env_u64(
         "NOVOVM_NOVORUDP_NETWORK_ONLY_TIMEOUT_MS",
         DEFAULT_TIMEOUT_MS,
@@ -353,13 +285,7 @@ fn run_receiver() -> Result<()> {
     }
 
     let missing = missing_ranges(tx_count, &delivered);
-    let execution = receiver_execution_summary_v0(
-        payload_mode,
-        apfl_execution_mode,
-        execute_aoem,
-        canonical_audit_sample_count,
-        &delivered,
-    );
+    let execution = receiver_execution_summary_v0(payload_mode, execute_aoem, &delivered);
     let elapsed_ms = start.elapsed().as_millis() as u64;
     let receiver_payload_bytes_total = delivered.values().fold(0u64, |acc, payload| {
         acc.saturating_add(payload.len() as u64)
@@ -399,9 +325,6 @@ fn run_receiver() -> Result<()> {
         "network_only_gate_enabled": true,
         "business_payload_mode": payload_mode.as_str(),
         "apfl_native_transfer_batch_v0_enabled": payload_mode.is_apfl_native_transfer(),
-        "receiver_apfl_execution_mode": apfl_execution_mode.as_str(),
-        "receiver_lazy_materialization_enabled": apfl_execution_mode.lazy_materialization_enabled(),
-        "receiver_canonical_audit_sample_limit": canonical_audit_sample_count,
         "txs_per_payload": txs_per_payload,
         "transport_payloads_delivered": receiver_transport_unique_delivered_count,
         "receiver_transport_data_received_count": stats.data_received,
@@ -433,11 +356,7 @@ fn run_receiver() -> Result<()> {
         "apfl_binary_savings_ratio_bps": apfl_binary_savings_ratio_bps,
         "receiver_apfl_decode_elapsed_ms": execution.apfl_decode_elapsed_ms,
         "receiver_canonical_reconstruction_elapsed_ms": execution.canonical_reconstruction_elapsed_ms,
-        "receiver_canonical_materialization_count": execution.canonical_reconstruction_count,
-        "receiver_canonical_audit_sample_count": execution.canonical_audit_sample_count,
         "receiver_aoem_adapter_elapsed_ms": execution.aoem_execute_elapsed_ms,
-        "receiver_structural_native_transfer_execute_count": execution.structural_native_transfer_execute_count,
-        "receiver_structural_execution_elapsed_ms": execution.structural_execution_elapsed_ms,
         "canonical_reconstruction_count": execution.canonical_reconstruction_count,
         "canonical_reconstruction_error_count": execution.canonical_reconstruction_error_count,
         "canonical_tx_hash_match_count": execution.canonical_tx_hash_match_count,
@@ -846,9 +765,7 @@ fn payload_for_sequence_v0(
 
 fn receiver_execution_summary_v0(
     mode: PayloadModeV0,
-    apfl_execution_mode: ApflExecutionModeV0,
     execute_aoem: bool,
-    canonical_audit_sample_count: u64,
     delivered: &BTreeMap<u64, Vec<u8>>,
 ) -> ReceiverExecutionSummaryV0 {
     if !mode.is_business_payload() {
@@ -868,87 +785,6 @@ fn receiver_execution_summary_v0(
                 ..
             })) => {
                 summary.business_decode_count = summary.business_decode_count.saturating_add(1);
-                if mode.is_apfl_native_transfer()
-                    && apfl_execution_mode == ApflExecutionModeV0::StructuralNativeTransfer
-                {
-                    match structural_native_transfer_execute_v0(
-                        native_payload.as_slice(),
-                        tx_count,
-                        execute_aoem,
-                        canonical_audit_sample_count,
-                    ) {
-                        Ok(decoded_native) => {
-                            summary.legacy_native_tx_bytes_total = summary
-                                .legacy_native_tx_bytes_total
-                                .saturating_add(decoded_native.legacy_bytes_total);
-                            summary.apfl_binary_bytes_total = summary
-                                .apfl_binary_bytes_total
-                                .saturating_add(decoded_native.apfl_binary_bytes_total);
-                            summary.apfl_decode_elapsed_ms = summary
-                                .apfl_decode_elapsed_ms
-                                .saturating_add(decoded_native.apfl_decode_elapsed_ms);
-                            summary.canonical_reconstruction_elapsed_ms = summary
-                                .canonical_reconstruction_elapsed_ms
-                                .saturating_add(decoded_native.canonical_reconstruction_elapsed_ms);
-                            summary.canonical_audit_sample_count = summary
-                                .canonical_audit_sample_count
-                                .saturating_add(decoded_native.canonical_audit_sample_count);
-                            summary.canonical_reconstruction_count = summary
-                                .canonical_reconstruction_count
-                                .saturating_add(decoded_native.canonical_reconstruction_count);
-                            summary.canonical_reconstruction_error_count =
-                                summary.canonical_reconstruction_error_count.saturating_add(
-                                    decoded_native.canonical_reconstruction_error_count,
-                                );
-                            summary.canonical_tx_hash_match_count = summary
-                                .canonical_tx_hash_match_count
-                                .saturating_add(decoded_native.canonical_tx_hash_match_count);
-                            summary.canonical_tx_hash_mismatch_count = summary
-                                .canonical_tx_hash_mismatch_count
-                                .saturating_add(decoded_native.canonical_tx_hash_mismatch_count);
-                            summary.signature_verify_count = summary
-                                .signature_verify_count
-                                .saturating_add(decoded_native.signature_verify_count);
-                            summary.signature_verify_error_count = summary
-                                .signature_verify_error_count
-                                .saturating_add(decoded_native.signature_verify_error_count);
-                            summary.business_transactions_decoded_count = summary
-                                .business_transactions_decoded_count
-                                .saturating_add(decoded_native.decoded_tx_count);
-                            if execute_aoem {
-                                let structural_start = Instant::now();
-                                summary.structural_native_transfer_execute_count = summary
-                                    .structural_native_transfer_execute_count
-                                    .saturating_add(decoded_native.decoded_tx_count);
-                                summary.aoem_executed_total = summary
-                                    .aoem_executed_total
-                                    .saturating_add(decoded_native.decoded_tx_count);
-                                summary.aoem_transactions_executed_total = summary
-                                    .aoem_transactions_executed_total
-                                    .saturating_add(decoded_native.decoded_tx_count);
-                                summary.ledger_completed_count = summary
-                                    .ledger_completed_count
-                                    .saturating_add(decoded_native.decoded_tx_count);
-                                summary.ledger_transactions_completed_count = summary
-                                    .ledger_transactions_completed_count
-                                    .saturating_add(decoded_native.decoded_tx_count);
-                                let structural_elapsed =
-                                    structural_start.elapsed().as_millis() as u64;
-                                summary.structural_execution_elapsed_ms = summary
-                                    .structural_execution_elapsed_ms
-                                    .saturating_add(structural_elapsed);
-                                summary.aoem_execute_elapsed_ms = summary
-                                    .aoem_execute_elapsed_ms
-                                    .saturating_add(structural_elapsed);
-                            }
-                        }
-                        Err(_) => {
-                            summary.business_decode_error_count =
-                                summary.business_decode_error_count.saturating_add(1);
-                        }
-                    }
-                    continue;
-                }
                 let native_txs = match decode_native_tx_payloads_for_payload_v0(
                     native_payload.as_slice(),
                     tx_count,
@@ -966,9 +802,6 @@ fn receiver_execution_summary_v0(
                         summary.canonical_reconstruction_elapsed_ms = summary
                             .canonical_reconstruction_elapsed_ms
                             .saturating_add(decoded_native.canonical_reconstruction_elapsed_ms);
-                        summary.canonical_audit_sample_count = summary
-                            .canonical_audit_sample_count
-                            .saturating_add(decoded_native.canonical_audit_sample_count);
                         summary.canonical_reconstruction_count = summary
                             .canonical_reconstruction_count
                             .saturating_add(decoded_native.canonical_reconstruction_count);
@@ -1142,7 +975,6 @@ fn decode_native_tx_payloads_for_payload_v0(
             .map_err(|err| anyhow::anyhow!("decode native tx wire failed: {err}"))?;
         return Ok(DecodedNativePayloadsV0 {
             txs: vec![tx],
-            decoded_tx_count: 1,
             legacy_bytes_total: payload.len() as u64,
             ..DecodedNativePayloadsV0::default()
         });
@@ -1179,16 +1011,15 @@ fn decode_native_tx_payloads_for_payload_v0(
     }
     Ok(DecodedNativePayloadsV0 {
         txs: out,
-        decoded_tx_count: encoded_count,
         legacy_bytes_total,
         ..DecodedNativePayloadsV0::default()
     })
 }
 
-fn native_transfer_apfl_batch_view_v0(
+fn decode_apfl_native_transfer_batch_payload_v0(
     payload: &[u8],
     tx_count: u64,
-) -> Result<NativeTransferApflBatchViewV0<'_>> {
+) -> Result<DecodedNativePayloadsV0> {
     let apfl_decode_start = Instant::now();
     let mut offset = APFL_NATIVE_TRANSFER_BATCH_MAGIC_V0.len();
     if payload.len() < offset + 1 + 2 + 8 + 8 + 8 + 1 {
@@ -1230,105 +1061,9 @@ fn native_transfer_apfl_batch_view_v0(
         bail!("apfl native transfer signature block length mismatch");
     }
     let apfl_decode_elapsed_ms = apfl_decode_start.elapsed().as_millis() as u64;
-    Ok(NativeTransferApflBatchViewV0 {
-        base_sequence,
-        tx_count: encoded_count,
-        chain_id,
-        template_id,
-        signature_len,
-        signature_block: &payload[offset..],
-        payload_len: payload.len(),
-        apfl_decode_elapsed_ms,
-    })
-}
 
-fn structural_native_transfer_execute_v0(
-    payload: &[u8],
-    tx_count: u64,
-    execute_aoem: bool,
-    canonical_audit_sample_count: u64,
-) -> Result<DecodedNativePayloadsV0> {
-    let view = native_transfer_apfl_batch_view_v0(payload, tx_count)?;
-    let _fixed_template_guard = (view.chain_id, view.template_id);
-    let mut signature_verify_count = 0u64;
-    let mut signature_verify_error_count = 0u64;
-    for tx_index in 0..view.tx_count {
-        let signature = view.signature_for_index(tx_index)?;
-        let sequence = view.base_sequence.saturating_add(tx_index);
-        let expected_signature = [(sequence.saturating_add(1) & 0xff) as u8; 32];
-        signature_verify_count = signature_verify_count.saturating_add(1);
-        if signature != expected_signature {
-            signature_verify_error_count = signature_verify_error_count.saturating_add(1);
-        }
-    }
-
-    let audit_count = canonical_audit_sample_count.min(view.tx_count);
     let canonical_reconstruction_start = Instant::now();
-    let mut legacy_bytes_total = 0u64;
-    let mut canonical_reconstruction_count = 0u64;
-    let mut canonical_reconstruction_error_count = 0u64;
-    let mut canonical_tx_hash_match_count = 0u64;
-    let mut canonical_tx_hash_mismatch_count = 0u64;
-    for tx_index in 0..audit_count {
-        let signature = view.signature_for_index(tx_index)?;
-        let sequence = view.base_sequence.saturating_add(tx_index);
-        match native_tx_for_sequence_with_signature_v0(sequence, signature) {
-            Ok(tx) => {
-                let reconstructed_wire = encode_nov_native_tx_wire_v1(&tx).map_err(|err| {
-                    anyhow::anyhow!("encode audited apfl native tx failed: {err}")
-                })?;
-                let legacy_wire = native_tx_payload_for_sequence_v0(sequence)?;
-                legacy_bytes_total = legacy_bytes_total.saturating_add(legacy_wire.len() as u64);
-                canonical_reconstruction_count = canonical_reconstruction_count.saturating_add(1);
-                let reconstructed_hash = sha2::Sha256::digest(reconstructed_wire.as_slice());
-                let legacy_hash = sha2::Sha256::digest(legacy_wire.as_slice());
-                if reconstructed_hash == legacy_hash {
-                    canonical_tx_hash_match_count = canonical_tx_hash_match_count.saturating_add(1);
-                } else {
-                    canonical_tx_hash_mismatch_count =
-                        canonical_tx_hash_mismatch_count.saturating_add(1);
-                }
-            }
-            Err(_) => {
-                canonical_reconstruction_error_count =
-                    canonical_reconstruction_error_count.saturating_add(1);
-            }
-        }
-    }
-    let canonical_reconstruction_elapsed_ms =
-        canonical_reconstruction_start.elapsed().as_millis() as u64;
-    let legacy_bytes_total = if audit_count > 0 {
-        legacy_bytes_total.saturating_mul(view.tx_count) / audit_count
-    } else {
-        0
-    };
-
-    let _ = execute_aoem;
-    Ok(DecodedNativePayloadsV0 {
-        txs: Vec::new(),
-        decoded_tx_count: view.tx_count,
-        legacy_bytes_total,
-        apfl_binary_bytes_total: view.payload_len as u64,
-        apfl_decode_elapsed_ms: view.apfl_decode_elapsed_ms,
-        canonical_reconstruction_elapsed_ms,
-        canonical_audit_sample_count: audit_count,
-        canonical_reconstruction_count,
-        canonical_reconstruction_error_count,
-        canonical_tx_hash_match_count,
-        canonical_tx_hash_mismatch_count,
-        signature_verify_count,
-        signature_verify_error_count,
-    })
-}
-
-fn decode_apfl_native_transfer_batch_payload_v0(
-    payload: &[u8],
-    tx_count: u64,
-) -> Result<DecodedNativePayloadsV0> {
-    let view = native_transfer_apfl_batch_view_v0(payload, tx_count)?;
-    let _fixed_template_guard = (view.chain_id, view.template_id);
-    let canonical_reconstruction_start = Instant::now();
-    let mut out = Vec::with_capacity(view.tx_count as usize);
+    let mut out = Vec::with_capacity(encoded_count as usize);
     let mut legacy_bytes_total = 0u64;
     let mut canonical_reconstruction_count = 0u64;
     let mut canonical_reconstruction_error_count = 0u64;
@@ -1337,9 +1072,12 @@ fn decode_apfl_native_transfer_batch_payload_v0(
     let mut signature_verify_count = 0u64;
     let mut signature_verify_error_count = 0u64;
 
-    for tx_index in 0..view.tx_count {
-        let signature = view.signature_for_index(tx_index)?;
-        let sequence = view.base_sequence.saturating_add(tx_index);
+    for tx_index in 0..encoded_count {
+        let sig_start = offset + (tx_index as usize).saturating_mul(signature_len);
+        let sig_end = sig_start + signature_len;
+        let mut signature = [0u8; 32];
+        signature.copy_from_slice(&payload[sig_start..sig_end]);
+        let sequence = base_sequence.saturating_add(tx_index);
         let expected_signature = [(sequence.saturating_add(1) & 0xff) as u8; 32];
         if signature != expected_signature {
             signature_verify_error_count = signature_verify_error_count.saturating_add(1);
@@ -1375,12 +1113,10 @@ fn decode_apfl_native_transfer_batch_payload_v0(
 
     Ok(DecodedNativePayloadsV0 {
         txs: out,
-        decoded_tx_count: view.tx_count,
         legacy_bytes_total,
-        apfl_binary_bytes_total: view.payload_len as u64,
-        apfl_decode_elapsed_ms: view.apfl_decode_elapsed_ms,
+        apfl_binary_bytes_total: payload.len() as u64,
+        apfl_decode_elapsed_ms,
         canonical_reconstruction_elapsed_ms,
-        canonical_audit_sample_count: view.tx_count,
         canonical_reconstruction_count,
         canonical_reconstruction_error_count,
         canonical_tx_hash_match_count,
@@ -1495,25 +1231,14 @@ mod tests {
             );
         }
 
-        let decoded = receiver_execution_summary_v0(
-            PayloadModeV0::EvmTransactions,
-            ApflExecutionModeV0::CanonicalMaterialized,
-            false,
-            0,
-            &delivered,
-        );
+        let decoded =
+            receiver_execution_summary_v0(PayloadModeV0::EvmTransactions, false, &delivered);
         assert_eq!(decoded.business_decode_count, 4);
         assert_eq!(decoded.business_decode_error_count, 0);
         assert_eq!(decoded.aoem_executed_total, 0);
         assert_eq!(decoded.ledger_completed_count, 0);
 
-        let opaque = receiver_execution_summary_v0(
-            PayloadModeV0::Opaque,
-            ApflExecutionModeV0::CanonicalMaterialized,
-            true,
-            0,
-            &delivered,
-        );
+        let opaque = receiver_execution_summary_v0(PayloadModeV0::Opaque, true, &delivered);
         assert_eq!(
             opaque.business_decode_count, 0,
             "transport-only mode must not decode business payloads"
@@ -1531,13 +1256,8 @@ mod tests {
             );
         }
 
-        let summary = receiver_execution_summary_v0(
-            PayloadModeV0::EvmTransactions,
-            ApflExecutionModeV0::CanonicalMaterialized,
-            true,
-            0,
-            &delivered,
-        );
+        let summary =
+            receiver_execution_summary_v0(PayloadModeV0::EvmTransactions, true, &delivered);
         assert_eq!(summary.business_decode_count, 4);
         assert_eq!(summary.business_decode_error_count, 0);
         assert_eq!(summary.aoem_executed_total, 4);
@@ -1556,13 +1276,8 @@ mod tests {
             );
         }
 
-        let summary = receiver_execution_summary_v0(
-            PayloadModeV0::EvmTransactions,
-            ApflExecutionModeV0::CanonicalMaterialized,
-            true,
-            0,
-            &delivered,
-        );
+        let summary =
+            receiver_execution_summary_v0(PayloadModeV0::EvmTransactions, true, &delivered);
         assert_eq!(summary.business_decode_count, 2);
         assert_eq!(summary.business_decode_error_count, 0);
         assert_eq!(summary.business_transactions_decoded_count, 6);
@@ -1587,13 +1302,8 @@ mod tests {
         let mut delivered = BTreeMap::new();
         delivered.insert(0, apfl);
 
-        let summary = receiver_execution_summary_v0(
-            PayloadModeV0::NativeTransferApflV0,
-            ApflExecutionModeV0::CanonicalMaterialized,
-            true,
-            0,
-            &delivered,
-        );
+        let summary =
+            receiver_execution_summary_v0(PayloadModeV0::NativeTransferApflV0, true, &delivered);
         assert_eq!(summary.business_decode_count, 1);
         assert_eq!(summary.business_decode_error_count, 0);
         assert_eq!(summary.business_transactions_decoded_count, txs_per_payload);
@@ -1606,38 +1316,6 @@ mod tests {
         assert_eq!(summary.signature_verify_count, txs_per_payload);
         assert_eq!(summary.signature_verify_error_count, 0);
         assert!(summary.legacy_native_tx_bytes_total > summary.apfl_binary_bytes_total);
-    }
-
-    #[test]
-    fn native_transfer_apfl_structural_mode_uses_lazy_materialization() {
-        let txs_per_payload = 8;
-        let apfl = payload_for_sequence_v0(PayloadModeV0::NativeTransferApflV0, 0, txs_per_payload)
-            .expect("apfl payload");
-        let mut delivered = BTreeMap::new();
-        delivered.insert(0, apfl);
-
-        let summary = receiver_execution_summary_v0(
-            PayloadModeV0::NativeTransferApflV0,
-            ApflExecutionModeV0::StructuralNativeTransfer,
-            true,
-            2,
-            &delivered,
-        );
-        assert_eq!(summary.business_decode_count, 1);
-        assert_eq!(summary.business_decode_error_count, 0);
-        assert_eq!(summary.business_transactions_decoded_count, txs_per_payload);
-        assert_eq!(
-            summary.structural_native_transfer_execute_count,
-            txs_per_payload
-        );
-        assert_eq!(summary.aoem_transactions_executed_total, txs_per_payload);
-        assert_eq!(summary.ledger_transactions_completed_count, txs_per_payload);
-        assert_eq!(summary.canonical_audit_sample_count, 2);
-        assert_eq!(summary.canonical_reconstruction_count, 2);
-        assert_eq!(summary.canonical_tx_hash_match_count, 2);
-        assert_eq!(summary.canonical_tx_hash_mismatch_count, 0);
-        assert_eq!(summary.signature_verify_count, txs_per_payload);
-        assert_eq!(summary.signature_verify_error_count, 0);
     }
 
     #[test]
