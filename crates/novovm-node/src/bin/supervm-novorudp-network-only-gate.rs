@@ -93,6 +93,10 @@ struct SenderStats {
     ack_received: u64,
     decode_error_count: u64,
     data_loss_injected: u64,
+    data_payload_bytes_sent_total: u64,
+    repair_payload_bytes_sent_total: u64,
+    payload_copy_elapsed_ms: u64,
+    socket_send_elapsed_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -139,6 +143,8 @@ struct ReceiverExecutionSummaryV0 {
     ledger_close_elapsed_ms: u64,
     legacy_native_tx_bytes_total: u64,
     apfl_binary_bytes_total: u64,
+    apfl_decode_elapsed_ms: u64,
+    canonical_reconstruction_elapsed_ms: u64,
     canonical_reconstruction_count: u64,
     canonical_reconstruction_error_count: u64,
     canonical_tx_hash_match_count: u64,
@@ -152,6 +158,8 @@ struct DecodedNativePayloadsV0 {
     txs: Vec<NovNativeTxWireV1>,
     legacy_bytes_total: u64,
     apfl_binary_bytes_total: u64,
+    apfl_decode_elapsed_ms: u64,
+    canonical_reconstruction_elapsed_ms: u64,
     canonical_reconstruction_count: u64,
     canonical_reconstruction_error_count: u64,
     canonical_tx_hash_match_count: u64,
@@ -339,11 +347,16 @@ fn run_receiver() -> Result<()> {
         "receiver_report_write_elapsed_ms": 0u64,
         "receiver_idle_wait_elapsed_ms": receiver_idle_wait_elapsed_ms,
         "receiver_payload_bytes_total": receiver_payload_bytes_total,
+        "receiver_effective_payload_bytes_per_sec": rate_per_sec_v0(receiver_payload_bytes_total, receiver_transport_delivery_elapsed_ms),
+        "receiver_effective_business_tx_per_sec": rate_per_sec_v0(execution.business_transactions_decoded_count, receiver_transport_delivery_elapsed_ms),
         "legacy_native_tx_bytes_total": execution.legacy_native_tx_bytes_total,
         "legacy_bytes_per_tx": legacy_bytes_per_tx,
         "apfl_binary_bytes_total": if payload_mode.is_apfl_native_transfer() { receiver_payload_bytes_total } else { 0u64 },
         "apfl_binary_bytes_per_tx": apfl_binary_bytes_per_tx,
         "apfl_binary_savings_ratio_bps": apfl_binary_savings_ratio_bps,
+        "receiver_apfl_decode_elapsed_ms": execution.apfl_decode_elapsed_ms,
+        "receiver_canonical_reconstruction_elapsed_ms": execution.canonical_reconstruction_elapsed_ms,
+        "receiver_aoem_adapter_elapsed_ms": execution.aoem_execute_elapsed_ms,
         "canonical_reconstruction_count": execution.canonical_reconstruction_count,
         "canonical_reconstruction_error_count": execution.canonical_reconstruction_error_count,
         "canonical_tx_hash_match_count": execution.canonical_tx_hash_match_count,
@@ -416,25 +429,46 @@ fn run_sender() -> Result<()> {
         start: 0,
         end_inclusive: tx_count.saturating_sub(1),
     }];
+    let payload_build_start = Instant::now();
     let payloads = (0..tx_count)
         .map(|sequence| payload_for_sequence_v0(payload_mode, sequence, txs_per_payload))
         .collect::<Result<Vec<_>>>()?;
+    let sender_batch_build_elapsed_ms = payload_build_start.elapsed().as_millis() as u64;
+    let sender_apfl_encode_elapsed_ms = if payload_mode.is_apfl_native_transfer() {
+        sender_batch_build_elapsed_ms
+    } else {
+        0
+    };
 
+    let primary_send_start = Instant::now();
     for sequence in 0..tx_count {
         stats.data_send_attempt = stats.data_send_attempt.saturating_add(1);
         if loss.drops_data_sequence(sequence) {
             stats.data_loss_injected = stats.data_loss_injected.saturating_add(1);
             continue;
         }
+        let copy_start = Instant::now();
+        let payload = payloads[sequence as usize].clone();
+        let payload_len = payload.len() as u64;
+        stats.payload_copy_elapsed_ms = stats
+            .payload_copy_elapsed_ms
+            .saturating_add(copy_start.elapsed().as_millis() as u64);
+        let socket_send_start = Instant::now();
         send_transport_frame(
             &socket,
             target,
             NovoRudpTransportFrameKindV0::Data,
             session_id,
             sequence,
-            payloads[sequence as usize].clone(),
+            payload,
             0,
         )?;
+        stats.socket_send_elapsed_ms = stats
+            .socket_send_elapsed_ms
+            .saturating_add(socket_send_start.elapsed().as_millis() as u64);
+        stats.data_payload_bytes_sent_total = stats
+            .data_payload_bytes_sent_total
+            .saturating_add(payload_len);
         if !sent_once.insert(sequence) {
             stats.duplicate_sent = stats.duplicate_sent.saturating_add(1);
         }
@@ -448,6 +482,7 @@ fn run_sender() -> Result<()> {
             thread::sleep(Duration::from_millis(data_pacing_chunk_gap_ms));
         }
     }
+    let sender_primary_send_elapsed_ms = primary_send_start.elapsed().as_millis() as u64;
 
     let mut buf = vec![0u8; 128 * 1024];
     let mut done = false;
@@ -488,15 +523,28 @@ fn run_sender() -> Result<()> {
                         if sequence >= tx_count {
                             continue;
                         }
+                        let copy_start = Instant::now();
+                        let payload = payloads[sequence as usize].clone();
+                        let payload_len = payload.len() as u64;
+                        stats.payload_copy_elapsed_ms = stats
+                            .payload_copy_elapsed_ms
+                            .saturating_add(copy_start.elapsed().as_millis() as u64);
+                        let socket_send_start = Instant::now();
                         send_transport_frame(
                             &socket,
                             target,
                             NovoRudpTransportFrameKindV0::Repair,
                             session_id,
                             sequence,
-                            payloads[sequence as usize].clone(),
+                            payload,
                             ack_epoch,
                         )?;
+                        stats.socket_send_elapsed_ms = stats
+                            .socket_send_elapsed_ms
+                            .saturating_add(socket_send_start.elapsed().as_millis() as u64);
+                        stats.repair_payload_bytes_sent_total = stats
+                            .repair_payload_bytes_sent_total
+                            .saturating_add(payload_len);
                         if !sent_once.insert(sequence) {
                             stats.duplicate_sent = stats.duplicate_sent.saturating_add(1);
                         }
@@ -534,15 +582,24 @@ fn run_sender() -> Result<()> {
         "sender_transport_data_send_attempt_count": stats.data_send_attempt,
         "sender_transport_data_loss_injected_count": stats.data_loss_injected,
         "sender_elapsed_ms": elapsed_ms,
+        "sender_batch_build_elapsed_ms": sender_batch_build_elapsed_ms,
+        "sender_apfl_encode_elapsed_ms": sender_apfl_encode_elapsed_ms,
+        "sender_payload_copy_elapsed_ms": stats.payload_copy_elapsed_ms,
+        "sender_socket_send_elapsed_ms": stats.socket_send_elapsed_ms,
+        "sender_primary_send_elapsed_ms": sender_primary_send_elapsed_ms,
+        "sender_data_payload_bytes_sent_total": stats.data_payload_bytes_sent_total,
+        "sender_repair_payload_bytes_sent_total": stats.repair_payload_bytes_sent_total,
         "sender_data_payload_bytes_total": sender_data_payload_bytes_total,
-        "sender_apfl_binary_bytes_total": if payload_mode.is_apfl_native_transfer() { sender_data_payload_bytes_total } else { 0u64 },
+        "sender_apfl_binary_bytes_total": if payload_mode.is_apfl_native_transfer() { stats.data_payload_bytes_sent_total } else { 0u64 },
         "sender_apfl_binary_bytes_per_tx": if payload_mode.is_apfl_native_transfer() {
-            sender_data_payload_bytes_total / stats.data_sent.saturating_mul(txs_per_payload).max(1)
+            stats.data_payload_bytes_sent_total / stats.data_sent.saturating_mul(txs_per_payload).max(1)
         } else {
             0u64
         },
         "sender_data_frames_per_sec": rate_per_sec_v0(stats.data_sent, elapsed_ms),
         "sender_data_bytes_per_sec": rate_per_sec_v0(sender_data_payload_bytes_total, elapsed_ms),
+        "sender_effective_payload_bytes_per_sec": rate_per_sec_v0(stats.data_payload_bytes_sent_total, sender_primary_send_elapsed_ms),
+        "sender_effective_business_tx_per_sec": rate_per_sec_v0(stats.data_sent.saturating_mul(txs_per_payload), sender_primary_send_elapsed_ms),
         "sender_ack_count": stats.ack_received,
         "sender_repair_amplification_bps": bps_v0(stats.repair_sent, stats.data_loss_injected),
         "sender_business_transactions_per_sec": rate_per_sec_v0(stats.data_sent.saturating_mul(txs_per_payload), elapsed_ms),
@@ -739,6 +796,12 @@ fn receiver_execution_summary_v0(
                         summary.apfl_binary_bytes_total = summary
                             .apfl_binary_bytes_total
                             .saturating_add(decoded_native.apfl_binary_bytes_total);
+                        summary.apfl_decode_elapsed_ms = summary
+                            .apfl_decode_elapsed_ms
+                            .saturating_add(decoded_native.apfl_decode_elapsed_ms);
+                        summary.canonical_reconstruction_elapsed_ms = summary
+                            .canonical_reconstruction_elapsed_ms
+                            .saturating_add(decoded_native.canonical_reconstruction_elapsed_ms);
                         summary.canonical_reconstruction_count = summary
                             .canonical_reconstruction_count
                             .saturating_add(decoded_native.canonical_reconstruction_count);
@@ -957,6 +1020,7 @@ fn decode_apfl_native_transfer_batch_payload_v0(
     payload: &[u8],
     tx_count: u64,
 ) -> Result<DecodedNativePayloadsV0> {
+    let apfl_decode_start = Instant::now();
     let mut offset = APFL_NATIVE_TRANSFER_BATCH_MAGIC_V0.len();
     if payload.len() < offset + 1 + 2 + 8 + 8 + 8 + 1 {
         bail!("apfl native transfer batch payload too short");
@@ -996,7 +1060,9 @@ fn decode_apfl_native_transfer_batch_payload_v0(
     if payload.len() != expected_len {
         bail!("apfl native transfer signature block length mismatch");
     }
+    let apfl_decode_elapsed_ms = apfl_decode_start.elapsed().as_millis() as u64;
 
+    let canonical_reconstruction_start = Instant::now();
     let mut out = Vec::with_capacity(encoded_count as usize);
     let mut legacy_bytes_total = 0u64;
     let mut canonical_reconstruction_count = 0u64;
@@ -1042,11 +1108,15 @@ fn decode_apfl_native_transfer_batch_payload_v0(
             }
         }
     }
+    let canonical_reconstruction_elapsed_ms =
+        canonical_reconstruction_start.elapsed().as_millis() as u64;
 
     Ok(DecodedNativePayloadsV0 {
         txs: out,
         legacy_bytes_total,
         apfl_binary_bytes_total: payload.len() as u64,
+        apfl_decode_elapsed_ms,
+        canonical_reconstruction_elapsed_ms,
         canonical_reconstruction_count,
         canonical_reconstruction_error_count,
         canonical_tx_hash_match_count,
