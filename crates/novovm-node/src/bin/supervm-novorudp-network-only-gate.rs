@@ -47,6 +47,14 @@ struct ReceiverStats {
     duplicate_received: u64,
     ack_sent: u64,
     decode_error_count: u64,
+    recv_from_call_count: u64,
+    recv_from_elapsed_us: u64,
+    frame_decode_elapsed_us: u64,
+    packet_dispatch_elapsed_us: u64,
+    delivered_insert_elapsed_us: u64,
+    ack_build_elapsed_us: u64,
+    ack_send_elapsed_us: u64,
+    recv_loop_total_elapsed_us: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +111,11 @@ struct SenderStats {
     transport_kernel_send_elapsed_us: u64,
     transport_send_total_elapsed_us: u64,
     transport_encoded_bytes_total: u64,
+    transport_send_call_count: u64,
+    transport_send_max_bytes: u64,
+    pacing_sleep_elapsed_ms: u64,
+    repair_send_elapsed_ms: u64,
+    repair_send_call_count: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -283,51 +296,86 @@ fn run_receiver() -> Result<()> {
     let mut transport_done_ms = None::<u64>;
 
     while start.elapsed() < timeout {
-        match socket.recv_from(buf.as_mut_slice()) {
+        let loop_start = Instant::now();
+        let recv_from_start = Instant::now();
+        let recv_result = socket.recv_from(buf.as_mut_slice());
+        stats.recv_from_elapsed_us = stats
+            .recv_from_elapsed_us
+            .saturating_add(recv_from_start.elapsed().as_micros() as u64);
+        match recv_result {
             Ok((n, src)) => {
+                stats.recv_from_call_count = stats.recv_from_call_count.saturating_add(1);
                 let recv_ms = start.elapsed().as_millis() as u64;
+                let decode_start = Instant::now();
                 let frame = match NovoRudpTransportFrameV0::decode(&buf[..n]) {
                     Ok(frame) => frame,
                     Err(_) => {
+                        stats.frame_decode_elapsed_us = stats
+                            .frame_decode_elapsed_us
+                            .saturating_add(decode_start.elapsed().as_micros() as u64);
                         stats.decode_error_count = stats.decode_error_count.saturating_add(1);
                         continue;
                     }
                 };
+                stats.frame_decode_elapsed_us = stats
+                    .frame_decode_elapsed_us
+                    .saturating_add(decode_start.elapsed().as_micros() as u64);
                 if frame.session_id != session_id {
                     continue;
                 }
                 first_packet_ms.get_or_insert(recv_ms);
                 last_packet_ms = Some(recv_ms);
                 last_peer = Some(src);
+                let dispatch_start = Instant::now();
                 match frame.kind {
                     NovoRudpTransportFrameKindV0::Data => {
                         stats.data_received = stats.data_received.saturating_add(1);
+                        let insert_start = Instant::now();
                         if delivered.insert(frame.sequence, frame.payload).is_some() {
                             stats.duplicate_received = stats.duplicate_received.saturating_add(1);
                         }
+                        stats.delivered_insert_elapsed_us = stats
+                            .delivered_insert_elapsed_us
+                            .saturating_add(insert_start.elapsed().as_micros() as u64);
                     }
                     NovoRudpTransportFrameKindV0::Repair => {
                         stats.repair_received = stats.repair_received.saturating_add(1);
+                        let insert_start = Instant::now();
                         if delivered.insert(frame.sequence, frame.payload).is_some() {
                             stats.duplicate_received = stats.duplicate_received.saturating_add(1);
                         }
+                        stats.delivered_insert_elapsed_us = stats
+                            .delivered_insert_elapsed_us
+                            .saturating_add(insert_start.elapsed().as_micros() as u64);
                     }
                     _ => {}
                 }
+                stats.packet_dispatch_elapsed_us = stats
+                    .packet_dispatch_elapsed_us
+                    .saturating_add(dispatch_start.elapsed().as_micros() as u64);
                 packet_since_ack = packet_since_ack.saturating_add(1);
                 let done = delivered.len() as u64 >= tx_count;
                 if done || packet_since_ack >= ack_every {
                     if let Some(peer) = last_peer {
                         ack_epoch = ack_epoch.saturating_add(1);
-                        send_ack(
+                        let ack_timing = send_ack(
                             &socket, peer, session_id, tx_count, &delivered, ack_epoch, done,
                         )?;
+                        stats.ack_build_elapsed_us = stats
+                            .ack_build_elapsed_us
+                            .saturating_add(ack_timing.frame_encode_elapsed_us);
+                        stats.ack_send_elapsed_us = stats
+                            .ack_send_elapsed_us
+                            .saturating_add(ack_timing.kernel_send_elapsed_us);
                         stats.ack_sent = stats.ack_sent.saturating_add(1);
                         packet_since_ack = 0;
                     }
                 }
                 if done {
                     transport_done_ms = Some(start.elapsed().as_millis() as u64);
+                    stats.recv_loop_total_elapsed_us = stats
+                        .recv_loop_total_elapsed_us
+                        .saturating_add(loop_start.elapsed().as_micros() as u64);
                     break;
                 }
             }
@@ -338,9 +386,15 @@ fn run_receiver() -> Result<()> {
                 if let Some(peer) = last_peer {
                     ack_epoch = ack_epoch.saturating_add(1);
                     let done = delivered.len() as u64 >= tx_count;
-                    send_ack(
+                    let ack_timing = send_ack(
                         &socket, peer, session_id, tx_count, &delivered, ack_epoch, done,
                     )?;
+                    stats.ack_build_elapsed_us = stats
+                        .ack_build_elapsed_us
+                        .saturating_add(ack_timing.frame_encode_elapsed_us);
+                    stats.ack_send_elapsed_us = stats
+                        .ack_send_elapsed_us
+                        .saturating_add(ack_timing.kernel_send_elapsed_us);
                     stats.ack_sent = stats.ack_sent.saturating_add(1);
                     if done {
                         break;
@@ -349,6 +403,9 @@ fn run_receiver() -> Result<()> {
             }
             Err(e) => return Err(e).context("receiver recv_from failed"),
         }
+        stats.recv_loop_total_elapsed_us = stats
+            .recv_loop_total_elapsed_us
+            .saturating_add(loop_start.elapsed().as_micros() as u64);
     }
 
     let missing = missing_ranges(tx_count, &delivered);
@@ -399,6 +456,21 @@ fn run_receiver() -> Result<()> {
         "receiver_transport_unique_delivered_count": receiver_transport_unique_delivered_count,
         "receiver_transport_duplicate_received_count": stats.duplicate_received,
         "receiver_transport_ack_sent_count": stats.ack_sent,
+        "receiver_recv_from_call_count": stats.recv_from_call_count,
+        "receiver_recv_from_elapsed_us": stats.recv_from_elapsed_us,
+        "receiver_recv_from_elapsed_ms": stats.recv_from_elapsed_us / 1000,
+        "receiver_frame_decode_elapsed_us": stats.frame_decode_elapsed_us,
+        "receiver_frame_decode_elapsed_ms": stats.frame_decode_elapsed_us / 1000,
+        "receiver_packet_dispatch_elapsed_us": stats.packet_dispatch_elapsed_us,
+        "receiver_packet_dispatch_elapsed_ms": stats.packet_dispatch_elapsed_us / 1000,
+        "receiver_delivered_insert_elapsed_us": stats.delivered_insert_elapsed_us,
+        "receiver_delivered_insert_elapsed_ms": stats.delivered_insert_elapsed_us / 1000,
+        "receiver_ack_build_elapsed_us": stats.ack_build_elapsed_us,
+        "receiver_ack_build_elapsed_ms": stats.ack_build_elapsed_us / 1000,
+        "receiver_ack_send_elapsed_us": stats.ack_send_elapsed_us,
+        "receiver_ack_send_elapsed_ms": stats.ack_send_elapsed_us / 1000,
+        "receiver_recv_loop_total_elapsed_us": stats.recv_loop_total_elapsed_us,
+        "receiver_recv_loop_total_elapsed_ms": stats.recv_loop_total_elapsed_us / 1000,
         "receiver_socket_send_buffer_requested_bytes": socket_buffers.requested_send_buffer_bytes,
         "receiver_socket_recv_buffer_requested_bytes": socket_buffers.requested_recv_buffer_bytes,
         "receiver_socket_send_buffer_effective_bytes": socket_buffers.effective_send_buffer_bytes,
@@ -607,6 +679,8 @@ fn run_sender() -> Result<()> {
         stats.transport_encoded_bytes_total = stats
             .transport_encoded_bytes_total
             .saturating_add(timing.encoded_bytes);
+        stats.transport_send_call_count = stats.transport_send_call_count.saturating_add(1);
+        stats.transport_send_max_bytes = stats.transport_send_max_bytes.max(timing.encoded_bytes);
         stats.data_payload_bytes_sent_total = stats
             .data_payload_bytes_sent_total
             .saturating_add(payload_len);
@@ -620,7 +694,11 @@ fn run_sender() -> Result<()> {
             && sequence + 1 < tx_count
         {
             stats.data_pacing_sleep_count = stats.data_pacing_sleep_count.saturating_add(1);
+            let pacing_sleep_start = Instant::now();
             thread::sleep(Duration::from_millis(data_pacing_chunk_gap_ms));
+            stats.pacing_sleep_elapsed_ms = stats
+                .pacing_sleep_elapsed_ms
+                .saturating_add(pacing_sleep_start.elapsed().as_millis() as u64);
         }
     }
     let sender_primary_send_elapsed_ms = primary_send_start.elapsed().as_millis() as u64;
@@ -628,6 +706,7 @@ fn run_sender() -> Result<()> {
     let mut buf = vec![0u8; 128 * 1024];
     let mut done = false;
     let mut pending_repair = None::<(Vec<NovoRudpRange>, u64)>;
+    let ack_poll_start = Instant::now();
     while start.elapsed() < timeout {
         match socket.recv_from(buf.as_mut_slice()) {
             Ok((n, _)) => {
@@ -695,6 +774,15 @@ fn run_sender() -> Result<()> {
                         stats.transport_encoded_bytes_total = stats
                             .transport_encoded_bytes_total
                             .saturating_add(timing.encoded_bytes);
+                        stats.transport_send_call_count =
+                            stats.transport_send_call_count.saturating_add(1);
+                        stats.transport_send_max_bytes =
+                            stats.transport_send_max_bytes.max(timing.encoded_bytes);
+                        stats.repair_send_elapsed_ms = stats
+                            .repair_send_elapsed_ms
+                            .saturating_add(socket_send_start.elapsed().as_millis() as u64);
+                        stats.repair_send_call_count =
+                            stats.repair_send_call_count.saturating_add(1);
                         stats.repair_payload_bytes_sent_total = stats
                             .repair_payload_bytes_sent_total
                             .saturating_add(payload_len);
@@ -708,6 +796,7 @@ fn run_sender() -> Result<()> {
             Err(e) => return Err(e).context("sender recv ack failed"),
         }
     }
+    let sender_ack_poll_elapsed_ms = ack_poll_start.elapsed().as_millis() as u64;
 
     let final_missing = missing_count(&latest_missing);
     let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -750,6 +839,17 @@ fn run_sender() -> Result<()> {
         "sender_transport_send_total_elapsed_us": stats.transport_send_total_elapsed_us,
         "sender_transport_send_total_elapsed_ms": stats.transport_send_total_elapsed_us / 1000,
         "sender_transport_encoded_bytes_total": stats.transport_encoded_bytes_total,
+        "sender_send_to_call_count": stats.transport_send_call_count,
+        "sender_send_to_avg_bytes": stats.transport_encoded_bytes_total / stats.transport_send_call_count.max(1),
+        "sender_send_to_max_bytes": stats.transport_send_max_bytes,
+        "sender_send_to_elapsed_us": stats.transport_kernel_send_elapsed_us,
+        "sender_pacing_sleep_elapsed_ms": stats.pacing_sleep_elapsed_ms,
+        "sender_ack_poll_elapsed_ms": sender_ack_poll_elapsed_ms,
+        "sender_repair_send_elapsed_ms": stats.repair_send_elapsed_ms,
+        "sender_repair_send_call_count": stats.repair_send_call_count,
+        "sender_send_loop_non_send_elapsed_ms": sender_primary_send_elapsed_ms
+            .saturating_sub(stats.transport_send_total_elapsed_us / 1000)
+            .saturating_sub(stats.pacing_sleep_elapsed_ms),
         "sender_primary_send_elapsed_ms": sender_primary_send_elapsed_ms,
         "sender_data_payload_bytes_sent_total": stats.data_payload_bytes_sent_total,
         "sender_repair_payload_bytes_sent_total": stats.repair_payload_bytes_sent_total,
@@ -824,7 +924,9 @@ fn send_ack(
     delivered: &BTreeMap<u64, Vec<u8>>,
     ack_epoch: u64,
     receiver_done: bool,
-) -> Result<()> {
+) -> Result<SendTransportFrameTimingV0> {
+    let total_start = Instant::now();
+    let encode_start = Instant::now();
     let ack = NetworkOnlyAckV0 {
         expected_total,
         received_unique_count: delivered.len() as u64,
@@ -842,10 +944,19 @@ fn send_ack(
         ack_epoch,
         payload,
     );
+    let encoded = frame.encode();
+    let frame_encode_elapsed_us = encode_start.elapsed().as_micros() as u64;
+    let send_start = Instant::now();
     socket
-        .send_to(frame.encode().as_slice(), target)
+        .send_to(encoded.as_slice(), target)
         .context("send ack frame failed")?;
-    Ok(())
+    let kernel_send_elapsed_us = send_start.elapsed().as_micros() as u64;
+    Ok(SendTransportFrameTimingV0 {
+        frame_encode_elapsed_us,
+        kernel_send_elapsed_us,
+        total_elapsed_us: total_start.elapsed().as_micros() as u64,
+        encoded_bytes: encoded.len() as u64,
+    })
 }
 
 fn configure_udp_socket_buffers_v0(socket: &UdpSocket, role: &str) -> Result<SocketBufferConfigV0> {
