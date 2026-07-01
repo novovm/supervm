@@ -14,7 +14,7 @@
   "runtime_canon_changed": false,
   "public_ffi_abi_changed": false,
   "source_artifacts": {
-    "windows_fullmax_bundle": "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260701-094001",
+    "windows_fullmax_bundle": "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260701-104624",
     "linux_fullmax_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\linux\\20260524-103416",
     "proof_engine_host_integration": "D:\\WorksArea\\AOEM\\dist\\aoem-compute-native-proof-v1.1-host-integration",
     "linux_fullmax_build_log": "D:\\WorksArea\\AOEM\\tmp\\linux_fullmax_20260524-103416.log",
@@ -36,7 +36,7 @@
       "name": "core",
       "platform": "windows-x86_64",
       "dll": "windows/core/bin/aoem_ffi.dll",
-      "sha256": "925657f7d74b31682c0deba491bb5bfdefea60b96f10e20d45189cade8af0ae0",
+      "sha256": "b28a72c0588a4daba0a8a75a440e0ac7a8c94bc7baf0ef43eb742a6144438a8f",
       "abi_expected": 1,
       "capabilities_required": {
         "execute_ops_v2": true
@@ -46,7 +46,7 @@
   "platforms": {
     "windows-x86_64": {
       "status": "included",
-      "source_bundle": "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260701-094001"
+      "source_bundle": "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260701-104624"
     },
     "linux-x86_64": {
       "status": "included",

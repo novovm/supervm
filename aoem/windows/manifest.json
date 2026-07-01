@@ -1,11 +1,11 @@
 ﻿{
-    "stamp":  "20260701-094001",
+    "stamp":  "20260701-104624",
     "release_version":  "Beta 0.8",
-    "source_commit":  "a36303dd",
+    "source_commit":  "ba53847e",
     "platform":  "windows",
     "profile":  "fullmax",
-    "bundle_dir":  "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260701-094001",
-    "core_dll":  "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260701-094001\\core\\bin\\aoem_ffi.dll",
+    "bundle_dir":  "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260701-104624",
+    "core_dll":  "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260701-104624\\core\\bin\\aoem_ffi.dll",
     "public_header":  "include/aoem.h",
     "plugins":  [
                     "aoem_ffi_crypto_hsm.dll",
