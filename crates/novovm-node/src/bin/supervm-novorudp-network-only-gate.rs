@@ -30,6 +30,9 @@ const APFL_NATIVE_TRANSFER_BATCH_MAGIC_V0: &[u8] = b"NOVRUDP-APFL-NTX-V0";
 const APFL_NATIVE_TRANSFER_BATCH_VERSION_V0: u8 = 1;
 const APFL_NATIVE_TRANSFER_TEMPLATE_DEPOSIT_RESERVE_V0: u16 = 1;
 const APFL_NATIVE_TRANSFER_SIGNATURE_LEN_V0: usize = 32;
+const SEND_TO_WOULD_BLOCK_YIELD_RETRIES_V0: u64 = 8;
+const SEND_TO_WOULD_BLOCK_SLEEP_US_V0: u64 = 100;
+const SEND_TO_WOULD_BLOCK_MAX_RETRIES_V0: u64 = 10_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NetworkOnlyAckV0 {
@@ -113,6 +116,11 @@ struct SenderStats {
     transport_encoded_bytes_total: u64,
     transport_send_call_count: u64,
     transport_send_max_bytes: u64,
+    data_send_would_block_count: u64,
+    data_send_retry_count: u64,
+    data_send_nonretryable_error_count: u64,
+    data_send_max_retry_exceeded_count: u64,
+    data_send_backoff_elapsed_us: u64,
     pacing_sleep_elapsed_ms: u64,
     repair_send_elapsed_ms: u64,
     repair_send_call_count: u64,
@@ -132,6 +140,11 @@ struct SendTransportFrameTimingV0 {
     kernel_send_elapsed_us: u64,
     total_elapsed_us: u64,
     encoded_bytes: u64,
+    would_block_count: u64,
+    retry_count: u64,
+    nonretryable_error_count: u64,
+    max_retry_exceeded_count: u64,
+    backoff_elapsed_us: u64,
 }
 
 struct SenderLaneV0 {
@@ -146,6 +159,11 @@ struct SenderLaneStatsV0 {
     send_to_elapsed_us: u64,
     bytes_total: u64,
     repair_send_to_call_count: u64,
+    would_block_count: u64,
+    retry_count: u64,
+    send_fail_count: u64,
+    max_retry_exceeded_count: u64,
+    backoff_elapsed_us: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -715,6 +733,21 @@ fn run_sender() -> Result<()> {
             stats.transport_send_call_count = stats.transport_send_call_count.saturating_add(1);
             stats.transport_send_max_bytes =
                 stats.transport_send_max_bytes.max(timing.encoded_bytes);
+            stats.data_send_would_block_count = stats
+                .data_send_would_block_count
+                .saturating_add(timing.would_block_count);
+            stats.data_send_retry_count = stats
+                .data_send_retry_count
+                .saturating_add(timing.retry_count);
+            stats.data_send_nonretryable_error_count = stats
+                .data_send_nonretryable_error_count
+                .saturating_add(timing.nonretryable_error_count);
+            stats.data_send_max_retry_exceeded_count = stats
+                .data_send_max_retry_exceeded_count
+                .saturating_add(timing.max_retry_exceeded_count);
+            stats.data_send_backoff_elapsed_us = stats
+                .data_send_backoff_elapsed_us
+                .saturating_add(timing.backoff_elapsed_us);
             lane_stats[lane_index].send_to_call_count =
                 lane_stats[lane_index].send_to_call_count.saturating_add(1);
             lane_stats[lane_index].send_to_elapsed_us = lane_stats[lane_index]
@@ -723,6 +756,21 @@ fn run_sender() -> Result<()> {
             lane_stats[lane_index].bytes_total = lane_stats[lane_index]
                 .bytes_total
                 .saturating_add(timing.encoded_bytes);
+            lane_stats[lane_index].would_block_count = lane_stats[lane_index]
+                .would_block_count
+                .saturating_add(timing.would_block_count);
+            lane_stats[lane_index].retry_count = lane_stats[lane_index]
+                .retry_count
+                .saturating_add(timing.retry_count);
+            lane_stats[lane_index].send_fail_count = lane_stats[lane_index]
+                .send_fail_count
+                .saturating_add(timing.nonretryable_error_count);
+            lane_stats[lane_index].max_retry_exceeded_count = lane_stats[lane_index]
+                .max_retry_exceeded_count
+                .saturating_add(timing.max_retry_exceeded_count);
+            lane_stats[lane_index].backoff_elapsed_us = lane_stats[lane_index]
+                .backoff_elapsed_us
+                .saturating_add(timing.backoff_elapsed_us);
             stats.data_payload_bytes_sent_total = stats
                 .data_payload_bytes_sent_total
                 .saturating_add(payload_len);
@@ -849,6 +897,21 @@ fn run_sender() -> Result<()> {
                             stats.transport_send_call_count.saturating_add(1);
                         stats.transport_send_max_bytes =
                             stats.transport_send_max_bytes.max(timing.encoded_bytes);
+                        stats.data_send_would_block_count = stats
+                            .data_send_would_block_count
+                            .saturating_add(timing.would_block_count);
+                        stats.data_send_retry_count = stats
+                            .data_send_retry_count
+                            .saturating_add(timing.retry_count);
+                        stats.data_send_nonretryable_error_count = stats
+                            .data_send_nonretryable_error_count
+                            .saturating_add(timing.nonretryable_error_count);
+                        stats.data_send_max_retry_exceeded_count = stats
+                            .data_send_max_retry_exceeded_count
+                            .saturating_add(timing.max_retry_exceeded_count);
+                        stats.data_send_backoff_elapsed_us = stats
+                            .data_send_backoff_elapsed_us
+                            .saturating_add(timing.backoff_elapsed_us);
                         stats.repair_send_elapsed_ms = stats
                             .repair_send_elapsed_ms
                             .saturating_add(socket_send_start.elapsed().as_millis() as u64);
@@ -865,6 +928,21 @@ fn run_sender() -> Result<()> {
                         lane_stats[lane_index].repair_send_to_call_count = lane_stats[lane_index]
                             .repair_send_to_call_count
                             .saturating_add(1);
+                        lane_stats[lane_index].would_block_count = lane_stats[lane_index]
+                            .would_block_count
+                            .saturating_add(timing.would_block_count);
+                        lane_stats[lane_index].retry_count = lane_stats[lane_index]
+                            .retry_count
+                            .saturating_add(timing.retry_count);
+                        lane_stats[lane_index].send_fail_count = lane_stats[lane_index]
+                            .send_fail_count
+                            .saturating_add(timing.nonretryable_error_count);
+                        lane_stats[lane_index].max_retry_exceeded_count = lane_stats[lane_index]
+                            .max_retry_exceeded_count
+                            .saturating_add(timing.max_retry_exceeded_count);
+                        lane_stats[lane_index].backoff_elapsed_us = lane_stats[lane_index]
+                            .backoff_elapsed_us
+                            .saturating_add(timing.backoff_elapsed_us);
                         stats.repair_payload_bytes_sent_total = stats
                             .repair_payload_bytes_sent_total
                             .saturating_add(payload_len);
@@ -908,6 +986,26 @@ fn run_sender() -> Result<()> {
         .iter()
         .map(|lane| lane.repair_send_to_call_count)
         .collect::<Vec<_>>();
+    let sender_lane_would_block_counts = lane_stats
+        .iter()
+        .map(|lane| lane.would_block_count)
+        .collect::<Vec<_>>();
+    let sender_lane_retry_counts = lane_stats
+        .iter()
+        .map(|lane| lane.retry_count)
+        .collect::<Vec<_>>();
+    let sender_lane_send_fail_counts = lane_stats
+        .iter()
+        .map(|lane| lane.send_fail_count)
+        .collect::<Vec<_>>();
+    let sender_lane_max_retry_exceeded_counts = lane_stats
+        .iter()
+        .map(|lane| lane.max_retry_exceeded_count)
+        .collect::<Vec<_>>();
+    let sender_lane_backoff_elapsed_ms = lane_stats
+        .iter()
+        .map(|lane| lane.backoff_elapsed_us / 1000)
+        .collect::<Vec<_>>();
     let sender_lane_send_buffer_effective_bytes = lanes
         .iter()
         .map(|lane| lane.buffers.effective_send_buffer_bytes)
@@ -947,6 +1045,11 @@ fn run_sender() -> Result<()> {
         "sender_lane_send_to_elapsed_ms": sender_lane_send_to_elapsed_ms,
         "sender_lane_bytes_total": sender_lane_bytes_total,
         "sender_lane_repair_send_to_call_counts": sender_lane_repair_send_to_call_counts,
+        "sender_lane_would_block_counts": sender_lane_would_block_counts,
+        "sender_lane_retry_counts": sender_lane_retry_counts,
+        "sender_lane_send_fail_counts": sender_lane_send_fail_counts,
+        "sender_lane_max_retry_exceeded_counts": sender_lane_max_retry_exceeded_counts,
+        "sender_lane_backoff_elapsed_ms": sender_lane_backoff_elapsed_ms,
         "sender_lane_send_buffer_effective_bytes": sender_lane_send_buffer_effective_bytes,
         "sender_lane_recv_buffer_effective_bytes": sender_lane_recv_buffer_effective_bytes,
         "sender_transport_data_send_attempt_count": stats.data_send_attempt,
@@ -963,6 +1066,11 @@ fn run_sender() -> Result<()> {
         "sender_transport_send_total_elapsed_us": stats.transport_send_total_elapsed_us,
         "sender_transport_send_total_elapsed_ms": stats.transport_send_total_elapsed_us / 1000,
         "sender_transport_encoded_bytes_total": stats.transport_encoded_bytes_total,
+        "sender_data_send_would_block_count": stats.data_send_would_block_count,
+        "sender_data_send_retry_count": stats.data_send_retry_count,
+        "sender_data_send_nonretryable_error_count": stats.data_send_nonretryable_error_count,
+        "sender_data_send_max_retry_exceeded_count": stats.data_send_max_retry_exceeded_count,
+        "sender_data_send_backoff_elapsed_ms": stats.data_send_backoff_elapsed_us / 1000,
         "sender_send_to_call_count": stats.transport_send_call_count,
         "sender_send_to_avg_bytes": stats.transport_encoded_bytes_total / stats.transport_send_call_count.max(1),
         "sender_send_to_max_bytes": stats.transport_send_max_bytes,
@@ -1116,6 +1224,21 @@ fn send_primary_lane_v0(
             .saturating_add(timing.encoded_bytes);
         stats.transport_send_call_count = stats.transport_send_call_count.saturating_add(1);
         stats.transport_send_max_bytes = stats.transport_send_max_bytes.max(timing.encoded_bytes);
+        stats.data_send_would_block_count = stats
+            .data_send_would_block_count
+            .saturating_add(timing.would_block_count);
+        stats.data_send_retry_count = stats
+            .data_send_retry_count
+            .saturating_add(timing.retry_count);
+        stats.data_send_nonretryable_error_count = stats
+            .data_send_nonretryable_error_count
+            .saturating_add(timing.nonretryable_error_count);
+        stats.data_send_max_retry_exceeded_count = stats
+            .data_send_max_retry_exceeded_count
+            .saturating_add(timing.max_retry_exceeded_count);
+        stats.data_send_backoff_elapsed_us = stats
+            .data_send_backoff_elapsed_us
+            .saturating_add(timing.backoff_elapsed_us);
         stats.data_payload_bytes_sent_total = stats
             .data_payload_bytes_sent_total
             .saturating_add(payload_len);
@@ -1125,6 +1248,19 @@ fn send_primary_lane_v0(
             .send_to_elapsed_us
             .saturating_add(timing.kernel_send_elapsed_us);
         lane_stats.bytes_total = lane_stats.bytes_total.saturating_add(timing.encoded_bytes);
+        lane_stats.would_block_count = lane_stats
+            .would_block_count
+            .saturating_add(timing.would_block_count);
+        lane_stats.retry_count = lane_stats.retry_count.saturating_add(timing.retry_count);
+        lane_stats.send_fail_count = lane_stats
+            .send_fail_count
+            .saturating_add(timing.nonretryable_error_count);
+        lane_stats.max_retry_exceeded_count = lane_stats
+            .max_retry_exceeded_count
+            .saturating_add(timing.max_retry_exceeded_count);
+        lane_stats.backoff_elapsed_us = lane_stats
+            .backoff_elapsed_us
+            .saturating_add(timing.backoff_elapsed_us);
         sent_sequences.push(sequence);
         lane_sent_count = lane_sent_count.saturating_add(1);
         if data_pacing_chunk_size > 0
@@ -1189,6 +1325,21 @@ fn merge_sender_stats_v0(dst: &mut SenderStats, src: SenderStats) {
     dst.transport_send_max_bytes = dst
         .transport_send_max_bytes
         .max(src.transport_send_max_bytes);
+    dst.data_send_would_block_count = dst
+        .data_send_would_block_count
+        .saturating_add(src.data_send_would_block_count);
+    dst.data_send_retry_count = dst
+        .data_send_retry_count
+        .saturating_add(src.data_send_retry_count);
+    dst.data_send_nonretryable_error_count = dst
+        .data_send_nonretryable_error_count
+        .saturating_add(src.data_send_nonretryable_error_count);
+    dst.data_send_max_retry_exceeded_count = dst
+        .data_send_max_retry_exceeded_count
+        .saturating_add(src.data_send_max_retry_exceeded_count);
+    dst.data_send_backoff_elapsed_us = dst
+        .data_send_backoff_elapsed_us
+        .saturating_add(src.data_send_backoff_elapsed_us);
     dst.pacing_sleep_elapsed_ms = dst
         .pacing_sleep_elapsed_ms
         .saturating_add(src.pacing_sleep_elapsed_ms);
@@ -1246,16 +1397,44 @@ fn send_transport_frame(
         NovoRudpTransportFrameV0::new(kind, session_id, 1, sequence, sequence, ack_epoch, payload);
     let encoded = frame.encode();
     let frame_encode_elapsed_us = encode_start.elapsed().as_micros() as u64;
+    let mut retry_count = 0u64;
+    let mut would_block_count = 0u64;
+    let mut backoff_elapsed_us = 0u64;
     let send_start = Instant::now();
-    socket
-        .send_to(encoded.as_slice(), target)
-        .with_context(|| format!("send {kind:?} frame failed"))?;
+    loop {
+        match socket.send_to(encoded.as_slice(), target) {
+            Ok(_) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                would_block_count = would_block_count.saturating_add(1);
+                if retry_count >= SEND_TO_WOULD_BLOCK_MAX_RETRIES_V0 {
+                    bail!(
+                        "send {kind:?} frame exceeded WouldBlock retry cap ({SEND_TO_WOULD_BLOCK_MAX_RETRIES_V0})"
+                    );
+                }
+                retry_count = retry_count.saturating_add(1);
+                let backoff_start = Instant::now();
+                if retry_count <= SEND_TO_WOULD_BLOCK_YIELD_RETRIES_V0 {
+                    thread::yield_now();
+                } else {
+                    thread::sleep(Duration::from_micros(SEND_TO_WOULD_BLOCK_SLEEP_US_V0));
+                }
+                backoff_elapsed_us =
+                    backoff_elapsed_us.saturating_add(backoff_start.elapsed().as_micros() as u64);
+            }
+            Err(e) => return Err(e).with_context(|| format!("send {kind:?} frame failed")),
+        }
+    }
     let kernel_send_elapsed_us = send_start.elapsed().as_micros() as u64;
     Ok(SendTransportFrameTimingV0 {
         frame_encode_elapsed_us,
         kernel_send_elapsed_us,
         total_elapsed_us: total_start.elapsed().as_micros() as u64,
         encoded_bytes: encoded.len() as u64,
+        would_block_count,
+        retry_count,
+        nonretryable_error_count: 0,
+        max_retry_exceeded_count: 0,
+        backoff_elapsed_us,
     })
 }
 
@@ -1299,6 +1478,11 @@ fn send_ack(
         kernel_send_elapsed_us,
         total_elapsed_us: total_start.elapsed().as_micros() as u64,
         encoded_bytes: encoded.len() as u64,
+        would_block_count: 0,
+        retry_count: 0,
+        nonretryable_error_count: 0,
+        max_retry_exceeded_count: 0,
+        backoff_elapsed_us: 0,
     })
 }
 
