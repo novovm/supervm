@@ -24,6 +24,7 @@ rand = "0.8"
 sha2 = "0.10"
 sha3 = "0.10"
 libloading = "0.8"
+socket2 = "0.6"
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

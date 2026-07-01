@@ -1592,6 +1592,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sha3",
+ "socket2",
  "tiny_http",
  "ureq",
 ]

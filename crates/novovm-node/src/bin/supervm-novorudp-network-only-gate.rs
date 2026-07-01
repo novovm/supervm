@@ -14,6 +14,7 @@ use novovm_protocol::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::Digest;
+use socket2::SockRef;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
@@ -98,6 +99,26 @@ struct SenderStats {
     repair_payload_bytes_sent_total: u64,
     payload_copy_elapsed_ms: u64,
     socket_send_elapsed_ms: u64,
+    transport_frame_encode_elapsed_us: u64,
+    transport_kernel_send_elapsed_us: u64,
+    transport_send_total_elapsed_us: u64,
+    transport_encoded_bytes_total: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SocketBufferConfigV0 {
+    requested_send_buffer_bytes: u64,
+    requested_recv_buffer_bytes: u64,
+    effective_send_buffer_bytes: u64,
+    effective_recv_buffer_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SendTransportFrameTimingV0 {
+    frame_encode_elapsed_us: u64,
+    kernel_send_elapsed_us: u64,
+    total_elapsed_us: u64,
+    encoded_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -245,6 +266,7 @@ fn run_receiver() -> Result<()> {
     let session_id = session_id_v0();
     let socket = UdpSocket::bind(bind_addr.as_str())
         .with_context(|| format!("bind receiver socket failed: {bind_addr}"))?;
+    let socket_buffers = configure_udp_socket_buffers_v0(&socket, "receiver")?;
     socket
         .set_read_timeout(Some(Duration::from_millis(100)))
         .context("set receiver read timeout failed")?;
@@ -377,6 +399,10 @@ fn run_receiver() -> Result<()> {
         "receiver_transport_unique_delivered_count": receiver_transport_unique_delivered_count,
         "receiver_transport_duplicate_received_count": stats.duplicate_received,
         "receiver_transport_ack_sent_count": stats.ack_sent,
+        "receiver_socket_send_buffer_requested_bytes": socket_buffers.requested_send_buffer_bytes,
+        "receiver_socket_recv_buffer_requested_bytes": socket_buffers.requested_recv_buffer_bytes,
+        "receiver_socket_send_buffer_effective_bytes": socket_buffers.effective_send_buffer_bytes,
+        "receiver_socket_recv_buffer_effective_bytes": socket_buffers.effective_recv_buffer_bytes,
         "receiver_transport_final_missing_count": receiver_transport_final_missing_count,
         "receiver_transport_final_missing_ranges": missing,
         "receiver_transport_done": receiver_transport_unique_delivered_count == tx_count,
@@ -520,6 +546,7 @@ fn run_sender() -> Result<()> {
         .with_context(|| format!("parse receiver addr failed: {target_addr}"))?;
     let socket = UdpSocket::bind(bind_addr.as_str())
         .with_context(|| format!("bind sender socket failed: {bind_addr}"))?;
+    let socket_buffers = configure_udp_socket_buffers_v0(&socket, "sender")?;
     socket
         .set_read_timeout(Some(Duration::from_millis(100)))
         .context("set sender read timeout failed")?;
@@ -556,7 +583,7 @@ fn run_sender() -> Result<()> {
             .payload_copy_elapsed_ms
             .saturating_add(copy_start.elapsed().as_millis() as u64);
         let socket_send_start = Instant::now();
-        send_transport_frame(
+        let timing = send_transport_frame(
             &socket,
             target,
             NovoRudpTransportFrameKindV0::Data,
@@ -568,6 +595,18 @@ fn run_sender() -> Result<()> {
         stats.socket_send_elapsed_ms = stats
             .socket_send_elapsed_ms
             .saturating_add(socket_send_start.elapsed().as_millis() as u64);
+        stats.transport_frame_encode_elapsed_us = stats
+            .transport_frame_encode_elapsed_us
+            .saturating_add(timing.frame_encode_elapsed_us);
+        stats.transport_kernel_send_elapsed_us = stats
+            .transport_kernel_send_elapsed_us
+            .saturating_add(timing.kernel_send_elapsed_us);
+        stats.transport_send_total_elapsed_us = stats
+            .transport_send_total_elapsed_us
+            .saturating_add(timing.total_elapsed_us);
+        stats.transport_encoded_bytes_total = stats
+            .transport_encoded_bytes_total
+            .saturating_add(timing.encoded_bytes);
         stats.data_payload_bytes_sent_total = stats
             .data_payload_bytes_sent_total
             .saturating_add(payload_len);
@@ -632,7 +671,7 @@ fn run_sender() -> Result<()> {
                             .payload_copy_elapsed_ms
                             .saturating_add(copy_start.elapsed().as_millis() as u64);
                         let socket_send_start = Instant::now();
-                        send_transport_frame(
+                        let timing = send_transport_frame(
                             &socket,
                             target,
                             NovoRudpTransportFrameKindV0::Repair,
@@ -644,6 +683,18 @@ fn run_sender() -> Result<()> {
                         stats.socket_send_elapsed_ms = stats
                             .socket_send_elapsed_ms
                             .saturating_add(socket_send_start.elapsed().as_millis() as u64);
+                        stats.transport_frame_encode_elapsed_us = stats
+                            .transport_frame_encode_elapsed_us
+                            .saturating_add(timing.frame_encode_elapsed_us);
+                        stats.transport_kernel_send_elapsed_us = stats
+                            .transport_kernel_send_elapsed_us
+                            .saturating_add(timing.kernel_send_elapsed_us);
+                        stats.transport_send_total_elapsed_us = stats
+                            .transport_send_total_elapsed_us
+                            .saturating_add(timing.total_elapsed_us);
+                        stats.transport_encoded_bytes_total = stats
+                            .transport_encoded_bytes_total
+                            .saturating_add(timing.encoded_bytes);
                         stats.repair_payload_bytes_sent_total = stats
                             .repair_payload_bytes_sent_total
                             .saturating_add(payload_len);
@@ -681,6 +732,10 @@ fn run_sender() -> Result<()> {
         "sender_transport_data_pacing_chunk_size": data_pacing_chunk_size,
         "sender_transport_data_pacing_chunk_gap_ms": data_pacing_chunk_gap_ms,
         "sender_transport_data_pacing_sleep_count": stats.data_pacing_sleep_count,
+        "sender_socket_send_buffer_requested_bytes": socket_buffers.requested_send_buffer_bytes,
+        "sender_socket_recv_buffer_requested_bytes": socket_buffers.requested_recv_buffer_bytes,
+        "sender_socket_send_buffer_effective_bytes": socket_buffers.effective_send_buffer_bytes,
+        "sender_socket_recv_buffer_effective_bytes": socket_buffers.effective_recv_buffer_bytes,
         "sender_transport_data_send_attempt_count": stats.data_send_attempt,
         "sender_transport_data_loss_injected_count": stats.data_loss_injected,
         "sender_elapsed_ms": elapsed_ms,
@@ -688,6 +743,13 @@ fn run_sender() -> Result<()> {
         "sender_apfl_encode_elapsed_ms": sender_apfl_encode_elapsed_ms,
         "sender_payload_copy_elapsed_ms": stats.payload_copy_elapsed_ms,
         "sender_socket_send_elapsed_ms": stats.socket_send_elapsed_ms,
+        "sender_transport_frame_encode_elapsed_us": stats.transport_frame_encode_elapsed_us,
+        "sender_transport_frame_encode_elapsed_ms": stats.transport_frame_encode_elapsed_us / 1000,
+        "sender_transport_kernel_send_elapsed_us": stats.transport_kernel_send_elapsed_us,
+        "sender_transport_kernel_send_elapsed_ms": stats.transport_kernel_send_elapsed_us / 1000,
+        "sender_transport_send_total_elapsed_us": stats.transport_send_total_elapsed_us,
+        "sender_transport_send_total_elapsed_ms": stats.transport_send_total_elapsed_us / 1000,
+        "sender_transport_encoded_bytes_total": stats.transport_encoded_bytes_total,
         "sender_primary_send_elapsed_ms": sender_primary_send_elapsed_ms,
         "sender_data_payload_bytes_sent_total": stats.data_payload_bytes_sent_total,
         "sender_repair_payload_bytes_sent_total": stats.repair_payload_bytes_sent_total,
@@ -734,14 +796,24 @@ fn send_transport_frame(
     sequence: u64,
     payload: Vec<u8>,
     ack_epoch: u64,
-) -> Result<()> {
+) -> Result<SendTransportFrameTimingV0> {
+    let total_start = Instant::now();
+    let encode_start = Instant::now();
     let frame =
         NovoRudpTransportFrameV0::new(kind, session_id, 1, sequence, sequence, ack_epoch, payload);
     let encoded = frame.encode();
+    let frame_encode_elapsed_us = encode_start.elapsed().as_micros() as u64;
+    let send_start = Instant::now();
     socket
         .send_to(encoded.as_slice(), target)
         .with_context(|| format!("send {kind:?} frame failed"))?;
-    Ok(())
+    let kernel_send_elapsed_us = send_start.elapsed().as_micros() as u64;
+    Ok(SendTransportFrameTimingV0 {
+        frame_encode_elapsed_us,
+        kernel_send_elapsed_us,
+        total_elapsed_us: total_start.elapsed().as_micros() as u64,
+        encoded_bytes: encoded.len() as u64,
+    })
 }
 
 fn send_ack(
@@ -774,6 +846,36 @@ fn send_ack(
         .send_to(frame.encode().as_slice(), target)
         .context("send ack frame failed")?;
     Ok(())
+}
+
+fn configure_udp_socket_buffers_v0(socket: &UdpSocket, role: &str) -> Result<SocketBufferConfigV0> {
+    let requested_send_buffer_bytes =
+        env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_SOCKET_SNDBUF_BYTES", 0);
+    let requested_recv_buffer_bytes =
+        env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_SOCKET_RCVBUF_BYTES", 0);
+    let sock = SockRef::from(socket);
+    if requested_send_buffer_bytes > 0 {
+        let size = usize::try_from(requested_send_buffer_bytes).unwrap_or(usize::MAX);
+        sock.set_send_buffer_size(size)
+            .with_context(|| format!("set {role} udp send buffer failed"))?;
+    }
+    if requested_recv_buffer_bytes > 0 {
+        let size = usize::try_from(requested_recv_buffer_bytes).unwrap_or(usize::MAX);
+        sock.set_recv_buffer_size(size)
+            .with_context(|| format!("set {role} udp recv buffer failed"))?;
+    }
+    let effective_send_buffer_bytes =
+        sock.send_buffer_size()
+            .with_context(|| format!("read {role} udp send buffer failed"))? as u64;
+    let effective_recv_buffer_bytes =
+        sock.recv_buffer_size()
+            .with_context(|| format!("read {role} udp recv buffer failed"))? as u64;
+    Ok(SocketBufferConfigV0 {
+        requested_send_buffer_bytes,
+        requested_recv_buffer_bytes,
+        effective_send_buffer_bytes,
+        effective_recv_buffer_bytes,
+    })
 }
 
 fn missing_ranges(expected_total: u64, delivered: &BTreeMap<u64, Vec<u8>>) -> Vec<NovoRudpRange> {
