@@ -312,6 +312,42 @@ AOEM_API int32_t aoem_secp256k1_recover_pubkey_v1(
   uint8_t** out_pubkey_ptr,
   size_t* out_pubkey_len
 );
+// Production ABI: verify-only ECDSA prehash host entrypoints.
+// These APIs verify public inputs only. They do not sign, recover, store keys,
+// accept private key material, manage nonces, or apply wallet/chain semantics.
+// q is SEC1 compressed or uncompressed public key bytes.
+// z, r, and s are each exactly 32 bytes. The caller hashes the message before
+// calling this ABI.
+// return code:
+//  0 = parsed and verification decision written to out_ok
+// -1 = null pointer or empty required pointer input
+// -2 = invalid z/r/s length
+// -3 = public key or signature parse failure
+// out_ok:
+//  1 = signature verified
+//  0 = signature did not verify or call failed before success
+AOEM_API int32_t aoem_ffi_secp256k1_verify(
+  const uint8_t* q_ptr,
+  size_t q_len,
+  const uint8_t* z_ptr,
+  size_t z_len,
+  const uint8_t* r_ptr,
+  size_t r_len,
+  const uint8_t* s_ptr,
+  size_t s_len,
+  uint8_t* out_ok
+);
+AOEM_API int32_t aoem_ffi_p256_verify(
+  const uint8_t* q_ptr,
+  size_t q_len,
+  const uint8_t* z_ptr,
+  size_t z_len,
+  const uint8_t* r_ptr,
+  size_t r_len,
+  const uint8_t* s_ptr,
+  size_t s_len,
+  uint8_t* out_ok
+);
 // Feature ABI: ring-signature verification (Web30-compatible payload).
 // signature_json payload schema:
 // {
