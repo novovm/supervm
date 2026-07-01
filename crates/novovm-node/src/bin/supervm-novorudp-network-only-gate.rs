@@ -2,6 +2,7 @@
 #![recursion_limit = "256"]
 
 use anyhow::{bail, Context, Result};
+use novovm_exec::{AoemExecFacade, AoemRuntimeConfig};
 use novovm_network::{NovoRudpRange, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0};
 use novovm_node::tx_ingress::nov_native_tx_to_adapter_tx_ir_v1;
 use novovm_protocol::{
@@ -151,6 +152,14 @@ struct ReceiverExecutionSummaryV0 {
     canonical_tx_hash_mismatch_count: u64,
     signature_verify_count: u64,
     signature_verify_error_count: u64,
+    aoem_apfl_wire_route_enabled: bool,
+    aoem_apfl_wire_route_attempt_count: u64,
+    aoem_apfl_wire_route_success_count: u64,
+    aoem_apfl_wire_route_error_count: u64,
+    aoem_apfl_wire_route_capability_missing: bool,
+    aoem_apfl_wire_route_fail_reason: Option<String>,
+    aoem_apfl_wire_route_last_output_prefix: Option<String>,
+    aoem_apfl_occc_delta_contract_present_count: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -369,7 +378,22 @@ fn run_receiver() -> Result<()> {
         "receiver_missing_rate_bps": bps_v0(receiver_transport_final_missing_count, tx_count),
         "receiver_duplicate_bps": bps_v0(stats.duplicate_received, receiver_transport_unique_delivered_count),
         "aoem_execute_enabled": execute_aoem,
-        "aoem_execution_mode": if execute_aoem { "adapter_projection_v0" } else { "disabled" },
+        "aoem_execution_mode": if execute_aoem && payload_mode.is_apfl_native_transfer() {
+            "aoem_opcode_114_apfl_native_transfer_v1"
+        } else if execute_aoem {
+            "adapter_projection_v0"
+        } else {
+            "disabled"
+        },
+        "aoem_apfl_wire_route_enabled": execution.aoem_apfl_wire_route_enabled,
+        "aoem_apfl_wire_route_opcode": if execution.aoem_apfl_wire_route_enabled { 114u64 } else { 0u64 },
+        "aoem_apfl_wire_route_attempt_count": execution.aoem_apfl_wire_route_attempt_count,
+        "aoem_apfl_wire_route_success_count": execution.aoem_apfl_wire_route_success_count,
+        "aoem_apfl_wire_route_error_count": execution.aoem_apfl_wire_route_error_count,
+        "aoem_apfl_wire_route_capability_missing": execution.aoem_apfl_wire_route_capability_missing,
+        "aoem_apfl_wire_route_fail_reason": execution.aoem_apfl_wire_route_fail_reason.clone(),
+        "aoem_apfl_wire_route_last_output_prefix": execution.aoem_apfl_wire_route_last_output_prefix.clone(),
+        "aoem_apfl_occc_delta_contract_present_count": execution.aoem_apfl_occc_delta_contract_present_count,
         "business_decode_count": execution.business_decode_count,
         "business_decode_error_count": execution.business_decode_error_count,
         "business_transactions_decoded_count": execution.business_transactions_decoded_count,
@@ -772,7 +796,18 @@ fn receiver_execution_summary_v0(
         return ReceiverExecutionSummaryV0::default();
     }
     let mut summary = ReceiverExecutionSummaryV0::default();
-    for payload in delivered.values() {
+    let mut aoem_apfl_session = None;
+    if mode.is_apfl_native_transfer() && execute_aoem {
+        summary.aoem_apfl_wire_route_enabled = true;
+        match open_aoem_apfl_native_transfer_session_v0() {
+            Ok(session) => aoem_apfl_session = Some(session),
+            Err(err) => {
+                summary.aoem_apfl_wire_route_capability_missing = true;
+                summary.aoem_apfl_wire_route_fail_reason = Some(err.to_string());
+            }
+        }
+    }
+    for (sequence, payload) in delivered {
         let business_decode_start = Instant::now();
         let decoded = business_decode_v0(payload.as_slice());
         summary.business_decode_elapsed_ms = summary
@@ -785,6 +820,49 @@ fn receiver_execution_summary_v0(
                 ..
             })) => {
                 summary.business_decode_count = summary.business_decode_count.saturating_add(1);
+                if mode.is_apfl_native_transfer() && execute_aoem {
+                    summary.apfl_binary_bytes_total = summary
+                        .apfl_binary_bytes_total
+                        .saturating_add(native_payload.len() as u64);
+                    summary.business_transactions_decoded_count = summary
+                        .business_transactions_decoded_count
+                        .saturating_add(tx_count);
+                    let Some(session) = aoem_apfl_session.as_ref() else {
+                        summary.aoem_apfl_wire_route_error_count =
+                            summary.aoem_apfl_wire_route_error_count.saturating_add(1);
+                        summary.aoem_execution_error_count =
+                            summary.aoem_execution_error_count.saturating_add(tx_count);
+                        continue;
+                    };
+                    let output_prefix = aoem_apfl_output_prefix_v0(*sequence);
+                    summary.aoem_apfl_wire_route_attempt_count =
+                        summary.aoem_apfl_wire_route_attempt_count.saturating_add(1);
+                    summary.aoem_apfl_wire_route_last_output_prefix = Some(output_prefix.clone());
+                    let aoem_start = Instant::now();
+                    match session.execute_apfl_native_transfer_wire_v1(
+                        output_prefix.as_str(),
+                        native_payload.as_slice(),
+                    ) {
+                        Ok(report) => {
+                            summary.aoem_apfl_wire_route_success_count =
+                                summary.aoem_apfl_wire_route_success_count.saturating_add(1);
+                            apply_aoem_apfl_native_transfer_report_v0(&mut summary, &report);
+                        }
+                        Err(err) => {
+                            summary.aoem_apfl_wire_route_error_count =
+                                summary.aoem_apfl_wire_route_error_count.saturating_add(1);
+                            summary.aoem_execution_error_count =
+                                summary.aoem_execution_error_count.saturating_add(tx_count);
+                            if summary.aoem_apfl_wire_route_fail_reason.is_none() {
+                                summary.aoem_apfl_wire_route_fail_reason = Some(err.to_string());
+                            }
+                        }
+                    }
+                    summary.aoem_execute_elapsed_ms = summary
+                        .aoem_execute_elapsed_ms
+                        .saturating_add(aoem_start.elapsed().as_millis() as u64);
+                    continue;
+                }
                 let native_txs = match decode_native_tx_payloads_for_payload_v0(
                     native_payload.as_slice(),
                     tx_count,
@@ -865,6 +943,174 @@ fn receiver_execution_summary_v0(
     }
     summary.ledger_close_elapsed_ms = summary.aoem_execute_elapsed_ms;
     summary
+}
+
+fn open_aoem_apfl_native_transfer_session_v0() -> Result<novovm_exec::AoemExecSession> {
+    let runtime = AoemRuntimeConfig::from_env().context("aoem runtime config unavailable")?;
+    let facade = AoemExecFacade::open_with_runtime(&runtime).context("aoem runtime open failed")?;
+    if !facade
+        .supports_apfl_native_transfer_wire_v1()
+        .context("aoem apfl native transfer capability probe failed")?
+    {
+        bail!("capability_missing: aoem opcode 114 apfl native transfer wire route unavailable");
+    }
+    facade
+        .create_session()
+        .context("aoem apfl native transfer session create failed")
+}
+
+fn aoem_apfl_output_prefix_v0(sequence: u64) -> String {
+    let base = env_string("NOVOVM_NOVORUDP_AOEM_APFL_OUTPUT_PREFIX")
+        .unwrap_or_else(|| format!("novovm/novorudp/{}/aoem", session_id_hex_v0()));
+    format!("{base}/payload-{sequence}")
+}
+
+fn apply_aoem_apfl_native_transfer_report_v0(
+    summary: &mut ReceiverExecutionSummaryV0,
+    report: &novovm_exec::AoemApflNativeTransferWireReportV1,
+) {
+    let tx_count = json_u64_surface_v0(
+        &report.result,
+        &[
+            "tx_count",
+            "business_transactions_decoded_count",
+            "ledger_transactions_completed_count",
+        ],
+    )
+    .max(json_u64_surface_v0(
+        &report.metadata,
+        &["tx_count", "transactions_count"],
+    ));
+    summary.aoem_executed_total = summary.aoem_executed_total.saturating_add(tx_count);
+    summary.aoem_transactions_executed_total =
+        summary.aoem_transactions_executed_total.saturating_add(
+            json_u64_surface_v0(
+                &report.result,
+                &["aoem_transactions_executed_total", "tx_count"],
+            )
+            .max(tx_count),
+        );
+    summary.ledger_completed_count = summary.ledger_completed_count.saturating_add(
+        json_u64_surface_v0(
+            &report.result,
+            &[
+                "ledger_transactions_completed_count",
+                "ledger_completed_count",
+                "tx_count",
+            ],
+        )
+        .max(tx_count),
+    );
+    summary.ledger_transactions_completed_count =
+        summary.ledger_transactions_completed_count.saturating_add(
+            json_u64_surface_v0(
+                &report.result,
+                &["ledger_transactions_completed_count", "tx_count"],
+            )
+            .max(tx_count),
+        );
+    summary.legacy_native_tx_bytes_total =
+        summary
+            .legacy_native_tx_bytes_total
+            .saturating_add(json_u64_surface_v0(
+                &report.metadata,
+                &["legacy_bytes_total", "legacy_native_tx_bytes_total"],
+            ));
+    summary.apfl_decode_elapsed_ms =
+        summary
+            .apfl_decode_elapsed_ms
+            .saturating_add(json_u64_surface_v0(
+                &report.metadata,
+                &["apfl_decode_elapsed_ms", "decode_elapsed_ms"],
+            ));
+    summary.canonical_reconstruction_elapsed_ms = summary
+        .canonical_reconstruction_elapsed_ms
+        .saturating_add(json_u64_surface_v0(
+            &report.result,
+            &[
+                "canonical_reconstruction_elapsed_ms",
+                "canonical_materialization_elapsed_ms",
+            ],
+        ));
+    summary.canonical_reconstruction_count =
+        summary
+            .canonical_reconstruction_count
+            .saturating_add(json_u64_surface_v0(
+                &report.result,
+                &[
+                    "canonical_reconstruction_count",
+                    "canonical_tx_hash_match_count",
+                ],
+            ));
+    summary.canonical_reconstruction_error_count = summary
+        .canonical_reconstruction_error_count
+        .saturating_add(json_u64_surface_v0(
+            &report.result,
+            &["canonical_reconstruction_error_count"],
+        ));
+    summary.canonical_tx_hash_match_count =
+        summary
+            .canonical_tx_hash_match_count
+            .saturating_add(json_u64_surface_v0(
+                &report.result,
+                &[
+                    "canonical_tx_hash_match_count",
+                    "canonical_hash_match_count",
+                ],
+            ));
+    summary.canonical_tx_hash_mismatch_count = summary
+        .canonical_tx_hash_mismatch_count
+        .saturating_add(json_u64_surface_v0(
+            &report.result,
+            &[
+                "canonical_tx_hash_mismatch_count",
+                "canonical_hash_mismatch_count",
+            ],
+        ));
+    summary.signature_verify_count = summary.signature_verify_count.saturating_add(
+        json_u64_surface_v0(
+            &report.result,
+            &[
+                "signature_verify_count",
+                "signature_checked_count",
+                "tx_count",
+            ],
+        )
+        .max(tx_count),
+    );
+    summary.signature_verify_error_count =
+        summary
+            .signature_verify_error_count
+            .saturating_add(json_u64_surface_v0(
+                &report.result,
+                &["signature_verify_error_count", "signature_errors"],
+            ));
+    if !report.occc_delta_contract.is_null() {
+        summary.aoem_apfl_occc_delta_contract_present_count = summary
+            .aoem_apfl_occc_delta_contract_present_count
+            .saturating_add(1);
+    }
+}
+
+fn json_u64_surface_v0(value: &serde_json::Value, keys: &[&str]) -> u64 {
+    for key in keys {
+        if let Some(v) = json_u64_at_key_v0(value, key) {
+            return v;
+        }
+        if let Some(inner) = value.get("value").and_then(|v| json_u64_at_key_v0(v, key)) {
+            return inner;
+        }
+        if let Some(inner) = value.get("data").and_then(|v| json_u64_at_key_v0(v, key)) {
+            return inner;
+        }
+    }
+    0
+}
+
+fn json_u64_at_key_v0(value: &serde_json::Value, key: &str) -> Option<u64> {
+    value
+        .get(key)
+        .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse::<u64>().ok()))
 }
 
 fn native_tx_for_sequence_v0(sequence: u64) -> Result<NovNativeTxWireV1> {
@@ -1153,6 +1399,13 @@ fn session_id_v0() -> [u8; 16] {
     out
 }
 
+fn session_id_hex_v0() -> String {
+    session_id_v0()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
 fn write_json_report(path: &str, value: &serde_json::Value) -> Result<()> {
     if let Some(parent) = std::path::Path::new(path).parent() {
         fs::create_dir_all(parent)
@@ -1288,7 +1541,7 @@ mod tests {
     }
 
     #[test]
-    fn native_transfer_apfl_payload_mode_reconstructs_canonical_native_txs() {
+    fn native_transfer_apfl_payload_mode_decode_only_reconstructs_canonical_native_txs() {
         let txs_per_payload = 8;
         let expanded = payload_for_sequence_v0(PayloadModeV0::EvmTransactions, 0, txs_per_payload)
             .expect("expanded payload");
@@ -1303,12 +1556,12 @@ mod tests {
         delivered.insert(0, apfl);
 
         let summary =
-            receiver_execution_summary_v0(PayloadModeV0::NativeTransferApflV0, true, &delivered);
+            receiver_execution_summary_v0(PayloadModeV0::NativeTransferApflV0, false, &delivered);
         assert_eq!(summary.business_decode_count, 1);
         assert_eq!(summary.business_decode_error_count, 0);
         assert_eq!(summary.business_transactions_decoded_count, txs_per_payload);
-        assert_eq!(summary.aoem_transactions_executed_total, txs_per_payload);
-        assert_eq!(summary.ledger_transactions_completed_count, txs_per_payload);
+        assert_eq!(summary.aoem_transactions_executed_total, 0);
+        assert_eq!(summary.ledger_transactions_completed_count, 0);
         assert_eq!(summary.canonical_reconstruction_count, txs_per_payload);
         assert_eq!(summary.canonical_reconstruction_error_count, 0);
         assert_eq!(summary.canonical_tx_hash_match_count, txs_per_payload);

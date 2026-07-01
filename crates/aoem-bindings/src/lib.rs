@@ -3191,6 +3191,10 @@ impl AoemSharedHandle {
         }
         Ok(result)
     }
+
+    pub fn state_read_json_v1(&self, key: &str) -> Result<Value> {
+        self.dynlib.state_read_json_v1(key)
+    }
 }
 
 unsafe fn cstr_to_string(ptr: *const c_char) -> Option<String> {

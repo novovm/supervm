@@ -13,6 +13,13 @@ mod ingress_codec;
 
 pub const AOEM_FAILURE_CLASSIFICATION_CONTRACT_V1: &str = "novovm-exec/v1";
 pub const EIP7610_REJECTION_CONTRACT_V1: &str = "novovm-exec/eip7610-v1";
+pub const AOEM_OPS_WIRE_V1_OPCODE_APFL_NATIVE_TRANSFER_V1: u8 = 114;
+pub const AOEM_APFL_NATIVE_TRANSFER_RESULT_SURFACE_V1: &str = "apfl/native_transfer/result";
+pub const AOEM_APFL_NATIVE_TRANSFER_DIGEST_SURFACE_V1: &str = "apfl/native_transfer/digest";
+pub const AOEM_APFL_NATIVE_TRANSFER_STATUS_SURFACE_V1: &str = "apfl/native_transfer/status";
+pub const AOEM_APFL_NATIVE_TRANSFER_METADATA_SURFACE_V1: &str = "apfl/native_transfer/metadata";
+pub const AOEM_APFL_NATIVE_TRANSFER_OCCC_DELTA_CONTRACT_SURFACE_V1: &str =
+    "apfl/native_transfer/occc_delta_contract";
 
 const EIP7610_MAINNET_CHAIN_ID_V1: u64 = 1;
 const EIP7610_MAINNET_REJECTED_ACCOUNTS_V1: [[u8; 20]; 28] = [
@@ -346,6 +353,20 @@ pub struct AoemExecFacade {
 
 pub struct AoemExecSession {
     handle: AoemSharedHandle,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AoemApflNativeTransferWireReportV1 {
+    pub output_prefix: String,
+    pub exec_processed: u32,
+    pub exec_success: u32,
+    pub exec_failed_index: Option<u32>,
+    pub exec_total_writes: u64,
+    pub result: serde_json::Value,
+    pub digest: serde_json::Value,
+    pub status: serde_json::Value,
+    pub metadata: serde_json::Value,
+    pub occc_delta_contract: serde_json::Value,
 }
 
 #[repr(u32)]
@@ -1999,6 +2020,31 @@ impl AoemExecFacade {
     pub fn supports_ops_wire_v1(&self) -> bool {
         self.dynlib.supports_execute_ops_wire_v1()
     }
+
+    pub fn supports_apfl_native_transfer_wire_v1(&self) -> Result<bool> {
+        let raw = self.capabilities_json()?;
+        let capability = capability_bool(
+            &raw,
+            &[
+                "compute_apfl_native_transfer_v1",
+                "apfl.native_transfer_v1",
+                "compute.apfl_native_transfer_v1",
+            ],
+        )
+        .unwrap_or(false);
+        let opcode = raw
+            .get("compute_apfl_native_transfer_v1_opcode")
+            .and_then(|value| value.as_u64())
+            .or_else(|| {
+                raw.pointer("/compute_apfl_native_transfer_v1/opcode")
+                    .and_then(|value| value.as_u64())
+            })
+            .unwrap_or(AOEM_OPS_WIRE_V1_OPCODE_APFL_NATIVE_TRANSFER_V1 as u64);
+        Ok(self.dynlib.supports_execute_ops_wire_v1()
+            && self.dynlib.supports_state_read_v1()
+            && capability
+            && opcode == AOEM_OPS_WIRE_V1_OPCODE_APFL_NATIVE_TRANSFER_V1 as u64)
+    }
 }
 
 impl AoemExecSession {
@@ -2008,6 +2054,43 @@ impl AoemExecSession {
 
     pub fn execute_ops_wire_v1(&self, input: &[u8]) -> Result<AoemExecV2Result> {
         self.handle.execute_ops_wire_v1(input)
+    }
+
+    pub fn state_read_json_v1(&self, key: &str) -> Result<serde_json::Value> {
+        self.handle.state_read_json_v1(key)
+    }
+
+    pub fn execute_apfl_native_transfer_wire_v1(
+        &self,
+        output_prefix: &str,
+        payload: &[u8],
+    ) -> Result<AoemApflNativeTransferWireReportV1> {
+        let wire = build_apfl_native_transfer_ops_wire_v1(output_prefix, payload)?;
+        let output = self.submit_ops_wire(wire.bytes.as_slice())?;
+        let failed_index = if output.result.failed_index == u32::MAX {
+            None
+        } else {
+            Some(output.result.failed_index)
+        };
+        let surface = |suffix: &str| format!("{output_prefix}/{suffix}");
+        Ok(AoemApflNativeTransferWireReportV1 {
+            output_prefix: output_prefix.to_string(),
+            exec_processed: output.result.processed,
+            exec_success: output.result.success,
+            exec_failed_index: failed_index,
+            exec_total_writes: output.result.total_writes,
+            result: self
+                .state_read_json_v1(&surface(AOEM_APFL_NATIVE_TRANSFER_RESULT_SURFACE_V1))?,
+            digest: self
+                .state_read_json_v1(&surface(AOEM_APFL_NATIVE_TRANSFER_DIGEST_SURFACE_V1))?,
+            status: self
+                .state_read_json_v1(&surface(AOEM_APFL_NATIVE_TRANSFER_STATUS_SURFACE_V1))?,
+            metadata: self
+                .state_read_json_v1(&surface(AOEM_APFL_NATIVE_TRANSFER_METADATA_SURFACE_V1))?,
+            occc_delta_contract: self.state_read_json_v1(&surface(
+                AOEM_APFL_NATIVE_TRANSFER_OCCC_DELTA_CONTRACT_SURFACE_V1,
+            ))?,
+        })
     }
 
     /// Host main-path stable entry: execute typed ops and return result+metrics in one object.
@@ -2108,6 +2191,30 @@ impl AoemExecSession {
             }
         }
     }
+}
+
+pub fn build_apfl_native_transfer_ops_wire_v1(
+    output_prefix: &str,
+    payload: &[u8],
+) -> Result<EncodedOpsWire> {
+    if output_prefix.trim().is_empty() {
+        bail!("apfl native transfer output_prefix must not be empty");
+    }
+    if payload.is_empty() {
+        bail!("apfl native transfer payload must not be empty");
+    }
+    let mut builder = OpsWireV1Builder::new();
+    builder.push(OpsWireOp {
+        opcode: AOEM_OPS_WIRE_V1_OPCODE_APFL_NATIVE_TRANSFER_V1,
+        flags: 0,
+        reserved: 0,
+        key: output_prefix.as_bytes(),
+        value: payload,
+        delta: 0,
+        expect_version: None,
+        plan_id: 0,
+    })?;
+    Ok(builder.finish())
 }
 
 fn classify_result_code(submitted_ops: u32, result: &AoemExecV2Result) -> AoemExecReturnCode {
@@ -2502,7 +2609,8 @@ fn _assert_abi_struct_layout(_v: AoemCreateOptionsV1) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        aoem_op_succeeded_v1, build_native_tx_batch_result_shape_v1, build_native_tx_batch_v1,
+        aoem_op_succeeded_v1, build_apfl_native_transfer_ops_wire_v1,
+        build_native_tx_batch_result_shape_v1, build_native_tx_batch_v1,
         classify_failure_from_anchor_v1, current_platform_dir_name, default_dll_path,
         default_plugin_dir, dynlib_names_by_preference,
         failure_class_from_anchor_return_code_name_v1, failure_class_from_anchor_return_code_v1,
@@ -2517,10 +2625,58 @@ mod tests {
         AoemFailureRecoverabilityV1, AoemProjectedTxExecutionV1, AoemReceiptDerivationRulesV1,
         AoemRuntimeVariant, AoemTxExecutionAnchorV1, NovovmAoemNativeTxBatchItemV1,
         NovovmAoemNativeTxBatchResultV1, NovovmAoemNativeTxReceiptV1, AOEM_LOG_BLOOM_BYTES_V1,
+        AOEM_OPS_WIRE_V1_MAGIC, AOEM_OPS_WIRE_V1_OPCODE_APFL_NATIVE_TRANSFER_V1,
         NOVOVM_AOEM_ALGEBRAIC_SEMANTIC_IR_V1, NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA,
         NOVOVM_AOEM_NATIVE_TX_BATCH_V1_SCHEMA,
     };
     use aoem_bindings::AoemExecV2Result;
+
+    #[test]
+    fn apfl_native_transfer_wire_v1_uses_unified_opcode_114() {
+        let encoded = build_apfl_native_transfer_ops_wire_v1("novovm/test/output", b"apfl-payload")
+            .expect("encode opcode 114 wire");
+        assert_eq!(encoded.op_count, 1);
+        let bytes = encoded.bytes;
+        assert_eq!(
+            &bytes[..AOEM_OPS_WIRE_V1_MAGIC.len()],
+            AOEM_OPS_WIRE_V1_MAGIC
+        );
+        let mut offset = AOEM_OPS_WIRE_V1_MAGIC.len();
+        assert_eq!(
+            u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap()),
+            1
+        );
+        offset += 2;
+        assert_eq!(
+            u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap()),
+            0
+        );
+        offset += 2;
+        assert_eq!(
+            u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()),
+            1
+        );
+        offset += 4;
+        assert_eq!(
+            bytes[offset],
+            AOEM_OPS_WIRE_V1_OPCODE_APFL_NATIVE_TRANSFER_V1
+        );
+        offset += 1;
+        assert_eq!(bytes[offset], 0);
+        offset += 1;
+        assert_eq!(
+            u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap()),
+            0
+        );
+        offset += 2;
+        let key_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        let value_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4 + 8 + 8 + 8;
+        assert_eq!(&bytes[offset..offset + key_len], b"novovm/test/output");
+        offset += key_len;
+        assert_eq!(&bytes[offset..offset + value_len], b"apfl-payload");
+    }
     use novovm_protocol::{evm_block_access_list_hash_v1, EvmBlockAccessListV1};
     use serde_json::json;
     use sha3::{Digest, Keccak256};
