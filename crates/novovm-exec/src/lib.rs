@@ -2060,6 +2060,11 @@ impl AoemExecSession {
         self.handle.state_read_json_v1(key)
     }
 
+    fn state_read_surface_value_json_v1(&self, key: &str) -> Result<serde_json::Value> {
+        let response = self.state_read_json_v1(key)?;
+        unwrap_aoem_state_read_value_v1(response, key)
+    }
+
     pub fn execute_apfl_native_transfer_wire_v1(
         &self,
         output_prefix: &str,
@@ -2079,15 +2084,19 @@ impl AoemExecSession {
             exec_success: output.result.success,
             exec_failed_index: failed_index,
             exec_total_writes: output.result.total_writes,
-            result: self
-                .state_read_json_v1(&surface(AOEM_APFL_NATIVE_TRANSFER_RESULT_SURFACE_V1))?,
-            digest: self
-                .state_read_json_v1(&surface(AOEM_APFL_NATIVE_TRANSFER_DIGEST_SURFACE_V1))?,
-            status: self
-                .state_read_json_v1(&surface(AOEM_APFL_NATIVE_TRANSFER_STATUS_SURFACE_V1))?,
-            metadata: self
-                .state_read_json_v1(&surface(AOEM_APFL_NATIVE_TRANSFER_METADATA_SURFACE_V1))?,
-            occc_delta_contract: self.state_read_json_v1(&surface(
+            result: self.state_read_surface_value_json_v1(&surface(
+                AOEM_APFL_NATIVE_TRANSFER_RESULT_SURFACE_V1,
+            ))?,
+            digest: self.state_read_surface_value_json_v1(&surface(
+                AOEM_APFL_NATIVE_TRANSFER_DIGEST_SURFACE_V1,
+            ))?,
+            status: self.state_read_surface_value_json_v1(&surface(
+                AOEM_APFL_NATIVE_TRANSFER_STATUS_SURFACE_V1,
+            ))?,
+            metadata: self.state_read_surface_value_json_v1(&surface(
+                AOEM_APFL_NATIVE_TRANSFER_METADATA_SURFACE_V1,
+            ))?,
+            occc_delta_contract: self.state_read_surface_value_json_v1(&surface(
                 AOEM_APFL_NATIVE_TRANSFER_OCCC_DELTA_CONTRACT_SURFACE_V1,
             ))?,
         })
@@ -2191,6 +2200,22 @@ impl AoemExecSession {
             }
         }
     }
+}
+
+fn unwrap_aoem_state_read_value_v1(
+    response: serde_json::Value,
+    key: &str,
+) -> Result<serde_json::Value> {
+    let Some(value) = response.get("value") else {
+        return Ok(response);
+    };
+    if value.get("found").and_then(|v| v.as_bool()) == Some(false) {
+        bail!("aoem_state_read_v1 surface not found: {key}");
+    }
+    if let Some(inner) = value.get("value") {
+        return Ok(inner.clone());
+    }
+    Ok(value.clone())
 }
 
 pub fn build_apfl_native_transfer_ops_wire_v1(

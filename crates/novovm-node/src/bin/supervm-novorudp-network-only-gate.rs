@@ -1009,13 +1009,16 @@ fn apply_aoem_apfl_native_transfer_report_v0(
             )
             .max(tx_count),
         );
-    summary.legacy_native_tx_bytes_total =
-        summary
-            .legacy_native_tx_bytes_total
-            .saturating_add(json_u64_surface_v0(
-                &report.metadata,
-                &["legacy_bytes_total", "legacy_native_tx_bytes_total"],
-            ));
+    summary.legacy_native_tx_bytes_total = summary.legacy_native_tx_bytes_total.saturating_add(
+        json_u64_surface_v0(
+            &report.result,
+            &["legacy_bytes_total", "legacy_native_tx_bytes_total"],
+        )
+        .max(json_u64_surface_v0(
+            &report.metadata,
+            &["legacy_bytes_total", "legacy_native_tx_bytes_total"],
+        )),
+    );
     summary.apfl_decode_elapsed_ms =
         summary
             .apfl_decode_elapsed_ms
