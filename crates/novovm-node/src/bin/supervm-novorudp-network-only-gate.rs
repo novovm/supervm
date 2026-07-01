@@ -134,6 +134,20 @@ struct SendTransportFrameTimingV0 {
     encoded_bytes: u64,
 }
 
+struct SenderLaneV0 {
+    socket: UdpSocket,
+    bind_addr: SocketAddr,
+    buffers: SocketBufferConfigV0,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SenderLaneStatsV0 {
+    send_to_call_count: u64,
+    send_to_elapsed_us: u64,
+    bytes_total: u64,
+    repair_send_to_call_count: u64,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct LossInjectionConfigV0 {
     data_loss_bps: u64,
@@ -294,6 +308,10 @@ fn run_receiver() -> Result<()> {
     let mut first_packet_ms = None::<u64>;
     let mut last_packet_ms = None::<u64>;
     let mut transport_done_ms = None::<u64>;
+    let mut source_addr_counts = BTreeMap::<String, u64>::new();
+    let mut source_port_counts = BTreeMap::<u16, u64>::new();
+    let mut max_seen_sequence = None::<u64>;
+    let mut out_of_order_count = 0u64;
 
     while start.elapsed() < timeout {
         let loop_start = Instant::now();
@@ -323,6 +341,14 @@ fn run_receiver() -> Result<()> {
                 if frame.session_id != session_id {
                     continue;
                 }
+                *source_addr_counts.entry(src.to_string()).or_default() += 1;
+                *source_port_counts.entry(src.port()).or_default() += 1;
+                if let Some(max_seen) = max_seen_sequence {
+                    if frame.sequence < max_seen {
+                        out_of_order_count = out_of_order_count.saturating_add(1);
+                    }
+                }
+                max_seen_sequence = Some(max_seen_sequence.unwrap_or(0).max(frame.sequence));
                 first_packet_ms.get_or_insert(recv_ms);
                 last_packet_ms = Some(recv_ms);
                 last_peer = Some(src);
@@ -471,6 +497,11 @@ fn run_receiver() -> Result<()> {
         "receiver_ack_send_elapsed_ms": stats.ack_send_elapsed_us / 1000,
         "receiver_recv_loop_total_elapsed_us": stats.recv_loop_total_elapsed_us,
         "receiver_recv_loop_total_elapsed_ms": stats.recv_loop_total_elapsed_us / 1000,
+        "receiver_source_addr_count": source_addr_counts.len() as u64,
+        "receiver_source_port_count": source_port_counts.len() as u64,
+        "receiver_packets_by_source_addr": source_addr_counts,
+        "receiver_packets_by_source_port": source_port_counts,
+        "receiver_out_of_order_count": out_of_order_count,
         "receiver_socket_send_buffer_requested_bytes": socket_buffers.requested_send_buffer_bytes,
         "receiver_socket_recv_buffer_requested_bytes": socket_buffers.requested_recv_buffer_bytes,
         "receiver_socket_send_buffer_effective_bytes": socket_buffers.effective_send_buffer_bytes,
@@ -616,12 +647,12 @@ fn run_sender() -> Result<()> {
     let target: SocketAddr = target_addr
         .parse()
         .with_context(|| format!("parse receiver addr failed: {target_addr}"))?;
-    let socket = UdpSocket::bind(bind_addr.as_str())
-        .with_context(|| format!("bind sender socket failed: {bind_addr}"))?;
-    let socket_buffers = configure_udp_socket_buffers_v0(&socket, "sender")?;
-    socket
-        .set_read_timeout(Some(Duration::from_millis(100)))
-        .context("set sender read timeout failed")?;
+    let sender_lane_count =
+        env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_SENDER_LANE_COUNT", 1).clamp(1, 16) as usize;
+    let sender_lane_base_port = env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_SENDER_LANE_BASE_PORT", 0);
+    let lanes = build_sender_lanes_v0(&bind_addr, sender_lane_count, sender_lane_base_port)?;
+    let socket_buffers = lanes.first().map(|lane| lane.buffers).unwrap_or_default();
+    let mut lane_stats = vec![SenderLaneStatsV0::default(); lanes.len()];
 
     let start = Instant::now();
     let mut stats = SenderStats::default();
@@ -642,63 +673,115 @@ fn run_sender() -> Result<()> {
     };
 
     let primary_send_start = Instant::now();
-    for sequence in 0..tx_count {
-        stats.data_send_attempt = stats.data_send_attempt.saturating_add(1);
-        if loss.drops_data_sequence(sequence) {
-            stats.data_loss_injected = stats.data_loss_injected.saturating_add(1);
-            continue;
+    if lanes.len() == 1 {
+        for sequence in 0..tx_count {
+            stats.data_send_attempt = stats.data_send_attempt.saturating_add(1);
+            if loss.drops_data_sequence(sequence) {
+                stats.data_loss_injected = stats.data_loss_injected.saturating_add(1);
+                continue;
+            }
+            let copy_start = Instant::now();
+            let payload = payloads[sequence as usize].clone();
+            let payload_len = payload.len() as u64;
+            stats.payload_copy_elapsed_ms = stats
+                .payload_copy_elapsed_ms
+                .saturating_add(copy_start.elapsed().as_millis() as u64);
+            let lane_index = 0usize;
+            let socket_send_start = Instant::now();
+            let timing = send_transport_frame(
+                &lanes[lane_index].socket,
+                target,
+                NovoRudpTransportFrameKindV0::Data,
+                session_id,
+                sequence,
+                payload,
+                0,
+            )?;
+            stats.socket_send_elapsed_ms = stats
+                .socket_send_elapsed_ms
+                .saturating_add(socket_send_start.elapsed().as_millis() as u64);
+            stats.transport_frame_encode_elapsed_us = stats
+                .transport_frame_encode_elapsed_us
+                .saturating_add(timing.frame_encode_elapsed_us);
+            stats.transport_kernel_send_elapsed_us = stats
+                .transport_kernel_send_elapsed_us
+                .saturating_add(timing.kernel_send_elapsed_us);
+            stats.transport_send_total_elapsed_us = stats
+                .transport_send_total_elapsed_us
+                .saturating_add(timing.total_elapsed_us);
+            stats.transport_encoded_bytes_total = stats
+                .transport_encoded_bytes_total
+                .saturating_add(timing.encoded_bytes);
+            stats.transport_send_call_count = stats.transport_send_call_count.saturating_add(1);
+            stats.transport_send_max_bytes =
+                stats.transport_send_max_bytes.max(timing.encoded_bytes);
+            lane_stats[lane_index].send_to_call_count =
+                lane_stats[lane_index].send_to_call_count.saturating_add(1);
+            lane_stats[lane_index].send_to_elapsed_us = lane_stats[lane_index]
+                .send_to_elapsed_us
+                .saturating_add(timing.kernel_send_elapsed_us);
+            lane_stats[lane_index].bytes_total = lane_stats[lane_index]
+                .bytes_total
+                .saturating_add(timing.encoded_bytes);
+            stats.data_payload_bytes_sent_total = stats
+                .data_payload_bytes_sent_total
+                .saturating_add(payload_len);
+            if !sent_once.insert(sequence) {
+                stats.duplicate_sent = stats.duplicate_sent.saturating_add(1);
+            }
+            stats.data_sent = stats.data_sent.saturating_add(1);
+            if data_pacing_chunk_size > 0
+                && data_pacing_chunk_gap_ms > 0
+                && stats.data_sent % data_pacing_chunk_size == 0
+                && sequence + 1 < tx_count
+            {
+                stats.data_pacing_sleep_count = stats.data_pacing_sleep_count.saturating_add(1);
+                let pacing_sleep_start = Instant::now();
+                thread::sleep(Duration::from_millis(data_pacing_chunk_gap_ms));
+                stats.pacing_sleep_elapsed_ms = stats
+                    .pacing_sleep_elapsed_ms
+                    .saturating_add(pacing_sleep_start.elapsed().as_millis() as u64);
+            }
         }
-        let copy_start = Instant::now();
-        let payload = payloads[sequence as usize].clone();
-        let payload_len = payload.len() as u64;
-        stats.payload_copy_elapsed_ms = stats
-            .payload_copy_elapsed_ms
-            .saturating_add(copy_start.elapsed().as_millis() as u64);
-        let socket_send_start = Instant::now();
-        let timing = send_transport_frame(
-            &socket,
-            target,
-            NovoRudpTransportFrameKindV0::Data,
-            session_id,
-            sequence,
-            payload,
-            0,
-        )?;
-        stats.socket_send_elapsed_ms = stats
-            .socket_send_elapsed_ms
-            .saturating_add(socket_send_start.elapsed().as_millis() as u64);
-        stats.transport_frame_encode_elapsed_us = stats
-            .transport_frame_encode_elapsed_us
-            .saturating_add(timing.frame_encode_elapsed_us);
-        stats.transport_kernel_send_elapsed_us = stats
-            .transport_kernel_send_elapsed_us
-            .saturating_add(timing.kernel_send_elapsed_us);
-        stats.transport_send_total_elapsed_us = stats
-            .transport_send_total_elapsed_us
-            .saturating_add(timing.total_elapsed_us);
-        stats.transport_encoded_bytes_total = stats
-            .transport_encoded_bytes_total
-            .saturating_add(timing.encoded_bytes);
-        stats.transport_send_call_count = stats.transport_send_call_count.saturating_add(1);
-        stats.transport_send_max_bytes = stats.transport_send_max_bytes.max(timing.encoded_bytes);
-        stats.data_payload_bytes_sent_total = stats
-            .data_payload_bytes_sent_total
-            .saturating_add(payload_len);
-        if !sent_once.insert(sequence) {
-            stats.duplicate_sent = stats.duplicate_sent.saturating_add(1);
-        }
-        stats.data_sent = stats.data_sent.saturating_add(1);
-        if data_pacing_chunk_size > 0
-            && data_pacing_chunk_gap_ms > 0
-            && stats.data_sent % data_pacing_chunk_size == 0
-            && sequence + 1 < tx_count
-        {
-            stats.data_pacing_sleep_count = stats.data_pacing_sleep_count.saturating_add(1);
-            let pacing_sleep_start = Instant::now();
-            thread::sleep(Duration::from_millis(data_pacing_chunk_gap_ms));
-            stats.pacing_sleep_elapsed_ms = stats
-                .pacing_sleep_elapsed_ms
-                .saturating_add(pacing_sleep_start.elapsed().as_millis() as u64);
+    } else {
+        let lane_results = thread::scope(|scope| -> Result<Vec<_>> {
+            let mut handles = Vec::with_capacity(lanes.len());
+            for lane_index in 0..lanes.len() {
+                let lane_socket = &lanes[lane_index].socket;
+                let payloads = &payloads;
+                let lane_count = lanes.len();
+                handles.push(scope.spawn(move || {
+                    send_primary_lane_v0(
+                        lane_index,
+                        lane_count,
+                        lane_socket,
+                        target,
+                        session_id,
+                        tx_count,
+                        payloads,
+                        loss,
+                        data_pacing_chunk_size,
+                        data_pacing_chunk_gap_ms,
+                    )
+                }));
+            }
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                let result = handle
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("sender primary lane worker panicked"))??;
+                results.push(result);
+            }
+            Ok(results)
+        })?;
+        for (lane_index, lane_stat, lane_sender_stats, sent_sequences) in lane_results {
+            lane_stats[lane_index] = lane_stat;
+            merge_sender_stats_v0(&mut stats, lane_sender_stats);
+            for sequence in sent_sequences {
+                if !sent_once.insert(sequence) {
+                    stats.duplicate_sent = stats.duplicate_sent.saturating_add(1);
+                }
+            }
         }
     }
     let sender_primary_send_elapsed_ms = primary_send_start.elapsed().as_millis() as u64;
@@ -708,21 +791,8 @@ fn run_sender() -> Result<()> {
     let mut pending_repair = None::<(Vec<NovoRudpRange>, u64)>;
     let ack_poll_start = Instant::now();
     while start.elapsed() < timeout {
-        match socket.recv_from(buf.as_mut_slice()) {
-            Ok((n, _)) => {
-                let frame = match NovoRudpTransportFrameV0::decode(&buf[..n]) {
-                    Ok(frame) => frame,
-                    Err(_) => {
-                        stats.decode_error_count = stats.decode_error_count.saturating_add(1);
-                        continue;
-                    }
-                };
-                if frame.kind != NovoRudpTransportFrameKindV0::Ack || frame.session_id != session_id
-                {
-                    continue;
-                }
-                let ack: NetworkOnlyAckV0 =
-                    serde_json::from_slice(frame.payload.as_slice()).context("decode ack json")?;
+        match recv_ack_from_lanes_v0(&lanes, session_id, buf.as_mut_slice())? {
+            Some(ack) => {
                 stats.ack_received = stats.ack_received.saturating_add(1);
                 latest_missing = ack.missing_ranges.clone();
                 if ack.receiver_done && latest_missing.is_empty() {
@@ -731,11 +801,11 @@ fn run_sender() -> Result<()> {
                 }
                 pending_repair = Some((latest_missing.clone(), ack.ack_epoch));
             }
-            Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {
+            None => {
                 let Some((repair_ranges, ack_epoch)) = pending_repair.take() else {
+                    if lanes.len() > 1 {
+                        thread::sleep(Duration::from_millis(1));
+                    }
                     continue;
                 };
                 for range in repair_ranges {
@@ -749,9 +819,10 @@ fn run_sender() -> Result<()> {
                         stats.payload_copy_elapsed_ms = stats
                             .payload_copy_elapsed_ms
                             .saturating_add(copy_start.elapsed().as_millis() as u64);
+                        let lane_index = (sequence as usize) % lanes.len();
                         let socket_send_start = Instant::now();
                         let timing = send_transport_frame(
-                            &socket,
+                            &lanes[lane_index].socket,
                             target,
                             NovoRudpTransportFrameKindV0::Repair,
                             session_id,
@@ -783,6 +854,17 @@ fn run_sender() -> Result<()> {
                             .saturating_add(socket_send_start.elapsed().as_millis() as u64);
                         stats.repair_send_call_count =
                             stats.repair_send_call_count.saturating_add(1);
+                        lane_stats[lane_index].send_to_call_count =
+                            lane_stats[lane_index].send_to_call_count.saturating_add(1);
+                        lane_stats[lane_index].send_to_elapsed_us = lane_stats[lane_index]
+                            .send_to_elapsed_us
+                            .saturating_add(timing.kernel_send_elapsed_us);
+                        lane_stats[lane_index].bytes_total = lane_stats[lane_index]
+                            .bytes_total
+                            .saturating_add(timing.encoded_bytes);
+                        lane_stats[lane_index].repair_send_to_call_count = lane_stats[lane_index]
+                            .repair_send_to_call_count
+                            .saturating_add(1);
                         stats.repair_payload_bytes_sent_total = stats
                             .repair_payload_bytes_sent_total
                             .saturating_add(payload_len);
@@ -793,7 +875,6 @@ fn run_sender() -> Result<()> {
                     }
                 }
             }
-            Err(e) => return Err(e).context("sender recv ack failed"),
         }
     }
     let sender_ack_poll_elapsed_ms = ack_poll_start.elapsed().as_millis() as u64;
@@ -803,6 +884,38 @@ fn run_sender() -> Result<()> {
     let sender_data_payload_bytes_total = payloads.iter().fold(0u64, |acc, payload| {
         acc.saturating_add(payload.len() as u64)
     });
+    let sender_lane_bind_addrs = lanes
+        .iter()
+        .map(|lane| lane.bind_addr.to_string())
+        .collect::<Vec<_>>();
+    let sender_lane_send_to_call_counts = lane_stats
+        .iter()
+        .map(|lane| lane.send_to_call_count)
+        .collect::<Vec<_>>();
+    let sender_lane_send_to_elapsed_us = lane_stats
+        .iter()
+        .map(|lane| lane.send_to_elapsed_us)
+        .collect::<Vec<_>>();
+    let sender_lane_send_to_elapsed_ms = lane_stats
+        .iter()
+        .map(|lane| lane.send_to_elapsed_us / 1000)
+        .collect::<Vec<_>>();
+    let sender_lane_bytes_total = lane_stats
+        .iter()
+        .map(|lane| lane.bytes_total)
+        .collect::<Vec<_>>();
+    let sender_lane_repair_send_to_call_counts = lane_stats
+        .iter()
+        .map(|lane| lane.repair_send_to_call_count)
+        .collect::<Vec<_>>();
+    let sender_lane_send_buffer_effective_bytes = lanes
+        .iter()
+        .map(|lane| lane.buffers.effective_send_buffer_bytes)
+        .collect::<Vec<_>>();
+    let sender_lane_recv_buffer_effective_bytes = lanes
+        .iter()
+        .map(|lane| lane.buffers.effective_recv_buffer_bytes)
+        .collect::<Vec<_>>();
     let report = json!({
         "schema": "novorudp-network-only-gate-v0",
         "role": "sender",
@@ -825,6 +938,17 @@ fn run_sender() -> Result<()> {
         "sender_socket_recv_buffer_requested_bytes": socket_buffers.requested_recv_buffer_bytes,
         "sender_socket_send_buffer_effective_bytes": socket_buffers.effective_send_buffer_bytes,
         "sender_socket_recv_buffer_effective_bytes": socket_buffers.effective_recv_buffer_bytes,
+        "sender_lane_count": lanes.len() as u64,
+        "sender_lane_primary_send_enabled": lanes.len() > 1,
+        "sender_lane_base_port": sender_lane_base_port,
+        "sender_lane_bind_addrs": sender_lane_bind_addrs,
+        "sender_lane_send_to_call_counts": sender_lane_send_to_call_counts,
+        "sender_lane_send_to_elapsed_us": sender_lane_send_to_elapsed_us,
+        "sender_lane_send_to_elapsed_ms": sender_lane_send_to_elapsed_ms,
+        "sender_lane_bytes_total": sender_lane_bytes_total,
+        "sender_lane_repair_send_to_call_counts": sender_lane_repair_send_to_call_counts,
+        "sender_lane_send_buffer_effective_bytes": sender_lane_send_buffer_effective_bytes,
+        "sender_lane_recv_buffer_effective_bytes": sender_lane_recv_buffer_effective_bytes,
         "sender_transport_data_send_attempt_count": stats.data_send_attempt,
         "sender_transport_data_loss_injected_count": stats.data_loss_injected,
         "sender_elapsed_ms": elapsed_ms,
@@ -886,6 +1010,225 @@ fn run_sender() -> Result<()> {
     } else {
         bail!("network-only sender missing={final_missing}")
     }
+}
+
+fn build_sender_lanes_v0(
+    bind_addr: &str,
+    lane_count: usize,
+    base_port_override: u64,
+) -> Result<Vec<SenderLaneV0>> {
+    let base_addr = bind_addr
+        .parse::<SocketAddr>()
+        .with_context(|| format!("parse sender bind addr failed: {bind_addr}"))?;
+    let base_port = if base_port_override > 0 {
+        u16::try_from(base_port_override).context("sender lane base port exceeds u16")?
+    } else {
+        base_addr.port()
+    };
+    let mut lanes = Vec::with_capacity(lane_count);
+    for lane_index in 0..lane_count {
+        let lane_offset = u16::try_from(lane_index).context("sender lane index exceeds u16")?;
+        let lane_port = base_port
+            .checked_add(lane_offset)
+            .context("sender lane port overflow")?;
+        let lane_addr = if lane_count == 1 && base_port_override == 0 {
+            base_addr
+        } else {
+            SocketAddr::new(base_addr.ip(), lane_port)
+        };
+        let socket = UdpSocket::bind(lane_addr)
+            .with_context(|| format!("bind sender lane {lane_index} socket failed: {lane_addr}"))?;
+        let buffers =
+            configure_udp_socket_buffers_v0(&socket, &format!("sender lane {lane_index}"))?;
+        if lane_count == 1 {
+            socket
+                .set_read_timeout(Some(Duration::from_millis(100)))
+                .context("set sender read timeout failed")?;
+        } else {
+            socket
+                .set_nonblocking(true)
+                .with_context(|| format!("set sender lane {lane_index} nonblocking failed"))?;
+        }
+        lanes.push(SenderLaneV0 {
+            socket,
+            bind_addr: lane_addr,
+            buffers,
+        });
+    }
+    Ok(lanes)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_primary_lane_v0(
+    lane_index: usize,
+    lane_count: usize,
+    socket: &UdpSocket,
+    target: SocketAddr,
+    session_id: [u8; 16],
+    tx_count: u64,
+    payloads: &[Vec<u8>],
+    loss: LossInjectionConfigV0,
+    data_pacing_chunk_size: u64,
+    data_pacing_chunk_gap_ms: u64,
+) -> Result<(usize, SenderLaneStatsV0, SenderStats, Vec<u64>)> {
+    let mut lane_stats = SenderLaneStatsV0::default();
+    let mut stats = SenderStats::default();
+    let mut sent_sequences = Vec::new();
+    let mut lane_sent_count = 0u64;
+    let mut sequence = lane_index as u64;
+    while sequence < tx_count {
+        stats.data_send_attempt = stats.data_send_attempt.saturating_add(1);
+        if loss.drops_data_sequence(sequence) {
+            stats.data_loss_injected = stats.data_loss_injected.saturating_add(1);
+            sequence = sequence.saturating_add(lane_count as u64);
+            continue;
+        }
+        let copy_start = Instant::now();
+        let payload = payloads[sequence as usize].clone();
+        let payload_len = payload.len() as u64;
+        stats.payload_copy_elapsed_ms = stats
+            .payload_copy_elapsed_ms
+            .saturating_add(copy_start.elapsed().as_millis() as u64);
+        let socket_send_start = Instant::now();
+        let timing = send_transport_frame(
+            socket,
+            target,
+            NovoRudpTransportFrameKindV0::Data,
+            session_id,
+            sequence,
+            payload,
+            0,
+        )?;
+        stats.socket_send_elapsed_ms = stats
+            .socket_send_elapsed_ms
+            .saturating_add(socket_send_start.elapsed().as_millis() as u64);
+        stats.transport_frame_encode_elapsed_us = stats
+            .transport_frame_encode_elapsed_us
+            .saturating_add(timing.frame_encode_elapsed_us);
+        stats.transport_kernel_send_elapsed_us = stats
+            .transport_kernel_send_elapsed_us
+            .saturating_add(timing.kernel_send_elapsed_us);
+        stats.transport_send_total_elapsed_us = stats
+            .transport_send_total_elapsed_us
+            .saturating_add(timing.total_elapsed_us);
+        stats.transport_encoded_bytes_total = stats
+            .transport_encoded_bytes_total
+            .saturating_add(timing.encoded_bytes);
+        stats.transport_send_call_count = stats.transport_send_call_count.saturating_add(1);
+        stats.transport_send_max_bytes = stats.transport_send_max_bytes.max(timing.encoded_bytes);
+        stats.data_payload_bytes_sent_total = stats
+            .data_payload_bytes_sent_total
+            .saturating_add(payload_len);
+        stats.data_sent = stats.data_sent.saturating_add(1);
+        lane_stats.send_to_call_count = lane_stats.send_to_call_count.saturating_add(1);
+        lane_stats.send_to_elapsed_us = lane_stats
+            .send_to_elapsed_us
+            .saturating_add(timing.kernel_send_elapsed_us);
+        lane_stats.bytes_total = lane_stats.bytes_total.saturating_add(timing.encoded_bytes);
+        sent_sequences.push(sequence);
+        lane_sent_count = lane_sent_count.saturating_add(1);
+        if data_pacing_chunk_size > 0
+            && data_pacing_chunk_gap_ms > 0
+            && lane_sent_count % data_pacing_chunk_size == 0
+            && sequence.saturating_add(lane_count as u64) < tx_count
+        {
+            stats.data_pacing_sleep_count = stats.data_pacing_sleep_count.saturating_add(1);
+            let pacing_sleep_start = Instant::now();
+            thread::sleep(Duration::from_millis(data_pacing_chunk_gap_ms));
+            stats.pacing_sleep_elapsed_ms = stats
+                .pacing_sleep_elapsed_ms
+                .saturating_add(pacing_sleep_start.elapsed().as_millis() as u64);
+        }
+        sequence = sequence.saturating_add(lane_count as u64);
+    }
+    Ok((lane_index, lane_stats, stats, sent_sequences))
+}
+
+fn merge_sender_stats_v0(dst: &mut SenderStats, src: SenderStats) {
+    dst.data_send_attempt = dst.data_send_attempt.saturating_add(src.data_send_attempt);
+    dst.data_sent = dst.data_sent.saturating_add(src.data_sent);
+    dst.data_pacing_sleep_count = dst
+        .data_pacing_sleep_count
+        .saturating_add(src.data_pacing_sleep_count);
+    dst.repair_sent = dst.repair_sent.saturating_add(src.repair_sent);
+    dst.duplicate_sent = dst.duplicate_sent.saturating_add(src.duplicate_sent);
+    dst.ack_received = dst.ack_received.saturating_add(src.ack_received);
+    dst.decode_error_count = dst
+        .decode_error_count
+        .saturating_add(src.decode_error_count);
+    dst.data_loss_injected = dst
+        .data_loss_injected
+        .saturating_add(src.data_loss_injected);
+    dst.data_payload_bytes_sent_total = dst
+        .data_payload_bytes_sent_total
+        .saturating_add(src.data_payload_bytes_sent_total);
+    dst.repair_payload_bytes_sent_total = dst
+        .repair_payload_bytes_sent_total
+        .saturating_add(src.repair_payload_bytes_sent_total);
+    dst.payload_copy_elapsed_ms = dst
+        .payload_copy_elapsed_ms
+        .saturating_add(src.payload_copy_elapsed_ms);
+    dst.socket_send_elapsed_ms = dst
+        .socket_send_elapsed_ms
+        .saturating_add(src.socket_send_elapsed_ms);
+    dst.transport_frame_encode_elapsed_us = dst
+        .transport_frame_encode_elapsed_us
+        .saturating_add(src.transport_frame_encode_elapsed_us);
+    dst.transport_kernel_send_elapsed_us = dst
+        .transport_kernel_send_elapsed_us
+        .saturating_add(src.transport_kernel_send_elapsed_us);
+    dst.transport_send_total_elapsed_us = dst
+        .transport_send_total_elapsed_us
+        .saturating_add(src.transport_send_total_elapsed_us);
+    dst.transport_encoded_bytes_total = dst
+        .transport_encoded_bytes_total
+        .saturating_add(src.transport_encoded_bytes_total);
+    dst.transport_send_call_count = dst
+        .transport_send_call_count
+        .saturating_add(src.transport_send_call_count);
+    dst.transport_send_max_bytes = dst
+        .transport_send_max_bytes
+        .max(src.transport_send_max_bytes);
+    dst.pacing_sleep_elapsed_ms = dst
+        .pacing_sleep_elapsed_ms
+        .saturating_add(src.pacing_sleep_elapsed_ms);
+    dst.repair_send_elapsed_ms = dst
+        .repair_send_elapsed_ms
+        .saturating_add(src.repair_send_elapsed_ms);
+    dst.repair_send_call_count = dst
+        .repair_send_call_count
+        .saturating_add(src.repair_send_call_count);
+}
+
+fn recv_ack_from_lanes_v0(
+    lanes: &[SenderLaneV0],
+    session_id: [u8; 16],
+    buf: &mut [u8],
+) -> Result<Option<NetworkOnlyAckV0>> {
+    for lane in lanes {
+        match lane.socket.recv_from(buf) {
+            Ok((n, _)) => {
+                let Ok(frame) = NovoRudpTransportFrameV0::decode(&buf[..n]) else {
+                    continue;
+                };
+                if frame.kind != NovoRudpTransportFrameKindV0::Ack || frame.session_id != session_id
+                {
+                    continue;
+                }
+                let ack =
+                    serde_json::from_slice(frame.payload.as_slice()).context("decode ack json")?;
+                return Ok(Some(ack));
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                continue;
+            }
+            Err(e) => return Err(e).context("sender recv ack failed"),
+        }
+    }
+    Ok(None)
 }
 
 fn send_transport_frame(
