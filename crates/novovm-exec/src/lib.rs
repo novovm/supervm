@@ -20,6 +20,8 @@ pub const AOEM_APFL_NATIVE_TRANSFER_STATUS_SURFACE_V1: &str = "apfl/native_trans
 pub const AOEM_APFL_NATIVE_TRANSFER_METADATA_SURFACE_V1: &str = "apfl/native_transfer/metadata";
 pub const AOEM_APFL_NATIVE_TRANSFER_OCCC_DELTA_CONTRACT_SURFACE_V1: &str =
     "apfl/native_transfer/occc_delta_contract";
+pub const AOEM_APFL_NATIVE_TRANSFER_BULK_MAGIC_V0: &[u8] = b"AOEM-APFL-NTBULK-V0";
+pub const AOEM_APFL_NATIVE_TRANSFER_BULK_VERSION_V0: u8 = 1;
 
 const EIP7610_MAINNET_CHAIN_ID_V1: u64 = 1;
 const EIP7610_MAINNET_REJECTED_ACCOUNTS_V1: [[u8; 20]; 28] = [
@@ -2151,6 +2153,15 @@ impl AoemExecSession {
         })
     }
 
+    pub fn execute_apfl_native_transfer_bulk_wire_v1(
+        &self,
+        output_prefix: &str,
+        payloads: &[&[u8]],
+    ) -> Result<AoemApflNativeTransferWireReportV1> {
+        let payload = build_apfl_native_transfer_bulk_payload_v0(payloads)?;
+        self.execute_apfl_native_transfer_wire_v1(output_prefix, payload.as_slice())
+    }
+
     /// Host main-path stable entry: execute typed ops and return result+metrics in one object.
     pub fn submit_ops(&self, ops: &[AoemOpV2]) -> Result<AoemExecOutput> {
         if ops.is_empty() {
@@ -2289,6 +2300,28 @@ pub fn build_apfl_native_transfer_ops_wire_v1(
         plan_id: 0,
     })?;
     Ok(builder.finish())
+}
+
+pub fn build_apfl_native_transfer_bulk_payload_v0(payloads: &[&[u8]]) -> Result<Vec<u8>> {
+    if payloads.is_empty() {
+        bail!("apfl native transfer bulk payloads must not be empty");
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(AOEM_APFL_NATIVE_TRANSFER_BULK_MAGIC_V0);
+    out.push(AOEM_APFL_NATIVE_TRANSFER_BULK_VERSION_V0);
+    out.push(0);
+    out.extend_from_slice(&0u16.to_le_bytes());
+    let count = u32::try_from(payloads.len())?;
+    out.extend_from_slice(&count.to_le_bytes());
+    for payload in payloads {
+        if payload.is_empty() {
+            bail!("apfl native transfer bulk entry must not be empty");
+        }
+        let len = u32::try_from(payload.len())?;
+        out.extend_from_slice(&len.to_le_bytes());
+        out.extend_from_slice(payload);
+    }
+    Ok(out)
 }
 
 fn classify_result_code(submitted_ops: u32, result: &AoemExecV2Result) -> AoemExecReturnCode {
@@ -2683,10 +2716,10 @@ fn _assert_abi_struct_layout(_v: AoemCreateOptionsV1) {}
 #[cfg(test)]
 mod tests {
     use super::{
-        aoem_op_succeeded_v1, build_apfl_native_transfer_ops_wire_v1,
-        build_native_tx_batch_result_shape_v1, build_native_tx_batch_v1,
-        classify_failure_from_anchor_v1, current_platform_dir_name, default_dll_path,
-        default_plugin_dir, dynlib_names_by_preference,
+        aoem_op_succeeded_v1, build_apfl_native_transfer_bulk_payload_v0,
+        build_apfl_native_transfer_ops_wire_v1, build_native_tx_batch_result_shape_v1,
+        build_native_tx_batch_v1, classify_failure_from_anchor_v1, current_platform_dir_name,
+        default_dll_path, default_plugin_dir, dynlib_names_by_preference,
         failure_class_from_anchor_return_code_name_v1, failure_class_from_anchor_return_code_v1,
         is_eip7610_rejected_account_v1, native_tx_batch_v1_input_commitment,
         native_tx_batch_v1_item_commitment, native_tx_batch_v1_receipt_commitment,
@@ -2698,10 +2731,11 @@ mod tests {
         AoemExecutionReconstructionSourcesV1, AoemFailureClassSourceV1, AoemFailureClassV1,
         AoemFailureRecoverabilityV1, AoemProjectedTxExecutionV1, AoemReceiptDerivationRulesV1,
         AoemRuntimeVariant, AoemTxExecutionAnchorV1, NovovmAoemNativeTxBatchItemV1,
-        NovovmAoemNativeTxBatchResultV1, NovovmAoemNativeTxReceiptV1, AOEM_LOG_BLOOM_BYTES_V1,
-        AOEM_OPS_WIRE_V1_MAGIC, AOEM_OPS_WIRE_V1_OPCODE_APFL_NATIVE_TRANSFER_V1,
-        NOVOVM_AOEM_ALGEBRAIC_SEMANTIC_IR_V1, NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA,
-        NOVOVM_AOEM_NATIVE_TX_BATCH_V1_SCHEMA,
+        NovovmAoemNativeTxBatchResultV1, NovovmAoemNativeTxReceiptV1,
+        AOEM_APFL_NATIVE_TRANSFER_BULK_MAGIC_V0, AOEM_APFL_NATIVE_TRANSFER_BULK_VERSION_V0,
+        AOEM_LOG_BLOOM_BYTES_V1, AOEM_OPS_WIRE_V1_MAGIC,
+        AOEM_OPS_WIRE_V1_OPCODE_APFL_NATIVE_TRANSFER_V1, NOVOVM_AOEM_ALGEBRAIC_SEMANTIC_IR_V1,
+        NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA, NOVOVM_AOEM_NATIVE_TX_BATCH_V1_SCHEMA,
     };
     use aoem_bindings::AoemExecV2Result;
 
@@ -2750,6 +2784,34 @@ mod tests {
         assert_eq!(&bytes[offset..offset + key_len], b"novovm/test/output");
         offset += key_len;
         assert_eq!(&bytes[offset..offset + value_len], b"apfl-payload");
+    }
+
+    #[test]
+    fn apfl_native_transfer_bulk_payload_v0_stays_inside_opcode_114_value() {
+        let payload_a = b"NOVRUDP-APFL-NTX-V0-a";
+        let payload_b = b"NOVRUDP-APFL-NTX-V0-b";
+        let bulk = build_apfl_native_transfer_bulk_payload_v0(&[payload_a, payload_b])
+            .expect("encode APFL native transfer bulk wrapper");
+        assert!(bulk.starts_with(AOEM_APFL_NATIVE_TRANSFER_BULK_MAGIC_V0));
+        assert_eq!(
+            bulk[AOEM_APFL_NATIVE_TRANSFER_BULK_MAGIC_V0.len()],
+            AOEM_APFL_NATIVE_TRANSFER_BULK_VERSION_V0
+        );
+
+        let encoded = build_apfl_native_transfer_ops_wire_v1("novovm/test/output/bulk", &bulk)
+            .expect("encode bulk opcode 114 wire");
+        let bytes = encoded.bytes;
+        let mut offset = AOEM_OPS_WIRE_V1_MAGIC.len() + 2 + 2 + 4;
+        assert_eq!(
+            bytes[offset],
+            AOEM_OPS_WIRE_V1_OPCODE_APFL_NATIVE_TRANSFER_V1
+        );
+        offset += 1 + 1 + 2;
+        let key_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4;
+        let value_len = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        offset += 4 + 8 + 8 + 8 + key_len;
+        assert_eq!(&bytes[offset..offset + value_len], bulk.as_slice());
     }
     use novovm_protocol::{evm_block_access_list_hash_v1, EvmBlockAccessListV1};
     use serde_json::json;

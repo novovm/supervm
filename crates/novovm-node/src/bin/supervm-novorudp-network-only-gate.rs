@@ -160,6 +160,21 @@ struct ReceiverExecutionSummaryV0 {
     aoem_apfl_wire_route_fail_reason: Option<String>,
     aoem_apfl_wire_route_last_output_prefix: Option<String>,
     aoem_apfl_occc_delta_contract_present_count: u64,
+    aoem_apfl_bulk_enabled: bool,
+    aoem_apfl_bulk_size: u64,
+    aoem_apfl_bulk_route_count: u64,
+    aoem_apfl_bulk_payload_count: u64,
+    aoem_apfl_bulk_tx_count: u64,
+    aoem_apfl_canonical_materialization_count: u64,
+    aoem_apfl_canonical_materialization_elapsed_ms: u64,
+    aoem_apfl_canonical_materialization_elapsed_us: u64,
+    aoem_apfl_structural_native_transfer_execute_elapsed_ms: u64,
+    aoem_apfl_structural_native_transfer_execute_elapsed_us: u64,
+    aoem_apfl_hot_plan_executed: bool,
+    aoem_apfl_hot_plan_count: u64,
+    aoem_apfl_hot_plan_total_writes: u64,
+    aoem_apfl_hot_plan_execute_elapsed_ms: u64,
+    aoem_apfl_hot_plan_execute_elapsed_us: u64,
     aoem_apfl_ffi_call_elapsed_ms: u64,
     aoem_apfl_ffi_call_elapsed_us: u64,
     aoem_apfl_state_read_elapsed_ms: u64,
@@ -415,6 +430,21 @@ fn run_receiver() -> Result<()> {
         "aoem_apfl_wire_route_fail_reason": execution.aoem_apfl_wire_route_fail_reason.clone(),
         "aoem_apfl_wire_route_last_output_prefix": execution.aoem_apfl_wire_route_last_output_prefix.clone(),
         "aoem_apfl_occc_delta_contract_present_count": execution.aoem_apfl_occc_delta_contract_present_count,
+        "aoem_apfl_bulk_enabled": execution.aoem_apfl_bulk_enabled,
+        "aoem_apfl_bulk_size": execution.aoem_apfl_bulk_size,
+        "aoem_apfl_bulk_route_count": execution.aoem_apfl_bulk_route_count,
+        "aoem_apfl_bulk_payload_count": execution.aoem_apfl_bulk_payload_count,
+        "aoem_apfl_bulk_tx_count": execution.aoem_apfl_bulk_tx_count,
+        "aoem_apfl_canonical_materialization_count": execution.aoem_apfl_canonical_materialization_count,
+        "aoem_apfl_canonical_materialization_elapsed_ms": execution.aoem_apfl_canonical_materialization_elapsed_ms,
+        "aoem_apfl_canonical_materialization_elapsed_us": execution.aoem_apfl_canonical_materialization_elapsed_us,
+        "aoem_apfl_structural_native_transfer_execute_elapsed_ms": execution.aoem_apfl_structural_native_transfer_execute_elapsed_ms,
+        "aoem_apfl_structural_native_transfer_execute_elapsed_us": execution.aoem_apfl_structural_native_transfer_execute_elapsed_us,
+        "aoem_apfl_hot_plan_executed": execution.aoem_apfl_hot_plan_executed,
+        "aoem_apfl_hot_plan_count": execution.aoem_apfl_hot_plan_count,
+        "aoem_apfl_hot_plan_total_writes": execution.aoem_apfl_hot_plan_total_writes,
+        "aoem_apfl_hot_plan_execute_elapsed_ms": execution.aoem_apfl_hot_plan_execute_elapsed_ms,
+        "aoem_apfl_hot_plan_execute_elapsed_us": execution.aoem_apfl_hot_plan_execute_elapsed_us,
         "aoem_apfl_ffi_call_elapsed_ms": execution.aoem_apfl_ffi_call_elapsed_ms,
         "aoem_apfl_ffi_call_elapsed_us": execution.aoem_apfl_ffi_call_elapsed_us,
         "aoem_apfl_state_read_elapsed_ms": execution.aoem_apfl_state_read_elapsed_ms,
@@ -845,8 +875,12 @@ fn receiver_execution_summary_v0(
     }
     let mut summary = ReceiverExecutionSummaryV0::default();
     let mut aoem_apfl_session = None;
+    let mut aoem_apfl_pending_payloads = Vec::<(u64, Vec<u8>, u64)>::new();
+    let aoem_apfl_bulk_size = env_u64("NOVOVM_NOVORUDP_AOEM_APFL_BULK_SIZE", 128).max(1) as usize;
     if mode.is_apfl_native_transfer() && execute_aoem {
         summary.aoem_apfl_wire_route_enabled = true;
+        summary.aoem_apfl_bulk_enabled = true;
+        summary.aoem_apfl_bulk_size = aoem_apfl_bulk_size as u64;
         match open_aoem_apfl_native_transfer_session_v0() {
             Ok(session) => aoem_apfl_session = Some(session),
             Err(err) => {
@@ -875,40 +909,14 @@ fn receiver_execution_summary_v0(
                     summary.business_transactions_decoded_count = summary
                         .business_transactions_decoded_count
                         .saturating_add(tx_count);
-                    let Some(session) = aoem_apfl_session.as_ref() else {
+                    if aoem_apfl_session.is_none() {
                         summary.aoem_apfl_wire_route_error_count =
                             summary.aoem_apfl_wire_route_error_count.saturating_add(1);
                         summary.aoem_execution_error_count =
                             summary.aoem_execution_error_count.saturating_add(tx_count);
                         continue;
-                    };
-                    let output_prefix = aoem_apfl_output_prefix_v0(*sequence);
-                    summary.aoem_apfl_wire_route_attempt_count =
-                        summary.aoem_apfl_wire_route_attempt_count.saturating_add(1);
-                    summary.aoem_apfl_wire_route_last_output_prefix = Some(output_prefix.clone());
-                    let aoem_start = Instant::now();
-                    match session.execute_apfl_native_transfer_wire_v1(
-                        output_prefix.as_str(),
-                        native_payload.as_slice(),
-                    ) {
-                        Ok(report) => {
-                            summary.aoem_apfl_wire_route_success_count =
-                                summary.aoem_apfl_wire_route_success_count.saturating_add(1);
-                            apply_aoem_apfl_native_transfer_report_v0(&mut summary, &report);
-                        }
-                        Err(err) => {
-                            summary.aoem_apfl_wire_route_error_count =
-                                summary.aoem_apfl_wire_route_error_count.saturating_add(1);
-                            summary.aoem_execution_error_count =
-                                summary.aoem_execution_error_count.saturating_add(tx_count);
-                            if summary.aoem_apfl_wire_route_fail_reason.is_none() {
-                                summary.aoem_apfl_wire_route_fail_reason = Some(err.to_string());
-                            }
-                        }
                     }
-                    summary.aoem_execute_elapsed_ms = summary
-                        .aoem_execute_elapsed_ms
-                        .saturating_add(aoem_start.elapsed().as_millis() as u64);
+                    aoem_apfl_pending_payloads.push((*sequence, native_payload, tx_count));
                     continue;
                 }
                 let native_txs = match decode_native_tx_payloads_for_payload_v0(
@@ -989,6 +997,59 @@ fn receiver_execution_summary_v0(
             }
         }
     }
+    if mode.is_apfl_native_transfer() && execute_aoem && !aoem_apfl_pending_payloads.is_empty() {
+        if let Some(session) = aoem_apfl_session.as_ref() {
+            for (chunk_index, chunk) in aoem_apfl_pending_payloads
+                .chunks(aoem_apfl_bulk_size)
+                .enumerate()
+            {
+                let first_sequence = chunk.first().map(|entry| entry.0).unwrap_or(0);
+                let last_sequence = chunk.last().map(|entry| entry.0).unwrap_or(first_sequence);
+                let tx_count = chunk
+                    .iter()
+                    .fold(0u64, |acc, entry| acc.saturating_add(entry.2));
+                let output_prefix =
+                    aoem_apfl_bulk_output_prefix_v0(first_sequence, last_sequence, chunk_index);
+                let payload_refs = chunk
+                    .iter()
+                    .map(|entry| entry.1.as_slice())
+                    .collect::<Vec<_>>();
+                summary.aoem_apfl_wire_route_attempt_count =
+                    summary.aoem_apfl_wire_route_attempt_count.saturating_add(1);
+                summary.aoem_apfl_bulk_route_count =
+                    summary.aoem_apfl_bulk_route_count.saturating_add(1);
+                summary.aoem_apfl_bulk_payload_count = summary
+                    .aoem_apfl_bulk_payload_count
+                    .saturating_add(chunk.len() as u64);
+                summary.aoem_apfl_bulk_tx_count =
+                    summary.aoem_apfl_bulk_tx_count.saturating_add(tx_count);
+                summary.aoem_apfl_wire_route_last_output_prefix = Some(output_prefix.clone());
+                let aoem_start = Instant::now();
+                match session.execute_apfl_native_transfer_bulk_wire_v1(
+                    output_prefix.as_str(),
+                    payload_refs.as_slice(),
+                ) {
+                    Ok(report) => {
+                        summary.aoem_apfl_wire_route_success_count =
+                            summary.aoem_apfl_wire_route_success_count.saturating_add(1);
+                        apply_aoem_apfl_native_transfer_report_v0(&mut summary, &report);
+                    }
+                    Err(err) => {
+                        summary.aoem_apfl_wire_route_error_count =
+                            summary.aoem_apfl_wire_route_error_count.saturating_add(1);
+                        summary.aoem_execution_error_count =
+                            summary.aoem_execution_error_count.saturating_add(tx_count);
+                        if summary.aoem_apfl_wire_route_fail_reason.is_none() {
+                            summary.aoem_apfl_wire_route_fail_reason = Some(err.to_string());
+                        }
+                    }
+                }
+                summary.aoem_execute_elapsed_ms = summary
+                    .aoem_execute_elapsed_ms
+                    .saturating_add(aoem_start.elapsed().as_millis() as u64);
+            }
+        }
+    }
     summary.ledger_close_elapsed_ms = summary.aoem_execute_elapsed_ms;
     summary
 }
@@ -1007,10 +1068,14 @@ fn open_aoem_apfl_native_transfer_session_v0() -> Result<novovm_exec::AoemExecSe
         .context("aoem apfl native transfer session create failed")
 }
 
-fn aoem_apfl_output_prefix_v0(sequence: u64) -> String {
+fn aoem_apfl_bulk_output_prefix_v0(
+    first_sequence: u64,
+    last_sequence: u64,
+    chunk_index: usize,
+) -> String {
     let base = env_string("NOVOVM_NOVORUDP_AOEM_APFL_OUTPUT_PREFIX")
         .unwrap_or_else(|| format!("novovm/novorudp/{}/aoem", session_id_hex_v0()));
-    format!("{base}/payload-{sequence}")
+    format!("{base}/bulk-{chunk_index}-{first_sequence}-{last_sequence}")
 }
 
 fn apply_aoem_apfl_native_transfer_report_v0(
@@ -1089,10 +1154,108 @@ fn apply_aoem_apfl_native_transfer_report_v0(
             .saturating_add(json_u64_surface_v0(
                 &report.result,
                 &[
+                    "canonical_materialization_count",
                     "canonical_reconstruction_count",
                     "canonical_tx_hash_match_count",
                 ],
             ));
+    summary.aoem_apfl_bulk_payload_count = summary.aoem_apfl_bulk_payload_count.max(
+        json_u64_surface_v0(&report.result, &["bulk_payload_count"]).max(json_u64_surface_v0(
+            &report.metadata,
+            &["bulk_payload_count"],
+        )),
+    );
+    summary.aoem_apfl_bulk_tx_count = summary.aoem_apfl_bulk_tx_count.max(
+        json_u64_surface_v0(&report.result, &["bulk_tx_count"])
+            .max(json_u64_surface_v0(&report.metadata, &["bulk_tx_count"])),
+    );
+    summary.aoem_apfl_canonical_materialization_count = summary
+        .aoem_apfl_canonical_materialization_count
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["canonical_materialization_count"]).max(
+                json_u64_surface_v0(&report.metadata, &["canonical_materialization_count"]),
+            ),
+        );
+    summary.aoem_apfl_canonical_materialization_elapsed_ms = summary
+        .aoem_apfl_canonical_materialization_elapsed_ms
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["canonical_materialization_elapsed_ms"]).max(
+                json_u64_surface_v0(&report.metadata, &["canonical_materialization_elapsed_ms"]),
+            ),
+        );
+    summary.aoem_apfl_canonical_materialization_elapsed_us = summary
+        .aoem_apfl_canonical_materialization_elapsed_us
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["canonical_materialization_elapsed_us"]).max(
+                json_u64_surface_v0(&report.metadata, &["canonical_materialization_elapsed_us"]),
+            ),
+        );
+    summary.aoem_apfl_structural_native_transfer_execute_elapsed_ms = summary
+        .aoem_apfl_structural_native_transfer_execute_elapsed_ms
+        .saturating_add(
+            json_u64_surface_v0(
+                &report.result,
+                &["structural_native_transfer_execute_elapsed_ms"],
+            )
+            .max(json_u64_surface_v0(
+                &report.metadata,
+                &["structural_native_transfer_execute_elapsed_ms"],
+            )),
+        );
+    summary.aoem_apfl_structural_native_transfer_execute_elapsed_us = summary
+        .aoem_apfl_structural_native_transfer_execute_elapsed_us
+        .saturating_add(
+            json_u64_surface_v0(
+                &report.result,
+                &["structural_native_transfer_execute_elapsed_us"],
+            )
+            .max(json_u64_surface_v0(
+                &report.metadata,
+                &["structural_native_transfer_execute_elapsed_us"],
+            )),
+        );
+    let hot_plan_executed = json_bool_surface_v0(&report.result, &["aoem_hot_plan_executed"])
+        || json_bool_surface_v0(&report.metadata, &["aoem_hot_plan_executed"])
+        || json_bool_surface_v0(&report.occc_delta_contract, &["aoem_hot_plan_executed"]);
+    summary.aoem_apfl_hot_plan_executed = summary.aoem_apfl_hot_plan_executed || hot_plan_executed;
+    summary.aoem_apfl_hot_plan_count = summary.aoem_apfl_hot_plan_count.saturating_add(
+        json_u64_surface_v0(&report.result, &["aoem_hot_plan_count"]).max(json_u64_surface_v0(
+            &report.occc_delta_contract,
+            &["aoem_hot_plan_count"],
+        )),
+    );
+    summary.aoem_apfl_hot_plan_total_writes =
+        summary.aoem_apfl_hot_plan_total_writes.saturating_add(
+            json_u64_surface_v0(&report.result, &["aoem_hot_plan_total_writes"]).max(
+                json_u64_surface_v0(&report.occc_delta_contract, &["aoem_hot_plan_total_writes"]),
+            ),
+        );
+    summary.aoem_apfl_hot_plan_execute_elapsed_ms = summary
+        .aoem_apfl_hot_plan_execute_elapsed_ms
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["aoem_hot_plan_execute_elapsed_ms"])
+                .max(json_u64_surface_v0(
+                    &report.metadata,
+                    &["aoem_hot_plan_execute_elapsed_ms"],
+                ))
+                .max(json_u64_surface_v0(
+                    &report.occc_delta_contract,
+                    &["aoem_hot_plan_execute_elapsed_ms"],
+                )),
+        );
+    summary.aoem_apfl_hot_plan_execute_elapsed_us = summary
+        .aoem_apfl_hot_plan_execute_elapsed_us
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["aoem_hot_plan_execute_elapsed_us"])
+                .max(json_u64_surface_v0(
+                    &report.metadata,
+                    &["aoem_hot_plan_execute_elapsed_us"],
+                ))
+                .max(json_u64_surface_v0(
+                    &report.occc_delta_contract,
+                    &["aoem_hot_plan_execute_elapsed_us"],
+                )),
+        );
     summary.canonical_reconstruction_error_count = summary
         .canonical_reconstruction_error_count
         .saturating_add(json_u64_surface_v0(
@@ -1283,10 +1446,35 @@ fn json_u64_surface_v0(value: &serde_json::Value, keys: &[&str]) -> u64 {
     0
 }
 
+fn json_bool_surface_v0(value: &serde_json::Value, keys: &[&str]) -> bool {
+    for key in keys {
+        if let Some(v) = json_bool_at_key_v0(value, key) {
+            return v;
+        }
+        if let Some(inner) = value.get("value").and_then(|v| json_bool_at_key_v0(v, key)) {
+            return inner;
+        }
+        if let Some(inner) = value.get("data").and_then(|v| json_bool_at_key_v0(v, key)) {
+            return inner;
+        }
+    }
+    false
+}
+
 fn json_u64_at_key_v0(value: &serde_json::Value, key: &str) -> Option<u64> {
     value
         .get(key)
         .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse::<u64>().ok()))
+}
+
+fn json_bool_at_key_v0(value: &serde_json::Value, key: &str) -> Option<bool> {
+    value.get(key).and_then(|v| {
+        v.as_bool().or_else(|| match v.as_str()? {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        })
+    })
 }
 
 fn native_tx_for_sequence_v0(sequence: u64) -> Result<NovNativeTxWireV1> {
