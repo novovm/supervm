@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 
 use anyhow::{bail, Context, Result};
 use novovm_exec::{AoemExecFacade, AoemRuntimeConfig};
@@ -160,6 +160,27 @@ struct ReceiverExecutionSummaryV0 {
     aoem_apfl_wire_route_fail_reason: Option<String>,
     aoem_apfl_wire_route_last_output_prefix: Option<String>,
     aoem_apfl_occc_delta_contract_present_count: u64,
+    aoem_apfl_ffi_call_elapsed_ms: u64,
+    aoem_apfl_ffi_call_elapsed_us: u64,
+    aoem_apfl_state_read_elapsed_ms: u64,
+    aoem_apfl_state_read_elapsed_us: u64,
+    aoem_apfl_state_surface_unwrap_elapsed_ms: u64,
+    aoem_apfl_state_surface_unwrap_elapsed_us: u64,
+    aoem_apfl_state_surface_read_count: u64,
+    aoem_apfl_opcode_114_execute_elapsed_ms: u64,
+    aoem_apfl_opcode_114_execute_elapsed_us: u64,
+    aoem_apfl_report_json_build_elapsed_ms: u64,
+    aoem_apfl_report_json_build_elapsed_us: u64,
+    aoem_apfl_state_surface_write_elapsed_ms: u64,
+    aoem_apfl_state_surface_write_elapsed_us: u64,
+    aoem_apfl_occc_delta_contract_generation_elapsed_ms: u64,
+    aoem_apfl_occc_delta_contract_generation_elapsed_us: u64,
+    aoem_apfl_signature_verify_elapsed_ms: u64,
+    aoem_apfl_signature_verify_elapsed_us: u64,
+    aoem_apfl_canonical_hash_parity_elapsed_ms: u64,
+    aoem_apfl_canonical_hash_parity_elapsed_us: u64,
+    aoem_apfl_ledger_delta_generation_elapsed_ms: u64,
+    aoem_apfl_ledger_delta_generation_elapsed_us: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -394,6 +415,33 @@ fn run_receiver() -> Result<()> {
         "aoem_apfl_wire_route_fail_reason": execution.aoem_apfl_wire_route_fail_reason.clone(),
         "aoem_apfl_wire_route_last_output_prefix": execution.aoem_apfl_wire_route_last_output_prefix.clone(),
         "aoem_apfl_occc_delta_contract_present_count": execution.aoem_apfl_occc_delta_contract_present_count,
+        "aoem_apfl_ffi_call_elapsed_ms": execution.aoem_apfl_ffi_call_elapsed_ms,
+        "aoem_apfl_ffi_call_elapsed_us": execution.aoem_apfl_ffi_call_elapsed_us,
+        "aoem_apfl_state_read_elapsed_ms": execution.aoem_apfl_state_read_elapsed_ms,
+        "aoem_apfl_state_read_elapsed_us": execution.aoem_apfl_state_read_elapsed_us,
+        "aoem_apfl_state_surface_unwrap_elapsed_ms": execution.aoem_apfl_state_surface_unwrap_elapsed_ms,
+        "aoem_apfl_state_surface_unwrap_elapsed_us": execution.aoem_apfl_state_surface_unwrap_elapsed_us,
+        "aoem_apfl_state_surface_read_count": execution.aoem_apfl_state_surface_read_count,
+        "aoem_apfl_payloads_per_route": if execution.aoem_apfl_wire_route_attempt_count > 0 {
+            receiver_transport_unique_delivered_count / execution.aoem_apfl_wire_route_attempt_count
+        } else { 0u64 },
+        "aoem_apfl_txs_per_route": if execution.aoem_apfl_wire_route_attempt_count > 0 {
+            execution.business_transactions_decoded_count / execution.aoem_apfl_wire_route_attempt_count
+        } else { 0u64 },
+        "aoem_apfl_opcode_114_execute_elapsed_ms": execution.aoem_apfl_opcode_114_execute_elapsed_ms,
+        "aoem_apfl_opcode_114_execute_elapsed_us": execution.aoem_apfl_opcode_114_execute_elapsed_us,
+        "aoem_apfl_report_json_build_elapsed_ms": execution.aoem_apfl_report_json_build_elapsed_ms,
+        "aoem_apfl_report_json_build_elapsed_us": execution.aoem_apfl_report_json_build_elapsed_us,
+        "aoem_apfl_state_surface_write_elapsed_ms": execution.aoem_apfl_state_surface_write_elapsed_ms,
+        "aoem_apfl_state_surface_write_elapsed_us": execution.aoem_apfl_state_surface_write_elapsed_us,
+        "aoem_apfl_occc_delta_contract_generation_elapsed_ms": execution.aoem_apfl_occc_delta_contract_generation_elapsed_ms,
+        "aoem_apfl_occc_delta_contract_generation_elapsed_us": execution.aoem_apfl_occc_delta_contract_generation_elapsed_us,
+        "aoem_apfl_signature_verify_elapsed_ms": execution.aoem_apfl_signature_verify_elapsed_ms,
+        "aoem_apfl_signature_verify_elapsed_us": execution.aoem_apfl_signature_verify_elapsed_us,
+        "aoem_apfl_canonical_hash_parity_elapsed_ms": execution.aoem_apfl_canonical_hash_parity_elapsed_ms,
+        "aoem_apfl_canonical_hash_parity_elapsed_us": execution.aoem_apfl_canonical_hash_parity_elapsed_us,
+        "aoem_apfl_ledger_delta_generation_elapsed_ms": execution.aoem_apfl_ledger_delta_generation_elapsed_ms,
+        "aoem_apfl_ledger_delta_generation_elapsed_us": execution.aoem_apfl_ledger_delta_generation_elapsed_us,
         "business_decode_count": execution.business_decode_count,
         "business_decode_error_count": execution.business_decode_error_count,
         "business_transactions_decoded_count": execution.business_transactions_decoded_count,
@@ -1093,6 +1141,131 @@ fn apply_aoem_apfl_native_transfer_report_v0(
             .aoem_apfl_occc_delta_contract_present_count
             .saturating_add(1);
     }
+    summary.aoem_apfl_ffi_call_elapsed_ms = summary
+        .aoem_apfl_ffi_call_elapsed_ms
+        .saturating_add(report.ffi_call_elapsed_ms);
+    summary.aoem_apfl_ffi_call_elapsed_us = summary
+        .aoem_apfl_ffi_call_elapsed_us
+        .saturating_add(report.ffi_call_elapsed_us);
+    summary.aoem_apfl_state_read_elapsed_ms = summary
+        .aoem_apfl_state_read_elapsed_ms
+        .saturating_add(report.state_read_elapsed_ms);
+    summary.aoem_apfl_state_read_elapsed_us = summary
+        .aoem_apfl_state_read_elapsed_us
+        .saturating_add(report.state_read_elapsed_us);
+    summary.aoem_apfl_state_surface_unwrap_elapsed_ms = summary
+        .aoem_apfl_state_surface_unwrap_elapsed_ms
+        .saturating_add(report.state_surface_unwrap_elapsed_ms);
+    summary.aoem_apfl_state_surface_unwrap_elapsed_us = summary
+        .aoem_apfl_state_surface_unwrap_elapsed_us
+        .saturating_add(report.state_surface_unwrap_elapsed_us);
+    summary.aoem_apfl_state_surface_read_count = summary
+        .aoem_apfl_state_surface_read_count
+        .saturating_add(report.state_surface_read_count);
+    summary.aoem_apfl_opcode_114_execute_elapsed_ms = summary
+        .aoem_apfl_opcode_114_execute_elapsed_ms
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["aoem_opcode_114_execute_elapsed_ms"]).max(
+                json_u64_surface_v0(&report.metadata, &["aoem_opcode_114_execute_elapsed_ms"]),
+            ),
+        );
+    summary.aoem_apfl_opcode_114_execute_elapsed_us = summary
+        .aoem_apfl_opcode_114_execute_elapsed_us
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["aoem_opcode_114_execute_elapsed_us"]).max(
+                json_u64_surface_v0(&report.metadata, &["aoem_opcode_114_execute_elapsed_us"]),
+            ),
+        );
+    summary.aoem_apfl_report_json_build_elapsed_ms = summary
+        .aoem_apfl_report_json_build_elapsed_ms
+        .saturating_add(json_u64_surface_v0(
+            &report.metadata,
+            &["report_json_build_elapsed_ms"],
+        ));
+    summary.aoem_apfl_report_json_build_elapsed_us = summary
+        .aoem_apfl_report_json_build_elapsed_us
+        .saturating_add(json_u64_surface_v0(
+            &report.metadata,
+            &["report_json_build_elapsed_us"],
+        ));
+    summary.aoem_apfl_state_surface_write_elapsed_ms = summary
+        .aoem_apfl_state_surface_write_elapsed_ms
+        .saturating_add(json_u64_surface_v0(
+            &report.metadata,
+            &["state_surface_write_elapsed_ms"],
+        ));
+    summary.aoem_apfl_state_surface_write_elapsed_us = summary
+        .aoem_apfl_state_surface_write_elapsed_us
+        .saturating_add(json_u64_surface_v0(
+            &report.metadata,
+            &["state_surface_write_elapsed_us"],
+        ));
+    summary.aoem_apfl_occc_delta_contract_generation_elapsed_ms = summary
+        .aoem_apfl_occc_delta_contract_generation_elapsed_ms
+        .saturating_add(
+            json_u64_surface_v0(
+                &report.metadata,
+                &["occc_delta_contract_generation_elapsed_ms"],
+            )
+            .max(json_u64_surface_v0(
+                &report.result,
+                &["occc_delta_contract_generation_elapsed_ms"],
+            )),
+        );
+    summary.aoem_apfl_occc_delta_contract_generation_elapsed_us = summary
+        .aoem_apfl_occc_delta_contract_generation_elapsed_us
+        .saturating_add(
+            json_u64_surface_v0(
+                &report.metadata,
+                &["occc_delta_contract_generation_elapsed_us"],
+            )
+            .max(json_u64_surface_v0(
+                &report.result,
+                &["occc_delta_contract_generation_elapsed_us"],
+            )),
+        );
+    summary.aoem_apfl_signature_verify_elapsed_ms = summary
+        .aoem_apfl_signature_verify_elapsed_ms
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["signature_verify_elapsed_ms"]).max(
+                json_u64_surface_v0(&report.metadata, &["signature_verify_elapsed_ms"]),
+            ),
+        );
+    summary.aoem_apfl_signature_verify_elapsed_us = summary
+        .aoem_apfl_signature_verify_elapsed_us
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["signature_verify_elapsed_us"]).max(
+                json_u64_surface_v0(&report.metadata, &["signature_verify_elapsed_us"]),
+            ),
+        );
+    summary.aoem_apfl_canonical_hash_parity_elapsed_ms = summary
+        .aoem_apfl_canonical_hash_parity_elapsed_ms
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["canonical_hash_parity_elapsed_ms"]).max(
+                json_u64_surface_v0(&report.metadata, &["canonical_hash_parity_elapsed_ms"]),
+            ),
+        );
+    summary.aoem_apfl_canonical_hash_parity_elapsed_us = summary
+        .aoem_apfl_canonical_hash_parity_elapsed_us
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["canonical_hash_parity_elapsed_us"]).max(
+                json_u64_surface_v0(&report.metadata, &["canonical_hash_parity_elapsed_us"]),
+            ),
+        );
+    summary.aoem_apfl_ledger_delta_generation_elapsed_ms = summary
+        .aoem_apfl_ledger_delta_generation_elapsed_ms
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["ledger_delta_generation_elapsed_ms"]).max(
+                json_u64_surface_v0(&report.metadata, &["ledger_delta_generation_elapsed_ms"]),
+            ),
+        );
+    summary.aoem_apfl_ledger_delta_generation_elapsed_us = summary
+        .aoem_apfl_ledger_delta_generation_elapsed_us
+        .saturating_add(
+            json_u64_surface_v0(&report.result, &["ledger_delta_generation_elapsed_us"]).max(
+                json_u64_surface_v0(&report.metadata, &["ledger_delta_generation_elapsed_us"]),
+            ),
+        );
 }
 
 fn json_u64_surface_v0(value: &serde_json::Value, keys: &[&str]) -> u64 {

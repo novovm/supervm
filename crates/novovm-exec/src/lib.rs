@@ -362,6 +362,13 @@ pub struct AoemApflNativeTransferWireReportV1 {
     pub exec_success: u32,
     pub exec_failed_index: Option<u32>,
     pub exec_total_writes: u64,
+    pub ffi_call_elapsed_ms: u64,
+    pub ffi_call_elapsed_us: u64,
+    pub state_read_elapsed_ms: u64,
+    pub state_read_elapsed_us: u64,
+    pub state_surface_unwrap_elapsed_ms: u64,
+    pub state_surface_unwrap_elapsed_us: u64,
+    pub state_surface_read_count: u64,
     pub result: serde_json::Value,
     pub digest: serde_json::Value,
     pub status: serde_json::Value,
@@ -2060,9 +2067,27 @@ impl AoemExecSession {
         self.handle.state_read_json_v1(key)
     }
 
-    fn state_read_surface_value_json_v1(&self, key: &str) -> Result<serde_json::Value> {
+    fn state_read_surface_value_json_v1(
+        &self,
+        key: &str,
+    ) -> Result<(serde_json::Value, u64, u64, u64, u64)> {
+        let read_started = Instant::now();
         let response = self.state_read_json_v1(key)?;
-        unwrap_aoem_state_read_value_v1(response, key)
+        let state_read_elapsed = read_started.elapsed();
+        let state_read_elapsed_ms = state_read_elapsed.as_millis() as u64;
+        let state_read_elapsed_us = state_read_elapsed.as_micros() as u64;
+        let unwrap_started = Instant::now();
+        let value = unwrap_aoem_state_read_value_v1(response, key)?;
+        let state_surface_unwrap_elapsed = unwrap_started.elapsed();
+        let state_surface_unwrap_elapsed_ms = state_surface_unwrap_elapsed.as_millis() as u64;
+        let state_surface_unwrap_elapsed_us = state_surface_unwrap_elapsed.as_micros() as u64;
+        Ok((
+            value,
+            state_read_elapsed_ms,
+            state_surface_unwrap_elapsed_ms,
+            state_read_elapsed_us,
+            state_surface_unwrap_elapsed_us,
+        ))
     }
 
     pub fn execute_apfl_native_transfer_wire_v1(
@@ -2071,34 +2096,58 @@ impl AoemExecSession {
         payload: &[u8],
     ) -> Result<AoemApflNativeTransferWireReportV1> {
         let wire = build_apfl_native_transfer_ops_wire_v1(output_prefix, payload)?;
+        let ffi_started = Instant::now();
         let output = self.submit_ops_wire(wire.bytes.as_slice())?;
+        let ffi_call_elapsed = ffi_started.elapsed();
+        let ffi_call_elapsed_ms = ffi_call_elapsed.as_millis() as u64;
+        let ffi_call_elapsed_us = ffi_call_elapsed.as_micros() as u64;
         let failed_index = if output.result.failed_index == u32::MAX {
             None
         } else {
             Some(output.result.failed_index)
         };
         let surface = |suffix: &str| format!("{output_prefix}/{suffix}");
+        let mut state_read_elapsed_ms = 0u64;
+        let mut state_read_elapsed_us = 0u64;
+        let mut state_surface_unwrap_elapsed_ms = 0u64;
+        let mut state_surface_unwrap_elapsed_us = 0u64;
+        let mut state_surface_read_count = 0u64;
+        let mut read_surface = |suffix: &str| -> Result<serde_json::Value> {
+            let (value, read_ms, unwrap_ms, read_us, unwrap_us) =
+                self.state_read_surface_value_json_v1(&surface(suffix))?;
+            state_read_elapsed_ms = state_read_elapsed_ms.saturating_add(read_ms);
+            state_read_elapsed_us = state_read_elapsed_us.saturating_add(read_us);
+            state_surface_unwrap_elapsed_ms =
+                state_surface_unwrap_elapsed_ms.saturating_add(unwrap_ms);
+            state_surface_unwrap_elapsed_us =
+                state_surface_unwrap_elapsed_us.saturating_add(unwrap_us);
+            state_surface_read_count = state_surface_read_count.saturating_add(1);
+            Ok(value)
+        };
+        let result = read_surface(AOEM_APFL_NATIVE_TRANSFER_RESULT_SURFACE_V1)?;
+        let digest = read_surface(AOEM_APFL_NATIVE_TRANSFER_DIGEST_SURFACE_V1)?;
+        let status = read_surface(AOEM_APFL_NATIVE_TRANSFER_STATUS_SURFACE_V1)?;
+        let metadata = read_surface(AOEM_APFL_NATIVE_TRANSFER_METADATA_SURFACE_V1)?;
+        let occc_delta_contract =
+            read_surface(AOEM_APFL_NATIVE_TRANSFER_OCCC_DELTA_CONTRACT_SURFACE_V1)?;
         Ok(AoemApflNativeTransferWireReportV1 {
             output_prefix: output_prefix.to_string(),
             exec_processed: output.result.processed,
             exec_success: output.result.success,
             exec_failed_index: failed_index,
             exec_total_writes: output.result.total_writes,
-            result: self.state_read_surface_value_json_v1(&surface(
-                AOEM_APFL_NATIVE_TRANSFER_RESULT_SURFACE_V1,
-            ))?,
-            digest: self.state_read_surface_value_json_v1(&surface(
-                AOEM_APFL_NATIVE_TRANSFER_DIGEST_SURFACE_V1,
-            ))?,
-            status: self.state_read_surface_value_json_v1(&surface(
-                AOEM_APFL_NATIVE_TRANSFER_STATUS_SURFACE_V1,
-            ))?,
-            metadata: self.state_read_surface_value_json_v1(&surface(
-                AOEM_APFL_NATIVE_TRANSFER_METADATA_SURFACE_V1,
-            ))?,
-            occc_delta_contract: self.state_read_surface_value_json_v1(&surface(
-                AOEM_APFL_NATIVE_TRANSFER_OCCC_DELTA_CONTRACT_SURFACE_V1,
-            ))?,
+            ffi_call_elapsed_ms,
+            ffi_call_elapsed_us,
+            state_read_elapsed_ms,
+            state_read_elapsed_us,
+            state_surface_unwrap_elapsed_ms,
+            state_surface_unwrap_elapsed_us,
+            state_surface_read_count,
+            result,
+            digest,
+            status,
+            metadata,
+            occc_delta_contract,
         })
     }
 
