@@ -118,6 +118,74 @@ impl OverlayRouteHealthSnapshot {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverlayRouteAttemptObservation {
+    pub decision: OverlayRuntimeDecision,
+    pub delivered: bool,
+    pub queued: bool,
+    pub observed_unix_ms: u64,
+    pub cooldown_ms: u64,
+}
+
+pub fn overlay_route_health_from_observations_v0(
+    observations: &[OverlayRouteAttemptObservation],
+) -> OverlayRouteHealthSnapshot {
+    let observed_unix_ms = observations
+        .iter()
+        .map(|observation| observation.observed_unix_ms)
+        .max()
+        .unwrap_or(0);
+    let mut hops = Vec::new();
+    for observation in observations {
+        if observation.delivered || observation.queued {
+            continue;
+        }
+        let cooldown_until_unix_ms = observation
+            .observed_unix_ms
+            .saturating_add(observation.cooldown_ms);
+        for peer_id in failed_path_peer_ids(&observation.decision) {
+            if !hops
+                .iter()
+                .any(|hop: &OverlayHopHealth| hop.peer_id == peer_id)
+            {
+                hops.push(OverlayHopHealth::cooling_down(
+                    peer_id,
+                    observation.observed_unix_ms,
+                    cooldown_until_unix_ms,
+                ));
+            }
+        }
+    }
+    OverlayRouteHealthSnapshot {
+        observed_unix_ms,
+        hops,
+    }
+}
+
+fn failed_path_peer_ids(decision: &OverlayRuntimeDecision) -> Vec<PeerId> {
+    match decision.selected_path {
+        OverlayRuntimeSelectedPath::DirectNovoRudp => {
+            if decision.direct_endpoint_candidates.is_empty() {
+                vec![decision.target_peer_id.clone()]
+            } else {
+                decision.direct_endpoint_candidates.clone()
+            }
+        }
+        OverlayRuntimeSelectedPath::RelayNovoRudp => decision
+            .relay_candidates
+            .first()
+            .cloned()
+            .into_iter()
+            .collect(),
+        OverlayRuntimeSelectedPath::MultiHopRelay => decision
+            .multi_hop_candidates
+            .first()
+            .cloned()
+            .unwrap_or_else(|| decision.relay_candidates.clone()),
+        OverlayRuntimeSelectedPath::QueueFallback => Vec::new(),
+    }
+}
+
 pub fn decide_overlay_runtime_route_v0(
     registry: &ControlPlaneRegistry,
     target_peer_id: &PeerId,
@@ -377,7 +445,8 @@ fn reason_from_resolve_error(err: ControlPlaneResolveError) -> OverlayRuntimeDec
 mod tests {
     use super::{
         decide_overlay_runtime_route_v0, decide_overlay_runtime_route_with_health_v0,
-        OverlayHopHealth, OverlayRouteHealthSnapshot, OverlayRuntimeDecisionReason,
+        overlay_route_health_from_observations_v0, OverlayHopHealth,
+        OverlayRouteAttemptObservation, OverlayRouteHealthSnapshot, OverlayRuntimeDecisionReason,
         OverlayRuntimeReachabilityClass, OverlayRuntimeSelectedPath,
     };
     use crate::control_plane::{
@@ -621,6 +690,88 @@ mod tests {
         );
         assert_eq!(
             decision.reason,
+            OverlayRuntimeDecisionReason::RouteHealthExhausted
+        );
+    }
+
+    #[test]
+    fn failed_direct_observation_builds_health_snapshot_for_multihop_fallback() {
+        let mut registry = registry();
+        let peer_id = PeerId::new("peer-target");
+        register_native_peer(&mut registry, &peer_id);
+        registry.register_route_set(mixed_direct_relay_route(peer_id.clone()));
+
+        let initial_health = OverlayRouteHealthSnapshot::new(1_000, Vec::new());
+        let direct_decision =
+            decide_overlay_runtime_route_with_health_v0(&registry, &peer_id, &initial_health);
+        assert_eq!(
+            direct_decision.selected_path,
+            OverlayRuntimeSelectedPath::DirectNovoRudp
+        );
+
+        let health = overlay_route_health_from_observations_v0(&[OverlayRouteAttemptObservation {
+            decision: direct_decision,
+            delivered: false,
+            queued: false,
+            observed_unix_ms: 1_000,
+            cooldown_ms: 60_000,
+        }]);
+        let next_decision =
+            decide_overlay_runtime_route_with_health_v0(&registry, &peer_id, &health);
+
+        assert_eq!(
+            next_decision.selected_path,
+            OverlayRuntimeSelectedPath::MultiHopRelay
+        );
+    }
+
+    #[test]
+    fn failed_multihop_observation_builds_health_snapshot_for_queue_fallback() {
+        let mut registry = registry();
+        let peer_id = PeerId::new("peer-target");
+        register_native_peer(&mut registry, &peer_id);
+        registry.register_route_set(mixed_direct_relay_route(peer_id.clone()));
+
+        let direct_cooldown = OverlayRouteHealthSnapshot::new(
+            1_000,
+            vec![OverlayHopHealth::cooling_down(peer_id.clone(), 900, 2_000)],
+        );
+        let multihop_decision =
+            decide_overlay_runtime_route_with_health_v0(&registry, &peer_id, &direct_cooldown);
+        assert_eq!(
+            multihop_decision.selected_path,
+            OverlayRuntimeSelectedPath::MultiHopRelay
+        );
+
+        let health = overlay_route_health_from_observations_v0(&[
+            OverlayRouteAttemptObservation {
+                decision: multihop_decision,
+                delivered: false,
+                queued: false,
+                observed_unix_ms: 1_000,
+                cooldown_ms: 60_000,
+            },
+            OverlayRouteAttemptObservation {
+                decision: decide_overlay_runtime_route_with_health_v0(
+                    &registry,
+                    &peer_id,
+                    &OverlayRouteHealthSnapshot::new(1_000, Vec::new()),
+                ),
+                delivered: false,
+                queued: false,
+                observed_unix_ms: 1_000,
+                cooldown_ms: 60_000,
+            },
+        ]);
+        let next_decision =
+            decide_overlay_runtime_route_with_health_v0(&registry, &peer_id, &health);
+
+        assert_eq!(
+            next_decision.selected_path,
+            OverlayRuntimeSelectedPath::QueueFallback
+        );
+        assert_eq!(
+            next_decision.reason,
             OverlayRuntimeDecisionReason::RouteHealthExhausted
         );
     }

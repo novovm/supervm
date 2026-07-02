@@ -7,7 +7,8 @@ use novovm_network::overlay::{
     AntiCensorshipProfile, OverlayHop, OverlayTransportProfile, RouteSet,
 };
 use novovm_network::overlay_runtime::{
-    decide_overlay_runtime_route_v0, decide_overlay_runtime_route_with_health_v0, OverlayHopHealth,
+    decide_overlay_runtime_route_v0, decide_overlay_runtime_route_with_health_v0,
+    overlay_route_health_from_observations_v0, OverlayHopHealth, OverlayRouteAttemptObservation,
     OverlayRouteHealthSnapshot, OverlayRuntimeDecision,
 };
 use novovm_network::reachability::{
@@ -35,6 +36,7 @@ fn main() -> Result<()> {
         "sender" => run_sender_gate(),
         "matrix" => run_matrix_gate(),
         "health-matrix" => run_health_matrix_gate(),
+        "observation-matrix" => run_observation_matrix_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -751,6 +753,127 @@ fn run_health_matrix_gate() -> Result<()> {
     }
 }
 
+fn run_observation_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
+        .unwrap_or_else(|| "artifacts/network-overlay-gate/observation-matrix.json".into());
+    let target_peer_id = PeerId::new("peer-target");
+    let local_peer_id = PeerId::new("peer-local");
+    let now_ms = env_u64("NOVOVM_OVERLAY_GATE_OBSERVATION_NOW_MS", 1_000);
+    let cooldown_ms = env_u64("NOVOVM_OVERLAY_GATE_OBSERVATION_COOLDOWN_MS", 60_000);
+    let registry = health_gate_registry(local_peer_id, target_peer_id.clone());
+    let base_health = OverlayRouteHealthSnapshot::new(now_ms, Vec::new());
+    let direct_decision =
+        decide_overlay_runtime_route_with_health_v0(&registry, &target_peer_id, &base_health);
+    let direct_success_health =
+        overlay_route_health_from_observations_v0(&[OverlayRouteAttemptObservation {
+            decision: direct_decision.clone(),
+            delivered: true,
+            queued: false,
+            observed_unix_ms: now_ms,
+            cooldown_ms,
+        }]);
+    let direct_failed_health =
+        overlay_route_health_from_observations_v0(&[OverlayRouteAttemptObservation {
+            decision: direct_decision.clone(),
+            delivered: false,
+            queued: false,
+            observed_unix_ms: now_ms,
+            cooldown_ms,
+        }]);
+    let multihop_after_direct_failure = decide_overlay_runtime_route_with_health_v0(
+        &registry,
+        &target_peer_id,
+        &direct_failed_health,
+    );
+    let direct_and_multihop_failed_health = overlay_route_health_from_observations_v0(&[
+        OverlayRouteAttemptObservation {
+            decision: direct_decision.clone(),
+            delivered: false,
+            queued: false,
+            observed_unix_ms: now_ms,
+            cooldown_ms,
+        },
+        OverlayRouteAttemptObservation {
+            decision: multihop_after_direct_failure.clone(),
+            delivered: false,
+            queued: false,
+            observed_unix_ms: now_ms,
+            cooldown_ms,
+        },
+    ]);
+    let cases = vec![
+        (
+            "observation-direct-success",
+            direct_success_health,
+            vec![json!({
+                "selected_path": direct_decision.selected_path,
+                "delivered": true,
+                "queued": false,
+            })],
+        ),
+        (
+            "observation-direct-failure",
+            direct_failed_health,
+            vec![json!({
+                "selected_path": direct_decision.selected_path,
+                "delivered": false,
+                "queued": false,
+            })],
+        ),
+        (
+            "observation-direct-and-multihop-failure",
+            direct_and_multihop_failed_health,
+            vec![
+                json!({
+                    "selected_path": direct_decision.selected_path,
+                    "delivered": false,
+                    "queued": false,
+                }),
+                json!({
+                    "selected_path": multihop_after_direct_failure.selected_path,
+                    "delivered": false,
+                    "queued": false,
+                }),
+            ],
+        ),
+    ];
+
+    let mut reports = Vec::new();
+    for (case_id, health, observations) in cases {
+        let decision =
+            decide_overlay_runtime_route_with_health_v0(&registry, &target_peer_id, &health);
+        let mut report = build_decision_loopback_report(
+            "network_overlay_gate_observation_matrix_case_v0",
+            case_id,
+            "runtime-observation",
+            &decision,
+            Some(health),
+        )?;
+        if let Some(value) = report.as_object_mut() {
+            value.insert("observations".into(), json!(observations));
+        }
+        reports.push(report);
+    }
+
+    let accepted = reports
+        .iter()
+        .all(|report| report["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "network_overlay_gate_observation_matrix_v0",
+        "boundary": network_boundary_json(),
+        "case_count": reports.len(),
+        "cases": reports,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("network overlay observation matrix gate failed")
+    }
+}
+
 fn build_decision_loopback_report(
     scope: &str,
     request_id: &str,
@@ -843,6 +966,23 @@ fn health_matrix_route_set(target_peer_id: PeerId) -> RouteSet {
         ],
         content_address_hint: Some("cid-overlay-health-matrix".into()),
     }
+}
+
+fn health_gate_registry(local_peer_id: PeerId, target_peer_id: PeerId) -> ControlPlaneRegistry {
+    let mut registry = ControlPlaneRegistry::new(
+        Libp2pControlPlaneConfig::production_minimum(local_peer_id),
+        AntiCensorshipProfile::default(),
+    );
+    registry.register_advertisement(
+        CapabilityAdvertisement {
+            peer_id: target_peer_id.clone(),
+            protocols: vec!["novorudp/0".into(), "native-pipeline/1".into()],
+            no_ip_identity_routing: true,
+        },
+        100,
+    );
+    registry.register_route_set(health_matrix_route_set(target_peer_id));
+    registry
 }
 
 #[derive(Debug, Clone)]

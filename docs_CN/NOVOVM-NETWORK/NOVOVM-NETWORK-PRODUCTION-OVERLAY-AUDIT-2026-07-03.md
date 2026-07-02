@@ -1602,6 +1602,109 @@ This gives the overlay runtime a path to avoid recently failed or cooling-down
 hops before retrying business-level payloads. The fallback decision remains in
 the network layer.
 
+### Cut 15: Overlay Observation to Health Feedback v0
+
+Implemented in:
+
+```text
+crates/novovm-network/src/overlay_runtime.rs
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+This cut connects runtime route observations to the health-aware route decision
+layer.
+
+New model:
+
+```text
+OverlayRouteAttemptObservation
+```
+
+New conversion:
+
+```text
+overlay_route_health_from_observations_v0
+```
+
+Semantics:
+
+```text
+delivered=true:
+  no cooldown is created
+
+queued=true:
+  no network-hop cooldown is created
+
+delivered=false and queued=false:
+  selected network path hops are marked CoolingDown
+```
+
+Gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=observation-matrix
+```
+
+Observed result:
+
+```text
+accepted=true
+case_count=3
+
+observation-direct-success:
+  selected=DirectNovoRudp
+  reason=DirectAllowed
+  delivered=true
+  queued=false
+  health_hops=0
+
+observation-direct-failure:
+  selected=MultiHopRelay
+  reason=MultiHopRelayRequired
+  delivered=true
+  queued=false
+  health_hops=1
+
+observation-direct-and-multihop-failure:
+  selected=QueueFallback
+  reason=RouteHealthExhausted
+  delivered=false
+  queued=true
+  health_hops=3
+```
+
+Validation:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-network
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+cargo test -q -p novovm-network overlay_runtime -- --test-threads=1
+
+NOVOVM_OVERLAY_GATE_MODE=observation-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/observation-matrix.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+apfl_interpreted=false
+aoem_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+
+This creates the first closed network feedback loop:
+
+```text
+route attempt observation
+  -> hop cooldown snapshot
+  -> health-aware route decision
+  -> direct / relay / multi-hop / queue fallback
+```
+
 ## Product Readout
 
 Current product status:
