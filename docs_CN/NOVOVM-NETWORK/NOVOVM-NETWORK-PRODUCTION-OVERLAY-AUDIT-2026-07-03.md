@@ -1299,6 +1299,105 @@ direct probe failed + relay unavailable
   -> queue fallback
 ```
 
+### Cut 12: Overlay Gate Matrix Report v0
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+This cut adds a one-command matrix report for production-overlay audit replay.
+
+Mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=matrix
+```
+
+Output:
+
+```text
+artifacts/network-overlay-gate/matrix.json
+```
+
+Matrix coverage:
+
+```text
+manual-direct
+manual-relay
+manual-multihop
+manual-queue
+auto-direct
+auto-relay
+auto-multihop
+auto-queue
+```
+
+Observed result:
+
+```text
+matrix accepted=true
+case_count=8
+
+manual-direct:
+  selected=DirectNovoRudp
+  delivered=true
+  queued=false
+  relay_hop_count=0
+
+manual-relay:
+  selected=RelayNovoRudp
+  delivered=true
+  queued=false
+  relay_hop_count=1
+
+manual-multihop:
+  selected=MultiHopRelay
+  delivered=true
+  queued=false
+  relay_hop_count=2
+
+manual-queue:
+  selected=QueueFallback
+  delivered=false
+  queued=true
+
+auto-direct:
+  route_plan_source=simulated_probe
+  selected=DirectNovoRudp
+  delivered=true
+
+auto-relay:
+  route_plan_source=simulated_probe
+  selected=RelayNovoRudp
+  delivered=true
+  relay_hop_count=1
+
+auto-multihop:
+  route_plan_source=simulated_probe
+  selected=MultiHopRelay
+  delivered=true
+  relay_hop_count=2
+
+auto-queue:
+  route_plan_source=simulated_probe
+  selected=QueueFallback
+  delivered=false
+  queued=true
+```
+
+Validation:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/matrix.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+This gives auditors a compact fallback matrix replay without touching APFL,
+AOEM, ledger, opcode 114, or business payload semantics.
+
 ## Product Readout
 
 Current product status:

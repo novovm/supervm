@@ -30,6 +30,7 @@ fn main() -> Result<()> {
         "receiver" => run_receiver_gate(),
         "relay" => run_relay_gate(),
         "sender" => run_sender_gate(),
+        "matrix" => run_matrix_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -48,12 +49,38 @@ fn run_loopback_gate() -> Result<()> {
         env_string("NOVOVM_OVERLAY_GATE_LOCAL_PEER_ID").unwrap_or_else(|| "peer-local".into()),
     );
 
+    let route_plan = route_plan_for(&requested_route, &target_peer_id)?;
+    let report = build_loopback_case_report(
+        "network_overlay_gate_v0",
+        &requested_route,
+        route_plan,
+        &request_id,
+        target_peer_id,
+        local_peer_id,
+    )?;
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+
+    if report["accepted"].as_bool().unwrap_or(false) {
+        Ok(())
+    } else {
+        anyhow::bail!("network overlay gate rejected requested route")
+    }
+}
+
+fn build_loopback_case_report(
+    scope: &str,
+    requested_route: &str,
+    route_plan: OverlayGateRoutePlan,
+    request_id: &str,
+    target_peer_id: PeerId,
+    local_peer_id: PeerId,
+) -> Result<serde_json::Value> {
     let mut registry = ControlPlaneRegistry::new(
         Libp2pControlPlaneConfig::production_minimum(local_peer_id),
         AntiCensorshipProfile::default(),
     );
 
-    let route_plan = route_plan_for(&requested_route, &target_peer_id)?;
     if route_plan.effective_route != "queue" {
         registry.register_advertisement(
             CapabilityAdvertisement {
@@ -71,8 +98,7 @@ fn run_loopback_gate() -> Result<()> {
 
     let decision = decide_overlay_runtime_route_v0(&registry, &target_peer_id);
     let input = NovoRudpRelayUdpLoopbackInput {
-        request_id: request_id.clone(),
-        // The path is intentionally overwritten by the overlay decision bridge.
+        request_id: request_id.to_string(),
         path: novovm_network::relay::RelayUdpLoopbackPath::QueueFallback,
         kind: NovoRudpTransportFrameKindV0::Data,
         session_id: [11u8; 16],
@@ -89,16 +115,11 @@ fn run_loopback_gate() -> Result<()> {
         "queue" => smoke.queued && !smoke.delivered,
         _ => smoke.delivered && smoke.frame_decode_ok && smoke.payload_match,
     };
-    let report = json!({
+
+    Ok(json!({
         "accepted": accepted,
-        "scope": "network_overlay_gate_v0",
-        "boundary": {
-            "network_only": true,
-            "apfl_interpreted": false,
-            "aoem_called": false,
-            "ledger_semantics": false,
-            "novorudp_wire_changed": false
-        },
+        "scope": scope,
+        "boundary": network_boundary_json(),
         "requested_route": requested_route,
         "effective_route": route_plan.effective_route,
         "route_plan_source": route_plan.route_plan_source,
@@ -109,15 +130,7 @@ fn run_loopback_gate() -> Result<()> {
         "target_peer_id": target_peer_id,
         "overlay_decision": decision,
         "loopback_report": smoke,
-    });
-    write_json_report(&report_path, &report)?;
-    println!("{}", serde_json::to_string_pretty(&report)?);
-
-    if accepted {
-        Ok(())
-    } else {
-        anyhow::bail!("network overlay gate rejected requested route")
-    }
+    }))
 }
 
 fn run_receiver_gate() -> Result<()> {
@@ -388,6 +401,120 @@ fn run_sender_gate() -> Result<()> {
     }
 }
 
+fn run_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
+        .unwrap_or_else(|| "artifacts/network-overlay-gate/matrix.json".into());
+    let target_peer_id = PeerId::new("peer-target");
+    let local_peer_id = PeerId::new("peer-local");
+    let cases = vec![
+        (
+            "manual-direct",
+            "direct",
+            OverlayGateRoutePlan::manual("direct"),
+        ),
+        (
+            "manual-relay",
+            "relay",
+            OverlayGateRoutePlan::manual("relay"),
+        ),
+        (
+            "manual-multihop",
+            "multihop",
+            OverlayGateRoutePlan::manual("multihop"),
+        ),
+        (
+            "manual-queue",
+            "queue",
+            OverlayGateRoutePlan::manual("queue"),
+        ),
+        (
+            "auto-direct",
+            "auto",
+            OverlayGateRoutePlan::simulated(
+                "direct",
+                1,
+                simulated_probe_decision(
+                    &target_peer_id,
+                    ReachabilityProbeStatus::LanReachable,
+                    true,
+                    true,
+                )?,
+            ),
+        ),
+        (
+            "auto-relay",
+            "auto",
+            OverlayGateRoutePlan::simulated(
+                "relay",
+                1,
+                simulated_probe_decision(
+                    &target_peer_id,
+                    ReachabilityProbeStatus::RelayOnly,
+                    true,
+                    false,
+                )?,
+            ),
+        ),
+        (
+            "auto-multihop",
+            "auto",
+            OverlayGateRoutePlan::simulated(
+                "multihop",
+                2,
+                simulated_probe_decision(
+                    &target_peer_id,
+                    ReachabilityProbeStatus::RelayOnly,
+                    true,
+                    false,
+                )?,
+            ),
+        ),
+        (
+            "auto-queue",
+            "auto",
+            OverlayGateRoutePlan::simulated(
+                "queue",
+                1,
+                simulated_probe_decision(
+                    &target_peer_id,
+                    ReachabilityProbeStatus::Unreachable,
+                    false,
+                    false,
+                )?,
+            ),
+        ),
+    ];
+
+    let mut reports = Vec::new();
+    for (case_id, requested_route, route_plan) in cases {
+        reports.push(build_loopback_case_report(
+            "network_overlay_gate_matrix_case_v0",
+            requested_route,
+            route_plan,
+            case_id,
+            target_peer_id.clone(),
+            local_peer_id.clone(),
+        )?);
+    }
+    let accepted = reports
+        .iter()
+        .all(|report| report["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "network_overlay_gate_matrix_v0",
+        "boundary": network_boundary_json(),
+        "case_count": reports.len(),
+        "cases": reports,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("network overlay matrix gate failed")
+    }
+}
+
 fn route_set_for(route: &str, target_peer_id: PeerId) -> Result<RouteSet> {
     match route {
         "direct" => Ok(RouteSet::direct(target_peer_id)),
@@ -429,6 +556,28 @@ struct OverlayGateRoutePlan {
     reachability_probe_decision: Option<ReachabilityProbeDecision>,
 }
 
+impl OverlayGateRoutePlan {
+    fn manual(route: &str) -> Self {
+        Self {
+            effective_route: route.to_string(),
+            route_plan_source: "manual".into(),
+            runtime_probe_used: false,
+            auto_relay_hops: 0,
+            reachability_probe_decision: None,
+        }
+    }
+
+    fn simulated(route: &str, auto_relay_hops: u64, decision: ReachabilityProbeDecision) -> Self {
+        Self {
+            effective_route: route.to_string(),
+            route_plan_source: "simulated_probe".into(),
+            runtime_probe_used: false,
+            auto_relay_hops,
+            reachability_probe_decision: Some(decision),
+        }
+    }
+}
+
 fn route_plan_for(requested_route: &str, target_peer_id: &PeerId) -> Result<OverlayGateRoutePlan> {
     route_plan_for_with_runtime_probe(requested_route, target_peer_id, None, None)
 }
@@ -440,13 +589,7 @@ fn route_plan_for_with_runtime_probe(
     local_bind_addr_override: Option<String>,
 ) -> Result<OverlayGateRoutePlan> {
     if requested_route != "auto" {
-        return Ok(OverlayGateRoutePlan {
-            effective_route: requested_route.to_string(),
-            route_plan_source: "manual".into(),
-            runtime_probe_used: false,
-            auto_relay_hops: 0,
-            reachability_probe_decision: None,
-        });
+        return Ok(OverlayGateRoutePlan::manual(requested_route));
     }
 
     let direct_probe_ack = runtime_probe
@@ -505,6 +648,40 @@ fn route_plan_for_with_runtime_probe(
         auto_relay_hops: relay_hops,
         reachability_probe_decision: Some(decision),
     })
+}
+
+fn simulated_probe_decision(
+    target_peer_id: &PeerId,
+    status: ReachabilityProbeStatus,
+    relay_available: bool,
+    direct_probe_ack: bool,
+) -> Result<ReachabilityProbeDecision> {
+    let (configured_addr_hint, observed_addr) = match status {
+        ReachabilityProbeStatus::DirectReachable => (
+            Some("8.8.8.8:39011".to_string()),
+            Some("8.8.8.8:39011".to_string()),
+        ),
+        ReachabilityProbeStatus::LanReachable => (
+            Some("127.0.0.1:39011".to_string()),
+            Some("127.0.0.1:39011".to_string()),
+        ),
+        ReachabilityProbeStatus::RelayOnly
+        | ReachabilityProbeStatus::Unreachable
+        | ReachabilityProbeStatus::Unknown => (Some("203.0.113.10:39011".to_string()), None),
+    };
+    Ok(decide_reachability_probe_v0(ReachabilityProbeInput {
+        peer_id: target_peer_id.0.clone(),
+        configured_addr_hint,
+        observed_addr,
+        local_bind_addr: Some("127.0.0.1:0".into()),
+        floating_port_mode: FloatingPortMode::EphemeralAllowed,
+        direct_probe_sent: true,
+        direct_probe_ack,
+        relay_available,
+        rtt_ms: direct_probe_ack.then_some(1),
+        observed_unix_ms: 0,
+        source: RoutingSource::LocalObserved,
+    }))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
