@@ -7,9 +7,14 @@ use novovm_network::overlay::{
     AntiCensorshipProfile, OverlayHop, OverlayTransportProfile, RouteSet,
 };
 use novovm_network::overlay_runtime::decide_overlay_runtime_route_v0;
+use novovm_network::reachability::{
+    decide_reachability_probe_v0, FloatingPortMode, ReachabilityProbeDecision,
+    ReachabilityProbeInput, ReachabilityProbeStatus,
+};
 use novovm_network::relay::{
     run_novorudp_overlay_relay_udp_loopback_smoke_v0, NovoRudpRelayUdpLoopbackInput,
 };
+use novovm_network::routing::RoutingSource;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::env;
@@ -32,7 +37,8 @@ fn main() -> Result<()> {
 fn run_loopback_gate() -> Result<()> {
     let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
         .unwrap_or_else(|| "artifacts/native-pipeline/network-overlay-gate/report.json".into());
-    let route = env_string("NOVOVM_OVERLAY_GATE_ROUTE").unwrap_or_else(|| "direct".into());
+    let requested_route =
+        env_string("NOVOVM_OVERLAY_GATE_ROUTE").unwrap_or_else(|| "direct".into());
     let request_id =
         env_string("NOVOVM_OVERLAY_GATE_REQUEST_ID").unwrap_or_else(|| "overlay-gate".into());
     let target_peer_id = PeerId::new(
@@ -47,7 +53,8 @@ fn run_loopback_gate() -> Result<()> {
         AntiCensorshipProfile::default(),
     );
 
-    if route != "queue" {
+    let route_plan = route_plan_for(&requested_route, &target_peer_id)?;
+    if route_plan.effective_route != "queue" {
         registry.register_advertisement(
             CapabilityAdvertisement {
                 peer_id: target_peer_id.clone(),
@@ -56,7 +63,10 @@ fn run_loopback_gate() -> Result<()> {
             },
             100,
         );
-        registry.register_route_set(route_set_for(&route, target_peer_id.clone())?);
+        registry.register_route_set(route_set_for(
+            &route_plan.effective_route,
+            target_peer_id.clone(),
+        )?);
     }
 
     let decision = decide_overlay_runtime_route_v0(&registry, &target_peer_id);
@@ -75,7 +85,7 @@ fn run_loopback_gate() -> Result<()> {
     let smoke = run_novorudp_overlay_relay_udp_loopback_smoke_v0(&decision, input)
         .map_err(|error| anyhow::anyhow!("run overlay relay UDP loopback smoke: {error}"))?;
 
-    let accepted = match route.as_str() {
+    let accepted = match route_plan.effective_route.as_str() {
         "queue" => smoke.queued && !smoke.delivered,
         _ => smoke.delivered && smoke.frame_decode_ok && smoke.payload_match,
     };
@@ -89,7 +99,9 @@ fn run_loopback_gate() -> Result<()> {
             "ledger_semantics": false,
             "novorudp_wire_changed": false
         },
-        "requested_route": route,
+        "requested_route": requested_route,
+        "effective_route": route_plan.effective_route,
+        "reachability_probe_decision": route_plan.reachability_probe_decision,
         "request_id": request_id,
         "target_peer_id": target_peer_id,
         "overlay_decision": decision,
@@ -215,7 +227,8 @@ fn run_relay_gate() -> Result<()> {
 fn run_sender_gate() -> Result<()> {
     let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
         .unwrap_or_else(|| "artifacts/network-overlay-gate/sender.json".into());
-    let route = env_string("NOVOVM_OVERLAY_GATE_ROUTE").unwrap_or_else(|| "direct".into());
+    let requested_route =
+        env_string("NOVOVM_OVERLAY_GATE_ROUTE").unwrap_or_else(|| "direct".into());
     let target_addr =
         env_string("NOVOVM_OVERLAY_GATE_TARGET_ADDR").unwrap_or_else(|| "127.0.0.1:39011".into());
     let relay_addr = env_string("NOVOVM_OVERLAY_GATE_RELAY_ADDR");
@@ -225,7 +238,8 @@ fn run_sender_gate() -> Result<()> {
     let request_id =
         env_string("NOVOVM_OVERLAY_GATE_REQUEST_ID").unwrap_or_else(|| "overlay-gate".into());
 
-    let (decision, target_peer_id) = decision_for_route(&route)?;
+    let route_plan = route_plan_for(&requested_route, &PeerId::new("peer-target"))?;
+    let (decision, target_peer_id) = decision_for_route(&route_plan.effective_route)?;
     let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
         NovoRudpTransportFrameKindV0::Data,
         [13u8; 16],
@@ -241,7 +255,7 @@ fn run_sender_gate() -> Result<()> {
         UdpSocket::bind(&bind_addr).with_context(|| format!("bind sender: {bind_addr}"))?;
     let local_addr = socket.local_addr().context("sender local addr")?;
     let start = Instant::now();
-    let (sent, sent_to, queued) = match route.as_str() {
+    let (sent, sent_to, queued) = match route_plan.effective_route.as_str() {
         "queue" => (0, None, true),
         "direct" => (
             socket
@@ -300,7 +314,9 @@ fn run_sender_gate() -> Result<()> {
         "accepted": accepted,
         "scope": "network_overlay_gate_sender_v0",
         "boundary": network_boundary_json(),
-        "requested_route": route,
+        "requested_route": requested_route,
+        "effective_route": route_plan.effective_route,
+        "reachability_probe_decision": route_plan.reachability_probe_decision,
         "request_id": request_id,
         "bind_addr_requested": bind_addr,
         "bind_addr_effective": local_addr.to_string(),
@@ -351,6 +367,62 @@ fn route_set_for(route: &str, target_peer_id: PeerId) -> Result<RouteSet> {
         }),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_ROUTE: {other}"),
     }
+}
+
+#[derive(Debug, Clone)]
+struct OverlayGateRoutePlan {
+    effective_route: String,
+    reachability_probe_decision: Option<ReachabilityProbeDecision>,
+}
+
+fn route_plan_for(requested_route: &str, target_peer_id: &PeerId) -> Result<OverlayGateRoutePlan> {
+    if requested_route != "auto" {
+        return Ok(OverlayGateRoutePlan {
+            effective_route: requested_route.to_string(),
+            reachability_probe_decision: None,
+        });
+    }
+
+    let direct_probe_ack = env_bool("NOVOVM_OVERLAY_GATE_DIRECT_PROBE_ACK", false);
+    let direct_probe_sent = env_bool("NOVOVM_OVERLAY_GATE_DIRECT_PROBE_SENT", true);
+    let relay_available = env_bool("NOVOVM_OVERLAY_GATE_RELAY_AVAILABLE", false);
+    let floating_port_mode = match env_string("NOVOVM_OVERLAY_GATE_FLOATING_PORT_MODE")
+        .unwrap_or_else(|| "ephemeral".into())
+        .as_str()
+    {
+        "fixed" => FloatingPortMode::Fixed,
+        "ephemeral" | "ephemeral_allowed" => FloatingPortMode::EphemeralAllowed,
+        other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_FLOATING_PORT_MODE: {other}"),
+    };
+    let decision = decide_reachability_probe_v0(ReachabilityProbeInput {
+        peer_id: target_peer_id.0.clone(),
+        configured_addr_hint: env_string("NOVOVM_OVERLAY_GATE_CONFIGURED_ADDR_HINT"),
+        observed_addr: env_string("NOVOVM_OVERLAY_GATE_OBSERVED_ADDR"),
+        local_bind_addr: env_string("NOVOVM_OVERLAY_GATE_LOCAL_BIND_ADDR")
+            .or_else(|| env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR")),
+        floating_port_mode,
+        direct_probe_sent,
+        direct_probe_ack,
+        relay_available,
+        rtt_ms: env_u32("NOVOVM_OVERLAY_GATE_PROBE_RTT_MS"),
+        observed_unix_ms: env_u64("NOVOVM_OVERLAY_GATE_OBSERVED_UNIX_MS", 0),
+        source: RoutingSource::LocalObserved,
+    });
+    let relay_hops = env_u64("NOVOVM_OVERLAY_GATE_AUTO_RELAY_HOPS", 1);
+    let effective_route = match decision.status {
+        ReachabilityProbeStatus::DirectReachable | ReachabilityProbeStatus::LanReachable => {
+            "direct"
+        }
+        ReachabilityProbeStatus::RelayOnly if relay_hops >= 2 => "multihop",
+        ReachabilityProbeStatus::RelayOnly => "relay",
+        ReachabilityProbeStatus::Unreachable | ReachabilityProbeStatus::Unknown => "queue",
+    }
+    .to_string();
+
+    Ok(OverlayGateRoutePlan {
+        effective_route,
+        reachability_probe_decision: Some(decision),
+    })
 }
 
 fn decision_for_route(
@@ -414,9 +486,20 @@ fn env_string(name: &str) -> Option<String> {
     env::var(name).ok().filter(|value| !value.trim().is_empty())
 }
 
+fn env_bool(name: &str, default: bool) -> bool {
+    env::var(name)
+        .ok()
+        .map(|raw| matches!(raw.trim(), "1" | "true" | "TRUE" | "yes" | "on"))
+        .unwrap_or(default)
+}
+
 fn env_u64(name: &str, default: u64) -> u64 {
     env::var(name)
         .ok()
         .and_then(|raw| raw.parse::<u64>().ok())
         .unwrap_or(default)
+}
+
+fn env_u32(name: &str) -> Option<u32> {
+    env::var(name).ok().and_then(|raw| raw.parse::<u32>().ok())
 }

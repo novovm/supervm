@@ -1015,6 +1015,112 @@ This is the first runnable multi-process `direct -> relay -> multi-hop -> queue`
 fallback network path. It is still local-loopback, but it validates process
 boundaries and route fallback without involving business execution.
 
+### Cut 9: Reachability-Driven Auto Route Gate v0
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+This cut adds `NOVOVM_OVERLAY_GATE_ROUTE=auto`. The gate now evaluates the
+reachability probe model, records the probe decision, derives an effective route,
+then runs the same network-only NOVORUDP frame gate.
+
+Boundary:
+
+```text
+Reachability probe drives route selection only.
+Probe does not inspect APFL.
+Probe does not call AOEM.
+Probe does not change NOVORUDP wire.
+Probe does not change ledger or execution semantics.
+```
+
+Environment:
+
+```text
+NOVOVM_OVERLAY_GATE_ROUTE=auto
+NOVOVM_OVERLAY_GATE_DIRECT_PROBE_SENT=1|0
+NOVOVM_OVERLAY_GATE_DIRECT_PROBE_ACK=1|0
+NOVOVM_OVERLAY_GATE_RELAY_AVAILABLE=1|0
+NOVOVM_OVERLAY_GATE_AUTO_RELAY_HOPS=1|2
+NOVOVM_OVERLAY_GATE_CONFIGURED_ADDR_HINT=<addr>
+NOVOVM_OVERLAY_GATE_OBSERVED_ADDR=<addr>
+NOVOVM_OVERLAY_GATE_LOCAL_BIND_ADDR=<addr>
+NOVOVM_OVERLAY_GATE_FLOATING_PORT_MODE=fixed|ephemeral
+NOVOVM_OVERLAY_GATE_PROBE_RTT_MS=<optional>
+```
+
+Auto route mapping:
+
+```text
+DirectReachable or LanReachable
+  -> effective_route=direct
+
+RelayOnly and AUTO_RELAY_HOPS < 2
+  -> effective_route=relay
+
+RelayOnly and AUTO_RELAY_HOPS >= 2
+  -> effective_route=multihop
+
+Unreachable or Unknown
+  -> effective_route=queue
+```
+
+Observed local auto-gate result:
+
+```text
+auto-direct:
+  accepted=true
+  probe=LanReachable
+  reachability=LanOnly
+  floating_port_active=true
+  effective_route=direct
+  selected_path=DirectNovoRudp
+  delivered=true
+
+auto-relay:
+  accepted=true
+  probe=RelayOnly
+  reachability=RelayOnly
+  floating_port_active=true
+  effective_route=relay
+  selected_path=RelayNovoRudp
+  delivered=true
+  relay_hop_count=1
+
+auto-multihop:
+  accepted=true
+  probe=RelayOnly
+  reachability=RelayOnly
+  floating_port_active=true
+  effective_route=multihop
+  selected_path=MultiHopRelay
+  delivered=true
+  relay_hop_count=2
+
+auto-queue:
+  accepted=true
+  probe=Unreachable
+  reachability=Unreachable
+  floating_port_active=true
+  effective_route=queue
+  selected_path=QueueFallback
+  delivered=false
+  queued=true
+```
+
+Validation:
+
+```text
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+This is the first executable gate where route selection can be driven by
+reachability evidence instead of a fixed route parameter.
+
 ## Product Readout
 
 Current product status:
