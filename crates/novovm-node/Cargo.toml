@@ -12,6 +12,7 @@ base64 = "0.22"
 novovm-exec = { path = "../novovm-exec" }
 novovm-consensus = { path = "../novovm-consensus" }
 novovm-network = { path = "../novovm-network" }
+novovm-udp-batch = { path = "../novovm-udp-batch" }
 novovm-protocol = { path = "../novovm-protocol" }
 novovm-adapter-api = { path = "../novovm-adapter-api" }
 novovm-governance-observability = { path = "../novovm-governance-observability" }

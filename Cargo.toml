@@ -14,6 +14,7 @@ members = [
     "crates/novovm-network",
     "crates/novovm-node",
     "crates/novovm-rollout-policy",
+    "crates/novovm-udp-batch",
     "crates/novovmctl",
     "crates/novovm-protocol",
     "crates/novovm-prover",

@@ -11,6 +11,7 @@ use novovm_protocol::{
     NovExecutionPolicyV1, NovExecutionTargetV1, NovFeePolicyV1, NovNativeTxWireV1,
     NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1, ProtocolMessage,
 };
+use novovm_udp_batch::sendmmsg_batch;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::Digest;
@@ -122,6 +123,11 @@ struct SenderStats {
     data_send_nonretryable_error_count: u64,
     data_send_max_retry_exceeded_count: u64,
     data_send_backoff_elapsed_us: u64,
+    send_batch_call_count: u64,
+    send_batch_datagram_count: u64,
+    send_batch_max_datagrams: u64,
+    send_batch_elapsed_us: u64,
+    send_to_fallback_call_count: u64,
     pacing_sleep_elapsed_ms: u64,
     repair_send_elapsed_ms: u64,
     repair_send_call_count: u64,
@@ -146,6 +152,29 @@ struct SendTransportFrameTimingV0 {
     nonretryable_error_count: u64,
     max_retry_exceeded_count: u64,
     backoff_elapsed_us: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SendEncodedBatchTimingV0 {
+    kernel_send_elapsed_us: u64,
+    total_elapsed_us: u64,
+    would_block_count: u64,
+    retry_count: u64,
+    nonretryable_error_count: u64,
+    max_retry_exceeded_count: u64,
+    backoff_elapsed_us: u64,
+    send_batch_call_count: u64,
+    send_batch_datagram_count: u64,
+    send_batch_max_datagrams: u64,
+    send_batch_elapsed_us: u64,
+    send_to_fallback_call_count: u64,
+}
+
+struct EncodedTransportFrameV0 {
+    sequence: u64,
+    payload_len: u64,
+    encoded: Vec<u8>,
+    frame_encode_elapsed_us: u64,
 }
 
 struct SenderLaneV0 {
@@ -777,6 +806,7 @@ fn run_sender() -> Result<()> {
         env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_DATA_PACING_CHUNK_GAP_MS", 5);
     let backpressure_pacing_requested =
         env_bool("NOVOVM_NOVORUDP_NETWORK_ONLY_BACKPRESSURE_PACING");
+    let send_batching_requested = env_bool("NOVOVM_NOVORUDP_NETWORK_ONLY_SEND_BATCHING");
     let timeout = Duration::from_millis(env_u64(
         "NOVOVM_NOVORUDP_NETWORK_ONLY_TIMEOUT_MS",
         DEFAULT_TIMEOUT_MS,
@@ -792,7 +822,7 @@ fn run_sender() -> Result<()> {
     let socket_buffers = lanes.first().map(|lane| lane.buffers).unwrap_or_default();
     let mut lane_stats = vec![SenderLaneStatsV0::default(); lanes.len()];
     let mut backpressure_pacing = BackpressurePacingV0::new(
-        backpressure_pacing_requested && lanes.len() == 1,
+        backpressure_pacing_requested && lanes.len() == 1 && !send_batching_requested,
         data_pacing_chunk_size,
         data_pacing_chunk_gap_ms,
     );
@@ -817,107 +847,127 @@ fn run_sender() -> Result<()> {
 
     let primary_send_start = Instant::now();
     if lanes.len() == 1 {
-        for sequence in 0..tx_count {
-            stats.data_send_attempt = stats.data_send_attempt.saturating_add(1);
-            if loss.drops_data_sequence(sequence) {
-                stats.data_loss_injected = stats.data_loss_injected.saturating_add(1);
-                continue;
-            }
-            let copy_start = Instant::now();
-            let payload = payloads[sequence as usize].clone();
-            let payload_len = payload.len() as u64;
-            stats.payload_copy_elapsed_ms = stats
-                .payload_copy_elapsed_ms
-                .saturating_add(copy_start.elapsed().as_millis() as u64);
-            let lane_index = 0usize;
-            let socket_send_start = Instant::now();
-            let timing = send_transport_frame(
-                &lanes[lane_index].socket,
+        if send_batching_requested {
+            let (lane_stat, lane_sender_stats, sent_sequences) = send_primary_batched_v0(
+                &lanes[0].socket,
                 target,
-                NovoRudpTransportFrameKindV0::Data,
                 session_id,
-                sequence,
-                payload,
-                0,
+                tx_count,
+                &payloads,
+                loss,
+                data_pacing_chunk_size,
+                data_pacing_chunk_gap_ms,
             )?;
-            stats.socket_send_elapsed_ms = stats
-                .socket_send_elapsed_ms
-                .saturating_add(socket_send_start.elapsed().as_millis() as u64);
-            stats.transport_frame_encode_elapsed_us = stats
-                .transport_frame_encode_elapsed_us
-                .saturating_add(timing.frame_encode_elapsed_us);
-            stats.transport_kernel_send_elapsed_us = stats
-                .transport_kernel_send_elapsed_us
-                .saturating_add(timing.kernel_send_elapsed_us);
-            stats.transport_send_total_elapsed_us = stats
-                .transport_send_total_elapsed_us
-                .saturating_add(timing.total_elapsed_us);
-            stats.transport_encoded_bytes_total = stats
-                .transport_encoded_bytes_total
-                .saturating_add(timing.encoded_bytes);
-            stats.transport_send_call_count = stats.transport_send_call_count.saturating_add(1);
-            stats.transport_send_max_bytes =
-                stats.transport_send_max_bytes.max(timing.encoded_bytes);
-            stats.data_send_would_block_count = stats
-                .data_send_would_block_count
-                .saturating_add(timing.would_block_count);
-            stats.data_send_retry_count = stats
-                .data_send_retry_count
-                .saturating_add(timing.retry_count);
-            stats.data_send_nonretryable_error_count = stats
-                .data_send_nonretryable_error_count
-                .saturating_add(timing.nonretryable_error_count);
-            stats.data_send_max_retry_exceeded_count = stats
-                .data_send_max_retry_exceeded_count
-                .saturating_add(timing.max_retry_exceeded_count);
-            stats.data_send_backoff_elapsed_us = stats
-                .data_send_backoff_elapsed_us
-                .saturating_add(timing.backoff_elapsed_us);
-            lane_stats[lane_index].send_to_call_count =
-                lane_stats[lane_index].send_to_call_count.saturating_add(1);
-            lane_stats[lane_index].send_to_elapsed_us = lane_stats[lane_index]
-                .send_to_elapsed_us
-                .saturating_add(timing.kernel_send_elapsed_us);
-            lane_stats[lane_index].bytes_total = lane_stats[lane_index]
-                .bytes_total
-                .saturating_add(timing.encoded_bytes);
-            lane_stats[lane_index].would_block_count = lane_stats[lane_index]
-                .would_block_count
-                .saturating_add(timing.would_block_count);
-            lane_stats[lane_index].retry_count = lane_stats[lane_index]
-                .retry_count
-                .saturating_add(timing.retry_count);
-            lane_stats[lane_index].send_fail_count = lane_stats[lane_index]
-                .send_fail_count
-                .saturating_add(timing.nonretryable_error_count);
-            lane_stats[lane_index].max_retry_exceeded_count = lane_stats[lane_index]
-                .max_retry_exceeded_count
-                .saturating_add(timing.max_retry_exceeded_count);
-            lane_stats[lane_index].backoff_elapsed_us = lane_stats[lane_index]
-                .backoff_elapsed_us
-                .saturating_add(timing.backoff_elapsed_us);
-            stats.data_payload_bytes_sent_total = stats
-                .data_payload_bytes_sent_total
-                .saturating_add(payload_len);
-            if !sent_once.insert(sequence) {
-                stats.duplicate_sent = stats.duplicate_sent.saturating_add(1);
+            lane_stats[0] = lane_stat;
+            merge_sender_stats_v0(&mut stats, lane_sender_stats);
+            for sequence in sent_sequences {
+                if !sent_once.insert(sequence) {
+                    stats.duplicate_sent = stats.duplicate_sent.saturating_add(1);
+                }
             }
-            stats.data_sent = stats.data_sent.saturating_add(1);
-            let active_pacing_chunk_size = backpressure_pacing.active_chunk_size();
-            let active_pacing_gap_ms = backpressure_pacing.active_gap_ms();
-            if data_pacing_chunk_size > 0
-                && data_pacing_chunk_gap_ms > 0
-                && stats.data_sent % active_pacing_chunk_size == 0
-                && sequence + 1 < tx_count
-            {
-                stats.data_pacing_sleep_count = stats.data_pacing_sleep_count.saturating_add(1);
-                let pacing_sleep_start = Instant::now();
-                thread::sleep(Duration::from_millis(active_pacing_gap_ms));
-                backpressure_pacing.note_sleep();
-                stats.pacing_sleep_elapsed_ms = stats
-                    .pacing_sleep_elapsed_ms
-                    .saturating_add(pacing_sleep_start.elapsed().as_millis() as u64);
-                backpressure_pacing.observe_window(&stats);
+        } else {
+            for sequence in 0..tx_count {
+                stats.data_send_attempt = stats.data_send_attempt.saturating_add(1);
+                if loss.drops_data_sequence(sequence) {
+                    stats.data_loss_injected = stats.data_loss_injected.saturating_add(1);
+                    continue;
+                }
+                let copy_start = Instant::now();
+                let payload = payloads[sequence as usize].clone();
+                let payload_len = payload.len() as u64;
+                stats.payload_copy_elapsed_ms = stats
+                    .payload_copy_elapsed_ms
+                    .saturating_add(copy_start.elapsed().as_millis() as u64);
+                let lane_index = 0usize;
+                let socket_send_start = Instant::now();
+                let timing = send_transport_frame(
+                    &lanes[lane_index].socket,
+                    target,
+                    NovoRudpTransportFrameKindV0::Data,
+                    session_id,
+                    sequence,
+                    payload,
+                    0,
+                )?;
+                stats.socket_send_elapsed_ms = stats
+                    .socket_send_elapsed_ms
+                    .saturating_add(socket_send_start.elapsed().as_millis() as u64);
+                stats.transport_frame_encode_elapsed_us = stats
+                    .transport_frame_encode_elapsed_us
+                    .saturating_add(timing.frame_encode_elapsed_us);
+                stats.transport_kernel_send_elapsed_us = stats
+                    .transport_kernel_send_elapsed_us
+                    .saturating_add(timing.kernel_send_elapsed_us);
+                stats.transport_send_total_elapsed_us = stats
+                    .transport_send_total_elapsed_us
+                    .saturating_add(timing.total_elapsed_us);
+                stats.transport_encoded_bytes_total = stats
+                    .transport_encoded_bytes_total
+                    .saturating_add(timing.encoded_bytes);
+                stats.transport_send_call_count = stats.transport_send_call_count.saturating_add(1);
+                stats.transport_send_max_bytes =
+                    stats.transport_send_max_bytes.max(timing.encoded_bytes);
+                stats.data_send_would_block_count = stats
+                    .data_send_would_block_count
+                    .saturating_add(timing.would_block_count);
+                stats.data_send_retry_count = stats
+                    .data_send_retry_count
+                    .saturating_add(timing.retry_count);
+                stats.data_send_nonretryable_error_count = stats
+                    .data_send_nonretryable_error_count
+                    .saturating_add(timing.nonretryable_error_count);
+                stats.data_send_max_retry_exceeded_count = stats
+                    .data_send_max_retry_exceeded_count
+                    .saturating_add(timing.max_retry_exceeded_count);
+                stats.data_send_backoff_elapsed_us = stats
+                    .data_send_backoff_elapsed_us
+                    .saturating_add(timing.backoff_elapsed_us);
+                lane_stats[lane_index].send_to_call_count =
+                    lane_stats[lane_index].send_to_call_count.saturating_add(1);
+                lane_stats[lane_index].send_to_elapsed_us = lane_stats[lane_index]
+                    .send_to_elapsed_us
+                    .saturating_add(timing.kernel_send_elapsed_us);
+                lane_stats[lane_index].bytes_total = lane_stats[lane_index]
+                    .bytes_total
+                    .saturating_add(timing.encoded_bytes);
+                lane_stats[lane_index].would_block_count = lane_stats[lane_index]
+                    .would_block_count
+                    .saturating_add(timing.would_block_count);
+                lane_stats[lane_index].retry_count = lane_stats[lane_index]
+                    .retry_count
+                    .saturating_add(timing.retry_count);
+                lane_stats[lane_index].send_fail_count = lane_stats[lane_index]
+                    .send_fail_count
+                    .saturating_add(timing.nonretryable_error_count);
+                lane_stats[lane_index].max_retry_exceeded_count = lane_stats[lane_index]
+                    .max_retry_exceeded_count
+                    .saturating_add(timing.max_retry_exceeded_count);
+                lane_stats[lane_index].backoff_elapsed_us = lane_stats[lane_index]
+                    .backoff_elapsed_us
+                    .saturating_add(timing.backoff_elapsed_us);
+                stats.data_payload_bytes_sent_total = stats
+                    .data_payload_bytes_sent_total
+                    .saturating_add(payload_len);
+                if !sent_once.insert(sequence) {
+                    stats.duplicate_sent = stats.duplicate_sent.saturating_add(1);
+                }
+                stats.data_sent = stats.data_sent.saturating_add(1);
+                let active_pacing_chunk_size = backpressure_pacing.active_chunk_size();
+                let active_pacing_gap_ms = backpressure_pacing.active_gap_ms();
+                if data_pacing_chunk_size > 0
+                    && data_pacing_chunk_gap_ms > 0
+                    && stats.data_sent % active_pacing_chunk_size == 0
+                    && sequence + 1 < tx_count
+                {
+                    stats.data_pacing_sleep_count = stats.data_pacing_sleep_count.saturating_add(1);
+                    let pacing_sleep_start = Instant::now();
+                    thread::sleep(Duration::from_millis(active_pacing_gap_ms));
+                    backpressure_pacing.note_sleep();
+                    stats.pacing_sleep_elapsed_ms = stats
+                        .pacing_sleep_elapsed_ms
+                        .saturating_add(pacing_sleep_start.elapsed().as_millis() as u64);
+                    backpressure_pacing.observe_window(&stats);
+                }
             }
         }
     } else {
@@ -1177,6 +1227,14 @@ fn run_sender() -> Result<()> {
         "sender_backpressure_recovery_count": backpressure_pacing.recovery_count,
         "sender_pacing_adjustment_count": backpressure_pacing.adjustment_count,
         "sender_backpressure_total_extra_sleep_ms": backpressure_pacing.total_extra_sleep_ms,
+        "sender_send_batching_requested": send_batching_requested,
+        "sender_send_batching_enabled": send_batching_requested && lanes.len() == 1,
+        "sender_send_batch_call_count": stats.send_batch_call_count,
+        "sender_send_batch_datagram_count": stats.send_batch_datagram_count,
+        "sender_send_batch_avg_datagrams": stats.send_batch_datagram_count / stats.send_batch_call_count.max(1),
+        "sender_send_batch_max_datagrams": stats.send_batch_max_datagrams,
+        "sender_send_batch_elapsed_ms": stats.send_batch_elapsed_us / 1000,
+        "sender_send_to_fallback_call_count": stats.send_to_fallback_call_count,
         "sender_socket_send_buffer_requested_bytes": socket_buffers.requested_send_buffer_bytes,
         "sender_socket_recv_buffer_requested_bytes": socket_buffers.requested_recv_buffer_bytes,
         "sender_socket_send_buffer_effective_bytes": socket_buffers.effective_send_buffer_bytes,
@@ -1309,6 +1367,156 @@ fn build_sender_lanes_v0(
         });
     }
     Ok(lanes)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_primary_batched_v0(
+    socket: &UdpSocket,
+    target: SocketAddr,
+    session_id: [u8; 16],
+    tx_count: u64,
+    payloads: &[Vec<u8>],
+    loss: LossInjectionConfigV0,
+    data_pacing_chunk_size: u64,
+    data_pacing_chunk_gap_ms: u64,
+) -> Result<(SenderLaneStatsV0, SenderStats, Vec<u64>)> {
+    let mut lane_stats = SenderLaneStatsV0::default();
+    let mut stats = SenderStats::default();
+    let mut sent_sequences = Vec::new();
+    let batch_size = data_pacing_chunk_size.max(1) as usize;
+    let mut sequence = 0u64;
+    while sequence < tx_count {
+        let mut batch = Vec::with_capacity(batch_size);
+        while sequence < tx_count && batch.len() < batch_size {
+            stats.data_send_attempt = stats.data_send_attempt.saturating_add(1);
+            if loss.drops_data_sequence(sequence) {
+                stats.data_loss_injected = stats.data_loss_injected.saturating_add(1);
+                sequence = sequence.saturating_add(1);
+                continue;
+            }
+            let copy_start = Instant::now();
+            let payload = payloads[sequence as usize].clone();
+            stats.payload_copy_elapsed_ms = stats
+                .payload_copy_elapsed_ms
+                .saturating_add(copy_start.elapsed().as_millis() as u64);
+            batch.push(encode_transport_frame_v0(
+                NovoRudpTransportFrameKindV0::Data,
+                session_id,
+                sequence,
+                payload,
+                0,
+            ));
+            sequence = sequence.saturating_add(1);
+        }
+        if batch.is_empty() {
+            continue;
+        }
+        let timing = send_encoded_transport_batch_v0(socket, target, &batch)?;
+        let batch_frame_encode_elapsed_us = batch
+            .iter()
+            .map(|frame| frame.frame_encode_elapsed_us)
+            .sum::<u64>();
+        stats.socket_send_elapsed_ms = stats
+            .socket_send_elapsed_ms
+            .saturating_add(timing.total_elapsed_us / 1000);
+        stats.transport_frame_encode_elapsed_us = stats
+            .transport_frame_encode_elapsed_us
+            .saturating_add(batch_frame_encode_elapsed_us);
+        stats.transport_kernel_send_elapsed_us = stats
+            .transport_kernel_send_elapsed_us
+            .saturating_add(timing.kernel_send_elapsed_us);
+        stats.transport_send_total_elapsed_us =
+            stats.transport_send_total_elapsed_us.saturating_add(
+                timing
+                    .total_elapsed_us
+                    .saturating_add(batch_frame_encode_elapsed_us),
+            );
+        stats.transport_encoded_bytes_total = stats.transport_encoded_bytes_total.saturating_add(
+            batch
+                .iter()
+                .map(|frame| frame.encoded.len() as u64)
+                .sum::<u64>(),
+        );
+        stats.data_payload_bytes_sent_total = stats
+            .data_payload_bytes_sent_total
+            .saturating_add(batch.iter().map(|frame| frame.payload_len).sum::<u64>());
+        stats.data_sent = stats.data_sent.saturating_add(batch.len() as u64);
+        stats.transport_send_call_count = stats
+            .transport_send_call_count
+            .saturating_add(timing.send_to_fallback_call_count);
+        stats.transport_send_max_bytes = stats.transport_send_max_bytes.max(
+            batch
+                .iter()
+                .map(|frame| frame.encoded.len() as u64)
+                .max()
+                .unwrap_or_default(),
+        );
+        stats.data_send_would_block_count = stats
+            .data_send_would_block_count
+            .saturating_add(timing.would_block_count);
+        stats.data_send_retry_count = stats
+            .data_send_retry_count
+            .saturating_add(timing.retry_count);
+        stats.data_send_nonretryable_error_count = stats
+            .data_send_nonretryable_error_count
+            .saturating_add(timing.nonretryable_error_count);
+        stats.data_send_max_retry_exceeded_count = stats
+            .data_send_max_retry_exceeded_count
+            .saturating_add(timing.max_retry_exceeded_count);
+        stats.data_send_backoff_elapsed_us = stats
+            .data_send_backoff_elapsed_us
+            .saturating_add(timing.backoff_elapsed_us);
+        stats.send_batch_call_count = stats
+            .send_batch_call_count
+            .saturating_add(timing.send_batch_call_count);
+        stats.send_batch_datagram_count = stats
+            .send_batch_datagram_count
+            .saturating_add(timing.send_batch_datagram_count);
+        stats.send_batch_max_datagrams = stats
+            .send_batch_max_datagrams
+            .max(timing.send_batch_max_datagrams);
+        stats.send_batch_elapsed_us = stats
+            .send_batch_elapsed_us
+            .saturating_add(timing.send_batch_elapsed_us);
+        stats.send_to_fallback_call_count = stats
+            .send_to_fallback_call_count
+            .saturating_add(timing.send_to_fallback_call_count);
+        lane_stats.send_to_call_count = lane_stats
+            .send_to_call_count
+            .saturating_add(timing.send_to_fallback_call_count);
+        lane_stats.send_to_elapsed_us = lane_stats
+            .send_to_elapsed_us
+            .saturating_add(timing.kernel_send_elapsed_us);
+        lane_stats.bytes_total = lane_stats.bytes_total.saturating_add(
+            batch
+                .iter()
+                .map(|frame| frame.encoded.len() as u64)
+                .sum::<u64>(),
+        );
+        lane_stats.would_block_count = lane_stats
+            .would_block_count
+            .saturating_add(timing.would_block_count);
+        lane_stats.retry_count = lane_stats.retry_count.saturating_add(timing.retry_count);
+        lane_stats.send_fail_count = lane_stats
+            .send_fail_count
+            .saturating_add(timing.nonretryable_error_count);
+        lane_stats.max_retry_exceeded_count = lane_stats
+            .max_retry_exceeded_count
+            .saturating_add(timing.max_retry_exceeded_count);
+        lane_stats.backoff_elapsed_us = lane_stats
+            .backoff_elapsed_us
+            .saturating_add(timing.backoff_elapsed_us);
+        sent_sequences.extend(batch.iter().map(|frame| frame.sequence));
+        if data_pacing_chunk_gap_ms > 0 && sequence < tx_count {
+            stats.data_pacing_sleep_count = stats.data_pacing_sleep_count.saturating_add(1);
+            let pacing_sleep_start = Instant::now();
+            thread::sleep(Duration::from_millis(data_pacing_chunk_gap_ms));
+            stats.pacing_sleep_elapsed_ms = stats
+                .pacing_sleep_elapsed_ms
+                .saturating_add(pacing_sleep_start.elapsed().as_millis() as u64);
+        }
+    }
+    Ok((lane_stats, stats, sent_sequences))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1485,6 +1693,21 @@ fn merge_sender_stats_v0(dst: &mut SenderStats, src: SenderStats) {
     dst.data_send_backoff_elapsed_us = dst
         .data_send_backoff_elapsed_us
         .saturating_add(src.data_send_backoff_elapsed_us);
+    dst.send_batch_call_count = dst
+        .send_batch_call_count
+        .saturating_add(src.send_batch_call_count);
+    dst.send_batch_datagram_count = dst
+        .send_batch_datagram_count
+        .saturating_add(src.send_batch_datagram_count);
+    dst.send_batch_max_datagrams = dst
+        .send_batch_max_datagrams
+        .max(src.send_batch_max_datagrams);
+    dst.send_batch_elapsed_us = dst
+        .send_batch_elapsed_us
+        .saturating_add(src.send_batch_elapsed_us);
+    dst.send_to_fallback_call_count = dst
+        .send_to_fallback_call_count
+        .saturating_add(src.send_to_fallback_call_count);
     dst.pacing_sleep_elapsed_ms = dst
         .pacing_sleep_elapsed_ms
         .saturating_add(src.pacing_sleep_elapsed_ms);
@@ -1537,17 +1760,13 @@ fn send_transport_frame(
     ack_epoch: u64,
 ) -> Result<SendTransportFrameTimingV0> {
     let total_start = Instant::now();
-    let encode_start = Instant::now();
-    let frame =
-        NovoRudpTransportFrameV0::new(kind, session_id, 1, sequence, sequence, ack_epoch, payload);
-    let encoded = frame.encode();
-    let frame_encode_elapsed_us = encode_start.elapsed().as_micros() as u64;
+    let encoded_frame = encode_transport_frame_v0(kind, session_id, sequence, payload, ack_epoch);
     let mut retry_count = 0u64;
     let mut would_block_count = 0u64;
     let mut backoff_elapsed_us = 0u64;
     let send_start = Instant::now();
     loop {
-        match socket.send_to(encoded.as_slice(), target) {
+        match socket.send_to(encoded_frame.encoded.as_slice(), target) {
             Ok(_) => break,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 would_block_count = would_block_count.saturating_add(1);
@@ -1571,10 +1790,155 @@ fn send_transport_frame(
     }
     let kernel_send_elapsed_us = send_start.elapsed().as_micros() as u64;
     Ok(SendTransportFrameTimingV0 {
-        frame_encode_elapsed_us,
+        frame_encode_elapsed_us: encoded_frame.frame_encode_elapsed_us,
         kernel_send_elapsed_us,
         total_elapsed_us: total_start.elapsed().as_micros() as u64,
-        encoded_bytes: encoded.len() as u64,
+        encoded_bytes: encoded_frame.encoded.len() as u64,
+        would_block_count,
+        retry_count,
+        nonretryable_error_count: 0,
+        max_retry_exceeded_count: 0,
+        backoff_elapsed_us,
+    })
+}
+
+fn encode_transport_frame_v0(
+    kind: NovoRudpTransportFrameKindV0,
+    session_id: [u8; 16],
+    sequence: u64,
+    payload: Vec<u8>,
+    ack_epoch: u64,
+) -> EncodedTransportFrameV0 {
+    let payload_len = payload.len() as u64;
+    let encode_start = Instant::now();
+    let frame =
+        NovoRudpTransportFrameV0::new(kind, session_id, 1, sequence, sequence, ack_epoch, payload);
+    let encoded = frame.encode();
+    EncodedTransportFrameV0 {
+        sequence,
+        payload_len,
+        encoded,
+        frame_encode_elapsed_us: encode_start.elapsed().as_micros() as u64,
+    }
+}
+
+fn send_encoded_transport_batch_v0(
+    socket: &UdpSocket,
+    target: SocketAddr,
+    batch: &[EncodedTransportFrameV0],
+) -> Result<SendEncodedBatchTimingV0> {
+    let total_start = Instant::now();
+    let mut timing = SendEncodedBatchTimingV0::default();
+    let datagrams = batch
+        .iter()
+        .map(|frame| frame.encoded.as_slice())
+        .collect::<Vec<_>>();
+    let mut next = 0usize;
+    while next < datagrams.len() {
+        let send_start = Instant::now();
+        match sendmmsg_batch(socket, target, &datagrams[next..]) {
+            Ok(0) => {
+                bail!("sendmmsg returned zero datagrams");
+            }
+            Ok(sent) => {
+                timing.send_batch_call_count = timing.send_batch_call_count.saturating_add(1);
+                timing.send_batch_datagram_count =
+                    timing.send_batch_datagram_count.saturating_add(sent as u64);
+                timing.send_batch_max_datagrams = timing.send_batch_max_datagrams.max(sent as u64);
+                timing.send_batch_elapsed_us = timing
+                    .send_batch_elapsed_us
+                    .saturating_add(send_start.elapsed().as_micros() as u64);
+                next = next.saturating_add(sent);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+                for datagram in &datagrams[next..] {
+                    let fallback = send_encoded_datagram_with_retry_v0(socket, target, datagram)?;
+                    timing.kernel_send_elapsed_us = timing
+                        .kernel_send_elapsed_us
+                        .saturating_add(fallback.kernel_send_elapsed_us);
+                    timing.would_block_count = timing
+                        .would_block_count
+                        .saturating_add(fallback.would_block_count);
+                    timing.retry_count = timing.retry_count.saturating_add(fallback.retry_count);
+                    timing.nonretryable_error_count = timing
+                        .nonretryable_error_count
+                        .saturating_add(fallback.nonretryable_error_count);
+                    timing.max_retry_exceeded_count = timing
+                        .max_retry_exceeded_count
+                        .saturating_add(fallback.max_retry_exceeded_count);
+                    timing.backoff_elapsed_us = timing
+                        .backoff_elapsed_us
+                        .saturating_add(fallback.backoff_elapsed_us);
+                    timing.send_to_fallback_call_count =
+                        timing.send_to_fallback_call_count.saturating_add(1);
+                }
+                timing.total_elapsed_us = total_start.elapsed().as_micros() as u64;
+                return Ok(timing);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                timing.would_block_count = timing.would_block_count.saturating_add(1);
+                if timing.retry_count >= SEND_TO_WOULD_BLOCK_MAX_RETRIES_V0 {
+                    bail!(
+                        "sendmmsg exceeded WouldBlock retry cap ({SEND_TO_WOULD_BLOCK_MAX_RETRIES_V0})"
+                    );
+                }
+                timing.retry_count = timing.retry_count.saturating_add(1);
+                let backoff_start = Instant::now();
+                if timing.retry_count <= SEND_TO_WOULD_BLOCK_YIELD_RETRIES_V0 {
+                    thread::yield_now();
+                } else {
+                    thread::sleep(Duration::from_micros(SEND_TO_WOULD_BLOCK_SLEEP_US_V0));
+                }
+                timing.backoff_elapsed_us = timing
+                    .backoff_elapsed_us
+                    .saturating_add(backoff_start.elapsed().as_micros() as u64);
+            }
+            Err(e) => return Err(e).context("sendmmsg batch failed"),
+        }
+    }
+    timing.kernel_send_elapsed_us = timing.send_batch_elapsed_us;
+    timing.total_elapsed_us = total_start.elapsed().as_micros() as u64;
+    Ok(timing)
+}
+
+fn send_encoded_datagram_with_retry_v0(
+    socket: &UdpSocket,
+    target: SocketAddr,
+    datagram: &[u8],
+) -> Result<SendTransportFrameTimingV0> {
+    let total_start = Instant::now();
+    let mut retry_count = 0u64;
+    let mut would_block_count = 0u64;
+    let mut backoff_elapsed_us = 0u64;
+    let send_start = Instant::now();
+    loop {
+        match socket.send_to(datagram, target) {
+            Ok(_) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                would_block_count = would_block_count.saturating_add(1);
+                if retry_count >= SEND_TO_WOULD_BLOCK_MAX_RETRIES_V0 {
+                    bail!(
+                        "send fallback datagram exceeded WouldBlock retry cap ({SEND_TO_WOULD_BLOCK_MAX_RETRIES_V0})"
+                    );
+                }
+                retry_count = retry_count.saturating_add(1);
+                let backoff_start = Instant::now();
+                if retry_count <= SEND_TO_WOULD_BLOCK_YIELD_RETRIES_V0 {
+                    thread::yield_now();
+                } else {
+                    thread::sleep(Duration::from_micros(SEND_TO_WOULD_BLOCK_SLEEP_US_V0));
+                }
+                backoff_elapsed_us =
+                    backoff_elapsed_us.saturating_add(backoff_start.elapsed().as_micros() as u64);
+            }
+            Err(e) => return Err(e).context("send fallback datagram failed"),
+        }
+    }
+    Ok(SendTransportFrameTimingV0 {
+        frame_encode_elapsed_us: 0,
+        kernel_send_elapsed_us: send_start.elapsed().as_micros() as u64,
+        total_elapsed_us: total_start.elapsed().as_micros() as u64,
+        encoded_bytes: datagram.len() as u64,
         would_block_count,
         retry_count,
         nonretryable_error_count: 0,

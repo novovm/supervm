@@ -1585,6 +1585,7 @@ dependencies = [
  "novovm-governance-observability",
  "novovm-network",
  "novovm-protocol",
+ "novovm-udp-batch",
  "postcard",
  "rand 0.8.5",
  "rocksdb",
@@ -1628,6 +1629,13 @@ dependencies = [
  "serde",
  "serde_json",
  "ureq",
+]
+
+[[package]]
+name = "novovm-udp-batch"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
