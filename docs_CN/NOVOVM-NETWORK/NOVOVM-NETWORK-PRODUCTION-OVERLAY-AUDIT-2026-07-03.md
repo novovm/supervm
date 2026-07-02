@@ -1398,6 +1398,106 @@ cargo run -q -p novovm-node --bin supervm-network-overlay-gate
 This gives auditors a compact fallback matrix replay without touching APFL,
 AOEM, ledger, opcode 114, or business payload semantics.
 
+### Cut 13: Overlay Gate Multi-Frame Data Plane v0
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+This cut upgrades the local three-process / four-process overlay gate from
+single-frame smoke to configurable multi-frame data-plane replay.
+
+New env:
+
+```text
+NOVOVM_OVERLAY_GATE_MAX_FRAMES
+```
+
+Default:
+
+```text
+1
+```
+
+So existing one-frame smoke behavior remains unchanged.
+
+Multi-frame behavior:
+
+```text
+sender:
+  sends N opaque NOVORUDP DATA frames
+  or queues N frames for queue fallback
+
+relay:
+  forwards N relay envelopes before exiting
+  preserves opaque NOVORUDP frame bytes
+
+receiver:
+  receives and decodes N NOVORUDP DATA frames
+  still replies to runtime Endpoint probe frames
+```
+
+Observed local process-gate result with:
+
+```text
+NOVOVM_OVERLAY_GATE_MAX_FRAMES=4
+```
+
+```text
+direct:
+  sender accepted=true
+  sent_frame_count=4
+  receiver accepted=true
+  data_frames_received=4
+
+relay:
+  sender accepted=true
+  sent_frame_count=4
+  relay accepted=true
+  frames_received=4
+  receiver accepted=true
+  data_frames_received=4
+
+multihop:
+  sender accepted=true
+  sent_frame_count=4
+  relay-a accepted=true
+  relay-a frames_received=4
+  relay-b accepted=true
+  relay-b frames_received=4
+  receiver accepted=true
+  data_frames_received=4
+
+queue:
+  sender accepted=true
+  queued_count=4
+```
+
+Validation:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+cargo test -q -p novovm-network relay::loopback -- --test-threads=1
+cargo test -q -p novovm-network overlay_runtime -- --test-threads=1
+```
+
+Boundary:
+
+```text
+network_only=true
+apfl_interpreted=false
+aoem_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+
+This is still a local gate, not yet a full production relay daemon. Its value is
+that relay and multi-hop paths now prove repeated opaque frame forwarding
+instead of a one-shot packet.
+
 ## Product Readout
 
 Current product status:

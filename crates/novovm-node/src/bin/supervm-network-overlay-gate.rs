@@ -139,6 +139,7 @@ fn run_receiver_gate() -> Result<()> {
     let bind_addr =
         env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR").unwrap_or_else(|| "127.0.0.1:0".into());
     let timeout_ms = env_u64("NOVOVM_OVERLAY_GATE_TIMEOUT_MS", 5000);
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 1).max(1);
     let socket =
         UdpSocket::bind(&bind_addr).with_context(|| format!("bind receiver: {bind_addr}"))?;
     socket
@@ -149,61 +150,84 @@ fn run_receiver_gate() -> Result<()> {
     let mut buf = vec![0u8; 65535];
     let mut probe_ack_sent = false;
     let mut probe_source_addr = None;
-    let (received_bytes, source_addr, frame) = loop {
-        let (received_bytes, source_addr) =
-            socket.recv_from(&mut buf).context("receiver recv frame")?;
-        let frame =
-            novovm_network::novorudp::NovoRudpTransportFrameV0::decode(&buf[..received_bytes]);
-        if let Ok(frame) = &frame {
-            if frame.kind == NovoRudpTransportFrameKindV0::Endpoint {
-                let ack = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
-                    NovoRudpTransportFrameKindV0::Ack,
-                    frame.session_id,
-                    frame.stream_id,
-                    frame.object_id,
-                    frame.sequence,
-                    frame.ack_epoch,
-                    frame.payload.clone(),
+    let mut frames = Vec::new();
+    let mut recv_error = None;
+    while frames.len() < max_frames as usize {
+        match socket.recv_from(&mut buf) {
+            Ok((received_bytes, source_addr)) => {
+                let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::decode(
+                    &buf[..received_bytes],
                 );
-                socket
-                    .send_to(&ack.encode(), source_addr)
-                    .context("receiver send probe ack")?;
-                probe_ack_sent = true;
-                probe_source_addr = Some(source_addr.to_string());
-                continue;
+                if let Ok(frame) = &frame {
+                    if frame.kind == NovoRudpTransportFrameKindV0::Endpoint {
+                        let ack = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+                            NovoRudpTransportFrameKindV0::Ack,
+                            frame.session_id,
+                            frame.stream_id,
+                            frame.object_id,
+                            frame.sequence,
+                            frame.ack_epoch,
+                            frame.payload.clone(),
+                        );
+                        socket
+                            .send_to(&ack.encode(), source_addr)
+                            .context("receiver send probe ack")?;
+                        probe_ack_sent = true;
+                        probe_source_addr = Some(source_addr.to_string());
+                        continue;
+                    }
+                }
+                let (
+                    frame_decode_ok,
+                    frame_decode_error,
+                    decoded_kind,
+                    decoded_sequence,
+                    payload_bytes,
+                ) = match frame {
+                    Ok(frame) => (
+                        true,
+                        None,
+                        Some(frame.kind),
+                        Some(frame.sequence),
+                        frame.payload.len(),
+                    ),
+                    Err(error) => (false, Some(error.to_string()), None, None, 0),
+                };
+                frames.push(json!({
+                    "source_addr": source_addr.to_string(),
+                    "received_bytes": received_bytes,
+                    "frame_decode_ok": frame_decode_ok,
+                    "frame_decode_error": frame_decode_error,
+                    "decoded_kind": decoded_kind,
+                    "decoded_sequence": decoded_sequence,
+                    "payload_bytes": payload_bytes,
+                }));
+            }
+            Err(error) => {
+                recv_error = Some(error.to_string());
+                break;
             }
         }
-        break (received_bytes, source_addr, frame);
-    };
+    }
     let elapsed_ms = start.elapsed().as_millis() as u64;
-    let (frame_decode_ok, frame_decode_error, decoded_kind, decoded_sequence, payload_bytes) =
-        match frame {
-            Ok(frame) => (
-                true,
-                None,
-                Some(frame.kind),
-                Some(frame.sequence),
-                frame.payload.len(),
-            ),
-            Err(error) => (false, Some(error.to_string()), None, None, 0),
-        };
-    let accepted = frame_decode_ok;
+    let data_frames_received = frames.len() as u64;
+    let accepted = data_frames_received == max_frames
+        && frames
+            .iter()
+            .all(|frame| frame["frame_decode_ok"].as_bool().unwrap_or(false));
     let report = json!({
         "accepted": accepted,
         "scope": "network_overlay_gate_receiver_v0",
         "boundary": network_boundary_json(),
         "bind_addr_requested": bind_addr,
         "bind_addr_effective": local_addr.to_string(),
-        "source_addr": source_addr.to_string(),
+        "max_frames": max_frames,
+        "data_frames_received": data_frames_received,
         "probe_ack_sent": probe_ack_sent,
         "probe_source_addr": probe_source_addr,
-        "received_bytes": received_bytes,
+        "recv_error": recv_error,
         "elapsed_ms": elapsed_ms,
-        "frame_decode_ok": frame_decode_ok,
-        "frame_decode_error": frame_decode_error,
-        "decoded_kind": decoded_kind,
-        "decoded_sequence": decoded_sequence,
-        "payload_bytes": payload_bytes,
+        "frames": frames,
     });
     write_json_report(&report_path, &report)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -221,6 +245,7 @@ fn run_relay_gate() -> Result<()> {
         env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR").unwrap_or_else(|| "127.0.0.1:0".into());
     let relay_id = env_string("NOVOVM_OVERLAY_GATE_RELAY_ID").unwrap_or_else(|| "relay-a".into());
     let timeout_ms = env_u64("NOVOVM_OVERLAY_GATE_TIMEOUT_MS", 5000);
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 1).max(1);
     let socket = UdpSocket::bind(&bind_addr).with_context(|| format!("bind relay: {bind_addr}"))?;
     socket
         .set_read_timeout(Some(Duration::from_millis(timeout_ms)))
@@ -228,42 +253,102 @@ fn run_relay_gate() -> Result<()> {
     let local_addr = socket.local_addr().context("relay local addr")?;
     let start = Instant::now();
     let mut buf = vec![0u8; 65535];
-    let (received_bytes, source_addr) =
-        socket.recv_from(&mut buf).context("relay recv envelope")?;
-    let mut envelope: OverlayGateRelayEnvelopeV0 =
-        serde_json::from_slice(&buf[..received_bytes]).context("decode relay envelope")?;
-    if envelope.ttl == 0 {
-        anyhow::bail!("relay ttl exhausted");
-    }
-    envelope.ttl = envelope.ttl.saturating_sub(1);
-    let (forward_to, forward_payload, delivered_to_target) =
-        if envelope.remaining_hop_addrs.is_empty() {
-            (envelope.target_addr.clone(), envelope.payload.clone(), true)
-        } else {
-            let next_hop = envelope.remaining_hop_addrs.remove(0);
-            (next_hop, serde_json::to_vec(&envelope)?, false)
+    let mut frames = Vec::new();
+    let mut recv_error = None;
+    while frames.len() < max_frames as usize {
+        let (received_bytes, source_addr) = match socket.recv_from(&mut buf) {
+            Ok(value) => value,
+            Err(error) => {
+                recv_error = Some(error.to_string());
+                break;
+            }
         };
-    let forwarded_bytes = socket
-        .send_to(&forward_payload, &forward_to)
-        .with_context(|| format!("relay forward to {forward_to}"))?;
+        let mut envelope: OverlayGateRelayEnvelopeV0 =
+            match serde_json::from_slice(&buf[..received_bytes]) {
+                Ok(envelope) => envelope,
+                Err(error) => {
+                    frames.push(json!({
+                        "accepted": false,
+                        "source_addr": source_addr.to_string(),
+                        "received_bytes": received_bytes,
+                        "forwarded_bytes": 0,
+                        "forwarded_to": null,
+                        "delivered_to_target": false,
+                        "error": format!("decode relay envelope failed: {error}"),
+                    }));
+                    continue;
+                }
+            };
+        if envelope.ttl == 0 {
+            frames.push(json!({
+                "accepted": false,
+                "request_id": envelope.request_id,
+                "source_addr": source_addr.to_string(),
+                "received_bytes": received_bytes,
+                "forwarded_bytes": 0,
+                "forwarded_to": null,
+                "delivered_to_target": false,
+                "error": "relay ttl exhausted",
+            }));
+            continue;
+        }
+        envelope.ttl = envelope.ttl.saturating_sub(1);
+        let (forward_to, forward_payload, delivered_to_target) =
+            if envelope.remaining_hop_addrs.is_empty() {
+                (envelope.target_addr.clone(), envelope.payload.clone(), true)
+            } else {
+                let next_hop = envelope.remaining_hop_addrs.remove(0);
+                (next_hop, serde_json::to_vec(&envelope)?, false)
+            };
+        match socket.send_to(&forward_payload, &forward_to) {
+            Ok(forwarded_bytes) => frames.push(json!({
+                "accepted": true,
+                "request_id": envelope.request_id,
+                "source_addr": source_addr.to_string(),
+                "received_bytes": received_bytes,
+                "forwarded_bytes": forwarded_bytes,
+                "forwarded_to": forward_to,
+                "delivered_to_target": delivered_to_target,
+                "error": null,
+            })),
+            Err(error) => frames.push(json!({
+                "accepted": false,
+                "request_id": envelope.request_id,
+                "source_addr": source_addr.to_string(),
+                "received_bytes": received_bytes,
+                "forwarded_bytes": 0,
+                "forwarded_to": forward_to,
+                "delivered_to_target": delivered_to_target,
+                "error": format!("relay forward failed: {error}"),
+            })),
+        }
+    }
     let elapsed_ms = start.elapsed().as_millis() as u64;
+    let frames_received = frames.len() as u64;
+    let accepted = frames_received == max_frames
+        && frames
+            .iter()
+            .all(|frame| frame["accepted"].as_bool().unwrap_or(false));
     let report = json!({
-        "accepted": true,
+        "accepted": accepted,
         "scope": "network_overlay_gate_relay_v0",
         "boundary": network_boundary_json(),
         "relay_id": relay_id,
         "bind_addr_requested": bind_addr,
         "bind_addr_effective": local_addr.to_string(),
-        "source_addr": source_addr.to_string(),
-        "received_bytes": received_bytes,
-        "forwarded_bytes": forwarded_bytes,
-        "forwarded_to": forward_to,
-        "delivered_to_target": delivered_to_target,
+        "max_frames": max_frames,
+        "frames_received": frames_received,
+        "recv_error": recv_error,
+        "frames": frames,
         "elapsed_ms": elapsed_ms,
     });
     write_json_report(&report_path, &report)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
-    Ok(())
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("relay failed to forward all requested frames")
+    }
 }
 
 fn run_sender_gate() -> Result<()> {
@@ -281,6 +366,7 @@ fn run_sender_gate() -> Result<()> {
         env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR").unwrap_or_else(|| "127.0.0.1:0".into());
     let request_id =
         env_string("NOVOVM_OVERLAY_GATE_REQUEST_ID").unwrap_or_else(|| "overlay-gate".into());
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 1).max(1);
 
     let socket =
         UdpSocket::bind(&bind_addr).with_context(|| format!("bind sender: {bind_addr}"))?;
@@ -302,73 +388,104 @@ fn run_sender_gate() -> Result<()> {
         Some(local_addr.to_string()),
     )?;
     let (decision, target_peer_id) = decision_for_route(&route_plan.effective_route)?;
-    let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
-        NovoRudpTransportFrameKindV0::Data,
-        [13u8; 16],
-        10,
-        20,
-        30,
-        40,
-        b"novovm-overlay-three-process-opaque-frame".to_vec(),
-    );
-    let encoded = frame.encode();
 
     let start = Instant::now();
-    let (sent, sent_to, queued) = match route_plan.effective_route.as_str() {
-        "queue" => (0, None, true),
-        "direct" => (
-            socket
-                .send_to(&encoded, &target_addr)
-                .with_context(|| format!("direct send to {target_addr}"))?,
-            Some(target_addr.clone()),
-            false,
-        ),
-        "relay" => {
-            let relay_addr = relay_addr.context("NOVOVM_OVERLAY_GATE_RELAY_ADDR required")?;
-            let envelope = OverlayGateRelayEnvelopeV0 {
-                request_id: request_id.clone(),
-                source_peer_id: "peer-source".into(),
-                target_peer_id: target_peer_id.0.clone(),
-                target_addr: relay_target_addr.clone(),
-                remaining_hop_addrs: Vec::new(),
-                ttl: 4,
-                payload: encoded.clone(),
-            };
-            let payload = serde_json::to_vec(&envelope)?;
-            (
+    let mut frames = Vec::new();
+    let mut sent_bytes_total = 0usize;
+    let mut queued_count = 0u64;
+    for frame_index in 0..max_frames {
+        let frame_request_id = if max_frames == 1 {
+            request_id.clone()
+        } else {
+            format!("{request_id}-{frame_index}")
+        };
+        let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            [13u8; 16],
+            10,
+            20,
+            30 + frame_index,
+            40,
+            format!("novovm-overlay-three-process-opaque-frame-{frame_index}").into_bytes(),
+        );
+        let encoded = frame.encode();
+        let (sent, sent_to, queued) = match route_plan.effective_route.as_str() {
+            "queue" => (0, None, true),
+            "direct" => (
                 socket
-                    .send_to(&payload, &relay_addr)
-                    .with_context(|| format!("relay send to {relay_addr}"))?,
-                Some(relay_addr),
+                    .send_to(&encoded, &target_addr)
+                    .with_context(|| format!("direct send to {target_addr}"))?,
+                Some(target_addr.clone()),
                 false,
-            )
+            ),
+            "relay" => {
+                let relay_addr = relay_addr
+                    .clone()
+                    .context("NOVOVM_OVERLAY_GATE_RELAY_ADDR required")?;
+                let envelope = OverlayGateRelayEnvelopeV0 {
+                    request_id: frame_request_id.clone(),
+                    source_peer_id: "peer-source".into(),
+                    target_peer_id: target_peer_id.0.clone(),
+                    target_addr: relay_target_addr.clone(),
+                    remaining_hop_addrs: Vec::new(),
+                    ttl: 4,
+                    payload: encoded.clone(),
+                };
+                let payload = serde_json::to_vec(&envelope)?;
+                (
+                    socket
+                        .send_to(&payload, &relay_addr)
+                        .with_context(|| format!("relay send to {relay_addr}"))?,
+                    Some(relay_addr),
+                    false,
+                )
+            }
+            "multihop" | "multi-hop" => {
+                let relay_addr = relay_addr
+                    .clone()
+                    .context("NOVOVM_OVERLAY_GATE_RELAY_ADDR required")?;
+                let next_hop_addr = next_hop_addr
+                    .clone()
+                    .context("NOVOVM_OVERLAY_GATE_NEXT_HOP_ADDR required")?;
+                let envelope = OverlayGateRelayEnvelopeV0 {
+                    request_id: frame_request_id.clone(),
+                    source_peer_id: "peer-source".into(),
+                    target_peer_id: target_peer_id.0.clone(),
+                    target_addr: relay_target_addr.clone(),
+                    remaining_hop_addrs: vec![next_hop_addr],
+                    ttl: 4,
+                    payload: encoded.clone(),
+                };
+                let payload = serde_json::to_vec(&envelope)?;
+                (
+                    socket
+                        .send_to(&payload, &relay_addr)
+                        .with_context(|| format!("multi-hop send to {relay_addr}"))?,
+                    Some(relay_addr),
+                    false,
+                )
+            }
+            other => anyhow::bail!("unsupported sender route: {other}"),
+        };
+        sent_bytes_total += sent;
+        if queued {
+            queued_count += 1;
         }
-        "multihop" | "multi-hop" => {
-            let relay_addr = relay_addr.context("NOVOVM_OVERLAY_GATE_RELAY_ADDR required")?;
-            let next_hop_addr =
-                next_hop_addr.context("NOVOVM_OVERLAY_GATE_NEXT_HOP_ADDR required")?;
-            let envelope = OverlayGateRelayEnvelopeV0 {
-                request_id: request_id.clone(),
-                source_peer_id: "peer-source".into(),
-                target_peer_id: target_peer_id.0.clone(),
-                target_addr: relay_target_addr.clone(),
-                remaining_hop_addrs: vec![next_hop_addr],
-                ttl: 4,
-                payload: encoded.clone(),
-            };
-            let payload = serde_json::to_vec(&envelope)?;
-            (
-                socket
-                    .send_to(&payload, &relay_addr)
-                    .with_context(|| format!("multi-hop send to {relay_addr}"))?,
-                Some(relay_addr),
-                false,
-            )
-        }
-        other => anyhow::bail!("unsupported sender route: {other}"),
-    };
+        frames.push(json!({
+            "request_id": frame_request_id,
+            "sequence": 30 + frame_index,
+            "sent_to": sent_to,
+            "queued": queued,
+            "sent_bytes": sent,
+            "encoded_frame_bytes": encoded.len(),
+        }));
+    }
     let elapsed_ms = start.elapsed().as_millis() as u64;
-    let accepted = queued || sent > 0;
+    let sent_frame_count = frames
+        .iter()
+        .filter(|frame| frame["sent_bytes"].as_u64().unwrap_or(0) > 0)
+        .count() as u64;
+    let accepted = queued_count == max_frames || sent_frame_count == max_frames;
     let report = json!({
         "accepted": accepted,
         "scope": "network_overlay_gate_sender_v0",
@@ -385,10 +502,11 @@ fn run_sender_gate() -> Result<()> {
         "bind_addr_effective": local_addr.to_string(),
         "target_addr": target_addr,
         "relay_target_addr": relay_target_addr,
-        "sent_to": sent_to,
-        "queued": queued,
-        "sent_bytes": sent,
-        "encoded_frame_bytes": encoded.len(),
+        "max_frames": max_frames,
+        "sent_frame_count": sent_frame_count,
+        "queued_count": queued_count,
+        "sent_bytes_total": sent_bytes_total,
+        "frames": frames,
         "elapsed_ms": elapsed_ms,
         "overlay_decision": decision,
     });
