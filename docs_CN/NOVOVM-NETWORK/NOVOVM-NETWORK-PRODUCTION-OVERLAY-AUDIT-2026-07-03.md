@@ -1808,6 +1808,98 @@ This is the first executable local fallback-chain proof for:
 direct -> relay -> multi-hop -> queue
 ```
 
+## Cut 17: Fallback Chain Multi-Process Runner v0
+
+Commit scope:
+
+```text
+network overlay process gate only
+APFL unchanged
+AOEM unchanged
+ledger unchanged
+NOVORUDP frame format unchanged
+payload treated as opaque bytes
+```
+
+New runner:
+
+```text
+scripts/novovm-overlay-fallback-chain-process-gate.ps1
+```
+
+Purpose:
+
+```text
+Turn the single-process fallback-chain proof into a scriptable multi-process gate.
+
+The runner starts independent gate processes for:
+1. direct receiver + sender
+2. relay receiver + relay + sender
+3. multihop receiver + relay-b + relay-c + sender
+4. queue sender
+
+It then writes one aggregate report:
+artifacts/network-overlay-gate/fallback-chain-process/report.json
+```
+
+Validation command:
+
+```powershell
+powershell -ExecutionPolicy Bypass `
+  -File scripts\novovm-overlay-fallback-chain-process-gate.ps1 `
+  -MaxFrames 4 `
+  -BasePort 39420
+```
+
+Observed result:
+
+```text
+accepted=true
+case_count=4
+max_frames=4
+
+direct:
+  sender_sent=4
+  receiver_frames=4
+
+relay:
+  sender_sent=4
+  relay_frames=4
+  receiver_frames=4
+
+multihop:
+  sender_sent=4
+  relay_b_frames=4
+  relay_c_frames=4
+  receiver_frames=4
+
+queue:
+  sender_sent=0
+  queued=4
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+
+Significance:
+
+```text
+This cut proves the production overlay fallback chain can be exercised as
+real independent network processes, not only as an in-process route decision.
+
+It remains strictly a network communication gate:
+the runner only verifies opaque NOVORUDP frame delivery/forwarding/queuing.
+It does not inspect APFL, call AOEM, or execute ledger semantics.
+```
+
 ## Product Readout
 
 Current product status:
