@@ -1228,6 +1228,77 @@ cargo check -q -p novovm-node --bin supervm-network-overlay-gate
 target/debug/supervm-network-overlay-gate.exe with receiver/relay/sender modes
 ```
 
+### Cut 11: Runtime Probe Multi-Hop Fallback + Route Plan Observability v0
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+This cut completes the runtime-probe fallback matrix for multi-hop relay routes
+and adds route-plan observability fields to the sender/loopback reports.
+
+New report fields:
+
+```text
+route_plan_source:
+  manual
+  simulated_probe
+  runtime_probe
+
+runtime_probe_used:
+  true | false
+
+auto_relay_hops:
+  0 for manual route
+  1 for relay fallback
+  2+ for multi-hop fallback
+```
+
+Observed local process-gate result:
+
+```text
+probe-multihop-fallback:
+  sender accepted=true
+  runtime_probe_report.ack_received=false
+  route_plan_source=runtime_probe
+  auto_relay_hops=2
+  effective_route=multihop
+  selected_path=MultiHopRelay
+  relay-a accepted=true
+  relay-b accepted=true
+  receiver accepted=true
+  receiver frame_decode_ok=true
+```
+
+Boundary:
+
+```text
+Multi-hop fallback is still network-only.
+Relay-a and relay-b forward opaque NOVORUDP frame bytes.
+No APFL.
+No AOEM.
+No opcode 114.
+No ledger/hash/signature execution.
+```
+
+This closes the local executable route matrix:
+
+```text
+direct probe ok
+  -> direct data path
+
+direct probe failed + relay available + 1 hop
+  -> relay data path
+
+direct probe failed + relay available + 2 hops
+  -> multi-hop data path
+
+direct probe failed + relay unavailable
+  -> queue fallback
+```
+
 ## Product Readout
 
 Current product status:

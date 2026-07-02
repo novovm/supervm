@@ -101,6 +101,9 @@ fn run_loopback_gate() -> Result<()> {
         },
         "requested_route": requested_route,
         "effective_route": route_plan.effective_route,
+        "route_plan_source": route_plan.route_plan_source,
+        "runtime_probe_used": route_plan.runtime_probe_used,
+        "auto_relay_hops": route_plan.auto_relay_hops,
         "reachability_probe_decision": route_plan.reachability_probe_decision,
         "request_id": request_id,
         "target_peer_id": target_peer_id,
@@ -359,6 +362,9 @@ fn run_sender_gate() -> Result<()> {
         "boundary": network_boundary_json(),
         "requested_route": requested_route,
         "effective_route": route_plan.effective_route,
+        "route_plan_source": route_plan.route_plan_source,
+        "runtime_probe_used": route_plan.runtime_probe_used,
+        "auto_relay_hops": route_plan.auto_relay_hops,
         "reachability_probe_decision": route_plan.reachability_probe_decision,
         "runtime_probe_report": runtime_probe,
         "request_id": request_id,
@@ -417,6 +423,9 @@ fn route_set_for(route: &str, target_peer_id: PeerId) -> Result<RouteSet> {
 #[derive(Debug, Clone)]
 struct OverlayGateRoutePlan {
     effective_route: String,
+    route_plan_source: String,
+    runtime_probe_used: bool,
+    auto_relay_hops: u64,
     reachability_probe_decision: Option<ReachabilityProbeDecision>,
 }
 
@@ -433,6 +442,9 @@ fn route_plan_for_with_runtime_probe(
     if requested_route != "auto" {
         return Ok(OverlayGateRoutePlan {
             effective_route: requested_route.to_string(),
+            route_plan_source: "manual".into(),
+            runtime_probe_used: false,
+            auto_relay_hops: 0,
             reachability_probe_decision: None,
         });
     }
@@ -484,6 +496,13 @@ fn route_plan_for_with_runtime_probe(
 
     Ok(OverlayGateRoutePlan {
         effective_route,
+        route_plan_source: if runtime_probe.is_some() {
+            "runtime_probe".into()
+        } else {
+            "simulated_probe".into()
+        },
+        runtime_probe_used: runtime_probe.is_some(),
+        auto_relay_hops: relay_hops,
         reachability_probe_decision: Some(decision),
     })
 }
