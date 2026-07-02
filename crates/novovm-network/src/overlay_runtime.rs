@@ -23,6 +23,9 @@ pub enum OverlayRuntimeDecisionReason {
     DirectAllowed,
     RelayRequired,
     MultiHopRelayRequired,
+    DirectCoolingDown,
+    RelayCoolingDown,
+    RouteHealthExhausted,
     PeerUnknown,
     NovoRudpUnsupported,
     NativePipelineUnsupported,
@@ -44,6 +47,77 @@ pub struct OverlayRuntimeDecision {
     pub reason: OverlayRuntimeDecisionReason,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OverlayRouteHealthState {
+    Healthy,
+    Degraded,
+    CoolingDown,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverlayHopHealth {
+    pub peer_id: PeerId,
+    pub state: OverlayRouteHealthState,
+    pub last_failure_unix_ms: u64,
+    pub cooldown_until_unix_ms: u64,
+    pub observed_rtt_ms: Option<u32>,
+}
+
+impl OverlayHopHealth {
+    pub fn healthy(peer_id: PeerId) -> Self {
+        Self {
+            peer_id,
+            state: OverlayRouteHealthState::Healthy,
+            last_failure_unix_ms: 0,
+            cooldown_until_unix_ms: 0,
+            observed_rtt_ms: None,
+        }
+    }
+
+    pub fn cooling_down(peer_id: PeerId, now_unix_ms: u64, cooldown_until_unix_ms: u64) -> Self {
+        Self {
+            peer_id,
+            state: OverlayRouteHealthState::CoolingDown,
+            last_failure_unix_ms: now_unix_ms,
+            cooldown_until_unix_ms,
+            observed_rtt_ms: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverlayRouteHealthSnapshot {
+    pub observed_unix_ms: u64,
+    pub hops: Vec<OverlayHopHealth>,
+}
+
+impl OverlayRouteHealthSnapshot {
+    pub fn new(observed_unix_ms: u64, hops: Vec<OverlayHopHealth>) -> Self {
+        Self {
+            observed_unix_ms,
+            hops,
+        }
+    }
+
+    pub fn hop_state(&self, peer_id: &PeerId) -> OverlayRouteHealthState {
+        let Some(health) = self.hops.iter().find(|hop| hop.peer_id == *peer_id) else {
+            return OverlayRouteHealthState::Healthy;
+        };
+        if health.cooldown_until_unix_ms > self.observed_unix_ms {
+            return OverlayRouteHealthState::CoolingDown;
+        }
+        health.state
+    }
+
+    pub fn hop_is_usable(&self, peer_id: &PeerId) -> bool {
+        matches!(
+            self.hop_state(peer_id),
+            OverlayRouteHealthState::Healthy | OverlayRouteHealthState::Degraded
+        )
+    }
+}
+
 pub fn decide_overlay_runtime_route_v0(
     registry: &ControlPlaneRegistry,
     target_peer_id: &PeerId,
@@ -53,6 +127,22 @@ pub fn decide_overlay_runtime_route_v0(
             target_peer_id.clone(),
             resolved.route_set,
             resolved.decision,
+        ),
+        Err(err) => queue_decision(target_peer_id.clone(), reason_from_resolve_error(err)),
+    }
+}
+
+pub fn decide_overlay_runtime_route_with_health_v0(
+    registry: &ControlPlaneRegistry,
+    target_peer_id: &PeerId,
+    health: &OverlayRouteHealthSnapshot,
+) -> OverlayRuntimeDecision {
+    match registry.resolve_data_plane_route(target_peer_id) {
+        Ok(resolved) => decision_from_route_with_health(
+            target_peer_id.clone(),
+            resolved.route_set,
+            resolved.decision,
+            health,
         ),
         Err(err) => queue_decision(target_peer_id.clone(), reason_from_resolve_error(err)),
     }
@@ -135,6 +225,118 @@ fn decision_from_route(
     }
 }
 
+fn decision_from_route_with_health(
+    target_peer_id: PeerId,
+    route_set: RouteSet,
+    route_decision: OverlayRouteDecision,
+    health: &OverlayRouteHealthSnapshot,
+) -> OverlayRuntimeDecision {
+    match route_decision {
+        OverlayRouteDecision::RejectIpAddressedRoute => {
+            return queue_decision(
+                target_peer_id,
+                OverlayRuntimeDecisionReason::IpAddressedRouteRejected,
+            );
+        }
+        OverlayRouteDecision::RejectTooManyHops => {
+            return queue_decision(target_peer_id, OverlayRuntimeDecisionReason::TooManyHops);
+        }
+        OverlayRouteDecision::RejectMissingCamouflageProfile => {
+            return queue_decision(
+                target_peer_id,
+                OverlayRuntimeDecisionReason::MissingCamouflageProfile,
+            );
+        }
+        OverlayRouteDecision::DirectAllowed | OverlayRouteDecision::RelayRequired => {}
+    }
+
+    let direct_endpoint_candidates: Vec<PeerId> = route_set
+        .hops
+        .iter()
+        .filter(|hop| matches!(hop.transport, OverlayTransportProfile::DirectNovoRudp))
+        .map(|hop| hop.peer_id.clone())
+        .collect();
+    let relay_candidates: Vec<PeerId> = route_set
+        .hops
+        .iter()
+        .filter(|hop| {
+            matches!(
+                hop.transport,
+                OverlayTransportProfile::RelayNovoRudp
+                    | OverlayTransportProfile::Libp2pCircuitRelay
+                    | OverlayTransportProfile::WebRtcRelay
+            )
+        })
+        .map(|hop| hop.peer_id.clone())
+        .collect();
+    let usable_direct: Vec<PeerId> = direct_endpoint_candidates
+        .iter()
+        .filter(|peer_id| health.hop_is_usable(peer_id))
+        .cloned()
+        .collect();
+    let usable_relays: Vec<PeerId> = relay_candidates
+        .iter()
+        .filter(|peer_id| health.hop_is_usable(peer_id))
+        .cloned()
+        .collect();
+    let multi_hop_candidates = if usable_relays.len() > 1 {
+        vec![usable_relays.clone()]
+    } else {
+        Vec::new()
+    };
+
+    if !usable_direct.is_empty() {
+        return OverlayRuntimeDecision {
+            target_peer_id,
+            selected_path: OverlayRuntimeSelectedPath::DirectNovoRudp,
+            route_set: Some(route_set),
+            direct_endpoint_candidates,
+            relay_candidates,
+            multi_hop_candidates,
+            reachability_class: OverlayRuntimeReachabilityClass::Direct,
+            reason: OverlayRuntimeDecisionReason::DirectAllowed,
+        };
+    }
+    if usable_relays.len() > 1 {
+        return OverlayRuntimeDecision {
+            target_peer_id,
+            selected_path: OverlayRuntimeSelectedPath::MultiHopRelay,
+            route_set: Some(route_set),
+            direct_endpoint_candidates,
+            relay_candidates,
+            multi_hop_candidates,
+            reachability_class: OverlayRuntimeReachabilityClass::RelayOnly,
+            reason: OverlayRuntimeDecisionReason::MultiHopRelayRequired,
+        };
+    }
+    if usable_relays.len() == 1 {
+        return OverlayRuntimeDecision {
+            target_peer_id,
+            selected_path: OverlayRuntimeSelectedPath::RelayNovoRudp,
+            route_set: Some(route_set),
+            direct_endpoint_candidates,
+            relay_candidates,
+            multi_hop_candidates,
+            reachability_class: OverlayRuntimeReachabilityClass::RelayOnly,
+            reason: OverlayRuntimeDecisionReason::DirectCoolingDown,
+        };
+    }
+
+    let direct_unusable = direct_endpoint_candidates
+        .iter()
+        .any(|peer_id| !health.hop_is_usable(peer_id));
+    let relay_unusable = relay_candidates
+        .iter()
+        .any(|peer_id| !health.hop_is_usable(peer_id));
+    let reason = match (direct_unusable, relay_unusable) {
+        (true, true) => OverlayRuntimeDecisionReason::RouteHealthExhausted,
+        (true, false) => OverlayRuntimeDecisionReason::DirectCoolingDown,
+        (false, true) => OverlayRuntimeDecisionReason::RelayCoolingDown,
+        (false, false) => OverlayRuntimeDecisionReason::RouteHealthExhausted,
+    };
+    queue_decision(target_peer_id, reason)
+}
+
 fn queue_decision(
     target_peer_id: PeerId,
     reason: OverlayRuntimeDecisionReason,
@@ -174,7 +376,8 @@ fn reason_from_resolve_error(err: ControlPlaneResolveError) -> OverlayRuntimeDec
 #[cfg(test)]
 mod tests {
     use super::{
-        decide_overlay_runtime_route_v0, OverlayRuntimeDecisionReason,
+        decide_overlay_runtime_route_v0, decide_overlay_runtime_route_with_health_v0,
+        OverlayHopHealth, OverlayRouteHealthSnapshot, OverlayRuntimeDecisionReason,
         OverlayRuntimeReachabilityClass, OverlayRuntimeSelectedPath,
     };
     use crate::control_plane::{
@@ -198,6 +401,30 @@ mod tests {
             },
             100,
         );
+    }
+
+    fn mixed_direct_relay_route(peer_id: PeerId) -> RouteSet {
+        RouteSet {
+            target_peer_id: peer_id.clone(),
+            hops: vec![
+                OverlayHop {
+                    peer_id,
+                    transport: OverlayTransportProfile::DirectNovoRudp,
+                    route_token: None,
+                },
+                OverlayHop {
+                    peer_id: PeerId::new("peer-relay-a"),
+                    transport: OverlayTransportProfile::Libp2pCircuitRelay,
+                    route_token: None,
+                },
+                OverlayHop {
+                    peer_id: PeerId::new("peer-relay-b"),
+                    transport: OverlayTransportProfile::RelayNovoRudp,
+                    route_token: None,
+                },
+            ],
+            content_address_hint: Some("cid-route".into()),
+        }
     }
 
     #[test]
@@ -303,5 +530,98 @@ mod tests {
             OverlayRuntimeReachabilityClass::Unknown
         );
         assert_eq!(decision.reason, OverlayRuntimeDecisionReason::PeerUnknown);
+    }
+
+    #[test]
+    fn health_aware_route_prefers_healthy_direct_in_mixed_route_set() {
+        let mut registry = registry();
+        let peer_id = PeerId::new("peer-target");
+        register_native_peer(&mut registry, &peer_id);
+        registry.register_route_set(mixed_direct_relay_route(peer_id.clone()));
+
+        let health = OverlayRouteHealthSnapshot::new(1_000, Vec::new());
+        let decision = decide_overlay_runtime_route_with_health_v0(&registry, &peer_id, &health);
+
+        assert_eq!(
+            decision.selected_path,
+            OverlayRuntimeSelectedPath::DirectNovoRudp
+        );
+        assert_eq!(decision.reason, OverlayRuntimeDecisionReason::DirectAllowed);
+    }
+
+    #[test]
+    fn health_aware_route_falls_back_to_multihop_when_direct_cools_down() {
+        let mut registry = registry();
+        let peer_id = PeerId::new("peer-target");
+        register_native_peer(&mut registry, &peer_id);
+        registry.register_route_set(mixed_direct_relay_route(peer_id.clone()));
+
+        let health = OverlayRouteHealthSnapshot::new(
+            1_000,
+            vec![OverlayHopHealth::cooling_down(peer_id.clone(), 900, 2_000)],
+        );
+        let decision = decide_overlay_runtime_route_with_health_v0(&registry, &peer_id, &health);
+
+        assert_eq!(
+            decision.selected_path,
+            OverlayRuntimeSelectedPath::MultiHopRelay
+        );
+        assert_eq!(
+            decision.reason,
+            OverlayRuntimeDecisionReason::MultiHopRelayRequired
+        );
+    }
+
+    #[test]
+    fn health_aware_route_falls_back_to_single_relay_when_one_relay_cools_down() {
+        let mut registry = registry();
+        let peer_id = PeerId::new("peer-target");
+        register_native_peer(&mut registry, &peer_id);
+        registry.register_route_set(mixed_direct_relay_route(peer_id.clone()));
+
+        let health = OverlayRouteHealthSnapshot::new(
+            1_000,
+            vec![
+                OverlayHopHealth::cooling_down(peer_id.clone(), 900, 2_000),
+                OverlayHopHealth::cooling_down(PeerId::new("peer-relay-a"), 900, 2_000),
+            ],
+        );
+        let decision = decide_overlay_runtime_route_with_health_v0(&registry, &peer_id, &health);
+
+        assert_eq!(
+            decision.selected_path,
+            OverlayRuntimeSelectedPath::RelayNovoRudp
+        );
+        assert_eq!(
+            decision.reason,
+            OverlayRuntimeDecisionReason::DirectCoolingDown
+        );
+    }
+
+    #[test]
+    fn health_aware_route_queues_when_all_hops_cool_down() {
+        let mut registry = registry();
+        let peer_id = PeerId::new("peer-target");
+        register_native_peer(&mut registry, &peer_id);
+        registry.register_route_set(mixed_direct_relay_route(peer_id.clone()));
+
+        let health = OverlayRouteHealthSnapshot::new(
+            1_000,
+            vec![
+                OverlayHopHealth::cooling_down(peer_id.clone(), 900, 2_000),
+                OverlayHopHealth::cooling_down(PeerId::new("peer-relay-a"), 900, 2_000),
+                OverlayHopHealth::cooling_down(PeerId::new("peer-relay-b"), 900, 2_000),
+            ],
+        );
+        let decision = decide_overlay_runtime_route_with_health_v0(&registry, &peer_id, &health);
+
+        assert_eq!(
+            decision.selected_path,
+            OverlayRuntimeSelectedPath::QueueFallback
+        );
+        assert_eq!(
+            decision.reason,
+            OverlayRuntimeDecisionReason::RouteHealthExhausted
+        );
     }
 }

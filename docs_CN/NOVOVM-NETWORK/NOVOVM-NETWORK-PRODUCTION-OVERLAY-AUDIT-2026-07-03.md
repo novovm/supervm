@@ -1498,6 +1498,110 @@ This is still a local gate, not yet a full production relay daemon. Its value is
 that relay and multi-hop paths now prove repeated opaque frame forwarding
 instead of a one-shot packet.
 
+### Cut 14: Overlay Route Health / Cooldown Matrix v0
+
+Implemented in:
+
+```text
+crates/novovm-network/src/overlay_runtime.rs
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+This cut adds an optional health-aware runtime route decision layer.
+
+Default API remains unchanged:
+
+```text
+decide_overlay_runtime_route_v0
+```
+
+New optional API:
+
+```text
+decide_overlay_runtime_route_with_health_v0
+```
+
+New health model:
+
+```text
+OverlayRouteHealthSnapshot
+OverlayHopHealth
+OverlayRouteHealthState:
+  Healthy
+  Degraded
+  CoolingDown
+  Failed
+```
+
+The decision layer is still network-only. It does not know or inspect APFL,
+AOEM, opcode 114, ledger state, signatures, receipts, or transaction semantics.
+
+Gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=health-matrix
+```
+
+Observed result:
+
+```text
+accepted=true
+case_count=4
+
+health-direct:
+  selected=DirectNovoRudp
+  reason=DirectAllowed
+  delivered=true
+  queued=false
+  relay_hop_count=0
+
+health-direct-cooldown-multihop:
+  selected=MultiHopRelay
+  reason=MultiHopRelayRequired
+  delivered=true
+  queued=false
+  relay_hop_count=2
+
+health-single-relay-fallback:
+  selected=RelayNovoRudp
+  reason=DirectCoolingDown
+  delivered=true
+  queued=false
+  relay_hop_count=1
+
+health-queue-fallback:
+  selected=QueueFallback
+  reason=RouteHealthExhausted
+  delivered=false
+  queued=true
+```
+
+Validation:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+cargo test -q -p novovm-network overlay_runtime -- --test-threads=1
+
+NOVOVM_OVERLAY_GATE_MODE=health-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/health-matrix.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+apfl_interpreted=false
+aoem_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+
+This gives the overlay runtime a path to avoid recently failed or cooling-down
+hops before retrying business-level payloads. The fallback decision remains in
+the network layer.
+
 ## Product Readout
 
 Current product status:

@@ -6,7 +6,10 @@ use novovm_network::novorudp::NovoRudpTransportFrameKindV0;
 use novovm_network::overlay::{
     AntiCensorshipProfile, OverlayHop, OverlayTransportProfile, RouteSet,
 };
-use novovm_network::overlay_runtime::decide_overlay_runtime_route_v0;
+use novovm_network::overlay_runtime::{
+    decide_overlay_runtime_route_v0, decide_overlay_runtime_route_with_health_v0, OverlayHopHealth,
+    OverlayRouteHealthSnapshot, OverlayRuntimeDecision,
+};
 use novovm_network::reachability::{
     decide_reachability_probe_v0, FloatingPortMode, ReachabilityProbeDecision,
     ReachabilityProbeInput, ReachabilityProbeStatus,
@@ -31,6 +34,7 @@ fn main() -> Result<()> {
         "relay" => run_relay_gate(),
         "sender" => run_sender_gate(),
         "matrix" => run_matrix_gate(),
+        "health-matrix" => run_health_matrix_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -633,6 +637,158 @@ fn run_matrix_gate() -> Result<()> {
     }
 }
 
+fn run_health_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
+        .unwrap_or_else(|| "artifacts/network-overlay-gate/health-matrix.json".into());
+    let target_peer_id = PeerId::new("peer-target");
+    let local_peer_id = PeerId::new("peer-local");
+    let now_ms = env_u64("NOVOVM_OVERLAY_GATE_HEALTH_NOW_MS", 1_000);
+    let cooldown_until_ms = env_u64(
+        "NOVOVM_OVERLAY_GATE_HEALTH_COOLDOWN_UNTIL_MS",
+        now_ms + 60_000,
+    );
+    let cases = vec![
+        (
+            "health-direct",
+            OverlayRouteHealthSnapshot::new(now_ms, Vec::new()),
+        ),
+        (
+            "health-direct-cooldown-multihop",
+            OverlayRouteHealthSnapshot::new(
+                now_ms,
+                vec![OverlayHopHealth::cooling_down(
+                    target_peer_id.clone(),
+                    now_ms,
+                    cooldown_until_ms,
+                )],
+            ),
+        ),
+        (
+            "health-single-relay-fallback",
+            OverlayRouteHealthSnapshot::new(
+                now_ms,
+                vec![
+                    OverlayHopHealth::cooling_down(
+                        target_peer_id.clone(),
+                        now_ms,
+                        cooldown_until_ms,
+                    ),
+                    OverlayHopHealth::cooling_down(
+                        PeerId::new("peer-relay-a"),
+                        now_ms,
+                        cooldown_until_ms,
+                    ),
+                ],
+            ),
+        ),
+        (
+            "health-queue-fallback",
+            OverlayRouteHealthSnapshot::new(
+                now_ms,
+                vec![
+                    OverlayHopHealth::cooling_down(
+                        target_peer_id.clone(),
+                        now_ms,
+                        cooldown_until_ms,
+                    ),
+                    OverlayHopHealth::cooling_down(
+                        PeerId::new("peer-relay-a"),
+                        now_ms,
+                        cooldown_until_ms,
+                    ),
+                    OverlayHopHealth::cooling_down(
+                        PeerId::new("peer-relay-b"),
+                        now_ms,
+                        cooldown_until_ms,
+                    ),
+                ],
+            ),
+        ),
+    ];
+
+    let mut reports = Vec::new();
+    for (case_id, health) in cases {
+        let mut registry = ControlPlaneRegistry::new(
+            Libp2pControlPlaneConfig::production_minimum(local_peer_id.clone()),
+            AntiCensorshipProfile::default(),
+        );
+        registry.register_advertisement(
+            CapabilityAdvertisement {
+                peer_id: target_peer_id.clone(),
+                protocols: vec!["novorudp/0".into(), "native-pipeline/1".into()],
+                no_ip_identity_routing: true,
+            },
+            100,
+        );
+        registry.register_route_set(health_matrix_route_set(target_peer_id.clone()));
+        let decision =
+            decide_overlay_runtime_route_with_health_v0(&registry, &target_peer_id, &health);
+        reports.push(build_decision_loopback_report(
+            "network_overlay_gate_health_matrix_case_v0",
+            case_id,
+            "health-aware",
+            &decision,
+            Some(health),
+        )?);
+    }
+
+    let accepted = reports
+        .iter()
+        .all(|report| report["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "network_overlay_gate_health_matrix_v0",
+        "boundary": network_boundary_json(),
+        "case_count": reports.len(),
+        "cases": reports,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("network overlay health matrix gate failed")
+    }
+}
+
+fn build_decision_loopback_report(
+    scope: &str,
+    request_id: &str,
+    route_plan_source: &str,
+    decision: &OverlayRuntimeDecision,
+    health: Option<OverlayRouteHealthSnapshot>,
+) -> Result<serde_json::Value> {
+    let input = NovoRudpRelayUdpLoopbackInput {
+        request_id: request_id.to_string(),
+        path: novovm_network::relay::RelayUdpLoopbackPath::QueueFallback,
+        kind: NovoRudpTransportFrameKindV0::Data,
+        session_id: [17u8; 16],
+        stream_id: 1,
+        object_id: 2,
+        sequence: 3,
+        ack_epoch: 4,
+        payload: b"novovm-overlay-health-matrix-opaque-frame".to_vec(),
+    };
+    let smoke = run_novorudp_overlay_relay_udp_loopback_smoke_v0(decision, input)
+        .map_err(|error| anyhow::anyhow!("run health matrix loopback smoke: {error}"))?;
+    let accepted = match decision.selected_path {
+        novovm_network::overlay_runtime::OverlayRuntimeSelectedPath::QueueFallback => {
+            smoke.queued && !smoke.delivered
+        }
+        _ => smoke.delivered && smoke.frame_decode_ok && smoke.payload_match,
+    };
+    Ok(json!({
+        "accepted": accepted,
+        "scope": scope,
+        "boundary": network_boundary_json(),
+        "request_id": request_id,
+        "route_plan_source": route_plan_source,
+        "health_snapshot": health,
+        "overlay_decision": decision,
+        "loopback_report": smoke,
+    }))
+}
+
 fn route_set_for(route: &str, target_peer_id: PeerId) -> Result<RouteSet> {
     match route {
         "direct" => Ok(RouteSet::direct(target_peer_id)),
@@ -662,6 +818,30 @@ fn route_set_for(route: &str, target_peer_id: PeerId) -> Result<RouteSet> {
             content_address_hint: Some("cid-overlay-gate".into()),
         }),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_ROUTE: {other}"),
+    }
+}
+
+fn health_matrix_route_set(target_peer_id: PeerId) -> RouteSet {
+    RouteSet {
+        target_peer_id: target_peer_id.clone(),
+        hops: vec![
+            OverlayHop {
+                peer_id: target_peer_id,
+                transport: OverlayTransportProfile::DirectNovoRudp,
+                route_token: None,
+            },
+            OverlayHop {
+                peer_id: PeerId::new("peer-relay-a"),
+                transport: OverlayTransportProfile::Libp2pCircuitRelay,
+                route_token: None,
+            },
+            OverlayHop {
+                peer_id: PeerId::new("peer-relay-b"),
+                transport: OverlayTransportProfile::RelayNovoRudp,
+                route_token: None,
+            },
+        ],
+        content_address_hint: Some("cid-overlay-health-matrix".into()),
     }
 }
 
