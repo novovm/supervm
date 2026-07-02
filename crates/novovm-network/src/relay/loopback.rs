@@ -4,6 +4,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::novorudp::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0};
+use crate::overlay_runtime::{OverlayRuntimeDecision, OverlayRuntimeSelectedPath};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RelayUdpLoopbackPath {
@@ -233,6 +234,25 @@ pub fn run_novorudp_relay_udp_loopback_smoke_v0(
     }
 }
 
+pub fn relay_udp_loopback_path_from_overlay_decision_v0(
+    decision: &OverlayRuntimeDecision,
+) -> RelayUdpLoopbackPath {
+    match decision.selected_path {
+        OverlayRuntimeSelectedPath::DirectNovoRudp => RelayUdpLoopbackPath::Direct,
+        OverlayRuntimeSelectedPath::RelayNovoRudp => RelayUdpLoopbackPath::Relay,
+        OverlayRuntimeSelectedPath::MultiHopRelay => RelayUdpLoopbackPath::MultiHop,
+        OverlayRuntimeSelectedPath::QueueFallback => RelayUdpLoopbackPath::QueueFallback,
+    }
+}
+
+pub fn run_novorudp_overlay_relay_udp_loopback_smoke_v0(
+    decision: &OverlayRuntimeDecision,
+    mut input: NovoRudpRelayUdpLoopbackInput,
+) -> Result<NovoRudpRelayUdpLoopbackReport, String> {
+    input.path = relay_udp_loopback_path_from_overlay_decision_v0(decision);
+    run_novorudp_relay_udp_loopback_smoke_v0(input)
+}
+
 struct RelayThreadHandle {
     relay_id: String,
     bind_addr: String,
@@ -361,10 +381,34 @@ fn spawn_loopback_relay_once(relay_id: &str) -> Result<(SocketAddr, RelayThreadH
 #[cfg(test)]
 mod tests {
     use super::{
-        run_novorudp_relay_udp_loopback_smoke_v0, NovoRudpRelayUdpLoopbackInput,
-        RelayUdpLoopbackPath,
+        relay_udp_loopback_path_from_overlay_decision_v0,
+        run_novorudp_overlay_relay_udp_loopback_smoke_v0, run_novorudp_relay_udp_loopback_smoke_v0,
+        NovoRudpRelayUdpLoopbackInput, RelayUdpLoopbackPath,
+    };
+    use crate::control_plane::{
+        CapabilityAdvertisement, ControlPlaneRegistry, Libp2pControlPlaneConfig, PeerId,
     };
     use crate::novorudp::NovoRudpTransportFrameKindV0;
+    use crate::overlay::{AntiCensorshipProfile, OverlayHop, OverlayTransportProfile, RouteSet};
+    use crate::overlay_runtime::decide_overlay_runtime_route_v0;
+
+    fn registry() -> ControlPlaneRegistry {
+        ControlPlaneRegistry::new(
+            Libp2pControlPlaneConfig::production_minimum(PeerId::new("peer-local")),
+            AntiCensorshipProfile::default(),
+        )
+    }
+
+    fn register_native_peer(registry: &mut ControlPlaneRegistry, peer_id: &PeerId) {
+        registry.register_advertisement(
+            CapabilityAdvertisement {
+                peer_id: peer_id.clone(),
+                protocols: vec!["novorudp/0".into(), "native-pipeline/1".into()],
+                no_ip_identity_routing: true,
+            },
+            100,
+        );
+    }
 
     fn input(path: RelayUdpLoopbackPath) -> NovoRudpRelayUdpLoopbackInput {
         NovoRudpRelayUdpLoopbackInput {
@@ -442,6 +486,119 @@ mod tests {
         assert_eq!(report.relay_hop_count, 0);
         assert!(!report.frame_decode_ok);
         assert_eq!(report.queued_payload_bytes, report.encoded_frame_bytes);
+        assert!(report.queued_payload_preserved);
+    }
+
+    #[test]
+    fn overlay_decision_drives_direct_udp_loopback_path() {
+        let mut registry = registry();
+        let peer_id = PeerId::new("peer-target");
+        register_native_peer(&mut registry, &peer_id);
+        registry.register_route_set(RouteSet::direct(peer_id.clone()));
+        let decision = decide_overlay_runtime_route_v0(&registry, &peer_id);
+
+        assert_eq!(
+            relay_udp_loopback_path_from_overlay_decision_v0(&decision),
+            RelayUdpLoopbackPath::Direct
+        );
+        let report = run_novorudp_overlay_relay_udp_loopback_smoke_v0(
+            &decision,
+            input(RelayUdpLoopbackPath::QueueFallback),
+        )
+        .expect("overlay direct loopback smoke");
+        assert_eq!(report.path, RelayUdpLoopbackPath::Direct);
+        assert!(report.delivered);
+        assert!(report.frame_decode_ok);
+        assert!(report.payload_match);
+    }
+
+    #[test]
+    fn overlay_decision_drives_relay_udp_loopback_path() {
+        let mut registry = registry();
+        let peer_id = PeerId::new("peer-target");
+        register_native_peer(&mut registry, &peer_id);
+        registry.register_route_set(RouteSet {
+            target_peer_id: peer_id.clone(),
+            hops: vec![OverlayHop {
+                peer_id: PeerId::new("peer-relay"),
+                transport: OverlayTransportProfile::RelayNovoRudp,
+                route_token: None,
+            }],
+            content_address_hint: None,
+        });
+        let decision = decide_overlay_runtime_route_v0(&registry, &peer_id);
+
+        assert_eq!(
+            relay_udp_loopback_path_from_overlay_decision_v0(&decision),
+            RelayUdpLoopbackPath::Relay
+        );
+        let report = run_novorudp_overlay_relay_udp_loopback_smoke_v0(
+            &decision,
+            input(RelayUdpLoopbackPath::Direct),
+        )
+        .expect("overlay relay loopback smoke");
+        assert_eq!(report.path, RelayUdpLoopbackPath::Relay);
+        assert!(report.delivered);
+        assert_eq!(report.relay_hop_count, 1);
+        assert!(report.frame_decode_ok);
+    }
+
+    #[test]
+    fn overlay_decision_drives_multihop_udp_loopback_path() {
+        let mut registry = registry();
+        let peer_id = PeerId::new("peer-target");
+        register_native_peer(&mut registry, &peer_id);
+        registry.register_route_set(RouteSet {
+            target_peer_id: peer_id.clone(),
+            hops: vec![
+                OverlayHop {
+                    peer_id: PeerId::new("peer-relay-a"),
+                    transport: OverlayTransportProfile::Libp2pCircuitRelay,
+                    route_token: None,
+                },
+                OverlayHop {
+                    peer_id: PeerId::new("peer-relay-b"),
+                    transport: OverlayTransportProfile::RelayNovoRudp,
+                    route_token: None,
+                },
+            ],
+            content_address_hint: Some("cid-route".into()),
+        });
+        let decision = decide_overlay_runtime_route_v0(&registry, &peer_id);
+
+        assert_eq!(
+            relay_udp_loopback_path_from_overlay_decision_v0(&decision),
+            RelayUdpLoopbackPath::MultiHop
+        );
+        let report = run_novorudp_overlay_relay_udp_loopback_smoke_v0(
+            &decision,
+            input(RelayUdpLoopbackPath::Direct),
+        )
+        .expect("overlay multi-hop loopback smoke");
+        assert_eq!(report.path, RelayUdpLoopbackPath::MultiHop);
+        assert!(report.delivered);
+        assert_eq!(report.relay_hop_count, 2);
+        assert!(report.frame_decode_ok);
+    }
+
+    #[test]
+    fn overlay_decision_drives_queue_udp_loopback_path() {
+        let registry = registry();
+        let peer_id = PeerId::new("peer-missing");
+        let decision = decide_overlay_runtime_route_v0(&registry, &peer_id);
+
+        assert_eq!(
+            relay_udp_loopback_path_from_overlay_decision_v0(&decision),
+            RelayUdpLoopbackPath::QueueFallback
+        );
+        let report = run_novorudp_overlay_relay_udp_loopback_smoke_v0(
+            &decision,
+            input(RelayUdpLoopbackPath::Direct),
+        )
+        .expect("overlay queue loopback smoke");
+        assert_eq!(report.path, RelayUdpLoopbackPath::QueueFallback);
+        assert!(!report.delivered);
+        assert!(report.queued);
         assert!(report.queued_payload_preserved);
     }
 }

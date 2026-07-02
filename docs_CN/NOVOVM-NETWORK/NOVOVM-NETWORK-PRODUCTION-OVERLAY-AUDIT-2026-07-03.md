@@ -729,6 +729,78 @@ cargo test -q -p novovm-network reachability -- --test-threads=1
 cargo check -q -p novovm-network
 ```
 
+### Cut 6: Overlay Decision -> UDP Loopback Runtime Gate v0
+
+Implemented in:
+
+```text
+crates/novovm-network/src/relay/loopback.rs
+```
+
+This cut connects the identity/route decision surface to the UDP loopback
+runtime gate. The runtime path no longer has to be selected only by a manual
+test parameter; it can be derived from `OverlayRuntimeDecision`.
+
+Mapping:
+
+```text
+OverlayRuntimeSelectedPath::DirectNovoRudp
+  -> RelayUdpLoopbackPath::Direct
+
+OverlayRuntimeSelectedPath::RelayNovoRudp
+  -> RelayUdpLoopbackPath::Relay
+
+OverlayRuntimeSelectedPath::MultiHopRelay
+  -> RelayUdpLoopbackPath::MultiHop
+
+OverlayRuntimeSelectedPath::QueueFallback
+  -> RelayUdpLoopbackPath::QueueFallback
+```
+
+Added surfaces:
+
+```text
+relay_udp_loopback_path_from_overlay_decision_v0(
+  OverlayRuntimeDecision
+) -> RelayUdpLoopbackPath
+
+run_novorudp_overlay_relay_udp_loopback_smoke_v0(
+  OverlayRuntimeDecision,
+  NovoRudpRelayUdpLoopbackInput
+) -> NovoRudpRelayUdpLoopbackReport
+```
+
+Acceptance covered:
+
+```text
+identity route with direct RouteSet
+  -> direct UDP loopback delivery
+
+identity route with one relay hop
+  -> relay UDP loopback delivery
+
+identity route with two relay/circuit hops
+  -> multi-hop UDP loopback delivery
+
+missing identity route
+  -> queue fallback without socket delivery
+```
+
+Boundary:
+
+```text
+Overlay/control plane chooses the path.
+Relay runtime only moves NOVORUDP frame bytes.
+No APFL/AOEM/ledger execution is introduced.
+```
+
+Validation:
+
+```text
+cargo test -q -p novovm-network relay::loopback -- --test-threads=1
+cargo check -q -p novovm-network
+```
+
 ## Product Readout
 
 Current product status:
