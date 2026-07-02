@@ -582,6 +582,76 @@ cargo test -q -p novovm-network relay::data_plane -- --test-threads=1
 cargo check -q -p novovm-network
 ```
 
+### Cut 4: NOVORUDP Relay Data-Plane Smoke v0
+
+Implemented in:
+
+```text
+crates/novovm-network/src/relay/data_plane.rs
+```
+
+This cut proves that the relay data-plane model carries actual
+`NovoRudpTransportFrameV0` encoded bytes, not just arbitrary test strings.
+
+Boundary:
+
+```text
+Network owns network communication only.
+Relay forwards opaque NOVORUDP frame bytes.
+Relay does not parse APFL.
+Relay does not call AOEM.
+Relay does not inspect ledger, signature, hash, or NativeTransfer semantics.
+No NOVORUDP frame format change.
+No ACK/repair semantic change.
+```
+
+Added smoke surface:
+
+```text
+run_novorudp_relay_data_plane_smoke_v0(
+  RelayServer,
+  OverlayRuntimeDecision,
+  NovoRudpRelaySmokeInput
+) -> NovoRudpRelaySmokeReport
+```
+
+The smoke builds a real `NovoRudpTransportFrameV0`, encodes it, forwards the
+encoded bytes through the selected overlay path, and decodes only the delivered
+frame bytes to verify transport preservation.
+
+Covered paths:
+
+```text
+direct_novorudp:
+  delivered=true
+  visited_hops=[]
+  decoded frame kind/sequence/payload match
+
+relay_novorudp:
+  delivered=true
+  visited_hops=[relay]
+  decoded frame kind/sequence/payload match
+
+multi_hop_relay:
+  delivered=true
+  visited_hops=[relay_a, relay_b]
+  decoded frame kind/sequence/payload match
+
+queue_fallback:
+  delivered=false
+  queued=true
+  encoded NOVORUDP frame bytes preserved
+```
+
+Validation:
+
+```text
+cargo test -q -p novovm-network relay::data_plane -- --test-threads=1
+cargo test -q -p novovm-network overlay_runtime -- --test-threads=1
+cargo test -q -p novovm-network reachability -- --test-threads=1
+cargo check -q -p novovm-network
+```
+
 ## Product Readout
 
 Current product status:
