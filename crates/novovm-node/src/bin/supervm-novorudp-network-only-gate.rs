@@ -33,6 +33,7 @@ const APFL_NATIVE_TRANSFER_SIGNATURE_LEN_V0: usize = 32;
 const SEND_TO_WOULD_BLOCK_YIELD_RETRIES_V0: u64 = 8;
 const SEND_TO_WOULD_BLOCK_SLEEP_US_V0: u64 = 100;
 const SEND_TO_WOULD_BLOCK_MAX_RETRIES_V0: u64 = 10_000;
+const BACKPRESSURE_HEALTHY_RECOVERY_WINDOWS_V0: u64 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct NetworkOnlyAckV0 {
@@ -164,6 +165,123 @@ struct SenderLaneStatsV0 {
     send_fail_count: u64,
     max_retry_exceeded_count: u64,
     backoff_elapsed_us: u64,
+}
+
+#[derive(Debug, Clone)]
+struct BackpressurePacingV0 {
+    enabled: bool,
+    base_chunk_size: u64,
+    base_gap_ms: u64,
+    current_chunk_size: u64,
+    current_gap_ms: u64,
+    min_chunk_size: u64,
+    max_gap_ms: u64,
+    effective_min_chunk_size: u64,
+    effective_max_gap_ms: u64,
+    window_count: u64,
+    trigger_count: u64,
+    would_block_trigger_count: u64,
+    repair_trigger_count: u64,
+    recovery_count: u64,
+    adjustment_count: u64,
+    total_extra_sleep_ms: u64,
+    last_would_block_count: u64,
+    last_repair_sent_count: u64,
+    healthy_window_count: u64,
+}
+
+impl BackpressurePacingV0 {
+    fn new(enabled: bool, base_chunk_size: u64, base_gap_ms: u64) -> Self {
+        let base_chunk_size = base_chunk_size.max(1);
+        let min_chunk_size = (base_chunk_size / 2).max(1);
+        let max_gap_ms = base_gap_ms.saturating_mul(2).max(base_gap_ms);
+        Self {
+            enabled,
+            base_chunk_size,
+            base_gap_ms,
+            current_chunk_size: base_chunk_size,
+            current_gap_ms: base_gap_ms,
+            min_chunk_size,
+            max_gap_ms,
+            effective_min_chunk_size: base_chunk_size,
+            effective_max_gap_ms: base_gap_ms,
+            window_count: 0,
+            trigger_count: 0,
+            would_block_trigger_count: 0,
+            repair_trigger_count: 0,
+            recovery_count: 0,
+            adjustment_count: 0,
+            total_extra_sleep_ms: 0,
+            last_would_block_count: 0,
+            last_repair_sent_count: 0,
+            healthy_window_count: 0,
+        }
+    }
+
+    const fn active_chunk_size(&self) -> u64 {
+        self.current_chunk_size
+    }
+
+    const fn active_gap_ms(&self) -> u64 {
+        self.current_gap_ms
+    }
+
+    fn note_sleep(&mut self) {
+        if self.enabled && self.current_gap_ms > self.base_gap_ms {
+            self.total_extra_sleep_ms = self
+                .total_extra_sleep_ms
+                .saturating_add(self.current_gap_ms - self.base_gap_ms);
+        }
+    }
+
+    fn observe_window(&mut self, stats: &SenderStats) {
+        if !self.enabled {
+            return;
+        }
+        self.window_count = self.window_count.saturating_add(1);
+        let new_would_block = stats
+            .data_send_would_block_count
+            .saturating_sub(self.last_would_block_count);
+        let new_repair = stats
+            .repair_sent
+            .saturating_sub(self.last_repair_sent_count);
+        self.last_would_block_count = stats.data_send_would_block_count;
+        self.last_repair_sent_count = stats.repair_sent;
+
+        if new_would_block > 0 || new_repair > 0 {
+            self.trigger_count = self.trigger_count.saturating_add(1);
+            if new_would_block > 0 {
+                self.would_block_trigger_count = self.would_block_trigger_count.saturating_add(1);
+            }
+            if new_repair > 0 {
+                self.repair_trigger_count = self.repair_trigger_count.saturating_add(1);
+            }
+            self.healthy_window_count = 0;
+            let next_chunk = self.min_chunk_size;
+            let next_gap = self.max_gap_ms;
+            if self.current_chunk_size != next_chunk || self.current_gap_ms != next_gap {
+                self.adjustment_count = self.adjustment_count.saturating_add(1);
+                self.current_chunk_size = next_chunk;
+                self.current_gap_ms = next_gap;
+                self.effective_min_chunk_size =
+                    self.effective_min_chunk_size.min(self.current_chunk_size);
+                self.effective_max_gap_ms = self.effective_max_gap_ms.max(self.current_gap_ms);
+            }
+            return;
+        }
+
+        self.healthy_window_count = self.healthy_window_count.saturating_add(1);
+        if self.healthy_window_count >= BACKPRESSURE_HEALTHY_RECOVERY_WINDOWS_V0
+            && (self.current_chunk_size != self.base_chunk_size
+                || self.current_gap_ms != self.base_gap_ms)
+        {
+            self.recovery_count = self.recovery_count.saturating_add(1);
+            self.adjustment_count = self.adjustment_count.saturating_add(1);
+            self.current_chunk_size = self.base_chunk_size;
+            self.current_gap_ms = self.base_gap_ms;
+            self.healthy_window_count = 0;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -657,6 +775,8 @@ fn run_sender() -> Result<()> {
     let data_pacing_chunk_size = env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_DATA_PACING_CHUNK_SIZE", 32);
     let data_pacing_chunk_gap_ms =
         env_u64("NOVOVM_NOVORUDP_NETWORK_ONLY_DATA_PACING_CHUNK_GAP_MS", 5);
+    let backpressure_pacing_requested =
+        env_bool("NOVOVM_NOVORUDP_NETWORK_ONLY_BACKPRESSURE_PACING");
     let timeout = Duration::from_millis(env_u64(
         "NOVOVM_NOVORUDP_NETWORK_ONLY_TIMEOUT_MS",
         DEFAULT_TIMEOUT_MS,
@@ -671,6 +791,11 @@ fn run_sender() -> Result<()> {
     let lanes = build_sender_lanes_v0(&bind_addr, sender_lane_count, sender_lane_base_port)?;
     let socket_buffers = lanes.first().map(|lane| lane.buffers).unwrap_or_default();
     let mut lane_stats = vec![SenderLaneStatsV0::default(); lanes.len()];
+    let mut backpressure_pacing = BackpressurePacingV0::new(
+        backpressure_pacing_requested && lanes.len() == 1,
+        data_pacing_chunk_size,
+        data_pacing_chunk_gap_ms,
+    );
 
     let start = Instant::now();
     let mut stats = SenderStats::default();
@@ -778,17 +903,21 @@ fn run_sender() -> Result<()> {
                 stats.duplicate_sent = stats.duplicate_sent.saturating_add(1);
             }
             stats.data_sent = stats.data_sent.saturating_add(1);
+            let active_pacing_chunk_size = backpressure_pacing.active_chunk_size();
+            let active_pacing_gap_ms = backpressure_pacing.active_gap_ms();
             if data_pacing_chunk_size > 0
                 && data_pacing_chunk_gap_ms > 0
-                && stats.data_sent % data_pacing_chunk_size == 0
+                && stats.data_sent % active_pacing_chunk_size == 0
                 && sequence + 1 < tx_count
             {
                 stats.data_pacing_sleep_count = stats.data_pacing_sleep_count.saturating_add(1);
                 let pacing_sleep_start = Instant::now();
-                thread::sleep(Duration::from_millis(data_pacing_chunk_gap_ms));
+                thread::sleep(Duration::from_millis(active_pacing_gap_ms));
+                backpressure_pacing.note_sleep();
                 stats.pacing_sleep_elapsed_ms = stats
                     .pacing_sleep_elapsed_ms
                     .saturating_add(pacing_sleep_start.elapsed().as_millis() as u64);
+                backpressure_pacing.observe_window(&stats);
             }
         }
     } else {
@@ -952,6 +1081,7 @@ fn run_sender() -> Result<()> {
                         stats.repair_sent = stats.repair_sent.saturating_add(1);
                     }
                 }
+                backpressure_pacing.observe_window(&stats);
             }
         }
     }
@@ -1032,6 +1162,21 @@ fn run_sender() -> Result<()> {
         "sender_transport_data_pacing_chunk_size": data_pacing_chunk_size,
         "sender_transport_data_pacing_chunk_gap_ms": data_pacing_chunk_gap_ms,
         "sender_transport_data_pacing_sleep_count": stats.data_pacing_sleep_count,
+        "sender_backpressure_pacing_requested": backpressure_pacing_requested,
+        "sender_backpressure_pacing_enabled": backpressure_pacing.enabled,
+        "sender_pacing_base_chunk_size": backpressure_pacing.base_chunk_size,
+        "sender_pacing_base_gap_ms": backpressure_pacing.base_gap_ms,
+        "sender_pacing_effective_min_chunk_size": backpressure_pacing.effective_min_chunk_size,
+        "sender_pacing_effective_max_gap_ms": backpressure_pacing.effective_max_gap_ms,
+        "sender_backpressure_last_effective_chunk_size": backpressure_pacing.current_chunk_size,
+        "sender_backpressure_last_effective_gap_ms": backpressure_pacing.current_gap_ms,
+        "sender_backpressure_window_count": backpressure_pacing.window_count,
+        "sender_backpressure_trigger_count": backpressure_pacing.trigger_count,
+        "sender_backpressure_would_block_trigger_count": backpressure_pacing.would_block_trigger_count,
+        "sender_backpressure_repair_trigger_count": backpressure_pacing.repair_trigger_count,
+        "sender_backpressure_recovery_count": backpressure_pacing.recovery_count,
+        "sender_pacing_adjustment_count": backpressure_pacing.adjustment_count,
+        "sender_backpressure_total_extra_sleep_ms": backpressure_pacing.total_extra_sleep_ms,
         "sender_socket_send_buffer_requested_bytes": socket_buffers.requested_send_buffer_bytes,
         "sender_socket_recv_buffer_requested_bytes": socket_buffers.requested_recv_buffer_bytes,
         "sender_socket_send_buffer_effective_bytes": socket_buffers.effective_send_buffer_bytes,
