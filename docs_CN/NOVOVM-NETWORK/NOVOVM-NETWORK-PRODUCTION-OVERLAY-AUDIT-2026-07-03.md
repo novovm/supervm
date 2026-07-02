@@ -1900,6 +1900,165 @@ the runner only verifies opaque NOVORUDP frame delivery/forwarding/queuing.
 It does not inspect APFL, call AOEM, or execute ledger semantics.
 ```
 
+## Cut 18: Configurable Cross-Machine Overlay Process Gate v0
+
+Commit scope:
+
+```text
+network overlay process gate only
+config-driven node addresses
+APFL unchanged
+AOEM unchanged
+ledger unchanged
+NOVORUDP frame format unchanged
+payload treated as opaque bytes
+```
+
+New files:
+
+```text
+configs/network-overlay/cross-machine-loopback.example.json
+scripts/novovm-overlay-cross-machine-process-gate.ps1
+```
+
+Purpose:
+
+```text
+Move the process runner from hardcoded localhost ports to config-driven node
+addresses. The same script can now be used in two modes:
+
+1. all-local:
+   Start sender / relay / receiver processes on one machine for CI and audit.
+
+2. cross-machine role mode:
+   Run one role per machine using the same config:
+   receiver, relay, sender, or queue.
+```
+
+Example config shape:
+
+```json
+{
+  "max_frames": 4,
+  "timeout_ms": 10000,
+  "sender": {
+    "node_id": "node-a",
+    "bind_addr": "127.0.0.1:0"
+  },
+  "receiver": {
+    "node_id": "node-b",
+    "bind_addr": "127.0.0.1:39520",
+    "public_addr": "127.0.0.1:39520"
+  },
+  "relays": [
+    {
+      "node_id": "relay-1",
+      "bind_addr": "127.0.0.1:39530",
+      "public_addr": "127.0.0.1:39530"
+    },
+    {
+      "node_id": "relay-2",
+      "bind_addr": "127.0.0.1:39540",
+      "public_addr": "127.0.0.1:39540"
+    }
+  ]
+}
+```
+
+Local validation command:
+
+```powershell
+powershell -ExecutionPolicy Bypass `
+  -File scripts\novovm-overlay-cross-machine-process-gate.ps1 `
+  -ConfigPath configs\network-overlay\cross-machine-loopback.example.json `
+  -Role all-local `
+  -Route all
+```
+
+Observed result:
+
+```text
+accepted=true
+scope=network_overlay_cross_machine_process_gate_v0
+case_count=4
+max_frames=4
+
+direct:
+  sender_sent=4
+  receiver_frames=4
+
+relay:
+  sender_sent=4
+  relay_frames=4
+  receiver_frames=4
+
+multihop:
+  sender_sent=4
+  relay_0_frames=4
+  relay_1_frames=4
+  receiver_frames=4
+
+queue:
+  sender_sent=0
+  queued=4
+```
+
+Cross-machine usage pattern:
+
+```powershell
+# On receiver node:
+powershell -ExecutionPolicy Bypass `
+  -File scripts\novovm-overlay-cross-machine-process-gate.ps1 `
+  -ConfigPath <shared-or-local-config.json> `
+  -Role receiver `
+  -Route direct
+
+# On relay node 0:
+powershell -ExecutionPolicy Bypass `
+  -File scripts\novovm-overlay-cross-machine-process-gate.ps1 `
+  -ConfigPath <shared-or-local-config.json> `
+  -Role relay `
+  -RelayIndex 0 `
+  -Route relay
+
+# On relay node 1 for multihop:
+powershell -ExecutionPolicy Bypass `
+  -File scripts\novovm-overlay-cross-machine-process-gate.ps1 `
+  -ConfigPath <shared-or-local-config.json> `
+  -Role relay `
+  -RelayIndex 1 `
+  -Route multihop
+
+# On sender node:
+powershell -ExecutionPolicy Bypass `
+  -File scripts\novovm-overlay-cross-machine-process-gate.ps1 `
+  -ConfigPath <shared-or-local-config.json> `
+  -Role sender `
+  -Route direct|relay|multihop
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+
+Significance:
+
+```text
+This cut creates the first config-driven bridge from local overlay gates to
+real A / Relay / B network smoke tests.
+
+It still does not claim production daemon readiness. It only proves that the
+overlay data plane can be launched by role with external node address config.
+The network layer remains isolated from APFL/AOEM/ledger semantics.
+```
+
 ## Product Readout
 
 Current product status:

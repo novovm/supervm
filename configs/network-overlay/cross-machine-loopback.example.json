@@ -1,0 +1,25 @@
+{
+  "max_frames": 4,
+  "timeout_ms": 10000,
+  "sender": {
+    "node_id": "node-a",
+    "bind_addr": "127.0.0.1:0"
+  },
+  "receiver": {
+    "node_id": "node-b",
+    "bind_addr": "127.0.0.1:39520",
+    "public_addr": "127.0.0.1:39520"
+  },
+  "relays": [
+    {
+      "node_id": "relay-1",
+      "bind_addr": "127.0.0.1:39530",
+      "public_addr": "127.0.0.1:39530"
+    },
+    {
+      "node_id": "relay-2",
+      "bind_addr": "127.0.0.1:39540",
+      "public_addr": "127.0.0.1:39540"
+    }
+  ]
+}
