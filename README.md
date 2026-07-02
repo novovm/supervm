@@ -8,6 +8,70 @@ Note: `SuperVM` is retained as an internal historical codename only.
 
 NOVOVM is a **decentralized infrastructure operator** for the Web3 era. It provides composable, metered, and verifiable execution and settlement capabilities. It is not “another public blockchain,” but a general-purpose execution infrastructure for a multi-chain, heterogeneous ecosystem.
 
+## Verified NativeTransfer milestone
+
+NOVOVM's first signed high-throughput production path is **native financial transfer**. It is designed for native asset movement, stablecoin-style settlement, exchange clearing, high-frequency small payments, and account balance flow. It is not a claim that arbitrary EVM contract calls run at the same rate.
+
+What has been verified:
+
+- `APFL NativeTransferBatchV0` compresses native transfer payloads to about **32 bytes / transaction**, compared with about **238-242 bytes / transaction** for the expanded legacy shape.
+- SUPERVM does **not** execute APFL transfer semantics locally. It hands compact APFL bytes to AOEM through `aoem_execute_ops_wire_v1`.
+- AOEM opcode `114` (`compute.apfl_native_transfer_v1`) owns the structural native transfer execution path.
+- Cross-machine correctness has been signed at `4800 x 128 = 614,400` native transfers with:
+  - `ledger_transactions_completed_count = 614400`
+  - `canonical_tx_hash_mismatch_count = 0`
+  - `signature_verify_error_count = 0`
+  - `final_missing = 0`
+
+How the path became fast:
+
+- APFL moves native transfer data as compact structured payloads instead of heavy per-transaction materialized objects.
+- AOEM structural bulk execution changed the route shape from `4800` AOEM route calls and `24000` state reads to **38 AOEM routes** and **190 state reads**.
+- Canonical transaction materialization was removed from the hot execution path: `canonical_materialization_count = 0`.
+- AOEM hot plans execute the structural path directly, and compact commit reduced hot-plan writes from **2,457,600** to **614,438** writes, about a **75% reduction**.
+
+Signed path:
+
+```text
+NOVORUDP
+  -> APFL compact native transfer bytes
+  -> SUPERVM bulk handoff
+  -> aoem_execute_ops_wire_v1
+  -> opcode 114 / compute.apfl_native_transfer_v1
+  -> AOEM structural hot plans
+  -> compact commit
+  -> AOEM state surfaces and OCCC evidence
+```
+
+Cross-machine tests on the available A/B network reached roughly **120k-150k native transfers per second**. Raw UDP and `iperf3` then showed that this test network itself was the limiting factor:
+
+| Measurement | Result |
+| --- | ---: |
+| Raw UDP, `4800 x 4280B` | about `5.18 MB/s`, zero loss |
+| Raw UDP, `17120 x 1200B` | about `3.63 MB/s`, zero loss |
+| `iperf3` TCP | about `28 Mbit/s` |
+| `iperf3` UDP, 1200B / 4280B | about `35 Mbit/s`, zero loss |
+
+Conclusion: on that test link, NOVORUDP/APFL/AOEM were already close to the network ceiling. The current cross-machine throughput wall was the A/B OS, NIC, Wi-Fi, routing, or UDP network path, not APFL compression, AOEM execution, compact commit, or receiver CPU.
+
+Theoretical payload budget at 32 bytes / native transfer:
+
+| Effective link budget | NativeTransfer payload budget |
+| ---: | ---: |
+| `35 Mbit/s` | about `136k tx/s` |
+| `100 Mbit/s` | about `390k tx/s` |
+| `1 Gbit/s` | about `3.9M tx/s` |
+| `2.5 Gbit/s` | about `9.7M tx/s` |
+| `10 Gbit/s` | about `39M tx/s` |
+
+These are payload-budget estimates, not full mainnet guarantees. Full financial-grade mainnet operation still requires long-duration multi-node validation, recovery and replay drills, malicious traffic tests, monitoring, operational runbooks, external security review, and governance/upgrade controls.
+
+Detailed signoffs:
+
+- [APFL NativeTransfer opcode 114 cross-machine signoff](docs/APFL_NATIVE_TRANSFER_OPCODE114_CROSS_MACHINE_SIGNOFF.md)
+- [APFL NativeTransfer structural bulk opcode 114 cross-machine signoff](docs/APFL_NATIVE_TRANSFER_STRUCTURAL_BULK_OPCODE114_CROSS_MACHINE_SIGNOFF.md)
+- [APFL NativeTransfer structural bulk compact commit cross-machine signoff](docs/APFL_NATIVE_TRANSFER_STRUCTURAL_BULK_COMPACT_COMMIT_CROSS_MACHINE_SIGNOFF.md)
+
 ## What it is / What it isn’t
 
 **NOVOVM is:**
