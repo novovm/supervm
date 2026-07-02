@@ -652,6 +652,83 @@ cargo test -q -p novovm-network reachability -- --test-threads=1
 cargo check -q -p novovm-network
 ```
 
+### Cut 5: NOVORUDP Relay UDP Loopback Runtime Gate v0
+
+Implemented in:
+
+```text
+crates/novovm-network/src/relay/loopback.rs
+crates/novovm-network/src/relay/mod.rs
+```
+
+This cut moves from pure in-memory forwarding to an actual local UDP runtime
+gate. It starts loopback UDP sockets, sends real `NovoRudpTransportFrameV0`
+encoded bytes, and verifies that the target receives decodable frame bytes.
+
+Boundary:
+
+```text
+Network communication only.
+No APFL payload interpretation.
+No AOEM call.
+No opcode 114 call.
+No ledger/hash/signature semantics.
+No NOVORUDP wire change.
+No ACK/repair semantic change.
+No production relay daemon claim yet.
+```
+
+Runtime smoke paths:
+
+```text
+direct:
+  sender UDP socket -> target UDP socket
+  target decodes NovoRudpTransportFrameV0
+
+relay:
+  sender UDP socket -> relay UDP socket -> target UDP socket
+  relay unwraps only relay envelope, forwards opaque NOVORUDP frame bytes
+
+multi-hop:
+  sender UDP socket -> relay-a UDP socket -> relay-b UDP socket -> target UDP socket
+  relays forward opaque NOVORUDP frame bytes through ordered hops
+
+queue_fallback:
+  no socket delivery
+  encoded NOVORUDP frame is preserved as queued payload
+```
+
+Report surface:
+
+```text
+NovoRudpRelayUdpLoopbackReport {
+  request_id
+  path
+  delivered
+  queued
+  encoded_frame_bytes
+  target_received_bytes
+  queued_payload_bytes
+  relay_hop_count
+  relay_hops
+  frame_decode_ok
+  decoded_kind
+  decoded_sequence
+  payload_match
+  queued_payload_preserved
+}
+```
+
+Validation:
+
+```text
+cargo test -q -p novovm-network relay::loopback -- --test-threads=1
+cargo test -q -p novovm-network relay::data_plane -- --test-threads=1
+cargo test -q -p novovm-network overlay_runtime -- --test-threads=1
+cargo test -q -p novovm-network reachability -- --test-threads=1
+cargo check -q -p novovm-network
+```
+
 ## Product Readout
 
 Current product status:
