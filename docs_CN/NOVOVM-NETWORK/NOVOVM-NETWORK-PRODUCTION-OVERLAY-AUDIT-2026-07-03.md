@@ -456,6 +456,87 @@ This cut turns the existing scattered route policy models into a single product
 decision point. After that, the relay data plane can be implemented against the
 same decision contract.
 
+## Implementation Progress
+
+### Cut 1: Overlay Runtime Decision v0
+
+Implemented in:
+
+```text
+crates/novovm-network/src/overlay_runtime.rs
+```
+
+This cut adds one product decision surface:
+
+```text
+decide_overlay_runtime_route_v0(
+  ControlPlaneRegistry,
+  target_peer_id
+) -> OverlayRuntimeDecision
+```
+
+It reports:
+
+```text
+selected_path = direct_novorudp | relay_novorudp | multi_hop_relay | queue_fallback
+route_set
+direct_endpoint_candidates
+relay_candidates
+multi_hop_candidates
+reachability_class
+reason
+```
+
+Validation:
+
+```text
+cargo test -q -p novovm-network overlay_runtime -- --test-threads=1
+cargo check -q -p novovm-network
+```
+
+### Cut 2: Reachability Probe + Floating Port v0
+
+Implemented in:
+
+```text
+crates/novovm-network/src/reachability.rs
+```
+
+This cut adds the pure runtime model that converts probe observations into L4
+reachability state:
+
+```text
+direct_probe_ack + public endpoint  -> Reachable
+direct_probe_ack + private endpoint -> LanOnly
+direct probe failed + relay exists  -> RelayOnly
+direct probe failed + no relay      -> Unreachable
+no probe evidence                   -> Unknown
+```
+
+It also detects floating-port operation:
+
+```text
+local bind port = 0
+or observed remote port != configured port
+```
+
+The model updates:
+
+```text
+L4LocalRoutingTable
+L4PeerRef.addr_hint
+L4PeerRef.reachability
+L4PeerRef.latency_ms
+L4PeerRef.last_seen_unix_ms
+```
+
+Validation:
+
+```text
+cargo test -q -p novovm-network reachability -- --test-threads=1
+cargo check -q -p novovm-network
+```
+
 ## Product Readout
 
 Current product status:
@@ -473,4 +554,3 @@ NOVOVM is past the "can it execute fast" question for NativeTransfer.
 The next product-grade problem is "can nodes find and reach each other under real networks,
 NAT, weak links, unstable ports, and blocking".
 ```
-

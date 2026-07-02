@@ -1,9 +1,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+
 pub type NodeId = String;
 pub type RegionId = String;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NodeTier {
     L1,
     L2,
@@ -11,7 +13,7 @@ pub enum NodeTier {
     L4,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum L4ParticipationLevel {
     ConsumerOnly,
     RoutingNode,
@@ -19,7 +21,7 @@ pub enum L4ParticipationLevel {
     NatAssistNode,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Reachability {
     Reachable,
     RelayOnly,
@@ -28,21 +30,21 @@ pub enum Reachability {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RelayHealth {
     Healthy,
     Degraded,
     Unavailable,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RelayCapacityClass {
     Small,
     Medium,
     Large,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RoutingSource {
     LocalObserved,
     PeerHinted,
@@ -50,7 +52,7 @@ pub enum RoutingSource {
     OperatorForced,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeRef {
     pub node_id: NodeId,
     pub tier: NodeTier,
@@ -59,14 +61,14 @@ pub struct NodeRef {
     pub source: RoutingSource,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EndpointHint {
     pub observed_addr: String,
     pub observed_unix_ms: u64,
     pub source: RoutingSource,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelayRef {
     pub node_id: NodeId,
     pub region: RegionId,
@@ -77,14 +79,14 @@ pub struct RelayRef {
     pub source: RoutingSource,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelayScoreView {
     pub relay_id: String,
     pub health: RelayHealth,
     pub score: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct L4PeerRef {
     pub node_id: NodeId,
     pub addr_hint: Option<String>,
