@@ -114,3 +114,7 @@ path = "src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs"
 [[bin]]
 name = "supervm-novorudp-network-only-gate"
 path = "src/bin/supervm-novorudp-network-only-gate.rs"
+
+[[bin]]
+name = "supervm-udp-raw-ceiling-bench"
+path = "src/bin/supervm-udp-raw-ceiling-bench.rs"
