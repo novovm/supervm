@@ -801,6 +801,100 @@ cargo test -q -p novovm-network relay::loopback -- --test-threads=1
 cargo check -q -p novovm-network
 ```
 
+### Cut 7: Network Overlay Gate CLI v0
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+crates/novovm-node/Cargo.toml
+```
+
+This cut exposes the overlay runtime gate as an executable report-producing
+binary. It builds a minimal identity/control-plane registry, derives
+`OverlayRuntimeDecision`, runs the UDP loopback relay gate, and writes a JSON
+report.
+
+Boundary:
+
+```text
+Network overlay verification only.
+No APFL decode.
+No AOEM call.
+No opcode 114.
+No ledger/hash/signature execution.
+No business payload interpretation.
+```
+
+Environment:
+
+```text
+NOVOVM_OVERLAY_GATE_ROUTE=direct|relay|multihop|queue
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/<route>.json
+NOVOVM_OVERLAY_GATE_REQUEST_ID=<optional>
+NOVOVM_OVERLAY_GATE_TARGET_PEER_ID=<optional>
+NOVOVM_OVERLAY_GATE_LOCAL_PEER_ID=<optional>
+```
+
+Validation commands:
+
+```text
+NOVOVM_OVERLAY_GATE_ROUTE=direct \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/direct.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_ROUTE=relay \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/relay.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_ROUTE=multihop \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/multihop.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_ROUTE=queue \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/queue.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Observed local gate result:
+
+```text
+direct:
+  accepted=true
+  selected_path=DirectNovoRudp
+  delivered=true
+  frame_decode_ok=true
+  payload_match=true
+  relay_hop_count=0
+
+relay:
+  accepted=true
+  selected_path=RelayNovoRudp
+  delivered=true
+  frame_decode_ok=true
+  payload_match=true
+  relay_hop_count=1
+
+multihop:
+  accepted=true
+  selected_path=MultiHopRelay
+  delivered=true
+  frame_decode_ok=true
+  payload_match=true
+  relay_hop_count=2
+
+queue:
+  accepted=true
+  selected_path=QueueFallback
+  delivered=false
+  queued=true
+  queued_payload_preserved=true
+```
+
+This is the first executable `direct -> relay -> multi-hop -> queue fallback`
+network-overlay gate. It is still loopback/local and not yet a production relay
+daemon, but it validates the route decision and NOVORUDP frame lifecycle.
+
 ## Product Readout
 
 Current product status:
