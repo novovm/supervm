@@ -1,8 +1,10 @@
 pub mod client;
+pub mod data_plane;
 pub mod frame;
 pub mod server;
 
 pub use client::*;
+pub use data_plane::*;
 pub use frame::*;
 pub use server::*;
 

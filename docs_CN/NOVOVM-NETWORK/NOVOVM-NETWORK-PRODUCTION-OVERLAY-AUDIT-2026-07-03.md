@@ -537,6 +537,51 @@ cargo test -q -p novovm-network reachability -- --test-threads=1
 cargo check -q -p novovm-network
 ```
 
+### Cut 3: Relay Data Plane v0
+
+Implemented in:
+
+```text
+crates/novovm-network/src/relay/data_plane.rs
+```
+
+This cut connects overlay runtime route decisions to an opaque NOVORUDP payload
+forwarding model.
+
+Boundary:
+
+```text
+No APFL changes.
+No AOEM changes.
+No NOVORUDP frame changes.
+Relay forwards opaque bytes only.
+Relay does not inspect native transfer payload semantics.
+Queue fallback preserves payload but does not deliver.
+```
+
+Supported paths:
+
+```text
+OverlayRuntimeSelectedPath::DirectNovoRudp
+  -> direct data-plane result, no relay hops
+
+OverlayRuntimeSelectedPath::RelayNovoRudp
+  -> MultiHopRelayFrame with one relay hop
+
+OverlayRuntimeSelectedPath::MultiHopRelay
+  -> MultiHopRelayFrame with ordered relay hop chain
+
+OverlayRuntimeSelectedPath::QueueFallback
+  -> queued=true, delivered=false
+```
+
+Validation:
+
+```text
+cargo test -q -p novovm-network relay::data_plane -- --test-threads=1
+cargo check -q -p novovm-network
+```
+
 ## Product Readout
 
 Current product status:
