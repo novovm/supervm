@@ -7,9 +7,10 @@ use novovm_network::overlay::{
     AntiCensorshipProfile, OverlayHop, OverlayTransportProfile, RouteSet,
 };
 use novovm_network::overlay_runtime::{
-    decide_overlay_runtime_route_v0, decide_overlay_runtime_route_with_health_v0,
-    overlay_route_health_from_observations_v0, OverlayHopHealth, OverlayRouteAttemptObservation,
-    OverlayRouteHealthSnapshot, OverlayRuntimeDecision,
+    decide_overlay_runtime_fallback_chain_v0, decide_overlay_runtime_route_v0,
+    decide_overlay_runtime_route_with_health_v0, overlay_route_health_from_observations_v0,
+    OverlayHopHealth, OverlayRouteAttemptObservation, OverlayRouteHealthSnapshot,
+    OverlayRuntimeDecision,
 };
 use novovm_network::reachability::{
     decide_reachability_probe_v0, FloatingPortMode, ReachabilityProbeDecision,
@@ -37,6 +38,7 @@ fn main() -> Result<()> {
         "matrix" => run_matrix_gate(),
         "health-matrix" => run_health_matrix_gate(),
         "observation-matrix" => run_observation_matrix_gate(),
+        "fallback-chain" => run_fallback_chain_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -874,6 +876,162 @@ fn run_observation_matrix_gate() -> Result<()> {
     }
 }
 
+fn run_fallback_chain_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
+        .unwrap_or_else(|| "artifacts/network-overlay-gate/fallback-chain.json".into());
+    let target_peer_id = PeerId::new("peer-target");
+    let now_ms = env_u64("NOVOVM_OVERLAY_GATE_OBSERVATION_NOW_MS", 1_000);
+    let cooldown_ms = env_u64("NOVOVM_OVERLAY_GATE_OBSERVATION_COOLDOWN_MS", 60_000);
+    let routes = fallback_chain_route_sets(target_peer_id.clone());
+    let profile = AntiCensorshipProfile::default();
+    let empty_health = OverlayRouteHealthSnapshot::new(now_ms, Vec::new());
+    let direct =
+        decide_overlay_runtime_fallback_chain_v0(&target_peer_id, &routes, &profile, &empty_health);
+    let direct_failed_health =
+        overlay_route_health_from_observations_v0(&[OverlayRouteAttemptObservation {
+            decision: direct.clone(),
+            delivered: false,
+            queued: false,
+            observed_unix_ms: now_ms,
+            cooldown_ms,
+        }]);
+    let relay = decide_overlay_runtime_fallback_chain_v0(
+        &target_peer_id,
+        &routes,
+        &profile,
+        &direct_failed_health,
+    );
+    let direct_and_relay_failed_health = overlay_route_health_from_observations_v0(&[
+        OverlayRouteAttemptObservation {
+            decision: direct.clone(),
+            delivered: false,
+            queued: false,
+            observed_unix_ms: now_ms,
+            cooldown_ms,
+        },
+        OverlayRouteAttemptObservation {
+            decision: relay.clone(),
+            delivered: false,
+            queued: false,
+            observed_unix_ms: now_ms,
+            cooldown_ms,
+        },
+    ]);
+    let multihop = decide_overlay_runtime_fallback_chain_v0(
+        &target_peer_id,
+        &routes,
+        &profile,
+        &direct_and_relay_failed_health,
+    );
+    let all_failed_health = overlay_route_health_from_observations_v0(&[
+        OverlayRouteAttemptObservation {
+            decision: direct.clone(),
+            delivered: false,
+            queued: false,
+            observed_unix_ms: now_ms,
+            cooldown_ms,
+        },
+        OverlayRouteAttemptObservation {
+            decision: relay.clone(),
+            delivered: false,
+            queued: false,
+            observed_unix_ms: now_ms,
+            cooldown_ms,
+        },
+        OverlayRouteAttemptObservation {
+            decision: multihop.clone(),
+            delivered: false,
+            queued: false,
+            observed_unix_ms: now_ms,
+            cooldown_ms,
+        },
+    ]);
+    let cases = vec![
+        ("fallback-direct", empty_health, Vec::new()),
+        (
+            "fallback-relay-after-direct-failure",
+            direct_failed_health,
+            vec![json!({
+                "selected_path": direct.selected_path,
+                "delivered": false,
+                "queued": false,
+            })],
+        ),
+        (
+            "fallback-multihop-after-direct-relay-failure",
+            direct_and_relay_failed_health,
+            vec![
+                json!({
+                    "selected_path": direct.selected_path,
+                    "delivered": false,
+                    "queued": false,
+                }),
+                json!({
+                    "selected_path": relay.selected_path,
+                    "delivered": false,
+                    "queued": false,
+                }),
+            ],
+        ),
+        (
+            "fallback-queue-after-all-failure",
+            all_failed_health,
+            vec![
+                json!({
+                    "selected_path": direct.selected_path,
+                    "delivered": false,
+                    "queued": false,
+                }),
+                json!({
+                    "selected_path": relay.selected_path,
+                    "delivered": false,
+                    "queued": false,
+                }),
+                json!({
+                    "selected_path": multihop.selected_path,
+                    "delivered": false,
+                    "queued": false,
+                }),
+            ],
+        ),
+    ];
+
+    let mut reports = Vec::new();
+    for (case_id, health, observations) in cases {
+        let decision =
+            decide_overlay_runtime_fallback_chain_v0(&target_peer_id, &routes, &profile, &health);
+        let mut report = build_decision_loopback_report(
+            "network_overlay_gate_fallback_chain_case_v0",
+            case_id,
+            "fallback-chain",
+            &decision,
+            Some(health),
+        )?;
+        if let Some(value) = report.as_object_mut() {
+            value.insert("observations".into(), json!(observations));
+        }
+        reports.push(report);
+    }
+
+    let accepted = reports
+        .iter()
+        .all(|report| report["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "network_overlay_gate_fallback_chain_v0",
+        "boundary": network_boundary_json(),
+        "case_count": reports.len(),
+        "cases": reports,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("network overlay fallback chain gate failed")
+    }
+}
+
 fn build_decision_loopback_report(
     scope: &str,
     request_id: &str,
@@ -983,6 +1141,37 @@ fn health_gate_registry(local_peer_id: PeerId, target_peer_id: PeerId) -> Contro
     );
     registry.register_route_set(health_matrix_route_set(target_peer_id));
     registry
+}
+
+fn fallback_chain_route_sets(target_peer_id: PeerId) -> Vec<RouteSet> {
+    vec![
+        RouteSet::direct(target_peer_id.clone()),
+        RouteSet {
+            target_peer_id: target_peer_id.clone(),
+            hops: vec![OverlayHop {
+                peer_id: PeerId::new("peer-relay-a"),
+                transport: OverlayTransportProfile::RelayNovoRudp,
+                route_token: None,
+            }],
+            content_address_hint: Some("cid-overlay-fallback-relay".into()),
+        },
+        RouteSet {
+            target_peer_id,
+            hops: vec![
+                OverlayHop {
+                    peer_id: PeerId::new("peer-relay-b"),
+                    transport: OverlayTransportProfile::Libp2pCircuitRelay,
+                    route_token: None,
+                },
+                OverlayHop {
+                    peer_id: PeerId::new("peer-relay-c"),
+                    transport: OverlayTransportProfile::RelayNovoRudp,
+                    route_token: None,
+                },
+            ],
+            content_address_hint: Some("cid-overlay-fallback-multihop".into()),
+        },
+    ]
 }
 
 #[derive(Debug, Clone)]

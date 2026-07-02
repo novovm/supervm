@@ -1705,6 +1705,109 @@ route attempt observation
   -> direct / relay / multi-hop / queue fallback
 ```
 
+### Cut 16: Direct -> Relay -> Multi-Hop -> Queue Fallback Chain v0
+
+Implemented in:
+
+```text
+crates/novovm-network/src/overlay_runtime.rs
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+This cut adds an ordered fallback-chain decision path for production overlay
+routing.
+
+New API:
+
+```text
+decide_overlay_runtime_fallback_chain_v0
+```
+
+Candidate order:
+
+```text
+1. direct NOVORUDP
+2. single relay NOVORUDP
+3. multi-hop relay
+4. queue fallback
+```
+
+The chain consumes the same `OverlayRouteHealthSnapshot` produced from runtime
+observations. It skips cooling-down hops and selects the next viable network
+path.
+
+Gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=fallback-chain
+```
+
+Observed result:
+
+```text
+accepted=true
+case_count=4
+
+fallback-direct:
+  selected=DirectNovoRudp
+  reason=DirectAllowed
+  delivered=true
+  queued=false
+  relay_hop_count=0
+  health_hops=0
+
+fallback-relay-after-direct-failure:
+  selected=RelayNovoRudp
+  reason=DirectCoolingDown
+  delivered=true
+  queued=false
+  relay_hop_count=1
+  health_hops=1
+
+fallback-multihop-after-direct-relay-failure:
+  selected=MultiHopRelay
+  reason=MultiHopRelayRequired
+  delivered=true
+  queued=false
+  relay_hop_count=2
+  health_hops=2
+
+fallback-queue-after-all-failure:
+  selected=QueueFallback
+  reason=RouteHealthExhausted
+  delivered=false
+  queued=true
+  health_hops=4
+```
+
+Validation:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+cargo test -q -p novovm-network overlay_runtime -- --test-threads=1
+
+NOVOVM_OVERLAY_GATE_MODE=fallback-chain \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/fallback-chain.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+apfl_interpreted=false
+aoem_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+
+This is the first executable local fallback-chain proof for:
+
+```text
+direct -> relay -> multi-hop -> queue
+```
+
 ## Product Readout
 
 Current product status:
