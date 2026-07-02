@@ -895,6 +895,126 @@ This is the first executable `direct -> relay -> multi-hop -> queue fallback`
 network-overlay gate. It is still loopback/local and not yet a production relay
 daemon, but it validates the route decision and NOVORUDP frame lifecycle.
 
+### Cut 8: Network Overlay Three-Process Runtime Gate v0
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+This cut extends the overlay gate from self-contained loopback mode into
+separate process roles:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=receiver
+NOVOVM_OVERLAY_GATE_MODE=relay
+NOVOVM_OVERLAY_GATE_MODE=sender
+```
+
+Boundary:
+
+```text
+Network communication only.
+Receiver decodes NOVORUDP frame bytes only.
+Relay decodes only the relay envelope and forwards opaque NOVORUDP frame bytes.
+Sender constructs one NOVORUDP frame or relay envelope.
+No APFL.
+No AOEM.
+No opcode 114.
+No ledger/hash/signature execution.
+No business payload semantics.
+```
+
+Mode behavior:
+
+```text
+receiver:
+  binds NOVOVM_OVERLAY_GATE_BIND_ADDR
+  receives one UDP datagram
+  decodes NovoRudpTransportFrameV0
+  writes receiver JSON report
+
+relay:
+  binds NOVOVM_OVERLAY_GATE_BIND_ADDR
+  receives one relay envelope
+  forwards to target_addr or next hop
+  writes relay JSON report
+
+sender:
+  route=direct
+    sends encoded NOVORUDP frame to target addr
+
+  route=relay
+    sends relay envelope to relay addr
+    relay forwards NOVORUDP frame to receiver
+
+  route=multihop
+    sends relay envelope to relay-a
+    relay-a forwards envelope to relay-b
+    relay-b forwards NOVORUDP frame to receiver
+
+  route=queue
+    does not send socket data
+    writes queued sender JSON report
+```
+
+Environment:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=receiver|relay|sender|loopback
+NOVOVM_OVERLAY_GATE_ROUTE=direct|relay|multihop|queue
+NOVOVM_OVERLAY_GATE_BIND_ADDR=127.0.0.1:<port>
+NOVOVM_OVERLAY_GATE_TARGET_ADDR=127.0.0.1:<receiver_port>
+NOVOVM_OVERLAY_GATE_RELAY_ADDR=127.0.0.1:<relay_a_port>
+NOVOVM_OVERLAY_GATE_NEXT_HOP_ADDR=127.0.0.1:<relay_b_port>
+NOVOVM_OVERLAY_GATE_REPORT_PATH=<json report path>
+```
+
+Observed local process-gate result:
+
+```text
+direct:
+  sender accepted=true
+  receiver accepted=true
+  receiver frame_decode_ok=true
+  receiver received_bytes=137
+
+relay:
+  sender accepted=true
+  relay accepted=true
+  receiver accepted=true
+  relay forwarded_bytes=137
+  receiver frame_decode_ok=true
+
+multihop:
+  sender accepted=true
+  relay-a accepted=true
+  relay-b accepted=true
+  receiver accepted=true
+  relay-a forwarded_to=127.0.0.1:40116
+  relay-b forwarded_to=127.0.0.1:40114
+  receiver frame_decode_ok=true
+
+queue:
+  sender accepted=true
+  queued=true
+  sent_bytes=0
+  selected_path=QueueFallback
+```
+
+Validation:
+
+```text
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+target/debug/supervm-network-overlay-gate.exe with receiver/relay/sender modes
+```
+
+This is the first runnable multi-process `direct -> relay -> multi-hop -> queue`
+fallback network path. It is still local-loopback, but it validates process
+boundaries and route fallback without involving business execution.
+
 ## Product Readout
 
 Current product status:
