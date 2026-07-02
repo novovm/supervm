@@ -1121,6 +1121,113 @@ cargo run -q -p novovm-node --bin supervm-network-overlay-gate
 This is the first executable gate where route selection can be driven by
 reachability evidence instead of a fixed route parameter.
 
+### Cut 10: Runtime Probe/Ack Auto Route Gate v0
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+This cut upgrades `route=auto` from simulated probe inputs to an optional real
+UDP probe/ack flow.
+
+Boundary:
+
+```text
+Probe uses NOVORUDP Endpoint frame.
+Receiver replies with NOVORUDP Ack frame.
+Sender uses Ack presence/absence only for route selection.
+No APFL decode.
+No AOEM call.
+No opcode 114.
+No ledger/hash/signature execution.
+No NOVORUDP data wire change.
+```
+
+New sender behavior:
+
+```text
+NOVOVM_OVERLAY_GATE_ROUTE=auto
+NOVOVM_OVERLAY_GATE_RUNTIME_PROBE=1
+
+sender:
+  binds local UDP socket
+  sends NovoRudpTransportFrameKindV0::Endpoint to target addr
+  waits for NovoRudpTransportFrameKindV0::Ack
+  feeds ack result into ReachabilityProbeDecision
+  selects effective route
+  sends DATA direct, relay, multihop, or queue fallback
+```
+
+Receiver behavior:
+
+```text
+receiver:
+  if Endpoint probe is received:
+    sends Ack to source addr
+    continues waiting for DATA
+
+  if DATA is received:
+    decodes NovoRudpTransportFrameV0
+    writes receiver report
+```
+
+Additional environment:
+
+```text
+NOVOVM_OVERLAY_GATE_RUNTIME_PROBE=1
+NOVOVM_OVERLAY_GATE_PROBE_TIMEOUT_MS=<ms>
+NOVOVM_OVERLAY_GATE_RELAY_TARGET_ADDR=<relay-reachable target addr>
+```
+
+Observed local process-gate result:
+
+```text
+probe-direct:
+  sender accepted=true
+  runtime_probe_report.ack_received=true
+  effective_route=direct
+  selected_path=DirectNovoRudp
+  receiver accepted=true
+  receiver probe_ack_sent=true
+  receiver frame_decode_ok=true
+
+probe-relay-fallback:
+  sender accepted=true
+  runtime_probe_report.ack_received=false
+  effective_route=relay
+  selected_path=RelayNovoRudp
+  relay accepted=true
+  receiver accepted=true
+  receiver frame_decode_ok=true
+
+probe-queue-fallback:
+  sender accepted=true
+  runtime_probe_report.ack_received=false
+  effective_route=queue
+  selected_path=QueueFallback
+  queued=true
+  sent_bytes=0
+```
+
+Important design note:
+
+```text
+NOVOVM_OVERLAY_GATE_TARGET_ADDR is the direct probe target.
+NOVOVM_OVERLAY_GATE_RELAY_TARGET_ADDR is the relay-reachable delivery target.
+
+These are intentionally separate because a direct endpoint can be unreachable
+while a relay has an alternate reachable target address.
+```
+
+Validation:
+
+```text
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+target/debug/supervm-network-overlay-gate.exe with receiver/relay/sender modes
+```
+
 ## Product Readout
 
 Current product status:

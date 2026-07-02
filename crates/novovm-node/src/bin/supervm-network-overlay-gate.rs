@@ -131,13 +131,37 @@ fn run_receiver_gate() -> Result<()> {
     let local_addr = socket.local_addr().context("receiver local addr")?;
     let start = Instant::now();
     let mut buf = vec![0u8; 65535];
-    let (received_bytes, source_addr) =
-        socket.recv_from(&mut buf).context("receiver recv frame")?;
+    let mut probe_ack_sent = false;
+    let mut probe_source_addr = None;
+    let (received_bytes, source_addr, frame) = loop {
+        let (received_bytes, source_addr) =
+            socket.recv_from(&mut buf).context("receiver recv frame")?;
+        let frame =
+            novovm_network::novorudp::NovoRudpTransportFrameV0::decode(&buf[..received_bytes]);
+        if let Ok(frame) = &frame {
+            if frame.kind == NovoRudpTransportFrameKindV0::Endpoint {
+                let ack = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+                    NovoRudpTransportFrameKindV0::Ack,
+                    frame.session_id,
+                    frame.stream_id,
+                    frame.object_id,
+                    frame.sequence,
+                    frame.ack_epoch,
+                    frame.payload.clone(),
+                );
+                socket
+                    .send_to(&ack.encode(), source_addr)
+                    .context("receiver send probe ack")?;
+                probe_ack_sent = true;
+                probe_source_addr = Some(source_addr.to_string());
+                continue;
+            }
+        }
+        break (received_bytes, source_addr, frame);
+    };
     let elapsed_ms = start.elapsed().as_millis() as u64;
-    let decoded =
-        novovm_network::novorudp::NovoRudpTransportFrameV0::decode(&buf[..received_bytes]);
     let (frame_decode_ok, frame_decode_error, decoded_kind, decoded_sequence, payload_bytes) =
-        match decoded {
+        match frame {
             Ok(frame) => (
                 true,
                 None,
@@ -155,6 +179,8 @@ fn run_receiver_gate() -> Result<()> {
         "bind_addr_requested": bind_addr,
         "bind_addr_effective": local_addr.to_string(),
         "source_addr": source_addr.to_string(),
+        "probe_ack_sent": probe_ack_sent,
+        "probe_source_addr": probe_source_addr,
         "received_bytes": received_bytes,
         "elapsed_ms": elapsed_ms,
         "frame_decode_ok": frame_decode_ok,
@@ -231,6 +257,8 @@ fn run_sender_gate() -> Result<()> {
         env_string("NOVOVM_OVERLAY_GATE_ROUTE").unwrap_or_else(|| "direct".into());
     let target_addr =
         env_string("NOVOVM_OVERLAY_GATE_TARGET_ADDR").unwrap_or_else(|| "127.0.0.1:39011".into());
+    let relay_target_addr =
+        env_string("NOVOVM_OVERLAY_GATE_RELAY_TARGET_ADDR").unwrap_or_else(|| target_addr.clone());
     let relay_addr = env_string("NOVOVM_OVERLAY_GATE_RELAY_ADDR");
     let next_hop_addr = env_string("NOVOVM_OVERLAY_GATE_NEXT_HOP_ADDR");
     let bind_addr =
@@ -238,7 +266,25 @@ fn run_sender_gate() -> Result<()> {
     let request_id =
         env_string("NOVOVM_OVERLAY_GATE_REQUEST_ID").unwrap_or_else(|| "overlay-gate".into());
 
-    let route_plan = route_plan_for(&requested_route, &PeerId::new("peer-target"))?;
+    let socket =
+        UdpSocket::bind(&bind_addr).with_context(|| format!("bind sender: {bind_addr}"))?;
+    let local_addr = socket.local_addr().context("sender local addr")?;
+    let runtime_probe =
+        if requested_route == "auto" && env_bool("NOVOVM_OVERLAY_GATE_RUNTIME_PROBE", false) {
+            Some(run_sender_direct_probe_v0(
+                &socket,
+                &target_addr,
+                &request_id,
+            )?)
+        } else {
+            None
+        };
+    let route_plan = route_plan_for_with_runtime_probe(
+        &requested_route,
+        &PeerId::new("peer-target"),
+        runtime_probe.as_ref(),
+        Some(local_addr.to_string()),
+    )?;
     let (decision, target_peer_id) = decision_for_route(&route_plan.effective_route)?;
     let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
         NovoRudpTransportFrameKindV0::Data,
@@ -251,9 +297,6 @@ fn run_sender_gate() -> Result<()> {
     );
     let encoded = frame.encode();
 
-    let socket =
-        UdpSocket::bind(&bind_addr).with_context(|| format!("bind sender: {bind_addr}"))?;
-    let local_addr = socket.local_addr().context("sender local addr")?;
     let start = Instant::now();
     let (sent, sent_to, queued) = match route_plan.effective_route.as_str() {
         "queue" => (0, None, true),
@@ -270,7 +313,7 @@ fn run_sender_gate() -> Result<()> {
                 request_id: request_id.clone(),
                 source_peer_id: "peer-source".into(),
                 target_peer_id: target_peer_id.0.clone(),
-                target_addr: target_addr.clone(),
+                target_addr: relay_target_addr.clone(),
                 remaining_hop_addrs: Vec::new(),
                 ttl: 4,
                 payload: encoded.clone(),
@@ -292,7 +335,7 @@ fn run_sender_gate() -> Result<()> {
                 request_id: request_id.clone(),
                 source_peer_id: "peer-source".into(),
                 target_peer_id: target_peer_id.0.clone(),
-                target_addr: target_addr.clone(),
+                target_addr: relay_target_addr.clone(),
                 remaining_hop_addrs: vec![next_hop_addr],
                 ttl: 4,
                 payload: encoded.clone(),
@@ -317,10 +360,12 @@ fn run_sender_gate() -> Result<()> {
         "requested_route": requested_route,
         "effective_route": route_plan.effective_route,
         "reachability_probe_decision": route_plan.reachability_probe_decision,
+        "runtime_probe_report": runtime_probe,
         "request_id": request_id,
         "bind_addr_requested": bind_addr,
         "bind_addr_effective": local_addr.to_string(),
         "target_addr": target_addr,
+        "relay_target_addr": relay_target_addr,
         "sent_to": sent_to,
         "queued": queued,
         "sent_bytes": sent,
@@ -376,6 +421,15 @@ struct OverlayGateRoutePlan {
 }
 
 fn route_plan_for(requested_route: &str, target_peer_id: &PeerId) -> Result<OverlayGateRoutePlan> {
+    route_plan_for_with_runtime_probe(requested_route, target_peer_id, None, None)
+}
+
+fn route_plan_for_with_runtime_probe(
+    requested_route: &str,
+    target_peer_id: &PeerId,
+    runtime_probe: Option<&OverlayGateRuntimeProbeReport>,
+    local_bind_addr_override: Option<String>,
+) -> Result<OverlayGateRoutePlan> {
     if requested_route != "auto" {
         return Ok(OverlayGateRoutePlan {
             effective_route: requested_route.to_string(),
@@ -383,8 +437,12 @@ fn route_plan_for(requested_route: &str, target_peer_id: &PeerId) -> Result<Over
         });
     }
 
-    let direct_probe_ack = env_bool("NOVOVM_OVERLAY_GATE_DIRECT_PROBE_ACK", false);
-    let direct_probe_sent = env_bool("NOVOVM_OVERLAY_GATE_DIRECT_PROBE_SENT", true);
+    let direct_probe_ack = runtime_probe
+        .map(|probe| probe.ack_received)
+        .unwrap_or_else(|| env_bool("NOVOVM_OVERLAY_GATE_DIRECT_PROBE_ACK", false));
+    let direct_probe_sent = runtime_probe
+        .map(|probe| probe.probe_sent)
+        .unwrap_or_else(|| env_bool("NOVOVM_OVERLAY_GATE_DIRECT_PROBE_SENT", true));
     let relay_available = env_bool("NOVOVM_OVERLAY_GATE_RELAY_AVAILABLE", false);
     let floating_port_mode = match env_string("NOVOVM_OVERLAY_GATE_FLOATING_PORT_MODE")
         .unwrap_or_else(|| "ephemeral".into())
@@ -397,14 +455,19 @@ fn route_plan_for(requested_route: &str, target_peer_id: &PeerId) -> Result<Over
     let decision = decide_reachability_probe_v0(ReachabilityProbeInput {
         peer_id: target_peer_id.0.clone(),
         configured_addr_hint: env_string("NOVOVM_OVERLAY_GATE_CONFIGURED_ADDR_HINT"),
-        observed_addr: env_string("NOVOVM_OVERLAY_GATE_OBSERVED_ADDR"),
-        local_bind_addr: env_string("NOVOVM_OVERLAY_GATE_LOCAL_BIND_ADDR")
+        observed_addr: runtime_probe
+            .and_then(|probe| probe.observed_addr.clone())
+            .or_else(|| env_string("NOVOVM_OVERLAY_GATE_OBSERVED_ADDR")),
+        local_bind_addr: local_bind_addr_override
+            .or_else(|| env_string("NOVOVM_OVERLAY_GATE_LOCAL_BIND_ADDR"))
             .or_else(|| env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR")),
         floating_port_mode,
         direct_probe_sent,
         direct_probe_ack,
         relay_available,
-        rtt_ms: env_u32("NOVOVM_OVERLAY_GATE_PROBE_RTT_MS"),
+        rtt_ms: runtime_probe
+            .and_then(|probe| probe.rtt_ms)
+            .or_else(|| env_u32("NOVOVM_OVERLAY_GATE_PROBE_RTT_MS")),
         observed_unix_ms: env_u64("NOVOVM_OVERLAY_GATE_OBSERVED_UNIX_MS", 0),
         source: RoutingSource::LocalObserved,
     });
@@ -423,6 +486,104 @@ fn route_plan_for(requested_route: &str, target_peer_id: &PeerId) -> Result<Over
         effective_route,
         reachability_probe_decision: Some(decision),
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct OverlayGateRuntimeProbeReport {
+    probe_sent: bool,
+    ack_received: bool,
+    target_addr: String,
+    observed_addr: Option<String>,
+    sent_bytes: usize,
+    received_bytes: usize,
+    elapsed_ms: u64,
+    rtt_ms: Option<u32>,
+    error: Option<String>,
+}
+
+fn run_sender_direct_probe_v0(
+    socket: &UdpSocket,
+    target_addr: &str,
+    request_id: &str,
+) -> Result<OverlayGateRuntimeProbeReport> {
+    let timeout_ms = env_u64("NOVOVM_OVERLAY_GATE_PROBE_TIMEOUT_MS", 500);
+    socket
+        .set_read_timeout(Some(Duration::from_millis(timeout_ms)))
+        .context("set sender probe read timeout")?;
+    let payload = format!("novovm-overlay-probe:{request_id}").into_bytes();
+    let probe = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+        NovoRudpTransportFrameKindV0::Endpoint,
+        [15u8; 16],
+        100,
+        200,
+        300,
+        400,
+        payload.clone(),
+    );
+    let encoded = probe.encode();
+    let start = Instant::now();
+    let sent_bytes = socket
+        .send_to(&encoded, target_addr)
+        .with_context(|| format!("send direct probe to {target_addr}"))?;
+    let mut buf = vec![0u8; 65535];
+    match socket.recv_from(&mut buf) {
+        Ok((received_bytes, observed_addr)) => {
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+            let decoded =
+                novovm_network::novorudp::NovoRudpTransportFrameV0::decode(&buf[..received_bytes]);
+            match decoded {
+                Ok(frame)
+                    if frame.kind == NovoRudpTransportFrameKindV0::Ack
+                        && frame.payload == payload =>
+                {
+                    Ok(OverlayGateRuntimeProbeReport {
+                        probe_sent: true,
+                        ack_received: true,
+                        target_addr: target_addr.to_string(),
+                        observed_addr: Some(observed_addr.to_string()),
+                        sent_bytes,
+                        received_bytes,
+                        elapsed_ms,
+                        rtt_ms: Some(elapsed_ms.min(u32::MAX as u64) as u32),
+                        error: None,
+                    })
+                }
+                Ok(frame) => Ok(OverlayGateRuntimeProbeReport {
+                    probe_sent: true,
+                    ack_received: false,
+                    target_addr: target_addr.to_string(),
+                    observed_addr: Some(observed_addr.to_string()),
+                    sent_bytes,
+                    received_bytes,
+                    elapsed_ms,
+                    rtt_ms: None,
+                    error: Some(format!("unexpected probe ack frame kind: {:?}", frame.kind)),
+                }),
+                Err(error) => Ok(OverlayGateRuntimeProbeReport {
+                    probe_sent: true,
+                    ack_received: false,
+                    target_addr: target_addr.to_string(),
+                    observed_addr: Some(observed_addr.to_string()),
+                    sent_bytes,
+                    received_bytes,
+                    elapsed_ms,
+                    rtt_ms: None,
+                    error: Some(format!("decode probe ack failed: {error}")),
+                }),
+            }
+        }
+        Err(error) => Ok(OverlayGateRuntimeProbeReport {
+            probe_sent: true,
+            ack_received: false,
+            target_addr: target_addr.to_string(),
+            observed_addr: None,
+            sent_bytes,
+            received_bytes: 0,
+            elapsed_ms: start.elapsed().as_millis() as u64,
+            rtt_ms: None,
+            error: Some(format!("probe ack timeout or recv failed: {error}")),
+        }),
+    }
 }
 
 fn decision_for_route(
