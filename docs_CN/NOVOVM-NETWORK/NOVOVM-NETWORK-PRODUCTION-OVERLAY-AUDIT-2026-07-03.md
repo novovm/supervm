@@ -2548,7 +2548,7 @@ and persistent health gossip remain future cuts.
 Status:
 
 ```text
-READY / PENDING REAL FOUR-MACHINE RUN
+PASS
 ```
 
 Implemented in:
@@ -2684,30 +2684,68 @@ cross-machine runner queue case:
   sent_frame_count=0
 ```
 
-Real-machine acceptance criteria:
+Real-machine observed result:
 
 ```text
 adaptive-direct:
-  sender selected_path=DirectNovoRudp
+  accepted=true
+  selected_path=DirectNovoRudp
+  decision_reason=DirectAllowed
+  route_plan_source=adaptive_runtime_peer_records_health
+  candidate_direct_count=1
+  candidate_relay_count=1
+  candidate_multihop_count=1
+  A sent_frame_count=4
   B received_frame_count=4
 
 adaptive-relay:
-  sender selected_path=RelayNovoRudp
+  accepted=true
+  selected_path=RelayNovoRudp
+  decision_reason=DirectCoolingDown
+  route_plan_source=adaptive_runtime_peer_records_health
+  cooldown_route_families=[Direct]
+  candidate_direct_count=0
+  candidate_relay_count=1
+  candidate_multihop_count=1
+  A sent_frame_count=4
   R1 relay_frames_forwarded=4
   B received_frame_count=4
 
 adaptive-multihop:
-  sender selected_path=MultiHopRelay
+  accepted=true
+  selected_path=MultiHopRelay
+  decision_reason=MultiHopRelayRequired
+  route_plan_source=adaptive_runtime_peer_records_health
+  cooldown_route_families=[Direct, Relay]
+  candidate_direct_count=0
+  candidate_relay_count=0
+  candidate_multihop_count=1
+  A sent_frame_count=4
   R1 relay_frames_forwarded=4
   R2 relay_frames_forwarded=4
   B received_frame_count=4
 
 adaptive-queue:
-  sender selected_path=QueueFallback
+  accepted=true
+  selected_path=QueueFallback
   decision_reason=RouteHealthExhausted
+  route_plan_source=adaptive_runtime_peer_records_health
+  cooldown_route_families=[Direct, Relay, Multihop]
+  candidate_direct_count=0
+  candidate_relay_count=0
+  candidate_multihop_count=0
   queued_count=4
   sent_frame_count=0
   sent_bytes_total=0
+```
+
+Aggregate reports:
+
+```text
+artifacts/network-overlay-gate/real-adaptive-overlay-4node-20260703/adaptive-direct/aggregate.json
+artifacts/network-overlay-gate/real-adaptive-overlay-4node-20260703/adaptive-relay/aggregate.json
+artifacts/network-overlay-gate/real-adaptive-overlay-4node-20260703/adaptive-multihop/aggregate.json
+artifacts/network-overlay-gate/real-adaptive-overlay-4node-20260703/adaptive-queue/aggregate.json
 ```
 
 Boundary:
@@ -2725,12 +2763,62 @@ novorudp_wire_changed=false
 Significance:
 
 ```text
-Cut 22 prepares the first real cross-machine adaptive-node smoke where node
-identity is fixed, endpoints are dynamic, relay is a capability, and route
-selection is driven by health rather than manual route selection.
+Cut 22 is the first real cross-machine adaptive-node smoke where node identity
+is fixed, endpoints are dynamic, relay is a capability, and route selection is
+driven by peer records, capability, and route health rather than manual route
+selection.
 
-It is not signed as PASS until the four-machine reports are collected and
-aggregated.
+The sender never specifies:
+
+NOVOVM_OVERLAY_GATE_ROUTE=direct|relay|multihop
+
+It only specifies:
+
+target_peer_id=node-b
+
+The runtime automatically selects:
+
+DirectNovoRudp
+RelayNovoRudp
+MultiHopRelay
+QueueFallback
+```
+
+Operational findings:
+
+```text
+1. advertised_endpoint cannot remain 0.0.0.0:port in production records.
+   It must be replaced with a reachable endpoint selected by probe result,
+   for example 192.168.71.x:port or an observed public endpoint.
+
+2. B's effective reachable endpoint in this run is:
+   192.168.71.56:41020
+
+   The WLAN address 192.168.71.117 is not the endpoint to publish for this
+   topology.
+
+3. direct_frames_received is ambiguous in relay/multihop receiver reports.
+   It means "decoded NOVORUDP data frames received by this node", not that the
+   route was direct. A future report field should rename or alias it as:
+
+   novorudp_frames_received
+
+4. relay delivered_to_target=false on an intermediate hop can be misread.
+   It means the relay forwarded to the next hop, not to final target. Future
+   reports should separate:
+
+   forwarded_to_next_hop
+   delivered_to_final_target
+```
+
+Next frontier:
+
+```text
+Cut 23: Endpoint Advertisement + Interface Selection Fix v0
+
+Fix advertised endpoint publication, interface scoring, VPN/virtual adapter
+avoidance, and reachable endpoint selection before NAT traversal / UDP hole
+punching.
 ```
 
 ## Product Readout
