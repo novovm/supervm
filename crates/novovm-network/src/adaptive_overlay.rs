@@ -4,6 +4,7 @@ use crate::control_plane::PeerId;
 use crate::overlay::{AntiCensorshipProfile, OverlayHop, OverlayTransportProfile, RouteSet};
 use crate::overlay_runtime::{
     decide_overlay_runtime_fallback_chain_v0, OverlayRouteHealthSnapshot, OverlayRuntimeDecision,
+    OverlayRuntimeDecisionReason, OverlayRuntimeReachabilityClass, OverlayRuntimeSelectedPath,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,6 +157,25 @@ pub struct AdaptiveOverlayRoutePlan {
     pub queue_allowed: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AdaptiveOverlayRouteFamily {
+    Direct,
+    Relay,
+    Multihop,
+}
+
+impl AdaptiveOverlayRouteFamily {
+    pub fn classify(route: &RouteSet, target_peer_id: &PeerId) -> Self {
+        if route.hops.len() == 1 && route.hops[0].peer_id == *target_peer_id {
+            Self::Direct
+        } else if route.hops.len() == 1 {
+            Self::Relay
+        } else {
+            Self::Multihop
+        }
+    }
+}
+
 pub fn adaptive_overlay_candidate_routes_v0(
     target_peer_id: &PeerId,
     peers: &[AdaptiveOverlayEndpointRecord],
@@ -221,7 +241,54 @@ pub fn decide_adaptive_overlay_route_v0(
     profile: &AntiCensorshipProfile,
     health: &OverlayRouteHealthSnapshot,
 ) -> AdaptiveOverlayRoutePlan {
-    let routes = adaptive_overlay_candidate_routes_v0(target_peer_id, &config.bootstrap_peers);
+    decide_adaptive_overlay_route_with_family_cooldown_v0(
+        config,
+        target_peer_id,
+        profile,
+        health,
+        &[],
+    )
+}
+
+pub fn decide_adaptive_overlay_route_with_family_cooldown_v0(
+    config: &AdaptiveOverlayNodeConfig,
+    target_peer_id: &PeerId,
+    profile: &AntiCensorshipProfile,
+    health: &OverlayRouteHealthSnapshot,
+    cooldown_families: &[AdaptiveOverlayRouteFamily],
+) -> AdaptiveOverlayRoutePlan {
+    let original_routes =
+        adaptive_overlay_candidate_routes_v0(target_peer_id, &config.bootstrap_peers);
+    let routes = original_routes
+        .iter()
+        .cloned()
+        .into_iter()
+        .filter(|route| {
+            let family = AdaptiveOverlayRouteFamily::classify(route, target_peer_id);
+            !cooldown_families.contains(&family)
+        })
+        .collect::<Vec<_>>();
+    if routes.is_empty() && !original_routes.is_empty() && !cooldown_families.is_empty() {
+        return AdaptiveOverlayRoutePlan {
+            local_peer_id: config.local_peer_id.clone(),
+            target_peer_id: target_peer_id.clone(),
+            decision: OverlayRuntimeDecision {
+                target_peer_id: target_peer_id.clone(),
+                selected_path: OverlayRuntimeSelectedPath::QueueFallback,
+                route_set: None,
+                direct_endpoint_candidates: Vec::new(),
+                relay_candidates: Vec::new(),
+                multi_hop_candidates: Vec::new(),
+                reachability_class: OverlayRuntimeReachabilityClass::Unknown,
+                reason: OverlayRuntimeDecisionReason::RouteHealthExhausted,
+            },
+            candidate_route_count: 0,
+            direct_candidate_count: 0,
+            relay_candidate_count: 0,
+            multihop_candidate_count: 0,
+            queue_allowed: config.capabilities.queue_enabled,
+        };
+    }
     let direct_candidate_count = routes
         .iter()
         .filter(|route| route.hops.len() == 1 && route.hops[0].peer_id == *target_peer_id)
@@ -365,6 +432,62 @@ mod tests {
         assert_eq!(
             plan.decision.selected_path,
             OverlayRuntimeSelectedPath::QueueFallback
+        );
+    }
+
+    #[test]
+    fn adaptive_route_family_cooldown_can_skip_single_relay_but_keep_multihop() {
+        let config = AdaptiveOverlayNodeConfig::zero_config(PeerId::new("node-a"))
+            .with_bootstrap_peers(vec![
+                AdaptiveOverlayEndpointRecord::zero_config(PeerId::new("node-b"))
+                    .with_advertised_endpoint("192.168.71.56:41020"),
+                AdaptiveOverlayEndpointRecord::zero_config(PeerId::new("relay-1"))
+                    .with_advertised_endpoint("192.168.71.9:41030")
+                    .with_relay_enabled(),
+                AdaptiveOverlayEndpointRecord::zero_config(PeerId::new("relay-2"))
+                    .with_advertised_endpoint("192.168.71.54:41040")
+                    .with_relay_enabled(),
+            ]);
+        let plan = super::decide_adaptive_overlay_route_with_family_cooldown_v0(
+            &config,
+            &PeerId::new("node-b"),
+            &AntiCensorshipProfile::default(),
+            &OverlayRouteHealthSnapshot::new(100, Vec::new()),
+            &[
+                super::AdaptiveOverlayRouteFamily::Direct,
+                super::AdaptiveOverlayRouteFamily::Relay,
+            ],
+        );
+        assert_eq!(
+            plan.decision.selected_path,
+            OverlayRuntimeSelectedPath::MultiHopRelay
+        );
+        assert_eq!(plan.direct_candidate_count, 0);
+        assert_eq!(plan.relay_candidate_count, 0);
+        assert_eq!(plan.multihop_candidate_count, 1);
+    }
+
+    #[test]
+    fn adaptive_route_family_cooldown_exhaustion_reports_health_exhausted() {
+        let config = adaptive_config();
+        let plan = super::decide_adaptive_overlay_route_with_family_cooldown_v0(
+            &config,
+            &PeerId::new("node-b"),
+            &AntiCensorshipProfile::default(),
+            &OverlayRouteHealthSnapshot::new(100, Vec::new()),
+            &[
+                super::AdaptiveOverlayRouteFamily::Direct,
+                super::AdaptiveOverlayRouteFamily::Relay,
+                super::AdaptiveOverlayRouteFamily::Multihop,
+            ],
+        );
+        assert_eq!(
+            plan.decision.selected_path,
+            OverlayRuntimeSelectedPath::QueueFallback
+        );
+        assert_eq!(
+            plan.decision.reason,
+            crate::overlay_runtime::OverlayRuntimeDecisionReason::RouteHealthExhausted
         );
     }
 }

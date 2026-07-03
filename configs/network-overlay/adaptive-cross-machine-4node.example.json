@@ -1,0 +1,75 @@
+{
+  "run_id": "real-adaptive-overlay-4node-20260703",
+  "scope": "adaptive_overlay_cross_machine_smoke_v0",
+  "max_frames": 4,
+  "timeout_ms": 3600000,
+  "target_peer_id": "node-b",
+  "nodes": [
+    {
+      "node_id": "node-a",
+      "machine_label": "A",
+      "bind_addr": "0.0.0.0:0",
+      "endpoint": "192.168.71.118:0",
+      "relay_enabled": false,
+      "queue_enabled": true
+    },
+    {
+      "node_id": "node-b",
+      "machine_label": "B",
+      "bind_addr": "0.0.0.0:41020",
+      "endpoint": "192.168.71.56:41020",
+      "relay_enabled": false,
+      "queue_enabled": true
+    },
+    {
+      "node_id": "relay-1",
+      "machine_label": "R1",
+      "bind_addr": "0.0.0.0:41030",
+      "endpoint": "192.168.71.9:41030",
+      "relay_enabled": true,
+      "queue_enabled": true
+    },
+    {
+      "node_id": "relay-2",
+      "machine_label": "R2",
+      "bind_addr": "0.0.0.0:41040",
+      "endpoint": "192.168.71.54:41040",
+      "relay_enabled": true,
+      "queue_enabled": true
+    }
+  ],
+  "cases": [
+    {
+      "name": "adaptive-direct",
+      "sender_node_id": "node-a",
+      "listener_node_ids": ["node-b"],
+      "cooldown_peers": [],
+      "cooldown_route_families": [],
+      "expected_path": "DirectNovoRudp"
+    },
+    {
+      "name": "adaptive-relay",
+      "sender_node_id": "node-a",
+      "listener_node_ids": ["node-b", "relay-1"],
+      "cooldown_peers": [],
+      "cooldown_route_families": ["direct"],
+      "expected_path": "RelayNovoRudp"
+    },
+    {
+      "name": "adaptive-multihop",
+      "sender_node_id": "node-a",
+      "listener_node_ids": ["node-b", "relay-1", "relay-2"],
+      "cooldown_peers": [],
+      "cooldown_route_families": ["direct", "relay"],
+      "expected_path": "MultiHopRelay"
+    },
+    {
+      "name": "adaptive-queue",
+      "sender_node_id": "node-a",
+      "listener_node_ids": [],
+      "cooldown_peers": [],
+      "cooldown_route_families": ["direct", "relay", "multihop"],
+      "expected_path": "QueueFallback"
+    }
+  ]
+}

@@ -2543,6 +2543,196 @@ external observed-address discovery, signed peer records, abuse policy,
 and persistent health gossip remain future cuts.
 ```
 
+## Cut 22: Real Cross-Machine Adaptive Overlay Node Smoke v0
+
+Status:
+
+```text
+READY / PENDING REAL FOUR-MACHINE RUN
+```
+
+Implemented in:
+
+```text
+crates/novovm-network/src/adaptive_overlay.rs
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+configs/network-overlay/adaptive-cross-machine-4node.example.json
+scripts/novovm-adaptive-overlay-cross-machine-smoke.ps1
+```
+
+Goal:
+
+```text
+Run the Cut 19 real four-device topology through adaptive-node mode instead
+of manually assigned sender / receiver / relay routes.
+
+The sender only provides:
+target_peer_id=node-b
+
+The route is selected by:
+peer records
+capabilities
+route health
+route-family cooldown state
+```
+
+Topology config:
+
+```text
+A  = node-a   = 192.168.71.118
+B  = node-b   = 192.168.71.56:41020
+R1 = relay-1  = 192.168.71.9:41030
+R2 = relay-2  = 192.168.71.54:41040
+```
+
+Config file:
+
+```text
+configs/network-overlay/adaptive-cross-machine-4node.example.json
+```
+
+Runner:
+
+```powershell
+powershell -ExecutionPolicy Bypass `
+  -File scripts\novovm-adaptive-overlay-cross-machine-smoke.ps1 `
+  -Action commands `
+  -ConfigPath configs\network-overlay\adaptive-cross-machine-4node.example.json
+```
+
+This prints per-machine commands for:
+
+```text
+adaptive-direct
+adaptive-relay
+adaptive-multihop
+adaptive-queue
+```
+
+No command uses:
+
+```text
+NOVOVM_OVERLAY_GATE_ROUTE=direct|relay|multihop
+```
+
+All active processes use:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=adaptive-node
+```
+
+Route-family health input:
+
+```text
+adaptive-direct:
+  cooldown_route_families=[]
+
+adaptive-relay:
+  cooldown_route_families=[direct]
+
+adaptive-multihop:
+  cooldown_route_families=[direct, relay]
+
+adaptive-queue:
+  cooldown_route_families=[direct, relay, multihop]
+```
+
+Why route-family cooldown exists:
+
+```text
+Cut 20/21 hop health is node-level.
+
+In a two-relay topology, marking R1 itself as cooling down would also remove
+the A -> R1 -> R2 -> B multihop path. Route-family cooldown represents the
+production condition "direct path failed" or "single-relay path failed" while
+keeping relay nodes themselves eligible for multihop.
+```
+
+New adaptive report fields:
+
+```text
+route_plan_source
+candidate_route_count
+candidate_direct_count
+candidate_relay_count
+candidate_multihop_count
+cooldown_hop_count
+cooldown_hops
+cooldown_route_families
+received_frame_count
+```
+
+Validated locally:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-network
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+cargo test -q -p novovm-network adaptive_overlay -- --test-threads=1
+cargo test -q -p novovm-network overlay_runtime -- --test-threads=1
+
+adaptive-node process matrix:
+  direct    PASS
+  relay     PASS
+  multihop  PASS
+  queue     PASS
+
+cross-machine runner queue case:
+  selected_path=QueueFallback
+  decision_reason=RouteHealthExhausted
+  queued_count=4
+  sent_frame_count=0
+```
+
+Real-machine acceptance criteria:
+
+```text
+adaptive-direct:
+  sender selected_path=DirectNovoRudp
+  B received_frame_count=4
+
+adaptive-relay:
+  sender selected_path=RelayNovoRudp
+  R1 relay_frames_forwarded=4
+  B received_frame_count=4
+
+adaptive-multihop:
+  sender selected_path=MultiHopRelay
+  R1 relay_frames_forwarded=4
+  R2 relay_frames_forwarded=4
+  B received_frame_count=4
+
+adaptive-queue:
+  sender selected_path=QueueFallback
+  decision_reason=RouteHealthExhausted
+  queued_count=4
+  sent_frame_count=0
+  sent_bytes_total=0
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+opcode114_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+
+Significance:
+
+```text
+Cut 22 prepares the first real cross-machine adaptive-node smoke where node
+identity is fixed, endpoints are dynamic, relay is a capability, and route
+selection is driven by health rather than manual route selection.
+
+It is not signed as PASS until the four-machine reports are collected and
+aggregated.
+```
+
 ## Product Readout
 
 Current product status:

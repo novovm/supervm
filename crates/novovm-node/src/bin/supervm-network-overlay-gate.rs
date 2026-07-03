@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use novovm_network::adaptive_overlay::{
-    decide_adaptive_overlay_route_v0, AdaptiveOverlayEndpointRecord,
-    AdaptiveOverlayNodeCapabilities, AdaptiveOverlayNodeConfig, AdaptiveOverlayRelayBudget,
+    decide_adaptive_overlay_route_v0, decide_adaptive_overlay_route_with_family_cooldown_v0,
+    AdaptiveOverlayEndpointRecord, AdaptiveOverlayNodeCapabilities, AdaptiveOverlayNodeConfig,
+    AdaptiveOverlayRelayBudget, AdaptiveOverlayRouteFamily,
 };
 use novovm_network::control_plane::{
     CapabilityAdvertisement, ControlPlaneRegistry, Libp2pControlPlaneConfig, PeerId,
@@ -1180,6 +1181,7 @@ fn run_adaptive_node_gate() -> Result<()> {
     let adaptive_config =
         AdaptiveOverlayNodeConfig::zero_config(node_id.clone()).with_bootstrap_peers(peers.clone());
     let health = adaptive_health_from_env(100);
+    let cooldown_route_families = adaptive_route_family_cooldown_from_env()?;
 
     let socket =
         UdpSocket::bind(&bind_addr).with_context(|| format!("bind adaptive node: {bind_addr}"))?;
@@ -1191,6 +1193,11 @@ fn run_adaptive_node_gate() -> Result<()> {
 
     let mut selected_path = None;
     let mut decision_reason = None;
+    let mut route_plan_source = None;
+    let mut candidate_route_count = None;
+    let mut candidate_direct_count = None;
+    let mut candidate_relay_count = None;
+    let mut candidate_multihop_count = None;
     let mut sent_frame_count = 0u64;
     let mut queued_count = 0u64;
     let mut sent_bytes_total = 0usize;
@@ -1198,14 +1205,20 @@ fn run_adaptive_node_gate() -> Result<()> {
     let mut sent_frames = Vec::new();
 
     if let Some(target_peer_id) = &target_peer_id {
-        let plan = decide_adaptive_overlay_route_v0(
+        let plan = decide_adaptive_overlay_route_with_family_cooldown_v0(
             &adaptive_config,
             target_peer_id,
             &AntiCensorshipProfile::default(),
             &health,
+            &cooldown_route_families,
         );
         selected_path = Some(plan.decision.selected_path);
         decision_reason = Some(plan.decision.reason);
+        route_plan_source = Some("adaptive_runtime_peer_records_health");
+        candidate_route_count = Some(plan.candidate_route_count);
+        candidate_direct_count = Some(plan.direct_candidate_count);
+        candidate_relay_count = Some(plan.relay_candidate_count);
+        candidate_multihop_count = Some(plan.multihop_candidate_count);
         for frame_index in 0..max_frames {
             let frame_request_id = format!("adaptive-node-{}-{frame_index}", node_id.0);
             let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
@@ -1394,6 +1407,7 @@ fn run_adaptive_node_gate() -> Result<()> {
     }
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
+    let received_frame_count = direct_frames_received;
     let accepted = if target_peer_id.is_some() {
         send_errors.is_empty() && (sent_frame_count == max_frames || queued_count == max_frames)
     } else {
@@ -1421,6 +1435,14 @@ fn run_adaptive_node_gate() -> Result<()> {
         "bootstrap_peer_count": peers.len(),
         "selected_path": selected_path,
         "decision_reason": decision_reason,
+        "route_plan_source": route_plan_source,
+        "candidate_route_count": candidate_route_count,
+        "candidate_direct_count": candidate_direct_count,
+        "candidate_relay_count": candidate_relay_count,
+        "candidate_multihop_count": candidate_multihop_count,
+        "cooldown_hop_count": health.hops.len(),
+        "cooldown_hops": health.hops,
+        "cooldown_route_families": cooldown_route_families,
         "relay_budget": capabilities.relay_budget,
         "queue_enabled": capabilities.queue_enabled,
         "target_peer_id": target_peer_id,
@@ -1429,6 +1451,7 @@ fn run_adaptive_node_gate() -> Result<()> {
         "sent_bytes_total": sent_bytes_total,
         "send_errors": send_errors,
         "sent_frames": sent_frames,
+        "received_frame_count": received_frame_count,
         "direct_frames_received": direct_frames_received,
         "relay_envelopes_received": relay_envelopes_received,
         "relay_frames_forwarded": relay_frames_forwarded,
@@ -1740,6 +1763,21 @@ fn adaptive_health_from_env(observed_unix_ms: u64) -> OverlayRouteHealthSnapshot
         .map(|value| OverlayHopHealth::cooling_down(PeerId::new(value), observed_unix_ms, 1_000))
         .collect::<Vec<_>>();
     OverlayRouteHealthSnapshot::new(observed_unix_ms, cooldown_peers)
+}
+
+fn adaptive_route_family_cooldown_from_env() -> Result<Vec<AdaptiveOverlayRouteFamily>> {
+    env_string("NOVOVM_OVERLAY_ADAPTIVE_COOLDOWN_ROUTE_FAMILIES")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| match value.to_ascii_lowercase().as_str() {
+            "direct" => Ok(AdaptiveOverlayRouteFamily::Direct),
+            "relay" | "single-relay" | "single_relay" => Ok(AdaptiveOverlayRouteFamily::Relay),
+            "multihop" | "multi-hop" | "multi_hop" => Ok(AdaptiveOverlayRouteFamily::Multihop),
+            other => anyhow::bail!("unsupported adaptive route family cooldown: {other}"),
+        })
+        .collect()
 }
 
 fn adaptive_interface_summary_json() -> serde_json::Value {
@@ -2075,6 +2113,7 @@ fn network_boundary_json() -> serde_json::Value {
         "network_only": true,
         "apfl_interpreted": false,
         "aoem_called": false,
+        "opcode114_called": false,
         "ledger_semantics": false,
         "novorudp_wire_changed": false
     })

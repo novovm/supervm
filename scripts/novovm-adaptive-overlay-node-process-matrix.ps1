@@ -59,7 +59,7 @@ function Read-JsonReport {
     if (-not (Test-Path $Path)) {
         throw "missing report: $Path"
     }
-    Get-Content $Path -Raw | ConvertFrom-Json
+    Get-Content $Path -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 
 function New-CaseDirectory {
