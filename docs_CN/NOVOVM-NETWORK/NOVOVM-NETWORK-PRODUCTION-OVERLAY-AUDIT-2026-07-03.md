@@ -2059,6 +2059,159 @@ overlay data plane can be launched by role with external node address config.
 The network layer remains isolated from APFL/AOEM/ledger semantics.
 ```
 
+## Cut 19: Real Four-Node Overlay Process Gate v0
+
+Status:
+
+```text
+PASS
+```
+
+Commit/runtime baseline:
+
+```text
+SUPERVM HEAD = 1bc4747
+Binary = target/debug/supervm-network-overlay-gate
+Scope = real four-device overlay process gate
+```
+
+Topology:
+
+```text
+A  = 192.168.71.118
+B  = 192.168.71.56:41020
+R1 = 192.168.71.9:41030
+R2 = 192.168.71.54:41040
+```
+
+Covered real network paths:
+
+```text
+Direct:
+  A -> B
+  4/4 opaque NOVORUDP frames delivered and decoded.
+
+Relay:
+  A -> R1 -> B
+  4/4 opaque NOVORUDP frames delivered and decoded.
+
+Multihop:
+  A -> R1 -> R2 -> B
+  4/4 opaque NOVORUDP frames delivered and decoded.
+
+Queue:
+  A local queue fallback
+  4/4 opaque NOVORUDP frames queued.
+  sent_frame_count=0
+  sent_bytes_total=0
+```
+
+Direct observed result:
+
+```text
+A sender:
+  accepted=true
+  target=192.168.71.56:41020
+  bind_addr_effective=0.0.0.0:45077
+  sent_frame_count=4
+  sent_bytes_total=556
+
+B receiver:
+  accepted=true
+  data_frames_received=4
+  source_addr=192.168.71.118:45077
+  frame_decode_ok=true
+```
+
+Relay observed result:
+
+```text
+A -> R1:
+  sender accepted=true
+  sent_frame_count=4
+
+R1 -> B:
+  frames_received=4
+  delivered_to_target=4/4
+
+B receiver:
+  accepted=true
+  data_frames_received=4
+  source_addr=192.168.71.9:41030
+  frame_decode_ok=true
+```
+
+Multihop observed result:
+
+```text
+A -> R1 -> R2 -> B:
+  R2 frames_received=4
+  R2 delivered_to_target=4/4
+
+B receiver:
+  accepted=true
+  data_frames_received=4
+  source_addr=192.168.71.54:41040
+  frame_decode_ok=true
+```
+
+Queue observed result:
+
+```text
+accepted=true
+requested_route=queue
+effective_route=queue
+queued_count=4
+sent_frame_count=0
+sent_bytes_total=0
+
+frames=4/4 queued
+sent_to=null
+encoded_frame_bytes=139
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+
+Operational findings:
+
+```text
+1. Linux sender must bind 0.0.0.0:0 for cross-machine UDP.
+
+   If sender defaults to 127.0.0.1:0 and sends to a non-loopback peer,
+   Linux may return Invalid argument (os error 22) or fail to send on the
+   expected outbound interface.
+
+2. B reachable endpoint for this four-node run is:
+   192.168.71.56:41020
+
+   The B WLAN address 192.168.71.117 was not the effective A -> B path in
+   this run.
+
+3. The real four-node run validates network overlay reachability only.
+   It does not execute APFL, call AOEM, or touch ledger semantics.
+```
+
+Significance:
+
+```text
+This cut moves Production Overlay validation out of localhost and into a real
+four-device network:
+
+direct -> relay -> multi-hop -> queue fallback
+
+It validates that the overlay data plane can survive role separation across
+physical machines while preserving strict network/business separation.
+```
+
 ## Product Readout
 
 Current product status:
