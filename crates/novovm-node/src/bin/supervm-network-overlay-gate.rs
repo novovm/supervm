@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use novovm_network::adaptive_overlay::{
-    decide_adaptive_overlay_route_v0, AdaptiveOverlayEndpointRecord, AdaptiveOverlayNodeConfig,
+    decide_adaptive_overlay_route_v0, AdaptiveOverlayEndpointRecord,
+    AdaptiveOverlayNodeCapabilities, AdaptiveOverlayNodeConfig, AdaptiveOverlayRelayBudget,
 };
 use novovm_network::control_plane::{
     CapabilityAdvertisement, ControlPlaneRegistry, Libp2pControlPlaneConfig, PeerId,
@@ -25,10 +26,12 @@ use novovm_network::relay::{
 use novovm_network::routing::RoutingSource;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::net::UdpSocket;
 use std::path::Path;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<()> {
@@ -43,6 +46,7 @@ fn main() -> Result<()> {
         "observation-matrix" => run_observation_matrix_gate(),
         "fallback-chain" => run_fallback_chain_gate(),
         "adaptive-node-matrix" => run_adaptive_node_matrix_gate(),
+        "adaptive-node" => run_adaptive_node_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -1139,6 +1143,416 @@ fn run_adaptive_node_matrix_gate() -> Result<()> {
     }
 }
 
+fn run_adaptive_node_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
+        .unwrap_or_else(|| "artifacts/network-overlay-gate/adaptive-node.json".into());
+    let node_id = PeerId::new(
+        env_string("NOVOVM_OVERLAY_ADAPTIVE_NODE_ID").unwrap_or_else(|| "node-local".into()),
+    );
+    let bind_addr =
+        env_string("NOVOVM_OVERLAY_ADAPTIVE_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:0".into());
+    let timeout_ms = env_u64("NOVOVM_OVERLAY_GATE_TIMEOUT_MS", 5000);
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 1).max(1);
+    let relay_enabled = env_bool("NOVOVM_OVERLAY_ADAPTIVE_RELAY_ENABLED", false);
+    let queue_enabled = env_bool("NOVOVM_OVERLAY_ADAPTIVE_QUEUE_ENABLED", true);
+    let target_peer_id = env_string("NOVOVM_OVERLAY_ADAPTIVE_TARGET_PEER_ID").map(PeerId::new);
+    let peers = adaptive_gate_peers_from_env()?;
+    let peer_endpoints = peers
+        .iter()
+        .filter_map(|peer| {
+            Some((
+                peer.peer_id.0.clone(),
+                peer.advertised_endpoint.as_ref()?.clone(),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let capabilities = AdaptiveOverlayNodeCapabilities {
+        can_send: true,
+        can_receive: true,
+        relay_enabled,
+        queue_enabled,
+        relay_budget: if relay_enabled {
+            AdaptiveOverlayRelayBudget::light_default()
+        } else {
+            AdaptiveOverlayRelayBudget::disabled()
+        },
+    };
+    let adaptive_config =
+        AdaptiveOverlayNodeConfig::zero_config(node_id.clone()).with_bootstrap_peers(peers.clone());
+    let health = adaptive_health_from_env(100);
+
+    let socket =
+        UdpSocket::bind(&bind_addr).with_context(|| format!("bind adaptive node: {bind_addr}"))?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(timeout_ms)))
+        .context("set adaptive node read timeout")?;
+    let bind_addr_effective = socket.local_addr().context("adaptive node local addr")?;
+    let interface_summary = adaptive_interface_summary_json();
+
+    let mut selected_path = None;
+    let mut decision_reason = None;
+    let mut sent_frame_count = 0u64;
+    let mut queued_count = 0u64;
+    let mut sent_bytes_total = 0usize;
+    let mut send_errors = Vec::new();
+    let mut sent_frames = Vec::new();
+
+    if let Some(target_peer_id) = &target_peer_id {
+        let plan = decide_adaptive_overlay_route_v0(
+            &adaptive_config,
+            target_peer_id,
+            &AntiCensorshipProfile::default(),
+            &health,
+        );
+        selected_path = Some(plan.decision.selected_path);
+        decision_reason = Some(plan.decision.reason);
+        for frame_index in 0..max_frames {
+            let frame_request_id = format!("adaptive-node-{}-{frame_index}", node_id.0);
+            let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+                NovoRudpTransportFrameKindV0::Data,
+                [21u8; 16],
+                10,
+                20,
+                30 + frame_index,
+                40,
+                format!("novovm-adaptive-node-opaque-frame-{frame_index}").into_bytes(),
+            );
+            let encoded = frame.encode();
+            match adaptive_send_decision_v0(
+                &socket,
+                &plan.decision,
+                &peer_endpoints,
+                &node_id.0,
+                &frame_request_id,
+                encoded.clone(),
+            ) {
+                Ok(AdaptiveGateSendOutcome::Sent {
+                    sent_to,
+                    sent_bytes,
+                }) => {
+                    sent_frame_count += 1;
+                    sent_bytes_total += sent_bytes;
+                    sent_frames.push(json!({
+                        "request_id": frame_request_id,
+                        "sequence": 30 + frame_index,
+                        "sent_to": sent_to,
+                        "queued": false,
+                        "sent_bytes": sent_bytes,
+                        "encoded_frame_bytes": encoded.len(),
+                    }));
+                }
+                Ok(AdaptiveGateSendOutcome::Queued) => {
+                    queued_count += 1;
+                    sent_frames.push(json!({
+                        "request_id": frame_request_id,
+                        "sequence": 30 + frame_index,
+                        "sent_to": null,
+                        "queued": true,
+                        "sent_bytes": 0,
+                        "encoded_frame_bytes": encoded.len(),
+                    }));
+                }
+                Err(error) => {
+                    send_errors.push(error.to_string());
+                    sent_frames.push(json!({
+                        "request_id": frame_request_id,
+                        "sequence": 30 + frame_index,
+                        "sent_to": null,
+                        "queued": false,
+                        "sent_bytes": 0,
+                        "encoded_frame_bytes": encoded.len(),
+                        "error": error.to_string(),
+                    }));
+                }
+            }
+        }
+    }
+
+    let start = Instant::now();
+    let mut buf = vec![0u8; 65535];
+    let mut direct_frames_received = 0u64;
+    let mut relay_envelopes_received = 0u64;
+    let mut relay_frames_forwarded = 0u64;
+    let mut probe_ack_sent = 0u64;
+    let mut frames = Vec::new();
+    let mut recv_error = None;
+    let should_listen = target_peer_id.is_none() || relay_enabled;
+    if should_listen {
+        while direct_frames_received + relay_frames_forwarded + probe_ack_sent < max_frames {
+            let (received_bytes, source_addr) = match socket.recv_from(&mut buf) {
+                Ok(value) => value,
+                Err(error) => {
+                    recv_error = Some(error.to_string());
+                    break;
+                }
+            };
+
+            if let Ok(frame) =
+                novovm_network::novorudp::NovoRudpTransportFrameV0::decode(&buf[..received_bytes])
+            {
+                if frame.kind == NovoRudpTransportFrameKindV0::Endpoint {
+                    let ack = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+                        NovoRudpTransportFrameKindV0::Ack,
+                        frame.session_id,
+                        frame.stream_id,
+                        frame.object_id,
+                        frame.sequence,
+                        frame.ack_epoch,
+                        frame.payload.clone(),
+                    );
+                    socket
+                        .send_to(&ack.encode(), source_addr)
+                        .context("adaptive node send probe ack")?;
+                    probe_ack_sent += 1;
+                    frames.push(json!({
+                        "kind": "probe",
+                        "source_addr": source_addr.to_string(),
+                        "received_bytes": received_bytes,
+                        "ack_sent": true,
+                    }));
+                    continue;
+                }
+                direct_frames_received += 1;
+                frames.push(json!({
+                    "kind": "direct_data",
+                    "source_addr": source_addr.to_string(),
+                    "received_bytes": received_bytes,
+                    "frame_decode_ok": true,
+                    "decoded_kind": frame.kind,
+                    "decoded_sequence": frame.sequence,
+                    "payload_bytes": frame.payload.len(),
+                }));
+                continue;
+            }
+
+            let mut envelope: OverlayGateRelayEnvelopeV0 =
+                match serde_json::from_slice(&buf[..received_bytes]) {
+                    Ok(envelope) => envelope,
+                    Err(error) => {
+                        frames.push(json!({
+                            "kind": "unknown",
+                            "source_addr": source_addr.to_string(),
+                            "received_bytes": received_bytes,
+                            "accepted": false,
+                            "error": error.to_string(),
+                        }));
+                        continue;
+                    }
+                };
+            relay_envelopes_received += 1;
+            if !capabilities.can_relay() {
+                frames.push(json!({
+                    "kind": "relay_envelope",
+                    "request_id": envelope.request_id,
+                    "source_addr": source_addr.to_string(),
+                    "accepted": false,
+                    "error": "relay_disabled_or_budget_exhausted",
+                }));
+                continue;
+            }
+            if envelope.ttl == 0 {
+                frames.push(json!({
+                    "kind": "relay_envelope",
+                    "request_id": envelope.request_id,
+                    "source_addr": source_addr.to_string(),
+                    "accepted": false,
+                    "error": "relay ttl exhausted",
+                }));
+                continue;
+            }
+            envelope.ttl = envelope.ttl.saturating_sub(1);
+            let (forward_to, forward_payload, delivered_to_target) =
+                if envelope.remaining_hop_addrs.is_empty() {
+                    (envelope.target_addr.clone(), envelope.payload.clone(), true)
+                } else {
+                    let next_hop = envelope.remaining_hop_addrs.remove(0);
+                    (next_hop, serde_json::to_vec(&envelope)?, false)
+                };
+            match socket.send_to(&forward_payload, &forward_to) {
+                Ok(forwarded_bytes) => {
+                    relay_frames_forwarded += 1;
+                    frames.push(json!({
+                        "kind": "relay_envelope",
+                        "request_id": envelope.request_id,
+                        "source_addr": source_addr.to_string(),
+                        "accepted": true,
+                        "forwarded_to": forward_to,
+                        "forwarded_bytes": forwarded_bytes,
+                        "delivered_to_target": delivered_to_target,
+                    }));
+                }
+                Err(error) => frames.push(json!({
+                    "kind": "relay_envelope",
+                    "request_id": envelope.request_id,
+                    "source_addr": source_addr.to_string(),
+                    "accepted": false,
+                    "forwarded_to": forward_to,
+                    "error": error.to_string(),
+                })),
+            }
+        }
+    }
+
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+    let accepted = if target_peer_id.is_some() {
+        send_errors.is_empty() && (sent_frame_count == max_frames || queued_count == max_frames)
+    } else {
+        direct_frames_received == max_frames
+            || relay_frames_forwarded == max_frames
+            || probe_ack_sent == max_frames
+    };
+    let endpoint_record = AdaptiveOverlayEndpointRecord {
+        peer_id: node_id.clone(),
+        bind_policy: adaptive_config.bind_policy.clone(),
+        advertised_endpoint: Some(bind_addr_effective.to_string()),
+        capabilities: capabilities.clone(),
+    };
+    let report = json!({
+        "accepted": accepted,
+        "scope": "adaptive_overlay_node_process_gate_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "node_id": node_id,
+        "bind_policy": adaptive_config.bind_policy,
+        "bind_addr_requested": bind_addr,
+        "bind_addr_effective": bind_addr_effective.to_string(),
+        "interface_summary": interface_summary,
+        "endpoint_record": endpoint_record,
+        "bootstrap_peer_count": peers.len(),
+        "selected_path": selected_path,
+        "decision_reason": decision_reason,
+        "relay_budget": capabilities.relay_budget,
+        "queue_enabled": capabilities.queue_enabled,
+        "target_peer_id": target_peer_id,
+        "sent_frame_count": sent_frame_count,
+        "queued_count": queued_count,
+        "sent_bytes_total": sent_bytes_total,
+        "send_errors": send_errors,
+        "sent_frames": sent_frames,
+        "direct_frames_received": direct_frames_received,
+        "relay_envelopes_received": relay_envelopes_received,
+        "relay_frames_forwarded": relay_frames_forwarded,
+        "probe_ack_sent": probe_ack_sent,
+        "recv_error": recv_error,
+        "frames": frames,
+        "elapsed_ms": elapsed_ms,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("adaptive overlay node gate failed")
+    }
+}
+
+enum AdaptiveGateSendOutcome {
+    Sent { sent_to: String, sent_bytes: usize },
+    Queued,
+}
+
+fn adaptive_send_decision_v0(
+    socket: &UdpSocket,
+    decision: &OverlayRuntimeDecision,
+    peer_endpoints: &BTreeMap<String, String>,
+    source_peer_id: &str,
+    request_id: &str,
+    encoded: Vec<u8>,
+) -> Result<AdaptiveGateSendOutcome> {
+    match decision.selected_path {
+        OverlayRuntimeSelectedPath::QueueFallback => Ok(AdaptiveGateSendOutcome::Queued),
+        OverlayRuntimeSelectedPath::DirectNovoRudp => {
+            let target_peer = decision
+                .direct_endpoint_candidates
+                .first()
+                .unwrap_or(&decision.target_peer_id);
+            let target_addr = peer_endpoints
+                .get(target_peer.0.as_str())
+                .with_context(|| format!("missing direct endpoint for {}", target_peer.0))?;
+            let sent_bytes = socket
+                .send_to(&encoded, target_addr)
+                .with_context(|| format!("adaptive direct send to {target_addr}"))?;
+            Ok(AdaptiveGateSendOutcome::Sent {
+                sent_to: target_addr.clone(),
+                sent_bytes,
+            })
+        }
+        OverlayRuntimeSelectedPath::RelayNovoRudp => {
+            let relay_peer = decision
+                .relay_candidates
+                .first()
+                .context("missing relay candidate")?;
+            let relay_addr = peer_endpoints
+                .get(relay_peer.0.as_str())
+                .with_context(|| format!("missing relay endpoint for {}", relay_peer.0))?;
+            let target_addr = peer_endpoints
+                .get(decision.target_peer_id.0.as_str())
+                .with_context(|| {
+                    format!("missing target endpoint for {}", decision.target_peer_id.0)
+                })?;
+            let envelope = OverlayGateRelayEnvelopeV0 {
+                request_id: request_id.to_string(),
+                source_peer_id: source_peer_id.into(),
+                target_peer_id: decision.target_peer_id.0.clone(),
+                target_addr: target_addr.clone(),
+                remaining_hop_addrs: Vec::new(),
+                ttl: 4,
+                payload: encoded,
+            };
+            let payload = serde_json::to_vec(&envelope)?;
+            let sent_bytes = socket
+                .send_to(&payload, relay_addr)
+                .with_context(|| format!("adaptive relay send to {relay_addr}"))?;
+            Ok(AdaptiveGateSendOutcome::Sent {
+                sent_to: relay_addr.clone(),
+                sent_bytes,
+            })
+        }
+        OverlayRuntimeSelectedPath::MultiHopRelay => {
+            let hops = decision
+                .multi_hop_candidates
+                .first()
+                .context("missing multi-hop candidate")?;
+            let first_hop = hops.first().context("missing first multi-hop relay")?;
+            let first_hop_addr = peer_endpoints
+                .get(first_hop.0.as_str())
+                .with_context(|| format!("missing relay endpoint for {}", first_hop.0))?;
+            let remaining_hop_addrs = hops
+                .iter()
+                .skip(1)
+                .map(|peer_id| {
+                    peer_endpoints
+                        .get(peer_id.0.as_str())
+                        .cloned()
+                        .with_context(|| format!("missing relay endpoint for {}", peer_id.0))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let target_addr = peer_endpoints
+                .get(decision.target_peer_id.0.as_str())
+                .with_context(|| {
+                    format!("missing target endpoint for {}", decision.target_peer_id.0)
+                })?;
+            let envelope = OverlayGateRelayEnvelopeV0 {
+                request_id: request_id.to_string(),
+                source_peer_id: source_peer_id.into(),
+                target_peer_id: decision.target_peer_id.0.clone(),
+                target_addr: target_addr.clone(),
+                remaining_hop_addrs,
+                ttl: 4,
+                payload: encoded,
+            };
+            let payload = serde_json::to_vec(&envelope)?;
+            let sent_bytes = socket
+                .send_to(&payload, first_hop_addr)
+                .with_context(|| format!("adaptive multi-hop send to {first_hop_addr}"))?;
+            Ok(AdaptiveGateSendOutcome::Sent {
+                sent_to: first_hop_addr.clone(),
+                sent_bytes,
+            })
+        }
+    }
+}
+
 fn build_decision_loopback_report(
     scope: &str,
     request_id: &str,
@@ -1295,6 +1709,91 @@ fn adaptive_gate_config(local_peer_id: PeerId) -> AdaptiveOverlayNodeConfig {
             .with_advertised_endpoint("192.168.71.55:41050")
             .with_relay_enabled(),
     ])
+}
+
+fn adaptive_gate_peers_from_env() -> Result<Vec<AdaptiveOverlayEndpointRecord>> {
+    if let Some(peers_json) = env_string("NOVOVM_OVERLAY_ADAPTIVE_PEERS_JSON") {
+        let peers = serde_json::from_str::<Vec<AdaptiveGatePeerConfig>>(&peers_json)
+            .context("parse NOVOVM_OVERLAY_ADAPTIVE_PEERS_JSON")?;
+        return Ok(peers
+            .into_iter()
+            .map(|peer| {
+                let mut record =
+                    AdaptiveOverlayEndpointRecord::zero_config(PeerId::new(peer.peer_id))
+                        .with_advertised_endpoint(peer.endpoint);
+                if peer.relay_enabled {
+                    record = record.with_relay_enabled();
+                }
+                record
+            })
+            .collect());
+    }
+    Ok(adaptive_gate_config(PeerId::new("node-local")).bootstrap_peers)
+}
+
+fn adaptive_health_from_env(observed_unix_ms: u64) -> OverlayRouteHealthSnapshot {
+    let cooldown_peers = env_string("NOVOVM_OVERLAY_ADAPTIVE_COOLDOWN_PEERS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| OverlayHopHealth::cooling_down(PeerId::new(value), observed_unix_ms, 1_000))
+        .collect::<Vec<_>>();
+    OverlayRouteHealthSnapshot::new(observed_unix_ms, cooldown_peers)
+}
+
+fn adaptive_interface_summary_json() -> serde_json::Value {
+    let os = env::consts::OS;
+    let command_output = if os == "windows" {
+        Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Get-NetIPAddress -AddressFamily IPv4 | Select-Object InterfaceAlias,IPAddress,PrefixLength | ConvertTo-Json -Compress",
+            ])
+            .output()
+    } else {
+        Command::new("sh")
+            .args(["-c", "ip -br addr 2>/dev/null || true"])
+            .output()
+    };
+    match command_output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            json!({
+                "os": os,
+                "inventory_available": output.status.success(),
+                "source": if os == "windows" { "Get-NetIPAddress" } else { "ip -br addr" },
+                "raw": stdout,
+                "stderr": stderr,
+                "heuristics": {
+                    "prefers_non_loopback": true,
+                    "ethernet_preferred_over_wifi": true,
+                    "vpn_virtual_not_disabled": true
+                }
+            })
+        }
+        Err(error) => json!({
+            "os": os,
+            "inventory_available": false,
+            "source": null,
+            "error": error.to_string(),
+            "heuristics": {
+                "prefers_non_loopback": true,
+                "ethernet_preferred_over_wifi": true,
+                "vpn_virtual_not_disabled": true
+            }
+        }),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AdaptiveGatePeerConfig {
+    peer_id: String,
+    endpoint: String,
+    #[serde(default)]
+    relay_enabled: bool,
 }
 
 #[derive(Debug, Clone)]

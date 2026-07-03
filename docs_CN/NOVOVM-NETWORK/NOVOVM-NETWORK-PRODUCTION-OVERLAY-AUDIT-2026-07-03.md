@@ -2363,6 +2363,186 @@ direct -> relay -> multihop -> queue
 without mixing network transport with APFL, AOEM, or ledger semantics.
 ```
 
+## Cut 21: Adaptive Overlay Node Process Gate v0
+
+Status:
+
+```text
+PASS
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+scripts/novovm-adaptive-overlay-node-process-matrix.ps1
+```
+
+Goal:
+
+```text
+Move the adaptive overlay from an in-process decision matrix to real process
+execution where every participant runs the same adaptive-node gate.
+
+This cut removes the fixed test identity shape from the local process gate:
+nodes are not launched as "sender", "receiver", "relay", or "queue" modes.
+They are launched as adaptive overlay nodes with capabilities, endpoints,
+peer records, route health, and a target peer when sending is required.
+```
+
+Gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=adaptive-node
+```
+
+Adaptive node inputs:
+
+```text
+NOVOVM_OVERLAY_ADAPTIVE_NODE_ID
+NOVOVM_OVERLAY_ADAPTIVE_BIND_ADDR
+NOVOVM_OVERLAY_ADAPTIVE_RELAY_ENABLED
+NOVOVM_OVERLAY_ADAPTIVE_QUEUE_ENABLED
+NOVOVM_OVERLAY_ADAPTIVE_TARGET_PEER_ID
+NOVOVM_OVERLAY_ADAPTIVE_PEERS_JSON
+NOVOVM_OVERLAY_ADAPTIVE_COOLDOWN_PEERS
+```
+
+Default bind behavior:
+
+```text
+NOVOVM_OVERLAY_ADAPTIVE_BIND_ADDR defaults to 0.0.0.0:0
+```
+
+This keeps the Cut 19 operational rule in the executable process path:
+
+```text
+cross-machine sender must not default to 127.0.0.1:0
+```
+
+Process matrix runner:
+
+```text
+scripts/novovm-adaptive-overlay-node-process-matrix.ps1
+```
+
+Validation command:
+
+```powershell
+powershell -ExecutionPolicy Bypass `
+  -File scripts\novovm-adaptive-overlay-node-process-matrix.ps1 `
+  -MaxFrames 4 `
+  -BasePort 39720
+```
+
+Observed aggregate result:
+
+```text
+accepted=true
+scope=adaptive_overlay_node_process_matrix_v0
+max_frames=4
+peer_count=4
+
+direct:
+  sender selected_path=DirectNovoRudp
+  reason=DirectAllowed
+  sender_sent=4
+  receiver_frames=4
+
+relay:
+  sender selected_path=RelayNovoRudp
+  reason=DirectCoolingDown
+  sender_sent=4
+  relay_frames_forwarded=4
+  receiver_frames=4
+
+multihop:
+  sender selected_path=MultiHopRelay
+  reason=MultiHopRelayRequired
+  sender_sent=4
+  relay_2_frames_forwarded=4
+  relay_3_frames_forwarded=4
+  receiver_frames=4
+
+queue:
+  sender selected_path=QueueFallback
+  reason=RouteHealthExhausted
+  sender_sent=0
+  queued_count=4
+```
+
+Per-node report fields include:
+
+```text
+node_id
+bind_policy
+bind_addr_requested
+bind_addr_effective
+interface_summary
+endpoint_record
+bootstrap_peer_count
+selected_path
+decision_reason
+relay_budget
+queue_enabled
+target_peer_id
+sent_frame_count
+queued_count
+direct_frames_received
+relay_envelopes_received
+relay_frames_forwarded
+probe_ack_sent
+```
+
+Execution detail:
+
+```text
+The adaptive-node process binds its UDP socket before running interface
+inventory. This prevents receiver startup races where interface inspection
+delays socket binding and the sender transmits before the listener exists.
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+
+Significance:
+
+```text
+Cut 21 is the first executable process proof of the Adaptive Overlay Node
+product shape:
+
+fixed node identity
+floating bind endpoint
+endpoint record generation
+interface inventory reporting
+capability-based relay eligibility
+health-aware route decision
+automatic direct -> relay -> multihop -> queue selection
+
+Each process still remains a network-only gate. It forwards opaque NOVORUDP
+bytes and never interprets APFL, calls AOEM, or mutates ledger state.
+```
+
+Known v0 limitation:
+
+```text
+This is still a local process matrix, not a long-running production daemon and
+not yet a real cross-machine autonomous discovery network.
+
+Peer records are supplied through NOVOVM_OVERLAY_ADAPTIVE_PEERS_JSON.
+Interface inventory is reported for audit, but endpoint publication,
+external observed-address discovery, signed peer records, abuse policy,
+and persistent health gossip remain future cuts.
+```
+
 ## Product Readout
 
 Current product status:
