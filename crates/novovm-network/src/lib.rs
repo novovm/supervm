@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod adaptive_overlay;
 pub mod availability;
 pub mod capability;
 pub mod control_plane;
@@ -19,6 +20,7 @@ pub mod routing;
 pub mod runtime_status;
 pub mod transport;
 
+pub use adaptive_overlay::*;
 pub use availability::*;
 pub use capability::*;
 pub use control_plane::*;

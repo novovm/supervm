@@ -2212,6 +2212,157 @@ It validates that the overlay data plane can survive role separation across
 physical machines while preserving strict network/business separation.
 ```
 
+## Cut 20: Adaptive Overlay Node Runtime Decision Core v0
+
+Status:
+
+```text
+PASS
+```
+
+Implemented in:
+
+```text
+crates/novovm-network/src/adaptive_overlay.rs
+crates/novovm-network/src/lib.rs
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Move from manually assigned A / R1 / R2 / B roles toward fixed node identity
+with dynamic runtime role selection.
+
+This cut does not introduce a long-running production daemon yet. It adds the
+decision core needed by such a daemon:
+
+- zero-config bind policy
+- node capability records
+- relay budget policy
+- endpoint records
+- adaptive candidate route generation
+- health-aware direct -> relay -> multihop -> queue route decision
+```
+
+New core types:
+
+```text
+AdaptiveOverlayBindPolicy
+AdaptiveOverlayRelayBudget
+AdaptiveOverlayNodeCapabilities
+AdaptiveOverlayEndpointRecord
+AdaptiveOverlayNodeConfig
+AdaptiveOverlayRoutePlan
+```
+
+Zero-config default:
+
+```text
+bind_policy = Floating
+effective_bind_candidates = ["0.0.0.0:0"]
+```
+
+This encodes the operational finding from Cut 19:
+
+```text
+Linux cross-machine sender must not default to 127.0.0.1:0.
+```
+
+Gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=adaptive-node-matrix
+```
+
+Validation command:
+
+```powershell
+$env:NOVOVM_OVERLAY_GATE_MODE="adaptive-node-matrix"
+$env:NOVOVM_OVERLAY_GATE_REPORT_PATH="artifacts/network-overlay-gate/adaptive-node-matrix.json"
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Observed result:
+
+```text
+accepted=true
+scope=adaptive_overlay_node_matrix_gate_v0
+fixed_identity_dynamic_role=true
+bind_candidates=["0.0.0.0:0"]
+bootstrap_peer_count=4
+
+adaptive-direct-healthy:
+  expected_path=DirectNovoRudp
+  selected_path=DirectNovoRudp
+  reason=DirectAllowed
+
+adaptive-relay-after-direct-cooldown:
+  expected_path=RelayNovoRudp
+  selected_path=RelayNovoRudp
+  reason=DirectCoolingDown
+
+adaptive-multihop-after-direct-relay-cooldown:
+  expected_path=MultiHopRelay
+  selected_path=MultiHopRelay
+  reason=MultiHopRelayRequired
+
+adaptive-queue-after-all-cooldown:
+  expected_path=QueueFallback
+  selected_path=QueueFallback
+  reason=RouteHealthExhausted
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+
+Design note:
+
+```text
+Relay is modeled as a capability, not a fixed machine identity.
+
+The same node can be a sender, receiver, relay candidate, or queue fallback
+participant depending on runtime request direction, reachability, policy, and
+health state.
+```
+
+Known v0 limitation:
+
+```text
+Health is still node-level, not edge-level.
+
+If a relay node is cooling down, all routes using that relay are skipped. A
+future edge-level health model should distinguish:
+
+A -> R1 failure
+R1 -> B failure
+R1 -> R2 failure
+R2 -> B failure
+```
+
+Significance:
+
+```text
+Cut 19 proved the real four-node data plane.
+Cut 20 begins the zero-config product shape:
+
+fixed identity
+dynamic endpoint
+capability-based relay
+health-aware automatic route selection
+direct -> relay -> multihop -> queue
+
+without mixing network transport with APFL, AOEM, or ledger semantics.
+```
+
 ## Product Readout
 
 Current product status:

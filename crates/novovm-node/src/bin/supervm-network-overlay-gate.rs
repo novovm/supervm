@@ -1,4 +1,7 @@
 use anyhow::{Context, Result};
+use novovm_network::adaptive_overlay::{
+    decide_adaptive_overlay_route_v0, AdaptiveOverlayEndpointRecord, AdaptiveOverlayNodeConfig,
+};
 use novovm_network::control_plane::{
     CapabilityAdvertisement, ControlPlaneRegistry, Libp2pControlPlaneConfig, PeerId,
 };
@@ -10,7 +13,7 @@ use novovm_network::overlay_runtime::{
     decide_overlay_runtime_fallback_chain_v0, decide_overlay_runtime_route_v0,
     decide_overlay_runtime_route_with_health_v0, overlay_route_health_from_observations_v0,
     OverlayHopHealth, OverlayRouteAttemptObservation, OverlayRouteHealthSnapshot,
-    OverlayRuntimeDecision,
+    OverlayRuntimeDecision, OverlayRuntimeSelectedPath,
 };
 use novovm_network::reachability::{
     decide_reachability_probe_v0, FloatingPortMode, ReachabilityProbeDecision,
@@ -39,6 +42,7 @@ fn main() -> Result<()> {
         "health-matrix" => run_health_matrix_gate(),
         "observation-matrix" => run_observation_matrix_gate(),
         "fallback-chain" => run_fallback_chain_gate(),
+        "adaptive-node-matrix" => run_adaptive_node_matrix_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -1032,6 +1036,109 @@ fn run_fallback_chain_gate() -> Result<()> {
     }
 }
 
+fn run_adaptive_node_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
+        .unwrap_or_else(|| "artifacts/network-overlay-gate/adaptive-node-matrix.json".into());
+    let local_peer_id = PeerId::new(
+        env_string("NOVOVM_OVERLAY_GATE_LOCAL_PEER_ID").unwrap_or_else(|| "node-a".into()),
+    );
+    let target_peer_id = PeerId::new(
+        env_string("NOVOVM_OVERLAY_GATE_TARGET_PEER_ID").unwrap_or_else(|| "node-b".into()),
+    );
+    let config = adaptive_gate_config(local_peer_id.clone());
+    let profile = AntiCensorshipProfile::default();
+    let cases = vec![
+        (
+            "adaptive-direct-healthy",
+            OverlayRuntimeSelectedPath::DirectNovoRudp,
+            OverlayRouteHealthSnapshot::new(100, Vec::new()),
+        ),
+        (
+            "adaptive-relay-after-direct-cooldown",
+            OverlayRuntimeSelectedPath::RelayNovoRudp,
+            OverlayRouteHealthSnapshot::new(
+                100,
+                vec![OverlayHopHealth::cooling_down(
+                    target_peer_id.clone(),
+                    100,
+                    1_000,
+                )],
+            ),
+        ),
+        (
+            "adaptive-multihop-after-direct-relay-cooldown",
+            OverlayRuntimeSelectedPath::MultiHopRelay,
+            OverlayRouteHealthSnapshot::new(
+                100,
+                vec![
+                    OverlayHopHealth::cooling_down(target_peer_id.clone(), 100, 1_000),
+                    OverlayHopHealth::cooling_down(PeerId::new("relay-1"), 100, 1_000),
+                ],
+            ),
+        ),
+        (
+            "adaptive-queue-after-all-cooldown",
+            OverlayRuntimeSelectedPath::QueueFallback,
+            OverlayRouteHealthSnapshot::new(
+                100,
+                vec![
+                    OverlayHopHealth::cooling_down(target_peer_id.clone(), 100, 1_000),
+                    OverlayHopHealth::cooling_down(PeerId::new("relay-1"), 100, 1_000),
+                    OverlayHopHealth::cooling_down(PeerId::new("relay-2"), 100, 1_000),
+                    OverlayHopHealth::cooling_down(PeerId::new("relay-3"), 100, 1_000),
+                ],
+            ),
+        ),
+    ];
+
+    let mut reports = Vec::new();
+    for (case_name, expected_path, health) in cases {
+        let plan = decide_adaptive_overlay_route_v0(&config, &target_peer_id, &profile, &health);
+        let selected_path = plan.decision.selected_path;
+        let queued = selected_path
+            == novovm_network::overlay_runtime::OverlayRuntimeSelectedPath::QueueFallback;
+        let case_accepted = selected_path == expected_path;
+        reports.push(json!({
+            "case": case_name,
+            "accepted": case_accepted,
+            "expected_path": expected_path,
+            "selected_path": selected_path,
+            "reason": plan.decision.reason,
+            "queued": queued,
+            "candidate_route_count": plan.candidate_route_count,
+            "direct_candidate_count": plan.direct_candidate_count,
+            "relay_candidate_count": plan.relay_candidate_count,
+            "multihop_candidate_count": plan.multihop_candidate_count,
+            "queue_allowed": plan.queue_allowed,
+            "health": health,
+            "decision": plan.decision,
+        }));
+    }
+    let accepted = reports.iter().all(|case| {
+        case["accepted"].as_bool().unwrap_or(false)
+            && case["candidate_route_count"].as_u64().unwrap_or(0) == 3
+    });
+    let report = json!({
+        "accepted": accepted,
+        "scope": "adaptive_overlay_node_matrix_gate_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "fixed_identity_dynamic_role": true,
+        "local_peer_id": local_peer_id,
+        "target_peer_id": target_peer_id,
+        "bind_candidates": config.bind_policy.effective_bind_candidates(),
+        "bootstrap_peer_count": config.bootstrap_peers.len(),
+        "cases": reports,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("adaptive node matrix gate failed")
+    }
+}
+
 fn build_decision_loopback_report(
     scope: &str,
     request_id: &str,
@@ -1172,6 +1279,22 @@ fn fallback_chain_route_sets(target_peer_id: PeerId) -> Vec<RouteSet> {
             content_address_hint: Some("cid-overlay-fallback-multihop".into()),
         },
     ]
+}
+
+fn adaptive_gate_config(local_peer_id: PeerId) -> AdaptiveOverlayNodeConfig {
+    AdaptiveOverlayNodeConfig::zero_config(local_peer_id).with_bootstrap_peers(vec![
+        AdaptiveOverlayEndpointRecord::zero_config(PeerId::new("node-b"))
+            .with_advertised_endpoint("192.168.71.56:41020"),
+        AdaptiveOverlayEndpointRecord::zero_config(PeerId::new("relay-1"))
+            .with_advertised_endpoint("192.168.71.9:41030")
+            .with_relay_enabled(),
+        AdaptiveOverlayEndpointRecord::zero_config(PeerId::new("relay-2"))
+            .with_advertised_endpoint("192.168.71.54:41040")
+            .with_relay_enabled(),
+        AdaptiveOverlayEndpointRecord::zero_config(PeerId::new("relay-3"))
+            .with_advertised_endpoint("192.168.71.55:41050")
+            .with_relay_enabled(),
+    ])
 }
 
 #[derive(Debug, Clone)]
