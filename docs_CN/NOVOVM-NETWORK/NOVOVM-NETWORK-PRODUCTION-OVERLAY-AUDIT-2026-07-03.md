@@ -2821,6 +2821,149 @@ avoidance, and reachable endpoint selection before NAT traversal / UDP hole
 punching.
 ```
 
+## Cut 23: Endpoint Advertisement + Interface Selection Fix v0
+
+Status:
+
+```text
+LOCAL / CONFIG VALIDATION PASS
+REAL FOUR-MACHINE CUT 22 REGRESSION PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Stop publishing bind endpoints such as 0.0.0.0:port in adaptive endpoint
+records.
+
+Separate:
+
+bind_addr_requested
+bind_addr_effective
+advertised_endpoint
+observed_endpoint
+
+Cut 23 v0 implements the first three. observed_endpoint remains a future NAT /
+external observer feature.
+```
+
+New report field:
+
+```text
+endpoint_selection
+```
+
+It contains:
+
+```text
+advertised_endpoint
+endpoint_selection_reason
+bind_addr_effective
+candidates
+rejected_candidates
+policy
+```
+
+Selection order:
+
+```text
+1. NOVOVM_OVERLAY_ADAPTIVE_ADVERTISED_ENDPOINT
+2. self peer record endpoint from NOVOVM_OVERLAY_ADAPTIVE_PEERS_JSON
+3. bind_addr_effective, only if it is publishable
+```
+
+Default rejection policy:
+
+```text
+reject_unspecified=true       # rejects 0.0.0.0 / ::
+reject_loopback_by_default=true
+reject_link_local_by_default=true
+```
+
+Observed validation:
+
+```text
+A:
+  bind_addr_effective=0.0.0.0:53386
+  advertised_endpoint=192.168.71.118:53386
+  endpoint_selection_reason=manually_configured_public_addr
+  rejected bind candidate:
+    endpoint=0.0.0.0:53386
+    reason=reject_unspecified_ip
+
+B:
+  bind_addr_effective=0.0.0.0:41020
+  advertised_endpoint=192.168.71.56:41020
+  endpoint_selection_reason=manually_configured_public_addr
+
+R1:
+  bind_addr_effective=0.0.0.0:41030
+  advertised_endpoint=192.168.71.9:41030
+  endpoint_selection_reason=manually_configured_public_addr
+
+R2:
+  bind_addr_effective=0.0.0.0:41040
+  advertised_endpoint=192.168.71.54:41040
+  endpoint_selection_reason=manually_configured_public_addr
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+cargo test -q -p novovm-network adaptive_overlay -- --test-threads=1
+
+adaptive-node process matrix:
+  direct    PASS
+  relay     PASS
+  multihop  PASS
+  queue     PASS
+
+cut23 endpoint selection sample:
+  adaptive-queue PASS
+  advertised_endpoint=192.168.71.118:<dynamic-port>
+  bind candidate 0.0.0.0:<dynamic-port> rejected
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+opcode114_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+
+Known v0 limitation:
+
+```text
+Cut 23 v0 uses configured peer-record endpoints as the source of publishable
+addresses.
+
+It does not yet run active peer reachability probes, does not derive observed
+public endpoints, and does not perform NAT traversal / UDP hole punching.
+```
+
+Next frontier:
+
+```text
+Cut 24: Reachability Probe + Observed Endpoint Record v0
+
+Use peer observations and probe replies to decide whether the configured
+advertised endpoint is actually reachable, then record observed source
+addresses for later NAT traversal.
+```
+
 ## Product Readout
 
 Current product status:

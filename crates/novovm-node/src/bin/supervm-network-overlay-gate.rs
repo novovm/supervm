@@ -30,7 +30,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::net::UdpSocket;
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -1190,6 +1190,8 @@ fn run_adaptive_node_gate() -> Result<()> {
         .context("set adaptive node read timeout")?;
     let bind_addr_effective = socket.local_addr().context("adaptive node local addr")?;
     let interface_summary = adaptive_interface_summary_json();
+    let endpoint_selection =
+        adaptive_select_advertised_endpoint_v0(&node_id, &peers, bind_addr_effective);
 
     let mut selected_path = None;
     let mut decision_reason = None;
@@ -1418,7 +1420,10 @@ fn run_adaptive_node_gate() -> Result<()> {
     let endpoint_record = AdaptiveOverlayEndpointRecord {
         peer_id: node_id.clone(),
         bind_policy: adaptive_config.bind_policy.clone(),
-        advertised_endpoint: Some(bind_addr_effective.to_string()),
+        advertised_endpoint: endpoint_selection
+            .get("advertised_endpoint")
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned),
         capabilities: capabilities.clone(),
     };
     let report = json!({
@@ -1431,6 +1436,7 @@ fn run_adaptive_node_gate() -> Result<()> {
         "bind_addr_requested": bind_addr,
         "bind_addr_effective": bind_addr_effective.to_string(),
         "interface_summary": interface_summary,
+        "endpoint_selection": endpoint_selection,
         "endpoint_record": endpoint_record,
         "bootstrap_peer_count": peers.len(),
         "selected_path": selected_path,
@@ -1778,6 +1784,132 @@ fn adaptive_route_family_cooldown_from_env() -> Result<Vec<AdaptiveOverlayRouteF
             other => anyhow::bail!("unsupported adaptive route family cooldown: {other}"),
         })
         .collect()
+}
+
+fn adaptive_select_advertised_endpoint_v0(
+    node_id: &PeerId,
+    peers: &[AdaptiveOverlayEndpointRecord],
+    bind_addr_effective: SocketAddr,
+) -> serde_json::Value {
+    let mut candidates = Vec::new();
+    let mut rejected = Vec::new();
+    let mut selected_endpoint = None::<String>;
+    let mut selected_reason = None::<String>;
+
+    if let Some(explicit) = env_string("NOVOVM_OVERLAY_ADAPTIVE_ADVERTISED_ENDPOINT") {
+        candidates.push(json!({
+            "source": "NOVOVM_OVERLAY_ADAPTIVE_ADVERTISED_ENDPOINT",
+            "endpoint": explicit,
+        }));
+        match normalize_advertised_endpoint_candidate(&explicit, bind_addr_effective.port()) {
+            Ok(endpoint) => {
+                selected_endpoint = Some(endpoint);
+                selected_reason = Some("manually_configured_public_addr".into());
+            }
+            Err(reason) => rejected.push(json!({
+                "source": "NOVOVM_OVERLAY_ADAPTIVE_ADVERTISED_ENDPOINT",
+                "endpoint": explicit,
+                "reason": reason,
+            })),
+        }
+    }
+
+    if selected_endpoint.is_none() {
+        if let Some(self_record) = peers.iter().find(|peer| peer.peer_id == *node_id) {
+            if let Some(endpoint) = &self_record.advertised_endpoint {
+                candidates.push(json!({
+                    "source": "self_peer_record",
+                    "endpoint": endpoint,
+                }));
+                match normalize_advertised_endpoint_candidate(endpoint, bind_addr_effective.port())
+                {
+                    Ok(endpoint) => {
+                        selected_endpoint = Some(endpoint);
+                        selected_reason = Some("manually_configured_public_addr".into());
+                    }
+                    Err(reason) => rejected.push(json!({
+                        "source": "self_peer_record",
+                        "endpoint": endpoint,
+                        "reason": reason,
+                    })),
+                }
+            }
+        }
+    }
+
+    let bind_endpoint = bind_addr_effective.to_string();
+    if selected_endpoint.is_none() {
+        candidates.push(json!({
+            "source": "bind_addr_effective",
+            "endpoint": bind_endpoint,
+        }));
+        match normalize_advertised_endpoint_candidate(&bind_endpoint, bind_addr_effective.port()) {
+            Ok(endpoint) => {
+                selected_endpoint = Some(endpoint);
+                selected_reason = Some("bind_addr_effective_non_wildcard".into());
+            }
+            Err(reason) => rejected.push(json!({
+                "source": "bind_addr_effective",
+                "endpoint": bind_endpoint,
+                "reason": reason,
+            })),
+        }
+    } else if let Err(reason) =
+        normalize_advertised_endpoint_candidate(&bind_endpoint, bind_addr_effective.port())
+    {
+        rejected.push(json!({
+            "source": "bind_addr_effective",
+            "endpoint": bind_endpoint,
+            "reason": reason,
+        }));
+    }
+
+    json!({
+        "advertised_endpoint": selected_endpoint,
+        "endpoint_selection_reason": selected_reason.unwrap_or_else(|| "no_publishable_endpoint".into()),
+        "bind_addr_effective": bind_addr_effective.to_string(),
+        "candidates": candidates,
+        "rejected_candidates": rejected,
+        "policy": {
+            "reject_unspecified": true,
+            "reject_loopback_by_default": true,
+            "reject_link_local_by_default": true,
+            "explicit_config_can_publish_non_default": true,
+        }
+    })
+}
+
+fn normalize_advertised_endpoint_candidate(
+    endpoint: &str,
+    bind_port: u16,
+) -> std::result::Result<String, String> {
+    let parsed = endpoint
+        .parse::<SocketAddr>()
+        .map_err(|error| format!("invalid_socket_addr:{error}"))?;
+    reject_default_advertised_ip(parsed.ip())?;
+    let port = if parsed.port() == 0 {
+        bind_port
+    } else {
+        parsed.port()
+    };
+    if port == 0 {
+        return Err("missing_publishable_port".into());
+    }
+    Ok(SocketAddr::new(parsed.ip(), port).to_string())
+}
+
+fn reject_default_advertised_ip(ip: IpAddr) -> std::result::Result<(), String> {
+    if ip.is_unspecified() {
+        return Err("reject_unspecified_ip".into());
+    }
+    if ip.is_loopback() {
+        return Err("reject_loopback_ip_by_default".into());
+    }
+    match ip {
+        IpAddr::V4(ipv4) if ipv4.is_link_local() => Err("reject_ipv4_link_local".into()),
+        IpAddr::V6(ipv6) if ipv6.is_unicast_link_local() => Err("reject_ipv6_link_local".into()),
+        _ => Ok(()),
+    }
 }
 
 fn adaptive_interface_summary_json() -> serde_json::Value {
