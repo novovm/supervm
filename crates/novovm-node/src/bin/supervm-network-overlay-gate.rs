@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use novovm_network::adaptive_overlay::{
     decide_adaptive_overlay_route_v0, decide_adaptive_overlay_route_with_family_cooldown_v0,
     AdaptiveOverlayEndpointRecord, AdaptiveOverlayNodeCapabilities, AdaptiveOverlayNodeConfig,
@@ -61,6 +62,7 @@ fn main() -> Result<()> {
             run_decentralized_bootstrap_constraint_matrix_gate()
         }
         "multi-relay-candidate-rotation-matrix" => run_multi_relay_candidate_rotation_matrix_gate(),
+        "peer-signed-relay-record-matrix" => run_peer_signed_relay_record_matrix_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -881,6 +883,198 @@ fn run_multi_relay_candidate_rotation_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("multi relay candidate rotation matrix failed")
+    }
+}
+
+fn run_peer_signed_relay_record_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/peer-signed-relay-record-matrix.json".into()
+    });
+    let now_ms = 10_000u64;
+    let relay_a_key = SigningKey::from_bytes(&[32u8; 32]);
+    let relay_b_key = SigningKey::from_bytes(&[33u8; 32]);
+    let valid_endpoint =
+        peer_signed_relay_endpoint_v0("wss", "wss://relay-a.example.com:443/novovm", 443, 10);
+    let valid_record = sign_relay_endpoint_record_v0(
+        &relay_a_key,
+        vec![valid_endpoint.clone()],
+        9_000,
+        70_000,
+        "relay-a-record-001",
+    )?;
+
+    let valid_case = evaluate_signed_relay_record_case_v0(
+        "valid_signed_relay_record",
+        vec![valid_record.clone()],
+        now_ms,
+    );
+
+    let mut invalid_signature_record = valid_record.clone();
+    invalid_signature_record.signature = "00".repeat(64);
+    let invalid_signature_case = evaluate_signed_relay_record_case_v0(
+        "invalid_signature_rejected",
+        vec![invalid_signature_record],
+        now_ms,
+    );
+
+    let expired_record = sign_relay_endpoint_record_v0(
+        &relay_a_key,
+        vec![valid_endpoint.clone()],
+        1_000,
+        9_000,
+        "relay-a-expired-001",
+    )?;
+    let expired_case = evaluate_signed_relay_record_case_v0(
+        "expired_record_rejected",
+        vec![expired_record],
+        now_ms,
+    );
+
+    let identity_mismatch_record = sign_relay_endpoint_record_with_peer_id_v0(
+        &relay_a_key,
+        "novovm-ed25519:identity-mismatch",
+        vec![valid_endpoint.clone()],
+        9_000,
+        70_000,
+        "relay-a-identity-mismatch-001",
+    )?;
+    let identity_mismatch_case = evaluate_signed_relay_record_case_v0(
+        "peer_id_public_key_mismatch_rejected",
+        vec![identity_mismatch_record],
+        now_ms,
+    );
+
+    let mut tampered_record = valid_record.clone();
+    tampered_record.endpoints[0].uri = "wss://attacker.example.com:443/novovm".to_string();
+    let tamper_case = evaluate_signed_relay_record_case_v0(
+        "endpoint_tamper_rejected",
+        vec![tampered_record],
+        now_ms,
+    );
+
+    let unsupported_transport_record = sign_relay_endpoint_record_v0(
+        &relay_a_key,
+        vec![peer_signed_relay_endpoint_v0(
+            "unknown",
+            "unknown://relay-a.example.com:443/novovm",
+            443,
+            10,
+        )],
+        9_000,
+        70_000,
+        "relay-a-unknown-transport-001",
+    )?;
+    let unsupported_transport_case = evaluate_signed_relay_record_case_v0(
+        "unsupported_transport_rejected",
+        vec![unsupported_transport_record],
+        now_ms,
+    );
+
+    let udp_record = sign_relay_endpoint_record_v0(
+        &relay_a_key,
+        vec![peer_signed_relay_endpoint_v0(
+            "udp",
+            "udp://relay-a.example.com:41030",
+            41030,
+            10,
+        )],
+        9_000,
+        70_000,
+        "relay-a-udp-001",
+    )?;
+    let wss_record = sign_relay_endpoint_record_v0(
+        &relay_b_key,
+        vec![peer_signed_relay_endpoint_v0(
+            "wss",
+            "wss://relay-b.example.com:443/novovm",
+            443,
+            10,
+        )],
+        9_000,
+        70_000,
+        "relay-b-wss-001",
+    )?;
+    let multiple_valid_case = evaluate_signed_relay_record_case_v0(
+        "multiple_valid_records_prefers_wss_443",
+        vec![udp_record, wss_record],
+        now_ms,
+    );
+
+    let cases = vec![
+        valid_case,
+        invalid_signature_case,
+        expired_case,
+        identity_mismatch_case,
+        tamper_case,
+        unsupported_transport_case,
+        multiple_valid_case,
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let relay_record_count = cases
+        .iter()
+        .map(|case| case["relay_record_count"].as_u64().unwrap_or(0))
+        .sum::<u64>();
+    let signature_checked_count = cases
+        .iter()
+        .map(|case| {
+            case["relay_record_signature_checked_count"]
+                .as_u64()
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let signature_valid_count = cases
+        .iter()
+        .map(|case| {
+            case["relay_record_signature_valid_count"]
+                .as_u64()
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let signature_invalid_count = cases
+        .iter()
+        .map(|case| {
+            case["relay_record_signature_invalid_count"]
+                .as_u64()
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "peer_signed_relay_endpoint_record_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "relay_is_trusted_authority": false,
+        "centralized_control_plane_required": false,
+        "single_official_relay_required": false,
+        "peer_identity_source": "novovm_key",
+        "routing_subject": "target_peer_id",
+        "signature_scheme": "ed25519",
+        "canonical_payload_covers": [
+            "record_version",
+            "relay_peer_id",
+            "relay_public_key",
+            "endpoints",
+            "issued_at_ms",
+            "expires_at_ms",
+            "nonce_or_record_id",
+            "capabilities"
+        ],
+        "relay_record_count": relay_record_count,
+        "relay_record_signature_checked_count": signature_checked_count,
+        "relay_record_signature_valid_count": signature_valid_count,
+        "relay_record_signature_invalid_count": signature_invalid_count,
+        "cases": cases,
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("peer signed relay record matrix failed")
     }
 }
 
@@ -3624,6 +3818,48 @@ struct RelayCandidateV0 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PeerSignedRelayEndpointRecordV0 {
+    record_version: u32,
+    relay_peer_id: String,
+    relay_public_key: String,
+    endpoints: Vec<PeerSignedRelayEndpointV0>,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    nonce_or_record_id: String,
+    signature_scheme: String,
+    signature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PeerSignedRelayEndpointPayloadV0 {
+    record_version: u32,
+    relay_peer_id: String,
+    relay_public_key: String,
+    endpoints: Vec<PeerSignedRelayEndpointV0>,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    nonce_or_record_id: String,
+    capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PeerSignedRelayEndpointV0 {
+    transport: String,
+    uri: String,
+    port: u16,
+    priority: u32,
+    capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RelayRecordValidationV0 {
+    accepted: bool,
+    signature_valid: bool,
+    reject_reason: Option<String>,
+    candidate: Option<RelayCandidateV0>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PublicRelayRegisterPayloadV0 {
     peer_id: String,
     advertised_endpoint: Option<String>,
@@ -4623,6 +4859,372 @@ fn relay_candidate_reject_reasons_v0(
         .collect()
 }
 
+fn peer_signed_relay_endpoint_v0(
+    transport: &str,
+    uri: &str,
+    port: u16,
+    priority: u32,
+) -> PeerSignedRelayEndpointV0 {
+    PeerSignedRelayEndpointV0 {
+        transport: transport.to_string(),
+        uri: uri.to_string(),
+        port,
+        priority,
+        capabilities: vec!["relay_novorudp_opaque".into(), "peer_id_routing".into()],
+    }
+}
+
+fn sign_relay_endpoint_record_v0(
+    signing_key: &SigningKey,
+    endpoints: Vec<PeerSignedRelayEndpointV0>,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    nonce_or_record_id: &str,
+) -> Result<PeerSignedRelayEndpointRecordV0> {
+    let public_key_hex = overlay_gate_hex_lower_v0(&signing_key.verifying_key().to_bytes());
+    let relay_peer_id = relay_peer_id_from_public_key_hex_v0(&public_key_hex);
+    sign_relay_endpoint_record_with_peer_id_v0(
+        signing_key,
+        &relay_peer_id,
+        endpoints,
+        issued_at_ms,
+        expires_at_ms,
+        nonce_or_record_id,
+    )
+}
+
+fn sign_relay_endpoint_record_with_peer_id_v0(
+    signing_key: &SigningKey,
+    relay_peer_id: &str,
+    endpoints: Vec<PeerSignedRelayEndpointV0>,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    nonce_or_record_id: &str,
+) -> Result<PeerSignedRelayEndpointRecordV0> {
+    let relay_public_key = overlay_gate_hex_lower_v0(&signing_key.verifying_key().to_bytes());
+    let payload = relay_record_payload_v0(
+        relay_peer_id.to_string(),
+        relay_public_key.clone(),
+        endpoints.clone(),
+        issued_at_ms,
+        expires_at_ms,
+        nonce_or_record_id.to_string(),
+    );
+    let canonical_payload = serde_json::to_vec(&payload)?;
+    let signature: Signature = signing_key.sign(&canonical_payload);
+    Ok(PeerSignedRelayEndpointRecordV0 {
+        record_version: payload.record_version,
+        relay_peer_id: payload.relay_peer_id,
+        relay_public_key,
+        endpoints,
+        issued_at_ms,
+        expires_at_ms,
+        nonce_or_record_id: nonce_or_record_id.to_string(),
+        signature_scheme: "ed25519".into(),
+        signature: overlay_gate_hex_lower_v0(&signature.to_bytes()),
+    })
+}
+
+fn evaluate_signed_relay_record_case_v0(
+    case_name: &str,
+    records: Vec<PeerSignedRelayEndpointRecordV0>,
+    now_ms: u64,
+) -> serde_json::Value {
+    let validations = records
+        .iter()
+        .map(|record| validate_peer_signed_relay_record_v0(record, now_ms))
+        .collect::<Vec<_>>();
+    let candidates = validations
+        .iter()
+        .filter_map(|validation| validation.candidate.clone())
+        .collect::<Vec<_>>();
+    let selected_index = select_relay_candidate_index_v0(&candidates, now_ms);
+    let selected = selected_index.map(|index| candidates[index].clone());
+    let signature_checked_count = validations.len() as u64;
+    let signature_valid_count = validations
+        .iter()
+        .filter(|validation| validation.signature_valid)
+        .count() as u64;
+    let signature_invalid_count = signature_checked_count.saturating_sub(signature_valid_count);
+    let expired_count = validations
+        .iter()
+        .filter(|validation| validation.reject_reason.as_deref() == Some("relay_record_expired"))
+        .count() as u64;
+    let identity_mismatch_count = validations
+        .iter()
+        .filter(|validation| {
+            validation.reject_reason.as_deref() == Some("relay_record_identity_mismatch")
+        })
+        .count() as u64;
+    let tamper_rejected_count = if case_name == "endpoint_tamper_rejected"
+        && validations.iter().any(|validation| {
+            validation.reject_reason.as_deref() == Some("relay_record_signature_invalid")
+        }) {
+        1
+    } else {
+        0
+    };
+    let transport_unsupported_count = validations
+        .iter()
+        .filter(|validation| {
+            validation.reject_reason.as_deref() == Some("relay_transport_unsupported")
+        })
+        .count() as u64;
+    let selected_path_after_relay_selection = if selected.is_some() {
+        "RelayNovoRudp"
+    } else {
+        "QueueFallback"
+    };
+    let selection_reason = match &selected {
+        Some(candidate) if candidate.transport == "wss" && candidate.port == 443 => {
+            "SignedWss443RelayRecordSelected"
+        }
+        Some(_) => "SignedRelayRecordSelected",
+        None => "NoValidSignedRelayRecord",
+    };
+    let accepted = match case_name {
+        "valid_signed_relay_record" => {
+            signature_valid_count == 1
+                && selected
+                    .as_ref()
+                    .map(|candidate| candidate.transport.as_str())
+                    == Some("wss")
+        }
+        "invalid_signature_rejected" => signature_invalid_count == 1 && selected.is_none(),
+        "expired_record_rejected" => expired_count == 1 && selected.is_none(),
+        "peer_id_public_key_mismatch_rejected" => {
+            identity_mismatch_count == 1 && selected.is_none()
+        }
+        "endpoint_tamper_rejected" => tamper_rejected_count == 1 && selected.is_none(),
+        "unsupported_transport_rejected" => transport_unsupported_count == 1 && selected.is_none(),
+        "multiple_valid_records_prefers_wss_443" => {
+            selected
+                .as_ref()
+                .map(|candidate| candidate.transport.as_str())
+                == Some("wss")
+        }
+        _ => selected.is_some(),
+    };
+
+    json!({
+        "case": case_name,
+        "accepted": accepted,
+        "relay_record_count": records.len(),
+        "relay_record_signature_checked_count": signature_checked_count,
+        "relay_record_signature_valid_count": signature_valid_count,
+        "relay_record_signature_invalid_count": signature_invalid_count,
+        "relay_record_expired_count": expired_count,
+        "relay_record_identity_mismatch_count": identity_mismatch_count,
+        "relay_record_tamper_rejected_count": tamper_rejected_count,
+        "relay_transport_unsupported_count": transport_unsupported_count,
+        "valid_relay_candidate_count": candidates.len(),
+        "selected_relay_peer_id": selected.as_ref().map(|candidate| candidate.relay_peer_id.clone()),
+        "selected_relay_endpoint": selected.as_ref().map(|candidate| candidate.endpoint.clone()),
+        "selected_transport": selected.as_ref().map(|candidate| candidate.transport.clone()),
+        "selection_reason": selection_reason,
+        "selected_path_after_relay_selection": selected_path_after_relay_selection,
+        "validations": validations.iter().map(|validation| {
+            json!({
+                "record_accepted": validation.accepted,
+                "signature_valid": validation.signature_valid,
+                "reject_reason": validation.reject_reason,
+                "candidate": validation.candidate,
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn validate_peer_signed_relay_record_v0(
+    record: &PeerSignedRelayEndpointRecordV0,
+    now_ms: u64,
+) -> RelayRecordValidationV0 {
+    let relay_public_key_bytes =
+        match overlay_gate_decode_hex_bytes_v0(&record.relay_public_key, "relay_public_key") {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return RelayRecordValidationV0 {
+                    accepted: false,
+                    signature_valid: false,
+                    reject_reason: Some("relay_record_public_key_invalid".into()),
+                    candidate: None,
+                }
+            }
+        };
+    let public_key_array: [u8; 32] = match relay_public_key_bytes.try_into() {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return RelayRecordValidationV0 {
+                accepted: false,
+                signature_valid: false,
+                reject_reason: Some("relay_record_public_key_invalid".into()),
+                candidate: None,
+            }
+        }
+    };
+    let expected_peer_id = relay_peer_id_from_public_key_hex_v0(&record.relay_public_key);
+    if record.signature_scheme != "ed25519" {
+        return RelayRecordValidationV0 {
+            accepted: false,
+            signature_valid: false,
+            reject_reason: Some("relay_record_signature_scheme_unsupported".into()),
+            candidate: None,
+        };
+    }
+    let verifying_key = match VerifyingKey::from_bytes(&public_key_array) {
+        Ok(key) => key,
+        Err(_) => {
+            return RelayRecordValidationV0 {
+                accepted: false,
+                signature_valid: false,
+                reject_reason: Some("relay_record_public_key_invalid".into()),
+                candidate: None,
+            }
+        }
+    };
+    let signature_bytes = match overlay_gate_decode_hex_bytes_v0(&record.signature, "signature") {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return RelayRecordValidationV0 {
+                accepted: false,
+                signature_valid: false,
+                reject_reason: Some("relay_record_signature_invalid".into()),
+                candidate: None,
+            }
+        }
+    };
+    let signature_array: [u8; 64] = match signature_bytes.try_into() {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return RelayRecordValidationV0 {
+                accepted: false,
+                signature_valid: false,
+                reject_reason: Some("relay_record_signature_invalid".into()),
+                candidate: None,
+            }
+        }
+    };
+    let signature = Signature::from_bytes(&signature_array);
+    let payload = relay_record_payload_v0(
+        record.relay_peer_id.clone(),
+        record.relay_public_key.clone(),
+        record.endpoints.clone(),
+        record.issued_at_ms,
+        record.expires_at_ms,
+        record.nonce_or_record_id.clone(),
+    );
+    let canonical_payload = match serde_json::to_vec(&payload) {
+        Ok(payload) => payload,
+        Err(_) => {
+            return RelayRecordValidationV0 {
+                accepted: false,
+                signature_valid: false,
+                reject_reason: Some("relay_record_canonical_payload_failed".into()),
+                candidate: None,
+            }
+        }
+    };
+    if verifying_key
+        .verify(&canonical_payload, &signature)
+        .is_err()
+    {
+        return RelayRecordValidationV0 {
+            accepted: false,
+            signature_valid: false,
+            reject_reason: Some("relay_record_signature_invalid".into()),
+            candidate: None,
+        };
+    }
+    if record.relay_peer_id != expected_peer_id {
+        return RelayRecordValidationV0 {
+            accepted: false,
+            signature_valid: true,
+            reject_reason: Some("relay_record_identity_mismatch".into()),
+            candidate: None,
+        };
+    }
+    if record.expires_at_ms <= now_ms {
+        return RelayRecordValidationV0 {
+            accepted: false,
+            signature_valid: true,
+            reject_reason: Some("relay_record_expired".into()),
+            candidate: None,
+        };
+    }
+    let endpoint = match record
+        .endpoints
+        .iter()
+        .find(|endpoint| relay_transport_supported_v0(&endpoint.transport, endpoint.port))
+    {
+        Some(endpoint) => endpoint,
+        None => {
+            return RelayRecordValidationV0 {
+                accepted: false,
+                signature_valid: true,
+                reject_reason: Some("relay_transport_unsupported".into()),
+                candidate: None,
+            }
+        }
+    };
+    RelayRecordValidationV0 {
+        accepted: true,
+        signature_valid: true,
+        reject_reason: None,
+        candidate: Some(RelayCandidateV0 {
+            relay_peer_id: record.relay_peer_id.clone(),
+            endpoint: endpoint.uri.clone(),
+            transport: endpoint.transport.clone(),
+            port: endpoint.port,
+            priority: endpoint.priority,
+            last_seen_ms: now_ms,
+            last_success_ms: Some(now_ms),
+            failure_count: 0,
+            cooldown_until_ms: 0,
+            observed_reachable: true,
+            supports_wss_443: endpoint.transport == "wss" && endpoint.port == 443,
+            supports_quic_443: endpoint.transport == "quic" && endpoint.port == 443,
+            supports_udp: endpoint.transport == "udp",
+            record_signature_valid: true,
+        }),
+    }
+}
+
+fn relay_record_payload_v0(
+    relay_peer_id: String,
+    relay_public_key: String,
+    endpoints: Vec<PeerSignedRelayEndpointV0>,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    nonce_or_record_id: String,
+) -> PeerSignedRelayEndpointPayloadV0 {
+    let mut capabilities = endpoints
+        .iter()
+        .flat_map(|endpoint| endpoint.capabilities.clone())
+        .collect::<Vec<_>>();
+    capabilities.sort();
+    capabilities.dedup();
+    PeerSignedRelayEndpointPayloadV0 {
+        record_version: 1,
+        relay_peer_id,
+        relay_public_key,
+        endpoints,
+        issued_at_ms,
+        expires_at_ms,
+        nonce_or_record_id,
+        capabilities,
+    }
+}
+
+fn relay_peer_id_from_public_key_hex_v0(public_key_hex: &str) -> String {
+    format!("novovm-ed25519:{public_key_hex}")
+}
+
+fn relay_transport_supported_v0(transport: &str, port: u16) -> bool {
+    matches!(
+        (transport, port),
+        ("wss", 443) | ("quic", 443) | ("tls", 443) | ("ws", 80) | ("udp", _)
+    )
+}
+
 fn send_public_relay_register_v0(
     socket: &UdpSocket,
     relay_addr: &str,
@@ -4706,6 +5308,40 @@ fn env_u64(name: &str, default: u64) -> u64 {
 
 fn env_u32(name: &str) -> Option<u32> {
     env::var(name).ok().and_then(|raw| raw.parse::<u32>().ok())
+}
+
+fn overlay_gate_hex_lower_v0(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+fn overlay_gate_decode_hex_bytes_v0(raw: &str, field: &str) -> Result<Vec<u8>> {
+    let normalized = raw
+        .trim()
+        .strip_prefix("0x")
+        .or_else(|| raw.trim().strip_prefix("0X"))
+        .unwrap_or(raw.trim());
+    if normalized.is_empty() {
+        anyhow::bail!("{field} is empty");
+    }
+    if normalized.len() % 2 != 0 {
+        anyhow::bail!("{field} must be even-length hex");
+    }
+    if !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        anyhow::bail!("{field} must be hex");
+    }
+    let mut out = Vec::with_capacity(normalized.len() / 2);
+    for pair in normalized.as_bytes().chunks_exact(2) {
+        let hex =
+            std::str::from_utf8(pair).with_context(|| format!("{field} contains invalid utf8"))?;
+        let byte = u8::from_str_radix(hex, 16)
+            .with_context(|| format!("{field} contains invalid hex byte {hex}"))?;
+        out.push(byte);
+    }
+    Ok(out)
 }
 
 fn now_unix_ms() -> u64 {

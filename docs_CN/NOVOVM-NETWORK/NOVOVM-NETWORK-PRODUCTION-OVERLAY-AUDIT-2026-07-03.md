@@ -4090,6 +4090,138 @@ relay_is_trusted_authority=false
 real_multi_relay_federated_smoke=false
 ```
 
+Next frontier:
+
+```text
+Cut 32:
+  Peer-signed Relay Endpoint Record v0
+```
+
+## Cut 32: Peer-signed Relay Endpoint Record v0
+
+Status:
+
+```text
+LOCAL PEER-SIGNED RELAY RECORD MATRIX PASS
+REAL FEDERATED SIGNED RELAY RECORD SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Turn relay_record_signature_valid from a policy boolean into a real
+signature verification step.
+
+Relay candidates are not accepted from a trusted central table.
+Each relay endpoint record must be signed by the NOVOVM key corresponding
+to relay_peer_id, and clients independently verify the record before using
+it for relay selection.
+```
+
+New gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=peer-signed-relay-record-matrix
+```
+
+Record shape:
+
+```text
+PeerSignedRelayEndpointRecord:
+  record_version
+  relay_peer_id
+  relay_public_key
+  endpoints:
+    transport
+    uri
+    port
+    priority
+    capabilities
+  issued_at_ms
+  expires_at_ms
+  nonce_or_record_id
+  signature_scheme=ed25519
+  signature
+```
+
+Canonical payload covered by signature:
+
+```text
+record_version
+relay_peer_id
+relay_public_key
+endpoints
+issued_at_ms
+expires_at_ms
+nonce_or_record_id
+capabilities
+```
+
+Local signed record matrix:
+
+```text
+valid signed relay record:
+  signature_valid=true
+  record_accepted=true
+  selected_transport=wss
+  selected_path_after_relay_selection=RelayNovoRudp
+
+invalid signature:
+  signature_valid=false
+  reject_reason=relay_record_signature_invalid
+
+expired record:
+  signature_valid=true
+  reject_reason=relay_record_expired
+
+peer_id / public_key mismatch:
+  signature_valid=true
+  reject_reason=relay_record_identity_mismatch
+
+endpoint tamper after signing:
+  signature_valid=false
+  reject_reason=relay_record_signature_invalid
+
+unsupported transport:
+  signature_valid=true
+  reject_reason=relay_transport_unsupported
+
+multiple valid records:
+  wss://relay:443 preferred over udp://relay:41030
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=peer-signed-relay-record-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/peer-signed-relay-record-matrix-cut32.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+relay_is_trusted_authority=false
+centralized_control_plane_required=false
+single_official_relay_required=false
+peer_identity_source=novovm_key
+routing_subject=target_peer_id
+business_semantics_interpreted_by_relay=false
+novorudp_wire_changed=false
+real_federated_signed_relay_record_smoke=false
+```
+
 ## Product Readout
 
 Current product status:
