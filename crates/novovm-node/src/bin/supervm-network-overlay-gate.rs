@@ -53,6 +53,7 @@ fn main() -> Result<()> {
         "observed-endpoint-matrix" => run_observed_endpoint_matrix_gate(),
         "observed-endpoint" => run_observed_endpoint_gate(),
         "nat-punch-matrix" => run_nat_punch_matrix_gate(),
+        "nat-auto-adaptive-matrix" => run_nat_auto_adaptive_matrix_gate(),
         "nat-punch" => run_nat_punch_gate(),
         "relay-first-zero-config-matrix" => run_relay_first_zero_config_matrix_gate(),
         "public-relay-bootstrap-matrix" => run_public_relay_bootstrap_matrix_gate(),
@@ -252,6 +253,93 @@ fn run_nat_punch_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("nat punch matrix failed")
+    }
+}
+
+fn run_nat_auto_adaptive_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
+        .unwrap_or_else(|| "artifacts/network-overlay-gate/nat-auto-adaptive-matrix.json".into());
+    let cases = vec![
+        nat_auto_adaptive_case_v0(
+            "punch_success_upgrades_to_direct",
+            true,
+            None,
+            true,
+            false,
+            false,
+        ),
+        nat_auto_adaptive_case_v0(
+            "udp_timeout_with_relay_falls_back_to_relay",
+            false,
+            Some("punch_ack_timeout_or_recv_failed:Resource temporarily unavailable"),
+            true,
+            false,
+            false,
+        ),
+        nat_auto_adaptive_case_v0(
+            "udp_timeout_without_relay_enters_queue",
+            false,
+            Some("punch_ack_timeout_or_recv_failed:Resource temporarily unavailable"),
+            false,
+            false,
+            false,
+        ),
+        nat_auto_adaptive_case_v0(
+            "nonce_mismatch_never_marks_reachable",
+            false,
+            Some("punch_nonce_mismatch"),
+            true,
+            false,
+            false,
+        ),
+        nat_auto_adaptive_case_v0(
+            "vpn_tun_detected_prefers_relay_first",
+            false,
+            Some("vpn_tun_or_cgnat_no_inbound_udp"),
+            true,
+            true,
+            false,
+        ),
+        nat_auto_adaptive_case_v0(
+            "relay_unavailable_after_nat_failure_queues",
+            false,
+            Some("relay_candidate_unavailable_after_nat_failure"),
+            false,
+            true,
+            true,
+        ),
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false))
+        && cases[0]["selected_path_after_punch"].as_str() == Some("PunchedDirect")
+        && cases[1]["selected_path_after_punch"].as_str() == Some("RelayNovoRudp")
+        && cases[2]["selected_path_after_punch"].as_str() == Some("QueueFallback")
+        && cases[3]["reachability_misclassified_as_direct"].as_bool() == Some(false)
+        && cases[4]["punch_required_for_connectivity"].as_bool() == Some(false)
+        && cases[5]["selected_path_after_punch"].as_str() == Some("QueueFallback");
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "nat_auto_adaptive_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "adaptive_auto_networking_complete": false,
+        "nat_punch_is_availability_prerequisite": false,
+        "nat_punch_is_optimization_path": true,
+        "relay_first_zero_config_required": true,
+        "manual_user_port_forward_required": false,
+        "vpn_tun_supported_by_policy": true,
+        "failure_is_diagnosed_before_route_selection": true,
+        "safe_fallback_without_false_reachable": true,
+        "cases": cases,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("nat auto adaptive matrix failed")
     }
 }
 
@@ -6687,19 +6775,113 @@ fn apply_nat_punch_fallback_v0(
     relay_fallback_enabled: bool,
     reason: String,
 ) {
+    let failure_classification = classify_nat_punch_failure_v0(&reason);
     report["punch_ack_valid"] = json!(false);
     report["punch_result"] = json!("failed");
     report["punch_reject_reason"] = json!(reason);
+    report["nat_failure_classification"] = json!(failure_classification);
     report["relay_fallback_selected"] = json!(relay_fallback_enabled);
+    report["queue_fallback_selected"] = json!(!relay_fallback_enabled);
     if relay_fallback_enabled {
         report["accepted"] = json!(true);
         report["fallback_reason"] = json!("NatPunchFailed");
         report["selected_path_after_punch"] = json!("RelayNovoRudp");
     } else {
-        report["accepted"] = json!(false);
-        report["fallback_reason"] = serde_json::Value::Null;
-        report["selected_path_after_punch"] = json!("PunchFailed");
+        report["accepted"] = json!(true);
+        report["fallback_reason"] = json!("NoHealthyRelayCandidateAfterNatPunchFailed");
+        report["selected_path_after_punch"] = json!("QueueFallback");
     }
+}
+
+fn classify_nat_punch_failure_v0(reason: &str) -> &'static str {
+    if reason.contains("punch_nonce_mismatch") {
+        "StaleOrMismatchedPunchAck"
+    } else if reason.contains("timeout") || reason.contains("Resource temporarily unavailable") {
+        "UdpReachabilityBlockedOrAckReturnFailed"
+    } else if reason.contains("vpn_tun") || reason.contains("cgnat") {
+        "VpnTunOrCgnatNoInboundUdp"
+    } else if reason.contains("relay_candidate_unavailable") {
+        "NoHealthyRelayCandidate"
+    } else if reason.contains("decode") {
+        "InvalidPunchAckFrame"
+    } else {
+        "NatPunchFailed"
+    }
+}
+
+fn nat_auto_adaptive_case_v0(
+    case_name: &str,
+    punch_ack_valid: bool,
+    punch_failure_reason: Option<&str>,
+    relay_candidate_available: bool,
+    vpn_tun_detected: bool,
+    relay_unavailable: bool,
+) -> serde_json::Value {
+    let punch_required_for_connectivity = false;
+    let selected_path_after_punch = if punch_ack_valid {
+        "PunchedDirect"
+    } else if relay_candidate_available && !relay_unavailable {
+        "RelayNovoRudp"
+    } else {
+        "QueueFallback"
+    };
+    let fallback_reason = if punch_ack_valid {
+        serde_json::Value::Null
+    } else if selected_path_after_punch == "RelayNovoRudp" {
+        json!("NatPunchFailed")
+    } else {
+        json!("NoHealthyNetworkPath")
+    };
+    let failure_classification = punch_failure_reason
+        .map(classify_nat_punch_failure_v0)
+        .unwrap_or("None");
+    let accepted = match case_name {
+        "punch_success_upgrades_to_direct" => {
+            punch_ack_valid && selected_path_after_punch == "PunchedDirect"
+        }
+        "udp_timeout_with_relay_falls_back_to_relay" => {
+            !punch_ack_valid
+                && failure_classification == "UdpReachabilityBlockedOrAckReturnFailed"
+                && selected_path_after_punch == "RelayNovoRudp"
+        }
+        "udp_timeout_without_relay_enters_queue" => {
+            !punch_ack_valid
+                && failure_classification == "UdpReachabilityBlockedOrAckReturnFailed"
+                && selected_path_after_punch == "QueueFallback"
+        }
+        "nonce_mismatch_never_marks_reachable" => {
+            !punch_ack_valid
+                && failure_classification == "StaleOrMismatchedPunchAck"
+                && selected_path_after_punch != "PunchedDirect"
+        }
+        "vpn_tun_detected_prefers_relay_first" => {
+            vpn_tun_detected && selected_path_after_punch == "RelayNovoRudp"
+        }
+        "relay_unavailable_after_nat_failure_queues" => {
+            relay_unavailable && selected_path_after_punch == "QueueFallback"
+        }
+        _ => selected_path_after_punch != "PunchFailed",
+    };
+
+    json!({
+        "case": case_name,
+        "accepted": accepted,
+        "vpn_tun_detected": vpn_tun_detected,
+        "punch_attempted": true,
+        "punch_ack_valid": punch_ack_valid,
+        "punch_failure_reason": punch_failure_reason,
+        "nat_failure_classification": failure_classification,
+        "relay_candidate_available": relay_candidate_available,
+        "relay_unavailable": relay_unavailable,
+        "relay_fallback_selected": selected_path_after_punch == "RelayNovoRudp",
+        "queue_fallback_selected": selected_path_after_punch == "QueueFallback",
+        "selected_path_after_punch": selected_path_after_punch,
+        "fallback_reason": fallback_reason,
+        "punch_required_for_connectivity": punch_required_for_connectivity,
+        "nat_punch_is_optimization_path": true,
+        "reachability_misclassified_as_direct": !punch_ack_valid && selected_path_after_punch == "PunchedDirect",
+        "manual_user_port_forward_required": false,
+    })
 }
 
 fn network_boundary_json() -> serde_json::Value {

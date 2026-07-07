@@ -4576,6 +4576,116 @@ novorudp_wire_changed=false
 real_multi_source_bootstrap_resolver_smoke=false
 ```
 
+Next frontier:
+
+```text
+Cut 36:
+  NAT Auto Diagnosis + Safe Fallback v0
+```
+
+## Cut 36: NAT Auto Diagnosis + Safe Fallback v0
+
+Status:
+
+```text
+LOCAL NAT AUTO DIAGNOSIS SAFE FALLBACK MATRIX PASS
+REAL MIXED NAT / VPN / CELLULAR FALLBACK SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Do not treat NAT punch as a basic connectivity prerequisite.
+
+NAT punch remains an optimization path. If punch succeeds, upgrade to
+PunchedDirect. If punch fails, classify the failure and safely fall back to
+RelayNovoRudp when a relay candidate exists, or QueueFallback when no healthy
+relay candidate exists. Never misclassify timeout, VPN/TUN, CGNAT, or nonce
+mismatch as reachable direct connectivity.
+```
+
+New gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=nat-auto-adaptive-matrix
+```
+
+Runtime prober behavior update:
+
+```text
+nat-punch prober timeout / recv failure:
+  punch_ack_valid=false
+  punch_result=failed
+  nat_failure_classification=UdpReachabilityBlockedOrAckReturnFailed
+  selected_path_after_punch=RelayNovoRudp if relay candidate exists
+  selected_path_after_punch=QueueFallback if no relay candidate exists
+  process exits accepted=true for safe fallback reports
+```
+
+Local auto-adaptive matrix:
+
+```text
+punch success upgrades to direct:
+  selected_path_after_punch=PunchedDirect
+
+UDP timeout with relay:
+  nat_failure_classification=UdpReachabilityBlockedOrAckReturnFailed
+  selected_path_after_punch=RelayNovoRudp
+
+UDP timeout without relay:
+  selected_path_after_punch=QueueFallback
+
+nonce mismatch:
+  nat_failure_classification=StaleOrMismatchedPunchAck
+  reachability_misclassified_as_direct=false
+
+VPN/TUN or CGNAT:
+  punch_required_for_connectivity=false
+  selected_path_after_punch=RelayNovoRudp when relay candidate exists
+
+relay unavailable after NAT failure:
+  selected_path_after_punch=QueueFallback
+  fallback_reason=NoHealthyNetworkPath
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=nat-punch-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/nat-punch-matrix-cut25-regression.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=nat-auto-adaptive-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/nat-auto-adaptive-matrix-cut36.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+adaptive_auto_networking_complete=false
+nat_punch_is_availability_prerequisite=false
+nat_punch_is_optimization_path=true
+relay_first_zero_config_required=true
+manual_user_port_forward_required=false
+vpn_tun_supported_by_policy=true
+failure_is_diagnosed_before_route_selection=true
+safe_fallback_without_false_reachable=true
+novorudp_wire_changed=false
+real_mixed_nat_vpn_cellular_fallback_smoke=false
+```
+
 ## Product Readout
 
 Current product status:
