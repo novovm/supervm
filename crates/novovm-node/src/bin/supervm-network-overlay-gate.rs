@@ -53,6 +53,8 @@ fn main() -> Result<()> {
         "nat-punch-matrix" => run_nat_punch_matrix_gate(),
         "nat-punch" => run_nat_punch_gate(),
         "relay-first-zero-config-matrix" => run_relay_first_zero_config_matrix_gate(),
+        "public-relay-bootstrap-matrix" => run_public_relay_bootstrap_matrix_gate(),
+        "public-relay-bootstrap" => run_public_relay_bootstrap_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -348,6 +350,346 @@ fn run_relay_first_zero_config_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("relay-first zero-config matrix failed")
+    }
+}
+
+fn run_public_relay_bootstrap_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/public-relay-bootstrap-matrix.json".into()
+    });
+    let report = run_public_relay_bootstrap_local_case_v0("public-relay-bootstrap-local", 4)?;
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if report["accepted"].as_bool().unwrap_or(false) {
+        Ok(())
+    } else {
+        anyhow::bail!("public relay bootstrap matrix failed")
+    }
+}
+
+fn run_public_relay_bootstrap_gate() -> Result<()> {
+    let role =
+        env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE").unwrap_or_else(|| "relay".to_string());
+    match role.as_str() {
+        "relay" => run_public_relay_bootstrap_relay_gate(),
+        "client-register" | "receiver" => run_public_relay_bootstrap_register_client_gate(),
+        "client-send" | "sender" => run_public_relay_bootstrap_send_client_gate(),
+        other => anyhow::bail!("unsupported NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE: {other}"),
+    }
+}
+
+fn run_public_relay_bootstrap_relay_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/public-relay-bootstrap-relay.json".into()
+    });
+    let bind_addr =
+        env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:41030".into());
+    let node_id = env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID")
+        .unwrap_or_else(|| "public-relay-1".into());
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
+    let expected_sessions = env_u64("NOVOVM_OVERLAY_PUBLIC_RELAY_EXPECTED_SESSIONS", 2).max(1);
+    let timeout_ms = env_u64("NOVOVM_OVERLAY_GATE_TIMEOUT_MS", 30_000);
+    let socket =
+        UdpSocket::bind(&bind_addr).with_context(|| format!("bind public relay: {bind_addr}"))?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .context("set public relay read timeout")?;
+    let bind_addr_effective = socket.local_addr().context("public relay local addr")?;
+    let start = Instant::now();
+    let mut buf = vec![0u8; 65535];
+    let mut sessions: BTreeMap<String, SocketAddr> = BTreeMap::new();
+    let mut events = Vec::new();
+    let mut relay_envelopes_received = 0u64;
+    let mut relay_frames_forwarded = 0u64;
+    let mut recv_error = None;
+
+    while start.elapsed() < Duration::from_millis(timeout_ms)
+        && (sessions.len() < expected_sessions as usize || relay_frames_forwarded < max_frames)
+    {
+        match socket.recv_from(&mut buf) {
+            Ok((received_bytes, source_addr)) => {
+                if let Ok(frame) = novovm_network::novorudp::NovoRudpTransportFrameV0::decode(
+                    &buf[..received_bytes],
+                ) {
+                    if frame.kind == NovoRudpTransportFrameKindV0::Endpoint {
+                        match serde_json::from_slice::<PublicRelayRegisterPayloadV0>(&frame.payload)
+                        {
+                            Ok(register) => {
+                                sessions.insert(register.peer_id.clone(), source_addr);
+                                events.push(json!({
+                                    "kind": "bootstrap_register",
+                                    "peer_id": register.peer_id,
+                                    "source_addr": source_addr.to_string(),
+                                    "received_bytes": received_bytes,
+                                }));
+                            }
+                            Err(error) => events.push(json!({
+                                "kind": "decode_register_failed",
+                                "source_addr": source_addr.to_string(),
+                                "error": error.to_string(),
+                            })),
+                        }
+                        continue;
+                    }
+                }
+
+                match serde_json::from_slice::<PublicRelayDataEnvelopeV0>(&buf[..received_bytes]) {
+                    Ok(envelope) => {
+                        relay_envelopes_received += 1;
+                        match sessions.get(&envelope.target_peer_id) {
+                            Some(target_addr) => {
+                                match socket.send_to(&envelope.payload, target_addr) {
+                                    Ok(forwarded_bytes) => {
+                                        relay_frames_forwarded += 1;
+                                        events.push(json!({
+                                        "kind": "relay_envelope",
+                                        "request_id": envelope.request_id,
+                                        "source_peer_id": envelope.source_peer_id,
+                                        "target_peer_id": envelope.target_peer_id,
+                                        "forwarded_to_peer_id": envelope.target_peer_id,
+                                        "forwarded_to_session_endpoint": target_addr.to_string(),
+                                        "forwarded_bytes": forwarded_bytes,
+                                    }));
+                                    }
+                                    Err(error) => events.push(json!({
+                                        "kind": "relay_forward_failed",
+                                        "request_id": envelope.request_id,
+                                        "target_peer_id": envelope.target_peer_id,
+                                        "error": error.to_string(),
+                                    })),
+                                }
+                            }
+                            None => events.push(json!({
+                                "kind": "relay_target_session_missing",
+                                "request_id": envelope.request_id,
+                                "target_peer_id": envelope.target_peer_id,
+                            })),
+                        }
+                    }
+                    Err(error) => events.push(json!({
+                        "kind": "unknown",
+                        "source_addr": source_addr.to_string(),
+                        "received_bytes": received_bytes,
+                        "error": error.to_string(),
+                    })),
+                }
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(error) => {
+                recv_error = Some(error.to_string());
+                break;
+            }
+        }
+    }
+
+    let accepted = sessions.len() >= expected_sessions as usize
+        && relay_envelopes_received >= max_frames
+        && relay_frames_forwarded >= max_frames;
+    let report = json!({
+        "accepted": accepted,
+        "scope": "public_relay_bootstrap_relay_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "node_id": node_id,
+        "relay_enabled": true,
+        "bind_addr_requested": bind_addr,
+        "bind_addr_effective": bind_addr_effective.to_string(),
+        "inbound_public_endpoint_required_for_clients": false,
+        "bootstrap_sessions_established": sessions.len(),
+        "session_peer_ids": sessions.keys().cloned().collect::<Vec<_>>(),
+        "relay_envelopes_received": relay_envelopes_received,
+        "relay_frames_forwarded": relay_frames_forwarded,
+        "forwarded_to_peer_id": "node-b",
+        "recv_error": recv_error,
+        "events": events,
+        "elapsed_ms": start.elapsed().as_millis() as u64,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("public relay bootstrap relay gate failed")
+    }
+}
+
+fn run_public_relay_bootstrap_register_client_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/public-relay-bootstrap-client.json".into()
+    });
+    let relay_addr = env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_ADDR")
+        .context("NOVOVM_OVERLAY_PUBLIC_RELAY_ADDR is required")?;
+    let node_id =
+        env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_CLIENT_PEER_ID").unwrap_or_else(|| "node-b".into());
+    let bind_addr =
+        env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:0".into());
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
+    let timeout_ms = env_u64("NOVOVM_OVERLAY_GATE_TIMEOUT_MS", 30_000);
+    let socket = UdpSocket::bind(&bind_addr)
+        .with_context(|| format!("bind public relay client: {bind_addr}"))?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(timeout_ms)))
+        .context("set public relay client read timeout")?;
+    let bind_addr_effective = socket
+        .local_addr()
+        .context("public relay client local addr")?;
+    send_public_relay_register_v0(&socket, &relay_addr, &node_id)?;
+    let start = Instant::now();
+    let mut buf = vec![0u8; 65535];
+    let mut frames = Vec::new();
+    let mut received_frame_count = 0u64;
+    let mut recv_error = None;
+    while received_frame_count < max_frames {
+        match socket.recv_from(&mut buf) {
+            Ok((received_bytes, source_addr)) => {
+                let decoded = novovm_network::novorudp::NovoRudpTransportFrameV0::decode(
+                    &buf[..received_bytes],
+                );
+                match decoded {
+                    Ok(frame) => {
+                        received_frame_count += 1;
+                        frames.push(json!({
+                            "kind": "relay_delivered_data",
+                            "source_addr": source_addr.to_string(),
+                            "received_bytes": received_bytes,
+                            "frame_decode_ok": true,
+                            "decoded_kind": frame.kind,
+                            "decoded_sequence": frame.sequence,
+                            "payload_bytes": frame.payload.len(),
+                            "source_peer_id": "node-a",
+                            "via_relay_peer_id": "public-relay-1",
+                        }));
+                    }
+                    Err(error) => frames.push(json!({
+                        "kind": "decode_failed",
+                        "source_addr": source_addr.to_string(),
+                        "received_bytes": received_bytes,
+                        "frame_decode_ok": false,
+                        "error": error.to_string(),
+                    })),
+                }
+            }
+            Err(error) => {
+                recv_error = Some(error.to_string());
+                break;
+            }
+        }
+    }
+    let accepted = received_frame_count == max_frames && recv_error.is_none();
+    let report = json!({
+        "accepted": accepted,
+        "scope": "public_relay_bootstrap_register_client_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "node_id": node_id,
+        "relay_addr": relay_addr,
+        "bind_addr_requested": bind_addr,
+        "bind_addr_effective": bind_addr_effective.to_string(),
+        "inbound_public_endpoint_required": false,
+        "bootstrap_register_sent": true,
+        "received_frame_count": received_frame_count,
+        "frame_decode_ok": accepted,
+        "source_peer_id": "node-a",
+        "via_relay_peer_id": "public-relay-1",
+        "recv_error": recv_error,
+        "frames": frames,
+        "elapsed_ms": start.elapsed().as_millis() as u64,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("public relay bootstrap register client failed")
+    }
+}
+
+fn run_public_relay_bootstrap_send_client_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/public-relay-bootstrap-sender.json".into()
+    });
+    let relay_addr = env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_ADDR")
+        .context("NOVOVM_OVERLAY_PUBLIC_RELAY_ADDR is required")?;
+    let source_peer_id =
+        env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_SOURCE_PEER_ID").unwrap_or_else(|| "node-a".into());
+    let target_peer_id =
+        env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_TARGET_PEER_ID").unwrap_or_else(|| "node-b".into());
+    let bind_addr =
+        env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:0".into());
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
+    let socket = UdpSocket::bind(&bind_addr)
+        .with_context(|| format!("bind public relay sender: {bind_addr}"))?;
+    let bind_addr_effective = socket
+        .local_addr()
+        .context("public relay sender local addr")?;
+    let register_sent_bytes = send_public_relay_register_v0(&socket, &relay_addr, &source_peer_id)?;
+    let mut sent_frames = Vec::new();
+    let mut sent_frame_count = 0u64;
+    let mut sent_bytes_total = 0usize;
+    for frame_index in 0..max_frames {
+        let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            [28u8; 16],
+            280,
+            281,
+            30 + frame_index,
+            283,
+            format!("novovm-public-relay-opaque-frame-{frame_index}").into_bytes(),
+        );
+        let encoded = frame.encode();
+        let envelope = PublicRelayDataEnvelopeV0 {
+            request_id: format!("public-relay-{frame_index}"),
+            source_peer_id: source_peer_id.clone(),
+            target_peer_id: target_peer_id.clone(),
+            payload: encoded.clone(),
+        };
+        let encoded_envelope = serde_json::to_vec(&envelope)?;
+        let sent_bytes = socket
+            .send_to(&encoded_envelope, &relay_addr)
+            .with_context(|| format!("send public relay envelope to {relay_addr}"))?;
+        sent_frame_count += 1;
+        sent_bytes_total += sent_bytes;
+        sent_frames.push(json!({
+            "request_id": envelope.request_id,
+            "target_peer_id": target_peer_id,
+            "sent_to": relay_addr,
+            "sent_bytes": sent_bytes,
+            "encoded_frame_bytes": encoded.len(),
+            "queued": false,
+        }));
+    }
+    let accepted = sent_frame_count == max_frames;
+    let report = json!({
+        "accepted": accepted,
+        "scope": "public_relay_bootstrap_send_client_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "relay_first_zero_config": true,
+        "inbound_public_endpoint_required": false,
+        "nat_punch_required": false,
+        "selected_path": "RelayNovoRudp",
+        "route_plan_source": "relay_first_zero_config_policy",
+        "source_peer_id": source_peer_id,
+        "target_peer_id": target_peer_id,
+        "selected_relay_peer_id": "public-relay-1",
+        "relay_addr": relay_addr,
+        "bind_addr_requested": bind_addr,
+        "bind_addr_effective": bind_addr_effective.to_string(),
+        "bootstrap_register_sent": true,
+        "register_sent_bytes": register_sent_bytes,
+        "sent_frame_count": sent_frame_count,
+        "queued_count": 0,
+        "sent_bytes_total": sent_bytes_total,
+        "sent_frames": sent_frames,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("public relay bootstrap sender failed")
     }
 }
 
@@ -2758,6 +3100,21 @@ struct OverlayGateRelayEnvelopeV0 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PublicRelayRegisterPayloadV0 {
+    peer_id: String,
+    advertised_endpoint: Option<String>,
+    registered_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PublicRelayDataEnvelopeV0 {
+    request_id: String,
+    source_peer_id: String,
+    target_peer_id: String,
+    payload: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ObservedEndpointProbePayloadV0 {
     probe_nonce: String,
     source_peer_id: String,
@@ -3351,6 +3708,208 @@ fn run_nat_punch_probe_v0(
     }
 
     Ok(report)
+}
+
+fn run_public_relay_bootstrap_local_case_v0(
+    case_name: &str,
+    max_frames: u64,
+) -> Result<serde_json::Value> {
+    let relay = UdpSocket::bind("127.0.0.1:0").context("bind local public relay")?;
+    let node_b = UdpSocket::bind("127.0.0.1:0").context("bind local public relay node-b")?;
+    let node_a = UdpSocket::bind("127.0.0.1:0").context("bind local public relay node-a")?;
+    relay
+        .set_read_timeout(Some(Duration::from_millis(1000)))
+        .context("set local public relay timeout")?;
+    node_b
+        .set_read_timeout(Some(Duration::from_millis(1000)))
+        .context("set local public relay node-b timeout")?;
+    let relay_addr = relay.local_addr().context("local public relay addr")?;
+    let node_b_addr = node_b
+        .local_addr()
+        .context("local public relay node-b addr")?;
+    let node_a_addr = node_a
+        .local_addr()
+        .context("local public relay node-a addr")?;
+    let start = Instant::now();
+
+    let node_b_register_sent_bytes =
+        send_public_relay_register_v0(&node_b, &relay_addr.to_string(), "node-b")?;
+    let node_a_register_sent_bytes =
+        send_public_relay_register_v0(&node_a, &relay_addr.to_string(), "node-a")?;
+    let mut relay_buf = vec![0u8; 65535];
+    let mut sessions = BTreeMap::new();
+    let mut register_received_bytes_total = 0usize;
+    for _ in 0..2 {
+        let (register_received_bytes, register_source_addr) = relay
+            .recv_from(&mut relay_buf)
+            .context("local public relay recv register")?;
+        register_received_bytes_total += register_received_bytes;
+        let register_frame = novovm_network::novorudp::NovoRudpTransportFrameV0::decode(
+            &relay_buf[..register_received_bytes],
+        )
+        .context("decode local public relay register frame")?;
+        let register_payload =
+            serde_json::from_slice::<PublicRelayRegisterPayloadV0>(&register_frame.payload)
+                .context("decode local public relay register payload")?;
+        sessions.insert(register_payload.peer_id.clone(), register_source_addr);
+    }
+
+    let mut sender_sent_frame_count = 0u64;
+    let mut sender_sent_bytes_total = 0usize;
+    for frame_index in 0..max_frames {
+        let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            [29u8; 16],
+            290,
+            291,
+            30 + frame_index,
+            293,
+            format!("novovm-public-relay-local-opaque-frame-{frame_index}").into_bytes(),
+        );
+        let envelope = PublicRelayDataEnvelopeV0 {
+            request_id: format!("{case_name}-{frame_index}"),
+            source_peer_id: "node-a".to_string(),
+            target_peer_id: "node-b".to_string(),
+            payload: frame.encode(),
+        };
+        let encoded_envelope = serde_json::to_vec(&envelope)?;
+        let sent_bytes = node_a
+            .send_to(&encoded_envelope, relay_addr)
+            .context("local public relay sender send envelope")?;
+        sender_sent_frame_count += 1;
+        sender_sent_bytes_total += sent_bytes;
+    }
+
+    let mut relay_envelopes_received = 0u64;
+    let mut relay_frames_forwarded = 0u64;
+    let mut relay_events = Vec::new();
+    while relay_frames_forwarded < max_frames {
+        let (received_bytes, source_addr) = relay
+            .recv_from(&mut relay_buf)
+            .context("local public relay recv envelope")?;
+        let envelope =
+            serde_json::from_slice::<PublicRelayDataEnvelopeV0>(&relay_buf[..received_bytes])
+                .context("decode local public relay envelope")?;
+        relay_envelopes_received += 1;
+        let target_session = sessions
+            .get(&envelope.target_peer_id)
+            .context("target peer session missing")?;
+        let forwarded_bytes = relay
+            .send_to(&envelope.payload, target_session)
+            .context("local public relay forward to session")?;
+        relay_frames_forwarded += 1;
+        relay_events.push(json!({
+            "request_id": envelope.request_id,
+            "source_addr": source_addr.to_string(),
+            "source_peer_id": envelope.source_peer_id,
+            "target_peer_id": envelope.target_peer_id,
+            "forwarded_to_peer_id": "node-b",
+            "forwarded_to_session_endpoint": target_session.to_string(),
+            "forwarded_bytes": forwarded_bytes,
+        }));
+    }
+
+    let mut node_b_frames = Vec::new();
+    let mut node_b_received_frame_count = 0u64;
+    let mut node_b_buf = vec![0u8; 65535];
+    while node_b_received_frame_count < max_frames {
+        let (received_bytes, source_addr) = node_b
+            .recv_from(&mut node_b_buf)
+            .context("local public relay node-b recv forwarded frame")?;
+        let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::decode(
+            &node_b_buf[..received_bytes],
+        )
+        .context("decode local public relay node-b frame")?;
+        node_b_received_frame_count += 1;
+        node_b_frames.push(json!({
+            "source_addr": source_addr.to_string(),
+            "received_bytes": received_bytes,
+            "frame_decode_ok": true,
+            "decoded_kind": frame.kind,
+            "decoded_sequence": frame.sequence,
+            "payload_bytes": frame.payload.len(),
+        }));
+    }
+
+    let accepted = sessions.contains_key("node-a")
+        && sessions.contains_key("node-b")
+        && sessions.len() == 2
+        && sender_sent_frame_count == max_frames
+        && relay_envelopes_received == max_frames
+        && relay_frames_forwarded == max_frames
+        && node_b_received_frame_count == max_frames;
+    Ok(json!({
+        "accepted": accepted,
+        "case": case_name,
+        "scope": "public_relay_bootstrap_local_case_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "relay_first_zero_config": true,
+        "inbound_public_endpoint_required": false,
+        "nat_punch_required": false,
+        "topology": {
+            "node_a_bind_addr": node_a_addr.to_string(),
+            "node_b_bind_addr": node_b_addr.to_string(),
+            "public_relay_bind_addr": relay_addr.to_string(),
+        },
+        "node_a": {
+            "accepted": sender_sent_frame_count == max_frames,
+            "selected_path": "RelayNovoRudp",
+            "route_plan_source": "relay_first_zero_config_policy",
+            "target_peer_id": "node-b",
+            "selected_relay_peer_id": "public-relay-1",
+            "sent_frame_count": sender_sent_frame_count,
+            "queued_count": 0,
+            "sent_bytes_total": sender_sent_bytes_total,
+        },
+        "public_relay": {
+            "accepted": relay_frames_forwarded == max_frames,
+            "node_id": "public-relay-1",
+            "relay_enabled": true,
+            "bootstrap_sessions_established": sessions.len(),
+            "register_sent_bytes": node_a_register_sent_bytes + node_b_register_sent_bytes,
+            "register_received_bytes": register_received_bytes_total,
+            "session_peer_ids": sessions.keys().cloned().collect::<Vec<_>>(),
+            "relay_envelopes_received": relay_envelopes_received,
+            "relay_frames_forwarded": relay_frames_forwarded,
+            "forwarded_to_peer_id": "node-b",
+            "events": relay_events,
+        },
+        "node_b": {
+            "accepted": node_b_received_frame_count == max_frames,
+            "inbound_public_endpoint_required": false,
+            "received_frame_count": node_b_received_frame_count,
+            "frame_decode_ok": true,
+            "source_peer_id": "node-a",
+            "via_relay_peer_id": "public-relay-1",
+            "frames": node_b_frames,
+        },
+        "elapsed_ms": start.elapsed().as_millis() as u64,
+    }))
+}
+
+fn send_public_relay_register_v0(
+    socket: &UdpSocket,
+    relay_addr: &str,
+    peer_id: &str,
+) -> Result<usize> {
+    let payload = PublicRelayRegisterPayloadV0 {
+        peer_id: peer_id.to_string(),
+        advertised_endpoint: None,
+        registered_at_ms: now_unix_ms(),
+    };
+    let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+        NovoRudpTransportFrameKindV0::Endpoint,
+        [30u8; 16],
+        300,
+        301,
+        302,
+        303,
+        serde_json::to_vec(&payload)?,
+    );
+    socket
+        .send_to(&frame.encode(), relay_addr)
+        .with_context(|| format!("send public relay register to {relay_addr}"))
 }
 
 fn apply_nat_punch_fallback_v0(

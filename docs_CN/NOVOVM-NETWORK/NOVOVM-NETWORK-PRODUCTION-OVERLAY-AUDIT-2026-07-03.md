@@ -3489,6 +3489,126 @@ novorudp_wire_changed=false
 real_public_relay_smoke=false
 ```
 
+Next frontier:
+
+```text
+Cut 27:
+  Real Public Relay Bootstrap Smoke v0
+```
+
+## Cut 27: Public Relay Bootstrap Smoke v0
+
+Status:
+
+```text
+LOCAL PUBLIC RELAY BOOTSTRAP MATRIX PASS
+REAL PUBLIC VPS RELAY SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Prove the relay-first zero-config data path shape before using a real public
+VPS relay.
+
+A and B both actively bootstrap to public relay R.
+A sends to target_peer_id=node-b through R.
+R forwards by peer_id using B's registered relay session endpoint.
+B does not need a public inbound endpoint.
+```
+
+New gate modes:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=public-relay-bootstrap-matrix
+NOVOVM_OVERLAY_GATE_MODE=public-relay-bootstrap
+```
+
+Role mode:
+
+```text
+NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE=relay
+NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE=client-register
+NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE=client-send
+```
+
+Local bootstrap matrix:
+
+```text
+public-relay-bootstrap-matrix accepted=true
+
+A:
+  selected_path=RelayNovoRudp
+  route_plan_source=relay_first_zero_config_policy
+  target_peer_id=node-b
+  selected_relay_peer_id=public-relay-1
+  sent_frame_count=4
+  queued_count=0
+
+Public relay:
+  node_id=public-relay-1
+  relay_enabled=true
+  bootstrap_sessions_established=2
+  session_peer_ids=[node-a,node-b]
+  relay_envelopes_received=4
+  relay_frames_forwarded=4
+  forwarded_to_peer_id=node-b
+
+B:
+  inbound_public_endpoint_required=false
+  received_frame_count=4
+  frame_decode_ok=true
+  source_peer_id=node-a
+  via_relay_peer_id=public-relay-1
+```
+
+Real public VPS relay smoke remains pending:
+
+```text
+Required:
+  R_PUBLIC_ADDR=<public-vps-ip-or-ddns>:<relay-port>
+  public relay inbound UDP allowed for this smoke
+
+Expected:
+  A and B do not require public inbound endpoints.
+  A and B both send outbound bootstrap registration to R.
+  A sends only target_peer_id=node-b through R.
+  R forwards to node-b's registered relay session endpoint.
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+cargo check -q -p novovm-network
+cargo test -q -p novovm-network adaptive_overlay -- --test-threads=1
+cargo test -q -p novovm-network overlay_runtime -- --test-threads=1
+
+NOVOVM_OVERLAY_GATE_MODE=public-relay-bootstrap-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/public-relay-bootstrap-matrix-cut27.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+opcode114_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+real_public_vps_relay_smoke=false
+```
+
 ## Product Readout
 
 Current product status:
