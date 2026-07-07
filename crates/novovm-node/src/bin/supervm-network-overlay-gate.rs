@@ -58,6 +58,9 @@ fn main() -> Result<()> {
         "relay-first-zero-config-matrix" => run_relay_first_zero_config_matrix_gate(),
         "public-relay-bootstrap-matrix" => run_public_relay_bootstrap_matrix_gate(),
         "public-relay-bootstrap" => run_public_relay_bootstrap_gate(),
+        "headless-public-relay-deploy-package-matrix" => {
+            run_headless_public_relay_deploy_package_matrix_gate()
+        }
         "relay-endpoint-candidates-matrix" => run_relay_endpoint_candidates_matrix_gate(),
         "wss-443-outbound-relay-matrix" => run_wss_443_outbound_relay_matrix_gate(),
         "decentralized-bootstrap-constraint-matrix" => {
@@ -466,6 +469,202 @@ fn run_public_relay_bootstrap_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("public relay bootstrap matrix failed")
+    }
+}
+
+fn run_headless_public_relay_deploy_package_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/headless-public-relay-deploy-package-matrix.json".into()
+    });
+    let package_root = env_string("NOVOVM_HEADLESS_RELAY_PACKAGE_DIR")
+        .unwrap_or_else(|| "artifacts/network-overlay-gate/novovm-public-relay-v0".into());
+    let relay_node_id =
+        env_string("NOVOVM_HEADLESS_RELAY_NODE_ID").unwrap_or_else(|| "public-relay-1".into());
+    let bind_addr =
+        env_string("NOVOVM_HEADLESS_RELAY_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:41030".into());
+    let current_exe = env::current_exe().context("resolve current relay gate executable")?;
+    let binary_name = format!("supervm-network-overlay-gate{}", env::consts::EXE_SUFFIX);
+    let package_path = Path::new(&package_root);
+    fs::create_dir_all(package_path.join("reports"))
+        .with_context(|| format!("create headless relay package: {package_root}"))?;
+    let binary_path = package_path.join(&binary_name);
+    fs::copy(&current_exe, &binary_path).with_context(|| {
+        format!(
+            "copy relay binary from {} to {}",
+            current_exe.display(),
+            binary_path.display()
+        )
+    })?;
+
+    let config = json!({
+        "mode": "public-relay-bootstrap",
+        "role": "relay",
+        "node_id": relay_node_id,
+        "bind_addr": bind_addr,
+        "report_path": "reports/public-relay-1.json",
+        "payload_treated_opaque": true,
+        "relay_is_trusted_authority": false,
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false
+    });
+    let config_path = package_path.join("relay.config.json");
+    fs::write(&config_path, serde_json::to_vec_pretty(&config)?)
+        .with_context(|| format!("write {}", config_path.display()))?;
+
+    let run_relay_sh = r#"#!/usr/bin/env sh
+set -eu
+BIN="${NOVOVM_RELAY_BINARY:-./supervm-network-overlay-gate}"
+if [ ! -x "$BIN" ]; then
+  if [ -x "./supervm-network-overlay-gate.exe" ]; then
+    BIN="./supervm-network-overlay-gate.exe"
+  fi
+fi
+mkdir -p reports
+NOVOVM_OVERLAY_GATE_MODE="${NOVOVM_OVERLAY_GATE_MODE:-public-relay-bootstrap}" \
+NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE="${NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE:-relay}" \
+NOVOVM_OVERLAY_GATE_BIND_ADDR="${NOVOVM_OVERLAY_GATE_BIND_ADDR:-0.0.0.0:41030}" \
+NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID="${NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID:-public-relay-1}" \
+NOVOVM_OVERLAY_GATE_REPORT_PATH="${NOVOVM_OVERLAY_GATE_REPORT_PATH:-reports/public-relay-1.json}" \
+"$BIN"
+"#;
+    let run_relay_ps1 = r#"$ErrorActionPreference = "Stop"
+$bin = $env:NOVOVM_RELAY_BINARY
+if ([string]::IsNullOrWhiteSpace($bin)) {
+  if (Test-Path ".\supervm-network-overlay-gate.exe") {
+    $bin = ".\supervm-network-overlay-gate.exe"
+  } else {
+    $bin = ".\supervm-network-overlay-gate"
+  }
+}
+New-Item -ItemType Directory -Force -Path "reports" | Out-Null
+$env:NOVOVM_OVERLAY_GATE_MODE = if ($env:NOVOVM_OVERLAY_GATE_MODE) { $env:NOVOVM_OVERLAY_GATE_MODE } else { "public-relay-bootstrap" }
+$env:NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE = if ($env:NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE) { $env:NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE } else { "relay" }
+$env:NOVOVM_OVERLAY_GATE_BIND_ADDR = if ($env:NOVOVM_OVERLAY_GATE_BIND_ADDR) { $env:NOVOVM_OVERLAY_GATE_BIND_ADDR } else { "0.0.0.0:41030" }
+$env:NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID = if ($env:NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID) { $env:NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID } else { "public-relay-1" }
+$env:NOVOVM_OVERLAY_GATE_REPORT_PATH = if ($env:NOVOVM_OVERLAY_GATE_REPORT_PATH) { $env:NOVOVM_OVERLAY_GATE_REPORT_PATH } else { "reports\public-relay-1.json" }
+& $bin
+"#;
+    let readme = r#"# NOVOVM Headless Public Relay v0
+
+This package is a runtime artifact for a public relay node.
+
+It does not require VS Code, Codex, a Rust toolchain, or a full git workspace on
+the public machine. Copy the directory to a VPS or server and run one script.
+
+Linux:
+
+```sh
+chmod +x ./supervm-network-overlay-gate ./run-relay.sh
+./run-relay.sh
+```
+
+Windows:
+
+```powershell
+.\run-relay.ps1
+```
+
+Default role:
+
+```text
+mode=public-relay-bootstrap
+role=relay
+node_id=public-relay-1
+bind_addr=0.0.0.0:41030
+report_path=reports/public-relay-1.json
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+relay_is_trusted_authority=false
+business_semantics_interpreted_by_relay=false
+novorudp_wire_changed=false
+```
+"#;
+    fs::write(package_path.join("run-relay.sh"), run_relay_sh).context("write run-relay.sh")?;
+    fs::write(package_path.join("run-relay.ps1"), run_relay_ps1).context("write run-relay.ps1")?;
+    fs::write(package_path.join("README.md"), readme).context("write package README")?;
+
+    let checksum_entries = [
+        binary_name.as_str(),
+        "relay.config.json",
+        "run-relay.sh",
+        "run-relay.ps1",
+        "README.md",
+    ];
+    let mut checksum_lines = Vec::new();
+    for entry in checksum_entries {
+        let digest = sha256_file_hex_v0(&package_path.join(entry))?;
+        checksum_lines.push(format!("{digest}  {entry}"));
+    }
+    let checksums_path = package_path.join("CHECKSUMS.txt");
+    fs::write(&checksums_path, format!("{}\n", checksum_lines.join("\n")))
+        .with_context(|| format!("write {}", checksums_path.display()))?;
+
+    let binary_present = binary_path.is_file();
+    let config_present = config_path.is_file();
+    let checksum_written = checksums_path.is_file();
+    let run_sh_present = package_path.join("run-relay.sh").is_file();
+    let run_ps1_present = package_path.join("run-relay.ps1").is_file();
+    let readme_present = package_path.join("README.md").is_file();
+    let reports_dir_present = package_path.join("reports").is_dir();
+    let config_value: serde_json::Value = serde_json::from_slice(&fs::read(&config_path)?)?;
+    let relay_start_command_documented = fs::read_to_string(package_path.join("README.md"))?
+        .contains("./run-relay.sh")
+        && fs::read_to_string(package_path.join("README.md"))?.contains(".\\run-relay.ps1");
+    let boundary_preserved = config_value["payload_treated_opaque"].as_bool() == Some(true)
+        && config_value["relay_is_trusted_authority"].as_bool() == Some(false)
+        && config_value["business_semantics_interpreted_by_relay"].as_bool() == Some(false)
+        && config_value["novorudp_wire_changed"].as_bool() == Some(false);
+    let accepted = binary_present
+        && config_present
+        && checksum_written
+        && run_sh_present
+        && run_ps1_present
+        && readme_present
+        && reports_dir_present
+        && relay_start_command_documented
+        && boundary_preserved;
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "headless_public_relay_deploy_package_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "headless_deploy_package": true,
+        "package_root": package_root,
+        "package_created": package_path.is_dir(),
+        "binary_present": binary_present,
+        "binary_name": binary_name,
+        "config_present": config_present,
+        "run_relay_sh_present": run_sh_present,
+        "run_relay_ps1_present": run_ps1_present,
+        "readme_present": readme_present,
+        "checksum_written": checksum_written,
+        "reports_dir_present": reports_dir_present,
+        "rust_toolchain_required": false,
+        "vscode_required": false,
+        "codex_required": false,
+        "full_git_workspace_required": false,
+        "relay_start_command_documented": relay_start_command_documented,
+        "relay_role": config_value["node_id"],
+        "bind_addr": config_value["bind_addr"],
+        "report_path_created": reports_dir_present,
+        "relay_is_trusted_authority": false,
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false,
+        "boundary_fields_preserved": boundary_preserved,
+        "files": checksum_lines,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("headless public relay deploy package matrix failed")
     }
 }
 
@@ -6744,6 +6943,12 @@ fn overlay_gate_sha256_hex_v0(parts: &[&[u8]]) -> String {
         hasher.update(part);
     }
     overlay_gate_hex_lower_v0(&hasher.finalize())
+}
+
+fn sha256_file_hex_v0(path: &Path) -> Result<String> {
+    let bytes =
+        fs::read(path).with_context(|| format!("read file for checksum: {}", path.display()))?;
+    Ok(overlay_gate_sha256_hex_v0(&[&bytes]))
 }
 
 fn send_public_relay_register_v0(

@@ -4686,6 +4686,117 @@ novorudp_wire_changed=false
 real_mixed_nat_vpn_cellular_fallback_smoke=false
 ```
 
+Next frontier:
+
+```text
+Cut 37:
+  Headless Public Relay Deploy Package v0
+```
+
+## Cut 37: Headless Public Relay Deploy Package v0
+
+Status:
+
+```text
+LOCAL HEADLESS PUBLIC RELAY DEPLOY PACKAGE MATRIX PASS
+REAL PUBLIC VPS RELAY RUNTIME SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+scripts/novovm-headless-public-relay-package.ps1
+```
+
+Goal:
+
+```text
+Separate public relay runtime from the development environment.
+
+The development machine builds and packages the relay binary. A public VPS only
+needs the binary, relay.config.json, run scripts, checksums, and a reports
+directory. It does not need VS Code, Codex, Rust toolchain, or a full git
+workspace.
+```
+
+New gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=headless-public-relay-deploy-package-matrix
+```
+
+Package layout:
+
+```text
+novovm-public-relay-v0/
+  supervm-network-overlay-gate(.exe)
+  relay.config.json
+  run-relay.sh
+  run-relay.ps1
+  README.md
+  CHECKSUMS.txt
+  reports/
+```
+
+relay.config.json:
+
+```text
+mode=public-relay-bootstrap
+role=relay
+node_id=public-relay-1
+bind_addr=0.0.0.0:41030
+report_path=reports/public-relay-1.json
+payload_treated_opaque=true
+relay_is_trusted_authority=false
+business_semantics_interpreted_by_relay=false
+novorudp_wire_changed=false
+```
+
+Local package matrix:
+
+```text
+package_created=true
+binary_present=true
+config_present=true
+run_relay_sh_present=true
+run_relay_ps1_present=true
+readme_present=true
+checksum_written=true
+reports_dir_present=true
+rust_toolchain_required=false
+vscode_required=false
+codex_required=false
+full_git_workspace_required=false
+relay_start_command_documented=true
+boundary_fields_preserved=true
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=headless-public-relay-deploy-package-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/headless-public-relay-deploy-package-matrix-cut37.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+
+powershell -ExecutionPolicy Bypass -File scripts/novovm-headless-public-relay-package.ps1
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+headless_deploy_package=true
+relay_is_trusted_authority=false
+business_semantics_interpreted_by_relay=false
+novorudp_wire_changed=false
+real_public_vps_relay_runtime_smoke=false
+```
+
 ## Product Readout
 
 Current product status:
