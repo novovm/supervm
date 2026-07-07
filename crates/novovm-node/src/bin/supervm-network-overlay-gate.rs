@@ -57,6 +57,9 @@ fn main() -> Result<()> {
         "public-relay-bootstrap" => run_public_relay_bootstrap_gate(),
         "relay-endpoint-candidates-matrix" => run_relay_endpoint_candidates_matrix_gate(),
         "wss-443-outbound-relay-matrix" => run_wss_443_outbound_relay_matrix_gate(),
+        "decentralized-bootstrap-constraint-matrix" => {
+            run_decentralized_bootstrap_constraint_matrix_gate()
+        }
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -559,6 +562,109 @@ fn run_wss_443_outbound_relay_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("wss 443 outbound relay matrix failed")
+    }
+}
+
+fn run_decentralized_bootstrap_constraint_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/decentralized-bootstrap-constraint-matrix.json".into()
+    });
+
+    let cases = vec![
+        json!({
+            "case": "same_lan_discovery",
+            "accepted": true,
+            "topology": "multiple_nodes_same_l2_or_l3_lan",
+            "discovery_methods": ["mdns", "udp_lan_broadcast", "local_static_peer_cache"],
+            "public_auxiliary_required": false,
+            "central_authority_required": false,
+            "broadcast_effective": true,
+            "broadcast_scope": "local_link_or_subnet_only",
+            "selected_path": "DirectNovoRudp",
+            "product_action": "use_lan_discovery_then_direct_or_lan_relay",
+        }),
+        json!({
+            "case": "lan_plus_cellular_no_shared_reachable_node",
+            "accepted": true,
+            "topology": "node_a_lan_nat_node_b_cellular_cgnat_vpn_tun",
+            "public_auxiliary_required": "not_central_authority_but_some_shared_reachable_path_is_required",
+            "central_authority_required": false,
+            "broadcast_effective": false,
+            "broadcast_scope": "does_not_cross_router_nat_carrier_or_vpn_tun_boundary",
+            "direct_discovery_guaranteed": false,
+            "reason": "two_private_or_filtered_networks_without_a_shared_reachable_medium_cannot_reliably_discover_or_connect",
+            "selected_path": "RelayNovoRudp_or_QueueFallback_until_relay_candidate_exists",
+            "product_action": "use_federated_relay_or_rendezvous_candidates_not_single_official_server",
+        }),
+        json!({
+            "case": "ipv6_or_public_endpoint_available",
+            "accepted": true,
+            "topology": "at_least_one_peer_has_valid_reachable_endpoint",
+            "public_auxiliary_required": false,
+            "central_authority_required": false,
+            "broadcast_effective": false,
+            "selected_path": "DirectNovoRudp",
+            "product_action": "verify_endpoint_with_observed_probe_then_use_direct_path",
+        }),
+        json!({
+            "case": "decentralized_relay_candidate_available",
+            "accepted": true,
+            "topology": "any_novovm_node_can_offer_relay_or_rendezvous_service",
+            "public_auxiliary_required": true,
+            "central_authority_required": false,
+            "relay_is_trusted_authority": false,
+            "payload_treated_opaque": true,
+            "routing_subject": "target_peer_id",
+            "peer_identity_source": "novovm_key",
+            "selected_path": "RelayNovoRudp",
+            "product_action": "select_from_peer_signed_relay_candidates_and_rotate_on_failure",
+        }),
+    ];
+
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "decentralized_bootstrap_constraint_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "terminal_product_policy": true,
+        "not_experimental_transition": true,
+        "centralized_control_plane_required": false,
+        "single_official_relay_required": false,
+        "single_official_domain_required": false,
+        "relay_is_trusted_authority": false,
+        "peer_identity_source": "novovm_key",
+        "routing_subject": "target_peer_id",
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false,
+        "physical_network_constraints": {
+            "lan_broadcast_can_discover_only_local_link_or_subnet": true,
+            "broadcast_does_not_cross_nat_router_cellular_cgnat_or_vpn_tun": true,
+            "arbitrary_private_networks_need_some_shared_reachable_medium": true,
+            "shared_reachable_medium_can_be_any_decentralized_novovm_relay": true,
+            "shared_reachable_medium_must_not_be_single_trust_root": true
+        },
+        "terminal_strategy": {
+            "lan_first": true,
+            "direct_ipv6_or_observed_endpoint_when_available": true,
+            "federated_relay_candidates": true,
+            "peer_signed_relay_endpoint_records": true,
+            "multi_relay_rotation": true,
+            "nat_punch_as_optimization": true,
+            "wss_tls_443_as_default_outbound_transport": true,
+            "queue_fallback_when_no_candidate_reachable": true
+        },
+        "cases": cases,
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("decentralized bootstrap constraint matrix failed")
     }
 }
 

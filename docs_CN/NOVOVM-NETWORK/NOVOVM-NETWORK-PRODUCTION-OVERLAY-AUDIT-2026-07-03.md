@@ -3827,6 +3827,143 @@ novorudp_wire_changed=false
 real_wss_tls_public_relay_smoke=false
 ```
 
+Architecture clarification:
+
+```text
+WSS/TLS 443 relay is the default zero-config outbound transport.
+It is not a centralized NOVOVM control plane.
+
+Relay nodes are replaceable reachability helpers.
+They forward opaque NOVORUDP frames by peer identity.
+They are not trusted authorities and do not own peer identity, payload,
+routing rights, or execution semantics.
+```
+
+Next frontier:
+
+```text
+Cut 30:
+  Decentralized Bootstrap Constraint Matrix v0
+```
+
+## Cut 30: Decentralized Bootstrap Constraint Matrix v0
+
+Status:
+
+```text
+LOCAL DECENTRALIZED BOOTSTRAP CONSTRAINT MATRIX PASS
+REAL FEDERATED RELAY / LAN / CELLULAR MIXED TOPOLOGY SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Define the terminal product network model without pretending that physical
+network constraints do not exist.
+
+NOVOVM must be decentralized.
+But decentralization does not mean two devices behind unrelated NAT / CGNAT /
+VPN / TUN networks can always discover each other without any shared reachable
+medium.
+```
+
+New gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=decentralized-bootstrap-constraint-matrix
+```
+
+Core constraints:
+
+```text
+LAN broadcast / mDNS:
+  Useful for same-LAN discovery.
+  Does not cross router / NAT / carrier CGNAT / VPN TUN boundaries.
+
+Cellular node outside LAN:
+  Cannot be discovered by LAN broadcast.
+  If it has no public reachable endpoint and no shared rendezvous / relay
+  candidate, direct discovery is not guaranteed.
+
+Relay / rendezvous:
+  Required as a reachability role for many real-world topologies.
+  Not required to be centralized.
+  Any NOVOVM node can become a relay candidate.
+```
+
+Local constraint matrix:
+
+```text
+decentralized-bootstrap-constraint-matrix accepted=true
+
+centralized_control_plane_required=false
+single_official_relay_required=false
+single_official_domain_required=false
+relay_is_trusted_authority=false
+peer_identity_source=novovm_key
+routing_subject=target_peer_id
+business_semantics_interpreted_by_relay=false
+novorudp_wire_changed=false
+```
+
+Terminal strategy:
+
+```text
+1. LAN-first discovery:
+   mDNS / UDP local broadcast / local peer cache
+
+2. Direct when physically possible:
+   IPv6 / public endpoint / observed endpoint probe
+
+3. Federated relay candidates:
+   Multiple replaceable NOVOVM relay nodes, not one official server
+
+4. Peer-signed relay endpoint records:
+   Relay reachability records are attached to NOVOVM identity
+
+5. Multi-relay rotation:
+   Fail over between relay candidates without trusting one relay
+
+6. NAT punch as optimization:
+   Improves latency/cost when possible, not required for availability
+
+7. WSS/TLS 443 as default outbound transport:
+   Real-world zero-config carrier across VPN/TUN/CGNAT/enterprise networks
+
+8. Queue fallback:
+   If no candidate path exists, do not fake connectivity
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=decentralized-bootstrap-constraint-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/decentralized-bootstrap-constraint-matrix-cut30.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+opcode114_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+real_federated_relay_smoke=false
+```
+
 ## Product Readout
 
 Current product status:
