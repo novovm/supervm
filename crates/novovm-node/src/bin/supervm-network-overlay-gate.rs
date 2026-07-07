@@ -74,6 +74,9 @@ fn main() -> Result<()> {
             run_native_first_transport_adaptive_matrix_gate()
         }
         "intelligent-network-strategy-matrix" => run_intelligent_network_strategy_matrix_gate(),
+        "apfl-advisory-strategy-interface-matrix" => {
+            run_apfl_advisory_strategy_interface_matrix_gate()
+        }
         "decentralized-bootstrap-constraint-matrix" => {
             run_decentralized_bootstrap_constraint_matrix_gate()
         }
@@ -1291,6 +1294,201 @@ fn run_intelligent_network_strategy_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("intelligent network strategy matrix failed")
+    }
+}
+
+fn run_apfl_advisory_strategy_interface_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/apfl-advisory-strategy-interface-matrix-cut43.json".into()
+    });
+    let now_ms = 10_000u64;
+    let advisory_key = SigningKey::from_bytes(&[70u8; 32]);
+    let base_payload = json!({
+        "schema_version": 1,
+        "confidence": 82,
+        "prefer_transport": "quic",
+        "batch_size_hint": 2,
+        "keepalive_interval_ms_hint": 15_000,
+        "relay_candidate_priority_hint": "prefer_low_failure_count",
+        "privacy_budget_hint": "minimize_peer_disclosure",
+        "weak_network_mode_hint": true,
+        "background_punch_probe_hint": true
+    });
+
+    let valid_advisory = sign_apfl_advisory_v0(
+        &advisory_key,
+        "apfl-valid-001",
+        base_payload.clone(),
+        9_000,
+        20_000,
+    )?;
+
+    let expired_advisory = sign_apfl_advisory_v0(
+        &advisory_key,
+        "apfl-expired-001",
+        base_payload.clone(),
+        1_000,
+        9_000,
+    )?;
+
+    let invalid_schema_advisory = sign_apfl_advisory_v0(
+        &advisory_key,
+        "apfl-invalid-schema-001",
+        json!({
+            "schema_version": 0,
+            "confidence": 82,
+            "prefer_transport": "quic"
+        }),
+        9_000,
+        20_000,
+    )?;
+
+    let mut bad_signature_advisory = valid_advisory.clone();
+    bad_signature_advisory.advisory_id = "apfl-bad-signature-001".into();
+    bad_signature_advisory.signature = "00".repeat(64);
+
+    let replay_advisory = sign_apfl_advisory_v0(
+        &advisory_key,
+        "apfl-replay-001",
+        base_payload.clone(),
+        9_000,
+        20_000,
+    )?;
+
+    let force_direct_advisory = sign_apfl_advisory_v0(
+        &advisory_key,
+        "apfl-force-direct-001",
+        json!({
+            "schema_version": 1,
+            "confidence": 90,
+            "prefer_transport": "native_encrypted_novorudp",
+            "force_direct": true
+        }),
+        9_000,
+        20_000,
+    )?;
+
+    let raw_endpoint_advisory = sign_apfl_advisory_v0(
+        &advisory_key,
+        "apfl-raw-endpoint-001",
+        json!({
+            "schema_version": 1,
+            "confidence": 90,
+            "prefer_transport": "wss",
+            "raw_endpoint": "wss://unsigned.example.net:443/novovm"
+        }),
+        9_000,
+        20_000,
+    )?;
+
+    let disable_queue_advisory = sign_apfl_advisory_v0(
+        &advisory_key,
+        "apfl-disable-queue-001",
+        json!({
+            "schema_version": 1,
+            "confidence": 90,
+            "prefer_transport": "quic",
+            "disable_queue_fallback": true
+        }),
+        9_000,
+        20_000,
+    )?;
+
+    let payload_mutation_advisory = sign_apfl_advisory_v0(
+        &advisory_key,
+        "apfl-payload-mutation-001",
+        json!({
+            "schema_version": 1,
+            "confidence": 90,
+            "prefer_transport": "quic",
+            "payload_semantics_mutation": true
+        }),
+        9_000,
+        20_000,
+    )?;
+
+    let cases = vec![
+        evaluate_apfl_advisory_case_v0("valid_advisory_within_bounds", valid_advisory, now_ms, &[]),
+        evaluate_apfl_advisory_case_v0("expired_advisory_rejected", expired_advisory, now_ms, &[]),
+        evaluate_apfl_advisory_case_v0(
+            "invalid_schema_rejected",
+            invalid_schema_advisory,
+            now_ms,
+            &[],
+        ),
+        evaluate_apfl_advisory_case_v0(
+            "bad_signature_rejected",
+            bad_signature_advisory,
+            now_ms,
+            &[],
+        ),
+        evaluate_apfl_advisory_case_v0(
+            "replay_advisory_rejected",
+            replay_advisory,
+            now_ms,
+            &["apfl-replay-001"],
+        ),
+        evaluate_apfl_advisory_case_v0("force_direct_rejected", force_direct_advisory, now_ms, &[]),
+        evaluate_apfl_advisory_case_v0(
+            "raw_endpoint_injection_rejected",
+            raw_endpoint_advisory,
+            now_ms,
+            &[],
+        ),
+        evaluate_apfl_advisory_case_v0(
+            "queue_fallback_disable_rejected",
+            disable_queue_advisory,
+            now_ms,
+            &[],
+        ),
+        evaluate_apfl_advisory_case_v0(
+            "payload_semantics_mutation_rejected",
+            payload_mutation_advisory,
+            now_ms,
+            &[],
+        ),
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "apfl_advisory_strategy_interface_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 43: APFL Advisory Strategy Interface v0",
+        "apfl_model_called": false,
+        "apfl_interpreted": false,
+        "apfl_advisory_interface_enabled": true,
+        "advisory_is_binding": false,
+        "hard_policy_precedence": true,
+        "advisory_constraints": {
+            "must_be_signed": true,
+            "ttl_required": true,
+            "replay_id_required": true,
+            "confidence_required": true,
+            "policy_bounds_required": true,
+            "may_affect_scoring_only": true,
+            "may_not_force_direct": true,
+            "may_not_inject_raw_endpoint": true,
+            "may_not_disable_queue_fallback": true,
+            "may_not_change_payload_semantics": true
+        },
+        "cases": cases,
+        "network_only": true,
+        "aoem_called": false,
+        "opcode114_called": false,
+        "ledger_semantics": false,
+        "novorudp_wire_changed": false,
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("apfl advisory strategy interface matrix failed")
     }
 }
 
@@ -5411,6 +5609,40 @@ struct IntelligentNetworkSignalV0 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SignedApflAdvisoryV0 {
+    advisory_id: String,
+    signer_public_key: String,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    payload: serde_json::Value,
+    signature_scheme: String,
+    signature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ApflAdvisoryCanonicalPayloadV0 {
+    advisory_id: String,
+    signer_public_key: String,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+struct ApflAdvisoryValidationV0 {
+    schema_valid: bool,
+    signature_valid: bool,
+    ttl_valid: bool,
+    policy_bounds_valid: bool,
+    replay_rejected: bool,
+    confidence: Option<u64>,
+    applied: bool,
+    reject_reason: Option<String>,
+    hard_policy_override_attempted: bool,
+    hard_policy_override_rejected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PeerSignedRelayEndpointRecordV0 {
     record_version: u32,
     relay_peer_id: String,
@@ -7966,6 +8198,267 @@ fn evaluate_intelligent_network_strategy_case_v0(
             "novorudp_wire_changed": false
         }
     })
+}
+
+fn sign_apfl_advisory_v0(
+    signing_key: &SigningKey,
+    advisory_id: &str,
+    payload: serde_json::Value,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+) -> Result<SignedApflAdvisoryV0> {
+    let signer_public_key = overlay_gate_hex_lower_v0(&signing_key.verifying_key().to_bytes());
+    let canonical = ApflAdvisoryCanonicalPayloadV0 {
+        advisory_id: advisory_id.to_string(),
+        signer_public_key: signer_public_key.clone(),
+        issued_at_ms,
+        expires_at_ms,
+        payload: payload.clone(),
+    };
+    let canonical_bytes = serde_json::to_vec(&canonical)?;
+    let signature: Signature = signing_key.sign(&canonical_bytes);
+    Ok(SignedApflAdvisoryV0 {
+        advisory_id: advisory_id.to_string(),
+        signer_public_key,
+        issued_at_ms,
+        expires_at_ms,
+        payload,
+        signature_scheme: "ed25519".into(),
+        signature: overlay_gate_hex_lower_v0(&signature.to_bytes()),
+    })
+}
+
+fn evaluate_apfl_advisory_case_v0(
+    case_name: &str,
+    advisory: SignedApflAdvisoryV0,
+    now_ms: u64,
+    seen_replay_ids: &[&str],
+) -> serde_json::Value {
+    let validation = validate_apfl_advisory_v0(&advisory, now_ms, seen_replay_ids);
+    let before = json!({
+        "selected_path": "RelayNovoRudp",
+        "selected_transport_family": "native_first_relay",
+        "queue_enabled": true,
+        "relay_record_signature_required": true,
+        "blinded_directory_required": true,
+        "batch_size": 4,
+        "keepalive_interval_ms": 30_000,
+    });
+    let after = if validation.applied {
+        json!({
+            "selected_path": "RelayNovoRudp",
+            "selected_transport_family": "native_first_relay",
+            "queue_enabled": true,
+            "relay_record_signature_required": true,
+            "blinded_directory_required": true,
+            "scoring_hints": {
+                "prefer_transport": advisory.payload.get("prefer_transport").cloned(),
+                "batch_size_hint": advisory.payload.get("batch_size_hint").cloned(),
+                "keepalive_interval_ms_hint": advisory.payload.get("keepalive_interval_ms_hint").cloned(),
+                "relay_candidate_priority_hint": advisory.payload.get("relay_candidate_priority_hint").cloned(),
+                "privacy_budget_hint": advisory.payload.get("privacy_budget_hint").cloned(),
+                "weak_network_mode_hint": advisory.payload.get("weak_network_mode_hint").cloned(),
+                "background_punch_probe_hint": advisory.payload.get("background_punch_probe_hint").cloned(),
+            }
+        })
+    } else {
+        before.clone()
+    };
+
+    let expected_reject_reason = match case_name {
+        "expired_advisory_rejected" => Some("apfl_advisory_expired"),
+        "invalid_schema_rejected" => Some("apfl_advisory_schema_invalid"),
+        "bad_signature_rejected" => Some("apfl_advisory_signature_invalid"),
+        "replay_advisory_rejected" => Some("apfl_advisory_replay_rejected"),
+        "force_direct_rejected" => Some("apfl_advisory_hard_policy_override"),
+        "raw_endpoint_injection_rejected" => Some("apfl_advisory_raw_endpoint_injection"),
+        "queue_fallback_disable_rejected" => Some("apfl_advisory_queue_fallback_disable"),
+        "payload_semantics_mutation_rejected" => Some("apfl_advisory_payload_semantics_mutation"),
+        _ => None,
+    };
+    let accepted = match case_name {
+        "valid_advisory_within_bounds" => {
+            validation.applied
+                && validation.schema_valid
+                && validation.signature_valid
+                && validation.ttl_valid
+                && validation.policy_bounds_valid
+                && !validation.hard_policy_override_attempted
+        }
+        _ => {
+            !validation.applied
+                && validation.reject_reason.as_deref() == expected_reject_reason
+                && (!validation.hard_policy_override_attempted
+                    || validation.hard_policy_override_rejected)
+        }
+    };
+
+    json!({
+        "case": case_name,
+        "accepted": accepted,
+        "apfl_advisory_received": true,
+        "apfl_advisory_schema_valid": validation.schema_valid,
+        "apfl_advisory_signature_valid": validation.signature_valid,
+        "apfl_advisory_ttl_valid": validation.ttl_valid,
+        "apfl_advisory_confidence": validation.confidence,
+        "apfl_advisory_policy_bounds_valid": validation.policy_bounds_valid,
+        "apfl_advisory_replay_id": advisory.advisory_id,
+        "apfl_advisory_replay_rejected": validation.replay_rejected,
+        "apfl_advisory_applied": validation.applied,
+        "apfl_advisory_reject_reason": validation.reject_reason,
+        "strategy_decision_before_advisory": before,
+        "strategy_decision_after_advisory": after,
+        "hard_policy_override_attempted": validation.hard_policy_override_attempted,
+        "hard_policy_override_rejected": validation.hard_policy_override_rejected,
+        "payload_treated_opaque": true,
+        "apfl_model_called": false,
+        "apfl_interpreted": false,
+        "aoem_called": false,
+        "ledger_semantics": false,
+        "novorudp_wire_changed": false,
+    })
+}
+
+fn validate_apfl_advisory_v0(
+    advisory: &SignedApflAdvisoryV0,
+    now_ms: u64,
+    seen_replay_ids: &[&str],
+) -> ApflAdvisoryValidationV0 {
+    let schema_valid = apfl_advisory_schema_valid_v0(&advisory.payload);
+    let confidence = advisory
+        .payload
+        .get("confidence")
+        .and_then(|value| value.as_u64());
+    let signature_valid = verify_apfl_advisory_signature_v0(advisory);
+    let ttl_valid = advisory.issued_at_ms <= now_ms && now_ms <= advisory.expires_at_ms;
+    let replay_rejected = seen_replay_ids
+        .iter()
+        .any(|seen| *seen == advisory.advisory_id);
+
+    let force_direct = advisory
+        .payload
+        .get("force_direct")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let raw_endpoint = advisory.payload.get("raw_endpoint").is_some();
+    let disable_queue = advisory
+        .payload
+        .get("disable_queue_fallback")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let payload_semantics_mutation = advisory
+        .payload
+        .get("payload_semantics_mutation")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let hard_policy_override_attempted =
+        force_direct || raw_endpoint || disable_queue || payload_semantics_mutation;
+
+    let reject_reason = if !schema_valid {
+        Some("apfl_advisory_schema_invalid".to_string())
+    } else if !signature_valid {
+        Some("apfl_advisory_signature_invalid".to_string())
+    } else if !ttl_valid {
+        Some("apfl_advisory_expired".to_string())
+    } else if replay_rejected {
+        Some("apfl_advisory_replay_rejected".to_string())
+    } else if force_direct {
+        Some("apfl_advisory_hard_policy_override".to_string())
+    } else if raw_endpoint {
+        Some("apfl_advisory_raw_endpoint_injection".to_string())
+    } else if disable_queue {
+        Some("apfl_advisory_queue_fallback_disable".to_string())
+    } else if payload_semantics_mutation {
+        Some("apfl_advisory_payload_semantics_mutation".to_string())
+    } else {
+        None
+    };
+    let policy_bounds_valid = reject_reason.is_none();
+    let applied = schema_valid
+        && signature_valid
+        && ttl_valid
+        && !replay_rejected
+        && policy_bounds_valid
+        && !hard_policy_override_attempted;
+
+    ApflAdvisoryValidationV0 {
+        schema_valid,
+        signature_valid,
+        ttl_valid,
+        policy_bounds_valid,
+        replay_rejected,
+        confidence,
+        applied,
+        reject_reason,
+        hard_policy_override_attempted,
+        hard_policy_override_rejected: hard_policy_override_attempted,
+    }
+}
+
+fn apfl_advisory_schema_valid_v0(payload: &serde_json::Value) -> bool {
+    let Some(schema_version) = payload
+        .get("schema_version")
+        .and_then(|value| value.as_u64())
+    else {
+        return false;
+    };
+    if schema_version != 1 {
+        return false;
+    }
+    let Some(confidence) = payload.get("confidence").and_then(|value| value.as_u64()) else {
+        return false;
+    };
+    if confidence > 100 {
+        return false;
+    }
+    if let Some(transport) = payload
+        .get("prefer_transport")
+        .and_then(|value| value.as_str())
+    {
+        matches!(
+            transport,
+            "native_encrypted_novorudp" | "wss" | "quic" | "tls" | "ws" | "udp"
+        )
+    } else {
+        true
+    }
+}
+
+fn verify_apfl_advisory_signature_v0(advisory: &SignedApflAdvisoryV0) -> bool {
+    if advisory.signature_scheme != "ed25519" {
+        return false;
+    }
+    let public_key_bytes =
+        match overlay_gate_decode_hex_bytes_v0(&advisory.signer_public_key, "apfl_public_key") {
+            Ok(bytes) => bytes,
+            Err(_) => return false,
+        };
+    let Ok(public_key_array) = <[u8; 32]>::try_from(public_key_bytes.as_slice()) else {
+        return false;
+    };
+    let Ok(verifying_key) = VerifyingKey::from_bytes(&public_key_array) else {
+        return false;
+    };
+    let signature_bytes =
+        match overlay_gate_decode_hex_bytes_v0(&advisory.signature, "apfl_signature") {
+            Ok(bytes) => bytes,
+            Err(_) => return false,
+        };
+    let Ok(signature_array) = <[u8; 64]>::try_from(signature_bytes.as_slice()) else {
+        return false;
+    };
+    let signature = Signature::from_bytes(&signature_array);
+    let canonical = ApflAdvisoryCanonicalPayloadV0 {
+        advisory_id: advisory.advisory_id.clone(),
+        signer_public_key: advisory.signer_public_key.clone(),
+        issued_at_ms: advisory.issued_at_ms,
+        expires_at_ms: advisory.expires_at_ms,
+        payload: advisory.payload.clone(),
+    };
+    let Ok(canonical_bytes) = serde_json::to_vec(&canonical) else {
+        return false;
+    };
+    verifying_key.verify(&canonical_bytes, &signature).is_ok()
 }
 
 fn evaluate_relay_selection_case_v0(
