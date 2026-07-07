@@ -67,6 +67,7 @@ fn main() -> Result<()> {
         "privacy-preserving-node-discovery-matrix" => {
             run_privacy_preserving_node_discovery_matrix_gate()
         }
+        "signed-bootstrap-manifest-matrix" => run_signed_bootstrap_manifest_matrix_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -1279,6 +1280,259 @@ fn run_privacy_preserving_node_discovery_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("privacy preserving node discovery matrix failed")
+    }
+}
+
+fn run_signed_bootstrap_manifest_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/signed-bootstrap-manifest-matrix.json".into()
+    });
+    let now_ms = 20_000u64;
+    let candidate_set_policy_limit = 2usize;
+    let manifest_key = SigningKey::from_bytes(&[50u8; 32]);
+    let relay_a_key = SigningKey::from_bytes(&[51u8; 32]);
+    let relay_b_key = SigningKey::from_bytes(&[52u8; 32]);
+    let rendezvous_key = SigningKey::from_bytes(&[53u8; 32]);
+    let seed_relay_records = vec![
+        sign_relay_endpoint_record_v0(
+            &relay_a_key,
+            vec![peer_signed_relay_endpoint_v0(
+                "wss",
+                "wss://relay-a.bootstrap.example:443/novovm",
+                443,
+                10,
+            )],
+            19_000,
+            90_000,
+            "bootstrap-relay-a-001",
+        )?,
+        sign_relay_endpoint_record_v0(
+            &relay_b_key,
+            vec![peer_signed_relay_endpoint_v0(
+                "quic",
+                "quic://relay-b.bootstrap.example:443/novovm",
+                443,
+                20,
+            )],
+            19_000,
+            90_000,
+            "bootstrap-relay-b-001",
+        )?,
+    ];
+    let seed_rendezvous_records = vec![sign_relay_endpoint_record_v0(
+        &rendezvous_key,
+        vec![peer_signed_relay_endpoint_v0(
+            "wss",
+            "wss://rendezvous-a.bootstrap.example:443/novovm",
+            443,
+            30,
+        )],
+        19_000,
+        90_000,
+        "bootstrap-rendezvous-a-001",
+    )?];
+    let valid_manifest = sign_bootstrap_manifest_v0(
+        &manifest_key,
+        "installer_bundle",
+        seed_relay_records.clone(),
+        seed_rendezvous_records.clone(),
+        19_000,
+        90_000,
+        "bootstrap-manifest-valid-001",
+        false,
+        false,
+        false,
+        candidate_set_policy_limit,
+    )?;
+    let valid_validation = validate_bootstrap_manifest_v0(&valid_manifest, now_ms);
+
+    let mut invalid_signature_manifest = valid_manifest.clone();
+    invalid_signature_manifest.signature = "00".repeat(64);
+    let invalid_signature_validation =
+        validate_bootstrap_manifest_v0(&invalid_signature_manifest, now_ms);
+
+    let expired_manifest = sign_bootstrap_manifest_v0(
+        &manifest_key,
+        "history_cache",
+        seed_relay_records.clone(),
+        seed_rendezvous_records.clone(),
+        1_000,
+        19_000,
+        "bootstrap-manifest-expired-001",
+        false,
+        false,
+        false,
+        candidate_set_policy_limit,
+    )?;
+    let expired_validation = validate_bootstrap_manifest_v0(&expired_manifest, now_ms);
+
+    let raw_directory_manifest = sign_bootstrap_manifest_v0(
+        &manifest_key,
+        "official_site",
+        seed_relay_records.clone(),
+        seed_rendezvous_records.clone(),
+        19_000,
+        90_000,
+        "bootstrap-manifest-raw-directory-001",
+        true,
+        false,
+        false,
+        candidate_set_policy_limit,
+    )?;
+    let raw_directory_validation = validate_bootstrap_manifest_v0(&raw_directory_manifest, now_ms);
+
+    let single_relay_manifest = sign_bootstrap_manifest_v0(
+        &manifest_key,
+        "qr_invite",
+        seed_relay_records.clone(),
+        seed_rendezvous_records.clone(),
+        19_000,
+        90_000,
+        "bootstrap-manifest-single-relay-001",
+        false,
+        true,
+        false,
+        candidate_set_policy_limit,
+    )?;
+    let single_relay_validation = validate_bootstrap_manifest_v0(&single_relay_manifest, now_ms);
+
+    let single_domain_manifest = sign_bootstrap_manifest_v0(
+        &manifest_key,
+        "friend_invite",
+        seed_relay_records.clone(),
+        seed_rendezvous_records.clone(),
+        19_000,
+        90_000,
+        "bootstrap-manifest-single-domain-001",
+        false,
+        false,
+        true,
+        candidate_set_policy_limit,
+    )?;
+    let single_domain_validation = validate_bootstrap_manifest_v0(&single_domain_manifest, now_ms);
+
+    let cut33_handoff_accepted = valid_validation.accepted
+        && valid_validation.blinded_directory_response.len() <= candidate_set_policy_limit
+        && valid_validation
+            .blinded_directory_response
+            .iter()
+            .all(|entry| {
+                entry
+                    .encrypted_or_blinded_endpoint_hint
+                    .starts_with("blind:v0:")
+                    && !entry.encrypted_or_blinded_endpoint_hint.contains("://")
+            });
+    let cases = vec![
+        json!({
+            "case": "valid_signed_bootstrap_manifest",
+            "accepted": valid_validation.accepted,
+            "bootstrap_manifest_signature_valid": valid_validation.signature_valid,
+            "bootstrap_manifest_source": valid_manifest.bootstrap_manifest_source,
+            "client_accepts_manifest": valid_validation.accepted,
+            "client_reject_reason": valid_validation.reject_reason,
+        }),
+        json!({
+            "case": "invalid_manifest_signature_rejected",
+            "accepted": !invalid_signature_validation.accepted
+                && invalid_signature_validation.reject_reason.as_deref() == Some("bootstrap_manifest_signature_invalid"),
+            "bootstrap_manifest_signature_valid": invalid_signature_validation.signature_valid,
+            "client_accepts_manifest": invalid_signature_validation.accepted,
+            "client_reject_reason": invalid_signature_validation.reject_reason,
+        }),
+        json!({
+            "case": "expired_manifest_rejected",
+            "accepted": !expired_validation.accepted
+                && expired_validation.reject_reason.as_deref() == Some("bootstrap_manifest_expired"),
+            "bootstrap_manifest_signature_valid": expired_validation.signature_valid,
+            "bootstrap_manifest_expired": expired_validation.expired,
+            "client_accepts_manifest": expired_validation.accepted,
+            "client_reject_reason": expired_validation.reject_reason,
+        }),
+        json!({
+            "case": "manifest_with_full_raw_ip_directory_rejected",
+            "accepted": !raw_directory_validation.accepted
+                && raw_directory_validation.reject_reason.as_deref() == Some("full_raw_ip_directory_forbidden"),
+            "full_raw_ip_directory_embedded": raw_directory_manifest.full_raw_ip_directory_embedded,
+            "client_accepts_manifest": raw_directory_validation.accepted,
+            "client_reject_reason": raw_directory_validation.reject_reason,
+        }),
+        json!({
+            "case": "manifest_requires_single_official_relay_rejected",
+            "accepted": !single_relay_validation.accepted
+                && single_relay_validation.reject_reason.as_deref() == Some("single_official_relay_forbidden"),
+            "manifest_requires_single_official_relay": single_relay_manifest.manifest_requires_single_official_relay,
+            "client_accepts_manifest": single_relay_validation.accepted,
+            "client_reject_reason": single_relay_validation.reject_reason,
+        }),
+        json!({
+            "case": "manifest_requires_single_official_domain_rejected",
+            "accepted": !single_domain_validation.accepted
+                && single_domain_validation.reject_reason.as_deref() == Some("single_official_domain_forbidden"),
+            "manifest_requires_single_official_domain": single_domain_manifest.manifest_requires_single_official_domain,
+            "client_accepts_manifest": single_domain_validation.accepted,
+            "client_reject_reason": single_domain_validation.reject_reason,
+        }),
+        json!({
+            "case": "manifest_seed_candidates_handed_to_cut33_policy",
+            "accepted": cut33_handoff_accepted,
+            "seed_relay_candidate_count": valid_manifest.seed_relay_candidates.len(),
+            "issued_blinded_candidate_count": valid_validation.blinded_directory_response.len(),
+            "candidate_set_policy_limit": candidate_set_policy_limit,
+            "node_receives_minimal_candidate_set": true,
+            "candidate_endpoint_encrypted_or_blinded": true,
+            "raw_ip_directory_exposed": false,
+        }),
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "signed_bootstrap_manifest_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "bootstrap_manifest_signature_valid": valid_validation.signature_valid,
+        "bootstrap_manifest_source": valid_manifest.bootstrap_manifest_source,
+        "bootstrap_manifest_expired": valid_validation.expired,
+        "seed_relay_candidate_count": valid_manifest.seed_relay_candidates.len(),
+        "seed_rendezvous_candidate_count": valid_manifest.seed_rendezvous_candidates.len(),
+        "full_raw_ip_directory_embedded": valid_manifest.full_raw_ip_directory_embedded,
+        "manifest_requires_single_official_relay": valid_manifest.manifest_requires_single_official_relay,
+        "manifest_requires_single_official_domain": valid_manifest.manifest_requires_single_official_domain,
+        "client_accepts_manifest": valid_validation.accepted,
+        "client_reject_reason": valid_validation.reject_reason,
+        "seed_relay_record_valid_count": valid_validation.seed_relay_record_valid_count,
+        "seed_relay_record_invalid_count": valid_validation.seed_relay_record_invalid_count,
+        "candidate_set_policy_limit": candidate_set_policy_limit,
+        "cut33_blinded_directory_handoff": cut33_handoff_accepted,
+        "issued_blinded_candidate_count": valid_validation.blinded_directory_response.len(),
+        "full_raw_ip_directory_exposed": false,
+        "centralized_control_plane_required": false,
+        "single_official_relay_required": false,
+        "single_official_domain_required": false,
+        "relay_is_trusted_authority": false,
+        "peer_identity_source": "novovm_key",
+        "routing_subject": "target_peer_id",
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false,
+        "manifest_policy": {
+            "signature_required": true,
+            "expiry_required": true,
+            "full_raw_ip_directory_forbidden": true,
+            "single_official_relay_forbidden": true,
+            "single_official_domain_forbidden": true,
+            "seed_candidates_forwarded_to_cut33_directory_policy": true
+        },
+        "blinded_directory_response": valid_validation.blinded_directory_response,
+        "cases": cases,
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("signed bootstrap manifest matrix failed")
     }
 }
 
@@ -4077,6 +4331,51 @@ struct BlindedRelayDirectoryEntryV0 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SignedBootstrapManifestV0 {
+    manifest_version: u32,
+    manifest_id: String,
+    bootstrap_manifest_source: String,
+    manifest_public_key: String,
+    seed_relay_candidates: Vec<PeerSignedRelayEndpointRecordV0>,
+    seed_rendezvous_candidates: Vec<PeerSignedRelayEndpointRecordV0>,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    full_raw_ip_directory_embedded: bool,
+    manifest_requires_single_official_relay: bool,
+    manifest_requires_single_official_domain: bool,
+    candidate_set_policy_limit: usize,
+    signature_scheme: String,
+    signature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct BootstrapManifestPayloadV0 {
+    manifest_version: u32,
+    manifest_id: String,
+    bootstrap_manifest_source: String,
+    manifest_public_key: String,
+    seed_relay_candidates: Vec<PeerSignedRelayEndpointRecordV0>,
+    seed_rendezvous_candidates: Vec<PeerSignedRelayEndpointRecordV0>,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    full_raw_ip_directory_embedded: bool,
+    manifest_requires_single_official_relay: bool,
+    manifest_requires_single_official_domain: bool,
+    candidate_set_policy_limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BootstrapManifestValidationV0 {
+    accepted: bool,
+    signature_valid: bool,
+    expired: bool,
+    reject_reason: Option<String>,
+    seed_relay_record_valid_count: usize,
+    seed_relay_record_invalid_count: usize,
+    blinded_directory_response: Vec<BlindedRelayDirectoryEntryV0>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PublicRelayRegisterPayloadV0 {
     peer_id: String,
     advertised_endpoint: Option<String>,
@@ -5088,6 +5387,289 @@ fn peer_signed_relay_endpoint_v0(
         port,
         priority,
         capabilities: vec!["relay_novorudp_opaque".into(), "peer_id_routing".into()],
+    }
+}
+
+fn sign_bootstrap_manifest_v0(
+    signing_key: &SigningKey,
+    bootstrap_manifest_source: &str,
+    seed_relay_candidates: Vec<PeerSignedRelayEndpointRecordV0>,
+    seed_rendezvous_candidates: Vec<PeerSignedRelayEndpointRecordV0>,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    manifest_id: &str,
+    full_raw_ip_directory_embedded: bool,
+    manifest_requires_single_official_relay: bool,
+    manifest_requires_single_official_domain: bool,
+    candidate_set_policy_limit: usize,
+) -> Result<SignedBootstrapManifestV0> {
+    let manifest_public_key = overlay_gate_hex_lower_v0(&signing_key.verifying_key().to_bytes());
+    let payload = bootstrap_manifest_payload_v0(
+        manifest_id.to_string(),
+        bootstrap_manifest_source.to_string(),
+        manifest_public_key.clone(),
+        seed_relay_candidates.clone(),
+        seed_rendezvous_candidates.clone(),
+        issued_at_ms,
+        expires_at_ms,
+        full_raw_ip_directory_embedded,
+        manifest_requires_single_official_relay,
+        manifest_requires_single_official_domain,
+        candidate_set_policy_limit,
+    );
+    let canonical_payload = serde_json::to_vec(&payload)?;
+    let signature: Signature = signing_key.sign(&canonical_payload);
+    Ok(SignedBootstrapManifestV0 {
+        manifest_version: payload.manifest_version,
+        manifest_id: payload.manifest_id,
+        bootstrap_manifest_source: payload.bootstrap_manifest_source,
+        manifest_public_key,
+        seed_relay_candidates,
+        seed_rendezvous_candidates,
+        issued_at_ms,
+        expires_at_ms,
+        full_raw_ip_directory_embedded,
+        manifest_requires_single_official_relay,
+        manifest_requires_single_official_domain,
+        candidate_set_policy_limit,
+        signature_scheme: "ed25519".into(),
+        signature: overlay_gate_hex_lower_v0(&signature.to_bytes()),
+    })
+}
+
+fn validate_bootstrap_manifest_v0(
+    manifest: &SignedBootstrapManifestV0,
+    now_ms: u64,
+) -> BootstrapManifestValidationV0 {
+    let empty_response = Vec::new();
+    let manifest_public_key_bytes = match overlay_gate_decode_hex_bytes_v0(
+        &manifest.manifest_public_key,
+        "manifest_public_key",
+    ) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return BootstrapManifestValidationV0 {
+                accepted: false,
+                signature_valid: false,
+                expired: false,
+                reject_reason: Some("bootstrap_manifest_public_key_invalid".into()),
+                seed_relay_record_valid_count: 0,
+                seed_relay_record_invalid_count: manifest.seed_relay_candidates.len(),
+                blinded_directory_response: empty_response,
+            }
+        }
+    };
+    let public_key_array: [u8; 32] = match manifest_public_key_bytes.try_into() {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return BootstrapManifestValidationV0 {
+                accepted: false,
+                signature_valid: false,
+                expired: false,
+                reject_reason: Some("bootstrap_manifest_public_key_invalid".into()),
+                seed_relay_record_valid_count: 0,
+                seed_relay_record_invalid_count: manifest.seed_relay_candidates.len(),
+                blinded_directory_response: empty_response,
+            }
+        }
+    };
+    if manifest.signature_scheme != "ed25519" {
+        return BootstrapManifestValidationV0 {
+            accepted: false,
+            signature_valid: false,
+            expired: false,
+            reject_reason: Some("bootstrap_manifest_signature_scheme_unsupported".into()),
+            seed_relay_record_valid_count: 0,
+            seed_relay_record_invalid_count: manifest.seed_relay_candidates.len(),
+            blinded_directory_response: empty_response,
+        };
+    }
+    let verifying_key = match VerifyingKey::from_bytes(&public_key_array) {
+        Ok(key) => key,
+        Err(_) => {
+            return BootstrapManifestValidationV0 {
+                accepted: false,
+                signature_valid: false,
+                expired: false,
+                reject_reason: Some("bootstrap_manifest_public_key_invalid".into()),
+                seed_relay_record_valid_count: 0,
+                seed_relay_record_invalid_count: manifest.seed_relay_candidates.len(),
+                blinded_directory_response: empty_response,
+            }
+        }
+    };
+    let signature_bytes = match overlay_gate_decode_hex_bytes_v0(&manifest.signature, "signature") {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return BootstrapManifestValidationV0 {
+                accepted: false,
+                signature_valid: false,
+                expired: false,
+                reject_reason: Some("bootstrap_manifest_signature_invalid".into()),
+                seed_relay_record_valid_count: 0,
+                seed_relay_record_invalid_count: manifest.seed_relay_candidates.len(),
+                blinded_directory_response: empty_response,
+            }
+        }
+    };
+    let signature_array: [u8; 64] = match signature_bytes.try_into() {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return BootstrapManifestValidationV0 {
+                accepted: false,
+                signature_valid: false,
+                expired: false,
+                reject_reason: Some("bootstrap_manifest_signature_invalid".into()),
+                seed_relay_record_valid_count: 0,
+                seed_relay_record_invalid_count: manifest.seed_relay_candidates.len(),
+                blinded_directory_response: empty_response,
+            }
+        }
+    };
+    let signature = Signature::from_bytes(&signature_array);
+    let payload = bootstrap_manifest_payload_v0(
+        manifest.manifest_id.clone(),
+        manifest.bootstrap_manifest_source.clone(),
+        manifest.manifest_public_key.clone(),
+        manifest.seed_relay_candidates.clone(),
+        manifest.seed_rendezvous_candidates.clone(),
+        manifest.issued_at_ms,
+        manifest.expires_at_ms,
+        manifest.full_raw_ip_directory_embedded,
+        manifest.manifest_requires_single_official_relay,
+        manifest.manifest_requires_single_official_domain,
+        manifest.candidate_set_policy_limit,
+    );
+    let canonical_payload = match serde_json::to_vec(&payload) {
+        Ok(payload) => payload,
+        Err(_) => {
+            return BootstrapManifestValidationV0 {
+                accepted: false,
+                signature_valid: false,
+                expired: false,
+                reject_reason: Some("bootstrap_manifest_canonical_payload_failed".into()),
+                seed_relay_record_valid_count: 0,
+                seed_relay_record_invalid_count: manifest.seed_relay_candidates.len(),
+                blinded_directory_response: empty_response,
+            }
+        }
+    };
+    if verifying_key
+        .verify(&canonical_payload, &signature)
+        .is_err()
+    {
+        return BootstrapManifestValidationV0 {
+            accepted: false,
+            signature_valid: false,
+            expired: false,
+            reject_reason: Some("bootstrap_manifest_signature_invalid".into()),
+            seed_relay_record_valid_count: 0,
+            seed_relay_record_invalid_count: manifest.seed_relay_candidates.len(),
+            blinded_directory_response: empty_response,
+        };
+    }
+    let expired = manifest.expires_at_ms <= now_ms;
+    if expired {
+        return BootstrapManifestValidationV0 {
+            accepted: false,
+            signature_valid: true,
+            expired,
+            reject_reason: Some("bootstrap_manifest_expired".into()),
+            seed_relay_record_valid_count: 0,
+            seed_relay_record_invalid_count: manifest.seed_relay_candidates.len(),
+            blinded_directory_response: empty_response,
+        };
+    }
+    if manifest.full_raw_ip_directory_embedded {
+        return BootstrapManifestValidationV0 {
+            accepted: false,
+            signature_valid: true,
+            expired,
+            reject_reason: Some("full_raw_ip_directory_forbidden".into()),
+            seed_relay_record_valid_count: 0,
+            seed_relay_record_invalid_count: manifest.seed_relay_candidates.len(),
+            blinded_directory_response: empty_response,
+        };
+    }
+    if manifest.manifest_requires_single_official_relay {
+        return BootstrapManifestValidationV0 {
+            accepted: false,
+            signature_valid: true,
+            expired,
+            reject_reason: Some("single_official_relay_forbidden".into()),
+            seed_relay_record_valid_count: 0,
+            seed_relay_record_invalid_count: manifest.seed_relay_candidates.len(),
+            blinded_directory_response: empty_response,
+        };
+    }
+    if manifest.manifest_requires_single_official_domain {
+        return BootstrapManifestValidationV0 {
+            accepted: false,
+            signature_valid: true,
+            expired,
+            reject_reason: Some("single_official_domain_forbidden".into()),
+            seed_relay_record_valid_count: 0,
+            seed_relay_record_invalid_count: manifest.seed_relay_candidates.len(),
+            blinded_directory_response: empty_response,
+        };
+    }
+    let seed_relay_record_valid_count = manifest
+        .seed_relay_candidates
+        .iter()
+        .filter(|record| validate_peer_signed_relay_record_v0(record, now_ms).accepted)
+        .count();
+    let seed_relay_record_invalid_count = manifest
+        .seed_relay_candidates
+        .len()
+        .saturating_sub(seed_relay_record_valid_count);
+    let blinded_directory_response = issue_blinded_relay_directory_response_v0(
+        &manifest.seed_relay_candidates,
+        manifest.candidate_set_policy_limit,
+        now_ms,
+    );
+    let accepted = seed_relay_record_valid_count > 0 && !blinded_directory_response.is_empty();
+    BootstrapManifestValidationV0 {
+        accepted,
+        signature_valid: true,
+        expired,
+        reject_reason: if accepted {
+            None
+        } else {
+            Some("no_valid_seed_relay_candidate".into())
+        },
+        seed_relay_record_valid_count,
+        seed_relay_record_invalid_count,
+        blinded_directory_response,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bootstrap_manifest_payload_v0(
+    manifest_id: String,
+    bootstrap_manifest_source: String,
+    manifest_public_key: String,
+    seed_relay_candidates: Vec<PeerSignedRelayEndpointRecordV0>,
+    seed_rendezvous_candidates: Vec<PeerSignedRelayEndpointRecordV0>,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    full_raw_ip_directory_embedded: bool,
+    manifest_requires_single_official_relay: bool,
+    manifest_requires_single_official_domain: bool,
+    candidate_set_policy_limit: usize,
+) -> BootstrapManifestPayloadV0 {
+    BootstrapManifestPayloadV0 {
+        manifest_version: 1,
+        manifest_id,
+        bootstrap_manifest_source,
+        manifest_public_key,
+        seed_relay_candidates,
+        seed_rendezvous_candidates,
+        issued_at_ms,
+        expires_at_ms,
+        full_raw_ip_directory_embedded,
+        manifest_requires_single_official_relay,
+        manifest_requires_single_official_domain,
+        candidate_set_policy_limit,
     }
 }
 

@@ -4347,6 +4347,120 @@ novorudp_wire_changed=false
 real_federated_blinded_directory_smoke=false
 ```
 
+Next frontier:
+
+```text
+Cut 34:
+  Signed Bootstrap Manifest v0
+```
+
+## Cut 34: Signed Bootstrap Manifest v0
+
+Status:
+
+```text
+LOCAL SIGNED BOOTSTRAP MANIFEST MATRIX PASS
+REAL MULTI-SOURCE BOOTSTRAP SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Define how a first-install / first-start NOVOVM node obtains initial bootstrap
+seed information without turning the bootstrap source into a centralized
+control plane.
+
+Bootstrap manifests may come from installer bundles, official downloads,
+QR invites, friend invites, or history cache, but clients must verify the
+manifest signature, expiry, policy flags, and seed relay records before use.
+```
+
+New gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=signed-bootstrap-manifest-matrix
+```
+
+Manifest policy:
+
+```text
+signature_required=true
+expiry_required=true
+full_raw_ip_directory_forbidden=true
+single_official_relay_forbidden=true
+single_official_domain_forbidden=true
+seed_candidates_forwarded_to_cut33_directory_policy=true
+```
+
+Local signed bootstrap matrix:
+
+```text
+valid signed bootstrap manifest:
+  bootstrap_manifest_signature_valid=true
+  client_accepts_manifest=true
+
+invalid manifest signature rejected:
+  client_accepts_manifest=false
+  client_reject_reason=bootstrap_manifest_signature_invalid
+
+expired manifest rejected:
+  bootstrap_manifest_expired=true
+  client_reject_reason=bootstrap_manifest_expired
+
+manifest with full raw IP directory rejected:
+  full_raw_ip_directory_embedded=true
+  client_reject_reason=full_raw_ip_directory_forbidden
+
+manifest requiring single official relay rejected:
+  manifest_requires_single_official_relay=true
+  client_reject_reason=single_official_relay_forbidden
+
+manifest requiring single official domain rejected:
+  manifest_requires_single_official_domain=true
+  client_reject_reason=single_official_domain_forbidden
+
+manifest seed candidates handed to Cut 33 policy:
+  node_receives_minimal_candidate_set=true
+  candidate_endpoint_encrypted_or_blinded=true
+  raw_ip_directory_exposed=false
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=signed-bootstrap-manifest-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/signed-bootstrap-manifest-matrix-cut34.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+bootstrap_manifest_signature_valid=true
+full_raw_ip_directory_embedded=false
+full_raw_ip_directory_exposed=false
+centralized_control_plane_required=false
+single_official_relay_required=false
+single_official_domain_required=false
+relay_is_trusted_authority=false
+peer_identity_source=novovm_key
+routing_subject=target_peer_id
+business_semantics_interpreted_by_relay=false
+novorudp_wire_changed=false
+real_multi_source_bootstrap_smoke=false
+```
+
 ## Product Readout
 
 Current product status:
