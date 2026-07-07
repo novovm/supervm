@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 use std::path::Path;
 use std::process::Command;
 use std::sync::{mpsc, Arc};
@@ -69,6 +69,7 @@ fn main() -> Result<()> {
         "wss-443-outbound-relay-matrix" => run_wss_443_outbound_relay_matrix_gate(),
         "wss-443-relay-session-runtime-matrix" => run_wss_443_relay_session_runtime_matrix_gate(),
         "wss-tls-socket-transport-matrix" => run_wss_tls_socket_transport_matrix_gate(),
+        "wss-tls-public-relay" => run_wss_tls_public_relay_gate(),
         "decentralized-bootstrap-constraint-matrix" => {
             run_decentralized_bootstrap_constraint_matrix_gate()
         }
@@ -486,8 +487,10 @@ fn run_headless_public_relay_deploy_package_matrix_gate() -> Result<()> {
         .unwrap_or_else(|| "artifacts/network-overlay-gate/novovm-public-relay-v0".into());
     let relay_node_id =
         env_string("NOVOVM_HEADLESS_RELAY_NODE_ID").unwrap_or_else(|| "public-relay-1".into());
+    let relay_mode =
+        env_string("NOVOVM_HEADLESS_RELAY_MODE").unwrap_or_else(|| "wss-tls-public-relay".into());
     let bind_addr =
-        env_string("NOVOVM_HEADLESS_RELAY_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:41030".into());
+        env_string("NOVOVM_HEADLESS_RELAY_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:8443".into());
     let current_exe = env::current_exe().context("resolve current relay gate executable")?;
     let binary_name = format!("supervm-network-overlay-gate{}", env::consts::EXE_SUFFIX);
     let package_path = Path::new(&package_root);
@@ -503,11 +506,17 @@ fn run_headless_public_relay_deploy_package_matrix_gate() -> Result<()> {
     })?;
 
     let config = json!({
-        "mode": "public-relay-bootstrap",
+        "mode": relay_mode,
         "role": "relay",
         "node_id": relay_node_id,
         "bind_addr": bind_addr,
         "report_path": "reports/public-relay-1.json",
+        "transport": "wss",
+        "websocket_path": "/novovm",
+        "product_default_endpoint": "wss://<relay>:443/novovm",
+        "runtime_default_bind_addr": "0.0.0.0:8443",
+        "tls_cert_env": "NOVOVM_OVERLAY_WSS_TLS_CERT_PATH",
+        "tls_key_env": "NOVOVM_OVERLAY_WSS_TLS_KEY_PATH",
         "payload_treated_opaque": true,
         "relay_is_trusted_authority": false,
         "business_semantics_interpreted_by_relay": false,
@@ -526,9 +535,10 @@ if [ ! -x "$BIN" ]; then
   fi
 fi
 mkdir -p reports
-NOVOVM_OVERLAY_GATE_MODE="${NOVOVM_OVERLAY_GATE_MODE:-public-relay-bootstrap}" \
+NOVOVM_OVERLAY_GATE_MODE="${NOVOVM_OVERLAY_GATE_MODE:-wss-tls-public-relay}" \
 NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE="${NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE:-relay}" \
-NOVOVM_OVERLAY_GATE_BIND_ADDR="${NOVOVM_OVERLAY_GATE_BIND_ADDR:-0.0.0.0:41030}" \
+NOVOVM_OVERLAY_WSS_RELAY_ROLE="${NOVOVM_OVERLAY_WSS_RELAY_ROLE:-relay}" \
+NOVOVM_OVERLAY_GATE_BIND_ADDR="${NOVOVM_OVERLAY_GATE_BIND_ADDR:-0.0.0.0:8443}" \
 NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID="${NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID:-public-relay-1}" \
 NOVOVM_OVERLAY_GATE_REPORT_PATH="${NOVOVM_OVERLAY_GATE_REPORT_PATH:-reports/public-relay-1.json}" \
 "$BIN"
@@ -543,9 +553,10 @@ if ([string]::IsNullOrWhiteSpace($bin)) {
   }
 }
 New-Item -ItemType Directory -Force -Path "reports" | Out-Null
-$env:NOVOVM_OVERLAY_GATE_MODE = if ($env:NOVOVM_OVERLAY_GATE_MODE) { $env:NOVOVM_OVERLAY_GATE_MODE } else { "public-relay-bootstrap" }
+$env:NOVOVM_OVERLAY_GATE_MODE = if ($env:NOVOVM_OVERLAY_GATE_MODE) { $env:NOVOVM_OVERLAY_GATE_MODE } else { "wss-tls-public-relay" }
 $env:NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE = if ($env:NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE) { $env:NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE } else { "relay" }
-$env:NOVOVM_OVERLAY_GATE_BIND_ADDR = if ($env:NOVOVM_OVERLAY_GATE_BIND_ADDR) { $env:NOVOVM_OVERLAY_GATE_BIND_ADDR } else { "0.0.0.0:41030" }
+$env:NOVOVM_OVERLAY_WSS_RELAY_ROLE = if ($env:NOVOVM_OVERLAY_WSS_RELAY_ROLE) { $env:NOVOVM_OVERLAY_WSS_RELAY_ROLE } else { "relay" }
+$env:NOVOVM_OVERLAY_GATE_BIND_ADDR = if ($env:NOVOVM_OVERLAY_GATE_BIND_ADDR) { $env:NOVOVM_OVERLAY_GATE_BIND_ADDR } else { "0.0.0.0:8443" }
 $env:NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID = if ($env:NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID) { $env:NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID } else { "public-relay-1" }
 $env:NOVOVM_OVERLAY_GATE_REPORT_PATH = if ($env:NOVOVM_OVERLAY_GATE_REPORT_PATH) { $env:NOVOVM_OVERLAY_GATE_REPORT_PATH } else { "reports\public-relay-1.json" }
 & $bin
@@ -570,14 +581,31 @@ Windows:
 .\run-relay.ps1
 ```
 
-Default role:
+Default WSS/TLS role:
 
 ```text
-mode=public-relay-bootstrap
+mode=wss-tls-public-relay
 role=relay
 node_id=public-relay-1
-bind_addr=0.0.0.0:41030
+bind_addr=0.0.0.0:8443
 report_path=reports/public-relay-1.json
+```
+
+Legacy UDP relay bootstrap can still be selected explicitly:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=public-relay-bootstrap
+NOVOVM_OVERLAY_GATE_BIND_ADDR=0.0.0.0:41030
+```
+
+WSS/TLS relay runtime:
+
+```text
+websocket_path=/novovm
+
+Optional formal TLS certificate:
+NOVOVM_OVERLAY_WSS_TLS_CERT_PATH=/etc/letsencrypt/live/example/fullchain.pem
+NOVOVM_OVERLAY_WSS_TLS_KEY_PATH=/etc/letsencrypt/live/example/privkey.pem
 ```
 
 Boundary:
@@ -657,6 +685,9 @@ novorudp_wire_changed=false
         "full_git_workspace_required": false,
         "relay_start_command_documented": relay_start_command_documented,
         "relay_role": config_value["node_id"],
+        "runtime_mode": config_value["mode"],
+        "selected_transport": config_value["transport"],
+        "websocket_path": config_value["websocket_path"],
         "bind_addr": config_value["bind_addr"],
         "report_path_created": reports_dir_present,
         "relay_is_trusted_authority": false,
@@ -5161,6 +5192,18 @@ struct Cut39NodeBThreadOutcomeV0 {
     pong_ok: bool,
 }
 
+struct Cut40AcceptedPeerV0 {
+    register: PublicRelayRegisterPayloadV0,
+    ws: rustls::StreamOwned<rustls::ServerConnection, TcpStream>,
+}
+
+#[derive(Debug, Clone)]
+struct Cut40WssEndpointV0 {
+    host: String,
+    socket_addr: SocketAddr,
+    path: String,
+}
+
 #[derive(Debug, Clone)]
 enum Cut39WebSocketFrameV0 {
     Binary(Vec<u8>),
@@ -5390,6 +5433,331 @@ fn run_wss_tls_socket_transport_matrix_gate() -> Result<()> {
     }
 }
 
+fn run_wss_tls_public_relay_gate() -> Result<()> {
+    let role = env_string("NOVOVM_OVERLAY_WSS_RELAY_ROLE")
+        .or_else(|| env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE"))
+        .unwrap_or_else(|| "relay".to_string());
+    match role.as_str() {
+        "relay" => run_wss_tls_public_relay_server_gate(),
+        "client-register" | "receiver" => run_wss_tls_public_relay_register_client_gate(),
+        "client-send" | "sender" => run_wss_tls_public_relay_send_client_gate(),
+        other => anyhow::bail!("unsupported NOVOVM_OVERLAY_WSS_RELAY_ROLE: {other}"),
+    }
+}
+
+fn run_wss_tls_public_relay_server_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/wss-tls-public-relay-server.json".into()
+    });
+    let bind_addr =
+        env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:8443".into());
+    let relay_peer_id = env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID")
+        .unwrap_or_else(|| "public-relay-1".into());
+    let source_peer_id =
+        env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_SOURCE_PEER_ID").unwrap_or_else(|| "node-a".into());
+    let target_peer_id =
+        env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_TARGET_PEER_ID").unwrap_or_else(|| "node-b".into());
+    let expected_sessions = env_u64("NOVOVM_OVERLAY_PUBLIC_RELAY_EXPECTED_SESSIONS", 2).max(1);
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
+    let timeout_ms = env_u64("NOVOVM_OVERLAY_GATE_TIMEOUT_MS", 60_000);
+    let (server_config, tls_certificate_source) = build_cut40_server_tls_config_v0()?;
+    let listener = TcpListener::bind(&bind_addr)
+        .with_context(|| format!("bind wss tls public relay: {bind_addr}"))?;
+    listener
+        .set_nonblocking(true)
+        .context("set wss tls relay listener nonblocking")?;
+    let bind_addr_effective = listener.local_addr().context("wss tls relay local addr")?;
+    let start = Instant::now();
+    let mut peers = Vec::new();
+    let mut events = Vec::new();
+
+    while start.elapsed() < Duration::from_millis(timeout_ms)
+        && peers.len() < expected_sessions as usize
+    {
+        match listener.accept() {
+            Ok((tcp, source_addr)) => match cut40_accept_registered_peer_v0(
+                tcp,
+                server_config.clone(),
+                &format!("cut40-ping-{}", peers.len()),
+            ) {
+                Ok(peer) => {
+                    events.push(json!({
+                        "kind": "wss_register",
+                        "peer_id": peer.register.peer_id,
+                        "source_addr": source_addr.to_string(),
+                    }));
+                    peers.push(peer);
+                }
+                Err(error) => events.push(json!({
+                    "kind": "wss_register_failed",
+                    "source_addr": source_addr.to_string(),
+                    "error": error.to_string(),
+                })),
+            },
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => {
+                events.push(json!({
+                    "kind": "wss_accept_failed",
+                    "error": error.to_string(),
+                }));
+                break;
+            }
+        }
+    }
+
+    let source_index = peers
+        .iter()
+        .position(|peer| peer.register.peer_id == source_peer_id);
+    let target_index = peers
+        .iter()
+        .position(|peer| peer.register.peer_id == target_peer_id);
+    let mut relay_frames_forwarded = 0u64;
+    let mut relay_envelopes_received = 0u64;
+    let mut target_peer_id_forwarding = false;
+    if let (Some(source_index), Some(target_index)) = (source_index, target_index) {
+        let mut source_peer = peers.swap_remove(source_index);
+        let adjusted_target_index = if source_index < target_index {
+            target_index - 1
+        } else {
+            target_index
+        };
+        let mut target_peer = peers.swap_remove(adjusted_target_index);
+        target_peer_id_forwarding = true;
+        for frame_index in 0..max_frames {
+            let bytes = cut39_read_binary_message_v0(&mut source_peer.ws)
+                .with_context(|| format!("cut40 relay read envelope {frame_index}"))?;
+            let envelope: PublicRelayDataEnvelopeV0 =
+                serde_json::from_slice(&bytes).context("cut40 relay decode envelope")?;
+            relay_envelopes_received += 1;
+            if envelope.target_peer_id != target_peer_id {
+                target_peer_id_forwarding = false;
+                events.push(json!({
+                    "kind": "target_peer_mismatch",
+                    "request_id": envelope.request_id,
+                    "target_peer_id": envelope.target_peer_id,
+                }));
+                continue;
+            }
+            cut39_websocket_write_frame_v0(&mut target_peer.ws, 0x2, &envelope.payload, false)
+                .context("cut40 relay forward payload")?;
+            relay_frames_forwarded += 1;
+            events.push(json!({
+                "kind": "wss_relay_forward",
+                "request_id": envelope.request_id,
+                "source_peer_id": envelope.source_peer_id,
+                "target_peer_id": envelope.target_peer_id,
+                "forwarded_to_peer_id": target_peer_id,
+                "payload_bytes": envelope.payload.len(),
+            }));
+        }
+    }
+
+    let session_peer_ids = events
+        .iter()
+        .filter_map(|event| event["peer_id"].as_str().map(|peer_id| peer_id.to_string()))
+        .collect::<Vec<_>>();
+    let public_endpoint_configured =
+        env_bool("NOVOVM_OVERLAY_WSS_PUBLIC_ENDPOINT_CONFIGURED", false);
+    let tls_trust_path = env_string("NOVOVM_OVERLAY_WSS_TLS_CERT_PATH").is_some()
+        && env_string("NOVOVM_OVERLAY_WSS_TLS_KEY_PATH").is_some();
+    let accepted = session_peer_ids.len() >= expected_sessions as usize
+        && relay_envelopes_received >= max_frames
+        && relay_frames_forwarded >= max_frames
+        && target_peer_id_forwarding;
+    let report = json!({
+        "accepted": accepted,
+        "scope": "headless_public_wss_tls_relay_runtime_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "real_public_tls_relay": public_endpoint_configured && tls_trust_path,
+        "real_public_tls_smoke": public_endpoint_configured && tls_trust_path && accepted,
+        "selected_transport": "wss",
+        "listen": bind_addr_effective.to_string(),
+        "bind_addr_requested": bind_addr,
+        "websocket_path": "/novovm",
+        "tls_accept_ok": session_peer_ids.len() >= expected_sessions as usize,
+        "tls_certificate_source": tls_certificate_source,
+        "tls_formal_trust_path": tls_trust_path,
+        "bootstrap_sessions_established": session_peer_ids.len(),
+        "session_peer_ids": session_peer_ids,
+        "relay_peer_id": relay_peer_id,
+        "relay_envelopes_received": relay_envelopes_received,
+        "relay_frames_forwarded": relay_frames_forwarded,
+        "forwards_by_peer_id": target_peer_id_forwarding,
+        "source_peer_id": source_peer_id,
+        "target_peer_id": target_peer_id,
+        "relay_is_trusted_authority": false,
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false,
+        "events": events,
+        "elapsed_ms": start.elapsed().as_millis() as u64,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("wss tls public relay server gate failed")
+    }
+}
+
+fn run_wss_tls_public_relay_register_client_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/wss-tls-public-relay-register-client.json".into()
+    });
+    let relay_endpoint = env_string("NOVOVM_OVERLAY_WSS_RELAY_ENDPOINT")
+        .context("NOVOVM_OVERLAY_WSS_RELAY_ENDPOINT is required")?;
+    let node_id =
+        env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_CLIENT_PEER_ID").unwrap_or_else(|| "node-b".into());
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
+    let parsed_endpoint = parse_cut40_wss_endpoint_v0(&relay_endpoint)?;
+    let client_config = build_cut40_client_tls_config_v0()?;
+    let mut ws = cut40_connect_tls_websocket_v0(&parsed_endpoint, client_config, &node_id)
+        .context("cut40 register client connect wss")?;
+    let register = PublicRelayRegisterPayloadV0 {
+        peer_id: node_id.clone(),
+        advertised_endpoint: None,
+        registered_at_ms: now_unix_ms(),
+    };
+    cut39_websocket_write_frame_v0(&mut ws, 0x2, &serde_json::to_vec(&register)?, true)
+        .context("cut40 register client send register")?;
+    let pong_ok = cut39_send_ping_expect_pong_v0(&mut ws, b"cut40-ping-0")?;
+    let start = Instant::now();
+    let mut received_frame_count = 0u64;
+    let mut frame_decode_ok_count = 0u64;
+    let mut frames = Vec::new();
+    for frame_index in 0..max_frames {
+        let bytes = cut39_read_binary_message_v0(&mut ws)
+            .with_context(|| format!("cut40 register client read frame {frame_index}"))?;
+        received_frame_count += 1;
+        match novovm_network::novorudp::NovoRudpTransportFrameV0::decode(&bytes) {
+            Ok(frame) => {
+                frame_decode_ok_count += 1;
+                frames.push(json!({
+                    "frame_decode_ok": true,
+                    "decoded_kind": frame.kind,
+                    "decoded_sequence": frame.sequence,
+                    "payload_bytes": frame.payload.len(),
+                }));
+            }
+            Err(error) => frames.push(json!({
+                "frame_decode_ok": false,
+                "error": error.to_string(),
+                "received_bytes": bytes.len(),
+            })),
+        }
+    }
+    let accepted =
+        pong_ok && received_frame_count == max_frames && frame_decode_ok_count == max_frames;
+    let report = json!({
+        "accepted": accepted,
+        "scope": "headless_public_wss_tls_register_client_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "selected_transport": "wss",
+        "selected_endpoint": relay_endpoint,
+        "node_id": node_id,
+        "bootstrap_register_sent": true,
+        "ping_pong_ok": pong_ok,
+        "received_frame_count": received_frame_count,
+        "frame_decode_ok": frame_decode_ok_count == max_frames,
+        "frame_decode_ok_count": frame_decode_ok_count,
+        "via_relay_peer_id": "public-relay-1",
+        "inbound_public_endpoint_required": false,
+        "novorudp_inner_frame_preserved": frame_decode_ok_count == max_frames,
+        "frames": frames,
+        "elapsed_ms": start.elapsed().as_millis() as u64,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("wss tls public relay register client failed")
+    }
+}
+
+fn run_wss_tls_public_relay_send_client_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/wss-tls-public-relay-send-client.json".into()
+    });
+    let relay_endpoint = env_string("NOVOVM_OVERLAY_WSS_RELAY_ENDPOINT")
+        .context("NOVOVM_OVERLAY_WSS_RELAY_ENDPOINT is required")?;
+    let source_peer_id =
+        env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_SOURCE_PEER_ID").unwrap_or_else(|| "node-a".into());
+    let target_peer_id =
+        env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_TARGET_PEER_ID").unwrap_or_else(|| "node-b".into());
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
+    let parsed_endpoint = parse_cut40_wss_endpoint_v0(&relay_endpoint)?;
+    let client_config = build_cut40_client_tls_config_v0()?;
+    let mut ws = cut40_connect_tls_websocket_v0(&parsed_endpoint, client_config, &source_peer_id)
+        .context("cut40 send client connect wss")?;
+    let register = PublicRelayRegisterPayloadV0 {
+        peer_id: source_peer_id.clone(),
+        advertised_endpoint: None,
+        registered_at_ms: now_unix_ms(),
+    };
+    cut39_websocket_write_frame_v0(&mut ws, 0x2, &serde_json::to_vec(&register)?, true)
+        .context("cut40 send client send register")?;
+    let pong_ok = cut39_send_ping_expect_pong_v0(&mut ws, b"cut40-ping-1")?;
+    let mut sent_frames = Vec::new();
+    for frame_index in 0..max_frames {
+        let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            [40u8; 16],
+            400,
+            401,
+            frame_index,
+            403,
+            format!("cut40-public-wss-opaque-frame-{frame_index}").into_bytes(),
+        );
+        let envelope = PublicRelayDataEnvelopeV0 {
+            request_id: format!("cut40-wss-public-{frame_index}"),
+            source_peer_id: source_peer_id.clone(),
+            target_peer_id: target_peer_id.clone(),
+            payload: frame.encode(),
+        };
+        let encoded = serde_json::to_vec(&envelope)?;
+        cut39_websocket_write_frame_v0(&mut ws, 0x2, &encoded, true)
+            .with_context(|| format!("cut40 send client envelope {frame_index}"))?;
+        sent_frames.push(json!({
+            "request_id": envelope.request_id,
+            "target_peer_id": target_peer_id,
+            "sent_bytes": encoded.len(),
+            "queued": false,
+        }));
+    }
+    let accepted = pong_ok && sent_frames.len() == max_frames as usize;
+    let report = json!({
+        "accepted": accepted,
+        "scope": "headless_public_wss_tls_send_client_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "selected_transport": "wss",
+        "selected_endpoint": relay_endpoint,
+        "selected_path": "RelayNovoRudp",
+        "source_peer_id": source_peer_id,
+        "target_peer_id": target_peer_id,
+        "sent_frame_count": sent_frames.len(),
+        "inbound_public_endpoint_required": false,
+        "nat_punch_required": false,
+        "ping_pong_ok": pong_ok,
+        "sent_frames": sent_frames,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("wss tls public relay send client failed")
+    }
+}
+
 fn run_cut39_local_wss_tls_socket_smoke_v0(
     max_frames: u64,
 ) -> Result<Cut39WssTlsSocketSmokeOutcomeV0> {
@@ -5599,6 +5967,184 @@ fn build_cut39_tls_configs_v0() -> Result<(Arc<rustls::ServerConfig>, Arc<rustls
         .with_no_client_auth();
 
     Ok((Arc::new(server_config), Arc::new(client_config)))
+}
+
+fn build_cut40_server_tls_config_v0() -> Result<(Arc<rustls::ServerConfig>, String)> {
+    let cert_path = env_string("NOVOVM_OVERLAY_WSS_TLS_CERT_PATH");
+    let key_path = env_string("NOVOVM_OVERLAY_WSS_TLS_KEY_PATH");
+    if let (Some(cert_path), Some(key_path)) = (cert_path, key_path) {
+        let certs = load_cut40_certs_pem_v0(&cert_path)
+            .with_context(|| format!("load tls cert path: {cert_path}"))?;
+        let key = load_cut40_private_key_pem_v0(&key_path)
+            .with_context(|| format!("load tls key path: {key_path}"))?;
+        let server_config = rustls::ServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .context("build cut40 server tls config from pem")?;
+        return Ok((Arc::new(server_config), "configured_pem".into()));
+    }
+
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])
+        .context("generate cut40 self-signed cert")?;
+    let cert_der = cert.serialize_der().context("serialize cut40 cert")?;
+    let key_der = cert.serialize_private_key_der();
+    let server_config = rustls::ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![rustls::Certificate(cert_der)],
+            rustls::PrivateKey(key_der),
+        )
+        .context("build cut40 self-signed server tls config")?;
+    Ok((Arc::new(server_config), "self_signed_ephemeral".into()))
+}
+
+fn build_cut40_client_tls_config_v0() -> Result<Arc<rustls::ClientConfig>> {
+    let mut roots = rustls::RootCertStore::empty();
+    if let Some(ca_path) = env_string("NOVOVM_OVERLAY_WSS_TLS_CA_CERT_PATH") {
+        for cert in load_cut40_certs_pem_v0(&ca_path)
+            .with_context(|| format!("load wss ca cert path: {ca_path}"))?
+        {
+            roots.add(&cert).context("add configured wss ca cert")?;
+        }
+    } else {
+        for cert in
+            rustls_native_certs::load_native_certs().context("load platform native tls roots")?
+        {
+            let _ = roots.add(&rustls::Certificate(cert.0));
+        }
+    }
+    let client_config = rustls::ClientConfig::builder()
+        .with_safe_defaults()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(Arc::new(client_config))
+}
+
+fn load_cut40_certs_pem_v0(path: &str) -> Result<Vec<rustls::Certificate>> {
+    let bytes = fs::read(path).with_context(|| format!("read cert pem: {path}"))?;
+    let mut reader = std::io::BufReader::new(bytes.as_slice());
+    let certs = rustls_pemfile::certs(&mut reader)
+        .context("parse cert pem")?
+        .into_iter()
+        .map(rustls::Certificate)
+        .collect::<Vec<_>>();
+    if certs.is_empty() {
+        anyhow::bail!("no certificates in pem: {path}");
+    }
+    Ok(certs)
+}
+
+fn load_cut40_private_key_pem_v0(path: &str) -> Result<rustls::PrivateKey> {
+    let bytes = fs::read(path).with_context(|| format!("read key pem: {path}"))?;
+    let mut pkcs8_reader = std::io::BufReader::new(bytes.as_slice());
+    let pkcs8_keys = rustls_pemfile::pkcs8_private_keys(&mut pkcs8_reader)
+        .context("parse pkcs8 private key pem")?;
+    if let Some(key) = pkcs8_keys.into_iter().next() {
+        return Ok(rustls::PrivateKey(key));
+    }
+    let mut rsa_reader = std::io::BufReader::new(bytes.as_slice());
+    let rsa_keys =
+        rustls_pemfile::rsa_private_keys(&mut rsa_reader).context("parse rsa private key pem")?;
+    if let Some(key) = rsa_keys.into_iter().next() {
+        return Ok(rustls::PrivateKey(key));
+    }
+    anyhow::bail!("no supported private key in pem: {path}")
+}
+
+fn parse_cut40_wss_endpoint_v0(endpoint: &str) -> Result<Cut40WssEndpointV0> {
+    let without_scheme = endpoint
+        .strip_prefix("wss://")
+        .or_else(|| endpoint.strip_prefix("ws://"))
+        .unwrap_or(endpoint);
+    let mut split = without_scheme.splitn(2, '/');
+    let authority = split
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("invalid wss endpoint: {endpoint}"))?;
+    let path = format!("/{}", split.next().unwrap_or("novovm"));
+    let (host, port) = authority
+        .rsplit_once(':')
+        .map(|(host, port)| (host.to_string(), port.parse::<u16>()))
+        .ok_or_else(|| anyhow::anyhow!("wss endpoint must include host:port: {endpoint}"))?;
+    let port = port.with_context(|| format!("parse wss endpoint port: {authority}"))?;
+    let socket_addr = (host.as_str(), port)
+        .to_socket_addrs()
+        .with_context(|| format!("resolve wss endpoint: {host}:{port}"))?
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no socket addr resolved for {host}:{port}"))?;
+    Ok(Cut40WssEndpointV0 {
+        host,
+        socket_addr,
+        path,
+    })
+}
+
+fn cut40_accept_registered_peer_v0(
+    tcp: TcpStream,
+    server_config: Arc<rustls::ServerConfig>,
+    ping_payload: &str,
+) -> Result<Cut40AcceptedPeerV0> {
+    let mut ws = cut39_accept_tls_websocket_v0(tcp, server_config).context("cut40 accept wss")?;
+    let bytes = cut39_read_binary_message_v0(&mut ws).context("cut40 read register")?;
+    let register: PublicRelayRegisterPayloadV0 =
+        serde_json::from_slice(&bytes).context("cut40 decode register")?;
+    cut39_answer_ping_v0(&mut ws, ping_payload.as_bytes()).context("cut40 answer ping")?;
+    Ok(Cut40AcceptedPeerV0 { register, ws })
+}
+
+fn cut40_connect_tls_websocket_v0(
+    endpoint: &Cut40WssEndpointV0,
+    client_config: Arc<rustls::ClientConfig>,
+    peer_id: &str,
+) -> Result<rustls::StreamOwned<rustls::ClientConnection, TcpStream>> {
+    let tcp = TcpStream::connect(endpoint.socket_addr).with_context(|| {
+        format!(
+            "connect cut40 relay tcp: {} ({})",
+            endpoint.host, endpoint.socket_addr
+        )
+    })?;
+    tcp.set_read_timeout(Some(Duration::from_secs(10)))
+        .context("set cut40 client read timeout")?;
+    tcp.set_write_timeout(Some(Duration::from_secs(10)))
+        .context("set cut40 client write timeout")?;
+    let server_name =
+        rustls::ServerName::try_from(endpoint.host.as_str()).context("cut40 server name")?;
+    let client_conn = rustls::ClientConnection::new(client_config, server_name)
+        .context("create cut40 tls client")?;
+    let mut tls = rustls::StreamOwned::new(client_conn, tcp);
+    let key = cut39_websocket_key_v0(peer_id);
+    cut40_websocket_client_upgrade_v0(&mut tls, endpoint, &key)?;
+    Ok(tls)
+}
+
+fn cut40_websocket_client_upgrade_v0<S: Read + Write>(
+    stream: &mut S,
+    endpoint: &Cut40WssEndpointV0,
+    sec_key: &str,
+) -> Result<()> {
+    let request = format!(
+        "GET {} HTTP/1.1\r\n\
+         Host: {}\r\n\
+         Upgrade: websocket\r\n\
+         Connection: Upgrade\r\n\
+         Sec-WebSocket-Key: {sec_key}\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n",
+        endpoint.path, endpoint.host
+    );
+    stream
+        .write_all(request.as_bytes())
+        .context("cut40 write websocket upgrade request")?;
+    stream.flush().context("cut40 flush websocket request")?;
+    let response = cut39_read_http_headers_v0(stream).context("cut40 read websocket response")?;
+    if !response.starts_with("HTTP/1.1 101") {
+        anyhow::bail!("websocket upgrade rejected: {response}");
+    }
+    let expected_accept = cut39_websocket_accept_key_v0(sec_key);
+    if !response.contains(&format!("Sec-WebSocket-Accept: {expected_accept}")) {
+        anyhow::bail!("websocket accept key mismatch");
+    }
+    Ok(())
 }
 
 fn cut39_accept_tls_websocket_v0(

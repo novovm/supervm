@@ -5001,6 +5001,116 @@ novorudp_wire_changed=false
 real_public_tls_smoke=false
 ```
 
+## Cut 40: Headless Public WSS/TLS Relay Runtime Smoke v0
+
+Status:
+
+```text
+HEADLESS WSS/TLS RELAY RUNTIME PACKAGE PASS
+REAL PUBLIC TLS RELAY SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+scripts/novovm-headless-public-relay-package.ps1
+```
+
+Purpose:
+
+```text
+Move the Cut 39 WSS/TLS socket runtime into the headless public relay package.
+
+The public machine still does not need:
+Rust
+VS Code
+Codex
+full git workspace
+
+The package can now run:
+mode=wss-tls-public-relay
+role=relay
+bind_addr=0.0.0.0:8443
+websocket_path=/novovm
+```
+
+Runtime roles:
+
+```text
+relay:
+  NOVOVM_OVERLAY_GATE_MODE=wss-tls-public-relay
+  NOVOVM_OVERLAY_WSS_RELAY_ROLE=relay
+  NOVOVM_OVERLAY_GATE_BIND_ADDR=0.0.0.0:8443
+
+node-b receiver:
+  NOVOVM_OVERLAY_GATE_MODE=wss-tls-public-relay
+  NOVOVM_OVERLAY_WSS_RELAY_ROLE=client-register
+  NOVOVM_OVERLAY_WSS_RELAY_ENDPOINT=wss://<relay-domain>:8443/novovm
+  NOVOVM_OVERLAY_PUBLIC_RELAY_CLIENT_PEER_ID=node-b
+
+node-a sender:
+  NOVOVM_OVERLAY_GATE_MODE=wss-tls-public-relay
+  NOVOVM_OVERLAY_WSS_RELAY_ROLE=client-send
+  NOVOVM_OVERLAY_WSS_RELAY_ENDPOINT=wss://<relay-domain>:8443/novovm
+  NOVOVM_OVERLAY_PUBLIC_RELAY_SOURCE_PEER_ID=node-a
+  NOVOVM_OVERLAY_PUBLIC_RELAY_TARGET_PEER_ID=node-b
+```
+
+TLS trust boundary:
+
+```text
+Configured formal TLS cert/key:
+  NOVOVM_OVERLAY_WSS_TLS_CERT_PATH=/path/fullchain.pem
+  NOVOVM_OVERLAY_WSS_TLS_KEY_PATH=/path/privkey.pem
+
+Client trust:
+  platform native root store by default
+  or NOVOVM_OVERLAY_WSS_TLS_CA_CERT_PATH=/path/ca.pem for explicit test CA
+
+If the relay uses IP + self-signed certificate, this can only sign a public WSS
+socket smoke, not a formal public TLS trust-path smoke.
+```
+
+Package validation:
+
+```text
+accepted=true
+headless_deploy_package=true
+mode=wss-tls-public-relay
+bind_addr=0.0.0.0:8443
+rust_toolchain_required=false
+vscode_required=false
+codex_required=false
+full_git_workspace_required=false
+boundary_fields_preserved=true
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=headless-public-relay-deploy-package-matrix \
+NOVOVM_HEADLESS_RELAY_PACKAGE_DIR=artifacts/network-overlay-gate/novovm-public-wss-relay-v0-cut40 \
+NOVOVM_HEADLESS_RELAY_MODE=wss-tls-public-relay \
+NOVOVM_HEADLESS_RELAY_BIND_ADDR=0.0.0.0:8443 \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/headless-public-wss-relay-runtime-package-cut40.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+relay_is_trusted_authority=false
+business_semantics_interpreted_by_relay=false
+novorudp_wire_changed=false
+real_public_tls_smoke=false
+```
+
 ## Product Readout
 
 Current product status:

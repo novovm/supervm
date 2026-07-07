@@ -1,7 +1,8 @@
 param(
   [string]$PackageDir = "artifacts\network-overlay-gate\novovm-public-relay-v0",
-  [string]$BindAddr = "0.0.0.0:41030",
+  [string]$BindAddr = "0.0.0.0:8443",
   [string]$NodeId = "public-relay-1",
+  [string]$RelayMode = "wss-tls-public-relay",
   [switch]$Release
 )
 
@@ -29,6 +30,7 @@ try {
   $env:NOVOVM_HEADLESS_RELAY_PACKAGE_DIR = $PackageDir
   $env:NOVOVM_HEADLESS_RELAY_BIND_ADDR = $BindAddr
   $env:NOVOVM_HEADLESS_RELAY_NODE_ID = $NodeId
+  $env:NOVOVM_HEADLESS_RELAY_MODE = $RelayMode
   $env:NOVOVM_OVERLAY_GATE_REPORT_PATH = Join-Path $PackageDir "reports\headless-package-matrix.json"
 
   & ".\$binary"
