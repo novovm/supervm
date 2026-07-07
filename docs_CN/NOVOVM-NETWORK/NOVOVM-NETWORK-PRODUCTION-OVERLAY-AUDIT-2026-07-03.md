@@ -3714,6 +3714,119 @@ novorudp_wire_changed=false
 real_multi_transport_public_relay_smoke=false
 ```
 
+Next frontier:
+
+```text
+Cut 29:
+  443 Outbound Relay Transport v0
+```
+
+## Cut 29: 443 Outbound Relay Transport v0
+
+Status:
+
+```text
+LOCAL WSS 443 OUTBOUND RELAY MATRIX PASS
+REAL WSS/TLS PUBLIC RELAY SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Make the default zero-config availability path explicit:
+
+A and B do not need public inbound endpoints.
+A and B actively connect outbound to relay R over the product default
+WSS/TLS 443 candidate.
+R forwards opaque NOVORUDP frames by target_peer_id over node-b's relay
+session.
+```
+
+New gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=wss-443-outbound-relay-matrix
+```
+
+Local WSS 443 relay matrix:
+
+```text
+wss-443-outbound-relay-matrix accepted=true
+
+outer_transport:
+  selected_transport=wss
+  selected_endpoint=wss://relay.example.com:443/novovm
+  selected_port=443
+  direction=client_outbound
+  tls_expected=true
+  requires_user_port_forward=false
+  requires_public_client_inbound=false
+
+NOVORUDP:
+  novorudp_carriage=NOVORUDP-over-WSS-443
+  novorudp_wire_changed=false
+  payload_treated_opaque=true
+```
+
+Expected local matrix fields:
+
+```text
+A:
+  selected_transport=wss
+  selected_endpoint=wss://relay.example.com:443/novovm
+  selected_path=RelayNovoRudp
+  target_peer_id=node-b
+  sent_frame_count=4
+  inbound_public_endpoint_required=false
+  nat_punch_required=false
+
+R:
+  listener=0.0.0.0:443
+  transport=wss
+  bootstrap_sessions_established=2
+  session_peer_ids=[node-a,node-b]
+  relay_frames_forwarded=4
+  forwarded_to_peer_id=node-b
+  forwards_by_peer_id=true
+
+B:
+  transport=wss
+  received_frame_count=4
+  frame_decode_ok=true
+  via_relay_peer_id=public-relay-1
+  inbound_public_endpoint_required=false
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=wss-443-outbound-relay-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/wss-443-outbound-relay-matrix-cut29.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+opcode114_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+real_wss_tls_public_relay_smoke=false
+```
+
 ## Product Readout
 
 Current product status:

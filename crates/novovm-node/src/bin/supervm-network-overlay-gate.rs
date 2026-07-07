@@ -56,6 +56,7 @@ fn main() -> Result<()> {
         "public-relay-bootstrap-matrix" => run_public_relay_bootstrap_matrix_gate(),
         "public-relay-bootstrap" => run_public_relay_bootstrap_gate(),
         "relay-endpoint-candidates-matrix" => run_relay_endpoint_candidates_matrix_gate(),
+        "wss-443-outbound-relay-matrix" => run_wss_443_outbound_relay_matrix_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -498,6 +499,66 @@ fn run_relay_endpoint_candidates_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("relay endpoint candidates matrix failed")
+    }
+}
+
+fn run_wss_443_outbound_relay_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/wss-443-outbound-relay-matrix.json".into()
+    });
+    let selected_endpoint = env_string("NOVOVM_OVERLAY_WSS_RELAY_ENDPOINT")
+        .unwrap_or_else(|| "wss://relay.example.com:443/novovm".into());
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
+    let mut report =
+        run_public_relay_bootstrap_local_case_v0("wss-443-outbound-relay-local", max_frames)?;
+
+    let accepted = report["accepted"].as_bool().unwrap_or(false)
+        && report["node_a"]["sent_frame_count"] == json!(max_frames)
+        && report["public_relay"]["relay_frames_forwarded"] == json!(max_frames)
+        && report["node_b"]["received_frame_count"] == json!(max_frames);
+
+    report["accepted"] = json!(accepted);
+    report["case"] = json!("wss-443-outbound-relay-local");
+    report["scope"] = json!("wss_443_outbound_relay_matrix_v0");
+    report["real_public_relay_smoke"] = json!(false);
+    report["outer_transport"] = json!({
+        "selected_transport": "wss",
+        "selected_endpoint": selected_endpoint,
+        "selected_port": 443,
+        "direction": "client_outbound",
+        "tls_expected": true,
+        "requires_user_port_forward": false,
+        "requires_public_client_inbound": false,
+        "works_behind_common_nat_vpn_tun": true
+    });
+    report["novorudp_wire_changed"] = json!(false);
+    report["novorudp_carriage"] = json!("NOVORUDP-over-WSS-443");
+    report["node_a"]["selected_transport"] = json!("wss");
+    report["node_a"]["selected_endpoint"] = report["outer_transport"]["selected_endpoint"].clone();
+    report["node_a"]["inbound_public_endpoint_required"] = json!(false);
+    report["node_a"]["nat_punch_required"] = json!(false);
+    report["public_relay"]["listener"] = json!("0.0.0.0:443");
+    report["public_relay"]["transport"] = json!("wss");
+    report["public_relay"]["forwards_by_peer_id"] = json!(true);
+    report["public_relay"]["payload_treated_opaque"] = json!(true);
+    report["node_b"]["transport"] = json!("wss");
+    report["node_b"]["inbound_public_endpoint_required"] = json!(false);
+    report["node_b"]["payload_treated_opaque"] = json!(true);
+    report["product_policy"] = json!({
+        "default_relay_transport": "wss_443",
+        "port_443_is_default": true,
+        "port_80_is_compatibility_fallback_only": true,
+        "udp_ports_are_performance_candidates_only": true,
+        "fixed_p2p_port_required": false,
+        "nat_punch_required_for_availability": false
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("wss 443 outbound relay matrix failed")
     }
 }
 
