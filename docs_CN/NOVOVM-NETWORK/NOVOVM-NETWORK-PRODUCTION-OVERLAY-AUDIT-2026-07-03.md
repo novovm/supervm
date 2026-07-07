@@ -4461,6 +4461,121 @@ novorudp_wire_changed=false
 real_multi_source_bootstrap_smoke=false
 ```
 
+Next frontier:
+
+```text
+Cut 35:
+  Bootstrap Source Resolver / Cache Fallback v0
+```
+
+## Cut 35: Bootstrap Source Resolver / Cache Fallback v0
+
+Status:
+
+```text
+LOCAL BOOTSTRAP SOURCE RESOLVER MATRIX PASS
+REAL MULTI-SOURCE BOOTSTRAP RESOLVER SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Define a deterministic first-start bootstrap source resolver.
+
+Signed bootstrap manifests can come from cache, installer bundle, QR invite,
+friend invite, official signed source, community signed source, or a discovered
+blinded directory source. The resolver must prefer fresh local cache when safe,
+skip expired or invalid sources, avoid making official sources mandatory, and
+merge valid sources through the Cut 33 blinded directory policy.
+```
+
+New gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=bootstrap-source-resolver-matrix
+```
+
+Resolver fallback order:
+
+```text
+1. local_cache
+2. embedded_install_manifest
+3. qr_invite_manifest
+4. friend_invite_manifest
+5. official_signed_bootstrap_manifest
+6. community_signed_bootstrap_manifest
+7. discovered_blinded_directory_source
+```
+
+Local resolver matrix:
+
+```text
+valid cache preferred when fresh:
+  selected_bootstrap_manifest_source=local_cache
+
+expired cache skipped:
+  reject_reason=bootstrap_manifest_expired
+  selected_bootstrap_manifest_source=embedded_install_manifest
+
+invalid signature source rejected:
+  reject_reason=bootstrap_manifest_signature_invalid
+
+official source not mandatory:
+  official_source_required=false
+  selected source may be friend/community invite
+
+multi-source merge does not expose raw IP directory:
+  multi_source_merge_exposes_raw_ip_directory=false
+  merged candidates remain blinded
+
+fallback order deterministic:
+  local_cache -> embedded_install_manifest -> qr_invite_manifest -> official_signed_bootstrap_manifest
+
+no reachable bootstrap source:
+  selected_path_after_bootstrap=QueueFallback
+  fallback_reason=NoReachableBootstrapSource
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=bootstrap-source-resolver-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/bootstrap-source-resolver-matrix-cut35.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+bootstrap_source_resolver_enabled=true
+valid_cache_preferred_when_fresh=true
+expired_cache_skipped=true
+invalid_signature_source_rejected=true
+official_source_required=false
+multi_source_merge_exposes_raw_ip_directory=false
+fallback_order_deterministic=true
+centralized_control_plane_required=false
+single_official_relay_required=false
+single_official_domain_required=false
+relay_is_trusted_authority=false
+peer_identity_source=novovm_key
+routing_subject=target_peer_id
+business_semantics_interpreted_by_relay=false
+novorudp_wire_changed=false
+real_multi_source_bootstrap_resolver_smoke=false
+```
+
 ## Product Readout
 
 Current product status:

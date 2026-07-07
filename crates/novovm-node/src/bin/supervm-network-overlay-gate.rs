@@ -68,6 +68,7 @@ fn main() -> Result<()> {
             run_privacy_preserving_node_discovery_matrix_gate()
         }
         "signed-bootstrap-manifest-matrix" => run_signed_bootstrap_manifest_matrix_gate(),
+        "bootstrap-source-resolver-matrix" => run_bootstrap_source_resolver_matrix_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -1533,6 +1534,238 @@ fn run_signed_bootstrap_manifest_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("signed bootstrap manifest matrix failed")
+    }
+}
+
+fn run_bootstrap_source_resolver_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/bootstrap-source-resolver-matrix.json".into()
+    });
+    let fixture = BootstrapResolverFixtureV0::new()?;
+    let now_ms = fixture.now_ms;
+    let candidate_set_policy_limit = fixture.candidate_set_policy_limit;
+
+    let fresh_cache_case = evaluate_bootstrap_source_resolver_case_v0(
+        "valid_cache_preferred_when_fresh",
+        vec![
+            fixture.source(
+                "local_cache",
+                10,
+                true,
+                fixture.valid_cache_manifest.clone(),
+            ),
+            fixture.source(
+                "embedded_install_manifest",
+                20,
+                true,
+                fixture.valid_embedded_manifest.clone(),
+            ),
+            fixture.source(
+                "official_signed_bootstrap_manifest",
+                40,
+                true,
+                fixture.valid_official_manifest.clone(),
+            ),
+        ],
+        now_ms,
+        candidate_set_policy_limit,
+    );
+    let expired_cache_case = evaluate_bootstrap_source_resolver_case_v0(
+        "expired_cache_skipped",
+        vec![
+            fixture.source(
+                "local_cache",
+                10,
+                true,
+                fixture.expired_cache_manifest.clone(),
+            ),
+            fixture.source(
+                "embedded_install_manifest",
+                20,
+                true,
+                fixture.valid_embedded_manifest.clone(),
+            ),
+        ],
+        now_ms,
+        candidate_set_policy_limit,
+    );
+    let invalid_signature_case = evaluate_bootstrap_source_resolver_case_v0(
+        "invalid_signature_source_rejected",
+        vec![
+            fixture.source(
+                "qr_invite_manifest",
+                30,
+                true,
+                fixture.invalid_signature_manifest(),
+            ),
+            fixture.source(
+                "community_signed_bootstrap_manifest",
+                50,
+                true,
+                fixture.valid_community_manifest.clone(),
+            ),
+        ],
+        now_ms,
+        candidate_set_policy_limit,
+    );
+    let official_not_mandatory_case = evaluate_bootstrap_source_resolver_case_v0(
+        "official_source_not_mandatory",
+        vec![
+            fixture.source(
+                "community_signed_bootstrap_manifest",
+                50,
+                true,
+                fixture.valid_community_manifest.clone(),
+            ),
+            fixture.source(
+                "friend_invite_manifest",
+                35,
+                true,
+                fixture.valid_friend_invite_manifest.clone(),
+            ),
+        ],
+        now_ms,
+        candidate_set_policy_limit,
+    );
+    let multi_source_merge_case = evaluate_bootstrap_source_resolver_case_v0(
+        "multi_source_merge_does_not_expose_raw_ip_directory",
+        vec![
+            fixture.source(
+                "embedded_install_manifest",
+                20,
+                true,
+                fixture.valid_embedded_manifest.clone(),
+            ),
+            fixture.source(
+                "community_signed_bootstrap_manifest",
+                50,
+                true,
+                fixture.valid_community_manifest.clone(),
+            ),
+            fixture.source(
+                "discovered_blinded_directory_source",
+                60,
+                true,
+                fixture.valid_discovered_manifest.clone(),
+            ),
+        ],
+        now_ms,
+        candidate_set_policy_limit,
+    );
+    let deterministic_fallback_case = evaluate_bootstrap_source_resolver_case_v0(
+        "fallback_order_deterministic",
+        vec![
+            fixture.source(
+                "local_cache",
+                10,
+                false,
+                fixture.valid_cache_manifest.clone(),
+            ),
+            fixture.source(
+                "embedded_install_manifest",
+                20,
+                true,
+                fixture.invalid_signature_manifest(),
+            ),
+            fixture.source(
+                "qr_invite_manifest",
+                30,
+                true,
+                fixture.valid_qr_manifest.clone(),
+            ),
+            fixture.source(
+                "official_signed_bootstrap_manifest",
+                40,
+                true,
+                fixture.valid_official_manifest.clone(),
+            ),
+        ],
+        now_ms,
+        candidate_set_policy_limit,
+    );
+    let no_source_case = evaluate_bootstrap_source_resolver_case_v0(
+        "no_reachable_bootstrap_source_enters_queue_fallback",
+        vec![
+            fixture.source(
+                "local_cache",
+                10,
+                false,
+                fixture.valid_cache_manifest.clone(),
+            ),
+            fixture.source(
+                "embedded_install_manifest",
+                20,
+                true,
+                fixture.expired_embedded_manifest.clone(),
+            ),
+            fixture.source(
+                "official_signed_bootstrap_manifest",
+                40,
+                true,
+                fixture.invalid_signature_manifest(),
+            ),
+        ],
+        now_ms,
+        candidate_set_policy_limit,
+    );
+
+    let cases = vec![
+        fresh_cache_case,
+        expired_cache_case,
+        invalid_signature_case,
+        official_not_mandatory_case,
+        multi_source_merge_case,
+        deterministic_fallback_case,
+        no_source_case,
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let selected_manifest_source = cases
+        .first()
+        .and_then(|case| case["selected_bootstrap_manifest_source"].as_str())
+        .map(str::to_string);
+    let report = json!({
+        "accepted": accepted,
+        "scope": "bootstrap_source_resolver_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "bootstrap_source_resolver_enabled": true,
+        "fallback_order": [
+            "local_cache",
+            "embedded_install_manifest",
+            "qr_invite_manifest",
+            "friend_invite_manifest",
+            "official_signed_bootstrap_manifest",
+            "community_signed_bootstrap_manifest",
+            "discovered_blinded_directory_source"
+        ],
+        "selected_bootstrap_manifest_source": selected_manifest_source,
+        "valid_cache_preferred_when_fresh": true,
+        "expired_cache_skipped": true,
+        "invalid_signature_source_rejected": true,
+        "official_source_required": false,
+        "multi_source_merge_exposes_raw_ip_directory": false,
+        "fallback_order_deterministic": true,
+        "no_reachable_bootstrap_source_selected_path": "QueueFallback",
+        "centralized_control_plane_required": false,
+        "single_official_relay_required": false,
+        "single_official_domain_required": false,
+        "full_raw_ip_directory_exposed": false,
+        "relay_is_trusted_authority": false,
+        "peer_identity_source": "novovm_key",
+        "routing_subject": "target_peer_id",
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false,
+        "cases": cases,
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("bootstrap source resolver matrix failed")
     }
 }
 
@@ -4375,6 +4608,30 @@ struct BootstrapManifestValidationV0 {
     blinded_directory_response: Vec<BlindedRelayDirectoryEntryV0>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BootstrapManifestSourceV0 {
+    source_id: String,
+    source_kind: String,
+    priority: u32,
+    reachable: bool,
+    manifest: SignedBootstrapManifestV0,
+}
+
+#[derive(Debug, Clone)]
+struct BootstrapResolverFixtureV0 {
+    now_ms: u64,
+    candidate_set_policy_limit: usize,
+    valid_cache_manifest: SignedBootstrapManifestV0,
+    expired_cache_manifest: SignedBootstrapManifestV0,
+    valid_embedded_manifest: SignedBootstrapManifestV0,
+    expired_embedded_manifest: SignedBootstrapManifestV0,
+    valid_qr_manifest: SignedBootstrapManifestV0,
+    valid_friend_invite_manifest: SignedBootstrapManifestV0,
+    valid_official_manifest: SignedBootstrapManifestV0,
+    valid_community_manifest: SignedBootstrapManifestV0,
+    valid_discovered_manifest: SignedBootstrapManifestV0,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PublicRelayRegisterPayloadV0 {
     peer_id: String,
@@ -5388,6 +5645,322 @@ fn peer_signed_relay_endpoint_v0(
         priority,
         capabilities: vec!["relay_novorudp_opaque".into(), "peer_id_routing".into()],
     }
+}
+
+impl BootstrapResolverFixtureV0 {
+    fn new() -> Result<Self> {
+        let now_ms = 30_000u64;
+        let candidate_set_policy_limit = 2usize;
+        let manifest_key = SigningKey::from_bytes(&[60u8; 32]);
+
+        Ok(Self {
+            now_ms,
+            candidate_set_policy_limit,
+            valid_cache_manifest: bootstrap_manifest_fixture_v0(
+                &manifest_key,
+                "local_cache",
+                "cache",
+                61,
+                29_000,
+                120_000,
+                candidate_set_policy_limit,
+            )?,
+            expired_cache_manifest: bootstrap_manifest_fixture_v0(
+                &manifest_key,
+                "local_cache",
+                "cache-expired",
+                62,
+                1_000,
+                29_000,
+                candidate_set_policy_limit,
+            )?,
+            valid_embedded_manifest: bootstrap_manifest_fixture_v0(
+                &manifest_key,
+                "embedded_install_manifest",
+                "embedded",
+                63,
+                29_000,
+                120_000,
+                candidate_set_policy_limit,
+            )?,
+            expired_embedded_manifest: bootstrap_manifest_fixture_v0(
+                &manifest_key,
+                "embedded_install_manifest",
+                "embedded-expired",
+                64,
+                1_000,
+                29_000,
+                candidate_set_policy_limit,
+            )?,
+            valid_qr_manifest: bootstrap_manifest_fixture_v0(
+                &manifest_key,
+                "qr_invite_manifest",
+                "qr",
+                65,
+                29_000,
+                120_000,
+                candidate_set_policy_limit,
+            )?,
+            valid_friend_invite_manifest: bootstrap_manifest_fixture_v0(
+                &manifest_key,
+                "friend_invite_manifest",
+                "friend",
+                66,
+                29_000,
+                120_000,
+                candidate_set_policy_limit,
+            )?,
+            valid_official_manifest: bootstrap_manifest_fixture_v0(
+                &manifest_key,
+                "official_signed_bootstrap_manifest",
+                "official",
+                67,
+                29_000,
+                120_000,
+                candidate_set_policy_limit,
+            )?,
+            valid_community_manifest: bootstrap_manifest_fixture_v0(
+                &manifest_key,
+                "community_signed_bootstrap_manifest",
+                "community",
+                68,
+                29_000,
+                120_000,
+                candidate_set_policy_limit,
+            )?,
+            valid_discovered_manifest: bootstrap_manifest_fixture_v0(
+                &manifest_key,
+                "discovered_blinded_directory_source",
+                "discovered",
+                69,
+                29_000,
+                120_000,
+                candidate_set_policy_limit,
+            )?,
+        })
+    }
+
+    fn source(
+        &self,
+        source_kind: &str,
+        priority: u32,
+        reachable: bool,
+        manifest: SignedBootstrapManifestV0,
+    ) -> BootstrapManifestSourceV0 {
+        BootstrapManifestSourceV0 {
+            source_id: format!("{source_kind}:{priority}"),
+            source_kind: source_kind.to_string(),
+            priority,
+            reachable,
+            manifest,
+        }
+    }
+
+    fn invalid_signature_manifest(&self) -> SignedBootstrapManifestV0 {
+        let mut manifest = self.valid_official_manifest.clone();
+        manifest.manifest_id = format!("{}-invalid-signature", manifest.manifest_id);
+        manifest.signature = "00".repeat(64);
+        manifest
+    }
+}
+
+fn bootstrap_manifest_fixture_v0(
+    manifest_key: &SigningKey,
+    source: &str,
+    id_suffix: &str,
+    relay_seed_byte: u8,
+    issued_at_ms: u64,
+    expires_at_ms: u64,
+    candidate_set_policy_limit: usize,
+) -> Result<SignedBootstrapManifestV0> {
+    let relay_key = SigningKey::from_bytes(&[relay_seed_byte; 32]);
+    let rendezvous_key = SigningKey::from_bytes(&[relay_seed_byte.saturating_add(1); 32]);
+    let seed_relay_candidates = vec![sign_relay_endpoint_record_v0(
+        &relay_key,
+        vec![peer_signed_relay_endpoint_v0(
+            "wss",
+            &format!("wss://relay-{id_suffix}.bootstrap.example:443/novovm"),
+            443,
+            u32::from(relay_seed_byte),
+        )],
+        issued_at_ms,
+        expires_at_ms,
+        &format!("relay-record-{id_suffix}-001"),
+    )?];
+    let seed_rendezvous_candidates = vec![sign_relay_endpoint_record_v0(
+        &rendezvous_key,
+        vec![peer_signed_relay_endpoint_v0(
+            "wss",
+            &format!("wss://rendezvous-{id_suffix}.bootstrap.example:443/novovm"),
+            443,
+            u32::from(relay_seed_byte.saturating_add(1)),
+        )],
+        issued_at_ms,
+        expires_at_ms,
+        &format!("rendezvous-record-{id_suffix}-001"),
+    )?];
+
+    sign_bootstrap_manifest_v0(
+        manifest_key,
+        source,
+        seed_relay_candidates,
+        seed_rendezvous_candidates,
+        issued_at_ms,
+        expires_at_ms,
+        &format!("bootstrap-manifest-{id_suffix}-001"),
+        false,
+        false,
+        false,
+        candidate_set_policy_limit,
+    )
+}
+
+fn evaluate_bootstrap_source_resolver_case_v0(
+    case_name: &str,
+    mut sources: Vec<BootstrapManifestSourceV0>,
+    now_ms: u64,
+    candidate_set_policy_limit: usize,
+) -> serde_json::Value {
+    sources.sort_by_key(|source| source.priority);
+    let fallback_order = sources
+        .iter()
+        .map(|source| source.source_kind.clone())
+        .collect::<Vec<_>>();
+    let mut selected: Option<(&BootstrapManifestSourceV0, BootstrapManifestValidationV0)> = None;
+    let mut validation_reports = Vec::new();
+    let mut valid_records = Vec::new();
+    let mut reachable_source_count = 0usize;
+    let mut valid_manifest_source_count = 0usize;
+    let mut invalid_signature_source_count = 0usize;
+    let mut expired_source_count = 0usize;
+
+    for source in &sources {
+        if source.reachable {
+            reachable_source_count += 1;
+        }
+        let validation = if source.reachable {
+            validate_bootstrap_manifest_v0(&source.manifest, now_ms)
+        } else {
+            BootstrapManifestValidationV0 {
+                accepted: false,
+                signature_valid: false,
+                expired: false,
+                reject_reason: Some("bootstrap_source_unreachable".into()),
+                seed_relay_record_valid_count: 0,
+                seed_relay_record_invalid_count: source.manifest.seed_relay_candidates.len(),
+                blinded_directory_response: Vec::new(),
+            }
+        };
+        if validation.accepted {
+            valid_manifest_source_count += 1;
+            valid_records.extend(source.manifest.seed_relay_candidates.clone());
+            if selected.is_none() {
+                selected = Some((source, validation.clone()));
+            }
+        }
+        if validation.reject_reason.as_deref() == Some("bootstrap_manifest_signature_invalid") {
+            invalid_signature_source_count += 1;
+        }
+        if validation.reject_reason.as_deref() == Some("bootstrap_manifest_expired") {
+            expired_source_count += 1;
+        }
+        validation_reports.push(json!({
+            "source_id": source.source_id,
+            "source_kind": source.source_kind,
+            "priority": source.priority,
+            "reachable": source.reachable,
+            "manifest_id": source.manifest.manifest_id,
+            "manifest_source": source.manifest.bootstrap_manifest_source,
+            "accepted": validation.accepted,
+            "signature_valid": validation.signature_valid,
+            "expired": validation.expired,
+            "reject_reason": validation.reject_reason,
+        }));
+    }
+
+    let merged_blinded_directory = issue_blinded_relay_directory_response_v0(
+        &valid_records,
+        candidate_set_policy_limit,
+        now_ms,
+    );
+    let raw_ip_directory_exposed = merged_blinded_directory.iter().any(|entry| {
+        entry.encrypted_or_blinded_endpoint_hint.contains("://")
+            || entry.encrypted_or_blinded_endpoint_hint.contains('.')
+    });
+    let selected_path_after_bootstrap = if selected.is_some() {
+        "RelayNovoRudp"
+    } else {
+        "QueueFallback"
+    };
+    let selected_bootstrap_manifest_source = selected
+        .as_ref()
+        .map(|(source, _)| source.source_kind.clone());
+    let selected_bootstrap_manifest_id = selected
+        .as_ref()
+        .map(|(source, _)| source.manifest.manifest_id.clone());
+
+    let accepted = match case_name {
+        "valid_cache_preferred_when_fresh" => {
+            selected_bootstrap_manifest_source.as_deref() == Some("local_cache")
+        }
+        "expired_cache_skipped" => {
+            expired_source_count >= 1
+                && selected_bootstrap_manifest_source.as_deref()
+                    == Some("embedded_install_manifest")
+        }
+        "invalid_signature_source_rejected" => {
+            invalid_signature_source_count >= 1
+                && selected_bootstrap_manifest_source.as_deref()
+                    == Some("community_signed_bootstrap_manifest")
+        }
+        "official_source_not_mandatory" => {
+            valid_manifest_source_count >= 1
+                && !sources
+                    .iter()
+                    .any(|source| source.source_kind == "official_signed_bootstrap_manifest")
+        }
+        "multi_source_merge_does_not_expose_raw_ip_directory" => {
+            valid_manifest_source_count >= 2
+                && !raw_ip_directory_exposed
+                && merged_blinded_directory.len() <= candidate_set_policy_limit
+        }
+        "fallback_order_deterministic" => {
+            fallback_order
+                == vec![
+                    "local_cache".to_string(),
+                    "embedded_install_manifest".to_string(),
+                    "qr_invite_manifest".to_string(),
+                    "official_signed_bootstrap_manifest".to_string(),
+                ]
+                && selected_bootstrap_manifest_source.as_deref() == Some("qr_invite_manifest")
+        }
+        "no_reachable_bootstrap_source_enters_queue_fallback" => {
+            selected.is_none() && selected_path_after_bootstrap == "QueueFallback"
+        }
+        _ => selected.is_some(),
+    };
+
+    json!({
+        "case": case_name,
+        "accepted": accepted,
+        "bootstrap_source_count": sources.len(),
+        "reachable_source_count": reachable_source_count,
+        "valid_manifest_source_count": valid_manifest_source_count,
+        "invalid_signature_source_count": invalid_signature_source_count,
+        "expired_source_count": expired_source_count,
+        "fallback_order": fallback_order,
+        "fallback_order_deterministic": true,
+        "selected_bootstrap_manifest_source": selected_bootstrap_manifest_source,
+        "selected_bootstrap_manifest_id": selected_bootstrap_manifest_id,
+        "official_source_required": false,
+        "multi_source_merge_exposes_raw_ip_directory": raw_ip_directory_exposed,
+        "merged_blinded_candidate_count": merged_blinded_directory.len(),
+        "candidate_set_policy_limit": candidate_set_policy_limit,
+        "selected_path_after_bootstrap": selected_path_after_bootstrap,
+        "fallback_reason": if selected.is_some() { serde_json::Value::Null } else { json!("NoReachableBootstrapSource") },
+        "source_validations": validation_reports,
+        "merged_blinded_directory_response": merged_blinded_directory,
+    })
 }
 
 fn sign_bootstrap_manifest_v0(
