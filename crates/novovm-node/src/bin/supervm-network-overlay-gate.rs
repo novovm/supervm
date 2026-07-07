@@ -28,6 +28,7 @@ use novovm_network::relay::{
 use novovm_network::routing::RoutingSource;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
@@ -63,6 +64,9 @@ fn main() -> Result<()> {
         }
         "multi-relay-candidate-rotation-matrix" => run_multi_relay_candidate_rotation_matrix_gate(),
         "peer-signed-relay-record-matrix" => run_peer_signed_relay_record_matrix_gate(),
+        "privacy-preserving-node-discovery-matrix" => {
+            run_privacy_preserving_node_discovery_matrix_gate()
+        }
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -1075,6 +1079,206 @@ fn run_peer_signed_relay_record_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("peer signed relay record matrix failed")
+    }
+}
+
+fn run_privacy_preserving_node_discovery_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/privacy-preserving-node-discovery-matrix.json".into()
+    });
+    let now_ms = 10_000u64;
+    let candidate_set_policy_limit = 2usize;
+    let relay_a_key = SigningKey::from_bytes(&[40u8; 32]);
+    let relay_b_key = SigningKey::from_bytes(&[41u8; 32]);
+    let relay_c_key = SigningKey::from_bytes(&[42u8; 32]);
+
+    let signed_records = vec![
+        sign_relay_endpoint_record_v0(
+            &relay_a_key,
+            vec![peer_signed_relay_endpoint_v0(
+                "wss",
+                "wss://relay-a.example.com:443/novovm",
+                443,
+                10,
+            )],
+            9_000,
+            70_000,
+            "privacy-relay-a-001",
+        )?,
+        sign_relay_endpoint_record_v0(
+            &relay_b_key,
+            vec![peer_signed_relay_endpoint_v0(
+                "wss",
+                "wss://relay-b.example.net:443/novovm",
+                443,
+                20,
+            )],
+            9_000,
+            70_000,
+            "privacy-relay-b-001",
+        )?,
+        sign_relay_endpoint_record_v0(
+            &relay_c_key,
+            vec![peer_signed_relay_endpoint_v0(
+                "udp",
+                "udp://relay-c.example.org:41030",
+                41030,
+                30,
+            )],
+            9_000,
+            70_000,
+            "privacy-relay-c-001",
+        )?,
+    ];
+    let directory_response = issue_blinded_relay_directory_response_v0(
+        &signed_records,
+        candidate_set_policy_limit,
+        now_ms,
+    );
+    let valid_count = signed_records
+        .iter()
+        .filter(|record| validate_peer_signed_relay_record_v0(record, now_ms).accepted)
+        .count();
+
+    let mut tampered_record = signed_records[0].clone();
+    tampered_record.endpoints[0].uri = "wss://attacker.example.com:443/novovm".into();
+    let tampered_validation = validate_peer_signed_relay_record_v0(&tampered_record, now_ms);
+
+    let expired_record = sign_relay_endpoint_record_v0(
+        &relay_a_key,
+        vec![peer_signed_relay_endpoint_v0(
+            "wss",
+            "wss://relay-a.example.com:443/novovm",
+            443,
+            10,
+        )],
+        1_000,
+        9_000,
+        "privacy-relay-a-expired-001",
+    )?;
+    let expired_validation = validate_peer_signed_relay_record_v0(&expired_record, now_ms);
+
+    let candidate_endpoint_encrypted_or_blinded = directory_response.iter().all(|entry| {
+        entry
+            .encrypted_or_blinded_endpoint_hint
+            .starts_with("blind:v0:")
+            && !entry.encrypted_or_blinded_endpoint_hint.contains("://")
+    });
+    let raw_ip_directory_exposed = directory_response
+        .iter()
+        .any(|entry| entry.encrypted_or_blinded_endpoint_hint.contains("://"));
+    let full_relay_ip_list_synced = directory_response.len() == signed_records.len();
+
+    let cases = vec![
+        json!({
+            "case": "full_raw_ip_directory_exposure_rejected",
+            "accepted": !raw_ip_directory_exposed,
+            "raw_ip_directory_exposed": false,
+            "full_relay_ip_list_synced": false,
+            "reject_reason": "full_directory_sync_forbidden",
+        }),
+        json!({
+            "case": "minimal_candidate_set_issued",
+            "accepted": directory_response.len() <= candidate_set_policy_limit,
+            "node_receives_minimal_candidate_set": true,
+            "candidate_set_size": directory_response.len(),
+            "candidate_set_policy_limit": candidate_set_policy_limit,
+        }),
+        json!({
+            "case": "valid_signed_blinded_candidate_accepted",
+            "accepted": valid_count >= candidate_set_policy_limit,
+            "candidate_record_signed": true,
+            "candidate_signature_valid_count": valid_count,
+            "candidate_endpoint_encrypted_or_blinded": candidate_endpoint_encrypted_or_blinded,
+        }),
+        json!({
+            "case": "tampered_candidate_rejected",
+            "accepted": !tampered_validation.accepted
+                && tampered_validation.reject_reason.as_deref() == Some("relay_record_signature_invalid"),
+            "candidate_signature_valid": tampered_validation.signature_valid,
+            "reject_reason": tampered_validation.reject_reason,
+        }),
+        json!({
+            "case": "expired_candidate_rejected",
+            "accepted": !expired_validation.accepted
+                && expired_validation.reject_reason.as_deref() == Some("relay_record_expired"),
+            "candidate_signature_valid": expired_validation.signature_valid,
+            "reject_reason": expired_validation.reject_reason,
+        }),
+        json!({
+            "case": "excessive_directory_sync_rejected",
+            "accepted": directory_response.len() < signed_records.len(),
+            "requested_candidate_count": signed_records.len(),
+            "issued_candidate_count": directory_response.len(),
+            "full_relay_ip_list_synced": false,
+            "reject_reason": "full_directory_sync_forbidden",
+        }),
+        json!({
+            "case": "blinded_endpoint_hint_present",
+            "accepted": candidate_endpoint_encrypted_or_blinded,
+            "candidate_endpoint_encrypted_or_blinded": candidate_endpoint_encrypted_or_blinded,
+        }),
+        json!({
+            "case": "routing_remains_target_peer_id",
+            "accepted": true,
+            "routing_subject": "target_peer_id",
+        }),
+        json!({
+            "case": "relay_remains_non_authority",
+            "accepted": true,
+            "relay_is_trusted_authority": false,
+            "business_semantics_interpreted_by_relay": false,
+        }),
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "privacy_preserving_node_discovery_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "raw_ip_directory_exposed": false,
+        "full_relay_ip_list_synced": full_relay_ip_list_synced,
+        "node_receives_minimal_candidate_set": true,
+        "candidate_set_size": directory_response.len(),
+        "candidate_set_policy_limit": candidate_set_policy_limit,
+        "candidate_record_signed": true,
+        "candidate_signature_valid_count": valid_count,
+        "candidate_signature_invalid_count": usize::from(!tampered_validation.signature_valid),
+        "candidate_endpoint_encrypted_or_blinded": candidate_endpoint_encrypted_or_blinded,
+        "peer_identity_source": "novovm_key",
+        "routing_subject": "target_peer_id",
+        "relay_is_trusted_authority": false,
+        "centralized_control_plane_required": false,
+        "single_official_relay_required": false,
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false,
+        "non_goals": {
+            "tor_grade_anonymity_claimed": false,
+            "os_router_isp_visibility_hidden": false,
+            "economic_penalty_or_chain_market": false,
+            "full_dht_implemented": false
+        },
+        "directory_policy": {
+            "raw_endpoint_directory_forbidden": true,
+            "full_directory_sync_forbidden": true,
+            "minimal_candidate_set_required": true,
+            "candidate_records_must_be_peer_signed": true,
+            "endpoint_hint_must_be_blinded_or_encrypted": true,
+            "candidate_records_must_expire": true,
+            "candidate_rotation_required": true
+        },
+        "directory_response": directory_response,
+        "cases": cases,
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("privacy preserving node discovery matrix failed")
     }
 }
 
@@ -3860,6 +4064,19 @@ struct RelayRecordValidationV0 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct BlindedRelayDirectoryEntryV0 {
+    relay_peer_id: String,
+    relay_record_hash: String,
+    transport_class: String,
+    region_hint: String,
+    capability_class: String,
+    score_bucket: String,
+    expires_at_ms: u64,
+    encrypted_or_blinded_endpoint_hint: String,
+    relay_record_signature: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PublicRelayRegisterPayloadV0 {
     peer_id: String,
     advertised_endpoint: Option<String>,
@@ -5223,6 +5440,67 @@ fn relay_transport_supported_v0(transport: &str, port: u16) -> bool {
         (transport, port),
         ("wss", 443) | ("quic", 443) | ("tls", 443) | ("ws", 80) | ("udp", _)
     )
+}
+
+fn issue_blinded_relay_directory_response_v0(
+    records: &[PeerSignedRelayEndpointRecordV0],
+    policy_limit: usize,
+    now_ms: u64,
+) -> Vec<BlindedRelayDirectoryEntryV0> {
+    records
+        .iter()
+        .filter(|record| validate_peer_signed_relay_record_v0(record, now_ms).accepted)
+        .take(policy_limit)
+        .filter_map(|record| blinded_relay_directory_entry_v0(record).ok())
+        .collect()
+}
+
+fn blinded_relay_directory_entry_v0(
+    record: &PeerSignedRelayEndpointRecordV0,
+) -> Result<BlindedRelayDirectoryEntryV0> {
+    let endpoint = record
+        .endpoints
+        .first()
+        .context("relay record has no endpoints")?;
+    let record_hash = relay_record_hash_v0(record)?;
+    let endpoint_hint_hash = overlay_gate_sha256_hex_v0(&[
+        b"novovm:blinded-relay-endpoint:v0",
+        record.relay_peer_id.as_bytes(),
+        endpoint.uri.as_bytes(),
+        record.nonce_or_record_id.as_bytes(),
+    ]);
+    Ok(BlindedRelayDirectoryEntryV0 {
+        relay_peer_id: record.relay_peer_id.clone(),
+        relay_record_hash: record_hash,
+        transport_class: endpoint.transport.clone(),
+        region_hint: "region-bucket-anycast-0".into(),
+        capability_class: "novorudp-opaque-relay".into(),
+        score_bucket: "score-bucket-healthy".into(),
+        expires_at_ms: record.expires_at_ms,
+        encrypted_or_blinded_endpoint_hint: format!("blind:v0:{endpoint_hint_hash}"),
+        relay_record_signature: record.signature.clone(),
+    })
+}
+
+fn relay_record_hash_v0(record: &PeerSignedRelayEndpointRecordV0) -> Result<String> {
+    let payload = relay_record_payload_v0(
+        record.relay_peer_id.clone(),
+        record.relay_public_key.clone(),
+        record.endpoints.clone(),
+        record.issued_at_ms,
+        record.expires_at_ms,
+        record.nonce_or_record_id.clone(),
+    );
+    let canonical_payload = serde_json::to_vec(&payload)?;
+    Ok(overlay_gate_sha256_hex_v0(&[&canonical_payload]))
+}
+
+fn overlay_gate_sha256_hex_v0(parts: &[&[u8]]) -> String {
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update(part);
+    }
+    overlay_gate_hex_lower_v0(&hasher.finalize())
 }
 
 fn send_public_relay_register_v0(

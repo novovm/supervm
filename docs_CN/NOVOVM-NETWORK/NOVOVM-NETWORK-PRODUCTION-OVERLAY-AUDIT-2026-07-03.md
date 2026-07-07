@@ -4222,6 +4222,131 @@ novorudp_wire_changed=false
 real_federated_signed_relay_record_smoke=false
 ```
 
+Next frontier:
+
+```text
+Cut 33:
+  Privacy-preserving Node Discovery / Blinded Relay Directory v0
+```
+
+## Cut 33: Privacy-preserving Node Discovery / Blinded Relay Directory v0
+
+Status:
+
+```text
+LOCAL PRIVACY-PRESERVING NODE DISCOVERY MATRIX PASS
+REAL FEDERATED BLINDED DIRECTORY SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Prevent NOVOVM discovery from becoming a full raw IP relay list sync system.
+
+Nodes must receive only a minimal necessary relay candidate set.
+Directory responses expose blinded / encrypted endpoint hints, signed record
+hashes, classes, score buckets, and expiry metadata rather than the full
+raw endpoint inventory.
+```
+
+New gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=privacy-preserving-node-discovery-matrix
+```
+
+Directory entry shape:
+
+```text
+BlindedRelayDirectoryEntry:
+  relay_peer_id
+  relay_record_hash
+  transport_class
+  region_hint
+  capability_class
+  score_bucket
+  expires_at_ms
+  encrypted_or_blinded_endpoint_hint
+  relay_record_signature
+```
+
+Local privacy matrix:
+
+```text
+full raw IP directory exposure rejected:
+  raw_ip_directory_exposed=false
+  reject_reason=full_directory_sync_forbidden
+
+minimal candidate set issued:
+  node_receives_minimal_candidate_set=true
+  candidate_set_size <= candidate_set_policy_limit
+
+valid signed blinded candidate accepted:
+  candidate_record_signed=true
+  candidate_signature_valid_count > 0
+  candidate_endpoint_encrypted_or_blinded=true
+
+tampered candidate rejected:
+  reject_reason=relay_record_signature_invalid
+
+expired candidate rejected:
+  reject_reason=relay_record_expired
+
+excessive directory sync rejected:
+  full_relay_ip_list_synced=false
+  reject_reason=full_directory_sync_forbidden
+
+routing remains peer based:
+  routing_subject=target_peer_id
+
+relay remains non-authority:
+  relay_is_trusted_authority=false
+  business_semantics_interpreted_by_relay=false
+```
+
+Non-goals in v0:
+
+```text
+tor_grade_anonymity_claimed=false
+os_router_isp_visibility_hidden=false
+economic_penalty_or_chain_market=false
+full_dht_implemented=false
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=privacy-preserving-node-discovery-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/privacy-preserving-node-discovery-matrix-cut33.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+raw_ip_directory_exposed=false
+full_relay_ip_list_synced=false
+relay_is_trusted_authority=false
+centralized_control_plane_required=false
+single_official_relay_required=false
+peer_identity_source=novovm_key
+routing_subject=target_peer_id
+business_semantics_interpreted_by_relay=false
+novorudp_wire_changed=false
+real_federated_blinded_directory_smoke=false
+```
+
 ## Product Readout
 
 Current product status:
