@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
@@ -69,6 +71,7 @@ fn main() -> Result<()> {
         "wss-443-outbound-relay-matrix" => run_wss_443_outbound_relay_matrix_gate(),
         "wss-443-relay-session-runtime-matrix" => run_wss_443_relay_session_runtime_matrix_gate(),
         "wss-tls-socket-transport-matrix" => run_wss_tls_socket_transport_matrix_gate(),
+        "wss-tls-relay-path-receipt-smoke" => run_wss_tls_relay_path_receipt_smoke_gate(),
         "wss-tls-public-relay" => run_wss_tls_public_relay_gate(),
         "native-first-transport-adaptive-matrix" => {
             run_native_first_transport_adaptive_matrix_gate()
@@ -6234,6 +6237,152 @@ fn run_wss_tls_socket_transport_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("wss tls socket transport matrix failed")
+    }
+}
+
+fn run_wss_tls_relay_path_receipt_smoke_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/wss-tls-relay-path-receipt-smoke-cut45.json".into()
+    });
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
+    let now_ms = 10_000u64;
+
+    let smoke = run_cut39_local_wss_tls_socket_smoke_v0(max_frames)?;
+    let advisory_key = SigningKey::from_bytes(&[72u8; 32]);
+    let advisory = sign_apfl_advisory_v0(
+        &advisory_key,
+        "apfl-cut45-wss-receipt-001",
+        json!({
+            "schema_version": 1,
+            "confidence": 86,
+            "prefer_transport": "wss",
+            "batch_size_hint": max_frames,
+            "keepalive_interval_ms_hint": 15_000,
+            "relay_candidate_priority_hint": "prefer_reachable_wss",
+            "privacy_budget_hint": "minimize_peer_disclosure",
+            "weak_network_mode_hint": false,
+            "background_punch_probe_hint": true
+        }),
+        9_000,
+        20_000,
+    )?;
+    let receipt_input = strategy_receipt_input_v0(
+        "cut45-local-wss-relay-path",
+        false,
+        true,
+        true,
+        false,
+        Some(advisory),
+    );
+    let receipt = build_strategy_receipt_v0(&receipt_input, now_ms);
+    let replayed_receipt = build_strategy_receipt_v0(&receipt_input, now_ms);
+    let strategy_replay_pass = receipt["strategy_decision_hash"]
+        == replayed_receipt["strategy_decision_hash"]
+        && receipt["strategy_input_hash"] == replayed_receipt["strategy_input_hash"]
+        && receipt["selected_path"] == replayed_receipt["selected_path"];
+
+    let socket_path_pass = smoke.websocket_upgrade_ok
+        && smoke.tls_accept_ok
+        && smoke.binary_frame_mode
+        && smoke.novorudp_inner_frame_preserved
+        && smoke.relay_frames_forwarded == max_frames
+        && smoke.node_b_received_frame_count == max_frames
+        && smoke.node_b_frame_decode_ok_count == max_frames
+        && smoke.ping_pong_ok
+        && smoke.target_peer_id_forwarding;
+    let receipt_pass = receipt["strategy_receipt_emitted"] == json!(true)
+        && strategy_replay_pass
+        && receipt["selected_path"] == json!("RelayNovoRudp")
+        && receipt["selected_transport"] == json!("wss")
+        && receipt["apfl_advisory_applied"] == json!(true)
+        && receipt["hard_policy_override_attempted"] == json!(false)
+        && receipt["hard_policy_override_rejected"] == json!(false);
+    let accepted = socket_path_pass && receipt_pass;
+
+    let node_a_report = json!({
+        "selected_transport": "wss",
+        "selected_endpoint": smoke.selected_endpoint,
+        "selected_path": "RelayNovoRudp",
+        "target_peer_id": "node-b",
+        "sent_frame_count": max_frames,
+        "inbound_public_endpoint_required": false,
+        "nat_punch_required": false,
+        "strategy_receipt_emitted": true
+    });
+    let relay_report = json!({
+        "relay_peer_id": "public-relay-local-cut45",
+        "websocket_path": "/novovm",
+        "bootstrap_sessions_established": 2,
+        "session_peer_ids": ["node-a", "node-b"],
+        "relay_frames_forwarded": smoke.relay_frames_forwarded,
+        "forwards_by_peer_id": true,
+        "payload_treated_opaque": true,
+        "relay_is_trusted_authority": false,
+        "business_semantics_interpreted_by_relay": false
+    });
+    let node_b_report = json!({
+        "received_frame_count": smoke.node_b_received_frame_count,
+        "frame_decode_ok_count": smoke.node_b_frame_decode_ok_count,
+        "via_relay_peer_id": "public-relay-local-cut45",
+        "inbound_public_endpoint_required": false,
+        "payload_treated_opaque": true,
+        "novorudp_inner_frame_preserved": smoke.novorudp_inner_frame_preserved
+    });
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "wss_tls_relay_path_with_strategy_receipt_smoke_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 45: Real WSS/TLS Relay Path with Strategy Receipt Smoke v0",
+        "local_real_wss_tls_socket_smoke": true,
+        "real_public_tls_relay_smoke": false,
+        "real_public_vps_relay_smoke": false,
+        "real_public_tls_trust_path": false,
+        "selected_transport": "wss",
+        "selected_path": "RelayNovoRudp",
+        "selected_endpoint": smoke.selected_endpoint,
+        "websocket_path": "/novovm",
+        "websocket_upgrade_ok": smoke.websocket_upgrade_ok,
+        "tls_accept_ok": smoke.tls_accept_ok,
+        "binary_frame_mode": smoke.binary_frame_mode,
+        "novorudp_inner_frame_preserved": smoke.novorudp_inner_frame_preserved,
+        "client_register_node_a_ok": smoke.client_register_node_a_ok,
+        "client_register_node_b_ok": smoke.client_register_node_b_ok,
+        "registered_peer_ids": smoke.registered_peer_ids,
+        "relay_frames_forwarded": smoke.relay_frames_forwarded,
+        "target_peer_id_forwarding": smoke.target_peer_id_forwarding,
+        "ping_pong_ok": smoke.ping_pong_ok,
+        "node_b_received_frame_count": smoke.node_b_received_frame_count,
+        "node_b_frame_decode_ok_count": smoke.node_b_frame_decode_ok_count,
+        "strategy_receipt_emitted": receipt["strategy_receipt_emitted"].clone(),
+        "strategy_replay_pass": strategy_replay_pass,
+        "strategy_input_hash": receipt["strategy_input_hash"].clone(),
+        "apfl_advisory_hash": receipt["apfl_advisory_hash"].clone(),
+        "strategy_decision_hash": receipt["strategy_decision_hash"].clone(),
+        "replayed_strategy_decision_hash": replayed_receipt["strategy_decision_hash"].clone(),
+        "strategy_receipt": receipt,
+        "node_a": node_a_report,
+        "public_relay": relay_report,
+        "node_b": node_b_report,
+        "apfl_model_called": false,
+        "apfl_interpreted": false,
+        "aoem_called": false,
+        "opcode114_called": false,
+        "ledger_semantics": false,
+        "novorudp_wire_changed": false,
+        "hard_policy_precedence": true,
+        "apfl_advisory_is_binding": false,
+        "relay_is_trusted_authority": false,
+        "business_semantics_interpreted_by_relay": false
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("wss tls relay path receipt smoke failed")
     }
 }
 
