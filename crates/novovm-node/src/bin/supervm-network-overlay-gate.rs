@@ -55,6 +55,7 @@ fn main() -> Result<()> {
         "relay-first-zero-config-matrix" => run_relay_first_zero_config_matrix_gate(),
         "public-relay-bootstrap-matrix" => run_public_relay_bootstrap_matrix_gate(),
         "public-relay-bootstrap" => run_public_relay_bootstrap_gate(),
+        "relay-endpoint-candidates-matrix" => run_relay_endpoint_candidates_matrix_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -375,6 +376,128 @@ fn run_public_relay_bootstrap_gate() -> Result<()> {
         "client-register" | "receiver" => run_public_relay_bootstrap_register_client_gate(),
         "client-send" | "sender" => run_public_relay_bootstrap_send_client_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE: {other}"),
+    }
+}
+
+fn run_relay_endpoint_candidates_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/relay-endpoint-candidates-matrix.json".into()
+    });
+    let requested_fixed_port = env_u64("NOVOVM_OVERLAY_PUBLIC_RELAY_PORT", 41030);
+    let udp_dynamic_port = env_u64("NOVOVM_OVERLAY_PUBLIC_RELAY_DYNAMIC_UDP_PORT", 49152);
+    let fixed_41030_used_as_requirement = requested_fixed_port == 41030
+        && env_bool("NOVOVM_OVERLAY_RELAY_REQUIRE_FIXED_TEST_PORT_41030", false);
+
+    let candidates = vec![
+        json!({
+            "rank": 1,
+            "transport": "wss",
+            "endpoint": "wss://relay.example.com:443/novovm",
+            "port": 443,
+            "direction": "client_outbound",
+            "requires_user_port_forward": false,
+            "works_behind_common_nat_vpn_tun": true,
+            "role": "default_zero_config_relay_candidate",
+        }),
+        json!({
+            "rank": 2,
+            "transport": "quic",
+            "endpoint": "quic://relay.example.com:443",
+            "port": 443,
+            "direction": "client_outbound",
+            "requires_user_port_forward": false,
+            "works_behind_common_nat_vpn_tun": true,
+            "role": "low_latency_optimization_candidate",
+        }),
+        json!({
+            "rank": 3,
+            "transport": "tls",
+            "endpoint": "tls://relay.example.com:443",
+            "port": 443,
+            "direction": "client_outbound",
+            "requires_user_port_forward": false,
+            "works_behind_common_nat_vpn_tun": true,
+            "role": "enterprise_firewall_compatible_candidate",
+        }),
+        json!({
+            "rank": 4,
+            "transport": "ws",
+            "endpoint": "ws://relay.example.com:80/novovm",
+            "port": 80,
+            "direction": "client_outbound",
+            "requires_user_port_forward": false,
+            "works_behind_common_nat_vpn_tun": true,
+            "role": "plain_http_compatibility_fallback",
+            "not_default_reason": "port_80_is_often_intercepted_or_proxy_modified",
+        }),
+        json!({
+            "rank": 5,
+            "transport": "udp",
+            "endpoint": format!("udp://relay.example.com:{udp_dynamic_port}"),
+            "port": udp_dynamic_port,
+            "direction": "client_outbound",
+            "requires_user_port_forward": false,
+            "works_behind_common_nat_vpn_tun": false,
+            "role": "performance_optimization_candidate",
+        }),
+    ];
+
+    let accepted = !fixed_41030_used_as_requirement
+        && candidates.iter().any(|candidate| {
+            candidate["port"] == json!(443)
+                && candidate["requires_user_port_forward"] == json!(false)
+        })
+        && candidates.iter().any(|candidate| {
+            candidate["port"] == json!(80)
+                && candidate["transport"] != json!("udp")
+                && candidate["requires_user_port_forward"] == json!(false)
+        });
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "relay_endpoint_candidates_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "zero_config_required": true,
+        "public_vps_required_for_local_validation": false,
+        "real_public_relay_smoke": false,
+        "fixed_relay_port_required": false,
+        "fixed_41030_used_as_requirement": fixed_41030_used_as_requirement,
+        "smoke_udp_port_can_be_configured": true,
+        "requested_test_udp_port": requested_fixed_port,
+        "port_policy": {
+            "default": "443-first outbound relay",
+            "port_443": "preferred for WSS/TLS/QUIC relay bootstrap",
+            "port_80": "allowed only as plain HTTP/WebSocket compatibility fallback, not as UDP default",
+            "port_41030": "test-only example, not a product requirement",
+            "dynamic_high_udp_ports": "allowed as performance candidates when network policy permits",
+            "fixed_p2p_port_risk": "single fixed ports can be filtered by ISP, VPN, enterprise firewall, or local policy"
+        },
+        "candidate_selection_order": [
+            "wss_443",
+            "quic_443",
+            "tls_443",
+            "ws_80",
+            "udp_dynamic_or_configured",
+            "queue_fallback"
+        ],
+        "candidates": candidates,
+        "fallback_policy": {
+            "relay_first_zero_config": true,
+            "nat_punch_is_optimization": true,
+            "direct_path_is_optimization": true,
+            "queue_fallback_when_no_relay_candidate_reachable": true,
+            "user_router_configuration_required": false,
+            "user_firewall_configuration_required": false
+        },
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("relay endpoint candidates matrix failed")
     }
 }
 

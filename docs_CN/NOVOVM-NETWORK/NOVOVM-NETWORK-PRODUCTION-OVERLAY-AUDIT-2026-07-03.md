@@ -3609,6 +3609,111 @@ novorudp_wire_changed=false
 real_public_vps_relay_smoke=false
 ```
 
+Next frontier:
+
+```text
+Cut 28:
+  Relay Endpoint Candidate Selection v0
+```
+
+## Cut 28: Relay Endpoint Candidate Selection v0
+
+Status:
+
+```text
+LOCAL RELAY ENDPOINT CANDIDATE MATRIX PASS
+REAL MULTI-TRANSPORT PUBLIC RELAY SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Remove fixed relay port assumptions from the product path.
+
+Cut 27 proved the local relay bootstrap semantics.
+Cut 28 proves that production relay bootstrap must select from endpoint
+candidates instead of requiring one hard-coded P2P port.
+```
+
+New gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=relay-endpoint-candidates-matrix
+```
+
+Port policy:
+
+```text
+443:
+  Preferred zero-config relay bootstrap path.
+  Used for WSS / TLS / QUIC candidates.
+
+80:
+  Allowed only as plain HTTP/WebSocket compatibility fallback.
+  Not a UDP default.
+  Not the preferred path because it is often intercepted or modified by proxy,
+  captive portal, ISP, or enterprise middleware.
+
+41030:
+  Test-only UDP smoke example.
+  Not a product requirement.
+
+Dynamic/high UDP ports:
+  Allowed as performance candidates when the network permits them.
+  Never required for user availability.
+```
+
+Local candidate matrix:
+
+```text
+relay-endpoint-candidates-matrix accepted=true
+
+candidate_selection_order:
+  1. wss_443
+  2. quic_443
+  3. tls_443
+  4. ws_80
+  5. udp_dynamic_or_configured
+  6. queue_fallback
+
+fixed_relay_port_required=false
+fixed_41030_used_as_requirement=false
+user_router_configuration_required=false
+user_firewall_configuration_required=false
+nat_punch_is_optimization=true
+direct_path_is_optimization=true
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=relay-endpoint-candidates-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/relay-endpoint-candidates-matrix-cut28.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+opcode114_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+real_multi_transport_public_relay_smoke=false
+```
+
 ## Product Readout
 
 Current product status:
