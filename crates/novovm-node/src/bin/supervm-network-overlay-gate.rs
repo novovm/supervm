@@ -200,9 +200,12 @@ fn run_nat_punch_matrix_gate() -> Result<()> {
     let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
         .unwrap_or_else(|| "artifacts/network-overlay-gate/nat-punch-matrix.json".into());
 
-    let success = run_nat_punch_local_case_v0("nat-punch-success", None, false)?;
+    let success =
+        run_nat_punch_local_case_v0("nat-punch-success", "node-a", "node-b", None, false)?;
     let mismatch = run_nat_punch_local_case_v0(
         "nat-punch-nonce-mismatch-rejected",
+        "node-a",
+        "node-b",
         Some("wrong-nat-punch-nonce".into()),
         false,
     )?;
@@ -236,11 +239,15 @@ fn run_nat_punch_matrix_gate() -> Result<()> {
 }
 
 fn run_nat_punch_gate() -> Result<()> {
-    let role = env_string("NOVOVM_OVERLAY_OBSERVED_ROLE").unwrap_or_else(|| "prober".to_string());
+    let role = env_string("NOVOVM_OVERLAY_NAT_ROLE")
+        .or_else(|| env_string("NOVOVM_OVERLAY_OBSERVED_ROLE"))
+        .unwrap_or_else(|| "prober".to_string());
     match role.as_str() {
         "observer" => run_nat_punch_observer_gate(),
         "prober" => run_nat_punch_prober_gate(),
-        other => anyhow::bail!("unsupported NOVOVM_OVERLAY_OBSERVED_ROLE for nat-punch: {other}"),
+        other => anyhow::bail!(
+            "unsupported NOVOVM_OVERLAY_NAT_ROLE/NOVOVM_OVERLAY_OBSERVED_ROLE for nat-punch: {other}"
+        ),
     }
 }
 
@@ -249,10 +256,12 @@ fn run_nat_punch_observer_gate() -> Result<()> {
         .unwrap_or_else(|| "artifacts/network-overlay-gate/nat-punch-observer.json".into());
     let bind_addr =
         env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:0".into());
-    let observer_peer_id =
-        env_string("NOVOVM_OVERLAY_OBSERVED_OBSERVER_PEER_ID").unwrap_or_else(|| "node-b".into());
+    let observer_peer_id = env_string("NOVOVM_OVERLAY_NAT_OBSERVER_PEER_ID")
+        .or_else(|| env_string("NOVOVM_OVERLAY_OBSERVED_OBSERVER_PEER_ID"))
+        .unwrap_or_else(|| "node-b".into());
     let timeout_ms = env_u64("NOVOVM_OVERLAY_GATE_TIMEOUT_MS", 5000);
-    let ack_nonce_override = env_string("NOVOVM_OVERLAY_NAT_PUNCH_ACK_NONCE_OVERRIDE")
+    let ack_nonce_override = env_string("NOVOVM_OVERLAY_NAT_ACK_NONCE_OVERRIDE")
+        .or_else(|| env_string("NOVOVM_OVERLAY_NAT_PUNCH_ACK_NONCE_OVERRIDE"))
         .or_else(|| env_string("NOVOVM_OVERLAY_OBSERVED_ACK_NONCE_OVERRIDE"));
     let socket = UdpSocket::bind(&bind_addr)
         .with_context(|| format!("bind nat punch observer: {bind_addr}"))?;
@@ -269,7 +278,9 @@ fn run_nat_punch_observer_gate() -> Result<()> {
         "scope": "nat_punch_observer_v0",
         "boundary": network_boundary_json(),
         "payload_treated_opaque": true,
+        "nat_traversal_enabled": true,
         "observer_peer_id": observer_peer_id,
+        "local_bind_endpoint": bind_addr_effective.to_string(),
         "bind_addr_requested": bind_addr,
         "bind_addr_effective": bind_addr_effective.to_string(),
     });
@@ -304,12 +315,16 @@ fn run_nat_punch_observer_gate() -> Result<()> {
                     let sent_bytes = socket
                         .send_to(&ack.encode(), source_addr)
                         .context("send nat punch ack")?;
+                    let mapping_changed = probe.advertised_endpoint.as_deref()
+                        != Some(source_addr.to_string().as_str());
                     report = json!({
                         "accepted": true,
                         "scope": "nat_punch_observer_v0",
                         "boundary": network_boundary_json(),
                         "payload_treated_opaque": true,
+                        "nat_traversal_enabled": true,
                         "observer_peer_id": observer_peer_id,
+                        "local_bind_endpoint": bind_addr_effective.to_string(),
                         "bind_addr_requested": bind_addr,
                         "bind_addr_effective": bind_addr_effective.to_string(),
                         "punch_received": true,
@@ -317,11 +332,16 @@ fn run_nat_punch_observer_gate() -> Result<()> {
                         "source_peer_id": probe.source_peer_id,
                         "target_peer_id": probe.target_peer_id,
                         "advertised_endpoint": probe.advertised_endpoint,
-                        "punch_target_observed_endpoint": probe.target_observed_endpoint,
                         "observed_endpoint": source_addr.to_string(),
+                        "observed_by_peer_id": observer_peer_id,
                         "observed_at_ms": observed_at_ms,
+                        "nat_mapping_changed": mapping_changed,
+                        "nat_mapping_stable": !mapping_changed,
+                        "punch_target_observed_endpoint": probe.target_observed_endpoint,
                         "ack_sent": true,
                         "ack_sent_bytes": sent_bytes,
+                        "punch_ack_sent": true,
+                        "punch_ack_sent_bytes": sent_bytes,
                         "ack_nonce": ack_payload.punch_nonce,
                         "elapsed_ms": start.elapsed().as_millis() as u64,
                     });
@@ -355,19 +375,29 @@ fn run_nat_punch_prober_gate() -> Result<()> {
         .unwrap_or_else(|| "artifacts/network-overlay-gate/nat-punch-prober.json".into());
     let bind_addr =
         env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:0".into());
-    let target_addr = env_string("NOVOVM_OVERLAY_NAT_PUNCH_TARGET_OBSERVED_ENDPOINT")
-        .or_else(|| env_string("NOVOVM_OVERLAY_OBSERVED_TARGET_ADDR"))
-        .context("NOVOVM_OVERLAY_NAT_PUNCH_TARGET_OBSERVED_ENDPOINT is required")?;
-    let source_peer_id =
-        env_string("NOVOVM_OVERLAY_OBSERVED_SOURCE_PEER_ID").unwrap_or_else(|| "node-a".into());
-    let target_peer_id =
-        env_string("NOVOVM_OVERLAY_OBSERVED_TARGET_PEER_ID").unwrap_or_else(|| "node-b".into());
-    let advertised_endpoint = env_string("NOVOVM_OVERLAY_OBSERVED_ADVERTISED_ENDPOINT");
+    let punch_target_observed_endpoint =
+        env_string("NOVOVM_OVERLAY_NAT_PUNCH_TARGET_OBSERVED_ENDPOINT")
+            .or_else(|| env_string("NOVOVM_OVERLAY_NAT_TARGET_ADDR"))
+            .or_else(|| env_string("NOVOVM_OVERLAY_OBSERVED_TARGET_ADDR"))
+            .context("NOVOVM_OVERLAY_NAT_PUNCH_TARGET_OBSERVED_ENDPOINT is required")?;
+    let source_peer_id = env_string("NOVOVM_OVERLAY_NAT_SOURCE_PEER_ID")
+        .or_else(|| env_string("NOVOVM_OVERLAY_OBSERVED_SOURCE_PEER_ID"))
+        .unwrap_or_else(|| "node-a".into());
+    let target_peer_id = env_string("NOVOVM_OVERLAY_NAT_TARGET_PEER_ID")
+        .or_else(|| env_string("NOVOVM_OVERLAY_OBSERVED_TARGET_PEER_ID"))
+        .unwrap_or_else(|| "node-b".into());
+    let advertised_endpoint = env_string("NOVOVM_OVERLAY_NAT_ADVERTISED_ENDPOINT")
+        .or_else(|| env_string("NOVOVM_OVERLAY_OBSERVED_ADVERTISED_ENDPOINT"));
+    let relay_fallback_endpoint = env_string("NOVOVM_OVERLAY_NAT_RELAY_FALLBACK_ENDPOINT");
+    let relay_fallback_enabled =
+        env_bool(
+            "NOVOVM_OVERLAY_NAT_RELAY_FALLBACK_ENABLED",
+            relay_fallback_endpoint.is_some(),
+        ) || env_bool("NOVOVM_OVERLAY_NAT_PUNCH_ENABLE_RELAY_FALLBACK", false);
     let punch_nonce = env_string("NOVOVM_OVERLAY_NAT_PUNCH_NONCE")
         .or_else(|| env_string("NOVOVM_OVERLAY_OBSERVED_PROBE_NONCE"))
         .unwrap_or_else(|| format!("nat-punch-{}", now_unix_ms()));
     let timeout_ms = env_u64("NOVOVM_OVERLAY_GATE_PROBE_TIMEOUT_MS", 1000);
-    let relay_fallback_enabled = env_bool("NOVOVM_OVERLAY_NAT_PUNCH_ENABLE_RELAY_FALLBACK", false);
     let socket = UdpSocket::bind(&bind_addr)
         .with_context(|| format!("bind nat punch prober: {bind_addr}"))?;
     socket
@@ -376,13 +406,14 @@ fn run_nat_punch_prober_gate() -> Result<()> {
     let bind_addr_effective = socket.local_addr().context("nat punch prober local addr")?;
     let report = run_nat_punch_probe_v0(
         &socket,
-        &target_addr,
+        &punch_target_observed_endpoint,
         &source_peer_id,
         &target_peer_id,
         advertised_endpoint,
         punch_nonce,
         bind_addr_effective,
         relay_fallback_enabled,
+        relay_fallback_endpoint,
     )?;
     write_json_report(&report_path, &report)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -2909,6 +2940,8 @@ fn run_observed_endpoint_probe_v0(
 
 fn run_nat_punch_local_case_v0(
     case_name: &str,
+    source_peer_id: &str,
+    observer_peer_id: &str,
     ack_nonce_override: Option<String>,
     relay_fallback_enabled: bool,
 ) -> Result<serde_json::Value> {
@@ -2931,8 +2964,8 @@ fn run_nat_punch_local_case_v0(
 
     let payload = NatPunchProbePayloadV0 {
         punch_nonce: punch_nonce.clone(),
-        source_peer_id: "node-a".to_string(),
-        target_peer_id: "node-b".to_string(),
+        source_peer_id: source_peer_id.to_string(),
+        target_peer_id: observer_peer_id.to_string(),
         advertised_endpoint: advertised_endpoint.clone(),
         target_observed_endpoint: observer_addr.to_string(),
         expires_at_ms: now_unix_ms().saturating_add(60_000),
@@ -2968,7 +3001,7 @@ fn run_nat_punch_local_case_v0(
         punch_nonce: ack_nonce,
         source_peer_id: observer_probe_payload.source_peer_id.clone(),
         target_peer_id: observer_probe_payload.target_peer_id.clone(),
-        observer_peer_id: "node-b".to_string(),
+        observer_peer_id: observer_peer_id.to_string(),
         observed_endpoint: observed_source_addr.to_string(),
         observed_at_ms,
     };
@@ -2997,6 +3030,8 @@ fn run_nat_punch_local_case_v0(
         .context("decode local nat punch ack payload")?;
     let punch_ack_valid = ack_frame.kind == NovoRudpTransportFrameKindV0::Ack
         && decoded_ack.punch_nonce == punch_nonce;
+    let nat_mapping_changed =
+        advertised_endpoint.as_deref() != Some(decoded_ack.observed_endpoint.as_str());
     let punch_reject_reason = if punch_ack_valid {
         None
     } else {
@@ -3017,11 +3052,13 @@ fn run_nat_punch_local_case_v0(
         "scope": "nat_punch_local_case_v0",
         "boundary": network_boundary_json(),
         "payload_treated_opaque": true,
-        "local_peer_id": "node-a",
-        "target_peer_id": "node-b",
+        "nat_traversal_enabled": true,
+        "local_peer_id": source_peer_id,
+        "target_peer_id": observer_peer_id,
         "local_bind_endpoint": prober_addr.to_string(),
+        "observer_bind_endpoint": observer_addr.to_string(),
         "advertised_endpoint": advertised_endpoint,
-        "punch_target_peer_id": "node-b",
+        "punch_target_peer_id": observer_peer_id,
         "punch_target_observed_endpoint": observer_addr.to_string(),
         "punch_attempt_sent": true,
         "punch_nonce": punch_nonce,
@@ -3035,6 +3072,8 @@ fn run_nat_punch_local_case_v0(
         "observed_endpoint": decoded_ack.observed_endpoint,
         "observed_by_peer_id": decoded_ack.observer_peer_id,
         "ack_source_endpoint": ack_source_addr.to_string(),
+        "nat_mapping_changed": nat_mapping_changed,
+        "nat_mapping_stable": !nat_mapping_changed,
         "probe_rtt_ms": start.elapsed().as_millis() as u64,
         "sent_bytes": sent_bytes,
         "observer_received_bytes": observer_received_bytes,
@@ -3054,6 +3093,7 @@ fn run_nat_punch_local_fallback_case_v0(case_name: &str) -> Result<serde_json::V
         "scope": "nat_punch_local_fallback_case_v0",
         "boundary": network_boundary_json(),
         "payload_treated_opaque": true,
+        "nat_traversal_enabled": true,
         "local_peer_id": "node-a",
         "target_peer_id": "node-b",
         "local_bind_endpoint": prober_addr.to_string(),
@@ -3065,6 +3105,7 @@ fn run_nat_punch_local_fallback_case_v0(case_name: &str) -> Result<serde_json::V
         "punch_reject_reason": "punch_ack_timeout_or_recv_failed",
         "punch_result": "failed",
         "relay_fallback_selected": true,
+        "relay_fallback_endpoint": serde_json::Value::Null,
         "fallback_reason": "NatPunchFailed",
         "selected_path_after_punch": "RelayNovoRudp",
     }))
@@ -3072,23 +3113,24 @@ fn run_nat_punch_local_fallback_case_v0(case_name: &str) -> Result<serde_json::V
 
 fn run_nat_punch_probe_v0(
     socket: &UdpSocket,
-    target_addr: &str,
+    punch_target_observed_endpoint: &str,
     source_peer_id: &str,
     target_peer_id: &str,
     advertised_endpoint: Option<String>,
     punch_nonce: String,
     bind_addr_effective: SocketAddr,
     relay_fallback_enabled: bool,
+    relay_fallback_endpoint: Option<String>,
 ) -> Result<serde_json::Value> {
     let payload = NatPunchProbePayloadV0 {
         punch_nonce: punch_nonce.clone(),
         source_peer_id: source_peer_id.to_string(),
         target_peer_id: target_peer_id.to_string(),
         advertised_endpoint: advertised_endpoint.clone(),
-        target_observed_endpoint: target_addr.to_string(),
+        target_observed_endpoint: punch_target_observed_endpoint.to_string(),
         expires_at_ms: now_unix_ms().saturating_add(60_000),
     };
-    let probe = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+    let punch = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
         NovoRudpTransportFrameKindV0::Endpoint,
         [27u8; 16],
         270,
@@ -3097,26 +3139,38 @@ fn run_nat_punch_probe_v0(
         273,
         serde_json::to_vec(&payload)?,
     );
-    let encoded_probe = probe.encode();
+    let encoded_punch = punch.encode();
     let start = Instant::now();
     let sent_bytes = socket
-        .send_to(&encoded_probe, target_addr)
-        .with_context(|| format!("send nat punch probe to {target_addr}"))?;
+        .send_to(&encoded_punch, punch_target_observed_endpoint)
+        .with_context(|| format!("send nat punch to {punch_target_observed_endpoint}"))?;
     let mut buf = vec![0u8; 65535];
     let mut report = json!({
         "accepted": false,
         "scope": "nat_punch_prober_v0",
         "boundary": network_boundary_json(),
         "payload_treated_opaque": true,
+        "nat_traversal_enabled": true,
         "local_peer_id": source_peer_id,
         "target_peer_id": target_peer_id,
         "local_bind_endpoint": bind_addr_effective.to_string(),
         "advertised_endpoint": advertised_endpoint,
-        "punch_target_peer_id": target_peer_id,
-        "punch_target_observed_endpoint": target_addr,
+        "observed_endpoint": serde_json::Value::Null,
+        "observed_by_peer_id": serde_json::Value::Null,
+        "nat_mapping_changed": serde_json::Value::Null,
+        "nat_mapping_stable": serde_json::Value::Null,
         "punch_nonce": punch_nonce,
+        "punch_target_peer_id": target_peer_id,
+        "punch_target_observed_endpoint": punch_target_observed_endpoint,
         "punch_attempt_sent": true,
         "sent_bytes": sent_bytes,
+        "punch_ack_valid": false,
+        "punch_result": "pending",
+        "punch_reject_reason": serde_json::Value::Null,
+        "relay_fallback_endpoint": relay_fallback_endpoint,
+        "relay_fallback_selected": false,
+        "fallback_reason": serde_json::Value::Null,
+        "selected_path_after_punch": serde_json::Value::Null,
         "relay_fallback_enabled": relay_fallback_enabled,
     });
 
@@ -3134,12 +3188,16 @@ fn run_nat_punch_probe_v0(
                                 .unwrap_or_default()
                                 .to_string();
                             let punch_ack_valid = ack_payload.punch_nonce == expected_nonce;
-                            report["punch_ack_valid"] = json!(punch_ack_valid);
-                            report["ack_nonce"] = json!(ack_payload.punch_nonce);
+                            let mapping_changed = report["advertised_endpoint"].as_str()
+                                != Some(ack_payload.observed_endpoint.as_str());
                             report["observed_endpoint"] = json!(ack_payload.observed_endpoint);
                             report["observed_by_peer_id"] = json!(ack_payload.observer_peer_id);
                             report["observed_at_ms"] = json!(ack_payload.observed_at_ms);
                             report["ack_source_endpoint"] = json!(ack_source_addr.to_string());
+                            report["nat_mapping_changed"] = json!(mapping_changed);
+                            report["nat_mapping_stable"] = json!(!mapping_changed);
+                            report["ack_nonce"] = json!(ack_payload.punch_nonce);
+                            report["punch_ack_valid"] = json!(punch_ack_valid);
                             report["punch_rtt_ms"] = json!(elapsed_ms);
                             report["received_bytes"] = json!(received_bytes);
                             if punch_ack_valid {
@@ -3150,44 +3208,44 @@ fn run_nat_punch_probe_v0(
                                 report["fallback_reason"] = serde_json::Value::Null;
                                 report["punch_reject_reason"] = serde_json::Value::Null;
                             } else {
-                                apply_nat_punch_failure_fallback(
+                                apply_nat_punch_fallback_v0(
                                     &mut report,
                                     relay_fallback_enabled,
-                                    "punch_nonce_mismatch",
+                                    "punch_nonce_mismatch".to_string(),
                                 );
                             }
                         }
                         Err(error) => {
-                            apply_nat_punch_failure_fallback(
+                            apply_nat_punch_fallback_v0(
                                 &mut report,
                                 relay_fallback_enabled,
-                                &format!("decode_punch_ack_payload_failed:{error}"),
+                                format!("decode_punch_ack_payload_failed:{error}"),
                             );
                         }
                     }
                 }
                 Ok(frame) => {
-                    apply_nat_punch_failure_fallback(
+                    apply_nat_punch_fallback_v0(
                         &mut report,
                         relay_fallback_enabled,
-                        &format!("unexpected_punch_ack_frame_kind:{:?}", frame.kind),
+                        format!("unexpected_punch_ack_frame_kind:{:?}", frame.kind),
                     );
                 }
                 Err(error) => {
-                    apply_nat_punch_failure_fallback(
+                    apply_nat_punch_fallback_v0(
                         &mut report,
                         relay_fallback_enabled,
-                        &format!("decode_punch_ack_failed:{error}"),
+                        format!("decode_punch_ack_failed:{error}"),
                     );
                 }
             }
         }
         Err(error) => {
             report["punch_rtt_ms"] = json!(start.elapsed().as_millis() as u64);
-            apply_nat_punch_failure_fallback(
+            apply_nat_punch_fallback_v0(
                 &mut report,
                 relay_fallback_enabled,
-                &format!("punch_ack_timeout_or_recv_failed:{error}"),
+                format!("punch_ack_timeout_or_recv_failed:{error}"),
             );
         }
     }
@@ -3195,14 +3253,14 @@ fn run_nat_punch_probe_v0(
     Ok(report)
 }
 
-fn apply_nat_punch_failure_fallback(
+fn apply_nat_punch_fallback_v0(
     report: &mut serde_json::Value,
     relay_fallback_enabled: bool,
-    reject_reason: &str,
+    reason: String,
 ) {
     report["punch_ack_valid"] = json!(false);
-    report["punch_reject_reason"] = json!(reject_reason);
     report["punch_result"] = json!("failed");
+    report["punch_reject_reason"] = json!(reason);
     report["relay_fallback_selected"] = json!(relay_fallback_enabled);
     if relay_fallback_enabled {
         report["accepted"] = json!(true);
