@@ -3018,7 +3018,7 @@ Status:
 
 ```text
 LOCAL / ROLE VALIDATION PASS
-REAL FOUR-MACHINE OBSERVED ENDPOINT SMOKE PENDING
+REAL FOUR-MACHINE OBSERVED ENDPOINT SMOKE PASS
 ```
 
 Implemented in:
@@ -3115,6 +3115,67 @@ observed_endpoint=127.0.0.1:<prober-port>
 ack_source_endpoint=127.0.0.1:41120
 ```
 
+Real four-machine observed endpoint smoke:
+
+```text
+Topology:
+  A  = 192.168.1.246
+  B  = 192.168.1.245:41020
+  R1 = 192.168.1.178:41030
+  R2 = 192.168.1.11:41040
+
+A->B observed endpoint:
+  accepted=true
+  probe_ack_valid=true
+  probe_nonce=a-to-b-cut24-001
+  ack_nonce=a-to-b-cut24-001
+  observed_by_peer_id=node-b
+  ack_source_endpoint=192.168.1.245:41020
+  observed_endpoint=192.168.1.246:58693
+  reachability_probe_result=reachable
+
+R1->B observed endpoint:
+  accepted=true
+  probe_ack_valid=true
+  probe_nonce=r1-to-b-cut24-001
+  ack_nonce=r1-to-b-cut24-001
+  observed_by_peer_id=node-b
+  ack_source_endpoint=192.168.1.245:41020
+  observed_endpoint=192.168.1.178:65108
+  reachability_probe_result=reachable
+
+R2->B observed endpoint:
+  accepted=true
+  probe_ack_valid=true
+  probe_nonce=r2-to-b-cut24-001
+  ack_nonce=r2-to-b-cut24-001
+  observed_by_peer_id=node-b
+  ack_source_endpoint=192.168.1.245:41020
+  observed_endpoint=192.168.1.11:65525
+  reachability_probe_result=reachable
+
+stale nonce rejection:
+  accepted=false
+  probe_ack_valid=false
+  probe_nonce=a-to-b-cut24-stale-001
+  ack_nonce=wrong-a-to-b-cut24-001
+  probe_reject_reason=probe_nonce_mismatch
+  reachability_probe_result=rejected
+  observed_endpoint=192.168.1.246:38857
+  ack_source_endpoint=192.168.1.245:41020
+```
+
+Observed smoke result:
+
+```text
+A->B observed endpoint      = PASS
+R1->B observed endpoint     = PASS
+R2->B observed endpoint     = PASS
+stale nonce rejection       = PASS
+
+Cut 24 real four-machine observed endpoint smoke = PASS
+```
+
 Validation commands:
 
 ```text
@@ -3154,12 +3215,6 @@ punch orchestration, endpoint stability windows, or public observer quorum.
 Next frontier:
 
 ```text
-Cut 24 real four-machine observed endpoint smoke:
-  A observed by B
-  B ack source observed by A
-  R1/R2 observed endpoint records
-  stale nonce rejection
-
 Cut 25:
   NAT Traversal Probe + UDP Hole Punch v0
 ```
