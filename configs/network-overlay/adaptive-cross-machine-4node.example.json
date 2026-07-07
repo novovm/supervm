@@ -9,7 +9,7 @@
       "node_id": "node-a",
       "machine_label": "A",
       "bind_addr": "0.0.0.0:0",
-      "endpoint": "192.168.71.118:0",
+      "endpoint": "192.168.1.246:0",
       "relay_enabled": false,
       "queue_enabled": true
     },
@@ -17,7 +17,7 @@
       "node_id": "node-b",
       "machine_label": "B",
       "bind_addr": "0.0.0.0:41020",
-      "endpoint": "192.168.71.56:41020",
+      "endpoint": "192.168.1.245:41020",
       "relay_enabled": false,
       "queue_enabled": true
     },
@@ -25,7 +25,7 @@
       "node_id": "relay-1",
       "machine_label": "R1",
       "bind_addr": "0.0.0.0:41030",
-      "endpoint": "192.168.71.9:41030",
+      "endpoint": "192.168.1.178:41030",
       "relay_enabled": true,
       "queue_enabled": true
     },
@@ -33,7 +33,7 @@
       "node_id": "relay-2",
       "machine_label": "R2",
       "bind_addr": "0.0.0.0:41040",
-      "endpoint": "192.168.71.54:41040",
+      "endpoint": "192.168.1.11:41040",
       "relay_enabled": true,
       "queue_enabled": true
     }
