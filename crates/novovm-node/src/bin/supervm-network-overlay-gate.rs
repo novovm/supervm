@@ -77,6 +77,9 @@ fn main() -> Result<()> {
         "apfl-advisory-strategy-interface-matrix" => {
             run_apfl_advisory_strategy_interface_matrix_gate()
         }
+        "strategy-decision-replay-receipt-matrix" => {
+            run_strategy_decision_replay_receipt_matrix_gate()
+        }
         "decentralized-bootstrap-constraint-matrix" => {
             run_decentralized_bootstrap_constraint_matrix_gate()
         }
@@ -1489,6 +1492,106 @@ fn run_apfl_advisory_strategy_interface_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("apfl advisory strategy interface matrix failed")
+    }
+}
+
+fn run_strategy_decision_replay_receipt_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/strategy-decision-replay-receipt-matrix-cut44.json".into()
+    });
+    let now_ms = 10_000u64;
+    let advisory_key = SigningKey::from_bytes(&[71u8; 32]);
+    let valid_advisory = sign_apfl_advisory_v0(
+        &advisory_key,
+        "apfl-receipt-valid-001",
+        json!({
+            "schema_version": 1,
+            "confidence": 88,
+            "prefer_transport": "quic",
+            "batch_size_hint": 2,
+            "keepalive_interval_ms_hint": 12_000,
+            "privacy_budget_hint": "minimize_peer_disclosure"
+        }),
+        9_000,
+        20_000,
+    )?;
+    let force_direct_advisory = sign_apfl_advisory_v0(
+        &advisory_key,
+        "apfl-receipt-force-direct-001",
+        json!({
+            "schema_version": 1,
+            "confidence": 99,
+            "prefer_transport": "native_encrypted_novorudp",
+            "force_direct": true
+        }),
+        9_000,
+        20_000,
+    )?;
+
+    let relay_input = strategy_receipt_input_v0(
+        "receipt-relay-with-valid-advisory",
+        false,
+        true,
+        true,
+        false,
+        Some(valid_advisory),
+    );
+    let override_input = strategy_receipt_input_v0(
+        "receipt-hard-policy-override-rejected",
+        false,
+        true,
+        true,
+        false,
+        Some(force_direct_advisory),
+    );
+    let queue_input = strategy_receipt_input_v0(
+        "receipt-no-path-queue-fallback",
+        false,
+        true,
+        false,
+        true,
+        None,
+    );
+
+    let cases = vec![
+        evaluate_strategy_receipt_case_v0("relay_decision_receipt_replays", relay_input, now_ms),
+        evaluate_strategy_receipt_case_v0(
+            "hard_policy_override_receipt_replays_rejection",
+            override_input,
+            now_ms,
+        ),
+        evaluate_strategy_receipt_case_v0("queue_fallback_receipt_replays", queue_input, now_ms),
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "strategy_decision_replay_receipt_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 44: Strategy Decision Replay Receipt v0",
+        "receipt_required": true,
+        "receipt_replay_required": true,
+        "apfl_advisory_is_binding": false,
+        "hard_policy_precedence": true,
+        "cases": cases,
+        "network_only": true,
+        "apfl_model_called": false,
+        "apfl_interpreted": false,
+        "aoem_called": false,
+        "opcode114_called": false,
+        "ledger_semantics": false,
+        "novorudp_wire_changed": false,
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("strategy decision replay receipt matrix failed")
     }
 }
 
@@ -5643,6 +5746,19 @@ struct ApflAdvisoryValidationV0 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct StrategyReceiptInputV0 {
+    case_id: String,
+    observed_endpoint: Option<String>,
+    nat_restricted: bool,
+    relay_available: bool,
+    all_paths_unreachable: bool,
+    relay_candidates: Vec<RelayCandidateV0>,
+    transport_candidates: Vec<TransportCandidateV0>,
+    bootstrap_source: String,
+    apfl_advisory: Option<SignedApflAdvisoryV0>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PeerSignedRelayEndpointRecordV0 {
     record_version: u32,
     relay_peer_id: String,
@@ -8459,6 +8575,224 @@ fn verify_apfl_advisory_signature_v0(advisory: &SignedApflAdvisoryV0) -> bool {
         return false;
     };
     verifying_key.verify(&canonical_bytes, &signature).is_ok()
+}
+
+fn strategy_receipt_input_v0(
+    case_id: &str,
+    direct_reachable: bool,
+    nat_restricted: bool,
+    relay_available: bool,
+    all_paths_unreachable: bool,
+    apfl_advisory: Option<SignedApflAdvisoryV0>,
+) -> StrategyReceiptInputV0 {
+    let relay_candidates = if relay_available {
+        vec![
+            relay_candidate_v0(
+                "relay-a",
+                "wss://relay-a.example.net:443/novovm",
+                "wss",
+                443,
+                10,
+                true,
+                true,
+                0,
+                0,
+            ),
+            relay_candidate_v0(
+                "relay-b-cooldown",
+                "quic://relay-b.example.net:443",
+                "quic",
+                443,
+                20,
+                true,
+                false,
+                2,
+                70_000,
+            ),
+        ]
+    } else {
+        Vec::new()
+    };
+    let transport_candidates = if direct_reachable {
+        vec![transport_candidate_v0(
+            "native-direct",
+            "novorudp://direct/observed",
+            "native_encrypted_novorudp",
+            0,
+            true,
+            false,
+            false,
+            "direct_native_path",
+        )]
+    } else if relay_available {
+        vec![
+            transport_candidate_v0(
+                "native-relay",
+                "novorudp://relay-a.example.net/dynamic",
+                "native_encrypted_novorudp",
+                0,
+                false,
+                true,
+                false,
+                "native_relay_candidate",
+            ),
+            transport_candidate_v0(
+                "wss-443",
+                "wss://relay-a.example.net:443/novovm",
+                "wss",
+                443,
+                true,
+                false,
+                true,
+                "compatibility_transport",
+            ),
+        ]
+    } else {
+        Vec::new()
+    };
+    StrategyReceiptInputV0 {
+        case_id: case_id.to_string(),
+        observed_endpoint: direct_reachable.then_some("203.0.113.10:41020".into()),
+        nat_restricted,
+        relay_available,
+        all_paths_unreachable,
+        relay_candidates,
+        transport_candidates,
+        bootstrap_source: "signed_manifest_cache_then_blinded_directory".into(),
+        apfl_advisory,
+    }
+}
+
+fn evaluate_strategy_receipt_case_v0(
+    case_name: &str,
+    input: StrategyReceiptInputV0,
+    now_ms: u64,
+) -> serde_json::Value {
+    let receipt = build_strategy_receipt_v0(&input, now_ms);
+    let replayed_receipt = build_strategy_receipt_v0(&input, now_ms);
+    let strategy_replay_pass = receipt["strategy_decision_hash"]
+        == replayed_receipt["strategy_decision_hash"]
+        && receipt["strategy_input_hash"] == replayed_receipt["strategy_input_hash"]
+        && receipt["selected_path"] == replayed_receipt["selected_path"];
+    let accepted = match case_name {
+        "relay_decision_receipt_replays" => {
+            strategy_replay_pass
+                && receipt["strategy_receipt_emitted"] == json!(true)
+                && receipt["selected_path"] == json!("RelayNovoRudp")
+                && receipt["apfl_advisory_applied"] == json!(true)
+        }
+        "hard_policy_override_receipt_replays_rejection" => {
+            strategy_replay_pass
+                && receipt["hard_policy_override_attempted"] == json!(true)
+                && receipt["hard_policy_override_rejected"] == json!(true)
+                && receipt["apfl_advisory_applied"] == json!(false)
+        }
+        "queue_fallback_receipt_replays" => {
+            strategy_replay_pass
+                && receipt["selected_path"] == json!("QueueFallback")
+                && receipt["fallback_reason"] == json!("NoReachablePath")
+        }
+        _ => false,
+    };
+
+    json!({
+        "case": case_name,
+        "accepted": accepted,
+        "strategy_replay_pass": strategy_replay_pass,
+        "receipt": receipt,
+        "replayed_strategy_decision_hash": replayed_receipt["strategy_decision_hash"].clone(),
+    })
+}
+
+fn build_strategy_receipt_v0(input: &StrategyReceiptInputV0, now_ms: u64) -> serde_json::Value {
+    let strategy_input_hash =
+        overlay_gate_sha256_hex_v0(&[&serde_json::to_vec(input).unwrap_or_default()]);
+    let apfl_advisory_hash = input.apfl_advisory.as_ref().map(|advisory| {
+        overlay_gate_sha256_hex_v0(&[&serde_json::to_vec(advisory).unwrap_or_default()])
+    });
+    let advisory_validation = input
+        .apfl_advisory
+        .as_ref()
+        .map(|advisory| validate_apfl_advisory_v0(advisory, now_ms, &[]));
+    let apfl_advisory_applied = advisory_validation
+        .as_ref()
+        .map(|validation| validation.applied)
+        .unwrap_or(false);
+    let hard_policy_override_attempted = advisory_validation
+        .as_ref()
+        .map(|validation| validation.hard_policy_override_attempted)
+        .unwrap_or(false);
+    let hard_policy_override_rejected = advisory_validation
+        .as_ref()
+        .map(|validation| validation.hard_policy_override_rejected)
+        .unwrap_or(false);
+
+    let selected_transport = select_transport_candidate_v0(&input.transport_candidates).cloned();
+    let selected_relay = select_relay_candidate_index_v0(&input.relay_candidates, now_ms)
+        .map(|index| input.relay_candidates[index].clone());
+    let selected_path = if input.all_paths_unreachable {
+        "QueueFallback"
+    } else if input.observed_endpoint.is_some()
+        && selected_transport
+            .as_ref()
+            .map(|candidate| candidate.transport.as_str())
+            == Some("native_encrypted_novorudp")
+    {
+        "DirectNovoRudp"
+    } else if input.relay_available && selected_relay.is_some() {
+        "RelayNovoRudp"
+    } else {
+        "QueueFallback"
+    };
+    let fallback_reason = if selected_path == "QueueFallback" {
+        if input.all_paths_unreachable {
+            json!("NoReachablePath")
+        } else {
+            json!("NoReachableRelayCandidate")
+        }
+    } else {
+        serde_json::Value::Null
+    };
+    let selection_reason = match selected_path {
+        "DirectNovoRudp" => "ObservedEndpointNativeDirectSelected",
+        "RelayNovoRudp" if apfl_advisory_applied => "RelaySelectedWithApflScoringHint",
+        "RelayNovoRudp" => "RelaySelectedByHardPolicy",
+        _ => "QueueFallbackSelected",
+    };
+    let rejected_candidates = relay_candidate_reject_reasons_v0(&input.relay_candidates, now_ms);
+    let decision = json!({
+        "selected_path": selected_path,
+        "selection_reason": selection_reason,
+        "selected_transport": selected_transport.as_ref().map(|candidate| candidate.transport.clone()),
+        "selected_relay_peer_id": selected_relay.as_ref().map(|relay| relay.relay_peer_id.clone()),
+        "fallback_reason": fallback_reason,
+        "rejected_candidate_count": rejected_candidates.len(),
+        "apfl_advisory_applied": apfl_advisory_applied,
+        "hard_policy_override_attempted": hard_policy_override_attempted,
+        "hard_policy_override_rejected": hard_policy_override_rejected,
+    });
+    let strategy_decision_hash =
+        overlay_gate_sha256_hex_v0(&[&serde_json::to_vec(&decision).unwrap_or_default()]);
+
+    json!({
+        "strategy_receipt_emitted": true,
+        "strategy_input_hash": strategy_input_hash,
+        "strategy_decision_hash": strategy_decision_hash,
+        "apfl_advisory_hash": apfl_advisory_hash,
+        "apfl_advisory_applied": apfl_advisory_applied,
+        "hard_policy_override_attempted": hard_policy_override_attempted,
+        "hard_policy_override_rejected": hard_policy_override_rejected,
+        "selected_path": selected_path,
+        "selection_reason": selection_reason,
+        "selected_transport": selected_transport.as_ref().map(|candidate| candidate.transport.clone()),
+        "selected_relay_peer_id": selected_relay.as_ref().map(|relay| relay.relay_peer_id.clone()),
+        "rejected_candidate_count": rejected_candidates.len(),
+        "rejected_candidates": rejected_candidates,
+        "fallback_reason": decision["fallback_reason"].clone(),
+        "payload_treated_opaque": true,
+        "novorudp_wire_changed": false,
+        "decision": decision,
+    })
 }
 
 fn evaluate_relay_selection_case_v0(
