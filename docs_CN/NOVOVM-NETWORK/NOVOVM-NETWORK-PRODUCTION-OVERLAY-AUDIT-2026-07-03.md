@@ -3964,6 +3964,132 @@ novorudp_wire_changed=false
 real_federated_relay_smoke=false
 ```
 
+Next frontier:
+
+```text
+Cut 31:
+  Multi-relay Candidate Selection / Rotation v0
+```
+
+## Cut 31: Multi-relay Candidate Selection / Rotation v0
+
+Status:
+
+```text
+LOCAL MULTI-RELAY CANDIDATE ROTATION MATRIX PASS
+REAL MULTI-RELAY FEDERATED SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Prove the client does not depend on a single relay.
+The node selects from multiple peer-signed relay candidates, skips invalid
+or cooled-down relays, rotates on send failure, and falls back to queue when
+no reachable relay exists.
+```
+
+New gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=multi-relay-candidate-rotation-matrix
+```
+
+Relay candidate fields:
+
+```text
+relay_peer_id
+endpoint
+transport
+port
+priority
+last_seen_ms
+last_success_ms
+failure_count
+cooldown_until_ms
+observed_reachable
+supports_wss_443
+supports_quic_443
+supports_udp
+record_signature_valid
+```
+
+Selection policy:
+
+```text
+require_record_signature_valid=true
+skip_cooldown_relays=true
+skip_unreachable_relays=true
+prefer_wss_443_over_udp_fixed_port=true
+rotate_on_send_failure=true
+all_relays_failed_fallback=QueueFallback
+relay_is_trusted_authority=false
+centralized_control_plane_required=false
+single_official_relay_required=false
+peer_identity_source=novovm_key
+routing_subject=target_peer_id
+```
+
+Local rotation matrix:
+
+```text
+case 1: single healthy relay
+  selected_relay_peer_id=relay-a
+  selected_path_after_relay_selection=RelayNovoRudp
+
+case 2: primary relay cooldown
+  relay-a skipped
+  selected_relay_peer_id=relay-b
+
+case 3: primary relay send failure
+  relay-a failure_count increments
+  relay-a enters cooldown
+  relay-b selected
+
+case 4: invalid relay signature
+  relay-invalid rejected
+  reject_reason=relay_record_signature_invalid
+  relay-b selected
+
+case 5: all relays unavailable
+  selected_path_after_relay_selection=QueueFallback
+  fallback_reason=NoReachableRelayCandidate
+
+case 6: transport priority
+  wss://relay:443 preferred over udp://relay:41030
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=multi-relay-candidate-rotation-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/multi-relay-candidate-rotation-matrix-cut31.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+opcode114_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+relay_is_trusted_authority=false
+real_multi_relay_federated_smoke=false
+```
+
 ## Product Readout
 
 Current product status:

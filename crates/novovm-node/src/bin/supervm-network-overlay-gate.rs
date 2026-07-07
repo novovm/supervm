@@ -60,6 +60,7 @@ fn main() -> Result<()> {
         "decentralized-bootstrap-constraint-matrix" => {
             run_decentralized_bootstrap_constraint_matrix_gate()
         }
+        "multi-relay-candidate-rotation-matrix" => run_multi_relay_candidate_rotation_matrix_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -665,6 +666,221 @@ fn run_decentralized_bootstrap_constraint_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("decentralized bootstrap constraint matrix failed")
+    }
+}
+
+fn run_multi_relay_candidate_rotation_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/multi-relay-candidate-rotation-matrix.json".into()
+    });
+    let now_ms = 10_000u64;
+
+    let single_healthy = evaluate_relay_selection_case_v0(
+        "single_healthy_relay",
+        vec![relay_candidate_v0(
+            "relay-a",
+            "wss://relay-a.example.com:443/novovm",
+            "wss",
+            443,
+            10,
+            true,
+            true,
+            0,
+            0,
+        )],
+        now_ms,
+        false,
+    );
+
+    let primary_cooldown = evaluate_relay_selection_case_v0(
+        "primary_relay_cooldown",
+        vec![
+            relay_candidate_v0(
+                "relay-a",
+                "wss://relay-a.example.com:443/novovm",
+                "wss",
+                443,
+                10,
+                true,
+                true,
+                1,
+                now_ms + 60_000,
+            ),
+            relay_candidate_v0(
+                "relay-b",
+                "wss://relay-b.example.com:443/novovm",
+                "wss",
+                443,
+                20,
+                true,
+                true,
+                0,
+                0,
+            ),
+        ],
+        now_ms,
+        false,
+    );
+
+    let primary_failure_rotation = evaluate_relay_selection_case_v0(
+        "primary_relay_send_failure_rotates",
+        vec![
+            relay_candidate_v0(
+                "relay-a",
+                "wss://relay-a.example.com:443/novovm",
+                "wss",
+                443,
+                10,
+                true,
+                true,
+                0,
+                0,
+            ),
+            relay_candidate_v0(
+                "relay-b",
+                "wss://relay-b.example.com:443/novovm",
+                "wss",
+                443,
+                20,
+                true,
+                true,
+                0,
+                0,
+            ),
+        ],
+        now_ms,
+        true,
+    );
+
+    let invalid_signature = evaluate_relay_selection_case_v0(
+        "invalid_relay_signature_rejected",
+        vec![
+            relay_candidate_v0(
+                "relay-invalid",
+                "wss://relay-invalid.example.com:443/novovm",
+                "wss",
+                443,
+                5,
+                false,
+                true,
+                0,
+                0,
+            ),
+            relay_candidate_v0(
+                "relay-b",
+                "wss://relay-b.example.com:443/novovm",
+                "wss",
+                443,
+                20,
+                true,
+                true,
+                0,
+                0,
+            ),
+        ],
+        now_ms,
+        false,
+    );
+
+    let all_unavailable = evaluate_relay_selection_case_v0(
+        "all_relays_unavailable_queue_fallback",
+        vec![
+            relay_candidate_v0(
+                "relay-a",
+                "wss://relay-a.example.com:443/novovm",
+                "wss",
+                443,
+                10,
+                true,
+                false,
+                3,
+                now_ms + 60_000,
+            ),
+            relay_candidate_v0(
+                "relay-b",
+                "udp://relay-b.example.com:41030",
+                "udp",
+                41030,
+                20,
+                true,
+                false,
+                2,
+                0,
+            ),
+        ],
+        now_ms,
+        false,
+    );
+
+    let transport_priority = evaluate_relay_selection_case_v0(
+        "transport_priority_prefers_wss_443",
+        vec![
+            relay_candidate_v0(
+                "relay-udp",
+                "udp://relay-udp.example.com:41030",
+                "udp",
+                41030,
+                10,
+                true,
+                true,
+                0,
+                0,
+            ),
+            relay_candidate_v0(
+                "relay-wss",
+                "wss://relay-wss.example.com:443/novovm",
+                "wss",
+                443,
+                10,
+                true,
+                true,
+                0,
+                0,
+            ),
+        ],
+        now_ms,
+        false,
+    );
+
+    let cases = vec![
+        single_healthy,
+        primary_cooldown,
+        primary_failure_rotation,
+        invalid_signature,
+        all_unavailable,
+        transport_priority,
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "multi_relay_candidate_rotation_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "relay_is_trusted_authority": false,
+        "centralized_control_plane_required": false,
+        "single_official_relay_required": false,
+        "peer_identity_source": "novovm_key",
+        "routing_subject": "target_peer_id",
+        "relay_record_source": "peer_signed_relay_candidate_records",
+        "selection_policy": {
+            "require_record_signature_valid": true,
+            "skip_cooldown_relays": true,
+            "skip_unreachable_relays": true,
+            "prefer_wss_443_over_udp_fixed_port": true,
+            "rotate_on_send_failure": true,
+            "all_relays_failed_fallback": "QueueFallback"
+        },
+        "cases": cases,
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("multi relay candidate rotation matrix failed")
     }
 }
 
@@ -3390,6 +3606,24 @@ struct OverlayGateRelayEnvelopeV0 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct RelayCandidateV0 {
+    relay_peer_id: String,
+    endpoint: String,
+    transport: String,
+    port: u16,
+    priority: u32,
+    last_seen_ms: u64,
+    last_success_ms: Option<u64>,
+    failure_count: u32,
+    cooldown_until_ms: u64,
+    observed_reachable: bool,
+    supports_wss_443: bool,
+    supports_quic_443: bool,
+    supports_udp: bool,
+    record_signature_valid: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PublicRelayRegisterPayloadV0 {
     peer_id: String,
     advertised_endpoint: Option<String>,
@@ -4176,6 +4410,217 @@ fn run_public_relay_bootstrap_local_case_v0(
         },
         "elapsed_ms": start.elapsed().as_millis() as u64,
     }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn relay_candidate_v0(
+    relay_peer_id: &str,
+    endpoint: &str,
+    transport: &str,
+    port: u16,
+    priority: u32,
+    record_signature_valid: bool,
+    observed_reachable: bool,
+    failure_count: u32,
+    cooldown_until_ms: u64,
+) -> RelayCandidateV0 {
+    RelayCandidateV0 {
+        relay_peer_id: relay_peer_id.to_string(),
+        endpoint: endpoint.to_string(),
+        transport: transport.to_string(),
+        port,
+        priority,
+        last_seen_ms: 9_000,
+        last_success_ms: observed_reachable.then_some(9_500),
+        failure_count,
+        cooldown_until_ms,
+        observed_reachable,
+        supports_wss_443: transport == "wss" && port == 443,
+        supports_quic_443: transport == "quic" && port == 443,
+        supports_udp: transport == "udp",
+        record_signature_valid,
+    }
+}
+
+fn evaluate_relay_selection_case_v0(
+    case_name: &str,
+    mut candidates: Vec<RelayCandidateV0>,
+    now_ms: u64,
+    simulate_send_failure: bool,
+) -> serde_json::Value {
+    let relay_candidate_count = candidates.len();
+    let valid_relay_candidate_count = candidates
+        .iter()
+        .filter(|candidate| candidate.record_signature_valid)
+        .count();
+    let invalid_relay_candidate_count = relay_candidate_count - valid_relay_candidate_count;
+    let cooldown_relay_count = candidates
+        .iter()
+        .filter(|candidate| candidate.cooldown_until_ms > now_ms)
+        .count();
+    let first_selected = select_relay_candidate_index_v0(&candidates, now_ms);
+    let mut relay_rotation_attempted = false;
+    let mut relay_rotation_count = 0u64;
+    let mut failed_relay_peer_id = None;
+
+    let final_selected = if simulate_send_failure {
+        match first_selected {
+            Some(index) => {
+                relay_rotation_attempted = true;
+                relay_rotation_count = 1;
+                failed_relay_peer_id = Some(candidates[index].relay_peer_id.clone());
+                candidates[index].failure_count = candidates[index].failure_count.saturating_add(1);
+                candidates[index].cooldown_until_ms = now_ms.saturating_add(60_000);
+                select_relay_candidate_index_v0(&candidates, now_ms)
+            }
+            None => None,
+        }
+    } else {
+        first_selected
+    };
+
+    let selected = final_selected.map(|index| candidates[index].clone());
+    let selected_path_after_relay_selection = if selected.is_some() {
+        "RelayNovoRudp"
+    } else {
+        "QueueFallback"
+    };
+    let fallback_reason = if selected.is_some() {
+        serde_json::Value::Null
+    } else {
+        json!("NoReachableRelayCandidate")
+    };
+    let selection_reason = match (
+        &selected,
+        simulate_send_failure,
+        failed_relay_peer_id.as_ref(),
+    ) {
+        (Some(_), true, Some(_)) => "PrimaryRelayFailedRotatedToNextCandidate",
+        (Some(candidate), _, _) if candidate.transport == "wss" && candidate.port == 443 => {
+            "Wss443ReachableCandidateSelected"
+        }
+        (Some(_), _, _) => "ReachableCandidateSelected",
+        (None, _, _) => "NoReachableRelayCandidate",
+    };
+    let accepted = match case_name {
+        "single_healthy_relay" => {
+            selected
+                .as_ref()
+                .map(|candidate| candidate.relay_peer_id.as_str())
+                == Some("relay-a")
+                && selected_path_after_relay_selection == "RelayNovoRudp"
+        }
+        "primary_relay_cooldown" => {
+            selected
+                .as_ref()
+                .map(|candidate| candidate.relay_peer_id.as_str())
+                == Some("relay-b")
+                && cooldown_relay_count >= 1
+        }
+        "primary_relay_send_failure_rotates" => {
+            failed_relay_peer_id.as_deref() == Some("relay-a")
+                && selected
+                    .as_ref()
+                    .map(|candidate| candidate.relay_peer_id.as_str())
+                    == Some("relay-b")
+                && relay_rotation_attempted
+        }
+        "invalid_relay_signature_rejected" => {
+            invalid_relay_candidate_count == 1
+                && selected
+                    .as_ref()
+                    .map(|candidate| candidate.relay_peer_id.as_str())
+                    == Some("relay-b")
+        }
+        "all_relays_unavailable_queue_fallback" => {
+            selected.is_none() && selected_path_after_relay_selection == "QueueFallback"
+        }
+        "transport_priority_prefers_wss_443" => {
+            selected
+                .as_ref()
+                .map(|candidate| candidate.relay_peer_id.as_str())
+                == Some("relay-wss")
+        }
+        _ => selected.is_some(),
+    };
+
+    json!({
+        "case": case_name,
+        "accepted": accepted,
+        "relay_candidate_count": relay_candidate_count,
+        "valid_relay_candidate_count": valid_relay_candidate_count,
+        "invalid_relay_candidate_count": invalid_relay_candidate_count,
+        "cooldown_relay_count": cooldown_relay_count,
+        "selected_relay_peer_id": selected.as_ref().map(|candidate| candidate.relay_peer_id.clone()),
+        "selected_relay_endpoint": selected.as_ref().map(|candidate| candidate.endpoint.clone()),
+        "selected_transport": selected.as_ref().map(|candidate| candidate.transport.clone()),
+        "selection_reason": selection_reason,
+        "relay_rotation_attempted": relay_rotation_attempted,
+        "relay_rotation_count": relay_rotation_count,
+        "failed_relay_peer_id": failed_relay_peer_id,
+        "relay_record_signature_valid": selected
+            .as_ref()
+            .map(|candidate| candidate.record_signature_valid)
+            .unwrap_or(false),
+        "selected_path_after_relay_selection": selected_path_after_relay_selection,
+        "fallback_reason": fallback_reason,
+        "reject_reasons": relay_candidate_reject_reasons_v0(&candidates, now_ms),
+        "candidates": candidates,
+    })
+}
+
+fn select_relay_candidate_index_v0(candidates: &[RelayCandidateV0], now_ms: u64) -> Option<usize> {
+    candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| candidate.record_signature_valid)
+        .filter(|(_, candidate)| candidate.observed_reachable)
+        .filter(|(_, candidate)| candidate.cooldown_until_ms <= now_ms)
+        .min_by_key(|(_, candidate)| {
+            (
+                candidate.priority,
+                relay_transport_rank_v0(&candidate.transport, candidate.port),
+                std::cmp::Reverse(candidate.last_success_ms.unwrap_or(0)),
+                candidate.failure_count,
+            )
+        })
+        .map(|(index, _)| index)
+}
+
+fn relay_transport_rank_v0(transport: &str, port: u16) -> u8 {
+    match (transport, port) {
+        ("wss", 443) => 0,
+        ("quic", 443) => 1,
+        ("tls", 443) => 2,
+        ("ws", 80) => 3,
+        ("udp", _) => 4,
+        _ => 5,
+    }
+}
+
+fn relay_candidate_reject_reasons_v0(
+    candidates: &[RelayCandidateV0],
+    now_ms: u64,
+) -> Vec<serde_json::Value> {
+    candidates
+        .iter()
+        .filter_map(|candidate| {
+            let reason = if !candidate.record_signature_valid {
+                Some("relay_record_signature_invalid")
+            } else if candidate.cooldown_until_ms > now_ms {
+                Some("relay_in_cooldown")
+            } else if !candidate.observed_reachable {
+                Some("relay_not_observed_reachable")
+            } else {
+                None
+            }?;
+            Some(json!({
+                "relay_peer_id": candidate.relay_peer_id,
+                "endpoint": candidate.endpoint,
+                "reason": reason,
+            }))
+        })
+        .collect()
 }
 
 fn send_public_relay_register_v0(
