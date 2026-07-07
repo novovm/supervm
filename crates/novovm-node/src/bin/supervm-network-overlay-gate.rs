@@ -33,7 +33,7 @@ use std::fs;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::path::Path;
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn main() -> Result<()> {
     let mode = env_string("NOVOVM_OVERLAY_GATE_MODE").unwrap_or_else(|| "loopback".into());
@@ -48,6 +48,8 @@ fn main() -> Result<()> {
         "fallback-chain" => run_fallback_chain_gate(),
         "adaptive-node-matrix" => run_adaptive_node_matrix_gate(),
         "adaptive-node" => run_adaptive_node_gate(),
+        "observed-endpoint-matrix" => run_observed_endpoint_matrix_gate(),
+        "observed-endpoint" => run_observed_endpoint_gate(),
         other => anyhow::bail!("unsupported NOVOVM_OVERLAY_GATE_MODE: {other}"),
     }
 }
@@ -148,6 +150,191 @@ fn build_loopback_case_report(
         "overlay_decision": decision,
         "loopback_report": smoke,
     }))
+}
+
+fn run_observed_endpoint_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
+        .unwrap_or_else(|| "artifacts/network-overlay-gate/observed-endpoint-matrix.json".into());
+
+    let valid =
+        run_observed_endpoint_local_case_v0("lan-observed-endpoint", "node-a", "node-b", None)?;
+    let mismatch = run_observed_endpoint_local_case_v0(
+        "nonce-mismatch-rejected",
+        "node-a",
+        "node-b",
+        Some("stale-wrong-nonce".into()),
+    )?;
+
+    let accepted = valid["accepted"].as_bool().unwrap_or(false)
+        && !mismatch["probe_ack_valid"].as_bool().unwrap_or(true)
+        && mismatch["probe_reject_reason"].as_str() == Some("probe_nonce_mismatch");
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "observed_endpoint_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cases": [valid, mismatch],
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("observed endpoint matrix failed")
+    }
+}
+
+fn run_observed_endpoint_gate() -> Result<()> {
+    let role = env_string("NOVOVM_OVERLAY_OBSERVED_ROLE").unwrap_or_else(|| "prober".to_string());
+    match role.as_str() {
+        "observer" => run_observed_endpoint_observer_gate(),
+        "prober" => run_observed_endpoint_prober_gate(),
+        other => anyhow::bail!("unsupported NOVOVM_OVERLAY_OBSERVED_ROLE: {other}"),
+    }
+}
+
+fn run_observed_endpoint_observer_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
+        .unwrap_or_else(|| "artifacts/network-overlay-gate/observed-endpoint-observer.json".into());
+    let bind_addr =
+        env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:0".into());
+    let observer_peer_id =
+        env_string("NOVOVM_OVERLAY_OBSERVED_OBSERVER_PEER_ID").unwrap_or_else(|| "node-b".into());
+    let timeout_ms = env_u64("NOVOVM_OVERLAY_GATE_TIMEOUT_MS", 5000);
+    let ack_nonce_override = env_string("NOVOVM_OVERLAY_OBSERVED_ACK_NONCE_OVERRIDE");
+    let socket = UdpSocket::bind(&bind_addr)
+        .with_context(|| format!("bind observed observer: {bind_addr}"))?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(timeout_ms)))
+        .context("set observed observer read timeout")?;
+    let bind_addr_effective = socket
+        .local_addr()
+        .context("observed observer local addr")?;
+    let start = Instant::now();
+    let mut buf = vec![0u8; 65535];
+    let mut report = json!({
+        "accepted": false,
+        "scope": "observed_endpoint_observer_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "observer_peer_id": observer_peer_id,
+        "bind_addr_requested": bind_addr,
+        "bind_addr_effective": bind_addr_effective.to_string(),
+    });
+
+    match socket.recv_from(&mut buf) {
+        Ok((received_bytes, source_addr)) => {
+            let frame =
+                novovm_network::novorudp::NovoRudpTransportFrameV0::decode(&buf[..received_bytes]);
+            match frame {
+                Ok(frame) if frame.kind == NovoRudpTransportFrameKindV0::Endpoint => {
+                    let probe =
+                        serde_json::from_slice::<ObservedEndpointProbePayloadV0>(&frame.payload)
+                            .context("decode observed endpoint probe payload")?;
+                    let observed_at_ms = now_unix_ms();
+                    let ack_nonce = ack_nonce_override.unwrap_or_else(|| probe.probe_nonce.clone());
+                    let ack_payload = ObservedEndpointAckPayloadV0 {
+                        probe_nonce: ack_nonce,
+                        source_peer_id: probe.source_peer_id.clone(),
+                        target_peer_id: probe.target_peer_id.clone(),
+                        observer_peer_id: observer_peer_id.clone(),
+                        observed_endpoint: source_addr.to_string(),
+                        observed_at_ms,
+                    };
+                    let ack = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+                        NovoRudpTransportFrameKindV0::Ack,
+                        frame.session_id,
+                        frame.stream_id,
+                        frame.object_id,
+                        frame.sequence,
+                        frame.ack_epoch,
+                        serde_json::to_vec(&ack_payload)?,
+                    );
+                    let sent_bytes = socket
+                        .send_to(&ack.encode(), source_addr)
+                        .context("send observed endpoint ack")?;
+                    report = json!({
+                        "accepted": true,
+                        "scope": "observed_endpoint_observer_v0",
+                        "boundary": network_boundary_json(),
+                        "payload_treated_opaque": true,
+                        "observer_peer_id": observer_peer_id,
+                        "bind_addr_requested": bind_addr,
+                        "bind_addr_effective": bind_addr_effective.to_string(),
+                        "probe_received": true,
+                        "probe_nonce": probe.probe_nonce,
+                        "source_peer_id": probe.source_peer_id,
+                        "target_peer_id": probe.target_peer_id,
+                        "advertised_endpoint": probe.advertised_endpoint,
+                        "observed_endpoint": source_addr.to_string(),
+                        "observed_at_ms": observed_at_ms,
+                        "ack_sent": true,
+                        "ack_sent_bytes": sent_bytes,
+                        "ack_nonce": ack_payload.probe_nonce,
+                        "elapsed_ms": start.elapsed().as_millis() as u64,
+                    });
+                }
+                Ok(frame) => {
+                    report["probe_reject_reason"] =
+                        json!(format!("unexpected_frame_kind:{:?}", frame.kind));
+                }
+                Err(error) => {
+                    report["probe_reject_reason"] = json!(format!("decode_probe_failed:{error}"));
+                }
+            }
+        }
+        Err(error) => {
+            report["probe_reject_reason"] = json!(format!("probe_recv_timeout_or_failed:{error}"));
+        }
+    }
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if report["accepted"].as_bool().unwrap_or(false) {
+        Ok(())
+    } else {
+        anyhow::bail!("observed endpoint observer failed")
+    }
+}
+
+fn run_observed_endpoint_prober_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH")
+        .unwrap_or_else(|| "artifacts/network-overlay-gate/observed-endpoint-prober.json".into());
+    let bind_addr =
+        env_string("NOVOVM_OVERLAY_GATE_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:0".into());
+    let target_addr = env_string("NOVOVM_OVERLAY_OBSERVED_TARGET_ADDR")
+        .context("NOVOVM_OVERLAY_OBSERVED_TARGET_ADDR is required for observed prober")?;
+    let source_peer_id =
+        env_string("NOVOVM_OVERLAY_OBSERVED_SOURCE_PEER_ID").unwrap_or_else(|| "node-a".into());
+    let target_peer_id =
+        env_string("NOVOVM_OVERLAY_OBSERVED_TARGET_PEER_ID").unwrap_or_else(|| "node-b".into());
+    let advertised_endpoint = env_string("NOVOVM_OVERLAY_OBSERVED_ADVERTISED_ENDPOINT");
+    let probe_nonce = env_string("NOVOVM_OVERLAY_OBSERVED_PROBE_NONCE")
+        .unwrap_or_else(|| format!("probe-{}", now_unix_ms()));
+    let timeout_ms = env_u64("NOVOVM_OVERLAY_GATE_PROBE_TIMEOUT_MS", 1000);
+    let socket = UdpSocket::bind(&bind_addr)
+        .with_context(|| format!("bind observed prober: {bind_addr}"))?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(timeout_ms)))
+        .context("set observed prober read timeout")?;
+    let bind_addr_effective = socket.local_addr().context("observed prober local addr")?;
+    let report = run_observed_endpoint_probe_v0(
+        &socket,
+        &target_addr,
+        &source_peer_id,
+        &target_peer_id,
+        advertised_endpoint,
+        probe_nonce,
+        bind_addr_effective,
+    )?;
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if report["accepted"].as_bool().unwrap_or(false) {
+        Ok(())
+    } else {
+        anyhow::bail!("observed endpoint prober failed")
+    }
 }
 
 fn run_receiver_gate() -> Result<()> {
@@ -2240,6 +2427,267 @@ struct OverlayGateRelayEnvelopeV0 {
     payload: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ObservedEndpointProbePayloadV0 {
+    probe_nonce: String,
+    source_peer_id: String,
+    target_peer_id: String,
+    advertised_endpoint: Option<String>,
+    expires_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ObservedEndpointAckPayloadV0 {
+    probe_nonce: String,
+    source_peer_id: String,
+    target_peer_id: String,
+    observer_peer_id: String,
+    observed_endpoint: String,
+    observed_at_ms: u64,
+}
+
+fn run_observed_endpoint_local_case_v0(
+    case_name: &str,
+    source_peer_id: &str,
+    observer_peer_id: &str,
+    ack_nonce_override: Option<String>,
+) -> Result<serde_json::Value> {
+    let prober = UdpSocket::bind("127.0.0.1:0").context("bind local observed prober")?;
+    let observer = UdpSocket::bind("127.0.0.1:0").context("bind local observed observer")?;
+    prober
+        .set_read_timeout(Some(Duration::from_millis(1000)))
+        .context("set local observed prober timeout")?;
+    observer
+        .set_read_timeout(Some(Duration::from_millis(1000)))
+        .context("set local observed observer timeout")?;
+
+    let prober_addr = prober.local_addr().context("local observed prober addr")?;
+    let observer_addr = observer
+        .local_addr()
+        .context("local observed observer addr")?;
+    let probe_nonce = format!("{case_name}-nonce");
+    let advertised_endpoint = Some(prober_addr.to_string());
+    let start = Instant::now();
+
+    let payload = ObservedEndpointProbePayloadV0 {
+        probe_nonce: probe_nonce.clone(),
+        source_peer_id: source_peer_id.to_string(),
+        target_peer_id: observer_peer_id.to_string(),
+        advertised_endpoint: advertised_endpoint.clone(),
+        expires_at_ms: now_unix_ms().saturating_add(60_000),
+    };
+    let probe = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+        NovoRudpTransportFrameKindV0::Endpoint,
+        [24u8; 16],
+        240,
+        241,
+        242,
+        243,
+        serde_json::to_vec(&payload)?,
+    );
+    let encoded_probe = probe.encode();
+    let sent_bytes = prober
+        .send_to(&encoded_probe, observer_addr)
+        .context("send local observed endpoint probe")?;
+
+    let mut observer_buf = vec![0u8; 65535];
+    let (observer_received_bytes, observed_source_addr) = observer
+        .recv_from(&mut observer_buf)
+        .context("local observed observer recv probe")?;
+    let observer_frame = novovm_network::novorudp::NovoRudpTransportFrameV0::decode(
+        &observer_buf[..observer_received_bytes],
+    )
+    .context("decode local observed probe frame")?;
+    let observer_probe_payload =
+        serde_json::from_slice::<ObservedEndpointProbePayloadV0>(&observer_frame.payload)
+            .context("decode local observed probe payload")?;
+    let observed_at_ms = now_unix_ms();
+    let ack_nonce =
+        ack_nonce_override.unwrap_or_else(|| observer_probe_payload.probe_nonce.clone());
+    let ack_payload = ObservedEndpointAckPayloadV0 {
+        probe_nonce: ack_nonce,
+        source_peer_id: observer_probe_payload.source_peer_id.clone(),
+        target_peer_id: observer_probe_payload.target_peer_id.clone(),
+        observer_peer_id: observer_peer_id.to_string(),
+        observed_endpoint: observed_source_addr.to_string(),
+        observed_at_ms,
+    };
+    let ack = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+        NovoRudpTransportFrameKindV0::Ack,
+        observer_frame.session_id,
+        observer_frame.stream_id,
+        observer_frame.object_id,
+        observer_frame.sequence,
+        observer_frame.ack_epoch,
+        serde_json::to_vec(&ack_payload)?,
+    );
+    let ack_sent_bytes = observer
+        .send_to(&ack.encode(), observed_source_addr)
+        .context("send local observed endpoint ack")?;
+
+    let mut prober_buf = vec![0u8; 65535];
+    let (ack_received_bytes, ack_source_addr) = prober
+        .recv_from(&mut prober_buf)
+        .context("local observed prober recv ack")?;
+    let ack_frame = novovm_network::novorudp::NovoRudpTransportFrameV0::decode(
+        &prober_buf[..ack_received_bytes],
+    )
+    .context("decode local observed ack frame")?;
+    let decoded_ack = serde_json::from_slice::<ObservedEndpointAckPayloadV0>(&ack_frame.payload)
+        .context("decode local observed ack payload")?;
+    let probe_ack_valid = ack_frame.kind == NovoRudpTransportFrameKindV0::Ack
+        && decoded_ack.probe_nonce == probe_nonce;
+    let probe_reject_reason = if probe_ack_valid {
+        None
+    } else {
+        Some("probe_nonce_mismatch")
+    };
+    let endpoint_changed =
+        advertised_endpoint.as_deref() != Some(decoded_ack.observed_endpoint.as_str());
+
+    Ok(json!({
+        "accepted": probe_ack_valid,
+        "case": case_name,
+        "scope": "observed_endpoint_local_case_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "local_peer_id": source_peer_id,
+        "observer_peer_id": observer_peer_id,
+        "local_bind_endpoint": prober_addr.to_string(),
+        "observer_bind_endpoint": observer_addr.to_string(),
+        "advertised_endpoint": advertised_endpoint,
+        "observed_endpoint": decoded_ack.observed_endpoint,
+        "observed_by_peer_id": decoded_ack.observer_peer_id,
+        "observed_at_ms": decoded_ack.observed_at_ms,
+        "ack_source_endpoint": ack_source_addr.to_string(),
+        "observed_endpoint_changed": endpoint_changed,
+        "observed_endpoint_stable": !endpoint_changed,
+        "reachability_probe_result": if probe_ack_valid { "reachable" } else { "rejected" },
+        "probe_nonce": probe_nonce,
+        "ack_nonce": decoded_ack.probe_nonce,
+        "probe_ack_valid": probe_ack_valid,
+        "probe_reject_reason": probe_reject_reason,
+        "probe_rtt_ms": start.elapsed().as_millis() as u64,
+        "sent_bytes": sent_bytes,
+        "observer_received_bytes": observer_received_bytes,
+        "ack_sent_bytes": ack_sent_bytes,
+        "ack_received_bytes": ack_received_bytes,
+    }))
+}
+
+fn run_observed_endpoint_probe_v0(
+    socket: &UdpSocket,
+    target_addr: &str,
+    source_peer_id: &str,
+    target_peer_id: &str,
+    advertised_endpoint: Option<String>,
+    probe_nonce: String,
+    bind_addr_effective: SocketAddr,
+) -> Result<serde_json::Value> {
+    let payload = ObservedEndpointProbePayloadV0 {
+        probe_nonce: probe_nonce.clone(),
+        source_peer_id: source_peer_id.to_string(),
+        target_peer_id: target_peer_id.to_string(),
+        advertised_endpoint: advertised_endpoint.clone(),
+        expires_at_ms: now_unix_ms().saturating_add(60_000),
+    };
+    let probe = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+        NovoRudpTransportFrameKindV0::Endpoint,
+        [25u8; 16],
+        250,
+        251,
+        252,
+        253,
+        serde_json::to_vec(&payload)?,
+    );
+    let encoded_probe = probe.encode();
+    let start = Instant::now();
+    let sent_bytes = socket
+        .send_to(&encoded_probe, target_addr)
+        .with_context(|| format!("send observed endpoint probe to {target_addr}"))?;
+    let mut buf = vec![0u8; 65535];
+    let mut report = json!({
+        "accepted": false,
+        "scope": "observed_endpoint_prober_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "local_peer_id": source_peer_id,
+        "target_peer_id": target_peer_id,
+        "local_bind_endpoint": bind_addr_effective.to_string(),
+        "advertised_endpoint": advertised_endpoint,
+        "target_addr": target_addr,
+        "probe_nonce": probe_nonce,
+        "probe_sent": true,
+        "sent_bytes": sent_bytes,
+    });
+
+    match socket.recv_from(&mut buf) {
+        Ok((received_bytes, ack_source_addr)) => {
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+            let decoded =
+                novovm_network::novorudp::NovoRudpTransportFrameV0::decode(&buf[..received_bytes]);
+            match decoded {
+                Ok(frame) if frame.kind == NovoRudpTransportFrameKindV0::Ack => {
+                    match serde_json::from_slice::<ObservedEndpointAckPayloadV0>(&frame.payload) {
+                        Ok(ack_payload) => {
+                            let expected_nonce = report["probe_nonce"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_string();
+                            let probe_ack_valid = ack_payload.probe_nonce == expected_nonce;
+                            let endpoint_changed = report["advertised_endpoint"].as_str()
+                                != Some(ack_payload.observed_endpoint.as_str());
+                            report["accepted"] = json!(probe_ack_valid);
+                            report["observed_endpoint"] = json!(ack_payload.observed_endpoint);
+                            report["observed_by_peer_id"] = json!(ack_payload.observer_peer_id);
+                            report["observed_at_ms"] = json!(ack_payload.observed_at_ms);
+                            report["ack_source_endpoint"] = json!(ack_source_addr.to_string());
+                            report["observed_endpoint_changed"] = json!(endpoint_changed);
+                            report["observed_endpoint_stable"] = json!(!endpoint_changed);
+                            report["reachability_probe_result"] = json!(if probe_ack_valid {
+                                "reachable"
+                            } else {
+                                "rejected"
+                            });
+                            report["ack_nonce"] = json!(ack_payload.probe_nonce);
+                            report["probe_ack_valid"] = json!(probe_ack_valid);
+                            report["probe_reject_reason"] = if probe_ack_valid {
+                                serde_json::Value::Null
+                            } else {
+                                json!("probe_nonce_mismatch")
+                            };
+                            report["probe_rtt_ms"] = json!(elapsed_ms);
+                            report["received_bytes"] = json!(received_bytes);
+                        }
+                        Err(error) => {
+                            report["probe_ack_valid"] = json!(false);
+                            report["probe_reject_reason"] =
+                                json!(format!("decode_ack_payload_failed:{error}"));
+                        }
+                    }
+                }
+                Ok(frame) => {
+                    report["probe_ack_valid"] = json!(false);
+                    report["probe_reject_reason"] =
+                        json!(format!("unexpected_ack_frame_kind:{:?}", frame.kind));
+                }
+                Err(error) => {
+                    report["probe_ack_valid"] = json!(false);
+                    report["probe_reject_reason"] = json!(format!("decode_ack_failed:{error}"));
+                }
+            }
+        }
+        Err(error) => {
+            report["probe_ack_valid"] = json!(false);
+            report["probe_reject_reason"] =
+                json!(format!("probe_ack_timeout_or_recv_failed:{error}"));
+            report["probe_rtt_ms"] = json!(start.elapsed().as_millis() as u64);
+        }
+    }
+
+    Ok(report)
+}
+
 fn network_boundary_json() -> serde_json::Value {
     json!({
         "network_only": true,
@@ -2279,4 +2727,11 @@ fn env_u64(name: &str, default: u64) -> u64 {
 
 fn env_u32(name: &str) -> Option<u32> {
     env::var(name).ok().and_then(|raw| raw.parse::<u32>().ok())
+}
+
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }

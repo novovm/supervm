@@ -3012,6 +3012,158 @@ advertised endpoint is actually reachable, then record observed source
 addresses for later NAT traversal.
 ```
 
+## Cut 24: Reachability Probe + Observed Endpoint Record v0
+
+Status:
+
+```text
+LOCAL / ROLE VALIDATION PASS
+REAL FOUR-MACHINE OBSERVED ENDPOINT SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Record what a peer actually observes as the source endpoint of a probe.
+
+Separate:
+
+bind_addr_effective
+advertised_endpoint
+observed_endpoint
+ack_source_endpoint
+
+This is the required step before NAT traversal / UDP hole punching.
+```
+
+New gate modes:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=observed-endpoint-matrix
+NOVOVM_OVERLAY_GATE_MODE=observed-endpoint
+```
+
+Observed endpoint role mode:
+
+```text
+NOVOVM_OVERLAY_OBSERVED_ROLE=observer
+NOVOVM_OVERLAY_OBSERVED_ROLE=prober
+```
+
+Probe / ack behavior:
+
+```text
+Probe:
+  NOVORUDP frame kind = Endpoint
+  payload = ObservedEndpointProbePayloadV0
+
+Ack:
+  NOVORUDP frame kind = Ack
+  payload = ObservedEndpointAckPayloadV0
+
+Ack must echo the probe_nonce.
+Nonce mismatch is rejected and cannot mark the endpoint reachable.
+```
+
+New report fields:
+
+```text
+observed_endpoint
+observed_by_peer_id
+observed_at_ms
+ack_source_endpoint
+observed_endpoint_changed
+observed_endpoint_stable
+reachability_probe_result
+probe_nonce
+ack_nonce
+probe_ack_valid
+probe_reject_reason
+probe_rtt_ms
+```
+
+Local matrix validation:
+
+```text
+observed-endpoint-matrix accepted=true
+
+lan-observed-endpoint:
+  probe_ack_valid=true
+  reachability_probe_result=reachable
+  observed_endpoint=127.0.0.1:<dynamic-port>
+  ack_source_endpoint=127.0.0.1:<observer-port>
+
+nonce-mismatch-rejected:
+  probe_ack_valid=false
+  reachability_probe_result=rejected
+  probe_reject_reason=probe_nonce_mismatch
+```
+
+Role validation:
+
+```text
+observer accepted=true
+prober accepted=true
+probe_ack_valid=true
+observed_endpoint=127.0.0.1:<prober-port>
+ack_source_endpoint=127.0.0.1:41120
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+cargo check -q -p novovm-network
+cargo test -q -p novovm-network adaptive_overlay -- --test-threads=1
+cargo test -q -p novovm-network overlay_runtime -- --test-threads=1
+
+NOVOVM_OVERLAY_GATE_MODE=observed-endpoint-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/observed-endpoint-matrix-cut24.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+opcode114_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+nat_hole_punch=false
+```
+
+Known v0 limitation:
+
+```text
+Cut 24 v0 records observed endpoints and rejects stale / mismatched probe ack.
+
+It does not yet perform NAT hole punching, simultaneous open, relay-assisted
+punch orchestration, endpoint stability windows, or public observer quorum.
+```
+
+Next frontier:
+
+```text
+Cut 24 real four-machine observed endpoint smoke:
+  A observed by B
+  B ack source observed by A
+  R1/R2 observed endpoint records
+  stale nonce rejection
+
+Cut 25:
+  NAT Traversal Probe + UDP Hole Punch v0
+```
+
 ## Product Readout
 
 Current product status:
