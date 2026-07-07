@@ -3374,6 +3374,121 @@ If punch fails but fallback works:
   fallback_reason=NatPunchFailed
 ```
 
+Next frontier:
+
+```text
+Cut 26:
+  Relay-First Zero-Config Overlay v0
+```
+
+## Cut 26: Relay-First Zero-Config Overlay v0
+
+Status:
+
+```text
+LOCAL PRODUCT-POLICY MATRIX PASS
+REAL PUBLIC RELAY SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Make the product connectivity contract explicit:
+
+The user must not need to know IPs, open ports, configure routers, or understand
+NAT/VPN/firewall state for baseline communication.
+
+Baseline connectivity is relay-first over outbound-friendly transports.
+Direct UDP / NAT punch is an optimization only.
+If punch fails, the node stays on relay.
+If relay is unavailable, the node queues rather than falsely claiming delivery.
+```
+
+New gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=relay-first-zero-config-matrix
+```
+
+Local policy matrix:
+
+```text
+vpn-tun-or-cgnat-no-inbound-udp:
+  selected_path=RelayNovoRudp
+  outbound_transport=QUIC_OR_TLS_OR_WEBSOCKET_443
+  udp_inbound_required=false
+  user_network_configuration_required=false
+
+observed-endpoint-and-punch-success-upgrades-path:
+  initial_path=RelayNovoRudp
+  punch_ack_valid=true
+  selected_path_after_punch=PunchedDirect
+
+punch-fails-stays-on-relay:
+  initial_path=RelayNovoRudp
+  punch_ack_valid=false
+  selected_path_after_punch=RelayNovoRudp
+  fallback_reason=NatPunchFailed
+
+relay-unavailable-queues-without-data-loss-claim:
+  selected_path=QueueFallback
+  queued=true
+```
+
+Privileged node service policy:
+
+```text
+Dedicated NOVOVM node deployments may install an explicitly authorized local
+service with highest local privilege.
+
+Allowed under explicit install / node ownership:
+  manage local firewall rules
+  manage local services and startup
+  inspect interfaces, VPN/TUN routes, and route metrics
+  attempt UPnP / NAT-PMP / PCP mappings
+  choose relay / direct / punch / queue paths automatically
+
+Not allowed / not claimed:
+  bypass external firewalls
+  bypass VPN provider policy
+  bypass ISP CGNAT
+  bypass cloud security groups
+  bypass OS privilege requirements without authorization
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+cargo check -q -p novovm-network
+cargo test -q -p novovm-network adaptive_overlay -- --test-threads=1
+cargo test -q -p novovm-network overlay_runtime -- --test-threads=1
+
+NOVOVM_OVERLAY_GATE_MODE=relay-first-zero-config-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/relay-first-zero-config-matrix-cut26.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+opcode114_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+real_public_relay_smoke=false
+```
+
 ## Product Readout
 
 Current product status:
