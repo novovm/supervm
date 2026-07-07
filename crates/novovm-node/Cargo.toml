@@ -23,7 +23,7 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 k256 = { version = "0.13", features = ["ecdsa"] }
 rand = "0.8"
 rcgen = "0.12"
-rustls = "0.21"
+rustls = { version = "0.21", features = ["dangerous_configuration"] }
 rustls-native-certs = "0.6"
 rustls-pemfile = "1"
 sha1 = "0.10"

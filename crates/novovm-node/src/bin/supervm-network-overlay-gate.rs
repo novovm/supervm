@@ -517,6 +517,15 @@ fn run_headless_public_relay_deploy_package_matrix_gate() -> Result<()> {
         "runtime_default_bind_addr": "0.0.0.0:8443",
         "tls_cert_env": "NOVOVM_OVERLAY_WSS_TLS_CERT_PATH",
         "tls_key_env": "NOVOVM_OVERLAY_WSS_TLS_KEY_PATH",
+        "client_default_transport_auth_mode": "encrypted-untrusted",
+        "tls_certificate_is_trust_root": false,
+        "tls_certificate_purpose": "tls_handshake_material_only",
+        "ca_trust_required": false,
+        "node_trust_required": false,
+        "relay_trust_required": false,
+        "validity_source": "zk_proof_and_seal",
+        "optional_endpoint_auth_modes": ["cert-sha256-pin", "webpki", "explicit-ca"],
+        "cert_pin_env_optional": "NOVOVM_OVERLAY_WSS_TLS_CERT_SHA256",
         "payload_treated_opaque": true,
         "relay_is_trusted_authority": false,
         "business_semantics_interpreted_by_relay": false,
@@ -603,9 +612,23 @@ WSS/TLS relay runtime:
 ```text
 websocket_path=/novovm
 
-Optional formal TLS certificate:
+Default NOVOVM transport mode:
+NOVOVM_OVERLAY_WSS_TLS_TRUST_MODE=encrypted-untrusted
+
+In default mode TLS is only an outer encrypted transport. The certificate is
+handshake material, not a NOVOVM identity, trust root, consensus rule, or data
+validity source.
+
+Optional configured TLS handshake material:
 NOVOVM_OVERLAY_WSS_TLS_CERT_PATH=/etc/letsencrypt/live/example/fullchain.pem
 NOVOVM_OVERLAY_WSS_TLS_KEY_PATH=/etc/letsencrypt/live/example/privkey.pem
+
+Optional endpoint-auth hardening:
+NOVOVM_OVERLAY_WSS_TLS_TRUST_MODE=cert-sha256-pin
+NOVOVM_OVERLAY_WSS_TLS_CERT_SHA256=<peer-signed relay record cert hash>
+
+Optional compatibility mode:
+NOVOVM_OVERLAY_WSS_TLS_TRUST_MODE=webpki
 ```
 
 Boundary:
@@ -613,6 +636,10 @@ Boundary:
 ```text
 network_only=true
 payload_treated_opaque=true
+node_trust_required=false
+relay_trust_required=false
+ca_trust_required=false
+validity_source=zk_proof_and_seal
 relay_is_trusted_authority=false
 business_semantics_interpreted_by_relay=false
 novorudp_wire_changed=false
@@ -5204,6 +5231,12 @@ struct Cut40WssEndpointV0 {
     path: String,
 }
 
+#[derive(Debug)]
+struct Cut40PinnedCertVerifierV0 {
+    expected_sha256_hex: Option<String>,
+    trust_mode: String,
+}
+
 #[derive(Debug, Clone)]
 enum Cut39WebSocketFrameV0 {
     Binary(Vec<u8>),
@@ -5353,6 +5386,34 @@ impl Wss443RelaySessionManagerV0 {
     }
 }
 
+impl rustls::client::ServerCertVerifier for Cut40PinnedCertVerifierV0 {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &rustls::ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: SystemTime,
+    ) -> std::result::Result<rustls::client::ServerCertVerified, rustls::Error> {
+        if self.trust_mode == "encrypted-untrusted" || self.trust_mode == "insecure-test-only" {
+            return Ok(rustls::client::ServerCertVerified::assertion());
+        }
+        let actual = overlay_gate_sha256_hex_v0(&[&end_entity.0]);
+        match &self.expected_sha256_hex {
+            Some(expected) if expected.eq_ignore_ascii_case(&actual) => {
+                Ok(rustls::client::ServerCertVerified::assertion())
+            }
+            Some(expected) => Err(rustls::Error::General(format!(
+                "NOVOVM WSS certificate pin mismatch: expected {expected}, actual {actual}"
+            ))),
+            None => Err(rustls::Error::General(
+                "NOVOVM WSS certificate pin missing".into(),
+            )),
+        }
+    }
+}
+
 fn run_wss_tls_socket_transport_matrix_gate() -> Result<()> {
     let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
         "artifacts/network-overlay-gate/wss-tls-socket-transport-matrix.json".into()
@@ -5460,7 +5521,8 @@ fn run_wss_tls_public_relay_server_gate() -> Result<()> {
     let expected_sessions = env_u64("NOVOVM_OVERLAY_PUBLIC_RELAY_EXPECTED_SESSIONS", 2).max(1);
     let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
     let timeout_ms = env_u64("NOVOVM_OVERLAY_GATE_TIMEOUT_MS", 60_000);
-    let (server_config, tls_certificate_source) = build_cut40_server_tls_config_v0()?;
+    let (server_config, tls_certificate_source, tls_cert_sha256) =
+        build_cut40_server_tls_config_v0()?;
     let listener = TcpListener::bind(&bind_addr)
         .with_context(|| format!("bind wss tls public relay: {bind_addr}"))?;
     listener
@@ -5563,7 +5625,7 @@ fn run_wss_tls_public_relay_server_gate() -> Result<()> {
         .collect::<Vec<_>>();
     let public_endpoint_configured =
         env_bool("NOVOVM_OVERLAY_WSS_PUBLIC_ENDPOINT_CONFIGURED", false);
-    let tls_trust_path = env_string("NOVOVM_OVERLAY_WSS_TLS_CERT_PATH").is_some()
+    let configured_tls_material = env_string("NOVOVM_OVERLAY_WSS_TLS_CERT_PATH").is_some()
         && env_string("NOVOVM_OVERLAY_WSS_TLS_KEY_PATH").is_some();
     let accepted = session_peer_ids.len() >= expected_sessions as usize
         && relay_envelopes_received >= max_frames
@@ -5574,15 +5636,25 @@ fn run_wss_tls_public_relay_server_gate() -> Result<()> {
         "scope": "headless_public_wss_tls_relay_runtime_v0",
         "boundary": network_boundary_json(),
         "payload_treated_opaque": true,
-        "real_public_tls_relay": public_endpoint_configured && tls_trust_path,
-        "real_public_tls_smoke": public_endpoint_configured && tls_trust_path && accepted,
+        "real_public_wss_relay": public_endpoint_configured,
+        "real_public_tls_smoke": public_endpoint_configured && accepted,
+        "real_public_ca_trust_smoke": false,
         "selected_transport": "wss",
         "listen": bind_addr_effective.to_string(),
         "bind_addr_requested": bind_addr,
         "websocket_path": "/novovm",
         "tls_accept_ok": session_peer_ids.len() >= expected_sessions as usize,
         "tls_certificate_source": tls_certificate_source,
-        "tls_formal_trust_path": tls_trust_path,
+        "tls_cert_sha256": tls_cert_sha256,
+        "tls_certificate_is_trust_root": false,
+        "tls_certificate_purpose": "tls_handshake_material_only",
+        "configured_tls_material": configured_tls_material,
+        "ca_trust_required": false,
+        "node_trust_required": false,
+        "relay_trust_required": false,
+        "validity_source": "zk_proof_and_seal",
+        "default_client_tls_trust_mode": "encrypted-untrusted",
+        "optional_endpoint_auth_modes": ["cert-sha256-pin", "webpki", "explicit-ca"],
         "bootstrap_sessions_established": session_peer_ids.len(),
         "session_peer_ids": session_peer_ids,
         "relay_peer_id": relay_peer_id,
@@ -5592,6 +5664,7 @@ fn run_wss_tls_public_relay_server_gate() -> Result<()> {
         "source_peer_id": source_peer_id,
         "target_peer_id": target_peer_id,
         "relay_is_trusted_authority": false,
+        "relay_trust_required": false,
         "business_semantics_interpreted_by_relay": false,
         "novorudp_wire_changed": false,
         "events": events,
@@ -5616,6 +5689,7 @@ fn run_wss_tls_public_relay_register_client_gate() -> Result<()> {
         env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_CLIENT_PEER_ID").unwrap_or_else(|| "node-b".into());
     let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
     let parsed_endpoint = parse_cut40_wss_endpoint_v0(&relay_endpoint)?;
+    let trust_mode = cut40_client_tls_trust_mode_v0();
     let client_config = build_cut40_client_tls_config_v0()?;
     let mut ws = cut40_connect_tls_websocket_v0(&parsed_endpoint, client_config, &node_id)
         .context("cut40 register client connect wss")?;
@@ -5661,6 +5735,14 @@ fn run_wss_tls_public_relay_register_client_gate() -> Result<()> {
         "payload_treated_opaque": true,
         "selected_transport": "wss",
         "selected_endpoint": relay_endpoint,
+        "tls_trust_mode": trust_mode,
+        "ca_required": trust_mode == "webpki" || trust_mode == "explicit-ca",
+        "tls_certificate_is_trust_root": false,
+        "tls_certificate_purpose": "tls_handshake_material_only",
+        "tls_peer_endpoint_auth": trust_mode == "cert-sha256-pin" || trust_mode == "webpki" || trust_mode == "explicit-ca",
+        "node_trust_required": false,
+        "relay_trust_required": false,
+        "validity_source": "zk_proof_and_seal",
         "node_id": node_id,
         "bootstrap_register_sent": true,
         "ping_pong_ok": pong_ok,
@@ -5694,6 +5776,7 @@ fn run_wss_tls_public_relay_send_client_gate() -> Result<()> {
         env_string("NOVOVM_OVERLAY_PUBLIC_RELAY_TARGET_PEER_ID").unwrap_or_else(|| "node-b".into());
     let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
     let parsed_endpoint = parse_cut40_wss_endpoint_v0(&relay_endpoint)?;
+    let trust_mode = cut40_client_tls_trust_mode_v0();
     let client_config = build_cut40_client_tls_config_v0()?;
     let mut ws = cut40_connect_tls_websocket_v0(&parsed_endpoint, client_config, &source_peer_id)
         .context("cut40 send client connect wss")?;
@@ -5740,6 +5823,14 @@ fn run_wss_tls_public_relay_send_client_gate() -> Result<()> {
         "payload_treated_opaque": true,
         "selected_transport": "wss",
         "selected_endpoint": relay_endpoint,
+        "tls_trust_mode": trust_mode,
+        "ca_required": trust_mode == "webpki" || trust_mode == "explicit-ca",
+        "tls_certificate_is_trust_root": false,
+        "tls_certificate_purpose": "tls_handshake_material_only",
+        "tls_peer_endpoint_auth": trust_mode == "cert-sha256-pin" || trust_mode == "webpki" || trust_mode == "explicit-ca",
+        "node_trust_required": false,
+        "relay_trust_required": false,
+        "validity_source": "zk_proof_and_seal",
         "selected_path": "RelayNovoRudp",
         "source_peer_id": source_peer_id,
         "target_peer_id": target_peer_id,
@@ -5969,12 +6060,13 @@ fn build_cut39_tls_configs_v0() -> Result<(Arc<rustls::ServerConfig>, Arc<rustls
     Ok((Arc::new(server_config), Arc::new(client_config)))
 }
 
-fn build_cut40_server_tls_config_v0() -> Result<(Arc<rustls::ServerConfig>, String)> {
+fn build_cut40_server_tls_config_v0() -> Result<(Arc<rustls::ServerConfig>, String, String)> {
     let cert_path = env_string("NOVOVM_OVERLAY_WSS_TLS_CERT_PATH");
     let key_path = env_string("NOVOVM_OVERLAY_WSS_TLS_KEY_PATH");
     if let (Some(cert_path), Some(key_path)) = (cert_path, key_path) {
         let certs = load_cut40_certs_pem_v0(&cert_path)
             .with_context(|| format!("load tls cert path: {cert_path}"))?;
+        let tls_cert_sha256 = overlay_gate_sha256_hex_v0(&[&certs[0].0]);
         let key = load_cut40_private_key_pem_v0(&key_path)
             .with_context(|| format!("load tls key path: {key_path}"))?;
         let server_config = rustls::ServerConfig::builder()
@@ -5982,12 +6074,17 @@ fn build_cut40_server_tls_config_v0() -> Result<(Arc<rustls::ServerConfig>, Stri
             .with_no_client_auth()
             .with_single_cert(certs, key)
             .context("build cut40 server tls config from pem")?;
-        return Ok((Arc::new(server_config), "configured_pem".into()));
+        return Ok((
+            Arc::new(server_config),
+            "configured_pem".into(),
+            tls_cert_sha256,
+        ));
     }
 
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])
         .context("generate cut40 self-signed cert")?;
     let cert_der = cert.serialize_der().context("serialize cut40 cert")?;
+    let tls_cert_sha256 = overlay_gate_sha256_hex_v0(&[&cert_der]);
     let key_der = cert.serialize_private_key_der();
     let server_config = rustls::ServerConfig::builder()
         .with_safe_defaults()
@@ -5997,29 +6094,67 @@ fn build_cut40_server_tls_config_v0() -> Result<(Arc<rustls::ServerConfig>, Stri
             rustls::PrivateKey(key_der),
         )
         .context("build cut40 self-signed server tls config")?;
-    Ok((Arc::new(server_config), "self_signed_ephemeral".into()))
+    Ok((
+        Arc::new(server_config),
+        "self_signed_ephemeral".into(),
+        tls_cert_sha256,
+    ))
 }
 
 fn build_cut40_client_tls_config_v0() -> Result<Arc<rustls::ClientConfig>> {
+    let trust_mode = cut40_client_tls_trust_mode_v0();
+    if trust_mode == "cert-sha256-pin" {
+        let expected_sha256_hex = env_string("NOVOVM_OVERLAY_WSS_TLS_CERT_SHA256")
+            .context("NOVOVM_OVERLAY_WSS_TLS_CERT_SHA256 is required for cert-sha256-pin trust")?;
+        let verifier = Cut40PinnedCertVerifierV0 {
+            expected_sha256_hex: Some(expected_sha256_hex),
+            trust_mode,
+        };
+        let client_config = rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_custom_certificate_verifier(Arc::new(verifier))
+            .with_no_client_auth();
+        return Ok(Arc::new(client_config));
+    }
+    if trust_mode == "encrypted-untrusted" || trust_mode == "insecure-test-only" {
+        let verifier = Cut40PinnedCertVerifierV0 {
+            expected_sha256_hex: None,
+            trust_mode,
+        };
+        let client_config = rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_custom_certificate_verifier(Arc::new(verifier))
+            .with_no_client_auth();
+        return Ok(Arc::new(client_config));
+    }
+
     let mut roots = rustls::RootCertStore::empty();
-    if let Some(ca_path) = env_string("NOVOVM_OVERLAY_WSS_TLS_CA_CERT_PATH") {
+    if trust_mode == "explicit-ca" {
+        let ca_path = env_string("NOVOVM_OVERLAY_WSS_TLS_CA_CERT_PATH")
+            .context("NOVOVM_OVERLAY_WSS_TLS_CA_CERT_PATH is required for explicit-ca trust")?;
         for cert in load_cut40_certs_pem_v0(&ca_path)
             .with_context(|| format!("load wss ca cert path: {ca_path}"))?
         {
             roots.add(&cert).context("add configured wss ca cert")?;
         }
-    } else {
+    } else if trust_mode == "webpki" {
         for cert in
             rustls_native_certs::load_native_certs().context("load platform native tls roots")?
         {
             let _ = roots.add(&rustls::Certificate(cert.0));
         }
+    } else {
+        anyhow::bail!("unsupported NOVOVM_OVERLAY_WSS_TLS_TRUST_MODE: {trust_mode}");
     }
     let client_config = rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(roots)
         .with_no_client_auth();
     Ok(Arc::new(client_config))
+}
+
+fn cut40_client_tls_trust_mode_v0() -> String {
+    env_string("NOVOVM_OVERLAY_WSS_TLS_TRUST_MODE").unwrap_or_else(|| "encrypted-untrusted".into())
 }
 
 fn load_cut40_certs_pem_v0(path: &str) -> Result<Vec<rustls::Certificate>> {
