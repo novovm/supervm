@@ -73,6 +73,7 @@ fn main() -> Result<()> {
         "native-first-transport-adaptive-matrix" => {
             run_native_first_transport_adaptive_matrix_gate()
         }
+        "intelligent-network-strategy-matrix" => run_intelligent_network_strategy_matrix_gate(),
         "decentralized-bootstrap-constraint-matrix" => {
             run_decentralized_bootstrap_constraint_matrix_gate()
         }
@@ -1149,6 +1150,147 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("native first transport adaptive matrix failed")
+    }
+}
+
+fn run_intelligent_network_strategy_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/intelligent-network-strategy-matrix-cut42.json".into()
+    });
+
+    let cases = vec![
+        evaluate_intelligent_network_strategy_case_v0(IntelligentNetworkSignalV0 {
+            case_name: "stable_native_path_prefers_native".into(),
+            direct_reachable: true,
+            nat_restricted: false,
+            relay_available: true,
+            weak_network: false,
+            visible_transport_high_risk: false,
+            privacy_budget_low: false,
+            tracking_exposure_high: false,
+            all_paths_unreachable: false,
+            apfl_strategy_hint_available: false,
+        }),
+        evaluate_intelligent_network_strategy_case_v0(IntelligentNetworkSignalV0 {
+            case_name: "nat_restricted_uses_relay_first_background_punch".into(),
+            direct_reachable: false,
+            nat_restricted: true,
+            relay_available: true,
+            weak_network: false,
+            visible_transport_high_risk: false,
+            privacy_budget_low: false,
+            tracking_exposure_high: false,
+            all_paths_unreachable: false,
+            apfl_strategy_hint_available: false,
+        }),
+        evaluate_intelligent_network_strategy_case_v0(IntelligentNetworkSignalV0 {
+            case_name: "visible_transport_risk_rotates_transport".into(),
+            direct_reachable: false,
+            nat_restricted: true,
+            relay_available: true,
+            weak_network: false,
+            visible_transport_high_risk: true,
+            privacy_budget_low: false,
+            tracking_exposure_high: false,
+            all_paths_unreachable: false,
+            apfl_strategy_hint_available: false,
+        }),
+        evaluate_intelligent_network_strategy_case_v0(IntelligentNetworkSignalV0 {
+            case_name: "weak_network_enables_queue_and_small_batches".into(),
+            direct_reachable: false,
+            nat_restricted: false,
+            relay_available: true,
+            weak_network: true,
+            visible_transport_high_risk: false,
+            privacy_budget_low: false,
+            tracking_exposure_high: false,
+            all_paths_unreachable: false,
+            apfl_strategy_hint_available: false,
+        }),
+        evaluate_intelligent_network_strategy_case_v0(IntelligentNetworkSignalV0 {
+            case_name: "privacy_low_minimizes_peer_disclosure".into(),
+            direct_reachable: false,
+            nat_restricted: true,
+            relay_available: true,
+            weak_network: false,
+            visible_transport_high_risk: false,
+            privacy_budget_low: true,
+            tracking_exposure_high: true,
+            all_paths_unreachable: false,
+            apfl_strategy_hint_available: false,
+        }),
+        evaluate_intelligent_network_strategy_case_v0(IntelligentNetworkSignalV0 {
+            case_name: "apfl_hint_available_kept_as_advisory".into(),
+            direct_reachable: false,
+            nat_restricted: true,
+            relay_available: true,
+            weak_network: true,
+            visible_transport_high_risk: true,
+            privacy_budget_low: true,
+            tracking_exposure_high: true,
+            all_paths_unreachable: false,
+            apfl_strategy_hint_available: true,
+        }),
+        evaluate_intelligent_network_strategy_case_v0(IntelligentNetworkSignalV0 {
+            case_name: "no_path_enters_queue_fallback".into(),
+            direct_reachable: false,
+            nat_restricted: true,
+            relay_available: false,
+            weak_network: true,
+            visible_transport_high_risk: true,
+            privacy_budget_low: true,
+            tracking_exposure_high: true,
+            all_paths_unreachable: true,
+            apfl_strategy_hint_available: true,
+        }),
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "intelligent_network_strategy_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 42: Intelligent Network Strategy Layer v0",
+        "real_public_adaptive_smoke": false,
+        "strategy_engine": {
+            "engine": "deterministic_local_policy_v0",
+            "apfl_strategy_hook_available": true,
+            "apfl_model_called": false,
+            "apfl_interpreted": false,
+            "aoem_called": false,
+            "strategy_outputs_are_advisory_until_verified": true,
+            "unsafe_black_box_network_mutation_allowed": false
+        },
+        "intelligence_loop": [
+            "observe_reachability_and_failure_signals",
+            "classify_nat_weaknet_visibility_privacy_risk",
+            "score_native_direct_relay_multihop_queue_candidates",
+            "choose_minimum_exposure_working_path",
+            "rotate_or_cooldown_failed_candidates",
+            "preserve_opaque_novorudp_payload",
+            "emit_auditable_report"
+        ],
+        "hard_boundaries": {
+            "node_trust_required": false,
+            "relay_trust_required": false,
+            "ca_trust_required": false,
+            "validity_source": "zk_proof_and_seal",
+            "business_semantics_interpreted_by_network": false,
+            "full_raw_ip_directory_exposed": false,
+            "novorudp_wire_changed": false
+        },
+        "cases": cases,
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("intelligent network strategy matrix failed")
     }
 }
 
@@ -5255,6 +5397,20 @@ struct TransportCandidateV0 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct IntelligentNetworkSignalV0 {
+    case_name: String,
+    direct_reachable: bool,
+    nat_restricted: bool,
+    relay_available: bool,
+    weak_network: bool,
+    visible_transport_high_risk: bool,
+    privacy_budget_low: bool,
+    tracking_exposure_high: bool,
+    all_paths_unreachable: bool,
+    apfl_strategy_hint_available: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PeerSignedRelayEndpointRecordV0 {
     record_version: u32,
     relay_peer_id: String,
@@ -7673,6 +7829,143 @@ fn transport_candidate_rank_v0(transport: &str, port: u16) -> u8 {
         ("udp", _) => 5,
         _ => 6,
     }
+}
+
+fn evaluate_intelligent_network_strategy_case_v0(
+    signal: IntelligentNetworkSignalV0,
+) -> serde_json::Value {
+    let selected_path =
+        if signal.all_paths_unreachable || (!signal.direct_reachable && !signal.relay_available) {
+            "QueueFallback"
+        } else if signal.direct_reachable && !signal.visible_transport_high_risk {
+            "DirectNovoRudp"
+        } else if signal.relay_available {
+            "RelayNovoRudp"
+        } else {
+            "QueueFallback"
+        };
+
+    let selected_transport_family = if selected_path == "QueueFallback" {
+        "none"
+    } else if selected_path == "DirectNovoRudp" {
+        "native_encrypted_novorudp"
+    } else if signal.visible_transport_high_risk {
+        "rotating_multi_transport_relay"
+    } else {
+        "native_first_relay"
+    };
+
+    let nat_action = if signal.nat_restricted && signal.relay_available {
+        "relay_first_background_punch_probe"
+    } else if signal.nat_restricted {
+        "diagnose_and_queue_until_relay_candidate"
+    } else {
+        "no_nat_intervention_required"
+    };
+
+    let weak_network_action = if signal.weak_network {
+        "enable_queue_small_batches_keepalive_backoff"
+    } else {
+        "normal_pacing"
+    };
+
+    let visibility_action = if signal.visible_transport_high_risk && signal.relay_available {
+        "rotate_transport_candidate_and_cooldown_visible_path"
+    } else if signal.visible_transport_high_risk {
+        "avoid_false_reachable_and_queue"
+    } else {
+        "keep_current_transport"
+    };
+
+    let privacy_action = if signal.privacy_budget_low || signal.tracking_exposure_high {
+        "minimize_peer_disclosure_blinded_directory_small_candidate_set"
+    } else {
+        "standard_peer_signed_candidate_sync"
+    };
+
+    let apfl_action = if signal.apfl_strategy_hint_available {
+        "advisory_only_not_executed"
+    } else {
+        "not_requested"
+    };
+
+    let fallback_reason = if selected_path == "QueueFallback" {
+        if signal.all_paths_unreachable {
+            json!("NoReachablePath")
+        } else {
+            json!("NoReachableRelayCandidate")
+        }
+    } else {
+        serde_json::Value::Null
+    };
+
+    let accepted = match signal.case_name.as_str() {
+        "stable_native_path_prefers_native" => {
+            selected_path == "DirectNovoRudp"
+                && selected_transport_family == "native_encrypted_novorudp"
+        }
+        "nat_restricted_uses_relay_first_background_punch" => {
+            selected_path == "RelayNovoRudp" && nat_action == "relay_first_background_punch_probe"
+        }
+        "visible_transport_risk_rotates_transport" => {
+            selected_path == "RelayNovoRudp"
+                && visibility_action == "rotate_transport_candidate_and_cooldown_visible_path"
+        }
+        "weak_network_enables_queue_and_small_batches" => {
+            weak_network_action == "enable_queue_small_batches_keepalive_backoff"
+        }
+        "privacy_low_minimizes_peer_disclosure" => {
+            privacy_action == "minimize_peer_disclosure_blinded_directory_small_candidate_set"
+        }
+        "apfl_hint_available_kept_as_advisory" => {
+            signal.apfl_strategy_hint_available && apfl_action == "advisory_only_not_executed"
+        }
+        "no_path_enters_queue_fallback" => {
+            selected_path == "QueueFallback" && fallback_reason == json!("NoReachablePath")
+        }
+        _ => false,
+    };
+
+    json!({
+        "case": signal.case_name,
+        "accepted": accepted,
+        "signals": {
+            "direct_reachable": signal.direct_reachable,
+            "nat_restricted": signal.nat_restricted,
+            "relay_available": signal.relay_available,
+            "weak_network": signal.weak_network,
+            "visible_transport_high_risk": signal.visible_transport_high_risk,
+            "privacy_budget_low": signal.privacy_budget_low,
+            "tracking_exposure_high": signal.tracking_exposure_high,
+            "all_paths_unreachable": signal.all_paths_unreachable,
+            "apfl_strategy_hint_available": signal.apfl_strategy_hint_available
+        },
+        "decision": {
+            "selected_path": selected_path,
+            "selected_transport_family": selected_transport_family,
+            "fallback_reason": fallback_reason,
+            "nat_action": nat_action,
+            "weak_network_action": weak_network_action,
+            "visibility_action": visibility_action,
+            "privacy_action": privacy_action,
+            "apfl_action": apfl_action,
+            "relay_rotation_allowed": signal.relay_available,
+            "background_punch_allowed": signal.nat_restricted && signal.relay_available,
+            "queue_enabled": true,
+            "full_raw_ip_directory_exposed": false
+        },
+        "safety_boundary": {
+            "apfl_model_called": false,
+            "apfl_interpreted": false,
+            "aoem_called": false,
+            "payload_treated_opaque": true,
+            "node_trust_required": false,
+            "relay_trust_required": false,
+            "ca_trust_required": false,
+            "validity_source": "zk_proof_and_seal",
+            "novorudp_wire_changed": false
+        }
+    })
 }
 
 fn evaluate_relay_selection_case_v0(
