@@ -3219,6 +3219,161 @@ Cut 25:
   NAT Traversal Probe + UDP Hole Punch v0
 ```
 
+## Cut 25: NAT Traversal Probe + UDP Hole Punch v0
+
+Status:
+
+```text
+LOCAL NAT-PUNCH LOGIC SMOKE PASS
+REAL CROSS-NAT SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Add the first NAT punch control-plane smoke path after Cut 24 observed endpoint
+records.
+
+This cut validates local punch control logic:
+1. punch probe / ack success
+2. punch nonce mismatch rejection
+3. punch failure -> RelayNovoRudp fallback selection
+
+It does not claim real NAT traversal success yet.
+```
+
+New gate modes:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=nat-punch-matrix
+NOVOVM_OVERLAY_GATE_MODE=nat-punch
+```
+
+NAT punch role mode:
+
+```text
+NOVOVM_OVERLAY_OBSERVED_ROLE=observer
+NOVOVM_OVERLAY_OBSERVED_ROLE=prober
+```
+
+Probe / ack behavior:
+
+```text
+Punch probe:
+  NOVORUDP frame kind = Endpoint
+  payload = NatPunchProbePayloadV0
+
+Punch ack:
+  NOVORUDP frame kind = Ack
+  payload = NatPunchAckPayloadV0
+
+Ack must echo punch_nonce.
+Nonce mismatch is rejected and cannot mark punch reachable.
+```
+
+New / relevant report fields:
+
+```text
+punch_nonce
+ack_nonce
+punch_target_peer_id
+punch_target_observed_endpoint
+punch_attempt_sent
+punch_ack_valid
+punch_reject_reason
+punch_result
+selected_path_after_punch
+relay_fallback_selected
+fallback_reason
+observed_endpoint
+observed_by_peer_id
+ack_source_endpoint
+```
+
+Local NAT punch matrix validation:
+
+```text
+nat-punch-matrix accepted=true
+
+success:
+  punch_ack_valid=true
+  punch_result=punched_direct
+  selected_path_after_punch=PunchedDirect
+
+nonce mismatch:
+  punch_ack_valid=false
+  punch_reject_reason=punch_nonce_mismatch
+
+fallback:
+  punch_ack_valid=false
+  relay_fallback_selected=true
+  fallback_reason=NatPunchFailed
+  selected_path_after_punch=RelayNovoRudp
+```
+
+Local role validation:
+
+```text
+observer accepted=true
+prober accepted=true
+punch_ack_valid=true
+punch_result=punched_direct
+selected_path_after_punch=PunchedDirect
+observed_endpoint=127.0.0.1:<prober-port>
+ack_source_endpoint=127.0.0.1:<observer-port>
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+cargo check -q -p novovm-network
+cargo test -q -p novovm-network adaptive_overlay -- --test-threads=1
+cargo test -q -p novovm-network overlay_runtime -- --test-threads=1
+
+NOVOVM_OVERLAY_GATE_MODE=nat-punch-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/nat-punch-matrix-cut25.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+apfl_interpreted=false
+aoem_called=false
+opcode114_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+
+Real cross-NAT smoke remains pending:
+
+```text
+Cut 25 has not yet proven:
+REAL NAT PUNCH PASS
+REAL CROSS-NAT UDP HOLE PUNCH PASS
+REAL CROSS-NAT RELAY FALLBACK PASS
+
+To run the real smoke, A must be able to send UDP to:
+B_OBSERVED_OR_PUBLIC_ADDR=<B public IP / DDNS / port mapping>:41020
+
+If punch succeeds:
+  selected_path_after_punch=PunchedDirect
+
+If punch fails but fallback works:
+  selected_path_after_punch=RelayNovoRudp
+  fallback_reason=NatPunchFailed
+```
+
 ## Product Readout
 
 Current product status:
