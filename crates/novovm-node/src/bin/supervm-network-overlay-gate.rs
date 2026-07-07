@@ -70,6 +70,9 @@ fn main() -> Result<()> {
         "wss-443-relay-session-runtime-matrix" => run_wss_443_relay_session_runtime_matrix_gate(),
         "wss-tls-socket-transport-matrix" => run_wss_tls_socket_transport_matrix_gate(),
         "wss-tls-public-relay" => run_wss_tls_public_relay_gate(),
+        "native-first-transport-adaptive-matrix" => {
+            run_native_first_transport_adaptive_matrix_gate()
+        }
         "decentralized-bootstrap-constraint-matrix" => {
             run_decentralized_bootstrap_constraint_matrix_gate()
         }
@@ -922,6 +925,230 @@ fn run_wss_443_outbound_relay_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("wss 443 outbound relay matrix failed")
+    }
+}
+
+fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/native-first-transport-adaptive-matrix-cut41.json".into()
+    });
+
+    let native_reachable = evaluate_transport_adaptive_case_v0(
+        "native_novorudp_reachable_selected",
+        vec![
+            transport_candidate_v0(
+                "native-novorudp",
+                "novorudp://relay-a.example.net/dynamic",
+                "native_encrypted_novorudp",
+                0,
+                true,
+                false,
+                false,
+                "native_mainnet_transport",
+            ),
+            transport_candidate_v0(
+                "wss-443",
+                "wss://relay-a.example.net:443/novovm",
+                "wss",
+                443,
+                true,
+                false,
+                true,
+                "compatibility_transport",
+            ),
+        ],
+    );
+
+    let native_blocked_falls_back_wss = evaluate_transport_adaptive_case_v0(
+        "native_blocked_falls_back_to_wss_443",
+        vec![
+            transport_candidate_v0(
+                "native-novorudp",
+                "novorudp://relay-a.example.net/dynamic",
+                "native_encrypted_novorudp",
+                0,
+                false,
+                true,
+                false,
+                "native_mainnet_transport",
+            ),
+            transport_candidate_v0(
+                "wss-443",
+                "wss://relay-a.example.net:443/novovm",
+                "wss",
+                443,
+                true,
+                false,
+                true,
+                "compatibility_transport",
+            ),
+        ],
+    );
+
+    let tls_visible_path_rotates = evaluate_transport_adaptive_case_v0(
+        "tls_visible_path_rotates_to_quic",
+        vec![
+            transport_candidate_v0(
+                "native-novorudp",
+                "novorudp://relay-a.example.net/dynamic",
+                "native_encrypted_novorudp",
+                0,
+                false,
+                true,
+                false,
+                "native_mainnet_transport",
+            ),
+            transport_candidate_v0(
+                "wss-443",
+                "wss://relay-a.example.net:443/novovm",
+                "wss",
+                443,
+                true,
+                true,
+                true,
+                "compatibility_transport",
+            ),
+            transport_candidate_v0(
+                "quic-443",
+                "quic://relay-b.example.net:443",
+                "quic",
+                443,
+                true,
+                false,
+                true,
+                "alternative_443_transport",
+            ),
+        ],
+    );
+
+    let http80_last_resort = evaluate_transport_adaptive_case_v0(
+        "http80_last_resort_when_443_paths_blocked",
+        vec![
+            transport_candidate_v0(
+                "native-novorudp",
+                "novorudp://relay-a.example.net/dynamic",
+                "native_encrypted_novorudp",
+                0,
+                false,
+                true,
+                false,
+                "native_mainnet_transport",
+            ),
+            transport_candidate_v0(
+                "wss-443",
+                "wss://relay-a.example.net:443/novovm",
+                "wss",
+                443,
+                false,
+                true,
+                true,
+                "compatibility_transport",
+            ),
+            transport_candidate_v0(
+                "ws-80",
+                "ws://relay-c.example.net:80/novovm",
+                "ws",
+                80,
+                true,
+                false,
+                true,
+                "last_resort_compatibility_transport",
+            ),
+        ],
+    );
+
+    let all_blocked_queue = evaluate_transport_adaptive_case_v0(
+        "all_transports_blocked_queue_fallback",
+        vec![
+            transport_candidate_v0(
+                "native-novorudp",
+                "novorudp://relay-a.example.net/dynamic",
+                "native_encrypted_novorudp",
+                0,
+                false,
+                true,
+                false,
+                "native_mainnet_transport",
+            ),
+            transport_candidate_v0(
+                "wss-443",
+                "wss://relay-a.example.net:443/novovm",
+                "wss",
+                443,
+                false,
+                true,
+                true,
+                "compatibility_transport",
+            ),
+            transport_candidate_v0(
+                "quic-443",
+                "quic://relay-b.example.net:443",
+                "quic",
+                443,
+                false,
+                true,
+                true,
+                "alternative_443_transport",
+            ),
+        ],
+    );
+
+    let cases = vec![
+        native_reachable,
+        native_blocked_falls_back_wss,
+        tls_visible_path_rotates,
+        http80_last_resort,
+        all_blocked_queue,
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "native_first_transport_adaptive_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 41: Native-first Multi-transport Adaptive Policy v0",
+        "real_public_mixed_transport_smoke": false,
+        "policy": {
+            "native_novorudp_first": true,
+            "wss_tls_443_is_compatibility_path": true,
+            "tls_certificate_is_trust_root": false,
+            "ca_trust_required": false,
+            "node_trust_required": false,
+            "relay_trust_required": false,
+            "validity_source": "zk_proof_and_seal",
+            "transport_selection_does_not_change_novorudp_wire": true,
+            "queue_fallback_when_no_transport_reachable": true
+        },
+        "transport_order": [
+            "native_encrypted_novorudp",
+            "wss_443_compatibility",
+            "quic_443_alternative",
+            "tls_443_compatibility",
+            "ws_80_last_resort",
+            "queue_fallback"
+        ],
+        "observable_surface_policy": {
+            "tls_can_be_fingerprinted": true,
+            "wss_can_be_fingerprinted": true,
+            "quic_can_be_fingerprinted": true,
+            "native_transport_uses_novorudp_identity_not_ca": true,
+            "do_not_depend_on_single_visible_transport": true
+        },
+        "cases": cases,
+        "relay_is_trusted_authority": false,
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false,
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("native first transport adaptive matrix failed")
     }
 }
 
@@ -5016,6 +5243,18 @@ struct RelayCandidateV0 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct TransportCandidateV0 {
+    candidate_id: String,
+    endpoint: String,
+    transport: String,
+    port: u16,
+    observed_reachable: bool,
+    fingerprint_blocked_or_high_risk: bool,
+    tls_visible_surface: bool,
+    role: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PeerSignedRelayEndpointRecordV0 {
     record_version: u32,
     relay_peer_id: String,
@@ -7310,6 +7549,129 @@ fn relay_candidate_v0(
         supports_quic_443: transport == "quic" && port == 443,
         supports_udp: transport == "udp",
         record_signature_valid,
+    }
+}
+
+fn transport_candidate_v0(
+    candidate_id: &str,
+    endpoint: &str,
+    transport: &str,
+    port: u16,
+    observed_reachable: bool,
+    fingerprint_blocked_or_high_risk: bool,
+    tls_visible_surface: bool,
+    role: &str,
+) -> TransportCandidateV0 {
+    TransportCandidateV0 {
+        candidate_id: candidate_id.to_string(),
+        endpoint: endpoint.to_string(),
+        transport: transport.to_string(),
+        port,
+        observed_reachable,
+        fingerprint_blocked_or_high_risk,
+        tls_visible_surface,
+        role: role.to_string(),
+    }
+}
+
+fn evaluate_transport_adaptive_case_v0(
+    case_name: &str,
+    candidates: Vec<TransportCandidateV0>,
+) -> serde_json::Value {
+    let selected = select_transport_candidate_v0(&candidates).cloned();
+    let selected_path = if selected.is_some() {
+        "RelayNovoRudp"
+    } else {
+        "QueueFallback"
+    };
+    let fallback_reason = if selected.is_some() {
+        serde_json::Value::Null
+    } else {
+        json!("NoReachableTransportCandidate")
+    };
+    let selection_reason = match selected
+        .as_ref()
+        .map(|candidate| candidate.transport.as_str())
+    {
+        Some("native_encrypted_novorudp") => "NativeNovoRudpTransportSelected",
+        Some("wss") => "NativeUnavailableWss443CompatibilitySelected",
+        Some("quic") => "VisibleTlsPathRotatedToQuic443",
+        Some("tls") => "Tls443CompatibilitySelected",
+        Some("ws") => "LastResortWs80CompatibilitySelected",
+        Some(_) => "ReachableTransportCandidateSelected",
+        None => "NoReachableTransportCandidate",
+    };
+    let accepted = match case_name {
+        "native_novorudp_reachable_selected" => {
+            selected
+                .as_ref()
+                .map(|candidate| candidate.transport.as_str())
+                == Some("native_encrypted_novorudp")
+        }
+        "native_blocked_falls_back_to_wss_443" => {
+            selected
+                .as_ref()
+                .map(|candidate| candidate.transport.as_str())
+                == Some("wss")
+        }
+        "tls_visible_path_rotates_to_quic" => {
+            selected
+                .as_ref()
+                .map(|candidate| candidate.transport.as_str())
+                == Some("quic")
+        }
+        "http80_last_resort_when_443_paths_blocked" => {
+            selected
+                .as_ref()
+                .map(|candidate| candidate.transport.as_str())
+                == Some("ws")
+        }
+        "all_transports_blocked_queue_fallback" => selected.is_none(),
+        _ => selected.is_some(),
+    };
+
+    json!({
+        "case": case_name,
+        "accepted": accepted,
+        "candidate_count": candidates.len(),
+        "selected_transport": selected.as_ref().map(|candidate| candidate.transport.clone()),
+        "selected_endpoint": selected.as_ref().map(|candidate| candidate.endpoint.clone()),
+        "selected_candidate_id": selected.as_ref().map(|candidate| candidate.candidate_id.clone()),
+        "selected_path_after_transport_selection": selected_path,
+        "selection_reason": selection_reason,
+        "fallback_reason": fallback_reason,
+        "tls_visible_surface_selected": selected
+            .as_ref()
+            .map(|candidate| candidate.tls_visible_surface)
+            .unwrap_or(false),
+        "ca_trust_required": false,
+        "node_trust_required": false,
+        "relay_trust_required": false,
+        "validity_source": "zk_proof_and_seal",
+        "novorudp_wire_changed": false,
+        "candidates": candidates,
+    })
+}
+
+fn select_transport_candidate_v0(
+    candidates: &[TransportCandidateV0],
+) -> Option<&TransportCandidateV0> {
+    candidates
+        .iter()
+        .filter(|candidate| candidate.observed_reachable)
+        .filter(|candidate| !candidate.fingerprint_blocked_or_high_risk)
+        .min_by_key(|candidate| transport_candidate_rank_v0(&candidate.transport, candidate.port))
+}
+
+fn transport_candidate_rank_v0(transport: &str, port: u16) -> u8 {
+    match (transport, port) {
+        ("native_encrypted_novorudp", _) => 0,
+        ("wss", 443) => 1,
+        ("quic", 443) => 2,
+        ("tls", 443) => 3,
+        ("ws", 80) => 4,
+        ("udp", _) => 5,
+        _ => 6,
     }
 }
 
