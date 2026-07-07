@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use novovm_network::adaptive_overlay::{
     decide_adaptive_overlay_route_v0, decide_adaptive_overlay_route_with_family_cooldown_v0,
@@ -32,9 +33,12 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::io::{Read, Write};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::Path;
 use std::process::Command;
+use std::sync::{mpsc, Arc};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn main() -> Result<()> {
@@ -64,6 +68,7 @@ fn main() -> Result<()> {
         "relay-endpoint-candidates-matrix" => run_relay_endpoint_candidates_matrix_gate(),
         "wss-443-outbound-relay-matrix" => run_wss_443_outbound_relay_matrix_gate(),
         "wss-443-relay-session-runtime-matrix" => run_wss_443_relay_session_runtime_matrix_gate(),
+        "wss-tls-socket-transport-matrix" => run_wss_tls_socket_transport_matrix_gate(),
         "decentralized-bootstrap-constraint-matrix" => {
             run_decentralized_bootstrap_constraint_matrix_gate()
         }
@@ -5122,6 +5127,48 @@ struct Wss443RelaySessionManagerV0 {
     session_ttl_ms: u64,
 }
 
+#[derive(Debug, Clone)]
+struct Cut39WssTlsSocketSmokeOutcomeV0 {
+    selected_endpoint: String,
+    websocket_upgrade_ok: bool,
+    tls_accept_ok: bool,
+    binary_frame_mode: bool,
+    novorudp_inner_frame_preserved: bool,
+    client_register_node_a_ok: bool,
+    client_register_node_b_ok: bool,
+    registered_peer_ids: Vec<String>,
+    relay_frames_forwarded: u64,
+    target_peer_id_forwarding: bool,
+    ping_pong_ok: bool,
+    node_b_received_frame_count: u64,
+    node_b_frame_decode_ok_count: u64,
+}
+
+#[derive(Debug, Clone)]
+struct Cut39RelayThreadOutcomeV0 {
+    websocket_upgrade_count: u64,
+    tls_accept_count: u64,
+    registered_peer_ids: Vec<String>,
+    relay_frames_forwarded: u64,
+    target_peer_id_forwarding: bool,
+    ping_pong_ok: bool,
+}
+
+#[derive(Debug, Clone)]
+struct Cut39NodeBThreadOutcomeV0 {
+    received_frame_count: u64,
+    frame_decode_ok_count: u64,
+    pong_ok: bool,
+}
+
+#[derive(Debug, Clone)]
+enum Cut39WebSocketFrameV0 {
+    Binary(Vec<u8>),
+    Ping(Vec<u8>),
+    Pong(Vec<u8>),
+    Close,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ObservedEndpointProbePayloadV0 {
     probe_nonce: String,
@@ -5260,6 +5307,563 @@ impl Wss443RelaySessionManagerV0 {
             now_ms.saturating_sub(session.last_pong_ms) <= self.session_ttl_ms
         });
         before.saturating_sub(self.sessions.len())
+    }
+}
+
+fn run_wss_tls_socket_transport_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/wss-tls-socket-transport-matrix.json".into()
+    });
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
+
+    let smoke = run_cut39_local_wss_tls_socket_smoke_v0(max_frames)?;
+    let accepted = smoke.websocket_upgrade_ok
+        && smoke.tls_accept_ok
+        && smoke.binary_frame_mode
+        && smoke.novorudp_inner_frame_preserved
+        && smoke.relay_frames_forwarded == max_frames
+        && smoke.node_b_received_frame_count == max_frames
+        && smoke.node_b_frame_decode_ok_count == max_frames
+        && smoke.ping_pong_ok
+        && smoke.target_peer_id_forwarding;
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "wss_tls_socket_transport_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "real_wss_tls_socket_implemented": true,
+        "real_public_tls_smoke": false,
+        "local_loopback_tls_smoke": true,
+        "selected_transport": "wss",
+        "selected_endpoint": smoke.selected_endpoint,
+        "product_default_endpoint": "wss://<relay>:443/novovm",
+        "product_default_port": 443,
+        "local_smoke_ephemeral_port": true,
+        "websocket_upgrade_ok": smoke.websocket_upgrade_ok,
+        "tls_accept_ok": smoke.tls_accept_ok,
+        "binary_frame_mode": smoke.binary_frame_mode,
+        "novorudp_inner_frame_preserved": smoke.novorudp_inner_frame_preserved,
+        "client_register_node_a_ok": smoke.client_register_node_a_ok,
+        "client_register_node_b_ok": smoke.client_register_node_b_ok,
+        "registered_peer_ids": smoke.registered_peer_ids,
+        "relay_frames_forwarded": smoke.relay_frames_forwarded,
+        "target_peer_id_forwarding": smoke.target_peer_id_forwarding,
+        "ping_pong_ok": smoke.ping_pong_ok,
+        "disconnect_reconnect_runtime_state_machine": "covered_by_cut_38",
+        "backpressure_runtime_state_machine": "covered_by_cut_38",
+        "node_a": {
+            "selected_transport": "wss",
+            "selected_endpoint": smoke.selected_endpoint,
+            "selected_path": "RelayNovoRudp",
+            "target_peer_id": "node-b",
+            "sent_frame_count": max_frames,
+            "inbound_public_endpoint_required": false,
+            "nat_punch_required": false
+        },
+        "public_relay": {
+            "relay_peer_id": "public-relay-local-cut39",
+            "websocket_path": "/novovm",
+            "relay_frames_forwarded": smoke.relay_frames_forwarded,
+            "forwards_by_peer_id": true,
+            "payload_treated_opaque": true,
+            "relay_is_trusted_authority": false,
+            "business_semantics_interpreted_by_relay": false
+        },
+        "node_b": {
+            "received_frame_count": smoke.node_b_received_frame_count,
+            "frame_decode_ok_count": smoke.node_b_frame_decode_ok_count,
+            "via_relay_peer_id": "public-relay-local-cut39",
+            "inbound_public_endpoint_required": false
+        },
+        "relay_is_trusted_authority": false,
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("wss tls socket transport matrix failed")
+    }
+}
+
+fn run_cut39_local_wss_tls_socket_smoke_v0(
+    max_frames: u64,
+) -> Result<Cut39WssTlsSocketSmokeOutcomeV0> {
+    let (server_config, client_config) = build_cut39_tls_configs_v0()?;
+    let listener = TcpListener::bind("127.0.0.1:0").context("bind cut39 local tls relay")?;
+    let relay_addr = listener.local_addr().context("cut39 relay local addr")?;
+    let selected_endpoint = format!("wss://127.0.0.1:{}/novovm", relay_addr.port());
+    let (ready_tx, ready_rx) = mpsc::channel::<SocketAddr>();
+    let relay_server_config = server_config.clone();
+    let relay_handle = thread::spawn(move || -> Result<Cut39RelayThreadOutcomeV0> {
+        ready_tx
+            .send(relay_addr)
+            .context("send cut39 relay ready addr")?;
+        run_cut39_relay_thread_v0(listener, relay_server_config, max_frames)
+    });
+
+    let relay_addr = ready_rx
+        .recv_timeout(Duration::from_secs(5))
+        .context("wait cut39 relay ready")?;
+    let node_b_client_config = client_config.clone();
+    let node_b_handle = thread::spawn(move || -> Result<Cut39NodeBThreadOutcomeV0> {
+        run_cut39_node_b_client_v0(relay_addr, node_b_client_config, max_frames)
+    });
+
+    thread::sleep(Duration::from_millis(150));
+    let node_a_client_config = client_config.clone();
+    let node_a_handle = thread::spawn(move || -> Result<bool> {
+        run_cut39_node_a_client_v0(relay_addr, node_a_client_config, max_frames)
+    });
+
+    let node_a_ok = node_a_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("cut39 node-a thread panicked"))??;
+    let node_b_outcome = node_b_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("cut39 node-b thread panicked"))??;
+    let relay_outcome = relay_handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("cut39 relay thread panicked"))??;
+
+    Ok(Cut39WssTlsSocketSmokeOutcomeV0 {
+        selected_endpoint,
+        websocket_upgrade_ok: relay_outcome.websocket_upgrade_count == 2,
+        tls_accept_ok: relay_outcome.tls_accept_count == 2,
+        binary_frame_mode: node_a_ok && node_b_outcome.received_frame_count == max_frames,
+        novorudp_inner_frame_preserved: node_b_outcome.frame_decode_ok_count == max_frames,
+        client_register_node_a_ok: relay_outcome
+            .registered_peer_ids
+            .iter()
+            .any(|peer_id| peer_id == "node-a"),
+        client_register_node_b_ok: relay_outcome
+            .registered_peer_ids
+            .iter()
+            .any(|peer_id| peer_id == "node-b"),
+        registered_peer_ids: relay_outcome.registered_peer_ids,
+        relay_frames_forwarded: relay_outcome.relay_frames_forwarded,
+        target_peer_id_forwarding: relay_outcome.target_peer_id_forwarding,
+        ping_pong_ok: relay_outcome.ping_pong_ok && node_b_outcome.pong_ok,
+        node_b_received_frame_count: node_b_outcome.received_frame_count,
+        node_b_frame_decode_ok_count: node_b_outcome.frame_decode_ok_count,
+    })
+}
+
+fn run_cut39_relay_thread_v0(
+    listener: TcpListener,
+    server_config: Arc<rustls::ServerConfig>,
+    max_frames: u64,
+) -> Result<Cut39RelayThreadOutcomeV0> {
+    let (node_b_tcp, _) = listener.accept().context("cut39 relay accept node-b")?;
+    let mut node_b_ws = cut39_accept_tls_websocket_v0(node_b_tcp, server_config.clone())
+        .context("node-b wss accept")?;
+    let node_b_register = cut39_read_register_message_v0(&mut node_b_ws, "node-b")?;
+    let node_b_pong_ok = cut39_answer_ping_v0(&mut node_b_ws, b"cut39-node-b-ping")?;
+
+    let (node_a_tcp, _) = listener.accept().context("cut39 relay accept node-a")?;
+    let mut node_a_ws =
+        cut39_accept_tls_websocket_v0(node_a_tcp, server_config).context("node-a wss accept")?;
+    let node_a_register = cut39_read_register_message_v0(&mut node_a_ws, "node-a")?;
+    let node_a_pong_ok = cut39_answer_ping_v0(&mut node_a_ws, b"cut39-node-a-ping")?;
+
+    let mut manager = Wss443RelaySessionManagerV0::new(max_frames as usize + 1, 30_000);
+    manager.register_session(&node_b_register.peer_id, "cut39-wss-node-b", 1_000);
+    manager.register_session(&node_a_register.peer_id, "cut39-wss-node-a", 1_001);
+
+    let mut relay_frames_forwarded = 0u64;
+    let mut target_peer_id_forwarding = true;
+    for frame_index in 0..max_frames {
+        let bytes = cut39_read_binary_message_v0(&mut node_a_ws)
+            .with_context(|| format!("cut39 relay read node-a envelope {frame_index}"))?;
+        let envelope: PublicRelayDataEnvelopeV0 =
+            serde_json::from_slice(&bytes).context("cut39 relay decode data envelope")?;
+        let forward = manager.forward_by_peer_id(envelope.clone(), 2_000 + frame_index);
+        if !forward.accepted || forward.forwarded_to_peer_id.as_deref() != Some("node-b") {
+            target_peer_id_forwarding = false;
+            continue;
+        }
+        cut39_websocket_write_frame_v0(&mut node_b_ws, 0x2, &envelope.payload, false)
+            .context("cut39 relay forward payload to node-b")?;
+        relay_frames_forwarded += 1;
+    }
+
+    Ok(Cut39RelayThreadOutcomeV0 {
+        websocket_upgrade_count: 2,
+        tls_accept_count: 2,
+        registered_peer_ids: vec![node_b_register.peer_id, node_a_register.peer_id],
+        relay_frames_forwarded,
+        target_peer_id_forwarding,
+        ping_pong_ok: node_a_pong_ok && node_b_pong_ok,
+    })
+}
+
+fn run_cut39_node_b_client_v0(
+    relay_addr: SocketAddr,
+    client_config: Arc<rustls::ClientConfig>,
+    max_frames: u64,
+) -> Result<Cut39NodeBThreadOutcomeV0> {
+    let mut ws = cut39_connect_tls_websocket_v0(relay_addr, client_config, "node-b")
+        .context("cut39 node-b connect wss")?;
+    let register = PublicRelayRegisterPayloadV0 {
+        peer_id: "node-b".into(),
+        advertised_endpoint: None,
+        registered_at_ms: now_unix_ms(),
+    };
+    cut39_websocket_write_frame_v0(&mut ws, 0x2, &serde_json::to_vec(&register)?, true)
+        .context("cut39 node-b send register")?;
+    let pong_ok = cut39_send_ping_expect_pong_v0(&mut ws, b"cut39-node-b-ping")?;
+
+    let mut received_frame_count = 0u64;
+    let mut frame_decode_ok_count = 0u64;
+    for frame_index in 0..max_frames {
+        let frame_bytes = cut39_read_binary_message_v0(&mut ws)
+            .with_context(|| format!("cut39 node-b read forwarded frame {frame_index}"))?;
+        received_frame_count += 1;
+        if let Ok(frame) = novovm_network::novorudp::NovoRudpTransportFrameV0::decode(&frame_bytes)
+        {
+            if frame.kind == NovoRudpTransportFrameKindV0::Data {
+                frame_decode_ok_count += 1;
+            }
+        }
+    }
+
+    Ok(Cut39NodeBThreadOutcomeV0 {
+        received_frame_count,
+        frame_decode_ok_count,
+        pong_ok,
+    })
+}
+
+fn run_cut39_node_a_client_v0(
+    relay_addr: SocketAddr,
+    client_config: Arc<rustls::ClientConfig>,
+    max_frames: u64,
+) -> Result<bool> {
+    let mut ws = cut39_connect_tls_websocket_v0(relay_addr, client_config, "node-a")
+        .context("cut39 node-a connect wss")?;
+    let register = PublicRelayRegisterPayloadV0 {
+        peer_id: "node-a".into(),
+        advertised_endpoint: None,
+        registered_at_ms: now_unix_ms(),
+    };
+    cut39_websocket_write_frame_v0(&mut ws, 0x2, &serde_json::to_vec(&register)?, true)
+        .context("cut39 node-a send register")?;
+    let pong_ok = cut39_send_ping_expect_pong_v0(&mut ws, b"cut39-node-a-ping")?;
+
+    for frame_index in 0..max_frames {
+        let frame = novovm_network::novorudp::NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            [39u8; 16],
+            390,
+            391,
+            frame_index,
+            393,
+            format!("cut39-opaque-novorudp-payload-{frame_index}").into_bytes(),
+        );
+        let envelope = PublicRelayDataEnvelopeV0 {
+            request_id: format!("cut39-wss-frame-{frame_index}"),
+            source_peer_id: "node-a".into(),
+            target_peer_id: "node-b".into(),
+            payload: frame.encode(),
+        };
+        cut39_websocket_write_frame_v0(&mut ws, 0x2, &serde_json::to_vec(&envelope)?, true)
+            .with_context(|| format!("cut39 node-a send envelope {frame_index}"))?;
+    }
+
+    Ok(pong_ok)
+}
+
+fn build_cut39_tls_configs_v0() -> Result<(Arc<rustls::ServerConfig>, Arc<rustls::ClientConfig>)> {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])
+        .context("generate cut39 self-signed cert")?;
+    let cert_der = cert.serialize_der().context("serialize cut39 cert")?;
+    let key_der = cert.serialize_private_key_der();
+    let certs = vec![rustls::Certificate(cert_der.clone())];
+    let server_config = rustls::ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(certs, rustls::PrivateKey(key_der))
+        .context("build cut39 server tls config")?;
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(&rustls::Certificate(cert_der))
+        .context("trust cut39 self-signed cert")?;
+    let client_config = rustls::ClientConfig::builder()
+        .with_safe_defaults()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+
+    Ok((Arc::new(server_config), Arc::new(client_config)))
+}
+
+fn cut39_accept_tls_websocket_v0(
+    tcp: TcpStream,
+    server_config: Arc<rustls::ServerConfig>,
+) -> Result<rustls::StreamOwned<rustls::ServerConnection, TcpStream>> {
+    tcp.set_read_timeout(Some(Duration::from_secs(5)))
+        .context("set cut39 server read timeout")?;
+    tcp.set_write_timeout(Some(Duration::from_secs(5)))
+        .context("set cut39 server write timeout")?;
+    let server_conn =
+        rustls::ServerConnection::new(server_config).context("create cut39 server tls conn")?;
+    let mut tls = rustls::StreamOwned::new(server_conn, tcp);
+    cut39_websocket_server_accept_v0(&mut tls, "/novovm")?;
+    Ok(tls)
+}
+
+fn cut39_connect_tls_websocket_v0(
+    relay_addr: SocketAddr,
+    client_config: Arc<rustls::ClientConfig>,
+    peer_id: &str,
+) -> Result<rustls::StreamOwned<rustls::ClientConnection, TcpStream>> {
+    let tcp = TcpStream::connect(relay_addr).context("connect cut39 relay tcp")?;
+    tcp.set_read_timeout(Some(Duration::from_secs(5)))
+        .context("set cut39 client read timeout")?;
+    tcp.set_write_timeout(Some(Duration::from_secs(5)))
+        .context("set cut39 client write timeout")?;
+    let server_name = rustls::ServerName::try_from("localhost").context("cut39 server name")?;
+    let client_conn = rustls::ClientConnection::new(client_config, server_name)
+        .context("create cut39 tls client")?;
+    let mut tls = rustls::StreamOwned::new(client_conn, tcp);
+    let key = cut39_websocket_key_v0(peer_id);
+    cut39_websocket_client_upgrade_v0(&mut tls, "/novovm", &relay_addr, &key)?;
+    Ok(tls)
+}
+
+fn cut39_websocket_key_v0(peer_id: &str) -> String {
+    let mut bytes = [0u8; 16];
+    for (index, byte) in peer_id.as_bytes().iter().enumerate().take(16) {
+        bytes[index] = *byte;
+    }
+    BASE64_STANDARD.encode(bytes)
+}
+
+fn cut39_websocket_server_accept_v0<S: Read + Write>(
+    stream: &mut S,
+    expected_path: &str,
+) -> Result<()> {
+    let request = cut39_read_http_headers_v0(stream).context("cut39 read websocket request")?;
+    let mut lines = request.lines();
+    let request_line = lines
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing websocket request line"))?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts.next().unwrap_or_default();
+    let path = request_parts.next().unwrap_or_default();
+    if method != "GET" || path != expected_path {
+        anyhow::bail!("invalid websocket upgrade request: {request_line}");
+    }
+    let mut sec_key = None;
+    for line in lines {
+        let lower = line.to_ascii_lowercase();
+        if lower.starts_with("sec-websocket-key:") {
+            sec_key = line
+                .split_once(':')
+                .map(|(_, value)| value.trim().to_string());
+            break;
+        }
+    }
+    let sec_key = sec_key.ok_or_else(|| anyhow::anyhow!("missing sec-websocket-key"))?;
+    let accept = cut39_websocket_accept_key_v0(&sec_key);
+    let response = format!(
+        "HTTP/1.1 101 Switching Protocols\r\n\
+         Upgrade: websocket\r\n\
+         Connection: Upgrade\r\n\
+         Sec-WebSocket-Accept: {accept}\r\n\r\n"
+    );
+    stream
+        .write_all(response.as_bytes())
+        .context("cut39 write websocket upgrade response")?;
+    stream.flush().context("cut39 flush websocket upgrade")?;
+    Ok(())
+}
+
+fn cut39_websocket_client_upgrade_v0<S: Read + Write>(
+    stream: &mut S,
+    path: &str,
+    relay_addr: &SocketAddr,
+    sec_key: &str,
+) -> Result<()> {
+    let request = format!(
+        "GET {path} HTTP/1.1\r\n\
+         Host: localhost:{}\r\n\
+         Upgrade: websocket\r\n\
+         Connection: Upgrade\r\n\
+         Sec-WebSocket-Key: {sec_key}\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n",
+        relay_addr.port()
+    );
+    stream
+        .write_all(request.as_bytes())
+        .context("cut39 write websocket upgrade request")?;
+    stream.flush().context("cut39 flush websocket request")?;
+    let response = cut39_read_http_headers_v0(stream).context("cut39 read websocket response")?;
+    if !response.starts_with("HTTP/1.1 101") {
+        anyhow::bail!("websocket upgrade rejected: {response}");
+    }
+    let expected_accept = cut39_websocket_accept_key_v0(sec_key);
+    if !response.contains(&format!("Sec-WebSocket-Accept: {expected_accept}")) {
+        anyhow::bail!("websocket accept key mismatch");
+    }
+    Ok(())
+}
+
+fn cut39_websocket_accept_key_v0(sec_key: &str) -> String {
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(sec_key.as_bytes());
+    hasher.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    BASE64_STANDARD.encode(hasher.finalize())
+}
+
+fn cut39_read_http_headers_v0<S: Read>(stream: &mut S) -> Result<String> {
+    let mut bytes = Vec::new();
+    let mut one = [0u8; 1];
+    while bytes.len() < 8192 {
+        stream
+            .read_exact(&mut one)
+            .context("cut39 read http header byte")?;
+        bytes.push(one[0]);
+        if bytes.ends_with(b"\r\n\r\n") {
+            return String::from_utf8(bytes).context("cut39 http headers utf8");
+        }
+    }
+    anyhow::bail!("cut39 http headers exceeded limit")
+}
+
+fn cut39_read_register_message_v0<S: Read + Write>(
+    stream: &mut S,
+    expected_peer_id: &str,
+) -> Result<PublicRelayRegisterPayloadV0> {
+    let bytes = cut39_read_binary_message_v0(stream).context("cut39 read register message")?;
+    let register: PublicRelayRegisterPayloadV0 =
+        serde_json::from_slice(&bytes).context("cut39 decode register message")?;
+    if register.peer_id != expected_peer_id {
+        anyhow::bail!(
+            "cut39 register peer mismatch: expected {expected_peer_id}, got {}",
+            register.peer_id
+        );
+    }
+    Ok(register)
+}
+
+fn cut39_answer_ping_v0<S: Read + Write>(stream: &mut S, expected_payload: &[u8]) -> Result<bool> {
+    match cut39_websocket_read_frame_v0(stream).context("cut39 read ping")? {
+        Cut39WebSocketFrameV0::Ping(payload) if payload == expected_payload => {
+            cut39_websocket_write_frame_v0(stream, 0xA, &payload, false)
+                .context("cut39 write pong")?;
+            Ok(true)
+        }
+        other => anyhow::bail!("cut39 expected ping, got {other:?}"),
+    }
+}
+
+fn cut39_send_ping_expect_pong_v0<S: Read + Write>(stream: &mut S, payload: &[u8]) -> Result<bool> {
+    cut39_websocket_write_frame_v0(stream, 0x9, payload, true).context("cut39 write ping")?;
+    match cut39_websocket_read_frame_v0(stream).context("cut39 read pong")? {
+        Cut39WebSocketFrameV0::Pong(received) => Ok(received == payload),
+        other => anyhow::bail!("cut39 expected pong, got {other:?}"),
+    }
+}
+
+fn cut39_read_binary_message_v0<S: Read + Write>(stream: &mut S) -> Result<Vec<u8>> {
+    match cut39_websocket_read_frame_v0(stream).context("cut39 read websocket frame")? {
+        Cut39WebSocketFrameV0::Binary(bytes) => Ok(bytes),
+        other => anyhow::bail!("cut39 expected binary websocket frame, got {other:?}"),
+    }
+}
+
+fn cut39_websocket_write_frame_v0<S: Write>(
+    stream: &mut S,
+    opcode: u8,
+    payload: &[u8],
+    masked: bool,
+) -> Result<()> {
+    let mut header = Vec::with_capacity(14 + payload.len());
+    header.push(0x80 | (opcode & 0x0F));
+    let mask_bit = if masked { 0x80 } else { 0 };
+    match payload.len() {
+        len if len <= 125 => header.push(mask_bit | len as u8),
+        len if len <= u16::MAX as usize => {
+            header.push(mask_bit | 126);
+            header.extend_from_slice(&(len as u16).to_be_bytes());
+        }
+        len => {
+            header.push(mask_bit | 127);
+            header.extend_from_slice(&(len as u64).to_be_bytes());
+        }
+    }
+    if masked {
+        let mask = [0x13, 0x37, 0x39, 0x41];
+        header.extend_from_slice(&mask);
+        header.extend(
+            payload
+                .iter()
+                .enumerate()
+                .map(|(index, byte)| byte ^ mask[index % 4]),
+        );
+    } else {
+        header.extend_from_slice(payload);
+    }
+    stream
+        .write_all(&header)
+        .context("cut39 write websocket frame")?;
+    stream.flush().context("cut39 flush websocket frame")?;
+    Ok(())
+}
+
+fn cut39_websocket_read_frame_v0<S: Read>(stream: &mut S) -> Result<Cut39WebSocketFrameV0> {
+    let mut header = [0u8; 2];
+    stream
+        .read_exact(&mut header)
+        .context("cut39 read websocket frame header")?;
+    let opcode = header[0] & 0x0F;
+    let masked = (header[1] & 0x80) != 0;
+    let mut len = (header[1] & 0x7F) as u64;
+    if len == 126 {
+        let mut ext = [0u8; 2];
+        stream
+            .read_exact(&mut ext)
+            .context("cut39 read websocket len16")?;
+        len = u16::from_be_bytes(ext) as u64;
+    } else if len == 127 {
+        let mut ext = [0u8; 8];
+        stream
+            .read_exact(&mut ext)
+            .context("cut39 read websocket len64")?;
+        len = u64::from_be_bytes(ext);
+    }
+    if len > 1_048_576 {
+        anyhow::bail!("cut39 websocket frame too large: {len}");
+    }
+    let mask = if masked {
+        let mut mask = [0u8; 4];
+        stream
+            .read_exact(&mut mask)
+            .context("cut39 read websocket mask")?;
+        Some(mask)
+    } else {
+        None
+    };
+    let mut payload = vec![0u8; len as usize];
+    stream
+        .read_exact(&mut payload)
+        .context("cut39 read websocket payload")?;
+    if let Some(mask) = mask {
+        for (index, byte) in payload.iter_mut().enumerate() {
+            *byte ^= mask[index % 4];
+        }
+    }
+    match opcode {
+        0x2 => Ok(Cut39WebSocketFrameV0::Binary(payload)),
+        0x8 => Ok(Cut39WebSocketFrameV0::Close),
+        0x9 => Ok(Cut39WebSocketFrameV0::Ping(payload)),
+        0xA => Ok(Cut39WebSocketFrameV0::Pong(payload)),
+        other => anyhow::bail!("cut39 unsupported websocket opcode: {other}"),
     }
 }
 

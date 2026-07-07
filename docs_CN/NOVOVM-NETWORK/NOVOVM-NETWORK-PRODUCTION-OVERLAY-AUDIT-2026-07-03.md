@@ -4904,6 +4904,103 @@ real_wss_tls_socket_implemented=false
 real_public_tls_smoke=false
 ```
 
+## Cut 39: Real WSS/TLS Socket Transport v0
+
+Status:
+
+```text
+LOCAL WSS/TLS SOCKET TRANSPORT PASS
+REAL PUBLIC TLS RELAY SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Purpose:
+
+```text
+Connect the Cut 38 relay session runtime to a real local socket path:
+
+TCP listener
+TLS accept
+WebSocket upgrade /novovm
+binary WebSocket messages
+client register node-a/node-b
+target_peer_id relay forwarding
+real ping/pong
+opaque NOVORUDP frame preservation
+
+This cut deliberately uses a localhost ephemeral port for the smoke test.
+The product default remains wss://<relay>:443/novovm.
+```
+
+Gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=wss-tls-socket-transport-matrix
+```
+
+Local WSS/TLS socket smoke:
+
+```text
+accepted=true
+real_wss_tls_socket_implemented=true
+real_public_tls_smoke=false
+local_loopback_tls_smoke=true
+selected_transport=wss
+product_default_endpoint=wss://<relay>:443/novovm
+product_default_port=443
+local_smoke_ephemeral_port=true
+
+websocket_upgrade_ok=true
+tls_accept_ok=true
+binary_frame_mode=true
+novorudp_inner_frame_preserved=true
+client_register_node_a_ok=true
+client_register_node_b_ok=true
+registered_peer_ids=[node-b,node-a]
+relay_frames_forwarded=4
+target_peer_id_forwarding=true
+ping_pong_ok=true
+
+node_a:
+  selected_path=RelayNovoRudp
+  target_peer_id=node-b
+  sent_frame_count=4
+  inbound_public_endpoint_required=false
+  nat_punch_required=false
+
+node_b:
+  received_frame_count=4
+  frame_decode_ok_count=4
+  inbound_public_endpoint_required=false
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=wss-tls-socket-transport-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/wss-tls-socket-transport-matrix-cut39.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+relay_is_trusted_authority=false
+business_semantics_interpreted_by_relay=false
+novorudp_wire_changed=false
+real_public_tls_smoke=false
+```
+
 ## Product Readout
 
 Current product status:
