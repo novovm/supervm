@@ -2827,7 +2827,7 @@ Status:
 
 ```text
 LOCAL / CONFIG VALIDATION PASS
-REAL FOUR-MACHINE CUT 22 REGRESSION PENDING
+REAL FOUR-MACHINE REGRESSION PASS
 ```
 
 Implemented in:
@@ -2890,27 +2890,69 @@ Observed validation:
 
 ```text
 A:
-  bind_addr_effective=0.0.0.0:53386
-  advertised_endpoint=192.168.71.118:53386
+  bind_addr_effective=0.0.0.0:<dynamic-port>
+  advertised_endpoint=192.168.1.246:<dynamic-port>
   endpoint_selection_reason=manually_configured_public_addr
   rejected bind candidate:
-    endpoint=0.0.0.0:53386
+    endpoint=0.0.0.0:<dynamic-port>
     reason=reject_unspecified_ip
 
 B:
   bind_addr_effective=0.0.0.0:41020
-  advertised_endpoint=192.168.71.56:41020
+  advertised_endpoint=192.168.1.245:41020
   endpoint_selection_reason=manually_configured_public_addr
 
 R1:
   bind_addr_effective=0.0.0.0:41030
-  advertised_endpoint=192.168.71.9:41030
+  advertised_endpoint=192.168.1.178:41030
   endpoint_selection_reason=manually_configured_public_addr
 
 R2:
   bind_addr_effective=0.0.0.0:41040
-  advertised_endpoint=192.168.71.54:41040
+  advertised_endpoint=192.168.1.11:41040
   endpoint_selection_reason=manually_configured_public_addr
+```
+
+Real four-machine regression:
+
+```text
+Topology:
+  A  = 192.168.1.246
+  B  = 192.168.1.245:41020
+  R1 = 192.168.1.178:41030
+  R2 = 192.168.1.11:41040
+
+adaptive-direct:
+  selected_path=DirectNovoRudp
+  A -> B
+  delivered=4/4
+
+adaptive-relay:
+  selected_path=RelayNovoRudp
+  A -> R1 -> B
+  delivered=4/4
+
+adaptive-multihop:
+  selected_path=MultiHopRelay
+  A -> R1 -> R2 -> B
+  delivered=4/4
+
+adaptive-queue:
+  selected_path=QueueFallback
+  queued_count=4
+  sent_bytes_total=0
+```
+
+Endpoint advertisement regression:
+
+```text
+advertised_endpoint no longer publishes 0.0.0.0:port.
+0.0.0.0:* candidates are rejected with reject_unspecified_ip.
+
+A  advertised_endpoint=192.168.1.246:<dynamic-port>
+B  advertised_endpoint=192.168.1.245:41020
+R1 advertised_endpoint=192.168.1.178:41030
+R2 advertised_endpoint=192.168.1.11:41040
 ```
 
 Validation commands:
@@ -2928,8 +2970,14 @@ adaptive-node process matrix:
 
 cut23 endpoint selection sample:
   adaptive-queue PASS
-  advertised_endpoint=192.168.71.118:<dynamic-port>
+  advertised_endpoint=192.168.1.246:<dynamic-port>
   bind candidate 0.0.0.0:<dynamic-port> rejected
+
+real four-machine adaptive regression:
+  adaptive-direct    PASS
+  adaptive-relay     PASS
+  adaptive-multihop  PASS
+  adaptive-queue     PASS
 ```
 
 Boundary:
