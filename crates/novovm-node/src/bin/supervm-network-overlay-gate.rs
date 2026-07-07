@@ -63,6 +63,7 @@ fn main() -> Result<()> {
         }
         "relay-endpoint-candidates-matrix" => run_relay_endpoint_candidates_matrix_gate(),
         "wss-443-outbound-relay-matrix" => run_wss_443_outbound_relay_matrix_gate(),
+        "wss-443-relay-session-runtime-matrix" => run_wss_443_relay_session_runtime_matrix_gate(),
         "decentralized-bootstrap-constraint-matrix" => {
             run_decentralized_bootstrap_constraint_matrix_gate()
         }
@@ -858,6 +859,162 @@ fn run_wss_443_outbound_relay_matrix_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("wss 443 outbound relay matrix failed")
+    }
+}
+
+fn run_wss_443_relay_session_runtime_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/wss-443-relay-session-runtime-matrix.json".into()
+    });
+    let mut manager = Wss443RelaySessionManagerV0::new(2, 30_000);
+
+    let session_a = manager.register_session("node-a", "wss-session-a-1", 1_000);
+    let session_b = manager.register_session("node-b", "wss-session-b-1", 1_000);
+    let duplicate_a = manager.register_session("node-a", "wss-session-a-2", 2_000);
+    let ping_ok = manager.observe_pong("node-a", 2_100);
+    let data_frame = PublicRelayDataEnvelopeV0 {
+        request_id: "wss-runtime-frame-1".into(),
+        source_peer_id: "node-a".into(),
+        target_peer_id: "node-b".into(),
+        payload: b"opaque-novorudp-frame".to_vec(),
+    };
+    let forward_1 = manager.forward_by_peer_id(data_frame.clone(), 2_200);
+    let forward_2 = manager.forward_by_peer_id(
+        PublicRelayDataEnvelopeV0 {
+            request_id: "wss-runtime-frame-2".into(),
+            ..data_frame.clone()
+        },
+        2_201,
+    );
+    let backpressure = manager.forward_by_peer_id(
+        PublicRelayDataEnvelopeV0 {
+            request_id: "wss-runtime-frame-3".into(),
+            ..data_frame.clone()
+        },
+        2_202,
+    );
+    let missing_target = manager.forward_by_peer_id(
+        PublicRelayDataEnvelopeV0 {
+            request_id: "wss-runtime-missing-target".into(),
+            target_peer_id: "node-missing".into(),
+            ..data_frame.clone()
+        },
+        2_300,
+    );
+    let disconnected = manager.disconnect("node-b", 2_400);
+    let after_disconnect = manager.forward_by_peer_id(
+        PublicRelayDataEnvelopeV0 {
+            request_id: "wss-runtime-after-disconnect".into(),
+            ..data_frame.clone()
+        },
+        2_500,
+    );
+    let reconnected_b = manager.register_session("node-b", "wss-session-b-2", 2_600);
+    let after_reconnect = manager.forward_by_peer_id(
+        PublicRelayDataEnvelopeV0 {
+            request_id: "wss-runtime-after-reconnect".into(),
+            ..data_frame
+        },
+        2_700,
+    );
+    let expired_count = manager.expire_sessions(40_000);
+
+    let cases = vec![
+        json!({
+            "case": "peer_id_session_registration",
+            "accepted": session_a.accepted && session_b.accepted,
+            "registered_peer_ids": ["node-a", "node-b"],
+            "session_count": 2,
+        }),
+        json!({
+            "case": "duplicate_login_replaces_previous_session",
+            "accepted": duplicate_a.accepted && duplicate_a.replaced_existing,
+            "peer_id": "node-a",
+            "active_session_id": "wss-session-a-2",
+            "replaced_existing": duplicate_a.replaced_existing,
+        }),
+        json!({
+            "case": "ping_pong_keeps_session_alive",
+            "accepted": ping_ok,
+            "peer_id": "node-a",
+            "ping_pong_supported": true,
+        }),
+        json!({
+            "case": "target_peer_id_forwarding",
+            "accepted": forward_1.accepted && forward_1.forwarded_to_peer_id.as_deref() == Some("node-b"),
+            "forwards_by_peer_id": true,
+            "payload_treated_opaque": true,
+            "forwarded_to_peer_id": forward_1.forwarded_to_peer_id,
+        }),
+        json!({
+            "case": "relay_queue_backpressure",
+            "accepted": forward_2.accepted
+                && !backpressure.accepted
+                && backpressure.reject_reason.as_deref() == Some("relay_session_backpressure"),
+            "relay_queue_depth": 2,
+            "relay_queue_limit": 2,
+            "reject_reason": backpressure.reject_reason,
+        }),
+        json!({
+            "case": "target_peer_missing_fallback",
+            "accepted": !missing_target.accepted
+                && missing_target.selected_path_after_failure == "QueueFallback",
+            "target_peer_id": "node-missing",
+            "fallback_reason": missing_target.reject_reason,
+            "selected_path_after_failure": missing_target.selected_path_after_failure,
+        }),
+        json!({
+            "case": "disconnect_and_reconnect",
+            "accepted": disconnected
+                && !after_disconnect.accepted
+                && reconnected_b.accepted
+                && after_reconnect.accepted,
+            "disconnect_observed": disconnected,
+            "after_disconnect_reject_reason": after_disconnect.reject_reason,
+            "reconnected_session_id": "wss-session-b-2",
+        }),
+        json!({
+            "case": "session_expiry",
+            "accepted": expired_count >= 1,
+            "expired_session_count": expired_count,
+            "session_ttl_ms": 30000,
+        }),
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "wss_443_relay_session_runtime_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "real_wss_tls_socket_implemented": false,
+        "real_public_tls_smoke": false,
+        "selected_transport": "wss",
+        "selected_port": 443,
+        "client_direction": "outbound",
+        "requires_public_client_inbound": false,
+        "session_manager": {
+            "peer_id_to_session": true,
+            "duplicate_login_replaces_previous_session": true,
+            "ping_pong_supported": true,
+            "disconnect_detected": true,
+            "reconnect_supported": true,
+            "relay_queue_limit": 2,
+            "backpressure_supported": true,
+            "target_peer_missing_fallback": "QueueFallback"
+        },
+        "relay_is_trusted_authority": false,
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false,
+        "cases": cases,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("wss 443 relay session runtime matrix failed")
     }
 }
 
@@ -4934,6 +5091,37 @@ struct PublicRelayDataEnvelopeV0 {
     payload: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Wss443RelaySessionV0 {
+    peer_id: String,
+    session_id: String,
+    connected: bool,
+    connected_at_ms: u64,
+    last_pong_ms: u64,
+    pending_frames: Vec<PublicRelayDataEnvelopeV0>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Wss443RelayRegisterOutcomeV0 {
+    accepted: bool,
+    replaced_existing: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Wss443RelayForwardOutcomeV0 {
+    accepted: bool,
+    forwarded_to_peer_id: Option<String>,
+    reject_reason: Option<String>,
+    selected_path_after_failure: String,
+}
+
+#[derive(Debug, Clone)]
+struct Wss443RelaySessionManagerV0 {
+    sessions: std::collections::BTreeMap<String, Wss443RelaySessionV0>,
+    queue_limit: usize,
+    session_ttl_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ObservedEndpointProbePayloadV0 {
     probe_nonce: String,
@@ -4971,6 +5159,108 @@ struct NatPunchAckPayloadV0 {
     observer_peer_id: String,
     observed_endpoint: String,
     observed_at_ms: u64,
+}
+
+impl Wss443RelaySessionManagerV0 {
+    fn new(queue_limit: usize, session_ttl_ms: u64) -> Self {
+        Self {
+            sessions: std::collections::BTreeMap::new(),
+            queue_limit,
+            session_ttl_ms,
+        }
+    }
+
+    fn register_session(
+        &mut self,
+        peer_id: &str,
+        session_id: &str,
+        now_ms: u64,
+    ) -> Wss443RelayRegisterOutcomeV0 {
+        let replaced_existing = self.sessions.contains_key(peer_id);
+        self.sessions.insert(
+            peer_id.to_string(),
+            Wss443RelaySessionV0 {
+                peer_id: peer_id.to_string(),
+                session_id: session_id.to_string(),
+                connected: true,
+                connected_at_ms: now_ms,
+                last_pong_ms: now_ms,
+                pending_frames: Vec::new(),
+            },
+        );
+        Wss443RelayRegisterOutcomeV0 {
+            accepted: true,
+            replaced_existing,
+        }
+    }
+
+    fn observe_pong(&mut self, peer_id: &str, now_ms: u64) -> bool {
+        match self.sessions.get_mut(peer_id) {
+            Some(session) if session.connected => {
+                session.last_pong_ms = now_ms;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn forward_by_peer_id(
+        &mut self,
+        envelope: PublicRelayDataEnvelopeV0,
+        _now_ms: u64,
+    ) -> Wss443RelayForwardOutcomeV0 {
+        match self.sessions.get_mut(&envelope.target_peer_id) {
+            Some(session) if session.connected => {
+                if session.pending_frames.len() >= self.queue_limit {
+                    return Wss443RelayForwardOutcomeV0 {
+                        accepted: false,
+                        forwarded_to_peer_id: Some(envelope.target_peer_id),
+                        reject_reason: Some("relay_session_backpressure".into()),
+                        selected_path_after_failure: "QueueFallback".into(),
+                    };
+                }
+                let forwarded_to_peer_id = envelope.target_peer_id.clone();
+                session.pending_frames.push(envelope);
+                Wss443RelayForwardOutcomeV0 {
+                    accepted: true,
+                    forwarded_to_peer_id: Some(forwarded_to_peer_id),
+                    reject_reason: None,
+                    selected_path_after_failure: "RelayNovoRudp".into(),
+                }
+            }
+            Some(_) => Wss443RelayForwardOutcomeV0 {
+                accepted: false,
+                forwarded_to_peer_id: Some(envelope.target_peer_id),
+                reject_reason: Some("relay_session_disconnected".into()),
+                selected_path_after_failure: "QueueFallback".into(),
+            },
+            None => Wss443RelayForwardOutcomeV0 {
+                accepted: false,
+                forwarded_to_peer_id: None,
+                reject_reason: Some("target_peer_session_not_found".into()),
+                selected_path_after_failure: "QueueFallback".into(),
+            },
+        }
+    }
+
+    fn disconnect(&mut self, peer_id: &str, _now_ms: u64) -> bool {
+        match self.sessions.get_mut(peer_id) {
+            Some(session) => {
+                session.connected = false;
+                session.pending_frames.clear();
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn expire_sessions(&mut self, now_ms: u64) -> usize {
+        let before = self.sessions.len();
+        self.sessions.retain(|_, session| {
+            now_ms.saturating_sub(session.last_pong_ms) <= self.session_ttl_ms
+        });
+        before.saturating_sub(self.sessions.len())
+    }
 }
 
 fn run_observed_endpoint_local_case_v0(

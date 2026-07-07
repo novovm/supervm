@@ -4797,6 +4797,113 @@ novorudp_wire_changed=false
 real_public_vps_relay_runtime_smoke=false
 ```
 
+Next frontier:
+
+```text
+Cut 38:
+  WSS 443 Relay Session Runtime Matrix v0
+```
+
+## Cut 38: WSS 443 Relay Session Runtime Matrix v0
+
+Status:
+
+```text
+LOCAL WSS 443 RELAY SESSION RUNTIME MATRIX PASS
+REAL WSS/TLS SOCKET IMPLEMENTATION PENDING
+REAL PUBLIC TLS RELAY SMOKE PENDING
+```
+
+Implemented in:
+
+```text
+crates/novovm-node/src/bin/supervm-network-overlay-gate.rs
+```
+
+Goal:
+
+```text
+Move beyond WSS endpoint selection semantics and define the relay session
+runtime state machine needed by a real WSS/TLS 443 relay.
+
+This cut does not claim a real TLS socket implementation. It locks the runtime
+behavior that a real WSS transport must drive: peer_id -> session mapping,
+duplicate login replacement, ping/pong liveness, disconnect/reconnect, target
+peer lookup, forwarding by target_peer_id, queue backpressure, and QueueFallback
+when the target session is unavailable.
+```
+
+New gate mode:
+
+```text
+NOVOVM_OVERLAY_GATE_MODE=wss-443-relay-session-runtime-matrix
+```
+
+Local session runtime matrix:
+
+```text
+peer_id session registration:
+  registered_peer_ids=[node-a,node-b]
+  session_count=2
+
+duplicate login replaces previous session:
+  active_session_id=wss-session-a-2
+  replaced_existing=true
+
+ping/pong keeps session alive:
+  ping_pong_supported=true
+
+target_peer_id forwarding:
+  forwards_by_peer_id=true
+  payload_treated_opaque=true
+  forwarded_to_peer_id=node-b
+
+relay queue backpressure:
+  relay_queue_limit=2
+  reject_reason=relay_session_backpressure
+
+target peer missing fallback:
+  fallback_reason=target_peer_session_not_found
+  selected_path_after_failure=QueueFallback
+
+disconnect and reconnect:
+  after_disconnect_reject_reason=relay_session_disconnected
+  reconnected_session_id=wss-session-b-2
+
+session expiry:
+  expired_session_count >= 1
+```
+
+Validation commands:
+
+```text
+cargo fmt --check
+cargo check -q -p novovm-node --bin supervm-network-overlay-gate
+
+NOVOVM_OVERLAY_GATE_MODE=wss-443-relay-session-runtime-matrix \
+NOVOVM_OVERLAY_GATE_REPORT_PATH=artifacts/network-overlay-gate/wss-443-relay-session-runtime-matrix-cut38.json \
+cargo run -q -p novovm-node --bin supervm-network-overlay-gate
+```
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+selected_transport=wss
+selected_port=443
+client_direction=outbound
+requires_public_client_inbound=false
+peer_id_to_session=true
+backpressure_supported=true
+target_peer_missing_fallback=QueueFallback
+relay_is_trusted_authority=false
+business_semantics_interpreted_by_relay=false
+novorudp_wire_changed=false
+real_wss_tls_socket_implemented=false
+real_public_tls_smoke=false
+```
+
 ## Product Readout
 
 Current product status:
