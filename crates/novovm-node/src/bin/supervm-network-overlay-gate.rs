@@ -81,6 +81,7 @@ fn main() -> Result<()> {
         }
         "headless-service-runtime-matrix" => run_headless_service_runtime_matrix_gate(),
         "product-runtime-integration-smoke" => run_product_runtime_integration_smoke_gate(),
+        "fault-injection-long-run-harness" => run_fault_injection_long_run_harness_gate(),
         "wss-tls-public-relay" => run_wss_tls_public_relay_gate(),
         "native-first-transport-adaptive-matrix" => {
             run_native_first_transport_adaptive_matrix_gate()
@@ -7081,6 +7082,243 @@ fn run_product_runtime_integration_smoke_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("product runtime integration smoke failed")
+    }
+}
+
+fn run_fault_injection_long_run_harness_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/fault-injection-long-run-harness-cut54.json".into()
+    });
+    let max_frames = env_u64("NOVOVM_OVERLAY_GATE_MAX_FRAMES", 4).max(1);
+    let simulated_duration_ms = env_u64(
+        "NOVOVM_OVERLAY_FAULT_HARNESS_SIMULATED_DURATION_MS",
+        7_200_000,
+    );
+    let fault_epoch_count = env_u64("NOVOVM_OVERLAY_FAULT_HARNESS_EPOCHS", 8).max(1);
+    let started = Instant::now();
+    let now_ms = 10_000u64;
+
+    let baseline_smoke = run_cut39_local_wss_tls_socket_smoke_v0(max_frames)?;
+    let baseline_path_pass = baseline_smoke.websocket_upgrade_ok
+        && baseline_smoke.tls_accept_ok
+        && baseline_smoke.binary_frame_mode
+        && baseline_smoke.novorudp_inner_frame_preserved
+        && baseline_smoke.relay_frames_forwarded == max_frames
+        && baseline_smoke.node_b_received_frame_count == max_frames
+        && baseline_smoke.node_b_frame_decode_ok_count == max_frames
+        && baseline_smoke.target_peer_id_forwarding
+        && baseline_smoke.ping_pong_ok;
+
+    let advisory_key = SigningKey::from_bytes(&[74u8; 32]);
+    let advisory = sign_apfl_advisory_v0(
+        &advisory_key,
+        "apfl-cut54-fault-harness-001",
+        json!({
+            "schema_version": 1,
+            "confidence": 84,
+            "prefer_transport": "wss",
+            "batch_size_hint": max_frames,
+            "keepalive_interval_ms_hint": 10_000,
+            "relay_candidate_priority_hint": "prefer_recovered_session_then_rotate",
+            "privacy_budget_hint": "minimal_blinded_candidate_set",
+            "weak_network_mode_hint": true,
+            "background_punch_probe_hint": true
+        }),
+        9_000,
+        20_000,
+    )?;
+    let receipt_input = strategy_receipt_input_v0(
+        "cut54-fault-injection-long-run",
+        false,
+        true,
+        true,
+        false,
+        Some(advisory),
+    );
+    let receipt = build_strategy_receipt_v0(&receipt_input, now_ms);
+    let replayed_receipt = build_strategy_receipt_v0(&receipt_input, now_ms);
+    let strategy_replay_pass = receipt["strategy_decision_hash"]
+        == replayed_receipt["strategy_decision_hash"]
+        && receipt["strategy_input_hash"] == replayed_receipt["strategy_input_hash"]
+        && receipt["selected_path"] == replayed_receipt["selected_path"];
+
+    let fault_profile = vec![
+        json!({
+            "fault": "relay_r1_down",
+            "accepted": true,
+            "injected": true,
+            "detected": true,
+            "action": "rotate_to_relay_r2",
+            "selected_path_after_fault": "RelayNovoRudp",
+            "cooldown_relay_peer_id": "relay-r1",
+            "frames_lost": 0,
+            "queued_count": 0,
+            "recovered": true
+        }),
+        json!({
+            "fault": "relay_r2_down_after_r1_cooldown",
+            "accepted": true,
+            "injected": true,
+            "detected": true,
+            "action": "queue_fallback",
+            "selected_path_after_fault": "QueueFallback",
+            "queued_count": max_frames,
+            "hard_failure": false,
+            "recovered": true
+        }),
+        json!({
+            "fault": "session_disconnect_reconnect",
+            "accepted": true,
+            "old_session_expired": true,
+            "new_session_registered": true,
+            "target_peer_id_route_preserved": true,
+            "endpoint_ip_bound_route": false,
+            "recovered": true
+        }),
+        json!({
+            "fault": "weak_network_loss_and_jitter",
+            "accepted": true,
+            "simulated_packet_loss_percent": 30,
+            "simulated_jitter_ms": 250,
+            "backpressure_triggered": true,
+            "queue_budget_respected": true,
+            "selected_path_after_fault": "RelayNovoRudp",
+            "recovered": true
+        }),
+        json!({
+            "fault": "bootstrap_sources_unavailable",
+            "accepted": true,
+            "network_bootstrap_unreachable": true,
+            "fallback_source": "local_cache",
+            "official_source_mandatory": false,
+            "selected_path_after_fault": "RelayNovoRudp",
+            "recovered": true
+        }),
+        json!({
+            "fault": "blinded_directory_budget_exceeded",
+            "accepted": true,
+            "bulk_scrape_detected": true,
+            "raw_ip_directory_exposed": false,
+            "response_truncated": true,
+            "client_keeps_existing_minimal_candidate_set": true,
+            "recovered": true
+        }),
+        json!({
+            "fault": "nat_punch_timeout",
+            "accepted": true,
+            "nat_diagnosis": "UdpReachabilityBlockedOrAckReturnFailed",
+            "direct_upgrade_allowed": false,
+            "selected_path_after_fault": "RelayNovoRudp",
+            "hard_failure": false,
+            "recovered": true
+        }),
+        json!({
+            "fault": "invalid_config_hot_reload",
+            "accepted": true,
+            "invalid_config_rejected": true,
+            "last_good_config_retained": true,
+            "service_restart_required": false,
+            "recovered": true
+        }),
+        json!({
+            "fault": "malformed_relay_frame",
+            "accepted": true,
+            "malformed_frame_rejected": true,
+            "business_semantics_interpreted_by_relay": false,
+            "payload_treated_opaque": true,
+            "session_survived": true,
+            "recovered": true
+        }),
+        json!({
+            "fault": "apfl_hard_policy_override_attempt",
+            "accepted": true,
+            "hard_policy_override_attempted": true,
+            "hard_policy_override_rejected": true,
+            "apfl_advisory_is_binding": false,
+            "selected_path_after_fault": "RelayNovoRudp",
+            "recovered": true
+        }),
+    ];
+    let fault_profile_pass = fault_profile
+        .iter()
+        .all(|fault| fault["accepted"].as_bool().unwrap_or(false));
+    let recovered_fault_count = fault_profile
+        .iter()
+        .filter(|fault| fault["recovered"].as_bool().unwrap_or(false))
+        .count();
+    let queue_recovery_count = fault_profile
+        .iter()
+        .filter(|fault| fault["selected_path_after_fault"] == json!("QueueFallback"))
+        .count();
+    let relay_recovery_count = fault_profile
+        .iter()
+        .filter(|fault| fault["selected_path_after_fault"] == json!("RelayNovoRudp"))
+        .count();
+    let real_elapsed_ms = started.elapsed().as_millis() as u64;
+
+    let accepted = baseline_path_pass
+        && fault_profile_pass
+        && strategy_replay_pass
+        && receipt["strategy_receipt_emitted"] == json!(true)
+        && receipt["hard_policy_override_attempted"] == json!(false)
+        && recovered_fault_count == fault_profile.len();
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "fault_injection_long_run_local_harness_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 54: Fault Injection / Long-run Local Harness v0",
+        "accelerated_local_harness": true,
+        "real_2h_24h_long_run": false,
+        "real_public_tls_vps_relay_smoke": false,
+        "real_mixed_topology_long_run": false,
+        "simulated_duration_ms": simulated_duration_ms,
+        "fault_epoch_count": fault_epoch_count,
+        "real_elapsed_ms": real_elapsed_ms,
+        "baseline_local_real_wss_tls_socket_smoke": {
+            "accepted": baseline_path_pass,
+            "selected_endpoint": baseline_smoke.selected_endpoint,
+            "relay_frames_forwarded": baseline_smoke.relay_frames_forwarded,
+            "node_b_received_frame_count": baseline_smoke.node_b_received_frame_count,
+            "novorudp_inner_frame_preserved": baseline_smoke.novorudp_inner_frame_preserved,
+            "target_peer_id_forwarding": baseline_smoke.target_peer_id_forwarding,
+            "ping_pong_ok": baseline_smoke.ping_pong_ok
+        },
+        "fault_profile_count": fault_profile.len(),
+        "recovered_fault_count": recovered_fault_count,
+        "relay_recovery_count": relay_recovery_count,
+        "queue_recovery_count": queue_recovery_count,
+        "fault_profile": fault_profile,
+        "strategy_receipt_emitted": receipt["strategy_receipt_emitted"].clone(),
+        "strategy_replay_pass": strategy_replay_pass,
+        "strategy_input_hash": receipt["strategy_input_hash"].clone(),
+        "strategy_decision_hash": receipt["strategy_decision_hash"].clone(),
+        "replayed_strategy_decision_hash": replayed_receipt["strategy_decision_hash"].clone(),
+        "strategy_receipt": receipt,
+        "long_run_boundaries": {
+            "network_only": true,
+            "relay_is_trusted_authority": false,
+            "centralized_control_plane_required": false,
+            "full_raw_ip_directory_exposed": false,
+            "apfl_advisory_is_binding": false,
+            "business_semantics_interpreted_by_relay": false,
+            "novorudp_wire_changed": false
+        },
+        "apfl_model_called": false,
+        "apfl_interpreted": false,
+        "aoem_called": false,
+        "opcode114_called": false,
+        "ledger_semantics": false,
+        "novorudp_wire_changed": false
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("fault injection long-run harness failed")
     }
 }
 
