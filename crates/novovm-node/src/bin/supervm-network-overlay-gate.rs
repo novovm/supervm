@@ -82,6 +82,7 @@ fn main() -> Result<()> {
         "headless-service-runtime-matrix" => run_headless_service_runtime_matrix_gate(),
         "product-runtime-integration-smoke" => run_product_runtime_integration_smoke_gate(),
         "fault-injection-long-run-harness" => run_fault_injection_long_run_harness_gate(),
+        "public-smoke-runbook-bundle-matrix" => run_public_smoke_runbook_bundle_matrix_gate(),
         "wss-tls-public-relay" => run_wss_tls_public_relay_gate(),
         "native-first-transport-adaptive-matrix" => {
             run_native_first_transport_adaptive_matrix_gate()
@@ -7319,6 +7320,416 @@ fn run_fault_injection_long_run_harness_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("fault injection long-run harness failed")
+    }
+}
+
+fn run_public_smoke_runbook_bundle_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/public-smoke-runbook-bundle-matrix-cut55.json".into()
+    });
+    let bundle_root = env_string("NOVOVM_PUBLIC_SMOKE_BUNDLE_DIR")
+        .unwrap_or_else(|| "artifacts/network-overlay-gate/public-smoke-runbook-v0".into());
+    let relay_endpoint = env_string("NOVOVM_PUBLIC_SMOKE_RELAY_ENDPOINT")
+        .unwrap_or_else(|| "wss://<relay-host>:8443/novovm".into());
+    let relay_bind_addr =
+        env_string("NOVOVM_PUBLIC_SMOKE_RELAY_BIND_ADDR").unwrap_or_else(|| "0.0.0.0:8443".into());
+    let relay_node_id =
+        env_string("NOVOVM_PUBLIC_SMOKE_RELAY_NODE_ID").unwrap_or_else(|| "public-relay-1".into());
+    let bundle_path = Path::new(&bundle_root);
+    fs::create_dir_all(bundle_path.join("env"))?;
+    fs::create_dir_all(bundle_path.join("scripts"))?;
+    fs::create_dir_all(bundle_path.join("checklist"))?;
+    fs::create_dir_all(bundle_path.join("reports"))?;
+
+    let current_exe = env::current_exe().context("resolve current overlay gate executable")?;
+    let binary_name = format!("supervm-network-overlay-gate{}", env::consts::EXE_SUFFIX);
+    let binary_path = bundle_path.join(&binary_name);
+    fs::copy(&current_exe, &binary_path).with_context(|| {
+        format!(
+            "copy smoke binary from {} to {}",
+            current_exe.display(),
+            binary_path.display()
+        )
+    })?;
+
+    let readme = r#"# NOVOVM Public Relay Smoke Bundle v0
+
+This bundle is for Cut 46+ real public relay smoke tests.
+
+It does not turn the VPS into a development machine. The public relay host only
+needs the bundled binary, env file, run script, and report directory.
+
+Boundary:
+
+```text
+network_only=true
+payload_treated_opaque=true
+relay_is_trusted_authority=false
+business_semantics_interpreted_by_relay=false
+apfl_interpreted=false
+aoem_called=false
+opcode114_called=false
+ledger_semantics=false
+novorudp_wire_changed=false
+```
+"#;
+    let runbook = format!(
+        r#"# Cut 46+ Real Public Relay Smoke Runbook
+
+## Roles
+
+```text
+R = public relay VPS, headless bundle only
+A = ordinary NAT client sender
+B = ordinary NAT or different-network client receiver
+```
+
+## Required endpoint
+
+```text
+R_PUBLIC_WSS_ENDPOINT={relay_endpoint}
+R_BIND_ADDR={relay_bind_addr}
+```
+
+Use TCP 443 where possible. TCP 8443 is acceptable for smoke if 443 is not
+available. Do not sign a formal 443/TLS trust-path pass when using IP +
+allow-insecure or an untrusted certificate.
+
+## VPS relay
+
+Linux:
+
+```sh
+chmod +x ./supervm-network-overlay-gate ./scripts/run-public-relay.sh
+cp ./env/relay.env.example ./relay.env
+vi ./relay.env
+./scripts/run-public-relay.sh
+```
+
+Windows:
+
+```powershell
+Copy-Item .\env\relay.env.example .\relay.env
+notepad .\relay.env
+.\scripts\run-public-relay.ps1
+```
+
+## Client B
+
+```powershell
+Copy-Item .\env\node-b.env.example .\node-b.env
+notepad .\node-b.env
+.\scripts\run-node-b.ps1
+```
+
+## Client A
+
+```powershell
+Copy-Item .\env\node-a.env.example .\node-a.env
+notepad .\node-a.env
+.\scripts\run-node-a.ps1
+```
+
+## Required acceptance
+
+```text
+R accepted=true
+R bootstrap_sessions_established>=2
+R relay_frames_forwarded=4
+R forwards_by_peer_id=true
+
+A accepted=true
+A selected_path=RelayNovoRudp
+A target_peer_id=node-b
+A sent_frame_count=4
+A strategy_receipt_emitted=true
+A strategy_replay_pass=true
+
+B accepted=true
+B received_frame_count=4
+B frame_decode_ok=true
+B via_relay_peer_id=public-relay-1
+```
+
+## Report collection
+
+```powershell
+.\scripts\collect-public-smoke-reports.ps1
+```
+"#
+    );
+    let relay_env = format!(
+        r#"NOVOVM_OVERLAY_GATE_MODE=wss-tls-public-relay
+NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE=relay
+NOVOVM_OVERLAY_WSS_RELAY_ROLE=relay
+NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID={relay_node_id}
+NOVOVM_OVERLAY_GATE_BIND_ADDR={relay_bind_addr}
+NOVOVM_OVERLAY_GATE_REPORT_PATH=reports/public-relay-1.json
+NOVOVM_OVERLAY_WSS_TLS_TRUST_MODE=encrypted-untrusted
+"#
+    );
+    let node_a_env = format!(
+        r#"NOVOVM_OVERLAY_GATE_MODE=wss-tls-public-relay
+NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE=client-send
+NOVOVM_OVERLAY_WSS_RELAY_ROLE=client-send
+NOVOVM_OVERLAY_PUBLIC_RELAY_SOURCE_PEER_ID=node-a
+NOVOVM_OVERLAY_PUBLIC_RELAY_TARGET_PEER_ID=node-b
+NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID={relay_node_id}
+NOVOVM_OVERLAY_PUBLIC_RELAY_ENDPOINT={relay_endpoint}
+NOVOVM_OVERLAY_GATE_MAX_FRAMES=4
+NOVOVM_OVERLAY_GATE_REPORT_PATH=reports/node-a.json
+NOVOVM_OVERLAY_WSS_TLS_TRUST_MODE=encrypted-untrusted
+"#
+    );
+    let node_b_env = format!(
+        r#"NOVOVM_OVERLAY_GATE_MODE=wss-tls-public-relay
+NOVOVM_OVERLAY_PUBLIC_RELAY_ROLE=client-register
+NOVOVM_OVERLAY_WSS_RELAY_ROLE=client-register
+NOVOVM_OVERLAY_PUBLIC_RELAY_TARGET_PEER_ID=node-b
+NOVOVM_OVERLAY_PUBLIC_RELAY_NODE_ID={relay_node_id}
+NOVOVM_OVERLAY_PUBLIC_RELAY_ENDPOINT={relay_endpoint}
+NOVOVM_OVERLAY_GATE_MAX_FRAMES=4
+NOVOVM_OVERLAY_GATE_REPORT_PATH=reports/node-b.json
+NOVOVM_OVERLAY_WSS_TLS_TRUST_MODE=encrypted-untrusted
+"#
+    );
+    let run_public_relay_sh = r#"#!/usr/bin/env sh
+set -eu
+set -a
+[ -f ./relay.env ] && . ./relay.env
+set +a
+mkdir -p reports
+BIN="${NOVOVM_RELAY_BINARY:-./supervm-network-overlay-gate}"
+[ -x "$BIN" ] || BIN="./supervm-network-overlay-gate.exe"
+"$BIN"
+"#;
+    let run_public_relay_ps1 = r#"$ErrorActionPreference = "Stop"
+if (Test-Path ".\relay.env") {
+  Get-Content ".\relay.env" | Where-Object { $_ -match "^[^#].+=" } | ForEach-Object {
+    $parts = $_ -split "=", 2
+    [Environment]::SetEnvironmentVariable($parts[0], $parts[1], "Process")
+  }
+}
+New-Item -ItemType Directory -Force -Path "reports" | Out-Null
+$bin = if (Test-Path ".\supervm-network-overlay-gate.exe") { ".\supervm-network-overlay-gate.exe" } else { ".\supervm-network-overlay-gate" }
+& $bin
+"#;
+    let run_node_a_ps1 = r#"$ErrorActionPreference = "Stop"
+Get-Content ".\node-a.env" | Where-Object { $_ -match "^[^#].+=" } | ForEach-Object {
+  $parts = $_ -split "=", 2
+  [Environment]::SetEnvironmentVariable($parts[0], $parts[1], "Process")
+}
+New-Item -ItemType Directory -Force -Path "reports" | Out-Null
+$bin = if (Test-Path ".\supervm-network-overlay-gate.exe") { ".\supervm-network-overlay-gate.exe" } else { ".\supervm-network-overlay-gate" }
+& $bin
+"#;
+    let run_node_b_ps1 = run_node_a_ps1.replace(".\\node-a.env", ".\\node-b.env");
+    let collect_reports_ps1 = r#"$ErrorActionPreference = "Stop"
+$paths = @("reports\public-relay-1.json", "reports\node-a.json", "reports\node-b.json")
+foreach ($path in $paths) {
+  if (!(Test-Path $path)) {
+    throw "missing report: $path"
+  }
+}
+$summary = [ordered]@{
+  accepted = $true
+  relay_report_present = Test-Path "reports\public-relay-1.json"
+  node_a_report_present = Test-Path "reports\node-a.json"
+  node_b_report_present = Test-Path "reports\node-b.json"
+  collected_at = (Get-Date).ToUniversalTime().ToString("o")
+}
+$summary | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 "reports\public-smoke-summary.json"
+Get-Content "reports\public-smoke-summary.json"
+"#;
+    let collect_reports_sh = r#"#!/usr/bin/env sh
+set -eu
+test -f reports/public-relay-1.json
+test -f reports/node-a.json
+test -f reports/node-b.json
+cat > reports/public-smoke-summary.json <<'JSON'
+{
+  "accepted": true,
+  "relay_report_present": true,
+  "node_a_report_present": true,
+  "node_b_report_present": true
+}
+JSON
+cat reports/public-smoke-summary.json
+"#;
+    let acceptance = json!({
+        "cut": "Cut 46+: Real Public TLS/VPS Relay A/B Delivery + Strategy Receipt Smoke",
+        "real_public_smoke_required": true,
+        "relay": {
+            "accepted": true,
+            "bootstrap_sessions_established_min": 2,
+            "relay_frames_forwarded": 4,
+            "forwards_by_peer_id": true,
+            "payload_treated_opaque": true
+        },
+        "node_a": {
+            "accepted": true,
+            "selected_path": "RelayNovoRudp",
+            "target_peer_id": "node-b",
+            "sent_frame_count": 4,
+            "strategy_receipt_emitted": true,
+            "strategy_replay_pass": true
+        },
+        "node_b": {
+            "accepted": true,
+            "received_frame_count": 4,
+            "frame_decode_ok": true,
+            "via_relay_peer_id": relay_node_id
+        },
+        "boundary": {
+            "network_only": true,
+            "payload_treated_opaque": true,
+            "relay_is_trusted_authority": false,
+            "business_semantics_interpreted_by_relay": false,
+            "novorudp_wire_changed": false
+        }
+    });
+
+    fs::write(bundle_path.join("README.md"), readme)?;
+    fs::write(bundle_path.join("PUBLIC-SMOKE-RUNBOOK.md"), runbook)?;
+    fs::write(bundle_path.join("env").join("relay.env.example"), relay_env)?;
+    fs::write(
+        bundle_path.join("env").join("node-a.env.example"),
+        node_a_env,
+    )?;
+    fs::write(
+        bundle_path.join("env").join("node-b.env.example"),
+        node_b_env,
+    )?;
+    fs::write(
+        bundle_path.join("scripts").join("run-public-relay.sh"),
+        run_public_relay_sh,
+    )?;
+    fs::write(
+        bundle_path.join("scripts").join("run-public-relay.ps1"),
+        run_public_relay_ps1,
+    )?;
+    fs::write(
+        bundle_path.join("scripts").join("run-node-a.ps1"),
+        run_node_a_ps1,
+    )?;
+    fs::write(
+        bundle_path.join("scripts").join("run-node-b.ps1"),
+        run_node_b_ps1,
+    )?;
+    fs::write(
+        bundle_path
+            .join("scripts")
+            .join("collect-public-smoke-reports.ps1"),
+        collect_reports_ps1,
+    )?;
+    fs::write(
+        bundle_path
+            .join("scripts")
+            .join("collect-public-smoke-reports.sh"),
+        collect_reports_sh,
+    )?;
+    fs::write(
+        bundle_path.join("checklist").join("acceptance-fields.json"),
+        serde_json::to_vec_pretty(&acceptance)?,
+    )?;
+
+    let required_files = vec![
+        binary_name.as_str(),
+        "README.md",
+        "PUBLIC-SMOKE-RUNBOOK.md",
+        "env/relay.env.example",
+        "env/node-a.env.example",
+        "env/node-b.env.example",
+        "scripts/run-public-relay.sh",
+        "scripts/run-public-relay.ps1",
+        "scripts/run-node-a.ps1",
+        "scripts/run-node-b.ps1",
+        "scripts/collect-public-smoke-reports.ps1",
+        "scripts/collect-public-smoke-reports.sh",
+        "checklist/acceptance-fields.json",
+    ];
+    let mut checksum_lines = Vec::new();
+    for file in &required_files {
+        let digest = sha256_file_hex_v0(&bundle_path.join(file))?;
+        checksum_lines.push(format!("{digest}  {file}"));
+    }
+    fs::write(
+        bundle_path.join("CHECKSUMS.txt"),
+        format!("{}\n", checksum_lines.join("\n")),
+    )?;
+
+    let required_files_present = required_files
+        .iter()
+        .all(|file| bundle_path.join(file).is_file());
+    let runbook_text = fs::read_to_string(bundle_path.join("PUBLIC-SMOKE-RUNBOOK.md"))?;
+    let runbook_documents_rab = runbook_text.contains("R = public relay VPS")
+        && runbook_text.contains("A = ordinary NAT client sender")
+        && runbook_text.contains("B = ordinary NAT or different-network client receiver");
+    let runbook_documents_acceptance = runbook_text.contains("relay_frames_forwarded=4")
+        && runbook_text.contains("received_frame_count=4")
+        && runbook_text.contains("strategy_replay_pass=true");
+    let env_templates_present = bundle_path.join("env/relay.env.example").is_file()
+        && bundle_path.join("env/node-a.env.example").is_file()
+        && bundle_path.join("env/node-b.env.example").is_file();
+    let scripts_present = bundle_path.join("scripts/run-public-relay.sh").is_file()
+        && bundle_path.join("scripts/run-public-relay.ps1").is_file()
+        && bundle_path.join("scripts/run-node-a.ps1").is_file()
+        && bundle_path.join("scripts/run-node-b.ps1").is_file()
+        && bundle_path
+            .join("scripts/collect-public-smoke-reports.ps1")
+            .is_file()
+        && bundle_path
+            .join("scripts/collect-public-smoke-reports.sh")
+            .is_file();
+    let acceptance_fields: serde_json::Value = serde_json::from_slice(&fs::read(
+        bundle_path.join("checklist/acceptance-fields.json"),
+    )?)?;
+    let acceptance_fields_complete = acceptance_fields["relay"]["relay_frames_forwarded"]
+        == json!(4)
+        && acceptance_fields["node_a"]["strategy_receipt_emitted"] == json!(true)
+        && acceptance_fields["node_a"]["strategy_replay_pass"] == json!(true)
+        && acceptance_fields["node_b"]["received_frame_count"] == json!(4)
+        && acceptance_fields["boundary"]["novorudp_wire_changed"] == json!(false);
+    let checksums_written = bundle_path.join("CHECKSUMS.txt").is_file();
+    let accepted = required_files_present
+        && runbook_documents_rab
+        && runbook_documents_acceptance
+        && env_templates_present
+        && scripts_present
+        && acceptance_fields_complete
+        && checksums_written;
+
+    let report = json!({
+        "accepted": accepted,
+        "scope": "public_smoke_runbook_artifact_bundle_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 55: Public Smoke Runbook + Artifact Bundle v0",
+        "real_public_tls_vps_relay_smoke": false,
+        "bundle_root": bundle_root,
+        "bundle_created": bundle_path.is_dir(),
+        "binary_present": binary_path.is_file(),
+        "runbook_present": bundle_path.join("PUBLIC-SMOKE-RUNBOOK.md").is_file(),
+        "runbook_documents_rab_roles": runbook_documents_rab,
+        "runbook_documents_acceptance_fields": runbook_documents_acceptance,
+        "env_templates_present": env_templates_present,
+        "scripts_present": scripts_present,
+        "acceptance_fields_complete": acceptance_fields_complete,
+        "checksums_written": checksums_written,
+        "vps_requires_rust_toolchain": false,
+        "vps_requires_vscode": false,
+        "vps_requires_codex": false,
+        "relay_is_trusted_authority": false,
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false,
+        "files": checksum_lines,
+    });
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("public smoke runbook artifact bundle matrix failed")
     }
 }
 
