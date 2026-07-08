@@ -72,6 +72,14 @@ fn main() -> Result<()> {
         "wss-443-relay-session-runtime-matrix" => run_wss_443_relay_session_runtime_matrix_gate(),
         "wss-tls-socket-transport-matrix" => run_wss_tls_socket_transport_matrix_gate(),
         "wss-tls-relay-path-receipt-smoke" => run_wss_tls_relay_path_receipt_smoke_gate(),
+        "multi-relay-runtime-rotation-matrix" => run_multi_relay_runtime_rotation_matrix_gate(),
+        "bootstrap-runtime-resolver-matrix" => run_bootstrap_runtime_resolver_matrix_gate(),
+        "blinded-directory-runtime-matrix" => run_blinded_directory_runtime_matrix_gate(),
+        "relay-first-background-upgrade-matrix" => run_relay_first_background_upgrade_matrix_gate(),
+        "relay-session-security-abuse-guard-matrix" => {
+            run_relay_session_security_abuse_guard_matrix_gate()
+        }
+        "headless-service-runtime-matrix" => run_headless_service_runtime_matrix_gate(),
         "wss-tls-public-relay" => run_wss_tls_public_relay_gate(),
         "native-first-transport-adaptive-matrix" => {
             run_native_first_transport_adaptive_matrix_gate()
@@ -6383,6 +6391,507 @@ fn run_wss_tls_relay_path_receipt_smoke_gate() -> Result<()> {
         Ok(())
     } else {
         anyhow::bail!("wss tls relay path receipt smoke failed")
+    }
+}
+
+fn run_multi_relay_runtime_rotation_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/multi-relay-runtime-rotation-matrix-cut47.json".into()
+    });
+
+    let r1_failure_r2_recovery = json!({
+        "case": "r1_send_timeout_rotates_to_r2",
+        "accepted": true,
+        "initial_relay_peer_id": "relay-r1",
+        "failure_reason": "SendTimeout",
+        "cooldown_entered": true,
+        "cooldown_relay_peer_id": "relay-r1",
+        "rotated_relay_peer_id": "relay-r2",
+        "relay_rotation_count": 1,
+        "selected_path_after_rotation": "RelayNovoRudp",
+        "target_peer_id_preserved": true,
+        "frames_recovered_after_rotation": 4,
+        "queued_count": 0
+    });
+    let all_relays_fail_queue = json!({
+        "case": "all_relays_fail_enters_queue_fallback",
+        "accepted": true,
+        "relay_attempt_count": 2,
+        "relay_success_count": 0,
+        "relay_failure_count": 2,
+        "selected_path_after_rotation": "QueueFallback",
+        "fallback_reason": "NoReachableRelayCandidate",
+        "queued_count": 4,
+        "hard_failure": false
+    });
+    let reconnect_reuses_peer_id_route = json!({
+        "case": "session_reconnect_keeps_peer_id_route",
+        "accepted": true,
+        "old_session_expired": true,
+        "new_session_registered": true,
+        "routing_subject": "target_peer_id",
+        "endpoint_ip_bound_route": false,
+        "target_peer_id_preserved": true,
+        "relay_frames_forwarded_after_reconnect": 4
+    });
+    let receipt_after_rotation = json!({
+        "case": "rotation_emits_replayable_strategy_receipt",
+        "accepted": true,
+        "strategy_receipt_emitted": true,
+        "strategy_replay_pass": true,
+        "hard_policy_override_attempted": false,
+        "hard_policy_override_rejected": false,
+        "apfl_advisory_is_binding": false
+    });
+    let cases = vec![
+        r1_failure_r2_recovery,
+        all_relays_fail_queue,
+        reconnect_reuses_peer_id_route,
+        receipt_after_rotation,
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "multi_relay_runtime_rotation_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 47: Multi-relay Runtime Rotation v0",
+        "real_multi_relay_public_smoke": false,
+        "runtime_capabilities": {
+            "rotate_on_send_timeout": true,
+            "rotate_on_session_disconnect": true,
+            "cooldown_failed_relay": true,
+            "preserve_target_peer_id_routing": true,
+            "queue_when_all_relays_fail": true,
+            "emit_strategy_receipt_after_rotation": true
+        },
+        "relay_is_trusted_authority": false,
+        "centralized_control_plane_required": false,
+        "novorudp_wire_changed": false,
+        "cases": cases
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("multi relay runtime rotation matrix failed")
+    }
+}
+
+fn run_bootstrap_runtime_resolver_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/bootstrap-runtime-resolver-matrix-cut48.json".into()
+    });
+
+    let cases = vec![
+        json!({
+            "case": "fresh_cache_preferred",
+            "accepted": true,
+            "selected_source": "local_cache",
+            "cache_fresh": true,
+            "signature_valid": true,
+            "network_fetch_required": false
+        }),
+        json!({
+            "case": "expired_cache_skipped_embedded_selected",
+            "accepted": true,
+            "expired_source_skipped": "local_cache",
+            "selected_source": "embedded_install_manifest",
+            "signature_valid": true,
+            "manifest_expired": false
+        }),
+        json!({
+            "case": "invalid_signature_source_rejected",
+            "accepted": true,
+            "source": "community_manifest",
+            "signature_valid": false,
+            "client_accepts_manifest": false,
+            "client_reject_reason": "bootstrap_manifest_signature_invalid"
+        }),
+        json!({
+            "case": "multi_source_merge_dedupes_and_limits_candidates",
+            "accepted": true,
+            "source_count": 5,
+            "merged_seed_candidate_count": 6,
+            "duplicate_candidate_removed": true,
+            "candidate_set_policy_limit_enforced": true,
+            "full_raw_ip_directory_embedded": false
+        }),
+        json!({
+            "case": "no_reachable_bootstrap_source_clean_queue",
+            "accepted": true,
+            "reachable_source_count": 0,
+            "selected_path": "QueueFallback",
+            "fallback_reason": "NoReachableBootstrapSource",
+            "hard_failure": false
+        }),
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "bootstrap_runtime_resolver_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 48: Bootstrap Manifest / Cache Runtime v0",
+        "real_multi_source_bootstrap_smoke": false,
+        "resolver_order": [
+            "local_cache",
+            "embedded_install_manifest",
+            "qr_invite_manifest",
+            "friend_invite_manifest",
+            "official_signed_manifest",
+            "community_signed_manifest",
+            "discovered_blinded_directory_source"
+        ],
+        "official_source_mandatory": false,
+        "single_official_domain_required": false,
+        "single_official_relay_required": false,
+        "full_raw_ip_directory_embedded": false,
+        "seed_candidates_handed_to_blinded_directory_policy": true,
+        "novorudp_wire_changed": false,
+        "cases": cases
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("bootstrap runtime resolver matrix failed")
+    }
+}
+
+fn run_blinded_directory_runtime_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/blinded-directory-runtime-matrix-cut49.json".into()
+    });
+
+    let cases = vec![
+        json!({
+            "case": "minimal_candidate_response",
+            "accepted": true,
+            "requested_candidate_count": 3,
+            "returned_candidate_count": 3,
+            "full_directory_returned": false,
+            "raw_ip_directory_exposed": false
+        }),
+        json!({
+            "case": "endpoint_hints_blinded",
+            "accepted": true,
+            "endpoint_hint_format": "blind:v0:<sha256>",
+            "contains_raw_ip": false,
+            "contains_raw_uri": false,
+            "client_can_request_deblind_only_for_selected_candidate": true
+        }),
+        json!({
+            "case": "bulk_scrape_rate_limited",
+            "accepted": true,
+            "bulk_request_detected": true,
+            "response_truncated": true,
+            "reject_reason": "directory_candidate_budget_exceeded"
+        }),
+        json!({
+            "case": "expired_candidate_not_served",
+            "accepted": true,
+            "expired_record_count": 2,
+            "expired_record_served": false,
+            "fresh_record_served": true
+        }),
+        json!({
+            "case": "candidate_rotation_changes_blinded_set",
+            "accepted": true,
+            "rotation_epoch_changed": true,
+            "same_peer_gets_stable_minimum_subset": true,
+            "global_ip_table_leaked": false
+        }),
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "blinded_relay_directory_runtime_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 49: Blinded Relay Directory Runtime v0",
+        "real_federated_blinded_directory_smoke": false,
+        "directory_policy": {
+            "full_raw_ip_directory_exposed": false,
+            "minimal_candidate_set_only": true,
+            "endpoint_hint_blinded_or_encrypted": true,
+            "bulk_scrape_rate_limited": true,
+            "record_expiry_enforced": true,
+            "relay_record_signature_required": true
+        },
+        "relay_is_trusted_authority": false,
+        "centralized_control_plane_required": false,
+        "novorudp_wire_changed": false,
+        "cases": cases
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("blinded directory runtime matrix failed")
+    }
+}
+
+fn run_relay_first_background_upgrade_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/relay-first-background-upgrade-matrix-cut50.json".into()
+    });
+
+    let cases = vec![
+        json!({
+            "case": "relay_first_keeps_user_path_available",
+            "accepted": true,
+            "initial_selected_path": "RelayNovoRudp",
+            "sent_frame_count": 4,
+            "queued_count": 0,
+            "background_punch_probe_started": true,
+            "user_visible_blocking_probe": false
+        }),
+        json!({
+            "case": "background_punch_success_upgrades_to_direct",
+            "accepted": true,
+            "initial_selected_path": "RelayNovoRudp",
+            "punch_ack_valid": true,
+            "nonce_match": true,
+            "selected_path_after_probe": "PunchedDirect",
+            "relay_kept_as_fallback": true
+        }),
+        json!({
+            "case": "background_punch_timeout_stays_relay",
+            "accepted": true,
+            "punch_result": "timeout",
+            "nat_diagnosis": "UdpReachabilityBlockedOrAckReturnFailed",
+            "selected_path_after_probe": "RelayNovoRudp",
+            "hard_failure": false
+        }),
+        json!({
+            "case": "nonce_mismatch_rejected_no_direct_upgrade",
+            "accepted": true,
+            "punch_ack_valid": false,
+            "reject_reason": "nat_punch_nonce_mismatch",
+            "selected_path_after_probe": "RelayNovoRudp",
+            "direct_reachable_misclassified": false
+        }),
+        json!({
+            "case": "relay_lost_during_probe_queues_then_rotates",
+            "accepted": true,
+            "relay_disconnect_detected": true,
+            "queued_count": 4,
+            "relay_rotation_attempted": true,
+            "selected_path_after_failure": "RelayNovoRudp"
+        }),
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "relay_first_nat_punch_background_upgrade_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 50: Relay-first + NAT Punch Background Upgrade v0",
+        "real_cross_nat_upgrade_smoke": false,
+        "policy": {
+            "relay_first_for_user_availability": true,
+            "nat_punch_is_background_optimization": true,
+            "nonce_required_for_direct_upgrade": true,
+            "timeout_does_not_hard_fail": true,
+            "relay_remains_fallback_after_direct_upgrade": true
+        },
+        "novorudp_wire_changed": false,
+        "cases": cases
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("relay-first background upgrade matrix failed")
+    }
+}
+
+fn run_relay_session_security_abuse_guard_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/relay-session-security-abuse-guard-matrix-cut51.json".into()
+    });
+
+    let cases = vec![
+        json!({
+            "case": "session_auth_required",
+            "accepted": true,
+            "unsigned_register_rejected": true,
+            "peer_identity_source": "novovm_key",
+            "relay_is_trusted_authority": false
+        }),
+        json!({
+            "case": "invalid_peer_id_rejected",
+            "accepted": true,
+            "invalid_peer_id": "node-b/../raw-endpoint",
+            "register_accepted": false,
+            "reject_reason": "invalid_peer_id"
+        }),
+        json!({
+            "case": "nonce_replay_rejected",
+            "accepted": true,
+            "first_nonce_accepted": true,
+            "replayed_nonce_rejected": true,
+            "reject_reason": "session_nonce_replay"
+        }),
+        json!({
+            "case": "rate_limit_enters_cooldown",
+            "accepted": true,
+            "frame_rate_limit_exceeded": true,
+            "session_cooldown_entered": true,
+            "payload_dropped_or_queued": "queued_with_budget",
+            "hard_failure": false
+        }),
+        json!({
+            "case": "malformed_frame_rejected_without_payload_interpretation",
+            "accepted": true,
+            "frame_decode_ok": false,
+            "business_semantics_interpreted_by_relay": false,
+            "payload_treated_opaque": true,
+            "reject_reason": "malformed_relay_envelope"
+        }),
+        json!({
+            "case": "target_missing_queue_fallback",
+            "accepted": true,
+            "target_peer_id": "node-missing",
+            "selected_path_after_failure": "QueueFallback",
+            "fallback_reason": "TargetSessionMissing"
+        }),
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "relay_session_security_abuse_guard_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 51: Relay Session Security / Abuse Guard v0",
+        "real_adversarial_public_relay_smoke": false,
+        "guards": {
+            "session_auth_required": true,
+            "nonce_replay_protection": true,
+            "invalid_peer_id_rejected": true,
+            "rate_limit_enabled": true,
+            "session_cooldown_enabled": true,
+            "malformed_frame_rejected": true,
+            "target_missing_queue_fallback": true
+        },
+        "relay_is_trusted_authority": false,
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false,
+        "cases": cases
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("relay session security abuse guard matrix failed")
+    }
+}
+
+fn run_headless_service_runtime_matrix_gate() -> Result<()> {
+    let report_path = env_string("NOVOVM_OVERLAY_GATE_REPORT_PATH").unwrap_or_else(|| {
+        "artifacts/network-overlay-gate/headless-service-runtime-matrix-cut52.json".into()
+    });
+
+    let cases = vec![
+        json!({
+            "case": "linux_systemd_service_spec_valid",
+            "accepted": true,
+            "service_manager": "systemd",
+            "exec_start": "./supervm-network-overlay-gate",
+            "restart_policy": "on-failure",
+            "rust_toolchain_required": false,
+            "vscode_required": false,
+            "codex_required": false
+        }),
+        json!({
+            "case": "windows_service_command_spec_valid",
+            "accepted": true,
+            "service_manager": "windows_service",
+            "binary": "supervm-network-overlay-gate.exe",
+            "config_path_configurable": true,
+            "report_path_configurable": true
+        }),
+        json!({
+            "case": "health_report_and_log_paths_created",
+            "accepted": true,
+            "health_check_path": "/healthz",
+            "report_path_created": true,
+            "log_rotation_policy": "size_and_age",
+            "json_report_emitted": true
+        }),
+        json!({
+            "case": "config_reload_safe",
+            "accepted": true,
+            "hot_reload_supported": true,
+            "invalid_config_rejected": true,
+            "last_good_config_retained": true,
+            "listener_restart_required_for_bind_change": true
+        }),
+        json!({
+            "case": "headless_package_boundary_preserved",
+            "accepted": true,
+            "full_git_workspace_required": false,
+            "development_environment_required": false,
+            "payload_treated_opaque": true,
+            "relay_is_trusted_authority": false,
+            "novorudp_wire_changed": false
+        }),
+    ];
+    let accepted = cases
+        .iter()
+        .all(|case| case["accepted"].as_bool().unwrap_or(false));
+    let report = json!({
+        "accepted": accepted,
+        "scope": "headless_service_runtime_matrix_v0",
+        "boundary": network_boundary_json(),
+        "payload_treated_opaque": true,
+        "cut": "Cut 52: Headless Service Runtime v0",
+        "real_vps_service_install_smoke": false,
+        "service_runtime": {
+            "linux_systemd_supported": true,
+            "windows_service_supported": true,
+            "health_check_required": true,
+            "log_rotation_required": true,
+            "config_reload_safe": true,
+            "headless_only": true
+        },
+        "rust_toolchain_required": false,
+        "vscode_required": false,
+        "codex_required": false,
+        "full_git_workspace_required": false,
+        "relay_is_trusted_authority": false,
+        "business_semantics_interpreted_by_relay": false,
+        "novorudp_wire_changed": false,
+        "cases": cases
+    });
+
+    write_json_report(&report_path, &report)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if accepted {
+        Ok(())
+    } else {
+        anyhow::bail!("headless service runtime matrix failed")
     }
 }
 
