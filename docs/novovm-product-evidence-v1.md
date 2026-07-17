@@ -1,0 +1,37 @@
+# NOVOVM Product Evidence v1
+
+`novovm-product-evidence` produces and verifies a signed manifest over actual
+runtime reports. It is a verifier, not a success generator: a report must first
+meet its scope-specific security boundaries before it can be included.
+
+Build an evidence manifest after a run:
+
+```bash
+novovm-product-evidence build \
+  /var/lib/novovm/reports \
+  /etc/novovm/evidence-ed25519.hex \
+  /var/lib/novovm/reports/evidence.json \
+  relay.json nat-punch.json node-overlay.json
+```
+
+Verify it independently:
+
+```bash
+novovm-product-evidence verify \
+  /var/lib/novovm/reports \
+  /var/lib/novovm/reports/evidence.json
+```
+
+The verifier checks:
+
+- manifest signer identity and Ed25519 signature;
+- SHA-256 for each report relative to the declared root;
+- `accepted`, opaque-payload, and unchanged-wire boundaries;
+- relay challenge-response and non-authority boundaries;
+- NAT direct routing only when `ack_valid=true`;
+- node strategy receipt signature and decentralized-control-plane boundary.
+
+It intentionally reports `real_public_topology_proven=false` and
+`real_cross_nat_proven=false`: report integrity alone cannot prove an external
+network topology. Those flags require a later verifier profile with signed,
+multi-node public/VPN/cellular evidence and independently identifiable runs.

@@ -31,6 +31,7 @@ sha2 = "0.10"
 sha3 = "0.10"
 libloading = "0.8"
 socket2 = "0.6"
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -43,6 +44,26 @@ lettre = "0.11"
 [[bin]]
 name = "novovm-node"
 path = "src/bin/novovm-node.rs"
+
+[[bin]]
+name = "novovm-product-relay"
+path = "src/bin/novovm-product-relay.rs"
+
+[[bin]]
+name = "novovm-product-node-overlay"
+path = "src/bin/novovm-product-node-overlay.rs"
+
+[[bin]]
+name = "novovm-product-nat"
+path = "src/bin/novovm-product-nat.rs"
+
+[[bin]]
+name = "novovm-product-evidence"
+path = "src/bin/novovm-product-evidence.rs"
+
+[[bin]]
+name = "novovm-product-peer"
+path = "src/bin/novovm-product-peer.rs"
 
 [[bin]]
 name = "supervm-mainline-gate"
