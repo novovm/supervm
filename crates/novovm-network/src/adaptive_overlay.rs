@@ -261,12 +261,11 @@ pub fn decide_adaptive_overlay_route_with_family_cooldown_v0(
         adaptive_overlay_candidate_routes_v0(target_peer_id, &config.bootstrap_peers);
     let routes = original_routes
         .iter()
-        .cloned()
-        .into_iter()
         .filter(|route| {
             let family = AdaptiveOverlayRouteFamily::classify(route, target_peer_id);
             !cooldown_families.contains(&family)
         })
+        .cloned()
         .collect::<Vec<_>>();
     if routes.is_empty() && !original_routes.is_empty() && !cooldown_families.is_empty() {
         return AdaptiveOverlayRoutePlan {

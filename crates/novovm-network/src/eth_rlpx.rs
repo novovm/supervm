@@ -470,7 +470,7 @@ fn eth_rlpx_mpt_child_node_rlp_v1(
 ) -> Result<Option<Vec<u8>>, String> {
     match child {
         EthRlpxRlpItemV1::List(_) => Ok(Some(child_raw.to_vec())),
-        EthRlpxRlpItemV1::Bytes(bytes) if bytes.is_empty() => Ok(None),
+        EthRlpxRlpItemV1::Bytes([]) => Ok(None),
         EthRlpxRlpItemV1::Bytes(bytes) if bytes.len() == 32 => {
             let mut hash = [0u8; 32];
             hash.copy_from_slice(bytes);
@@ -655,10 +655,10 @@ fn eth_rlpx_mpt_subtree_bounds_v1(prefix: &[u8], width: usize) -> (Vec<u8>, Vec<
     let mut min = prefix.to_vec();
     let mut max = prefix.to_vec();
     if min.len() < width {
-        min.extend(std::iter::repeat(0u8).take(width - min.len()));
+        min.extend(std::iter::repeat_n(0u8, width - min.len()));
     }
     if max.len() < width {
-        max.extend(std::iter::repeat(0x0fu8).take(width - max.len()));
+        max.extend(std::iter::repeat_n(0x0fu8, width - max.len()));
     }
     (min, max)
 }
