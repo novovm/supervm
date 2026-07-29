@@ -21028,7 +21028,7 @@ mod tests {
         let account_hash = [0x23; 32];
         let account_root_node = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let account_state_root = crate::eth_rlpx_trie_node_hash_v1(account_root_node.as_slice());
@@ -21422,7 +21422,7 @@ mod tests {
         let proof_account_hash = [0x24; 32];
         let storage_proof_node = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let proof_storage_root = crate::eth_rlpx_trie_node_hash_v1(storage_proof_node.as_slice());
@@ -21491,7 +21491,7 @@ mod tests {
         let last_account_hash = [0x29; 32];
         let last_empty_proof_node = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let last_empty_root = crate::eth_rlpx_trie_node_hash_v1(last_empty_proof_node.as_slice());
@@ -21957,17 +21957,17 @@ mod tests {
     fn rlpx_snap_trie_nodes_partial_response_matches_geth_heal_semantics_v1() {
         let root_node = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let storage_node = {
             let mut node = vec![0xd1_u8, 0x01];
-            node.extend(std::iter::repeat(0x80_u8).take(16));
+            node.extend(std::iter::repeat_n(0x80_u8, 16));
             node
         };
         let unexpected_node = {
             let mut node = vec![0xd1_u8, 0x02];
-            node.extend(std::iter::repeat(0x80_u8).take(16));
+            node.extend(std::iter::repeat_n(0x80_u8, 16));
             node
         };
         let root_hash = crate::eth_rlpx_trie_node_hash_v1(root_node.as_slice());
@@ -21983,7 +21983,7 @@ mod tests {
             expected.as_slice(),
             &[root_node.clone(), {
                 let mut node = vec![0xd1_u8, 0x01];
-                node.extend(std::iter::repeat(0x80_u8).take(16));
+                node.extend(std::iter::repeat_n(0x80_u8, 16));
                 node
             }],
         )
@@ -21995,7 +21995,7 @@ mod tests {
             &[
                 {
                     let mut node = vec![0xd1_u8, 0x01];
-                    node.extend(std::iter::repeat(0x80_u8).take(16));
+                    node.extend(std::iter::repeat_n(0x80_u8, 16));
                     node
                 },
                 root_node,
@@ -22018,7 +22018,7 @@ mod tests {
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         let root_trie_node = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let local_state_root = crate::eth_rlpx_trie_node_hash_v1(root_trie_node.as_slice());
@@ -22741,7 +22741,7 @@ mod tests {
         let trie_path = vec![vec![0x01], vec![0x02]];
         let trie_node = {
             let mut node = vec![0xd1_u8, 0x03];
-            node.extend(std::iter::repeat(0x80_u8).take(16));
+            node.extend(std::iter::repeat_n(0x80_u8, 16));
             node
         };
         let trie_node_hash = crate::eth_rlpx_trie_node_hash_v1(trie_node.as_slice());
@@ -23117,7 +23117,7 @@ mod tests {
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         let root_trie_node = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let storage_slot_hash = [0x37; 32];
