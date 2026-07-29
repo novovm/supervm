@@ -2530,16 +2530,18 @@ fn run_signed_bootstrap_manifest_matrix_gate() -> Result<()> {
     )?];
     let valid_manifest = sign_bootstrap_manifest_v0(
         &manifest_key,
-        "installer_bundle",
-        seed_relay_records.clone(),
-        seed_rendezvous_records.clone(),
-        19_000,
-        90_000,
-        "bootstrap-manifest-valid-001",
-        false,
-        false,
-        false,
-        candidate_set_policy_limit,
+        BootstrapManifestSigningInputV0 {
+            bootstrap_manifest_source: "installer_bundle",
+            seed_relay_candidates: seed_relay_records.clone(),
+            seed_rendezvous_candidates: seed_rendezvous_records.clone(),
+            issued_at_ms: 19_000,
+            expires_at_ms: 90_000,
+            manifest_id: "bootstrap-manifest-valid-001",
+            full_raw_ip_directory_embedded: false,
+            manifest_requires_single_official_relay: false,
+            manifest_requires_single_official_domain: false,
+            candidate_set_policy_limit,
+        },
     )?;
     let valid_validation = validate_bootstrap_manifest_v0(&valid_manifest, now_ms);
 
@@ -2550,61 +2552,69 @@ fn run_signed_bootstrap_manifest_matrix_gate() -> Result<()> {
 
     let expired_manifest = sign_bootstrap_manifest_v0(
         &manifest_key,
-        "history_cache",
-        seed_relay_records.clone(),
-        seed_rendezvous_records.clone(),
-        1_000,
-        19_000,
-        "bootstrap-manifest-expired-001",
-        false,
-        false,
-        false,
-        candidate_set_policy_limit,
+        BootstrapManifestSigningInputV0 {
+            bootstrap_manifest_source: "history_cache",
+            seed_relay_candidates: seed_relay_records.clone(),
+            seed_rendezvous_candidates: seed_rendezvous_records.clone(),
+            issued_at_ms: 1_000,
+            expires_at_ms: 19_000,
+            manifest_id: "bootstrap-manifest-expired-001",
+            full_raw_ip_directory_embedded: false,
+            manifest_requires_single_official_relay: false,
+            manifest_requires_single_official_domain: false,
+            candidate_set_policy_limit,
+        },
     )?;
     let expired_validation = validate_bootstrap_manifest_v0(&expired_manifest, now_ms);
 
     let raw_directory_manifest = sign_bootstrap_manifest_v0(
         &manifest_key,
-        "official_site",
-        seed_relay_records.clone(),
-        seed_rendezvous_records.clone(),
-        19_000,
-        90_000,
-        "bootstrap-manifest-raw-directory-001",
-        true,
-        false,
-        false,
-        candidate_set_policy_limit,
+        BootstrapManifestSigningInputV0 {
+            bootstrap_manifest_source: "official_site",
+            seed_relay_candidates: seed_relay_records.clone(),
+            seed_rendezvous_candidates: seed_rendezvous_records.clone(),
+            issued_at_ms: 19_000,
+            expires_at_ms: 90_000,
+            manifest_id: "bootstrap-manifest-raw-directory-001",
+            full_raw_ip_directory_embedded: true,
+            manifest_requires_single_official_relay: false,
+            manifest_requires_single_official_domain: false,
+            candidate_set_policy_limit,
+        },
     )?;
     let raw_directory_validation = validate_bootstrap_manifest_v0(&raw_directory_manifest, now_ms);
 
     let single_relay_manifest = sign_bootstrap_manifest_v0(
         &manifest_key,
-        "qr_invite",
-        seed_relay_records.clone(),
-        seed_rendezvous_records.clone(),
-        19_000,
-        90_000,
-        "bootstrap-manifest-single-relay-001",
-        false,
-        true,
-        false,
-        candidate_set_policy_limit,
+        BootstrapManifestSigningInputV0 {
+            bootstrap_manifest_source: "qr_invite",
+            seed_relay_candidates: seed_relay_records.clone(),
+            seed_rendezvous_candidates: seed_rendezvous_records.clone(),
+            issued_at_ms: 19_000,
+            expires_at_ms: 90_000,
+            manifest_id: "bootstrap-manifest-single-relay-001",
+            full_raw_ip_directory_embedded: false,
+            manifest_requires_single_official_relay: true,
+            manifest_requires_single_official_domain: false,
+            candidate_set_policy_limit,
+        },
     )?;
     let single_relay_validation = validate_bootstrap_manifest_v0(&single_relay_manifest, now_ms);
 
     let single_domain_manifest = sign_bootstrap_manifest_v0(
         &manifest_key,
-        "friend_invite",
-        seed_relay_records.clone(),
-        seed_rendezvous_records.clone(),
-        19_000,
-        90_000,
-        "bootstrap-manifest-single-domain-001",
-        false,
-        false,
-        true,
-        candidate_set_policy_limit,
+        BootstrapManifestSigningInputV0 {
+            bootstrap_manifest_source: "friend_invite",
+            seed_relay_candidates: seed_relay_records.clone(),
+            seed_rendezvous_candidates: seed_rendezvous_records.clone(),
+            issued_at_ms: 19_000,
+            expires_at_ms: 90_000,
+            manifest_id: "bootstrap-manifest-single-domain-001",
+            full_raw_ip_directory_embedded: false,
+            manifest_requires_single_official_relay: false,
+            manifest_requires_single_official_domain: true,
+            candidate_set_policy_limit,
+        },
     )?;
     let single_domain_validation = validate_bootstrap_manifest_v0(&single_domain_manifest, now_ms);
 
@@ -3433,17 +3443,17 @@ fn run_nat_punch_prober_gate() -> Result<()> {
         .set_read_timeout(Some(Duration::from_millis(timeout_ms)))
         .context("set nat punch prober read timeout")?;
     let bind_addr_effective = socket.local_addr().context("nat punch prober local addr")?;
-    let report = run_nat_punch_probe_v0(
-        &socket,
-        &punch_target_observed_endpoint,
-        &source_peer_id,
-        &target_peer_id,
+    let report = run_nat_punch_probe_v0(NatPunchProbeInputV0 {
+        socket: &socket,
+        punch_target_observed_endpoint: &punch_target_observed_endpoint,
+        source_peer_id: &source_peer_id,
+        target_peer_id: &target_peer_id,
         advertised_endpoint,
         punch_nonce,
         bind_addr_effective,
         relay_fallback_enabled,
         relay_fallback_endpoint,
-    )?;
+    })?;
     write_json_report(&report_path, &report)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     if report["accepted"].as_bool().unwrap_or(false) {
@@ -9249,17 +9259,30 @@ fn run_nat_punch_local_fallback_case_v0(case_name: &str) -> Result<serde_json::V
     }))
 }
 
-fn run_nat_punch_probe_v0(
-    socket: &UdpSocket,
-    punch_target_observed_endpoint: &str,
-    source_peer_id: &str,
-    target_peer_id: &str,
+struct NatPunchProbeInputV0<'a> {
+    socket: &'a UdpSocket,
+    punch_target_observed_endpoint: &'a str,
+    source_peer_id: &'a str,
+    target_peer_id: &'a str,
     advertised_endpoint: Option<String>,
     punch_nonce: String,
     bind_addr_effective: SocketAddr,
     relay_fallback_enabled: bool,
     relay_fallback_endpoint: Option<String>,
-) -> Result<serde_json::Value> {
+}
+
+fn run_nat_punch_probe_v0(input: NatPunchProbeInputV0<'_>) -> Result<serde_json::Value> {
+    let NatPunchProbeInputV0 {
+        socket,
+        punch_target_observed_endpoint,
+        source_peer_id,
+        target_peer_id,
+        advertised_endpoint,
+        punch_nonce,
+        bind_addr_effective,
+        relay_fallback_enabled,
+        relay_fallback_endpoint,
+    } = input;
     let payload = NatPunchProbePayloadV0 {
         punch_nonce: punch_nonce.clone(),
         source_peer_id: source_peer_id.to_string(),
@@ -10689,16 +10712,18 @@ fn bootstrap_manifest_fixture_v0(
 
     sign_bootstrap_manifest_v0(
         manifest_key,
-        source,
-        seed_relay_candidates,
-        seed_rendezvous_candidates,
-        issued_at_ms,
-        expires_at_ms,
-        &format!("bootstrap-manifest-{id_suffix}-001"),
-        false,
-        false,
-        false,
-        candidate_set_policy_limit,
+        BootstrapManifestSigningInputV0 {
+            bootstrap_manifest_source: source,
+            seed_relay_candidates,
+            seed_rendezvous_candidates,
+            issued_at_ms,
+            expires_at_ms,
+            manifest_id: &format!("bootstrap-manifest-{id_suffix}-001"),
+            full_raw_ip_directory_embedded: false,
+            manifest_requires_single_official_relay: false,
+            manifest_requires_single_official_domain: false,
+            candidate_set_policy_limit,
+        },
     )
 }
 
@@ -10850,19 +10875,35 @@ fn evaluate_bootstrap_source_resolver_case_v0(
     })
 }
 
-fn sign_bootstrap_manifest_v0(
-    signing_key: &SigningKey,
-    bootstrap_manifest_source: &str,
+struct BootstrapManifestSigningInputV0<'a> {
+    bootstrap_manifest_source: &'a str,
     seed_relay_candidates: Vec<PeerSignedRelayEndpointRecordV0>,
     seed_rendezvous_candidates: Vec<PeerSignedRelayEndpointRecordV0>,
     issued_at_ms: u64,
     expires_at_ms: u64,
-    manifest_id: &str,
+    manifest_id: &'a str,
     full_raw_ip_directory_embedded: bool,
     manifest_requires_single_official_relay: bool,
     manifest_requires_single_official_domain: bool,
     candidate_set_policy_limit: usize,
+}
+
+fn sign_bootstrap_manifest_v0(
+    signing_key: &SigningKey,
+    input: BootstrapManifestSigningInputV0<'_>,
 ) -> Result<SignedBootstrapManifestV0> {
+    let BootstrapManifestSigningInputV0 {
+        bootstrap_manifest_source,
+        seed_relay_candidates,
+        seed_rendezvous_candidates,
+        issued_at_ms,
+        expires_at_ms,
+        manifest_id,
+        full_raw_ip_directory_embedded,
+        manifest_requires_single_official_relay,
+        manifest_requires_single_official_domain,
+        candidate_set_policy_limit,
+    } = input;
     let manifest_public_key = overlay_gate_hex_lower_v0(&signing_key.verifying_key().to_bytes());
     let payload = bootstrap_manifest_payload_v0(
         manifest_id.to_string(),
