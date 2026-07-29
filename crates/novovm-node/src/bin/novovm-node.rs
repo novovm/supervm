@@ -2701,7 +2701,7 @@ fn eth_rlpx_material_recovery_rollback_stalled_v1(
             >= stalled_refresh_interval_ticks.max(8)
 }
 
-fn eth_rlpx_idle_head_probe_stalled_v1(
+struct EthRlpxIdleHeadProbeInputV1 {
     highest_block: u64,
     current_block: u64,
     current_head_present: bool,
@@ -2712,7 +2712,21 @@ fn eth_rlpx_idle_head_probe_stalled_v1(
     tick: usize,
     last_complete_head_progress_tick: usize,
     stalled_refresh_interval_ticks: usize,
-) -> bool {
+}
+
+fn eth_rlpx_idle_head_probe_stalled_v1(input: EthRlpxIdleHeadProbeInputV1) -> bool {
+    let EthRlpxIdleHeadProbeInputV1 {
+        highest_block,
+        current_block,
+        current_head_present,
+        current_head_body_available,
+        current_head_receipt_available,
+        ready_peers,
+        status_updates,
+        tick,
+        last_complete_head_progress_tick,
+        stalled_refresh_interval_ticks,
+    } = input;
     current_block > 0
         && highest_block == current_block
         && current_head_present
@@ -6375,18 +6389,18 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             last_complete_head_progress_tick,
             stalled_refresh_interval_ticks,
         );
-        let head_probe_stalled = eth_rlpx_idle_head_probe_stalled_v1(
-            highest_sync_block,
-            current_sync_block,
+        let head_probe_stalled = eth_rlpx_idle_head_probe_stalled_v1(EthRlpxIdleHeadProbeInputV1 {
+            highest_block: highest_sync_block,
+            current_block: current_sync_block,
             current_head_present,
             current_head_body_available,
             current_head_receipt_available,
-            report.ready_peers,
-            report.status_updates,
+            ready_peers: report.ready_peers,
+            status_updates: report.status_updates,
             tick,
             last_complete_head_progress_tick,
             stalled_refresh_interval_ticks,
-        );
+        });
         let body_recovery_stalled = current_head_body_missing
             && report.ready_peers == 0
             && report.body_updates == 0
@@ -7421,18 +7435,18 @@ mod mainline_evm_cli_tests {
                 50,
                 true,
                 0,
-                eth_rlpx_idle_head_probe_stalled_v1(
-                    25_282_495,
-                    25_282_495,
-                    true,
-                    true,
-                    true,
-                    0,
-                    0,
-                    8,
-                    2,
-                    4,
-                ),
+                eth_rlpx_idle_head_probe_stalled_v1(EthRlpxIdleHeadProbeInputV1 {
+                    highest_block: 25_282_495,
+                    current_block: 25_282_495,
+                    current_head_present: true,
+                    current_head_body_available: true,
+                    current_head_receipt_available: true,
+                    ready_peers: 0,
+                    status_updates: 0,
+                    tick: 8,
+                    last_complete_head_progress_tick: 2,
+                    stalled_refresh_interval_ticks: 4,
+                }),
             ),
             50,
             "a complete current==highest head with stale status still needs admission for fresh-head probing"
@@ -7665,30 +7679,77 @@ mod mainline_evm_cli_tests {
     #[test]
     fn eth_rlpx_idle_head_probe_stall_uses_complete_head_progress_tick_v1() {
         assert!(eth_rlpx_idle_head_probe_stalled_v1(
-            25_282_495, 25_282_495, true, true, true, 0, 0, 8, 2, 4,
+            EthRlpxIdleHeadProbeInputV1 {
+                highest_block: 25_282_495,
+                current_block: 25_282_495,
+                current_head_present: true,
+                current_head_body_available: true,
+                current_head_receipt_available: true,
+                ready_peers: 0,
+                status_updates: 0,
+                tick: 8,
+                last_complete_head_progress_tick: 2,
+                stalled_refresh_interval_ticks: 4,
+            }
         ));
         assert!(
-            !eth_rlpx_idle_head_probe_stalled_v1(
-                25_282_496, 25_282_495, true, true, true, 0, 0, 8, 2, 4,
-            ),
+            !eth_rlpx_idle_head_probe_stalled_v1(EthRlpxIdleHeadProbeInputV1 {
+                highest_block: 25_282_496,
+                current_block: 25_282_495,
+                current_head_present: true,
+                current_head_body_available: true,
+                current_head_receipt_available: true,
+                ready_peers: 0,
+                status_updates: 0,
+                tick: 8,
+                last_complete_head_progress_tick: 2,
+                stalled_refresh_interval_ticks: 4,
+            }),
             "regular forward lag uses the forward-progress stall path"
         );
         assert!(
-            !eth_rlpx_idle_head_probe_stalled_v1(
-                25_282_495, 25_282_495, true, true, true, 1, 0, 8, 2, 4,
-            ),
+            !eth_rlpx_idle_head_probe_stalled_v1(EthRlpxIdleHeadProbeInputV1 {
+                highest_block: 25_282_495,
+                current_block: 25_282_495,
+                current_head_present: true,
+                current_head_body_available: true,
+                current_head_receipt_available: true,
+                ready_peers: 1,
+                status_updates: 0,
+                tick: 8,
+                last_complete_head_progress_tick: 2,
+                stalled_refresh_interval_ticks: 4,
+            }),
             "a ready peer can still provide a fresh status/head probe"
         );
         assert!(
-            !eth_rlpx_idle_head_probe_stalled_v1(
-                25_282_495, 25_282_495, true, true, true, 0, 1, 8, 2, 4,
-            ),
+            !eth_rlpx_idle_head_probe_stalled_v1(EthRlpxIdleHeadProbeInputV1 {
+                highest_block: 25_282_495,
+                current_block: 25_282_495,
+                current_head_present: true,
+                current_head_body_available: true,
+                current_head_receipt_available: true,
+                ready_peers: 0,
+                status_updates: 1,
+                tick: 8,
+                last_complete_head_progress_tick: 2,
+                stalled_refresh_interval_ticks: 4,
+            }),
             "same-tick status updates prove the head probe is active"
         );
         assert!(
-            !eth_rlpx_idle_head_probe_stalled_v1(
-                25_282_495, 25_282_495, true, true, false, 0, 0, 8, 2, 4,
-            ),
+            !eth_rlpx_idle_head_probe_stalled_v1(EthRlpxIdleHeadProbeInputV1 {
+                highest_block: 25_282_495,
+                current_block: 25_282_495,
+                current_head_present: true,
+                current_head_body_available: true,
+                current_head_receipt_available: false,
+                ready_peers: 0,
+                status_updates: 0,
+                tick: 8,
+                last_complete_head_progress_tick: 2,
+                stalled_refresh_interval_ticks: 4,
+            }),
             "missing current-head material uses recovery paths instead of idle probing"
         );
     }
