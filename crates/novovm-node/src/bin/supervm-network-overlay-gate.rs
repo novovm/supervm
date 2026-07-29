@@ -962,7 +962,7 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
     let native_reachable = evaluate_transport_adaptive_case_v0(
         "native_novorudp_reachable_selected",
         vec![
-            transport_candidate_v0(
+            transport_candidate_v0((
                 "native-novorudp",
                 "novorudp://relay-a.example.net/dynamic",
                 "native_encrypted_novorudp",
@@ -971,8 +971,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 false,
                 false,
                 "native_mainnet_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "wss-443",
                 "wss://relay-a.example.net:443/novovm",
                 "wss",
@@ -981,14 +981,14 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 false,
                 true,
                 "compatibility_transport",
-            ),
+            )),
         ],
     );
 
     let native_blocked_falls_back_wss = evaluate_transport_adaptive_case_v0(
         "native_blocked_falls_back_to_wss_443",
         vec![
-            transport_candidate_v0(
+            transport_candidate_v0((
                 "native-novorudp",
                 "novorudp://relay-a.example.net/dynamic",
                 "native_encrypted_novorudp",
@@ -997,8 +997,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 false,
                 "native_mainnet_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "wss-443",
                 "wss://relay-a.example.net:443/novovm",
                 "wss",
@@ -1007,14 +1007,14 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 false,
                 true,
                 "compatibility_transport",
-            ),
+            )),
         ],
     );
 
     let tls_visible_path_rotates = evaluate_transport_adaptive_case_v0(
         "tls_visible_path_rotates_to_quic",
         vec![
-            transport_candidate_v0(
+            transport_candidate_v0((
                 "native-novorudp",
                 "novorudp://relay-a.example.net/dynamic",
                 "native_encrypted_novorudp",
@@ -1023,8 +1023,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 false,
                 "native_mainnet_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "wss-443",
                 "wss://relay-a.example.net:443/novovm",
                 "wss",
@@ -1033,8 +1033,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 true,
                 "compatibility_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "quic-443",
                 "quic://relay-b.example.net:443",
                 "quic",
@@ -1043,14 +1043,14 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 false,
                 true,
                 "alternative_443_transport",
-            ),
+            )),
         ],
     );
 
     let http80_last_resort = evaluate_transport_adaptive_case_v0(
         "http80_last_resort_when_443_paths_blocked",
         vec![
-            transport_candidate_v0(
+            transport_candidate_v0((
                 "native-novorudp",
                 "novorudp://relay-a.example.net/dynamic",
                 "native_encrypted_novorudp",
@@ -1059,8 +1059,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 false,
                 "native_mainnet_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "wss-443",
                 "wss://relay-a.example.net:443/novovm",
                 "wss",
@@ -1069,8 +1069,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 true,
                 "compatibility_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "ws-80",
                 "ws://relay-c.example.net:80/novovm",
                 "ws",
@@ -1079,14 +1079,14 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 false,
                 true,
                 "last_resort_compatibility_transport",
-            ),
+            )),
         ],
     );
 
     let all_blocked_queue = evaluate_transport_adaptive_case_v0(
         "all_transports_blocked_queue_fallback",
         vec![
-            transport_candidate_v0(
+            transport_candidate_v0((
                 "native-novorudp",
                 "novorudp://relay-a.example.net/dynamic",
                 "native_encrypted_novorudp",
@@ -1095,8 +1095,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 false,
                 "native_mainnet_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "wss-443",
                 "wss://relay-a.example.net:443/novovm",
                 "wss",
@@ -1105,8 +1105,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 true,
                 "compatibility_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "quic-443",
                 "quic://relay-b.example.net:443",
                 "quic",
@@ -1115,7 +1115,7 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 true,
                 "alternative_443_transport",
-            ),
+            )),
         ],
     );
 
@@ -9622,16 +9622,19 @@ fn relay_candidate_v0(
     }
 }
 
-fn transport_candidate_v0(
-    candidate_id: &str,
-    endpoint: &str,
-    transport: &str,
-    port: u16,
-    observed_reachable: bool,
-    fingerprint_blocked_or_high_risk: bool,
-    tls_visible_surface: bool,
-    role: &str,
-) -> TransportCandidateV0 {
+type TransportCandidateInputV0<'a> = (&'a str, &'a str, &'a str, u16, bool, bool, bool, &'a str);
+
+fn transport_candidate_v0(input: TransportCandidateInputV0<'_>) -> TransportCandidateV0 {
+    let (
+        candidate_id,
+        endpoint,
+        transport,
+        port,
+        observed_reachable,
+        fingerprint_blocked_or_high_risk,
+        tls_visible_surface,
+        role,
+    ) = input;
     TransportCandidateV0 {
         candidate_id: candidate_id.to_string(),
         endpoint: endpoint.to_string(),
@@ -10180,7 +10183,7 @@ fn strategy_receipt_input_v0(
         Vec::new()
     };
     let transport_candidates = if direct_reachable {
-        vec![transport_candidate_v0(
+        vec![transport_candidate_v0((
             "native-direct",
             "novorudp://direct/observed",
             "native_encrypted_novorudp",
@@ -10189,10 +10192,10 @@ fn strategy_receipt_input_v0(
             false,
             false,
             "direct_native_path",
-        )]
+        ))]
     } else if relay_available {
         vec![
-            transport_candidate_v0(
+            transport_candidate_v0((
                 "native-relay",
                 "novorudp://relay-a.example.net/dynamic",
                 "native_encrypted_novorudp",
@@ -10201,8 +10204,8 @@ fn strategy_receipt_input_v0(
                 true,
                 false,
                 "native_relay_candidate",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "wss-443",
                 "wss://relay-a.example.net:443/novovm",
                 "wss",
@@ -10211,7 +10214,7 @@ fn strategy_receipt_input_v0(
                 false,
                 true,
                 "compatibility_transport",
-            ),
+            )),
         ]
     } else {
         Vec::new()
