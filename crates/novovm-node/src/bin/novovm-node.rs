@@ -2560,31 +2560,21 @@ fn eth_rlpx_adaptive_headers_batch_input_v1(
         native_phase,
         Some(NetworkRuntimeNativeSyncPhaseV1::State | NetworkRuntimeNativeSyncPhaseV1::Discovery)
     );
-    if request_transport_failure
-        && phase_can_resume_state_lag_headers
+    let header_lag = highest_block.saturating_sub(current_block);
+    let should_cap_batch = request_transport_failure
         && current_head_body_available
-        && highest_block.saturating_sub(current_block)
-            > ETH_RLPX_PUBLIC_SYNC_STATE_LAG_HEADER_LAG_THRESHOLD_V1
-    {
-        current_batch
-            .min(ETH_RLPX_PUBLIC_SYNC_STATE_LAG_EFFECTIVE_HEADERS_BATCH_V1)
-            .max(1)
-    } else if request_transport_failure
-        && current_head_body_available
-        && matches!(
-            native_phase,
-            Some(
-                NetworkRuntimeNativeSyncPhaseV1::Finalize
-                    | NetworkRuntimeNativeSyncPhaseV1::Discovery
-            )
-        )
-        && highest_block > current_block
-        && highest_block.saturating_sub(current_block)
-            <= ETH_RLPX_PUBLIC_SYNC_STATE_LAG_HEADER_LAG_THRESHOLD_V1
-    {
-        current_batch
-            .min(ETH_RLPX_PUBLIC_SYNC_STATE_LAG_EFFECTIVE_HEADERS_BATCH_V1)
-            .max(1)
+        && ((phase_can_resume_state_lag_headers
+            && header_lag > ETH_RLPX_PUBLIC_SYNC_STATE_LAG_HEADER_LAG_THRESHOLD_V1)
+            || (matches!(
+                native_phase,
+                Some(
+                    NetworkRuntimeNativeSyncPhaseV1::Finalize
+                        | NetworkRuntimeNativeSyncPhaseV1::Discovery
+                )
+            ) && highest_block > current_block
+                && header_lag <= ETH_RLPX_PUBLIC_SYNC_STATE_LAG_HEADER_LAG_THRESHOLD_V1));
+    if should_cap_batch {
+        current_batch.clamp(1, ETH_RLPX_PUBLIC_SYNC_STATE_LAG_EFFECTIVE_HEADERS_BATCH_V1)
     } else {
         current_batch.max(1)
     }
@@ -37623,11 +37613,8 @@ impl NativeExecutionPipelineAggregateV1 {
         } else if aoem_gate_requested && !self.receiver_final_summary_aoem_fields_present {
             "aoem_owned_gate_requested_but_summary_fields_missing".to_string()
         } else if self.child_runtime_env_aoem_production_candidate
-            && !self.tx_ingress_aoem_gate_config_production_candidate
-        {
-            "aoem_owned_child_runtime_gate_not_propagated_to_tx_ingress".to_string()
-        } else if self.child_runtime_env_aoem_production_candidate
-            && !self.aoem_owned_child_runtime_gate_propagated_to_tx_ingress
+            && (!self.tx_ingress_aoem_gate_config_production_candidate
+                || !self.aoem_owned_child_runtime_gate_propagated_to_tx_ingress)
         {
             "aoem_owned_child_runtime_gate_not_propagated_to_tx_ingress".to_string()
         } else if aoem_gate_requested && !self.tx_ingress_called_with_explicit_aoem_gate_config {
