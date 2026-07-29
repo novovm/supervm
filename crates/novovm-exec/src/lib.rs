@@ -887,29 +887,33 @@ fn hex_lower_v1(data: &[u8]) -> String {
     out
 }
 
+pub struct NativeTxBatchV1ItemCommitmentInputV1<'a> {
+    pub sequence: u64,
+    pub tx_hash: &'a str,
+    pub sender_identity: &'a str,
+    pub signer_identity: Option<&'a str>,
+    pub nonce: u64,
+    pub intent_type: &'a str,
+    pub semantic_operator: &'a str,
+    pub parameter_payload: &'a serde_json::Value,
+}
+
 pub fn native_tx_batch_v1_item_commitment(
-    sequence: u64,
-    tx_hash: &str,
-    sender_identity: &str,
-    signer_identity: Option<&str>,
-    nonce: u64,
-    intent_type: &str,
-    semantic_operator: &str,
-    parameter_payload: &serde_json::Value,
+    input: NativeTxBatchV1ItemCommitmentInputV1<'_>,
 ) -> String {
-    let sequence_bytes = sequence.to_be_bytes();
-    let nonce_bytes = nonce.to_be_bytes();
-    let payload_bytes = serde_json::to_vec(parameter_payload).unwrap_or_default();
-    let signer = signer_identity.unwrap_or("");
+    let sequence_bytes = input.sequence.to_be_bytes();
+    let nonce_bytes = input.nonce.to_be_bytes();
+    let payload_bytes = serde_json::to_vec(input.parameter_payload).unwrap_or_default();
+    let signer = input.signer_identity.unwrap_or("");
     native_tx_batch_v1_hash_hex(&[
         NOVOVM_AOEM_ALGEBRAIC_SEMANTIC_IR_V1.as_bytes(),
         sequence_bytes.as_slice(),
-        tx_hash.as_bytes(),
-        sender_identity.as_bytes(),
+        input.tx_hash.as_bytes(),
+        input.sender_identity.as_bytes(),
         signer.as_bytes(),
         nonce_bytes.as_slice(),
-        intent_type.as_bytes(),
-        semantic_operator.as_bytes(),
+        input.intent_type.as_bytes(),
+        input.semantic_operator.as_bytes(),
         payload_bytes.as_slice(),
     ])
 }
@@ -947,16 +951,16 @@ pub fn build_native_tx_batch_v1(
         bail!("NOVOVM_AOEM_NATIVE_TX_BATCH_V1 requires at least one tx item");
     }
     for item in &tx_items {
-        let expected = native_tx_batch_v1_item_commitment(
-            item.sequence,
-            item.tx_hash.as_str(),
-            item.sender_identity.as_str(),
-            item.signer_identity.as_deref(),
-            item.nonce,
-            item.intent_type.as_str(),
-            item.semantic_operator.as_str(),
-            &item.parameter_payload,
-        );
+        let expected = native_tx_batch_v1_item_commitment(NativeTxBatchV1ItemCommitmentInputV1 {
+            sequence: item.sequence,
+            tx_hash: item.tx_hash.as_str(),
+            sender_identity: item.sender_identity.as_str(),
+            signer_identity: item.signer_identity.as_deref(),
+            nonce: item.nonce,
+            intent_type: item.intent_type.as_str(),
+            semantic_operator: item.semantic_operator.as_str(),
+            parameter_payload: &item.parameter_payload,
+        });
         if item.canonical_rebuild_commitment != expected {
             bail!(
                 "invalid canonical_rebuild_commitment for sequence {}",
@@ -2730,10 +2734,10 @@ mod tests {
         AoemExecMetrics, AoemExecOutput, AoemExecutionReconstructionInputV1,
         AoemExecutionReconstructionSourcesV1, AoemFailureClassSourceV1, AoemFailureClassV1,
         AoemFailureRecoverabilityV1, AoemProjectedTxExecutionV1, AoemReceiptDerivationRulesV1,
-        AoemRuntimeVariant, AoemTxExecutionAnchorV1, NovovmAoemNativeTxBatchItemV1,
-        NovovmAoemNativeTxBatchResultV1, NovovmAoemNativeTxReceiptV1,
-        AOEM_APFL_NATIVE_TRANSFER_BULK_MAGIC_V0, AOEM_APFL_NATIVE_TRANSFER_BULK_VERSION_V0,
-        AOEM_LOG_BLOOM_BYTES_V1, AOEM_OPS_WIRE_V1_MAGIC,
+        AoemRuntimeVariant, AoemTxExecutionAnchorV1, NativeTxBatchV1ItemCommitmentInputV1,
+        NovovmAoemNativeTxBatchItemV1, NovovmAoemNativeTxBatchResultV1,
+        NovovmAoemNativeTxReceiptV1, AOEM_APFL_NATIVE_TRANSFER_BULK_MAGIC_V0,
+        AOEM_APFL_NATIVE_TRANSFER_BULK_VERSION_V0, AOEM_LOG_BLOOM_BYTES_V1, AOEM_OPS_WIRE_V1_MAGIC,
         AOEM_OPS_WIRE_V1_OPCODE_APFL_NATIVE_TRANSFER_V1, NOVOVM_AOEM_ALGEBRAIC_SEMANTIC_IR_V1,
         NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA, NOVOVM_AOEM_NATIVE_TX_BATCH_V1_SCHEMA,
     };
@@ -2839,16 +2843,17 @@ mod tests {
             "asset_ref": "asset:NOV",
             "amount": 7,
         });
-        let canonical_rebuild_commitment = native_tx_batch_v1_item_commitment(
-            sequence,
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "identity:alice",
-            Some("signer:alice"),
-            11,
-            "transfer",
-            "TransferV1",
-            &parameter_payload,
-        );
+        let canonical_rebuild_commitment =
+            native_tx_batch_v1_item_commitment(NativeTxBatchV1ItemCommitmentInputV1 {
+                sequence,
+                tx_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                sender_identity: "identity:alice",
+                signer_identity: Some("signer:alice"),
+                nonce: 11,
+                intent_type: "transfer",
+                semantic_operator: "TransferV1",
+                parameter_payload: &parameter_payload,
+            });
         NovovmAoemNativeTxBatchItemV1 {
             sequence,
             tx_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

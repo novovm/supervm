@@ -1916,9 +1916,11 @@ impl NovoVmAdapter {
                     self.state.set_account(contract_address.clone(), account);
                 }
             }
-            if !self.state.storage.contains_key(&contract_address) {
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                self.state.storage.entry(contract_address.clone())
+            {
                 if let Some(storage) = state.storage.get(&contract_address).cloned() {
-                    self.state.storage.insert(contract_address, storage);
+                    entry.insert(storage);
                 }
             }
         }
@@ -5020,7 +5022,7 @@ mod tests {
                 }
                 assert!(
                     runtime_state
-                        .get_storage(to, &tx.nonce.to_le_bytes().to_vec())
+                        .get_storage(to, tx.nonce.to_le_bytes().as_ref())
                         .is_none(),
                     "failed official case must not add adapter synthetic target storage"
                 );
@@ -5326,7 +5328,7 @@ mod tests {
                 runtime_state
                     .get_storage(
                         tx.to.as_ref().expect("call target"),
-                        &tx.nonce.to_le_bytes().to_vec()
+                        tx.nonce.to_le_bytes().as_ref()
                     )
                     .is_none(),
                 "failed zero-calls revert must not add adapter synthetic target storage"
@@ -6208,7 +6210,7 @@ mod tests {
                     runtime_state
                         .get_storage(
                             tx.to.as_ref().expect("call target"),
-                            &tx.nonce.to_le_bytes().to_vec()
+                            tx.nonce.to_le_bytes().as_ref()
                         )
                         .is_none(),
                     "failed STATICCALL no-commit projection must not add adapter synthetic target storage"
@@ -6617,7 +6619,7 @@ mod tests {
                 runtime_state
                     .get_storage(
                         tx.to.as_ref().expect("call target"),
-                        &tx.nonce.to_le_bytes().to_vec()
+                        tx.nonce.to_le_bytes().as_ref()
                     )
                     .is_none(),
                 "failed STATICCALL OOG projection must not add adapter synthetic target storage"

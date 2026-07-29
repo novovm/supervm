@@ -7942,7 +7942,7 @@ mod tests {
 
     #[test]
     fn lagging_peer_observation_does_not_lower_known_highest() {
-        let chain_id = 2026_1_u64;
+        let chain_id = 20_261_u64;
         clear_runtime_sync_status_for_test(chain_id);
         set_network_runtime_sync_status(
             chain_id,
@@ -8028,7 +8028,7 @@ mod tests {
 
     #[test]
     fn same_head_observation_renews_peer_liveness() {
-        let chain_id = 2028_1_u64;
+        let chain_id = 20_281_u64;
         clear_runtime_sync_status_for_test(chain_id);
         observe_network_runtime_local_head(chain_id, 10).expect("observe local");
         register_network_runtime_peer(chain_id, 42).expect("register peer");
@@ -9251,7 +9251,7 @@ mod tests {
 
     #[test]
     fn native_header_source_peer_snapshot_tracks_same_block_observations() {
-        let chain_id = 2042_100_u64;
+        let chain_id = 2_042_100_u64;
         clear_network_runtime_native_state_for_host_tests_v1();
 
         for (source_peer_id, observed_unix_ms) in [(7_u64, 10_u128), (3_u64, 11_u128), (7, 12)] {
