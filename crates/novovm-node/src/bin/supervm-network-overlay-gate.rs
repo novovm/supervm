@@ -11747,7 +11747,7 @@ fn overlay_gate_decode_hex_bytes_v0(raw: &str, field: &str) -> Result<Vec<u8>> {
     if normalized.is_empty() {
         anyhow::bail!("{field} is empty");
     }
-    if normalized.len() % 2 != 0 {
+    if !normalized.len().is_multiple_of(2) {
         anyhow::bail!("{field} must be even-length hex");
     }
     if !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {

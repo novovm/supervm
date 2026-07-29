@@ -1408,8 +1408,7 @@ fn eth_dns_rlp_parse_item_v1(input: &[u8]) -> Option<(EthDnsRlpItemV1<'_>, usize
         0x00..=0x7f => Some((EthDnsRlpItemV1::Bytes(&input[..1]), 1)),
         0x80..=0xb7 => {
             let len = (lead - 0x80) as usize;
-            (input.len() >= 1 + len)
-                .then_some((EthDnsRlpItemV1::Bytes(&input[1..1 + len]), 1 + len))
+            (input.len() > len).then_some((EthDnsRlpItemV1::Bytes(&input[1..1 + len]), 1 + len))
         }
         0xb8..=0xbf => {
             let len_of_len = (lead - 0xb7) as usize;
@@ -1427,7 +1426,7 @@ fn eth_dns_rlp_parse_item_v1(input: &[u8]) -> Option<(EthDnsRlpItemV1<'_>, usize
         }
         0xc0..=0xf7 => {
             let len = (lead - 0xc0) as usize;
-            (input.len() >= 1 + len).then_some((EthDnsRlpItemV1::List(&input[1..1 + len]), 1 + len))
+            (input.len() > len).then_some((EthDnsRlpItemV1::List(&input[1..1 + len]), 1 + len))
         }
         _ => {
             let len_of_len = (lead - 0xf7) as usize;
@@ -33558,11 +33557,11 @@ impl NativeExecutionPipelineUdpDriveV1 {
                     self.max_propagations,
                 ) {
                     Ok(sent) => {
-                        broadcast_tx_count = broadcast_tx_count.saturating_add(sent as u64);
+                        broadcast_tx_count = broadcast_tx_count.saturating_add(sent);
                         peer_reports.push(serde_json::json!({
                             "peer": peer.0,
                             "ok": true,
-                            "broadcast_tx_count": sent as u64,
+                            "broadcast_tx_count": sent,
                         }));
                     }
                     Err(err) => {

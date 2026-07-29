@@ -6081,7 +6081,7 @@ mod novorudp_tests {
             assert_eq!(metrics.mode, "async_flush_plane");
             assert_eq!(metrics.flush_interval_ms, 10);
             assert_eq!(metrics.queue_limit, 8);
-            assert_eq!(metrics.hot_path_blocked, false);
+            assert!(!metrics.hot_path_blocked);
             plane.shutdown_live_worker();
             let _ = fs::remove_file(path);
         });
@@ -6145,7 +6145,7 @@ mod novorudp_tests {
                                             }));
                                         }
                                         let metrics = plane.snapshot_metrics();
-                                        assert_eq!(metrics.hot_path_blocked, false);
+                                        assert!(!metrics.hot_path_blocked);
                                         assert_eq!(metrics.hot_path_block_ms, 0);
                                         assert!(metrics.dropped_live_count > 0);
                                         plane.shutdown_live_worker();
@@ -6252,7 +6252,7 @@ mod novorudp_tests {
                 }));
             }
             let metrics = plane.snapshot_metrics();
-            assert_eq!(metrics.hot_path_blocked, false);
+            assert!(!metrics.hot_path_blocked);
             assert_ne!(
                 metrics.backpressure_reason,
                 "ack_plane_blocked_by_diagnostics"
@@ -6275,7 +6275,7 @@ mod novorudp_tests {
                 }));
             }
             let metrics = plane.snapshot_metrics();
-            assert_eq!(metrics.hot_path_blocked, false);
+            assert!(!metrics.hot_path_blocked);
             assert_ne!(
                 metrics.backpressure_reason,
                 "repair_plane_blocked_by_diagnostics"
@@ -10328,12 +10328,11 @@ mod novorudp_tests {
             assert_eq!(report["receiver_done_ack_received"].as_bool(), Some(false));
             assert_eq!(report["report_written"].as_bool(), Some(true));
             assert_eq!(report["sender_hard_timeout_reached"].as_bool(), Some(false));
-            assert_eq!(
+            assert!(
                 report["repair_progress_observed_count"]
                     .as_u64()
                     .unwrap_or_default()
-                    > 0,
-                true
+                    > 0
             );
             assert!(
                 report["tail_repair"]["tail_repair_udp_ack_received_count"]
@@ -10414,7 +10413,7 @@ mod novorudp_tests {
                     Some("20"),
                     || {
                         with_sender_hard_timeout_env(200, || {
-                            let chain_id = 92_002_1;
+                            let chain_id = 920_021;
                             let tx_count = 4;
                             let sender_addr = reserve_udp_addr().expect("sender addr");
                             let receiver_addr = reserve_udp_addr().expect("receiver addr");
@@ -17951,7 +17950,7 @@ fn send_scheduled_batch(
                     }
                     if sender_repair_pacing_chunk_gap_ms > 0
                         && sender_repair_pacing_chunk_size > 0
-                        && sent_packets % sender_repair_pacing_chunk_size == 0
+                        && sent_packets.is_multiple_of(sender_repair_pacing_chunk_size)
                     {
                         sender_repair_pacing_chunk_count =
                             sender_repair_pacing_chunk_count.saturating_add(1);
@@ -22181,7 +22180,7 @@ fn run_sender(
     let ack_plane_last_recv_ms = ack_plane_final_snapshot
         .as_ref()
         .and_then(|state| state.last_recv_elapsed_ms)
-        .or_else(|| {
+        .or({
             if primary_ack_last_consumed_elapsed_ms > 0 {
                 Some(primary_ack_last_consumed_elapsed_ms)
             } else {

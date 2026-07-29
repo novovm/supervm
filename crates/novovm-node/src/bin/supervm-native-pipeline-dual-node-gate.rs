@@ -330,9 +330,7 @@ fn main() -> Result<()> {
     let udp_recv_budget = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_RECV_BUDGET", 16)?;
     let startup_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STARTUP_WAIT_MS", 300)?;
     let sender_rounds = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS", 1)?.max(1);
-    let receiver_count = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT", 1)?
-        .max(1)
-        .min(8);
+    let receiver_count = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT", 1)?.clamp(1, 8);
     let sender_round_interval_ms = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_INTERVAL_MS",
         tick_interval_ms,
