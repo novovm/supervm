@@ -12124,20 +12124,20 @@ fn run_receiver_node(input: ReceiverNodeInputV1<'_>) -> Result<Value> {
                         reason.as_str(),
                         &state,
                     )?;
-                    write_receiver_exit_report(
+                    write_receiver_exit_report(ReceiverExitReportInputV1 {
                         child_pid,
-                        Some(&output),
-                        stdout_path.as_path(),
-                        stderr_path.as_path(),
-                        diagnostics.report_path.as_path(),
+                        output: Some(&output),
+                        stdout_path: stdout_path.as_path(),
+                        stderr_path: stderr_path.as_path(),
+                        diagnostics_path: diagnostics.report_path.as_path(),
                         expected_tx_count,
-                        None,
-                        &state,
-                        reason.as_str(),
-                        false,
-                        true,
-                        false,
-                    )?;
+                        summary: None,
+                        state: &state,
+                        fail_reason: reason.as_str(),
+                        final_report_written: false,
+                        diagnostics_report_written: true,
+                        child_was_killed: false,
+                    })?;
                     return Err(err);
                 }
             };
@@ -12233,20 +12233,20 @@ fn run_receiver_node(input: ReceiverNodeInputV1<'_>) -> Result<Value> {
                 expected_tx_count,
                 &mut diagnostics_plane,
             )?;
-            write_receiver_exit_report(
+            write_receiver_exit_report(ReceiverExitReportInputV1 {
                 child_pid,
-                Some(&output),
-                stdout_path.as_path(),
-                stderr_path.as_path(),
-                diagnostics.report_path.as_path(),
+                output: Some(&output),
+                stdout_path: stdout_path.as_path(),
+                stderr_path: stderr_path.as_path(),
+                diagnostics_path: diagnostics.report_path.as_path(),
                 expected_tx_count,
-                Some(&summary),
-                &state,
-                "normal_pass",
-                true,
-                true,
-                false,
-            )?;
+                summary: Some(&summary),
+                state: &state,
+                fail_reason: "normal_pass",
+                final_report_written: true,
+                diagnostics_report_written: true,
+                child_was_killed: false,
+            })?;
             return Ok(summary);
         }
 
@@ -12698,20 +12698,20 @@ fn run_receiver_node(input: ReceiverNodeInputV1<'_>) -> Result<Value> {
                         expected_tx_count,
                         &mut diagnostics_plane,
                     )?;
-                    write_receiver_exit_report(
+                    write_receiver_exit_report(ReceiverExitReportInputV1 {
                         child_pid,
-                        Some(&output),
-                        stdout_path.as_path(),
-                        stderr_path.as_path(),
-                        diagnostics.report_path.as_path(),
+                        output: Some(&output),
+                        stdout_path: stdout_path.as_path(),
+                        stderr_path: stderr_path.as_path(),
+                        diagnostics_path: diagnostics.report_path.as_path(),
                         expected_tx_count,
-                        Some(&summary),
-                        &state,
-                        "completed_live_summary",
-                        true,
-                        true,
-                        true,
-                    )?;
+                        summary: Some(&summary),
+                        state: &state,
+                        fail_reason: "completed_live_summary",
+                        final_report_written: true,
+                        diagnostics_report_written: true,
+                        child_was_killed: true,
+                    })?;
                     return Ok(summary);
                 }
             }
@@ -12741,20 +12741,20 @@ fn run_receiver_node(input: ReceiverNodeInputV1<'_>) -> Result<Value> {
                     reason.as_str(),
                     &state,
                 )?;
-                write_receiver_exit_report(
+                write_receiver_exit_report(ReceiverExitReportInputV1 {
                     child_pid,
-                    Some(&output),
-                    stdout_path.as_path(),
-                    stderr_path.as_path(),
-                    diagnostics.report_path.as_path(),
+                    output: Some(&output),
+                    stdout_path: stdout_path.as_path(),
+                    stderr_path: stderr_path.as_path(),
+                    diagnostics_path: diagnostics.report_path.as_path(),
                     expected_tx_count,
-                    None,
-                    &state,
-                    reason.as_str(),
-                    false,
-                    true,
-                    true,
-                )?;
+                    summary: None,
+                    state: &state,
+                    fail_reason: reason.as_str(),
+                    final_report_written: false,
+                    diagnostics_report_written: true,
+                    child_was_killed: true,
+                })?;
                 bail!("cross-machine receiver diagnostics failed: {reason}");
             }
             emit_diagnostics_report(
@@ -13695,20 +13695,36 @@ fn output_stderr_tail(output: Option<&Output>, max_chars: usize) -> Option<Strin
     })
 }
 
-fn write_receiver_exit_report(
+struct ReceiverExitReportInputV1<'a> {
     child_pid: u32,
-    output: Option<&Output>,
-    stdout_path: &Path,
-    stderr_path: &Path,
-    diagnostics_path: &Path,
+    output: Option<&'a Output>,
+    stdout_path: &'a Path,
+    stderr_path: &'a Path,
+    diagnostics_path: &'a Path,
     expected_tx_count: u64,
-    summary: Option<&Value>,
-    state: &ReceiverDiagnosticsStateV1,
-    fail_reason: &str,
+    summary: Option<&'a Value>,
+    state: &'a ReceiverDiagnosticsStateV1,
+    fail_reason: &'a str,
     final_report_written: bool,
     diagnostics_report_written: bool,
     child_was_killed: bool,
-) -> Result<()> {
+}
+
+fn write_receiver_exit_report(input: ReceiverExitReportInputV1<'_>) -> Result<()> {
+    let ReceiverExitReportInputV1 {
+        child_pid,
+        output,
+        stdout_path,
+        stderr_path,
+        diagnostics_path,
+        expected_tx_count,
+        summary,
+        state,
+        fail_reason,
+        final_report_written,
+        diagnostics_report_written,
+        child_was_killed,
+    } = input;
     let last_sample = state.samples.last();
     let stable_progress_total = last_sample
         .and_then(|sample| sample.get("stable_progress_total"))
