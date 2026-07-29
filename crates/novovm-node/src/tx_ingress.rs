@@ -11694,14 +11694,16 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             let intent_type = native_tx_kind_label_v1(&item.native_tx).to_string();
             let semantic_operator = native_tx_semantic_operator_v1(&item.native_tx).to_string();
             let canonical_rebuild_commitment = novovm_exec::native_tx_batch_v1_item_commitment(
-                sequence,
-                tx_hash.as_str(),
-                sender_identity.as_str(),
-                signer_identity.as_deref(),
-                nonce,
-                intent_type.as_str(),
-                semantic_operator.as_str(),
-                &parameter_payload,
+                novovm_exec::NativeTxBatchV1ItemCommitmentInputV1 {
+                    sequence,
+                    tx_hash: tx_hash.as_str(),
+                    sender_identity: sender_identity.as_str(),
+                    signer_identity: signer_identity.as_deref(),
+                    nonce,
+                    intent_type: intent_type.as_str(),
+                    semantic_operator: semantic_operator.as_str(),
+                    parameter_payload: &parameter_payload,
+                },
             );
             items.push(novovm_exec::NovovmAoemNativeTxBatchItemV1 {
                 sequence,
@@ -14724,14 +14726,16 @@ mod tests {
             "amount": 9
         });
         let canonical_rebuild_commitment = novovm_exec::native_tx_batch_v1_item_commitment(
-            1,
-            "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-            "identity:alice",
-            Some("signer:alice"),
-            1,
-            "transfer",
-            "TransferV1",
-            &parameter_payload,
+            novovm_exec::NativeTxBatchV1ItemCommitmentInputV1 {
+                sequence: 1,
+                tx_hash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                sender_identity: "identity:alice",
+                signer_identity: Some("signer:alice"),
+                nonce: 1,
+                intent_type: "transfer",
+                semantic_operator: "TransferV1",
+                parameter_payload: &parameter_payload,
+            },
         );
         let item = novovm_exec::NovovmAoemNativeTxBatchItemV1 {
             sequence: 1,
