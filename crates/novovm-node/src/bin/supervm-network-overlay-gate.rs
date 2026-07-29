@@ -29,6 +29,11 @@ use novovm_network::relay::{
     run_novorudp_overlay_relay_udp_loopback_smoke_v0, NovoRudpRelayUdpLoopbackInput,
 };
 use novovm_network::routing::RoutingSource;
+use rustls::{
+    client::danger::{HandshakeSignatureValid, ServerCertVerified},
+    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime},
+    DigitallySignedStruct, SignatureScheme,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -6143,23 +6148,22 @@ impl Wss443RelaySessionManagerV0 {
     }
 }
 
-impl rustls::client::ServerCertVerifier for Cut40PinnedCertVerifierV0 {
+impl rustls::client::danger::ServerCertVerifier for Cut40PinnedCertVerifierV0 {
     fn verify_server_cert(
         &self,
-        end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
         _ocsp_response: &[u8],
-        _now: SystemTime,
-    ) -> std::result::Result<rustls::client::ServerCertVerified, rustls::Error> {
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
         if self.trust_mode == "encrypted-untrusted" || self.trust_mode == "insecure-test-only" {
-            return Ok(rustls::client::ServerCertVerified::assertion());
+            return Ok(ServerCertVerified::assertion());
         }
-        let actual = overlay_gate_sha256_hex_v0(&[&end_entity.0]);
+        let actual = overlay_gate_sha256_hex_v0(&[end_entity.as_ref()]);
         match &self.expected_sha256_hex {
             Some(expected) if expected.eq_ignore_ascii_case(&actual) => {
-                Ok(rustls::client::ServerCertVerified::assertion())
+                Ok(ServerCertVerified::assertion())
             }
             Some(expected) => Err(rustls::Error::General(format!(
                 "NOVOVM WSS certificate pin mismatch: expected {expected}, actual {actual}"
@@ -6168,6 +6172,40 @@ impl rustls::client::ServerCertVerifier for Cut40PinnedCertVerifierV0 {
                 "NOVOVM WSS certificate pin missing".into(),
             )),
         }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 
@@ -8280,19 +8318,24 @@ fn build_cut39_tls_configs_v0() -> Result<(Arc<rustls::ServerConfig>, Arc<rustls
         .context("generate cut39 self-signed cert")?;
     let cert_der = cert.serialize_der().context("serialize cut39 cert")?;
     let key_der = cert.serialize_private_key_der();
-    let certs = vec![rustls::Certificate(cert_der.clone())];
-    let server_config = rustls::ServerConfig::builder()
-        .with_safe_defaults()
+    let certs = vec![CertificateDer::from(cert_der.clone())];
+    let server_config = rustls::ServerConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+        .with_safe_default_protocol_versions()
+        .context("select cut39 server TLS protocol versions")?
         .with_no_client_auth()
-        .with_single_cert(certs, rustls::PrivateKey(key_der))
+        .with_single_cert(
+            certs,
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der)),
+        )
         .context("build cut39 server tls config")?;
 
     let mut roots = rustls::RootCertStore::empty();
     roots
-        .add(&rustls::Certificate(cert_der))
+        .add(CertificateDer::from(cert_der))
         .context("trust cut39 self-signed cert")?;
-    let client_config = rustls::ClientConfig::builder()
-        .with_safe_defaults()
+    let client_config = rustls::ClientConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+        .with_safe_default_protocol_versions()
+        .context("select cut39 client TLS protocol versions")?
         .with_root_certificates(roots)
         .with_no_client_auth();
 
@@ -8305,14 +8348,16 @@ fn build_cut40_server_tls_config_v0() -> Result<(Arc<rustls::ServerConfig>, Stri
     if let (Some(cert_path), Some(key_path)) = (cert_path, key_path) {
         let certs = load_cut40_certs_pem_v0(&cert_path)
             .with_context(|| format!("load tls cert path: {cert_path}"))?;
-        let tls_cert_sha256 = overlay_gate_sha256_hex_v0(&[&certs[0].0]);
+        let tls_cert_sha256 = overlay_gate_sha256_hex_v0(&[certs[0].as_ref()]);
         let key = load_cut40_private_key_pem_v0(&key_path)
             .with_context(|| format!("load tls key path: {key_path}"))?;
-        let server_config = rustls::ServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth()
-            .with_single_cert(certs, key)
-            .context("build cut40 server tls config from pem")?;
+        let server_config =
+            rustls::ServerConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+                .with_safe_default_protocol_versions()
+                .context("select cut40 configured server TLS protocol versions")?
+                .with_no_client_auth()
+                .with_single_cert(certs, key)
+                .context("build cut40 server tls config from pem")?;
         return Ok((
             Arc::new(server_config),
             "configured_pem".into(),
@@ -8325,12 +8370,13 @@ fn build_cut40_server_tls_config_v0() -> Result<(Arc<rustls::ServerConfig>, Stri
     let cert_der = cert.serialize_der().context("serialize cut40 cert")?;
     let tls_cert_sha256 = overlay_gate_sha256_hex_v0(&[&cert_der]);
     let key_der = cert.serialize_private_key_der();
-    let server_config = rustls::ServerConfig::builder()
-        .with_safe_defaults()
+    let server_config = rustls::ServerConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+        .with_safe_default_protocol_versions()
+        .context("select cut40 self-signed server TLS protocol versions")?
         .with_no_client_auth()
         .with_single_cert(
-            vec![rustls::Certificate(cert_der)],
-            rustls::PrivateKey(key_der),
+            vec![CertificateDer::from(cert_der)],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der)),
         )
         .context("build cut40 self-signed server tls config")?;
     Ok((
@@ -8349,10 +8395,13 @@ fn build_cut40_client_tls_config_v0() -> Result<Arc<rustls::ClientConfig>> {
             expected_sha256_hex: Some(expected_sha256_hex),
             trust_mode,
         };
-        let client_config = rustls::ClientConfig::builder()
-            .with_safe_defaults()
-            .with_custom_certificate_verifier(Arc::new(verifier))
-            .with_no_client_auth();
+        let client_config =
+            rustls::ClientConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+                .with_safe_default_protocol_versions()
+                .context("select cut40 pinned client TLS protocol versions")?
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(verifier))
+                .with_no_client_auth();
         return Ok(Arc::new(client_config));
     }
     if trust_mode == "encrypted-untrusted" || trust_mode == "insecure-test-only" {
@@ -8360,10 +8409,13 @@ fn build_cut40_client_tls_config_v0() -> Result<Arc<rustls::ClientConfig>> {
             expected_sha256_hex: None,
             trust_mode,
         };
-        let client_config = rustls::ClientConfig::builder()
-            .with_safe_defaults()
-            .with_custom_certificate_verifier(Arc::new(verifier))
-            .with_no_client_auth();
+        let client_config =
+            rustls::ClientConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+                .with_safe_default_protocol_versions()
+                .context("select cut40 node-key client TLS protocol versions")?
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(verifier))
+                .with_no_client_auth();
         return Ok(Arc::new(client_config));
     }
 
@@ -8374,57 +8426,53 @@ fn build_cut40_client_tls_config_v0() -> Result<Arc<rustls::ClientConfig>> {
         for cert in load_cut40_certs_pem_v0(&ca_path)
             .with_context(|| format!("load wss ca cert path: {ca_path}"))?
         {
-            roots.add(&cert).context("add configured wss ca cert")?;
+            roots.add(cert).context("add configured wss ca cert")?;
         }
     } else if trust_mode == "webpki" {
-        for cert in
-            rustls_native_certs::load_native_certs().context("load platform native tls roots")?
-        {
-            let _ = roots.add(&rustls::Certificate(cert.0));
+        let native = rustls_native_certs::load_native_certs();
+        if !native.errors.is_empty() {
+            anyhow::bail!("load platform native tls roots: {:?}", native.errors);
+        }
+        for cert in native.certs {
+            roots.add(cert).context("add platform native tls root")?;
         }
     } else {
         anyhow::bail!("unsupported NOVOVM_OVERLAY_WSS_TLS_TRUST_MODE: {trust_mode}");
     }
-    let client_config = rustls::ClientConfig::builder()
-        .with_safe_defaults()
+    let client_config = rustls::ClientConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+        .with_safe_default_protocol_versions()
+        .context("select cut40 root-store client TLS protocol versions")?
         .with_root_certificates(roots)
         .with_no_client_auth();
     Ok(Arc::new(client_config))
+}
+
+fn overlay_gate_tls_provider_v0() -> Arc<rustls::crypto::CryptoProvider> {
+    Arc::new(rustls::crypto::aws_lc_rs::default_provider())
 }
 
 fn cut40_client_tls_trust_mode_v0() -> String {
     env_string("NOVOVM_OVERLAY_WSS_TLS_TRUST_MODE").unwrap_or_else(|| "encrypted-untrusted".into())
 }
 
-fn load_cut40_certs_pem_v0(path: &str) -> Result<Vec<rustls::Certificate>> {
+fn load_cut40_certs_pem_v0(path: &str) -> Result<Vec<CertificateDer<'static>>> {
     let bytes = fs::read(path).with_context(|| format!("read cert pem: {path}"))?;
     let mut reader = std::io::BufReader::new(bytes.as_slice());
     let certs = rustls_pemfile::certs(&mut reader)
-        .context("parse cert pem")?
-        .into_iter()
-        .map(rustls::Certificate)
-        .collect::<Vec<_>>();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("parse cert pem")?;
     if certs.is_empty() {
         anyhow::bail!("no certificates in pem: {path}");
     }
     Ok(certs)
 }
 
-fn load_cut40_private_key_pem_v0(path: &str) -> Result<rustls::PrivateKey> {
+fn load_cut40_private_key_pem_v0(path: &str) -> Result<PrivateKeyDer<'static>> {
     let bytes = fs::read(path).with_context(|| format!("read key pem: {path}"))?;
-    let mut pkcs8_reader = std::io::BufReader::new(bytes.as_slice());
-    let pkcs8_keys = rustls_pemfile::pkcs8_private_keys(&mut pkcs8_reader)
-        .context("parse pkcs8 private key pem")?;
-    if let Some(key) = pkcs8_keys.into_iter().next() {
-        return Ok(rustls::PrivateKey(key));
-    }
-    let mut rsa_reader = std::io::BufReader::new(bytes.as_slice());
-    let rsa_keys =
-        rustls_pemfile::rsa_private_keys(&mut rsa_reader).context("parse rsa private key pem")?;
-    if let Some(key) = rsa_keys.into_iter().next() {
-        return Ok(rustls::PrivateKey(key));
-    }
-    anyhow::bail!("no supported private key in pem: {path}")
+    let mut reader = std::io::BufReader::new(bytes.as_slice());
+    rustls_pemfile::private_key(&mut reader)
+        .context("parse private key pem")?
+        .with_context(|| format!("no supported private key in pem: {path}"))
 }
 
 fn parse_cut40_wss_endpoint_v0(endpoint: &str) -> Result<Cut40WssEndpointV0> {
@@ -8482,8 +8530,7 @@ fn cut40_connect_tls_websocket_v0(
         .context("set cut40 client read timeout")?;
     tcp.set_write_timeout(Some(Duration::from_secs(10)))
         .context("set cut40 client write timeout")?;
-    let server_name =
-        rustls::ServerName::try_from(endpoint.host.as_str()).context("cut40 server name")?;
+    let server_name = ServerName::try_from(endpoint.host.clone()).context("cut40 server name")?;
     let client_conn = rustls::ClientConnection::new(client_config, server_name)
         .context("create cut40 tls client")?;
     let mut tls = rustls::StreamOwned::new(client_conn, tcp);
@@ -8546,7 +8593,7 @@ fn cut39_connect_tls_websocket_v0(
         .context("set cut39 client read timeout")?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))
         .context("set cut39 client write timeout")?;
-    let server_name = rustls::ServerName::try_from("localhost").context("cut39 server name")?;
+    let server_name = ServerName::try_from("localhost").context("cut39 server name")?;
     let client_conn = rustls::ClientConnection::new(client_config, server_name)
         .context("create cut39 tls client")?;
     let mut tls = rustls::StreamOwned::new(client_conn, tcp);

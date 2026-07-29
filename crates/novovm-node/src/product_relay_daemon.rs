@@ -10,6 +10,7 @@ use novovm_network::{
     HandshakeReplayCacheV1, NodeHandshakeResponderV1, ProductRelayRuntimeConfigV1,
     ProductRelaySessionManagerV1, ProductRelayWireMessageV1,
 };
+use rustls::pki_types::PrivateKeyDer;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest as Sha1Digest, Sha1};
 use std::{
@@ -389,41 +390,31 @@ fn build_server_tls_config_v1(cert_path: &Path, key_path: &Path) -> Result<rustl
         .with_context(|| format!("read relay tls certificate: {}", cert_path.display()))?;
     let mut cert_reader = io::BufReader::new(cert_bytes.as_slice());
     let certificates = rustls_pemfile::certs(&mut cert_reader)
-        .context("parse relay tls certificates")?
-        .into_iter()
-        .map(rustls::Certificate)
-        .collect::<Vec<_>>();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("parse relay tls certificates")?;
     if certificates.is_empty() {
         bail!("relay TLS certificate file contains no certificate");
     }
     let key_bytes = fs::read(key_path)
         .with_context(|| format!("read relay tls key: {}", key_path.display()))?;
     let private_key = load_private_key_v1(&key_bytes)?;
-    rustls::ServerConfig::builder()
-        .with_safe_defaults()
+    rustls::ServerConfig::builder_with_provider(tls_crypto_provider_v1())
+        .with_safe_default_protocol_versions()
+        .context("select product relay TLS protocol versions")?
         .with_no_client_auth()
         .with_single_cert(certificates, private_key)
         .context("build product relay tls config")
 }
 
-fn load_private_key_v1(bytes: &[u8]) -> Result<rustls::PrivateKey> {
-    let mut pkcs8_reader = io::BufReader::new(bytes);
-    if let Some(key) = rustls_pemfile::pkcs8_private_keys(&mut pkcs8_reader)
-        .context("parse pkcs8 relay key")?
-        .into_iter()
-        .next()
-    {
-        return Ok(rustls::PrivateKey(key));
-    }
-    let mut rsa_reader = io::BufReader::new(bytes);
-    if let Some(key) = rustls_pemfile::rsa_private_keys(&mut rsa_reader)
-        .context("parse rsa relay key")?
-        .into_iter()
-        .next()
-    {
-        return Ok(rustls::PrivateKey(key));
-    }
-    bail!("relay TLS key file contains no supported key")
+fn tls_crypto_provider_v1() -> Arc<rustls::crypto::CryptoProvider> {
+    Arc::new(rustls::crypto::aws_lc_rs::default_provider())
+}
+
+fn load_private_key_v1(bytes: &[u8]) -> Result<PrivateKeyDer<'static>> {
+    let mut reader = io::BufReader::new(bytes);
+    rustls_pemfile::private_key(&mut reader)
+        .context("parse relay TLS key")?
+        .context("relay TLS key file contains no supported key")
 }
 
 fn load_ed25519_signing_key_v1(path: &Path) -> Result<SigningKey> {
@@ -586,6 +577,7 @@ mod tests {
         NodeHandshakeResponderV1, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
         RelayPeerHandshakeV1,
     };
+    use rustls::pki_types::{CertificateDer, ServerName};
     use std::{net::SocketAddr, time::Instant};
 
     type TestClientWebSocketV1 = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
@@ -845,7 +837,7 @@ mod tests {
         tcp.set_read_timeout(Some(Duration::from_millis(200)))
             .unwrap();
         tcp.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
-        let server_name = rustls::ServerName::try_from("localhost").unwrap();
+        let server_name = ServerName::try_from("localhost").unwrap();
         let connection = rustls::ClientConnection::new(client_config, server_name).unwrap();
         let mut stream = rustls::StreamOwned::new(connection, tcp);
         let key = BASE64_STANDARD.encode([9u8; 16]);
@@ -858,10 +850,11 @@ mod tests {
 
     fn test_client_tls_config_v1(certificate_der: Vec<u8>) -> Arc<rustls::ClientConfig> {
         let mut roots = rustls::RootCertStore::empty();
-        roots.add(&rustls::Certificate(certificate_der)).unwrap();
+        roots.add(CertificateDer::from(certificate_der)).unwrap();
         Arc::new(
-            rustls::ClientConfig::builder()
-                .with_safe_defaults()
+            rustls::ClientConfig::builder_with_provider(tls_crypto_provider_v1())
+                .with_safe_default_protocol_versions()
+                .unwrap()
                 .with_root_certificates(roots)
                 .with_no_client_auth(),
         )

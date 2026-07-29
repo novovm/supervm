@@ -8,7 +8,11 @@ use novovm_network::{
     ProductRelayWireMessageV1, RelayPeerHandshakeDeliveryV1, RelayPeerHandshakeV1,
     SecureNovoRudpEnvelopeV1,
 };
-use rustls::client::{ServerCertVerified, ServerCertVerifier};
+use rustls::{
+    client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    pki_types::{CertificateDer, ServerName, UnixTime},
+    DigitallySignedStruct, SignatureScheme,
+};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest as Sha1Digest, Sha1};
 use std::{
@@ -111,7 +115,7 @@ impl ProductRelayClientV1 {
             config.connect_timeout_ms.max(1),
         )))?;
         let tls_config = build_tls_config_v1(&config.tls_trust)?;
-        let server_name = rustls::ServerName::try_from(endpoint.host.as_str())
+        let server_name = ServerName::try_from(endpoint.host.clone())
             .context("relay endpoint must use a DNS hostname")?;
         let connection = rustls::ClientConnection::new(tls_config, server_name)
             .context("create relay TLS client")?;
@@ -285,14 +289,47 @@ struct NodeKeyBoundVerifierV1;
 impl ServerCertVerifier for NodeKeyBoundVerifierV1 {
     fn verify_server_cert(
         &self,
-        _: &rustls::Certificate,
-        _: &[rustls::Certificate],
-        _: &rustls::ServerName,
-        _: &mut dyn Iterator<Item = &[u8]>,
+        _: &CertificateDer<'_>,
+        _: &[CertificateDer<'_>],
+        _: &ServerName<'_>,
         _: &[u8],
-        _: SystemTime,
+        _: UnixTime,
     ) -> std::result::Result<ServerCertVerified, rustls::Error> {
         Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 
@@ -322,14 +359,17 @@ fn build_tls_config_v1(trust: &ProductRelayTlsTrustV1) -> Result<Arc<rustls::Cli
     let mut roots = rustls::RootCertStore::empty();
     match trust {
         ProductRelayTlsTrustV1::NativeWebPki => {
-            for certificate in
-                rustls_native_certs::load_native_certs().context("load native TLS roots")?
-            {
-                let _ = roots.add(&rustls::Certificate(certificate.0));
+            let native = rustls_native_certs::load_native_certs();
+            if !native.errors.is_empty() {
+                bail!("load native TLS roots: {:?}", native.errors);
+            }
+            for certificate in native.certs {
+                roots.add(certificate).context("add native TLS root")?;
             }
             Ok(Arc::new(
-                rustls::ClientConfig::builder()
-                    .with_safe_defaults()
+                rustls::ClientConfig::builder_with_provider(tls_crypto_provider_v1())
+                    .with_safe_default_protocol_versions()
+                    .context("select native relay TLS protocol versions")?
                     .with_root_certificates(roots)
                     .with_no_client_auth(),
             ))
@@ -339,27 +379,33 @@ fn build_tls_config_v1(trust: &ProductRelayTlsTrustV1) -> Result<Arc<rustls::Cli
                 format!("read explicit relay CA: {}", certificate_path.display())
             })?;
             let mut reader = io::BufReader::new(bytes.as_slice());
-            for certificate in
-                rustls_pemfile::certs(&mut reader).context("parse explicit relay CA")?
-            {
-                roots
-                    .add(&rustls::Certificate(certificate))
-                    .context("add explicit relay CA")?;
+            let certificates = rustls_pemfile::certs(&mut reader)
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("parse explicit relay CA")?;
+            for certificate in certificates {
+                roots.add(certificate).context("add explicit relay CA")?;
             }
             Ok(Arc::new(
-                rustls::ClientConfig::builder()
-                    .with_safe_defaults()
+                rustls::ClientConfig::builder_with_provider(tls_crypto_provider_v1())
+                    .with_safe_default_protocol_versions()
+                    .context("select explicit relay TLS protocol versions")?
                     .with_root_certificates(roots)
                     .with_no_client_auth(),
             ))
         }
         ProductRelayTlsTrustV1::NodeKeyBoundEncrypted => Ok(Arc::new(
-            rustls::ClientConfig::builder()
-                .with_safe_defaults()
+            rustls::ClientConfig::builder_with_provider(tls_crypto_provider_v1())
+                .with_safe_default_protocol_versions()
+                .context("select node-key relay TLS protocol versions")?
+                .dangerous()
                 .with_custom_certificate_verifier(Arc::new(NodeKeyBoundVerifierV1))
                 .with_no_client_auth(),
         )),
     }
+}
+
+fn tls_crypto_provider_v1() -> Arc<rustls::crypto::CryptoProvider> {
+    Arc::new(rustls::crypto::aws_lc_rs::default_provider())
 }
 
 fn websocket_upgrade_v1<S: Read + Write>(stream: &mut S, endpoint: &RelayEndpointV1) -> Result<()> {
