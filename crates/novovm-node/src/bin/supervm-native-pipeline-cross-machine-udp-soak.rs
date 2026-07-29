@@ -11685,18 +11685,33 @@ fn aoem_runtime_worker_pipeline_u64_env_v1(name: &str, default: u64) -> u64 {
     u64_env(name, default).unwrap_or(default).max(1)
 }
 
-fn spawn_receiver_node(
-    node_bin: &Path,
+#[derive(Clone, Copy)]
+struct ReceiverNodeInputV1<'a> {
+    node_bin: &'a Path,
     chain_id: u64,
     receiver_node: u64,
-    listen_addr: &str,
-    store_path: &Path,
+    listen_addr: &'a str,
+    store_path: &'a Path,
     expected_tx_count: u64,
     max_ticks: u64,
     tick_interval_ms: u64,
     batch_budget: u64,
     recv_budget: u64,
-) -> Result<Child> {
+}
+
+fn spawn_receiver_node(input: ReceiverNodeInputV1<'_>) -> Result<Child> {
+    let ReceiverNodeInputV1 {
+        node_bin,
+        chain_id,
+        receiver_node,
+        listen_addr,
+        store_path,
+        expected_tx_count,
+        max_ticks,
+        tick_interval_ms,
+        batch_budget,
+        recv_budget,
+    } = input;
     let mut cmd = Command::new(node_bin);
     let pipeline_enabled = aoem_runtime_worker_pipeline_enabled_env_v1();
     let worker_tick_interval_ms = if pipeline_enabled {
@@ -11979,20 +11994,8 @@ fn parse_summary_ref(output: &Output, label: &str) -> Result<Value> {
     })
 }
 
-fn run_receiver_node(
-    node_bin: &Path,
-    chain_id: u64,
-    receiver_node: u64,
-    listen_addr: &str,
-    store_path: &Path,
-    expected_tx_count: u64,
-    max_ticks: u64,
-    tick_interval_ms: u64,
-    batch_budget: u64,
-    recv_budget: u64,
-) -> Result<Value> {
-    let diagnostics = receiver_diagnostics_config()?;
-    let mut child = spawn_receiver_node(
+fn run_receiver_node(input: ReceiverNodeInputV1<'_>) -> Result<Value> {
+    let ReceiverNodeInputV1 {
         node_bin,
         chain_id,
         receiver_node,
@@ -12003,7 +12006,20 @@ fn run_receiver_node(
         tick_interval_ms,
         batch_budget,
         recv_budget,
-    )?;
+    } = input;
+    let diagnostics = receiver_diagnostics_config()?;
+    let mut child = spawn_receiver_node(ReceiverNodeInputV1 {
+        node_bin,
+        chain_id,
+        receiver_node,
+        listen_addr,
+        store_path,
+        expected_tx_count,
+        max_ticks,
+        tick_interval_ms,
+        batch_budget,
+        recv_budget,
+    })?;
     if !diagnostics.enabled {
         return parse_summary(
             child
@@ -24001,18 +24017,18 @@ fn run_receiver(
     recv_budget: u64,
     sustained: SustainedConfigV1,
 ) -> Result<Value> {
-    let mut receiver_summary = run_receiver_node(
+    let mut receiver_summary = run_receiver_node(ReceiverNodeInputV1 {
         node_bin,
         chain_id,
         receiver_node,
         listen_addr,
         store_path,
-        tx_count,
+        expected_tx_count: tx_count,
         max_ticks,
         tick_interval_ms,
         batch_budget,
         recv_budget,
-    )?;
+    })?;
     annotate_receiver_aoem_gate_trace_v1(&mut receiver_summary);
     annotate_host_recovery_store_boundary_v1(&mut receiver_summary, store_path);
     let recovery_probe = get_host_recovery_store_recovery_probe_v1(store_path)?;
@@ -24102,18 +24118,18 @@ fn run_local_smoke(
         std::env::set_var("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED", "1");
         std::env::set_var("NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR", ack_addr);
     }
-    let child = spawn_receiver_node(
+    let child = spawn_receiver_node(ReceiverNodeInputV1 {
         node_bin,
         chain_id,
         receiver_node,
-        receiver_addr.as_str(),
+        listen_addr: receiver_addr.as_str(),
         store_path,
-        tx_count,
+        expected_tx_count: tx_count,
         max_ticks,
         tick_interval_ms,
         batch_budget,
         recv_budget,
-    )?;
+    })?;
     match previous_ack_enabled {
         Some(value) => std::env::set_var("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED", value),
         None => std::env::remove_var("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED"),
@@ -24331,18 +24347,18 @@ fn run_memory_bisect_variant(
     let store_for_thread = store.clone();
     let receiver_addr_for_thread = receiver_addr.clone();
     let handle = std::thread::spawn(move || {
-        run_receiver_node(
-            node_bin.as_path(),
+        run_receiver_node(ReceiverNodeInputV1 {
+            node_bin: node_bin.as_path(),
             chain_id,
             receiver_node,
-            receiver_addr_for_thread.as_str(),
-            store_for_thread.as_path(),
-            tx_count,
-            div_ceil_u64(tx_count, batch_budget).saturating_add(180),
+            listen_addr: receiver_addr_for_thread.as_str(),
+            store_path: store_for_thread.as_path(),
+            expected_tx_count: tx_count,
+            max_ticks: div_ceil_u64(tx_count, batch_budget).saturating_add(180),
             tick_interval_ms,
             batch_budget,
             recv_budget,
-        )
+        })
     });
     std::thread::sleep(Duration::from_millis(startup_wait_ms));
     let sender_result = run_sender(
