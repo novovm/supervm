@@ -15854,7 +15854,7 @@ fn receiver_summary_consistency_reasons_v1(
     reasons
 }
 
-fn receiver_drain_attribution_stage_v1(
+struct ReceiverDrainAttributionInputV1 {
     network_received_total: u64,
     ingress_submitted_total: u64,
     pending_last: u64,
@@ -15864,7 +15864,20 @@ fn receiver_drain_attribution_stage_v1(
     aoem: u64,
     canonical: u64,
     ledger_completed: u64,
-) -> &'static str {
+}
+
+fn receiver_drain_attribution_stage_v1(input: ReceiverDrainAttributionInputV1) -> &'static str {
+    let ReceiverDrainAttributionInputV1 {
+        network_received_total,
+        ingress_submitted_total,
+        pending_last,
+        ticks,
+        queue_admitted_total,
+        nonempty_aoem_batch_ticks,
+        aoem,
+        canonical,
+        ledger_completed,
+    } = input;
     if network_received_total == 0 && ingress_submitted_total == 0 {
         "waiting_for_udp"
     } else if pending_last > 0 && ticks == 0 {
@@ -16597,17 +16610,18 @@ fn diagnostics_summary_sample(
     let summary_consistency_reasons =
         receiver_summary_consistency_reasons_v1(aoem, canonical, ledger_completed);
     let summary_consistency_violation_count = summary_consistency_reasons.len() as u64;
-    let receiver_drain_attribution_stage = receiver_drain_attribution_stage_v1(
-        network_received_total,
-        ingress_submitted_total,
-        pending_last,
-        ticks,
-        queue_admitted_total,
-        nonempty_aoem_batch_ticks,
-        aoem,
-        canonical,
-        ledger_completed,
-    );
+    let receiver_drain_attribution_stage =
+        receiver_drain_attribution_stage_v1(ReceiverDrainAttributionInputV1 {
+            network_received_total,
+            ingress_submitted_total,
+            pending_last,
+            ticks,
+            queue_admitted_total,
+            nonempty_aoem_batch_ticks,
+            aoem,
+            canonical,
+            ledger_completed,
+        });
     let mut out = serde_json::json!({
         "elapsed_ms": started_at.elapsed().as_millis() as u64,
         "received_unique_total": summary_u64(summary, "ingress_total_last"),
