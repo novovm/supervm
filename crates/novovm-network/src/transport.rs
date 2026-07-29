@@ -11443,17 +11443,31 @@ mod tests {
         meta
     }
 
-    fn signed_endpoint_record_test_v1(
-        signing_key: &SigningKey,
+    struct SignedEndpointRecordTestInputV1<'a> {
         node_id: NodeId,
         chain_id: u64,
-        run_id: &str,
-        session_id: &str,
-        data_endpoint: &str,
+        run_id: &'a str,
+        session_id: &'a str,
+        data_endpoint: &'a str,
         sequence: u64,
         issued_at_ms: u64,
         ttl_ms: u64,
+    }
+
+    fn signed_endpoint_record_test_v1(
+        signing_key: &SigningKey,
+        input: SignedEndpointRecordTestInputV1<'_>,
     ) -> NodeEndpointRecord {
+        let SignedEndpointRecordTestInputV1 {
+            node_id,
+            chain_id,
+            run_id,
+            session_id,
+            data_endpoint,
+            sequence,
+            issued_at_ms,
+            ttl_ms,
+        } = input;
         let mut record = NodeEndpointRecord {
             node_id,
             node_public_key: signing_key.verifying_key().to_bytes().to_vec(),
@@ -11667,14 +11681,16 @@ mod tests {
         let src: SocketAddr = "127.0.0.1:41001".parse().unwrap();
         let record = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(41),
-            9001,
-            "run-a",
-            "session-a",
-            "127.0.0.1:41001",
-            1,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(41),
+                chain_id: 9001,
+                run_id: "run-a",
+                session_id: "session-a",
+                data_endpoint: "127.0.0.1:41001",
+                sequence: 1,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
 
         assert!(validate_endpoint_record_for_source_pin_v1(
@@ -11697,14 +11713,16 @@ mod tests {
         let src: SocketAddr = "127.0.0.1:41002".parse().unwrap();
         let mut record = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(42),
-            9002,
-            "run-b",
-            "session-b",
-            "127.0.0.1:41002",
-            1,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(42),
+                chain_id: 9002,
+                run_id: "run-b",
+                session_id: "session-b",
+                data_endpoint: "127.0.0.1:41002",
+                sequence: 1,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
         record.data_endpoint = "127.0.0.1:41003".to_string();
 
@@ -11726,14 +11744,16 @@ mod tests {
         let src: SocketAddr = "127.0.0.1:41004".parse().unwrap();
         let record = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(43),
-            9003,
-            "run-c",
-            "session-c",
-            "127.0.0.1:41004",
-            3,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(43),
+                chain_id: 9003,
+                run_id: "run-c",
+                session_id: "session-c",
+                data_endpoint: "127.0.0.1:41004",
+                sequence: 3,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
 
         assert!(validate_endpoint_record_for_source_pin_v1(
@@ -11804,25 +11824,29 @@ mod tests {
         let src_b: SocketAddr = "127.0.0.1:41009".parse().unwrap();
         let first = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(46),
-            9006,
-            "run-f",
-            "session-f",
-            "127.0.0.1:41008",
-            1,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(46),
+                chain_id: 9006,
+                run_id: "run-f",
+                session_id: "session-f",
+                data_endpoint: "127.0.0.1:41008",
+                sequence: 1,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
         let second = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(46),
-            9006,
-            "run-f",
-            "session-f",
-            "127.0.0.1:41009",
-            2,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(46),
+                chain_id: 9006,
+                run_id: "run-f",
+                session_id: "session-f",
+                data_endpoint: "127.0.0.1:41009",
+                sequence: 2,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
 
         assert!(validate_endpoint_record_for_source_pin_v1(
@@ -11856,25 +11880,29 @@ mod tests {
         let src_b: SocketAddr = "127.0.0.1:41011".parse().unwrap();
         let first = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(47),
-            9007,
-            "run-g",
-            "session-g",
-            "127.0.0.1:41010",
-            1,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(47),
+                chain_id: 9007,
+                run_id: "run-g",
+                session_id: "session-g",
+                data_endpoint: "127.0.0.1:41010",
+                sequence: 1,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
         let wrong_session = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(47),
-            9007,
-            "run-g",
-            "session-other",
-            "127.0.0.1:41011",
-            2,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(47),
+                chain_id: 9007,
+                run_id: "run-g",
+                session_id: "session-other",
+                data_endpoint: "127.0.0.1:41011",
+                sequence: 2,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
 
         assert!(validate_endpoint_record_for_source_pin_v1(
@@ -22201,7 +22229,7 @@ mod tests {
                 let response = crate::eth_rlpx_build_account_range_payload_v1(
                     request.request_id,
                     &[],
-                    &[root_trie_node.clone()],
+                    std::slice::from_ref(&root_trie_node),
                 );
                 crate::eth_rlpx_write_wire_frame_v1(
                     &mut accepted,
@@ -22598,7 +22626,7 @@ mod tests {
                 assert_eq!(request.paths, vec![vec![vec![0_u8]]]);
                 let response = crate::eth_rlpx_build_trie_nodes_payload_v1(
                     request.request_id,
-                    &[root_trie_node.clone()],
+                    std::slice::from_ref(&root_trie_node),
                 );
                 crate::eth_rlpx_write_wire_frame_v1(
                     &mut accepted,
@@ -23319,7 +23347,7 @@ mod tests {
             let response = crate::eth_rlpx_build_account_range_payload_v1(
                 account_request_id,
                 &[account],
-                &[root_trie_node.clone()],
+                std::slice::from_ref(&root_trie_node),
             );
             crate::eth_rlpx_write_wire_frame_v1(
                 &mut accepted,
@@ -23359,7 +23387,7 @@ mod tests {
                     let response = crate::eth_rlpx_build_storage_ranges_payload_v1(
                         request.request_id,
                         slotsets.as_slice(),
-                        &[storage_root_trie_node.clone()],
+                        std::slice::from_ref(&storage_root_trie_node),
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
@@ -23378,7 +23406,7 @@ mod tests {
                     assert_eq!(request.hashes, vec![code_hash]);
                     let response = crate::eth_rlpx_build_byte_codes_payload_v1(
                         request.request_id,
-                        &[bytecode.clone()],
+                        std::slice::from_ref(&bytecode),
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
@@ -23403,7 +23431,7 @@ mod tests {
                         );
                         crate::eth_rlpx_build_trie_nodes_payload_v1(
                             request.request_id,
-                            &[storage_root_trie_node.clone()],
+                            std::slice::from_ref(&storage_root_trie_node),
                         )
                     } else {
                         assert_eq!(trie_nodes_requests, 2);
@@ -23411,7 +23439,7 @@ mod tests {
                         saw_trie_nodes = true;
                         crate::eth_rlpx_build_trie_nodes_payload_v1(
                             request.request_id,
-                            &[root_trie_node.clone()],
+                            std::slice::from_ref(&root_trie_node),
                         )
                     };
                     crate::eth_rlpx_write_wire_frame_v1(
