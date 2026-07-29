@@ -126,7 +126,7 @@
     "windows-x86_64": {
       "status": "included",
       "library": "windows/core/bin/aoem_ffi.dll",
-      "library_sha256": "f533036e18d0e1f34d1e7208ed26e62eed0ba91e9ef8f61ba3b0aa2ec2bbe1a9",
+      "library_sha256": "2b9a91ae7d7d8a518d9ee2363ea1b402ae48ab3509e51b424c3c564f61bf730e",
       "fullmax_sidecars": "included",
       "source_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260606-161254"
     },

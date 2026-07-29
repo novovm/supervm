@@ -49,9 +49,17 @@ This file defines the current public documentation surface for NOVOVM and lists 
    - `docs/NOVOVM-NETWORK/NOVOVM-FULL-MODE-MINIMAL-BOOTSTRAP-TEMPLATE-2026-04-18.md`
    - `scripts/novovm-p2d-daily-report.ps1`
 5. Mainline status and delivery contract artifacts
-   - `artifacts/mainline-status.json`
-   - `artifacts/mainline-delivery-contract.json`
-   - `artifacts/mainline/mainline-nightly-soak-gate-report.json`
+   - `artifacts/mainline-status.json` (generated only by a successful mainline run)
+   - `artifacts/mainline-delivery-contract.json` (generated only by a successful mainline run)
+   - `artifacts/mainline/mainline-nightly-soak-gate-report.json` (generated only by a successful nightly soak)
+6. Product overlay operational runtime (not a claim of public topology completion)
+   - `docs/novovm-product-relay-daemon-v1.md`
+   - `docs/novovm-product-relay-client-v1.md`
+   - `docs/novovm-product-node-overlay-v1.md`
+   - `docs/novovm-product-nat-runtime-v1.md`
+   - `docs/novovm-product-peer-runtime-v1.md`
+   - `docs/novovm-product-evidence-v1.md`
+   - `scripts/novovm-package-product-linux.ps1`
 
 ## Current unified-account wording
 
@@ -82,6 +90,8 @@ When documentation conflicts occur, resolve in this order:
 ## Maintenance requirements
 
 - If you add a new public interface, runtime entry, or gate entry, update this file in the same change.
+- Runtime artifacts are evidence only after the corresponding command or CI job succeeds; missing generated artifacts prove no result and must not be replaced with placeholders.
+- The product overlay documents define headless relay-first operations and signed evidence boundaries. They do not claim mainline/AOEM ingress integration or a public VPS, NAT, cellular, VPN, or CGNAT result until that topology has been run and verified.
 - Current public documents should describe established capabilities, current boundaries, and current reading order rather than development history.
 - If the project adds a new sealed capability or decision policy, publish that seal first and then update this entry point.
 - Unified account should be read from the current `Account Protocol v1-min` document rather than inferred from legacy or migration material.
