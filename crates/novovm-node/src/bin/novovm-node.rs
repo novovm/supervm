@@ -7337,9 +7337,8 @@ mod mainline_evm_cli_tests {
         assert!(eth_rlpx_current_head_material_missing_v1(
             true, false, false
         ));
-        assert_eq!(
+        assert!(
             eth_rlpx_current_head_material_missing_v1(true, true, false),
-            true,
             "a near-head pivot with body but missing receipts must stay a sync target"
         );
         assert!(!eth_rlpx_current_head_material_missing_v1(true, true, true));
@@ -8042,9 +8041,11 @@ mod mainline_evm_cli_tests {
 
     #[test]
     fn eth_rlpx_public_sync_runtime_defaults_preserve_smaller_snapshot_cap_v1() {
-        let mut budget = EthFullnodeBudgetHooksV1::default();
-        budget.runtime_block_snapshot_limit = 4;
-        budget.runtime_pending_tx_snapshot_limit = 32;
+        let mut budget = EthFullnodeBudgetHooksV1 {
+            runtime_block_snapshot_limit: 4,
+            runtime_pending_tx_snapshot_limit: 32,
+            ..Default::default()
+        };
 
         eth_rlpx_apply_public_sync_runtime_defaults_v1(
             &mut budget,
@@ -8434,7 +8435,7 @@ mod mainline_evm_cli_tests {
             Some(0x04),
         );
 
-        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, &[endpoint.clone()], 16)
+        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, std::slice::from_ref(&endpoint), 16)
             .expect("write peer endpoint cache with capacity reject");
         let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
             .expect("load capacity cache")
@@ -8553,7 +8554,7 @@ mod mainline_evm_cli_tests {
         novovm_network::observe_network_runtime_eth_peer_header_success_v1(chain_id, peer_id, 2048);
         novovm_network::observe_network_runtime_eth_peer_body_success_v1(chain_id, peer_id, 2048);
 
-        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, &[endpoint.clone()], 16)
+        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, std::slice::from_ref(&endpoint), 16)
             .expect("write peer endpoint cache with material success");
         let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
             .expect("load material cache")
@@ -8684,7 +8685,7 @@ mod mainline_evm_cli_tests {
             chain_id, peer_id, reason,
         );
 
-        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, &[endpoint.clone()], 16)
+        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, std::slice::from_ref(&endpoint), 16)
             .expect("write peer endpoint cache with permanent reject");
         let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
             .expect("load permanent cache")
@@ -8857,7 +8858,7 @@ mod mainline_evm_cli_tests {
         let trie_node_path = vec![vec![0_u8]];
         let trie_node_rlp = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let trie_node_hash = novovm_network::eth_rlpx_trie_node_hash_v1(trie_node_rlp.as_slice());
