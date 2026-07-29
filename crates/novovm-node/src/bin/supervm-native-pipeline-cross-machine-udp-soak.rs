@@ -3996,7 +3996,7 @@ struct SenderFinalAckReconciliationV1 {
     fail_reason: Option<&'static str>,
 }
 
-fn reconcile_sender_final_ack_with_latest_missing_v1(
+struct SenderFinalAckReconciliationInputV1 {
     sender_completed: bool,
     tail_repair_enabled: bool,
     receiver_done_ack_required: bool,
@@ -4005,7 +4005,21 @@ fn reconcile_sender_final_ack_with_latest_missing_v1(
     repair_coverage_gap_count: u64,
     final_ack_received_after_repair: bool,
     fallback_fail_reason: Option<&'static str>,
+}
+
+fn reconcile_sender_final_ack_with_latest_missing_v1(
+    input: SenderFinalAckReconciliationInputV1,
 ) -> SenderFinalAckReconciliationV1 {
+    let SenderFinalAckReconciliationInputV1 {
+        sender_completed,
+        tail_repair_enabled,
+        receiver_done_ack_required,
+        latest_ack_receiver_done,
+        latest_ack_missing_count,
+        repair_coverage_gap_count,
+        final_ack_received_after_repair,
+        fallback_fail_reason,
+    } = input;
     let receiver_done_ack_seen = latest_ack_receiver_done;
     let receiver_done_complete = latest_ack_receiver_done;
     let repair_coverage_gap_blocks_final =
@@ -10863,14 +10877,16 @@ mod novorudp_tests {
     #[test]
     fn full_async_sender_final_ack_overrides_stale_missing_sample() {
         let result = reconcile_sender_final_ack_with_latest_missing_v1(
-            true,
-            true,
-            true,
-            true,
-            Some(0),
-            1708,
-            true,
-            Some("receiver_repair_incomplete"),
+            SenderFinalAckReconciliationInputV1 {
+                sender_completed: true,
+                tail_repair_enabled: true,
+                receiver_done_ack_required: true,
+                latest_ack_receiver_done: true,
+                latest_ack_missing_count: Some(0),
+                repair_coverage_gap_count: 1708,
+                final_ack_received_after_repair: true,
+                fallback_fail_reason: Some("receiver_repair_incomplete"),
+            },
         );
 
         assert!(result.accepted);
@@ -10887,14 +10903,16 @@ mod novorudp_tests {
     #[test]
     fn receiver_done_ack_latches_caught_up_even_with_stale_missing_gap() {
         let result = reconcile_sender_final_ack_with_latest_missing_v1(
-            true,
-            true,
-            true,
-            true,
-            Some(81),
-            1966,
-            false,
-            Some("ack_caught_up_latch_missing"),
+            SenderFinalAckReconciliationInputV1 {
+                sender_completed: true,
+                tail_repair_enabled: true,
+                receiver_done_ack_required: true,
+                latest_ack_receiver_done: true,
+                latest_ack_missing_count: Some(81),
+                repair_coverage_gap_count: 1966,
+                final_ack_received_after_repair: false,
+                fallback_fail_reason: Some("ack_caught_up_latch_missing"),
+            },
         );
 
         assert!(result.accepted);
@@ -10911,14 +10929,16 @@ mod novorudp_tests {
     #[test]
     fn full_async_repair_coverage_gap_blocks_when_receiver_done_missing() {
         let result = reconcile_sender_final_ack_with_latest_missing_v1(
-            true,
-            true,
-            true,
-            false,
-            Some(1708),
-            1708,
-            false,
-            Some("receiver_repair_incomplete"),
+            SenderFinalAckReconciliationInputV1 {
+                sender_completed: true,
+                tail_repair_enabled: true,
+                receiver_done_ack_required: true,
+                latest_ack_receiver_done: false,
+                latest_ack_missing_count: Some(1708),
+                repair_coverage_gap_count: 1708,
+                final_ack_received_after_repair: false,
+                fallback_fail_reason: Some("receiver_repair_incomplete"),
+            },
         );
 
         assert!(!result.accepted);
@@ -10961,14 +10981,16 @@ mod novorudp_tests {
     #[test]
     fn full_async_sender_requires_receiver_done_ack_even_without_tail_repair() {
         let result = reconcile_sender_final_ack_with_latest_missing_v1(
-            true,
-            false,
-            true,
-            false,
-            None,
-            0,
-            false,
-            Some("receiver_repair_no_ack"),
+            SenderFinalAckReconciliationInputV1 {
+                sender_completed: true,
+                tail_repair_enabled: false,
+                receiver_done_ack_required: true,
+                latest_ack_receiver_done: false,
+                latest_ack_missing_count: None,
+                repair_coverage_gap_count: 0,
+                final_ack_received_after_repair: false,
+                fallback_fail_reason: Some("receiver_repair_no_ack"),
+            },
         );
 
         assert!(!result.accepted);
@@ -10981,7 +11003,16 @@ mod novorudp_tests {
     #[test]
     fn legacy_sender_can_complete_without_receiver_done_ack_when_not_required() {
         let result = reconcile_sender_final_ack_with_latest_missing_v1(
-            true, false, false, false, None, 0, false, None,
+            SenderFinalAckReconciliationInputV1 {
+                sender_completed: true,
+                tail_repair_enabled: false,
+                receiver_done_ack_required: false,
+                latest_ack_receiver_done: false,
+                latest_ack_missing_count: None,
+                repair_coverage_gap_count: 0,
+                final_ack_received_after_repair: false,
+                fallback_fail_reason: None,
+            },
         );
 
         assert!(result.accepted);
@@ -16015,9 +16046,9 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
         && ledger_close_delta == 0
     {
         "proof_close_ledger_projection_stall"
-    } else if pipeline_stage_liveness_stalled && pending_selected_delta == 0 {
-        "pending_drain_callsite_stall"
-    } else if pending_last > 0 && all_pipeline_stage_deltas_zero && canonical_delta == 0 {
+    } else if (pipeline_stage_liveness_stalled && pending_selected_delta == 0)
+        || (pending_last > 0 && all_pipeline_stage_deltas_zero && canonical_delta == 0)
+    {
         "pending_drain_callsite_stall"
     } else {
         "none"
@@ -22161,16 +22192,17 @@ fn run_sender(
     } else {
         Some("receiver_repair_incomplete")
     };
-    let sender_final_ack_reconciliation = reconcile_sender_final_ack_with_latest_missing_v1(
-        sender_completed,
-        tail_repair.enabled,
-        tail_repair.enabled || full_async_runtime_engine,
-        latest_ack_receiver_done,
-        latest_ack_missing_count,
-        repair_coverage_gap_count,
-        final_ack_received_after_repair,
-        fallback_fail_reason,
-    );
+    let sender_final_ack_reconciliation =
+        reconcile_sender_final_ack_with_latest_missing_v1(SenderFinalAckReconciliationInputV1 {
+            sender_completed,
+            tail_repair_enabled: tail_repair.enabled,
+            receiver_done_ack_required: tail_repair.enabled || full_async_runtime_engine,
+            latest_ack_receiver_done,
+            latest_ack_missing_count,
+            repair_coverage_gap_count,
+            final_ack_received_after_repair,
+            fallback_fail_reason,
+        });
     let accepted = sender_final_ack_reconciliation.accepted;
     let fail_reason = sender_final_ack_reconciliation.fail_reason;
     let sender_ack_final_sample_is_null =
