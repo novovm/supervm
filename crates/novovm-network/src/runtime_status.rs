@@ -10629,10 +10629,7 @@ mod tests {
             requeue.repair_final_missing_payload_missing_by_sequence_count,
             0
         );
-        assert_eq!(
-            requeue.repair_payload_retention_false_negative_suspected,
-            false
-        );
+        assert!(!requeue.repair_payload_retention_false_negative_suspected);
         assert_eq!(
             get_network_runtime_native_pending_tx_payload_v1(chain_id, repair_tx),
             Some(payload)

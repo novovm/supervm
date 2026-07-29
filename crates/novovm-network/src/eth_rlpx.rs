@@ -5395,7 +5395,7 @@ mod tests {
         let node = eth_rlpx_mpt_single_leaf_node_rlp_v1(&key, value.as_slice());
         let root = eth_rlpx_trie_node_hash_v1(node.as_slice());
 
-        let proven = eth_rlpx_mpt_verify_proof_value_v1(root, &key, &[node.clone()])
+        let proven = eth_rlpx_mpt_verify_proof_value_v1(root, &key, std::slice::from_ref(&node))
             .expect("verify single leaf")
             .expect("leaf value");
         assert_eq!(proven, value);
@@ -5410,7 +5410,7 @@ mod tests {
     fn mpt_proof_has_right_element_detects_empty_range_completion_v1() {
         let empty_branch = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let empty_branch_root = eth_rlpx_trie_node_hash_v1(empty_branch.as_slice());

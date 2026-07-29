@@ -387,9 +387,13 @@ mod tests {
             "payload_treated_opaque": true, "novorudp_wire_changed": false, "punch_attempt": null
         })).unwrap()).unwrap();
         let signer = SigningKey::from_bytes(&[131; 32]);
-        let manifest =
-            build_product_evidence_manifest_v1(&root, &[report_path.clone()], &signer, 1_000)
-                .unwrap();
+        let manifest = build_product_evidence_manifest_v1(
+            &root,
+            std::slice::from_ref(&report_path),
+            &signer,
+            1_000,
+        )
+        .unwrap();
         let manifest_path = root.join("evidence.json");
         write_product_evidence_manifest_v1(&manifest_path, &manifest).unwrap();
         assert!(verify_product_evidence_manifest_v1(&root, &manifest_path).accepted);

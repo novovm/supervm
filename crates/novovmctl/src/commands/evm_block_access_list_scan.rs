@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use novovm_node::mainline_canonical::{
     derive_mainline_eth_block_contexts_v1, load_mainline_canonical_store,
@@ -375,7 +375,7 @@ fn apply_block_summary(
 fn enforce_scan_requirements(
     args: &EvmBlockAccessListScanArgs,
     summary: &EvmBlockAccessListScanSummary,
-    store_path: &PathBuf,
+    store_path: &Path,
     from_block: u64,
     to_block: u64,
 ) -> Result<(), CtlError> {

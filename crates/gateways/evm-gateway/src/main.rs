@@ -6373,9 +6373,8 @@ fn gateway_runtime_method_domain(method: &str) -> &'static str {
         "novovm_mainnet_mainline_only"
     } else if method.starts_with("novovm_") {
         "novovm_mainnet"
-    } else if is_gateway_internal_evm_diagnostic_method(method) {
-        "evm_plugin"
-    } else if method.starts_with("eth_")
+    } else if is_gateway_internal_evm_diagnostic_method(method)
+        || method.starts_with("eth_")
         || method.starts_with("evm_")
         || is_gateway_engine_probe_method_v1(method)
         || method.starts_with("txpool_")

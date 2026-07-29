@@ -16153,7 +16153,7 @@ mod tests {
                                     &request,
                                 )
                                 .expect("dispatch should persist through rocksdb backend");
-                            assert_eq!(receipt.status, true);
+                            assert!(receipt.status);
                             assert!(
                                 !path.exists(),
                                 "rocksdb backend must not write the legacy json snapshot"
@@ -16197,8 +16197,10 @@ mod tests {
             NOV_NATIVE_EXECUTION_STORE_BACKEND_ROCKSDB_V1,
             || {
                 with_test_native_execution_store_path_v1(|path| {
-                    let mut store = NovNativeExecutionStoreV1::default();
-                    store.last_updated_unix_ms = 1234;
+                    let mut store = NovNativeExecutionStoreV1 {
+                        last_updated_unix_ms: 1234,
+                        ..Default::default()
+                    };
                     store
                         .module_state
                         .account_asset_balances
@@ -16355,8 +16357,10 @@ mod tests {
             NOV_NATIVE_EXECUTION_STORE_BACKEND_ROCKSDB_V1,
             || {
                 with_test_native_execution_store_path_v1(|path| {
-                    let mut store = NovNativeExecutionStoreV1::default();
-                    store.last_updated_unix_ms = 777;
+                    let mut store = NovNativeExecutionStoreV1 {
+                        last_updated_unix_ms: 777,
+                        ..Default::default()
+                    };
                     store.module_state.treasury_reserve_bucket_nov = 123;
                     store.module_state.treasury_settlement_paused = true;
                     store.module_state.treasury_policy_source = "test-policy".to_string();
@@ -16505,8 +16509,10 @@ mod tests {
             NOV_NATIVE_EXECUTION_STORE_BACKEND_DUAL_V1,
             || {
                 with_test_native_execution_store_path_v1(|path| {
-                    let mut store = NovNativeExecutionStoreV1::default();
-                    store.last_updated_unix_ms = 5678;
+                    let mut store = NovNativeExecutionStoreV1 {
+                        last_updated_unix_ms: 5678,
+                        ..Default::default()
+                    };
                     store
                         .module_state
                         .account_asset_balances
@@ -19397,7 +19403,7 @@ mod tests {
                             "novovm-native-aoem-semantic-ledger-mirror/v1"
                         );
                         assert_eq!(last_mirror.execution_kernel, "AOEM");
-                        assert_eq!(last_mirror.algebraic_semantic_entry, true);
+                        assert!(last_mirror.algebraic_semantic_entry);
                         assert_eq!(last_mirror.sequence, 2);
                         assert_eq!(last_mirror.tx_hash, second_receipt.tx_hash);
                         assert_eq!(last_mirror.prev_seal, first_seal);
