@@ -2742,8 +2742,7 @@ const ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1: u64 = 16;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_HEADERS_MIN_BATCH_V1: u64 = 4;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1: u64 = 1;
 
-fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
-    budget: &mut EthFullnodeBudgetHooksV1,
+struct EthRlpxPublicSyncRuntimeDefaultsV1 {
     headers_batch: u64,
     bodies_batch: u64,
     sync_target_fanout: usize,
@@ -2752,7 +2751,22 @@ fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     runtime_snapshot_blocks: u64,
     runtime_pending_txs: u64,
     finalize_headers_batch: u64,
+}
+
+fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
+    budget: &mut EthFullnodeBudgetHooksV1,
+    defaults: EthRlpxPublicSyncRuntimeDefaultsV1,
 ) {
+    let EthRlpxPublicSyncRuntimeDefaultsV1 {
+        headers_batch,
+        bodies_batch,
+        sync_target_fanout,
+        rlpx_request_timeout_ms,
+        sync_request_interval_ms,
+        runtime_snapshot_blocks,
+        runtime_pending_txs,
+        finalize_headers_batch,
+    } = defaults;
     eth_rlpx_apply_public_sync_batch_defaults_v1(budget, headers_batch, bodies_batch);
     budget.sync_target_fanout = sync_target_fanout.max(1) as u64;
     budget.rlpx_request_timeout_ms = rlpx_request_timeout_ms.max(1);
@@ -5771,14 +5785,16 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     budget.active_native_peer_hard_limit = candidate_limit as u64;
     eth_rlpx_apply_public_sync_runtime_defaults_v1(
         &mut budget,
-        headers_batch,
-        bodies_batch,
-        runtime_sync_target_fanout,
-        rlpx_request_timeout_ms,
-        sync_request_interval_ms,
-        runtime_snapshot_blocks,
-        runtime_pending_txs,
-        finalize_headers_batch,
+        EthRlpxPublicSyncRuntimeDefaultsV1 {
+            headers_batch,
+            bodies_batch,
+            sync_target_fanout: runtime_sync_target_fanout,
+            rlpx_request_timeout_ms,
+            sync_request_interval_ms,
+            runtime_snapshot_blocks,
+            runtime_pending_txs,
+            finalize_headers_batch,
+        },
     );
     let max_runtime_headers_batch = budget.sync_pull_headers_batch.max(1);
     let max_runtime_bodies_batch = budget.sync_pull_bodies_batch.max(1);
@@ -8117,14 +8133,16 @@ mod mainline_evm_cli_tests {
 
         eth_rlpx_apply_public_sync_runtime_defaults_v1(
             &mut budget,
-            192,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1,
-            8,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1,
+            EthRlpxPublicSyncRuntimeDefaultsV1 {
+                headers_batch: 192,
+                bodies_batch: ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1,
+                sync_target_fanout: 8,
+                rlpx_request_timeout_ms: ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
+                sync_request_interval_ms: ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
+                runtime_snapshot_blocks: ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
+                runtime_pending_txs: ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
+                finalize_headers_batch: ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1,
+            },
         );
 
         assert_eq!(budget.sync_target_fanout, 8);
@@ -8167,14 +8185,16 @@ mod mainline_evm_cli_tests {
 
         eth_rlpx_apply_public_sync_runtime_defaults_v1(
             &mut budget,
-            192,
-            128,
-            8,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1,
+            EthRlpxPublicSyncRuntimeDefaultsV1 {
+                headers_batch: 192,
+                bodies_batch: 128,
+                sync_target_fanout: 8,
+                rlpx_request_timeout_ms: ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
+                sync_request_interval_ms: ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
+                runtime_snapshot_blocks: ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
+                runtime_pending_txs: ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
+                finalize_headers_batch: ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1,
+            },
         );
 
         assert_eq!(budget.runtime_block_snapshot_limit, 4);
@@ -33810,43 +33830,55 @@ fn native_execution_pipeline_network_drive_from_env_v1(
     budget.active_native_peer_hard_limit = candidate_limit as u64;
     eth_rlpx_apply_public_sync_runtime_defaults_v1(
         &mut budget,
-        u64_env_clamped("NOVOVM_NATIVE_EXECUTION_PIPELINE_HEADERS_BATCH", 16, 1, 256),
-        u64_env_clamped("NOVOVM_NATIVE_EXECUTION_PIPELINE_BODIES_BATCH", 4, 1, 64),
-        usize_env_allow_zero(
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_SYNC_TARGET_FANOUT",
-            eth_rlpx_default_sync_target_fanout_v1(max_peers),
-        )?
-        .clamp(1, max_peers),
-        u64_env_clamped(
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUEST_TIMEOUT_MS",
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
-            1_000,
-            120_000,
-        ),
-        u64_env_clamped(
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_SYNC_REQUEST_INTERVAL_MS",
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
-            10,
-            60_000,
-        ),
-        u64_env_clamped(
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_RUNTIME_SNAPSHOT_BLOCKS",
-            4,
-            1,
-            128,
-        ),
-        u64_env_clamped(
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_RUNTIME_PENDING_TXS",
-            128,
-            1,
-            2048,
-        ),
-        u64_env_clamped(
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_FINALIZE_HEADERS_BATCH",
-            16,
-            1,
-            256,
-        ),
+        EthRlpxPublicSyncRuntimeDefaultsV1 {
+            headers_batch: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_HEADERS_BATCH",
+                16,
+                1,
+                256,
+            ),
+            bodies_batch: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_BODIES_BATCH",
+                4,
+                1,
+                64,
+            ),
+            sync_target_fanout: usize_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_SYNC_TARGET_FANOUT",
+                eth_rlpx_default_sync_target_fanout_v1(max_peers),
+            )?
+            .clamp(1, max_peers),
+            rlpx_request_timeout_ms: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUEST_TIMEOUT_MS",
+                ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
+                1_000,
+                120_000,
+            ),
+            sync_request_interval_ms: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_SYNC_REQUEST_INTERVAL_MS",
+                ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
+                10,
+                60_000,
+            ),
+            runtime_snapshot_blocks: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_RUNTIME_SNAPSHOT_BLOCKS",
+                4,
+                1,
+                128,
+            ),
+            runtime_pending_txs: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_RUNTIME_PENDING_TXS",
+                128,
+                1,
+                2048,
+            ),
+            finalize_headers_batch: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_FINALIZE_HEADERS_BATCH",
+                16,
+                1,
+                256,
+            ),
+        },
     );
     let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
         chain_id,
