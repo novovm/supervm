@@ -15553,8 +15553,10 @@ mod tests {
 
     #[test]
     fn rlpx_headers_request_batch_respects_runtime_budget_v1() {
-        let mut budget = EthFullnodeBudgetHooksV1::default();
-        budget.sync_pull_headers_batch = 64;
+        let budget = EthFullnodeBudgetHooksV1 {
+            sync_pull_headers_batch: 64,
+            ..Default::default()
+        };
         assert_eq!(
             eth_fullnode_native_budget_capped_headers_batch_v1(2_048, &budget),
             64
@@ -18226,13 +18228,15 @@ mod tests {
         let status_head_hash = [0x77; 32];
         let empty_root = crate::eth_rlpx_empty_trie_root_v1();
         let empty_ommers_hash = crate::eth_rlpx_empty_ommers_hash_v1();
-        let receipt_blocks = vec![vec![vec![0xc0]]];
+        let receipt_blocks = [vec![vec![0xc0]]];
         let header_record_1 = crate::EthRlpxBlockHeaderRecordV1 {
             number: 120,
             hash: [0u8; 32],
             parent_hash: [0x10; 32],
             state_root: [0x20; 32],
-            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(
+                std::slice::from_ref(&raw_tx),
+            ),
             receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&receipt_blocks[0]),
             ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
@@ -18526,7 +18530,9 @@ mod tests {
             hash: [0u8; 32],
             parent_hash: [0x80; 32],
             state_root: [0x81; 32],
-            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(
+                std::slice::from_ref(&raw_tx),
+            ),
             receipts_root: empty_root,
             ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
@@ -18864,7 +18870,9 @@ mod tests {
             hash: [0u8; 32],
             parent_hash: [0x10; 32],
             state_root: [0x20; 32],
-            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(
+                std::slice::from_ref(&raw_tx),
+            ),
             receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&receipt_blocks[0]),
             ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
@@ -18893,7 +18901,9 @@ mod tests {
             hash: [0u8; 32],
             parent_hash: header_hash,
             state_root: [0x21; 32],
-            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(
+                std::slice::from_ref(&raw_tx),
+            ),
             receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&receipt_blocks[1]),
             ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
@@ -19292,7 +19302,9 @@ mod tests {
             hash: [0u8; 32],
             parent_hash: ancestor_hash,
             state_root: [0x20; 32],
-            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(
+                std::slice::from_ref(&raw_tx),
+            ),
             receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&header_a_receipts),
             ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
@@ -19949,7 +19961,7 @@ mod tests {
                 assert_eq!(request.hashes, vec![tx_hash]);
                 let response = crate::eth_rlpx_build_pooled_transactions_payload_v1(
                     request.request_id,
-                    &[server_tx.clone()],
+                    std::slice::from_ref(&server_tx),
                 );
                 crate::eth_rlpx_write_wire_frame_v1(
                     &mut accepted,
