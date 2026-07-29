@@ -25,6 +25,7 @@ try {
     "novovm-product-relay",
     "novovm-product-node-overlay",
     "novovm-product-nat",
+    "novovm-product-peer",
     "novovm-product-evidence"
   )
   foreach ($bin in $bins) {
@@ -56,6 +57,36 @@ try {
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\relay.json.example")
 
   @'
+{
+  "role": "sender",
+  "identity_key_path": "/etc/novovm/peer-a-ed25519.hex",
+  "relay": {
+    "endpoint": "wss://relay.example/novovm",
+    "expected_relay_peer_id": "<verified-relay-peer-id>",
+    "tls_trust": "native_web_pki"
+  },
+  "target_peer_id": "<peer-b-id>",
+  "payload_paths": ["/var/lib/novovm/outbound/operator-provided-payload.bin"],
+  "report_path": "/var/lib/novovm/reports/peer-a.json"
+}
+'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\peer-sender.json.example")
+
+  @'
+{
+  "role": "receiver",
+  "identity_key_path": "/etc/novovm/peer-b-ed25519.hex",
+  "relay": {
+    "endpoint": "wss://relay.example/novovm",
+    "expected_relay_peer_id": "<verified-relay-peer-id>",
+    "tls_trust": "native_web_pki"
+  },
+  "expected_source_peer_id": "<peer-a-id>",
+  "expected_frame_count": 1,
+  "report_path": "/var/lib/novovm/reports/peer-b.json"
+}
+'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\peer-receiver.json.example")
+
+  @'
 [Unit]
 Description=NOVOVM Product WSS Relay
 After=network-online.target
@@ -81,6 +112,7 @@ WantedBy=multi-user.target
   Copy-Item -Force (Join-Path $repo "docs\novovm-product-relay-daemon-v1.md") (Join-Path $packagePath "docs\")
   Copy-Item -Force (Join-Path $repo "docs\novovm-product-node-overlay-v1.md") (Join-Path $packagePath "docs\")
   Copy-Item -Force (Join-Path $repo "docs\novovm-product-nat-runtime-v1.md") (Join-Path $packagePath "docs\")
+  Copy-Item -Force (Join-Path $repo "docs\novovm-product-peer-runtime-v1.md") (Join-Path $packagePath "docs\")
   Copy-Item -Force (Join-Path $repo "docs\novovm-product-evidence-v1.md") (Join-Path $packagePath "docs\")
   Copy-Item -Force (Join-Path $repo "docs\novovm-product-relay-client-v1.md") (Join-Path $packagePath "docs\")
 
