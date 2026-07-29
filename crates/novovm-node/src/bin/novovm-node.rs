@@ -5282,16 +5282,29 @@ fn upsert_eth_rlpx_native_history_block_store_v1(
     }
 }
 
-fn update_eth_rlpx_native_history_store_from_snapshots_v1(
-    store: &mut EthRlpxNativeHistoryStoreV1,
+struct EthRlpxNativeHistorySnapshotInputV1<'a> {
     chain_id: u64,
     sync_status: Option<NetworkRuntimeSyncStatus>,
-    header: Option<&NetworkRuntimeNativeHeaderSnapshotV1>,
-    body: Option<&NetworkRuntimeNativeBodySnapshotV1>,
-    receipt: Option<&NetworkRuntimeNativeReceiptSnapshotV1>,
-    head: Option<&NetworkRuntimeNativeHeadSnapshotV1>,
+    header: Option<&'a NetworkRuntimeNativeHeaderSnapshotV1>,
+    body: Option<&'a NetworkRuntimeNativeBodySnapshotV1>,
+    receipt: Option<&'a NetworkRuntimeNativeReceiptSnapshotV1>,
+    head: Option<&'a NetworkRuntimeNativeHeadSnapshotV1>,
     retention: usize,
+}
+
+fn update_eth_rlpx_native_history_store_from_snapshots_v1(
+    store: &mut EthRlpxNativeHistoryStoreV1,
+    input: EthRlpxNativeHistorySnapshotInputV1<'_>,
 ) -> bool {
+    let EthRlpxNativeHistorySnapshotInputV1 {
+        chain_id,
+        sync_status,
+        header,
+        body,
+        receipt,
+        head,
+        retention,
+    } = input;
     let Some(header) = header else {
         return false;
     };
@@ -6211,13 +6224,15 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             if let Some(store) = native_history_store.as_mut() {
                 if update_eth_rlpx_native_history_store_from_snapshots_v1(
                     store,
-                    chain_id,
-                    sync_status,
-                    header.as_ref(),
-                    body_for_header.as_ref(),
-                    receipt_for_header.as_ref(),
-                    head_snapshot.as_ref(),
-                    native_history_store_retention,
+                    EthRlpxNativeHistorySnapshotInputV1 {
+                        chain_id,
+                        sync_status,
+                        header: header.as_ref(),
+                        body: body_for_header.as_ref(),
+                        receipt: receipt_for_header.as_ref(),
+                        head: head_snapshot.as_ref(),
+                        retention: native_history_store_retention,
+                    },
                 ) {
                     write_eth_rlpx_native_history_store_v1(&native_history_store_path, store)?;
                 }
@@ -9412,13 +9427,15 @@ mod mainline_evm_cli_tests {
         let mut history = eth_rlpx_native_history_store_empty_v1(chain_id);
         assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
             &mut history,
-            chain_id,
-            Some(sync_status),
-            Some(&header),
-            None,
-            None,
-            None,
-            8,
+            EthRlpxNativeHistorySnapshotInputV1 {
+                chain_id,
+                sync_status: Some(sync_status),
+                header: Some(&header),
+                body: None,
+                receipt: None,
+                head: None,
+                retention: 8,
+            }
         ));
         assert_eq!(history.current_block, 77);
         assert_eq!(history.highest_block, 120);
@@ -9683,33 +9700,37 @@ mod mainline_evm_cli_tests {
         let mut store = eth_rlpx_native_history_store_empty_v1(chain_id);
         assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
             &mut store,
-            chain_id,
-            Some(NetworkRuntimeSyncStatus {
-                peer_count: 1,
-                starting_block: 76,
-                current_block: 76,
-                highest_block: 77,
-            }),
-            Some(&header_a),
-            Some(&body_a),
-            None,
-            Some(&head_a),
-            8,
+            EthRlpxNativeHistorySnapshotInputV1 {
+                chain_id,
+                sync_status: Some(NetworkRuntimeSyncStatus {
+                    peer_count: 1,
+                    starting_block: 76,
+                    current_block: 76,
+                    highest_block: 77,
+                }),
+                header: Some(&header_a),
+                body: Some(&body_a),
+                receipt: None,
+                head: Some(&head_a),
+                retention: 8,
+            }
         ));
         assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
             &mut store,
-            chain_id,
-            Some(NetworkRuntimeSyncStatus {
-                peer_count: 1,
-                starting_block: 76,
-                current_block: 77,
-                highest_block: 99,
-            }),
-            Some(&header_b),
-            Some(&body_b),
-            Some(&receipt_b),
-            Some(&head_b),
-            8,
+            EthRlpxNativeHistorySnapshotInputV1 {
+                chain_id,
+                sync_status: Some(NetworkRuntimeSyncStatus {
+                    peer_count: 1,
+                    starting_block: 76,
+                    current_block: 77,
+                    highest_block: 99,
+                }),
+                header: Some(&header_b),
+                body: Some(&body_b),
+                receipt: Some(&receipt_b),
+                head: Some(&head_b),
+                retention: 8,
+            }
         ));
         write_eth_rlpx_native_history_store_v1(&path, &store).expect("write native history store");
 
@@ -9876,33 +9897,37 @@ mod mainline_evm_cli_tests {
         let mut store = eth_rlpx_native_history_store_empty_v1(chain_id);
         assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
             &mut store,
-            chain_id,
-            Some(NetworkRuntimeSyncStatus {
-                peer_count: 1,
-                starting_block: 100,
-                current_block: 100,
-                highest_block: 130,
-            }),
-            Some(&header_a),
-            Some(&body_a),
-            Some(&receipt_a),
-            Some(&head_a),
-            8,
+            EthRlpxNativeHistorySnapshotInputV1 {
+                chain_id,
+                sync_status: Some(NetworkRuntimeSyncStatus {
+                    peer_count: 1,
+                    starting_block: 100,
+                    current_block: 100,
+                    highest_block: 130,
+                }),
+                header: Some(&header_a),
+                body: Some(&body_a),
+                receipt: Some(&receipt_a),
+                head: Some(&head_a),
+                retention: 8,
+            }
         ));
         assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
             &mut store,
-            chain_id,
-            Some(NetworkRuntimeSyncStatus {
-                peer_count: 1,
-                starting_block: 100,
-                current_block: 101,
-                highest_block: 130,
-            }),
-            Some(&header_b),
-            None,
-            None,
-            Some(&head_b),
-            8,
+            EthRlpxNativeHistorySnapshotInputV1 {
+                chain_id,
+                sync_status: Some(NetworkRuntimeSyncStatus {
+                    peer_count: 1,
+                    starting_block: 100,
+                    current_block: 101,
+                    highest_block: 130,
+                }),
+                header: Some(&header_b),
+                body: None,
+                receipt: None,
+                head: Some(&head_b),
+                retention: 8,
+            }
         ));
 
         let restored_startup =
@@ -10054,13 +10079,15 @@ mod mainline_evm_cli_tests {
         let mut store = eth_rlpx_native_history_store_empty_v1(chain_id);
         assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
             &mut store,
-            chain_id,
-            Some(sync_status),
-            Some(&current_header),
-            None,
-            None,
-            Some(&current_head),
-            16,
+            EthRlpxNativeHistorySnapshotInputV1 {
+                chain_id,
+                sync_status: Some(sync_status),
+                header: Some(&current_header),
+                body: None,
+                receipt: None,
+                head: Some(&current_head),
+                retention: 16,
+            }
         ));
         let stored_numbers = store
             .blocks
