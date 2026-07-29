@@ -1122,17 +1122,32 @@ fn transaction_frame_auth_tag_v1(
     hex_lower(hasher.finalize().as_slice())
 }
 
-fn sign_transaction_frame_auth_v1(
+struct TransactionFrameAuthInputV1<'a> {
     from: NodeId,
     chain_id: u64,
-    tx_hash: &[u8; 32],
+    tx_hash: &'a [u8; 32],
     tx_count: u64,
-    payload: &[u8],
-    frame_kind: &str,
-    run_id: &str,
+    payload: &'a [u8],
+    frame_kind: &'a str,
+    run_id: &'a str,
     sequence: u64,
     copy_index: u64,
+}
+
+fn sign_transaction_frame_auth_v1(
+    input: TransactionFrameAuthInputV1<'_>,
 ) -> Option<EvmNativeTransactionFrameAuthV1> {
+    let TransactionFrameAuthInputV1 {
+        from,
+        chain_id,
+        tx_hash,
+        tx_count,
+        payload,
+        frame_kind,
+        run_id,
+        sequence,
+        copy_index,
+    } = input;
     let key = control_frame_auth_key_v1()?;
     let mut meta = EvmNativeTransactionFrameAuthV1 {
         scheme: "keyed_sha256_v1".to_string(),
@@ -1164,10 +1179,10 @@ fn decode_hex_32_v1(raw: &str) -> Option<[u8; 32]> {
         return None;
     }
     let mut out = [0u8; 32];
-    for index in 0..32 {
+    for (index, slot) in out.iter_mut().enumerate() {
         let start = index * 2;
         let byte = u8::from_str_radix(&text[start..start + 2], 16).ok()?;
-        out[index] = byte;
+        *slot = byte;
     }
     Some(out)
 }
@@ -17884,17 +17899,17 @@ fn send_scheduled_batch(
             tx_hash: tx.tx_hash,
             tx_count: tx.copy_index.saturating_add(1).max(1),
             payload: tx.payload.clone(),
-            transport_auth: sign_transaction_frame_auth_v1(
-                NodeId(sender_node),
+            transport_auth: sign_transaction_frame_auth_v1(TransactionFrameAuthInputV1 {
+                from: NodeId(sender_node),
                 chain_id,
-                &tx.tx_hash,
-                tx.copy_index.saturating_add(1).max(1),
-                tx.payload.as_slice(),
+                tx_hash: &tx.tx_hash,
+                tx_count: tx.copy_index.saturating_add(1).max(1),
+                payload: tx.payload.as_slice(),
                 frame_kind,
                 run_id,
-                tx.index,
-                tx.copy_index,
-            ),
+                sequence: tx.index,
+                copy_index: tx.copy_index,
+            }),
         });
         let encoded_len = protocol_encode(&msg)
             .map(|encoded| encoded.len().try_into().unwrap_or(u64::MAX))
