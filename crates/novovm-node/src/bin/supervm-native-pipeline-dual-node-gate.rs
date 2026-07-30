@@ -487,6 +487,8 @@ fn main() -> Result<()> {
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED",
                 "true".to_string(),
             ),
+            // The UDP underlay is valid only when it carries NovoRUDP frames.
+            ("NOVOVM_NATIVE_PIPELINE_TRANSPORT", "novorudp".to_string()),
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_LISTEN_ADDR",
                 listen.to_string(),
