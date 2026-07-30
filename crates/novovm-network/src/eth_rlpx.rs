@@ -470,7 +470,7 @@ fn eth_rlpx_mpt_child_node_rlp_v1(
 ) -> Result<Option<Vec<u8>>, String> {
     match child {
         EthRlpxRlpItemV1::List(_) => Ok(Some(child_raw.to_vec())),
-        EthRlpxRlpItemV1::Bytes(bytes) if bytes.is_empty() => Ok(None),
+        EthRlpxRlpItemV1::Bytes([]) => Ok(None),
         EthRlpxRlpItemV1::Bytes(bytes) if bytes.len() == 32 => {
             let mut hash = [0u8; 32];
             hash.copy_from_slice(bytes);
@@ -655,10 +655,10 @@ fn eth_rlpx_mpt_subtree_bounds_v1(prefix: &[u8], width: usize) -> (Vec<u8>, Vec<
     let mut min = prefix.to_vec();
     let mut max = prefix.to_vec();
     if min.len() < width {
-        min.extend(std::iter::repeat(0u8).take(width - min.len()));
+        min.extend(std::iter::repeat_n(0u8, width - min.len()));
     }
     if max.len() < width {
-        max.extend(std::iter::repeat(0x0fu8).take(width - max.len()));
+        max.extend(std::iter::repeat_n(0x0fu8, width - max.len()));
     }
     (min, max)
 }
@@ -5395,7 +5395,7 @@ mod tests {
         let node = eth_rlpx_mpt_single_leaf_node_rlp_v1(&key, value.as_slice());
         let root = eth_rlpx_trie_node_hash_v1(node.as_slice());
 
-        let proven = eth_rlpx_mpt_verify_proof_value_v1(root, &key, &[node.clone()])
+        let proven = eth_rlpx_mpt_verify_proof_value_v1(root, &key, std::slice::from_ref(&node))
             .expect("verify single leaf")
             .expect("leaf value");
         assert_eq!(proven, value);
@@ -5410,7 +5410,7 @@ mod tests {
     fn mpt_proof_has_right_element_detects_empty_range_completion_v1() {
         let empty_branch = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let empty_branch_root = eth_rlpx_trie_node_hash_v1(empty_branch.as_slice());

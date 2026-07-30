@@ -1408,8 +1408,7 @@ fn eth_dns_rlp_parse_item_v1(input: &[u8]) -> Option<(EthDnsRlpItemV1<'_>, usize
         0x00..=0x7f => Some((EthDnsRlpItemV1::Bytes(&input[..1]), 1)),
         0x80..=0xb7 => {
             let len = (lead - 0x80) as usize;
-            (input.len() >= 1 + len)
-                .then_some((EthDnsRlpItemV1::Bytes(&input[1..1 + len]), 1 + len))
+            (input.len() > len).then_some((EthDnsRlpItemV1::Bytes(&input[1..1 + len]), 1 + len))
         }
         0xb8..=0xbf => {
             let len_of_len = (lead - 0xb7) as usize;
@@ -1427,7 +1426,7 @@ fn eth_dns_rlp_parse_item_v1(input: &[u8]) -> Option<(EthDnsRlpItemV1<'_>, usize
         }
         0xc0..=0xf7 => {
             let len = (lead - 0xc0) as usize;
-            (input.len() >= 1 + len).then_some((EthDnsRlpItemV1::List(&input[1..1 + len]), 1 + len))
+            (input.len() > len).then_some((EthDnsRlpItemV1::List(&input[1..1 + len]), 1 + len))
         }
         _ => {
             let len_of_len = (lead - 0xf7) as usize;
@@ -2316,7 +2315,8 @@ fn eth_reorder_peer_endpoints_by_runtime_reputation_v1(
     productive
 }
 
-fn eth_rlpx_peer_refresh_plan_v1(
+#[derive(Clone, Copy)]
+struct EthRlpxPeerRefreshInputV1 {
     candidate_pool_exhausted: bool,
     progress_stalled: bool,
     bootstrap_stalled: bool,
@@ -2330,7 +2330,26 @@ fn eth_rlpx_peer_refresh_plan_v1(
     last_peer_refresh_tick: usize,
     exhausted_refresh_interval_ticks: usize,
     stalled_refresh_interval_ticks: usize,
+}
+
+fn eth_rlpx_peer_refresh_plan_v1(
+    input: EthRlpxPeerRefreshInputV1,
 ) -> Option<(usize, &'static str)> {
+    let EthRlpxPeerRefreshInputV1 {
+        candidate_pool_exhausted,
+        progress_stalled,
+        bootstrap_stalled,
+        head_probe_stalled,
+        body_recovery_stalled,
+        refresh_exhausted_enabled,
+        candidate_limit,
+        adaptive_candidate_limit,
+        max_peers,
+        tick,
+        last_peer_refresh_tick,
+        exhausted_refresh_interval_ticks,
+        stalled_refresh_interval_ticks,
+    } = input;
     if candidate_pool_exhausted && candidate_limit < adaptive_candidate_limit {
         return Some((
             candidate_limit
@@ -2561,31 +2580,21 @@ fn eth_rlpx_adaptive_headers_batch_input_v1(
         native_phase,
         Some(NetworkRuntimeNativeSyncPhaseV1::State | NetworkRuntimeNativeSyncPhaseV1::Discovery)
     );
-    if request_transport_failure
-        && phase_can_resume_state_lag_headers
+    let header_lag = highest_block.saturating_sub(current_block);
+    let should_cap_batch = request_transport_failure
         && current_head_body_available
-        && highest_block.saturating_sub(current_block)
-            > ETH_RLPX_PUBLIC_SYNC_STATE_LAG_HEADER_LAG_THRESHOLD_V1
-    {
-        current_batch
-            .min(ETH_RLPX_PUBLIC_SYNC_STATE_LAG_EFFECTIVE_HEADERS_BATCH_V1)
-            .max(1)
-    } else if request_transport_failure
-        && current_head_body_available
-        && matches!(
-            native_phase,
-            Some(
-                NetworkRuntimeNativeSyncPhaseV1::Finalize
-                    | NetworkRuntimeNativeSyncPhaseV1::Discovery
-            )
-        )
-        && highest_block > current_block
-        && highest_block.saturating_sub(current_block)
-            <= ETH_RLPX_PUBLIC_SYNC_STATE_LAG_HEADER_LAG_THRESHOLD_V1
-    {
-        current_batch
-            .min(ETH_RLPX_PUBLIC_SYNC_STATE_LAG_EFFECTIVE_HEADERS_BATCH_V1)
-            .max(1)
+        && ((phase_can_resume_state_lag_headers
+            && header_lag > ETH_RLPX_PUBLIC_SYNC_STATE_LAG_HEADER_LAG_THRESHOLD_V1)
+            || (matches!(
+                native_phase,
+                Some(
+                    NetworkRuntimeNativeSyncPhaseV1::Finalize
+                        | NetworkRuntimeNativeSyncPhaseV1::Discovery
+                )
+            ) && highest_block > current_block
+                && header_lag <= ETH_RLPX_PUBLIC_SYNC_STATE_LAG_HEADER_LAG_THRESHOLD_V1));
+    if should_cap_batch {
+        current_batch.clamp(1, ETH_RLPX_PUBLIC_SYNC_STATE_LAG_EFFECTIVE_HEADERS_BATCH_V1)
     } else {
         current_batch.max(1)
     }
@@ -2640,7 +2649,8 @@ fn eth_rlpx_forward_progress_stalled_v1(
             >= stalled_refresh_interval_ticks.max(1)
 }
 
-fn eth_rlpx_material_recovery_rollback_stalled_v1(
+#[derive(Clone, Copy)]
+struct EthRlpxMaterialRecoveryInputV1 {
     current_head_material_missing: bool,
     current_head_body_available: bool,
     current_head_receipt_available: bool,
@@ -2654,7 +2664,24 @@ fn eth_rlpx_material_recovery_rollback_stalled_v1(
     receipt_recovery_stalled: bool,
     ready_peers: usize,
     sync_requests: usize,
-) -> bool {
+}
+
+fn eth_rlpx_material_recovery_rollback_stalled_v1(input: EthRlpxMaterialRecoveryInputV1) -> bool {
+    let EthRlpxMaterialRecoveryInputV1 {
+        current_head_material_missing,
+        current_head_body_available,
+        current_head_receipt_available,
+        tick,
+        last_sync_progress_tick,
+        last_complete_head_progress_tick,
+        last_material_recovery_activity_tick,
+        stalled_refresh_interval_ticks,
+        body_material_request_transport_failure,
+        body_recovery_stalled,
+        receipt_recovery_stalled,
+        ready_peers,
+        sync_requests,
+    } = input;
     if !current_head_material_missing {
         return false;
     }
@@ -2692,7 +2719,7 @@ fn eth_rlpx_material_recovery_rollback_stalled_v1(
             >= stalled_refresh_interval_ticks.max(8)
 }
 
-fn eth_rlpx_idle_head_probe_stalled_v1(
+struct EthRlpxIdleHeadProbeInputV1 {
     highest_block: u64,
     current_block: u64,
     current_head_present: bool,
@@ -2703,7 +2730,21 @@ fn eth_rlpx_idle_head_probe_stalled_v1(
     tick: usize,
     last_complete_head_progress_tick: usize,
     stalled_refresh_interval_ticks: usize,
-) -> bool {
+}
+
+fn eth_rlpx_idle_head_probe_stalled_v1(input: EthRlpxIdleHeadProbeInputV1) -> bool {
+    let EthRlpxIdleHeadProbeInputV1 {
+        highest_block,
+        current_block,
+        current_head_present,
+        current_head_body_available,
+        current_head_receipt_available,
+        ready_peers,
+        status_updates,
+        tick,
+        last_complete_head_progress_tick,
+        stalled_refresh_interval_ticks,
+    } = input;
     current_block > 0
         && highest_block == current_block
         && current_head_present
@@ -2733,8 +2774,7 @@ const ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1: u64 = 16;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_HEADERS_MIN_BATCH_V1: u64 = 4;
 const ETH_RLPX_PUBLIC_SYNC_DEFAULT_ADAPTIVE_BODIES_MIN_BATCH_V1: u64 = 1;
 
-fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
-    budget: &mut EthFullnodeBudgetHooksV1,
+struct EthRlpxPublicSyncRuntimeDefaultsV1 {
     headers_batch: u64,
     bodies_batch: u64,
     sync_target_fanout: usize,
@@ -2743,7 +2783,22 @@ fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
     runtime_snapshot_blocks: u64,
     runtime_pending_txs: u64,
     finalize_headers_batch: u64,
+}
+
+fn eth_rlpx_apply_public_sync_runtime_defaults_v1(
+    budget: &mut EthFullnodeBudgetHooksV1,
+    defaults: EthRlpxPublicSyncRuntimeDefaultsV1,
 ) {
+    let EthRlpxPublicSyncRuntimeDefaultsV1 {
+        headers_batch,
+        bodies_batch,
+        sync_target_fanout,
+        rlpx_request_timeout_ms,
+        sync_request_interval_ms,
+        runtime_snapshot_blocks,
+        runtime_pending_txs,
+        finalize_headers_batch,
+    } = defaults;
     eth_rlpx_apply_public_sync_batch_defaults_v1(budget, headers_batch, bodies_batch);
     budget.sync_target_fanout = sync_target_fanout.max(1) as u64;
     budget.rlpx_request_timeout_ms = rlpx_request_timeout_ms.max(1);
@@ -5227,16 +5282,29 @@ fn upsert_eth_rlpx_native_history_block_store_v1(
     }
 }
 
-fn update_eth_rlpx_native_history_store_from_snapshots_v1(
-    store: &mut EthRlpxNativeHistoryStoreV1,
+struct EthRlpxNativeHistorySnapshotInputV1<'a> {
     chain_id: u64,
     sync_status: Option<NetworkRuntimeSyncStatus>,
-    header: Option<&NetworkRuntimeNativeHeaderSnapshotV1>,
-    body: Option<&NetworkRuntimeNativeBodySnapshotV1>,
-    receipt: Option<&NetworkRuntimeNativeReceiptSnapshotV1>,
-    head: Option<&NetworkRuntimeNativeHeadSnapshotV1>,
+    header: Option<&'a NetworkRuntimeNativeHeaderSnapshotV1>,
+    body: Option<&'a NetworkRuntimeNativeBodySnapshotV1>,
+    receipt: Option<&'a NetworkRuntimeNativeReceiptSnapshotV1>,
+    head: Option<&'a NetworkRuntimeNativeHeadSnapshotV1>,
     retention: usize,
+}
+
+fn update_eth_rlpx_native_history_store_from_snapshots_v1(
+    store: &mut EthRlpxNativeHistoryStoreV1,
+    input: EthRlpxNativeHistorySnapshotInputV1<'_>,
 ) -> bool {
+    let EthRlpxNativeHistorySnapshotInputV1 {
+        chain_id,
+        sync_status,
+        header,
+        body,
+        receipt,
+        head,
+        retention,
+    } = input;
     let Some(header) = header else {
         return false;
     };
@@ -5762,14 +5830,16 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
     budget.active_native_peer_hard_limit = candidate_limit as u64;
     eth_rlpx_apply_public_sync_runtime_defaults_v1(
         &mut budget,
-        headers_batch,
-        bodies_batch,
-        runtime_sync_target_fanout,
-        rlpx_request_timeout_ms,
-        sync_request_interval_ms,
-        runtime_snapshot_blocks,
-        runtime_pending_txs,
-        finalize_headers_batch,
+        EthRlpxPublicSyncRuntimeDefaultsV1 {
+            headers_batch,
+            bodies_batch,
+            sync_target_fanout: runtime_sync_target_fanout,
+            rlpx_request_timeout_ms,
+            sync_request_interval_ms,
+            runtime_snapshot_blocks,
+            runtime_pending_txs,
+            finalize_headers_batch,
+        },
     );
     let max_runtime_headers_batch = budget.sync_pull_headers_batch.max(1);
     let max_runtime_bodies_batch = budget.sync_pull_bodies_batch.max(1);
@@ -6154,13 +6224,15 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             if let Some(store) = native_history_store.as_mut() {
                 if update_eth_rlpx_native_history_store_from_snapshots_v1(
                     store,
-                    chain_id,
-                    sync_status,
-                    header.as_ref(),
-                    body_for_header.as_ref(),
-                    receipt_for_header.as_ref(),
-                    head_snapshot.as_ref(),
-                    native_history_store_retention,
+                    EthRlpxNativeHistorySnapshotInputV1 {
+                        chain_id,
+                        sync_status,
+                        header: header.as_ref(),
+                        body: body_for_header.as_ref(),
+                        receipt: receipt_for_header.as_ref(),
+                        head: head_snapshot.as_ref(),
+                        retention: native_history_store_retention,
+                    },
                 ) {
                     write_eth_rlpx_native_history_store_v1(&native_history_store_path, store)?;
                 }
@@ -6350,18 +6422,18 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             last_complete_head_progress_tick,
             stalled_refresh_interval_ticks,
         );
-        let head_probe_stalled = eth_rlpx_idle_head_probe_stalled_v1(
-            highest_sync_block,
-            current_sync_block,
+        let head_probe_stalled = eth_rlpx_idle_head_probe_stalled_v1(EthRlpxIdleHeadProbeInputV1 {
+            highest_block: highest_sync_block,
+            current_block: current_sync_block,
             current_head_present,
             current_head_body_available,
             current_head_receipt_available,
-            report.ready_peers,
-            report.status_updates,
+            ready_peers: report.ready_peers,
+            status_updates: report.status_updates,
             tick,
             last_complete_head_progress_tick,
             stalled_refresh_interval_ticks,
-        );
+        });
         let body_recovery_stalled = current_head_body_missing
             && report.ready_peers == 0
             && report.body_updates == 0
@@ -6378,21 +6450,22 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             && highest_sync_block == 0
             && tick.saturating_sub(last_complete_head_progress_tick)
                 >= stalled_refresh_interval_ticks;
-        let material_recovery_stalled = eth_rlpx_material_recovery_rollback_stalled_v1(
-            current_head_material_missing,
-            current_head_body_available,
-            current_head_receipt_available,
-            tick,
-            last_sync_progress_tick,
-            last_complete_head_progress_tick,
-            last_material_recovery_activity_tick,
-            stalled_refresh_interval_ticks,
-            body_material_request_transport_failure,
-            body_recovery_stalled,
-            receipt_recovery_stalled,
-            report.ready_peers,
-            report.sync_requests,
-        );
+        let material_recovery_stalled =
+            eth_rlpx_material_recovery_rollback_stalled_v1(EthRlpxMaterialRecoveryInputV1 {
+                current_head_material_missing,
+                current_head_body_available,
+                current_head_receipt_available,
+                tick,
+                last_sync_progress_tick,
+                last_complete_head_progress_tick,
+                last_material_recovery_activity_tick,
+                stalled_refresh_interval_ticks,
+                body_material_request_transport_failure,
+                body_recovery_stalled,
+                receipt_recovery_stalled,
+                ready_peers: report.ready_peers,
+                sync_requests: report.sync_requests,
+            });
         if native_history_store_enabled && material_recovery_stalled {
             if let Some(store) = native_history_store.as_mut() {
                 let rollback_floor = current_sync_block
@@ -6497,13 +6570,15 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
                 );
             }
         }
-        let refresh_plan = eth_rlpx_peer_refresh_plan_v1(
+        let refresh_plan = eth_rlpx_peer_refresh_plan_v1(EthRlpxPeerRefreshInputV1 {
             candidate_pool_exhausted,
             progress_stalled,
             bootstrap_stalled,
             head_probe_stalled,
-            body_recovery_stalled || receipt_recovery_stalled,
-            bool_env_default_true("NOVOVM_ETH_RLPX_REFRESH_EXHAUSTED_CANDIDATES_ENABLED"),
+            body_recovery_stalled: body_recovery_stalled || receipt_recovery_stalled,
+            refresh_exhausted_enabled: bool_env_default_true(
+                "NOVOVM_ETH_RLPX_REFRESH_EXHAUSTED_CANDIDATES_ENABLED",
+            ),
             candidate_limit,
             adaptive_candidate_limit,
             max_peers,
@@ -6511,7 +6586,7 @@ fn run_eth_rlpx_sync_node_mode_v1(verbose: bool) -> Result<()> {
             last_peer_refresh_tick,
             exhausted_refresh_interval_ticks,
             stalled_refresh_interval_ticks,
-        );
+        });
         if let Some((next_candidate_limit, refresh_reason)) = refresh_plan {
             last_peer_refresh_tick = tick;
             let discovery_candidate_limit = eth_rlpx_peer_refresh_discovery_limit_v1(
@@ -7208,43 +7283,115 @@ mod mainline_evm_cli_tests {
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_expands_on_stalled_progress_v1() {
-        let plan = eth_rlpx_peer_refresh_plan_v1(
-            false, true, false, false, false, true, 128, 512, 6, 16, 0, 8, 16,
-        );
+        let plan = eth_rlpx_peer_refresh_plan_v1(EthRlpxPeerRefreshInputV1 {
+            candidate_pool_exhausted: false,
+            progress_stalled: true,
+            bootstrap_stalled: false,
+            head_probe_stalled: false,
+            body_recovery_stalled: false,
+            refresh_exhausted_enabled: true,
+            candidate_limit: 128,
+            adaptive_candidate_limit: 512,
+            max_peers: 6,
+            tick: 16,
+            last_peer_refresh_tick: 0,
+            exhausted_refresh_interval_ticks: 8,
+            stalled_refresh_interval_ticks: 16,
+        });
         assert_eq!(plan, Some((256, "sync_progress_stalled_expand")));
     }
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_refreshes_stalled_at_adaptive_cap_v1() {
-        let plan = eth_rlpx_peer_refresh_plan_v1(
-            false, true, false, false, false, true, 512, 512, 6, 32, 8, 8, 16,
-        );
+        let plan = eth_rlpx_peer_refresh_plan_v1(EthRlpxPeerRefreshInputV1 {
+            candidate_pool_exhausted: false,
+            progress_stalled: true,
+            bootstrap_stalled: false,
+            head_probe_stalled: false,
+            body_recovery_stalled: false,
+            refresh_exhausted_enabled: true,
+            candidate_limit: 512,
+            adaptive_candidate_limit: 512,
+            max_peers: 6,
+            tick: 32,
+            last_peer_refresh_tick: 8,
+            exhausted_refresh_interval_ticks: 8,
+            stalled_refresh_interval_ticks: 16,
+        });
         assert_eq!(plan, Some((512, "sync_progress_stalled_refresh")));
     }
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_expands_immediately_on_body_recovery_stall_v1() {
-        let plan = eth_rlpx_peer_refresh_plan_v1(
-            false, false, false, false, true, true, 256, 512, 32, 1, 0, 8, 16,
-        );
+        let plan = eth_rlpx_peer_refresh_plan_v1(EthRlpxPeerRefreshInputV1 {
+            candidate_pool_exhausted: false,
+            progress_stalled: false,
+            bootstrap_stalled: false,
+            head_probe_stalled: false,
+            body_recovery_stalled: true,
+            refresh_exhausted_enabled: true,
+            candidate_limit: 256,
+            adaptive_candidate_limit: 512,
+            max_peers: 32,
+            tick: 1,
+            last_peer_refresh_tick: 0,
+            exhausted_refresh_interval_ticks: 8,
+            stalled_refresh_interval_ticks: 16,
+        });
         assert_eq!(plan, Some((512, "body_recovery_stalled_expand")));
 
-        let refresh = eth_rlpx_peer_refresh_plan_v1(
-            false, false, false, false, true, true, 512, 512, 32, 2, 1, 8, 16,
-        );
+        let refresh = eth_rlpx_peer_refresh_plan_v1(EthRlpxPeerRefreshInputV1 {
+            candidate_pool_exhausted: false,
+            progress_stalled: false,
+            bootstrap_stalled: false,
+            head_probe_stalled: false,
+            body_recovery_stalled: true,
+            refresh_exhausted_enabled: true,
+            candidate_limit: 512,
+            adaptive_candidate_limit: 512,
+            max_peers: 32,
+            tick: 2,
+            last_peer_refresh_tick: 1,
+            exhausted_refresh_interval_ticks: 8,
+            stalled_refresh_interval_ticks: 16,
+        });
         assert_eq!(refresh, Some((512, "body_recovery_stalled_refresh")));
     }
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_expands_on_idle_head_probe_stall_v1() {
-        let plan = eth_rlpx_peer_refresh_plan_v1(
-            false, false, false, true, false, true, 512, 1024, 50, 8, 2, 8, 4,
-        );
+        let plan = eth_rlpx_peer_refresh_plan_v1(EthRlpxPeerRefreshInputV1 {
+            candidate_pool_exhausted: false,
+            progress_stalled: false,
+            bootstrap_stalled: false,
+            head_probe_stalled: true,
+            body_recovery_stalled: false,
+            refresh_exhausted_enabled: true,
+            candidate_limit: 512,
+            adaptive_candidate_limit: 1024,
+            max_peers: 50,
+            tick: 8,
+            last_peer_refresh_tick: 2,
+            exhausted_refresh_interval_ticks: 8,
+            stalled_refresh_interval_ticks: 4,
+        });
         assert_eq!(plan, Some((1024, "head_probe_stalled_expand")));
 
-        let refresh = eth_rlpx_peer_refresh_plan_v1(
-            false, false, false, true, false, true, 1024, 1024, 50, 10, 5, 8, 4,
-        );
+        let refresh = eth_rlpx_peer_refresh_plan_v1(EthRlpxPeerRefreshInputV1 {
+            candidate_pool_exhausted: false,
+            progress_stalled: false,
+            bootstrap_stalled: false,
+            head_probe_stalled: true,
+            body_recovery_stalled: false,
+            refresh_exhausted_enabled: true,
+            candidate_limit: 1024,
+            adaptive_candidate_limit: 1024,
+            max_peers: 50,
+            tick: 10,
+            last_peer_refresh_tick: 5,
+            exhausted_refresh_interval_ticks: 8,
+            stalled_refresh_interval_ticks: 4,
+        });
         assert_eq!(refresh, Some((1024, "head_probe_stalled_refresh")));
     }
 
@@ -7322,18 +7469,18 @@ mod mainline_evm_cli_tests {
                 50,
                 true,
                 0,
-                eth_rlpx_idle_head_probe_stalled_v1(
-                    25_282_495,
-                    25_282_495,
-                    true,
-                    true,
-                    true,
-                    0,
-                    0,
-                    8,
-                    2,
-                    4,
-                ),
+                eth_rlpx_idle_head_probe_stalled_v1(EthRlpxIdleHeadProbeInputV1 {
+                    highest_block: 25_282_495,
+                    current_block: 25_282_495,
+                    current_head_present: true,
+                    current_head_body_available: true,
+                    current_head_receipt_available: true,
+                    ready_peers: 0,
+                    status_updates: 0,
+                    tick: 8,
+                    last_complete_head_progress_tick: 2,
+                    stalled_refresh_interval_ticks: 4,
+                }),
             ),
             50,
             "a complete current==highest head with stale status still needs admission for fresh-head probing"
@@ -7348,9 +7495,8 @@ mod mainline_evm_cli_tests {
         assert!(eth_rlpx_current_head_material_missing_v1(
             true, false, false
         ));
-        assert_eq!(
+        assert!(
             eth_rlpx_current_head_material_missing_v1(true, true, false),
-            true,
             "a near-head pivot with body but missing receipts must stay a sync target"
         );
         assert!(!eth_rlpx_current_head_material_missing_v1(true, true, true));
@@ -7460,92 +7606,160 @@ mod mainline_evm_cli_tests {
 
     #[test]
     fn eth_rlpx_material_rollback_waits_for_material_failure_or_hard_stall_v1() {
+        let base = EthRlpxMaterialRecoveryInputV1 {
+            current_head_material_missing: true,
+            current_head_body_available: false,
+            current_head_receipt_available: false,
+            tick: 6,
+            last_sync_progress_tick: 0,
+            last_complete_head_progress_tick: 0,
+            last_material_recovery_activity_tick: 0,
+            stalled_refresh_interval_ticks: 4,
+            body_material_request_transport_failure: false,
+            body_recovery_stalled: false,
+            receipt_recovery_stalled: false,
+            ready_peers: 0,
+            sync_requests: 0,
+        };
         assert!(
-            !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 6, 0, 0, 0, 4, false, false, false, 1, 1,
-            ),
+            !eth_rlpx_material_recovery_rollback_stalled_v1(EthRlpxMaterialRecoveryInputV1 {
+                ready_peers: 1,
+                sync_requests: 1,
+                ..base
+            }),
             "ready/sync activity must leave room for material recovery hedging"
         );
         assert!(
-            !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 6, 0, 0, 0, 4, false, false, false, 0, 0,
-            ),
+            !eth_rlpx_material_recovery_rollback_stalled_v1(base),
             "a short no-activity gap after header-only progress is not enough to rollback"
         );
         assert!(
-            !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 6, 0, 0, 0, 4, true, false, false, 0, 0,
-            ),
+            !eth_rlpx_material_recovery_rollback_stalled_v1(EthRlpxMaterialRecoveryInputV1 {
+                body_material_request_transport_failure: true,
+                ..base
+            }),
             "body recovery should wait for the hard-stall window after recent sync progress"
         );
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, false, false, 8, 0, 0, 0, 4, true, false, false, 0, 0,
+            EthRlpxMaterialRecoveryInputV1 {
+                tick: 8,
+                body_material_request_transport_failure: true,
+                ..base
+            },
         ));
         assert!(
-            !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 6, 0, 0, 0, 4, true, false, false, 2, 1,
-            ),
+            !eth_rlpx_material_recovery_rollback_stalled_v1(EthRlpxMaterialRecoveryInputV1 {
+                body_material_request_transport_failure: true,
+                ready_peers: 2,
+                sync_requests: 1,
+                ..base
+            }),
             "fresh ready/sync material activity must not rollback on a historical body failure"
         );
         assert!(
-            !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 12, 12, 2, 0, 4, true, false, false, 0, 0,
-            ),
+            !eth_rlpx_material_recovery_rollback_stalled_v1(EthRlpxMaterialRecoveryInputV1 {
+                tick: 12,
+                last_sync_progress_tick: 12,
+                last_complete_head_progress_tick: 2,
+                body_material_request_transport_failure: true,
+                ..base
+            }),
             "fresh header-only progress must give body recovery a full material window"
         );
         assert!(
-            !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 6, 0, 0, 0, 4, false, true, false, 0, 0,
-            ),
+            !eth_rlpx_material_recovery_rollback_stalled_v1(EthRlpxMaterialRecoveryInputV1 {
+                body_recovery_stalled: true,
+                ..base
+            }),
             "body recovery stall should not rollback before the hard-stall window"
         );
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, false, false, 8, 0, 0, 0, 4, false, true, false, 0, 0,
+            EthRlpxMaterialRecoveryInputV1 {
+                tick: 8,
+                body_recovery_stalled: true,
+                ..base
+            },
         ));
         assert!(
-            !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, false, false, 19, 11, 1, 18, 4, false, true, false, 0, 0,
-            ),
+            !eth_rlpx_material_recovery_rollback_stalled_v1(EthRlpxMaterialRecoveryInputV1 {
+                tick: 19,
+                last_sync_progress_tick: 11,
+                last_complete_head_progress_tick: 1,
+                last_material_recovery_activity_tick: 18,
+                body_recovery_stalled: true,
+                ..base
+            }),
             "recent material recovery activity must keep a header-only head in recovery"
         );
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, false, false, 27, 11, 1, 18, 4, false, true, false, 0, 0,
+            EthRlpxMaterialRecoveryInputV1 {
+                tick: 27,
+                last_sync_progress_tick: 11,
+                last_complete_head_progress_tick: 1,
+                last_material_recovery_activity_tick: 18,
+                body_recovery_stalled: true,
+                ..base
+            },
         ));
         assert!(
-            !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, true, false, 6, 0, 0, 0, 4, true, true, false, 1, 1,
-            ),
+            !eth_rlpx_material_recovery_rollback_stalled_v1(EthRlpxMaterialRecoveryInputV1 {
+                current_head_body_available: true,
+                body_material_request_transport_failure: true,
+                body_recovery_stalled: true,
+                ready_peers: 1,
+                sync_requests: 1,
+                ..base
+            }),
             "body progress must not be rolled back while receipt recovery still has an active peer"
         );
         assert!(
-            !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, true, false, 16, 15, 2, 0, 4, false, false, true, 0, 0,
-            ),
+            !eth_rlpx_material_recovery_rollback_stalled_v1(EthRlpxMaterialRecoveryInputV1 {
+                current_head_body_available: true,
+                tick: 16,
+                last_sync_progress_tick: 15,
+                last_complete_head_progress_tick: 2,
+                receipt_recovery_stalled: true,
+                ..base
+            }),
             "fresh body progress must give receipt recovery a full material window"
         );
         assert!(
-            !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, true, false, 6, 0, 0, 0, 4, false, false, true, 0, 0,
-            ),
+            !eth_rlpx_material_recovery_rollback_stalled_v1(EthRlpxMaterialRecoveryInputV1 {
+                current_head_body_available: true,
+                receipt_recovery_stalled: true,
+                ..base
+            }),
             "receipt recovery stall should not rollback before the hard-stall window"
         );
         assert!(
-            !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, true, false, 8, 0, 0, 0, 4, false, false, true, 0, 0,
-            ),
+            !eth_rlpx_material_recovery_rollback_stalled_v1(EthRlpxMaterialRecoveryInputV1 {
+                current_head_body_available: true,
+                tick: 8,
+                receipt_recovery_stalled: true,
+                ..base
+            }),
             "receipt-only gaps keep the materialized body while waiting for a serving peer"
         );
         assert!(
-            !eth_rlpx_material_recovery_rollback_stalled_v1(
-                true, true, false, 16, 0, 0, 0, 4, false, false, true, 0, 0,
-            ),
+            !eth_rlpx_material_recovery_rollback_stalled_v1(EthRlpxMaterialRecoveryInputV1 {
+                current_head_body_available: true,
+                tick: 16,
+                receipt_recovery_stalled: true,
+                ..base
+            }),
             "receipt-only gaps should not rollback on public admission churn alone"
         );
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, true, false, 16, 0, 0, 0, 4, true, false, true, 0, 0,
+            EthRlpxMaterialRecoveryInputV1 {
+                current_head_body_available: true,
+                tick: 16,
+                body_material_request_transport_failure: true,
+                receipt_recovery_stalled: true,
+                ..base
+            },
         ));
         assert!(eth_rlpx_material_recovery_rollback_stalled_v1(
-            true, false, false, 8, 0, 0, 0, 4, false, false, false, 0, 0,
+            EthRlpxMaterialRecoveryInputV1 { tick: 8, ..base },
         ));
     }
 
@@ -7567,30 +7781,77 @@ mod mainline_evm_cli_tests {
     #[test]
     fn eth_rlpx_idle_head_probe_stall_uses_complete_head_progress_tick_v1() {
         assert!(eth_rlpx_idle_head_probe_stalled_v1(
-            25_282_495, 25_282_495, true, true, true, 0, 0, 8, 2, 4,
+            EthRlpxIdleHeadProbeInputV1 {
+                highest_block: 25_282_495,
+                current_block: 25_282_495,
+                current_head_present: true,
+                current_head_body_available: true,
+                current_head_receipt_available: true,
+                ready_peers: 0,
+                status_updates: 0,
+                tick: 8,
+                last_complete_head_progress_tick: 2,
+                stalled_refresh_interval_ticks: 4,
+            }
         ));
         assert!(
-            !eth_rlpx_idle_head_probe_stalled_v1(
-                25_282_496, 25_282_495, true, true, true, 0, 0, 8, 2, 4,
-            ),
+            !eth_rlpx_idle_head_probe_stalled_v1(EthRlpxIdleHeadProbeInputV1 {
+                highest_block: 25_282_496,
+                current_block: 25_282_495,
+                current_head_present: true,
+                current_head_body_available: true,
+                current_head_receipt_available: true,
+                ready_peers: 0,
+                status_updates: 0,
+                tick: 8,
+                last_complete_head_progress_tick: 2,
+                stalled_refresh_interval_ticks: 4,
+            }),
             "regular forward lag uses the forward-progress stall path"
         );
         assert!(
-            !eth_rlpx_idle_head_probe_stalled_v1(
-                25_282_495, 25_282_495, true, true, true, 1, 0, 8, 2, 4,
-            ),
+            !eth_rlpx_idle_head_probe_stalled_v1(EthRlpxIdleHeadProbeInputV1 {
+                highest_block: 25_282_495,
+                current_block: 25_282_495,
+                current_head_present: true,
+                current_head_body_available: true,
+                current_head_receipt_available: true,
+                ready_peers: 1,
+                status_updates: 0,
+                tick: 8,
+                last_complete_head_progress_tick: 2,
+                stalled_refresh_interval_ticks: 4,
+            }),
             "a ready peer can still provide a fresh status/head probe"
         );
         assert!(
-            !eth_rlpx_idle_head_probe_stalled_v1(
-                25_282_495, 25_282_495, true, true, true, 0, 1, 8, 2, 4,
-            ),
+            !eth_rlpx_idle_head_probe_stalled_v1(EthRlpxIdleHeadProbeInputV1 {
+                highest_block: 25_282_495,
+                current_block: 25_282_495,
+                current_head_present: true,
+                current_head_body_available: true,
+                current_head_receipt_available: true,
+                ready_peers: 0,
+                status_updates: 1,
+                tick: 8,
+                last_complete_head_progress_tick: 2,
+                stalled_refresh_interval_ticks: 4,
+            }),
             "same-tick status updates prove the head probe is active"
         );
         assert!(
-            !eth_rlpx_idle_head_probe_stalled_v1(
-                25_282_495, 25_282_495, true, true, false, 0, 0, 8, 2, 4,
-            ),
+            !eth_rlpx_idle_head_probe_stalled_v1(EthRlpxIdleHeadProbeInputV1 {
+                highest_block: 25_282_495,
+                current_block: 25_282_495,
+                current_head_present: true,
+                current_head_body_available: true,
+                current_head_receipt_available: false,
+                ready_peers: 0,
+                status_updates: 0,
+                tick: 8,
+                last_complete_head_progress_tick: 2,
+                stalled_refresh_interval_ticks: 4,
+            }),
             "missing current-head material uses recovery paths instead of idle probing"
         );
     }
@@ -7965,17 +8226,41 @@ mod mainline_evm_cli_tests {
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_keeps_exhausted_expand_priority_v1() {
-        let plan = eth_rlpx_peer_refresh_plan_v1(
-            true, true, true, false, true, true, 64, 256, 6, 4, 0, 8, 16,
-        );
+        let plan = eth_rlpx_peer_refresh_plan_v1(EthRlpxPeerRefreshInputV1 {
+            candidate_pool_exhausted: true,
+            progress_stalled: true,
+            bootstrap_stalled: true,
+            head_probe_stalled: false,
+            body_recovery_stalled: true,
+            refresh_exhausted_enabled: true,
+            candidate_limit: 64,
+            adaptive_candidate_limit: 256,
+            max_peers: 6,
+            tick: 4,
+            last_peer_refresh_tick: 0,
+            exhausted_refresh_interval_ticks: 8,
+            stalled_refresh_interval_ticks: 16,
+        });
         assert_eq!(plan, Some((128, "all_candidate_peers_in_cooldown_expand")));
     }
 
     #[test]
     fn eth_rlpx_peer_refresh_plan_expands_on_bootstrap_stall_without_remote_highest_v1() {
-        let plan = eth_rlpx_peer_refresh_plan_v1(
-            false, false, true, false, false, true, 64, 128, 4, 16, 0, 8, 16,
-        );
+        let plan = eth_rlpx_peer_refresh_plan_v1(EthRlpxPeerRefreshInputV1 {
+            candidate_pool_exhausted: false,
+            progress_stalled: false,
+            bootstrap_stalled: true,
+            head_probe_stalled: false,
+            body_recovery_stalled: false,
+            refresh_exhausted_enabled: true,
+            candidate_limit: 64,
+            adaptive_candidate_limit: 128,
+            max_peers: 4,
+            tick: 16,
+            last_peer_refresh_tick: 0,
+            exhausted_refresh_interval_ticks: 8,
+            stalled_refresh_interval_ticks: 16,
+        });
         assert_eq!(plan, Some((128, "bootstrap_stalled_expand")));
     }
 
@@ -8011,14 +8296,16 @@ mod mainline_evm_cli_tests {
 
         eth_rlpx_apply_public_sync_runtime_defaults_v1(
             &mut budget,
-            192,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1,
-            8,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1,
+            EthRlpxPublicSyncRuntimeDefaultsV1 {
+                headers_batch: 192,
+                bodies_batch: ETH_RLPX_PUBLIC_SYNC_DEFAULT_BODIES_BATCH_V1,
+                sync_target_fanout: 8,
+                rlpx_request_timeout_ms: ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
+                sync_request_interval_ms: ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
+                runtime_snapshot_blocks: ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
+                runtime_pending_txs: ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
+                finalize_headers_batch: ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1,
+            },
         );
 
         assert_eq!(budget.sync_target_fanout, 8);
@@ -8053,20 +8340,24 @@ mod mainline_evm_cli_tests {
 
     #[test]
     fn eth_rlpx_public_sync_runtime_defaults_preserve_smaller_snapshot_cap_v1() {
-        let mut budget = EthFullnodeBudgetHooksV1::default();
-        budget.runtime_block_snapshot_limit = 4;
-        budget.runtime_pending_tx_snapshot_limit = 32;
+        let mut budget = EthFullnodeBudgetHooksV1 {
+            runtime_block_snapshot_limit: 4,
+            runtime_pending_tx_snapshot_limit: 32,
+            ..Default::default()
+        };
 
         eth_rlpx_apply_public_sync_runtime_defaults_v1(
             &mut budget,
-            192,
-            128,
-            8,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1,
+            EthRlpxPublicSyncRuntimeDefaultsV1 {
+                headers_batch: 192,
+                bodies_batch: 128,
+                sync_target_fanout: 8,
+                rlpx_request_timeout_ms: ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
+                sync_request_interval_ms: ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
+                runtime_snapshot_blocks: ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_SNAPSHOT_BLOCKS_V1,
+                runtime_pending_txs: ETH_RLPX_PUBLIC_SYNC_DEFAULT_RUNTIME_PENDING_TXS_V1,
+                finalize_headers_batch: ETH_RLPX_PUBLIC_SYNC_DEFAULT_FINALIZE_HEADERS_BATCH_V1,
+            },
         );
 
         assert_eq!(budget.runtime_block_snapshot_limit, 4);
@@ -8445,7 +8736,7 @@ mod mainline_evm_cli_tests {
             Some(0x04),
         );
 
-        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, &[endpoint.clone()], 16)
+        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, std::slice::from_ref(&endpoint), 16)
             .expect("write peer endpoint cache with capacity reject");
         let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
             .expect("load capacity cache")
@@ -8564,7 +8855,7 @@ mod mainline_evm_cli_tests {
         novovm_network::observe_network_runtime_eth_peer_header_success_v1(chain_id, peer_id, 2048);
         novovm_network::observe_network_runtime_eth_peer_body_success_v1(chain_id, peer_id, 2048);
 
-        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, &[endpoint.clone()], 16)
+        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, std::slice::from_ref(&endpoint), 16)
             .expect("write peer endpoint cache with material success");
         let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
             .expect("load material cache")
@@ -8695,7 +8986,7 @@ mod mainline_evm_cli_tests {
             chain_id, peer_id, reason,
         );
 
-        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, &[endpoint.clone()], 16)
+        write_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id, std::slice::from_ref(&endpoint), 16)
             .expect("write peer endpoint cache with permanent reject");
         let loaded = load_eth_rlpx_peer_endpoint_cache_v1(&path, chain_id)
             .expect("load permanent cache")
@@ -8868,7 +9159,7 @@ mod mainline_evm_cli_tests {
         let trie_node_path = vec![vec![0_u8]];
         let trie_node_rlp = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let trie_node_hash = novovm_network::eth_rlpx_trie_node_hash_v1(trie_node_rlp.as_slice());
@@ -9136,13 +9427,15 @@ mod mainline_evm_cli_tests {
         let mut history = eth_rlpx_native_history_store_empty_v1(chain_id);
         assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
             &mut history,
-            chain_id,
-            Some(sync_status),
-            Some(&header),
-            None,
-            None,
-            None,
-            8,
+            EthRlpxNativeHistorySnapshotInputV1 {
+                chain_id,
+                sync_status: Some(sync_status),
+                header: Some(&header),
+                body: None,
+                receipt: None,
+                head: None,
+                retention: 8,
+            }
         ));
         assert_eq!(history.current_block, 77);
         assert_eq!(history.highest_block, 120);
@@ -9407,33 +9700,37 @@ mod mainline_evm_cli_tests {
         let mut store = eth_rlpx_native_history_store_empty_v1(chain_id);
         assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
             &mut store,
-            chain_id,
-            Some(NetworkRuntimeSyncStatus {
-                peer_count: 1,
-                starting_block: 76,
-                current_block: 76,
-                highest_block: 77,
-            }),
-            Some(&header_a),
-            Some(&body_a),
-            None,
-            Some(&head_a),
-            8,
+            EthRlpxNativeHistorySnapshotInputV1 {
+                chain_id,
+                sync_status: Some(NetworkRuntimeSyncStatus {
+                    peer_count: 1,
+                    starting_block: 76,
+                    current_block: 76,
+                    highest_block: 77,
+                }),
+                header: Some(&header_a),
+                body: Some(&body_a),
+                receipt: None,
+                head: Some(&head_a),
+                retention: 8,
+            }
         ));
         assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
             &mut store,
-            chain_id,
-            Some(NetworkRuntimeSyncStatus {
-                peer_count: 1,
-                starting_block: 76,
-                current_block: 77,
-                highest_block: 99,
-            }),
-            Some(&header_b),
-            Some(&body_b),
-            Some(&receipt_b),
-            Some(&head_b),
-            8,
+            EthRlpxNativeHistorySnapshotInputV1 {
+                chain_id,
+                sync_status: Some(NetworkRuntimeSyncStatus {
+                    peer_count: 1,
+                    starting_block: 76,
+                    current_block: 77,
+                    highest_block: 99,
+                }),
+                header: Some(&header_b),
+                body: Some(&body_b),
+                receipt: Some(&receipt_b),
+                head: Some(&head_b),
+                retention: 8,
+            }
         ));
         write_eth_rlpx_native_history_store_v1(&path, &store).expect("write native history store");
 
@@ -9600,33 +9897,37 @@ mod mainline_evm_cli_tests {
         let mut store = eth_rlpx_native_history_store_empty_v1(chain_id);
         assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
             &mut store,
-            chain_id,
-            Some(NetworkRuntimeSyncStatus {
-                peer_count: 1,
-                starting_block: 100,
-                current_block: 100,
-                highest_block: 130,
-            }),
-            Some(&header_a),
-            Some(&body_a),
-            Some(&receipt_a),
-            Some(&head_a),
-            8,
+            EthRlpxNativeHistorySnapshotInputV1 {
+                chain_id,
+                sync_status: Some(NetworkRuntimeSyncStatus {
+                    peer_count: 1,
+                    starting_block: 100,
+                    current_block: 100,
+                    highest_block: 130,
+                }),
+                header: Some(&header_a),
+                body: Some(&body_a),
+                receipt: Some(&receipt_a),
+                head: Some(&head_a),
+                retention: 8,
+            }
         ));
         assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
             &mut store,
-            chain_id,
-            Some(NetworkRuntimeSyncStatus {
-                peer_count: 1,
-                starting_block: 100,
-                current_block: 101,
-                highest_block: 130,
-            }),
-            Some(&header_b),
-            None,
-            None,
-            Some(&head_b),
-            8,
+            EthRlpxNativeHistorySnapshotInputV1 {
+                chain_id,
+                sync_status: Some(NetworkRuntimeSyncStatus {
+                    peer_count: 1,
+                    starting_block: 100,
+                    current_block: 101,
+                    highest_block: 130,
+                }),
+                header: Some(&header_b),
+                body: None,
+                receipt: None,
+                head: Some(&head_b),
+                retention: 8,
+            }
         ));
 
         let restored_startup =
@@ -9778,13 +10079,15 @@ mod mainline_evm_cli_tests {
         let mut store = eth_rlpx_native_history_store_empty_v1(chain_id);
         assert!(update_eth_rlpx_native_history_store_from_snapshots_v1(
             &mut store,
-            chain_id,
-            Some(sync_status),
-            Some(&current_header),
-            None,
-            None,
-            Some(&current_head),
-            16,
+            EthRlpxNativeHistorySnapshotInputV1 {
+                chain_id,
+                sync_status: Some(sync_status),
+                header: Some(&current_header),
+                body: None,
+                receipt: None,
+                head: Some(&current_head),
+                retention: 16,
+            }
         ));
         let stored_numbers = store
             .blocks
@@ -32923,10 +33226,14 @@ fn novorudp_child_expected_total_raw_env_v1() -> Option<String> {
 }
 
 fn novorudp_child_receiver_mode_v1() -> bool {
-    string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TRANSPORT")
-        .is_some_and(|value| value.eq_ignore_ascii_case("novorudp"))
+    novorudp_child_mode_v1()
         && string_env_nonempty("NOVOVM_NATIVE_PIPELINE_ROLE")
             .is_some_and(|value| value.eq_ignore_ascii_case("receiver"))
+}
+
+fn novorudp_child_mode_v1() -> bool {
+    string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TRANSPORT")
+        .is_some_and(|value| value.eq_ignore_ascii_case("novorudp"))
 }
 
 fn decorate_native_receiver_attribution_summary_v1(summary: &mut serde_json::Value, source: &str) {
@@ -33475,7 +33782,7 @@ impl NativeExecutionPipelineUdpDriveV1 {
         if !bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED") {
             return Ok(None);
         }
-        if !novorudp_child_receiver_mode_v1() {
+        if !novorudp_child_mode_v1() {
             bail!(
                 "plain_udp_pipeline_removed: set NOVOVM_NATIVE_PIPELINE_TRANSPORT=novorudp; UDP is only the NovoRUDP underlay"
             );
@@ -33558,11 +33865,11 @@ impl NativeExecutionPipelineUdpDriveV1 {
                     self.max_propagations,
                 ) {
                     Ok(sent) => {
-                        broadcast_tx_count = broadcast_tx_count.saturating_add(sent as u64);
+                        broadcast_tx_count = broadcast_tx_count.saturating_add(sent);
                         peer_reports.push(serde_json::json!({
                             "peer": peer.0,
                             "ok": true,
-                            "broadcast_tx_count": sent as u64,
+                            "broadcast_tx_count": sent,
                         }));
                     }
                     Err(err) => {
@@ -33702,43 +34009,55 @@ fn native_execution_pipeline_network_drive_from_env_v1(
     budget.active_native_peer_hard_limit = candidate_limit as u64;
     eth_rlpx_apply_public_sync_runtime_defaults_v1(
         &mut budget,
-        u64_env_clamped("NOVOVM_NATIVE_EXECUTION_PIPELINE_HEADERS_BATCH", 16, 1, 256),
-        u64_env_clamped("NOVOVM_NATIVE_EXECUTION_PIPELINE_BODIES_BATCH", 4, 1, 64),
-        usize_env_allow_zero(
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_SYNC_TARGET_FANOUT",
-            eth_rlpx_default_sync_target_fanout_v1(max_peers),
-        )?
-        .clamp(1, max_peers),
-        u64_env_clamped(
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUEST_TIMEOUT_MS",
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
-            1_000,
-            120_000,
-        ),
-        u64_env_clamped(
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_SYNC_REQUEST_INTERVAL_MS",
-            ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
-            10,
-            60_000,
-        ),
-        u64_env_clamped(
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_RUNTIME_SNAPSHOT_BLOCKS",
-            4,
-            1,
-            128,
-        ),
-        u64_env_clamped(
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_RUNTIME_PENDING_TXS",
-            128,
-            1,
-            2048,
-        ),
-        u64_env_clamped(
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_FINALIZE_HEADERS_BATCH",
-            16,
-            1,
-            256,
-        ),
+        EthRlpxPublicSyncRuntimeDefaultsV1 {
+            headers_batch: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_HEADERS_BATCH",
+                16,
+                1,
+                256,
+            ),
+            bodies_batch: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_BODIES_BATCH",
+                4,
+                1,
+                64,
+            ),
+            sync_target_fanout: usize_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_SYNC_TARGET_FANOUT",
+                eth_rlpx_default_sync_target_fanout_v1(max_peers),
+            )?
+            .clamp(1, max_peers),
+            rlpx_request_timeout_ms: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUEST_TIMEOUT_MS",
+                ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_TIMEOUT_MS_V1,
+                1_000,
+                120_000,
+            ),
+            sync_request_interval_ms: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_SYNC_REQUEST_INTERVAL_MS",
+                ETH_RLPX_PUBLIC_SYNC_DEFAULT_REQUEST_INTERVAL_MS_V1,
+                10,
+                60_000,
+            ),
+            runtime_snapshot_blocks: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_RUNTIME_SNAPSHOT_BLOCKS",
+                4,
+                1,
+                128,
+            ),
+            runtime_pending_txs: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_RUNTIME_PENDING_TXS",
+                128,
+                1,
+                2048,
+            ),
+            finalize_headers_batch: u64_env_clamped(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_FINALIZE_HEADERS_BATCH",
+                16,
+                1,
+                256,
+            ),
+        },
     );
     let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
         chain_id,
@@ -37624,11 +37943,8 @@ impl NativeExecutionPipelineAggregateV1 {
         } else if aoem_gate_requested && !self.receiver_final_summary_aoem_fields_present {
             "aoem_owned_gate_requested_but_summary_fields_missing".to_string()
         } else if self.child_runtime_env_aoem_production_candidate
-            && !self.tx_ingress_aoem_gate_config_production_candidate
-        {
-            "aoem_owned_child_runtime_gate_not_propagated_to_tx_ingress".to_string()
-        } else if self.child_runtime_env_aoem_production_candidate
-            && !self.aoem_owned_child_runtime_gate_propagated_to_tx_ingress
+            && (!self.tx_ingress_aoem_gate_config_production_candidate
+                || !self.aoem_owned_child_runtime_gate_propagated_to_tx_ingress)
         {
             "aoem_owned_child_runtime_gate_not_propagated_to_tx_ingress".to_string()
         } else if aoem_gate_requested && !self.tx_ingress_called_with_explicit_aoem_gate_config {
@@ -40870,8 +41186,10 @@ mod native_execution_pipeline_tests {
     fn native_execution_pipeline_udp_drive_requires_novorudp_transport() {
         let enabled_key = "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED";
         let transport_key = "NOVOVM_NATIVE_PIPELINE_TRANSPORT";
+        let role_key = "NOVOVM_NATIVE_PIPELINE_ROLE";
         let previous_enabled = std::env::var(enabled_key).ok();
         let previous_transport = std::env::var(transport_key).ok();
+        let previous_role = std::env::var(role_key).ok();
         std::env::set_var(enabled_key, "1");
         std::env::remove_var(transport_key);
 
@@ -40880,6 +41198,12 @@ mod native_execution_pipeline_tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("plain_udp_pipeline_removed"));
+
+        std::env::set_var(transport_key, "novorudp");
+        std::env::set_var(role_key, "sender");
+        assert!(NativeExecutionPipelineUdpDriveV1::from_env(9_998_890)
+            .expect("NovoRUDP sender transport must be accepted")
+            .is_some());
 
         if let Some(value) = previous_enabled {
             std::env::set_var(enabled_key, value);
@@ -40890,6 +41214,11 @@ mod native_execution_pipeline_tests {
             std::env::set_var(transport_key, value);
         } else {
             std::env::remove_var(transport_key);
+        }
+        if let Some(value) = previous_role {
+            std::env::set_var(role_key, value);
+        } else {
+            std::env::remove_var(role_key);
         }
     }
 

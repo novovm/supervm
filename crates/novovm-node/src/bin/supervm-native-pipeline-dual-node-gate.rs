@@ -330,9 +330,7 @@ fn main() -> Result<()> {
     let udp_recv_budget = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_RECV_BUDGET", 16)?;
     let startup_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STARTUP_WAIT_MS", 300)?;
     let sender_rounds = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS", 1)?.max(1);
-    let receiver_count = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT", 1)?
-        .max(1)
-        .min(8);
+    let receiver_count = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT", 1)?.clamp(1, 8);
     let sender_round_interval_ms = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_INTERVAL_MS",
         tick_interval_ms,
@@ -355,7 +353,10 @@ fn main() -> Result<()> {
     )?;
     let min_receiver_max_network_received_per_tick = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_NETWORK_RECEIVED_PER_TICK",
-        tx_count.min(udp_recv_budget).max(1),
+        tx_count
+            .min(udp_broadcast_max_per_tick)
+            .min(udp_recv_budget)
+            .max(1),
     )?;
     let min_receiver_max_queue_admitted_per_tick = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_QUEUE_ADMITTED_PER_TICK",
@@ -489,6 +490,8 @@ fn main() -> Result<()> {
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED",
                 "true".to_string(),
             ),
+            // The UDP underlay is valid only when it carries NovoRUDP frames.
+            ("NOVOVM_NATIVE_PIPELINE_TRANSPORT", "novorudp".to_string()),
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_LISTEN_ADDR",
                 listen.to_string(),

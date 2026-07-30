@@ -3467,10 +3467,12 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                                         chain_id,
                                         peer.0,
                                         session,
-                                        root,
-                                        origin,
-                                        limit_hash,
-                                        ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES,
+                                        EthFullnodeNativeSnapAccountRangeRequestV1 {
+                                            root,
+                                            origin,
+                                            limit: limit_hash,
+                                            byte_limit: ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES,
+                                        },
                                         "snap_account_range_request_write_failed",
                                     )
                                 {
@@ -4793,14 +4795,18 @@ fn dispatch_eth_fullnode_native_rlpx_queued_block_access_lists_v1(
     Ok(true)
 }
 
-fn dispatch_eth_fullnode_native_snap_account_range_request_v1(
-    chain_id: u64,
-    source_peer_id: u64,
-    session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+struct EthFullnodeNativeSnapAccountRangeRequestV1 {
     root: [u8; 32],
     origin: [u8; 32],
     limit: [u8; 32],
     byte_limit: u64,
+}
+
+fn dispatch_eth_fullnode_native_snap_account_range_request_v1(
+    chain_id: u64,
+    source_peer_id: u64,
+    session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
+    request: EthFullnodeNativeSnapAccountRangeRequestV1,
     failure_reason: &'static str,
 ) -> Result<u64, NetworkError> {
     let Some(snap_offset) = eth_rlpx_snap_base_offset_v1(
@@ -4812,8 +4818,13 @@ fn dispatch_eth_fullnode_native_snap_account_range_request_v1(
         ));
     };
     let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
-    let payload =
-        eth_rlpx_build_get_account_range_payload_v1(request_id, root, origin, limit, byte_limit);
+    let payload = eth_rlpx_build_get_account_range_payload_v1(
+        request_id,
+        request.root,
+        request.origin,
+        request.limit,
+        request.byte_limit,
+    );
     eth_rlpx_write_wire_frame_v1(
         &mut session.stream,
         &mut session.frame_session,
@@ -4838,9 +4849,9 @@ fn dispatch_eth_fullnode_native_snap_account_range_request_v1(
     session.last_snap_storage_ranges_request_id = None;
     session.last_snap_byte_codes_request_id = None;
     session.last_snap_trie_nodes_request_id = None;
-    session.last_snap_state_root = Some(root);
-    session.last_snap_account_origin = Some(origin);
-    session.last_snap_account_limit = Some(limit);
+    session.last_snap_state_root = Some(request.root);
+    session.last_snap_account_origin = Some(request.origin);
+    session.last_snap_account_limit = Some(request.limit);
     session.pending_snap_next_account_origin = None;
     session.pending_snap_storage_accounts.clear();
     session.pending_snap_storage_origin.clear();
@@ -5049,10 +5060,12 @@ fn maybe_continue_eth_fullnode_native_snap_account_range_v1(
         chain_id,
         source_peer_id,
         session,
-        root,
-        origin,
-        limit,
-        ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES,
+        EthFullnodeNativeSnapAccountRangeRequestV1 {
+            root,
+            origin,
+            limit,
+            byte_limit: ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES,
+        },
         "snap_account_range_continuation_request_write_failed",
     )?;
     eprintln!(
@@ -6343,13 +6356,15 @@ fn eth_fullnode_native_snap_storage_ranges_missing_accounts_v1(
     pending_accounts[completed..].to_vec()
 }
 
+type EthFullnodeNativeSnapStorageRangeContinuationV1 = ([u8; 32], [u8; 32]);
+
 fn eth_fullnode_native_snap_storage_ranges_continuation_v1(
     chain_id: u64,
     source_peer_id: u64,
     state_root: Option<[u8; 32]>,
     pending_accounts: &[[u8; 32]],
     response: &EthRlpxStorageRangesResponseV1,
-) -> Result<Option<([u8; 32], [u8; 32])>, NetworkError> {
+) -> Result<Option<EthFullnodeNativeSnapStorageRangeContinuationV1>, NetworkError> {
     if response.proof.is_empty() || response.slots.is_empty() {
         return Ok(None);
     }
@@ -6450,17 +6465,21 @@ fn set_or_merge_eth_fullnode_native_snap_account_storage_snapshot_v1(
     set_network_runtime_native_snap_account_storage_snapshot_v1(chain_id, existing);
 }
 
+struct EthFullnodeNativeSnapStorageRangesRequestV1<'a> {
+    root: [u8; 32],
+    accounts: &'a [[u8; 32]],
+    origin: &'a [u8],
+    limit: &'a [u8],
+}
+
 fn dispatch_eth_fullnode_native_snap_storage_ranges_request_v1(
     chain_id: u64,
     source_peer_id: u64,
     session: &mut EthFullnodeNativeRlpxLivePeerSessionV1,
-    root: [u8; 32],
-    accounts: &[[u8; 32]],
-    origin: &[u8],
-    limit: &[u8],
+    request: EthFullnodeNativeSnapStorageRangesRequestV1<'_>,
     failure_reason: &'static str,
 ) -> Result<u64, NetworkError> {
-    if accounts.is_empty() {
+    if request.accounts.is_empty() {
         return Err(NetworkError::Encode(
             "snap_storage_ranges_empty_request".to_string(),
         ));
@@ -6476,10 +6495,10 @@ fn dispatch_eth_fullnode_native_snap_storage_ranges_request_v1(
     let request_id = next_eth_fullnode_native_rlpx_request_id_v1();
     let payload = eth_rlpx_build_get_storage_ranges_payload_v1(
         request_id,
-        root,
-        accounts,
-        origin,
-        limit,
+        request.root,
+        request.accounts,
+        request.origin,
+        request.limit,
         ETH_RLPX_SNAP_DEFAULT_ACCOUNT_RANGE_BYTES,
     );
     eth_rlpx_write_wire_frame_v1(
@@ -6500,9 +6519,9 @@ fn dispatch_eth_fullnode_native_snap_storage_ranges_request_v1(
     observe_eth_native_snap_pull(chain_id);
     observe_network_runtime_eth_peer_syncing_v1(chain_id, source_peer_id);
     session.last_snap_storage_ranges_request_id = Some(request_id);
-    session.pending_snap_storage_accounts = accounts.to_vec();
-    session.pending_snap_storage_origin = origin.to_vec();
-    session.pending_snap_storage_limit = limit.to_vec();
+    session.pending_snap_storage_accounts = request.accounts.to_vec();
+    session.pending_snap_storage_origin = request.origin.to_vec();
+    session.pending_snap_storage_limit = request.limit.to_vec();
     session.last_sync_request_unix_ms = now_unix_ms();
     eprintln!(
         "network_info: rlpx stage snap_storage_ranges_requested chain_id={} peer={} endpoint={} request_id={} accounts={} origin={} limit={} root=0x{}",
@@ -6510,10 +6529,10 @@ fn dispatch_eth_fullnode_native_snap_storage_ranges_request_v1(
         source_peer_id,
         session.endpoint.addr_hint,
         request_id,
-        accounts.len(),
-        hex_dynamic_v1(origin),
-        hex_dynamic_v1(limit),
-        hex32_v1(&root),
+        request.accounts.len(),
+        hex_dynamic_v1(request.origin),
+        hex_dynamic_v1(request.limit),
+        hex32_v1(&request.root),
     );
     Ok(request_id)
 }
@@ -6629,10 +6648,12 @@ fn ingest_real_rlpx_snap_account_range_v1(
             chain_id,
             source_peer_id,
             session,
-            root,
-            storage_accounts.as_slice(),
-            &[],
-            &[],
+            EthFullnodeNativeSnapStorageRangesRequestV1 {
+                root,
+                accounts: storage_accounts.as_slice(),
+                origin: &[],
+                limit: &[],
+            },
             "snap_storage_ranges_request_write_failed",
         )?;
     }
@@ -6789,10 +6810,12 @@ fn ingest_real_rlpx_snap_storage_ranges_v1(
             chain_id,
             source_peer_id,
             session,
-            root,
-            &[account_hash],
-            next_origin.as_slice(),
-            requested_storage_limit.as_slice(),
+            EthFullnodeNativeSnapStorageRangesRequestV1 {
+                root,
+                accounts: &[account_hash],
+                origin: next_origin.as_slice(),
+                limit: requested_storage_limit.as_slice(),
+            },
             "snap_storage_ranges_continuation_request_write_failed",
         )?;
         return Ok(());
@@ -6814,10 +6837,12 @@ fn ingest_real_rlpx_snap_storage_ranges_v1(
             chain_id,
             source_peer_id,
             session,
-            root,
-            next_storage_accounts.as_slice(),
-            &[],
-            &[],
+            EthFullnodeNativeSnapStorageRangesRequestV1 {
+                root,
+                accounts: next_storage_accounts.as_slice(),
+                origin: &[],
+                limit: &[],
+            },
             "snap_storage_ranges_retry_request_write_failed",
         )?;
         return Ok(());
@@ -8809,9 +8834,7 @@ fn source_rebind_allowed_v1() -> bool {
 }
 
 fn source_rebind_max_per_run_v1() -> u64 {
-    parse_env_u64("NOVOVM_NOVORUDP_SOURCE_REBIND_MAX_PER_RUN", 4)
-        .max(1)
-        .min(1_000)
+    parse_env_u64("NOVOVM_NOVORUDP_SOURCE_REBIND_MAX_PER_RUN", 4).clamp(1, 1_000)
 }
 
 fn source_rebind_min_interval_ms_v1() -> u64 {
@@ -8828,15 +8851,11 @@ fn receiver_rate_limit_enabled_v1() -> bool {
 }
 
 fn receiver_token_bucket_capacity_v1() -> u64 {
-    parse_env_u64("NOVOVM_NOVORUDP_RECEIVER_TOKEN_BUCKET_CAPACITY", 4096)
-        .max(1)
-        .min(1_000_000)
+    parse_env_u64("NOVOVM_NOVORUDP_RECEIVER_TOKEN_BUCKET_CAPACITY", 4096).clamp(1, 1_000_000)
 }
 
 fn receiver_token_bucket_refill_per_sec_v1() -> u64 {
-    parse_env_u64("NOVOVM_NOVORUDP_RECEIVER_TOKEN_BUCKET_REFILL_PER_SEC", 4096)
-        .max(1)
-        .min(1_000_000)
+    parse_env_u64("NOVOVM_NOVORUDP_RECEIVER_TOKEN_BUCKET_REFILL_PER_SEC", 4096).clamp(1, 1_000_000)
 }
 
 fn receiver_repair_token_bucket_capacity_v1() -> u64 {
@@ -8844,8 +8863,7 @@ fn receiver_repair_token_bucket_capacity_v1() -> u64 {
         "NOVOVM_NOVORUDP_RECEIVER_REPAIR_TOKEN_BUCKET_CAPACITY",
         receiver_token_bucket_capacity_v1() / 2,
     )
-    .max(1)
-    .min(1_000_000)
+    .clamp(1, 1_000_000)
 }
 
 fn receiver_repair_token_bucket_refill_per_sec_v1() -> u64 {
@@ -8853,8 +8871,7 @@ fn receiver_repair_token_bucket_refill_per_sec_v1() -> u64 {
         "NOVOVM_NOVORUDP_RECEIVER_REPAIR_TOKEN_BUCKET_REFILL_PER_SEC",
         receiver_token_bucket_refill_per_sec_v1() / 2,
     )
-    .max(1)
-    .min(1_000_000)
+    .clamp(1, 1_000_000)
 }
 
 fn now_millis_v1() -> u64 {
@@ -9328,6 +9345,8 @@ impl Transport for InMemoryTransport {
 }
 
 /// UDP transport for multi-process probe and lightweight local-node networking.
+type UdpDrainQueueV1 = Arc<Mutex<VecDeque<(Vec<u8>, SocketAddr)>>>;
+
 #[derive(Debug, Clone)]
 pub struct UdpTransport {
     node: NodeId,
@@ -9339,7 +9358,7 @@ pub struct UdpTransport {
     runtime_peer_registered: Arc<DashMap<NodeId, ()>>,
     source_pins: Arc<DashMap<SourcePinKeyV1, SourcePinStateV1>>,
     recv_buf: Arc<Mutex<Vec<u8>>>,
-    drain_queue: Arc<Mutex<VecDeque<(Vec<u8>, SocketAddr)>>>,
+    drain_queue: UdpDrainQueueV1,
     drain_first_enabled: bool,
     drain_batch_max: usize,
     drain_queue_limit: usize,
@@ -11424,17 +11443,31 @@ mod tests {
         meta
     }
 
-    fn signed_endpoint_record_test_v1(
-        signing_key: &SigningKey,
+    struct SignedEndpointRecordTestInputV1<'a> {
         node_id: NodeId,
         chain_id: u64,
-        run_id: &str,
-        session_id: &str,
-        data_endpoint: &str,
+        run_id: &'a str,
+        session_id: &'a str,
+        data_endpoint: &'a str,
         sequence: u64,
         issued_at_ms: u64,
         ttl_ms: u64,
+    }
+
+    fn signed_endpoint_record_test_v1(
+        signing_key: &SigningKey,
+        input: SignedEndpointRecordTestInputV1<'_>,
     ) -> NodeEndpointRecord {
+        let SignedEndpointRecordTestInputV1 {
+            node_id,
+            chain_id,
+            run_id,
+            session_id,
+            data_endpoint,
+            sequence,
+            issued_at_ms,
+            ttl_ms,
+        } = input;
         let mut record = NodeEndpointRecord {
             node_id,
             node_public_key: signing_key.verifying_key().to_bytes().to_vec(),
@@ -11648,14 +11681,16 @@ mod tests {
         let src: SocketAddr = "127.0.0.1:41001".parse().unwrap();
         let record = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(41),
-            9001,
-            "run-a",
-            "session-a",
-            "127.0.0.1:41001",
-            1,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(41),
+                chain_id: 9001,
+                run_id: "run-a",
+                session_id: "session-a",
+                data_endpoint: "127.0.0.1:41001",
+                sequence: 1,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
 
         assert!(validate_endpoint_record_for_source_pin_v1(
@@ -11678,14 +11713,16 @@ mod tests {
         let src: SocketAddr = "127.0.0.1:41002".parse().unwrap();
         let mut record = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(42),
-            9002,
-            "run-b",
-            "session-b",
-            "127.0.0.1:41002",
-            1,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(42),
+                chain_id: 9002,
+                run_id: "run-b",
+                session_id: "session-b",
+                data_endpoint: "127.0.0.1:41002",
+                sequence: 1,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
         record.data_endpoint = "127.0.0.1:41003".to_string();
 
@@ -11707,14 +11744,16 @@ mod tests {
         let src: SocketAddr = "127.0.0.1:41004".parse().unwrap();
         let record = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(43),
-            9003,
-            "run-c",
-            "session-c",
-            "127.0.0.1:41004",
-            3,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(43),
+                chain_id: 9003,
+                run_id: "run-c",
+                session_id: "session-c",
+                data_endpoint: "127.0.0.1:41004",
+                sequence: 3,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
 
         assert!(validate_endpoint_record_for_source_pin_v1(
@@ -11785,25 +11824,29 @@ mod tests {
         let src_b: SocketAddr = "127.0.0.1:41009".parse().unwrap();
         let first = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(46),
-            9006,
-            "run-f",
-            "session-f",
-            "127.0.0.1:41008",
-            1,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(46),
+                chain_id: 9006,
+                run_id: "run-f",
+                session_id: "session-f",
+                data_endpoint: "127.0.0.1:41008",
+                sequence: 1,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
         let second = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(46),
-            9006,
-            "run-f",
-            "session-f",
-            "127.0.0.1:41009",
-            2,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(46),
+                chain_id: 9006,
+                run_id: "run-f",
+                session_id: "session-f",
+                data_endpoint: "127.0.0.1:41009",
+                sequence: 2,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
 
         assert!(validate_endpoint_record_for_source_pin_v1(
@@ -11837,25 +11880,29 @@ mod tests {
         let src_b: SocketAddr = "127.0.0.1:41011".parse().unwrap();
         let first = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(47),
-            9007,
-            "run-g",
-            "session-g",
-            "127.0.0.1:41010",
-            1,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(47),
+                chain_id: 9007,
+                run_id: "run-g",
+                session_id: "session-g",
+                data_endpoint: "127.0.0.1:41010",
+                sequence: 1,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
         let wrong_session = signed_endpoint_record_test_v1(
             &signing_key,
-            NodeId(47),
-            9007,
-            "run-g",
-            "session-other",
-            "127.0.0.1:41011",
-            2,
-            now_millis_v1(),
-            60_000,
+            SignedEndpointRecordTestInputV1 {
+                node_id: NodeId(47),
+                chain_id: 9007,
+                run_id: "run-g",
+                session_id: "session-other",
+                data_endpoint: "127.0.0.1:41011",
+                sequence: 2,
+                issued_at_ms: now_millis_v1(),
+                ttl_ms: 60_000,
+            },
         );
 
         assert!(validate_endpoint_record_for_source_pin_v1(
@@ -15534,8 +15581,10 @@ mod tests {
 
     #[test]
     fn rlpx_headers_request_batch_respects_runtime_budget_v1() {
-        let mut budget = EthFullnodeBudgetHooksV1::default();
-        budget.sync_pull_headers_batch = 64;
+        let budget = EthFullnodeBudgetHooksV1 {
+            sync_pull_headers_batch: 64,
+            ..Default::default()
+        };
         assert_eq!(
             eth_fullnode_native_budget_capped_headers_batch_v1(2_048, &budget),
             64
@@ -18207,13 +18256,15 @@ mod tests {
         let status_head_hash = [0x77; 32];
         let empty_root = crate::eth_rlpx_empty_trie_root_v1();
         let empty_ommers_hash = crate::eth_rlpx_empty_ommers_hash_v1();
-        let receipt_blocks = vec![vec![vec![0xc0]]];
+        let receipt_blocks = [vec![vec![0xc0]]];
         let header_record_1 = crate::EthRlpxBlockHeaderRecordV1 {
             number: 120,
             hash: [0u8; 32],
             parent_hash: [0x10; 32],
             state_root: [0x20; 32],
-            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(
+                std::slice::from_ref(&raw_tx),
+            ),
             receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&receipt_blocks[0]),
             ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
@@ -18507,7 +18558,9 @@ mod tests {
             hash: [0u8; 32],
             parent_hash: [0x80; 32],
             state_root: [0x81; 32],
-            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(
+                std::slice::from_ref(&raw_tx),
+            ),
             receipts_root: empty_root,
             ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
@@ -18845,7 +18898,9 @@ mod tests {
             hash: [0u8; 32],
             parent_hash: [0x10; 32],
             state_root: [0x20; 32],
-            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(
+                std::slice::from_ref(&raw_tx),
+            ),
             receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&receipt_blocks[0]),
             ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
@@ -18874,7 +18929,9 @@ mod tests {
             hash: [0u8; 32],
             parent_hash: header_hash,
             state_root: [0x21; 32],
-            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(
+                std::slice::from_ref(&raw_tx),
+            ),
             receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&receipt_blocks[1]),
             ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
@@ -19273,7 +19330,9 @@ mod tests {
             hash: [0u8; 32],
             parent_hash: ancestor_hash,
             state_root: [0x20; 32],
-            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(&[raw_tx.clone()]),
+            transactions_root: crate::eth_rlpx_transactions_root_from_raw_txs_v1(
+                std::slice::from_ref(&raw_tx),
+            ),
             receipts_root: crate::eth_rlpx_receipts_root_from_raw_receipts_v1(&header_a_receipts),
             ommers_hash: empty_ommers_hash,
             logs_bloom: vec![0u8; 256],
@@ -19930,7 +19989,7 @@ mod tests {
                 assert_eq!(request.hashes, vec![tx_hash]);
                 let response = crate::eth_rlpx_build_pooled_transactions_payload_v1(
                     request.request_id,
-                    &[server_tx.clone()],
+                    std::slice::from_ref(&server_tx),
                 );
                 crate::eth_rlpx_write_wire_frame_v1(
                     &mut accepted,
@@ -20997,7 +21056,7 @@ mod tests {
         let account_hash = [0x23; 32];
         let account_root_node = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let account_state_root = crate::eth_rlpx_trie_node_hash_v1(account_root_node.as_slice());
@@ -21391,7 +21450,7 @@ mod tests {
         let proof_account_hash = [0x24; 32];
         let storage_proof_node = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let proof_storage_root = crate::eth_rlpx_trie_node_hash_v1(storage_proof_node.as_slice());
@@ -21460,7 +21519,7 @@ mod tests {
         let last_account_hash = [0x29; 32];
         let last_empty_proof_node = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let last_empty_root = crate::eth_rlpx_trie_node_hash_v1(last_empty_proof_node.as_slice());
@@ -21926,17 +21985,17 @@ mod tests {
     fn rlpx_snap_trie_nodes_partial_response_matches_geth_heal_semantics_v1() {
         let root_node = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let storage_node = {
             let mut node = vec![0xd1_u8, 0x01];
-            node.extend(std::iter::repeat(0x80_u8).take(16));
+            node.extend(std::iter::repeat_n(0x80_u8, 16));
             node
         };
         let unexpected_node = {
             let mut node = vec![0xd1_u8, 0x02];
-            node.extend(std::iter::repeat(0x80_u8).take(16));
+            node.extend(std::iter::repeat_n(0x80_u8, 16));
             node
         };
         let root_hash = crate::eth_rlpx_trie_node_hash_v1(root_node.as_slice());
@@ -21952,7 +22011,7 @@ mod tests {
             expected.as_slice(),
             &[root_node.clone(), {
                 let mut node = vec![0xd1_u8, 0x01];
-                node.extend(std::iter::repeat(0x80_u8).take(16));
+                node.extend(std::iter::repeat_n(0x80_u8, 16));
                 node
             }],
         )
@@ -21964,7 +22023,7 @@ mod tests {
             &[
                 {
                     let mut node = vec![0xd1_u8, 0x01];
-                    node.extend(std::iter::repeat(0x80_u8).take(16));
+                    node.extend(std::iter::repeat_n(0x80_u8, 16));
                     node
                 },
                 root_node,
@@ -21987,7 +22046,7 @@ mod tests {
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         let root_trie_node = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let local_state_root = crate::eth_rlpx_trie_node_hash_v1(root_trie_node.as_slice());
@@ -22170,7 +22229,7 @@ mod tests {
                 let response = crate::eth_rlpx_build_account_range_payload_v1(
                     request.request_id,
                     &[],
-                    &[root_trie_node.clone()],
+                    std::slice::from_ref(&root_trie_node),
                 );
                 crate::eth_rlpx_write_wire_frame_v1(
                     &mut accepted,
@@ -22567,7 +22626,7 @@ mod tests {
                 assert_eq!(request.paths, vec![vec![vec![0_u8]]]);
                 let response = crate::eth_rlpx_build_trie_nodes_payload_v1(
                     request.request_id,
-                    &[root_trie_node.clone()],
+                    std::slice::from_ref(&root_trie_node),
                 );
                 crate::eth_rlpx_write_wire_frame_v1(
                     &mut accepted,
@@ -22710,7 +22769,7 @@ mod tests {
         let trie_path = vec![vec![0x01], vec![0x02]];
         let trie_node = {
             let mut node = vec![0xd1_u8, 0x03];
-            node.extend(std::iter::repeat(0x80_u8).take(16));
+            node.extend(std::iter::repeat_n(0x80_u8, 16));
             node
         };
         let trie_node_hash = crate::eth_rlpx_trie_node_hash_v1(trie_node.as_slice());
@@ -23086,7 +23145,7 @@ mod tests {
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         let root_trie_node = {
             let mut node = vec![0xd1_u8];
-            node.extend(std::iter::repeat(0x80_u8).take(17));
+            node.extend(std::iter::repeat_n(0x80_u8, 17));
             node
         };
         let storage_slot_hash = [0x37; 32];
@@ -23288,7 +23347,7 @@ mod tests {
             let response = crate::eth_rlpx_build_account_range_payload_v1(
                 account_request_id,
                 &[account],
-                &[root_trie_node.clone()],
+                std::slice::from_ref(&root_trie_node),
             );
             crate::eth_rlpx_write_wire_frame_v1(
                 &mut accepted,
@@ -23328,7 +23387,7 @@ mod tests {
                     let response = crate::eth_rlpx_build_storage_ranges_payload_v1(
                         request.request_id,
                         slotsets.as_slice(),
-                        &[storage_root_trie_node.clone()],
+                        std::slice::from_ref(&storage_root_trie_node),
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
@@ -23347,7 +23406,7 @@ mod tests {
                     assert_eq!(request.hashes, vec![code_hash]);
                     let response = crate::eth_rlpx_build_byte_codes_payload_v1(
                         request.request_id,
-                        &[bytecode.clone()],
+                        std::slice::from_ref(&bytecode),
                     );
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
@@ -23372,7 +23431,7 @@ mod tests {
                         );
                         crate::eth_rlpx_build_trie_nodes_payload_v1(
                             request.request_id,
-                            &[storage_root_trie_node.clone()],
+                            std::slice::from_ref(&storage_root_trie_node),
                         )
                     } else {
                         assert_eq!(trie_nodes_requests, 2);
@@ -23380,7 +23439,7 @@ mod tests {
                         saw_trie_nodes = true;
                         crate::eth_rlpx_build_trie_nodes_payload_v1(
                             request.request_id,
-                            &[root_trie_node.clone()],
+                            std::slice::from_ref(&root_trie_node),
                         )
                     };
                     crate::eth_rlpx_write_wire_frame_v1(

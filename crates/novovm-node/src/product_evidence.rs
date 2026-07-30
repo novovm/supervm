@@ -239,6 +239,64 @@ fn validate_product_report_v1(path: &Path) -> Result<()> {
                 bail!("node overlay report requires centralized control plane");
             }
         }
+        "novovm_product_peer_runtime_v1" => {
+            let role = value
+                .get("role")
+                .and_then(Value::as_str)
+                .context("peer report missing role")?;
+            if !matches!(role, "sender" | "receiver") {
+                bail!("peer report has unsupported role: {role}");
+            }
+            for field in ["local_peer_id", "remote_peer_id", "relay_peer_id"] {
+                if value
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .is_none_or(str::is_empty)
+                {
+                    bail!("peer report missing {field}");
+                }
+            }
+            if value.get("selected_path").and_then(Value::as_str) != Some("RelayNovoRudp")
+                || value.get("selected_transport").and_then(Value::as_str) != Some("wss")
+                || value
+                    .get("peer_handshake_via_relay")
+                    .and_then(Value::as_bool)
+                    != Some(true)
+                || value
+                    .get("e2e_session_established")
+                    .and_then(Value::as_bool)
+                    != Some(true)
+                || value
+                    .get("novorudp_inner_frame_preserved")
+                    .and_then(Value::as_bool)
+                    != Some(true)
+                || value
+                    .get("relay_is_trusted_authority")
+                    .and_then(Value::as_bool)
+                    != Some(false)
+                || value.get("network_only").and_then(Value::as_bool) != Some(true)
+            {
+                bail!("peer report relay or end-to-end boundary invalid");
+            }
+            for field in ["apfl_interpreted", "aoem_called", "ledger_semantics"] {
+                if value.get(field).and_then(Value::as_bool) != Some(false) {
+                    bail!("peer report non-network boundary invalid: {field}");
+                }
+            }
+            let sent = value
+                .get("sent_frame_count")
+                .and_then(Value::as_u64)
+                .context("peer report missing sent_frame_count")?;
+            let received = value
+                .get("received_frame_count")
+                .and_then(Value::as_u64)
+                .context("peer report missing received_frame_count")?;
+            match role {
+                "sender" if sent > 0 && received == 0 => {}
+                "receiver" if sent == 0 && received > 0 => {}
+                _ => bail!("peer report frame counters do not match role"),
+            }
+        }
         _ => bail!("unsupported product evidence report scope: {scope}"),
     }
     Ok(())
@@ -329,14 +387,59 @@ mod tests {
             "payload_treated_opaque": true, "novorudp_wire_changed": false, "punch_attempt": null
         })).unwrap()).unwrap();
         let signer = SigningKey::from_bytes(&[131; 32]);
-        let manifest =
-            build_product_evidence_manifest_v1(&root, &[report_path.clone()], &signer, 1_000)
-                .unwrap();
+        let manifest = build_product_evidence_manifest_v1(
+            &root,
+            std::slice::from_ref(&report_path),
+            &signer,
+            1_000,
+        )
+        .unwrap();
         let manifest_path = root.join("evidence.json");
         write_product_evidence_manifest_v1(&manifest_path, &manifest).unwrap();
         assert!(verify_product_evidence_manifest_v1(&root, &manifest_path).accepted);
         fs::write(&report_path, b"{}".as_slice()).unwrap();
         assert!(!verify_product_evidence_manifest_v1(&root, &manifest_path).accepted);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn signed_evidence_accepts_real_peer_runtime_boundary() {
+        let root = std::env::temp_dir().join(format!("novovm-peer-evidence-{}", now_ms_v1()));
+        fs::create_dir_all(&root).unwrap();
+        let report_path = root.join("sender.json");
+        fs::write(
+            &report_path,
+            serde_json::to_vec(&serde_json::json!({
+                "accepted": true,
+                "scope": "novovm_product_peer_runtime_v1",
+                "role": "sender",
+                "local_peer_id": "peer-a",
+                "remote_peer_id": "peer-b",
+                "relay_peer_id": "relay-a",
+                "selected_path": "RelayNovoRudp",
+                "selected_transport": "wss",
+                "peer_handshake_via_relay": true,
+                "e2e_session_established": true,
+                "sent_frame_count": 1,
+                "received_frame_count": 0,
+                "novorudp_inner_frame_preserved": true,
+                "payload_treated_opaque": true,
+                "relay_is_trusted_authority": false,
+                "network_only": true,
+                "apfl_interpreted": false,
+                "aoem_called": false,
+                "ledger_semantics": false,
+                "novorudp_wire_changed": false
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let signer = SigningKey::from_bytes(&[132; 32]);
+        let manifest =
+            build_product_evidence_manifest_v1(&root, &[report_path], &signer, 1_000).unwrap();
+        let manifest_path = root.join("evidence.json");
+        write_product_evidence_manifest_v1(&manifest_path, &manifest).unwrap();
+        assert!(verify_product_evidence_manifest_v1(&root, &manifest_path).accepted);
         let _ = fs::remove_dir_all(root);
     }
 }

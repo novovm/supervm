@@ -196,20 +196,36 @@ fn apply_fault_schedule(
     scheduled
 }
 
-fn spawn_receiver(
-    node_bin: &Path,
+struct ReceiverSpawnInput<'a> {
+    node_bin: &'a Path,
     chain_id: u64,
     receiver_node: u64,
     sender_node: u64,
-    receiver_addr: &str,
-    sender_addr: &str,
-    store_path: &Path,
+    receiver_addr: &'a str,
+    sender_addr: &'a str,
+    store_path: &'a Path,
     receiver_ticks: u64,
     tick_interval_ms: u64,
     batch_budget: u64,
     recv_budget: u64,
     expected_unique: u64,
-) -> Result<Child> {
+}
+
+fn spawn_receiver(input: ReceiverSpawnInput<'_>) -> Result<Child> {
+    let ReceiverSpawnInput {
+        node_bin,
+        chain_id,
+        receiver_node,
+        sender_node,
+        receiver_addr,
+        sender_addr,
+        store_path,
+        receiver_ticks,
+        tick_interval_ms,
+        batch_budget,
+        recv_budget,
+        expected_unique,
+    } = input;
     let mut cmd = Command::new(node_bin);
     cmd.env_clear();
     for (key, value) in std::env::vars() {
@@ -430,20 +446,20 @@ fn main() -> Result<()> {
     let duplicate_received = sent_packets.saturating_sub(delivered_unique_count);
     let unique_loss = tx_count.saturating_sub(delivered_unique_count);
 
-    let receiver = spawn_receiver(
-        node_bin.as_path(),
+    let receiver = spawn_receiver(ReceiverSpawnInput {
+        node_bin: node_bin.as_path(),
         chain_id,
         receiver_node,
         sender_node,
-        receiver_addr.as_str(),
-        sender_addr.as_str(),
-        store_path.as_path(),
+        receiver_addr: receiver_addr.as_str(),
+        sender_addr: sender_addr.as_str(),
+        store_path: store_path.as_path(),
         receiver_ticks,
         tick_interval_ms,
         batch_budget,
         recv_budget,
-        delivered_unique_count,
-    )?;
+        expected_unique: delivered_unique_count,
+    })?;
     std::thread::sleep(std::time::Duration::from_millis(startup_wait_ms));
 
     let sender = UdpTransport::bind_for_chain(NodeId(sender_node), sender_addr.as_str(), chain_id)

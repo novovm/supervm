@@ -149,20 +149,36 @@ fn build_native_payloads(chain_id: u64, count: u64) -> Result<Vec<NativeFixtureT
     Ok(out)
 }
 
-fn spawn_receiver(
-    node_bin: &Path,
+struct ReceiverSpawnInput<'a> {
+    node_bin: &'a Path,
     chain_id: u64,
     receiver_node: u64,
     sender_node: u64,
-    receiver_addr: &str,
-    sender_addr: &str,
-    store_path: &Path,
+    receiver_addr: &'a str,
+    sender_addr: &'a str,
+    store_path: &'a Path,
     receiver_ticks: u64,
     tick_interval_ms: u64,
     batch_budget: u64,
     recv_budget: u64,
     expected_execution_count: u64,
-) -> Result<Child> {
+}
+
+fn spawn_receiver(input: ReceiverSpawnInput<'_>) -> Result<Child> {
+    let ReceiverSpawnInput {
+        node_bin,
+        chain_id,
+        receiver_node,
+        sender_node,
+        receiver_addr,
+        sender_addr,
+        store_path,
+        receiver_ticks,
+        tick_interval_ms,
+        batch_budget,
+        recv_budget,
+        expected_execution_count,
+    } = input;
     let mut cmd = Command::new(node_bin);
     cmd.env_clear();
     for (key, value) in std::env::vars() {
@@ -343,16 +359,28 @@ fn write_report(path: &Path, report: &Value) -> Result<()> {
         .with_context(|| format!("write remote reentry report failed: {}", path.display()))
 }
 
-fn send_duplicate_rounds(
+struct DuplicateRoundsInput<'a> {
     chain_id: u64,
     sender_node: u64,
     receiver_node: u64,
-    sender_addr: &str,
-    receiver_addr: &str,
-    txs: &[NativeFixtureTxV1],
+    sender_addr: &'a str,
+    receiver_addr: &'a str,
+    txs: &'a [NativeFixtureTxV1],
     duplicate_rounds: u64,
     delay_ms: u64,
-) -> Result<BTreeMap<String, u64>> {
+}
+
+fn send_duplicate_rounds(input: DuplicateRoundsInput<'_>) -> Result<BTreeMap<String, u64>> {
+    let DuplicateRoundsInput {
+        chain_id,
+        sender_node,
+        receiver_node,
+        sender_addr,
+        receiver_addr,
+        txs,
+        duplicate_rounds,
+        delay_ms,
+    } = input;
     let sender = UdpTransport::bind_for_chain(NodeId(sender_node), sender_addr, chain_id)
         .with_context(|| format!("bind remote reentry sender UDP failed: {sender_addr}"))?;
     sender
@@ -453,31 +481,31 @@ fn main() -> Result<()> {
 
     let sender_addr = reserve_udp_addr()?;
     let receiver_addr = reserve_udp_addr()?;
-    let receiver = spawn_receiver(
-        node_bin.as_path(),
+    let receiver = spawn_receiver(ReceiverSpawnInput {
+        node_bin: node_bin.as_path(),
         chain_id,
         receiver_node,
         sender_node,
-        receiver_addr.as_str(),
-        sender_addr.as_str(),
-        store_path.as_path(),
+        receiver_addr: receiver_addr.as_str(),
+        sender_addr: sender_addr.as_str(),
+        store_path: store_path.as_path(),
         receiver_ticks,
         tick_interval_ms,
         batch_budget,
         recv_budget,
-        tx_count,
-    )?;
+        expected_execution_count: tx_count,
+    })?;
     std::thread::sleep(std::time::Duration::from_millis(startup_wait_ms));
-    let initial_sent_by_hash = send_duplicate_rounds(
+    let initial_sent_by_hash = send_duplicate_rounds(DuplicateRoundsInput {
         chain_id,
         sender_node,
         receiver_node,
-        sender_addr.as_str(),
-        receiver_addr.as_str(),
-        txs.as_slice(),
+        sender_addr: sender_addr.as_str(),
+        receiver_addr: receiver_addr.as_str(),
+        txs: txs.as_slice(),
         duplicate_rounds,
         delay_ms,
-    )?;
+    })?;
     let initial_summary = parse_summary(
         receiver
             .wait_with_output()
@@ -489,31 +517,31 @@ fn main() -> Result<()> {
 
     let restart_sender_addr = reserve_udp_addr()?;
     let restart_receiver_addr = reserve_udp_addr()?;
-    let restart_receiver = spawn_receiver(
-        node_bin.as_path(),
+    let restart_receiver = spawn_receiver(ReceiverSpawnInput {
+        node_bin: node_bin.as_path(),
         chain_id,
         receiver_node,
         sender_node,
-        restart_receiver_addr.as_str(),
-        restart_sender_addr.as_str(),
-        store_path.as_path(),
-        restart_ticks,
+        receiver_addr: restart_receiver_addr.as_str(),
+        sender_addr: restart_sender_addr.as_str(),
+        store_path: store_path.as_path(),
+        receiver_ticks: restart_ticks,
         tick_interval_ms,
         batch_budget,
         recv_budget,
-        0,
-    )?;
+        expected_execution_count: 0,
+    })?;
     std::thread::sleep(std::time::Duration::from_millis(startup_wait_ms));
-    let restart_sent_by_hash = send_duplicate_rounds(
+    let restart_sent_by_hash = send_duplicate_rounds(DuplicateRoundsInput {
         chain_id,
         sender_node,
         receiver_node,
-        restart_sender_addr.as_str(),
-        restart_receiver_addr.as_str(),
-        txs.as_slice(),
+        sender_addr: restart_sender_addr.as_str(),
+        receiver_addr: restart_receiver_addr.as_str(),
+        txs: txs.as_slice(),
         duplicate_rounds,
         delay_ms,
-    )?;
+    })?;
     let restart_summary = parse_summary(
         restart_receiver
             .wait_with_output()

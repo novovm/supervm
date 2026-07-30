@@ -1426,16 +1426,29 @@ fn tx_ingress_real_callsite_v1(
     default_callsite.to_string()
 }
 
-fn insert_aoem_runtime_worker_pipeline_fields_v1(
-    out: &mut serde_json::Map<String, serde_json::Value>,
-    params: &serde_json::Value,
+struct AoemRuntimeWorkerPipelineFieldsInputV1<'a> {
+    params: &'a serde_json::Value,
     production_candidate_enabled: bool,
-    tx_ingress_real_callsite: &str,
+    tx_ingress_real_callsite: &'a str,
     tx_count: u64,
     batch_built: bool,
     result_ready: bool,
     result_verified: bool,
+}
+
+fn insert_aoem_runtime_worker_pipeline_fields_v1(
+    out: &mut serde_json::Map<String, serde_json::Value>,
+    input: AoemRuntimeWorkerPipelineFieldsInputV1<'_>,
 ) {
+    let AoemRuntimeWorkerPipelineFieldsInputV1 {
+        params,
+        production_candidate_enabled,
+        tx_ingress_real_callsite,
+        tx_count,
+        batch_built,
+        result_ready,
+        result_verified,
+    } = input;
     let pipeline_enabled = native_aoem_runtime_worker_pipeline_enabled_v1();
     let pipeline_mode = if pipeline_enabled {
         "aoem_runtime_worker_pipeline"
@@ -3907,10 +3920,9 @@ fn native_rocksdb_decode_account_asset_key_v1(key: &[u8]) -> Option<(String, Str
     Some((account.to_string(), normalize_asset_symbol_v1(asset)))
 }
 
-fn native_rocksdb_iter_prefix_v1(
-    db: &RocksDb,
-    prefix: &[u8],
-) -> Vec<Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>> {
+type NativeRocksDbIterItemV1 = Result<(Box<[u8]>, Box<[u8]>), rocksdb::Error>;
+
+fn native_rocksdb_iter_prefix_v1(db: &RocksDb, prefix: &[u8]) -> Vec<NativeRocksDbIterItemV1> {
     db.iterator(RocksDbIteratorMode::From(prefix, RocksDbDirection::Forward))
         .take_while(|item| {
             item.as_ref()
@@ -4508,8 +4520,13 @@ fn load_nov_native_execution_store_rocksdb_v1(path: &Path) -> Result<NovNativeEx
 }
 
 enum NovNativeExecutionReceiptLookupV1 {
-    RocksDb { db: RocksDb, path: PathBuf },
-    Materialized { store: NovNativeExecutionStoreV1 },
+    RocksDb {
+        db: RocksDb,
+        path: PathBuf,
+    },
+    Materialized {
+        store: Box<NovNativeExecutionStoreV1>,
+    },
 }
 
 impl NovNativeExecutionReceiptLookupV1 {
@@ -4525,12 +4542,12 @@ impl NovNativeExecutionReceiptLookupV1 {
             }
             if backend == NOV_NATIVE_EXECUTION_STORE_BACKEND_ROCKSDB_V1 {
                 return Ok(Self::Materialized {
-                    store: NovNativeExecutionStoreV1::default(),
+                    store: Box::new(NovNativeExecutionStoreV1::default()),
                 });
             }
         }
         Ok(Self::Materialized {
-            store: load_nov_native_execution_store_json_v1(path)?,
+            store: Box::new(load_nov_native_execution_store_json_v1(path)?),
         })
     }
 
@@ -6643,12 +6660,10 @@ fn build_protocol_clearing_price_v1(
         .iter()
         .map(|(source, _)| (*source).to_string())
         .collect::<Vec<_>>();
-    let state = if sources_used.is_empty() {
-        "constrained"
-    } else if sources_used.len() == 1 || !rejected.is_empty() {
-        "constrained"
-    } else {
+    let state = if sources_used.len() > 1 && rejected.is_empty() {
         "healthy"
+    } else {
+        "constrained"
     };
     let reason = if rejected.is_empty() && !sources_used.is_empty() {
         None
@@ -9742,24 +9757,29 @@ pub fn dispatch_and_persist_nov_execution_request_with_store_path_v1(
     )
 }
 
+struct NovExecutionRequestDispatchContextV1<'a> {
+    mirror_base_path: &'a Path,
+    subject_meta: Option<&'a NovExecutionSubjectMetaV1>,
+    requested_behavior: Option<&'a NovRequestedExecutionBehaviorV1>,
+    unified_account_store_path: Option<&'a Path>,
+    aoem_semantic_ingress_override: Option<NovAoemSemanticIngressMetaV1>,
+    mirror_records: Option<&'a mut Vec<NovAoemSemanticLedgerMirrorRecordV1>>,
+    now_ms: u128,
+}
+
 fn dispatch_nov_execution_request_into_loaded_store_v1(
-    mirror_base_path: &Path,
     store: &mut NovNativeExecutionStoreV1,
     request: &NovExecutionRequestV1,
-    subject_meta: Option<&NovExecutionSubjectMetaV1>,
-    requested_behavior: Option<&NovRequestedExecutionBehaviorV1>,
-    unified_account_store_path: Option<&Path>,
-    aoem_semantic_ingress_override: Option<NovAoemSemanticIngressMetaV1>,
-    mirror_records: Option<&mut Vec<NovAoemSemanticLedgerMirrorRecordV1>>,
-    now_ms: u128,
+    context: NovExecutionRequestDispatchContextV1<'_>,
 ) -> Result<NovNativeExecutionReceiptV1> {
-    let effective_subject_meta = subject_meta
+    let effective_subject_meta = context
+        .subject_meta
         .cloned()
         .unwrap_or_else(|| fallback_execution_subject_meta_v1(request));
     let effective_subject_meta = match enforce_requested_execution_behavior_v1(
         &effective_subject_meta,
-        requested_behavior,
-        unified_account_store_path,
+        context.requested_behavior,
+        context.unified_account_store_path,
     ) {
         Ok(meta) => meta,
         Err(rejection) => {
@@ -9788,10 +9808,10 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
                 &failed,
                 &rejected_subject_meta,
                 store,
-                now_ms,
+                context.now_ms,
             );
             persist_execution_trace_v1(store, trace);
-            store.last_updated_unix_ms = now_ms;
+            store.last_updated_unix_ms = context.now_ms;
             return Ok(failed);
         }
     };
@@ -9799,7 +9819,7 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
         request,
         &effective_subject_meta,
         store,
-        now_ms,
+        context.now_ms,
     ) {
         Ok(value) => value,
         Err(err) => {
@@ -9827,14 +9847,14 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
                 &failed,
                 &effective_subject_meta,
                 store,
-                now_ms,
+                context.now_ms,
             );
             persist_execution_trace_v1(store, trace);
-            store.last_updated_unix_ms = now_ms;
+            store.last_updated_unix_ms = context.now_ms;
             return Ok(failed);
         }
     };
-    let aoem_semantic_ingress = if let Some(meta) = aoem_semantic_ingress_override {
+    let aoem_semantic_ingress = if let Some(meta) = context.aoem_semantic_ingress_override {
         Some(meta)
     } else {
         match execute_native_request_via_aoem_semantic_ingress_v1(
@@ -9862,10 +9882,10 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
                     &failed,
                     &effective_subject_meta,
                     store,
-                    now_ms,
+                    context.now_ms,
                 );
                 persist_execution_trace_v1(store, trace);
-                store.last_updated_unix_ms = now_ms;
+                store.last_updated_unix_ms = context.now_ms;
                 return Ok(failed);
             }
         }
@@ -9901,17 +9921,18 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
         &receipt,
         &effective_subject_meta,
         store,
-        now_ms,
+        context.now_ms,
     );
     persist_execution_trace_v1(store, trace);
-    store.last_updated_unix_ms = now_ms;
+    store.last_updated_unix_ms = context.now_ms;
     if let Some(mirror_record) =
-        build_native_aoem_semantic_ledger_mirror_record_v1(&receipt, now_ms)
+        build_native_aoem_semantic_ledger_mirror_record_v1(&receipt, context.now_ms)
     {
-        if let Some(records) = mirror_records {
+        if let Some(records) = context.mirror_records {
             records.push(mirror_record);
         } else {
-            let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(mirror_base_path);
+            let mirror_path =
+                nov_native_aoem_semantic_ledger_mirror_path_v1(context.mirror_base_path);
             append_nov_native_aoem_semantic_ledger_mirror_record_v1(
                 mirror_path.as_path(),
                 &mirror_record,
@@ -9933,15 +9954,17 @@ fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
     let previous_store = store.clone();
     let now_ms = now_unix_millis_v1();
     let receipt = dispatch_nov_execution_request_into_loaded_store_v1(
-        path,
         &mut store,
         request,
-        subject_meta,
-        requested_behavior,
-        unified_account_store_path,
-        None,
-        None,
-        now_ms,
+        NovExecutionRequestDispatchContextV1 {
+            mirror_base_path: path,
+            subject_meta,
+            requested_behavior,
+            unified_account_store_path,
+            aoem_semantic_ingress_override: None,
+            mirror_records: None,
+            now_ms,
+        },
     )?;
     save_nov_native_execution_store_with_previous_v1(path, Some(&previous_store), &store)?;
     Ok(receipt)
@@ -11382,7 +11405,7 @@ fn execute_native_raw_tx_batch_chunks_via_aoem_semantic_ingress_v1(
         bail!("nov raw transaction batch must not be empty");
     }
     let max_batch = native_aoem_batch_max_size_v1();
-    let chunk_count = (raw_payloads.len() + max_batch - 1) / max_batch;
+    let chunk_count = raw_payloads.len().div_ceil(max_batch);
     let mut chunks = Vec::with_capacity(chunk_count);
     for chunk in raw_payloads.chunks(max_batch) {
         chunks.push(execute_native_raw_tx_batch_via_aoem_semantic_ingress_v1(
@@ -11694,14 +11717,16 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             let intent_type = native_tx_kind_label_v1(&item.native_tx).to_string();
             let semantic_operator = native_tx_semantic_operator_v1(&item.native_tx).to_string();
             let canonical_rebuild_commitment = novovm_exec::native_tx_batch_v1_item_commitment(
-                sequence,
-                tx_hash.as_str(),
-                sender_identity.as_str(),
-                signer_identity.as_deref(),
-                nonce,
-                intent_type.as_str(),
-                semantic_operator.as_str(),
-                &parameter_payload,
+                novovm_exec::NativeTxBatchV1ItemCommitmentInputV1 {
+                    sequence,
+                    tx_hash: tx_hash.as_str(),
+                    sender_identity: sender_identity.as_str(),
+                    signer_identity: signer_identity.as_deref(),
+                    nonce,
+                    intent_type: intent_type.as_str(),
+                    semantic_operator: semantic_operator.as_str(),
+                    parameter_payload: &parameter_payload,
+                },
             );
             items.push(novovm_exec::NovovmAoemNativeTxBatchItemV1 {
                 sequence,
@@ -11883,19 +11908,21 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             .unwrap_or(&aoem_batch_ingress);
         let execution_receipt = if let Some(request) = item.execution_request.as_ref() {
             Some(dispatch_nov_execution_request_into_loaded_store_v1(
-                effective_native_store_path.as_path(),
                 &mut store,
                 request,
-                item.execution_subject.as_ref(),
-                item.requested_execution_behavior.as_ref(),
-                unified_account_store_path.as_deref(),
-                Some(native_aoem_batch_item_ingress_meta_v1(
-                    item_batch_ingress,
-                    item_index,
-                    item_count,
-                )),
-                Some(&mut mirror_records),
-                now_ms,
+                NovExecutionRequestDispatchContextV1 {
+                    mirror_base_path: effective_native_store_path.as_path(),
+                    subject_meta: item.execution_subject.as_ref(),
+                    requested_behavior: item.requested_execution_behavior.as_ref(),
+                    unified_account_store_path: unified_account_store_path.as_deref(),
+                    aoem_semantic_ingress_override: Some(native_aoem_batch_item_ingress_meta_v1(
+                        item_batch_ingress,
+                        item_index,
+                        item_count,
+                    )),
+                    mirror_records: Some(&mut mirror_records),
+                    now_ms,
+                },
             )?)
         } else {
             None
@@ -12198,13 +12225,15 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     );
     insert_aoem_runtime_worker_pipeline_fields_v1(
         &mut out,
-        params,
-        production_candidate_enabled,
-        tx_ingress_real_callsite.as_str(),
-        raw_payloads.len() as u64,
-        shadow_batch.is_some(),
-        shadow_result.is_some(),
-        production_candidate_status.result_ok,
+        AoemRuntimeWorkerPipelineFieldsInputV1 {
+            params,
+            production_candidate_enabled,
+            tx_ingress_real_callsite: tx_ingress_real_callsite.as_str(),
+            tx_count: raw_payloads.len() as u64,
+            batch_built: shadow_batch.is_some(),
+            result_ready: shadow_result.is_some(),
+            result_verified: production_candidate_status.result_ok,
+        },
     );
     out.insert(
         "tx_ingress_called_with_explicit_aoem_gate_config".to_string(),
@@ -12610,27 +12639,39 @@ fn novorudp_trace_sample_limit_v1() -> usize {
         .min(512)
 }
 
+struct NovorudpTraceStagesV1<'a> {
+    candidate_sequences: &'a BTreeSet<u64>,
+    payload_available_sequences: &'a BTreeSet<u64>,
+    selected_sequences: &'a BTreeSet<u64>,
+    raw_txs_pushed_sequences: &'a BTreeSet<u64>,
+    actual_batch_sequences: &'a BTreeSet<u64>,
+    receipt_sequences: &'a BTreeSet<u64>,
+    canonical_sequences: &'a BTreeSet<u64>,
+    durable_missing_closed_sequences: &'a BTreeSet<u64>,
+}
+
+struct NovorudpSequenceLifecycleTraceInputV1<'a> {
+    summary: &'a novovm_network::NetworkRuntimeNativePendingTxSummaryV1,
+    repair_final_missing_sequence_start: Option<u64>,
+    stages: NovorudpTraceStagesV1<'a>,
+    tx_hash_by_sequence: &'a BTreeMap<u64, String>,
+    blocked_reason: &'a str,
+}
+
 fn novorudp_trace_sequence_entry_v1(
     sequence: u64,
     tx_hash: Option<&String>,
-    candidate_sequences: &BTreeSet<u64>,
-    payload_available_sequences: &BTreeSet<u64>,
-    selected_sequences: &BTreeSet<u64>,
-    raw_txs_pushed_sequences: &BTreeSet<u64>,
-    actual_batch_sequences: &BTreeSet<u64>,
-    receipt_sequences: &BTreeSet<u64>,
-    canonical_sequences: &BTreeSet<u64>,
-    durable_missing_closed_sequences: &BTreeSet<u64>,
+    stages: NovorudpTraceStagesV1<'_>,
     blocked_reason: &str,
 ) -> serde_json::Value {
-    let candidate_created = candidate_sequences.contains(&sequence);
-    let payload_available = payload_available_sequences.contains(&sequence);
-    let selected = selected_sequences.contains(&sequence);
-    let raw_txs_push_success = raw_txs_pushed_sequences.contains(&sequence);
-    let actual_batch_included = actual_batch_sequences.contains(&sequence);
-    let receipt_written = receipt_sequences.contains(&sequence);
-    let canonical_included = canonical_sequences.contains(&sequence);
-    let durable_missing_closed = durable_missing_closed_sequences.contains(&sequence);
+    let candidate_created = stages.candidate_sequences.contains(&sequence);
+    let payload_available = stages.payload_available_sequences.contains(&sequence);
+    let selected = stages.selected_sequences.contains(&sequence);
+    let raw_txs_push_success = stages.raw_txs_pushed_sequences.contains(&sequence);
+    let actual_batch_included = stages.actual_batch_sequences.contains(&sequence);
+    let receipt_written = stages.receipt_sequences.contains(&sequence);
+    let canonical_included = stages.canonical_sequences.contains(&sequence);
+    let durable_missing_closed = stages.durable_missing_closed_sequences.contains(&sequence);
     let first_missing_stage = if !candidate_created {
         "candidate_created"
     } else if !payload_available {
@@ -12741,19 +12782,15 @@ fn novorudp_trace_first_divergence_stage_v1(
 }
 
 fn novorudp_sequence_lifecycle_trace_diff_v1(
-    summary: &novovm_network::NetworkRuntimeNativePendingTxSummaryV1,
-    repair_final_missing_sequence_start: Option<u64>,
-    candidate_sequences: &BTreeSet<u64>,
-    payload_available_sequences: &BTreeSet<u64>,
-    selected_sequences: &BTreeSet<u64>,
-    raw_txs_pushed_sequences: &BTreeSet<u64>,
-    actual_batch_sequences: &BTreeSet<u64>,
-    receipt_sequences: &BTreeSet<u64>,
-    canonical_sequences: &BTreeSet<u64>,
-    durable_missing_closed_sequences: &BTreeSet<u64>,
-    tx_hash_by_sequence: &BTreeMap<u64, String>,
-    blocked_reason: &str,
+    input: NovorudpSequenceLifecycleTraceInputV1<'_>,
 ) -> serde_json::Value {
+    let NovorudpSequenceLifecycleTraceInputV1 {
+        summary,
+        repair_final_missing_sequence_start,
+        stages,
+        tx_hash_by_sequence,
+        blocked_reason,
+    } = input;
     let sample_limit = novorudp_trace_sample_limit_v1();
     let completed_count = summary.ledger_completed_count;
     let success_sample_count = sample_limit.min(16) as u64;
@@ -12769,14 +12806,16 @@ fn novorudp_sequence_lifecycle_trace_diff_v1(
         success_sequences.push(novorudp_trace_sequence_entry_v1(
             sequence,
             tx_hash_by_sequence.get(&sequence),
-            &closed,
-            &closed,
-            &closed,
-            &closed,
-            &closed,
-            &closed,
-            &closed,
-            &closed,
+            NovorudpTraceStagesV1 {
+                candidate_sequences: &closed,
+                payload_available_sequences: &closed,
+                selected_sequences: &closed,
+                raw_txs_pushed_sequences: &closed,
+                actual_batch_sequences: &closed,
+                receipt_sequences: &closed,
+                canonical_sequences: &closed,
+                durable_missing_closed_sequences: &closed,
+            },
             "",
         ));
     }
@@ -12802,14 +12841,21 @@ fn novorudp_sequence_lifecycle_trace_diff_v1(
             break;
         }
     }
-    failed_trace_set.extend(candidate_sequences.iter().copied().take(sample_limit));
     failed_trace_set.extend(
-        payload_available_sequences
+        stages
+            .candidate_sequences
             .iter()
             .copied()
             .take(sample_limit),
     );
-    failed_trace_set.extend(selected_sequences.iter().copied().take(sample_limit));
+    failed_trace_set.extend(
+        stages
+            .payload_available_sequences
+            .iter()
+            .copied()
+            .take(sample_limit),
+    );
+    failed_trace_set.extend(stages.selected_sequences.iter().copied().take(sample_limit));
     while failed_trace_set.len() > sample_limit {
         let Some(last) = failed_trace_set.iter().next_back().copied() else {
             break;
@@ -12821,26 +12867,28 @@ fn novorudp_sequence_lifecycle_trace_diff_v1(
         failed_sequences.push(novorudp_trace_sequence_entry_v1(
             sequence,
             tx_hash_by_sequence.get(&sequence),
-            candidate_sequences,
-            payload_available_sequences,
-            selected_sequences,
-            raw_txs_pushed_sequences,
-            actual_batch_sequences,
-            receipt_sequences,
-            canonical_sequences,
-            durable_missing_closed_sequences,
+            NovorudpTraceStagesV1 {
+                candidate_sequences: stages.candidate_sequences,
+                payload_available_sequences: stages.payload_available_sequences,
+                selected_sequences: stages.selected_sequences,
+                raw_txs_pushed_sequences: stages.raw_txs_pushed_sequences,
+                actual_batch_sequences: stages.actual_batch_sequences,
+                receipt_sequences: stages.receipt_sequences,
+                canonical_sequences: stages.canonical_sequences,
+                durable_missing_closed_sequences: stages.durable_missing_closed_sequences,
+            },
             blocked_reason,
         ));
     }
     let (first_divergence_stage, first_divergence_sequence) =
         novorudp_trace_first_divergence_stage_v1(
-            payload_available_sequences,
-            selected_sequences,
-            raw_txs_pushed_sequences,
-            actual_batch_sequences,
-            receipt_sequences,
-            canonical_sequences,
-            durable_missing_closed_sequences,
+            stages.payload_available_sequences,
+            stages.selected_sequences,
+            stages.raw_txs_pushed_sequences,
+            stages.actual_batch_sequences,
+            stages.receipt_sequences,
+            stages.canonical_sequences,
+            stages.durable_missing_closed_sequences,
         );
     serde_json::json!({
         "novorudp_trace_enabled": true,
@@ -12855,13 +12903,13 @@ fn novorudp_sequence_lifecycle_trace_diff_v1(
             "first_divergence_sequence": first_divergence_sequence,
         },
         "trace_candidate_payload_available_not_selected_sequences":
-            payload_available_sequences.difference(selected_sequences).copied().take(sample_limit).collect::<Vec<_>>(),
+            stages.payload_available_sequences.difference(stages.selected_sequences).copied().take(sample_limit).collect::<Vec<_>>(),
         "trace_selected_not_pushed_sequences":
-            selected_sequences.difference(raw_txs_pushed_sequences).copied().take(sample_limit).collect::<Vec<_>>(),
+            stages.selected_sequences.difference(stages.raw_txs_pushed_sequences).copied().take(sample_limit).collect::<Vec<_>>(),
         "trace_pushed_not_batched_sequences":
-            raw_txs_pushed_sequences.difference(actual_batch_sequences).copied().take(sample_limit).collect::<Vec<_>>(),
+            stages.raw_txs_pushed_sequences.difference(stages.actual_batch_sequences).copied().take(sample_limit).collect::<Vec<_>>(),
         "trace_batched_not_receipted_sequences":
-            actual_batch_sequences.difference(receipt_sequences).copied().take(sample_limit).collect::<Vec<_>>(),
+            stages.actual_batch_sequences.difference(stages.receipt_sequences).copied().take(sample_limit).collect::<Vec<_>>(),
     })
 }
 
@@ -13026,13 +13074,15 @@ fn insert_empty_tick_aoem_owned_gate_config_fields_v1(
     );
     insert_aoem_runtime_worker_pipeline_fields_v1(
         report,
-        params,
-        production_candidate_enabled,
-        tx_ingress_real_callsite.as_str(),
-        0,
-        false,
-        false,
-        false,
+        AoemRuntimeWorkerPipelineFieldsInputV1 {
+            params,
+            production_candidate_enabled,
+            tx_ingress_real_callsite: tx_ingress_real_callsite.as_str(),
+            tx_count: 0,
+            batch_built: false,
+            result_ready: false,
+            result_verified: false,
+        },
     );
     report.insert(
         "native_execution_tick_params_source".to_string(),
@@ -13349,20 +13399,23 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         let ledger_final_missing_batch_blocked_by_unknown_invariant_violation_count =
             u64::from(ledger_final_missing_batch_blocked_reason == "unknown_invariant_violation");
         let empty_trace_sequences = BTreeSet::<u64>::new();
-        let trace = novorudp_sequence_lifecycle_trace_diff_v1(
-            &pre_batch_pending_summary,
-            repair_final_missing_sequence_start,
-            &ledger_final_missing_candidate_sequences,
-            &ledger_final_missing_payload_available_sequences,
-            &ledger_final_missing_selected_sequences,
-            &ledger_final_missing_raw_txs_pushed_sequences,
-            &empty_trace_sequences,
-            &empty_trace_sequences,
-            &empty_trace_sequences,
-            &empty_trace_sequences,
-            &ledger_final_missing_tx_hash_by_sequence,
-            ledger_final_missing_batch_blocked_reason,
-        );
+        let trace =
+            novorudp_sequence_lifecycle_trace_diff_v1(NovorudpSequenceLifecycleTraceInputV1 {
+                summary: &pre_batch_pending_summary,
+                repair_final_missing_sequence_start,
+                stages: NovorudpTraceStagesV1 {
+                    candidate_sequences: &ledger_final_missing_candidate_sequences,
+                    payload_available_sequences: &ledger_final_missing_payload_available_sequences,
+                    selected_sequences: &ledger_final_missing_selected_sequences,
+                    raw_txs_pushed_sequences: &ledger_final_missing_raw_txs_pushed_sequences,
+                    actual_batch_sequences: &empty_trace_sequences,
+                    receipt_sequences: &empty_trace_sequences,
+                    canonical_sequences: &empty_trace_sequences,
+                    durable_missing_closed_sequences: &empty_trace_sequences,
+                },
+                tx_hash_by_sequence: &ledger_final_missing_tx_hash_by_sequence,
+                blocked_reason: ledger_final_missing_batch_blocked_reason,
+            });
         let mut report = serde_json::Map::new();
         report.insert(
             "method".to_string(),
@@ -13666,20 +13719,22 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     }
     let post_batch_pending_summary =
         snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
-    let trace = novorudp_sequence_lifecycle_trace_diff_v1(
-        &post_batch_pending_summary,
+    let trace = novorudp_sequence_lifecycle_trace_diff_v1(NovorudpSequenceLifecycleTraceInputV1 {
+        summary: &post_batch_pending_summary,
         repair_final_missing_sequence_start,
-        &ledger_final_missing_candidate_sequences,
-        &ledger_final_missing_payload_available_sequences,
-        &ledger_final_missing_selected_sequences,
-        &ledger_final_missing_raw_txs_pushed_sequences,
-        &ledger_final_missing_selected_sequences,
-        &ledger_final_missing_selected_sequences,
-        &ledger_final_missing_selected_sequences,
-        &ledger_final_missing_selected_sequences,
-        &ledger_final_missing_tx_hash_by_sequence,
-        "",
-    );
+        stages: NovorudpTraceStagesV1 {
+            candidate_sequences: &ledger_final_missing_candidate_sequences,
+            payload_available_sequences: &ledger_final_missing_payload_available_sequences,
+            selected_sequences: &ledger_final_missing_selected_sequences,
+            raw_txs_pushed_sequences: &ledger_final_missing_raw_txs_pushed_sequences,
+            actual_batch_sequences: &ledger_final_missing_selected_sequences,
+            receipt_sequences: &ledger_final_missing_selected_sequences,
+            canonical_sequences: &ledger_final_missing_selected_sequences,
+            durable_missing_closed_sequences: &ledger_final_missing_selected_sequences,
+        },
+        tx_hash_by_sequence: &ledger_final_missing_tx_hash_by_sequence,
+        blocked_reason: "",
+    });
     let mut report = serde_json::Map::new();
     report.insert(
         "method".to_string(),
@@ -14724,14 +14779,16 @@ mod tests {
             "amount": 9
         });
         let canonical_rebuild_commitment = novovm_exec::native_tx_batch_v1_item_commitment(
-            1,
-            "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-            "identity:alice",
-            Some("signer:alice"),
-            1,
-            "transfer",
-            "TransferV1",
-            &parameter_payload,
+            novovm_exec::NativeTxBatchV1ItemCommitmentInputV1 {
+                sequence: 1,
+                tx_hash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                sender_identity: "identity:alice",
+                signer_identity: Some("signer:alice"),
+                nonce: 1,
+                intent_type: "transfer",
+                semantic_operator: "TransferV1",
+                parameter_payload: &parameter_payload,
+            },
         );
         let item = novovm_exec::NovovmAoemNativeTxBatchItemV1 {
             sequence: 1,
@@ -16096,7 +16153,7 @@ mod tests {
                                     &request,
                                 )
                                 .expect("dispatch should persist through rocksdb backend");
-                            assert_eq!(receipt.status, true);
+                            assert!(receipt.status);
                             assert!(
                                 !path.exists(),
                                 "rocksdb backend must not write the legacy json snapshot"
@@ -16140,8 +16197,10 @@ mod tests {
             NOV_NATIVE_EXECUTION_STORE_BACKEND_ROCKSDB_V1,
             || {
                 with_test_native_execution_store_path_v1(|path| {
-                    let mut store = NovNativeExecutionStoreV1::default();
-                    store.last_updated_unix_ms = 1234;
+                    let mut store = NovNativeExecutionStoreV1 {
+                        last_updated_unix_ms: 1234,
+                        ..Default::default()
+                    };
                     store
                         .module_state
                         .account_asset_balances
@@ -16298,8 +16357,10 @@ mod tests {
             NOV_NATIVE_EXECUTION_STORE_BACKEND_ROCKSDB_V1,
             || {
                 with_test_native_execution_store_path_v1(|path| {
-                    let mut store = NovNativeExecutionStoreV1::default();
-                    store.last_updated_unix_ms = 777;
+                    let mut store = NovNativeExecutionStoreV1 {
+                        last_updated_unix_ms: 777,
+                        ..Default::default()
+                    };
                     store.module_state.treasury_reserve_bucket_nov = 123;
                     store.module_state.treasury_settlement_paused = true;
                     store.module_state.treasury_policy_source = "test-policy".to_string();
@@ -16448,8 +16509,10 @@ mod tests {
             NOV_NATIVE_EXECUTION_STORE_BACKEND_DUAL_V1,
             || {
                 with_test_native_execution_store_path_v1(|path| {
-                    let mut store = NovNativeExecutionStoreV1::default();
-                    store.last_updated_unix_ms = 5678;
+                    let mut store = NovNativeExecutionStoreV1 {
+                        last_updated_unix_ms: 5678,
+                        ..Default::default()
+                    };
                     store
                         .module_state
                         .account_asset_balances
@@ -19014,20 +19077,23 @@ mod tests {
         let candidate = test_sequence_set_v1(&[14_112]);
         let payload_available = test_sequence_set_v1(&[14_112]);
         let empty = BTreeSet::<u64>::new();
-        let trace = novorudp_sequence_lifecycle_trace_diff_v1(
-            &summary,
-            Some(14_112),
-            &candidate,
-            &payload_available,
-            &empty,
-            &empty,
-            &empty,
-            &empty,
-            &empty,
-            &empty,
-            &BTreeMap::new(),
-            "payload_available_but_not_selected",
-        );
+        let trace =
+            novorudp_sequence_lifecycle_trace_diff_v1(NovorudpSequenceLifecycleTraceInputV1 {
+                summary: &summary,
+                repair_final_missing_sequence_start: Some(14_112),
+                stages: NovorudpTraceStagesV1 {
+                    candidate_sequences: &candidate,
+                    payload_available_sequences: &payload_available,
+                    selected_sequences: &empty,
+                    raw_txs_pushed_sequences: &empty,
+                    actual_batch_sequences: &empty,
+                    receipt_sequences: &empty,
+                    canonical_sequences: &empty,
+                    durable_missing_closed_sequences: &empty,
+                },
+                tx_hash_by_sequence: &BTreeMap::new(),
+                blocked_reason: "payload_available_but_not_selected",
+            });
 
         assert_eq!(trace["novorudp_trace_enabled"].as_bool(), Some(true));
         assert!(trace["trace_success_sequences_sample"]
@@ -19048,20 +19114,23 @@ mod tests {
         let candidate = test_sequence_set_v1(&[14_112]);
         let payload_available = test_sequence_set_v1(&[14_112]);
         let empty = BTreeSet::<u64>::new();
-        let trace = novorudp_sequence_lifecycle_trace_diff_v1(
-            &summary,
-            Some(14_112),
-            &candidate,
-            &payload_available,
-            &empty,
-            &empty,
-            &empty,
-            &empty,
-            &empty,
-            &empty,
-            &BTreeMap::new(),
-            "payload_available_but_not_selected",
-        );
+        let trace =
+            novorudp_sequence_lifecycle_trace_diff_v1(NovorudpSequenceLifecycleTraceInputV1 {
+                summary: &summary,
+                repair_final_missing_sequence_start: Some(14_112),
+                stages: NovorudpTraceStagesV1 {
+                    candidate_sequences: &candidate,
+                    payload_available_sequences: &payload_available,
+                    selected_sequences: &empty,
+                    raw_txs_pushed_sequences: &empty,
+                    actual_batch_sequences: &empty,
+                    receipt_sequences: &empty,
+                    canonical_sequences: &empty,
+                    durable_missing_closed_sequences: &empty,
+                },
+                tx_hash_by_sequence: &BTreeMap::new(),
+                blocked_reason: "payload_available_but_not_selected",
+            });
 
         assert_eq!(
             trace["trace_first_divergence_stage"].as_str(),
@@ -19084,20 +19153,23 @@ mod tests {
         let payload_available = test_sequence_set_v1(&[14_112]);
         let selected = test_sequence_set_v1(&[14_112]);
         let empty = BTreeSet::<u64>::new();
-        let trace = novorudp_sequence_lifecycle_trace_diff_v1(
-            &summary,
-            Some(14_112),
-            &candidate,
-            &payload_available,
-            &selected,
-            &empty,
-            &empty,
-            &empty,
-            &empty,
-            &empty,
-            &BTreeMap::new(),
-            "selected_but_not_pushed_to_raw_txs",
-        );
+        let trace =
+            novorudp_sequence_lifecycle_trace_diff_v1(NovorudpSequenceLifecycleTraceInputV1 {
+                summary: &summary,
+                repair_final_missing_sequence_start: Some(14_112),
+                stages: NovorudpTraceStagesV1 {
+                    candidate_sequences: &candidate,
+                    payload_available_sequences: &payload_available,
+                    selected_sequences: &selected,
+                    raw_txs_pushed_sequences: &empty,
+                    actual_batch_sequences: &empty,
+                    receipt_sequences: &empty,
+                    canonical_sequences: &empty,
+                    durable_missing_closed_sequences: &empty,
+                },
+                tx_hash_by_sequence: &BTreeMap::new(),
+                blocked_reason: "selected_but_not_pushed_to_raw_txs",
+            });
 
         assert_eq!(
             trace["trace_first_divergence_stage"].as_str(),
@@ -19331,7 +19403,7 @@ mod tests {
                             "novovm-native-aoem-semantic-ledger-mirror/v1"
                         );
                         assert_eq!(last_mirror.execution_kernel, "AOEM");
-                        assert_eq!(last_mirror.algebraic_semantic_entry, true);
+                        assert!(last_mirror.algebraic_semantic_entry);
                         assert_eq!(last_mirror.sequence, 2);
                         assert_eq!(last_mirror.tx_hash, second_receipt.tx_hash);
                         assert_eq!(last_mirror.prev_seal, first_seal);

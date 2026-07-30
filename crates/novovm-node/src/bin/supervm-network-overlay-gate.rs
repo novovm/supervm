@@ -29,6 +29,13 @@ use novovm_network::relay::{
     run_novorudp_overlay_relay_udp_loopback_smoke_v0, NovoRudpRelayUdpLoopbackInput,
 };
 use novovm_network::routing::RoutingSource;
+use rustls::{
+    client::danger::{HandshakeSignatureValid, ServerCertVerified},
+    pki_types::{
+        pem::PemObject, CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime,
+    },
+    DigitallySignedStruct, SignatureScheme,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -957,7 +964,7 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
     let native_reachable = evaluate_transport_adaptive_case_v0(
         "native_novorudp_reachable_selected",
         vec![
-            transport_candidate_v0(
+            transport_candidate_v0((
                 "native-novorudp",
                 "novorudp://relay-a.example.net/dynamic",
                 "native_encrypted_novorudp",
@@ -966,8 +973,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 false,
                 false,
                 "native_mainnet_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "wss-443",
                 "wss://relay-a.example.net:443/novovm",
                 "wss",
@@ -976,14 +983,14 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 false,
                 true,
                 "compatibility_transport",
-            ),
+            )),
         ],
     );
 
     let native_blocked_falls_back_wss = evaluate_transport_adaptive_case_v0(
         "native_blocked_falls_back_to_wss_443",
         vec![
-            transport_candidate_v0(
+            transport_candidate_v0((
                 "native-novorudp",
                 "novorudp://relay-a.example.net/dynamic",
                 "native_encrypted_novorudp",
@@ -992,8 +999,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 false,
                 "native_mainnet_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "wss-443",
                 "wss://relay-a.example.net:443/novovm",
                 "wss",
@@ -1002,14 +1009,14 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 false,
                 true,
                 "compatibility_transport",
-            ),
+            )),
         ],
     );
 
     let tls_visible_path_rotates = evaluate_transport_adaptive_case_v0(
         "tls_visible_path_rotates_to_quic",
         vec![
-            transport_candidate_v0(
+            transport_candidate_v0((
                 "native-novorudp",
                 "novorudp://relay-a.example.net/dynamic",
                 "native_encrypted_novorudp",
@@ -1018,8 +1025,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 false,
                 "native_mainnet_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "wss-443",
                 "wss://relay-a.example.net:443/novovm",
                 "wss",
@@ -1028,8 +1035,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 true,
                 "compatibility_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "quic-443",
                 "quic://relay-b.example.net:443",
                 "quic",
@@ -1038,14 +1045,14 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 false,
                 true,
                 "alternative_443_transport",
-            ),
+            )),
         ],
     );
 
     let http80_last_resort = evaluate_transport_adaptive_case_v0(
         "http80_last_resort_when_443_paths_blocked",
         vec![
-            transport_candidate_v0(
+            transport_candidate_v0((
                 "native-novorudp",
                 "novorudp://relay-a.example.net/dynamic",
                 "native_encrypted_novorudp",
@@ -1054,8 +1061,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 false,
                 "native_mainnet_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "wss-443",
                 "wss://relay-a.example.net:443/novovm",
                 "wss",
@@ -1064,8 +1071,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 true,
                 "compatibility_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "ws-80",
                 "ws://relay-c.example.net:80/novovm",
                 "ws",
@@ -1074,14 +1081,14 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 false,
                 true,
                 "last_resort_compatibility_transport",
-            ),
+            )),
         ],
     );
 
     let all_blocked_queue = evaluate_transport_adaptive_case_v0(
         "all_transports_blocked_queue_fallback",
         vec![
-            transport_candidate_v0(
+            transport_candidate_v0((
                 "native-novorudp",
                 "novorudp://relay-a.example.net/dynamic",
                 "native_encrypted_novorudp",
@@ -1090,8 +1097,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 false,
                 "native_mainnet_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "wss-443",
                 "wss://relay-a.example.net:443/novovm",
                 "wss",
@@ -1100,8 +1107,8 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 true,
                 "compatibility_transport",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "quic-443",
                 "quic://relay-b.example.net:443",
                 "quic",
@@ -1110,7 +1117,7 @@ fn run_native_first_transport_adaptive_matrix_gate() -> Result<()> {
                 true,
                 true,
                 "alternative_443_transport",
-            ),
+            )),
         ],
     );
 
@@ -2525,16 +2532,18 @@ fn run_signed_bootstrap_manifest_matrix_gate() -> Result<()> {
     )?];
     let valid_manifest = sign_bootstrap_manifest_v0(
         &manifest_key,
-        "installer_bundle",
-        seed_relay_records.clone(),
-        seed_rendezvous_records.clone(),
-        19_000,
-        90_000,
-        "bootstrap-manifest-valid-001",
-        false,
-        false,
-        false,
-        candidate_set_policy_limit,
+        BootstrapManifestSigningInputV0 {
+            bootstrap_manifest_source: "installer_bundle",
+            seed_relay_candidates: seed_relay_records.clone(),
+            seed_rendezvous_candidates: seed_rendezvous_records.clone(),
+            issued_at_ms: 19_000,
+            expires_at_ms: 90_000,
+            manifest_id: "bootstrap-manifest-valid-001",
+            full_raw_ip_directory_embedded: false,
+            manifest_requires_single_official_relay: false,
+            manifest_requires_single_official_domain: false,
+            candidate_set_policy_limit,
+        },
     )?;
     let valid_validation = validate_bootstrap_manifest_v0(&valid_manifest, now_ms);
 
@@ -2545,61 +2554,69 @@ fn run_signed_bootstrap_manifest_matrix_gate() -> Result<()> {
 
     let expired_manifest = sign_bootstrap_manifest_v0(
         &manifest_key,
-        "history_cache",
-        seed_relay_records.clone(),
-        seed_rendezvous_records.clone(),
-        1_000,
-        19_000,
-        "bootstrap-manifest-expired-001",
-        false,
-        false,
-        false,
-        candidate_set_policy_limit,
+        BootstrapManifestSigningInputV0 {
+            bootstrap_manifest_source: "history_cache",
+            seed_relay_candidates: seed_relay_records.clone(),
+            seed_rendezvous_candidates: seed_rendezvous_records.clone(),
+            issued_at_ms: 1_000,
+            expires_at_ms: 19_000,
+            manifest_id: "bootstrap-manifest-expired-001",
+            full_raw_ip_directory_embedded: false,
+            manifest_requires_single_official_relay: false,
+            manifest_requires_single_official_domain: false,
+            candidate_set_policy_limit,
+        },
     )?;
     let expired_validation = validate_bootstrap_manifest_v0(&expired_manifest, now_ms);
 
     let raw_directory_manifest = sign_bootstrap_manifest_v0(
         &manifest_key,
-        "official_site",
-        seed_relay_records.clone(),
-        seed_rendezvous_records.clone(),
-        19_000,
-        90_000,
-        "bootstrap-manifest-raw-directory-001",
-        true,
-        false,
-        false,
-        candidate_set_policy_limit,
+        BootstrapManifestSigningInputV0 {
+            bootstrap_manifest_source: "official_site",
+            seed_relay_candidates: seed_relay_records.clone(),
+            seed_rendezvous_candidates: seed_rendezvous_records.clone(),
+            issued_at_ms: 19_000,
+            expires_at_ms: 90_000,
+            manifest_id: "bootstrap-manifest-raw-directory-001",
+            full_raw_ip_directory_embedded: true,
+            manifest_requires_single_official_relay: false,
+            manifest_requires_single_official_domain: false,
+            candidate_set_policy_limit,
+        },
     )?;
     let raw_directory_validation = validate_bootstrap_manifest_v0(&raw_directory_manifest, now_ms);
 
     let single_relay_manifest = sign_bootstrap_manifest_v0(
         &manifest_key,
-        "qr_invite",
-        seed_relay_records.clone(),
-        seed_rendezvous_records.clone(),
-        19_000,
-        90_000,
-        "bootstrap-manifest-single-relay-001",
-        false,
-        true,
-        false,
-        candidate_set_policy_limit,
+        BootstrapManifestSigningInputV0 {
+            bootstrap_manifest_source: "qr_invite",
+            seed_relay_candidates: seed_relay_records.clone(),
+            seed_rendezvous_candidates: seed_rendezvous_records.clone(),
+            issued_at_ms: 19_000,
+            expires_at_ms: 90_000,
+            manifest_id: "bootstrap-manifest-single-relay-001",
+            full_raw_ip_directory_embedded: false,
+            manifest_requires_single_official_relay: true,
+            manifest_requires_single_official_domain: false,
+            candidate_set_policy_limit,
+        },
     )?;
     let single_relay_validation = validate_bootstrap_manifest_v0(&single_relay_manifest, now_ms);
 
     let single_domain_manifest = sign_bootstrap_manifest_v0(
         &manifest_key,
-        "friend_invite",
-        seed_relay_records.clone(),
-        seed_rendezvous_records.clone(),
-        19_000,
-        90_000,
-        "bootstrap-manifest-single-domain-001",
-        false,
-        false,
-        true,
-        candidate_set_policy_limit,
+        BootstrapManifestSigningInputV0 {
+            bootstrap_manifest_source: "friend_invite",
+            seed_relay_candidates: seed_relay_records.clone(),
+            seed_rendezvous_candidates: seed_rendezvous_records.clone(),
+            issued_at_ms: 19_000,
+            expires_at_ms: 90_000,
+            manifest_id: "bootstrap-manifest-single-domain-001",
+            full_raw_ip_directory_embedded: false,
+            manifest_requires_single_official_relay: false,
+            manifest_requires_single_official_domain: true,
+            candidate_set_policy_limit,
+        },
     )?;
     let single_domain_validation = validate_bootstrap_manifest_v0(&single_domain_manifest, now_ms);
 
@@ -3428,17 +3445,17 @@ fn run_nat_punch_prober_gate() -> Result<()> {
         .set_read_timeout(Some(Duration::from_millis(timeout_ms)))
         .context("set nat punch prober read timeout")?;
     let bind_addr_effective = socket.local_addr().context("nat punch prober local addr")?;
-    let report = run_nat_punch_probe_v0(
-        &socket,
-        &punch_target_observed_endpoint,
-        &source_peer_id,
-        &target_peer_id,
+    let report = run_nat_punch_probe_v0(NatPunchProbeInputV0 {
+        socket: &socket,
+        punch_target_observed_endpoint: &punch_target_observed_endpoint,
+        source_peer_id: &source_peer_id,
+        target_peer_id: &target_peer_id,
         advertised_endpoint,
         punch_nonce,
         bind_addr_effective,
         relay_fallback_enabled,
         relay_fallback_endpoint,
-    )?;
+    })?;
     write_json_report(&report_path, &report)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     if report["accepted"].as_bool().unwrap_or(false) {
@@ -6143,23 +6160,22 @@ impl Wss443RelaySessionManagerV0 {
     }
 }
 
-impl rustls::client::ServerCertVerifier for Cut40PinnedCertVerifierV0 {
+impl rustls::client::danger::ServerCertVerifier for Cut40PinnedCertVerifierV0 {
     fn verify_server_cert(
         &self,
-        end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
         _ocsp_response: &[u8],
-        _now: SystemTime,
-    ) -> std::result::Result<rustls::client::ServerCertVerified, rustls::Error> {
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
         if self.trust_mode == "encrypted-untrusted" || self.trust_mode == "insecure-test-only" {
-            return Ok(rustls::client::ServerCertVerified::assertion());
+            return Ok(ServerCertVerified::assertion());
         }
-        let actual = overlay_gate_sha256_hex_v0(&[&end_entity.0]);
+        let actual = overlay_gate_sha256_hex_v0(&[end_entity.as_ref()]);
         match &self.expected_sha256_hex {
             Some(expected) if expected.eq_ignore_ascii_case(&actual) => {
-                Ok(rustls::client::ServerCertVerified::assertion())
+                Ok(ServerCertVerified::assertion())
             }
             Some(expected) => Err(rustls::Error::General(format!(
                 "NOVOVM WSS certificate pin mismatch: expected {expected}, actual {actual}"
@@ -6168,6 +6184,40 @@ impl rustls::client::ServerCertVerifier for Cut40PinnedCertVerifierV0 {
                 "NOVOVM WSS certificate pin missing".into(),
             )),
         }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 
@@ -8280,19 +8330,24 @@ fn build_cut39_tls_configs_v0() -> Result<(Arc<rustls::ServerConfig>, Arc<rustls
         .context("generate cut39 self-signed cert")?;
     let cert_der = cert.serialize_der().context("serialize cut39 cert")?;
     let key_der = cert.serialize_private_key_der();
-    let certs = vec![rustls::Certificate(cert_der.clone())];
-    let server_config = rustls::ServerConfig::builder()
-        .with_safe_defaults()
+    let certs = vec![CertificateDer::from(cert_der.clone())];
+    let server_config = rustls::ServerConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+        .with_safe_default_protocol_versions()
+        .context("select cut39 server TLS protocol versions")?
         .with_no_client_auth()
-        .with_single_cert(certs, rustls::PrivateKey(key_der))
+        .with_single_cert(
+            certs,
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der)),
+        )
         .context("build cut39 server tls config")?;
 
     let mut roots = rustls::RootCertStore::empty();
     roots
-        .add(&rustls::Certificate(cert_der))
+        .add(CertificateDer::from(cert_der))
         .context("trust cut39 self-signed cert")?;
-    let client_config = rustls::ClientConfig::builder()
-        .with_safe_defaults()
+    let client_config = rustls::ClientConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+        .with_safe_default_protocol_versions()
+        .context("select cut39 client TLS protocol versions")?
         .with_root_certificates(roots)
         .with_no_client_auth();
 
@@ -8305,14 +8360,16 @@ fn build_cut40_server_tls_config_v0() -> Result<(Arc<rustls::ServerConfig>, Stri
     if let (Some(cert_path), Some(key_path)) = (cert_path, key_path) {
         let certs = load_cut40_certs_pem_v0(&cert_path)
             .with_context(|| format!("load tls cert path: {cert_path}"))?;
-        let tls_cert_sha256 = overlay_gate_sha256_hex_v0(&[&certs[0].0]);
+        let tls_cert_sha256 = overlay_gate_sha256_hex_v0(&[certs[0].as_ref()]);
         let key = load_cut40_private_key_pem_v0(&key_path)
             .with_context(|| format!("load tls key path: {key_path}"))?;
-        let server_config = rustls::ServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth()
-            .with_single_cert(certs, key)
-            .context("build cut40 server tls config from pem")?;
+        let server_config =
+            rustls::ServerConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+                .with_safe_default_protocol_versions()
+                .context("select cut40 configured server TLS protocol versions")?
+                .with_no_client_auth()
+                .with_single_cert(certs, key)
+                .context("build cut40 server tls config from pem")?;
         return Ok((
             Arc::new(server_config),
             "configured_pem".into(),
@@ -8325,12 +8382,13 @@ fn build_cut40_server_tls_config_v0() -> Result<(Arc<rustls::ServerConfig>, Stri
     let cert_der = cert.serialize_der().context("serialize cut40 cert")?;
     let tls_cert_sha256 = overlay_gate_sha256_hex_v0(&[&cert_der]);
     let key_der = cert.serialize_private_key_der();
-    let server_config = rustls::ServerConfig::builder()
-        .with_safe_defaults()
+    let server_config = rustls::ServerConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+        .with_safe_default_protocol_versions()
+        .context("select cut40 self-signed server TLS protocol versions")?
         .with_no_client_auth()
         .with_single_cert(
-            vec![rustls::Certificate(cert_der)],
-            rustls::PrivateKey(key_der),
+            vec![CertificateDer::from(cert_der)],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der)),
         )
         .context("build cut40 self-signed server tls config")?;
     Ok((
@@ -8349,10 +8407,13 @@ fn build_cut40_client_tls_config_v0() -> Result<Arc<rustls::ClientConfig>> {
             expected_sha256_hex: Some(expected_sha256_hex),
             trust_mode,
         };
-        let client_config = rustls::ClientConfig::builder()
-            .with_safe_defaults()
-            .with_custom_certificate_verifier(Arc::new(verifier))
-            .with_no_client_auth();
+        let client_config =
+            rustls::ClientConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+                .with_safe_default_protocol_versions()
+                .context("select cut40 pinned client TLS protocol versions")?
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(verifier))
+                .with_no_client_auth();
         return Ok(Arc::new(client_config));
     }
     if trust_mode == "encrypted-untrusted" || trust_mode == "insecure-test-only" {
@@ -8360,10 +8421,13 @@ fn build_cut40_client_tls_config_v0() -> Result<Arc<rustls::ClientConfig>> {
             expected_sha256_hex: None,
             trust_mode,
         };
-        let client_config = rustls::ClientConfig::builder()
-            .with_safe_defaults()
-            .with_custom_certificate_verifier(Arc::new(verifier))
-            .with_no_client_auth();
+        let client_config =
+            rustls::ClientConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+                .with_safe_default_protocol_versions()
+                .context("select cut40 node-key client TLS protocol versions")?
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(verifier))
+                .with_no_client_auth();
         return Ok(Arc::new(client_config));
     }
 
@@ -8374,57 +8438,51 @@ fn build_cut40_client_tls_config_v0() -> Result<Arc<rustls::ClientConfig>> {
         for cert in load_cut40_certs_pem_v0(&ca_path)
             .with_context(|| format!("load wss ca cert path: {ca_path}"))?
         {
-            roots.add(&cert).context("add configured wss ca cert")?;
+            roots.add(cert).context("add configured wss ca cert")?;
         }
     } else if trust_mode == "webpki" {
-        for cert in
-            rustls_native_certs::load_native_certs().context("load platform native tls roots")?
-        {
-            let _ = roots.add(&rustls::Certificate(cert.0));
+        let native = rustls_native_certs::load_native_certs();
+        if !native.errors.is_empty() {
+            anyhow::bail!("load platform native tls roots: {:?}", native.errors);
+        }
+        for cert in native.certs {
+            roots.add(cert).context("add platform native tls root")?;
         }
     } else {
         anyhow::bail!("unsupported NOVOVM_OVERLAY_WSS_TLS_TRUST_MODE: {trust_mode}");
     }
-    let client_config = rustls::ClientConfig::builder()
-        .with_safe_defaults()
+    let client_config = rustls::ClientConfig::builder_with_provider(overlay_gate_tls_provider_v0())
+        .with_safe_default_protocol_versions()
+        .context("select cut40 root-store client TLS protocol versions")?
         .with_root_certificates(roots)
         .with_no_client_auth();
     Ok(Arc::new(client_config))
+}
+
+fn overlay_gate_tls_provider_v0() -> Arc<rustls::crypto::CryptoProvider> {
+    Arc::new(rustls::crypto::aws_lc_rs::default_provider())
 }
 
 fn cut40_client_tls_trust_mode_v0() -> String {
     env_string("NOVOVM_OVERLAY_WSS_TLS_TRUST_MODE").unwrap_or_else(|| "encrypted-untrusted".into())
 }
 
-fn load_cut40_certs_pem_v0(path: &str) -> Result<Vec<rustls::Certificate>> {
+fn load_cut40_certs_pem_v0(path: &str) -> Result<Vec<CertificateDer<'static>>> {
     let bytes = fs::read(path).with_context(|| format!("read cert pem: {path}"))?;
-    let mut reader = std::io::BufReader::new(bytes.as_slice());
-    let certs = rustls_pemfile::certs(&mut reader)
-        .context("parse cert pem")?
-        .into_iter()
-        .map(rustls::Certificate)
-        .collect::<Vec<_>>();
+    let certs = CertificateDer::pem_slice_iter(bytes.as_slice())
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("parse cert pem")?;
     if certs.is_empty() {
         anyhow::bail!("no certificates in pem: {path}");
     }
     Ok(certs)
 }
 
-fn load_cut40_private_key_pem_v0(path: &str) -> Result<rustls::PrivateKey> {
+fn load_cut40_private_key_pem_v0(path: &str) -> Result<PrivateKeyDer<'static>> {
     let bytes = fs::read(path).with_context(|| format!("read key pem: {path}"))?;
-    let mut pkcs8_reader = std::io::BufReader::new(bytes.as_slice());
-    let pkcs8_keys = rustls_pemfile::pkcs8_private_keys(&mut pkcs8_reader)
-        .context("parse pkcs8 private key pem")?;
-    if let Some(key) = pkcs8_keys.into_iter().next() {
-        return Ok(rustls::PrivateKey(key));
-    }
-    let mut rsa_reader = std::io::BufReader::new(bytes.as_slice());
-    let rsa_keys =
-        rustls_pemfile::rsa_private_keys(&mut rsa_reader).context("parse rsa private key pem")?;
-    if let Some(key) = rsa_keys.into_iter().next() {
-        return Ok(rustls::PrivateKey(key));
-    }
-    anyhow::bail!("no supported private key in pem: {path}")
+    PrivateKeyDer::from_pem_slice(bytes.as_slice())
+        .context("parse private key pem")
+        .with_context(|| format!("no supported private key in pem: {path}"))
 }
 
 fn parse_cut40_wss_endpoint_v0(endpoint: &str) -> Result<Cut40WssEndpointV0> {
@@ -8482,8 +8540,7 @@ fn cut40_connect_tls_websocket_v0(
         .context("set cut40 client read timeout")?;
     tcp.set_write_timeout(Some(Duration::from_secs(10)))
         .context("set cut40 client write timeout")?;
-    let server_name =
-        rustls::ServerName::try_from(endpoint.host.as_str()).context("cut40 server name")?;
+    let server_name = ServerName::try_from(endpoint.host.clone()).context("cut40 server name")?;
     let client_conn = rustls::ClientConnection::new(client_config, server_name)
         .context("create cut40 tls client")?;
     let mut tls = rustls::StreamOwned::new(client_conn, tcp);
@@ -8546,7 +8603,7 @@ fn cut39_connect_tls_websocket_v0(
         .context("set cut39 client read timeout")?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))
         .context("set cut39 client write timeout")?;
-    let server_name = rustls::ServerName::try_from("localhost").context("cut39 server name")?;
+    let server_name = ServerName::try_from("localhost").context("cut39 server name")?;
     let client_conn = rustls::ClientConnection::new(client_config, server_name)
         .context("create cut39 tls client")?;
     let mut tls = rustls::StreamOwned::new(client_conn, tcp);
@@ -9202,17 +9259,30 @@ fn run_nat_punch_local_fallback_case_v0(case_name: &str) -> Result<serde_json::V
     }))
 }
 
-fn run_nat_punch_probe_v0(
-    socket: &UdpSocket,
-    punch_target_observed_endpoint: &str,
-    source_peer_id: &str,
-    target_peer_id: &str,
+struct NatPunchProbeInputV0<'a> {
+    socket: &'a UdpSocket,
+    punch_target_observed_endpoint: &'a str,
+    source_peer_id: &'a str,
+    target_peer_id: &'a str,
     advertised_endpoint: Option<String>,
     punch_nonce: String,
     bind_addr_effective: SocketAddr,
     relay_fallback_enabled: bool,
     relay_fallback_endpoint: Option<String>,
-) -> Result<serde_json::Value> {
+}
+
+fn run_nat_punch_probe_v0(input: NatPunchProbeInputV0<'_>) -> Result<serde_json::Value> {
+    let NatPunchProbeInputV0 {
+        socket,
+        punch_target_observed_endpoint,
+        source_peer_id,
+        target_peer_id,
+        advertised_endpoint,
+        punch_nonce,
+        bind_addr_effective,
+        relay_fallback_enabled,
+        relay_fallback_endpoint,
+    } = input;
     let payload = NatPunchProbePayloadV0 {
         punch_nonce: punch_nonce.clone(),
         source_peer_id: source_peer_id.to_string(),
@@ -9552,16 +9622,19 @@ fn relay_candidate_v0(
     }
 }
 
-fn transport_candidate_v0(
-    candidate_id: &str,
-    endpoint: &str,
-    transport: &str,
-    port: u16,
-    observed_reachable: bool,
-    fingerprint_blocked_or_high_risk: bool,
-    tls_visible_surface: bool,
-    role: &str,
-) -> TransportCandidateV0 {
+type TransportCandidateInputV0<'a> = (&'a str, &'a str, &'a str, u16, bool, bool, bool, &'a str);
+
+fn transport_candidate_v0(input: TransportCandidateInputV0<'_>) -> TransportCandidateV0 {
+    let (
+        candidate_id,
+        endpoint,
+        transport,
+        port,
+        observed_reachable,
+        fingerprint_blocked_or_high_risk,
+        tls_visible_surface,
+        role,
+    ) = input;
     TransportCandidateV0 {
         candidate_id: candidate_id.to_string(),
         endpoint: endpoint.to_string(),
@@ -10110,7 +10183,7 @@ fn strategy_receipt_input_v0(
         Vec::new()
     };
     let transport_candidates = if direct_reachable {
-        vec![transport_candidate_v0(
+        vec![transport_candidate_v0((
             "native-direct",
             "novorudp://direct/observed",
             "native_encrypted_novorudp",
@@ -10119,10 +10192,10 @@ fn strategy_receipt_input_v0(
             false,
             false,
             "direct_native_path",
-        )]
+        ))]
     } else if relay_available {
         vec![
-            transport_candidate_v0(
+            transport_candidate_v0((
                 "native-relay",
                 "novorudp://relay-a.example.net/dynamic",
                 "native_encrypted_novorudp",
@@ -10131,8 +10204,8 @@ fn strategy_receipt_input_v0(
                 true,
                 false,
                 "native_relay_candidate",
-            ),
-            transport_candidate_v0(
+            )),
+            transport_candidate_v0((
                 "wss-443",
                 "wss://relay-a.example.net:443/novovm",
                 "wss",
@@ -10141,7 +10214,7 @@ fn strategy_receipt_input_v0(
                 false,
                 true,
                 "compatibility_transport",
-            ),
+            )),
         ]
     } else {
         Vec::new()
@@ -10642,16 +10715,18 @@ fn bootstrap_manifest_fixture_v0(
 
     sign_bootstrap_manifest_v0(
         manifest_key,
-        source,
-        seed_relay_candidates,
-        seed_rendezvous_candidates,
-        issued_at_ms,
-        expires_at_ms,
-        &format!("bootstrap-manifest-{id_suffix}-001"),
-        false,
-        false,
-        false,
-        candidate_set_policy_limit,
+        BootstrapManifestSigningInputV0 {
+            bootstrap_manifest_source: source,
+            seed_relay_candidates,
+            seed_rendezvous_candidates,
+            issued_at_ms,
+            expires_at_ms,
+            manifest_id: &format!("bootstrap-manifest-{id_suffix}-001"),
+            full_raw_ip_directory_embedded: false,
+            manifest_requires_single_official_relay: false,
+            manifest_requires_single_official_domain: false,
+            candidate_set_policy_limit,
+        },
     )
 }
 
@@ -10803,19 +10878,35 @@ fn evaluate_bootstrap_source_resolver_case_v0(
     })
 }
 
-fn sign_bootstrap_manifest_v0(
-    signing_key: &SigningKey,
-    bootstrap_manifest_source: &str,
+struct BootstrapManifestSigningInputV0<'a> {
+    bootstrap_manifest_source: &'a str,
     seed_relay_candidates: Vec<PeerSignedRelayEndpointRecordV0>,
     seed_rendezvous_candidates: Vec<PeerSignedRelayEndpointRecordV0>,
     issued_at_ms: u64,
     expires_at_ms: u64,
-    manifest_id: &str,
+    manifest_id: &'a str,
     full_raw_ip_directory_embedded: bool,
     manifest_requires_single_official_relay: bool,
     manifest_requires_single_official_domain: bool,
     candidate_set_policy_limit: usize,
+}
+
+fn sign_bootstrap_manifest_v0(
+    signing_key: &SigningKey,
+    input: BootstrapManifestSigningInputV0<'_>,
 ) -> Result<SignedBootstrapManifestV0> {
+    let BootstrapManifestSigningInputV0 {
+        bootstrap_manifest_source,
+        seed_relay_candidates,
+        seed_rendezvous_candidates,
+        issued_at_ms,
+        expires_at_ms,
+        manifest_id,
+        full_raw_ip_directory_embedded,
+        manifest_requires_single_official_relay,
+        manifest_requires_single_official_domain,
+        candidate_set_policy_limit,
+    } = input;
     let manifest_public_key = overlay_gate_hex_lower_v0(&signing_key.verifying_key().to_bytes());
     let payload = bootstrap_manifest_payload_v0(
         manifest_id.to_string(),
@@ -11700,7 +11791,7 @@ fn overlay_gate_decode_hex_bytes_v0(raw: &str, field: &str) -> Result<Vec<u8>> {
     if normalized.is_empty() {
         anyhow::bail!("{field} is empty");
     }
-    if normalized.len() % 2 != 0 {
+    if !normalized.len().is_multiple_of(2) {
         anyhow::bail!("{field} must be even-length hex");
     }
     if !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {

@@ -23,9 +23,8 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 k256 = { version = "0.13", features = ["ecdsa"] }
 rand = "0.8"
 rcgen = "0.12"
-rustls = { version = "0.21", features = ["dangerous_configuration"] }
-rustls-native-certs = "0.6"
-rustls-pemfile = "1"
+rustls = "0.23.37"
+rustls-native-certs = "0.8.4"
 sha1 = "0.10"
 sha2 = "0.10"
 sha3 = "0.10"
@@ -39,7 +38,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 tiny_http = "0.12"
 rocksdb = { version = "0.22", default-features = false }
 ureq = "2"
-lettre = "0.11"
+lettre = "0.11.22"
 
 [[bin]]
 name = "novovm-node"

@@ -8228,7 +8228,7 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
         }
     }?;
     let remote_status =
-        eth_rlpx_parse_status_payload_v1(remote_status.as_slice()).map_err(|err| {
+        eth_rlpx_parse_status_payload_v1(remote_status.as_slice()).inspect_err(|_err| {
             set_gateway_eth_plugin_session_disconnect_diagnostics(
                 chain_id,
                 endpoint,
@@ -8238,7 +8238,6 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
                 auth_ack_seen_at.elapsed().as_millis() as u64,
                 now_unix_millis() as u64,
             );
-            err
         })?;
     let status_chain_id = remote_status.network_id;
     bump_gateway_eth_plugin_session_stage(

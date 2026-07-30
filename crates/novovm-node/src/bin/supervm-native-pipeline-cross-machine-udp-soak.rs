@@ -1122,17 +1122,32 @@ fn transaction_frame_auth_tag_v1(
     hex_lower(hasher.finalize().as_slice())
 }
 
-fn sign_transaction_frame_auth_v1(
+struct TransactionFrameAuthInputV1<'a> {
     from: NodeId,
     chain_id: u64,
-    tx_hash: &[u8; 32],
+    tx_hash: &'a [u8; 32],
     tx_count: u64,
-    payload: &[u8],
-    frame_kind: &str,
-    run_id: &str,
+    payload: &'a [u8],
+    frame_kind: &'a str,
+    run_id: &'a str,
     sequence: u64,
     copy_index: u64,
+}
+
+fn sign_transaction_frame_auth_v1(
+    input: TransactionFrameAuthInputV1<'_>,
 ) -> Option<EvmNativeTransactionFrameAuthV1> {
+    let TransactionFrameAuthInputV1 {
+        from,
+        chain_id,
+        tx_hash,
+        tx_count,
+        payload,
+        frame_kind,
+        run_id,
+        sequence,
+        copy_index,
+    } = input;
     let key = control_frame_auth_key_v1()?;
     let mut meta = EvmNativeTransactionFrameAuthV1 {
         scheme: "keyed_sha256_v1".to_string(),
@@ -1164,10 +1179,10 @@ fn decode_hex_32_v1(raw: &str) -> Option<[u8; 32]> {
         return None;
     }
     let mut out = [0u8; 32];
-    for index in 0..32 {
+    for (index, slot) in out.iter_mut().enumerate() {
         let start = index * 2;
         let byte = u8::from_str_radix(&text[start..start + 2], 16).ok()?;
-        out[index] = byte;
+        *slot = byte;
     }
     Some(out)
 }
@@ -3981,7 +3996,7 @@ struct SenderFinalAckReconciliationV1 {
     fail_reason: Option<&'static str>,
 }
 
-fn reconcile_sender_final_ack_with_latest_missing_v1(
+struct SenderFinalAckReconciliationInputV1 {
     sender_completed: bool,
     tail_repair_enabled: bool,
     receiver_done_ack_required: bool,
@@ -3990,7 +4005,21 @@ fn reconcile_sender_final_ack_with_latest_missing_v1(
     repair_coverage_gap_count: u64,
     final_ack_received_after_repair: bool,
     fallback_fail_reason: Option<&'static str>,
+}
+
+fn reconcile_sender_final_ack_with_latest_missing_v1(
+    input: SenderFinalAckReconciliationInputV1,
 ) -> SenderFinalAckReconciliationV1 {
+    let SenderFinalAckReconciliationInputV1 {
+        sender_completed,
+        tail_repair_enabled,
+        receiver_done_ack_required,
+        latest_ack_receiver_done,
+        latest_ack_missing_count,
+        repair_coverage_gap_count,
+        final_ack_received_after_repair,
+        fallback_fail_reason,
+    } = input;
     let receiver_done_ack_seen = latest_ack_receiver_done;
     let receiver_done_complete = latest_ack_receiver_done;
     let repair_coverage_gap_blocks_final =
@@ -4393,7 +4422,8 @@ mod novorudp_tests {
         ))
     }
 
-    fn pipeline_liveness_sample(
+    #[derive(Clone, Copy)]
+    struct PipelineLivenessSampleInputV1 {
         elapsed_ms: u64,
         pending: u64,
         child_ticks: u64,
@@ -4404,7 +4434,21 @@ mod novorudp_tests {
         result_ready: u64,
         result_verified: u64,
         closed: u64,
-    ) -> Value {
+    }
+
+    fn pipeline_liveness_sample(input: PipelineLivenessSampleInputV1) -> Value {
+        let PipelineLivenessSampleInputV1 {
+            elapsed_ms,
+            pending,
+            child_ticks,
+            object_ready,
+            batch_ready,
+            batch_received,
+            tx_ingress_calls,
+            result_ready,
+            result_verified,
+            closed,
+        } = input;
         serde_json::json!({
             "elapsed_ms": elapsed_ms,
             "receiver_udp_packet_recv_count": object_ready,
@@ -6081,7 +6125,7 @@ mod novorudp_tests {
             assert_eq!(metrics.mode, "async_flush_plane");
             assert_eq!(metrics.flush_interval_ms, 10);
             assert_eq!(metrics.queue_limit, 8);
-            assert_eq!(metrics.hot_path_blocked, false);
+            assert!(!metrics.hot_path_blocked);
             plane.shutdown_live_worker();
             let _ = fs::remove_file(path);
         });
@@ -6145,7 +6189,7 @@ mod novorudp_tests {
                                             }));
                                         }
                                         let metrics = plane.snapshot_metrics();
-                                        assert_eq!(metrics.hot_path_blocked, false);
+                                        assert!(!metrics.hot_path_blocked);
                                         assert_eq!(metrics.hot_path_block_ms, 0);
                                         assert!(metrics.dropped_live_count > 0);
                                         plane.shutdown_live_worker();
@@ -6252,7 +6296,7 @@ mod novorudp_tests {
                 }));
             }
             let metrics = plane.snapshot_metrics();
-            assert_eq!(metrics.hot_path_blocked, false);
+            assert!(!metrics.hot_path_blocked);
             assert_ne!(
                 metrics.backpressure_reason,
                 "ack_plane_blocked_by_diagnostics"
@@ -6275,7 +6319,7 @@ mod novorudp_tests {
                 }));
             }
             let metrics = plane.snapshot_metrics();
-            assert_eq!(metrics.hot_path_blocked, false);
+            assert!(!metrics.hot_path_blocked);
             assert_ne!(
                 metrics.backpressure_reason,
                 "repair_plane_blocked_by_diagnostics"
@@ -6981,6 +7025,43 @@ mod novorudp_tests {
         }
     }
 
+    fn sender_timeout_input_v1<'a>(
+        chain_id: u64,
+        tx_count: u64,
+        sender_addr: &'a str,
+        receiver_addr: &'a str,
+        tail_repair: TailRepairConfigV1,
+        ack_bind_addr: String,
+        ack_recv_timeout_ms: u64,
+    ) -> RunSenderInputV1<'a> {
+        RunSenderInputV1 {
+            chain_id,
+            tx_count,
+            sender_node: 1,
+            receiver_node: 2,
+            sender_addr,
+            receiver_addr,
+            fault: FaultConfigV1 {
+                enabled: false,
+                loss_bps: 0,
+                duplicate_bps: 0,
+                delay_ms: 0,
+                reorder_bps: 0,
+                seed: 0,
+            },
+            sustained: sender_timeout_sustained_config(tx_count),
+            tail_repair,
+            udp_send_retry: default_udp_send_retry_config(),
+            udp_ack: UdpAckConfigV1 {
+                enabled: true,
+                bind_addr: ack_bind_addr,
+                target_addr: None,
+                recv_timeout_ms: ack_recv_timeout_ms,
+            },
+            novorudp: sender_timeout_novorudp_config(),
+        }
+    }
+
     fn ledger_receipt_progress_summary_for_test() -> Value {
         serde_json::json!({
             "included_canonical_total": 14112,
@@ -7580,8 +7661,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_reports_stage_liveness_counters() {
-        let previous = pipeline_liveness_sample(10_000, 32, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 64, 12, 132, 5, 5, 5, 5, 5, 132);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 32,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 64,
+            child_ticks: 12,
+            object_ready: 132,
+            batch_ready: 5,
+            batch_received: 5,
+            tx_ingress_calls: 5,
+            result_ready: 5,
+            result_verified: 5,
+            closed: 132,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7617,10 +7720,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_detects_pending_drain_stall_when_pending_nonzero() {
-        let previous =
-            pipeline_liveness_sample(10_000, 1_920, 10, 29_400, 920, 920, 920, 920, 920, 29_400);
-        let mut sample =
-            pipeline_liveness_sample(15_000, 1_952, 10, 29_400, 920, 920, 920, 920, 920, 29_400);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 1_920,
+            child_ticks: 10,
+            object_ready: 29_400,
+            batch_ready: 920,
+            batch_received: 920,
+            tx_ingress_calls: 920,
+            result_ready: 920,
+            result_verified: 920,
+            closed: 29_400,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 1_952,
+            child_ticks: 10,
+            object_ready: 29_400,
+            batch_ready: 920,
+            batch_received: 920,
+            tx_ingress_calls: 920,
+            result_ready: 920,
+            result_verified: 920,
+            closed: 29_400,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(sample["pipeline_pending_drain_stall"].as_bool(), Some(true));
@@ -7637,8 +7760,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_reports_assembler_to_runtime_handoff_stall() {
-        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 4, 4, 4, 4, 100);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 64,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 11,
+            object_ready: 132,
+            batch_ready: 5,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7653,8 +7798,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_reports_runtime_worker_submit_stall() {
-        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 5, 4, 4, 4, 100);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 64,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 11,
+            object_ready: 132,
+            batch_ready: 5,
+            batch_received: 5,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7669,8 +7836,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_reports_result_drain_stall() {
-        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 5, 5, 4, 4, 100);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 64,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 11,
+            object_ready: 132,
+            batch_ready: 5,
+            batch_received: 5,
+            tx_ingress_calls: 5,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
         sample["receiver_pending_selected_count"] =
             previous["receiver_pending_selected_count"].clone();
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
@@ -7687,8 +7876,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_reports_finality_worker_backpressure() {
-        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 5, 5, 5, 4, 100);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 64,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 11,
+            object_ready: 132,
+            batch_ready: 5,
+            batch_received: 5,
+            tx_ingress_calls: 5,
+            result_ready: 5,
+            result_verified: 4,
+            closed: 100,
+        });
         sample["receiver_pending_selected_count"] =
             previous["receiver_pending_selected_count"].clone();
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
@@ -7705,8 +7916,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_does_not_report_tail_repair_when_pending_nonzero() {
-        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 10, 100, 4, 4, 4, 4, 4, 100);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 64,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7721,8 +7954,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_pending_nonzero_disallows_waiting_for_sender() {
-        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 10, 100, 4, 4, 4, 4, 4, 100);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 64,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
         sample["waiting_for_sender"] = serde_json::json!(true);
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
@@ -7738,8 +7993,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_reports_pending_drain_callsite_idle_while_pending() {
-        let previous = pipeline_liveness_sample(10_000, 128, 10, 200, 8, 8, 8, 8, 8, 200);
-        let mut sample = pipeline_liveness_sample(15_000, 128, 10, 200, 8, 8, 8, 8, 8, 200);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 128,
+            child_ticks: 10,
+            object_ready: 200,
+            batch_ready: 8,
+            batch_received: 8,
+            tx_ingress_calls: 8,
+            result_ready: 8,
+            result_verified: 8,
+            closed: 200,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 128,
+            child_ticks: 10,
+            object_ready: 200,
+            batch_ready: 8,
+            batch_received: 8,
+            tx_ingress_calls: 8,
+            result_ready: 8,
+            result_verified: 8,
+            closed: 200,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(sample["receiver_child_tick_delta"].as_u64(), Some(0));
@@ -7753,10 +8030,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_pending_nonzero_with_close_progress_is_active_drain() {
-        let previous =
-            pipeline_liveness_sample(10_000, 584, 100, 17_224, 100, 100, 100, 100, 100, 17_224);
-        let mut sample =
-            pipeline_liveness_sample(15_000, 584, 100, 17_224, 100, 100, 100, 100, 100, 17_352);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 584,
+            child_ticks: 100,
+            object_ready: 17_224,
+            batch_ready: 100,
+            batch_received: 100,
+            tx_ingress_calls: 100,
+            result_ready: 100,
+            result_verified: 100,
+            closed: 17_224,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 584,
+            child_ticks: 100,
+            object_ready: 17_224,
+            batch_ready: 100,
+            batch_received: 100,
+            tx_ingress_calls: 100,
+            result_ready: 100,
+            result_verified: 100,
+            closed: 17_352,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7775,10 +8072,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_fails_closed_when_pending_nonzero_and_drain_attempt_stops() {
-        let previous =
-            pipeline_liveness_sample(10_000, 2_640, 453, 2_672, 453, 453, 453, 453, 453, 27_936);
-        let mut sample =
-            pipeline_liveness_sample(16_819, 2_640, 453, 2_672, 453, 453, 453, 453, 453, 27_936);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 2_640,
+            child_ticks: 453,
+            object_ready: 2_672,
+            batch_ready: 453,
+            batch_received: 453,
+            tx_ingress_calls: 453,
+            result_ready: 453,
+            result_verified: 453,
+            closed: 27_936,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 16_819,
+            pending: 2_640,
+            child_ticks: 453,
+            object_ready: 2_672,
+            batch_ready: 453,
+            batch_received: 453,
+            tx_ingress_calls: 453,
+            result_ready: 453,
+            result_verified: 453,
+            closed: 27_936,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7791,8 +8108,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_drain_callsite_handoff_to_runtime_worker_smoke() {
-        let previous = pipeline_liveness_sample(10_000, 128, 10, 200, 8, 8, 8, 8, 8, 200);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 232, 9, 9, 9, 9, 9, 232);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 128,
+            child_ticks: 10,
+            object_ready: 200,
+            batch_ready: 8,
+            batch_received: 8,
+            tx_ingress_calls: 8,
+            result_ready: 8,
+            result_verified: 8,
+            closed: 200,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 11,
+            object_ready: 232,
+            batch_ready: 9,
+            batch_received: 9,
+            tx_ingress_calls: 9,
+            result_ready: 9,
+            result_verified: 9,
+            closed: 232,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7808,8 +8147,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_pending_drain_recovers_after_idle_window() {
-        let previous = pipeline_liveness_sample(10_000, 128, 10, 200, 8, 8, 8, 8, 8, 200);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 232, 9, 9, 9, 9, 9, 232);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 128,
+            child_ticks: 10,
+            object_ready: 200,
+            batch_ready: 8,
+            batch_received: 8,
+            tx_ingress_calls: 8,
+            result_ready: 8,
+            result_verified: 8,
+            closed: 200,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 11,
+            object_ready: 232,
+            batch_ready: 9,
+            batch_received: 9,
+            tx_ingress_calls: 9,
+            result_ready: 9,
+            result_verified: 9,
+            closed: 232,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -10290,32 +10651,15 @@ mod novorudp_tests {
                 }
             });
 
-            let report = run_sender(
+            let report = run_sender(sender_timeout_input_v1(
                 chain_id,
                 tx_count,
-                1,
-                2,
                 sender_addr.as_str(),
                 receiver_addr.as_str(),
-                FaultConfigV1 {
-                    enabled: false,
-                    loss_bps: 0,
-                    duplicate_bps: 0,
-                    delay_ms: 0,
-                    reorder_bps: 0,
-                    seed: 0,
-                },
-                sender_timeout_sustained_config(tx_count),
                 sender_timeout_tail_repair_config(),
-                default_udp_send_retry_config(),
-                UdpAckConfigV1 {
-                    enabled: true,
-                    bind_addr: ack_bind_addr,
-                    target_addr: None,
-                    recv_timeout_ms: 10,
-                },
-                sender_timeout_novorudp_config(),
-            )
+                ack_bind_addr,
+                10,
+            ))
             .expect("sender must return a fail report instead of hanging");
             let _ = ack_thread.join();
 
@@ -10328,12 +10672,11 @@ mod novorudp_tests {
             assert_eq!(report["receiver_done_ack_received"].as_bool(), Some(false));
             assert_eq!(report["report_written"].as_bool(), Some(true));
             assert_eq!(report["sender_hard_timeout_reached"].as_bool(), Some(false));
-            assert_eq!(
+            assert!(
                 report["repair_progress_observed_count"]
                     .as_u64()
                     .unwrap_or_default()
-                    > 0,
-                true
+                    > 0
             );
             assert!(
                 report["tail_repair"]["tail_repair_udp_ack_received_count"]
@@ -10357,32 +10700,15 @@ mod novorudp_tests {
             let receiver_addr = reserve_udp_addr().expect("receiver addr");
             let ack_bind_addr = reserve_udp_addr().expect("ack bind addr");
 
-            let report = run_sender(
+            let report = run_sender(sender_timeout_input_v1(
                 chain_id,
                 tx_count,
-                1,
-                2,
                 sender_addr.as_str(),
                 receiver_addr.as_str(),
-                FaultConfigV1 {
-                    enabled: false,
-                    loss_bps: 0,
-                    duplicate_bps: 0,
-                    delay_ms: 0,
-                    reorder_bps: 0,
-                    seed: 0,
-                },
-                sender_timeout_sustained_config(tx_count),
                 sender_timeout_tail_repair_config(),
-                default_udp_send_retry_config(),
-                UdpAckConfigV1 {
-                    enabled: true,
-                    bind_addr: ack_bind_addr,
-                    target_addr: None,
-                    recv_timeout_ms: 10,
-                },
-                sender_timeout_novorudp_config(),
-            )
+                ack_bind_addr,
+                10,
+            ))
             .expect("sender must return a no-ack fail report instead of hanging");
 
             assert_eq!(report["accepted"].as_bool(), Some(false));
@@ -10414,7 +10740,7 @@ mod novorudp_tests {
                     Some("20"),
                     || {
                         with_sender_hard_timeout_env(200, || {
-                            let chain_id = 92_002_1;
+                            let chain_id = 920_021;
                             let tx_count = 4;
                             let sender_addr = reserve_udp_addr().expect("sender addr");
                             let receiver_addr = reserve_udp_addr().expect("receiver addr");
@@ -10423,32 +10749,15 @@ mod novorudp_tests {
                             tail_repair.enabled = false;
                             tail_repair.rounds = 0;
 
-                            let report = run_sender(
+                            let report = run_sender(sender_timeout_input_v1(
                                 chain_id,
                                 tx_count,
-                                1,
-                                2,
                                 sender_addr.as_str(),
                                 receiver_addr.as_str(),
-                                FaultConfigV1 {
-                                    enabled: false,
-                                    loss_bps: 0,
-                                    duplicate_bps: 0,
-                                    delay_ms: 0,
-                                    reorder_bps: 0,
-                                    seed: 0,
-                                },
-                                sender_timeout_sustained_config(tx_count),
                                 tail_repair,
-                                default_udp_send_retry_config(),
-                                UdpAckConfigV1 {
-                                    enabled: true,
-                                    bind_addr: ack_bind_addr,
-                                    target_addr: None,
-                                    recv_timeout_ms: 0,
-                                },
-                                sender_timeout_novorudp_config(),
-                            )
+                                ack_bind_addr,
+                                0,
+                            ))
                             .expect("sender must wait progress deadline and return fail report");
 
                             assert_eq!(report["accepted"].as_bool(), Some(false));
@@ -10501,32 +10810,15 @@ mod novorudp_tests {
                                             let ack_bind_addr =
                                                 reserve_udp_addr().expect("ack bind addr");
 
-                                            let report = run_sender(
+                                            let report = run_sender(sender_timeout_input_v1(
                                                 chain_id,
                                                 tx_count,
-                                                1,
-                                                2,
                                                 sender_addr.as_str(),
                                                 receiver_addr.as_str(),
-                                                FaultConfigV1 {
-                                                    enabled: false,
-                                                    loss_bps: 0,
-                                                    duplicate_bps: 0,
-                                                    delay_ms: 0,
-                                                    reorder_bps: 0,
-                                                    seed: 0,
-                                                },
-                                                sender_timeout_sustained_config(tx_count),
                                                 sender_timeout_tail_repair_config(),
-                                                default_udp_send_retry_config(),
-                                                UdpAckConfigV1 {
-                                                    enabled: true,
-                                                    bind_addr: ack_bind_addr.clone(),
-                                                    target_addr: None,
-                                                    recv_timeout_ms: 0,
-                                                },
-                                                sender_timeout_novorudp_config(),
-                                            )
+                                                ack_bind_addr.clone(),
+                                                0,
+                                            ))
                                             .expect(
                                                 "sender must return a full async ACK fail report",
                                             );
@@ -10632,32 +10924,15 @@ mod novorudp_tests {
                                                 );
                                             });
 
-                                            let report = run_sender(
+                                            let report = run_sender(sender_timeout_input_v1(
                                                 chain_id,
                                                 tx_count,
-                                                1,
-                                                2,
                                                 sender_addr.as_str(),
                                                 receiver_addr.as_str(),
-                                                FaultConfigV1 {
-                                                    enabled: false,
-                                                    loss_bps: 0,
-                                                    duplicate_bps: 0,
-                                                    delay_ms: 0,
-                                                    reorder_bps: 0,
-                                                    seed: 0,
-                                                },
-                                                sender_timeout_sustained_config(tx_count),
                                                 sender_timeout_tail_repair_config(),
-                                                default_udp_send_retry_config(),
-                                                UdpAckConfigV1 {
-                                                    enabled: true,
-                                                    bind_addr: ack_bind_addr,
-                                                    target_addr: None,
-                                                    recv_timeout_ms: 0,
-                                                },
-                                                sender_timeout_novorudp_config(),
-                                            )
+                                                ack_bind_addr,
+                                                0,
+                                            ))
                                             .expect(
                                                 "sender must return final done deadline report",
                                             );
@@ -10734,32 +11009,15 @@ mod novorudp_tests {
                                             .send_to(ack.to_string().as_bytes(), ack_target_addr);
                                     });
 
-                                    let report = run_sender(
+                                    let report = run_sender(sender_timeout_input_v1(
                                         chain_id,
                                         tx_count,
-                                        1,
-                                        2,
                                         sender_addr.as_str(),
                                         receiver_addr.as_str(),
-                                        FaultConfigV1 {
-                                            enabled: false,
-                                            loss_bps: 0,
-                                            duplicate_bps: 0,
-                                            delay_ms: 0,
-                                            reorder_bps: 0,
-                                            seed: 0,
-                                        },
-                                        sender_timeout_sustained_config(tx_count),
                                         sender_timeout_tail_repair_config(),
-                                        default_udp_send_retry_config(),
-                                        UdpAckConfigV1 {
-                                            enabled: true,
-                                            bind_addr: ack_bind_addr,
-                                            target_addr: None,
-                                            recv_timeout_ms: 0,
-                                        },
-                                        sender_timeout_novorudp_config(),
-                                    )
+                                        ack_bind_addr,
+                                        0,
+                                    ))
                                     .expect("sender must accept receiver_done ack");
                                     let _ = ack_thread.join();
 
@@ -10849,14 +11107,16 @@ mod novorudp_tests {
     #[test]
     fn full_async_sender_final_ack_overrides_stale_missing_sample() {
         let result = reconcile_sender_final_ack_with_latest_missing_v1(
-            true,
-            true,
-            true,
-            true,
-            Some(0),
-            1708,
-            true,
-            Some("receiver_repair_incomplete"),
+            SenderFinalAckReconciliationInputV1 {
+                sender_completed: true,
+                tail_repair_enabled: true,
+                receiver_done_ack_required: true,
+                latest_ack_receiver_done: true,
+                latest_ack_missing_count: Some(0),
+                repair_coverage_gap_count: 1708,
+                final_ack_received_after_repair: true,
+                fallback_fail_reason: Some("receiver_repair_incomplete"),
+            },
         );
 
         assert!(result.accepted);
@@ -10873,14 +11133,16 @@ mod novorudp_tests {
     #[test]
     fn receiver_done_ack_latches_caught_up_even_with_stale_missing_gap() {
         let result = reconcile_sender_final_ack_with_latest_missing_v1(
-            true,
-            true,
-            true,
-            true,
-            Some(81),
-            1966,
-            false,
-            Some("ack_caught_up_latch_missing"),
+            SenderFinalAckReconciliationInputV1 {
+                sender_completed: true,
+                tail_repair_enabled: true,
+                receiver_done_ack_required: true,
+                latest_ack_receiver_done: true,
+                latest_ack_missing_count: Some(81),
+                repair_coverage_gap_count: 1966,
+                final_ack_received_after_repair: false,
+                fallback_fail_reason: Some("ack_caught_up_latch_missing"),
+            },
         );
 
         assert!(result.accepted);
@@ -10897,14 +11159,16 @@ mod novorudp_tests {
     #[test]
     fn full_async_repair_coverage_gap_blocks_when_receiver_done_missing() {
         let result = reconcile_sender_final_ack_with_latest_missing_v1(
-            true,
-            true,
-            true,
-            false,
-            Some(1708),
-            1708,
-            false,
-            Some("receiver_repair_incomplete"),
+            SenderFinalAckReconciliationInputV1 {
+                sender_completed: true,
+                tail_repair_enabled: true,
+                receiver_done_ack_required: true,
+                latest_ack_receiver_done: false,
+                latest_ack_missing_count: Some(1708),
+                repair_coverage_gap_count: 1708,
+                final_ack_received_after_repair: false,
+                fallback_fail_reason: Some("receiver_repair_incomplete"),
+            },
         );
 
         assert!(!result.accepted);
@@ -10947,14 +11211,16 @@ mod novorudp_tests {
     #[test]
     fn full_async_sender_requires_receiver_done_ack_even_without_tail_repair() {
         let result = reconcile_sender_final_ack_with_latest_missing_v1(
-            true,
-            false,
-            true,
-            false,
-            None,
-            0,
-            false,
-            Some("receiver_repair_no_ack"),
+            SenderFinalAckReconciliationInputV1 {
+                sender_completed: true,
+                tail_repair_enabled: false,
+                receiver_done_ack_required: true,
+                latest_ack_receiver_done: false,
+                latest_ack_missing_count: None,
+                repair_coverage_gap_count: 0,
+                final_ack_received_after_repair: false,
+                fallback_fail_reason: Some("receiver_repair_no_ack"),
+            },
         );
 
         assert!(!result.accepted);
@@ -10967,7 +11233,16 @@ mod novorudp_tests {
     #[test]
     fn legacy_sender_can_complete_without_receiver_done_ack_when_not_required() {
         let result = reconcile_sender_final_ack_with_latest_missing_v1(
-            true, false, false, false, None, 0, false, None,
+            SenderFinalAckReconciliationInputV1 {
+                sender_completed: true,
+                tail_repair_enabled: false,
+                receiver_done_ack_required: false,
+                latest_ack_receiver_done: false,
+                latest_ack_missing_count: None,
+                repair_coverage_gap_count: 0,
+                final_ack_received_after_repair: false,
+                fallback_fail_reason: None,
+            },
         );
 
         assert!(result.accepted);
@@ -11640,18 +11915,33 @@ fn aoem_runtime_worker_pipeline_u64_env_v1(name: &str, default: u64) -> u64 {
     u64_env(name, default).unwrap_or(default).max(1)
 }
 
-fn spawn_receiver_node(
-    node_bin: &Path,
+#[derive(Clone, Copy)]
+struct ReceiverNodeInputV1<'a> {
+    node_bin: &'a Path,
     chain_id: u64,
     receiver_node: u64,
-    listen_addr: &str,
-    store_path: &Path,
+    listen_addr: &'a str,
+    store_path: &'a Path,
     expected_tx_count: u64,
     max_ticks: u64,
     tick_interval_ms: u64,
     batch_budget: u64,
     recv_budget: u64,
-) -> Result<Child> {
+}
+
+fn spawn_receiver_node(input: ReceiverNodeInputV1<'_>) -> Result<Child> {
+    let ReceiverNodeInputV1 {
+        node_bin,
+        chain_id,
+        receiver_node,
+        listen_addr,
+        store_path,
+        expected_tx_count,
+        max_ticks,
+        tick_interval_ms,
+        batch_budget,
+        recv_budget,
+    } = input;
     let mut cmd = Command::new(node_bin);
     let pipeline_enabled = aoem_runtime_worker_pipeline_enabled_env_v1();
     let worker_tick_interval_ms = if pipeline_enabled {
@@ -11934,20 +12224,8 @@ fn parse_summary_ref(output: &Output, label: &str) -> Result<Value> {
     })
 }
 
-fn run_receiver_node(
-    node_bin: &Path,
-    chain_id: u64,
-    receiver_node: u64,
-    listen_addr: &str,
-    store_path: &Path,
-    expected_tx_count: u64,
-    max_ticks: u64,
-    tick_interval_ms: u64,
-    batch_budget: u64,
-    recv_budget: u64,
-) -> Result<Value> {
-    let diagnostics = receiver_diagnostics_config()?;
-    let mut child = spawn_receiver_node(
+fn run_receiver_node(input: ReceiverNodeInputV1<'_>) -> Result<Value> {
+    let ReceiverNodeInputV1 {
         node_bin,
         chain_id,
         receiver_node,
@@ -11958,7 +12236,20 @@ fn run_receiver_node(
         tick_interval_ms,
         batch_budget,
         recv_budget,
-    )?;
+    } = input;
+    let diagnostics = receiver_diagnostics_config()?;
+    let mut child = spawn_receiver_node(ReceiverNodeInputV1 {
+        node_bin,
+        chain_id,
+        receiver_node,
+        listen_addr,
+        store_path,
+        expected_tx_count,
+        max_ticks,
+        tick_interval_ms,
+        batch_budget,
+        recv_budget,
+    })?;
     if !diagnostics.enabled {
         return parse_summary(
             child
@@ -12063,20 +12354,20 @@ fn run_receiver_node(
                         reason.as_str(),
                         &state,
                     )?;
-                    write_receiver_exit_report(
+                    write_receiver_exit_report(ReceiverExitReportInputV1 {
                         child_pid,
-                        Some(&output),
-                        stdout_path.as_path(),
-                        stderr_path.as_path(),
-                        diagnostics.report_path.as_path(),
+                        output: Some(&output),
+                        stdout_path: stdout_path.as_path(),
+                        stderr_path: stderr_path.as_path(),
+                        diagnostics_path: diagnostics.report_path.as_path(),
                         expected_tx_count,
-                        None,
-                        &state,
-                        reason.as_str(),
-                        false,
-                        true,
-                        false,
-                    )?;
+                        summary: None,
+                        state: &state,
+                        fail_reason: reason.as_str(),
+                        final_report_written: false,
+                        diagnostics_report_written: true,
+                        child_was_killed: false,
+                    })?;
                     return Err(err);
                 }
             };
@@ -12172,20 +12463,20 @@ fn run_receiver_node(
                 expected_tx_count,
                 &mut diagnostics_plane,
             )?;
-            write_receiver_exit_report(
+            write_receiver_exit_report(ReceiverExitReportInputV1 {
                 child_pid,
-                Some(&output),
-                stdout_path.as_path(),
-                stderr_path.as_path(),
-                diagnostics.report_path.as_path(),
+                output: Some(&output),
+                stdout_path: stdout_path.as_path(),
+                stderr_path: stderr_path.as_path(),
+                diagnostics_path: diagnostics.report_path.as_path(),
                 expected_tx_count,
-                Some(&summary),
-                &state,
-                "normal_pass",
-                true,
-                true,
-                false,
-            )?;
+                summary: Some(&summary),
+                state: &state,
+                fail_reason: "normal_pass",
+                final_report_written: true,
+                diagnostics_report_written: true,
+                child_was_killed: false,
+            })?;
             return Ok(summary);
         }
 
@@ -12637,20 +12928,20 @@ fn run_receiver_node(
                         expected_tx_count,
                         &mut diagnostics_plane,
                     )?;
-                    write_receiver_exit_report(
+                    write_receiver_exit_report(ReceiverExitReportInputV1 {
                         child_pid,
-                        Some(&output),
-                        stdout_path.as_path(),
-                        stderr_path.as_path(),
-                        diagnostics.report_path.as_path(),
+                        output: Some(&output),
+                        stdout_path: stdout_path.as_path(),
+                        stderr_path: stderr_path.as_path(),
+                        diagnostics_path: diagnostics.report_path.as_path(),
                         expected_tx_count,
-                        Some(&summary),
-                        &state,
-                        "completed_live_summary",
-                        true,
-                        true,
-                        true,
-                    )?;
+                        summary: Some(&summary),
+                        state: &state,
+                        fail_reason: "completed_live_summary",
+                        final_report_written: true,
+                        diagnostics_report_written: true,
+                        child_was_killed: true,
+                    })?;
                     return Ok(summary);
                 }
             }
@@ -12680,20 +12971,20 @@ fn run_receiver_node(
                     reason.as_str(),
                     &state,
                 )?;
-                write_receiver_exit_report(
+                write_receiver_exit_report(ReceiverExitReportInputV1 {
                     child_pid,
-                    Some(&output),
-                    stdout_path.as_path(),
-                    stderr_path.as_path(),
-                    diagnostics.report_path.as_path(),
+                    output: Some(&output),
+                    stdout_path: stdout_path.as_path(),
+                    stderr_path: stderr_path.as_path(),
+                    diagnostics_path: diagnostics.report_path.as_path(),
                     expected_tx_count,
-                    None,
-                    &state,
-                    reason.as_str(),
-                    false,
-                    true,
-                    true,
-                )?;
+                    summary: None,
+                    state: &state,
+                    fail_reason: reason.as_str(),
+                    final_report_written: false,
+                    diagnostics_report_written: true,
+                    child_was_killed: true,
+                })?;
                 bail!("cross-machine receiver diagnostics failed: {reason}");
             }
             emit_diagnostics_report(
@@ -13634,20 +13925,36 @@ fn output_stderr_tail(output: Option<&Output>, max_chars: usize) -> Option<Strin
     })
 }
 
-fn write_receiver_exit_report(
+struct ReceiverExitReportInputV1<'a> {
     child_pid: u32,
-    output: Option<&Output>,
-    stdout_path: &Path,
-    stderr_path: &Path,
-    diagnostics_path: &Path,
+    output: Option<&'a Output>,
+    stdout_path: &'a Path,
+    stderr_path: &'a Path,
+    diagnostics_path: &'a Path,
     expected_tx_count: u64,
-    summary: Option<&Value>,
-    state: &ReceiverDiagnosticsStateV1,
-    fail_reason: &str,
+    summary: Option<&'a Value>,
+    state: &'a ReceiverDiagnosticsStateV1,
+    fail_reason: &'a str,
     final_report_written: bool,
     diagnostics_report_written: bool,
     child_was_killed: bool,
-) -> Result<()> {
+}
+
+fn write_receiver_exit_report(input: ReceiverExitReportInputV1<'_>) -> Result<()> {
+    let ReceiverExitReportInputV1 {
+        child_pid,
+        output,
+        stdout_path,
+        stderr_path,
+        diagnostics_path,
+        expected_tx_count,
+        summary,
+        state,
+        fail_reason,
+        final_report_written,
+        diagnostics_report_written,
+        child_was_killed,
+    } = input;
     let last_sample = state.samples.last();
     let stable_progress_total = last_sample
         .and_then(|sample| sample.get("stable_progress_total"))
@@ -15809,7 +16116,7 @@ fn receiver_summary_consistency_reasons_v1(
     reasons
 }
 
-fn receiver_drain_attribution_stage_v1(
+struct ReceiverDrainAttributionInputV1 {
     network_received_total: u64,
     ingress_submitted_total: u64,
     pending_last: u64,
@@ -15819,7 +16126,20 @@ fn receiver_drain_attribution_stage_v1(
     aoem: u64,
     canonical: u64,
     ledger_completed: u64,
-) -> &'static str {
+}
+
+fn receiver_drain_attribution_stage_v1(input: ReceiverDrainAttributionInputV1) -> &'static str {
+    let ReceiverDrainAttributionInputV1 {
+        network_received_total,
+        ingress_submitted_total,
+        pending_last,
+        ticks,
+        queue_admitted_total,
+        nonempty_aoem_batch_ticks,
+        aoem,
+        canonical,
+        ledger_completed,
+    } = input;
     if network_received_total == 0 && ingress_submitted_total == 0 {
         "waiting_for_udp"
     } else if pending_last > 0 && ticks == 0 {
@@ -16001,9 +16321,9 @@ fn annotate_receiver_ingress_drain_delta_v1(sample: &mut Value, previous: Option
         && ledger_close_delta == 0
     {
         "proof_close_ledger_projection_stall"
-    } else if pipeline_stage_liveness_stalled && pending_selected_delta == 0 {
-        "pending_drain_callsite_stall"
-    } else if pending_last > 0 && all_pipeline_stage_deltas_zero && canonical_delta == 0 {
+    } else if (pipeline_stage_liveness_stalled && pending_selected_delta == 0)
+        || (pending_last > 0 && all_pipeline_stage_deltas_zero && canonical_delta == 0)
+    {
         "pending_drain_callsite_stall"
     } else {
         "none"
@@ -16552,17 +16872,18 @@ fn diagnostics_summary_sample(
     let summary_consistency_reasons =
         receiver_summary_consistency_reasons_v1(aoem, canonical, ledger_completed);
     let summary_consistency_violation_count = summary_consistency_reasons.len() as u64;
-    let receiver_drain_attribution_stage = receiver_drain_attribution_stage_v1(
-        network_received_total,
-        ingress_submitted_total,
-        pending_last,
-        ticks,
-        queue_admitted_total,
-        nonempty_aoem_batch_ticks,
-        aoem,
-        canonical,
-        ledger_completed,
-    );
+    let receiver_drain_attribution_stage =
+        receiver_drain_attribution_stage_v1(ReceiverDrainAttributionInputV1 {
+            network_received_total,
+            ingress_submitted_total,
+            pending_last,
+            ticks,
+            queue_admitted_total,
+            nonempty_aoem_batch_ticks,
+            aoem,
+            canonical,
+            ledger_completed,
+        });
     let mut out = serde_json::json!({
         "elapsed_ms": started_at.elapsed().as_millis() as u64,
         "received_unique_total": summary_u64(summary, "ingress_total_last"),
@@ -17792,18 +18113,32 @@ fn emit_diagnostics_report(
     }
 }
 
-fn send_scheduled_batch(
+struct SendScheduledBatchInputV1<'a> {
     chain_id: u64,
     sender_node: u64,
     receiver_node: u64,
-    sender_addr: &str,
-    receiver_addr: &str,
-    txs: &[NativeFixtureTxV1],
+    sender_addr: &'a str,
+    receiver_addr: &'a str,
+    txs: &'a [NativeFixtureTxV1],
     delay_ms: u64,
     retry: UdpSendRetryConfigV1,
-    frame_kind: &str,
-    run_id: &str,
-) -> Result<SendScheduleStatsV1> {
+    frame_kind: &'a str,
+    run_id: &'a str,
+}
+
+fn send_scheduled_batch(input: SendScheduledBatchInputV1<'_>) -> Result<SendScheduleStatsV1> {
+    let SendScheduledBatchInputV1 {
+        chain_id,
+        sender_node,
+        receiver_node,
+        sender_addr,
+        receiver_addr,
+        txs,
+        delay_ms,
+        retry,
+        frame_kind,
+        run_id,
+    } = input;
     let sender = UdpTransport::bind_for_chain(NodeId(sender_node), sender_addr, chain_id)
         .with_context(|| format!("bind cross-machine sender UDP failed: {sender_addr}"))?;
     sender
@@ -17885,17 +18220,17 @@ fn send_scheduled_batch(
             tx_hash: tx.tx_hash,
             tx_count: tx.copy_index.saturating_add(1).max(1),
             payload: tx.payload.clone(),
-            transport_auth: sign_transaction_frame_auth_v1(
-                NodeId(sender_node),
+            transport_auth: sign_transaction_frame_auth_v1(TransactionFrameAuthInputV1 {
+                from: NodeId(sender_node),
                 chain_id,
-                &tx.tx_hash,
-                tx.copy_index.saturating_add(1).max(1),
-                tx.payload.as_slice(),
+                tx_hash: &tx.tx_hash,
+                tx_count: tx.copy_index.saturating_add(1).max(1),
+                payload: tx.payload.as_slice(),
                 frame_kind,
                 run_id,
-                tx.index,
-                tx.copy_index,
-            ),
+                sequence: tx.index,
+                copy_index: tx.copy_index,
+            }),
         });
         let encoded_len = protocol_encode(&msg)
             .map(|encoded| encoded.len().try_into().unwrap_or(u64::MAX))
@@ -17951,7 +18286,7 @@ fn send_scheduled_batch(
                     }
                     if sender_repair_pacing_chunk_gap_ms > 0
                         && sender_repair_pacing_chunk_size > 0
-                        && sent_packets % sender_repair_pacing_chunk_size == 0
+                        && sent_packets.is_multiple_of(sender_repair_pacing_chunk_size)
                     {
                         sender_repair_pacing_chunk_count =
                             sender_repair_pacing_chunk_count.saturating_add(1);
@@ -18112,20 +18447,36 @@ fn sender_udp_bytes_per_second_estimate_v1(
     Some(bytes_total.saturating_mul(1_000) / elapsed_ms)
 }
 
-fn send_repair_payloads_paced(
+struct SendRepairPayloadsInputV1<'a> {
     chain_id: u64,
     sender_node: u64,
     receiver_node: u64,
-    sender_addr: &str,
-    receiver_addr: &str,
-    txs: &[NativeFixtureTxV1],
+    sender_addr: &'a str,
+    receiver_addr: &'a str,
+    txs: &'a [NativeFixtureTxV1],
     repair_round: u64,
     tail_repair: TailRepairConfigV1,
     packet_copies_override: Option<u64>,
     batch_size_override: Option<u64>,
     batch_pause_ms_override: Option<u64>,
     retry: UdpSendRetryConfigV1,
-) -> Result<SendScheduleStatsV1> {
+}
+
+fn send_repair_payloads_paced(input: SendRepairPayloadsInputV1<'_>) -> Result<SendScheduleStatsV1> {
+    let SendRepairPayloadsInputV1 {
+        chain_id,
+        sender_node,
+        receiver_node,
+        sender_addr,
+        receiver_addr,
+        txs,
+        repair_round,
+        tail_repair,
+        packet_copies_override,
+        batch_size_override,
+        batch_pause_ms_override,
+        retry,
+    } = input;
     let copies = packet_copies_override
         .unwrap_or(tail_repair.packet_copies)
         .max(1);
@@ -18144,20 +18495,21 @@ fn send_repair_payloads_paced(
                 tx.copy_index = copy_index;
                 tx.dropped = false;
             }
-            let stats = send_scheduled_batch(
+            let run_id = transaction_frame_run_id_v1(&format!(
+                "{chain_id}:{sender_node}:{receiver_node}:repair"
+            ));
+            let stats = send_scheduled_batch(SendScheduledBatchInputV1 {
                 chain_id,
                 sender_node,
                 receiver_node,
                 sender_addr,
                 receiver_addr,
-                chunk_txs.as_slice(),
-                0,
+                txs: chunk_txs.as_slice(),
+                delay_ms: 0,
                 retry,
-                "repair",
-                &transaction_frame_run_id_v1(&format!(
-                    "{chain_id}:{sender_node}:{receiver_node}:repair"
-                )),
-            )?;
+                frame_kind: "repair",
+                run_id: &run_id,
+            })?;
             merge_send_stats(&mut out, stats);
             if out.send_failed_count > 0 {
                 return Ok(out);
@@ -18700,20 +19052,36 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
     )
 }
 
-fn run_sender(
+struct RunSenderInputV1<'a> {
     chain_id: u64,
     tx_count: u64,
     sender_node: u64,
     receiver_node: u64,
-    sender_addr: &str,
-    receiver_addr: &str,
+    sender_addr: &'a str,
+    receiver_addr: &'a str,
     fault: FaultConfigV1,
     sustained: SustainedConfigV1,
     tail_repair: TailRepairConfigV1,
     udp_send_retry: UdpSendRetryConfigV1,
     udp_ack: UdpAckConfigV1,
     novorudp: NovoRudpConfigV1,
-) -> Result<Value> {
+}
+
+fn run_sender(input: RunSenderInputV1<'_>) -> Result<Value> {
+    let RunSenderInputV1 {
+        chain_id,
+        tx_count,
+        sender_node,
+        receiver_node,
+        sender_addr,
+        receiver_addr,
+        fault,
+        sustained,
+        tail_repair,
+        udp_send_retry,
+        udp_ack,
+        novorudp,
+    } = input;
     let network_profile = NetworkProfileV1::from_env("sender");
     let sender_ack_bind_requested_addr = udp_ack.bind_addr.clone();
     let sender_ack_advertised_addr = first_string_env_nonempty(&[
@@ -19831,20 +20199,21 @@ fn run_sender(
         let round_tx_count = remaining.min(tx_per_round);
         let txs = build_native_payloads_from_index(chain_id, sent_unique_target, round_tx_count)?;
         let scheduled = apply_fault_schedule(txs.as_slice(), fault);
-        let round_stats = send_scheduled_batch(
+        let run_id = transaction_frame_run_id_v1(&format!(
+            "{chain_id}:{sender_node}:{receiver_node}:{tx_count}"
+        ));
+        let round_stats = send_scheduled_batch(SendScheduledBatchInputV1 {
             chain_id,
             sender_node,
             receiver_node,
             sender_addr,
             receiver_addr,
-            scheduled.as_slice(),
-            fault.delay_ms,
-            udp_send_retry,
-            "primary",
-            &transaction_frame_run_id_v1(&format!(
-                "{chain_id}:{sender_node}:{receiver_node}:{tx_count}"
-            )),
-        )?;
+            txs: scheduled.as_slice(),
+            delay_ms: fault.delay_ms,
+            retry: udp_send_retry,
+            frame_kind: "primary",
+            run_id: &run_id,
+        })?;
         sent_unique_target = sent_unique_target.saturating_add(round_tx_count);
         merge_send_stats(&mut stats, round_stats);
         drain_primary_sender_ack!();
@@ -21036,42 +21405,42 @@ fn run_sender(
                 }
                 continue;
             }
-            let round_stats = send_repair_payloads_paced(
+            let round_stats = send_repair_payloads_paced(SendRepairPayloadsInputV1 {
                 chain_id,
                 sender_node,
                 receiver_node,
                 sender_addr,
                 receiver_addr,
-                txs.as_slice(),
+                txs: txs.as_slice(),
                 repair_round,
-                if novorudp.enabled {
+                tail_repair: if novorudp.enabled {
                     repair_send_config
                 } else {
                     tail_repair
                 },
-                tail_gap_this_round.map(|_| {
+                packet_copies_override: tail_gap_this_round.map(|_| {
                     if novorudp.enabled {
                         novorudp.tail_window_packet_copies
                     } else {
                         tail_repair.tail_packet_copies
                     }
                 }),
-                tail_gap_this_round.map(|_| {
+                batch_size_override: tail_gap_this_round.map(|_| {
                     if novorudp.enabled {
                         novorudp.tail_window_batch_size
                     } else {
                         tail_repair.batch_size
                     }
                 }),
-                tail_gap_this_round.map(|_| {
+                batch_pause_ms_override: tail_gap_this_round.map(|_| {
                     if novorudp.enabled {
                         novorudp.tail_window_batch_pause_ms
                     } else {
                         tail_repair.tail_batch_pause_ms
                     }
                 }),
-                udp_send_retry,
-            )?;
+                retry: udp_send_retry,
+            })?;
             let round_packet_sent_count = round_stats.sent_packets;
             if tail_gap_sent_count_this_round > 0 {
                 tail_gap_repair_packet_count = tail_gap_repair_packet_count.saturating_add(
@@ -21788,20 +22157,21 @@ fn run_sender(
                             } else {
                                 tail_repair
                             };
-                            let round_stats = send_repair_payloads_paced(
-                                chain_id,
-                                sender_node,
-                                receiver_node,
-                                sender_addr,
-                                receiver_addr,
-                                txs.as_slice(),
-                                repair_rounds_used,
-                                continuation_config,
-                                None,
-                                None,
-                                None,
-                                udp_send_retry,
-                            )?;
+                            let round_stats =
+                                send_repair_payloads_paced(SendRepairPayloadsInputV1 {
+                                    chain_id,
+                                    sender_node,
+                                    receiver_node,
+                                    sender_addr,
+                                    receiver_addr,
+                                    txs: txs.as_slice(),
+                                    repair_round: repair_rounds_used,
+                                    tail_repair: continuation_config,
+                                    packet_copies_override: None,
+                                    batch_size_override: None,
+                                    batch_pause_ms_override: None,
+                                    retry: udp_send_retry,
+                                })?;
                             merge_send_stats(&mut repair_stats, round_stats);
                             repair_rounds_used = repair_rounds_used.saturating_add(1);
                             sender_post_primary_repair_last_at = Some(Instant::now());
@@ -22147,16 +22517,17 @@ fn run_sender(
     } else {
         Some("receiver_repair_incomplete")
     };
-    let sender_final_ack_reconciliation = reconcile_sender_final_ack_with_latest_missing_v1(
-        sender_completed,
-        tail_repair.enabled,
-        tail_repair.enabled || full_async_runtime_engine,
-        latest_ack_receiver_done,
-        latest_ack_missing_count,
-        repair_coverage_gap_count,
-        final_ack_received_after_repair,
-        fallback_fail_reason,
-    );
+    let sender_final_ack_reconciliation =
+        reconcile_sender_final_ack_with_latest_missing_v1(SenderFinalAckReconciliationInputV1 {
+            sender_completed,
+            tail_repair_enabled: tail_repair.enabled,
+            receiver_done_ack_required: tail_repair.enabled || full_async_runtime_engine,
+            latest_ack_receiver_done,
+            latest_ack_missing_count,
+            repair_coverage_gap_count,
+            final_ack_received_after_repair,
+            fallback_fail_reason,
+        });
     let accepted = sender_final_ack_reconciliation.accepted;
     let fail_reason = sender_final_ack_reconciliation.fail_reason;
     let sender_ack_final_sample_is_null =
@@ -22181,7 +22552,7 @@ fn run_sender(
     let ack_plane_last_recv_ms = ack_plane_final_snapshot
         .as_ref()
         .and_then(|state| state.last_recv_elapsed_ms)
-        .or_else(|| {
+        .or({
             if primary_ack_last_consumed_elapsed_ms > 0 {
                 Some(primary_ack_last_consumed_elapsed_ms)
             } else {
@@ -23928,31 +24299,46 @@ fn run_sender(
     Ok(compact_sender_report_for_report(report))
 }
 
-fn run_receiver(
+struct RunReceiverInputV1<'a> {
     chain_id: u64,
     tx_count: u64,
     receiver_node: u64,
-    listen_addr: &str,
-    node_bin: &Path,
-    store_path: &Path,
+    listen_addr: &'a str,
+    node_bin: &'a Path,
+    store_path: &'a Path,
     max_ticks: u64,
     tick_interval_ms: u64,
     batch_budget: u64,
     recv_budget: u64,
     sustained: SustainedConfigV1,
-) -> Result<Value> {
-    let mut receiver_summary = run_receiver_node(
+}
+
+fn run_receiver(input: RunReceiverInputV1<'_>) -> Result<Value> {
+    let RunReceiverInputV1 {
+        chain_id,
+        tx_count,
+        receiver_node,
+        listen_addr,
+        node_bin,
+        store_path,
+        max_ticks,
+        tick_interval_ms,
+        batch_budget,
+        recv_budget,
+        sustained,
+    } = input;
+    let mut receiver_summary = run_receiver_node(ReceiverNodeInputV1 {
         node_bin,
         chain_id,
         receiver_node,
         listen_addr,
         store_path,
-        tx_count,
+        expected_tx_count: tx_count,
         max_ticks,
         tick_interval_ms,
         batch_budget,
         recv_budget,
-    )?;
+    })?;
     annotate_receiver_aoem_gate_trace_v1(&mut receiver_summary);
     annotate_host_recovery_store_boundary_v1(&mut receiver_summary, store_path);
     let recovery_probe = get_host_recovery_store_recovery_probe_v1(store_path)?;
@@ -24012,13 +24398,13 @@ fn run_receiver(
     }))
 }
 
-fn run_local_smoke(
+struct RunLocalSmokeInputV1<'a> {
     chain_id: u64,
     tx_count: u64,
     sender_node: u64,
     receiver_node: u64,
-    node_bin: &Path,
-    store_path: &Path,
+    node_bin: &'a Path,
+    store_path: &'a Path,
     max_ticks: u64,
     tick_interval_ms: u64,
     batch_budget: u64,
@@ -24028,7 +24414,26 @@ fn run_local_smoke(
     sustained: SustainedConfigV1,
     tail_repair: TailRepairConfigV1,
     novorudp: NovoRudpConfigV1,
-) -> Result<Value> {
+}
+
+fn run_local_smoke(input: RunLocalSmokeInputV1<'_>) -> Result<Value> {
+    let RunLocalSmokeInputV1 {
+        chain_id,
+        tx_count,
+        sender_node,
+        receiver_node,
+        node_bin,
+        store_path,
+        max_ticks,
+        tick_interval_ms,
+        batch_budget,
+        recv_budget,
+        startup_wait_ms,
+        fault,
+        sustained,
+        tail_repair,
+        novorudp,
+    } = input;
     let sender_addr = reserve_udp_addr()?;
     let receiver_addr = reserve_udp_addr()?;
     let local_ack_addr = if novorudp.enabled {
@@ -24042,18 +24447,18 @@ fn run_local_smoke(
         std::env::set_var("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED", "1");
         std::env::set_var("NOVOVM_NATIVE_PIPELINE_ACK_TARGET_ADDR", ack_addr);
     }
-    let child = spawn_receiver_node(
+    let child = spawn_receiver_node(ReceiverNodeInputV1 {
         node_bin,
         chain_id,
         receiver_node,
-        receiver_addr.as_str(),
+        listen_addr: receiver_addr.as_str(),
         store_path,
-        tx_count,
+        expected_tx_count: tx_count,
         max_ticks,
         tick_interval_ms,
         batch_budget,
         recv_budget,
-    )?;
+    })?;
     match previous_ack_enabled {
         Some(value) => std::env::set_var("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED", value),
         None => std::env::remove_var("NOVOVM_NATIVE_PIPELINE_UDP_ACK_ENABLED"),
@@ -24072,23 +24477,23 @@ fn run_local_smoke(
             recv_timeout_ms: 1000,
         })
         .unwrap_or_else(default_udp_ack_config);
-    let sender_report = run_sender(
+    let sender_report = run_sender(RunSenderInputV1 {
         chain_id,
         tx_count,
         sender_node,
         receiver_node,
-        sender_addr.as_str(),
-        receiver_addr.as_str(),
-        FaultConfigV1 {
+        sender_addr: sender_addr.as_str(),
+        receiver_addr: receiver_addr.as_str(),
+        fault: FaultConfigV1 {
             delay_ms: if fault.enabled { fault.delay_ms } else { 1 },
             ..fault
         },
         sustained,
         tail_repair,
-        default_udp_send_retry_config(),
+        udp_send_retry: default_udp_send_retry_config(),
         udp_ack,
         novorudp,
-    )?;
+    })?;
     let mut receiver_summary = parse_summary(
         child
             .wait_with_output()
@@ -24271,28 +24676,28 @@ fn run_memory_bisect_variant(
     let store_for_thread = store.clone();
     let receiver_addr_for_thread = receiver_addr.clone();
     let handle = std::thread::spawn(move || {
-        run_receiver_node(
-            node_bin.as_path(),
+        run_receiver_node(ReceiverNodeInputV1 {
+            node_bin: node_bin.as_path(),
             chain_id,
             receiver_node,
-            receiver_addr_for_thread.as_str(),
-            store_for_thread.as_path(),
-            tx_count,
-            div_ceil_u64(tx_count, batch_budget).saturating_add(180),
+            listen_addr: receiver_addr_for_thread.as_str(),
+            store_path: store_for_thread.as_path(),
+            expected_tx_count: tx_count,
+            max_ticks: div_ceil_u64(tx_count, batch_budget).saturating_add(180),
             tick_interval_ms,
             batch_budget,
             recv_budget,
-        )
+        })
     });
     std::thread::sleep(Duration::from_millis(startup_wait_ms));
-    let sender_result = run_sender(
+    let sender_result = run_sender(RunSenderInputV1 {
         chain_id,
         tx_count,
         sender_node,
         receiver_node,
-        sender_addr.as_str(),
-        receiver_addr.as_str(),
-        FaultConfigV1 {
+        sender_addr: sender_addr.as_str(),
+        receiver_addr: receiver_addr.as_str(),
+        fault: FaultConfigV1 {
             enabled: false,
             loss_bps: 0,
             duplicate_bps: 0,
@@ -24300,13 +24705,13 @@ fn run_memory_bisect_variant(
             reorder_bps: 0,
             seed: 0,
         },
-        SustainedConfigV1 {
+        sustained: SustainedConfigV1 {
             enabled: false,
             duration_seconds: 0,
             tx_per_round: tx_count,
             round_interval_ms: 0,
         },
-        TailRepairConfigV1 {
+        tail_repair: TailRepairConfigV1 {
             enabled: true,
             rounds: 1,
             interval_ms: 200,
@@ -24320,9 +24725,9 @@ fn run_memory_bisect_variant(
             tail_batch_pause_ms: 0,
             round_pause_ms: 200,
         },
-        default_udp_send_retry_config(),
-        default_udp_ack_config(),
-        NovoRudpConfigV1 {
+        udp_send_retry: default_udp_send_retry_config(),
+        udp_ack: default_udp_ack_config(),
+        novorudp: NovoRudpConfigV1 {
             enabled: false,
             window_size: 64,
             repair_windows_per_ack: 8,
@@ -24341,7 +24746,7 @@ fn run_memory_bisect_variant(
             ack_progress_interval_ms: 250,
             no_progress_backoff: true,
         },
-    );
+    });
     let receiver_result = match handle.join() {
         Ok(result) => result,
         Err(_) => Err(anyhow::anyhow!("memory bisect receiver thread panicked")),
@@ -24809,19 +25214,19 @@ fn main() -> Result<()> {
                 sender_ack_advertised.as_deref().unwrap_or("<missing>"),
                 signoff_contract.same_host_two_process_smoke_detected,
             );
-            run_receiver(
+            run_receiver(RunReceiverInputV1 {
                 chain_id,
                 tx_count,
                 receiver_node,
-                listen_addr.as_str(),
-                node_bin.as_path(),
-                store.as_path(),
+                listen_addr: listen_addr.as_str(),
+                node_bin: node_bin.as_path(),
+                store_path: store.as_path(),
                 max_ticks,
                 tick_interval_ms,
                 batch_budget,
                 recv_budget,
                 sustained,
-            )?
+            })?
         }
         "sender" => {
             let receiver_addr = first_string_env_nonempty(&[
@@ -24863,28 +25268,28 @@ fn main() -> Result<()> {
                 receiver_addr,
                 signoff_contract.same_host_two_process_smoke_detected,
             );
-            run_sender(
+            run_sender(RunSenderInputV1 {
                 chain_id,
                 tx_count,
                 sender_node,
                 receiver_node,
-                sender_addr.as_str(),
-                receiver_addr.as_str(),
+                sender_addr: sender_addr.as_str(),
+                receiver_addr: receiver_addr.as_str(),
                 fault,
                 sustained,
                 tail_repair,
                 udp_send_retry,
                 udp_ack,
                 novorudp,
-            )?
+            })?
         }
-        "local-smoke" | "local_smoke" => run_local_smoke(
+        "local-smoke" | "local_smoke" => run_local_smoke(RunLocalSmokeInputV1 {
             chain_id,
             tx_count,
             sender_node,
             receiver_node,
-            node_bin.as_path(),
-            store.as_path(),
+            node_bin: node_bin.as_path(),
+            store_path: store.as_path(),
             max_ticks,
             tick_interval_ms,
             batch_budget,
@@ -24894,7 +25299,7 @@ fn main() -> Result<()> {
             sustained,
             tail_repair,
             novorudp,
-        )?,
+        })?,
         other => bail!("unknown NOVOVM_NATIVE_PIPELINE_ROLE: {other}"),
     };
     write_report(path.as_path(), &report)?;

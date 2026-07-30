@@ -35,7 +35,9 @@ pub struct ProductPeerRuntimeConfigV1 {
     #[serde(default)]
     pub expected_source_peer_id: Option<String>,
     #[serde(default = "default_frame_count_v1")]
-    pub frame_count: u64,
+    pub expected_frame_count: u64,
+    #[serde(default)]
+    pub payload_paths: Vec<PathBuf>,
     pub report_path: PathBuf,
 }
 
@@ -76,9 +78,18 @@ pub fn load_product_peer_runtime_config_v1(
 pub fn run_product_peer_runtime_v1(
     config: ProductPeerRuntimeConfigV1,
 ) -> Result<ProductPeerRuntimeReportV1> {
-    if config.frame_count == 0 {
-        bail!("frame_count must be positive");
-    }
+    let sender_payloads = match &config.role {
+        ProductPeerRoleV1::Sender => load_sender_payloads_v1(&config.payload_paths)?,
+        ProductPeerRoleV1::Receiver => {
+            if config.expected_frame_count == 0 {
+                bail!("receiver expected_frame_count must be positive");
+            }
+            if !config.payload_paths.is_empty() {
+                bail!("receiver must not configure payload_paths");
+            }
+            Vec::new()
+        }
+    };
     let identity = load_ed25519_key_v1(&config.identity_key_path)?;
     let local_peer_id = peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
     let mut relay = ProductRelayClientV1::connect(&identity, &config.relay)?;
@@ -89,6 +100,7 @@ pub fn run_product_peer_runtime_v1(
             &identity,
             &local_peer_id,
             &config,
+            sender_payloads,
             relay_peer_id,
         )?,
         ProductPeerRoleV1::Receiver => run_receiver_v1(
@@ -113,6 +125,7 @@ fn run_sender_v1(
     identity: &SigningKey,
     local_peer_id: &str,
     config: &ProductPeerRuntimeConfigV1,
+    payloads: Vec<Vec<u8>>,
     relay_peer_id: String,
 ) -> Result<ProductPeerRuntimeReportV1> {
     let target_peer_id = config
@@ -139,15 +152,16 @@ fn run_sender_v1(
     };
     let mut replay = HandshakeReplayCacheV1::default();
     let mut channel = initiator.complete(&response, now_ms_v1(), &mut replay)?;
-    for sequence in 0..config.frame_count {
+    let frame_count = payloads.len() as u64;
+    for (sequence, payload) in payloads.into_iter().enumerate() {
         let frame = NovoRudpTransportFrameV0::new(
             NovoRudpTransportFrameKindV0::Data,
             [0x56; 16],
             1,
             2,
-            sequence,
+            sequence as u64,
             3,
-            format!("novovm-product-peer-frame-{sequence}").into_bytes(),
+            payload,
         );
         relay.send_envelope(channel.seal_novorudp_frame(&frame)?)?;
     }
@@ -156,7 +170,7 @@ fn run_sender_v1(
         local_peer_id,
         Some(target_peer_id.into()),
         relay_peer_id,
-        config.frame_count,
+        frame_count,
         0,
         true,
     ))
@@ -204,7 +218,7 @@ fn run_receiver_v1(
         RelayPeerHandshakeV1::Response(response),
     )?;
     let mut received = 0u64;
-    while received < config.frame_count {
+    while received < config.expected_frame_count {
         match relay.recv_event()? {
             ProductRelayClientEventV1::Delivery(delivery) => {
                 channel.open_novorudp_frame(&delivery.envelope)?;
@@ -276,6 +290,22 @@ fn load_ed25519_key_v1(path: &Path) -> Result<SigningKey> {
     Ok(SigningKey::from_bytes(&bytes))
 }
 
+fn load_sender_payloads_v1(paths: &[PathBuf]) -> Result<Vec<Vec<u8>>> {
+    if paths.is_empty() {
+        bail!("sender requires one or more payload_paths");
+    }
+    let mut payloads = Vec::with_capacity(paths.len());
+    for path in paths {
+        let payload = fs::read(path)
+            .with_context(|| format!("read sender opaque payload: {}", path.display()))?;
+        if payload.is_empty() {
+            bail!("sender payload must not be empty: {}", path.display());
+        }
+        payloads.push(payload);
+    }
+    Ok(payloads)
+}
+
 fn now_ms_v1() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -284,4 +314,24 @@ fn now_ms_v1() -> u64 {
 }
 fn default_frame_count_v1() -> u64 {
     4
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sender_requires_nonempty_operator_supplied_payloads() {
+        assert!(load_sender_payloads_v1(&[]).is_err());
+
+        let root = std::env::temp_dir().join(format!("novovm-peer-payload-{}", now_ms_v1()));
+        fs::create_dir_all(&root).unwrap();
+        let payload_path = root.join("payload.bin");
+        fs::write(&payload_path, [0x7b, 0x22, 0x76, 0x22]).unwrap();
+        assert_eq!(
+            load_sender_payloads_v1(&[payload_path]).unwrap(),
+            vec![vec![0x7b, 0x22, 0x76, 0x22]]
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }

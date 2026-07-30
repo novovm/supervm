@@ -57,7 +57,7 @@ fn run_sender() -> Result<()> {
         bytes_sent = bytes_sent.saturating_add(payload.len() as u64);
         if pacing_chunk > 0
             && pacing_gap_ms > 0
-            && send_call_count % pacing_chunk == 0
+            && send_call_count.is_multiple_of(pacing_chunk)
             && sequence + 1 < packet_count
         {
             let sleep_start = Instant::now();

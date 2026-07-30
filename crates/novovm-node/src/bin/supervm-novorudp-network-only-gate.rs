@@ -1618,7 +1618,7 @@ fn send_primary_lane_v0(
         lane_sent_count = lane_sent_count.saturating_add(1);
         if data_pacing_chunk_size > 0
             && data_pacing_chunk_gap_ms > 0
-            && lane_sent_count % data_pacing_chunk_size == 0
+            && lane_sent_count.is_multiple_of(data_pacing_chunk_size)
             && sequence.saturating_add(lane_count as u64) < tx_count
         {
             stats.data_pacing_sleep_count = stats.data_pacing_sleep_count.saturating_add(1);
