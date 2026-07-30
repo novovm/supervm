@@ -7025,6 +7025,43 @@ mod novorudp_tests {
         }
     }
 
+    fn sender_timeout_input_v1<'a>(
+        chain_id: u64,
+        tx_count: u64,
+        sender_addr: &'a str,
+        receiver_addr: &'a str,
+        tail_repair: TailRepairConfigV1,
+        ack_bind_addr: String,
+        ack_recv_timeout_ms: u64,
+    ) -> RunSenderInputV1<'a> {
+        RunSenderInputV1 {
+            chain_id,
+            tx_count,
+            sender_node: 1,
+            receiver_node: 2,
+            sender_addr,
+            receiver_addr,
+            fault: FaultConfigV1 {
+                enabled: false,
+                loss_bps: 0,
+                duplicate_bps: 0,
+                delay_ms: 0,
+                reorder_bps: 0,
+                seed: 0,
+            },
+            sustained: sender_timeout_sustained_config(tx_count),
+            tail_repair,
+            udp_send_retry: default_udp_send_retry_config(),
+            udp_ack: UdpAckConfigV1 {
+                enabled: true,
+                bind_addr: ack_bind_addr,
+                target_addr: None,
+                recv_timeout_ms: ack_recv_timeout_ms,
+            },
+            novorudp: sender_timeout_novorudp_config(),
+        }
+    }
+
     fn ledger_receipt_progress_summary_for_test() -> Value {
         serde_json::json!({
             "included_canonical_total": 14112,
@@ -10614,32 +10651,15 @@ mod novorudp_tests {
                 }
             });
 
-            let report = run_sender(
+            let report = run_sender(sender_timeout_input_v1(
                 chain_id,
                 tx_count,
-                1,
-                2,
                 sender_addr.as_str(),
                 receiver_addr.as_str(),
-                FaultConfigV1 {
-                    enabled: false,
-                    loss_bps: 0,
-                    duplicate_bps: 0,
-                    delay_ms: 0,
-                    reorder_bps: 0,
-                    seed: 0,
-                },
-                sender_timeout_sustained_config(tx_count),
                 sender_timeout_tail_repair_config(),
-                default_udp_send_retry_config(),
-                UdpAckConfigV1 {
-                    enabled: true,
-                    bind_addr: ack_bind_addr,
-                    target_addr: None,
-                    recv_timeout_ms: 10,
-                },
-                sender_timeout_novorudp_config(),
-            )
+                ack_bind_addr,
+                10,
+            ))
             .expect("sender must return a fail report instead of hanging");
             let _ = ack_thread.join();
 
@@ -10680,32 +10700,15 @@ mod novorudp_tests {
             let receiver_addr = reserve_udp_addr().expect("receiver addr");
             let ack_bind_addr = reserve_udp_addr().expect("ack bind addr");
 
-            let report = run_sender(
+            let report = run_sender(sender_timeout_input_v1(
                 chain_id,
                 tx_count,
-                1,
-                2,
                 sender_addr.as_str(),
                 receiver_addr.as_str(),
-                FaultConfigV1 {
-                    enabled: false,
-                    loss_bps: 0,
-                    duplicate_bps: 0,
-                    delay_ms: 0,
-                    reorder_bps: 0,
-                    seed: 0,
-                },
-                sender_timeout_sustained_config(tx_count),
                 sender_timeout_tail_repair_config(),
-                default_udp_send_retry_config(),
-                UdpAckConfigV1 {
-                    enabled: true,
-                    bind_addr: ack_bind_addr,
-                    target_addr: None,
-                    recv_timeout_ms: 10,
-                },
-                sender_timeout_novorudp_config(),
-            )
+                ack_bind_addr,
+                10,
+            ))
             .expect("sender must return a no-ack fail report instead of hanging");
 
             assert_eq!(report["accepted"].as_bool(), Some(false));
@@ -10746,32 +10749,15 @@ mod novorudp_tests {
                             tail_repair.enabled = false;
                             tail_repair.rounds = 0;
 
-                            let report = run_sender(
+                            let report = run_sender(sender_timeout_input_v1(
                                 chain_id,
                                 tx_count,
-                                1,
-                                2,
                                 sender_addr.as_str(),
                                 receiver_addr.as_str(),
-                                FaultConfigV1 {
-                                    enabled: false,
-                                    loss_bps: 0,
-                                    duplicate_bps: 0,
-                                    delay_ms: 0,
-                                    reorder_bps: 0,
-                                    seed: 0,
-                                },
-                                sender_timeout_sustained_config(tx_count),
                                 tail_repair,
-                                default_udp_send_retry_config(),
-                                UdpAckConfigV1 {
-                                    enabled: true,
-                                    bind_addr: ack_bind_addr,
-                                    target_addr: None,
-                                    recv_timeout_ms: 0,
-                                },
-                                sender_timeout_novorudp_config(),
-                            )
+                                ack_bind_addr,
+                                0,
+                            ))
                             .expect("sender must wait progress deadline and return fail report");
 
                             assert_eq!(report["accepted"].as_bool(), Some(false));
@@ -10824,32 +10810,15 @@ mod novorudp_tests {
                                             let ack_bind_addr =
                                                 reserve_udp_addr().expect("ack bind addr");
 
-                                            let report = run_sender(
+                                            let report = run_sender(sender_timeout_input_v1(
                                                 chain_id,
                                                 tx_count,
-                                                1,
-                                                2,
                                                 sender_addr.as_str(),
                                                 receiver_addr.as_str(),
-                                                FaultConfigV1 {
-                                                    enabled: false,
-                                                    loss_bps: 0,
-                                                    duplicate_bps: 0,
-                                                    delay_ms: 0,
-                                                    reorder_bps: 0,
-                                                    seed: 0,
-                                                },
-                                                sender_timeout_sustained_config(tx_count),
                                                 sender_timeout_tail_repair_config(),
-                                                default_udp_send_retry_config(),
-                                                UdpAckConfigV1 {
-                                                    enabled: true,
-                                                    bind_addr: ack_bind_addr.clone(),
-                                                    target_addr: None,
-                                                    recv_timeout_ms: 0,
-                                                },
-                                                sender_timeout_novorudp_config(),
-                                            )
+                                                ack_bind_addr.clone(),
+                                                0,
+                                            ))
                                             .expect(
                                                 "sender must return a full async ACK fail report",
                                             );
@@ -10955,32 +10924,15 @@ mod novorudp_tests {
                                                 );
                                             });
 
-                                            let report = run_sender(
+                                            let report = run_sender(sender_timeout_input_v1(
                                                 chain_id,
                                                 tx_count,
-                                                1,
-                                                2,
                                                 sender_addr.as_str(),
                                                 receiver_addr.as_str(),
-                                                FaultConfigV1 {
-                                                    enabled: false,
-                                                    loss_bps: 0,
-                                                    duplicate_bps: 0,
-                                                    delay_ms: 0,
-                                                    reorder_bps: 0,
-                                                    seed: 0,
-                                                },
-                                                sender_timeout_sustained_config(tx_count),
                                                 sender_timeout_tail_repair_config(),
-                                                default_udp_send_retry_config(),
-                                                UdpAckConfigV1 {
-                                                    enabled: true,
-                                                    bind_addr: ack_bind_addr,
-                                                    target_addr: None,
-                                                    recv_timeout_ms: 0,
-                                                },
-                                                sender_timeout_novorudp_config(),
-                                            )
+                                                ack_bind_addr,
+                                                0,
+                                            ))
                                             .expect(
                                                 "sender must return final done deadline report",
                                             );
@@ -11057,32 +11009,15 @@ mod novorudp_tests {
                                             .send_to(ack.to_string().as_bytes(), ack_target_addr);
                                     });
 
-                                    let report = run_sender(
+                                    let report = run_sender(sender_timeout_input_v1(
                                         chain_id,
                                         tx_count,
-                                        1,
-                                        2,
                                         sender_addr.as_str(),
                                         receiver_addr.as_str(),
-                                        FaultConfigV1 {
-                                            enabled: false,
-                                            loss_bps: 0,
-                                            duplicate_bps: 0,
-                                            delay_ms: 0,
-                                            reorder_bps: 0,
-                                            seed: 0,
-                                        },
-                                        sender_timeout_sustained_config(tx_count),
                                         sender_timeout_tail_repair_config(),
-                                        default_udp_send_retry_config(),
-                                        UdpAckConfigV1 {
-                                            enabled: true,
-                                            bind_addr: ack_bind_addr,
-                                            target_addr: None,
-                                            recv_timeout_ms: 0,
-                                        },
-                                        sender_timeout_novorudp_config(),
-                                    )
+                                        ack_bind_addr,
+                                        0,
+                                    ))
                                     .expect("sender must accept receiver_done ack");
                                     let _ = ack_thread.join();
 
@@ -19117,20 +19052,36 @@ fn validate_receiver_report(summary: &Value, probe: &Value, tx_count: u64) -> (V
     )
 }
 
-fn run_sender(
+struct RunSenderInputV1<'a> {
     chain_id: u64,
     tx_count: u64,
     sender_node: u64,
     receiver_node: u64,
-    sender_addr: &str,
-    receiver_addr: &str,
+    sender_addr: &'a str,
+    receiver_addr: &'a str,
     fault: FaultConfigV1,
     sustained: SustainedConfigV1,
     tail_repair: TailRepairConfigV1,
     udp_send_retry: UdpSendRetryConfigV1,
     udp_ack: UdpAckConfigV1,
     novorudp: NovoRudpConfigV1,
-) -> Result<Value> {
+}
+
+fn run_sender(input: RunSenderInputV1<'_>) -> Result<Value> {
+    let RunSenderInputV1 {
+        chain_id,
+        tx_count,
+        sender_node,
+        receiver_node,
+        sender_addr,
+        receiver_addr,
+        fault,
+        sustained,
+        tail_repair,
+        udp_send_retry,
+        udp_ack,
+        novorudp,
+    } = input;
     let network_profile = NetworkProfileV1::from_env("sender");
     let sender_ack_bind_requested_addr = udp_ack.bind_addr.clone();
     let sender_ack_advertised_addr = first_string_env_nonempty(&[
@@ -24492,23 +24443,23 @@ fn run_local_smoke(
             recv_timeout_ms: 1000,
         })
         .unwrap_or_else(default_udp_ack_config);
-    let sender_report = run_sender(
+    let sender_report = run_sender(RunSenderInputV1 {
         chain_id,
         tx_count,
         sender_node,
         receiver_node,
-        sender_addr.as_str(),
-        receiver_addr.as_str(),
-        FaultConfigV1 {
+        sender_addr: sender_addr.as_str(),
+        receiver_addr: receiver_addr.as_str(),
+        fault: FaultConfigV1 {
             delay_ms: if fault.enabled { fault.delay_ms } else { 1 },
             ..fault
         },
         sustained,
         tail_repair,
-        default_udp_send_retry_config(),
+        udp_send_retry: default_udp_send_retry_config(),
         udp_ack,
         novorudp,
-    )?;
+    })?;
     let mut receiver_summary = parse_summary(
         child
             .wait_with_output()
@@ -24705,14 +24656,14 @@ fn run_memory_bisect_variant(
         })
     });
     std::thread::sleep(Duration::from_millis(startup_wait_ms));
-    let sender_result = run_sender(
+    let sender_result = run_sender(RunSenderInputV1 {
         chain_id,
         tx_count,
         sender_node,
         receiver_node,
-        sender_addr.as_str(),
-        receiver_addr.as_str(),
-        FaultConfigV1 {
+        sender_addr: sender_addr.as_str(),
+        receiver_addr: receiver_addr.as_str(),
+        fault: FaultConfigV1 {
             enabled: false,
             loss_bps: 0,
             duplicate_bps: 0,
@@ -24720,13 +24671,13 @@ fn run_memory_bisect_variant(
             reorder_bps: 0,
             seed: 0,
         },
-        SustainedConfigV1 {
+        sustained: SustainedConfigV1 {
             enabled: false,
             duration_seconds: 0,
             tx_per_round: tx_count,
             round_interval_ms: 0,
         },
-        TailRepairConfigV1 {
+        tail_repair: TailRepairConfigV1 {
             enabled: true,
             rounds: 1,
             interval_ms: 200,
@@ -24740,9 +24691,9 @@ fn run_memory_bisect_variant(
             tail_batch_pause_ms: 0,
             round_pause_ms: 200,
         },
-        default_udp_send_retry_config(),
-        default_udp_ack_config(),
-        NovoRudpConfigV1 {
+        udp_send_retry: default_udp_send_retry_config(),
+        udp_ack: default_udp_ack_config(),
+        novorudp: NovoRudpConfigV1 {
             enabled: false,
             window_size: 64,
             repair_windows_per_ack: 8,
@@ -24761,7 +24712,7 @@ fn run_memory_bisect_variant(
             ack_progress_interval_ms: 250,
             no_progress_backoff: true,
         },
-    );
+    });
     let receiver_result = match handle.join() {
         Ok(result) => result,
         Err(_) => Err(anyhow::anyhow!("memory bisect receiver thread panicked")),
@@ -25283,20 +25234,20 @@ fn main() -> Result<()> {
                 receiver_addr,
                 signoff_contract.same_host_two_process_smoke_detected,
             );
-            run_sender(
+            run_sender(RunSenderInputV1 {
                 chain_id,
                 tx_count,
                 sender_node,
                 receiver_node,
-                sender_addr.as_str(),
-                receiver_addr.as_str(),
+                sender_addr: sender_addr.as_str(),
+                receiver_addr: receiver_addr.as_str(),
                 fault,
                 sustained,
                 tail_repair,
                 udp_send_retry,
                 udp_ack,
                 novorudp,
-            )?
+            })?
         }
         "local-smoke" | "local_smoke" => run_local_smoke(
             chain_id,
