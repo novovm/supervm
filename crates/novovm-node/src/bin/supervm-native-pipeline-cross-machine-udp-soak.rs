@@ -4422,7 +4422,8 @@ mod novorudp_tests {
         ))
     }
 
-    fn pipeline_liveness_sample(
+    #[derive(Clone, Copy)]
+    struct PipelineLivenessSampleInputV1 {
         elapsed_ms: u64,
         pending: u64,
         child_ticks: u64,
@@ -4433,7 +4434,21 @@ mod novorudp_tests {
         result_ready: u64,
         result_verified: u64,
         closed: u64,
-    ) -> Value {
+    }
+
+    fn pipeline_liveness_sample(input: PipelineLivenessSampleInputV1) -> Value {
+        let PipelineLivenessSampleInputV1 {
+            elapsed_ms,
+            pending,
+            child_ticks,
+            object_ready,
+            batch_ready,
+            batch_received,
+            tx_ingress_calls,
+            result_ready,
+            result_verified,
+            closed,
+        } = input;
         serde_json::json!({
             "elapsed_ms": elapsed_ms,
             "receiver_udp_packet_recv_count": object_ready,
@@ -7609,8 +7624,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_reports_stage_liveness_counters() {
-        let previous = pipeline_liveness_sample(10_000, 32, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 64, 12, 132, 5, 5, 5, 5, 5, 132);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 32,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 64,
+            child_ticks: 12,
+            object_ready: 132,
+            batch_ready: 5,
+            batch_received: 5,
+            tx_ingress_calls: 5,
+            result_ready: 5,
+            result_verified: 5,
+            closed: 132,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7646,10 +7683,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_detects_pending_drain_stall_when_pending_nonzero() {
-        let previous =
-            pipeline_liveness_sample(10_000, 1_920, 10, 29_400, 920, 920, 920, 920, 920, 29_400);
-        let mut sample =
-            pipeline_liveness_sample(15_000, 1_952, 10, 29_400, 920, 920, 920, 920, 920, 29_400);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 1_920,
+            child_ticks: 10,
+            object_ready: 29_400,
+            batch_ready: 920,
+            batch_received: 920,
+            tx_ingress_calls: 920,
+            result_ready: 920,
+            result_verified: 920,
+            closed: 29_400,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 1_952,
+            child_ticks: 10,
+            object_ready: 29_400,
+            batch_ready: 920,
+            batch_received: 920,
+            tx_ingress_calls: 920,
+            result_ready: 920,
+            result_verified: 920,
+            closed: 29_400,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(sample["pipeline_pending_drain_stall"].as_bool(), Some(true));
@@ -7666,8 +7723,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_reports_assembler_to_runtime_handoff_stall() {
-        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 4, 4, 4, 4, 100);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 64,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 11,
+            object_ready: 132,
+            batch_ready: 5,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7682,8 +7761,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_reports_runtime_worker_submit_stall() {
-        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 5, 4, 4, 4, 100);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 64,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 11,
+            object_ready: 132,
+            batch_ready: 5,
+            batch_received: 5,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7698,8 +7799,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_reports_result_drain_stall() {
-        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 5, 5, 4, 4, 100);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 64,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 11,
+            object_ready: 132,
+            batch_ready: 5,
+            batch_received: 5,
+            tx_ingress_calls: 5,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
         sample["receiver_pending_selected_count"] =
             previous["receiver_pending_selected_count"].clone();
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
@@ -7716,8 +7839,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_reports_finality_worker_backpressure() {
-        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 132, 5, 5, 5, 5, 4, 100);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 64,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 11,
+            object_ready: 132,
+            batch_ready: 5,
+            batch_received: 5,
+            tx_ingress_calls: 5,
+            result_ready: 5,
+            result_verified: 4,
+            closed: 100,
+        });
         sample["receiver_pending_selected_count"] =
             previous["receiver_pending_selected_count"].clone();
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
@@ -7734,8 +7879,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_does_not_report_tail_repair_when_pending_nonzero() {
-        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 10, 100, 4, 4, 4, 4, 4, 100);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 64,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7750,8 +7917,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_pending_nonzero_disallows_waiting_for_sender() {
-        let previous = pipeline_liveness_sample(10_000, 64, 10, 100, 4, 4, 4, 4, 4, 100);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 10, 100, 4, 4, 4, 4, 4, 100);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 64,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 10,
+            object_ready: 100,
+            batch_ready: 4,
+            batch_received: 4,
+            tx_ingress_calls: 4,
+            result_ready: 4,
+            result_verified: 4,
+            closed: 100,
+        });
         sample["waiting_for_sender"] = serde_json::json!(true);
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
@@ -7767,8 +7956,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_reports_pending_drain_callsite_idle_while_pending() {
-        let previous = pipeline_liveness_sample(10_000, 128, 10, 200, 8, 8, 8, 8, 8, 200);
-        let mut sample = pipeline_liveness_sample(15_000, 128, 10, 200, 8, 8, 8, 8, 8, 200);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 128,
+            child_ticks: 10,
+            object_ready: 200,
+            batch_ready: 8,
+            batch_received: 8,
+            tx_ingress_calls: 8,
+            result_ready: 8,
+            result_verified: 8,
+            closed: 200,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 128,
+            child_ticks: 10,
+            object_ready: 200,
+            batch_ready: 8,
+            batch_received: 8,
+            tx_ingress_calls: 8,
+            result_ready: 8,
+            result_verified: 8,
+            closed: 200,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(sample["receiver_child_tick_delta"].as_u64(), Some(0));
@@ -7782,10 +7993,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_pending_nonzero_with_close_progress_is_active_drain() {
-        let previous =
-            pipeline_liveness_sample(10_000, 584, 100, 17_224, 100, 100, 100, 100, 100, 17_224);
-        let mut sample =
-            pipeline_liveness_sample(15_000, 584, 100, 17_224, 100, 100, 100, 100, 100, 17_352);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 584,
+            child_ticks: 100,
+            object_ready: 17_224,
+            batch_ready: 100,
+            batch_received: 100,
+            tx_ingress_calls: 100,
+            result_ready: 100,
+            result_verified: 100,
+            closed: 17_224,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 584,
+            child_ticks: 100,
+            object_ready: 17_224,
+            batch_ready: 100,
+            batch_received: 100,
+            tx_ingress_calls: 100,
+            result_ready: 100,
+            result_verified: 100,
+            closed: 17_352,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7804,10 +8035,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_fails_closed_when_pending_nonzero_and_drain_attempt_stops() {
-        let previous =
-            pipeline_liveness_sample(10_000, 2_640, 453, 2_672, 453, 453, 453, 453, 453, 27_936);
-        let mut sample =
-            pipeline_liveness_sample(16_819, 2_640, 453, 2_672, 453, 453, 453, 453, 453, 27_936);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 2_640,
+            child_ticks: 453,
+            object_ready: 2_672,
+            batch_ready: 453,
+            batch_received: 453,
+            tx_ingress_calls: 453,
+            result_ready: 453,
+            result_verified: 453,
+            closed: 27_936,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 16_819,
+            pending: 2_640,
+            child_ticks: 453,
+            object_ready: 2_672,
+            batch_ready: 453,
+            batch_received: 453,
+            tx_ingress_calls: 453,
+            result_ready: 453,
+            result_verified: 453,
+            closed: 27_936,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7820,8 +8071,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_drain_callsite_handoff_to_runtime_worker_smoke() {
-        let previous = pipeline_liveness_sample(10_000, 128, 10, 200, 8, 8, 8, 8, 8, 200);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 232, 9, 9, 9, 9, 9, 232);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 128,
+            child_ticks: 10,
+            object_ready: 200,
+            batch_ready: 8,
+            batch_received: 8,
+            tx_ingress_calls: 8,
+            result_ready: 8,
+            result_verified: 8,
+            closed: 200,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 11,
+            object_ready: 232,
+            batch_ready: 9,
+            batch_received: 9,
+            tx_ingress_calls: 9,
+            result_ready: 9,
+            result_verified: 9,
+            closed: 232,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
@@ -7837,8 +8110,30 @@ mod novorudp_tests {
 
     #[test]
     fn pipeline_pending_drain_recovers_after_idle_window() {
-        let previous = pipeline_liveness_sample(10_000, 128, 10, 200, 8, 8, 8, 8, 8, 200);
-        let mut sample = pipeline_liveness_sample(15_000, 96, 11, 232, 9, 9, 9, 9, 9, 232);
+        let previous = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 10_000,
+            pending: 128,
+            child_ticks: 10,
+            object_ready: 200,
+            batch_ready: 8,
+            batch_received: 8,
+            tx_ingress_calls: 8,
+            result_ready: 8,
+            result_verified: 8,
+            closed: 200,
+        });
+        let mut sample = pipeline_liveness_sample(PipelineLivenessSampleInputV1 {
+            elapsed_ms: 15_000,
+            pending: 96,
+            child_ticks: 11,
+            object_ready: 232,
+            batch_ready: 9,
+            batch_received: 9,
+            tx_ingress_calls: 9,
+            result_ready: 9,
+            result_verified: 9,
+            closed: 232,
+        });
         annotate_receiver_ingress_drain_delta_v1(&mut sample, Some(&previous));
 
         assert_eq!(
