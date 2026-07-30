@@ -18512,20 +18512,36 @@ fn sender_udp_bytes_per_second_estimate_v1(
     Some(bytes_total.saturating_mul(1_000) / elapsed_ms)
 }
 
-fn send_repair_payloads_paced(
+struct SendRepairPayloadsInputV1<'a> {
     chain_id: u64,
     sender_node: u64,
     receiver_node: u64,
-    sender_addr: &str,
-    receiver_addr: &str,
-    txs: &[NativeFixtureTxV1],
+    sender_addr: &'a str,
+    receiver_addr: &'a str,
+    txs: &'a [NativeFixtureTxV1],
     repair_round: u64,
     tail_repair: TailRepairConfigV1,
     packet_copies_override: Option<u64>,
     batch_size_override: Option<u64>,
     batch_pause_ms_override: Option<u64>,
     retry: UdpSendRetryConfigV1,
-) -> Result<SendScheduleStatsV1> {
+}
+
+fn send_repair_payloads_paced(input: SendRepairPayloadsInputV1<'_>) -> Result<SendScheduleStatsV1> {
+    let SendRepairPayloadsInputV1 {
+        chain_id,
+        sender_node,
+        receiver_node,
+        sender_addr,
+        receiver_addr,
+        txs,
+        repair_round,
+        tail_repair,
+        packet_copies_override,
+        batch_size_override,
+        batch_pause_ms_override,
+        retry,
+    } = input;
     let copies = packet_copies_override
         .unwrap_or(tail_repair.packet_copies)
         .max(1);
@@ -21438,42 +21454,42 @@ fn run_sender(
                 }
                 continue;
             }
-            let round_stats = send_repair_payloads_paced(
+            let round_stats = send_repair_payloads_paced(SendRepairPayloadsInputV1 {
                 chain_id,
                 sender_node,
                 receiver_node,
                 sender_addr,
                 receiver_addr,
-                txs.as_slice(),
+                txs: txs.as_slice(),
                 repair_round,
-                if novorudp.enabled {
+                tail_repair: if novorudp.enabled {
                     repair_send_config
                 } else {
                     tail_repair
                 },
-                tail_gap_this_round.map(|_| {
+                packet_copies_override: tail_gap_this_round.map(|_| {
                     if novorudp.enabled {
                         novorudp.tail_window_packet_copies
                     } else {
                         tail_repair.tail_packet_copies
                     }
                 }),
-                tail_gap_this_round.map(|_| {
+                batch_size_override: tail_gap_this_round.map(|_| {
                     if novorudp.enabled {
                         novorudp.tail_window_batch_size
                     } else {
                         tail_repair.batch_size
                     }
                 }),
-                tail_gap_this_round.map(|_| {
+                batch_pause_ms_override: tail_gap_this_round.map(|_| {
                     if novorudp.enabled {
                         novorudp.tail_window_batch_pause_ms
                     } else {
                         tail_repair.tail_batch_pause_ms
                     }
                 }),
-                udp_send_retry,
-            )?;
+                retry: udp_send_retry,
+            })?;
             let round_packet_sent_count = round_stats.sent_packets;
             if tail_gap_sent_count_this_round > 0 {
                 tail_gap_repair_packet_count = tail_gap_repair_packet_count.saturating_add(
@@ -22190,20 +22206,21 @@ fn run_sender(
                             } else {
                                 tail_repair
                             };
-                            let round_stats = send_repair_payloads_paced(
-                                chain_id,
-                                sender_node,
-                                receiver_node,
-                                sender_addr,
-                                receiver_addr,
-                                txs.as_slice(),
-                                repair_rounds_used,
-                                continuation_config,
-                                None,
-                                None,
-                                None,
-                                udp_send_retry,
-                            )?;
+                            let round_stats =
+                                send_repair_payloads_paced(SendRepairPayloadsInputV1 {
+                                    chain_id,
+                                    sender_node,
+                                    receiver_node,
+                                    sender_addr,
+                                    receiver_addr,
+                                    txs: txs.as_slice(),
+                                    repair_round: repair_rounds_used,
+                                    tail_repair: continuation_config,
+                                    packet_copies_override: None,
+                                    batch_size_override: None,
+                                    batch_pause_ms_override: None,
+                                    retry: udp_send_retry,
+                                })?;
                             merge_send_stats(&mut repair_stats, round_stats);
                             repair_rounds_used = repair_rounds_used.saturating_add(1);
                             sender_post_primary_repair_last_at = Some(Instant::now());
