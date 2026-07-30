@@ -33226,10 +33226,14 @@ fn novorudp_child_expected_total_raw_env_v1() -> Option<String> {
 }
 
 fn novorudp_child_receiver_mode_v1() -> bool {
-    string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TRANSPORT")
-        .is_some_and(|value| value.eq_ignore_ascii_case("novorudp"))
+    novorudp_child_mode_v1()
         && string_env_nonempty("NOVOVM_NATIVE_PIPELINE_ROLE")
             .is_some_and(|value| value.eq_ignore_ascii_case("receiver"))
+}
+
+fn novorudp_child_mode_v1() -> bool {
+    string_env_nonempty("NOVOVM_NATIVE_PIPELINE_TRANSPORT")
+        .is_some_and(|value| value.eq_ignore_ascii_case("novorudp"))
 }
 
 fn decorate_native_receiver_attribution_summary_v1(summary: &mut serde_json::Value, source: &str) {
@@ -33778,7 +33782,7 @@ impl NativeExecutionPipelineUdpDriveV1 {
         if !bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED") {
             return Ok(None);
         }
-        if !novorudp_child_receiver_mode_v1() {
+        if !novorudp_child_mode_v1() {
             bail!(
                 "plain_udp_pipeline_removed: set NOVOVM_NATIVE_PIPELINE_TRANSPORT=novorudp; UDP is only the NovoRUDP underlay"
             );
@@ -41182,8 +41186,10 @@ mod native_execution_pipeline_tests {
     fn native_execution_pipeline_udp_drive_requires_novorudp_transport() {
         let enabled_key = "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED";
         let transport_key = "NOVOVM_NATIVE_PIPELINE_TRANSPORT";
+        let role_key = "NOVOVM_NATIVE_PIPELINE_ROLE";
         let previous_enabled = std::env::var(enabled_key).ok();
         let previous_transport = std::env::var(transport_key).ok();
+        let previous_role = std::env::var(role_key).ok();
         std::env::set_var(enabled_key, "1");
         std::env::remove_var(transport_key);
 
@@ -41192,6 +41198,12 @@ mod native_execution_pipeline_tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("plain_udp_pipeline_removed"));
+
+        std::env::set_var(transport_key, "novorudp");
+        std::env::set_var(role_key, "sender");
+        assert!(NativeExecutionPipelineUdpDriveV1::from_env(9_998_890)
+            .expect("NovoRUDP sender transport must be accepted")
+            .is_some());
 
         if let Some(value) = previous_enabled {
             std::env::set_var(enabled_key, value);
@@ -41202,6 +41214,11 @@ mod native_execution_pipeline_tests {
             std::env::set_var(transport_key, value);
         } else {
             std::env::remove_var(transport_key);
+        }
+        if let Some(value) = previous_role {
+            std::env::set_var(role_key, value);
+        } else {
+            std::env::remove_var(role_key);
         }
     }
 

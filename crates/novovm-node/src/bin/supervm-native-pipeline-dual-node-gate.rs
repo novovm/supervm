@@ -353,7 +353,10 @@ fn main() -> Result<()> {
     )?;
     let min_receiver_max_network_received_per_tick = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_NETWORK_RECEIVED_PER_TICK",
-        tx_count.min(udp_recv_budget).max(1),
+        tx_count
+            .min(udp_broadcast_max_per_tick)
+            .min(udp_recv_budget)
+            .max(1),
     )?;
     let min_receiver_max_queue_admitted_per_tick = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_QUEUE_ADMITTED_PER_TICK",
