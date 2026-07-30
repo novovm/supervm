@@ -31,7 +31,9 @@ use novovm_network::relay::{
 use novovm_network::routing::RoutingSource;
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified},
-    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime},
+    pki_types::{
+        pem::PemObject, CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime,
+    },
     DigitallySignedStruct, SignatureScheme,
 };
 use serde::{Deserialize, Serialize};
@@ -8467,8 +8469,7 @@ fn cut40_client_tls_trust_mode_v0() -> String {
 
 fn load_cut40_certs_pem_v0(path: &str) -> Result<Vec<CertificateDer<'static>>> {
     let bytes = fs::read(path).with_context(|| format!("read cert pem: {path}"))?;
-    let mut reader = std::io::BufReader::new(bytes.as_slice());
-    let certs = rustls_pemfile::certs(&mut reader)
+    let certs = CertificateDer::pem_slice_iter(bytes.as_slice())
         .collect::<std::result::Result<Vec<_>, _>>()
         .context("parse cert pem")?;
     if certs.is_empty() {
@@ -8479,9 +8480,8 @@ fn load_cut40_certs_pem_v0(path: &str) -> Result<Vec<CertificateDer<'static>>> {
 
 fn load_cut40_private_key_pem_v0(path: &str) -> Result<PrivateKeyDer<'static>> {
     let bytes = fs::read(path).with_context(|| format!("read key pem: {path}"))?;
-    let mut reader = std::io::BufReader::new(bytes.as_slice());
-    rustls_pemfile::private_key(&mut reader)
-        .context("parse private key pem")?
+    PrivateKeyDer::from_pem_slice(bytes.as_slice())
+        .context("parse private key pem")
         .with_context(|| format!("no supported private key in pem: {path}"))
 }
 

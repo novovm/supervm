@@ -10,13 +10,13 @@ use novovm_network::{
 };
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
-    pki_types::{CertificateDer, ServerName, UnixTime},
+    pki_types::{pem::PemObject, CertificateDer, ServerName, UnixTime},
     DigitallySignedStruct, SignatureScheme,
 };
 use serde::{Deserialize, Serialize};
 use sha1::{Digest as Sha1Digest, Sha1};
 use std::{
-    io::{self, Read, Write},
+    io::{Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::PathBuf,
     sync::Arc,
@@ -378,8 +378,7 @@ fn build_tls_config_v1(trust: &ProductRelayTlsTrustV1) -> Result<Arc<rustls::Cli
             let bytes = std::fs::read(certificate_path).with_context(|| {
                 format!("read explicit relay CA: {}", certificate_path.display())
             })?;
-            let mut reader = io::BufReader::new(bytes.as_slice());
-            let certificates = rustls_pemfile::certs(&mut reader)
+            let certificates = CertificateDer::pem_slice_iter(bytes.as_slice())
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .context("parse explicit relay CA")?;
             for certificate in certificates {

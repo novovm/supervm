@@ -10,7 +10,7 @@ use novovm_network::{
     HandshakeReplayCacheV1, NodeHandshakeResponderV1, ProductRelayRuntimeConfigV1,
     ProductRelaySessionManagerV1, ProductRelayWireMessageV1,
 };
-use rustls::pki_types::PrivateKeyDer;
+use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest as Sha1Digest, Sha1};
 use std::{
@@ -388,8 +388,7 @@ fn write_product_relay_report_v1(
 fn build_server_tls_config_v1(cert_path: &Path, key_path: &Path) -> Result<rustls::ServerConfig> {
     let cert_bytes = fs::read(cert_path)
         .with_context(|| format!("read relay tls certificate: {}", cert_path.display()))?;
-    let mut cert_reader = io::BufReader::new(cert_bytes.as_slice());
-    let certificates = rustls_pemfile::certs(&mut cert_reader)
+    let certificates = CertificateDer::pem_slice_iter(cert_bytes.as_slice())
         .collect::<std::result::Result<Vec<_>, _>>()
         .context("parse relay tls certificates")?;
     if certificates.is_empty() {
@@ -411,9 +410,8 @@ fn tls_crypto_provider_v1() -> Arc<rustls::crypto::CryptoProvider> {
 }
 
 fn load_private_key_v1(bytes: &[u8]) -> Result<PrivateKeyDer<'static>> {
-    let mut reader = io::BufReader::new(bytes);
-    rustls_pemfile::private_key(&mut reader)
-        .context("parse relay TLS key")?
+    PrivateKeyDer::from_pem_slice(bytes)
+        .context("parse relay TLS key")
         .context("relay TLS key file contains no supported key")
 }
 
