@@ -18178,18 +18178,32 @@ fn emit_diagnostics_report(
     }
 }
 
-fn send_scheduled_batch(
+struct SendScheduledBatchInputV1<'a> {
     chain_id: u64,
     sender_node: u64,
     receiver_node: u64,
-    sender_addr: &str,
-    receiver_addr: &str,
-    txs: &[NativeFixtureTxV1],
+    sender_addr: &'a str,
+    receiver_addr: &'a str,
+    txs: &'a [NativeFixtureTxV1],
     delay_ms: u64,
     retry: UdpSendRetryConfigV1,
-    frame_kind: &str,
-    run_id: &str,
-) -> Result<SendScheduleStatsV1> {
+    frame_kind: &'a str,
+    run_id: &'a str,
+}
+
+fn send_scheduled_batch(input: SendScheduledBatchInputV1<'_>) -> Result<SendScheduleStatsV1> {
+    let SendScheduledBatchInputV1 {
+        chain_id,
+        sender_node,
+        receiver_node,
+        sender_addr,
+        receiver_addr,
+        txs,
+        delay_ms,
+        retry,
+        frame_kind,
+        run_id,
+    } = input;
     let sender = UdpTransport::bind_for_chain(NodeId(sender_node), sender_addr, chain_id)
         .with_context(|| format!("bind cross-machine sender UDP failed: {sender_addr}"))?;
     sender
@@ -18530,20 +18544,21 @@ fn send_repair_payloads_paced(
                 tx.copy_index = copy_index;
                 tx.dropped = false;
             }
-            let stats = send_scheduled_batch(
+            let run_id = transaction_frame_run_id_v1(&format!(
+                "{chain_id}:{sender_node}:{receiver_node}:repair"
+            ));
+            let stats = send_scheduled_batch(SendScheduledBatchInputV1 {
                 chain_id,
                 sender_node,
                 receiver_node,
                 sender_addr,
                 receiver_addr,
-                chunk_txs.as_slice(),
-                0,
+                txs: chunk_txs.as_slice(),
+                delay_ms: 0,
                 retry,
-                "repair",
-                &transaction_frame_run_id_v1(&format!(
-                    "{chain_id}:{sender_node}:{receiver_node}:repair"
-                )),
-            )?;
+                frame_kind: "repair",
+                run_id: &run_id,
+            })?;
             merge_send_stats(&mut out, stats);
             if out.send_failed_count > 0 {
                 return Ok(out);
@@ -20217,20 +20232,21 @@ fn run_sender(
         let round_tx_count = remaining.min(tx_per_round);
         let txs = build_native_payloads_from_index(chain_id, sent_unique_target, round_tx_count)?;
         let scheduled = apply_fault_schedule(txs.as_slice(), fault);
-        let round_stats = send_scheduled_batch(
+        let run_id = transaction_frame_run_id_v1(&format!(
+            "{chain_id}:{sender_node}:{receiver_node}:{tx_count}"
+        ));
+        let round_stats = send_scheduled_batch(SendScheduledBatchInputV1 {
             chain_id,
             sender_node,
             receiver_node,
             sender_addr,
             receiver_addr,
-            scheduled.as_slice(),
-            fault.delay_ms,
-            udp_send_retry,
-            "primary",
-            &transaction_frame_run_id_v1(&format!(
-                "{chain_id}:{sender_node}:{receiver_node}:{tx_count}"
-            )),
-        )?;
+            txs: scheduled.as_slice(),
+            delay_ms: fault.delay_ms,
+            retry: udp_send_retry,
+            frame_kind: "primary",
+            run_id: &run_id,
+        })?;
         sent_unique_target = sent_unique_target.saturating_add(round_tx_count);
         merge_send_stats(&mut stats, round_stats);
         drain_primary_sender_ack!();

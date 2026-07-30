@@ -61,6 +61,6 @@ Sustained validation must be split into three gates:
 
 ## Legacy Historical Rule
 
-Any remaining reference to `ProtocolMessage::EvmNative::Transactions` plus `transport_auth.frame_kind=repair` must be treated as historical attribution only.
+Any remaining reference to `ProtocolMessage::EvmNative::Transactions` plus `transport_auth.frame_kind=repair` must be treated as legacy compatibility or attribution only, never as a production runtime path.
 
 New behavior fixes must not deepen this mixed-layer path. If a change needs transport repair behavior, it must target explicit NOVORUDP transport frames. Production sustained signoff must not use the mixed-layer path.
