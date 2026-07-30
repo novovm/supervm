@@ -127,11 +127,10 @@ fn resolve_gate_target_dir_v1() -> String {
             return format!("{trimmed}-gate");
         }
     }
-    if cfg!(windows) {
-        "D:\\cargo-target-supervm-gate".to_string()
-    } else {
-        "target/cargo-target-supervm-gate".to_string()
-    }
+    std::env::temp_dir()
+        .join("cargo-target-supervm-gate")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn main() -> Result<()> {

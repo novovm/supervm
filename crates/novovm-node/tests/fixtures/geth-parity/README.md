@@ -82,15 +82,18 @@ The batch report includes `observableProjection` checks for block `transactionsR
 External sample directory:
 
 ```powershell
-$env:NOVOVM_GETH_PARITY_SAMPLE_DIR="D:\path\to\geth-parity"
+$repoRoot = (git rev-parse --show-toplevel).Trim()
+$env:NOVOVM_GETH_PARITY_SAMPLE_DIR = Join-Path $repoRoot "path\to\geth-parity"
 cargo test -p novovm-node mainline_query::tests::eth_end_to_end_geth_sample_batch_parity_report_from_files_v1 -- --nocapture
 ```
 
 External geth export samples with placeholder path:
 
 ```powershell
-$env:NOVOVM_GETH_REPO_ROOT="D:\WEB3_AI\go-ethereum"
-$env:NOVOVM_GETH_PARITY_SAMPLE_DIR="D:\WEB3_AI\SUPERVM\crates\novovm-node\tests\fixtures\geth-parity-external"
+$repoRoot = (git rev-parse --show-toplevel).Trim()
+$workspaceRoot = Split-Path -Parent $repoRoot
+$env:NOVOVM_GETH_REPO_ROOT = Join-Path $workspaceRoot "go-ethereum"
+$env:NOVOVM_GETH_PARITY_SAMPLE_DIR = Join-Path $repoRoot "crates\novovm-node\tests\fixtures\geth-parity-external"
 cargo test -p novovm-node mainline_query::tests::eth_end_to_end_geth_sample_batch_parity_report_from_files_v1 -- --nocapture
 ```
 

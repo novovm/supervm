@@ -1,6 +1,6 @@
 param(
     [string]$RepoRoot = "",
-    [string]$Svm2026Root = "D:\WEB3_AI\SVM2026",
+    [string]$Svm2026Root = "",
     [string[]]$PreserveFiles = @("dividend_pool.rs"),
     [switch]$DryRun
 )
@@ -12,6 +12,16 @@ if (-not $RepoRoot) {
     $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 } else {
     $RepoRoot = (Resolve-Path $RepoRoot).Path
+}
+
+if ([string]::IsNullOrWhiteSpace($Svm2026Root)) {
+    $Svm2026Root = Join-Path (Split-Path -Parent $RepoRoot) "SVM2026"
+}
+elseif (-not [System.IO.Path]::IsPathRooted($Svm2026Root)) {
+    $Svm2026Root = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $Svm2026Root))
+}
+else {
+    $Svm2026Root = [System.IO.Path]::GetFullPath($Svm2026Root)
 }
 
 $srcDir = Join-Path $Svm2026Root "contracts\web30\core\src"

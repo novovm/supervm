@@ -1,6 +1,6 @@
 param(
     [string]$RepoRoot = "",
-    [string]$GethRoot = "D:\WEB3_AI\go-ethereum",
+    [string]$GethRoot = "",
     [string]$Since = "",
     [UInt64]$SinceHours = 48,
     [UInt64]$MaxCommits = 80,
@@ -304,6 +304,9 @@ function Get-AreaChecks {
 $RepoRoot = Resolve-RootPath -Root $RepoRoot
 Set-Location $RepoRoot
 
+if ([string]::IsNullOrWhiteSpace($GethRoot)) {
+    $GethRoot = Join-Path (Split-Path -Parent $RepoRoot) "go-ethereum"
+}
 $GethRoot = Resolve-FullPath -Root $RepoRoot -Value $GethRoot
 if (-not (Test-Path $GethRoot)) {
     throw ("geth root does not exist: {0}" -f $GethRoot)

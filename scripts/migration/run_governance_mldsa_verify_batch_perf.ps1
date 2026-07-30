@@ -1,6 +1,6 @@
 param(
-    [string]$RepoRoot = "D:\WEB3_AI\SUPERVM",
-    [string]$DllPath = "D:\WEB3_AI\SUPERVM\aoem\windows\core\bin\aoem_ffi.dll",
+    [string]$RepoRoot = "",
+    [string]$DllPath = "",
     [int[]]$Counts = @(1000, 10000, 100000),
     [int[]]$ParMinSet = @(1, 64),
     [int]$Repeats = 5,
@@ -10,6 +10,23 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+}
+else {
+    $RepoRoot = (Resolve-Path $RepoRoot).Path
+}
+
+if ([string]::IsNullOrWhiteSpace($DllPath)) {
+    $DllPath = Join-Path $RepoRoot "aoem\windows\core\bin\aoem_ffi.dll"
+}
+elseif (-not [System.IO.Path]::IsPathRooted($DllPath)) {
+    $DllPath = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $DllPath))
+}
+else {
+    $DllPath = [System.IO.Path]::GetFullPath($DllPath)
+}
 
 function Get-NearestRankQuantile {
     param(
