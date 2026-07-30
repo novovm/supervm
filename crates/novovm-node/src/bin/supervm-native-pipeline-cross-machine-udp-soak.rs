@@ -24299,19 +24299,34 @@ fn run_sender(input: RunSenderInputV1<'_>) -> Result<Value> {
     Ok(compact_sender_report_for_report(report))
 }
 
-fn run_receiver(
+struct RunReceiverInputV1<'a> {
     chain_id: u64,
     tx_count: u64,
     receiver_node: u64,
-    listen_addr: &str,
-    node_bin: &Path,
-    store_path: &Path,
+    listen_addr: &'a str,
+    node_bin: &'a Path,
+    store_path: &'a Path,
     max_ticks: u64,
     tick_interval_ms: u64,
     batch_budget: u64,
     recv_budget: u64,
     sustained: SustainedConfigV1,
-) -> Result<Value> {
+}
+
+fn run_receiver(input: RunReceiverInputV1<'_>) -> Result<Value> {
+    let RunReceiverInputV1 {
+        chain_id,
+        tx_count,
+        receiver_node,
+        listen_addr,
+        node_bin,
+        store_path,
+        max_ticks,
+        tick_interval_ms,
+        batch_budget,
+        recv_budget,
+        sustained,
+    } = input;
     let mut receiver_summary = run_receiver_node(ReceiverNodeInputV1 {
         node_bin,
         chain_id,
@@ -25180,19 +25195,19 @@ fn main() -> Result<()> {
                 sender_ack_advertised.as_deref().unwrap_or("<missing>"),
                 signoff_contract.same_host_two_process_smoke_detected,
             );
-            run_receiver(
+            run_receiver(RunReceiverInputV1 {
                 chain_id,
                 tx_count,
                 receiver_node,
-                listen_addr.as_str(),
-                node_bin.as_path(),
-                store.as_path(),
+                listen_addr: listen_addr.as_str(),
+                node_bin: node_bin.as_path(),
+                store_path: store.as_path(),
                 max_ticks,
                 tick_interval_ms,
                 batch_budget,
                 recv_budget,
                 sustained,
-            )?
+            })?
         }
         "sender" => {
             let receiver_addr = first_string_env_nonempty(&[
