@@ -90,11 +90,10 @@ fn resolve_gate_target_dir_v1() -> String {
             return trimmed.to_string();
         }
     }
-    if cfg!(windows) {
-        "D:\\cargo-target-supervm-gate".to_string()
-    } else {
-        "target/cargo-target-supervm-gate".to_string()
-    }
+    std::env::temp_dir()
+        .join("cargo-target-supervm-gate")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn profile_list_v1() -> Vec<String> {
