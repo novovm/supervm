@@ -24398,13 +24398,13 @@ fn run_receiver(input: RunReceiverInputV1<'_>) -> Result<Value> {
     }))
 }
 
-fn run_local_smoke(
+struct RunLocalSmokeInputV1<'a> {
     chain_id: u64,
     tx_count: u64,
     sender_node: u64,
     receiver_node: u64,
-    node_bin: &Path,
-    store_path: &Path,
+    node_bin: &'a Path,
+    store_path: &'a Path,
     max_ticks: u64,
     tick_interval_ms: u64,
     batch_budget: u64,
@@ -24414,7 +24414,26 @@ fn run_local_smoke(
     sustained: SustainedConfigV1,
     tail_repair: TailRepairConfigV1,
     novorudp: NovoRudpConfigV1,
-) -> Result<Value> {
+}
+
+fn run_local_smoke(input: RunLocalSmokeInputV1<'_>) -> Result<Value> {
+    let RunLocalSmokeInputV1 {
+        chain_id,
+        tx_count,
+        sender_node,
+        receiver_node,
+        node_bin,
+        store_path,
+        max_ticks,
+        tick_interval_ms,
+        batch_budget,
+        recv_budget,
+        startup_wait_ms,
+        fault,
+        sustained,
+        tail_repair,
+        novorudp,
+    } = input;
     let sender_addr = reserve_udp_addr()?;
     let receiver_addr = reserve_udp_addr()?;
     let local_ack_addr = if novorudp.enabled {
@@ -25264,13 +25283,13 @@ fn main() -> Result<()> {
                 novorudp,
             })?
         }
-        "local-smoke" | "local_smoke" => run_local_smoke(
+        "local-smoke" | "local_smoke" => run_local_smoke(RunLocalSmokeInputV1 {
             chain_id,
             tx_count,
             sender_node,
             receiver_node,
-            node_bin.as_path(),
-            store.as_path(),
+            node_bin: node_bin.as_path(),
+            store_path: store.as_path(),
             max_ticks,
             tick_interval_ms,
             batch_budget,
@@ -25280,7 +25299,7 @@ fn main() -> Result<()> {
             sustained,
             tail_repair,
             novorudp,
-        )?,
+        })?,
         other => bail!("unknown NOVOVM_NATIVE_PIPELINE_ROLE: {other}"),
     };
     write_report(path.as_path(), &report)?;
