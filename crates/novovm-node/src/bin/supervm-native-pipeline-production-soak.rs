@@ -207,6 +207,43 @@ fn validate_summary(
         "host_drives_lifecycle_only_no_rust_execution_scheduler",
         &mut violations,
     );
+    require_eq_str(
+        summary,
+        "tx_ingress_selected_path",
+        "aoem_runtime_owned_state_persistence",
+        &mut violations,
+    );
+    require_eq_str(
+        summary,
+        "tx_ingress_production_target",
+        "aoem_runtime_owned_state_persistence",
+        &mut violations,
+    );
+    for field in [
+        "tx_ingress_aoem_gate_config_production_candidate",
+        "aoem_owned_single_path_enforced",
+        "aoem_native_tx_batch_production_candidate_result_ok",
+        "aoem_owned_regression_signable",
+    ] {
+        if summary.get(field).and_then(Value::as_bool) != Some(true) {
+            violations.push(format!("{field} is not true"));
+        }
+    }
+    for field in [
+        "legacy_host_transitional_fallback_used",
+        "aoem_native_tx_batch_production_fallback_used",
+        "aoem_native_tx_batch_production_double_write_legacy_canonical",
+    ] {
+        if summary.get(field).and_then(Value::as_bool) != Some(false) {
+            violations.push(format!("{field} is not false"));
+        }
+    }
+    require_min(
+        summary,
+        "aoem_native_tx_batch_production_receipt_count",
+        tx_count,
+        &mut violations,
+    );
     require_min(summary, "ticks", expected_ticks, &mut violations);
     require_min(
         summary,
@@ -513,6 +550,18 @@ fn main() -> Result<()> {
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH",
             child_summary_path.display().to_string(),
         ),
+        ("NOVOVM_AOEM_VARIANT", "core".to_string()),
+        ("NOVOVM_AOEM_PERSIST_BACKEND", "rocksdb".to_string()),
+        (
+            "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE",
+            "true".to_string(),
+        ),
+        ("NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE", "true".to_string()),
+        ("NOVOVM_AOEM_NATIVE_TX_BATCH_SHADOW", "false".to_string()),
+        (
+            "NOVOVM_LEGACY_HOST_TRANSITIONAL_FALLBACK",
+            "false".to_string(),
+        ),
     ];
     let output = run_node(node_bin.as_path(), envs.as_slice())?;
     let child_summary = parse_summary(&output)?;
@@ -550,8 +599,12 @@ fn main() -> Result<()> {
             "aoem_concurrency_owner": "AOEM_runtime",
             "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
             "product_entry": "pending_only",
-            "receipt_state_source": "AOEM_tick_lifecycle",
-            "commit": "dirty_sharded_atomic_commit",
+            "receipt_state_source": "AOEM_semantic_graph_v3",
+            "state_receipt_owner": "AOEM_runtime",
+            "host_store_role": "validated_query_and_lifecycle_projection",
+            "commit": "aoem_submit_semantic_graph_v3_atomic_persistence",
+            "legacy_host_transitional_fallback": false,
+            "legacy_canonical_double_write": false,
             "feature_expansion": "stopped"
         },
         "budgets": {

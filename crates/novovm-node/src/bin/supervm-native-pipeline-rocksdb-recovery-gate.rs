@@ -2,6 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use novovm_node::tx_ingress::{
+    get_nov_native_aoem_owned_state_recovery_probe_v1,
     get_nov_native_execution_store_recovery_probe_v1, nov_native_execution_store_rocksdb_path_v1,
 };
 use serde_json::Value;
@@ -10,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const REPORT_SCHEMA_V1: &str = "novovm-native-pipeline-rocksdb-recovery-report/v1";
+const REPORT_SCHEMA_V2: &str = "novovm-native-pipeline-rocksdb-recovery-report/v2";
 
 fn string_env_nonempty(name: &str) -> Option<String> {
     std::env::var(name)
@@ -151,6 +152,8 @@ fn require_max(summary: &Value, field: &str, max: u64, violations: &mut Vec<Stri
 fn base_env(
     chain_id: u64,
     store_path: &Path,
+    aoem_persistence_path: &Path,
+    aoem_owned_state_db_path: &Path,
     ticks: u64,
     tick_interval_ms: u64,
     batch_budget: u64,
@@ -194,6 +197,26 @@ fn base_env(
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_QUIET_TICKS",
             "true".to_string(),
         ),
+        ("NOVOVM_AOEM_VARIANT", "persist".to_string()),
+        ("NOVOVM_AOEM_PERSIST_BACKEND", "rocksdb".to_string()),
+        (
+            "AOEM_PERSISTENCE_PATH",
+            aoem_persistence_path.display().to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_OWNED_STATE_DB_PATH",
+            aoem_owned_state_db_path.display().to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE",
+            "true".to_string(),
+        ),
+        ("NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE", "true".to_string()),
+        ("NOVOVM_AOEM_NATIVE_TX_BATCH_SHADOW", "false".to_string()),
+        (
+            "NOVOVM_LEGACY_HOST_TRANSITIONAL_FALLBACK",
+            "false".to_string(),
+        ),
     ]
 }
 
@@ -231,6 +254,11 @@ fn main() -> Result<()> {
     let store_path = string_env_nonempty("NOVOVM_NATIVE_PIPELINE_ROCKSDB_RECOVERY_STORE_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| temp_store_path(chain_id));
+    let aoem_persistence_path =
+        PathBuf::from(format!("{}.aoem-runtime.rocksdb", store_path.display()));
+    let aoem_owned_state_db_path =
+        PathBuf::from(format!("{}.aoem-owned.rocksdb", store_path.display()));
+    let aoem_state_namespace = format!("chain-{chain_id}");
     let node_bin = novovm_node_bin();
     if !node_bin.exists() {
         bail!(
@@ -242,6 +270,8 @@ fn main() -> Result<()> {
     let mut write_env = base_env(
         chain_id,
         store_path.as_path(),
+        aoem_persistence_path.as_path(),
+        aoem_owned_state_db_path.as_path(),
         write_ticks,
         tick_interval_ms,
         batch_budget,
@@ -358,11 +388,22 @@ fn main() -> Result<()> {
     )?;
 
     std::env::set_var("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND", "rocksdb");
+    std::env::set_var("NOVOVM_AOEM_VARIANT", "persist");
+    std::env::set_var("NOVOVM_AOEM_PERSIST_BACKEND", "rocksdb");
+    std::env::set_var("AOEM_PERSISTENCE_PATH", aoem_persistence_path.as_os_str());
+    std::env::set_var(
+        "NOVOVM_AOEM_OWNED_STATE_DB_PATH",
+        aoem_owned_state_db_path.as_os_str(),
+    );
     let recovery_probe = get_nov_native_execution_store_recovery_probe_v1(store_path.as_path())?;
+    let aoem_owned_recovery_probe =
+        get_nov_native_aoem_owned_state_recovery_probe_v1(chain_id, &aoem_state_namespace)?;
 
     let restart_env = base_env(
         chain_id,
         store_path.as_path(),
+        aoem_persistence_path.as_path(),
+        aoem_owned_state_db_path.as_path(),
         restart_ticks,
         tick_interval_ms,
         batch_budget,
@@ -395,6 +436,47 @@ fn main() -> Result<()> {
     require_min(
         &write_summary,
         "aoem_executed_total",
+        tx_count,
+        &mut violations,
+    );
+    require_eq_str(
+        &write_summary,
+        "tx_ingress_selected_path",
+        "aoem_runtime_owned_state_persistence",
+        &mut violations,
+    );
+    require_eq_str(
+        &write_summary,
+        "tx_ingress_production_target",
+        "aoem_runtime_owned_state_persistence",
+        &mut violations,
+    );
+    for field in [
+        "tx_ingress_aoem_gate_config_production_candidate",
+        "aoem_owned_child_runtime_gate_propagated_to_tx_ingress",
+        "aoem_owned_single_path_enforced",
+        "aoem_native_tx_batch_production_candidate_result_ok",
+        "aoem_native_tx_batch_production_state_delta_root_present",
+        "aoem_native_tx_batch_production_snapshot_metadata_present",
+        "aoem_owned_regression_signable",
+    ] {
+        if write_summary.get(field).and_then(Value::as_bool) != Some(true) {
+            violations.push(format!("{field} is not true"));
+        }
+    }
+    for field in [
+        "legacy_host_transitional_fallback_used",
+        "legacy_host_transitional_success_suppressed_by_aoem_gate",
+        "aoem_native_tx_batch_production_fallback_used",
+        "aoem_native_tx_batch_production_double_write_legacy_canonical",
+    ] {
+        if write_summary.get(field).and_then(Value::as_bool) != Some(false) {
+            violations.push(format!("{field} is not false"));
+        }
+    }
+    require_min(
+        &write_summary,
+        "aoem_native_tx_batch_production_receipt_count",
         tx_count,
         &mut violations,
     );
@@ -434,6 +516,44 @@ fn main() -> Result<()> {
                 .unwrap_or_default()
         ));
     }
+    for (field, expected) in [
+        ("recovery_ok", true),
+        ("semantic_graph_v3_capability", true),
+        ("semantic_graph_v3_domain_agnostic", true),
+        ("semantic_graph_v3_ready", true),
+    ] {
+        if aoem_owned_recovery_probe
+            .get(field)
+            .and_then(Value::as_bool)
+            != Some(expected)
+        {
+            violations.push(format!("aoem_owned_recovery.{field} is not {expected}"));
+        }
+    }
+    require_eq_str(
+        &aoem_owned_recovery_probe,
+        "persistence_owner",
+        "aoem_runtime",
+        &mut violations,
+    );
+    require_eq_str(
+        &aoem_owned_recovery_probe,
+        "persistence_backend",
+        "rocksdb",
+        &mut violations,
+    );
+    require_eq_str(
+        &aoem_owned_recovery_probe,
+        "commit_surface",
+        "aoem_submit_semantic_graph_v3",
+        &mut violations,
+    );
+    require_min(
+        &aoem_owned_recovery_probe,
+        "cumulative_receipt_count",
+        tx_count,
+        &mut violations,
+    );
     require_eq_str(
         &restart_summary,
         "execution_kernel",
@@ -466,7 +586,7 @@ fn main() -> Result<()> {
     let pass = violations.is_empty();
     let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(store_path.as_path());
     let report = serde_json::json!({
-        "schema": REPORT_SCHEMA_V1,
+        "schema": REPORT_SCHEMA_V2,
         "method": "supervm_native_pipeline_rocksdb_recovery_gate",
         "accepted": pass,
         "chain_id": chain_id,
@@ -474,16 +594,45 @@ fn main() -> Result<()> {
         "batch_budget": batch_budget,
         "store_path": store_path,
         "rocksdb_path": rocksdb_path,
+        "aoem_persistence_path": aoem_persistence_path,
+        "aoem_owned_state_db_path": aoem_owned_state_db_path,
+        "aoem_state_namespace": aoem_state_namespace,
         "boundaries": {
             "lifecycle_structure": "frozen",
             "execution_kernel": "AOEM",
             "aoem_concurrency_owner": "AOEM_runtime",
             "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
             "product_entry": "pending_only",
-            "receipt_state_source": "AOEM_tick_lifecycle",
-            "commit": "dirty_sharded_atomic_commit",
+            "receipt_state_source": "AOEM_semantic_graph_v3",
+            "state_receipt_owner": "AOEM_runtime",
+            "host_store_role": "validated_query_and_lifecycle_projection",
+            "commit": "aoem_submit_semantic_graph_v3_atomic_persistence",
+            "legacy_host_transitional_fallback": false,
+            "legacy_canonical_double_write": false,
         },
         "recovery": {
+            "aoem_owned_state": {
+                "recovery_ok": aoem_owned_recovery_probe["recovery_ok"].clone(),
+                "persistence_owner": aoem_owned_recovery_probe["persistence_owner"].clone(),
+                "persistence_backend": aoem_owned_recovery_probe["persistence_backend"].clone(),
+                "commit_surface": aoem_owned_recovery_probe["commit_surface"].clone(),
+                "state_root": aoem_owned_recovery_probe["state_root"].clone(),
+                "receipt_root": aoem_owned_recovery_probe["receipt_root"].clone(),
+                "batch_receipt_count": aoem_owned_recovery_probe["batch_receipt_count"].clone(),
+                "cumulative_receipt_count": aoem_owned_recovery_probe["cumulative_receipt_count"].clone(),
+                "state_version": aoem_owned_recovery_probe["state_version"].clone(),
+                "semantic_graph_v3_ready": aoem_owned_recovery_probe["semantic_graph_v3_ready"].clone(),
+                "aoem_domain_specific_logic": aoem_owned_recovery_probe["aoem_domain_specific_logic"].clone(),
+            },
+            "host_projection": {
+                "recovery_ok": recovery_probe["recovery_ok"].clone(),
+                "semantic_head_recovered": recovery_probe["semantic_head_current_recovered"].clone(),
+                "semantic_head_by_height_recovered": recovery_probe["semantic_head_by_height_recovered"].clone(),
+                "snapshot_meta_recovered": recovery_probe["snapshot_meta_current_recovered"].clone(),
+                "snapshot_meta_by_height_recovered": recovery_probe["snapshot_meta_by_height_recovered"].clone(),
+                "receipt_index_recovered": recovery_probe["receipt_index_recovered"].clone(),
+                "materialized_view_rebuilt": recovery_probe["materialized_view_rebuilt"].clone(),
+            },
             "recovery_ok": recovery_probe["recovery_ok"].clone(),
             "semantic_head_recovered": recovery_probe["semantic_head_current_recovered"].clone(),
             "semantic_head_by_height_recovered": recovery_probe["semantic_head_by_height_recovered"].clone(),
@@ -497,6 +646,7 @@ fn main() -> Result<()> {
         "violations": violations,
         "write_summary": write_summary,
         "recovery_probe": recovery_probe,
+        "aoem_owned_recovery_probe": aoem_owned_recovery_probe,
         "restart_summary": restart_summary,
     });
     let path = report_path();

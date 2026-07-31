@@ -243,6 +243,7 @@ fn spawn_receiver(input: ReceiverSpawnInput<'_>) -> Result<Child> {
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED",
             "true".to_string(),
         ),
+        ("NOVOVM_NATIVE_PIPELINE_TRANSPORT", "novorudp".to_string()),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_LISTEN_ADDR",
             receiver_addr.to_string(),
@@ -278,6 +279,18 @@ fn spawn_receiver(input: ReceiverSpawnInput<'_>) -> Result<Child> {
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED",
             expected_execution_count.to_string(),
+        ),
+        ("NOVOVM_AOEM_VARIANT", "core".to_string()),
+        ("NOVOVM_AOEM_PERSIST_BACKEND", "rocksdb".to_string()),
+        (
+            "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE",
+            "true".to_string(),
+        ),
+        ("NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE", "true".to_string()),
+        ("NOVOVM_AOEM_NATIVE_TX_BATCH_SHADOW", "false".to_string()),
+        (
+            "NOVOVM_LEGACY_HOST_TRANSITIONAL_FALLBACK",
+            "false".to_string(),
         ),
     ];
     for (key, value) in base_envs {
@@ -439,6 +452,36 @@ fn validate_common_boundaries(summary: &Value, label: &str, violations: &mut Vec
     }
 }
 
+fn validate_aoem_owned_production(summary: &Value, label: &str, violations: &mut Vec<String>) {
+    for field in [
+        "tx_ingress_aoem_gate_config_production_candidate",
+        "aoem_owned_single_path_enforced",
+        "aoem_native_tx_batch_production_candidate_result_ok",
+        "aoem_owned_regression_signable",
+    ] {
+        if summary.get(field).and_then(Value::as_bool) != Some(true) {
+            violations.push(format!("{label}.{field} is not true"));
+        }
+    }
+    for field in [
+        "legacy_host_transitional_fallback_used",
+        "aoem_native_tx_batch_production_fallback_used",
+        "aoem_native_tx_batch_production_double_write_legacy_canonical",
+    ] {
+        if summary.get(field).and_then(Value::as_bool) != Some(false) {
+            violations.push(format!("{label}.{field} is not false"));
+        }
+    }
+    for field in ["tx_ingress_selected_path", "tx_ingress_production_target"] {
+        if summary_str(summary, field) != "aoem_runtime_owned_state_persistence" {
+            violations.push(format!(
+                "{label}.{field}={} expected aoem_runtime_owned_state_persistence",
+                summary_str(summary, field)
+            ));
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let chain_id = u64_env("NOVOVM_NATIVE_PIPELINE_REMOTE_REENTRY_CHAIN_ID", 9_998_903)?;
     let tx_count = u64_env("NOVOVM_NATIVE_PIPELINE_REMOTE_REENTRY_TX_COUNT", 16)?.max(1);
@@ -590,6 +633,7 @@ fn main() -> Result<()> {
     let mut violations = Vec::<String>::new();
     validate_common_boundaries(&initial_summary, "initial", &mut violations);
     validate_common_boundaries(&restart_summary, "restart", &mut violations);
+    validate_aoem_owned_production(&initial_summary, "initial", &mut violations);
     if expected_duplicate_received == 0 {
         violations.push("duplicate_received=0 expected >0".to_string());
     }
@@ -672,8 +716,13 @@ fn main() -> Result<()> {
             "aoem_concurrency_owner": "AOEM_runtime",
             "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
             "product_entry": "pending_only",
-            "receipt_state_source": "AOEM_tick_lifecycle",
-            "commit": "dirty_sharded_atomic_commit",
+            "receipt_state_source": "AOEM_semantic_graph_v3",
+            "state_receipt_owner": "AOEM_runtime",
+            "host_store_role": "validated_query_and_lifecycle_projection",
+            "transport": "novorudp",
+            "commit": "aoem_submit_semantic_graph_v3_atomic_persistence",
+            "legacy_host_transitional_fallback": false,
+            "legacy_canonical_double_write": false,
             "canonical_body_head_recovery": "not_claimed_by_this_gate"
         },
         "remote_reentry": {

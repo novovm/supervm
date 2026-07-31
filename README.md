@@ -411,7 +411,7 @@ $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_REPORT_PATH="artifacts/native-pipeli
 cargo run -p novovm-node --bin supervm-native-pipeline-production-soak
 ```
 
-The wrapper does not change pipeline structure. It runs `novovm-node` in `native_execution_pipeline` mode with pending-only product entry, validates AOEM owner / host policy / dirty sharded RocksDB commit / queue drain / dropped-rejected budgets, and writes `novovm-native-pipeline-production-soak-report/v1`. `30min`, `2h`, and `overnight` are supported profile names; local and CI smoke runs may override `NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_DURATION_SECONDS` to a short value while preserving the same report schema.
+The wrapper does not change pipeline structure. It runs `novovm-node` in `native_execution_pipeline` mode with pending-only product entry, forces AOEM-owned Semantic Graph V3 persistence with legacy fallback/double write disabled, and validates AOEM owner evidence, host policy, host RocksDB query/lifecycle projection, queue drain, and dropped-rejected budgets. It writes `novovm-native-pipeline-production-soak-report/v1`. `30min`, `2h`, and `overnight` are supported profile names; local and CI smoke runs may override `NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_DURATION_SECONDS` to a short value while preserving the same report schema.
 
 RocksDB recovery gate:
 
@@ -423,7 +423,7 @@ $env:NOVOVM_NATIVE_PIPELINE_ROCKSDB_RECOVERY_REPORT_PATH="artifacts/native-pipel
 cargo run -p novovm-node --bin supervm-native-pipeline-rocksdb-recovery-gate
 ```
 
-The recovery gate writes native txs through the frozen pipeline using the RocksDB-only native execution store, exits the child node, reopens the same RocksDB keyspaces, verifies `semantic_head/current`, `semantic_head/by_height`, `receipt/{tx_hash}`, `receipt_by_height/{height}/{index}/{tx_hash}`, snapshot metadata, and the materialized native execution view, then restarts the node with no ingress to verify no duplicate execution/canonical inclusion. Canonical body/head persistence is reported separately as pending because the current canonical projection still lives in the network runtime, not in the native execution RocksDB store.
+The recovery gate is schema `novovm-native-pipeline-rocksdb-recovery-report/v2`. It forces the AOEM production owner with legacy fallback disabled, writes native txs, exits the child node, and independently reopens both ownership layers. The AOEM-owned Semantic Graph V3 store verifies its persisted state root, receipt root, cumulative receipt count, capability boundary, and domain-neutral contract. The host RocksDB store verifies `semantic_head/current`, `semantic_head/by_height`, `receipt/{tx_hash}`, `receipt_by_height/{height}/{index}/{tx_hash}`, snapshot metadata, and the materialized query/lifecycle projection. A final restart must remain idle without duplicate execution/canonical inclusion. Canonical body/head persistence is reported separately as pending because the current canonical projection still lives in the network runtime, not in the native execution RocksDB store.
 
 Network fault injection gate:
 
@@ -437,7 +437,7 @@ $env:NOVOVM_NATIVE_PIPELINE_FAULT_REPORT_PATH="artifacts/native-pipeline/native-
 cargo run -p novovm-node --bin supervm-native-pipeline-network-fault-gate
 ```
 
-The fault gate starts a receiver `novovm-node` in `native_execution_pipeline` mode, injects UDP packet loss, duplicate packets, delay, and reorder from the gate process, and verifies receiver AOEM/canonical convergence. It requires `duplicate_canonical_included = 0`, semantic head recovery, receipt index consistency, and a drained pending queue under the configured unique-loss budget.
+The fault gate starts a receiver `novovm-node` in `native_execution_pipeline` mode over the NovoRUDP underlay, injects packet loss, duplicate packets, delay, and reorder from the gate process, and verifies AOEM-owned canonical convergence. It requires the AOEM production path, no legacy fallback/double write, `duplicate_canonical_included = 0`, semantic head recovery, receipt index consistency, and a drained pending queue under the configured unique-loss budget.
 
 Pending crash recovery gate:
 
@@ -447,7 +447,7 @@ $env:NOVOVM_NATIVE_PIPELINE_PENDING_CRASH_REPORT_PATH="artifacts/native-pipeline
 cargo run -p novovm-node --bin supervm-native-pipeline-pending-crash-recovery-gate
 ```
 
-The pending crash gate signs the current pending queue policy honestly. `pending_policy = volatile`: transactions that crash before AOEM tick / dirty commit are not recovered from RocksDB. Already canonical included transactions are recovered through the native execution store and must not execute again after restart. The gate verifies partial-commit restart protection, duplicate receipt protection, semantic head recovery, receipt index consistency, and keeps canonical body/head recovery out of scope.
+The pending crash gate signs the current pending queue policy honestly. `pending_policy = volatile`: transactions that crash before the AOEM Semantic Graph V3 commit are not recovered from RocksDB. Already committed transactions are recovered through AOEM-owned state plus the host query/lifecycle projection and must not execute again after restart. The gate requires the AOEM production path with no legacy fallback/double write, verifies partial-commit restart protection, duplicate receipt protection, semantic head recovery, receipt index consistency, and keeps canonical body/head recovery out of scope.
 
 Remote reentry dedup gate:
 
@@ -457,7 +457,7 @@ $env:NOVOVM_NATIVE_PIPELINE_REMOTE_REENTRY_REPORT_PATH="artifacts/native-pipelin
 cargo run -p novovm-node --bin supervm-native-pipeline-remote-reentry-dedup-gate
 ```
 
-The remote reentry gate sends the same native tx batch repeatedly over UDP, verifies the receiver includes each unique tx once, restarts the receiver against the same RocksDB native execution store, then injects the same tx batch again. Already receipted txs are dropped from volatile pending before AOEM selection, so duplicate remote reentry cannot create duplicate canonical inclusion, duplicate receipt, extra semantic head advance, or duplicate dirty commit. Canonical body/head recovery remains out of scope for this gate.
+The remote reentry gate sends the same native tx batch repeatedly over the NovoRUDP underlay, verifies the AOEM production owner includes each unique tx once with no legacy fallback/double write, restarts the receiver against the same stores, then injects the same tx batch again. Already receipted txs are dropped from volatile pending before AOEM selection, so duplicate remote reentry cannot create duplicate canonical inclusion, duplicate receipt, extra semantic head advance, or duplicate atomic commit. Canonical body/head recovery remains out of scope for this gate.
 
 Cross-machine UDP soak:
 

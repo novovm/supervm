@@ -1,7 +1,8 @@
 # NOVOVM Generic Native Transaction AOEM State Ownership v1
 
-Status: host Adapter plus domain-neutral AOEM Semantic Graph V3 production
-candidate.
+Status: production default. The host Adapter owns product semantics and
+domain-neutral AOEM Semantic Graph V3 owns canonical state and receipt
+persistence.
 
 ## Ownership boundary
 
@@ -47,9 +48,23 @@ Recovery reads the head and chunks through
 `aoem_storage_provider_wire_v1`, reconstructs the envelope, verifies its
 digest and roots, and rejects partial or mismatched state.
 
+## Production default
+
+Generic native transaction ingress enables the AOEM-owned path by default.
+No machine-local environment variable is required. The compatibility variable
+`NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE=false` can still select the
+transitional host path for controlled A/B diagnosis; it is not the production
+default.
+
+The default FULLMAX core runtime uses its generic storage-provider RocksDB
+surface. An explicit `NOVOVM_AOEM_PERSIST_BACKEND=none` is treated as an
+operator override and fails the AOEM ownership gate closed. The separate
+FULLMAX persist sidecar remains supported and is exercised by the restart
+recovery gate.
+
 ## Required AOEM contract
 
-The production candidate requires the generic AOEM capability boundary:
+The production owner requires the generic AOEM capability boundary:
 
 ```text
 semantic_graph_v3 = true
@@ -65,7 +80,7 @@ NOVOVM-specific AOEM opcode or capability is required.
 
 ## Runtime evidence
 
-A successful production candidate reports:
+A successful production-owned batch reports:
 
 ```text
 business_semantic_planner = supervm_host_adapter
@@ -92,11 +107,17 @@ resolved in this order:
 3. the configured native execution-store path plus
    `.aoem-owned.rocksdb`.
 
-The default therefore stays repository-relative on every development machine.
+The default is derived from the configured native execution-store path on every
+development machine. It never depends on a drive letter or workspace parent
+name.
+
+The AOEM runtime persistence path used by recovery gates is derived from the
+same temporary/store path. Gate execution therefore does not require
+machine-specific absolute-path configuration.
 
 ## Fail-closed rules
 
-The production candidate is rejected when:
+The production owner is rejected when:
 
 - the domain-neutral V3 capability or symbols are missing;
 - host lowering did not complete;
@@ -106,3 +127,21 @@ The production candidate is rejected when:
 - state-root or receipt-root parity fails;
 - any AOEM domain-specific business logic is reported;
 - a legacy host canonical write is detected.
+
+## Production seal
+
+The v1 production seal requires all of the following with the AOEM-owned path
+enabled and legacy fallback disabled:
+
+- AOEM-owned Semantic Graph V3 state reopens after process exit, with state
+  root, receipt root, cumulative receipt count, and capability contract
+  verified;
+- host query/lifecycle projection reopens independently;
+- restart performs no duplicate execution or canonical inclusion;
+- pending-crash recovery preserves already committed transactions;
+- remote NovoRUDP reentry cannot duplicate receipts, state-head advances, or
+  canonical inclusion;
+- packet loss, duplication, delay, and reordering converge without a legacy
+  canonical write;
+- an idle tick after successful execution is neutral and cannot overwrite the
+  last valid AOEM ownership evidence.

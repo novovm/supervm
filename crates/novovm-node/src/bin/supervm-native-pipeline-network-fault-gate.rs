@@ -287,6 +287,7 @@ fn spawn_receiver(input: ReceiverSpawnInput<'_>) -> Result<Child> {
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED",
             "true".to_string(),
         ),
+        ("NOVOVM_NATIVE_PIPELINE_TRANSPORT", "novorudp".to_string()),
         (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_LISTEN_ADDR",
             receiver_addr.to_string(),
@@ -335,6 +336,18 @@ fn spawn_receiver(input: ReceiverSpawnInput<'_>) -> Result<Child> {
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_COMMIT_TICKS",
             execution_ticks.to_string(),
         ),
+        ("NOVOVM_AOEM_VARIANT", "core".to_string()),
+        ("NOVOVM_AOEM_PERSIST_BACKEND", "rocksdb".to_string()),
+        (
+            "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE",
+            "true".to_string(),
+        ),
+        ("NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE", "true".to_string()),
+        ("NOVOVM_AOEM_NATIVE_TX_BATCH_SHADOW", "false".to_string()),
+        (
+            "NOVOVM_LEGACY_HOST_TRANSITIONAL_FALLBACK",
+            "false".to_string(),
+        ),
     ];
     for (key, value) in envs {
         cmd.env(key, value);
@@ -374,6 +387,36 @@ fn summary_u64(summary: &Value, field: &str) -> u64 {
 
 fn summary_str<'a>(summary: &'a Value, field: &str) -> &'a str {
     summary.get(field).and_then(Value::as_str).unwrap_or("-")
+}
+
+fn require_aoem_owned_production_v1(summary: &Value, violations: &mut Vec<String>) {
+    for field in [
+        "tx_ingress_aoem_gate_config_production_candidate",
+        "aoem_owned_single_path_enforced",
+        "aoem_native_tx_batch_production_candidate_result_ok",
+        "aoem_owned_regression_signable",
+    ] {
+        if summary.get(field).and_then(Value::as_bool) != Some(true) {
+            violations.push(format!("{field} is not true"));
+        }
+    }
+    for field in [
+        "legacy_host_transitional_fallback_used",
+        "aoem_native_tx_batch_production_fallback_used",
+        "aoem_native_tx_batch_production_double_write_legacy_canonical",
+    ] {
+        if summary.get(field).and_then(Value::as_bool) != Some(false) {
+            violations.push(format!("{field} is not false"));
+        }
+    }
+    for field in ["tx_ingress_selected_path", "tx_ingress_production_target"] {
+        if summary_str(summary, field) != "aoem_runtime_owned_state_persistence" {
+            violations.push(format!(
+                "{field}={} expected aoem_runtime_owned_state_persistence",
+                summary_str(summary, field)
+            ));
+        }
+    }
 }
 
 fn write_report(path: &Path, report: &Value) -> Result<()> {
@@ -547,6 +590,7 @@ fn main() -> Result<()> {
             summary_str(&receiver_summary, "host_concurrency_policy")
         ));
     }
+    require_aoem_owned_production_v1(&receiver_summary, &mut violations);
     if delivered_unique_count < tx_count.saturating_sub(max_unique_loss) {
         violations.push(format!(
             "received_unique={delivered_unique_count} below budgeted minimum {}",
@@ -611,8 +655,13 @@ fn main() -> Result<()> {
             "aoem_concurrency_owner": "AOEM_runtime",
             "host_concurrency_policy": "host_drives_lifecycle_only_no_rust_execution_scheduler",
             "product_entry": "pending_only",
-            "receipt_state_source": "AOEM_tick_lifecycle",
-            "commit": "dirty_sharded_atomic_commit",
+            "receipt_state_source": "AOEM_semantic_graph_v3",
+            "state_receipt_owner": "AOEM_runtime",
+            "host_store_role": "validated_query_and_lifecycle_projection",
+            "transport": "novorudp",
+            "commit": "aoem_submit_semantic_graph_v3_atomic_persistence",
+            "legacy_host_transitional_fallback": false,
+            "legacy_canonical_double_write": false,
             "canonical_body_head_recovery": "not_claimed_by_this_gate"
         },
         "fault_injection": {

@@ -1267,7 +1267,7 @@ fn native_aoem_native_tx_batch_shadow_enabled_v1() -> bool {
 fn native_aoem_native_tx_batch_production_candidate_enabled_v1() -> bool {
     bool_env_default_v1(
         NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
-        false,
+        true,
     )
 }
 
@@ -1347,7 +1347,7 @@ fn tx_ingress_aoem_ownership_gates_from_params_v1(
                 config,
                 &["production_candidate", "productionCandidate"],
             )
-            .unwrap_or(false),
+            .unwrap_or(true),
             semantic_graph_v3_required: bool_param_from_object_any_v1(
                 config,
                 &[
@@ -1430,6 +1430,20 @@ fn tx_ingress_aoem_ownership_gates_from_params_v1(
         source: "env_fallback".to_string(),
         explicit: false,
     }
+}
+
+fn native_aoem_owned_runtime_config_v1() -> Result<AoemRuntimeConfig> {
+    // `AoemRuntimeConfig::apply_process_env` publishes the already-open core
+    // runtime as `AOEM_FFI_PERSIST_BACKEND=none`. That internal projection must
+    // not disable the product's later AOEM-owned state boundary. The NOVOVM
+    // variable is the explicit operator override; otherwise FULLMAX core uses
+    // its storage-provider RocksDB surface for owned state.
+    let persist_backend_explicit = std::env::var("NOVOVM_AOEM_PERSIST_BACKEND").is_ok();
+    let mut runtime = AoemRuntimeConfig::from_env()?;
+    if !persist_backend_explicit && runtime.persist_backend.trim().eq_ignore_ascii_case("none") {
+        runtime.persist_backend = "rocksdb".to_string();
+    }
+    Ok(runtime)
 }
 
 fn tx_ingress_string_param_any_v1(params: &serde_json::Value, keys: &[&str]) -> Option<String> {
@@ -11854,8 +11868,8 @@ fn probe_semantic_graph_v3_capability_v1() -> Result<NovAoemSemanticGraphCapabil
         });
     }
 
-    let runtime =
-        AoemRuntimeConfig::from_env().context("AOEM semantic graph V3 runtime config failed")?;
+    let runtime = native_aoem_owned_runtime_config_v1()
+        .context("AOEM semantic graph V3 runtime config failed")?;
     let facade = AoemExecFacade::open_with_runtime(&runtime)
         .context("open AOEM semantic graph V3 runtime failed")?;
     let capability = facade
@@ -12169,8 +12183,8 @@ pub fn get_nov_native_aoem_owned_state_recovery_probe_v1(
     });
     let namespace_digest = native_aoem_owned_state_namespace_digest_v1(&params, chain_id);
     let state_key = native_aoem_owned_state_key_v1(chain_id, namespace_digest.as_str());
-    let runtime =
-        AoemRuntimeConfig::from_env().context("AOEM-owned recovery runtime config failed")?;
+    let runtime = native_aoem_owned_runtime_config_v1()
+        .context("AOEM-owned recovery runtime config failed")?;
     if runtime.persist_backend.trim().eq_ignore_ascii_case("none") {
         bail!(
             "AOEM-owned recovery requires a persistent backend; configure NOVOVM_AOEM_VARIANT=persist or NOVOVM_AOEM_PERSIST_BACKEND=rocksdb"
@@ -12245,6 +12259,8 @@ pub fn get_nov_native_aoem_owned_state_recovery_probe_v1(
         "computed_receipt_root": computed_receipt_root,
         "batch_result_id": envelope.batch_result.batch_result_id,
         "receipt_count": envelope.batch_result.per_tx_receipts.len(),
+        "batch_receipt_count": envelope.batch_result.per_tx_receipts.len(),
+        "cumulative_receipt_count": envelope.store.receipts.len(),
         "state_version": envelope.batch_result.snapshot_metadata.state_version,
         "semantic_graph_v3_capability": capability.semantic_graph_v3,
         "semantic_graph_v3_domain_agnostic": capability.semantic_graph_v3_domain_agnostic,
@@ -12260,8 +12276,8 @@ fn persist_native_state_as_aoem_owner_v1(
     store: &NovNativeExecutionStoreV1,
     batch_result: &novovm_exec::NovovmAoemNativeTxBatchResultV1,
 ) -> Result<NovAoemOwnedNativeStateCommitV1> {
-    let runtime =
-        AoemRuntimeConfig::from_env().context("AOEM-owned native state runtime config failed")?;
+    let runtime = native_aoem_owned_runtime_config_v1()
+        .context("AOEM-owned native state runtime config failed")?;
     if !runtime.dll_path.exists() {
         bail!(
             "AOEM-owned native state runtime DLL is missing: {}",
@@ -12855,7 +12871,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
                     .collect::<Vec<_>>();
                 let state_root = native_semantic_ledger_state_digest_v1(&store.module_state);
                 let receipt_root = native_execution_receipt_root_v1(&store);
-                let runtime_backend = AoemRuntimeConfig::from_env()
+                let runtime_backend = native_aoem_owned_runtime_config_v1()
                     .map(|runtime| runtime.persist_backend)
                     .unwrap_or_else(|_| "unavailable".to_string());
                 match novovm_exec::build_native_tx_batch_result_from_execution_v1(
@@ -16034,10 +16050,12 @@ mod tests {
         let lock_path = nov_native_execution_store_lock_path_v1(path.as_path());
         let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(path.as_path());
         let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(path.as_path());
+        let aoem_owned_state_path = PathBuf::from(format!("{}.aoem-owned.rocksdb", path.display()));
         let _ = fs::remove_file(path);
         let _ = fs::remove_file(lock_path);
         let _ = fs::remove_file(mirror_path);
         let _ = fs::remove_dir_all(rocksdb_path);
+        let _ = fs::remove_dir_all(aoem_owned_state_path);
         out
     }
 
@@ -16062,6 +16080,32 @@ mod tests {
 
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);
+        let _guard = EnvGuard {
+            key: key.to_string(),
+            previous,
+        };
+        test_fn()
+    }
+
+    fn with_env_removed_v1<F, T>(key: &str, test_fn: F) -> T
+    where
+        F: FnOnce() -> T,
+    {
+        struct EnvGuard {
+            key: String,
+            previous: Option<String>,
+        }
+
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                if let Some(previous) = self.previous.take() {
+                    std::env::set_var(self.key.as_str(), previous);
+                }
+            }
+        }
+
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
         let _guard = EnvGuard {
             key: key.to_string(),
             previous,
@@ -16217,15 +16261,27 @@ mod tests {
             NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
             "false",
             || {
-                with_env_override_v1(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, "1", || {
-                    with_test_native_execution_store_path_v1(|path| {
-                        run_nov_send_raw_transaction_batch_from_params_v1(&serde_json::json!({
-                            "raw_txs": raw_txs,
-                            "native_execution_store_path": path,
-                        }))
-                        .expect("shadow batch should preserve legacy host path")
-                    })
-                })
+                with_env_override_v1(
+                    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+                    "false",
+                    || {
+                        with_env_override_v1(
+                            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV,
+                            "1",
+                            || {
+                                with_test_native_execution_store_path_v1(|path| {
+                                    run_nov_send_raw_transaction_batch_from_params_v1(
+                                        &serde_json::json!({
+                                            "raw_txs": raw_txs,
+                                            "native_execution_store_path": path,
+                                        }),
+                                    )
+                                    .expect("shadow batch should preserve legacy host path")
+                                })
+                            },
+                        )
+                    },
+                )
             },
         )
     }
@@ -16758,6 +16814,58 @@ mod tests {
         assert_eq!(
             out["tx_ingress_production_target"].as_str(),
             Some("legacy_host_transitional")
+        );
+    }
+
+    #[test]
+    fn tx_ingress_defaults_to_aoem_owned_state_persistence() {
+        let raw_txs = vec![
+            build_test_native_execute_raw_hex_v1(1, "acct-default-owner-1", 25),
+            build_test_native_execute_raw_hex_v1(2, "acct-default-owner-2", 35),
+        ];
+        let out = with_env_removed_v1(
+            NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    with_test_native_aoem_persist_runtime_v1(path.as_path(), |aoem_path| {
+                        run_nov_send_raw_transaction_batch_from_params_v1(&serde_json::json!({
+                            "raw_txs": raw_txs,
+                            "native_execution_store_path": path,
+                            "aoem_state_namespace": aoem_path.to_string_lossy(),
+                        }))
+                        .expect("default native batch must use AOEM-owned persistence")
+                    })
+                })
+            },
+        );
+        assert_eq!(
+            out["tx_ingress_aoem_gate_config_source"].as_str(),
+            Some("env_fallback")
+        );
+        assert_eq!(
+            out["tx_ingress_aoem_gate_config_explicit"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_candidate_enabled"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_candidate_result_ok"].as_bool(),
+            Some(true),
+            "default AOEM owner output: {out:#}"
+        );
+        assert_eq!(
+            out["tx_ingress_selected_path"].as_str(),
+            Some("aoem_runtime_owned_state_persistence")
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_fallback_used"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_double_write_legacy_canonical"].as_bool(),
+            Some(false)
         );
     }
 
