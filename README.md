@@ -311,6 +311,10 @@ The Product Overlay can be owned by this same node lifecycle with
 payloads re-enter `ingest_local_nov_raw_tx_payload_v1`; relay transport never
 bypasses native authentication or becomes an AOEM policy owner. See
 `docs/NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md`.
+The product-mainline `duplex` role propagates in both directions over one
+authenticated E2E session. Relay disconnects use bounded reconnect backoff and
+rotate only to another verified signed candidate; queued outbound payloads
+remain node-owned until an encrypted relay write succeeds.
 
 For UDP node-to-node pipeline probes, enable the UDP drive on each node:
 

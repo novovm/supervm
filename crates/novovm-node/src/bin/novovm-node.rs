@@ -33590,8 +33590,12 @@ struct NativeExecutionPipelineProductOverlayDriveV1 {
     max_propagations: u64,
     event_budget: usize,
     relay_connected: bool,
+    relay_peer_id: Option<String>,
     e2e_session_established: bool,
     remote_peer_id: String,
+    reconnect_total: u64,
+    relay_rotation_total: u64,
+    last_relay_error: Option<String>,
     received_total: u64,
     submitted_total: u64,
     delivered_total: u64,
@@ -33721,6 +33725,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
         let remote_peer_id = match config.role {
             ProductMainlineOverlayRoleV1::Initiator => config.target_peer_id.clone(),
             ProductMainlineOverlayRoleV1::Responder => config.expected_source_peer_id.clone(),
+            ProductMainlineOverlayRoleV1::Duplex => config.target_peer_id.clone(),
         }
         .context("product mainline overlay remote peer id is missing")?;
         let runtime = ProductMainlineOverlayRuntimeV1::start(config, now_unix_ms())?;
@@ -33743,8 +33748,12 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             )?
             .clamp(1, 65_536),
             relay_connected: false,
+            relay_peer_id: None,
             e2e_session_established: false,
             remote_peer_id,
+            reconnect_total: 0,
+            relay_rotation_total: 0,
+            last_relay_error: None,
             received_total: 0,
             submitted_total: 0,
             delivered_total: 0,
@@ -33761,8 +33770,26 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
         let mut tx_hashes = Vec::new();
         for event in self.runtime.drain_events(self.event_budget) {
             match event {
-                ProductMainlineOverlayEventV1::RelayConnected { .. } => {
+                ProductMainlineOverlayEventV1::RelayConnected { relay_peer_id } => {
                     self.relay_connected = true;
+                    self.relay_peer_id = Some(relay_peer_id);
+                    self.last_relay_error = None;
+                }
+                ProductMainlineOverlayEventV1::RelayDisconnected {
+                    error,
+                    reconnect_in_ms: _,
+                    relay_peer_id: _,
+                } => {
+                    self.relay_connected = false;
+                    self.e2e_session_established = false;
+                    self.reconnect_total = self.reconnect_total.saturating_add(1);
+                    self.last_relay_error = Some(error);
+                }
+                ProductMainlineOverlayEventV1::RelayRotated {
+                    previous_relay_peer_id: _,
+                    next_relay_peer_id: _,
+                } => {
+                    self.relay_rotation_total = self.relay_rotation_total.saturating_add(1);
                 }
                 ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id } => {
                     self.e2e_session_established = true;
@@ -33820,7 +33847,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
         let mut candidate_count = 0u64;
         if self.worker_error.is_none()
             && !self.worker_stopped
-            && self.runtime.role() == ProductMainlineOverlayRoleV1::Initiator
+            && self.runtime.role() != ProductMainlineOverlayRoleV1::Responder
         {
             let candidates =
                 snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1(
@@ -33867,11 +33894,16 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             "role": match self.runtime.role() {
                 ProductMainlineOverlayRoleV1::Initiator => "initiator",
                 ProductMainlineOverlayRoleV1::Responder => "responder",
+                ProductMainlineOverlayRoleV1::Duplex => "duplex",
             },
             "lifecycle_owner": "novovm_node",
             "relay_connected": self.relay_connected,
+            "relay_peer_id": self.relay_peer_id,
             "e2e_session_established": self.e2e_session_established,
             "remote_peer_id": self.remote_peer_id,
+            "reconnect_total": self.reconnect_total,
+            "relay_rotation_total": self.relay_rotation_total,
+            "last_relay_error": self.last_relay_error,
             "selected_path": self.runtime.startup().route_plan.selected_path,
             "bootstrap_candidate_count": self.runtime.startup().bootstrap.valid_relay_candidate_count,
             "payload_treated_opaque_by_relay": true,
@@ -33908,10 +33940,15 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 "role": match self.runtime.role() {
                     ProductMainlineOverlayRoleV1::Initiator => "initiator",
                     ProductMainlineOverlayRoleV1::Responder => "responder",
+                    ProductMainlineOverlayRoleV1::Duplex => "duplex",
                 },
                 "relay_connected": self.relay_connected,
+                "relay_peer_id": self.relay_peer_id,
                 "e2e_session_established": self.e2e_session_established,
                 "remote_peer_id": self.remote_peer_id,
+                "reconnect_total": self.reconnect_total,
+                "relay_rotation_total": self.relay_rotation_total,
+                "last_relay_error": self.last_relay_error,
                 "selected_path": self.runtime.startup().route_plan.selected_path,
                 "bootstrap_candidate_count": self.runtime.startup().bootstrap.valid_relay_candidate_count,
                 "payload_treated_opaque_by_relay": true,

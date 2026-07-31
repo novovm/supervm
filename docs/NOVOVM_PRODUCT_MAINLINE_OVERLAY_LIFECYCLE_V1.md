@@ -36,12 +36,12 @@ NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG=<path-to-config.json>
 The config path is supplied by the operator. No repository, drive-letter, or
 workspace-parent absolute path is built into the runtime.
 
-Example initiator config:
+Recommended duplex config:
 
 ```json
 {
   "chain_id": 1,
-  "role": "initiator",
+  "role": "duplex",
   "identity_key_path": "runtime/node-ed25519.hex",
   "target_peer_id": "novovm-ed25519:<peer-public-key>",
   "overlay": {
@@ -54,11 +54,18 @@ Example initiator config:
   "read_timeout_ms": 250,
   "tls_trust": "native_web_pki",
   "channel_capacity": 1024,
-  "metric_peer_id": 9990777
+  "metric_peer_id": 9990777,
+  "reconnect_base_delay_ms": 250,
+  "reconnect_max_delay_ms": 30000
 }
 ```
 
-A responder uses:
+The `duplex` role deterministically chooses which authenticated node starts the
+peer handshake, then enables both encrypted directions on the resulting
+session. Both nodes may propagate pending transactions and both nodes return
+decrypted payloads to the same native ingress boundary.
+
+The original one-way compatibility roles remain available. A responder uses:
 
 ```json
 {
@@ -79,11 +86,35 @@ The public key arrays above are abbreviated examples; each key must contain
 exactly 32 bytes, and a trusted signed manifest must be available from the
 embedded source or unexpired local cache.
 
-The initiator owns outbound pending-transaction propagation. The responder
-owns inbound delivery for the authenticated peer. This v1 role split keeps one
-E2E session single-purpose and deterministic. The signed v1 gate covers the
-initiator-to-responder direction; simultaneous bidirectional scheduling is not
-claimed by this milestone.
+An `initiator` owns outbound propagation and a `responder` owns inbound
+delivery. They remain useful for constrained or staged deployments, but
+`duplex` is the product-mainline role.
+
+## Recovery and signed relay rotation
+
+The node keeps ownership of queued outbound transactions while a relay session
+is unavailable. A failed encrypted write does not produce a successful
+delivery receipt and does not discard the queued transaction.
+
+Connection or session failure causes the node to:
+
+1. mark the active signed relay candidate failed and enter its configured
+   cooldown;
+2. select another candidate only from the already verified signed pool;
+3. authenticate the replacement relay by its node key;
+4. establish a fresh peer E2E session; and
+5. resume queued delivery with fresh session keys and replay windows.
+
+Reconnect delay uses bounded exponential backoff from
+`reconnect_base_delay_ms` through `reconnect_max_delay_ms`. Rotation never
+introduces an unsigned endpoint or turns bootstrap/relay infrastructure into a
+transaction authority.
+
+Relay concurrency may deliver queued ciphertext immediately beside the peer
+handshake response. Before E2E authentication completes, the node may retain
+at most 64 opaque envelopes from the configured remote peer. It cannot decrypt
+or ingest them until the signed handshake succeeds; an unexpected source,
+overflow, or post-handshake authentication failure closes that session.
 
 ## Fail-closed rules
 
@@ -97,7 +128,8 @@ claimed by this milestone.
 - Invalid signature, identity, nonce, chain domain, empty payload, or wrong
   frame type is rejected before pending state.
 - A transaction is counted as propagated only after the encrypted relay write
-  succeeds.
+  succeeds. A write interrupted by disconnect remains queued for the next
+  authenticated session.
 - The worker stops and joins with the owning node runtime.
 
 `NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_ENABLED` defaults to disabled when
@@ -118,10 +150,11 @@ NOVOVM_PRODUCT_MAINLINE_OVERLAY_EXPECTED_DELIVERED=<count>
 The final pipeline summary includes `product_mainline_overlay` with lifecycle,
 bootstrap, relay, E2E, ingress, delivery, and ownership evidence.
 
-The mainline gate runs a local real-WSS relay test with two node-owned Overlay
-runtimes. It verifies signed relay selection, relay identity authentication,
-peer E2E establishment, opaque encrypted NovoRUDP delivery, and lifecycle
-shutdown.
+The mainline gate runs local real-WSS tests with node-owned Overlay runtimes.
+It verifies signed relay selection, relay identity authentication,
+deterministic peer E2E establishment, simultaneous bidirectional encrypted
+NovoRUDP delivery, failed-candidate cooldown, signed relay rotation, reconnect,
+and lifecycle shutdown.
 
 This does not claim a public VPS, cellular, VPN, NAT, or CGNAT result. Those
 remain topology evidence work.

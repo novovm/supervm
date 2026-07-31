@@ -10,6 +10,9 @@ The same signed bootstrap and relay-selection runtime is now also owned by the
 `NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED=true`. See
 `NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md`. The standalone binary
 remains a discovery/receipt diagnostic and does not execute transactions.
+The node-owned lifecycle supports a deterministic duplex E2E session, bounded
+reconnect backoff, and rotation only among candidates verified from the signed
+bootstrap/cache set.
 
 ## Configuration
 
