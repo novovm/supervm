@@ -68,6 +68,7 @@ pub enum ProductRelayClientEventV1 {
 pub struct ProductRelayClientV1 {
     stream: rustls::StreamOwned<rustls::ClientConnection, TcpStream>,
     session: ProductRelayClientSessionV1,
+    read_buffer: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +154,7 @@ impl ProductRelayClientV1 {
                 node_identity_challenge_response_verified: true,
                 tls_is_novorudp_identity_root: false,
             },
+            read_buffer: Vec::new(),
         })
     }
 
@@ -185,7 +187,7 @@ impl ProductRelayClientV1 {
 
     pub fn recv_event(&mut self) -> Result<ProductRelayClientEventV1> {
         loop {
-            match read_frame_v1(&mut self.stream)? {
+            match read_buffered_frame_v1(&mut self.stream, &mut self.read_buffer)? {
                 RelayClientFrameV1::Binary(bytes) => {
                     match serde_json::from_slice(&bytes).context("decode relay event")? {
                         ProductRelayWireMessageV1::Delivery(delivery) => {
@@ -460,6 +462,93 @@ fn write_masked_frame_v1<S: Write>(stream: &mut S, opcode: u8, payload: &[u8]) -
     Ok(())
 }
 
+fn read_buffered_frame_v1<S: Read>(
+    stream: &mut S,
+    read_buffer: &mut Vec<u8>,
+) -> Result<RelayClientFrameV1> {
+    loop {
+        if let Some((frame, consumed)) = decode_buffered_frame_v1(read_buffer)? {
+            read_buffer.drain(..consumed);
+            return Ok(frame);
+        }
+        let mut chunk = [0u8; 16 * 1024];
+        let read = stream.read(&mut chunk)?;
+        if read == 0 {
+            bail!("relay WebSocket stream closed");
+        }
+        read_buffer.extend_from_slice(&chunk[..read]);
+        if read_buffer.len() > MAX_WEBSOCKET_FRAME_BYTES_V1.saturating_add(14) {
+            bail!("relay WebSocket buffered frame too large");
+        }
+    }
+}
+
+fn decode_buffered_frame_v1(bytes: &[u8]) -> Result<Option<(RelayClientFrameV1, usize)>> {
+    if bytes.len() < 2 {
+        return Ok(None);
+    }
+    if bytes[0] & 0x80 == 0 {
+        bail!("fragmented relay WebSocket frames are unsupported");
+    }
+    let opcode = bytes[0] & 0x0f;
+    let masked = bytes[1] & 0x80 != 0;
+    let length_tag = bytes[1] & 0x7f;
+    let mut cursor = 2usize;
+    let length = match length_tag {
+        126 => {
+            if bytes.len() < cursor + 2 {
+                return Ok(None);
+            }
+            let length = u16::from_be_bytes(bytes[cursor..cursor + 2].try_into().unwrap()) as u64;
+            cursor += 2;
+            length
+        }
+        127 => {
+            if bytes.len() < cursor + 8 {
+                return Ok(None);
+            }
+            let length = u64::from_be_bytes(bytes[cursor..cursor + 8].try_into().unwrap());
+            cursor += 8;
+            length
+        }
+        length => u64::from(length),
+    };
+    if length > MAX_WEBSOCKET_FRAME_BYTES_V1 as u64 {
+        bail!("relay WebSocket frame too large");
+    }
+    let mask = if masked {
+        if bytes.len() < cursor + 4 {
+            return Ok(None);
+        }
+        let mask: [u8; 4] = bytes[cursor..cursor + 4].try_into().unwrap();
+        cursor += 4;
+        Some(mask)
+    } else {
+        None
+    };
+    let payload_len = usize::try_from(length).context("relay frame length exceeds usize")?;
+    let frame_len = cursor
+        .checked_add(payload_len)
+        .context("relay frame length overflow")?;
+    if bytes.len() < frame_len {
+        return Ok(None);
+    }
+    let mut payload = bytes[cursor..frame_len].to_vec();
+    if let Some(mask) = mask {
+        for (index, byte) in payload.iter_mut().enumerate() {
+            *byte ^= mask[index % 4];
+        }
+    }
+    let frame = match opcode {
+        0x2 => RelayClientFrameV1::Binary(payload),
+        0x9 => RelayClientFrameV1::Ping(payload),
+        0xA => RelayClientFrameV1::Pong,
+        0x8 => RelayClientFrameV1::Close,
+        _ => bail!("unsupported relay WebSocket opcode"),
+    };
+    Ok(Some((frame, frame_len)))
+}
+
 fn read_frame_v1<S: Read>(stream: &mut S) -> Result<RelayClientFrameV1> {
     let mut header = [0u8; 2];
     stream.read_exact(&mut header)?;
@@ -699,6 +788,24 @@ mod tests {
         assert_eq!(connector.state().next_delay_ms, 200);
         assert!(connector.connect().is_err());
         assert_eq!(connector.state().next_delay_ms, 250);
+    }
+
+    #[test]
+    fn buffered_decoder_preserves_partial_websocket_frame_across_reads() {
+        let payload = vec![0x5a; 300];
+        let mut encoded = vec![0x82, 126];
+        encoded.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        encoded.extend_from_slice(&payload);
+
+        assert!(decode_buffered_frame_v1(&encoded[..1]).unwrap().is_none());
+        assert!(decode_buffered_frame_v1(&encoded[..3]).unwrap().is_none());
+        assert!(decode_buffered_frame_v1(&encoded[..100]).unwrap().is_none());
+        let (frame, consumed) = decode_buffered_frame_v1(&encoded).unwrap().unwrap();
+        assert_eq!(consumed, encoded.len());
+        match frame {
+            RelayClientFrameV1::Binary(decoded) => assert_eq!(decoded, payload),
+            other => panic!("unexpected buffered frame: {other:?}"),
+        }
     }
 
     fn hex_v1(bytes: &[u8]) -> String {

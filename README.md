@@ -305,6 +305,13 @@ Expected summary evidence: `execution_kernel=AOEM`, `aoem_concurrency_owner=AOEM
 
 The fixture source only builds valid NOV native raw transactions. Submission still goes through `ingest_local_nov_raw_tx_payload_v1`, which is the product raw transaction ingress used by `nov_sendRawTransaction`, before the pending runtime is drained by the AOEM tick. Production raw transaction entry must run with `NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY=true` or equivalent `pipeline_only/pending_only` request metadata: it accepts and indexes the tx, but receipt/state projection is produced only by the AOEM tick lifecycle. The legacy immediate dispatch path is compatibility/debug behavior, not the product high-frequency pipeline.
 
+The Product Overlay can be owned by this same node lifecycle with
+`NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED=true` and
+`NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG=<config.json>`. Inbound E2E NovoRUDP
+payloads re-enter `ingest_local_nov_raw_tx_payload_v1`; relay transport never
+bypasses native authentication or becomes an AOEM policy owner. See
+`docs/NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md`.
+
 For UDP node-to-node pipeline probes, enable the UDP drive on each node:
 
 ```powershell

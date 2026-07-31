@@ -5,6 +5,12 @@ it merges signed bootstrap sources, restores a local cache, verifies every relay
 record, selects a relay, and emits a signed strategy receipt. It does not expose
 or request a global raw-IP directory.
 
+The same signed bootstrap and relay-selection runtime is now also owned by the
+`novovm-node` native execution pipeline when
+`NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED=true`. See
+`NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md`. The standalone binary
+remains a discovery/receipt diagnostic and does not execute transactions.
+
 ## Configuration
 
 ```json

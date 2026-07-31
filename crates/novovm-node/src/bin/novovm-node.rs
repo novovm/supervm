@@ -101,6 +101,10 @@ use novovm_node::mainline_query::{
     is_mainline_native_execution_query_method, mainline_query_method_from_env,
     mainline_query_params_from_env, run_mainline_query_from_path,
 };
+use novovm_node::product_mainline_overlay::{
+    ingest_product_mainline_overlay_payload_v1, load_product_mainline_overlay_config_v1,
+    ProductMainlineOverlayEventV1, ProductMainlineOverlayRoleV1, ProductMainlineOverlayRuntimeV1,
+};
 use novovm_node::tx_ingress::{
     available_ingress_codecs, decode_eth_send_raw_hex_payload_v1,
     ingest_local_eth_raw_tx_payload_v1, ingest_local_nov_raw_tx_payload_v1,
@@ -33578,10 +33582,30 @@ struct NativeExecutionPipelineIngressDriveV1 {
     max_per_tick: usize,
 }
 
+struct NativeExecutionPipelineProductOverlayDriveV1 {
+    chain_id: u64,
+    runtime: ProductMainlineOverlayRuntimeV1,
+    in_flight: HashSet<[u8; 32]>,
+    max_per_tick: usize,
+    max_propagations: u64,
+    event_budget: usize,
+    relay_connected: bool,
+    e2e_session_established: bool,
+    remote_peer_id: String,
+    received_total: u64,
+    submitted_total: u64,
+    delivered_total: u64,
+    failed_total: u64,
+    worker_stopped: bool,
+    worker_error: Option<String>,
+}
+
 const NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_SOURCE_V1: &str =
     "nov_sendRawTransaction_product_raw_tx_ingress";
 const NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1: &str =
     "ingest_local_nov_raw_tx_payload_v1";
+const NATIVE_EXECUTION_PIPELINE_PRODUCT_OVERLAY_SOURCE_V1: &str =
+    "novovm_product_mainline_overlay_runtime_v1";
 
 impl NativeExecutionPipelineIngressDriveV1 {
     fn from_env(chain_id: u64) -> Result<Option<Self>> {
@@ -33678,6 +33702,278 @@ impl NativeExecutionPipelineIngressDriveV1 {
     }
 }
 
+impl NativeExecutionPipelineProductOverlayDriveV1 {
+    fn from_env(chain_id: u64) -> Result<Option<Self>> {
+        if !bool_env("NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED") {
+            return Ok(None);
+        }
+        let config_path = string_env_nonempty("NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG").context(
+            "NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG is required when product overlay is enabled",
+        )?;
+        let config = load_product_mainline_overlay_config_v1(&config_path)?;
+        if config.chain_id != chain_id {
+            bail!(
+                "product mainline overlay chain_id {} does not match native pipeline chain_id {}",
+                config.chain_id,
+                chain_id
+            );
+        }
+        let remote_peer_id = match config.role {
+            ProductMainlineOverlayRoleV1::Initiator => config.target_peer_id.clone(),
+            ProductMainlineOverlayRoleV1::Responder => config.expected_source_peer_id.clone(),
+        }
+        .context("product mainline overlay remote peer id is missing")?;
+        let runtime = ProductMainlineOverlayRuntimeV1::start(config, now_unix_ms())?;
+        Ok(Some(Self {
+            chain_id,
+            runtime,
+            in_flight: HashSet::new(),
+            max_per_tick: usize_env_allow_zero(
+                "NOVOVM_PRODUCT_MAINLINE_OVERLAY_MAX_PER_TICK",
+                1_024,
+            )?
+            .clamp(1, 16_384),
+            max_propagations: u64_env_positive(
+                "NOVOVM_PRODUCT_MAINLINE_OVERLAY_MAX_PROPAGATIONS",
+                3,
+            )?,
+            event_budget: usize_env_allow_zero(
+                "NOVOVM_PRODUCT_MAINLINE_OVERLAY_EVENT_BUDGET",
+                4_096,
+            )?
+            .clamp(1, 65_536),
+            relay_connected: false,
+            e2e_session_established: false,
+            remote_peer_id,
+            received_total: 0,
+            submitted_total: 0,
+            delivered_total: 0,
+            failed_total: 0,
+            worker_stopped: false,
+            worker_error: None,
+        }))
+    }
+
+    fn drive_once(&mut self) -> serde_json::Value {
+        let mut received = 0u64;
+        let mut delivered = 0u64;
+        let mut delivery_failed = 0u64;
+        let mut tx_hashes = Vec::new();
+        for event in self.runtime.drain_events(self.event_budget) {
+            match event {
+                ProductMainlineOverlayEventV1::RelayConnected { .. } => {
+                    self.relay_connected = true;
+                }
+                ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id } => {
+                    self.e2e_session_established = true;
+                    self.remote_peer_id = remote_peer_id;
+                }
+                ProductMainlineOverlayEventV1::Inbound(inbound) => {
+                    match ingest_product_mainline_overlay_payload_v1(
+                        self.chain_id,
+                        inbound.frame.payload.as_slice(),
+                    ) {
+                        Ok(receipt) => {
+                            received = received.saturating_add(1);
+                            self.received_total = self.received_total.saturating_add(1);
+                            tx_hashes.push(to_hex_prefixed(&receipt.tx_hash));
+                        }
+                        Err(error) => {
+                            self.worker_error = Some(format!(
+                                "product overlay transaction ingress rejected payload from {}: {error}",
+                                inbound.source_peer_id
+                            ));
+                            self.failed_total = self.failed_total.saturating_add(1);
+                            break;
+                        }
+                    }
+                }
+                ProductMainlineOverlayEventV1::Delivery(delivery) => {
+                    self.in_flight.remove(&delivery.tx_hash);
+                    if delivery.delivered {
+                        delivered = delivered.saturating_add(1);
+                        self.delivered_total = self.delivered_total.saturating_add(1);
+                        observe_network_runtime_native_pending_tx_propagated_with_context_v1(
+                            self.chain_id,
+                            delivery.tx_hash,
+                            Some(self.runtime.metric_peer_id()),
+                            Some("product_overlay_relay_novorudp"),
+                            Some(self.max_propagations),
+                        );
+                    } else {
+                        delivery_failed = delivery_failed.saturating_add(1);
+                        self.failed_total = self.failed_total.saturating_add(1);
+                        self.worker_error = delivery.error;
+                    }
+                }
+                ProductMainlineOverlayEventV1::WorkerStopped => {
+                    self.worker_stopped = true;
+                }
+                ProductMainlineOverlayEventV1::WorkerFailed(error) => {
+                    self.worker_error = Some(error);
+                    self.failed_total = self.failed_total.saturating_add(1);
+                }
+            }
+        }
+
+        let mut submitted = 0u64;
+        let mut candidate_count = 0u64;
+        if self.worker_error.is_none()
+            && !self.worker_stopped
+            && self.runtime.role() == ProductMainlineOverlayRoleV1::Initiator
+        {
+            let candidates =
+                snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1(
+                    self.chain_id,
+                    self.max_per_tick,
+                    self.max_propagations,
+                );
+            candidate_count = candidates.len() as u64;
+            for candidate in candidates {
+                if self.in_flight.contains(&candidate.tx_hash) {
+                    continue;
+                }
+                match self
+                    .runtime
+                    .try_submit(candidate.tx_hash, candidate.tx_payload)
+                {
+                    Ok(true) => {
+                        self.in_flight.insert(candidate.tx_hash);
+                        submitted = submitted.saturating_add(1);
+                        self.submitted_total = self.submitted_total.saturating_add(1);
+                    }
+                    Ok(false) => break,
+                    Err(error) => {
+                        self.worker_error = Some(error.to_string());
+                        self.failed_total = self.failed_total.saturating_add(1);
+                        break;
+                    }
+                }
+            }
+        }
+        if candidate_count > 0 || delivered > 0 || delivery_failed > 0 {
+            observe_network_runtime_native_pending_tx_broadcast_dispatch_v1(
+                self.chain_id,
+                self.runtime.metric_peer_id(),
+                candidate_count,
+                delivered,
+                delivery_failed == 0,
+            );
+        }
+        serde_json::json!({
+            "enabled": true,
+            "ok": self.worker_error.is_none() && !self.worker_stopped,
+            "source": NATIVE_EXECUTION_PIPELINE_PRODUCT_OVERLAY_SOURCE_V1,
+            "role": match self.runtime.role() {
+                ProductMainlineOverlayRoleV1::Initiator => "initiator",
+                ProductMainlineOverlayRoleV1::Responder => "responder",
+            },
+            "lifecycle_owner": "novovm_node",
+            "relay_connected": self.relay_connected,
+            "e2e_session_established": self.e2e_session_established,
+            "remote_peer_id": self.remote_peer_id,
+            "selected_path": self.runtime.startup().route_plan.selected_path,
+            "bootstrap_candidate_count": self.runtime.startup().bootstrap.valid_relay_candidate_count,
+            "payload_treated_opaque_by_relay": true,
+            "relay_is_trusted_authority": false,
+            "inbound_entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
+            "inbound_policy": "signature_identity_nonce_chain_domain_before_pending",
+            "execution_owner_after_ingress": "aoem_runtime",
+            "received": received,
+            "received_total": self.received_total,
+            "candidate_count": candidate_count,
+            "submitted": submitted,
+            "submitted_total": self.submitted_total,
+            "delivered": delivered,
+            "delivered_total": self.delivered_total,
+            "delivery_failed": delivery_failed,
+            "failed_total": self.failed_total,
+            "in_flight": self.in_flight.len() as u64,
+            "worker_stopped": self.worker_stopped,
+            "error": self.worker_error,
+            "tx_hashes": tx_hashes,
+        })
+    }
+
+    fn decorate_summary(&self, summary: &mut serde_json::Value) {
+        let Some(object) = summary.as_object_mut() else {
+            return;
+        };
+        object.insert(
+            "product_mainline_overlay".to_string(),
+            serde_json::json!({
+                "enabled": true,
+                "source": NATIVE_EXECUTION_PIPELINE_PRODUCT_OVERLAY_SOURCE_V1,
+                "lifecycle_owner": "novovm_node",
+                "role": match self.runtime.role() {
+                    ProductMainlineOverlayRoleV1::Initiator => "initiator",
+                    ProductMainlineOverlayRoleV1::Responder => "responder",
+                },
+                "relay_connected": self.relay_connected,
+                "e2e_session_established": self.e2e_session_established,
+                "remote_peer_id": self.remote_peer_id,
+                "selected_path": self.runtime.startup().route_plan.selected_path,
+                "bootstrap_candidate_count": self.runtime.startup().bootstrap.valid_relay_candidate_count,
+                "payload_treated_opaque_by_relay": true,
+                "relay_is_trusted_authority": false,
+                "inbound_entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
+                "inbound_policy": "signature_identity_nonce_chain_domain_before_pending",
+                "execution_owner_after_ingress": "aoem_runtime",
+                "received_total": self.received_total,
+                "submitted_total": self.submitted_total,
+                "delivered_total": self.delivered_total,
+                "failed_total": self.failed_total,
+                "in_flight": self.in_flight.len() as u64,
+                "worker_stopped": self.worker_stopped,
+                "error": self.worker_error,
+            }),
+        );
+    }
+
+    fn validate_signoff(&self) -> Result<()> {
+        if !bool_env("NOVOVM_PRODUCT_MAINLINE_OVERLAY_SIGNOFF_REQUIRED") {
+            return Ok(());
+        }
+        if let Some(error) = self.worker_error.as_deref() {
+            bail!("product mainline overlay worker failed: {error}");
+        }
+        if self.worker_stopped {
+            bail!("product mainline overlay worker stopped before node shutdown");
+        }
+        if !self.relay_connected {
+            bail!("product mainline overlay signoff missing authenticated relay connection");
+        }
+        if !self.e2e_session_established {
+            bail!("product mainline overlay signoff missing authenticated E2E peer session");
+        }
+        let expected_received =
+            u64_env_allow_zero("NOVOVM_PRODUCT_MAINLINE_OVERLAY_EXPECTED_RECEIVED", 0)?;
+        let expected_delivered =
+            u64_env_allow_zero("NOVOVM_PRODUCT_MAINLINE_OVERLAY_EXPECTED_DELIVERED", 0)?;
+        if self.received_total < expected_received {
+            bail!(
+                "product mainline overlay received_total {} below expected {}",
+                self.received_total,
+                expected_received
+            );
+        }
+        if self.delivered_total < expected_delivered {
+            bail!(
+                "product mainline overlay delivered_total {} below expected {}",
+                self.delivered_total,
+                expected_delivered
+            );
+        }
+        if !self.in_flight.is_empty() {
+            bail!(
+                "product mainline overlay signoff has {} in-flight transactions",
+                self.in_flight.len()
+            );
+        }
+        Ok(())
+    }
+}
+
 struct NativeExecutionPipelineBroadcastDriveV1 {
     chain_id: u64,
     peer_id: u64,
@@ -33687,7 +33983,13 @@ struct NativeExecutionPipelineBroadcastDriveV1 {
 }
 
 impl NativeExecutionPipelineBroadcastDriveV1 {
-    fn from_env(chain_id: u64) -> Result<Self> {
+    fn from_env(chain_id: u64, product_overlay_enabled: bool) -> Result<Self> {
+        let enabled =
+            if std::env::var_os("NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_ENABLED").is_some() {
+                bool_env_default_true("NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_ENABLED")
+            } else {
+                !product_overlay_enabled
+            };
         Ok(Self {
             chain_id,
             peer_id: u64_env_allow_zero(
@@ -33703,7 +34005,7 @@ impl NativeExecutionPipelineBroadcastDriveV1 {
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_MAX_PROPAGATIONS",
                 3,
             )?,
-            enabled: bool_env_default_true("NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_ENABLED"),
+            enabled,
         })
     }
 
@@ -41948,8 +42250,13 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
     let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
     let mut ingress_drive = NativeExecutionPipelineIngressDriveV1::from_env(chain_id)?;
+    let mut product_overlay_drive =
+        NativeExecutionPipelineProductOverlayDriveV1::from_env(chain_id)?;
     let udp_drive = NativeExecutionPipelineUdpDriveV1::from_env(chain_id)?;
-    let broadcast_drive = NativeExecutionPipelineBroadcastDriveV1::from_env(chain_id)?;
+    let broadcast_drive = NativeExecutionPipelineBroadcastDriveV1::from_env(
+        chain_id,
+        product_overlay_drive.is_some(),
+    )?;
     let soak_gate = NativeExecutionPipelineSoakGateV1::from_env()?;
     let progress_report_path =
         string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH")
@@ -42017,11 +42324,23 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                 "reason": "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED is not set",
             }),
         };
+        let product_overlay_drive_out = match product_overlay_drive.as_mut() {
+            Some(drive) => drive.drive_once(),
+            None => serde_json::json!({
+                "enabled": false,
+                "ok": true,
+                "reason": "NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED is not set",
+            }),
+        };
         let network_enabled = network_drive_out
             .get("enabled")
             .and_then(|value| value.as_bool())
             .unwrap_or(false)
             || udp_drive_out
+                .get("enabled")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            || product_overlay_drive_out
                 .get("enabled")
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false);
@@ -42032,12 +42351,17 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
             && udp_drive_out
                 .get("ok")
                 .and_then(|value| value.as_bool())
+                .unwrap_or(true)
+            && product_overlay_drive_out
+                .get("ok")
+                .and_then(|value| value.as_bool())
                 .unwrap_or(true);
         let network_drive_out = serde_json::json!({
             "enabled": network_enabled,
             "ok": network_ok,
             "rlpx": network_drive_out,
             "udp": udp_drive_out,
+            "product_overlay": product_overlay_drive_out,
         });
         let broadcast_drive_out = broadcast_drive.drive_once();
         let mut params = native_execution_tick_params_from_env_v1()?;
@@ -42099,6 +42423,9 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                     }
                 }
                 let mut progress_summary = aggregate.to_json();
+                if let Some(drive) = product_overlay_drive.as_ref() {
+                    drive.decorate_summary(&mut progress_summary);
+                }
                 decorate_aoem_runtime_worker_scheduler_summary_v1(
                     &mut progress_summary,
                     aoem_runtime_worker_pipeline_enabled,
@@ -42170,6 +42497,9 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         ticks = ticks.saturating_add(1);
         if bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID") {
             let mut summary = aggregate.to_json();
+            if let Some(drive) = product_overlay_drive.as_ref() {
+                drive.decorate_summary(&mut summary);
+            }
             decorate_aoem_runtime_worker_scheduler_summary_v1(
                 &mut summary,
                 aoem_runtime_worker_pipeline_enabled,
@@ -42218,6 +42548,9 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         }
     }
     let mut summary = aggregate.to_json();
+    if let Some(drive) = product_overlay_drive.as_ref() {
+        drive.decorate_summary(&mut summary);
+    }
     decorate_aoem_runtime_worker_scheduler_summary_v1(
         &mut summary,
         aoem_runtime_worker_pipeline_enabled,
@@ -42266,6 +42599,9 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         serde_json::to_string_pretty(&summary)
             .context("encode native execution pipeline summary failed")?
     );
+    if let Some(drive) = product_overlay_drive.as_ref() {
+        drive.validate_signoff()?;
+    }
     soak_gate.validate_summary(&summary)?;
     Ok(())
 }

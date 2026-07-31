@@ -47,6 +47,7 @@ struct MainlineGate {
     test_v2_stage3a_convergence_recovery_consistency: bool,
     test_v2_stage3b_convergence_time_recovery_budget_consistency: bool,
     test_relay_path_tests: bool,
+    test_product_mainline_overlay_lifecycle: bool,
     test_queue_replay_smoke: bool,
 }
 
@@ -180,6 +181,7 @@ fn main() -> Result<()> {
         test_v2_stage3a_convergence_recovery_consistency: false,
         test_v2_stage3b_convergence_time_recovery_budget_consistency: false,
         test_relay_path_tests: false,
+        test_product_mainline_overlay_lifecycle: false,
         test_queue_replay_smoke: false,
     };
 
@@ -673,6 +675,19 @@ fn main() -> Result<()> {
         ],
     )?;
     gate.test_relay_path_tests = true;
+
+    run_step(
+        "test product mainline overlay lifecycle",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-node",
+            "--lib",
+            "product_mainline_overlay::tests::mainline_lifecycle_owns_authenticated_overlay_delivery",
+        ],
+    )?;
+    gate.test_product_mainline_overlay_lifecycle = true;
 
     run_step(
         "test queue_replay_smoke",

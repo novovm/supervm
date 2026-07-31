@@ -11,6 +11,7 @@ pub mod mainline_duty_report;
 pub mod mainline_query;
 pub mod mainline_soak;
 pub mod product_evidence;
+pub mod product_mainline_overlay;
 pub mod product_nat_runtime;
 pub mod product_node_overlay;
 pub mod product_peer_runtime;
