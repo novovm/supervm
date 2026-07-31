@@ -13,6 +13,9 @@ remains a discovery/receipt diagnostic and does not execute transactions.
 The node-owned lifecycle supports a deterministic duplex E2E session, bounded
 reconnect backoff, and rotation only among candidates verified from the signed
 bootstrap/cache set.
+For a mesh, one local relay session multiplexes independent E2E channels and
+pending-delivery queues for up to 64 explicitly configured peers; duplicate
+peer IDs and duplicate or zero metric IDs are rejected at startup.
 
 ## Configuration
 

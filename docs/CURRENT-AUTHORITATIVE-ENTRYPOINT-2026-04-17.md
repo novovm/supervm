@@ -56,6 +56,7 @@ This file defines the current public documentation surface for NOVOVM and lists 
    - `artifacts/mainline/mainline-nightly-soak-gate-report.json` (generated only by a successful nightly soak)
 6. Product overlay operational runtime (not a claim of public topology completion)
    - `docs/NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md`
+   - `docs/novovm-product-topology-preflight-v1.md`
    - `docs/novovm-product-relay-daemon-v1.md`
    - `docs/novovm-product-relay-client-v1.md`
    - `docs/novovm-product-node-overlay-v1.md`

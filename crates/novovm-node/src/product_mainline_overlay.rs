@@ -14,7 +14,7 @@ use novovm_network::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -50,6 +50,12 @@ pub enum ProductMainlineOverlayRoleV1 {
     Duplex,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProductMainlineOverlayPeerConfigV1 {
+    pub peer_id: String,
+    pub metric_peer_id: u64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProductMainlineOverlayConfigV1 {
     pub chain_id: u64,
@@ -60,6 +66,8 @@ pub struct ProductMainlineOverlayConfigV1 {
     pub target_peer_id: Option<String>,
     #[serde(default)]
     pub expected_source_peer_id: Option<String>,
+    #[serde(default)]
+    pub peers: Vec<ProductMainlineOverlayPeerConfigV1>,
     #[serde(default = "default_connect_timeout_ms_v1")]
     pub connect_timeout_ms: u64,
     #[serde(default = "default_read_timeout_ms_v1")]
@@ -81,6 +89,7 @@ pub struct ProductMainlineOverlayStartupV1 {
     pub scope: String,
     pub local_peer_id: String,
     pub remote_peer_id: String,
+    pub remote_peer_ids: Vec<String>,
     pub role: ProductMainlineOverlayRoleV1,
     pub bootstrap: ProductNodeBootstrapStatusV1,
     pub route_plan: ProductNodeRoutePlanV1,
@@ -98,6 +107,8 @@ pub struct ProductMainlineOverlayInboundV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductMainlineOverlayDeliveryV1 {
     pub tx_hash: [u8; 32],
+    pub remote_peer_id: String,
+    pub metric_peer_id: u64,
     pub delivered: bool,
     pub error: Option<String>,
 }
@@ -134,7 +145,7 @@ pub enum ProductMainlineOverlayEventV1 {
     WorkerFailed(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ProductMainlineOverlayOutboundV1 {
     tx_hash: [u8; 32],
     payload: Vec<u8>,
@@ -152,6 +163,7 @@ struct ProductMainlineOverlayWorkerV1 {
     reconnect_max_delay_ms: u64,
     role: ProductMainlineOverlayRoleV1,
     remote_peer_id: String,
+    remote_peers: Vec<ProductMainlineOverlayPeerConfigV1>,
     expected_source_peer_id: Option<String>,
     chain_id: u64,
     outbound: Receiver<ProductMainlineOverlayOutboundV1>,
@@ -163,6 +175,7 @@ pub struct ProductMainlineOverlayRuntimeV1 {
     startup: ProductMainlineOverlayStartupV1,
     role: ProductMainlineOverlayRoleV1,
     metric_peer_id: u64,
+    remote_peer_ids: Vec<String>,
     outbound: SyncSender<ProductMainlineOverlayOutboundV1>,
     events: Receiver<ProductMainlineOverlayEventV1>,
     stop: Arc<AtomicBool>,
@@ -183,10 +196,22 @@ impl ProductMainlineOverlayRuntimeV1 {
         let identity = load_ed25519_identity_v1(&config.identity_key_path)?;
         let local_peer_id =
             peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
-        let remote_peer_id = configured_remote_peer_id_v1(&config)?.to_string();
-        if local_peer_id == remote_peer_id {
-            bail!("product mainline overlay remote peer must differ from local peer");
+        let remote_peers = configured_remote_peers_v1(&config)?;
+        let remote_peer_id = remote_peers
+            .first()
+            .context("product mainline overlay requires at least one remote peer")?
+            .peer_id
+            .clone();
+        if remote_peers
+            .iter()
+            .any(|remote| local_peer_id == remote.peer_id)
+        {
+            bail!("product mainline overlay remote peers must differ from local peer");
         }
+        let remote_peer_ids = remote_peers
+            .iter()
+            .map(|remote| remote.peer_id.clone())
+            .collect::<Vec<_>>();
 
         let overlay = ProductNodeOverlayRuntimeV1::bootstrap(&config.overlay, now_ms)
             .context("bootstrap product overlay inside main node lifecycle")?;
@@ -218,6 +243,7 @@ impl ProductMainlineOverlayRuntimeV1 {
             scope: PRODUCT_MAINLINE_OVERLAY_SCOPE_V1.into(),
             local_peer_id,
             remote_peer_id: remote_peer_id.clone(),
+            remote_peer_ids: remote_peer_ids.clone(),
             role: config.role,
             bootstrap: overlay.bootstrap_status().clone(),
             route_plan: route_plan.clone(),
@@ -232,6 +258,7 @@ impl ProductMainlineOverlayRuntimeV1 {
         let worker_stop = Arc::clone(&stop);
         let worker_role = config.role;
         let worker_remote_peer_id = remote_peer_id;
+        let worker_remote_peers = remote_peers;
         let chain_id = config.chain_id;
         let expected_source_peer_id = config.expected_source_peer_id.clone();
         let connect_timeout_ms = config.connect_timeout_ms.max(1);
@@ -254,6 +281,7 @@ impl ProductMainlineOverlayRuntimeV1 {
                     reconnect_max_delay_ms,
                     role: worker_role,
                     remote_peer_id: worker_remote_peer_id,
+                    remote_peers: worker_remote_peers,
                     expected_source_peer_id,
                     chain_id,
                     outbound: outbound_rx,
@@ -273,6 +301,7 @@ impl ProductMainlineOverlayRuntimeV1 {
             startup,
             role: config.role,
             metric_peer_id: config.metric_peer_id,
+            remote_peer_ids,
             outbound: outbound_tx,
             events: event_rx,
             stop,
@@ -315,6 +344,11 @@ impl ProductMainlineOverlayRuntimeV1 {
     #[must_use]
     pub fn metric_peer_id(&self) -> u64 {
         self.metric_peer_id
+    }
+
+    #[must_use]
+    pub fn remote_peer_ids(&self) -> &[String] {
+        &self.remote_peer_ids
     }
 
     pub fn try_submit(&self, tx_hash: [u8; 32], payload: Vec<u8>) -> Result<bool> {
@@ -365,10 +399,40 @@ pub fn load_product_mainline_overlay_config_v1(
     path: impl AsRef<Path>,
 ) -> Result<ProductMainlineOverlayConfigV1> {
     let path = path.as_ref();
-    let bytes = fs::read(path)
-        .with_context(|| format!("read product mainline overlay config: {}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .with_context(|| format!("decode product mainline overlay config: {}", path.display()))
+    let absolute_path = fs::canonicalize(path).with_context(|| {
+        format!(
+            "resolve product mainline overlay config: {}",
+            path.display()
+        )
+    })?;
+    let bytes = fs::read(&absolute_path).with_context(|| {
+        format!(
+            "read product mainline overlay config: {}",
+            absolute_path.display()
+        )
+    })?;
+    let mut config: ProductMainlineOverlayConfigV1 =
+        serde_json::from_slice(&bytes).with_context(|| {
+            format!(
+                "decode product mainline overlay config: {}",
+                absolute_path.display()
+            )
+        })?;
+    let base = absolute_path
+        .parent()
+        .context("product mainline overlay config has no parent directory")?;
+    rebase_relative_path_v1(base, &mut config.identity_key_path);
+    rebase_relative_path_v1(base, &mut config.overlay.cache_path);
+    if let ProductRelayTlsTrustV1::ExplicitCa { certificate_path } = &mut config.tls_trust {
+        rebase_relative_path_v1(base, certificate_path);
+    }
+    Ok(config)
+}
+
+fn rebase_relative_path_v1(base: &Path, path: &mut PathBuf) {
+    if path.is_relative() {
+        *path = base.join(&*path);
+    }
 }
 
 pub fn ingest_product_mainline_overlay_payload_v1(
@@ -400,8 +464,28 @@ pub fn ingest_product_mainline_overlay_payload_v1(
     })
 }
 
+pub fn validate_product_mainline_overlay_config_v1(
+    config: &ProductMainlineOverlayConfigV1,
+) -> Result<()> {
+    validate_config_v1(config)
+}
+
+pub fn product_mainline_overlay_local_peer_id_v1(
+    config: &ProductMainlineOverlayConfigV1,
+) -> Result<String> {
+    let identity = load_ed25519_identity_v1(&config.identity_key_path)?;
+    Ok(peer_id_from_ed25519_public_key_v1(
+        &identity.verifying_key().to_bytes(),
+    ))
+}
+
 fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
     let mut pending = VecDeque::new();
+    let mut mesh_pending = worker
+        .remote_peers
+        .iter()
+        .map(|remote| (remote.peer_id.clone(), VecDeque::new()))
+        .collect::<BTreeMap<_, _>>();
     let mut consecutive_failures = 0u32;
     while !worker.stop.load(Ordering::Acquire) {
         if worker.route_plan.selected_relay.is_none() {
@@ -459,7 +543,13 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
                         relay_peer_id: relay.session().relay_peer_id.clone(),
                     })
                     .context("publish product overlay relay-connected event")?;
-                let result = run_authenticated_role_v1(&mut relay, &worker, &mut pending);
+                let result = if worker.role == ProductMainlineOverlayRoleV1::Duplex
+                    && worker.remote_peers.len() > 1
+                {
+                    run_duplex_mesh_session_v1(&mut relay, &worker, &mut mesh_pending)
+                } else {
+                    run_authenticated_role_v1(&mut relay, &worker, &mut pending)
+                };
                 if worker.stop.load(Ordering::Acquire) {
                     let _ = relay.close();
                     return Ok(());
@@ -512,11 +602,265 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
     Ok(())
 }
 
+fn run_duplex_mesh_session_v1(
+    relay: &mut ProductRelayClientV1,
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayOutboundV1>>,
+) -> Result<()> {
+    let local_peer_id =
+        peer_id_from_ed25519_public_key_v1(&worker.identity.verifying_key().to_bytes());
+    let metrics = worker
+        .remote_peers
+        .iter()
+        .map(|peer| (peer.peer_id.clone(), peer.metric_peer_id))
+        .collect::<BTreeMap<_, _>>();
+    let mut initiators = BTreeMap::new();
+    let mut channels = BTreeMap::<String, E2eSecureChannelV1>::new();
+    let mut buffered_deliveries = worker
+        .remote_peers
+        .iter()
+        .map(|peer| {
+            (
+                peer.peer_id.clone(),
+                VecDeque::<OpaqueRelayDeliveryV1>::new(),
+            )
+        })
+        .collect::<BTreeMap<String, VecDeque<OpaqueRelayDeliveryV1>>>();
+    let mut frame_sequences = worker
+        .remote_peers
+        .iter()
+        .map(|peer| (peer.peer_id.clone(), 0u64))
+        .collect::<BTreeMap<_, _>>();
+    let mut replay = HandshakeReplayCacheV1::default();
+
+    for peer in &worker.remote_peers {
+        let initiator =
+            NodeHandshakeInitiatorV1::start(&worker.identity, &peer.peer_id, now_ms_v1(), 30_000)?;
+        relay.send_peer_handshake(
+            peer.peer_id.clone(),
+            RelayPeerHandshakeV1::Offer(initiator.offer().clone()),
+        )?;
+        initiators.insert(peer.peer_id.clone(), initiator);
+    }
+
+    let mut last_heartbeat_ms = now_ms_v1();
+    while !worker.stop.load(Ordering::Acquire) {
+        for _ in 0..256 {
+            let outbound = match worker.outbound.try_recv() {
+                Ok(outbound) => outbound,
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            };
+            for peer in &worker.remote_peers {
+                pending_by_peer
+                    .entry(peer.peer_id.clone())
+                    .or_default()
+                    .push_back(outbound.clone());
+            }
+        }
+
+        for peer in &worker.remote_peers {
+            let Some(outbound) = pending_by_peer
+                .get(&peer.peer_id)
+                .and_then(|queue| queue.front())
+                .cloned()
+            else {
+                continue;
+            };
+            let Some(channel) = channels.get_mut(&peer.peer_id) else {
+                continue;
+            };
+            let frame_sequence = frame_sequences.entry(peer.peer_id.clone()).or_default();
+            let object_id =
+                u64::from_le_bytes(outbound.tx_hash[..8].try_into().unwrap_or_default());
+            let frame = NovoRudpTransportFrameV0::new(
+                NovoRudpTransportFrameKindV0::Data,
+                PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1,
+                worker.chain_id,
+                object_id,
+                *frame_sequence,
+                0,
+                outbound.payload,
+            );
+            *frame_sequence = frame_sequence.saturating_add(1);
+            let envelope = channel
+                .seal_novorudp_frame(&frame)
+                .context("seal multi-peer product overlay payload")?;
+            relay
+                .send_envelope(envelope)
+                .context("send multi-peer product overlay payload; retained for reconnect")?;
+            pending_by_peer
+                .get_mut(&peer.peer_id)
+                .and_then(VecDeque::pop_front)
+                .context("multi-peer pending queue lost delivered transaction")?;
+            worker
+                .events
+                .send(ProductMainlineOverlayEventV1::Delivery(
+                    ProductMainlineOverlayDeliveryV1 {
+                        tx_hash: outbound.tx_hash,
+                        remote_peer_id: peer.peer_id.clone(),
+                        metric_peer_id: peer.metric_peer_id,
+                        delivered: true,
+                        error: None,
+                    },
+                ))
+                .context("publish multi-peer product overlay delivery")?;
+        }
+
+        let buffered_ready_peer = buffered_deliveries.iter().find_map(|(peer_id, queue)| {
+            let channel = channels.get(peer_id)?;
+            queue
+                .front()
+                .is_some_and(|delivery| delivery.envelope.session_id == channel.session_id())
+                .then(|| peer_id.clone())
+        });
+        if let Some(peer_id) = buffered_ready_peer {
+            let delivery = buffered_deliveries
+                .get_mut(&peer_id)
+                .and_then(VecDeque::pop_front)
+                .context("multi-peer buffered delivery disappeared")?;
+            publish_mesh_inbound_v1(&mut channels, delivery, worker.chain_id, &worker.events)?;
+            continue;
+        }
+
+        let now_ms = now_ms_v1();
+        if now_ms.saturating_sub(last_heartbeat_ms) >= 2_000 {
+            relay
+                .heartbeat()
+                .context("send multi-peer product overlay relay heartbeat")?;
+            last_heartbeat_ms = now_ms;
+        }
+        let Some(event) = recv_relay_event_or_idle_v1(relay)? else {
+            continue;
+        };
+        match event {
+            ProductRelayClientEventV1::PeerHandshake(delivery) => {
+                let source_peer_id = delivery.source_peer_id.clone();
+                if !metrics.contains_key(&source_peer_id) {
+                    bail!("product overlay mesh rejected an unconfigured handshake peer");
+                }
+                match delivery.handshake {
+                    RelayPeerHandshakeV1::Offer(offer) => {
+                        if offer.initiator_peer_id != source_peer_id {
+                            bail!("product overlay mesh relay source does not match signed offer");
+                        }
+                        let has_active_channel = channels.contains_key(&source_peer_id);
+                        if initiators.contains_key(&source_peer_id)
+                            && !has_active_channel
+                            && local_peer_id < source_peer_id
+                        {
+                            continue;
+                        }
+                        initiators.remove(&source_peer_id);
+                        let responder = NodeHandshakeResponderV1::respond(
+                            &offer,
+                            &worker.identity,
+                            now_ms_v1(),
+                            30_000,
+                            &mut replay,
+                        )?;
+                        let response = responder.response().clone();
+                        let channel = responder.into_channel();
+                        let session_id = channel.session_id();
+                        relay.send_peer_handshake(
+                            source_peer_id.clone(),
+                            RelayPeerHandshakeV1::Response(response),
+                        )?;
+                        channels.insert(source_peer_id.clone(), channel);
+                        buffered_deliveries
+                            .entry(source_peer_id.clone())
+                            .or_default()
+                            .retain(|delivery| delivery.envelope.session_id == session_id);
+                        worker
+                            .events
+                            .send(ProductMainlineOverlayEventV1::E2eSessionEstablished {
+                                remote_peer_id: source_peer_id,
+                            })
+                            .context("publish multi-peer responder E2E-ready event")?;
+                    }
+                    RelayPeerHandshakeV1::Response(response) => {
+                        let Some(initiator) = initiators.remove(&source_peer_id) else {
+                            continue;
+                        };
+                        let channel = initiator.complete(&response, now_ms_v1(), &mut replay)?;
+                        let session_id = channel.session_id();
+                        channels.insert(source_peer_id.clone(), channel);
+                        buffered_deliveries
+                            .entry(source_peer_id.clone())
+                            .or_default()
+                            .retain(|delivery| delivery.envelope.session_id == session_id);
+                        worker
+                            .events
+                            .send(ProductMainlineOverlayEventV1::E2eSessionEstablished {
+                                remote_peer_id: source_peer_id,
+                            })
+                            .context("publish multi-peer initiator E2E-ready event")?;
+                    }
+                }
+            }
+            ProductRelayClientEventV1::Delivery(delivery) => {
+                if !metrics.contains_key(&delivery.source_peer_id) {
+                    bail!("product overlay mesh rejected data from an unconfigured peer");
+                }
+                if channels
+                    .get(&delivery.source_peer_id)
+                    .is_some_and(|channel| channel.session_id() == delivery.envelope.session_id)
+                {
+                    publish_mesh_inbound_v1(
+                        &mut channels,
+                        delivery,
+                        worker.chain_id,
+                        &worker.events,
+                    )?;
+                } else {
+                    let peer_id = delivery.source_peer_id.clone();
+                    buffer_preauth_delivery_v1(
+                        buffered_deliveries.entry(peer_id.clone()).or_default(),
+                        delivery,
+                        Some(&peer_id),
+                    )?;
+                }
+            }
+            ProductRelayClientEventV1::HeartbeatAck => {}
+            ProductRelayClientEventV1::Closed => {
+                bail!("product overlay relay closed the multi-peer session")
+            }
+        }
+    }
+    Ok(())
+}
+
+fn publish_mesh_inbound_v1(
+    channels: &mut BTreeMap<String, E2eSecureChannelV1>,
+    delivery: OpaqueRelayDeliveryV1,
+    chain_id: u64,
+    events: &SyncSender<ProductMainlineOverlayEventV1>,
+) -> Result<()> {
+    let source_peer_id = delivery.source_peer_id;
+    let channel = channels
+        .get_mut(&source_peer_id)
+        .context("multi-peer delivery arrived without an E2E channel")?;
+    let frame = channel.open_novorudp_frame(&delivery.envelope)?;
+    validate_inbound_frame_v1(&frame, chain_id)?;
+    events
+        .send(ProductMainlineOverlayEventV1::Inbound(
+            ProductMainlineOverlayInboundV1 {
+                source_peer_id,
+                frame,
+            },
+        ))
+        .context("publish multi-peer product overlay inbound event")
+}
+
 fn run_authenticated_role_v1(
     relay: &mut ProductRelayClientV1,
     worker: &ProductMainlineOverlayWorkerV1,
     pending: &mut VecDeque<ProductMainlineOverlayOutboundV1>,
 ) -> Result<()> {
+    let remote_metric_peer_id = worker
+        .remote_peers
+        .first()
+        .context("product overlay worker has no remote peer")?
+        .metric_peer_id;
     let (channel, buffered_deliveries, allow_outbound, allow_inbound) = match worker.role {
         ProductMainlineOverlayRoleV1::Initiator => {
             let (channel, buffered) = establish_initiator_channel_v1(
@@ -572,6 +916,7 @@ fn run_authenticated_role_v1(
         buffered_deliveries,
         allow_outbound,
         allow_inbound,
+        remote_metric_peer_id,
     )
 }
 
@@ -712,6 +1057,7 @@ fn run_authenticated_session_v1(
     mut buffered_deliveries: VecDeque<OpaqueRelayDeliveryV1>,
     allow_outbound: bool,
     allow_inbound: bool,
+    remote_metric_peer_id: u64,
 ) -> Result<()> {
     let source_peer_id = channel.remote_peer_id().to_string();
     let mut frame_sequence = 0u64;
@@ -746,6 +1092,8 @@ fn run_authenticated_session_v1(
                     .send(ProductMainlineOverlayEventV1::Delivery(
                         ProductMainlineOverlayDeliveryV1 {
                             tx_hash: outbound.tx_hash,
+                            remote_peer_id: channel.remote_peer_id().to_string(),
+                            metric_peer_id: remote_metric_peer_id,
                             delivered: true,
                             error: None,
                         },
@@ -808,6 +1156,28 @@ fn validate_config_v1(config: &ProductMainlineOverlayConfigV1) -> Result<()> {
     {
         bail!("product mainline overlay reconnect delay policy is invalid");
     }
+    if config.peers.len() > 64 {
+        bail!("product mainline overlay supports at most 64 configured peers");
+    }
+    if !config.peers.is_empty() && config.role != ProductMainlineOverlayRoleV1::Duplex {
+        bail!("product mainline overlay peers list requires the duplex role");
+    }
+    let mut peer_ids = BTreeSet::new();
+    let mut metric_peer_ids = BTreeSet::new();
+    for peer in &config.peers {
+        if peer.peer_id.is_empty() {
+            bail!("product mainline overlay peer_id must not be empty");
+        }
+        if peer.metric_peer_id == 0 {
+            bail!("product mainline overlay metric_peer_id must be positive");
+        }
+        if !peer_ids.insert(peer.peer_id.as_str()) {
+            bail!("product mainline overlay peer_id values must be unique");
+        }
+        if !metric_peer_ids.insert(peer.metric_peer_id) {
+            bail!("product mainline overlay metric_peer_id values must be unique");
+        }
+    }
     match config.role {
         ProductMainlineOverlayRoleV1::Initiator => {
             if config.target_peer_id.as_deref().is_none_or(str::is_empty) {
@@ -824,18 +1194,26 @@ fn validate_config_v1(config: &ProductMainlineOverlayConfigV1) -> Result<()> {
             }
         }
         ProductMainlineOverlayRoleV1::Duplex => {
-            let target = config
-                .target_peer_id
-                .as_deref()
-                .filter(|target| !target.is_empty())
-                .context("product mainline overlay duplex role requires target_peer_id")?;
-            if config
-                .expected_source_peer_id
-                .as_deref()
-                .is_some_and(|expected| expected != target)
-            {
+            if config.peers.is_empty() {
+                let target = config
+                    .target_peer_id
+                    .as_deref()
+                    .filter(|target| !target.is_empty())
+                    .context(
+                        "product mainline overlay duplex role requires target_peer_id or peers",
+                    )?;
+                if config
+                    .expected_source_peer_id
+                    .as_deref()
+                    .is_some_and(|expected| expected != target)
+                {
+                    bail!(
+                        "product mainline overlay duplex expected_source_peer_id must match target_peer_id"
+                    );
+                }
+            } else if config.expected_source_peer_id.is_some() {
                 bail!(
-                    "product mainline overlay duplex expected_source_peer_id must match target_peer_id"
+                    "product mainline overlay multi-peer duplex must not set expected_source_peer_id"
                 );
             }
         }
@@ -879,6 +1257,20 @@ fn configured_remote_peer_id_v1(config: &ProductMainlineOverlayConfigV1) -> Resu
             .as_deref()
             .context("product overlay duplex target peer is missing"),
     }
+}
+
+fn configured_remote_peers_v1(
+    config: &ProductMainlineOverlayConfigV1,
+) -> Result<Vec<ProductMainlineOverlayPeerConfigV1>> {
+    if !config.peers.is_empty() {
+        let mut peers = config.peers.clone();
+        peers.sort_by(|left, right| left.peer_id.cmp(&right.peer_id));
+        return Ok(peers);
+    }
+    Ok(vec![ProductMainlineOverlayPeerConfigV1 {
+        peer_id: configured_remote_peer_id_v1(config)?.to_string(),
+        metric_peer_id: config.metric_peer_id,
+    }])
 }
 
 fn reconnect_delay_ms_v1(consecutive_failures: u32, base_delay_ms: u64, max_delay_ms: u64) -> u64 {
@@ -998,6 +1390,7 @@ mod tests {
             },
             target_peer_id: None,
             expected_source_peer_id: None,
+            peers: Vec::new(),
             connect_timeout_ms: 5_000,
             read_timeout_ms: 250,
             tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
@@ -1027,6 +1420,68 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("target_peer_id"));
+
+        let mut mesh = config(ProductMainlineOverlayRoleV1::Duplex);
+        mesh.peers = vec![
+            ProductMainlineOverlayPeerConfigV1 {
+                peer_id: "peer-a".into(),
+                metric_peer_id: 1,
+            },
+            ProductMainlineOverlayPeerConfigV1 {
+                peer_id: "peer-b".into(),
+                metric_peer_id: 1,
+            },
+        ];
+        assert!(validate_config_v1(&mesh)
+            .unwrap_err()
+            .to_string()
+            .contains("metric_peer_id values must be unique"));
+    }
+
+    #[test]
+    fn config_relative_paths_are_based_on_the_config_directory() {
+        let now = now_ms_v1();
+        let root = std::env::temp_dir().join(format!("novovm-overlay-relative-config-{now}"));
+        let config_dir = root.join("config");
+        fs::create_dir_all(&config_dir).unwrap();
+        let config_path = config_dir.join("node.json");
+        fs::write(
+            &config_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "chain_id": 7,
+                "role": "duplex",
+                "identity_key_path": "secrets/node.hex",
+                "target_peer_id": "peer-b",
+                "overlay": {
+                    "cache_path": "runtime/bootstrap-cache.json",
+                    "trusted_signer_public_keys": [],
+                    "embedded_sources": []
+                },
+                "tls_trust": {
+                    "explicit_ca": {
+                        "certificate_path": "tls/ca.pem"
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let loaded = load_product_mainline_overlay_config_v1(&config_path).unwrap();
+        let absolute_config_dir = fs::canonicalize(&config_dir).unwrap();
+        assert_eq!(
+            loaded.identity_key_path,
+            absolute_config_dir.join("secrets/node.hex")
+        );
+        assert_eq!(
+            loaded.overlay.cache_path,
+            absolute_config_dir.join("runtime/bootstrap-cache.json")
+        );
+        assert!(matches!(
+            loaded.tls_trust,
+            ProductRelayTlsTrustV1::ExplicitCa { certificate_path }
+                if certificate_path == absolute_config_dir.join("tls/ca.pem")
+        ));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1242,6 +1697,217 @@ mod tests {
         }
         node_a_runtime.shutdown();
         node_b_runtime.shutdown();
+        daemon.join().unwrap().unwrap();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn one_relay_session_multiplexes_three_node_duplex_mesh() {
+        let now = now_ms_v1();
+        let root = std::env::temp_dir().join(format!("novovm-product-overlay-mesh-{now}"));
+        fs::create_dir_all(&root).unwrap();
+        let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let certificate_path = root.join("relay-cert.pem");
+        let tls_key_path = root.join("relay-key.pem");
+        let relay_identity_path = root.join("relay-identity.hex");
+        fs::write(&certificate_path, certificate.serialize_pem().unwrap()).unwrap();
+        fs::write(&tls_key_path, certificate.serialize_private_key_pem()).unwrap();
+        write_identity_v1(&relay_identity_path, [59; 32]);
+
+        let node_seeds = [[60; 32], [61; 32], [62; 32]];
+        let node_identity_paths = [
+            root.join("node-a.hex"),
+            root.join("node-b.hex"),
+            root.join("node-c.hex"),
+        ];
+        for (path, seed) in node_identity_paths.iter().zip(node_seeds) {
+            write_identity_v1(path, seed);
+        }
+        let node_peer_ids = node_seeds
+            .iter()
+            .map(|seed| {
+                let identity = SigningKey::from_bytes(seed);
+                peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes())
+            })
+            .collect::<Vec<_>>();
+
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let relay_report_path = root.join("relay-report.json");
+        let daemon_config = ProductRelayDaemonConfigV1 {
+            bind_addr: format!("127.0.0.1:{port}"),
+            tls_cert_path: certificate_path,
+            tls_key_path,
+            relay_identity_key_path: relay_identity_path,
+            report_path: relay_report_path.clone(),
+            report_interval_ms: 20,
+            run_for_ms: Some(8_000),
+            session_queue_capacity: Some(32),
+            offline_queue_per_peer: Some(32),
+            offline_queue_total: Some(128),
+            session_ttl_ms: Some(10_000),
+            rate_limit_frames: Some(2_000),
+            rate_limit_window_ms: Some(1_000),
+        };
+        let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
+        wait_until_v1(Duration::from_secs(1), || relay_report_path.exists());
+
+        let relay_identity = SigningKey::from_bytes(&[59; 32]);
+        let relay_peer_id =
+            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
+        let bootstrap_signer = SigningKey::from_bytes(&[63; 32]);
+        let source = signed_bootstrap_source_v1(
+            &bootstrap_signer,
+            &relay_identity,
+            now.saturating_sub(1_000),
+            now.saturating_add(30_000),
+        );
+        let chain_id = 8_200_000 + now % 100_000;
+        let relay_override = ProductRelayClientConfigV1 {
+            endpoint: format!("wss://127.0.0.1:{port}/novovm"),
+            expected_relay_peer_id: relay_peer_id,
+            connect_timeout_ms: 1_000,
+            read_timeout_ms: 50,
+            tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
+        };
+
+        let mut configs = Vec::new();
+        for (index, identity_path) in node_identity_paths.iter().enumerate() {
+            let mut config = mainline_config_v1(
+                chain_id,
+                ProductMainlineOverlayRoleV1::Duplex,
+                identity_path.clone(),
+                root.join(format!("node-{index}-cache.json")),
+                bootstrap_signer.verifying_key().to_bytes(),
+                source.clone(),
+                None,
+                None,
+            );
+            config.peers = node_peer_ids
+                .iter()
+                .enumerate()
+                .filter(|(peer_index, _)| *peer_index != index)
+                .map(|(peer_index, peer_id)| ProductMainlineOverlayPeerConfigV1 {
+                    peer_id: peer_id.clone(),
+                    metric_peer_id: 92_000 + peer_index as u64,
+                })
+                .collect();
+            configs.push(config);
+        }
+
+        let node_c_restart_config = configs[2].clone();
+        let mut node_c = ProductMainlineOverlayRuntimeV1::start_with_relay_override_v1(
+            configs.remove(2),
+            now_ms_v1(),
+            relay_override.clone(),
+        )
+        .unwrap();
+        let mut node_b = ProductMainlineOverlayRuntimeV1::start_with_relay_override_v1(
+            configs.remove(1),
+            now_ms_v1(),
+            relay_override.clone(),
+        )
+        .unwrap();
+        let mut node_a = ProductMainlineOverlayRuntimeV1::start_with_relay_override_v1(
+            configs.remove(0),
+            now_ms_v1(),
+            relay_override.clone(),
+        )
+        .unwrap();
+
+        wait_for_e2e_peers_v1(
+            &node_a,
+            &[node_peer_ids[1].clone(), node_peer_ids[2].clone()],
+            Duration::from_secs(3),
+        );
+        wait_for_e2e_peers_v1(
+            &node_b,
+            &[node_peer_ids[0].clone(), node_peer_ids[2].clone()],
+            Duration::from_secs(3),
+        );
+        wait_for_e2e_peers_v1(
+            &node_c,
+            &[node_peer_ids[0].clone(), node_peer_ids[1].clone()],
+            Duration::from_secs(3),
+        );
+
+        let tx_hash_a = [0x51; 32];
+        let raw_tx_a = signed_native_tx_v1(chain_id, &format!("overlay-mesh-a-{now}"));
+        assert!(node_a.try_submit(tx_hash_a, raw_tx_a.clone()).unwrap());
+        let inbound_at_b = wait_for_inbound_v1(&node_b, Duration::from_secs(2));
+        let inbound_at_c = wait_for_inbound_v1(&node_c, Duration::from_secs(2));
+        assert_eq!(inbound_at_b.frame.payload, raw_tx_a);
+        assert_eq!(inbound_at_c.frame.payload, raw_tx_a);
+        wait_for_delivery_peers_v1(
+            &node_a,
+            tx_hash_a,
+            &[node_peer_ids[1].clone(), node_peer_ids[2].clone()],
+            Duration::from_secs(2),
+        );
+
+        let tx_hash_b = [0x52; 32];
+        let raw_tx_b = signed_native_tx_v1(chain_id, &format!("overlay-mesh-b-{now}"));
+        assert!(node_b.try_submit(tx_hash_b, raw_tx_b.clone()).unwrap());
+        let inbound_at_a = wait_for_inbound_v1(&node_a, Duration::from_secs(2));
+        let second_inbound_at_c = wait_for_inbound_v1(&node_c, Duration::from_secs(2));
+        assert_eq!(inbound_at_a.frame.payload, raw_tx_b);
+        assert_eq!(second_inbound_at_c.frame.payload, raw_tx_b);
+        wait_for_delivery_peers_v1(
+            &node_b,
+            tx_hash_b,
+            &[node_peer_ids[0].clone(), node_peer_ids[2].clone()],
+            Duration::from_secs(2),
+        );
+
+        for inbound in [
+            inbound_at_a,
+            inbound_at_b,
+            inbound_at_c,
+            second_inbound_at_c,
+        ] {
+            let receipt =
+                ingest_product_mainline_overlay_payload_v1(chain_id, &inbound.frame.payload)
+                    .unwrap();
+            assert_eq!(receipt.execution_owner, "aoem_runtime");
+        }
+
+        node_c.shutdown();
+        let mut node_c_restarted = ProductMainlineOverlayRuntimeV1::start_with_relay_override_v1(
+            node_c_restart_config,
+            now_ms_v1(),
+            relay_override,
+        )
+        .unwrap();
+        wait_for_e2e_peers_v1(
+            &node_c_restarted,
+            &[node_peer_ids[0].clone(), node_peer_ids[1].clone()],
+            Duration::from_secs(2),
+        );
+        wait_for_e2e_peers_v1(&node_a, &[node_peer_ids[2].clone()], Duration::from_secs(2));
+        wait_for_e2e_peers_v1(&node_b, &[node_peer_ids[2].clone()], Duration::from_secs(2));
+
+        let tx_hash_c = [0x53; 32];
+        let raw_tx_c = signed_native_tx_v1(chain_id, &format!("overlay-mesh-c-restart-{now}"));
+        assert!(node_c_restarted
+            .try_submit(tx_hash_c, raw_tx_c.clone())
+            .unwrap());
+        let post_restart_inbound_at_a = wait_for_inbound_v1(&node_a, Duration::from_secs(2));
+        let post_restart_inbound_at_b = wait_for_inbound_v1(&node_b, Duration::from_secs(2));
+        assert_eq!(post_restart_inbound_at_a.frame.payload, raw_tx_c);
+        assert_eq!(post_restart_inbound_at_b.frame.payload, raw_tx_c);
+        wait_for_delivery_peers_v1(
+            &node_c_restarted,
+            tx_hash_c,
+            &[node_peer_ids[0].clone(), node_peer_ids[1].clone()],
+            Duration::from_secs(2),
+        );
+
+        node_a.shutdown();
+        node_b.shutdown();
+        node_c_restarted.shutdown();
         daemon.join().unwrap().unwrap();
         let _ = fs::remove_dir_all(root);
     }
@@ -1509,6 +2175,7 @@ mod tests {
             },
             target_peer_id,
             expected_source_peer_id,
+            peers: Vec::new(),
             connect_timeout_ms: 1_000,
             read_timeout_ms: 50,
             tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
@@ -1665,5 +2332,64 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         panic!("timed out waiting for product overlay inbound payload");
+    }
+
+    fn wait_for_e2e_peers_v1(
+        runtime: &ProductMainlineOverlayRuntimeV1,
+        expected: &[String],
+        timeout: Duration,
+    ) {
+        let expected = expected.iter().cloned().collect::<BTreeSet<_>>();
+        let mut observed = BTreeSet::new();
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            for event in runtime.drain_events(64) {
+                match event {
+                    ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id } => {
+                        observed.insert(remote_peer_id);
+                    }
+                    ProductMainlineOverlayEventV1::WorkerFailed(error) => {
+                        panic!("product overlay worker failed: {error}")
+                    }
+                    _ => {}
+                }
+            }
+            if observed == expected {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out waiting for E2E peers: expected={expected:?} observed={observed:?}");
+    }
+
+    fn wait_for_delivery_peers_v1(
+        runtime: &ProductMainlineOverlayRuntimeV1,
+        tx_hash: [u8; 32],
+        expected: &[String],
+        timeout: Duration,
+    ) {
+        let expected = expected.iter().cloned().collect::<BTreeSet<_>>();
+        let mut observed = BTreeSet::new();
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            for event in runtime.drain_events(64) {
+                match event {
+                    ProductMainlineOverlayEventV1::Delivery(delivery)
+                        if delivery.tx_hash == tx_hash && delivery.delivered =>
+                    {
+                        observed.insert(delivery.remote_peer_id);
+                    }
+                    ProductMainlineOverlayEventV1::WorkerFailed(error) => {
+                        panic!("product overlay worker failed: {error}")
+                    }
+                    _ => {}
+                }
+            }
+            if observed == expected {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out waiting for delivery peers: expected={expected:?} observed={observed:?}");
     }
 }

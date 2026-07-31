@@ -33585,14 +33585,16 @@ struct NativeExecutionPipelineIngressDriveV1 {
 struct NativeExecutionPipelineProductOverlayDriveV1 {
     chain_id: u64,
     runtime: ProductMainlineOverlayRuntimeV1,
-    in_flight: HashSet<[u8; 32]>,
+    in_flight: HashMap<[u8; 32], HashSet<String>>,
     max_per_tick: usize,
     max_propagations: u64,
     event_budget: usize,
     relay_connected: bool,
     relay_peer_id: Option<String>,
     e2e_session_established: bool,
+    e2e_peer_ids: HashSet<String>,
     remote_peer_id: String,
+    remote_peer_ids: Vec<String>,
     reconnect_total: u64,
     relay_rotation_total: u64,
     last_relay_error: Option<String>,
@@ -33722,17 +33724,16 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 chain_id
             );
         }
-        let remote_peer_id = match config.role {
-            ProductMainlineOverlayRoleV1::Initiator => config.target_peer_id.clone(),
-            ProductMainlineOverlayRoleV1::Responder => config.expected_source_peer_id.clone(),
-            ProductMainlineOverlayRoleV1::Duplex => config.target_peer_id.clone(),
-        }
-        .context("product mainline overlay remote peer id is missing")?;
         let runtime = ProductMainlineOverlayRuntimeV1::start(config, now_unix_ms())?;
+        let remote_peer_ids = runtime.remote_peer_ids().to_vec();
+        let remote_peer_id = remote_peer_ids
+            .first()
+            .cloned()
+            .context("product mainline overlay remote peer id is missing")?;
         Ok(Some(Self {
             chain_id,
             runtime,
-            in_flight: HashSet::new(),
+            in_flight: HashMap::new(),
             max_per_tick: usize_env_allow_zero(
                 "NOVOVM_PRODUCT_MAINLINE_OVERLAY_MAX_PER_TICK",
                 1_024,
@@ -33750,7 +33751,9 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             relay_connected: false,
             relay_peer_id: None,
             e2e_session_established: false,
+            e2e_peer_ids: HashSet::new(),
             remote_peer_id,
+            remote_peer_ids,
             reconnect_total: 0,
             relay_rotation_total: 0,
             last_relay_error: None,
@@ -33782,6 +33785,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 } => {
                     self.relay_connected = false;
                     self.e2e_session_established = false;
+                    self.e2e_peer_ids.clear();
                     self.reconnect_total = self.reconnect_total.saturating_add(1);
                     self.last_relay_error = Some(error);
                 }
@@ -33792,7 +33796,9 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                     self.relay_rotation_total = self.relay_rotation_total.saturating_add(1);
                 }
                 ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id } => {
-                    self.e2e_session_established = true;
+                    self.e2e_peer_ids.insert(remote_peer_id.clone());
+                    self.e2e_session_established =
+                        self.e2e_peer_ids.len() == self.remote_peer_ids.len();
                     self.remote_peer_id = remote_peer_id;
                 }
                 ProductMainlineOverlayEventV1::Inbound(inbound) => {
@@ -33816,14 +33822,23 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                     }
                 }
                 ProductMainlineOverlayEventV1::Delivery(delivery) => {
-                    self.in_flight.remove(&delivery.tx_hash);
+                    let delivery_complete =
+                        self.in_flight
+                            .get_mut(&delivery.tx_hash)
+                            .is_some_and(|pending_peers| {
+                                pending_peers.remove(&delivery.remote_peer_id);
+                                pending_peers.is_empty()
+                            });
+                    if delivery_complete {
+                        self.in_flight.remove(&delivery.tx_hash);
+                    }
                     if delivery.delivered {
                         delivered = delivered.saturating_add(1);
                         self.delivered_total = self.delivered_total.saturating_add(1);
                         observe_network_runtime_native_pending_tx_propagated_with_context_v1(
                             self.chain_id,
                             delivery.tx_hash,
-                            Some(self.runtime.metric_peer_id()),
+                            Some(delivery.metric_peer_id),
                             Some("product_overlay_relay_novorudp"),
                             Some(self.max_propagations),
                         );
@@ -33857,7 +33872,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 );
             candidate_count = candidates.len() as u64;
             for candidate in candidates {
-                if self.in_flight.contains(&candidate.tx_hash) {
+                if self.in_flight.contains_key(&candidate.tx_hash) {
                     continue;
                 }
                 match self
@@ -33865,7 +33880,10 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                     .try_submit(candidate.tx_hash, candidate.tx_payload)
                 {
                     Ok(true) => {
-                        self.in_flight.insert(candidate.tx_hash);
+                        self.in_flight.insert(
+                            candidate.tx_hash,
+                            self.remote_peer_ids.iter().cloned().collect(),
+                        );
                         submitted = submitted.saturating_add(1);
                         self.submitted_total = self.submitted_total.saturating_add(1);
                     }
@@ -33901,6 +33919,8 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             "relay_peer_id": self.relay_peer_id,
             "e2e_session_established": self.e2e_session_established,
             "remote_peer_id": self.remote_peer_id,
+            "remote_peer_ids": self.remote_peer_ids,
+            "e2e_peer_count": self.e2e_peer_ids.len() as u64,
             "reconnect_total": self.reconnect_total,
             "relay_rotation_total": self.relay_rotation_total,
             "last_relay_error": self.last_relay_error,
@@ -33921,6 +33941,11 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             "delivery_failed": delivery_failed,
             "failed_total": self.failed_total,
             "in_flight": self.in_flight.len() as u64,
+            "in_flight_peer_deliveries": self
+                .in_flight
+                .values()
+                .map(HashSet::len)
+                .sum::<usize>() as u64,
             "worker_stopped": self.worker_stopped,
             "error": self.worker_error,
             "tx_hashes": tx_hashes,
@@ -33946,6 +33971,8 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 "relay_peer_id": self.relay_peer_id,
                 "e2e_session_established": self.e2e_session_established,
                 "remote_peer_id": self.remote_peer_id,
+                "remote_peer_ids": self.remote_peer_ids,
+                "e2e_peer_count": self.e2e_peer_ids.len() as u64,
                 "reconnect_total": self.reconnect_total,
                 "relay_rotation_total": self.relay_rotation_total,
                 "last_relay_error": self.last_relay_error,
@@ -33961,6 +33988,11 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 "delivered_total": self.delivered_total,
                 "failed_total": self.failed_total,
                 "in_flight": self.in_flight.len() as u64,
+                "in_flight_peer_deliveries": self
+                    .in_flight
+                    .values()
+                    .map(HashSet::len)
+                    .sum::<usize>() as u64,
                 "worker_stopped": self.worker_stopped,
                 "error": self.worker_error,
             }),

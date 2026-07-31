@@ -34,7 +34,9 @@ NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG=<path-to-config.json>
 ```
 
 The config path is supplied by the operator. No repository, drive-letter, or
-workspace-parent absolute path is built into the runtime.
+workspace-parent absolute path is built into the runtime. Relative identity,
+bootstrap-cache, and explicit-CA paths inside the config are resolved from the
+config file's own directory, not from the process working directory.
 
 Recommended duplex config:
 
@@ -43,7 +45,20 @@ Recommended duplex config:
   "chain_id": 1,
   "role": "duplex",
   "identity_key_path": "runtime/node-ed25519.hex",
-  "target_peer_id": "novovm-ed25519:<peer-public-key>",
+  "peers": [
+    {
+      "peer_id": "novovm-ed25519:<peer-b-public-key>",
+      "metric_peer_id": 9991002
+    },
+    {
+      "peer_id": "novovm-ed25519:<peer-c-public-key>",
+      "metric_peer_id": 9991003
+    },
+    {
+      "peer_id": "novovm-ed25519:<peer-d-public-key>",
+      "metric_peer_id": 9991004
+    }
+  ],
   "overlay": {
     "cache_path": "runtime/bootstrap-cache.json",
     "trusted_signer_public_keys": [[1, 2, 3]],
@@ -60,10 +75,17 @@ Recommended duplex config:
 }
 ```
 
-The `duplex` role deterministically chooses which authenticated node starts the
-peer handshake, then enables both encrypted directions on the resulting
-session. Both nodes may propagate pending transactions and both nodes return
-decrypted payloads to the same native ingress boundary.
+The `duplex` role uses one authenticated relay connection for the local node
+identity and multiplexes one independent E2E secure channel per configured
+peer. Simultaneous offers are resolved deterministically; a peer that reconnects
+may initiate a fresh offer without forcing the other nodes to reconnect their
+relay sessions. Every peer has its own session keys, replay window, pending
+delivery queue, and propagation metric ID.
+
+Both ends may propagate pending transactions and both return decrypted
+payloads to the same native ingress boundary. For a compatibility two-node
+deployment, `target_peer_id` plus the top-level `metric_peer_id` remains
+accepted when `peers` is omitted.
 
 The original one-way compatibility roles remain available. A responder uses:
 
@@ -93,8 +115,11 @@ delivery. They remain useful for constrained or staged deployments, but
 ## Recovery and signed relay rotation
 
 The node keeps ownership of queued outbound transactions while a relay session
-is unavailable. A failed encrypted write does not produce a successful
-delivery receipt and does not discard the queued transaction.
+or individual peer channel is unavailable. Each submitted transaction is
+expanded into a bounded per-peer delivery obligation. One peer succeeding does
+not clear another peer's pending delivery. A failed encrypted write does not
+produce a successful delivery receipt and does not discard the queued
+transaction.
 
 Connection or session failure causes the node to:
 
@@ -148,13 +173,16 @@ NOVOVM_PRODUCT_MAINLINE_OVERLAY_EXPECTED_DELIVERED=<count>
 ```
 
 The final pipeline summary includes `product_mainline_overlay` with lifecycle,
-bootstrap, relay, E2E, ingress, delivery, and ownership evidence.
+bootstrap, relay, E2E peer count, per-peer in-flight delivery count, ingress,
+delivery, reconnect/rotation, and ownership evidence.
 
 The mainline gate runs local real-WSS tests with node-owned Overlay runtimes.
 It verifies signed relay selection, relay identity authentication,
-deterministic peer E2E establishment, simultaneous bidirectional encrypted
-NovoRUDP delivery, failed-candidate cooldown, signed relay rotation, reconnect,
-and lifecycle shutdown.
+deterministic peer E2E establishment, three-node multiplexing over one relay
+session per node, simultaneous bidirectional encrypted NovoRUDP delivery,
+single-peer restart recovery without reconnecting the other nodes,
+failed-candidate cooldown, signed relay rotation, reconnect, and lifecycle
+shutdown.
 
 This does not claim a public VPS, cellular, VPN, NAT, or CGNAT result. Those
 remain topology evidence work.

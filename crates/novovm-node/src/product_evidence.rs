@@ -297,6 +297,34 @@ fn validate_product_report_v1(path: &Path) -> Result<()> {
                 _ => bail!("peer report frame counters do not match role"),
             }
         }
+        "novovm_product_mainline_topology_plan_v1" => {
+            if value.get("full_mesh_symmetric").and_then(Value::as_bool) != Some(true)
+                || value
+                    .get("external_network_executed")
+                    .and_then(Value::as_bool)
+                    != Some(false)
+                || value
+                    .get("real_public_topology_proven")
+                    .and_then(Value::as_bool)
+                    != Some(false)
+                || value.get("real_cross_nat_proven").and_then(Value::as_bool) != Some(false)
+            {
+                bail!("mainline topology preflight boundary invalid");
+            }
+            let node_count = value
+                .get("node_count")
+                .and_then(Value::as_u64)
+                .context("topology preflight missing node_count")?;
+            let directed_edges = value
+                .get("directed_peer_edge_count")
+                .and_then(Value::as_u64)
+                .context("topology preflight missing directed_peer_edge_count")?;
+            if !(2..=64).contains(&node_count)
+                || directed_edges != node_count.saturating_mul(node_count.saturating_sub(1))
+            {
+                bail!("mainline topology preflight is not a complete mesh");
+            }
+        }
         _ => bail!("unsupported product evidence report scope: {scope}"),
     }
     Ok(())
@@ -435,6 +463,37 @@ mod tests {
         )
         .unwrap();
         let signer = SigningKey::from_bytes(&[132; 32]);
+        let manifest =
+            build_product_evidence_manifest_v1(&root, &[report_path], &signer, 1_000).unwrap();
+        let manifest_path = root.join("evidence.json");
+        write_product_evidence_manifest_v1(&manifest_path, &manifest).unwrap();
+        assert!(verify_product_evidence_manifest_v1(&root, &manifest_path).accepted);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn signed_evidence_accepts_offline_topology_without_external_claims() {
+        let root = std::env::temp_dir().join(format!("novovm-topology-evidence-{}", now_ms_v1()));
+        fs::create_dir_all(&root).unwrap();
+        let report_path = root.join("topology.json");
+        fs::write(
+            &report_path,
+            serde_json::to_vec(&serde_json::json!({
+                "accepted": true,
+                "scope": "novovm_product_mainline_topology_plan_v1",
+                "payload_treated_opaque": true,
+                "novorudp_wire_changed": false,
+                "node_count": 4,
+                "directed_peer_edge_count": 12,
+                "full_mesh_symmetric": true,
+                "external_network_executed": false,
+                "real_public_topology_proven": false,
+                "real_cross_nat_proven": false
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let signer = SigningKey::from_bytes(&[133; 32]);
         let manifest =
             build_product_evidence_manifest_v1(&root, &[report_path], &signer, 1_000).unwrap();
         let manifest_path = root.join("evidence.json");

@@ -30,6 +30,18 @@ The verifier checks:
 - relay challenge-response and non-authority boundaries;
 - NAT direct routing only when `ack_valid=true`;
 - node strategy receipt signature and decentralized-control-plane boundary.
+- offline mainline topology full-mesh symmetry while requiring all external
+  execution/proof flags to remain false.
+
+An offline topology preflight can be signed into the manifest:
+
+```bash
+novovm-product-topology /etc/novovm/topology-plan.json \
+  > /var/lib/novovm/reports/topology-preflight.json
+```
+
+This records deployable configuration intent only. It is not a replacement for
+the later signed reports from actual public/VPN/cellular runs.
 
 It intentionally reports `real_public_topology_proven=false` and
 `real_cross_nat_proven=false`: report integrity alone cannot prove an external

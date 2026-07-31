@@ -677,15 +677,9 @@ fn main() -> Result<()> {
     gate.test_relay_path_tests = true;
 
     run_step(
-        "test product mainline overlay duplex and relay recovery lifecycle",
+        "test product mainline overlay mesh, recovery, and topology preflight",
         "cargo",
-        &[
-            "test",
-            "-p",
-            "novovm-node",
-            "--lib",
-            "product_mainline_overlay::tests::",
-        ],
+        &["test", "-p", "novovm-node", "--lib", "product_mainline_"],
     )?;
     gate.test_product_mainline_overlay_lifecycle = true;
 

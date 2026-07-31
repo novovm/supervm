@@ -65,6 +65,10 @@ name = "novovm-product-peer"
 path = "src/bin/novovm-product-peer.rs"
 
 [[bin]]
+name = "novovm-product-topology"
+path = "src/bin/novovm-product-topology.rs"
+
+[[bin]]
 name = "supervm-mainline-gate"
 path = "src/bin/supervm-mainline-gate.rs"
 

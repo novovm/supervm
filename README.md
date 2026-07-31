@@ -312,9 +312,17 @@ payloads re-enter `ingest_local_nov_raw_tx_payload_v1`; relay transport never
 bypasses native authentication or becomes an AOEM policy owner. See
 `docs/NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md`.
 The product-mainline `duplex` role propagates in both directions over one
-authenticated E2E session. Relay disconnects use bounded reconnect backoff and
-rotate only to another verified signed candidate; queued outbound payloads
-remain node-owned until an encrypted relay write succeeds.
+authenticated E2E session per configured peer, multiplexed over one relay
+connection for the local node identity. Relay disconnects use bounded
+reconnect backoff and rotate only to another verified signed candidate; queued
+outbound payloads remain node-owned per peer until each encrypted relay write
+succeeds. An individual peer restart can replace only that peer's E2E channel
+without requiring the other nodes to reconnect their relay sessions.
+Before distributing configs to multiple machines, run
+`novovm-product-topology <topology-plan.json>` to verify chain consistency,
+unique peer metrics, and a symmetric full mesh. This is an offline config gate
+and always reports external/public topology as not executed. See
+`docs/novovm-product-topology-preflight-v1.md`.
 
 For UDP node-to-node pipeline probes, enable the UDP drive on each node:
 
