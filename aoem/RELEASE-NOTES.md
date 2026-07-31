@@ -15,19 +15,20 @@ stage:   Windows + Linux FULLMAX included, macOS pending rebuild
 
 ```text
 Runtime baseline:
-  AOEM FULLMAX Runtime Baseline 2026-06-06
+  AOEM FULLMAX Runtime Baseline 2026-07-31
+  AOEM source commit a951273c
   Windows included and verified
   Linux included and verified
   macOS pending, not bundled, not advertised as available
 
 Windows:
-  AOEM SUPERVM v1.2 FULLMAX freshly generated and installed
-  artifact: D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260606-161254
+  canonical AOEM FULLMAX installed
+  artifact: aoem/windows/manifest.json
   core: aoem/windows/core/bin/aoem_ffi.dll
 
 Linux:
-  AOEM SUPERVM v1.2 FULLMAX freshly generated and installed
-  artifact: D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\linux\20260524-103416
+  canonical AOEM FULLMAX installed
+  artifact: aoem/linux/manifest.json
   core: aoem/linux/core/bin/libaoem_ffi.so
   RISC0 recursion artifact: verified
 
@@ -77,6 +78,9 @@ materialized from a fresh AOEM FULLMAX platform build before being reintroduced.
 ```text
 typed execution v2
 wire execution v1
+Semantic Graph V3
+semantic atomic writer v1
+storage provider wire v1
 state read / write / snapshot
 tensor compute
 primitive operator graph: sort / scan / scatter / fft / merkle / ntt / gemm
@@ -158,7 +162,7 @@ not a generic arbitrary-circuit proof system
 not a performance-ready claim
 not a Graph OS path
 not a dedicated LR path
-no new public FFI ABI
+additive public FFI ABI update for Semantic Graph V3
 no Runtime Canon change
 macOS runtime availability is not claimed by this package
 ```

@@ -1,56 +1,40 @@
-AOEM runtime in SUPERVM is packaged as a single-layer FULLMAX host bundle.
+AOEM runtime in SUPERVM is packaged as one portable FULLMAX host bundle.
 
 Runtime baseline:
-  AOEM FULLMAX Runtime Baseline 2026-06-06
+  AOEM FULLMAX Runtime Baseline 2026-07-31
+  AOEM source commit a951273c.
   Windows included and verified.
   Linux included and verified.
   macOS pending, not bundled, not advertised as available.
 
 Primary host model:
-  SUPERVM loads aoem/windows/core/bin/aoem_ffi.dll and calls
-  aoem_execute_ops_wire_v1 / typed AOEM FFI symbols directly.
+  SUPERVM resolves the runtime relative to the repository package:
+    aoem/windows/core/bin/aoem_ffi.dll
+    aoem/linux/core/bin/libaoem_ffi.so
 
-Current core upgrade:
-  Windows is installed from a freshly generated AOEM FULLMAX bundle:
-    D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260606-161254
-
-  Linux is installed from a freshly generated AOEM FULLMAX bundle:
-    D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\linux\20260524-103416
-
-  Linux RISC0 recursion artifact was verified before the FULLMAX build:
-    C:\Users\leadb\Downloads\ffc503386276f809137161f18d2f3ddcba3bb4b2d8b5d893b2c5d94b35afaf47.zip
-    sha256=ffc503386276f809137161f18d2f3ddcba3bb4b2d8b5d893b2c5d94b35afaf47
-
-  macOS is pending rebuild and is not bundled in this SUPERVM package.
-
-Clean package rule:
-  Old macOS dynamic libraries and sidecars were removed from aoem/ so users do
-  not mistake stale platform artifacts for current AOEM v1.2 FULLMAX output.
-  Linux was reintroduced only after a fresh platform FULLMAX artifact was built,
-  copied, checksummed and host-verified.
+  The checkout may live on any drive or under any workspace directory name.
 
 FULLMAX continuity:
-  RocksDB persistence, WASM/Wasmtime, zkVM executor, ML-DSA, KMS/HSM and related
-  sidecar/plugin binaries are bundled for the included Windows and Linux
-  platforms under aoem/<platform>/core/plugins and
-  aoem/<platform>/kms-hsm-plugin. These are part of the same AOEM package, not a
-  second package layer.
+  The package includes the generic AOEM core plus RocksDB persistence,
+  WASM/Wasmtime, zkVM executor, ML-DSA, and KMS/HSM sidecars under:
+    aoem/<platform>/core/plugins
+    aoem/<platform>/kms-hsm-plugin
 
-Proof host integration:
-  Embedded host examples, schemas, acceptance contracts and optional JSONL
-  worker adapter are materialized directly under aoem/host-integration,
-  aoem/schemas, aoem/acceptance, aoem/worker-adapter and aoem/bin.
+Semantic Graph V3 boundary:
+  AOEM provides domain-neutral scheduling, atomic persistence, completion, and
+  evidence through:
+    aoem_submit_semantic_graph_v3
+    aoem_bind_semantic_atomic_writer_v1
+    aoem_storage_provider_wire_v1
 
-Boundary:
-  No public FFI ABI change, no Runtime Canon change, no Graph OS path, no
-  dedicated LR path, and no generic arbitrary-circuit or performance-ready claim.
+  NOVOVM remains responsible for authentication, nonce and chain-domain
+  validation, transaction semantics, balances, and product policy. No
+  NOVOVM-specific business logic is built into AOEM.
 
-Source artifacts:
-  Windows FULLMAX bundle:
-    D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260606-161254
-  Linux FULLMAX bundle:
-    D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\linux\20260524-103416
-  Proof Engine host integration examples/schemas:
-    D:\WorksArea\AOEM\dist\aoem-compute-native-proof-v1.1-host-integration
-  macOS FULLMAX:
-    pending rebuild; not bundled in this SUPERVM package.
+Source manifests:
+  Windows FULLMAX: aoem/windows/manifest.json
+  Linux FULLMAX:   aoem/linux/manifest.json
+  Host examples:   aoem/host-integration/
+
+macOS:
+  pending rebuild; not bundled in this SUPERVM package.

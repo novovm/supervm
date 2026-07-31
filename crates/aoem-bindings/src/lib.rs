@@ -192,6 +192,232 @@ pub struct AoemExecV2Result {
     pub failed_index: u32, // u32::MAX means none
     pub total_writes: u64,
 }
+
+pub const AOEM_SEMANTIC_GRAPH_ABI_V2: u16 = 2;
+pub const AOEM_SEMANTIC_GRAPH_ABI_V3: u16 = 3;
+pub const AOEM_ATOMIC_WRITE_ABI_V1: u16 = 1;
+pub const AOEM_STATUS_OK: i32 = 0;
+pub const AOEM_STATUS_WOULD_BLOCK: i32 = 1;
+pub const AOEM_ERROR_INVALID_ARGUMENT: i32 = -1;
+pub const AOEM_ERROR_ABI_MISMATCH: i32 = -2;
+pub const AOEM_ERROR_DESCRIPTOR_TOO_LARGE: i32 = -3;
+pub const AOEM_ERROR_EVENT_TOO_LARGE: i32 = -4;
+pub const AOEM_ERROR_ADMISSION_REJECTED: i32 = -5;
+pub const AOEM_ERROR_UNKNOWN_CONTEXT_HANDLE: i32 = -6;
+pub const AOEM_ERROR_STALE_GENERATION_HANDLE: i32 = -7;
+pub const AOEM_ERROR_GRAPH_CANCELLED: i32 = -8;
+pub const AOEM_ERROR_GRAPH_FAULTED: i32 = -9;
+pub const AOEM_ERROR_STATE_WRITE_FAILED: i32 = -10;
+pub const AOEM_ERROR_CALLBACK_PANICKED: i32 = -11;
+pub const AOEM_ATOMIC_WRITE_PUT_V1: u8 = 1;
+pub const AOEM_ATOMIC_WRITE_DELETE_V1: u8 = 2;
+pub const AOEM_STEP_HAS_CONTINUATION: u32 = 1 << 0;
+pub const AOEM_STEP_HAS_EMITTED_TASK: u32 = 1 << 1;
+pub const AOEM_STEP_HAS_EVENT: u32 = 1 << 2;
+pub const AOEM_STEP_HAS_ATOMIC_WRITE_SET: u32 = 1 << 3;
+pub const AOEM_GRAPH_HAS_ADMISSION_WRITE_SET_V3: u16 = 1 << 0;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AoemTaskDescriptorV2 {
+    pub abi_version: u16,
+    pub task_kind: u16,
+    pub payload_len: u16,
+    pub priority: u8,
+    pub flags: u8,
+    pub graph_id: u64,
+    pub task_id: u64,
+    pub context_handle: u64,
+    pub sequence: u64,
+    pub payload: [u8; 88],
+}
+
+impl Default for AoemTaskDescriptorV2 {
+    fn default() -> Self {
+        Self {
+            abi_version: AOEM_SEMANTIC_GRAPH_ABI_V2,
+            task_kind: 0,
+            payload_len: 0,
+            priority: 0,
+            flags: 0,
+            graph_id: 0,
+            task_id: 0,
+            context_handle: 0,
+            sequence: 0,
+            payload: [0; 88],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AoemStateEventV2 {
+    pub abi_version: u16,
+    pub event_kind: u16,
+    pub payload_len: u16,
+    pub flags: u16,
+    pub graph_id: u64,
+    pub task_id: u64,
+    pub context_handle: u64,
+    pub sequence: u64,
+    pub payload: [u8; 216],
+}
+
+impl Default for AoemStateEventV2 {
+    fn default() -> Self {
+        Self {
+            abi_version: AOEM_SEMANTIC_GRAPH_ABI_V2,
+            event_kind: 0,
+            payload_len: 0,
+            flags: 0,
+            graph_id: 0,
+            task_id: 0,
+            context_handle: 0,
+            sequence: 0,
+            payload: [0; 216],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AoemAtomicWriteRecordV1 {
+    pub kind: u8,
+    pub reserved: [u8; 3],
+    pub key_len: u16,
+    pub value_len: u16,
+    pub key: [u8; 96],
+    pub value: [u8; 512],
+}
+
+impl Default for AoemAtomicWriteRecordV1 {
+    fn default() -> Self {
+        Self {
+            kind: 0,
+            reserved: [0; 3],
+            key_len: 0,
+            value_len: 0,
+            key: [0; 96],
+            value: [0; 512],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AoemAtomicWriteSetV1 {
+    pub abi_version: u16,
+    pub write_count: u16,
+    pub reserved: u32,
+    pub stream_id: u64,
+    pub sequence: u64,
+    pub writes: [AoemAtomicWriteRecordV1; 4],
+}
+
+impl Default for AoemAtomicWriteSetV1 {
+    fn default() -> Self {
+        Self {
+            abi_version: AOEM_ATOMIC_WRITE_ABI_V1,
+            write_count: 0,
+            reserved: 0,
+            stream_id: 0,
+            sequence: 0,
+            writes: [AoemAtomicWriteRecordV1::default(); 4],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct AoemTaskStepOutputV3 {
+    pub flags: u32,
+    pub reserved: u32,
+    pub continuation: AoemTaskDescriptorV2,
+    pub emitted_task: AoemTaskDescriptorV2,
+    pub event: AoemStateEventV2,
+    pub atomic_write_set: AoemAtomicWriteSetV1,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AoemGraphSubmitOptionsV3 {
+    pub abi_version: u16,
+    pub flags: u16,
+    pub max_queued_tasks: u32,
+    pub event_capacity: u32,
+    pub initial_event_sequence: u64,
+    pub admission_write_set: AoemAtomicWriteSetV1,
+}
+
+impl Default for AoemGraphSubmitOptionsV3 {
+    fn default() -> Self {
+        Self {
+            abi_version: AOEM_SEMANTIC_GRAPH_ABI_V3,
+            flags: 0,
+            max_queued_tasks: 0,
+            event_capacity: 0,
+            initial_event_sequence: 0,
+            admission_write_set: AoemAtomicWriteSetV1::default(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AoemGraphCompletionV2 {
+    pub abi_version: u16,
+    pub reserved: u16,
+    pub status: i32,
+    pub graph_id: u64,
+    pub processed: u64,
+    pub succeeded: u64,
+    pub failed: u64,
+    pub would_block_retries: u64,
+    pub peak_queued_tasks: u64,
+}
+
+pub type AoemTaskExecuteCallbackV3 = unsafe extern "C-unwind" fn(
+    *const AoemTaskDescriptorV2,
+    *mut AoemTaskStepOutputV3,
+    *mut c_void,
+) -> i32;
+pub type AoemContextRetainCallbackV2 = unsafe extern "C-unwind" fn(u64, *mut c_void) -> i32;
+pub type AoemContextReleaseCallbackV2 = unsafe extern "C-unwind" fn(u64, *mut c_void) -> i32;
+pub type AoemStateEventCallbackV2 =
+    unsafe extern "C-unwind" fn(*const AoemStateEventV2, *mut c_void) -> i32;
+pub type AoemGraphCompletionWriteCallbackV3 = unsafe extern "C-unwind" fn(
+    *const AoemGraphCompletionV2,
+    *mut AoemAtomicWriteSetV1,
+    *mut c_void,
+) -> i32;
+pub type AoemGraphCompletionCallbackV2 =
+    unsafe extern "C-unwind" fn(*const AoemGraphCompletionV2, *mut c_void);
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AoemGraphCallbacksV3 {
+    pub execute: Option<AoemTaskExecuteCallbackV3>,
+    pub retain_context: Option<AoemContextRetainCallbackV2>,
+    pub release_context: Option<AoemContextReleaseCallbackV2>,
+    pub state_event: Option<AoemStateEventCallbackV2>,
+    pub completion_write: Option<AoemGraphCompletionWriteCallbackV3>,
+    pub completion: Option<AoemGraphCompletionCallbackV2>,
+    pub user_data: *mut c_void,
+}
+
+pub type AoemBindSemanticAtomicWriterV1 = unsafe extern "C" fn(*mut c_void, u64, u32, u32) -> i32;
+pub type AoemSubmitSemanticGraphV3 = unsafe extern "C" fn(
+    *mut c_void,
+    *const AoemTaskDescriptorV2,
+    u32,
+    *const AoemGraphSubmitOptionsV3,
+    *const AoemGraphCallbacksV3,
+) -> i32;
+pub type AoemCancelSemanticGraphV2 = unsafe extern "C" fn(*mut c_void, u64) -> i32;
+pub type AoemSemanticGraphV2ActiveCount = unsafe extern "C" fn(*mut c_void) -> u64;
+pub type AoemStorageProviderWireV1 =
+    unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut *mut u8, *mut usize) -> i32;
+
 pub type AoemCreate = unsafe extern "C" fn() -> *mut c_void;
 pub type AoemCreateWithOptions = unsafe extern "C" fn(*const AoemCreateOptionsV1) -> *mut c_void;
 pub type AoemDestroy = unsafe extern "C" fn(*mut c_void);
@@ -285,6 +511,11 @@ pub struct AoemDyn {
     free: Option<AoemFree>,
     execute_ops_v2: Option<AoemExecuteOpsV2>,
     execute_ops_wire_v1: Option<AoemExecuteOpsWireV1>,
+    bind_semantic_atomic_writer_v1: Option<AoemBindSemanticAtomicWriterV1>,
+    submit_semantic_graph_v3: Option<AoemSubmitSemanticGraphV3>,
+    cancel_semantic_graph_v2: Option<AoemCancelSemanticGraphV2>,
+    semantic_graph_v2_active_count: Option<AoemSemanticGraphV2ActiveCount>,
+    storage_provider_wire_v1: Option<AoemStorageProviderWireV1>,
     state_write_v1: Option<AoemStateWriteV1>,
     state_read_v1: Option<AoemStateReadV1>,
     state_snapshot_v1: Option<AoemStateSnapshotV1>,
@@ -571,6 +802,26 @@ impl AoemDyn {
             .get::<AoemExecuteOpsWireV1>(b"aoem_execute_ops_wire_v1")
             .ok()
             .map(|f| *f);
+        let bind_semantic_atomic_writer_v1: Option<AoemBindSemanticAtomicWriterV1> = lib
+            .get::<AoemBindSemanticAtomicWriterV1>(b"aoem_bind_semantic_atomic_writer_v1")
+            .ok()
+            .map(|f| *f);
+        let submit_semantic_graph_v3: Option<AoemSubmitSemanticGraphV3> = lib
+            .get::<AoemSubmitSemanticGraphV3>(b"aoem_submit_semantic_graph_v3")
+            .ok()
+            .map(|f| *f);
+        let cancel_semantic_graph_v2: Option<AoemCancelSemanticGraphV2> = lib
+            .get::<AoemCancelSemanticGraphV2>(b"aoem_cancel_semantic_graph_v2")
+            .ok()
+            .map(|f| *f);
+        let semantic_graph_v2_active_count: Option<AoemSemanticGraphV2ActiveCount> = lib
+            .get::<AoemSemanticGraphV2ActiveCount>(b"aoem_semantic_graph_v2_active_count")
+            .ok()
+            .map(|f| *f);
+        let storage_provider_wire_v1: Option<AoemStorageProviderWireV1> = lib
+            .get::<AoemStorageProviderWireV1>(b"aoem_storage_provider_wire_v1")
+            .ok()
+            .map(|f| *f);
         let state_write_v1: Option<AoemStateWriteV1> = lib
             .get::<AoemStateWriteV1>(b"aoem_state_write_v1")
             .ok()
@@ -641,6 +892,11 @@ impl AoemDyn {
             free,
             execute_ops_v2,
             execute_ops_wire_v1,
+            bind_semantic_atomic_writer_v1,
+            submit_semantic_graph_v3,
+            cancel_semantic_graph_v2,
+            semantic_graph_v2_active_count,
+            storage_provider_wire_v1,
             state_write_v1,
             state_read_v1,
             state_snapshot_v1,
@@ -853,6 +1109,14 @@ impl AoemDyn {
 
     pub fn supports_execute_ops_wire_v1(&self) -> bool {
         self.execute_ops_wire_v1.is_some()
+    }
+
+    pub fn supports_semantic_graph_v3(&self) -> bool {
+        self.bind_semantic_atomic_writer_v1.is_some()
+            && self.submit_semantic_graph_v3.is_some()
+            && self.cancel_semantic_graph_v2.is_some()
+            && self.semantic_graph_v2_active_count.is_some()
+            && self.storage_provider_wire_v1.is_some()
     }
 
     pub fn supports_state_read_v1(&self) -> bool {
@@ -3192,8 +3456,137 @@ impl AoemSharedHandle {
         Ok(result)
     }
 
+    pub fn supports_semantic_graph_v3(&self) -> bool {
+        self.dynlib.supports_semantic_graph_v3()
+    }
+
+    pub fn storage_provider_wire_v1(&self, request: &[u8]) -> Result<Vec<u8>> {
+        let Some(call) = self.dynlib.storage_provider_wire_v1 else {
+            bail!("aoem_storage_provider_wire_v1 not found in loaded DLL");
+        };
+        if request.is_empty() {
+            bail!("AOEM storage provider request must not be empty");
+        }
+        let mut output_ptr: *mut u8 = ptr::null_mut();
+        let mut output_len = 0usize;
+        let rc = unsafe {
+            call(
+                self.raw,
+                request.as_ptr(),
+                request.len(),
+                &mut output_ptr,
+                &mut output_len,
+            )
+        };
+        let response = self.dynlib.copy_aoem_owned_bytes(
+            output_ptr,
+            output_len,
+            "aoem_storage_provider_wire_v1 output",
+        )?;
+        if rc != 0 && response.is_empty() {
+            let err = unsafe { cstr_to_string((self.dynlib.last_error)(self.raw)) }.unwrap_or_else(
+                || format!("aoem_storage_provider_wire_v1 failed rc={rc} and no response"),
+            );
+            bail!("aoem_storage_provider_wire_v1 failed: rc={rc}, err={err}");
+        }
+        Ok(response)
+    }
+
+    pub fn bind_semantic_atomic_writer_v1(
+        &self,
+        database_id: u64,
+        queue_capacity: u32,
+        max_batch_sets: u32,
+    ) -> Result<()> {
+        let Some(bind) = self.dynlib.bind_semantic_atomic_writer_v1 else {
+            bail!("aoem_bind_semantic_atomic_writer_v1 not found in loaded DLL");
+        };
+        if database_id == 0 || queue_capacity == 0 || max_batch_sets == 0 {
+            bail!("semantic atomic writer binding arguments must be non-zero");
+        }
+        let rc = unsafe { bind(self.raw, database_id, queue_capacity, max_batch_sets) };
+        if rc != 0 {
+            let err = unsafe { cstr_to_string((self.dynlib.last_error)(self.raw)) }.unwrap_or_else(
+                || format!("aoem_bind_semantic_atomic_writer_v1 failed rc={rc} and no last_error"),
+            );
+            bail!("aoem_bind_semantic_atomic_writer_v1 failed: rc={rc}, err={err}");
+        }
+        Ok(())
+    }
+
+    /// Submits callbacks that AOEM may retain and invoke asynchronously.
+    ///
+    /// # Safety
+    ///
+    /// Every callback and `user_data` reachable through `callbacks` must remain
+    /// valid and thread-safe until the graph completion callback has returned.
+    pub unsafe fn submit_semantic_graph_v3(
+        &self,
+        seeds: &[AoemTaskDescriptorV2],
+        options: &AoemGraphSubmitOptionsV3,
+        callbacks: &AoemGraphCallbacksV3,
+    ) -> Result<i32> {
+        let Some(submit) = self.dynlib.submit_semantic_graph_v3 else {
+            bail!("aoem_submit_semantic_graph_v3 not found in loaded DLL");
+        };
+        if seeds.is_empty() || seeds.len() > u32::MAX as usize {
+            bail!("semantic graph v3 seed count is invalid");
+        }
+        if options.abi_version != AOEM_SEMANTIC_GRAPH_ABI_V3 {
+            bail!("semantic graph v3 options ABI mismatch");
+        }
+        let rc = unsafe {
+            submit(
+                self.raw,
+                seeds.as_ptr(),
+                seeds.len() as u32,
+                options,
+                callbacks,
+            )
+        };
+        if rc < 0 {
+            let err = unsafe { cstr_to_string((self.dynlib.last_error)(self.raw)) }.unwrap_or_else(
+                || format!("aoem_submit_semantic_graph_v3 failed rc={rc} and no last_error"),
+            );
+            bail!("aoem_submit_semantic_graph_v3 failed: rc={rc}, err={err}");
+        }
+        Ok(rc)
+    }
+
+    pub fn cancel_semantic_graph_v2(&self, graph_id: u64) -> Result<()> {
+        let Some(cancel) = self.dynlib.cancel_semantic_graph_v2 else {
+            bail!("aoem_cancel_semantic_graph_v2 not found in loaded DLL");
+        };
+        if graph_id == 0 {
+            bail!("semantic graph id must be non-zero");
+        }
+        let rc = unsafe { cancel(self.raw, graph_id) };
+        if rc != 0 {
+            let err = unsafe { cstr_to_string((self.dynlib.last_error)(self.raw)) }.unwrap_or_else(
+                || format!("aoem_cancel_semantic_graph_v2 failed rc={rc} and no last_error"),
+            );
+            bail!("aoem_cancel_semantic_graph_v2 failed: rc={rc}, err={err}");
+        }
+        Ok(())
+    }
+
+    pub fn semantic_graph_v2_active_count(&self) -> Result<u64> {
+        let Some(active_count) = self.dynlib.semantic_graph_v2_active_count else {
+            bail!("aoem_semantic_graph_v2_active_count not found in loaded DLL");
+        };
+        Ok(unsafe { active_count(self.raw) })
+    }
+
     pub fn state_read_json_v1(&self, key: &str) -> Result<Value> {
         self.dynlib.state_read_json_v1(key)
+    }
+
+    pub fn state_write_json_v1(&self, key: &str, value: Value) -> Result<Value> {
+        self.dynlib.state_write_json_v1(key, value)
+    }
+
+    pub fn state_snapshot_json_v1(&self, path: Option<&Path>) -> Result<Value> {
+        self.dynlib.state_snapshot_json_v1(path)
     }
 }
 
@@ -3214,6 +3607,26 @@ mod tests {
             .expect("clock should be after epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("aoem-bindings-{name}-{nonce}"))
+    }
+
+    #[test]
+    fn semantic_graph_v3_ffi_layout_matches_aoem_header() {
+        assert_eq!(std::mem::size_of::<AoemTaskDescriptorV2>(), 128);
+        assert_eq!(std::mem::align_of::<AoemTaskDescriptorV2>(), 8);
+        assert_eq!(std::mem::size_of::<AoemStateEventV2>(), 256);
+        assert_eq!(std::mem::align_of::<AoemStateEventV2>(), 8);
+        assert_eq!(std::mem::size_of::<AoemAtomicWriteRecordV1>(), 616);
+        assert_eq!(std::mem::size_of::<AoemAtomicWriteSetV1>(), 2488);
+        assert_eq!(std::mem::size_of::<AoemTaskStepOutputV3>(), 3008);
+        assert_eq!(std::mem::size_of::<AoemGraphSubmitOptionsV3>(), 2512);
+        assert_eq!(
+            AoemGraphSubmitOptionsV3::default().abi_version,
+            AOEM_SEMANTIC_GRAPH_ABI_V3
+        );
+        assert_eq!(
+            AoemAtomicWriteSetV1::default().abi_version,
+            AOEM_ATOMIC_WRITE_ABI_V1
+        );
     }
 
     #[test]

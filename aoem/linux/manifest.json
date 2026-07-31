@@ -1,10 +1,12 @@
 {
-  "stamp": "20260524-103416",
-  "release_version": "SUPERVM v1.2 FULLMAX",
+  "stamp": "20260731-060252",
+  "release_version": "1.0.0+a951273c",
+  "source_commit": "a951273c",
   "platform": "linux",
   "profile": "fullmax",
-  "bundle_dir": "/mnt/d/WorksArea/AOEM/artifacts/ffi-bundles/fullmax/linux/20260524-103416",
-  "core_dll": "/mnt/d/WorksArea/AOEM/artifacts/ffi-bundles/fullmax/linux/20260524-103416/core/bin/libaoem_ffi.so",
+  "bundle_dir": ".",
+  "core_dll": "core/bin/libaoem_ffi.so",
+  "public_header": "include/aoem.h",
   "plugins": [
     "libaoem_ffi_crypto_hsm.so",
     "libaoem_ffi_crypto_kms.so",
@@ -22,5 +24,30 @@
     "libaoem_kms_plugin.so"
   ],
   "features": "rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
-  "notes": "linux fullmax includes persist/wasm/zkvm/mldsa/kms-hsm sidecars; risc0/sp1 runtime paths are enabled"
+  "storage_provider": {
+    "entry": "aoem_storage_provider_wire_v1",
+    "wire": "binary",
+    "raw_values": true,
+    "multi_database": true,
+    "consistent_read_snapshots": true,
+    "bounded_ordered_range_reads": true,
+    "json": false
+  },
+  "semantic_graph_v3": {
+    "enabled": true,
+    "entry": "aoem_submit_semantic_graph_v3",
+    "atomic_writer_bind_entry": "aoem_bind_semantic_atomic_writer_v1",
+    "storage_provider_entry": "aoem_storage_provider_wire_v1",
+    "domain_agnostic": true,
+    "opaque_task_payload": true,
+    "host_business_policy_owner": "host",
+    "atomic_step_commit": true,
+    "durable_completion_boundary": true
+  },
+  "boundaries": {
+    "public_ffi_abi_changed": true,
+    "business_semantics": false,
+    "novovm_specific_logic": false
+  },
+  "notes": "Canonical AOEM FULLMAX core plus optional sidecars; RISC0 guest methods are embedded and host product policy remains outside AOEM."
 }

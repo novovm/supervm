@@ -86,6 +86,12 @@ Detailed signoffs:
 
 ## Architecture overview
 
+- **Native transaction authentication**
+	- Native wire version 2 requires `ed25519 public key (32) || signature (64)` before pending admission
+	- The signed domain binds chain ID, nonce, signer identity, account ownership fields, execution target, policy, data, gas, value, and transaction hash
+	- Legacy 32-byte native authentication values remain decode-only and are rejected by ingress
+	- High-level host operations require `NOVOVM_NATIVE_HOST_SIGNING_SEED`; see [the active native authentication contract](docs/NOVOVM_NATIVE_TRANSACTION_AUTHENTICATION_V1.md)
+
 - **Unified execution kernel (`AOEM`)**
 	- Semantic concurrency with `OCCC` as the primary execution path
 	- `OCC` remains only a validation baseline for compatibility checks

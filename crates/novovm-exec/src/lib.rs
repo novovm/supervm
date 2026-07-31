@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod ingress_codec;
+mod semantic_graph_v3;
 
 pub const AOEM_FAILURE_CLASSIFICATION_CONTRACT_V1: &str = "novovm-exec/v1";
 pub const EIP7610_REJECTION_CONTRACT_V1: &str = "novovm-exec/eip7610-v1";
@@ -1061,6 +1062,75 @@ pub fn build_native_tx_batch_result_shape_v1(
     })
 }
 
+pub fn build_native_tx_batch_result_from_execution_v1(
+    batch: &NovovmAoemNativeTxBatchV1,
+    per_tx_receipts: Vec<NovovmAoemNativeTxReceiptV1>,
+    state_delta_root: impl Into<String>,
+    receipt_root: impl Into<String>,
+    snapshot_metadata: NovovmAoemSnapshotMetadataV1,
+) -> Result<NovovmAoemNativeTxBatchResultV1> {
+    if per_tx_receipts.len() != batch.tx_items.len() {
+        bail!("native tx batch execution receipt count does not match tx count");
+    }
+    for (item, receipt) in batch.tx_items.iter().zip(&per_tx_receipts) {
+        if receipt.sequence != item.sequence || receipt.tx_hash != item.tx_hash {
+            bail!(
+                "native tx batch execution receipt identity mismatch at sequence {}",
+                item.sequence
+            );
+        }
+        let expected = native_tx_batch_v1_receipt_commitment(
+            receipt.sequence,
+            receipt.tx_hash.as_str(),
+            receipt.status_ok,
+        );
+        if receipt.receipt_commitment != expected {
+            bail!(
+                "native tx batch execution receipt commitment mismatch at sequence {}",
+                item.sequence
+            );
+        }
+    }
+    let state_delta_root = state_delta_root.into();
+    if state_delta_root.trim().is_empty() {
+        bail!("native tx batch execution state delta root is required");
+    }
+    let receipt_root = receipt_root.into();
+    if receipt_root.trim().is_empty() {
+        bail!("native tx batch execution receipt root is required");
+    }
+    if snapshot_metadata.persistence_owner != "aoem_runtime" {
+        bail!("native tx batch execution persistence owner must be aoem_runtime");
+    }
+    let canonical_inclusion_proof = native_tx_batch_v1_hash_hex(&[
+        b"novovm-aoem-native-canonical-proof/v1",
+        batch.batch_id.as_bytes(),
+        receipt_root.as_bytes(),
+    ]);
+    let durable_ledger_close_proof = native_tx_batch_v1_hash_hex(&[
+        b"novovm-aoem-native-durable-close-proof/v1",
+        batch.expected_output_commitment.as_bytes(),
+        state_delta_root.as_bytes(),
+        canonical_inclusion_proof.as_bytes(),
+    ]);
+    let batch_result_id = native_tx_batch_v1_hash_hex(&[
+        NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA.as_bytes(),
+        batch.batch_id.as_bytes(),
+        durable_ledger_close_proof.as_bytes(),
+    ]);
+    Ok(NovovmAoemNativeTxBatchResultV1 {
+        schema: NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA.to_string(),
+        batch_result_id,
+        batch_id: batch.batch_id.clone(),
+        per_tx_receipts,
+        state_delta_root,
+        canonical_inclusion_proof,
+        receipt_root,
+        durable_ledger_close_proof,
+        snapshot_metadata,
+    })
+}
+
 pub fn resolve_aoem_block_access_list_hash_v1(
     artifacts: &AoemBatchExecutionArtifactsV1,
 ) -> Option<[u8; 32]> {
@@ -1693,6 +1763,13 @@ pub struct AoemCapabilityContract {
     pub runtime_ownership_ready: bool,
     pub native_tx_batch_v1: bool,
     pub algebraic_semantic_data_plane_v1: bool,
+    pub semantic_graph_v3: bool,
+    pub semantic_graph_v3_domain_agnostic: bool,
+    pub semantic_graph_v3_opaque_task_payload: bool,
+    pub semantic_graph_v3_host_business_policy_owner: Option<String>,
+    pub semantic_graph_v3_atomic_step_commit: bool,
+    pub semantic_graph_v3_durable_completion_boundary: bool,
+    pub semantic_graph_v3_ready: bool,
     pub zkvm_prove: bool,
     pub zkvm_verify: bool,
     pub zkvm_probe_api_present: bool,
@@ -1774,6 +1851,24 @@ impl AoemCapabilityContract {
             ],
         )
         .unwrap_or(native_tx_batch_v1);
+        let semantic_graph_v3 = capability_bool(&raw, &["semantic_graph_v3"]).unwrap_or(false);
+        let semantic_graph_v3_domain_agnostic =
+            capability_bool(&raw, &["semantic_graph_v3_domain_agnostic"]).unwrap_or(false);
+        let semantic_graph_v3_opaque_task_payload =
+            capability_bool(&raw, &["semantic_graph_v3_opaque_task_payload"]).unwrap_or(false);
+        let semantic_graph_v3_host_business_policy_owner =
+            capability_string(&raw, &["semantic_graph_v3_host_business_policy_owner"]);
+        let semantic_graph_v3_atomic_step_commit =
+            capability_bool(&raw, &["semantic_graph_v3_atomic_step_commit"]).unwrap_or(false);
+        let semantic_graph_v3_durable_completion_boundary =
+            capability_bool(&raw, &["semantic_graph_v3_durable_completion_boundary"])
+                .unwrap_or(false);
+        let semantic_graph_v3_ready = semantic_graph_v3
+            && semantic_graph_v3_domain_agnostic
+            && semantic_graph_v3_opaque_task_payload
+            && semantic_graph_v3_host_business_policy_owner.as_deref() == Some("host")
+            && semantic_graph_v3_atomic_step_commit
+            && semantic_graph_v3_durable_completion_boundary;
         let zkvm_prove = capability_bool(
             &raw,
             &[
@@ -1927,6 +2022,13 @@ impl AoemCapabilityContract {
             runtime_ownership_ready,
             native_tx_batch_v1,
             algebraic_semantic_data_plane_v1,
+            semantic_graph_v3,
+            semantic_graph_v3_domain_agnostic,
+            semantic_graph_v3_opaque_task_payload,
+            semantic_graph_v3_host_business_policy_owner,
+            semantic_graph_v3_atomic_step_commit,
+            semantic_graph_v3_durable_completion_boundary,
+            semantic_graph_v3_ready,
             zkvm_prove,
             zkvm_verify,
             zkvm_probe_api_present: false,
@@ -1994,6 +2096,8 @@ impl AoemExecFacade {
         contract.runtime_ownership_ready = contract.execute_ops_wire_v1
             && contract.state_surface_v1
             && (contract.rocksdb_persistence || contract.persist_delegate_runtime);
+        contract.semantic_graph_v3_ready =
+            self.dynlib.supports_semantic_graph_v3() && contract.semantic_graph_v3_ready;
         contract.zkvm_probe_api_present = self.dynlib.supports_zkvm_probe();
         contract.zkvm_symbol_supported = self.dynlib.zkvm_supported_flag();
         Ok(contract)
@@ -2071,6 +2175,60 @@ impl AoemExecSession {
 
     pub fn state_read_json_v1(&self, key: &str) -> Result<serde_json::Value> {
         self.handle.state_read_json_v1(key)
+    }
+
+    pub fn state_write_json_v1(
+        &self,
+        key: &str,
+        value: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.handle.state_write_json_v1(key, value)
+    }
+
+    pub fn state_snapshot_json_v1(&self, path: Option<&Path>) -> Result<serde_json::Value> {
+        self.handle.state_snapshot_json_v1(path)
+    }
+
+    pub fn supports_semantic_graph_v3(&self) -> bool {
+        self.handle.supports_semantic_graph_v3()
+    }
+
+    pub fn storage_provider_wire_v1(&self, request: &[u8]) -> Result<Vec<u8>> {
+        self.handle.storage_provider_wire_v1(request)
+    }
+
+    pub fn bind_semantic_atomic_writer_v1(
+        &self,
+        database_id: u64,
+        queue_capacity: u32,
+        max_batch_sets: u32,
+    ) -> Result<()> {
+        self.handle
+            .bind_semantic_atomic_writer_v1(database_id, queue_capacity, max_batch_sets)
+    }
+
+    /// # Safety
+    ///
+    /// Callback functions and user data must outlive AOEM's asynchronous graph
+    /// and remain valid until its completion callback returns.
+    pub unsafe fn submit_semantic_graph_v3(
+        &self,
+        seeds: &[aoem_bindings::AoemTaskDescriptorV2],
+        options: &aoem_bindings::AoemGraphSubmitOptionsV3,
+        callbacks: &aoem_bindings::AoemGraphCallbacksV3,
+    ) -> Result<i32> {
+        unsafe {
+            self.handle
+                .submit_semantic_graph_v3(seeds, options, callbacks)
+        }
+    }
+
+    pub fn cancel_semantic_graph_v2(&self, graph_id: u64) -> Result<()> {
+        self.handle.cancel_semantic_graph_v2(graph_id)
+    }
+
+    pub fn semantic_graph_v2_active_count(&self) -> Result<u64> {
+        self.handle.semantic_graph_v2_active_count()
     }
 
     fn state_read_surface_value_json_v1(
@@ -2701,11 +2859,29 @@ pub use aoem_bindings::global_parallel_budget;
 pub use aoem_bindings::recommend_threads_auto;
 pub use aoem_bindings::recommend_threads_from_aoem;
 pub use aoem_bindings::set_global_parallel_budget;
+pub use aoem_bindings::AoemAtomicWriteRecordV1;
+pub use aoem_bindings::AoemAtomicWriteSetV1;
 /// Re-export AOEM V2 op/result types for host integration.
 pub use aoem_bindings::AoemExecV2Result as ExecResultV2;
+pub use aoem_bindings::AoemGraphCallbacksV3;
+pub use aoem_bindings::AoemGraphCompletionV2;
+pub use aoem_bindings::AoemGraphSubmitOptionsV3;
 pub use aoem_bindings::AoemHostAdaptiveDecision;
 pub use aoem_bindings::AoemHostHint;
 pub use aoem_bindings::AoemOpV2 as ExecOpV2;
+pub use aoem_bindings::AoemStateEventV2;
+pub use aoem_bindings::AoemTaskDescriptorV2;
+pub use aoem_bindings::AoemTaskStepOutputV3;
+pub use aoem_bindings::AOEM_ATOMIC_WRITE_ABI_V1;
+pub use aoem_bindings::AOEM_ATOMIC_WRITE_DELETE_V1;
+pub use aoem_bindings::AOEM_ATOMIC_WRITE_PUT_V1;
+pub use aoem_bindings::AOEM_GRAPH_HAS_ADMISSION_WRITE_SET_V3;
+pub use aoem_bindings::AOEM_SEMANTIC_GRAPH_ABI_V2;
+pub use aoem_bindings::AOEM_SEMANTIC_GRAPH_ABI_V3;
+pub use aoem_bindings::AOEM_STEP_HAS_ATOMIC_WRITE_SET;
+pub use aoem_bindings::AOEM_STEP_HAS_CONTINUATION;
+pub use aoem_bindings::AOEM_STEP_HAS_EMITTED_TASK;
+pub use aoem_bindings::AOEM_STEP_HAS_EVENT;
 pub use ingress_codec::EncodedOpsWire;
 pub use ingress_codec::IngressCodecRegistry;
 pub use ingress_codec::OpsWireOp;
@@ -2713,6 +2889,11 @@ pub use ingress_codec::OpsWireV1Builder;
 pub use ingress_codec::RawIngressCodecRegistry;
 pub use ingress_codec::AOEM_OPS_WIRE_V1_MAGIC;
 pub use ingress_codec::AOEM_OPS_WIRE_V1_VERSION;
+pub use semantic_graph_v3::{
+    AoemAtomicGraphCommitReportV1, AoemAtomicGraphEventV1, AoemAtomicGraphRequestV1,
+    AoemAtomicGraphStepV1, AoemAtomicGraphWriteV1, AoemSemanticGraphStoreV1,
+    AoemStorageProviderConfigV1,
+};
 
 #[allow(dead_code)]
 fn _assert_abi_struct_layout(_v: AoemCreateOptionsV1) {}
@@ -2721,9 +2902,10 @@ fn _assert_abi_struct_layout(_v: AoemCreateOptionsV1) {}
 mod tests {
     use super::{
         aoem_op_succeeded_v1, build_apfl_native_transfer_bulk_payload_v0,
-        build_apfl_native_transfer_ops_wire_v1, build_native_tx_batch_result_shape_v1,
-        build_native_tx_batch_v1, classify_failure_from_anchor_v1, current_platform_dir_name,
-        default_dll_path, default_plugin_dir, dynlib_names_by_preference,
+        build_apfl_native_transfer_ops_wire_v1, build_native_tx_batch_result_from_execution_v1,
+        build_native_tx_batch_result_shape_v1, build_native_tx_batch_v1,
+        classify_failure_from_anchor_v1, current_platform_dir_name, default_dll_path,
+        default_plugin_dir, dynlib_names_by_preference,
         failure_class_from_anchor_return_code_name_v1, failure_class_from_anchor_return_code_v1,
         is_eip7610_rejected_account_v1, native_tx_batch_v1_input_commitment,
         native_tx_batch_v1_item_commitment, native_tx_batch_v1_receipt_commitment,
@@ -2736,8 +2918,9 @@ mod tests {
         AoemFailureRecoverabilityV1, AoemProjectedTxExecutionV1, AoemReceiptDerivationRulesV1,
         AoemRuntimeVariant, AoemTxExecutionAnchorV1, NativeTxBatchV1ItemCommitmentInputV1,
         NovovmAoemNativeTxBatchItemV1, NovovmAoemNativeTxBatchResultV1,
-        NovovmAoemNativeTxReceiptV1, AOEM_APFL_NATIVE_TRANSFER_BULK_MAGIC_V0,
-        AOEM_APFL_NATIVE_TRANSFER_BULK_VERSION_V0, AOEM_LOG_BLOOM_BYTES_V1, AOEM_OPS_WIRE_V1_MAGIC,
+        NovovmAoemNativeTxReceiptV1, NovovmAoemSnapshotMetadataV1,
+        AOEM_APFL_NATIVE_TRANSFER_BULK_MAGIC_V0, AOEM_APFL_NATIVE_TRANSFER_BULK_VERSION_V0,
+        AOEM_LOG_BLOOM_BYTES_V1, AOEM_OPS_WIRE_V1_MAGIC,
         AOEM_OPS_WIRE_V1_OPCODE_APFL_NATIVE_TRANSFER_V1, NOVOVM_AOEM_ALGEBRAIC_SEMANTIC_IR_V1,
         NOVOVM_AOEM_NATIVE_TX_BATCH_RESULT_V1_SCHEMA, NOVOVM_AOEM_NATIVE_TX_BATCH_V1_SCHEMA,
     };
@@ -2869,6 +3052,29 @@ mod tests {
     }
 
     #[test]
+    fn semantic_graph_v3_capability_requires_domain_neutral_host_boundary() {
+        let ready = AoemCapabilityContract::from_capabilities_json(json!({
+            "semantic_graph_v3": true,
+            "semantic_graph_v3_domain_agnostic": true,
+            "semantic_graph_v3_opaque_task_payload": true,
+            "semantic_graph_v3_host_business_policy_owner": "host",
+            "semantic_graph_v3_atomic_step_commit": true,
+            "semantic_graph_v3_durable_completion_boundary": true,
+        }));
+        assert!(ready.semantic_graph_v3_ready);
+
+        let wrong_owner = AoemCapabilityContract::from_capabilities_json(json!({
+            "semantic_graph_v3": true,
+            "semantic_graph_v3_domain_agnostic": true,
+            "semantic_graph_v3_opaque_task_payload": true,
+            "semantic_graph_v3_host_business_policy_owner": "kernel",
+            "semantic_graph_v3_atomic_step_commit": true,
+            "semantic_graph_v3_durable_completion_boundary": true,
+        }));
+        assert!(!wrong_owner.semantic_graph_v3_ready);
+    }
+
+    #[test]
     fn native_tx_batch_v1_schema_smoke() {
         let batch = build_native_tx_batch_v1(
             "batch-1",
@@ -2950,6 +3156,79 @@ mod tests {
         assert!(result.receipt_root.len() >= 64);
         assert!(result.durable_ledger_close_proof.len() >= 64);
         assert_eq!(result.snapshot_metadata.persistence_owner, "aoem_runtime");
+    }
+
+    #[test]
+    fn native_tx_batch_result_from_execution_preserves_actual_roots() {
+        let batch = build_native_tx_batch_v1(
+            "batch-actual-execution",
+            7092,
+            None,
+            vec![native_tx_batch_v1_sample_item(31)],
+        )
+        .expect("build batch");
+        let receipt = NovovmAoemNativeTxReceiptV1 {
+            sequence: 31,
+            tx_hash: batch.tx_items[0].tx_hash.clone(),
+            status_ok: true,
+            receipt_commitment: native_tx_batch_v1_receipt_commitment(
+                31,
+                batch.tx_items[0].tx_hash.as_str(),
+                true,
+            ),
+            error_class: None,
+        };
+        let result = build_native_tx_batch_result_from_execution_v1(
+            &batch,
+            vec![receipt],
+            "actual-state-root",
+            "actual-receipt-root",
+            NovovmAoemSnapshotMetadataV1 {
+                snapshot_version: 7,
+                state_version: 9,
+                backend: "rocksdb".to_string(),
+                persistence_owner: "aoem_runtime".to_string(),
+            },
+        )
+        .expect("build result from actual execution");
+        assert_eq!(result.state_delta_root, "actual-state-root");
+        assert_eq!(result.receipt_root, "actual-receipt-root");
+        assert_eq!(result.snapshot_metadata.backend, "rocksdb");
+        assert_eq!(result.snapshot_metadata.state_version, 9);
+    }
+
+    #[test]
+    fn native_tx_batch_result_from_execution_rejects_fabricated_receipt_commitment() {
+        let batch = build_native_tx_batch_v1(
+            "batch-invalid-receipt",
+            7092,
+            None,
+            vec![native_tx_batch_v1_sample_item(32)],
+        )
+        .expect("build batch");
+        let receipt = NovovmAoemNativeTxReceiptV1 {
+            sequence: 32,
+            tx_hash: batch.tx_items[0].tx_hash.clone(),
+            status_ok: true,
+            receipt_commitment: "fabricated".to_string(),
+            error_class: None,
+        };
+        let err = build_native_tx_batch_result_from_execution_v1(
+            &batch,
+            vec![receipt],
+            "state-root",
+            "receipt-root",
+            NovovmAoemSnapshotMetadataV1 {
+                snapshot_version: 1,
+                state_version: 1,
+                backend: "rocksdb".to_string(),
+                persistence_owner: "aoem_runtime".to_string(),
+            },
+        )
+        .expect_err("fabricated receipt commitment must fail");
+        assert!(err
+            .to_string()
+            .contains("execution receipt commitment mismatch"));
     }
 
     #[test]

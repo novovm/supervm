@@ -6,7 +6,7 @@ use ed25519_dalek::{Signer, SigningKey};
 use novovm_network::{Transport, UdpTransport};
 use novovm_node::tx_ingress::{
     get_nov_native_execution_store_recovery_probe_v1, nov_native_tx_to_adapter_tx_ir_v1,
-    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+    sign_nov_native_tx_with_seed_v1, NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV,
 };
 use novovm_protocol::{
@@ -2430,7 +2430,7 @@ fn build_native_payloads_from_index(
         let index = start_index.saturating_add(local_index);
         let nonce = index.saturating_add(1);
         let account_id = format!("acct-native-cross-machine-{nonce}");
-        let tx = NovNativeTxWireV1 {
+        let mut tx = NovNativeTxWireV1 {
             chain_id,
             kind: NovTxKindV1::Execute(NovExecuteTxV1 {
                 caller: vec![(nonce & 0xff) as u8; 20],
@@ -2456,8 +2456,9 @@ fn build_native_payloads_from_index(
                 gas_like_limit: Some(90_000),
                 nonce,
             }),
-            signature: [(nonce & 0xff) as u8; 32],
+            signature: Vec::new(),
         };
+        sign_nov_native_tx_with_seed_v1(&mut tx, [(nonce & 0xff) as u8; 32])?;
         let ir = nov_native_tx_to_adapter_tx_ir_v1(&tx)?;
         let mut tx_hash = [0u8; 32];
         let copy_len = ir.hash.len().min(32);

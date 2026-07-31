@@ -41,7 +41,7 @@ const ADAPTER_UCA_ID_PREFIX: &str = "uca:adapter:";
 const ADAPTER_UA_INGRESS_GUARD_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_INGRESS_GUARD";
 const ADAPTER_UA_AUTOPROVISION_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_AUTOPROVISION";
 const ADAPTER_UA_SIGNATURE_DOMAIN_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_SIGNATURE_DOMAIN";
-const ADAPTER_TX_SIG_DOMAIN: &[u8] = b"novovm_adapter_tx_sig_v1";
+const ADAPTER_TX_SIG_DOMAIN: &[u8] = b"novovm_adapter_tx_sig_v2";
 const ADAPTER_UA_SUBJECT_ACCOUNT_KEY_PREFIX: &[u8] = b"ua:subject:v1:";
 const ADAPTER_UA_SUBJECT_NONCE_KEY_PREFIX: &[u8] = b"ua:nonce:v1:";
 const TX_SIG_VERIFY_PARALLEL_MIN_BATCH: usize = 128;
@@ -274,7 +274,7 @@ impl NovoVmAdapter {
                             jobs.push(scope.spawn(move || -> Result<(usize, Vec<bool>)> {
                                 let mut chunk_results = Vec::with_capacity(end - start);
                                 for idx in &batch_indices_ref[start..end] {
-                                    let verified = verify_tx_signature_v1(&txs_ref[*idx])?;
+                                    let verified = verify_native_tx_signature_v1(&txs_ref[*idx])?;
                                     chunk_results.push(verified);
                                 }
                                 Ok((start, chunk_results))
@@ -299,7 +299,7 @@ impl NovoVmAdapter {
                     }
                 } else {
                     for idx in batch_indices {
-                        verify_results[idx] = verify_tx_signature_v1(&txs[idx])?;
+                        verify_results[idx] = verify_native_tx_signature_v1(&txs[idx])?;
                     }
                 }
             }
@@ -2078,6 +2078,21 @@ fn compute_tx_ir_hash(tx: &TxIR) -> Vec<u8> {
 }
 
 pub fn tx_signing_message_v1(tx: &TxIR) -> [u8; 32] {
+    fn update_len_prefixed(hasher: &mut Sha256, value: &[u8]) {
+        hasher.update((value.len() as u64).to_le_bytes());
+        hasher.update(value);
+    }
+
+    fn update_optional_string(hasher: &mut Sha256, value: Option<&str>) {
+        match value {
+            Some(value) => {
+                hasher.update([1u8]);
+                update_len_prefixed(hasher, value.as_bytes());
+            }
+            None => hasher.update([0u8]),
+        }
+    }
+
     let mut hasher = Sha256::new();
     hasher.update(ADAPTER_TX_SIG_DOMAIN);
     hasher.update(tx.chain_id.to_le_bytes());
@@ -2086,15 +2101,45 @@ pub fn tx_signing_message_v1(tx: &TxIR) -> [u8; 32] {
     hasher.update(tx.value.to_le_bytes());
     hasher.update(tx.gas_limit.to_le_bytes());
     hasher.update(tx.gas_price.to_le_bytes());
-    hasher.update(&tx.from);
+    update_len_prefixed(&mut hasher, &tx.from);
+    update_optional_string(&mut hasher, tx.account_id.as_deref());
+    update_optional_string(&mut hasher, tx.fee_owner_account_id.as_deref());
+    update_optional_string(&mut hasher, tx.nonce_owner_account_id.as_deref());
     if let Some(to) = &tx.to {
         hasher.update([1u8]);
-        hasher.update(to);
+        update_len_prefixed(&mut hasher, to);
     } else {
         hasher.update([0u8]);
     }
-    hasher.update(&tx.data);
-    hasher.update(&tx.hash);
+    update_len_prefixed(&mut hasher, &tx.data);
+    hasher.update([match tx.execution_policy {
+        novovm_adapter_api::TxExecutionPolicyV1::Standard => 0,
+        novovm_adapter_api::TxExecutionPolicyV1::PqRequired => 1,
+        novovm_adapter_api::TxExecutionPolicyV1::PrivacyRequired => 2,
+    }]);
+    hasher.update((tx.evm_access_list.len() as u64).to_le_bytes());
+    for entry in &tx.evm_access_list {
+        update_len_prefixed(&mut hasher, &entry.address);
+        hasher.update((entry.storage_keys.len() as u64).to_le_bytes());
+        for storage_key in &entry.storage_keys {
+            update_len_prefixed(&mut hasher, storage_key);
+        }
+    }
+    match tx.source_chain {
+        Some(chain_id) => {
+            hasher.update([1u8]);
+            hasher.update(chain_id.to_le_bytes());
+        }
+        None => hasher.update([0u8]),
+    }
+    match tx.target_chain {
+        Some(chain_id) => {
+            hasher.update([1u8]);
+            hasher.update(chain_id.to_le_bytes());
+        }
+        None => hasher.update([0u8]),
+    }
+    update_len_prefixed(&mut hasher, &tx.hash);
     hasher.finalize().into()
 }
 
@@ -2256,7 +2301,7 @@ pub fn build_privacy_tx_ir_signed_from_raw_v1(
     )
 }
 
-fn verify_tx_signature_v1(tx: &TxIR) -> Result<bool> {
+pub fn verify_native_tx_signature_v1(tx: &TxIR) -> Result<bool> {
     if tx.signature.len() != 96 {
         return Ok(false);
     }
@@ -2375,7 +2420,7 @@ impl ChainAdapter for NovoVmAdapter {
             }
             _ => {
                 if tx.signature.len() == 96 {
-                    verify_tx_signature_v1(tx)?
+                    verify_native_tx_signature_v1(tx)?
                 } else if self.supports_evm_raw_signature_path() {
                     verify_evm_raw_tx_signature_v1(self.config.chain_type, tx)?
                 } else {

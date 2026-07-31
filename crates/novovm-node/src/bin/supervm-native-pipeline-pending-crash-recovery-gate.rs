@@ -7,6 +7,7 @@ use novovm_network::{
 };
 use novovm_node::tx_ingress::{
     get_nov_native_execution_store_recovery_probe_v1, nov_native_tx_to_adapter_tx_ir_v1,
+    sign_nov_native_tx_with_seed_v1,
 };
 use novovm_protocol::{
     encode_nov_native_tx_wire_v1, NovExecuteTxV1, NovExecutionModeV1, NovExecutionPolicyV1,
@@ -95,7 +96,7 @@ fn build_native_payloads(
     for index in 0..count {
         let nonce = index.saturating_add(1);
         let account_id = format!("{account_prefix}-{nonce}");
-        let tx = NovNativeTxWireV1 {
+        let mut tx = NovNativeTxWireV1 {
             chain_id,
             kind: NovTxKindV1::Execute(NovExecuteTxV1 {
                 caller: vec![(nonce & 0xff) as u8; 20],
@@ -121,8 +122,9 @@ fn build_native_payloads(
                 gas_like_limit: Some(90_000),
                 nonce,
             }),
-            signature: [(nonce & 0xff) as u8; 32],
+            signature: Vec::new(),
         };
+        sign_nov_native_tx_with_seed_v1(&mut tx, [(nonce & 0xff) as u8; 32])?;
         let ir = nov_native_tx_to_adapter_tx_ir_v1(&tx)?;
         let mut tx_hash = [0u8; 32];
         let copy_len = ir.hash.len().min(32);

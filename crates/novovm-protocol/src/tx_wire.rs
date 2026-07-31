@@ -4,10 +4,12 @@ use thiserror::Error;
 
 pub const LOCAL_TX_WIRE_V1_CODEC: &str = "novovm_local_tx_wire_v1";
 pub const NOV_NATIVE_TX_WIRE_V1_CODEC: &str = "novovm_native_tx_wire_v1_postcard";
+pub const NOV_NATIVE_TX_WIRE_V2_CODEC: &str = "novovm_native_tx_wire_v2_postcard";
 const LOCAL_TX_WIRE_MAGIC: &[u8; 4] = b"NTX1";
 const LOCAL_TX_WIRE_VERSION: u8 = 1;
 const NOV_NATIVE_TX_WIRE_MAGIC: &[u8; 4] = b"NNX1";
-const NOV_NATIVE_TX_WIRE_VERSION: u8 = 1;
+const NOV_NATIVE_TX_WIRE_VERSION_V1: u8 = 1;
+const NOV_NATIVE_TX_WIRE_VERSION_V2: u8 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalTxWireV1 {
@@ -131,7 +133,20 @@ pub enum NovTxKindV1 {
 pub struct NovNativeTxWireV1 {
     pub chain_id: u64,
     pub kind: NovTxKindV1,
-    pub signature: [u8; 32],
+    /// Native authentication payload.
+    ///
+    /// Version 2 encodes `ed25519 public key (32) || signature (64)`. The
+    /// decoder still accepts a version-1 wire and exposes its legacy 32-byte
+    /// value here so ingress can reject it with an authentication-specific
+    /// error instead of a generic codec failure.
+    pub signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct NovNativeTxWireLegacyV1 {
+    chain_id: u64,
+    kind: NovTxKindV1,
+    signature: [u8; 32],
 }
 
 #[derive(Debug, Error)]
@@ -220,7 +235,7 @@ pub fn encode_nov_native_tx_wire_v1(tx: &NovNativeTxWireV1) -> Result<Vec<u8>, N
         .map_err(|err| NativeTxWireError::EncodeFailed(err.to_string()))?;
     let mut out = Vec::with_capacity(4 + 1 + payload.len());
     out.extend_from_slice(NOV_NATIVE_TX_WIRE_MAGIC);
-    out.push(NOV_NATIVE_TX_WIRE_VERSION);
+    out.push(NOV_NATIVE_TX_WIRE_VERSION_V2);
     out.extend_from_slice(&payload);
     Ok(out)
 }
@@ -236,14 +251,23 @@ pub fn decode_nov_native_tx_wire_v1(bytes: &[u8]) -> Result<NovNativeTxWireV1, N
     if &bytes[..4] != NOV_NATIVE_TX_WIRE_MAGIC {
         return Err(NativeTxWireError::MagicMismatch);
     }
-    if bytes[4] != NOV_NATIVE_TX_WIRE_VERSION {
-        return Err(NativeTxWireError::VersionMismatch {
-            expected: NOV_NATIVE_TX_WIRE_VERSION,
-            got: bytes[4],
-        });
+    match bytes[4] {
+        NOV_NATIVE_TX_WIRE_VERSION_V2 => postcard::from_bytes(&bytes[header_len..])
+            .map_err(|err| NativeTxWireError::DecodeFailed(err.to_string())),
+        NOV_NATIVE_TX_WIRE_VERSION_V1 => {
+            let legacy: NovNativeTxWireLegacyV1 = postcard::from_bytes(&bytes[header_len..])
+                .map_err(|err| NativeTxWireError::DecodeFailed(err.to_string()))?;
+            Ok(NovNativeTxWireV1 {
+                chain_id: legacy.chain_id,
+                kind: legacy.kind,
+                signature: legacy.signature.to_vec(),
+            })
+        }
+        got => Err(NativeTxWireError::VersionMismatch {
+            expected: NOV_NATIVE_TX_WIRE_VERSION_V2,
+            got,
+        }),
     }
-    postcard::from_bytes(&bytes[header_len..])
-        .map_err(|err| NativeTxWireError::DecodeFailed(err.to_string()))
 }
 
 #[cfg(test)]
@@ -405,7 +429,7 @@ mod tests {
                     slippage_bps: 50,
                 },
             }),
-            signature: [0xabu8; 32],
+            signature: vec![0xabu8; 96],
         };
         let transfer_wire = encode_nov_native_tx_wire_v1(&transfer).expect("encode transfer");
         let transfer_decoded =
@@ -434,7 +458,7 @@ mod tests {
                 gas_like_limit: Some(300_000),
                 nonce: 9,
             }),
-            signature: [0x55; 32],
+            signature: vec![0x55; 96],
         };
         let execute_wire = encode_nov_native_tx_wire_v1(&execute).expect("encode execute");
         let execute_decoded = decode_nov_native_tx_wire_v1(&execute_wire).expect("decode execute");
@@ -448,11 +472,41 @@ mod tests {
                 payload: b"{\"set\":\"m2_limit\"}".to_vec(),
                 nonce: 19,
             }),
-            signature: [0x66; 32],
+            signature: vec![0x66; 96],
         };
         let governance_wire = encode_nov_native_tx_wire_v1(&governance).expect("encode governance");
         let governance_decoded =
             decode_nov_native_tx_wire_v1(&governance_wire).expect("decode governance");
         assert_eq!(governance_decoded, governance);
+    }
+
+    #[test]
+    fn nov_native_tx_wire_decodes_legacy_auth_for_explicit_ingress_rejection() {
+        let legacy = NovNativeTxWireLegacyV1 {
+            chain_id: 77,
+            kind: NovTxKindV1::Transfer(NovTransferTxV1 {
+                from: vec![0x11; 20],
+                to: vec![0x22; 20],
+                asset: "NOV".to_string(),
+                amount: 1,
+                nonce: 1,
+                fee_policy: NovFeePolicyV1 {
+                    pay_asset: "NOV".to_string(),
+                    max_pay_amount: 1,
+                    slippage_bps: 0,
+                },
+            }),
+            signature: [0x44; 32],
+        };
+        let payload = postcard::to_allocvec(&legacy).expect("encode legacy native tx");
+        let mut wire = Vec::with_capacity(5 + payload.len());
+        wire.extend_from_slice(NOV_NATIVE_TX_WIRE_MAGIC);
+        wire.push(NOV_NATIVE_TX_WIRE_VERSION_V1);
+        wire.extend_from_slice(&payload);
+
+        let decoded = decode_nov_native_tx_wire_v1(&wire).expect("decode legacy native tx");
+        assert_eq!(decoded.chain_id, legacy.chain_id);
+        assert_eq!(decoded.kind, legacy.kind);
+        assert_eq!(decoded.signature, legacy.signature);
     }
 }

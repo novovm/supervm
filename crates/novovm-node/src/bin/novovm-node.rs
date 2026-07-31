@@ -108,8 +108,8 @@ use novovm_node::tx_ingress::{
     load_ops_wire_v1_payload_file, load_tx_records_from_wire_file,
     native_aoem_semantic_ingress_runtime_reuse_counters_v1, nov_native_execution_store_path_v1,
     run_eth_send_raw_transaction_from_params_v1, run_nov_native_execution_tick_from_params_v1,
-    tx_ingress_records_to_adapter_tx_irs, TxIngressRecord, LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1,
-    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
+    sign_nov_native_tx_with_seed_v1, tx_ingress_records_to_adapter_tx_irs, TxIngressRecord,
+    LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1, NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV,
 };
@@ -257,7 +257,7 @@ fn build_native_execution_pipeline_fixture_payloads_v1(
         let nonce = nonce_start.saturating_add(idx as u64);
         let amount = amount_start.saturating_add(idx as u64);
         let account_id = format!("{account_prefix}-{nonce}");
-        let native_tx = novovm_protocol::NovNativeTxWireV1 {
+        let mut native_tx = novovm_protocol::NovNativeTxWireV1 {
             chain_id,
             kind: novovm_protocol::NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
                 caller: vec![(nonce & 0xff) as u8; 20],
@@ -283,8 +283,9 @@ fn build_native_execution_pipeline_fixture_payloads_v1(
                 gas_like_limit: Some(90_000),
                 nonce,
             }),
-            signature: [(nonce & 0xff) as u8; 32],
+            signature: Vec::new(),
         };
+        sign_nov_native_tx_with_seed_v1(&mut native_tx, [(nonce & 0xff) as u8; 32])?;
         payloads.push(
             novovm_protocol::encode_nov_native_tx_wire_v1(&native_tx).map_err(|err| {
                 anyhow::anyhow!("encode native execution pipeline fixture tx failed: {err}")
@@ -40784,7 +40785,7 @@ mod native_execution_pipeline_tests {
                 gas_like_limit: Some(90_000),
                 nonce: 71,
             }),
-            signature: [0x71; 32],
+            signature: vec![0x71; 32],
         };
         let raw =
             novovm_protocol::encode_nov_native_tx_wire_v1(&native_tx).expect("encode native tx");
@@ -40938,7 +40939,7 @@ mod native_execution_pipeline_tests {
                     gas_like_limit: Some(90_000),
                     nonce,
                 }),
-                signature: [0x86; 32],
+                signature: vec![0x86; 32],
             };
             novovm_protocol::encode_nov_native_tx_wire_v1(&native_tx).expect("encode native tx")
         };
@@ -41125,7 +41126,7 @@ mod native_execution_pipeline_tests {
                 gas_like_limit: Some(90_000),
                 nonce: 87,
             }),
-            signature: [0x87; 32],
+            signature: vec![0x87; 32],
         };
         let raw =
             novovm_protocol::encode_nov_native_tx_wire_v1(&native_tx).expect("encode native tx");

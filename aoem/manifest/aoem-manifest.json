@@ -2,7 +2,7 @@
   "package": "aoem-fullmax-supervm-host",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX Runtime Baseline 2026-06-06",
+    "id": "AOEM FULLMAX Runtime Baseline 2026-07-31",
     "stage": "windows_linux_fullmax_trusted_release",
     "windows_included_and_verified": true,
     "linux_included_and_verified": true,
@@ -12,12 +12,12 @@
   "entry": "aoem_execute_ops_wire_v1",
   "output": "aoem_state_read_v1",
   "runtime_canon_changed": false,
-  "public_ffi_abi_changed": false,
+  "public_ffi_abi_changed": true,
   "source_artifacts": {
-    "windows_fullmax_bundle": "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260701-142430",
-    "linux_fullmax_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\linux\\20260524-103416",
-    "proof_engine_host_integration": "D:\\WorksArea\\AOEM\\dist\\aoem-compute-native-proof-v1.1-host-integration",
-    "linux_fullmax_build_log": "D:\\WorksArea\\AOEM\\tmp\\linux_fullmax_20260524-103416.log",
+    "source_commit": "a951273c",
+    "windows_fullmax_bundle": "windows/manifest.json",
+    "linux_fullmax_bundle": "linux/manifest.json",
+    "proof_engine_host_integration": "host-integration/",
     "linux_fullmax_status": "included",
     "macos_fullmax_status": "pending_rebuild_not_bundled"
   },
@@ -26,32 +26,35 @@
       "name": "core",
       "platform": "linux-x86_64",
       "dll": "linux/core/bin/libaoem_ffi.so",
-      "sha256": "d72ea8704b13681b91f23ac6714411046b5965ee5aeda5b6a249bcb0574a05ba",
+      "sha256": "bd6f36f63f4194fe000b29ca2ee709c78bf384e83352757307aa9a3f7fe106ea",
       "abi_expected": 1,
       "capabilities_required": {
-        "execute_ops_v2": true
+        "execute_ops_v2": true,
+        "semantic_graph_v3": true,
+        "storage_provider_wire_v1": true
       }
     },
     {
       "name": "core",
       "platform": "windows-x86_64",
       "dll": "windows/core/bin/aoem_ffi.dll",
-      "sha256": "2b9a91ae7d7d8a518d9ee2363ea1b402ae48ab3509e51b424c3c564f61bf730e",
+      "sha256": "e84ee50a2b308559a52d9599a2200d16dac3a1de0e2c217c8a44675886e2c788",
       "abi_expected": 1,
       "capabilities_required": {
-        "execute_ops_v2": true
+        "execute_ops_v2": true,
+        "semantic_graph_v3": true,
+        "storage_provider_wire_v1": true
       }
     }
   ],
   "platforms": {
     "windows-x86_64": {
       "status": "included",
-      "source_bundle": "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20260701-142430"
+      "source_bundle": "windows/manifest.json"
     },
     "linux-x86_64": {
       "status": "included",
-      "source_bundle": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\linux\\20260524-103416",
-      "build_log": "D:\\WorksArea\\AOEM\\tmp\\linux_fullmax_20260524-103416.log"
+      "source_bundle": "linux/manifest.json"
     },
     "macos-universal": {
       "status": "pending_rebuild_not_bundled"
@@ -145,6 +148,9 @@
     "proof_worker_default_changed": false
   },
   "fullmax_capability_domains": [
+    "semantic_graph_v3",
+    "semantic_atomic_writer_v1",
+    "storage_provider_wire_v1",
     "rocksdb_persistence_sidecar",
     "wasm_wasmtime_runtime_sidecar",
     "zkvm_executor_sidecar",

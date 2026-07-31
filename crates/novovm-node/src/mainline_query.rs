@@ -423,10 +423,9 @@ fn run_mainline_native_user_execute_v1(
         "chain_id".to_string(),
         json!(param_as_u64(params, "chain_id", 0).unwrap_or(1)),
     );
-    execute_params.insert(
-        "nonce".to_string(),
-        json!(param_as_u64(params, "nonce", 0).unwrap_or(0)),
-    );
+    if let Some(nonce) = param_as_u64(params, "nonce", 0) {
+        execute_params.insert("nonce".to_string(), json!(nonce));
+    }
     execute_params.insert("pay_asset".to_string(), Value::String(pay_asset));
     execute_params.insert("max_pay_amount".to_string(), json!(max_pay_amount));
     execute_params.insert("slippage_bps".to_string(), json!(slippage_bps));

@@ -1,0 +1,12 @@
+{
+  "source_build": "AOEM canonical FULLMAX build",
+  "outputs": [
+    "aoem_kms_plugin.dll",
+    "aoem_ffi_kms.dll",
+    "aoem_ffi_crypto_kms.dll",
+    "aoem_hsm_plugin.dll",
+    "aoem_ffi_hsm.dll",
+    "aoem_ffi_crypto_hsm.dll"
+  ],
+  "feature_contract": "exports aoem_abi_version + aoem_kms_sign_v1 + aoem_hsm_sign_v1 + aoem_free"
+}

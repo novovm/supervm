@@ -39,6 +39,7 @@ aoem/**
 !aoem/INSTALL-INFO.txt
 !aoem/README.md
 !aoem/RELEASE-NOTES.md
+!aoem/RUNTIME-BASELINE.md
 !aoem/CHECKSUMS.sha256
 !aoem/aoem-sdk-manifest.json
 !aoem/license.json.example
@@ -92,6 +93,7 @@ aoem/windows/include/**
 !aoem/windows/kms-hsm-plugin/
 aoem/windows/kms-hsm-plugin/**
 !aoem/windows/kms-hsm-plugin/*.dll
+!aoem/windows/kms-hsm-plugin/manifest.json
 !aoem/windows/core/
 aoem/windows/core/**
 !aoem/windows/core/bin/

@@ -7597,7 +7597,7 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: sequence.saturating_add(1),
             }),
-            signature: [0x33; 32],
+            signature: vec![0x33; 32],
         };
         novovm_protocol::encode_nov_native_tx_wire_v1(&tx).expect("encode native repair tx")
     }

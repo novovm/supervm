@@ -4,7 +4,7 @@
 use anyhow::{bail, Context, Result};
 use novovm_exec::{AoemExecFacade, AoemRuntimeConfig};
 use novovm_network::{NovoRudpRange, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0};
-use novovm_node::tx_ingress::nov_native_tx_to_adapter_tx_ir_v1;
+use novovm_node::tx_ingress::{nov_native_tx_to_adapter_tx_ir_v1, sign_nov_native_tx_with_seed_v1};
 use novovm_protocol::{
     decode as business_decode_v0, decode_nov_native_tx_wire_v1, encode as business_encode_v0,
     encode_nov_native_tx_wire_v1, EvmNativeMessage, NodeId, NovExecuteTxV1, NovExecutionModeV1,
@@ -2735,11 +2735,11 @@ fn native_tx_for_sequence_v0(sequence: u64) -> Result<NovNativeTxWireV1> {
 
 fn native_tx_for_sequence_with_signature_v0(
     sequence: u64,
-    signature: [u8; 32],
+    signing_seed: [u8; 32],
 ) -> Result<NovNativeTxWireV1> {
     let nonce = sequence.saturating_add(1);
     let account_id = format!("acct-novorudp-network-only-{nonce}");
-    Ok(NovNativeTxWireV1 {
+    let mut tx = NovNativeTxWireV1 {
         chain_id: 1,
         kind: NovTxKindV1::Execute(NovExecuteTxV1 {
             caller: vec![(nonce & 0xff) as u8; 20],
@@ -2765,8 +2765,10 @@ fn native_tx_for_sequence_with_signature_v0(
             gas_like_limit: Some(90_000),
             nonce,
         }),
-        signature,
-    })
+        signature: Vec::new(),
+    };
+    sign_nov_native_tx_with_seed_v1(&mut tx, signing_seed)?;
+    Ok(tx)
 }
 
 fn native_tx_payload_for_sequence_v0(sequence: u64) -> Result<Vec<u8>> {

@@ -46,20 +46,21 @@ current v1.2 FULLMAX output.
 
 ```text
 Runtime baseline:
-  AOEM FULLMAX Runtime Baseline 2026-06-06
+  AOEM FULLMAX Runtime Baseline 2026-07-31
+  source commit: a951273c
   Windows included and verified
   Linux included and verified
   macOS pending, not bundled, not advertised as available
 
 Windows:
   included
-  freshly generated AOEM SUPERVM v1.2 FULLMAX bundle
-  source: D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\windows\20260606-161254
+  canonical AOEM FULLMAX bundle
+  source: aoem/windows/manifest.json
 
 Linux:
   included
-  freshly generated AOEM SUPERVM v1.2 FULLMAX bundle
-  source: D:\WorksArea\AOEM\artifacts\ffi-bundles\fullmax\linux\20260524-103416
+  canonical AOEM FULLMAX bundle
+  source: aoem/linux/manifest.json
   core: aoem/linux/core/bin/libaoem_ffi.so
 
 macOS:
@@ -98,6 +99,21 @@ native circuit / Halo2 path
 ML-DSA sidecar
 KMS / HSM sidecar
 ```
+
+## Semantic Graph V3 Host Boundary
+
+NOVOVM uses the generic AOEM Semantic Graph V3 surface:
+
+```text
+aoem_submit_semantic_graph_v3
+aoem_bind_semantic_atomic_writer_v1
+aoem_storage_provider_wire_v1
+```
+
+AOEM owns domain-neutral scheduling, atomic persistence, completion, and
+evidence. The SUPERVM/NOVOVM host owns authentication, nonce and chain-domain
+validation, transaction semantics, balances, and all product policy. The AOEM
+runtime contains no NOVOVM-specific business logic.
 
 ## Confidential Transfer Capability
 
@@ -156,7 +172,7 @@ can embed AOEM directly and do not need to deploy the worker.
 ## Boundaries
 
 ```text
-no new public FFI ABI
+additive public FFI ABI update for Semantic Graph V3
 Runtime Canon unchanged
 not a standalone AOEM platform service
 not a generic arbitrary-circuit proof system
