@@ -2275,7 +2275,7 @@ mod tests {
                     slippage_bps: 100,
                 },
                 gas_like_limit: Some(90_000),
-                nonce: 1,
+                nonce: 0,
             }),
             signature: Vec::new(),
         };

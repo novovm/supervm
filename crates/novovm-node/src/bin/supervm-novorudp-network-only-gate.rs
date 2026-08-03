@@ -14,7 +14,7 @@ use novovm_protocol::{
 use novovm_udp_batch::sendmmsg_batch;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::Digest;
+use sha2::{Digest, Sha256};
 use socket2::SockRef;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -2729,28 +2729,35 @@ fn json_bool_at_key_v0(value: &serde_json::Value, key: &str) -> Option<bool> {
 fn native_tx_for_sequence_v0(sequence: u64) -> Result<NovNativeTxWireV1> {
     native_tx_for_sequence_with_signature_v0(
         sequence,
-        [(sequence.saturating_add(1) & 0xff) as u8; 32],
+        native_fixture_signing_seed_v1(1, sequence.saturating_add(1)),
     )
+}
+
+fn native_fixture_signing_seed_v1(chain_id: u64, fixture_identity: u64) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-native-fixture-signing-seed/v1");
+    hasher.update(chain_id.to_le_bytes());
+    hasher.update(fixture_identity.to_le_bytes());
+    hasher.finalize().into()
 }
 
 fn native_tx_for_sequence_with_signature_v0(
     sequence: u64,
     signing_seed: [u8; 32],
 ) -> Result<NovNativeTxWireV1> {
-    let nonce = sequence.saturating_add(1);
-    let account_id = format!("acct-novorudp-network-only-{nonce}");
+    let fixture_identity = sequence.saturating_add(1);
     let mut tx = NovNativeTxWireV1 {
         chain_id: 1,
         kind: NovTxKindV1::Execute(NovExecuteTxV1 {
-            caller: vec![(nonce & 0xff) as u8; 20],
-            account_id: Some(account_id.clone()),
-            fee_owner_account_id: Some(account_id.clone()),
-            nonce_owner_account_id: Some(account_id),
+            caller: Vec::new(),
+            account_id: None,
+            fee_owner_account_id: None,
+            nonce_owner_account_id: None,
             target: NovExecutionTargetV1::NativeModule("treasury".to_string()),
             method: "deposit_reserve".to_string(),
             args: serde_json::to_vec(&serde_json::json!({
                 "asset": "USDT",
-                "amount": nonce,
+                "amount": fixture_identity,
             }))
             .context("encode network-only native tx args")?,
             execution_mode: NovExecutionModeV1::Batch,
@@ -2763,7 +2770,7 @@ fn native_tx_for_sequence_with_signature_v0(
                 slippage_bps: 100,
             },
             gas_like_limit: Some(90_000),
-            nonce,
+            nonce: 0,
         }),
         signature: Vec::new(),
     };
@@ -2939,7 +2946,7 @@ fn decode_apfl_native_transfer_batch_payload_v0(
         let mut signature = [0u8; 32];
         signature.copy_from_slice(&payload[sig_start..sig_end]);
         let sequence = base_sequence.saturating_add(tx_index);
-        let expected_signature = [(sequence.saturating_add(1) & 0xff) as u8; 32];
+        let expected_signature = native_fixture_signing_seed_v1(1, sequence.saturating_add(1));
         if signature != expected_signature {
             signature_verify_error_count = signature_verify_error_count.saturating_add(1);
         }

@@ -163,6 +163,26 @@ try {
 
   @'
 NOVOVM_NODE_MODE=native_execution_pipeline
+NOVOVM_NATIVE_CHAIN_ID=1
+NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID=1
+NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS=0
+NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS=250
+NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY=true
+NOVOVM_NATIVE_EXECUTION_STORE=/var/lib/novovm/state/native-execution-store.json
+NOVOVM_MAINLINE_NATIVE_EXECUTION_STORE_PATH=/var/lib/novovm/state/native-execution-store.json
+NOVOVM_NATIVE_EXECUTION_STORE_BACKEND=rocksdb
+NOVOVM_NATIVE_EXECUTION_STORE_ROCKSDB_PATH=/var/lib/novovm/state/native-execution-store.rocksdb
+NOVOVM_AOEM_OWNED_STATE_DB_PATH=/var/lib/novovm/state/aoem-owned.rocksdb
+NOVOVM_AOEM_STATE_NAMESPACE=novovm-mainnet-chain-1
+NOVOVM_AOEM_PERSIST_BACKEND=rocksdb
+AOEM_PERSISTENCE_PATH=/var/lib/novovm/state/aoem-runtime.rocksdb
+NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED=true
+NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED=true
+NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE=true
+NOVOVM_AOEM_NATIVE_TX_BATCH_SHADOW=true
+NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE=true
+NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH=/var/lib/novovm/reports/node-progress.json
+NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH=/var/lib/novovm/reports/node-summary.json
 NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED=true
 NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG=/etc/novovm/node-mainline-overlay.json
 NOVOVM_PRODUCT_MAINLINE_OVERLAY_MAX_PER_TICK=1024
@@ -216,6 +236,9 @@ Wants=network-online.target
 Type=simple
 User=novovm
 Group=novovm
+WorkingDirectory=/var/lib/novovm
+StateDirectory=novovm
+ExecStartPre=/usr/bin/mkdir -p /var/lib/novovm/reports
 ExecStart=/opt/novovm/bin/novovm-product-relay /etc/novovm/relay.json
 Restart=on-failure
 RestartSec=5
@@ -240,8 +263,11 @@ Type=simple
 User=novovm
 Group=novovm
 EnvironmentFile=/etc/novovm/novovm-node.env
+WorkingDirectory=/var/lib/novovm
+StateDirectory=novovm
+ExecStartPre=/usr/bin/mkdir -p /var/lib/novovm/state /var/lib/novovm/reports
 ExecStart=/opt/novovm/bin/novovm-node
-Restart=on-failure
+Restart=always
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
@@ -273,7 +299,9 @@ Codex installation, or source workspace.
 3. Keep relay/node Ed25519 secret files readable only by the service account.
 4. For a relay, use the included relay systemd unit after reviewing paths and user.
 5. For a main node, install `node-mainline-overlay.json` and `novovm-node.env`,
-   then review the included main-node systemd unit.
+   then review the included main-node systemd unit. The example pins an
+   infinite native-execution loop (`MAX_TICKS=0`) and durable state under
+   `/var/lib/novovm`; replace chain ID `1` with the deployment chain ID.
 6. Keep the bundled generic AOEM FULLMAX runtime under `/opt/novovm/aoem`;
    `novovm-node.env` pins its core, manifest, profile, and sidecar paths.
 7. Run `novovm-product-topology` before deployment and preserve its offline

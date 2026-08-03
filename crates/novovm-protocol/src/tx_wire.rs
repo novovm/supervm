@@ -1,15 +1,18 @@
 #![forbid(unsafe_code)]
 
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub const LOCAL_TX_WIRE_V1_CODEC: &str = "novovm_local_tx_wire_v1";
 pub const NOV_NATIVE_TX_WIRE_V1_CODEC: &str = "novovm_native_tx_wire_v1_postcard";
 pub const NOV_NATIVE_TX_WIRE_V2_CODEC: &str = "novovm_native_tx_wire_v2_postcard";
+pub const NOV_NATIVE_TX_WIRE_V3_CODEC: &str = "novovm_native_tx_wire_v3_postcard";
 const LOCAL_TX_WIRE_MAGIC: &[u8; 4] = b"NTX1";
 const LOCAL_TX_WIRE_VERSION: u8 = 1;
 const NOV_NATIVE_TX_WIRE_MAGIC: &[u8; 4] = b"NNX1";
 const NOV_NATIVE_TX_WIRE_VERSION_V1: u8 = 1;
 const NOV_NATIVE_TX_WIRE_VERSION_V2: u8 = 2;
+const NOV_NATIVE_TX_WIRE_VERSION_V3: u8 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalTxWireV1 {
@@ -135,7 +138,7 @@ pub struct NovNativeTxWireV1 {
     pub kind: NovTxKindV1,
     /// Native authentication payload.
     ///
-    /// Version 2 encodes `ed25519 public key (32) || signature (64)`. The
+    /// Version 3 encodes `ed25519 public key (32) || signature (64)`. The
     /// decoder still accepts a version-1 wire and exposes its legacy 32-byte
     /// value here so ingress can reject it with an authentication-specific
     /// error instead of a generic codec failure.
@@ -235,9 +238,26 @@ pub fn encode_nov_native_tx_wire_v1(tx: &NovNativeTxWireV1) -> Result<Vec<u8>, N
         .map_err(|err| NativeTxWireError::EncodeFailed(err.to_string()))?;
     let mut out = Vec::with_capacity(4 + 1 + payload.len());
     out.extend_from_slice(NOV_NATIVE_TX_WIRE_MAGIC);
-    out.push(NOV_NATIVE_TX_WIRE_VERSION_V2);
+    out.push(NOV_NATIVE_TX_WIRE_VERSION_V3);
     out.extend_from_slice(&payload);
     Ok(out)
+}
+
+/// Returns the domain-separated identity of every signed native transaction
+/// field. The authentication payload is deliberately cleared before encoding,
+/// so the commitment is stable before and after signing while still binding
+/// the complete version-3 wire intent.
+pub fn native_tx_unsigned_commitment_v3(
+    tx: &NovNativeTxWireV1,
+) -> Result<[u8; 32], NativeTxWireError> {
+    let mut unsigned = tx.clone();
+    unsigned.signature.clear();
+    let wire = encode_nov_native_tx_wire_v1(&unsigned)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-native-tx-unsigned-commitment-v3");
+    hasher.update((wire.len() as u64).to_le_bytes());
+    hasher.update(wire.as_slice());
+    Ok(hasher.finalize().into())
 }
 
 pub fn decode_nov_native_tx_wire_v1(bytes: &[u8]) -> Result<NovNativeTxWireV1, NativeTxWireError> {
@@ -252,8 +272,12 @@ pub fn decode_nov_native_tx_wire_v1(bytes: &[u8]) -> Result<NovNativeTxWireV1, N
         return Err(NativeTxWireError::MagicMismatch);
     }
     match bytes[4] {
-        NOV_NATIVE_TX_WIRE_VERSION_V2 => postcard::from_bytes(&bytes[header_len..])
+        NOV_NATIVE_TX_WIRE_VERSION_V3 => postcard::from_bytes(&bytes[header_len..])
             .map_err(|err| NativeTxWireError::DecodeFailed(err.to_string())),
+        NOV_NATIVE_TX_WIRE_VERSION_V2 => Err(NativeTxWireError::VersionMismatch {
+            expected: NOV_NATIVE_TX_WIRE_VERSION_V3,
+            got: NOV_NATIVE_TX_WIRE_VERSION_V2,
+        }),
         NOV_NATIVE_TX_WIRE_VERSION_V1 => {
             let legacy: NovNativeTxWireLegacyV1 = postcard::from_bytes(&bytes[header_len..])
                 .map_err(|err| NativeTxWireError::DecodeFailed(err.to_string()))?;
@@ -264,7 +288,7 @@ pub fn decode_nov_native_tx_wire_v1(bytes: &[u8]) -> Result<NovNativeTxWireV1, N
             })
         }
         got => Err(NativeTxWireError::VersionMismatch {
-            expected: NOV_NATIVE_TX_WIRE_VERSION_V2,
+            expected: NOV_NATIVE_TX_WIRE_VERSION_V3,
             got,
         }),
     }
@@ -464,6 +488,58 @@ mod tests {
         let execute_decoded = decode_nov_native_tx_wire_v1(&execute_wire).expect("decode execute");
         assert_eq!(execute_decoded, execute);
 
+        let execute_commitment =
+            native_tx_unsigned_commitment_v3(&execute).expect("commit execute intent");
+        let mut signature_only = execute.clone();
+        signature_only.signature = vec![0x99; 96];
+        assert_eq!(
+            native_tx_unsigned_commitment_v3(&signature_only).expect("commit re-signed intent"),
+            execute_commitment,
+            "authentication bytes are not part of the unsigned intent"
+        );
+
+        let mut execution_mode_changed = execute.clone();
+        let NovTxKindV1::Execute(item) = &mut execution_mode_changed.kind else {
+            unreachable!("execute fixture")
+        };
+        item.execution_mode = NovExecutionModeV1::HighPriority;
+        assert_ne!(
+            native_tx_unsigned_commitment_v3(&execution_mode_changed)
+                .expect("commit execution-mode mutation"),
+            execute_commitment
+        );
+
+        let mut privacy_changed = execute.clone();
+        let NovTxKindV1::Execute(item) = &mut privacy_changed.kind else {
+            unreachable!("execute fixture")
+        };
+        item.privacy_mode = NovPrivacyModeV1::Private;
+        assert_ne!(
+            native_tx_unsigned_commitment_v3(&privacy_changed).expect("commit privacy mutation"),
+            execute_commitment
+        );
+
+        let mut verification_changed = execute.clone();
+        let NovTxKindV1::Execute(item) = &mut verification_changed.kind else {
+            unreachable!("execute fixture")
+        };
+        item.verification_mode = NovVerificationModeV1::Auditable;
+        assert_ne!(
+            native_tx_unsigned_commitment_v3(&verification_changed)
+                .expect("commit verification mutation"),
+            execute_commitment
+        );
+
+        let mut fee_changed = execute.clone();
+        let NovTxKindV1::Execute(item) = &mut fee_changed.kind else {
+            unreachable!("execute fixture")
+        };
+        item.fee_policy.max_pay_amount += 1;
+        assert_ne!(
+            native_tx_unsigned_commitment_v3(&fee_changed).expect("commit fee mutation"),
+            execute_commitment
+        );
+
         let governance = NovNativeTxWireV1 {
             chain_id: 3,
             kind: NovTxKindV1::Governance(NovGovernanceTxV1 {
@@ -478,6 +554,19 @@ mod tests {
         let governance_decoded =
             decode_nov_native_tx_wire_v1(&governance_wire).expect("decode governance");
         assert_eq!(governance_decoded, governance);
+
+        let governance_commitment =
+            native_tx_unsigned_commitment_v3(&governance).expect("commit governance intent");
+        let mut governance_type_changed = governance.clone();
+        let NovTxKindV1::Governance(item) = &mut governance_type_changed.kind else {
+            unreachable!("governance fixture")
+        };
+        item.proposal_type = NovGovernanceProposalTypeV1::Treasury;
+        assert_ne!(
+            native_tx_unsigned_commitment_v3(&governance_type_changed)
+                .expect("commit governance-type mutation"),
+            governance_commitment
+        );
     }
 
     #[test]

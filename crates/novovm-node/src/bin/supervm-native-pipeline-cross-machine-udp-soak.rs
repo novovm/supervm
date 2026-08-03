@@ -3,17 +3,20 @@
 
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::{Signer, SigningKey};
-use novovm_network::{Transport, UdpTransport};
+use novovm_network::{
+    build_evm_native_transaction_frame_auth_v1, EvmNativeTransactionFrameAuthInputV1, Transport,
+    UdpTransport,
+};
 use novovm_node::tx_ingress::{
     get_nov_native_execution_store_recovery_probe_v1, nov_native_tx_to_adapter_tx_ir_v1,
     sign_nov_native_tx_with_seed_v1, NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, NOV_NATIVE_AOEM_RUNTIME_WORKER_PIPELINE_ENV,
 };
 use novovm_protocol::{
-    encode as protocol_encode, encode_nov_native_tx_wire_v1, EvmNativeMessage,
-    EvmNativeTransactionFrameAuthV1, NodeEndpointRecord, NodeId, NovExecuteTxV1,
-    NovExecutionModeV1, NovExecutionPolicyV1, NovExecutionTargetV1, NovFeePolicyV1,
-    NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1, ProtocolMessage,
+    encode as protocol_encode, encode_nov_native_tx_wire_v1, EvmNativeMessage, NodeEndpointRecord,
+    NodeId, NovExecuteTxV1, NovExecutionModeV1, NovExecutionPolicyV1, NovExecutionTargetV1,
+    NovFeePolicyV1, NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1,
+    ProtocolMessage,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -1077,92 +1080,6 @@ fn verify_ack_control_frame_auth_v1(value: &Value) -> bool {
     ack_control_frame_auth_tag_v1(value, key.as_str()) == tag
 }
 
-fn transaction_frame_auth_material_v1(
-    from: NodeId,
-    chain_id: u64,
-    tx_hash: &[u8; 32],
-    tx_count: u64,
-    payload: &[u8],
-    meta: &EvmNativeTransactionFrameAuthV1,
-) -> String {
-    let mut payload_hasher = Sha256::new();
-    payload_hasher.update(payload);
-    [
-        "novovm-novorudp-transaction-frame-auth-v1".to_string(),
-        from.0.to_string(),
-        chain_id.to_string(),
-        hex_lower(tx_hash),
-        tx_count.to_string(),
-        hex_lower(payload_hasher.finalize().as_slice()),
-        meta.frame_kind.clone(),
-        meta.run_id.clone(),
-        meta.sequence.to_string(),
-        meta.copy_index.to_string(),
-    ]
-    .join("|")
-}
-
-fn transaction_frame_auth_tag_v1(
-    from: NodeId,
-    chain_id: u64,
-    tx_hash: &[u8; 32],
-    tx_count: u64,
-    payload: &[u8],
-    meta: &EvmNativeTransactionFrameAuthV1,
-    key: &str,
-) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(b"novovm-novorudp-control-frame-auth-keyed-sha256-v1");
-    hasher.update(key.as_bytes());
-    hasher.update(b"|");
-    hasher.update(
-        transaction_frame_auth_material_v1(from, chain_id, tx_hash, tx_count, payload, meta)
-            .as_bytes(),
-    );
-    hex_lower(hasher.finalize().as_slice())
-}
-
-struct TransactionFrameAuthInputV1<'a> {
-    from: NodeId,
-    chain_id: u64,
-    tx_hash: &'a [u8; 32],
-    tx_count: u64,
-    payload: &'a [u8],
-    frame_kind: &'a str,
-    run_id: &'a str,
-    sequence: u64,
-    copy_index: u64,
-}
-
-fn sign_transaction_frame_auth_v1(
-    input: TransactionFrameAuthInputV1<'_>,
-) -> Option<EvmNativeTransactionFrameAuthV1> {
-    let TransactionFrameAuthInputV1 {
-        from,
-        chain_id,
-        tx_hash,
-        tx_count,
-        payload,
-        frame_kind,
-        run_id,
-        sequence,
-        copy_index,
-    } = input;
-    let key = control_frame_auth_key_v1()?;
-    let mut meta = EvmNativeTransactionFrameAuthV1 {
-        scheme: "keyed_sha256_v1".to_string(),
-        domain: "novorudp_transaction_v1".to_string(),
-        frame_kind: frame_kind.to_string(),
-        run_id: run_id.to_string(),
-        sequence,
-        copy_index,
-        tag: String::new(),
-    };
-    meta.tag =
-        transaction_frame_auth_tag_v1(from, chain_id, tx_hash, tx_count, payload, &meta, &key);
-    Some(meta)
-}
-
 fn endpoint_record_required_v1() -> bool {
     bool_env("NOVOVM_NOVORUDP_ENDPOINT_RECORD_REQUIRED")
         || bool_env("NOVOVM_NETWORK_ENDPOINT_RECORD_REQUIRED")
@@ -2019,7 +1936,7 @@ fn memory_bisect_report_path() -> PathBuf {
 fn store_path(chain_id: u64, role: &str) -> PathBuf {
     first_string_env_nonempty(&[
         "NOVOVM_NATIVE_PIPELINE_STORE_PATH",
-        "NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH",
+        "NOVOVM_NATIVE_EXECUTION_STORE",
     ])
     .map(PathBuf::from)
     .unwrap_or_else(|| temp_store_path(chain_id, role))
@@ -2428,20 +2345,19 @@ fn build_native_payloads_from_index(
     let mut out = Vec::with_capacity(count as usize);
     for local_index in 0..count {
         let index = start_index.saturating_add(local_index);
-        let nonce = index.saturating_add(1);
-        let account_id = format!("acct-native-cross-machine-{nonce}");
+        let fixture_identity = index.saturating_add(1);
         let mut tx = NovNativeTxWireV1 {
             chain_id,
             kind: NovTxKindV1::Execute(NovExecuteTxV1 {
-                caller: vec![(nonce & 0xff) as u8; 20],
-                account_id: Some(account_id.clone()),
-                fee_owner_account_id: Some(account_id.clone()),
-                nonce_owner_account_id: Some(account_id),
+                caller: Vec::new(),
+                account_id: None,
+                fee_owner_account_id: None,
+                nonce_owner_account_id: None,
                 target: NovExecutionTargetV1::NativeModule("treasury".to_string()),
                 method: "deposit_reserve".to_string(),
                 args: serde_json::to_vec(&serde_json::json!({
                     "asset": "USDT",
-                    "amount": nonce,
+                    "amount": fixture_identity,
                 }))
                 .context("encode cross-machine fixture args failed")?,
                 execution_mode: NovExecutionModeV1::Batch,
@@ -2454,11 +2370,14 @@ fn build_native_payloads_from_index(
                     slippage_bps: 100,
                 },
                 gas_like_limit: Some(90_000),
-                nonce,
+                nonce: 0,
             }),
             signature: Vec::new(),
         };
-        sign_nov_native_tx_with_seed_v1(&mut tx, [(nonce & 0xff) as u8; 32])?;
+        sign_nov_native_tx_with_seed_v1(
+            &mut tx,
+            native_fixture_signing_seed_v1(chain_id, fixture_identity),
+        )?;
         let ir = nov_native_tx_to_adapter_tx_ir_v1(&tx)?;
         let mut tx_hash = [0u8; 32];
         let copy_len = ir.hash.len().min(32);
@@ -2474,6 +2393,14 @@ fn build_native_payloads_from_index(
         });
     }
     Ok(out)
+}
+
+fn native_fixture_signing_seed_v1(chain_id: u64, fixture_identity: u64) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-native-fixture-signing-seed/v1");
+    hasher.update(chain_id.to_le_bytes());
+    hasher.update(fixture_identity.to_le_bytes());
+    hasher.finalize().into()
 }
 
 fn merge_send_stats(target: &mut SendScheduleStatsV1, next: SendScheduleStatsV1) {
@@ -11975,6 +11902,8 @@ fn spawn_receiver_node(input: ReceiverNodeInputV1<'_>) -> Result<Child> {
         250
     };
     let host_recovery_store_backend = host_recovery_store_backend_v1().to_string();
+    let aoem_persistence_path = store_path.with_extension("aoem-persistence");
+    let aoem_owned_state_db_path = store_path.with_extension("aoem-owned.rocksdb");
     let worker_max_ticks = if pipeline_enabled && worker_tick_interval_ms < tick_interval_ms {
         let requested_wall_ms = max_ticks.saturating_mul(tick_interval_ms);
         div_ceil_u64(requested_wall_ms, worker_tick_interval_ms).max(max_ticks)
@@ -12031,12 +11960,34 @@ fn spawn_receiver_node(input: ReceiverNodeInputV1<'_>) -> Result<Child> {
             worker_time_slice_ms.to_string(),
         ),
         (
-            "NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH",
+            "NOVOVM_NATIVE_EXECUTION_STORE",
             store_path.display().to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_STORE_BACKEND",
             host_recovery_store_backend,
+        ),
+        ("NOVOVM_AOEM_VARIANT", "core".to_string()),
+        ("NOVOVM_AOEM_PERSIST_BACKEND", "rocksdb".to_string()),
+        (
+            "AOEM_PERSISTENCE_PATH",
+            aoem_persistence_path.display().to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_OWNED_STATE_DB_PATH",
+            aoem_owned_state_db_path.display().to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_STATE_NAMESPACE",
+            format!("cross-machine-soak-chain-{chain_id}-node-{receiver_node}"),
+        ),
+        (
+            "NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED",
+            "true".to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED",
+            "true".to_string(),
         ),
         (
             "NOVOVM_NETWORK_RECOVERY_CHECKPOINT_MODE",
@@ -18215,23 +18166,28 @@ fn send_scheduled_batch(input: SendScheduledBatchInputV1<'_>) -> Result<SendSche
             dropped_packets = dropped_packets.saturating_add(1);
             continue;
         }
-        let msg = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
-            from: NodeId(sender_node),
-            chain_id,
-            tx_hash: tx.tx_hash,
-            tx_count: tx.copy_index.saturating_add(1).max(1),
-            payload: tx.payload.clone(),
-            transport_auth: sign_transaction_frame_auth_v1(TransactionFrameAuthInputV1 {
+        let tx_count = 1;
+        let transport_auth = control_frame_auth_key_v1().map(|key| {
+            build_evm_native_transaction_frame_auth_v1(EvmNativeTransactionFrameAuthInputV1 {
                 from: NodeId(sender_node),
                 chain_id,
                 tx_hash: &tx.tx_hash,
-                tx_count: tx.copy_index.saturating_add(1).max(1),
+                tx_count,
                 payload: tx.payload.as_slice(),
                 frame_kind,
                 run_id,
                 sequence: tx.index,
                 copy_index: tx.copy_index,
-            }),
+                key: key.as_str(),
+            })
+        });
+        let msg = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+            from: NodeId(sender_node),
+            chain_id,
+            tx_hash: tx.tx_hash,
+            tx_count,
+            payload: tx.payload.clone(),
+            transport_auth,
         });
         let encoded_len = protocol_encode(&msg)
             .map(|encoded| encoded.len().try_into().unwrap_or(u64::MAX))

@@ -474,13 +474,38 @@ fn main() -> Result<()> {
                 "NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET",
                 tick_budget.to_string(),
             ),
-            (
-                "NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH",
-                store.display().to_string(),
-            ),
+            ("NOVOVM_NATIVE_EXECUTION_STORE", store.display().to_string()),
             (
                 "NOVOVM_NATIVE_EXECUTION_STORE_BACKEND",
                 store_backend.clone(),
+            ),
+            ("NOVOVM_AOEM_VARIANT", "core".to_string()),
+            ("NOVOVM_AOEM_PERSIST_BACKEND", "rocksdb".to_string()),
+            (
+                "AOEM_PERSISTENCE_PATH",
+                store
+                    .with_extension("aoem-persistence")
+                    .display()
+                    .to_string(),
+            ),
+            (
+                "NOVOVM_AOEM_OWNED_STATE_DB_PATH",
+                store
+                    .with_extension("aoem-owned.rocksdb")
+                    .display()
+                    .to_string(),
+            ),
+            (
+                "NOVOVM_AOEM_STATE_NAMESPACE",
+                format!("dual-node-gate-chain-{chain_id}-node-{node}"),
+            ),
+            (
+                "NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED",
+                "true".to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED",
+                "true".to_string(),
             ),
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_ROCKSDB_STORE",

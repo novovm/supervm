@@ -108,9 +108,10 @@ use novovm_node::product_mainline_overlay::{
 use novovm_node::tx_ingress::{
     available_ingress_codecs, decode_eth_send_raw_hex_payload_v1,
     ingest_local_eth_raw_tx_payload_v1, ingest_local_nov_raw_tx_payload_v1,
-    load_exec_batch_from_wire_file, load_ops_wire_v1_file, load_ops_wire_v1_from_tx_wire_file,
-    load_ops_wire_v1_payload_file, load_tx_records_from_wire_file,
-    native_aoem_semantic_ingress_runtime_reuse_counters_v1, nov_native_execution_store_path_v1,
+    ingest_remote_nov_raw_tx_payload_v1, load_exec_batch_from_wire_file, load_ops_wire_v1_file,
+    load_ops_wire_v1_from_tx_wire_file, load_ops_wire_v1_payload_file,
+    load_tx_records_from_wire_file, native_aoem_semantic_ingress_runtime_reuse_counters_v1,
+    nov_native_execution_store_path_v1, recover_nov_native_host_projection_from_aoem_v1,
     run_eth_send_raw_transaction_from_params_v1, run_nov_native_execution_tick_from_params_v1,
     sign_nov_native_tx_with_seed_v1, tx_ingress_records_to_adapter_tx_irs, TxIngressRecord,
     LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1, NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
@@ -120,7 +121,10 @@ use novovm_node::tx_ingress::{
 use novovm_node::unified_account_surface::{
     default_mainline_unified_account_store_path, is_mainline_unified_account_query_method,
 };
-use novovm_protocol::{encode_local_tx_wire_v1 as encode_tx_wire_v1, LocalTxWireV1, NodeId};
+use novovm_protocol::{
+    encode_local_tx_wire_v1 as encode_tx_wire_v1, EvmNativeMessage, LocalTxWireV1, NodeId,
+    ProtocolMessage,
+};
 use rand::seq::SliceRandom;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -232,9 +236,6 @@ fn build_native_execution_pipeline_fixture_payloads_v1(
     chain_id: u64,
     count: usize,
 ) -> Result<Vec<Vec<u8>>> {
-    let account_prefix =
-        string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_ACCOUNT_PREFIX")
-            .unwrap_or_else(|| "acct-native-pipeline-fixture".to_string());
     let asset = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_ASSET")
         .unwrap_or_else(|| "USDT".to_string());
     let fee_asset =
@@ -252,22 +253,21 @@ fn build_native_execution_pipeline_fixture_payloads_v1(
         "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_AMOUNT_START",
         1,
     )?;
-    let nonce_start = u64_env_allow_zero(
+    let fixture_identity_start = u64_env_allow_zero(
         "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_NONCE_START",
         1,
     )?;
     let mut payloads = Vec::with_capacity(count);
     for idx in 0..count {
-        let nonce = nonce_start.saturating_add(idx as u64);
+        let fixture_identity = fixture_identity_start.saturating_add(idx as u64);
         let amount = amount_start.saturating_add(idx as u64);
-        let account_id = format!("{account_prefix}-{nonce}");
         let mut native_tx = novovm_protocol::NovNativeTxWireV1 {
             chain_id,
             kind: novovm_protocol::NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
-                caller: vec![(nonce & 0xff) as u8; 20],
-                account_id: Some(account_id.clone()),
-                fee_owner_account_id: Some(account_id.clone()),
-                nonce_owner_account_id: Some(account_id),
+                caller: Vec::new(),
+                account_id: None,
+                fee_owner_account_id: None,
+                nonce_owner_account_id: None,
                 target: novovm_protocol::NovExecutionTargetV1::NativeModule("treasury".to_string()),
                 method: "deposit_reserve".to_string(),
                 args: serde_json::to_vec(&serde_json::json!({
@@ -285,11 +285,14 @@ fn build_native_execution_pipeline_fixture_payloads_v1(
                     slippage_bps: fee_slippage_bps as u32,
                 },
                 gas_like_limit: Some(90_000),
-                nonce,
+                nonce: 0,
             }),
             signature: Vec::new(),
         };
-        sign_nov_native_tx_with_seed_v1(&mut native_tx, [(nonce & 0xff) as u8; 32])?;
+        sign_nov_native_tx_with_seed_v1(
+            &mut native_tx,
+            native_fixture_signing_seed_v1(chain_id, fixture_identity),
+        )?;
         payloads.push(
             novovm_protocol::encode_nov_native_tx_wire_v1(&native_tx).map_err(|err| {
                 anyhow::anyhow!("encode native execution pipeline fixture tx failed: {err}")
@@ -297,6 +300,14 @@ fn build_native_execution_pipeline_fixture_payloads_v1(
         );
     }
     Ok(payloads)
+}
+
+fn native_fixture_signing_seed_v1(chain_id: u64, fixture_identity: u64) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-native-fixture-signing-seed/v1");
+    hasher.update(chain_id.to_le_bytes());
+    hasher.update(fixture_identity.to_le_bytes());
+    hasher.finalize().into()
 }
 
 fn load_native_execution_pipeline_ingress_payloads_from_env_v1(
@@ -34203,10 +34214,46 @@ impl NativeExecutionPipelineUdpDriveV1 {
 
     fn drive_once(&self) -> serde_json::Value {
         let mut received = 0u64;
+        let mut native_ingress_accepted_count = 0u64;
+        let mut native_ingress_rejected_count = 0u64;
+        let mut native_ingress_error_sample = Vec::<String>::new();
         for _ in 0..self.recv_budget {
             match self.transport.try_recv(self.local_node) {
-                Ok(Some(_msg)) => {
+                Ok(Some(msg)) => {
                     received = received.saturating_add(1);
+                    if let ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+                        from,
+                        chain_id,
+                        tx_hash,
+                        payload,
+                        transport_auth,
+                        ..
+                    }) = msg
+                    {
+                        if payload.starts_with(b"NNX1") {
+                            let params = serde_json::json!({"chain_id": chain_id});
+                            match ingest_remote_nov_raw_tx_payload_v1(
+                                &params,
+                                chain_id,
+                                from.0,
+                                tx_hash,
+                                payload.as_slice(),
+                                transport_auth.as_ref(),
+                            ) {
+                                Ok(_) => {
+                                    native_ingress_accepted_count =
+                                        native_ingress_accepted_count.saturating_add(1);
+                                }
+                                Err(err) => {
+                                    native_ingress_rejected_count =
+                                        native_ingress_rejected_count.saturating_add(1);
+                                    if native_ingress_error_sample.len() < 8 {
+                                        native_ingress_error_sample.push(err.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 Ok(None) => break,
                 Err(err) => {
@@ -34271,6 +34318,9 @@ impl NativeExecutionPipelineUdpDriveV1 {
             "local_addr": local_addr,
             "peer_count": self.peers.len() as u64,
             "received_count": received,
+            "native_ingress_accepted_count": native_ingress_accepted_count,
+            "native_ingress_rejected_count": native_ingress_rejected_count,
+            "native_ingress_error_sample": native_ingress_error_sample,
             "broadcast_enabled": self.broadcast_enabled,
             "broadcast_tx_count": broadcast_tx_count,
             "broadcast_error_count": broadcast_error_count,
@@ -34475,10 +34525,10 @@ fn native_execution_tick_params_from_env_v1() -> Result<serde_json::Value> {
         effective_budget.saturating_mul(4).max(effective_budget),
     )?;
     let aoem_gate_production_candidate =
-        bool_env_default_true(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV);
+        bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV);
     let aoem_gate_shadow = bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV);
     let aoem_gate_compare = bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV);
-    let mut params = serde_json::json!({
+    Ok(serde_json::json!({
         "chain_id": u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?,
         "hard_budget_per_tick": hard_budget,
         "target_budget_per_tick": target_budget,
@@ -34497,17 +34547,7 @@ fn native_execution_tick_params_from_env_v1() -> Result<serde_json::Value> {
             "compare": aoem_gate_compare,
             "source": "receiver_child_runtime",
         },
-    });
-    if let (Some(path), Some(obj)) = (
-        string_env_nonempty("NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH"),
-        params.as_object_mut(),
-    ) {
-        obj.insert(
-            "native_execution_store_path".to_string(),
-            serde_json::Value::String(path),
-        );
-    }
-    Ok(params)
+    }))
 }
 
 fn decorate_aoem_runtime_worker_scheduler_summary_v1(
@@ -34847,16 +34887,16 @@ fn build_native_execution_pipeline_report_v1(
         },
         "tick_result": compact_tick_out,
     });
-    report["child_runtime_env_aoem_production_candidate"] = serde_json::json!(
-        bool_env_default_true(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV)
-    );
+    report["child_runtime_env_aoem_production_candidate"] = serde_json::json!(bool_env(
+        NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV
+    ));
     report["child_runtime_env_aoem_shadow"] =
         serde_json::json!(bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV));
     report["child_runtime_env_aoem_compare"] =
         serde_json::json!(bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV));
     report["child_runtime_aoem_gate_config_source"] = serde_json::json!("receiver_child_runtime");
     report["lifecycle"]["aoem_owned_gate_env"] = serde_json::json!({
-        "child_runtime_env_aoem_production_candidate": bool_env_default_true(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV),
+        "child_runtime_env_aoem_production_candidate": bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV),
         "child_runtime_env_aoem_shadow": bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV),
         "child_runtime_env_aoem_compare": bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV),
         "child_runtime_aoem_gate_config_source": "receiver_child_runtime",
@@ -36185,7 +36225,7 @@ impl NativeExecutionPipelineAggregateV1 {
             broadcast_candidates_last: 0,
             broadcast_dispatch_total_last: 0,
             broadcast_tx_total_last: 0,
-            child_runtime_env_aoem_production_candidate: bool_env_default_true(
+            child_runtime_env_aoem_production_candidate: bool_env(
                 NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
             ),
             child_runtime_env_aoem_shadow: bool_env(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV),
@@ -40393,12 +40433,23 @@ mod native_execution_pipeline_tests {
         assert_eq!(first.chain_id, chain_id);
         match first.kind {
             novovm_protocol::NovTxKindV1::Execute(tx) => {
+                let expected_account = to_hex_prefixed(
+                    novovm_adapter_novovm::address_from_seed_v1(native_fixture_signing_seed_v1(
+                        chain_id, 1,
+                    ))
+                    .as_slice(),
+                );
+                assert_eq!(tx.account_id.as_deref(), Some(expected_account.as_str()));
                 assert_eq!(
-                    tx.account_id.as_deref(),
-                    Some("acct-native-pipeline-fixture-1")
+                    tx.fee_owner_account_id.as_deref(),
+                    Some(expected_account.as_str())
+                );
+                assert_eq!(
+                    tx.nonce_owner_account_id.as_deref(),
+                    Some(expected_account.as_str())
                 );
                 assert_eq!(tx.method.as_str(), "deposit_reserve");
-                assert_eq!(tx.nonce, 1);
+                assert_eq!(tx.nonce, 0);
             }
             _ => panic!("fixture payload must be a native execute tx"),
         }
@@ -40408,14 +40459,45 @@ mod native_execution_pipeline_tests {
         assert_eq!(second.chain_id, chain_id);
         match second.kind {
             novovm_protocol::NovTxKindV1::Execute(tx) => {
-                assert_eq!(
-                    tx.account_id.as_deref(),
-                    Some("acct-native-pipeline-fixture-2")
+                let expected_account = to_hex_prefixed(
+                    novovm_adapter_novovm::address_from_seed_v1(native_fixture_signing_seed_v1(
+                        chain_id, 2,
+                    ))
+                    .as_slice(),
                 );
-                assert_eq!(tx.nonce, 2);
+                assert_eq!(tx.account_id.as_deref(), Some(expected_account.as_str()));
+                assert_eq!(
+                    tx.fee_owner_account_id.as_deref(),
+                    Some(expected_account.as_str())
+                );
+                assert_eq!(
+                    tx.nonce_owner_account_id.as_deref(),
+                    Some(expected_account.as_str())
+                );
+                assert_eq!(tx.nonce, 0);
             }
             _ => panic!("fixture payload must be a native execute tx"),
         }
+    }
+
+    #[test]
+    fn native_execution_pipeline_fixture_signers_are_unique_beyond_u8_range() {
+        let chain_id = 9_998_891u64;
+        let payloads = build_native_execution_pipeline_fixture_payloads_v1(chain_id, 257)
+            .expect("fixture payloads should encode");
+        let callers = payloads
+            .iter()
+            .map(|payload| {
+                let tx = novovm_protocol::decode_nov_native_tx_wire_v1(payload)
+                    .expect("fixture payload should decode");
+                let novovm_protocol::NovTxKindV1::Execute(execute) = tx.kind else {
+                    panic!("fixture payload must be a native execute tx");
+                };
+                assert_eq!(execute.nonce, 0);
+                execute.caller
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(callers.len(), 257);
     }
 
     #[test]
@@ -41192,36 +41274,9 @@ mod native_execution_pipeline_tests {
     #[test]
     fn native_execution_pipeline_ingress_drive_feeds_aoem_tick_closed_loop() {
         let chain_id = 9_998_885u64;
-        let native_tx = novovm_protocol::NovNativeTxWireV1 {
-            chain_id,
-            kind: novovm_protocol::NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
-                caller: vec![0x55; 20],
-                account_id: Some("acct-pipeline-ingress".to_string()),
-                fee_owner_account_id: Some("acct-pipeline-ingress".to_string()),
-                nonce_owner_account_id: Some("acct-pipeline-ingress".to_string()),
-                target: novovm_protocol::NovExecutionTargetV1::NativeModule("treasury".to_string()),
-                method: "deposit_reserve".to_string(),
-                args: serde_json::to_vec(&serde_json::json!({
-                    "asset": "USDT",
-                    "amount": 17u64
-                }))
-                .expect("encode args"),
-                execution_mode: novovm_protocol::NovExecutionModeV1::Batch,
-                execution_policy: novovm_protocol::NovExecutionPolicyV1::Standard,
-                privacy_mode: novovm_protocol::NovPrivacyModeV1::Public,
-                verification_mode: novovm_protocol::NovVerificationModeV1::Standard,
-                fee_policy: novovm_protocol::NovFeePolicyV1 {
-                    pay_asset: "NOV".to_string(),
-                    max_pay_amount: 50,
-                    slippage_bps: 100,
-                },
-                gas_like_limit: Some(90_000),
-                nonce: 71,
-            }),
-            signature: vec![0x71; 32],
-        };
-        let raw =
-            novovm_protocol::encode_nov_native_tx_wire_v1(&native_tx).expect("encode native tx");
+        let raw = build_native_execution_pipeline_fixture_payloads_v1(chain_id, 1)
+            .expect("build authenticated native fixture")
+            .remove(0);
         let mut ingress_drive = NativeExecutionPipelineIngressDriveV1 {
             chain_id,
             payloads: vec![raw],
@@ -41343,42 +41398,10 @@ mod native_execution_pipeline_tests {
     #[test]
     fn native_execution_pipeline_multitick_keeps_aoem_batch_as_concurrency_boundary() {
         let chain_id = 9_998_886u64;
-        let build_raw = |nonce: u64| {
-            let native_tx = novovm_protocol::NovNativeTxWireV1 {
-                chain_id,
-                kind: novovm_protocol::NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
-                    caller: vec![nonce as u8; 20],
-                    account_id: Some(format!("acct-pipeline-multitick-{nonce}")),
-                    fee_owner_account_id: Some(format!("acct-pipeline-multitick-{nonce}")),
-                    nonce_owner_account_id: Some(format!("acct-pipeline-multitick-{nonce}")),
-                    target: novovm_protocol::NovExecutionTargetV1::NativeModule(
-                        "treasury".to_string(),
-                    ),
-                    method: "deposit_reserve".to_string(),
-                    args: serde_json::to_vec(&serde_json::json!({
-                        "asset": "USDT",
-                        "amount": nonce
-                    }))
-                    .expect("encode args"),
-                    execution_mode: novovm_protocol::NovExecutionModeV1::Batch,
-                    execution_policy: novovm_protocol::NovExecutionPolicyV1::Standard,
-                    privacy_mode: novovm_protocol::NovPrivacyModeV1::Public,
-                    verification_mode: novovm_protocol::NovVerificationModeV1::Standard,
-                    fee_policy: novovm_protocol::NovFeePolicyV1 {
-                        pay_asset: "NOV".to_string(),
-                        max_pay_amount: 50,
-                        slippage_bps: 100,
-                    },
-                    gas_like_limit: Some(90_000),
-                    nonce,
-                }),
-                signature: vec![0x86; 32],
-            };
-            novovm_protocol::encode_nov_native_tx_wire_v1(&native_tx).expect("encode native tx")
-        };
         let mut ingress_drive = NativeExecutionPipelineIngressDriveV1 {
             chain_id,
-            payloads: (81..=85).map(build_raw).collect(),
+            payloads: build_native_execution_pipeline_fixture_payloads_v1(chain_id, 5)
+                .expect("build authenticated native fixtures"),
             cursor: 0,
             max_per_tick: 2,
         };
@@ -41533,36 +41556,9 @@ mod native_execution_pipeline_tests {
         transport.register(local);
         transport.register(remote);
 
-        let native_tx = novovm_protocol::NovNativeTxWireV1 {
-            chain_id,
-            kind: novovm_protocol::NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
-                caller: vec![0x87; 20],
-                account_id: Some("acct-pipeline-transport-remote".to_string()),
-                fee_owner_account_id: Some("acct-pipeline-transport-remote".to_string()),
-                nonce_owner_account_id: Some("acct-pipeline-transport-remote".to_string()),
-                target: novovm_protocol::NovExecutionTargetV1::NativeModule("treasury".to_string()),
-                method: "deposit_reserve".to_string(),
-                args: serde_json::to_vec(&serde_json::json!({
-                    "asset": "USDT",
-                    "amount": 29u64
-                }))
-                .expect("encode args"),
-                execution_mode: novovm_protocol::NovExecutionModeV1::Batch,
-                execution_policy: novovm_protocol::NovExecutionPolicyV1::Standard,
-                privacy_mode: novovm_protocol::NovPrivacyModeV1::Public,
-                verification_mode: novovm_protocol::NovVerificationModeV1::Standard,
-                fee_policy: novovm_protocol::NovFeePolicyV1 {
-                    pay_asset: "NOV".to_string(),
-                    max_pay_amount: 50,
-                    slippage_bps: 100,
-                },
-                gas_like_limit: Some(90_000),
-                nonce: 87,
-            }),
-            signature: vec![0x87; 32],
-        };
-        let raw =
-            novovm_protocol::encode_nov_native_tx_wire_v1(&native_tx).expect("encode native tx");
+        let raw = build_native_execution_pipeline_fixture_payloads_v1(chain_id, 1)
+            .expect("build authenticated native fixture")
+            .remove(0);
         let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
             &serde_json::json!({ "chain_id": chain_id }),
             raw.as_slice(),
@@ -42317,6 +42313,17 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     )?;
     let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
     apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
+    let startup_recovery_params = native_execution_tick_params_from_env_v1()?;
+    let startup_recovery =
+        recover_nov_native_host_projection_from_aoem_v1(&startup_recovery_params)
+            .context("recover native host projection from AOEM authority at startup failed")?;
+    if verbose {
+        println!(
+            "native_execution_startup_recovery: {}",
+            serde_json::to_string(&startup_recovery)
+                .context("encode native execution startup recovery report failed")?
+        );
+    }
     let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
     let mut ingress_drive = NativeExecutionPipelineIngressDriveV1::from_env(chain_id)?;
     let mut product_overlay_drive =

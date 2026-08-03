@@ -15,6 +15,7 @@ use novovm_protocol::{
     NovVerificationModeV1,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -49,6 +50,14 @@ fn unix_ms_now() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+fn native_fixture_signing_seed_v1(chain_id: u64, fixture_identity: u64) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-native-fixture-signing-seed/v1");
+    hasher.update(chain_id.to_le_bytes());
+    hasher.update(fixture_identity.to_le_bytes());
+    hasher.finalize().into()
 }
 
 fn temp_store_path(chain_id: u64) -> PathBuf {
@@ -87,27 +96,22 @@ fn novovm_node_bin() -> PathBuf {
     dir.join(exe)
 }
 
-fn build_native_payloads(
-    chain_id: u64,
-    count: u64,
-    account_prefix: &str,
-) -> Result<Vec<NativeFixtureTxV1>> {
+fn build_native_payloads(chain_id: u64, count: u64) -> Result<Vec<NativeFixtureTxV1>> {
     let mut out = Vec::with_capacity(count as usize);
     for index in 0..count {
-        let nonce = index.saturating_add(1);
-        let account_id = format!("{account_prefix}-{nonce}");
+        let fixture_identity = index.saturating_add(1);
         let mut tx = NovNativeTxWireV1 {
             chain_id,
             kind: NovTxKindV1::Execute(NovExecuteTxV1 {
-                caller: vec![(nonce & 0xff) as u8; 20],
-                account_id: Some(account_id.clone()),
-                fee_owner_account_id: Some(account_id.clone()),
-                nonce_owner_account_id: Some(account_id),
+                caller: Vec::new(),
+                account_id: None,
+                fee_owner_account_id: None,
+                nonce_owner_account_id: None,
                 target: NovExecutionTargetV1::NativeModule("treasury".to_string()),
                 method: "deposit_reserve".to_string(),
                 args: serde_json::to_vec(&serde_json::json!({
                     "asset": "USDT",
-                    "amount": nonce,
+                    "amount": fixture_identity,
                 }))
                 .context("encode pending crash fixture args failed")?,
                 execution_mode: NovExecutionModeV1::Batch,
@@ -120,11 +124,14 @@ fn build_native_payloads(
                     slippage_bps: 100,
                 },
                 gas_like_limit: Some(90_000),
-                nonce,
+                nonce: 0,
             }),
             signature: Vec::new(),
         };
-        sign_nov_native_tx_with_seed_v1(&mut tx, [(nonce & 0xff) as u8; 32])?;
+        sign_nov_native_tx_with_seed_v1(
+            &mut tx,
+            native_fixture_signing_seed_v1(chain_id, fixture_identity),
+        )?;
         let ir = nov_native_tx_to_adapter_tx_ir_v1(&tx)?;
         let mut tx_hash = [0u8; 32];
         let copy_len = ir.hash.len().min(32);
@@ -237,6 +244,8 @@ fn base_env(
     tick_interval_ms: u64,
     batch_budget: u64,
 ) -> Vec<(&'static str, String)> {
+    let aoem_persistence_path = store_path.with_extension("aoem-persistence");
+    let aoem_owned_state_db_path = store_path.with_extension("aoem-owned.rocksdb");
     vec![
         ("NOVOVM_NODE_MODE", "native_execution_pipeline".to_string()),
         (
@@ -261,7 +270,7 @@ fn base_env(
             tick_interval_ms.to_string(),
         ),
         (
-            "NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH",
+            "NOVOVM_NATIVE_EXECUTION_STORE",
             store_path.display().to_string(),
         ),
         (
@@ -278,6 +287,26 @@ fn base_env(
         ),
         ("NOVOVM_AOEM_VARIANT", "core".to_string()),
         ("NOVOVM_AOEM_PERSIST_BACKEND", "rocksdb".to_string()),
+        (
+            "AOEM_PERSISTENCE_PATH",
+            aoem_persistence_path.display().to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_OWNED_STATE_DB_PATH",
+            aoem_owned_state_db_path.display().to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_STATE_NAMESPACE",
+            format!("pending-crash-chain-{chain_id}"),
+        ),
+        (
+            "NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED",
+            "true".to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED",
+            "true".to_string(),
+        ),
         (
             "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE",
             "true".to_string(),
@@ -310,11 +339,7 @@ fn main() -> Result<()> {
         );
     }
 
-    let pending_payloads = build_native_payloads(
-        chain_id,
-        pending_tx_count,
-        "acct-native-pending-crash-volatile",
-    )?;
+    let pending_payloads = build_native_payloads(chain_id, pending_tx_count)?;
     for tx in &pending_payloads {
         observe_network_runtime_native_pending_tx_local_native_payload_v1(
             chain_id,
@@ -389,6 +414,18 @@ fn main() -> Result<()> {
     )?;
 
     std::env::set_var("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND", "rocksdb");
+    std::env::set_var(
+        "AOEM_PERSISTENCE_PATH",
+        partial_store.with_extension("aoem-persistence"),
+    );
+    std::env::set_var(
+        "NOVOVM_AOEM_OWNED_STATE_DB_PATH",
+        partial_store.with_extension("aoem-owned.rocksdb"),
+    );
+    std::env::set_var(
+        "NOVOVM_AOEM_STATE_NAMESPACE",
+        format!("pending-crash-chain-{chain_id}"),
+    );
     let first_probe = get_nov_native_execution_store_recovery_probe_v1(partial_store.as_path())?;
 
     let restart_env = base_env(

@@ -8,7 +8,7 @@ use crate::{
     },
     EthFullnodeBudgetHooksV1, NovoRudpSequenceLifecycleLedger,
 };
-use novovm_protocol::{decode_nov_native_tx_wire_v1, NovTxKindV1};
+use novovm_protocol::decode_nov_native_tx_wire_v1;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -146,6 +146,35 @@ static NETWORK_RUNTIME_RECEIVER_DECODE_ATTRIBUTION: OnceLock<
 static NETWORK_RUNTIME_NOVORUDP_SEQUENCE_LEDGER: OnceLock<
     Mutex<HashMap<u64, NovoRudpSequenceLifecycleLedger>>,
 > = OnceLock::new();
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RuntimeNovoRudpVerifiedStreamKeyV1 {
+    chain_id: u64,
+    from_node_id: u64,
+    run_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RuntimeNovoRudpVerifiedSequenceRefV1 {
+    stream: RuntimeNovoRudpVerifiedStreamKeyV1,
+    sequence: u64,
+    compatibility_sequence: u64,
+}
+
+type RuntimeNovoRudpVerifiedStreamLedgerMapV1 =
+    HashMap<RuntimeNovoRudpVerifiedStreamKeyV1, NovoRudpSequenceLifecycleLedger>;
+type RuntimeNovoRudpVerifiedTxRefsMapV1 =
+    HashMap<(u64, [u8; 32]), HashSet<RuntimeNovoRudpVerifiedSequenceRefV1>>;
+
+// Authenticated transport sequences are scoped to the sending node and run.
+// The older chain-only ledger remains as a compatibility projection for the
+// existing single-stream diagnostics, but it is not authoritative when more
+// than one peer uses the same sequence number.
+static NETWORK_RUNTIME_NOVORUDP_VERIFIED_STREAM_LEDGERS: OnceLock<
+    Mutex<RuntimeNovoRudpVerifiedStreamLedgerMapV1>,
+> = OnceLock::new();
+static NETWORK_RUNTIME_NOVORUDP_VERIFIED_TX_REFS: OnceLock<
+    Mutex<RuntimeNovoRudpVerifiedTxRefsMapV1>,
+> = OnceLock::new();
 static NETWORK_RUNTIME_NOVORUDP_LEDGER_CLOSE_DIAGNOSTICS: OnceLock<
     Mutex<HashMap<u64, NetworkRuntimeNovoRudpLedgerCloseDiagnosticsV1>>,
 > = OnceLock::new();
@@ -281,6 +310,15 @@ fn runtime_receiver_decode_attribution_map(
 fn runtime_novorudp_sequence_ledger_map(
 ) -> &'static Mutex<HashMap<u64, NovoRudpSequenceLifecycleLedger>> {
     NETWORK_RUNTIME_NOVORUDP_SEQUENCE_LEDGER.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_novorudp_verified_stream_ledger_map(
+) -> &'static Mutex<RuntimeNovoRudpVerifiedStreamLedgerMapV1> {
+    NETWORK_RUNTIME_NOVORUDP_VERIFIED_STREAM_LEDGERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_novorudp_verified_tx_refs_map() -> &'static Mutex<RuntimeNovoRudpVerifiedTxRefsMapV1> {
+    NETWORK_RUNTIME_NOVORUDP_VERIFIED_TX_REFS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn runtime_novorudp_ledger_close_diagnostics_map(
@@ -2042,6 +2080,21 @@ pub fn observe_network_runtime_receiver_udp_packet_predecode_drop_v1(
     receiver_decode_attribution_refresh_len_percentiles_v1(state);
 }
 
+pub fn observe_network_runtime_receiver_transaction_frame_auth_drop_v1(
+    chain_id: u64,
+    reason: &str,
+) {
+    let Ok(mut guard) = runtime_receiver_decode_attribution_map().lock() else {
+        return;
+    };
+    let state = guard.entry(chain_id).or_default();
+    receiver_decode_attribution_classify_decode_error_v1(state, reason);
+    receiver_decode_attribution_sample_push_v1(
+        &mut state.receiver_udp_packet_drop_reason_sample,
+        reason.to_string(),
+    );
+}
+
 fn observe_novorudp_sequence_repair_received_v1(
     chain_id: u64,
     sequence: u64,
@@ -2096,6 +2149,120 @@ pub fn observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
     }
 }
 
+/// Binds an authenticated transport delivery to its sender/run scoped
+/// sequence. Reusing one sequence for a different transaction in the same
+/// authenticated stream is equivocation and is rejected without mutating the
+/// original mapping.
+#[must_use]
+pub fn observe_runtime_novorudp_verified_sequence_tx_hash_mapping_v1(
+    chain_id: u64,
+    from_node_id: u64,
+    run_id: &str,
+    sequence: u64,
+    tx_hash: [u8; 32],
+) -> bool {
+    if run_id.trim().is_empty() {
+        return false;
+    }
+    let stream = RuntimeNovoRudpVerifiedStreamKeyV1 {
+        chain_id,
+        from_node_id,
+        run_id: run_id.to_string(),
+    };
+    let now = now_unix_millis();
+    let Ok(mut ledgers) = runtime_novorudp_verified_stream_ledger_map().lock() else {
+        return false;
+    };
+    let ledger = ledgers
+        .entry(stream.clone())
+        .or_insert_with(|| NovoRudpSequenceLifecycleLedger::new(sequence.saturating_add(1), 64));
+    if ledger
+        .records
+        .get(&sequence)
+        .and_then(|record| record.tx_hash)
+        .is_some_and(|existing| existing != tx_hash)
+    {
+        return false;
+    }
+    if ledger.expected_total <= sequence {
+        ledger.ensure_expected_total(
+            sequence.saturating_add(1),
+            now,
+            "verified_stream_tx_hash_mapping_extend_expected",
+        );
+    }
+    let was_received = ledger
+        .records
+        .get(&sequence)
+        .is_some_and(|record| record.received);
+    ledger.observe_tx_hash_mapping(sequence, tx_hash, now, "verified_stream_tx_hash_mapping");
+    if let Some(record) = ledger.records.get_mut(&sequence) {
+        record.run_id = Some(run_id.to_string());
+        record.session_id = Some(format!("node-{from_node_id}"));
+        record.received = true;
+        record.accepted = true;
+        if was_received {
+            record.duplicate_seen_count = record.duplicate_seen_count.saturating_add(1);
+        }
+    }
+    drop(ledgers);
+
+    let Ok(mut refs) = runtime_novorudp_verified_tx_refs_map().lock() else {
+        return false;
+    };
+    if refs.get(&(chain_id, tx_hash)).is_some_and(|existing| {
+        existing
+            .iter()
+            .any(|reference| reference.stream == stream && reference.sequence == sequence)
+    }) {
+        return true;
+    }
+
+    // Assign a collision-free chain-wide compatibility sequence for the
+    // existing summary/repair API. The authenticated stream sequence remains
+    // authoritative; this projection merely lets legacy diagnostics account
+    // for all peers instead of silently dropping sender-B sequence zero.
+    let compatibility_sequence = {
+        let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() else {
+            return false;
+        };
+        let ledger = guard.entry(chain_id).or_insert_with(|| {
+            NovoRudpSequenceLifecycleLedger::new(sequence.saturating_add(1), 64)
+        });
+        let existing_for_tx = novorudp_sequence_for_tx_hash_v1(ledger, tx_hash);
+        let selected = existing_for_tx.unwrap_or_else(|| {
+            let preferred_is_available = ledger
+                .records
+                .get(&sequence)
+                .and_then(|record| record.tx_hash)
+                .is_none_or(|existing| existing == tx_hash);
+            if preferred_is_available {
+                sequence
+            } else {
+                ledger.expected_total
+            }
+        });
+        if ledger.expected_total <= selected {
+            ledger.ensure_expected_total(
+                selected.saturating_add(1),
+                now,
+                "verified_stream_compat_projection_extend_expected",
+            );
+        }
+        ledger.observe_tx_hash_mapping(selected, tx_hash, now, "verified_stream_compat_projection");
+        selected
+    };
+    let sequence_ref = RuntimeNovoRudpVerifiedSequenceRefV1 {
+        stream,
+        sequence,
+        compatibility_sequence,
+    };
+    refs.entry((chain_id, tx_hash))
+        .or_default()
+        .insert(sequence_ref);
+    true
+}
+
 fn novorudp_sequence_for_tx_hash_v1(
     ledger: &NovoRudpSequenceLifecycleLedger,
     tx_hash: [u8; 32],
@@ -2104,6 +2271,75 @@ fn novorudp_sequence_for_tx_hash_v1(
         .records
         .iter()
         .find_map(|(sequence, record)| (record.tx_hash == Some(tx_hash)).then_some(*sequence))
+}
+
+#[must_use]
+pub fn get_runtime_novorudp_sequence_for_tx_hash_v1(
+    chain_id: u64,
+    tx_hash: [u8; 32],
+) -> Option<u64> {
+    let verified = runtime_novorudp_verified_tx_refs_map()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&(chain_id, tx_hash)).cloned())
+        .and_then(|refs| {
+            refs.into_iter()
+                .map(|reference| reference.compatibility_sequence)
+                .min()
+        });
+    if verified.is_some() {
+        return verified;
+    }
+    runtime_novorudp_sequence_ledger_map()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&chain_id).cloned())
+        .and_then(|ledger| novorudp_sequence_for_tx_hash_v1(&ledger, tx_hash))
+}
+
+fn close_runtime_novorudp_verified_refs_v1(
+    chain_id: u64,
+    tx_hash: [u8; 32],
+    canonical: bool,
+) -> (bool, bool) {
+    let refs = runtime_novorudp_verified_tx_refs_map()
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(&(chain_id, tx_hash)).cloned())
+        .unwrap_or_default();
+    if refs.is_empty() {
+        return (false, false);
+    }
+    let now = now_unix_millis();
+    let Ok(mut ledgers) = runtime_novorudp_verified_stream_ledger_map().lock() else {
+        return (false, false);
+    };
+    let mut mapped = false;
+    let mut closed_now = false;
+    for reference in refs {
+        let Some(ledger) = ledgers.get_mut(&reference.stream) else {
+            continue;
+        };
+        let Some(record) = ledger.records.get(&reference.sequence) else {
+            continue;
+        };
+        if record.tx_hash != Some(tx_hash) {
+            continue;
+        }
+        mapped = true;
+        let was_closed = if canonical {
+            record.canonical_included
+        } else {
+            record.receipt_written
+        };
+        if canonical {
+            ledger.mark_canonical_included(reference.sequence, now);
+        } else {
+            ledger.mark_receipt_written(reference.sequence, now);
+        }
+        closed_now |= !was_closed;
+    }
+    (mapped, closed_now)
 }
 
 pub fn observe_runtime_novorudp_receipt_proof_close_v1(chain_id: u64, tx_hash: [u8; 32]) -> bool {
@@ -2116,6 +2352,8 @@ pub fn observe_runtime_novorudp_receipt_proof_close_v1(chain_id: u64, tx_hash: [
             .ledger_receipt_proof_tx_hash_count
             .saturating_add(1);
     }
+    let (verified_mapped, mut closed_now) =
+        close_runtime_novorudp_verified_refs_v1(chain_id, tx_hash, false);
     let sequence = runtime_novorudp_sequence_ledger_map()
         .lock()
         .ok()
@@ -2124,7 +2362,7 @@ pub fn observe_runtime_novorudp_receipt_proof_close_v1(chain_id: u64, tx_hash: [
                 .get(&chain_id)
                 .and_then(|ledger| novorudp_sequence_for_tx_hash_v1(ledger, tx_hash))
         });
-    let Some(sequence) = sequence else {
+    if sequence.is_none() && !verified_mapped {
         if let Ok(mut guard) = runtime_novorudp_ledger_close_diagnostics_map().lock() {
             guard
                 .entry(chain_id)
@@ -2132,9 +2370,10 @@ pub fn observe_runtime_novorudp_receipt_proof_close_v1(chain_id: u64, tx_hash: [
                 .ledger_receipt_proof_missing_sequence_mapping_count += 1;
         }
         return false;
-    };
-    let mut closed_now = false;
-    if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
+    }
+    if let (Some(sequence), Ok(mut guard)) =
+        (sequence, runtime_novorudp_sequence_ledger_map().lock())
+    {
         let ledger = guard.entry(chain_id).or_insert_with(|| {
             NovoRudpSequenceLifecycleLedger::new(sequence.saturating_add(1), 64)
         });
@@ -2143,7 +2382,7 @@ pub fn observe_runtime_novorudp_receipt_proof_close_v1(chain_id: u64, tx_hash: [
             .get(&sequence)
             .is_some_and(|record| record.receipt_written);
         ledger.mark_receipt_written(sequence, now_unix_millis());
-        closed_now = !was_closed;
+        closed_now |= !was_closed;
     }
     if closed_now {
         if let Ok(mut guard) = runtime_novorudp_ledger_close_diagnostics_map().lock() {
@@ -2166,6 +2405,8 @@ pub fn observe_runtime_novorudp_canonical_proof_close_v1(chain_id: u64, tx_hash:
             .ledger_canonical_proof_tx_hash_count
             .saturating_add(1);
     }
+    let (verified_mapped, mut closed_now) =
+        close_runtime_novorudp_verified_refs_v1(chain_id, tx_hash, true);
     let sequence = runtime_novorudp_sequence_ledger_map()
         .lock()
         .ok()
@@ -2174,7 +2415,7 @@ pub fn observe_runtime_novorudp_canonical_proof_close_v1(chain_id: u64, tx_hash:
                 .get(&chain_id)
                 .and_then(|ledger| novorudp_sequence_for_tx_hash_v1(ledger, tx_hash))
         });
-    let Some(sequence) = sequence else {
+    if sequence.is_none() && !verified_mapped {
         if let Ok(mut guard) = runtime_novorudp_ledger_close_diagnostics_map().lock() {
             guard
                 .entry(chain_id)
@@ -2182,9 +2423,10 @@ pub fn observe_runtime_novorudp_canonical_proof_close_v1(chain_id: u64, tx_hash:
                 .ledger_canonical_proof_missing_sequence_mapping_count += 1;
         }
         return false;
-    };
-    let mut closed_now = false;
-    if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
+    }
+    if let (Some(sequence), Ok(mut guard)) =
+        (sequence, runtime_novorudp_sequence_ledger_map().lock())
+    {
         let ledger = guard.entry(chain_id).or_insert_with(|| {
             NovoRudpSequenceLifecycleLedger::new(sequence.saturating_add(1), 64)
         });
@@ -2193,7 +2435,7 @@ pub fn observe_runtime_novorudp_canonical_proof_close_v1(chain_id: u64, tx_hash:
             .get(&sequence)
             .is_some_and(|record| record.canonical_included);
         ledger.mark_canonical_included(sequence, now_unix_millis());
-        closed_now = !was_closed;
+        closed_now |= !was_closed;
     }
     if closed_now {
         if let Ok(mut guard) = runtime_novorudp_ledger_close_diagnostics_map().lock() {
@@ -2871,12 +3113,12 @@ pub fn observe_network_runtime_native_pending_tx_repair_probe_v1(
         network_runtime_native_repair_probe_reject_v1(state, "wrong_chain_id");
         return;
     }
-    let sequence = match tx.kind {
-        NovTxKindV1::Execute(execute) => execute.nonce.saturating_sub(1),
-        NovTxKindV1::Transfer(_) | NovTxKindV1::Governance(_) => {
-            network_runtime_native_repair_probe_reject_v1(state, "non_execute_tx");
-            return;
-        }
+    let Some(sequence) = get_runtime_novorudp_sequence_for_tx_hash_v1(chain_id, tx_hash) else {
+        network_runtime_native_repair_probe_reject_v1(
+            state,
+            "missing_verified_transport_sequence_mapping",
+        );
+        return;
     };
     state.sequence_received_count = state.sequence_received_count.saturating_add(1);
     state.sequence_received_min = Some(
@@ -4632,6 +4874,12 @@ pub fn clear_network_runtime_native_state_for_host_tests_v1() {
         guard.clear();
     }
     if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_novorudp_verified_stream_ledger_map().lock() {
+        guard.clear();
+    }
+    if let Ok(mut guard) = runtime_novorudp_verified_tx_refs_map().lock() {
         guard.clear();
     }
     if let Ok(mut guard) = runtime_native_execution_budget_runtime_map().lock() {
@@ -6532,6 +6780,12 @@ pub fn clear_network_runtime_native_snapshots_for_chain_v1(chain_id: u64) {
     if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
         guard.remove(&chain_id);
     }
+    if let Ok(mut guard) = runtime_novorudp_verified_stream_ledger_map().lock() {
+        guard.retain(|stream, _| stream.chain_id != chain_id);
+    }
+    if let Ok(mut guard) = runtime_novorudp_verified_tx_refs_map().lock() {
+        guard.retain(|(mapped_chain_id, _), _| *mapped_chain_id != chain_id);
+    }
     if let Ok(mut guard) = runtime_native_execution_budget_runtime_map().lock() {
         guard.remove(&chain_id);
     }
@@ -7569,6 +7823,7 @@ pub fn finish_network_runtime_native_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use novovm_protocol::NovTxKindV1;
 
     fn build_native_repair_payload_for_test(chain_id: u64, sequence: u64) -> Vec<u8> {
         let tx = novovm_protocol::NovNativeTxWireV1 {
@@ -7595,7 +7850,7 @@ mod tests {
                     slippage_bps: 100,
                 },
                 gas_like_limit: Some(90_000),
-                nonce: sequence.saturating_add(1),
+                nonce: 0,
             }),
             signature: vec![0x33; 32],
         };
@@ -7654,6 +7909,12 @@ mod tests {
         if let Ok(mut guard) = runtime_novorudp_sequence_ledger_map().lock() {
             guard.remove(&chain_id);
         }
+        if let Ok(mut guard) = runtime_novorudp_verified_stream_ledger_map().lock() {
+            guard.retain(|stream, _| stream.chain_id != chain_id);
+        }
+        if let Ok(mut guard) = runtime_novorudp_verified_tx_refs_map().lock() {
+            guard.retain(|(mapped_chain_id, _), _| *mapped_chain_id != chain_id);
+        }
         if let Ok(mut guard) = runtime_native_repair_probe_map().lock() {
             guard.remove(&chain_id);
         }
@@ -7701,6 +7962,7 @@ mod tests {
         let payload = build_native_repair_payload_for_test(chain_id, sequence);
         clear_novorudp_sequence_ledger_for_test(chain_id);
         ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 14_400, 64);
+        observe_runtime_novorudp_sequence_tx_hash_mapping_v1(chain_id, sequence, tx_hash);
         observe_network_runtime_native_pending_tx_repair_probe_v1(
             chain_id,
             tx_hash,
@@ -7716,6 +7978,130 @@ mod tests {
         assert!(missing_ranges
             .iter()
             .all(|range| sequence < range.start || sequence > range.end_inclusive));
+    }
+
+    #[test]
+    fn verified_transport_sequences_are_scoped_by_sender_and_run() {
+        let chain_id = 9_998_783;
+        let first_hash = [0x81; 32];
+        let second_hash = [0x82; 32];
+        let equivocated_hash = [0x83; 32];
+        clear_novorudp_sequence_ledger_for_test(chain_id);
+
+        assert!(
+            observe_runtime_novorudp_verified_sequence_tx_hash_mapping_v1(
+                chain_id, 11, "run-a", 0, first_hash,
+            )
+        );
+        assert!(
+            observe_runtime_novorudp_verified_sequence_tx_hash_mapping_v1(
+                chain_id,
+                12,
+                "run-b",
+                0,
+                second_hash,
+            )
+        );
+        assert!(
+            !observe_runtime_novorudp_verified_sequence_tx_hash_mapping_v1(
+                chain_id,
+                11,
+                "run-a",
+                0,
+                equivocated_hash,
+            )
+        );
+        assert_eq!(
+            get_runtime_novorudp_sequence_for_tx_hash_v1(chain_id, first_hash),
+            Some(0)
+        );
+        assert_eq!(
+            get_runtime_novorudp_sequence_for_tx_hash_v1(chain_id, second_hash),
+            Some(1)
+        );
+        assert_eq!(
+            get_runtime_novorudp_sequence_for_tx_hash_v1(chain_id, equivocated_hash),
+            None
+        );
+
+        assert!(observe_runtime_novorudp_receipt_proof_close_v1(
+            chain_id, first_hash
+        ));
+        assert!(observe_runtime_novorudp_canonical_proof_close_v1(
+            chain_id,
+            second_hash,
+        ));
+        assert!(
+            observe_runtime_novorudp_verified_sequence_tx_hash_mapping_v1(
+                chain_id, 13, "run-c", 0, first_hash,
+            )
+        );
+        assert!(observe_runtime_novorudp_canonical_proof_close_v1(
+            chain_id, first_hash,
+        ));
+        let ledgers = runtime_novorudp_verified_stream_ledger_map()
+            .lock()
+            .expect("verified stream ledgers");
+        let first = ledgers
+            .iter()
+            .find(|(stream, _)| {
+                stream.chain_id == chain_id && stream.from_node_id == 11 && stream.run_id == "run-a"
+            })
+            .and_then(|(_, ledger)| ledger.records.get(&0))
+            .expect("first stream sequence");
+        let second = ledgers
+            .iter()
+            .find(|(stream, _)| {
+                stream.chain_id == chain_id && stream.from_node_id == 12 && stream.run_id == "run-b"
+            })
+            .and_then(|(_, ledger)| ledger.records.get(&0))
+            .expect("second stream sequence");
+        let replayed = ledgers
+            .iter()
+            .find(|(stream, _)| {
+                stream.chain_id == chain_id && stream.from_node_id == 13 && stream.run_id == "run-c"
+            })
+            .and_then(|(_, ledger)| ledger.records.get(&0))
+            .expect("replayed stream sequence");
+        assert!(first.receipt_written);
+        assert!(first.canonical_included);
+        assert!(second.canonical_included);
+        assert!(replayed.canonical_included);
+        drop(ledgers);
+        let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary.ledger_expected_count, 2);
+        assert_eq!(summary.ledger_completed_count, 2);
+        assert_eq!(summary.ledger_durable_missing_count, 0);
+    }
+
+    #[test]
+    fn repair_probe_rejects_missing_verified_transport_sequence_mapping() {
+        let chain_id = 9_998_774;
+        let sequence = 42;
+        let tx_hash = [0x7b; 32];
+        let payload = build_native_repair_payload_for_test(chain_id, sequence);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+
+        observe_network_runtime_native_pending_tx_repair_probe_v1(
+            chain_id,
+            tx_hash,
+            1,
+            Some(payload.as_slice()),
+        );
+
+        let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+        assert_eq!(summary.repair_sequence_received_count, 0);
+        assert_eq!(
+            summary
+                .repair_reject_reason_counts
+                .get("missing_verified_transport_sequence_mapping")
+                .copied(),
+            Some(1)
+        );
+        assert_eq!(
+            get_runtime_novorudp_sequence_for_tx_hash_v1(chain_id, tx_hash),
+            None
+        );
     }
 
     #[test]
@@ -10497,6 +10883,7 @@ mod tests {
         let sequence = 14_399_u64;
         let payload = build_native_repair_payload_for_test(chain_id, sequence);
 
+        observe_runtime_novorudp_sequence_tx_hash_mapping_v1(chain_id, sequence, repair_tx);
         observe_network_runtime_native_pending_tx_repair_probe_v1(
             chain_id,
             repair_tx,
@@ -10537,6 +10924,7 @@ mod tests {
         let sequence = 14_168_u64;
         let payload = build_native_repair_payload_for_test(chain_id, sequence);
 
+        observe_runtime_novorudp_sequence_tx_hash_mapping_v1(chain_id, sequence, repair_tx);
         observe_network_runtime_native_pending_tx_repair_probe_v1(
             chain_id,
             repair_tx,
@@ -10591,6 +10979,7 @@ mod tests {
         let sequence = 14_200_u64;
         let payload = build_native_repair_payload_for_test(chain_id, sequence);
 
+        observe_runtime_novorudp_sequence_tx_hash_mapping_v1(chain_id, sequence, repair_tx);
         observe_network_runtime_native_pending_tx_repair_probe_v1(
             chain_id,
             repair_tx,

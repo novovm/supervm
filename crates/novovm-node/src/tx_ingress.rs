@@ -19,17 +19,20 @@ use novovm_governance_observability::{append_governance_event_auto, GovernanceEv
 use novovm_network::{
     eth_rlpx_transaction_hash_v1, eth_rlpx_validate_transaction_envelope_payload_v1,
     get_network_runtime_native_head_snapshot_v1, get_network_runtime_native_pending_tx_payload_v1,
+    get_runtime_novorudp_sequence_for_tx_hash_v1,
     observe_network_runtime_native_execution_budget_target_v1,
     observe_network_runtime_native_execution_budget_throttle_v1,
     observe_network_runtime_native_pending_tx_dropped_v1,
     observe_network_runtime_native_pending_tx_local_ingress_with_payload_v1,
     observe_network_runtime_native_pending_tx_local_native_payload_v1,
     observe_network_runtime_native_pending_tx_rejected_v1,
+    observe_network_runtime_native_pending_tx_remote_native_payload_v1,
     observe_network_runtime_native_pending_tx_repair_actual_batch_v1,
+    observe_network_runtime_native_pending_tx_repair_probe_v1,
     observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1,
     observe_runtime_novorudp_canonical_proof_close_v1,
     observe_runtime_novorudp_receipt_proof_close_v1,
-    observe_runtime_novorudp_sequence_tx_hash_mapping_v1,
+    observe_runtime_novorudp_verified_sequence_tx_hash_mapping_v1,
     set_network_runtime_native_body_snapshot_v1, set_network_runtime_native_head_snapshot_v1,
     snapshot_network_runtime_native_active_pending_txs_for_repair_window_v1,
     snapshot_network_runtime_native_execution_budget_runtime_summary_v1,
@@ -42,8 +45,8 @@ use novovm_network::{
 use novovm_protocol::{
     decode_local_tx_wire_v1 as decode_tx_wire_v1, decode_nov_native_tx_wire_v1,
     encode_nov_native_tx_wire_v1, LocalTxWireV1, NovExecuteTxV1, NovExecutionModeV1,
-    NovExecutionPolicyV1, NovExecutionTargetV1, NovFeePolicyV1, NovGovernanceTxV1,
-    NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1,
+    NovExecutionPolicyV1, NovExecutionTargetV1, NovFeePolicyV1, NovNativeTxWireV1,
+    NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1,
 };
 use rocksdb::{
     Direction as RocksDbDirection, IteratorMode as RocksDbIteratorMode, Options as RocksDbOptions,
@@ -62,7 +65,6 @@ pub const LOCAL_TX_WIRE_V1_BYTES: usize = 4 + 1 + (8 * 5) + 32;
 pub const NOV_NATIVE_GOVERNANCE_ALLOWLIST_ENV: &str = "NOVOVM_NATIVE_GOVERNANCE_PROPOSERS";
 pub const NOV_NATIVE_GOVERNANCE_ENABLED_ENV: &str = "NOVOVM_NATIVE_GOVERNANCE_ENABLED";
 pub const NOV_NATIVE_CHAIN_ID_ENV: &str = "NOVOVM_NATIVE_CHAIN_ID";
-pub const NOV_NATIVE_HOST_SIGNING_SEED_ENV: &str = "NOVOVM_NATIVE_HOST_SIGNING_SEED";
 pub const NOV_NATIVE_EXECUTION_STORE_ENV: &str = "NOVOVM_NATIVE_EXECUTION_STORE";
 pub const NOV_NATIVE_EXECUTION_STORE_BACKEND_ENV: &str = "NOVOVM_NATIVE_EXECUTION_STORE_BACKEND";
 pub const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_PATH_ENV: &str =
@@ -98,6 +100,7 @@ pub const NOV_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED_ENV: &str =
 pub const NOV_NATIVE_AOEM_SEMANTIC_LEDGER_MIRROR_ENV: &str =
     "NOVOVM_NATIVE_AOEM_SEMANTIC_LEDGER_MIRROR";
 pub const NOV_NATIVE_AOEM_OWNED_STATE_DB_PATH_ENV: &str = "NOVOVM_AOEM_OWNED_STATE_DB_PATH";
+pub const NOV_NATIVE_AOEM_STATE_NAMESPACE_ENV: &str = "NOVOVM_AOEM_STATE_NAMESPACE";
 pub const NOV_NATIVE_AOEM_CONCURRENT_EXECUTION_ENABLED_ENV: &str =
     "NOVOVM_NATIVE_AOEM_CONCURRENT_EXECUTION_ENABLED";
 pub const NOV_NATIVE_AOEM_BATCH_MAX_SIZE_ENV: &str = "NOVOVM_NATIVE_AOEM_BATCH_MAX_SIZE";
@@ -163,7 +166,6 @@ const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_SEMANTIC_BY_HEIGHT_PREFIX_V1: &[u8] =
 const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_SNAPSHOT_META_PREFIX_V1: &[u8] = b"snapshot_meta/";
 const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_SNAPSHOT_META_CURRENT_V1: &[u8] = b"snapshot_meta/current";
 const NOV_NATIVE_EXECUTION_STORE_LOCK_TIMEOUT_MS_V1: u64 = 10_000;
-const NOV_NATIVE_EXECUTION_STORE_LOCK_STALE_MS_V1: u64 = 60_000;
 const NOV_NATIVE_EXECUTION_STORE_LOCK_POLL_MS_V1: u64 = 10;
 const NOV_FEE_RATE_PPM_DENOMINATOR_V1: u128 = 1_000_000;
 const NOV_FEE_RATE_PPM_NOV_V1: u128 = NOV_FEE_RATE_PPM_DENOMINATOR_V1;
@@ -463,6 +465,10 @@ pub struct NovAoemSemanticMutationCommitV1 {
     pub action: String,
     pub tx_ref: String,
     pub mirror_backend: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mirror_projection_ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mirror_projection_error: Option<String>,
     pub fallback_reason: Option<String>,
 }
 
@@ -791,6 +797,10 @@ pub struct NovNativeExecutionModuleStateV1 {
     #[serde(default)]
     pub account_asset_balances: BTreeMap<String, BTreeMap<String, u128>>,
     #[serde(default)]
+    pub native_auth_nonce_reservations: BTreeMap<String, String>,
+    #[serde(default)]
+    pub native_auth_next_nonces: BTreeMap<String, u64>,
+    #[serde(default)]
     pub governance_proposals: BTreeMap<u64, serde_json::Value>,
     #[serde(default)]
     pub next_governance_proposal_id: u64,
@@ -959,6 +969,8 @@ pub struct NovNativeExecutionModuleStateV1 {
     #[serde(default)]
     pub aoem_semantic_ledger_head: String,
     #[serde(default)]
+    pub aoem_semantic_ledger_records: BTreeMap<u64, NovAoemSemanticLedgerMirrorRecordV1>,
+    #[serde(default)]
     pub unified_account_semantic_event_count: u64,
     #[serde(default)]
     pub unified_account_semantic_head: String,
@@ -980,6 +992,8 @@ impl Default for NovNativeExecutionModuleStateV1 {
             treasury_reserves: BTreeMap::new(),
             treasury_reserve_proofs: BTreeMap::new(),
             account_asset_balances: BTreeMap::new(),
+            native_auth_nonce_reservations: BTreeMap::new(),
+            native_auth_next_nonces: BTreeMap::new(),
             governance_proposals: BTreeMap::new(),
             next_governance_proposal_id: 0,
             treasury_settled_nov_total: 0,
@@ -1067,6 +1081,7 @@ impl Default for NovNativeExecutionModuleStateV1 {
             execution_trace_order: Vec::new(),
             aoem_semantic_ledger_sequence: 0,
             aoem_semantic_ledger_head: String::new(),
+            aoem_semantic_ledger_records: BTreeMap::new(),
             unified_account_semantic_event_count: 0,
             unified_account_semantic_head: String::new(),
             unified_account_semantic_last_digest: String::new(),
@@ -1082,6 +1097,10 @@ impl Default for NovNativeExecutionModuleStateV1 {
 pub struct NovNativeExecutionStoreV1 {
     pub schema: String,
     #[serde(default)]
+    pub authority_chain_id: Option<u64>,
+    #[serde(default)]
+    pub authority_namespace_digest: String,
+    #[serde(default)]
     pub receipts: BTreeMap<String, NovNativeExecutionReceiptV1>,
     #[serde(default)]
     pub module_state: NovNativeExecutionModuleStateV1,
@@ -1094,6 +1113,10 @@ pub struct NovNativeExecutionStoreSnapshotMetaV1 {
     pub schema: String,
     pub store_schema: String,
     pub backend_schema: String,
+    #[serde(default)]
+    pub authority_chain_id: Option<u64>,
+    #[serde(default)]
+    pub authority_namespace_digest: String,
     pub last_updated_unix_ms: u128,
     pub receipt_count: usize,
     pub account_count: usize,
@@ -1106,6 +1129,8 @@ impl Default for NovNativeExecutionStoreV1 {
     fn default() -> Self {
         Self {
             schema: NOV_NATIVE_EXECUTION_STORE_SCHEMA_V1.to_string(),
+            authority_chain_id: None,
+            authority_namespace_digest: String::new(),
             receipts: BTreeMap::new(),
             module_state: NovNativeExecutionModuleStateV1::default(),
             last_updated_unix_ms: 0,
@@ -1125,11 +1150,18 @@ fn estimate_native_execution_store_retained_bytes_v1(store: &NovNativeExecutionS
         .values()
         .map(BTreeMap::len)
         .sum::<usize>() as u64;
+    let native_auth_nonce_reservation_count =
+        store.module_state.native_auth_nonce_reservations.len() as u64;
+    let native_auth_nonce_identity_count = store.module_state.native_auth_next_nonces.len() as u64;
+    let semantic_ledger_record_count = store.module_state.aoem_semantic_ledger_records.len() as u64;
     receipt_count
         .saturating_mul(1024)
         .saturating_add(trace_count.saturating_mul(2048))
         .saturating_add(trace_order_count.saturating_mul(96))
         .saturating_add(account_asset_count.saturating_mul(128))
+        .saturating_add(native_auth_nonce_reservation_count.saturating_mul(192))
+        .saturating_add(native_auth_nonce_identity_count.saturating_mul(96))
+        .saturating_add(semantic_ledger_record_count.saturating_mul(768))
 }
 
 #[derive(Debug)]
@@ -1157,10 +1189,23 @@ static LOCAL_TX_RECORD_CODEC_REGISTRY: OnceLock<RawIngressCodecRegistry> = OnceL
 type NativeAuthNonceReservationKeyV1 = (u64, Vec<u8>, u64);
 type NativeAuthNonceReservationRegistryV1 =
     Mutex<HashMap<NativeAuthNonceReservationKeyV1, [u8; 32]>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NovNativeDurableAuthReservationV1 {
+    runtime_key: NativeAuthNonceReservationKeyV1,
+    ledger_key: String,
+    identity_key: String,
+    nonce: u64,
+    reservation_id: String,
+    tx_hash: String,
+}
+#[cfg(test)]
 type NativeHostNonceAllocatorKeyV1 = (u64, Vec<u8>);
+#[cfg(test)]
 type NativeHostNonceAllocatorV1 = Mutex<HashMap<NativeHostNonceAllocatorKeyV1, u64>>;
 static NOV_NATIVE_AUTH_NONCE_RESERVATIONS_V1: OnceLock<NativeAuthNonceReservationRegistryV1> =
     OnceLock::new();
+#[cfg(test)]
 static NOV_NATIVE_HOST_NEXT_NONCES_V1: OnceLock<NativeHostNonceAllocatorV1> = OnceLock::new();
 
 #[inline]
@@ -1267,7 +1312,7 @@ fn native_aoem_native_tx_batch_shadow_enabled_v1() -> bool {
 fn native_aoem_native_tx_batch_production_candidate_enabled_v1() -> bool {
     bool_env_default_v1(
         NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
-        true,
+        false,
     )
 }
 
@@ -1342,7 +1387,7 @@ fn tx_ingress_aoem_ownership_gates_from_params_v1(
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("explicit_params")
             .to_string();
-        return TxIngressAoemOwnershipGatesV1 {
+        let mut gates = TxIngressAoemOwnershipGatesV1 {
             production_candidate: bool_param_from_object_any_v1(
                 config,
                 &["production_candidate", "productionCandidate"],
@@ -1364,6 +1409,8 @@ fn tx_ingress_aoem_ownership_gates_from_params_v1(
             source,
             explicit: true,
         };
+        pin_tx_ingress_aoem_ownership_gates_to_environment_v1(&mut gates);
+        return gates;
     }
 
     let production_candidate = bool_param_any_v1(
@@ -1412,7 +1459,7 @@ fn tx_ingress_aoem_ownership_gates_from_params_v1(
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("explicit_params")
             .to_string();
-        return TxIngressAoemOwnershipGatesV1 {
+        let mut gates = TxIngressAoemOwnershipGatesV1 {
             production_candidate: production_candidate.unwrap_or(false),
             semantic_graph_v3_required: semantic_graph_v3_required.unwrap_or(false),
             shadow: shadow.unwrap_or(false),
@@ -1420,6 +1467,8 @@ fn tx_ingress_aoem_ownership_gates_from_params_v1(
             source,
             explicit: true,
         };
+        pin_tx_ingress_aoem_ownership_gates_to_environment_v1(&mut gates);
+        return gates;
     }
 
     TxIngressAoemOwnershipGatesV1 {
@@ -1430,6 +1479,16 @@ fn tx_ingress_aoem_ownership_gates_from_params_v1(
         source: "env_fallback".to_string(),
         explicit: false,
     }
+}
+
+fn pin_tx_ingress_aoem_ownership_gates_to_environment_v1(
+    gates: &mut TxIngressAoemOwnershipGatesV1,
+) {
+    // Request parameters may opt into stricter validation, but they may never
+    // turn off an ownership/compare gate pinned by the node operator.
+    gates.production_candidate |= native_aoem_native_tx_batch_production_candidate_enabled_v1();
+    gates.shadow |= native_aoem_native_tx_batch_shadow_enabled_v1();
+    gates.compare |= native_aoem_native_tx_batch_compare_enabled_v1();
 }
 
 fn native_aoem_owned_runtime_config_v1() -> Result<AoemRuntimeConfig> {
@@ -1763,6 +1822,9 @@ fn bool_param_any_v1(params: &serde_json::Value, keys: &[&str]) -> Option<bool> 
 }
 
 fn native_send_raw_transaction_pipeline_only_v1(params: &serde_json::Value) -> bool {
+    if bool_env_default_v1(NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV, false) {
+        return true;
+    }
     bool_param_any_v1(
         params,
         &[
@@ -1772,9 +1834,7 @@ fn native_send_raw_transaction_pipeline_only_v1(params: &serde_json::Value) -> b
             "pendingOnly",
         ],
     )
-    .unwrap_or_else(|| {
-        bool_env_default_v1(NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV, false)
-    })
+    .unwrap_or(false)
 }
 
 fn usize_env_default_v1(name: &str, default: usize) -> usize {
@@ -2504,6 +2564,14 @@ pub fn get_nov_native_execution_store_recovery_probe_v1(path: &Path) -> Result<s
         "materialized_view_rebuilt": materialized_view_rebuilt,
         "materialized_account_count": materialized_account_count,
         "materialized_account_asset_count": materialized_account_asset_count,
+        "durable_native_nonce_reservation_count": store
+            .module_state
+            .native_auth_nonce_reservations
+            .len(),
+        "durable_native_nonce_identity_count": store
+            .module_state
+            .native_auth_next_nonces
+            .len(),
         "semantic_head": {
             "sequence": sequence,
             "head": head,
@@ -2657,6 +2725,23 @@ fn native_policy_state_projection_v1(state: &NovNativeExecutionModuleStateV1) ->
     })
 }
 
+fn native_committed_module_state_projection_v2(
+    state: &NovNativeExecutionModuleStateV1,
+) -> serde_json::Value {
+    let mut projection = serde_json::to_value(state)
+        .expect("NovNativeExecutionModuleStateV1 must remain JSON serializable");
+    if let Some(object) = projection.as_object_mut() {
+        // These fields contain the commit chain produced from the state digest
+        // itself. Excluding only that self-referential evidence keeps every
+        // executable, policy, accounting, nonce, and query-visible state field
+        // bound by the state root.
+        object.remove("aoem_semantic_ledger_sequence");
+        object.remove("aoem_semantic_ledger_head");
+        object.remove("aoem_semantic_ledger_records");
+    }
+    projection
+}
+
 fn build_native_execution_semantic_deltas_v1(
     before: &NovNativeExecutionModuleStateV1,
     after: &NovNativeExecutionModuleStateV1,
@@ -2754,6 +2839,25 @@ fn build_native_execution_semantic_deltas_v1(
         native_policy_state_projection_v1(after),
     );
 
+    push_native_json_semantic_delta_v1(
+        &mut deltas,
+        "native_auth_nonce_reservations",
+        serde_json::json!(before.native_auth_nonce_reservations),
+        serde_json::json!(after.native_auth_nonce_reservations),
+    );
+    push_native_json_semantic_delta_v1(
+        &mut deltas,
+        "native_auth_next_nonces",
+        serde_json::json!(before.native_auth_next_nonces),
+        serde_json::json!(after.native_auth_next_nonces),
+    );
+    push_native_json_semantic_delta_v1(
+        &mut deltas,
+        "native_committed_module_state_v2",
+        native_committed_module_state_projection_v2(before),
+        native_committed_module_state_projection_v2(after),
+    );
+
     deltas
 }
 
@@ -2769,24 +2873,10 @@ fn native_semantic_delta_digest_v1(deltas: &[serde_json::Value]) -> String {
 }
 
 fn native_semantic_ledger_state_digest_v1(state: &NovNativeExecutionModuleStateV1) -> String {
-    let projection = serde_json::json!({
-        "account_asset_balances": state.account_asset_balances,
-        "treasury_reserves": state.treasury_reserves,
-        "treasury_settled_nov_total": state.treasury_settled_nov_total,
-        "treasury_settlements": state.treasury_settlements,
-        "treasury_settled_by_asset": state.treasury_settled_by_asset,
-        "treasury_redeemed_nov_total": state.treasury_redeemed_nov_total,
-        "treasury_redeemed_by_asset": state.treasury_redeemed_by_asset,
-        "treasury_reserve_bucket_nov": state.treasury_reserve_bucket_nov,
-        "treasury_fee_bucket_nov": state.treasury_fee_bucket_nov,
-        "treasury_risk_buffer_nov": state.treasury_risk_buffer_nov,
-        "credit_vaults": state.credit_vaults,
-        "next_credit_vault_id": state.next_credit_vault_id,
-        "native_policy_state": native_policy_state_projection_v1(state),
-    });
+    let projection = native_committed_module_state_projection_v2(state);
     let bytes = serde_json::to_vec(&projection).unwrap_or_default();
     to_hex(&sha256_bytes_v1(&[
-        b"novovm-native-aoem-semantic-ledger-state-digest-v1",
+        b"novovm-native-aoem-semantic-ledger-state-digest-v2",
         bytes.as_slice(),
     ]))
 }
@@ -2904,6 +2994,8 @@ fn build_native_receipt_aoem_semantic_commit_v1(
         action: receipt.method.clone(),
         tx_ref: receipt.tx_hash.clone(),
         mirror_backend: "jsonl_append_only".to_string(),
+        mirror_projection_ok: None,
+        mirror_projection_error: None,
         fallback_reason: meta.fallback_reason.clone(),
     })
 }
@@ -3084,9 +3176,15 @@ where
         source: source.to_string(),
         created_at_ms: now_ms,
     };
-    let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(path);
-    append_nov_native_aoem_semantic_ledger_mirror_record_v1(mirror_path.as_path(), &mirror_record)?;
+    store
+        .module_state
+        .aoem_semantic_ledger_records
+        .insert(next_sequence, mirror_record);
     save_nov_native_execution_store_with_previous_v1(path, Some(&previous_store), &store)?;
+    let mirror_projection_error =
+        reconcile_nov_native_aoem_semantic_ledger_mirror_from_store_v1(path, &store, now_ms)
+            .err()
+            .map(|err| format!("{err:#}"));
 
     let commit = NovAoemSemanticMutationCommitV1 {
         schema: "novovm-native-aoem-semantic-mutation-commit/v1".to_string(),
@@ -3114,6 +3212,8 @@ where
         action: action.to_string(),
         tx_ref: tx_ref.to_string(),
         mirror_backend: "jsonl_append_only".to_string(),
+        mirror_projection_ok: Some(mirror_projection_error.is_none()),
+        mirror_projection_error,
         fallback_reason: meta.fallback_reason,
     };
     Ok((output, Some(commit)))
@@ -3203,63 +3303,21 @@ fn governance_allowlist_env_v1() -> Vec<String> {
     out
 }
 
-fn governance_authority_check_v1(
-    governance: &NovGovernanceTxV1,
-    params: &serde_json::Value,
-) -> Result<()> {
-    if !bool_env_default_v1(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, false) {
-        bail!(
-            "native governance tx is disabled (set {}=true to enable)",
-            NOV_NATIVE_GOVERNANCE_ENABLED_ENV
-        );
-    }
-    if params
-        .get("governance_authorized")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-    {
-        return Ok(());
-    }
-    let proposer = to_hex(&governance.proposer);
-    let allowlist = governance_allowlist_env_v1();
-    if allowlist.is_empty() {
-        bail!(
-            "governance authority missing: allow {} or provide governance_authorized=true",
-            NOV_NATIVE_GOVERNANCE_ALLOWLIST_ENV
-        );
-    }
-    if !allowlist.iter().any(|item| item == &proposer) {
-        bail!(
-            "governance proposer not authorized: proposer=0x{} allowlist_env={}",
-            proposer,
-            NOV_NATIVE_GOVERNANCE_ALLOWLIST_ENV
-        );
-    }
-    Ok(())
-}
-
 fn governance_execute_authorized_v1(
     request: &NovExecutionRequestV1,
-    args: &serde_json::Value,
+    _args: &serde_json::Value,
 ) -> Result<()> {
     if !bool_env_default_v1(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, false) {
         bail!(
             "native governance tx is disabled (set {}=true to enable)",
             NOV_NATIVE_GOVERNANCE_ENABLED_ENV
         );
-    }
-    if args
-        .get("governance_authorized")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-    {
-        return Ok(());
     }
     let proposer = to_hex(&request.caller);
     let allowlist = governance_allowlist_env_v1();
     if allowlist.is_empty() {
         bail!(
-            "governance authority missing: allow {} or provide governance_authorized=true",
+            "governance authority missing: configure {} with canonical signer identities",
             NOV_NATIVE_GOVERNANCE_ALLOWLIST_ENV
         );
     }
@@ -3302,8 +3360,7 @@ pub fn nov_native_tx_to_execution_request_v1(
     let NovTxKindV1::Execute(execute) = &tx.kind else {
         return Ok(None);
     };
-    let mut ir = nov_native_tx_to_adapter_tx_ir_v1(tx)?;
-    ir.compute_hash();
+    let ir = nov_native_tx_to_adapter_tx_ir_v1(tx)?;
     let mut tx_hash = [0u8; 32];
     let hash = ir.hash.as_slice();
     if hash.len() >= 32 {
@@ -3397,6 +3454,14 @@ pub fn nov_native_tx_to_adapter_tx_ir_v1(tx: &NovNativeTxWireV1) -> Result<TxIR>
             target_chain: None,
         },
     };
+    let signed_intent_commitment = novovm_protocol::native_tx_unsigned_commitment_v3(tx)
+        .context("compute native signed-intent commitment failed")?;
+    let original_data = std::mem::take(&mut ir.data);
+    ir.data = Vec::with_capacity(33 + signed_intent_commitment.len() + original_data.len());
+    ir.data
+        .extend_from_slice(b"novovm-native-signed-intent-v3\0");
+    ir.data.extend_from_slice(&signed_intent_commitment);
+    ir.data.extend_from_slice(original_data.as_slice());
     ir.compute_hash();
     Ok(ir)
 }
@@ -3406,9 +3471,32 @@ pub fn sign_nov_native_tx_with_seed_v1(
     signing_seed: [u8; 32],
 ) -> Result<()> {
     let signer = novovm_adapter_novovm::address_from_seed_v1(signing_seed);
+    let signer_account = to_hex_prefixed_v1(signer.as_slice()).to_ascii_lowercase();
     match &mut tx.kind {
         NovTxKindV1::Transfer(transfer) => transfer.from = signer,
-        NovTxKindV1::Execute(execute) => execute.caller = signer,
+        NovTxKindV1::Execute(execute) => {
+            let caller_was_empty = execute.caller.is_empty();
+            let previous_caller =
+                to_hex_prefixed_v1(execute.caller.as_slice()).to_ascii_lowercase();
+            let should_follow_direct_signer = |account: &Option<String>| {
+                caller_was_empty
+                    || account.is_none()
+                    || account
+                        .as_deref()
+                        .and_then(normalize_account_ref_v1)
+                        .is_some_and(|value| value == previous_caller)
+            };
+            if should_follow_direct_signer(&execute.account_id) {
+                execute.account_id = Some(signer_account.clone());
+            }
+            if should_follow_direct_signer(&execute.fee_owner_account_id) {
+                execute.fee_owner_account_id = Some(signer_account.clone());
+            }
+            if should_follow_direct_signer(&execute.nonce_owner_account_id) {
+                execute.nonce_owner_account_id = Some(signer_account.clone());
+            }
+            execute.caller = signer;
+        }
         NovTxKindV1::Governance(governance) => governance.proposer = signer,
     }
     tx.signature.clear();
@@ -3452,7 +3540,64 @@ fn native_auth_nonce_identity_v1(tx: &NovNativeTxWireV1, ir: &TxIR) -> Vec<u8> {
     identity
 }
 
-fn next_host_native_nonce_v1(chain_id: u64, nonce_owner_account_id: &str) -> Result<u64> {
+fn native_auth_nonce_identity_key_v1(chain_id: u64, identity: &[u8]) -> String {
+    to_hex(&sha256_bytes_v1(&[
+        b"novovm-native-auth-nonce-identity-v1",
+        &chain_id.to_be_bytes(),
+        identity,
+    ]))
+}
+
+fn native_auth_nonce_reservation_id_v1(tx_hash: [u8; 32], signature: &[u8]) -> [u8; 32] {
+    sha256_bytes_v1(&[
+        b"novovm-native-auth-nonce-reservation-v1",
+        &tx_hash,
+        signature,
+    ])
+}
+
+fn native_auth_nonce_ledger_key_v1(reservation_key: &NativeAuthNonceReservationKeyV1) -> String {
+    let chain_id_bytes = reservation_key.0.to_be_bytes();
+    let nonce_bytes = reservation_key.2.to_be_bytes();
+    to_hex(&sha256_bytes_v1(&[
+        b"novovm-native-auth-durable-nonce-key-v1",
+        &chain_id_bytes,
+        reservation_key.1.as_slice(),
+        &nonce_bytes,
+    ]))
+}
+
+fn nov_native_durable_auth_reservation_v1(
+    native_tx: &NovNativeTxWireV1,
+    ir: &TxIR,
+    tx_hash: [u8; 32],
+) -> NovNativeDurableAuthReservationV1 {
+    let reservation_key = (
+        native_tx.chain_id,
+        native_auth_nonce_identity_v1(native_tx, ir),
+        native_tx_nonce_for_auth_v1(native_tx),
+    );
+    let reservation_id =
+        native_auth_nonce_reservation_id_v1(tx_hash, native_tx.signature.as_slice());
+    NovNativeDurableAuthReservationV1 {
+        runtime_key: reservation_key.clone(),
+        ledger_key: native_auth_nonce_ledger_key_v1(&reservation_key),
+        identity_key: native_auth_nonce_identity_key_v1(
+            reservation_key.0,
+            reservation_key.1.as_slice(),
+        ),
+        nonce: reservation_key.2,
+        reservation_id: to_hex(&reservation_id),
+        tx_hash: to_hex(&tx_hash),
+    }
+}
+
+#[cfg(test)]
+fn next_host_native_nonce_v1(
+    params: &serde_json::Value,
+    chain_id: u64,
+    nonce_owner_account_id: &str,
+) -> Result<u64> {
     let mut identity = b"account:".to_vec();
     identity.extend_from_slice(
         nonce_owner_account_id
@@ -3460,6 +3605,15 @@ fn next_host_native_nonce_v1(chain_id: u64, nonce_owner_account_id: &str) -> Res
             .to_ascii_lowercase()
             .as_bytes(),
     );
+    let identity_key = native_auth_nonce_identity_key_v1(chain_id, identity.as_slice());
+    let store_path = resolve_native_execution_store_path_from_params_v1(params)
+        .unwrap_or_else(nov_native_execution_store_path_v1);
+    let durable_floor = load_nov_native_execution_store_v1(store_path.as_path())?
+        .module_state
+        .native_auth_next_nonces
+        .get(identity_key.as_str())
+        .copied()
+        .unwrap_or_default();
     let host_next_nonces =
         NOV_NATIVE_HOST_NEXT_NONCES_V1.get_or_init(|| Mutex::new(HashMap::new()));
     let mut next_guard = host_next_nonces
@@ -3477,7 +3631,9 @@ fn next_host_native_nonce_v1(chain_id: u64, nonce_owner_account_id: &str) -> Res
         })
         .map(|(_, _, nonce)| *nonce)
         .max()
-        .map_or(0, |nonce| nonce.saturating_add(1));
+        .map_or(durable_floor, |nonce| {
+            nonce.saturating_add(1).max(durable_floor)
+        });
     let next = next_guard
         .entry((chain_id, identity))
         .or_insert(reservation_floor);
@@ -3487,6 +3643,47 @@ fn next_host_native_nonce_v1(chain_id: u64, nonce_owner_account_id: &str) -> Res
     let allocated = *next;
     *next = (*next).saturating_add(1);
     Ok(allocated)
+}
+
+fn verify_nov_native_execute_subject_authority_v1(
+    _params: &serde_json::Value,
+    native_tx: &NovNativeTxWireV1,
+    ir: &TxIR,
+) -> Result<()> {
+    let NovTxKindV1::Execute(execute) = &native_tx.kind else {
+        return Ok(());
+    };
+    if execute.execution_policy == NovExecutionPolicyV1::PqRequired {
+        bail!(
+            "nov native authentication rejected: wire v3 carries only Ed25519 authentication and cannot satisfy PqRequired; use a future canonical PQ-capable wire"
+        );
+    }
+    let signer_account = normalize_account_ref_v1(to_hex_prefixed_v1(ir.from.as_slice()).as_str())
+        .ok_or_else(|| anyhow::anyhow!("nov native signer account is invalid"))?;
+    let subject = subject_meta_from_execute_tx_v1(execute);
+    let claimed_accounts = [
+        ("account_id", subject.account_id.as_str()),
+        (
+            "fee_owner_account_id",
+            subject.fee_owner_account_id.as_str(),
+        ),
+        (
+            "nonce_owner_account_id",
+            subject.nonce_owner_account_id.as_str(),
+        ),
+    ];
+    for (field, account_id) in claimed_accounts {
+        if account_id == signer_account {
+            continue;
+        }
+        bail!(
+            "nov native authentication rejected: {}={} must equal direct signer {}; canonical UCA delegation proof is not available in native wire v3",
+            field,
+            account_id,
+            signer_account
+        );
+    }
+    Ok(())
 }
 
 fn requested_native_chain_id_v1(params: &serde_json::Value) -> Option<u64> {
@@ -3542,23 +3739,22 @@ fn verify_nov_native_auth_v1(
     if !novovm_adapter_novovm::verify_native_tx_signature_v1(ir)? {
         bail!("nov native authentication rejected: signature or signer identity mismatch");
     }
+    verify_nov_native_execute_subject_authority_v1(params, native_tx, ir)?;
 
     let reservation_key = (
         native_tx.chain_id,
         native_auth_nonce_identity_v1(native_tx, ir),
         nonce,
     );
-    let reservation_id = sha256_bytes_v1(&[
-        b"novovm-native-auth-nonce-reservation-v1",
-        &tx_hash,
-        native_tx.signature.as_slice(),
-    ]);
+    let reservation_id =
+        native_auth_nonce_reservation_id_v1(tx_hash, native_tx.signature.as_slice());
     Ok((reservation_key, reservation_id))
 }
 
 fn reserve_nov_native_auth_nonce_v1(
     reservation_key: NativeAuthNonceReservationKeyV1,
     reservation_id: [u8; 32],
+    durable_expected_nonce: Option<u64>,
 ) -> Result<()> {
     let reservations =
         NOV_NATIVE_AUTH_NONCE_RESERVATIONS_V1.get_or_init(|| Mutex::new(HashMap::new()));
@@ -3576,14 +3772,238 @@ fn reserve_nov_native_auth_nonce_v1(
         }
         return Ok(());
     }
+    let pending_expected_nonce = guard
+        .keys()
+        .filter(|(chain_id, identity, _)| {
+            *chain_id == reservation_key.0 && identity == &reservation_key.1
+        })
+        .map(|(_, _, nonce)| *nonce)
+        .max()
+        .map(|nonce| nonce.saturating_add(1));
+    let expected_nonce = match (pending_expected_nonce, durable_expected_nonce) {
+        (Some(pending), Some(durable)) => pending.max(durable),
+        (Some(pending), None) => pending,
+        (None, Some(durable)) => durable,
+        (None, None) => 0,
+    };
+    if reservation_key.2 != expected_nonce {
+        bail!(
+            "nov native authentication rejected: nonce sequence mismatch chain_id={} expected={} got={} nonce_owner={}",
+            reservation_key.0,
+            expected_nonce,
+            reservation_key.2,
+            String::from_utf8_lossy(&reservation_key.1)
+        );
+    }
     guard.insert(reservation_key, reservation_id);
     Ok(())
+}
+
+fn release_nov_native_auth_nonce_reservation_v1(
+    durable: &NovNativeDurableAuthReservationV1,
+) -> Result<()> {
+    let Some(reservations) = NOV_NATIVE_AUTH_NONCE_RESERVATIONS_V1.get() else {
+        return Ok(());
+    };
+    let mut guard = reservations
+        .lock()
+        .map_err(|_| anyhow::anyhow!("nov native authentication nonce registry poisoned"))?;
+    let matches_exact_reservation = guard
+        .get(&durable.runtime_key)
+        .is_some_and(|reservation_id| to_hex(reservation_id) == durable.reservation_id);
+    if matches_exact_reservation {
+        guard.remove(&durable.runtime_key);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NovNativeDurableAuthNonceCheckV1 {
+    ExactReplay,
+    New { expected_nonce: Option<u64> },
+}
+
+fn verify_nov_native_durable_auth_nonce_v1(
+    params: &serde_json::Value,
+    reservation: &NovNativeDurableAuthReservationV1,
+) -> Result<NovNativeDurableAuthNonceCheckV1> {
+    let store_path = resolve_native_execution_store_path_from_params_v1(params)
+        .unwrap_or_else(nov_native_execution_store_path_v1);
+    let store = load_nov_native_execution_store_v1(store_path.as_path()).with_context(|| {
+        format!(
+            "load durable native authentication state failed: {}",
+            store_path.display()
+        )
+    })?;
+    if let Some(existing_reservation_id) = store
+        .module_state
+        .native_auth_nonce_reservations
+        .get(reservation.ledger_key.as_str())
+    {
+        if existing_reservation_id != &reservation.reservation_id {
+            bail!(
+                "nov native authentication rejected: durable nonce conflict ledger_key={} committed_reservation={} requested_reservation={}",
+                reservation.ledger_key,
+                existing_reservation_id,
+                reservation.reservation_id
+            );
+        }
+        return Ok(NovNativeDurableAuthNonceCheckV1::ExactReplay);
+    }
+    let expected_nonce = store
+        .module_state
+        .native_auth_next_nonces
+        .get(reservation.identity_key.as_str())
+        .copied()
+        .unwrap_or(0);
+    if reservation.nonce != expected_nonce {
+        bail!(
+            "nov native authentication rejected: durable nonce sequence mismatch identity_key={} expected={} got={}",
+            reservation.identity_key,
+            expected_nonce,
+            reservation.nonce
+        );
+    }
+    Ok(NovNativeDurableAuthNonceCheckV1::New {
+        expected_nonce: Some(expected_nonce),
+    })
 }
 
 pub fn ingest_local_nov_raw_tx_payload_v1(
     params: &serde_json::Value,
     payload: &[u8],
 ) -> Result<(NovNativeTxWireV1, TxIR, [u8; 32])> {
+    let (native_tx, ir, tx_hash, _) =
+        ingest_local_nov_raw_tx_payload_internal_v1(params, payload, true, true)?;
+    Ok((native_tx, ir, tx_hash))
+}
+
+/// Validate an authenticated remote NOV native frame before it becomes
+/// pending. The outer transport hash and chain are treated as commitments,
+/// not hints, and the same signature/identity/durable-nonce gate used by local
+/// raw ingress is applied before the pending payload is retained.
+pub fn ingest_remote_nov_raw_tx_payload_v1(
+    params: &serde_json::Value,
+    announced_chain_id: u64,
+    source_peer_id: u64,
+    announced_tx_hash: [u8; 32],
+    payload: &[u8],
+    validated_transport_auth: Option<&novovm_protocol::EvmNativeTransactionFrameAuthV1>,
+) -> Result<[u8; 32]> {
+    if payload.is_empty() {
+        observe_network_runtime_native_pending_tx_rejected_v1(
+            announced_chain_id,
+            announced_tx_hash,
+            Some(source_peer_id),
+        );
+        bail!("remote nov native payload is empty");
+    }
+    let native_tx = decode_nov_native_tx_wire_v1(payload).map_err(|err| {
+        observe_network_runtime_native_pending_tx_rejected_v1(
+            announced_chain_id,
+            announced_tx_hash,
+            Some(source_peer_id),
+        );
+        anyhow::anyhow!("remote nov native payload decode failed: {err}")
+    })?;
+    if native_tx.chain_id != announced_chain_id {
+        observe_network_runtime_native_pending_tx_rejected_v1(
+            announced_chain_id,
+            announced_tx_hash,
+            Some(source_peer_id),
+        );
+        bail!(
+            "remote nov native chain commitment mismatch announced={} signed={}",
+            announced_chain_id,
+            native_tx.chain_id
+        );
+    }
+    let ir = nov_native_tx_to_adapter_tx_ir_v1(&native_tx).inspect_err(|_| {
+        observe_network_runtime_native_pending_tx_rejected_v1(
+            announced_chain_id,
+            announced_tx_hash,
+            Some(source_peer_id),
+        );
+    })?;
+    let canonical_tx_hash = tx_hash_array_from_ir_v1(&ir);
+    if canonical_tx_hash != announced_tx_hash {
+        observe_network_runtime_native_pending_tx_rejected_v1(
+            announced_chain_id,
+            announced_tx_hash,
+            Some(source_peer_id),
+        );
+        bail!(
+            "remote nov native transaction hash commitment mismatch announced=0x{} canonical=0x{}",
+            to_hex(&announced_tx_hash),
+            to_hex(&canonical_tx_hash)
+        );
+    }
+
+    let (_, _, admitted_hash, should_admit_pending) = ingest_local_nov_raw_tx_payload_internal_v1(
+        params, payload, true, false,
+    )
+    .inspect_err(|_| {
+        observe_network_runtime_native_pending_tx_rejected_v1(
+            announced_chain_id,
+            announced_tx_hash,
+            Some(source_peer_id),
+        );
+    })?;
+    debug_assert_eq!(admitted_hash, canonical_tx_hash);
+
+    if let Some(meta) = validated_transport_auth {
+        if !observe_runtime_novorudp_verified_sequence_tx_hash_mapping_v1(
+            announced_chain_id,
+            source_peer_id,
+            meta.run_id.as_str(),
+            meta.sequence,
+            canonical_tx_hash,
+        ) {
+            let durable_reservation =
+                nov_native_durable_auth_reservation_v1(&native_tx, &ir, canonical_tx_hash);
+            release_nov_native_auth_nonce_reservation_v1(&durable_reservation)?;
+            observe_network_runtime_native_pending_tx_rejected_v1(
+                announced_chain_id,
+                announced_tx_hash,
+                Some(source_peer_id),
+            );
+            bail!(
+                "remote nov native transport sequence equivocation sender={} run={} sequence={}",
+                source_peer_id,
+                meta.run_id,
+                meta.sequence
+            );
+        }
+        if meta.frame_kind == "repair" {
+            observe_network_runtime_native_pending_tx_repair_probe_v1(
+                announced_chain_id,
+                canonical_tx_hash,
+                meta.copy_index.max(1),
+                Some(payload),
+            );
+        }
+    }
+
+    if should_admit_pending {
+        observe_network_runtime_native_pending_tx_remote_native_payload_v1(
+            announced_chain_id,
+            source_peer_id,
+            canonical_tx_hash,
+            Some(payload),
+        );
+    } else {
+        observe_runtime_novorudp_receipt_proof_close_v1(announced_chain_id, canonical_tx_hash);
+        observe_runtime_novorudp_canonical_proof_close_v1(announced_chain_id, canonical_tx_hash);
+    }
+    Ok(canonical_tx_hash)
+}
+
+fn ingest_local_nov_raw_tx_payload_internal_v1(
+    params: &serde_json::Value,
+    payload: &[u8],
+    check_durable_nonce: bool,
+    admit_pending: bool,
+) -> Result<(NovNativeTxWireV1, TxIR, [u8; 32], bool)> {
     if payload.is_empty() {
         bail!("nov_sendRawTransaction payload is empty");
     }
@@ -3603,8 +4023,41 @@ pub fn ingest_local_nov_raw_tx_payload_v1(
                 return Err(err);
             }
         };
-    if let NovTxKindV1::Governance(governance) = &native_tx.kind {
-        if let Err(err) = governance_authority_check_v1(governance, params) {
+    if !matches!(&native_tx.kind, NovTxKindV1::Execute(_)) {
+        observe_network_runtime_native_pending_tx_rejected_v1(native_tx.chain_id, tx_hash, None);
+        bail!(
+            "nov native authenticated ingress rejected: {} is not executable by the AOEM-owned durable finalize path; only execute is enabled until transfer/governance ownership is implemented",
+            native_tx_kind_label_v1(&native_tx)
+        );
+    }
+    let durable_reservation = nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash);
+    let durable_check = if check_durable_nonce {
+        match verify_nov_native_durable_auth_nonce_v1(params, &durable_reservation) {
+            Ok(check) => check,
+            Err(err) => {
+                observe_network_runtime_native_pending_tx_rejected_v1(
+                    native_tx.chain_id,
+                    tx_hash,
+                    None,
+                );
+                return Err(err);
+            }
+        }
+    } else {
+        NovNativeDurableAuthNonceCheckV1::New {
+            expected_nonce: None,
+        }
+    };
+    let durable_exact_replay =
+        matches!(durable_check, NovNativeDurableAuthNonceCheckV1::ExactReplay);
+    if check_durable_nonce {
+        let NovNativeDurableAuthNonceCheckV1::New { expected_nonce } = durable_check else {
+            release_nov_native_auth_nonce_reservation_v1(&durable_reservation)?;
+            return Ok((native_tx, ir, tx_hash, false));
+        };
+        if let Err(err) =
+            reserve_nov_native_auth_nonce_v1(reservation_key, reservation_id, expected_nonce)
+        {
             observe_network_runtime_native_pending_tx_rejected_v1(
                 native_tx.chain_id,
                 tx_hash,
@@ -3613,16 +4066,14 @@ pub fn ingest_local_nov_raw_tx_payload_v1(
             return Err(err);
         }
     }
-    if let Err(err) = reserve_nov_native_auth_nonce_v1(reservation_key, reservation_id) {
-        observe_network_runtime_native_pending_tx_rejected_v1(native_tx.chain_id, tx_hash, None);
-        return Err(err);
+    if admit_pending && !durable_exact_replay {
+        observe_network_runtime_native_pending_tx_local_native_payload_v1(
+            native_tx.chain_id,
+            tx_hash,
+            Some(payload),
+        );
     }
-    observe_network_runtime_native_pending_tx_local_native_payload_v1(
-        native_tx.chain_id,
-        tx_hash,
-        Some(payload),
-    );
-    Ok((native_tx, ir, tx_hash))
+    Ok((native_tx, ir, tx_hash, !durable_exact_replay))
 }
 
 pub fn ingest_local_eth_raw_tx_payload_v1(chain_id: u64, payload: &[u8]) -> Result<[u8; 32]> {
@@ -4203,6 +4654,8 @@ fn native_rocksdb_snapshot_meta_v1(
         schema: "novovm-native-execution-store-snapshot-meta/v1".to_string(),
         store_schema: store.schema.clone(),
         backend_schema: "rocksdb_sharded_commit/v1".to_string(),
+        authority_chain_id: store.authority_chain_id,
+        authority_namespace_digest: store.authority_namespace_digest.clone(),
         last_updated_unix_ms: store.last_updated_unix_ms,
         receipt_count: store.receipts.len(),
         account_count: store.module_state.account_asset_balances.len(),
@@ -4343,8 +4796,11 @@ fn native_module_state_shard_value_v1(
             "last_execution_trace": module_state.last_execution_trace,
             "execution_traces_by_tx": module_state.execution_traces_by_tx,
             "execution_trace_order": module_state.execution_trace_order,
+            "native_auth_nonce_reservations": module_state.native_auth_nonce_reservations,
+            "native_auth_next_nonces": module_state.native_auth_next_nonces,
             "aoem_semantic_ledger_sequence": module_state.aoem_semantic_ledger_sequence,
             "aoem_semantic_ledger_head": module_state.aoem_semantic_ledger_head,
+            "aoem_semantic_ledger_records": module_state.aoem_semantic_ledger_records,
             "unified_account_semantic_event_count": module_state.unified_account_semantic_event_count,
             "unified_account_semantic_head": module_state.unified_account_semantic_head,
             "unified_account_semantic_last_digest": module_state.unified_account_semantic_last_digest,
@@ -4476,8 +4932,11 @@ fn native_apply_module_state_shard_v1(
             assign_field!(last_execution_trace);
             assign_field!(execution_traces_by_tx);
             assign_field!(execution_trace_order);
+            assign_field!(native_auth_nonce_reservations);
+            assign_field!(native_auth_next_nonces);
             assign_field!(aoem_semantic_ledger_sequence);
             assign_field!(aoem_semantic_ledger_head);
+            assign_field!(aoem_semantic_ledger_records);
             assign_field!(unified_account_semantic_event_count);
             assign_field!(unified_account_semantic_head);
             assign_field!(unified_account_semantic_last_digest);
@@ -4607,32 +5066,41 @@ fn native_execution_store_dirty_set_v1(
 }
 
 fn nov_native_execution_store_lock_path_v1(path: &Path) -> PathBuf {
+    let backend = nov_native_execution_store_backend_v1();
+    let coordination_target = if native_execution_store_backend_reads_rocksdb_v1(backend.as_str()) {
+        nov_native_execution_store_rocksdb_path_v1(path)
+    } else {
+        path.to_path_buf()
+    };
+    let mut raw = coordination_target.as_os_str().to_os_string();
+    raw.push(".write.lock");
+    PathBuf::from(raw)
+}
+
+fn nov_native_execution_store_json_backup_path_v1(path: &Path) -> PathBuf {
     let mut raw = path.as_os_str().to_os_string();
-    raw.push(".lock");
+    raw.push(".backup");
+    PathBuf::from(raw)
+}
+
+fn nov_native_execution_store_json_temp_path_v1(path: &Path) -> PathBuf {
+    let mut raw = path.as_os_str().to_os_string();
+    raw.push(format!(
+        ".tmp.{}.{}",
+        std::process::id(),
+        now_unix_millis_v1()
+    ));
     PathBuf::from(raw)
 }
 
 struct NovNativeExecutionStoreWriteLockV1 {
-    path: PathBuf,
-    _file: fs::File,
+    file: fs::File,
 }
 
 impl Drop for NovNativeExecutionStoreWriteLockV1 {
     fn drop(&mut self) {
-        let _ = fs::remove_file(self.path.as_path());
+        let _ = self.file.unlock();
     }
-}
-
-fn is_stale_native_execution_store_lock_v1(path: &Path, now: std::time::SystemTime) -> bool {
-    let Ok(metadata) = fs::metadata(path) else {
-        return false;
-    };
-    let Ok(modified) = metadata.modified() else {
-        return false;
-    };
-    now.duration_since(modified)
-        .map(|age| age.as_millis() > u128::from(NOV_NATIVE_EXECUTION_STORE_LOCK_STALE_MS_V1))
-        .unwrap_or(false)
 }
 
 fn acquire_nov_native_execution_store_write_lock_v1(
@@ -4650,38 +5118,41 @@ fn acquire_nov_native_execution_store_write_lock_v1(
         }
     }
     let started = Instant::now();
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path.as_path())
+        .with_context(|| {
+            format!(
+                "open nov native execution store coordination lock failed: {}",
+                lock_path.display()
+            )
+        })?;
     loop {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(lock_path.as_path())
-        {
-            Ok(mut file) => {
-                use std::io::Write;
-                let _ = writeln!(
+        match file.try_lock() {
+            Ok(()) => {
+                file.set_len(0)
+                    .context("truncate nov native execution store lock diagnostics failed")?;
+                writeln!(
                     file,
-                    "pid={} acquired_unix_ms={}",
+                    "pid={} acquired_unix_ms={} physical_target={}",
                     std::process::id(),
-                    now_unix_millis_v1()
-                );
-                return Ok(NovNativeExecutionStoreWriteLockV1 {
-                    path: lock_path,
-                    _file: file,
-                });
+                    now_unix_millis_v1(),
+                    lock_path.display()
+                )
+                .context("write nov native execution store lock diagnostics failed")?;
+                file.sync_data()
+                    .context("flush nov native execution store lock diagnostics failed")?;
+                return Ok(NovNativeExecutionStoreWriteLockV1 { file });
             }
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                if is_stale_native_execution_store_lock_v1(
-                    lock_path.as_path(),
-                    std::time::SystemTime::now(),
-                ) {
-                    let _ = fs::remove_file(lock_path.as_path());
-                    continue;
-                }
+            Err(std::fs::TryLockError::WouldBlock) => {
                 if started.elapsed()
                     >= Duration::from_millis(NOV_NATIVE_EXECUTION_STORE_LOCK_TIMEOUT_MS_V1)
                 {
                     bail!(
-                        "nov native execution store write lock timeout: store={} lock={}",
+                        "nov native execution store OS write lock timeout: store={} lock={}",
                         path.display(),
                         lock_path.display()
                     );
@@ -4690,10 +5161,10 @@ fn acquire_nov_native_execution_store_write_lock_v1(
                     NOV_NATIVE_EXECUTION_STORE_LOCK_POLL_MS_V1,
                 ));
             }
-            Err(err) => {
+            Err(std::fs::TryLockError::Error(err)) => {
                 return Err(err).with_context(|| {
                     format!(
-                        "acquire nov native execution store write lock failed: {}",
+                        "acquire nov native execution store OS write lock failed: {}",
                         lock_path.display()
                     )
                 });
@@ -4717,21 +5188,41 @@ pub fn load_nov_native_execution_store_v1(path: &Path) -> Result<NovNativeExecut
 }
 
 fn load_nov_native_execution_store_json_v1(path: &Path) -> Result<NovNativeExecutionStoreV1> {
-    if !path.exists() {
+    let backup_path = nov_native_execution_store_json_backup_path_v1(path);
+    if !path.exists() && !backup_path.exists() {
         return Ok(NovNativeExecutionStoreV1::default());
     }
-    let bytes = fs::read(path)
-        .with_context(|| format!("read nov native execution store failed: {}", path.display()))?;
-    if bytes.is_empty() {
-        return Ok(NovNativeExecutionStoreV1::default());
-    }
-    let mut store: NovNativeExecutionStoreV1 = serde_json::from_slice(bytes.as_slice())
-        .with_context(|| {
+    let decode = |candidate: &Path| -> Result<NovNativeExecutionStoreV1> {
+        let bytes = fs::read(candidate).with_context(|| {
             format!(
-                "parse nov native execution store failed: {}",
-                path.display()
+                "read nov native execution store failed: {}",
+                candidate.display()
             )
         })?;
+        if bytes.is_empty() {
+            bail!(
+                "nov native execution store is empty/corrupt: {}",
+                candidate.display()
+            );
+        }
+        serde_json::from_slice(bytes.as_slice()).with_context(|| {
+            format!(
+                "parse nov native execution store failed: {}",
+                candidate.display()
+            )
+        })
+    };
+    let mut store = match decode(path) {
+        Ok(store) => store,
+        Err(primary_error) if backup_path.exists() => decode(backup_path.as_path()).with_context(
+            || {
+                format!(
+                    "primary native execution store is corrupt ({primary_error:#}); backup recovery failed"
+                )
+            },
+        )?,
+        Err(primary_error) => return Err(primary_error),
+    };
     if store.schema.trim().is_empty() {
         store.schema = NOV_NATIVE_EXECUTION_STORE_SCHEMA_V1.to_string();
     }
@@ -4868,6 +5359,8 @@ fn materialize_nov_native_execution_store_from_rocksdb_v1(
 
     let mut store = NovNativeExecutionStoreV1 {
         schema: NOV_NATIVE_EXECUTION_STORE_SCHEMA_V1.to_string(),
+        authority_chain_id: None,
+        authority_namespace_digest: String::new(),
         receipts: BTreeMap::new(),
         module_state,
         last_updated_unix_ms: 0,
@@ -4890,6 +5383,8 @@ fn materialize_nov_native_execution_store_from_rocksdb_v1(
                 )
             })?;
         store.schema = meta.store_schema;
+        store.authority_chain_id = meta.authority_chain_id;
+        store.authority_namespace_digest = meta.authority_namespace_digest;
         store.last_updated_unix_ms = meta.last_updated_unix_ms;
     }
 
@@ -4949,6 +5444,7 @@ pub fn save_nov_native_execution_store_v1(
     path: &Path,
     store: &NovNativeExecutionStoreV1,
 ) -> Result<()> {
+    let _write_lock = acquire_nov_native_execution_store_write_lock_v1(path)?;
     save_nov_native_execution_store_with_previous_v1(path, None, store)
 }
 
@@ -4994,14 +5490,81 @@ fn save_nov_native_execution_store_json_v1(
             })?;
         }
     }
-    let serialized = serde_json::to_string_pretty(store)
-        .context("serialize nov native execution store failed")?;
-    fs::write(path, serialized).with_context(|| {
-        format!(
-            "write nov native execution store failed: {}",
-            path.display()
-        )
-    })?;
+    let serialized =
+        serde_json::to_vec_pretty(store).context("serialize nov native execution store failed")?;
+    let backup_path = nov_native_execution_store_json_backup_path_v1(path);
+    let temp_path = nov_native_execution_store_json_temp_path_v1(path);
+    let mut temp = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp_path.as_path())
+        .with_context(|| {
+            format!(
+                "create nov native execution store temp failed: {}",
+                temp_path.display()
+            )
+        })?;
+    let staged = (|| -> Result<()> {
+        temp.write_all(serialized.as_slice()).with_context(|| {
+            format!(
+                "write nov native execution store temp failed: {}",
+                temp_path.display()
+            )
+        })?;
+        temp.flush()
+            .context("flush nov native execution store temp")?;
+        temp.sync_all()
+            .context("sync nov native execution store temp")?;
+        Ok(())
+    })();
+    drop(temp);
+    if let Err(err) = staged {
+        let _ = fs::remove_file(temp_path.as_path());
+        return Err(err);
+    }
+
+    if path.exists() {
+        if backup_path.exists() {
+            fs::remove_file(backup_path.as_path()).with_context(|| {
+                format!(
+                    "remove stale nov native execution store backup failed: {}",
+                    backup_path.display()
+                )
+            })?;
+        }
+        fs::rename(path, backup_path.as_path()).with_context(|| {
+            format!(
+                "rotate nov native execution store backup failed: {} -> {}",
+                path.display(),
+                backup_path.display()
+            )
+        })?;
+    }
+    if let Err(err) = fs::rename(temp_path.as_path(), path) {
+        if backup_path.exists() && !path.exists() {
+            let _ = fs::rename(backup_path.as_path(), path);
+        }
+        let _ = fs::remove_file(temp_path.as_path());
+        return Err(err).with_context(|| {
+            format!(
+                "install nov native execution store snapshot failed: {}",
+                path.display()
+            )
+        });
+    }
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .with_context(|| {
+                    format!(
+                        "sync nov native execution store parent failed: {}",
+                        parent.display()
+                    )
+                })?;
+        }
+    }
     Ok(())
 }
 
@@ -5149,8 +5712,14 @@ where
 pub fn load_last_nov_native_aoem_semantic_ledger_mirror_record_v1(
     path: &Path,
 ) -> Result<Option<NovAoemSemanticLedgerMirrorRecordV1>> {
+    Ok(load_nov_native_aoem_semantic_ledger_mirror_records_v1(path)?.pop())
+}
+
+fn load_nov_native_aoem_semantic_ledger_mirror_records_v1(
+    path: &Path,
+) -> Result<Vec<NovAoemSemanticLedgerMirrorRecordV1>> {
     if !path.exists() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let file = fs::File::open(path).with_context(|| {
         format!(
@@ -5159,7 +5728,7 @@ pub fn load_last_nov_native_aoem_semantic_ledger_mirror_record_v1(
         )
     })?;
     let reader = BufReader::new(file);
-    let mut last = None;
+    let mut records = Vec::new();
     for line in reader.lines() {
         let line = line.with_context(|| {
             format!(
@@ -5171,7 +5740,7 @@ pub fn load_last_nov_native_aoem_semantic_ledger_mirror_record_v1(
         if trimmed.is_empty() {
             continue;
         }
-        last = Some(
+        records.push(
             serde_json::from_str::<NovAoemSemanticLedgerMirrorRecordV1>(trimmed).with_context(
                 || {
                     format!(
@@ -5182,7 +5751,212 @@ pub fn load_last_nov_native_aoem_semantic_ledger_mirror_record_v1(
             )?,
         );
     }
-    Ok(last)
+    Ok(records)
+}
+
+fn repair_trailing_nov_native_aoem_semantic_ledger_mirror_v1(path: &Path) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let bytes = fs::read(path).with_context(|| {
+        format!(
+            "read AOEM semantic ledger mirror for tail repair failed: {}",
+            path.display()
+        )
+    })?;
+    if bytes.is_empty() || bytes.last() == Some(&b'\n') {
+        return Ok(false);
+    }
+    let tail_start = bytes
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map(|index| index.saturating_add(1))
+        .unwrap_or(0);
+    let tail = &bytes[tail_start..];
+    if serde_json::from_slice::<NovAoemSemanticLedgerMirrorRecordV1>(tail).is_ok() {
+        let mut writer = OpenOptions::new()
+            .append(true)
+            .open(path)
+            .with_context(|| {
+                format!(
+                    "open AOEM semantic ledger mirror tail for newline repair failed: {}",
+                    path.display()
+                )
+            })?;
+        writer.write_all(b"\n").with_context(|| {
+            format!(
+                "append AOEM semantic ledger mirror repaired newline failed: {}",
+                path.display()
+            )
+        })?;
+        writer.sync_all().with_context(|| {
+            format!(
+                "sync AOEM semantic ledger mirror newline repair failed: {}",
+                path.display()
+            )
+        })?;
+        return Ok(true);
+    }
+    let file = OpenOptions::new().write(true).open(path).with_context(|| {
+        format!(
+            "open AOEM semantic ledger mirror for partial-tail truncate failed: {}",
+            path.display()
+        )
+    })?;
+    file.set_len(tail_start as u64).with_context(|| {
+        format!(
+            "truncate malformed AOEM semantic ledger mirror tail failed: {}",
+            path.display()
+        )
+    })?;
+    file.sync_all().with_context(|| {
+        format!(
+            "sync malformed AOEM semantic ledger mirror tail repair failed: {}",
+            path.display()
+        )
+    })?;
+    Ok(true)
+}
+
+fn reconcile_nov_native_aoem_semantic_ledger_mirror_from_store_v1(
+    host_store_path: &Path,
+    store: &NovNativeExecutionStoreV1,
+    now_ms: u128,
+) -> Result<usize> {
+    let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(host_store_path);
+    repair_trailing_nov_native_aoem_semantic_ledger_mirror_v1(mirror_path.as_path())?;
+    let existing = load_nov_native_aoem_semantic_ledger_mirror_records_v1(mirror_path.as_path())?;
+    let mut previous = None::<&NovAoemSemanticLedgerMirrorRecordV1>;
+    for record in &existing {
+        if let Some(last) = previous {
+            if record.sequence != last.sequence.saturating_add(1) {
+                bail!(
+                    "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_SEQUENCE_GAP: expected={} got={}",
+                    last.sequence.saturating_add(1),
+                    record.sequence
+                );
+            }
+            if record.prev_seal != last.commit_seal {
+                bail!(
+                    "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_PREV_SEAL_MISMATCH: expected={} got={}",
+                    last.commit_seal,
+                    record.prev_seal
+                );
+            }
+        } else if record.sequence != 1 || !record.prev_seal.is_empty() {
+            bail!(
+                "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_INVALID_GENESIS: sequence={} prev_seal={}",
+                record.sequence,
+                record.prev_seal
+            );
+        }
+        previous = Some(record);
+    }
+
+    let committed_sequence = store.module_state.aoem_semantic_ledger_sequence;
+    let committed_head = store.module_state.aoem_semantic_ledger_head.as_str();
+    let existing_sequence = existing.last().map(|record| record.sequence).unwrap_or(0);
+    if existing_sequence > committed_sequence {
+        bail!(
+            "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_AHEAD_OF_STATE: mirror_sequence={} state_sequence={}",
+            existing_sequence,
+            committed_sequence
+        );
+    }
+
+    for (sequence_key, record) in &store.module_state.aoem_semantic_ledger_records {
+        if *sequence_key != record.sequence {
+            bail!(
+                "ERR_AOEM_SEMANTIC_LEDGER_JOURNAL_KEY_MISMATCH: key={} record_sequence={}",
+                sequence_key,
+                record.sequence
+            );
+        }
+        if record.sequence == 0 || record.sequence > committed_sequence {
+            bail!(
+                "ERR_AOEM_SEMANTIC_LEDGER_JOURNAL_SEQUENCE_OUT_OF_RANGE: sequence={} committed_sequence={}",
+                record.sequence,
+                committed_sequence
+            );
+        }
+    }
+
+    let mut receipt_records = store.module_state.aoem_semantic_ledger_records.clone();
+    for receipt in store.receipts.values() {
+        let Some(record) = build_native_aoem_semantic_ledger_mirror_record_v1(receipt, now_ms)
+        else {
+            continue;
+        };
+        if let Some(conflict) = receipt_records.insert(record.sequence, record.clone()) {
+            let mut comparable = record;
+            comparable.created_at_ms = conflict.created_at_ms;
+            if comparable != conflict {
+                bail!(
+                    "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_DUPLICATE_SEQUENCE: sequence={}",
+                    conflict.sequence
+                );
+            }
+        }
+    }
+
+    for actual in &existing {
+        if let Some(expected) = receipt_records.get(&actual.sequence) {
+            let mut comparable = expected.clone();
+            comparable.created_at_ms = actual.created_at_ms;
+            if comparable != *actual {
+                bail!(
+                    "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_RECEIPT_MISMATCH: sequence={}",
+                    actual.sequence
+                );
+            }
+        }
+    }
+
+    let mut missing = Vec::new();
+    let mut expected_prev_seal = existing
+        .last()
+        .map(|record| record.commit_seal.clone())
+        .unwrap_or_default();
+    for sequence in existing_sequence.saturating_add(1)..=committed_sequence {
+        let record = receipt_records.get(&sequence).ok_or_else(|| {
+            anyhow::anyhow!(
+                "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_RECOVERY_RECORD_MISSING: sequence={}",
+                sequence
+            )
+        })?;
+        if record.prev_seal != expected_prev_seal {
+            bail!(
+                "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_RECOVERY_PREV_SEAL_MISMATCH: sequence={} expected={} got={}",
+                sequence,
+                expected_prev_seal,
+                record.prev_seal
+            );
+        }
+        expected_prev_seal = record.commit_seal.clone();
+        missing.push(record.clone());
+    }
+    append_nov_native_aoem_semantic_ledger_mirror_records_v1(
+        mirror_path.as_path(),
+        missing.as_slice(),
+    )?;
+
+    let final_head = missing
+        .last()
+        .or_else(|| existing.last())
+        .map(|record| record.commit_seal.as_str())
+        .unwrap_or_default();
+    if committed_sequence == 0 {
+        if !committed_head.is_empty() || !final_head.is_empty() {
+            bail!("ERR_AOEM_SEMANTIC_LEDGER_MIRROR_EMPTY_STATE_HEAD_MISMATCH");
+        }
+    } else if final_head != committed_head {
+        bail!(
+            "ERR_AOEM_SEMANTIC_LEDGER_MIRROR_STATE_HEAD_MISMATCH: expected={} got={}",
+            committed_head,
+            final_head
+        );
+    }
+    Ok(missing.len())
 }
 
 fn append_nov_native_aoem_semantic_ledger_mirror_record_v1(
@@ -5258,6 +6032,12 @@ fn append_nov_native_aoem_semantic_ledger_mirror_records_v1(
     writer.flush().with_context(|| {
         format!(
             "flush AOEM semantic ledger mirror record failed: {}",
+            path.display()
+        )
+    })?;
+    writer.sync_all().with_context(|| {
+        format!(
+            "sync AOEM semantic ledger mirror record failed: {}",
             path.display()
         )
     })?;
@@ -10003,6 +10783,7 @@ pub fn dispatch_and_persist_nov_execution_request_v1(
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -10011,7 +10792,7 @@ pub fn dispatch_and_persist_nov_execution_request_with_store_path_v1(
     request: &NovExecutionRequestV1,
 ) -> Result<NovNativeExecutionReceiptV1> {
     dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
-        path, request, None, None, None,
+        path, request, None, None, None, None,
     )
 }
 
@@ -10020,9 +10801,110 @@ struct NovExecutionRequestDispatchContextV1<'a> {
     subject_meta: Option<&'a NovExecutionSubjectMetaV1>,
     requested_behavior: Option<&'a NovRequestedExecutionBehaviorV1>,
     unified_account_store_path: Option<&'a Path>,
+    durable_auth_reservation: Option<&'a NovNativeDurableAuthReservationV1>,
     aoem_semantic_ingress_override: Option<NovAoemSemanticIngressMetaV1>,
     mirror_records: Option<&'a mut Vec<NovAoemSemanticLedgerMirrorRecordV1>>,
     now_ms: u128,
+}
+
+fn find_nov_native_durable_auth_receipt_v1(
+    store: &NovNativeExecutionStoreV1,
+    reservation: &NovNativeDurableAuthReservationV1,
+) -> Result<Option<NovNativeExecutionReceiptV1>> {
+    if let Some(existing_reservation_id) = store
+        .module_state
+        .native_auth_nonce_reservations
+        .get(reservation.ledger_key.as_str())
+    {
+        if existing_reservation_id != &reservation.reservation_id {
+            bail!(
+                "nov native execution rejected: durable nonce conflict ledger_key={} committed_reservation={} requested_reservation={}",
+                reservation.ledger_key,
+                existing_reservation_id,
+                reservation.reservation_id
+            );
+        }
+        let receipt = store
+            .receipts
+            .get(reservation.tx_hash.as_str())
+            .cloned()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "nov native execution rejected: transaction already committed but its receipt is unavailable tx_hash={}",
+                    reservation.tx_hash
+                )
+            })?;
+        return Ok(Some(receipt));
+    }
+    Ok(None)
+}
+
+fn check_nov_native_durable_auth_reservation_v1(
+    store: &NovNativeExecutionStoreV1,
+    reservation: &NovNativeDurableAuthReservationV1,
+) -> Result<Option<NovNativeExecutionReceiptV1>> {
+    if let Some(receipt) = find_nov_native_durable_auth_receipt_v1(store, reservation)? {
+        return Ok(Some(receipt));
+    }
+    let expected_nonce = store
+        .module_state
+        .native_auth_next_nonces
+        .get(reservation.identity_key.as_str())
+        .copied()
+        .unwrap_or(0);
+    if reservation.nonce != expected_nonce {
+        bail!(
+            "nov native execution rejected: durable nonce sequence mismatch identity_key={} expected={} got={}",
+            reservation.identity_key,
+            expected_nonce,
+            reservation.nonce
+        );
+    }
+    Ok(None)
+}
+
+fn commit_nov_native_durable_auth_reservation_v1(
+    store: &mut NovNativeExecutionStoreV1,
+    reservation: &NovNativeDurableAuthReservationV1,
+) -> Result<()> {
+    if let Some(existing) = store
+        .module_state
+        .native_auth_nonce_reservations
+        .get(reservation.ledger_key.as_str())
+    {
+        if existing != &reservation.reservation_id {
+            bail!(
+                "nov native execution rejected: durable nonce conflict ledger_key={} committed_reservation={} requested_reservation={}",
+                reservation.ledger_key,
+                existing,
+                reservation.reservation_id
+            );
+        }
+        return Ok(());
+    }
+    let expected_nonce = store
+        .module_state
+        .native_auth_next_nonces
+        .get(reservation.identity_key.as_str())
+        .copied()
+        .unwrap_or(0);
+    if reservation.nonce != expected_nonce {
+        bail!(
+            "nov native execution rejected: durable nonce sequence mismatch identity_key={} expected={} got={}",
+            reservation.identity_key,
+            expected_nonce,
+            reservation.nonce
+        );
+    }
+    store.module_state.native_auth_nonce_reservations.insert(
+        reservation.ledger_key.clone(),
+        reservation.reservation_id.clone(),
+    );
+    store.module_state.native_auth_next_nonces.insert(
+        reservation.identity_key.clone(),
+        reservation.nonce.saturating_add(1),
+    );
+    Ok(())
 }
 
 fn dispatch_nov_execution_request_into_loaded_store_v1(
@@ -10030,6 +10912,14 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
     request: &NovExecutionRequestV1,
     context: NovExecutionRequestDispatchContextV1<'_>,
 ) -> Result<NovNativeExecutionReceiptV1> {
+    if let Some(reservation) = context.durable_auth_reservation {
+        if reservation.tx_hash != to_hex(&request.tx_hash) {
+            bail!("nov native durable authentication transaction hash mismatch");
+        }
+        if let Some(receipt) = check_nov_native_durable_auth_reservation_v1(store, reservation)? {
+            return Ok(receipt);
+        }
+    }
     let effective_subject_meta = context
         .subject_meta
         .cloned()
@@ -10057,6 +10947,9 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
                 "enforce".to_string(),
                 rejection.reason.to_string(),
             );
+            if let Some(reservation) = context.durable_auth_reservation {
+                commit_nov_native_durable_auth_reservation_v1(store, reservation)?;
+            }
             store
                 .receipts
                 .insert(failed.tx_hash.clone(), failed.clone());
@@ -10096,6 +10989,9 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
                 fee_method.to_string(),
                 reason,
             );
+            if let Some(reservation) = context.durable_auth_reservation {
+                commit_nov_native_durable_auth_reservation_v1(store, reservation)?;
+            }
             store
                 .receipts
                 .insert(failed.tx_hash.clone(), failed.clone());
@@ -10131,6 +11027,9 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
                     "semantic_ingress".to_string(),
                     format!("aoem.semantic_ingress.required_failed: {err}"),
                 );
+                if let Some(reservation) = context.durable_auth_reservation {
+                    commit_nov_native_durable_auth_reservation_v1(store, reservation)?;
+                }
                 store
                     .receipts
                     .insert(failed.tx_hash.clone(), failed.clone());
@@ -10152,6 +11051,9 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
     let mut receipt =
         dispatch_native_module_execute_v1(request, &settled_fee, &effective_subject_meta, store);
     receipt.aoem_semantic_ingress = aoem_semantic_ingress;
+    if let Some(reservation) = context.durable_auth_reservation {
+        commit_nov_native_durable_auth_reservation_v1(store, reservation)?;
+    }
     let semantic_deltas = build_native_execution_semantic_deltas_v1(
         &module_state_before_execution,
         &store.module_state,
@@ -10186,6 +11088,10 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
     if let Some(mirror_record) =
         build_native_aoem_semantic_ledger_mirror_record_v1(&receipt, context.now_ms)
     {
+        store
+            .module_state
+            .aoem_semantic_ledger_records
+            .insert(mirror_record.sequence, mirror_record.clone());
         if let Some(records) = context.mirror_records {
             records.push(mirror_record);
         } else {
@@ -10206,11 +11112,13 @@ fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
     subject_meta: Option<&NovExecutionSubjectMetaV1>,
     requested_behavior: Option<&NovRequestedExecutionBehaviorV1>,
     unified_account_store_path: Option<&Path>,
+    durable_auth_reservation: Option<&NovNativeDurableAuthReservationV1>,
 ) -> Result<NovNativeExecutionReceiptV1> {
     let _write_lock = acquire_nov_native_execution_store_write_lock_v1(path)?;
     let mut store = load_nov_native_execution_store_v1(path)?;
     let previous_store = store.clone();
     let now_ms = now_unix_millis_v1();
+    let mut mirror_records = Vec::new();
     let receipt = dispatch_nov_execution_request_into_loaded_store_v1(
         &mut store,
         request,
@@ -10219,12 +11127,17 @@ fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
             subject_meta,
             requested_behavior,
             unified_account_store_path,
+            durable_auth_reservation,
             aoem_semantic_ingress_override: None,
-            mirror_records: None,
+            mirror_records: Some(&mut mirror_records),
             now_ms,
         },
     )?;
     save_nov_native_execution_store_with_previous_v1(path, Some(&previous_store), &store)?;
+    if let Some(reservation) = durable_auth_reservation {
+        release_nov_native_auth_nonce_reservation_v1(reservation)?;
+    }
+    let _ = reconcile_nov_native_aoem_semantic_ledger_mirror_from_store_v1(path, &store, now_ms);
     Ok(receipt)
 }
 
@@ -10331,6 +11244,12 @@ pub fn get_nov_native_treasury_clearing_summary_v1() -> Result<serde_json::Value
 fn resolve_native_execution_store_path_from_params_v1(
     params: &serde_json::Value,
 ) -> Option<PathBuf> {
+    if let Ok(configured) = std::env::var(NOV_NATIVE_EXECUTION_STORE_ENV) {
+        let trimmed = configured.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
     params
         .get("native_execution_store_path")
         .and_then(|value| value.as_str())
@@ -10348,34 +11267,36 @@ fn resolve_unified_account_store_path_from_params_v1(
     params: &serde_json::Value,
     native_execution_store_path: &Path,
 ) -> Option<PathBuf> {
-    params
-        .get("unified_account_store_path")
-        .or_else(|| params.get("ua_store_path"))
-        .and_then(|value| value.as_str())
-        .and_then(|raw| {
+    match std::env::var("NOVOVM_UNIFIED_ACCOUNT_DB") {
+        Ok(raw) => {
             let trimmed = raw.trim();
             if trimmed.is_empty() {
                 None
             } else {
                 Some(PathBuf::from(trimmed))
             }
-        })
-        .or_else(|| match std::env::var("NOVOVM_UNIFIED_ACCOUNT_DB") {
-            Ok(raw) => {
+        }
+        Err(_) => None,
+    }
+    .or_else(|| {
+        params
+            .get("unified_account_store_path")
+            .or_else(|| params.get("ua_store_path"))
+            .and_then(|value| value.as_str())
+            .and_then(|raw| {
                 let trimmed = raw.trim();
                 if trimmed.is_empty() {
                     None
                 } else {
                     Some(PathBuf::from(trimmed))
                 }
-            }
-            Err(_) => None,
-        })
-        .or_else(|| {
-            native_execution_store_path
-                .parent()
-                .map(|parent| parent.join("novovm-unified-account-router.rocksdb"))
-        })
+            })
+    })
+    .or_else(|| {
+        native_execution_store_path
+            .parent()
+            .map(|parent| parent.join("novovm-unified-account-router.rocksdb"))
+    })
 }
 
 fn requested_execution_behavior_v1(
@@ -11365,39 +12286,22 @@ pub fn run_nov_send_raw_transaction_from_params_v1(
         .ok_or_else(|| anyhow::anyhow!("raw_tx is required for nov_sendRawTransaction"))?;
     let payload = decode_eth_send_raw_hex_payload_v1(raw_tx, "raw_tx")?;
     let (native_tx, ir, tx_hash) = ingest_local_nov_raw_tx_payload_v1(params, payload.as_slice())?;
-    let requested_execution_policy_override = parse_nov_execution_policy_v1(
-        params
-            .get("execution_policy")
-            .and_then(|value| value.as_str()),
-    );
-    let requested_privacy_mode_override =
-        parse_nov_privacy_mode_v1(params.get("privacy_mode").and_then(|value| value.as_str()));
     let execution_subject = match &native_tx.kind {
         NovTxKindV1::Execute(execute) => Some(subject_meta_from_execute_tx_v1(execute)),
         _ => None,
     };
     let requested_execution_behavior = match &native_tx.kind {
-        NovTxKindV1::Execute(execute) => {
-            let requested_policy = if params.get("execution_policy").is_some() {
-                requested_execution_policy_override
-            } else {
-                execute.execution_policy
-            };
-            Some(requested_execution_behavior_v1(
-                effective_execution_policy_for_fee_asset_v1(
-                    requested_policy,
-                    execute.fee_policy.pay_asset.as_str(),
-                ),
-                if params.get("privacy_mode").is_some() {
-                    requested_privacy_mode_override
-                } else {
-                    execute.privacy_mode
-                },
-            ))
-        }
+        NovTxKindV1::Execute(execute) => Some(requested_execution_behavior_v1(
+            effective_execution_policy_for_fee_asset_v1(
+                execute.execution_policy,
+                execute.fee_policy.pay_asset.as_str(),
+            ),
+            execute.privacy_mode,
+        )),
         _ => None,
     };
     let execution_request = nov_native_tx_to_execution_request_v1(&native_tx)?;
+    let durable_auth_reservation = nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash);
     let store_path_override = resolve_native_execution_store_path_from_params_v1(params);
     let effective_native_store_path = store_path_override
         .clone()
@@ -11407,7 +12311,16 @@ pub fn run_nov_send_raw_transaction_from_params_v1(
         effective_native_store_path.as_path(),
     );
     let pipeline_only = native_send_raw_transaction_pipeline_only_v1(params);
-    let execution_receipt = if !pipeline_only {
+    let committed_replay_receipt = if execution_request.is_some() {
+        let store = load_nov_native_execution_store_v1(effective_native_store_path.as_path())?;
+        find_nov_native_durable_auth_receipt_v1(&store, &durable_auth_reservation)?
+    } else {
+        None
+    };
+    let durable_exact_replay = committed_replay_receipt.is_some();
+    let execution_receipt = if let Some(receipt) = committed_replay_receipt {
+        Some(receipt)
+    } else if !pipeline_only {
         if let Some(request) = execution_request.as_ref() {
             Some(if let Some(path) = store_path_override.as_deref() {
                 dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
@@ -11416,6 +12329,7 @@ pub fn run_nov_send_raw_transaction_from_params_v1(
                     execution_subject.as_ref(),
                     requested_execution_behavior.as_ref(),
                     unified_account_store_path.as_deref(),
+                    Some(&durable_auth_reservation),
                 )?
             } else {
                 dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
@@ -11424,6 +12338,7 @@ pub fn run_nov_send_raw_transaction_from_params_v1(
                     execution_subject.as_ref(),
                     requested_execution_behavior.as_ref(),
                     unified_account_store_path.as_deref(),
+                    Some(&durable_auth_reservation),
                 )?
             })
         } else {
@@ -11432,7 +12347,9 @@ pub fn run_nov_send_raw_transaction_from_params_v1(
     } else {
         None
     };
-    let execution_lifecycle = if pipeline_only {
+    let execution_lifecycle = if durable_exact_replay {
+        "durable_exact_committed_no_execution"
+    } else if pipeline_only {
         "pending_runtime_to_aoem_tick"
     } else {
         "compat_immediate_dispatch_after_pending_ingress"
@@ -11440,7 +12357,7 @@ pub fn run_nov_send_raw_transaction_from_params_v1(
     Ok(serde_json::json!({
         "method": "nov_sendRawTransaction",
         "accepted": true,
-        "pending_tx_local_ingress": true,
+        "pending_tx_local_ingress": !durable_exact_replay,
         "pending_tx_hash": to_hex_prefixed_v1(&tx_hash),
         "chain_id": native_tx.chain_id,
         "nov_tx_kind": match native_tx.kind {
@@ -11452,7 +12369,9 @@ pub fn run_nov_send_raw_transaction_from_params_v1(
         "execution_request": execution_request,
         "execution_subject": execution_subject,
         "pipeline_only": pipeline_only,
-        "immediate_execution": execution_receipt.is_some(),
+        "immediate_execution": execution_receipt.is_some() && !durable_exact_replay,
+        "durable_exact_replay": durable_exact_replay,
+        "aoem_reexecution": !durable_exact_replay && execution_receipt.is_some(),
         "execution_lifecycle": execution_lifecycle,
         "aoem_lifecycle": execution_lifecycle,
         "native_receipt": execution_receipt,
@@ -11699,6 +12618,36 @@ fn native_tx_kind_label_v1(tx: &NovNativeTxWireV1) -> &'static str {
     }
 }
 
+fn deterministic_native_aoem_batch_id_v1(
+    chain_id: u64,
+    store: &NovNativeExecutionStoreV1,
+    items: &[novovm_exec::NovovmAoemNativeTxBatchItemV1],
+) -> String {
+    use sha2::{Digest, Sha256};
+
+    let pre_state_commitment = native_semantic_ledger_state_digest_v1(&store.module_state);
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-native-aoem-batch-id-v1");
+    hasher.update(chain_id.to_le_bytes());
+    hasher.update(store.authority_namespace_digest.as_bytes());
+    hasher.update(pre_state_commitment.as_bytes());
+    hasher.update(
+        store
+            .module_state
+            .aoem_semantic_ledger_sequence
+            .to_le_bytes(),
+    );
+    hasher.update(store.module_state.aoem_semantic_ledger_head.as_bytes());
+    hasher.update((items.len() as u64).to_le_bytes());
+    for item in items {
+        hasher.update(item.sequence.to_le_bytes());
+        hasher.update((item.canonical_rebuild_commitment.len() as u64).to_le_bytes());
+        hasher.update(item.canonical_rebuild_commitment.as_bytes());
+    }
+    let digest: [u8; 32] = hasher.finalize().into();
+    format!("novovm-tx-ingress-aoem-owned-v1-{}", to_hex(&digest))
+}
+
 fn native_tx_semantic_operator_v1(tx: &NovNativeTxWireV1) -> &'static str {
     match tx.kind {
         NovTxKindV1::Transfer(_) => "TransferV1",
@@ -11775,15 +12724,19 @@ fn native_tx_parameter_payload_v1(
     }
 }
 
-const NOVOVM_AOEM_OWNED_NATIVE_STATE_SCHEMA_V1: &str = "novovm-aoem-owned-native-state/v1";
-const NOVOVM_AOEM_OWNED_NATIVE_STATE_HEAD_SCHEMA_V1: &str =
-    "novovm-aoem-owned-native-state-head/v1";
+const NOVOVM_AOEM_OWNED_NATIVE_STATE_SCHEMA_V2: &str = "novovm-aoem-owned-native-state/v2";
+const NOVOVM_AOEM_OWNED_NATIVE_STATE_HEAD_SCHEMA_V2: &str =
+    "novovm-aoem-owned-native-state-head/v2";
+const NOVOVM_AOEM_OWNED_PRODUCTION_GATE_CONTRACT_V2: &str =
+    "novovm-aoem-owned-production-gate/prepublish-validated-v2";
 const NOVOVM_AOEM_OWNED_NATIVE_STATE_CHUNK_BYTES_V1: usize = 512;
 const NOVOVM_AOEM_OWNED_NATIVE_STATE_WRITES_PER_STEP_V1: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 struct NovAoemOwnedNativeStateEnvelopeV1 {
     schema: String,
+    production_accepted: bool,
+    production_gate_contract: String,
     chain_id: u64,
     namespace_digest: String,
     state_root: String,
@@ -11805,6 +12758,9 @@ struct NovAoemOwnedNativeStateHeadV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 struct NovAoemOwnedNativeStateCommitV1 {
+    state_schema: String,
+    production_accepted: bool,
+    production_gate_contract: String,
     aoem_called: bool,
     aoem_execution_completed: bool,
     aoem_execution_scope: String,
@@ -11903,13 +12859,96 @@ fn native_aoem_owned_state_namespace_digest_v1(
     params: &serde_json::Value,
     chain_id: u64,
 ) -> String {
-    let namespace =
-        tx_ingress_string_param_any_v1(params, &["aoem_state_namespace", "aoemStateNamespace"])
-            .unwrap_or_else(|| format!("chain-{chain_id}"));
+    let namespace = std::env::var(NOV_NATIVE_AOEM_STATE_NAMESPACE_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            tx_ingress_string_param_any_v1(params, &["aoem_state_namespace", "aoemStateNamespace"])
+        })
+        .unwrap_or_else(|| format!("chain-{chain_id}"));
     to_hex(&sha256_bytes_v1(&[
         b"novovm-native-aoem-state-namespace-v1",
         namespace.as_bytes(),
     ]))
+}
+
+fn bind_native_execution_store_authority_domain_v1(
+    store: &mut NovNativeExecutionStoreV1,
+    chain_id: u64,
+    namespace_digest: &str,
+) -> Result<bool> {
+    if let Some(bound_chain_id) = store.authority_chain_id {
+        if bound_chain_id != chain_id {
+            bail!(
+                "native execution store authority chain mismatch: bound={} requested={}",
+                bound_chain_id,
+                chain_id
+            );
+        }
+    }
+    if !store.authority_namespace_digest.is_empty()
+        && store.authority_namespace_digest != namespace_digest
+    {
+        bail!(
+            "native execution store authority namespace mismatch: bound={} requested={}",
+            store.authority_namespace_digest,
+            namespace_digest
+        );
+    }
+    let changed = store.authority_chain_id.is_none() || store.authority_namespace_digest.is_empty();
+    store.authority_chain_id = Some(chain_id);
+    store.authority_namespace_digest = namespace_digest.to_string();
+    Ok(changed)
+}
+
+fn verify_native_execution_store_authority_domain_v1(
+    store: &NovNativeExecutionStoreV1,
+    chain_id: u64,
+    namespace_digest: &str,
+) -> Result<()> {
+    if let Some(bound_chain_id) = store.authority_chain_id {
+        if bound_chain_id != chain_id {
+            bail!(
+                "native execution store authority chain mismatch: bound={} requested={}",
+                bound_chain_id,
+                chain_id
+            );
+        }
+    }
+    if !store.authority_namespace_digest.is_empty()
+        && store.authority_namespace_digest != namespace_digest
+    {
+        bail!(
+            "native execution store authority namespace mismatch: bound={} requested={}",
+            store.authority_namespace_digest,
+            namespace_digest
+        );
+    }
+    Ok(())
+}
+
+fn verify_production_native_execution_store_authority_domain_v2(
+    store: &NovNativeExecutionStoreV1,
+    chain_id: u64,
+    namespace_digest: &str,
+) -> Result<()> {
+    if store.authority_chain_id != Some(chain_id) {
+        bail!(
+            "production AOEM-owned state authority chain binding is missing or mismatched: bound={:?} requested={}",
+            store.authority_chain_id,
+            chain_id
+        );
+    }
+    if store.authority_namespace_digest.is_empty()
+        || store.authority_namespace_digest != namespace_digest
+    {
+        bail!(
+            "production AOEM-owned state authority namespace binding is missing or mismatched: bound={} requested={}",
+            store.authority_namespace_digest,
+            namespace_digest
+        );
+    }
+    Ok(())
 }
 
 fn native_aoem_owned_state_key_v1(chain_id: u64, namespace_digest: &str) -> String {
@@ -11917,28 +12956,28 @@ fn native_aoem_owned_state_key_v1(chain_id: u64, namespace_digest: &str) -> Stri
 }
 
 fn native_aoem_owned_state_db_path_v1(params: &serde_json::Value) -> PathBuf {
-    tx_ingress_string_param_any_v1(
-        params,
-        &[
-            "aoem_owned_state_db_path",
-            "aoemOwnedStateDbPath",
-            "aoem_state_db_path",
-        ],
-    )
-    .map(PathBuf::from)
-    .or_else(|| {
-        std::env::var(NOV_NATIVE_AOEM_OWNED_STATE_DB_PATH_ENV)
-            .ok()
-            .filter(|value| !value.trim().is_empty())
+    std::env::var(NOV_NATIVE_AOEM_OWNED_STATE_DB_PATH_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            tx_ingress_string_param_any_v1(
+                params,
+                &[
+                    "aoem_owned_state_db_path",
+                    "aoemOwnedStateDbPath",
+                    "aoem_state_db_path",
+                ],
+            )
             .map(PathBuf::from)
-    })
-    .unwrap_or_else(|| {
-        let native_store_path = resolve_native_execution_store_path_from_params_v1(params)
-            .unwrap_or_else(nov_native_execution_store_path_v1);
-        let mut raw = native_store_path.as_os_str().to_os_string();
-        raw.push(".aoem-owned.rocksdb");
-        PathBuf::from(raw)
-    })
+        })
+        .unwrap_or_else(|| {
+            let native_store_path = resolve_native_execution_store_path_from_params_v1(params)
+                .unwrap_or_else(nov_native_execution_store_path_v1);
+            let mut raw = native_store_path.as_os_str().to_os_string();
+            raw.push(".aoem-owned.rocksdb");
+            PathBuf::from(raw)
+        })
 }
 
 fn native_aoem_owned_state_namespace_key_digest_v1(namespace_digest: &str) -> [u8; 32] {
@@ -12002,6 +13041,24 @@ fn native_aoem_owned_state_graph_id_v1(
     u64::from_le_bytes(digest[..8].try_into().expect("fixed length")).max(1)
 }
 
+fn native_aoem_owned_state_gc_graph_id_v1(
+    chain_id: u64,
+    namespace_digest: &str,
+    previous_batch_result_id: &str,
+    current_batch_result_id: &str,
+    envelope_digest: &[u8; 32],
+) -> u64 {
+    let digest = sha256_bytes_v1(&[
+        b"novovm-aoem-owned-state-gc-graph-id-v1",
+        &chain_id.to_le_bytes(),
+        namespace_digest.as_bytes(),
+        previous_batch_result_id.as_bytes(),
+        current_batch_result_id.as_bytes(),
+        envelope_digest,
+    ]);
+    u64::from_le_bytes(digest[..8].try_into().expect("fixed length")).max(1)
+}
+
 fn read_native_state_envelope_from_aoem_graph_store_v1(
     graph_store: &novovm_exec::AoemSemanticGraphStoreV1,
     chain_id: u64,
@@ -12013,9 +13070,9 @@ fn read_native_state_envelope_from_aoem_graph_store_v1(
         .ok_or_else(|| anyhow::anyhow!("AOEM-owned semantic graph state head was not found"))?;
     let head: NovAoemOwnedNativeStateHeadV1 = serde_json::from_slice(head_bytes.as_slice())
         .context("decode AOEM-owned semantic graph state head")?;
-    if head.schema != NOVOVM_AOEM_OWNED_NATIVE_STATE_HEAD_SCHEMA_V1 {
+    if head.schema != NOVOVM_AOEM_OWNED_NATIVE_STATE_HEAD_SCHEMA_V2 {
         bail!(
-            "AOEM-owned semantic graph state head schema mismatch: {}",
+            "AOEM-owned semantic graph state head schema is not production-accepted: {}",
             head.schema
         );
     }
@@ -12051,7 +13108,7 @@ fn read_native_state_envelope_from_aoem_graph_store_v1(
         );
     }
     let computed_digest = to_hex(&sha256_bytes_v1(&[
-        b"novovm-aoem-owned-native-state-envelope-v1",
+        b"novovm-aoem-owned-native-state-envelope-v2",
         envelope_bytes.as_slice(),
     ]));
     if computed_digest != head.envelope_digest {
@@ -12069,6 +13126,232 @@ fn read_native_state_envelope_from_aoem_graph_store_v1(
     Ok(envelope)
 }
 
+fn validate_production_native_state_envelope_v1(
+    envelope: &NovAoemOwnedNativeStateEnvelopeV1,
+    chain_id: u64,
+    namespace_digest: &str,
+) -> Result<(String, String)> {
+    if envelope.schema != NOVOVM_AOEM_OWNED_NATIVE_STATE_SCHEMA_V2
+        || !envelope.production_accepted
+        || envelope.production_gate_contract != NOVOVM_AOEM_OWNED_PRODUCTION_GATE_CONTRACT_V2
+    {
+        bail!(
+            "AOEM-owned native state envelope is not production-accepted under the current gate contract"
+        );
+    }
+    if envelope.chain_id != chain_id || envelope.namespace_digest != namespace_digest {
+        bail!("AOEM-owned native state envelope domain mismatch");
+    }
+    verify_production_native_execution_store_authority_domain_v2(
+        &envelope.store,
+        chain_id,
+        namespace_digest,
+    )?;
+    let computed_state_root = native_semantic_ledger_state_digest_v1(&envelope.store.module_state);
+    let computed_receipt_root = native_execution_receipt_root_v1(&envelope.store);
+    if envelope.state_root != computed_state_root
+        || envelope.batch_result.state_delta_root != computed_state_root
+    {
+        bail!("AOEM-owned native state envelope state root mismatch");
+    }
+    if envelope.receipt_root != computed_receipt_root
+        || envelope.batch_result.receipt_root != computed_receipt_root
+    {
+        bail!("AOEM-owned native state envelope receipt root mismatch");
+    }
+    if envelope.batch_result.snapshot_metadata.state_version
+        != envelope.store.module_state.aoem_semantic_ledger_sequence
+    {
+        bail!("AOEM-owned native state envelope snapshot version mismatch");
+    }
+    for batch_receipt in &envelope.batch_result.per_tx_receipts {
+        let receipt_key = batch_receipt
+            .tx_hash
+            .strip_prefix("0x")
+            .unwrap_or(batch_receipt.tx_hash.as_str());
+        let stored_receipt = envelope
+            .store
+            .receipts
+            .get(receipt_key)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "AOEM-owned native state envelope batch receipt is absent from cumulative store: {}",
+                    batch_receipt.tx_hash
+                )
+            })?;
+        if stored_receipt.status != batch_receipt.status_ok {
+            bail!("AOEM-owned native state envelope batch receipt status mismatch");
+        }
+    }
+    Ok((computed_state_root, computed_receipt_root))
+}
+
+fn load_validated_native_state_envelope_from_aoem_owner_v1(
+    params: &serde_json::Value,
+    chain_id: u64,
+) -> Result<Option<NovAoemOwnedNativeStateEnvelopeV1>> {
+    let runtime = native_aoem_owned_runtime_config_v1()
+        .context("load AOEM-owned native state runtime config failed")?;
+    if runtime.persist_backend.trim().eq_ignore_ascii_case("none") {
+        bail!("AOEM-owned native state recovery requires a persistent backend");
+    }
+    let namespace_digest = native_aoem_owned_state_namespace_digest_v1(params, chain_id);
+    let state_db_path = native_aoem_owned_state_db_path_v1(params);
+    let host_store_path = resolve_native_execution_store_path_from_params_v1(params)
+        .unwrap_or_else(nov_native_execution_store_path_v1);
+    let host_rocksdb_path = nov_native_execution_store_rocksdb_path_v1(host_store_path.as_path());
+    let comparable_path = |path: &Path| {
+        fs::canonicalize(path)
+            .or_else(|_| std::path::absolute(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase()
+    };
+    let aoem_path_key = comparable_path(state_db_path.as_path());
+    if aoem_path_key == comparable_path(host_store_path.as_path())
+        || aoem_path_key == comparable_path(host_rocksdb_path.as_path())
+    {
+        bail!("AOEM-owned state database path must be separate from Host projection storage");
+    }
+    let graph_store = novovm_exec::AoemSemanticGraphStoreV1::open(
+        &runtime,
+        state_db_path.as_path(),
+        &novovm_exec::AoemStorageProviderConfigV1::default(),
+    )
+    .context("open AOEM-owned native state recovery store failed")?;
+    let head_key = native_aoem_owned_state_head_key_v1(chain_id, namespace_digest.as_str());
+    if graph_store.get(head_key.as_slice())?.is_none() {
+        return Ok(None);
+    }
+    let envelope = read_native_state_envelope_from_aoem_graph_store_v1(
+        &graph_store,
+        chain_id,
+        namespace_digest.as_str(),
+    )?;
+    validate_production_native_state_envelope_v1(&envelope, chain_id, namespace_digest.as_str())?;
+    Ok(Some(envelope))
+}
+
+fn reconcile_native_host_projection_from_aoem_owner_v1(
+    params: &serde_json::Value,
+    chain_id: u64,
+    host_store_path: &Path,
+    host_store: &mut NovNativeExecutionStoreV1,
+) -> Result<bool> {
+    let namespace_digest = native_aoem_owned_state_namespace_digest_v1(params, chain_id);
+    verify_native_execution_store_authority_domain_v1(
+        host_store,
+        chain_id,
+        namespace_digest.as_str(),
+    )?;
+    let Some(envelope) = load_validated_native_state_envelope_from_aoem_owner_v1(params, chain_id)?
+    else {
+        let host_has_state = native_host_projection_has_state_v1(host_store);
+        // Bootstrap reverses the normal AOEM -> Host authority direction and
+        // is therefore an offline operator migration switch, never an RPC
+        // request option.
+        let migration_allowed =
+            bool_env_default_v1("NOVOVM_ALLOW_AOEM_STATE_BOOTSTRAP_FROM_HOST", false);
+        if host_has_state && !migration_allowed {
+            bail!(
+                "AOEM authority has no state head while Host projection is non-empty; run an explicit AOEM state bootstrap migration"
+            );
+        }
+        return Ok(false);
+    };
+    let host_sequence = host_store.module_state.aoem_semantic_ledger_sequence;
+    let aoem_sequence = envelope.store.module_state.aoem_semantic_ledger_sequence;
+    if host_sequence > aoem_sequence {
+        bail!(
+            "host native projection is ahead of AOEM authority: host_sequence={} aoem_sequence={}",
+            host_sequence,
+            aoem_sequence
+        );
+    }
+    if *host_store == envelope.store {
+        return Ok(false);
+    }
+    let previous = host_store.clone();
+    *host_store = envelope.store;
+    save_nov_native_execution_store_with_previous_v1(host_store_path, Some(&previous), host_store)
+        .context("repair host native query projection from AOEM authority failed")?;
+    Ok(true)
+}
+
+fn native_host_projection_has_state_v1(store: &NovNativeExecutionStoreV1) -> bool {
+    !store.receipts.is_empty() || store.module_state != NovNativeExecutionModuleStateV1::default()
+}
+
+fn load_and_reconcile_native_host_projection_from_aoem_owner_locked_v1(
+    params: &serde_json::Value,
+    chain_id: u64,
+    host_store_path: &Path,
+) -> Result<(NovNativeExecutionStoreV1, bool)> {
+    match load_nov_native_execution_store_v1(host_store_path) {
+        Ok(mut host_store) => {
+            let recovered = reconcile_native_host_projection_from_aoem_owner_v1(
+                params,
+                chain_id,
+                host_store_path,
+                &mut host_store,
+            )?;
+            Ok((host_store, recovered))
+        }
+        Err(host_error) => {
+            let envelope = load_validated_native_state_envelope_from_aoem_owner_v1(
+                params, chain_id,
+            )?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "host native projection is unreadable and AOEM authority has no recovery head: {}",
+                    host_error
+                )
+            })?;
+            let host_store = envelope.store;
+            save_nov_native_execution_store_with_previous_v1(host_store_path, None, &host_store)
+                .context("rebuild unreadable host native projection from AOEM authority failed")?;
+            Ok((host_store, true))
+        }
+    }
+}
+
+pub fn recover_nov_native_host_projection_from_aoem_v1(
+    params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let chain_id = requested_native_chain_id_v1(params)
+        .ok_or_else(|| anyhow::anyhow!("chain_id is required for AOEM projection recovery"))?;
+    let host_store_path = resolve_native_execution_store_path_from_params_v1(params)
+        .unwrap_or_else(nov_native_execution_store_path_v1);
+    let _write_lock = acquire_nov_native_execution_store_write_lock_v1(host_store_path.as_path())?;
+    let (store, recovered) = load_and_reconcile_native_host_projection_from_aoem_owner_locked_v1(
+        params,
+        chain_id,
+        host_store_path.as_path(),
+    )?;
+    let (mirror_records_recovered, mirror_projection_error) =
+        match reconcile_nov_native_aoem_semantic_ledger_mirror_from_store_v1(
+            host_store_path.as_path(),
+            &store,
+            now_unix_millis_v1(),
+        ) {
+            Ok(count) => (count, None),
+            Err(err) => (0, Some(format!("{err:#}"))),
+        };
+    Ok(serde_json::json!({
+        "schema": "novovm-native-host-projection-aoem-recovery/v1",
+        "chain_id": chain_id,
+        "recovered": recovered,
+        "mirror_records_recovered": mirror_records_recovered,
+        "mirror_projection_ok": mirror_projection_error.is_none(),
+        "mirror_projection_error": mirror_projection_error,
+        "host_projection_path": host_store_path.display().to_string(),
+        "state_root": native_semantic_ledger_state_digest_v1(&store.module_state),
+        "receipt_root": native_execution_receipt_root_v1(&store),
+        "semantic_sequence": store.module_state.aoem_semantic_ledger_sequence,
+    }))
+}
+
 fn commit_native_state_envelope_via_aoem_graph_v1(
     runtime: &AoemRuntimeConfig,
     state_db_path: &Path,
@@ -12083,14 +13366,14 @@ fn commit_native_state_envelope_via_aoem_graph_v1(
         bail!("AOEM-owned native state envelope must not be empty");
     }
     let envelope_digest = sha256_bytes_v1(&[
-        b"novovm-aoem-owned-native-state-envelope-v1",
+        b"novovm-aoem-owned-native-state-envelope-v2",
         envelope_bytes.as_slice(),
     ]);
     let chunks = envelope_bytes
         .chunks(NOVOVM_AOEM_OWNED_NATIVE_STATE_CHUNK_BYTES_V1)
         .collect::<Vec<_>>();
     let head = NovAoemOwnedNativeStateHeadV1 {
-        schema: NOVOVM_AOEM_OWNED_NATIVE_STATE_HEAD_SCHEMA_V1.to_string(),
+        schema: NOVOVM_AOEM_OWNED_NATIVE_STATE_HEAD_SCHEMA_V2.to_string(),
         batch_result_id: envelope.batch_result.batch_result_id.clone(),
         envelope_len: envelope_bytes.len(),
         chunk_count: chunks.len(),
@@ -12106,9 +13389,65 @@ fn commit_native_state_envelope_via_aoem_graph_v1(
             NOVOVM_AOEM_OWNED_NATIVE_STATE_CHUNK_BYTES_V1
         );
     }
-    let mut chunk_writes = Vec::with_capacity(chunks.len());
+    let head_key =
+        native_aoem_owned_state_head_key_v1(envelope.chain_id, envelope.namespace_digest.as_str());
+    let graph_store = novovm_exec::AoemSemanticGraphStoreV1::open(
+        runtime,
+        state_db_path,
+        &novovm_exec::AoemStorageProviderConfigV1::default(),
+    )?;
+    let previous_head = graph_store
+        .get(head_key.as_slice())?
+        .map(|bytes| {
+            let previous: NovAoemOwnedNativeStateHeadV1 = serde_json::from_slice(bytes.as_slice())
+                .context("decode previous AOEM-owned semantic graph state head")?;
+            if previous.schema != NOVOVM_AOEM_OWNED_NATIVE_STATE_HEAD_SCHEMA_V2
+                || previous.batch_result_id.trim().is_empty()
+                || previous.chunk_count == 0
+                || previous.chunk_count
+                    != previous
+                        .envelope_len
+                        .div_ceil(NOVOVM_AOEM_OWNED_NATIVE_STATE_CHUNK_BYTES_V1)
+            {
+                bail!("previous AOEM-owned semantic graph state head metadata is invalid");
+            }
+            Ok(previous)
+        })
+        .transpose()?;
+
+    // The envelope is a recoverable latest-state snapshot, not block history.
+    // Determine which old chunks can be reclaimed, but never delete them in
+    // the graph that publishes the new head. AOEM persists graph steps before
+    // its completion write, so pre-head deletion would make the old head
+    // unrecoverable across a crash in that window.
+    let previous_prune_count = previous_head.as_ref().map_or(0, |previous| {
+        if previous.batch_result_id == head.batch_result_id {
+            previous.chunk_count.saturating_sub(head.chunk_count)
+        } else {
+            previous.chunk_count
+        }
+    });
+    let mut prune_writes = Vec::with_capacity(previous_prune_count);
+    if let Some(previous) = previous_head.as_ref() {
+        let prune_start = if previous.batch_result_id == head.batch_result_id {
+            head.chunk_count.min(previous.chunk_count)
+        } else {
+            0
+        };
+        for chunk_index in prune_start..previous.chunk_count {
+            prune_writes.push(novovm_exec::AoemAtomicGraphWriteV1::Delete {
+                key: native_aoem_owned_state_chunk_key_v1(
+                    envelope.chain_id,
+                    envelope.namespace_digest.as_str(),
+                    previous.batch_result_id.as_str(),
+                    chunk_index,
+                )?,
+            });
+        }
+    }
+    let mut state_writes = Vec::with_capacity(chunks.len());
     for (chunk_index, chunk) in chunks.iter().enumerate() {
-        chunk_writes.push(novovm_exec::AoemAtomicGraphWriteV1::Put {
+        state_writes.push(novovm_exec::AoemAtomicGraphWriteV1::Put {
             key: native_aoem_owned_state_chunk_key_v1(
                 envelope.chain_id,
                 envelope.namespace_digest.as_str(),
@@ -12118,11 +13457,11 @@ fn commit_native_state_envelope_via_aoem_graph_v1(
             value: chunk.to_vec(),
         });
     }
-    let step_count = chunk_writes
+    let step_count = state_writes
         .len()
         .div_ceil(NOVOVM_AOEM_OWNED_NATIVE_STATE_WRITES_PER_STEP_V1);
     let mut steps = Vec::with_capacity(step_count);
-    for (step_index, writes) in chunk_writes
+    for (step_index, writes) in state_writes
         .chunks(NOVOVM_AOEM_OWNED_NATIVE_STATE_WRITES_PER_STEP_V1)
         .enumerate()
     {
@@ -12146,27 +13485,77 @@ fn commit_native_state_envelope_via_aoem_graph_v1(
         envelope.batch_result.batch_result_id.as_str(),
         &envelope_digest,
     );
-    let graph_store = novovm_exec::AoemSemanticGraphStoreV1::open(
-        runtime,
-        state_db_path,
-        &novovm_exec::AoemStorageProviderConfigV1::default(),
-    )?;
     let report = graph_store.commit(novovm_exec::AoemAtomicGraphRequestV1 {
         graph_id,
         steps,
         completion_write: novovm_exec::AoemAtomicGraphWriteV1::Put {
-            key: native_aoem_owned_state_head_key_v1(
-                envelope.chain_id,
-                envelope.namespace_digest.as_str(),
-            ),
-            value: head_bytes,
+            key: head_key.clone(),
+            value: head_bytes.clone(),
         },
     })?;
-    let readback = read_native_state_envelope_from_aoem_graph_store_v1(
+    let mut readback = read_native_state_envelope_from_aoem_graph_store_v1(
         &graph_store,
         envelope.chain_id,
         envelope.namespace_digest.as_str(),
     )?;
+
+    // Only after the new head and every chunk have been durably published and
+    // read back may unreachable chunks be removed. This GC graph is
+    // deliberately best-effort: a GC failure may retain space, but it must not
+    // turn a committed canonical state into an execution failure. Reusing the
+    // current head as the completion write makes the cleanup idempotent.
+    if !prune_writes.is_empty() {
+        let gc_step_count = prune_writes
+            .len()
+            .div_ceil(NOVOVM_AOEM_OWNED_NATIVE_STATE_WRITES_PER_STEP_V1);
+        let mut gc_steps = Vec::with_capacity(gc_step_count);
+        for (step_index, writes) in prune_writes
+            .chunks(NOVOVM_AOEM_OWNED_NATIVE_STATE_WRITES_PER_STEP_V1)
+            .enumerate()
+        {
+            let mut opaque_payload = Vec::with_capacity(44);
+            opaque_payload.extend_from_slice(&envelope_digest);
+            opaque_payload.extend_from_slice(&(step_index as u32).to_le_bytes());
+            opaque_payload.extend_from_slice(&(gc_step_count as u32).to_le_bytes());
+            gc_steps.push(novovm_exec::AoemAtomicGraphStepV1 {
+                task_kind: 1,
+                task_payload: opaque_payload.clone(),
+                writes: writes.to_vec(),
+                event: Some(novovm_exec::AoemAtomicGraphEventV1 {
+                    kind: 1,
+                    payload: opaque_payload,
+                }),
+            });
+        }
+        let previous_batch_result_id = previous_head
+            .as_ref()
+            .map(|previous| previous.batch_result_id.as_str())
+            .unwrap_or_default();
+        let gc_graph_id = native_aoem_owned_state_gc_graph_id_v1(
+            envelope.chain_id,
+            envelope.namespace_digest.as_str(),
+            previous_batch_result_id,
+            envelope.batch_result.batch_result_id.as_str(),
+            &envelope_digest,
+        );
+        if graph_store
+            .commit(novovm_exec::AoemAtomicGraphRequestV1 {
+                graph_id: gc_graph_id,
+                steps: gc_steps,
+                completion_write: novovm_exec::AoemAtomicGraphWriteV1::Put {
+                    key: head_key,
+                    value: head_bytes,
+                },
+            })
+            .is_ok()
+        {
+            readback = read_native_state_envelope_from_aoem_graph_store_v1(
+                &graph_store,
+                envelope.chain_id,
+                envelope.namespace_digest.as_str(),
+            )?;
+        }
+    }
     Ok((report, readback))
 }
 
@@ -12212,38 +13601,18 @@ pub fn get_nov_native_aoem_owned_state_recovery_probe_v1(
         namespace_digest.as_str(),
     )
     .context("read AOEM-owned semantic graph recovery envelope failed")?;
-    if envelope.chain_id != chain_id {
-        bail!(
-            "AOEM-owned recovery chain mismatch: stored={} requested={chain_id}",
-            envelope.chain_id
-        );
-    }
-    if envelope.namespace_digest != namespace_digest {
-        bail!("AOEM-owned recovery namespace digest mismatch");
-    }
-    let computed_state_root = native_semantic_ledger_state_digest_v1(&envelope.store.module_state);
-    let computed_receipt_root = native_execution_receipt_root_v1(&envelope.store);
-    if envelope.state_root != computed_state_root {
-        bail!(
-            "AOEM-owned recovery state root mismatch: stored={} computed={computed_state_root}",
-            envelope.state_root
-        );
-    }
-    if envelope.receipt_root != computed_receipt_root {
-        bail!(
-            "AOEM-owned recovery receipt root mismatch: stored={} computed={computed_receipt_root}",
-            envelope.receipt_root
-        );
-    }
-    if envelope.batch_result.state_delta_root != envelope.state_root {
-        bail!("AOEM-owned recovery batch state root mismatch");
-    }
-    if envelope.batch_result.receipt_root != envelope.receipt_root {
-        bail!("AOEM-owned recovery batch receipt root mismatch");
-    }
+    let (computed_state_root, computed_receipt_root) =
+        validate_production_native_state_envelope_v1(
+            &envelope,
+            chain_id,
+            namespace_digest.as_str(),
+        )?;
     Ok(serde_json::json!({
         "schema": "novovm-aoem-owned-native-state-recovery-probe/v1",
         "recovery_ok": true,
+        "state_schema": envelope.schema,
+        "production_accepted": envelope.production_accepted,
+        "production_gate_contract": envelope.production_gate_contract,
         "recovery_source": "aoem_storage_provider_wire_v1",
         "commit_surface": "aoem_submit_semantic_graph_v3",
         "persistence_owner": "aoem_runtime",
@@ -12326,7 +13695,9 @@ fn persist_native_state_as_aoem_owner_v1(
         );
     }
     let envelope = NovAoemOwnedNativeStateEnvelopeV1 {
-        schema: NOVOVM_AOEM_OWNED_NATIVE_STATE_SCHEMA_V1.to_string(),
+        schema: NOVOVM_AOEM_OWNED_NATIVE_STATE_SCHEMA_V2.to_string(),
+        production_accepted: true,
+        production_gate_contract: NOVOVM_AOEM_OWNED_PRODUCTION_GATE_CONTRACT_V2.to_string(),
         chain_id,
         namespace_digest,
         state_root: state_root.clone(),
@@ -12346,6 +13717,9 @@ fn persist_native_state_as_aoem_owner_v1(
     }
 
     Ok(NovAoemOwnedNativeStateCommitV1 {
+        state_schema: NOVOVM_AOEM_OWNED_NATIVE_STATE_SCHEMA_V2.to_string(),
+        production_accepted: true,
+        production_gate_contract: NOVOVM_AOEM_OWNED_PRODUCTION_GATE_CONTRACT_V2.to_string(),
         aoem_called: true,
         aoem_execution_completed: true,
         aoem_execution_scope: "host_adapter_lowering_and_aoem_semantic_graph_v3_atomic_persistence"
@@ -12535,6 +13909,21 @@ fn aoem_native_tx_batch_production_candidate_status_v1(
 pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
+    run_nov_send_raw_transaction_batch_internal_v1(params, false)
+}
+
+fn run_nov_send_raw_transaction_batch_internal_v1(
+    params: &serde_json::Value,
+    trusted_internal_call: bool,
+) -> Result<serde_json::Value> {
+    if !trusted_internal_call
+        && (native_aoem_native_tx_batch_production_candidate_enabled_v1()
+            || native_send_raw_transaction_pipeline_only_v1(&serde_json::Value::Null))
+    {
+        bail!(
+            "direct native batch execution is internal-only when the node pins AOEM production/pipeline ownership; submit authenticated transactions to pending ingress"
+        );
+    }
     let raw_values = params
         .get("raw_txs")
         .or_else(|| params.get("raw_transactions"))
@@ -12551,6 +13940,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         native_tx: NovNativeTxWireV1,
         ir: TxIR,
         tx_hash: [u8; 32],
+        durable_auth_reservation: NovNativeDurableAuthReservationV1,
         execution_subject: Option<NovExecutionSubjectMetaV1>,
         requested_execution_behavior: Option<NovRequestedExecutionBehaviorV1>,
         execution_request: Option<NovExecutionRequestV1>,
@@ -12558,59 +13948,58 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
 
     let mut raw_payloads = Vec::with_capacity(raw_values.len());
     let mut prepared = Vec::with_capacity(raw_values.len());
-    let requested_execution_policy_override = parse_nov_execution_policy_v1(
-        params
-            .get("execution_policy")
-            .and_then(|value| value.as_str()),
-    );
-    let requested_privacy_mode_override =
-        parse_nov_privacy_mode_v1(params.get("privacy_mode").and_then(|value| value.as_str()));
     for (idx, value) in raw_values.iter().enumerate() {
         let raw = value
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("raw_txs[{idx}] must be a hex string"))?;
         let payload = decode_eth_send_raw_hex_payload_v1(raw, "raw_txs")?;
-        let (native_tx, ir, tx_hash) =
-            ingest_local_nov_raw_tx_payload_v1(params, payload.as_slice())?;
+        let (native_tx, ir, tx_hash, _) =
+            ingest_local_nov_raw_tx_payload_internal_v1(params, payload.as_slice(), false, false)?;
         let execution_subject = match &native_tx.kind {
             NovTxKindV1::Execute(execute) => Some(subject_meta_from_execute_tx_v1(execute)),
             _ => None,
         };
         let requested_execution_behavior = match &native_tx.kind {
-            NovTxKindV1::Execute(execute) => {
-                let requested_policy = if params.get("execution_policy").is_some() {
-                    requested_execution_policy_override
-                } else {
-                    execute.execution_policy
-                };
-                Some(requested_execution_behavior_v1(
-                    effective_execution_policy_for_fee_asset_v1(
-                        requested_policy,
-                        execute.fee_policy.pay_asset.as_str(),
-                    ),
-                    if params.get("privacy_mode").is_some() {
-                        requested_privacy_mode_override
-                    } else {
-                        execute.privacy_mode
-                    },
-                ))
-            }
+            NovTxKindV1::Execute(execute) => Some(requested_execution_behavior_v1(
+                effective_execution_policy_for_fee_asset_v1(
+                    execute.execution_policy,
+                    execute.fee_policy.pay_asset.as_str(),
+                ),
+                execute.privacy_mode,
+            )),
             _ => None,
         };
         let execution_request = nov_native_tx_to_execution_request_v1(&native_tx)?;
+        let durable_auth_reservation =
+            nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash);
         raw_payloads.push(payload);
         prepared.push(PreparedNovRawBatchItemV1 {
             native_tx,
             ir,
             tx_hash,
+            durable_auth_reservation,
             execution_subject,
             requested_execution_behavior,
             execution_request,
         });
     }
 
-    let (aoem_batch_ingress, aoem_batch_chunks) =
-        execute_native_raw_tx_batch_chunks_via_aoem_semantic_ingress_v1(raw_payloads.as_slice())?;
+    let chain_id = prepared
+        .first()
+        .map(|item| item.native_tx.chain_id)
+        .unwrap_or_default();
+    if prepared
+        .iter()
+        .any(|item| item.native_tx.chain_id != chain_id)
+    {
+        bail!("mixed chain_id values are not allowed in a native transaction batch");
+    }
+    let mut seen_tx_hashes = std::collections::HashSet::<[u8; 32]>::new();
+    for item in &prepared {
+        if !seen_tx_hashes.insert(item.tx_hash) {
+            bail!("duplicate signed intent within native transaction batch");
+        }
+    }
     let now_ms = now_unix_millis_v1();
     let env_shadow_enabled = native_aoem_native_tx_batch_shadow_enabled_v1();
     let env_production_candidate_enabled =
@@ -12621,9 +14010,179 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     let production_candidate_enabled =
         aoem_gate_config.production_candidate || aoem_gate_config.semantic_graph_v3_required;
     let compare_enabled = aoem_gate_config.compare;
+    let tx_ingress_real_callsite = tx_ingress_real_callsite_v1(
+        params,
+        production_candidate_enabled,
+        "nov_sendRawTransactionBatch",
+    );
+    if production_candidate_enabled && !aoem_gate_config.explicit {
+        bail!(
+            "AOEM-owned production ingress requires explicit aoem_owned_gate_config before pending admission"
+        );
+    }
+    if native_aoem_runtime_worker_pipeline_enabled_v1()
+        && production_candidate_enabled
+        && tx_ingress_real_callsite != "aoem_runtime_worker"
+    {
+        bail!(
+            "AOEM runtime-worker production ingress must be called by aoem_runtime_worker before pending admission"
+        );
+    }
+    if production_candidate_enabled
+        && !cfg!(test)
+        && [
+            "native_execution_store_path",
+            "aoem_owned_state_db_path",
+            "aoemOwnedStateDbPath",
+            "aoem_state_db_path",
+            "aoem_state_namespace",
+            "aoemStateNamespace",
+            "unified_account_store_path",
+            "ua_store_path",
+        ]
+        .iter()
+        .any(|key| params.get(*key).is_some())
+    {
+        bail!(
+            "production native persistence paths and AOEM namespace are node configuration, not request parameters"
+        );
+    }
     let legacy_host_transitional_fallback_gate_enabled =
         native_legacy_host_transitional_fallback_enabled_v1();
     let native_tx_batch_build_required = shadow_enabled || production_candidate_enabled;
+    let store_path_override = resolve_native_execution_store_path_from_params_v1(params);
+    let effective_native_store_path = store_path_override
+        .clone()
+        .unwrap_or_else(nov_native_execution_store_path_v1);
+    let unified_account_store_path = resolve_unified_account_store_path_from_params_v1(
+        params,
+        effective_native_store_path.as_path(),
+    );
+    let _write_lock =
+        acquire_nov_native_execution_store_write_lock_v1(effective_native_store_path.as_path())?;
+    let (mut store, host_projection_recovered_from_aoem) = if production_candidate_enabled {
+        load_and_reconcile_native_host_projection_from_aoem_owner_locked_v1(
+            params,
+            chain_id,
+            effective_native_store_path.as_path(),
+        )?
+    } else {
+        (
+            load_nov_native_execution_store_v1(effective_native_store_path.as_path())?,
+            false,
+        )
+    };
+    let mut authority_domain_bound = false;
+    if production_candidate_enabled {
+        let namespace_digest = native_aoem_owned_state_namespace_digest_v1(params, chain_id);
+        verify_native_execution_store_authority_domain_v1(
+            &store,
+            chain_id,
+            namespace_digest.as_str(),
+        )?;
+    }
+    let mut replay_results = Vec::with_capacity(prepared.len());
+    let mut replay_count = 0usize;
+    for item in &prepared {
+        if item.execution_request.is_some() {
+            if let Some(receipt) =
+                find_nov_native_durable_auth_receipt_v1(&store, &item.durable_auth_reservation)?
+            {
+                replay_count = replay_count.saturating_add(1);
+                replay_results.push(serde_json::json!({
+                    "method": "nov_sendRawTransaction",
+                    "accepted": true,
+                    "pending_tx_local_ingress": false,
+                    "pending_tx_hash": to_hex_prefixed_v1(&item.tx_hash),
+                    "chain_id": item.native_tx.chain_id,
+                    "nov_tx_kind": "execute",
+                    "tx_ir_type": format!("{:?}", item.ir.tx_type),
+                    "execution_request": item.execution_request,
+                    "execution_subject": item.execution_subject,
+                    "native_receipt": receipt,
+                    "durable_exact_replay": true,
+                }));
+            }
+        }
+    }
+    if replay_count > 0 {
+        if replay_count != prepared.len() {
+            bail!(
+                "native transaction batch mixes committed replay and uncommitted intents; split the requests"
+            );
+        }
+        for item in &prepared {
+            if item.execution_request.is_some() {
+                release_nov_native_auth_nonce_reservation_v1(&item.durable_auth_reservation)?;
+            }
+        }
+        let (mirror_records_recovered, mirror_projection_error) =
+            match reconcile_nov_native_aoem_semantic_ledger_mirror_from_store_v1(
+                effective_native_store_path.as_path(),
+                &store,
+                now_ms,
+            ) {
+                Ok(count) => (count, None),
+                Err(err) => (0, Some(format!("{err:#}"))),
+            };
+        return Ok(serde_json::json!({
+            "method": "nov_sendRawTransactionBatch",
+            "accepted": true,
+            "batch_replay": true,
+            "replay_mode": "durable_exact_committed_no_execution",
+            "aoem_reexecution": false,
+            "host_projection_recovered_from_aoem": host_projection_recovered_from_aoem,
+            "authority_domain_bound": authority_domain_bound,
+            "mirror_records_recovered": mirror_records_recovered,
+            "mirror_projection_ok": mirror_projection_error.is_none(),
+            "mirror_projection_error": mirror_projection_error,
+            "batch_size": replay_results.len(),
+            "results": replay_results,
+        }));
+    }
+    if production_candidate_enabled {
+        let namespace_digest = native_aoem_owned_state_namespace_digest_v1(params, chain_id);
+        authority_domain_bound = bind_native_execution_store_authority_domain_v1(
+            &mut store,
+            chain_id,
+            namespace_digest.as_str(),
+        )?;
+    }
+    let mut batch_expected_nonces = store.module_state.native_auth_next_nonces.clone();
+    for item in &prepared {
+        if item.execution_request.is_none() {
+            continue;
+        }
+        let reservation = &item.durable_auth_reservation;
+        let expected = batch_expected_nonces
+            .entry(reservation.identity_key.clone())
+            .or_insert(0);
+        if reservation.nonce != *expected {
+            bail!(
+                "native transaction batch nonce sequence mismatch identity_key={} expected={} got={}",
+                reservation.identity_key,
+                *expected,
+                reservation.nonce
+            );
+        }
+        *expected = expected.saturating_add(1);
+    }
+    for (item, payload) in prepared.iter().zip(raw_payloads.iter()) {
+        observe_network_runtime_native_pending_tx_local_native_payload_v1(
+            item.native_tx.chain_id,
+            item.tx_hash,
+            Some(payload.as_slice()),
+        );
+    }
+    let precommit_store_materialized_receipts = store.receipts.len();
+    let precommit_store_materialized_estimated_bytes =
+        estimate_native_execution_store_retained_bytes_v1(&store);
+    let previous_store = store.clone();
+    let previous_store_clone_receipts = previous_store.receipts.len();
+    let previous_store_clone_estimated_bytes =
+        estimate_native_execution_store_retained_bytes_v1(&previous_store);
+    let (aoem_batch_ingress, aoem_batch_chunks) =
+        execute_native_raw_tx_batch_chunks_via_aoem_semantic_ingress_v1(raw_payloads.as_slice())?;
     let mut shadow_mismatch_reasons = Vec::<String>::new();
     let mut semantic_graph_v3_capability_error = None::<String>;
     let semantic_graph_v3_capability_status = if production_candidate_enabled {
@@ -12719,11 +14278,9 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         {
             shadow_mismatch_reasons.push("mixed_chain_id_in_batch".to_string());
         }
+        let batch_id = deterministic_native_aoem_batch_id_v1(chain_id, &store, items.as_slice());
         Some(novovm_exec::build_native_tx_batch_v1(
-            format!("novovm-tx-ingress-aoem-owned-{now_ms}"),
-            chain_id,
-            None,
-            items,
+            batch_id, chain_id, None, items,
         )?)
     } else {
         None
@@ -12770,28 +14327,15 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         }
     }
     let aoem_chunk_size = native_aoem_batch_max_size_v1();
-    let store_path_override = resolve_native_execution_store_path_from_params_v1(params);
-    let effective_native_store_path = store_path_override
-        .clone()
-        .unwrap_or_else(nov_native_execution_store_path_v1);
-    let unified_account_store_path = resolve_unified_account_store_path_from_params_v1(
-        params,
-        effective_native_store_path.as_path(),
-    );
-    let _write_lock =
-        acquire_nov_native_execution_store_write_lock_v1(effective_native_store_path.as_path())?;
-    let mut store = load_nov_native_execution_store_v1(effective_native_store_path.as_path())?;
-    let precommit_store_materialized_receipts = store.receipts.len();
-    let precommit_store_materialized_estimated_bytes =
-        estimate_native_execution_store_retained_bytes_v1(&store);
-    let previous_store = store.clone();
-    let previous_store_clone_receipts = previous_store.receipts.len();
-    let previous_store_clone_estimated_bytes =
-        estimate_native_execution_store_retained_bytes_v1(&previous_store);
     let mut results = Vec::with_capacity(prepared.len());
     let mut native_receipts = Vec::with_capacity(prepared.len());
     let mut mirror_records = Vec::new();
     let mut host_adapter_business_planner_invoked = false;
+    let committed_auth_reservations = prepared
+        .iter()
+        .filter(|item| item.execution_request.is_some())
+        .map(|item| item.durable_auth_reservation.clone())
+        .collect::<Vec<_>>();
     let item_count = prepared.len();
     for (item_index, item) in prepared.into_iter().enumerate() {
         let item_batch_ingress = aoem_batch_chunks
@@ -12807,6 +14351,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
                     subject_meta: item.execution_subject.as_ref(),
                     requested_behavior: item.requested_execution_behavior.as_ref(),
                     unified_account_store_path: unified_account_store_path.as_deref(),
+                    durable_auth_reservation: Some(&item.durable_auth_reservation),
                     aoem_semantic_ingress_override: Some(native_aoem_batch_item_ingress_meta_v1(
                         item_batch_ingress,
                         item_index,
@@ -12903,7 +14448,13 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         shadow_result
     };
     let owned_commit = if production_candidate_enabled {
-        if !semantic_graph_v3_capability_status
+        if !shadow_mismatch_reasons.is_empty() {
+            owned_commit_error = Some(format!(
+                "AOEM production pre-publish validation failed: {}",
+                shadow_mismatch_reasons.join(",")
+            ));
+            None
+        } else if !semantic_graph_v3_capability_status
             .as_ref()
             .is_some_and(|status| status.ready)
         {
@@ -12964,11 +14515,6 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     } else {
         production_candidate_status.mismatch_reasons.join(",")
     };
-    let tx_ingress_real_callsite = tx_ingress_real_callsite_v1(
-        params,
-        production_candidate_enabled,
-        "nov_sendRawTransactionBatch",
-    );
     let aoem_owned_single_path_enforced = production_candidate_enabled;
     let legacy_host_transitional_fallback_used =
         production_candidate_enabled && !production_candidate_status.result_ok;
@@ -13137,22 +14683,29 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
             .as_ref()
             .is_some_and(|result| commit.receipt_root == result.receipt_root)
     });
-    let mirror_path =
-        nov_native_aoem_semantic_ledger_mirror_path_v1(effective_native_store_path.as_path());
     let native_store_dirty_set =
         native_execution_store_dirty_set_v1(&previous_store, &store, false)?;
     let native_store_dirty_stats =
         native_execution_store_dirty_set_stats_json_v1(&native_store_dirty_set);
+    let mut mirror_records_recovered = 0usize;
+    let mut mirror_projection_error = None::<String>;
     if host_store_projection_write_allowed {
-        append_nov_native_aoem_semantic_ledger_mirror_records_v1(
-            mirror_path.as_path(),
-            mirror_records.as_slice(),
-        )?;
         save_nov_native_execution_store_with_previous_v1(
             effective_native_store_path.as_path(),
             Some(&previous_store),
             &store,
         )?;
+        for reservation in &committed_auth_reservations {
+            release_nov_native_auth_nonce_reservation_v1(reservation)?;
+        }
+        match reconcile_nov_native_aoem_semantic_ledger_mirror_from_store_v1(
+            effective_native_store_path.as_path(),
+            &store,
+            now_ms,
+        ) {
+            Ok(count) => mirror_records_recovered = count,
+            Err(err) => mirror_projection_error = Some(format!("{err:#}")),
+        }
     }
     let aoem_batch_chunk_count = aoem_batch_chunks.len();
     let native_store_backend_status = get_nov_native_execution_store_backend_status_v1(Some(
@@ -13181,8 +14734,32 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
         serde_json::json!(production_candidate_status.result_ok),
     );
     native_store_commit.insert(
+        "host_projection_recovered_from_aoem".to_string(),
+        serde_json::json!(host_projection_recovered_from_aoem),
+    );
+    native_store_commit.insert(
+        "authority_domain_bound".to_string(),
+        serde_json::json!(authority_domain_bound),
+    );
+    native_store_commit.insert(
         "host_projection_write_performed".to_string(),
         serde_json::json!(host_store_projection_write_allowed),
+    );
+    native_store_commit.insert(
+        "mirror_records_expected".to_string(),
+        serde_json::json!(mirror_records.len()),
+    );
+    native_store_commit.insert(
+        "mirror_records_recovered".to_string(),
+        serde_json::json!(mirror_records_recovered),
+    );
+    native_store_commit.insert(
+        "mirror_projection_ok".to_string(),
+        serde_json::json!(mirror_projection_error.is_none()),
+    );
+    native_store_commit.insert(
+        "mirror_projection_error".to_string(),
+        serde_json::json!(mirror_projection_error),
     );
     native_store_commit.insert(
         "replacement_target".to_string(),
@@ -13573,7 +15150,7 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     );
     out.insert(
         "aoem_native_tx_batch_nonce_parity_scope".to_string(),
-        serde_json::json!("authenticated_ingress_reservation_only_not_restart_durable"),
+        serde_json::json!("authenticated_execute_committed_next_nonce_restart_durable_v1"),
     );
     out.insert(
         "aoem_native_tx_batch_production_receipt_count".to_string(),
@@ -14430,12 +16007,14 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     let mut skipped_missing_payload = 0usize;
     let mut skipped_non_native_payload = 0usize;
     let mut skipped_chain_mismatch = 0usize;
+    let mut skipped_tx_hash_mismatch = 0usize;
+    let mut skipped_authentication_rejected = 0usize;
     let mut skipped_ineligible_stage = 0usize;
     let mut skipped_already_receipted = 0usize;
     let mut ledger_final_missing_candidate_selected_count = 0usize;
     let mut ledger_final_missing_candidate_payload_available_count = 0usize;
     let mut ledger_final_missing_candidate_payload_missing_count = 0usize;
-    let ledger_final_missing_candidate_tx_hash_mapping_missing_count = 0usize;
+    let mut ledger_final_missing_candidate_tx_hash_mapping_missing_count = 0usize;
     let mut ledger_final_missing_candidate_raw_tx_build_error_count = 0usize;
     let mut ledger_final_missing_candidate_ineligible_stage_count = 0usize;
     let mut ledger_final_missing_candidate_already_receipted_count = 0usize;
@@ -14496,19 +16075,22 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
                     ledger_final_missing_candidate_raw_tx_build_error_count =
                         ledger_final_missing_candidate_raw_tx_build_error_count.saturating_add(1);
                 }
+                observe_network_runtime_native_pending_tx_rejected_v1(
+                    chain_id,
+                    pending_tx.tx_hash,
+                    pending_tx.source_peer_id,
+                );
                 continue;
             }
         };
-        let native_sequence = match &native_tx.kind {
-            NovTxKindV1::Execute(execute) => execute.nonce.saturating_sub(1),
-            NovTxKindV1::Transfer(_) | NovTxKindV1::Governance(_) => 0,
-        };
-        observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
-            chain_id,
-            native_sequence,
-            pending_tx.tx_hash,
-        );
+        let native_sequence =
+            get_runtime_novorudp_sequence_for_tx_hash_v1(chain_id, pending_tx.tx_hash);
         if is_ledger_final_missing_candidate {
+            let Some(native_sequence) = native_sequence else {
+                ledger_final_missing_candidate_tx_hash_mapping_missing_count =
+                    ledger_final_missing_candidate_tx_hash_mapping_missing_count.saturating_add(1);
+                continue;
+            };
             ledger_final_missing_candidate_sequences.insert(native_sequence);
             ledger_final_missing_payload_available_sequences.insert(native_sequence);
             ledger_final_missing_tx_hash_by_sequence
@@ -14520,6 +16102,44 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
                 ledger_final_missing_candidate_raw_tx_build_error_count =
                     ledger_final_missing_candidate_raw_tx_build_error_count.saturating_add(1);
             }
+            observe_network_runtime_native_pending_tx_rejected_v1(
+                chain_id,
+                pending_tx.tx_hash,
+                pending_tx.source_peer_id,
+            );
+            continue;
+        }
+        let pending_ir = match nov_native_tx_to_adapter_tx_ir_v1(&native_tx) {
+            Ok(ir) => ir,
+            Err(_) => {
+                skipped_authentication_rejected = skipped_authentication_rejected.saturating_add(1);
+                observe_network_runtime_native_pending_tx_rejected_v1(
+                    chain_id,
+                    pending_tx.tx_hash,
+                    pending_tx.source_peer_id,
+                );
+                continue;
+            }
+        };
+        let canonical_tx_hash = tx_hash_array_from_ir_v1(&pending_ir);
+        if canonical_tx_hash != pending_tx.tx_hash {
+            skipped_tx_hash_mismatch = skipped_tx_hash_mismatch.saturating_add(1);
+            observe_network_runtime_native_pending_tx_rejected_v1(
+                chain_id,
+                pending_tx.tx_hash,
+                pending_tx.source_peer_id,
+            );
+            continue;
+        }
+        if verify_nov_native_auth_v1(params, &native_tx, &pending_ir, canonical_tx_hash).is_err()
+            || !matches!(&native_tx.kind, NovTxKindV1::Execute(_))
+        {
+            skipped_authentication_rejected = skipped_authentication_rejected.saturating_add(1);
+            observe_network_runtime_native_pending_tx_rejected_v1(
+                chain_id,
+                pending_tx.tx_hash,
+                pending_tx.source_peer_id,
+            );
             continue;
         }
         let pending_tx_hash = to_hex_prefixed_v1(&pending_tx.tx_hash);
@@ -14538,6 +16158,10 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
                     pending_tx.tx_hash,
                 );
             }
+            let pending_ir = nov_native_tx_to_adapter_tx_ir_v1(&native_tx)?;
+            let durable_reservation =
+                nov_native_durable_auth_reservation_v1(&native_tx, &pending_ir, pending_tx.tx_hash);
+            release_nov_native_auth_nonce_reservation_v1(&durable_reservation)?;
             observe_network_runtime_native_pending_tx_dropped_v1(chain_id, pending_tx.tx_hash);
             continue;
         }
@@ -14546,7 +16170,9 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
                 ledger_final_missing_payload_available_selected_count.saturating_add(1);
             ledger_final_missing_raw_txs_push_attempt_count =
                 ledger_final_missing_raw_txs_push_attempt_count.saturating_add(1);
-            ledger_final_missing_selected_sequences.insert(native_sequence);
+            if let Some(native_sequence) = native_sequence {
+                ledger_final_missing_selected_sequences.insert(native_sequence);
+            }
         }
         raw_txs.push(serde_json::Value::String(to_hex_prefixed_v1(
             payload.as_slice(),
@@ -14559,7 +16185,9 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
                 ledger_final_missing_candidate_selected_count.saturating_add(1);
             ledger_final_missing_raw_txs_push_success_count =
                 ledger_final_missing_raw_txs_push_success_count.saturating_add(1);
-            ledger_final_missing_raw_txs_pushed_sequences.insert(native_sequence);
+            if let Some(native_sequence) = native_sequence {
+                ledger_final_missing_raw_txs_pushed_sequences.insert(native_sequence);
+            }
             observe_network_runtime_native_pending_tx_repair_actual_batch_v1(
                 chain_id,
                 pending_tx.tx_hash,
@@ -14954,6 +16582,14 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             serde_json::json!(skipped_chain_mismatch),
         );
         skipped.insert(
+            "tx_hash_mismatch".to_string(),
+            serde_json::json!(skipped_tx_hash_mismatch),
+        );
+        skipped.insert(
+            "authentication_rejected".to_string(),
+            serde_json::json!(skipped_authentication_rejected),
+        );
+        skipped.insert(
             "ineligible_stage".to_string(),
             serde_json::json!(skipped_ineligible_stage),
         );
@@ -14972,19 +16608,41 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
         anyhow::anyhow!("nov_executePendingNativeTxBatch params must be an object")
     })?;
     obj.insert("raw_txs".to_string(), serde_json::Value::Array(raw_txs));
-    let batch_result = run_nov_send_raw_transaction_batch_from_params_v1(&batch_params)?;
-    let canonical_projection = project_executed_native_pending_batch_to_canonical_v1(
-        chain_id,
-        selected_hash_bytes.as_slice(),
-        selected_raw_payloads.as_slice(),
-    );
-    for tx_hash in selected_hash_bytes.iter().copied() {
-        observe_runtime_novorudp_receipt_proof_close_v1(chain_id, tx_hash);
-        observe_runtime_novorudp_canonical_proof_close_v1(chain_id, tx_hash);
-        observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1(chain_id, tx_hash);
+    let batch_result = run_nov_send_raw_transaction_batch_internal_v1(&batch_params, true)?;
+    let batch_accepted = batch_result
+        .get("accepted")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let batch_replay = batch_result
+        .get("batch_replay")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let canonical_projection = if !batch_accepted || batch_replay {
+        None
+    } else {
+        Some(project_executed_native_pending_batch_to_canonical_v1(
+            chain_id,
+            selected_hash_bytes.as_slice(),
+            selected_raw_payloads.as_slice(),
+        ))
+    };
+    if batch_accepted {
+        for tx_hash in selected_hash_bytes.iter().copied() {
+            observe_runtime_novorudp_receipt_proof_close_v1(chain_id, tx_hash);
+            observe_runtime_novorudp_canonical_proof_close_v1(chain_id, tx_hash);
+            observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1(
+                chain_id, tx_hash,
+            );
+        }
     }
     let post_batch_pending_summary =
         snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
+    let rejected_trace_sequences = BTreeSet::<u64>::new();
+    let completed_sequences = if batch_accepted {
+        &ledger_final_missing_selected_sequences
+    } else {
+        &rejected_trace_sequences
+    };
     let trace = novorudp_sequence_lifecycle_trace_diff_v1(NovorudpSequenceLifecycleTraceInputV1 {
         summary: &post_batch_pending_summary,
         repair_final_missing_sequence_start,
@@ -14994,19 +16652,23 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
             selected_sequences: &ledger_final_missing_selected_sequences,
             raw_txs_pushed_sequences: &ledger_final_missing_raw_txs_pushed_sequences,
             actual_batch_sequences: &ledger_final_missing_selected_sequences,
-            receipt_sequences: &ledger_final_missing_selected_sequences,
-            canonical_sequences: &ledger_final_missing_selected_sequences,
-            durable_missing_closed_sequences: &ledger_final_missing_selected_sequences,
+            receipt_sequences: completed_sequences,
+            canonical_sequences: completed_sequences,
+            durable_missing_closed_sequences: completed_sequences,
         },
         tx_hash_by_sequence: &ledger_final_missing_tx_hash_by_sequence,
-        blocked_reason: "",
+        blocked_reason: if batch_accepted {
+            ""
+        } else {
+            "aoem_batch_rejected_before_canonical_projection"
+        },
     });
     let mut report = serde_json::Map::new();
     report.insert(
         "method".to_string(),
         serde_json::json!("nov_executePendingNativeTxBatch"),
     );
-    report.insert("accepted".to_string(), serde_json::json!(true));
+    report.insert("accepted".to_string(), serde_json::json!(batch_accepted));
     report.insert("execution_kernel".to_string(), serde_json::json!("AOEM"));
     report.insert(
         "source".to_string(),
@@ -15207,7 +16869,11 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     );
     report.insert(
         "ledger_final_missing_batch_blocked_reason".to_string(),
-        serde_json::json!(""),
+        serde_json::json!(if batch_accepted {
+            ""
+        } else {
+            "aoem_batch_rejected_before_canonical_projection"
+        }),
     );
     report.insert(
         "pending_scanned".to_string(),
@@ -15266,7 +16932,16 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     );
     insert_aoem_owned_tx_ingress_fields_from_batch_result_v1(&mut report, &batch_result);
     insert_novorudp_sequence_lifecycle_trace_fields_v1(&mut report, &trace);
-    report.insert("executed".to_string(), serde_json::json!(true));
+    report.insert("executed".to_string(), serde_json::json!(batch_accepted));
+    report.insert("batch_replay".to_string(), serde_json::json!(batch_replay));
+    report.insert(
+        "canonical_projection_skipped_for_replay".to_string(),
+        serde_json::json!(batch_replay),
+    );
+    report.insert(
+        "canonical_projection_skipped_for_rejection".to_string(),
+        serde_json::json!(!batch_accepted),
+    );
     report.insert(
         "canonical_projection".to_string(),
         serde_json::to_value(&canonical_projection).unwrap_or_else(|_| {
@@ -15288,6 +16963,14 @@ pub fn run_nov_execute_pending_native_tx_batch_from_params_v1(
     skipped.insert(
         "chain_mismatch".to_string(),
         serde_json::json!(skipped_chain_mismatch),
+    );
+    skipped.insert(
+        "tx_hash_mismatch".to_string(),
+        serde_json::json!(skipped_tx_hash_mismatch),
+    );
+    skipped.insert(
+        "authentication_rejected".to_string(),
+        serde_json::json!(skipped_authentication_rejected),
     );
     skipped.insert(
         "ineligible_stage".to_string(),
@@ -15406,6 +17089,10 @@ pub fn run_nov_native_execution_tick_from_params_v1(
         serde_json::Value::Number(serde_json::Number::from(scan_limit)),
     );
     let batch_result = run_nov_execute_pending_native_tx_batch_from_params_v1(&batch_params)?;
+    let batch_accepted = batch_result
+        .get("accepted")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
     let elapsed_ms = started_at.elapsed().as_millis() as u64;
     let time_slice_exceeded = elapsed_ms > effective_time_slice_ms;
     if time_slice_exceeded {
@@ -15417,16 +17104,20 @@ pub fn run_nov_native_execution_tick_from_params_v1(
             true,
         );
     }
-    let executed_count = batch_result
-        .get("selected_count")
-        .and_then(|value| value.as_u64())
-        .unwrap_or_default();
+    let executed_count = if batch_accepted {
+        batch_result
+            .get("selected_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default()
+    } else {
+        0
+    };
     let budget_runtime =
         snapshot_network_runtime_native_execution_budget_runtime_summary_v1(chain_id);
 
     Ok(serde_json::json!({
         "method": "nov_runNativeExecutionTick",
-        "accepted": true,
+        "accepted": batch_accepted,
         "scheduler_mode": "mainline_native_execution_tick",
         "background_daemon": false,
         "execution_kernel": "AOEM",
@@ -15592,34 +17283,6 @@ fn parse_nov_signature_v1(params: &serde_json::Value) -> Result<Option<Vec<u8>>>
     Ok(Some(sig))
 }
 
-fn native_host_signing_seed_v1() -> Result<[u8; 32]> {
-    if let Ok(raw_seed) = std::env::var(NOV_NATIVE_HOST_SIGNING_SEED_ENV) {
-        let seed =
-            decode_eth_send_raw_hex_payload_v1(raw_seed.trim(), NOV_NATIVE_HOST_SIGNING_SEED_ENV)?;
-        if seed.len() != 32 {
-            bail!(
-                "{} must be exactly 32 bytes, got={}",
-                NOV_NATIVE_HOST_SIGNING_SEED_ENV,
-                seed.len()
-            );
-        }
-        let mut out = [0u8; 32];
-        out.copy_from_slice(&seed);
-        return Ok(out);
-    }
-    #[cfg(test)]
-    {
-        Ok([0x42; 32])
-    }
-    #[cfg(not(test))]
-    {
-        bail!(
-            "signature is required for nov_execute unless {} configures the trusted host signer",
-            NOV_NATIVE_HOST_SIGNING_SEED_ENV
-        )
-    }
-}
-
 pub fn run_nov_execute_from_params_v1(params: &serde_json::Value) -> Result<serde_json::Value> {
     let caller_raw = params
         .get("caller")
@@ -15668,9 +17331,28 @@ pub fn run_nov_execute_from_params_v1(params: &serde_json::Value) -> Result<serd
             .unwrap_or(&serde_json::Value::String("default".to_string())),
     );
     let chain_id = param_as_u64_from_value(params, "chain_id").unwrap_or(1);
-    let nonce = param_as_u64_from_value(params, "nonce")
-        .map(Ok)
-        .unwrap_or_else(|| next_host_native_nonce_v1(chain_id, nonce_owner_account_id.as_str()))?;
+    let supplied_signature = parse_nov_signature_v1(params)?;
+    #[cfg(not(test))]
+    if supplied_signature.is_none() {
+        bail!(
+            "signature is required for nov_execute; public structured operations must carry the user's signed intent"
+        );
+    }
+    let nonce = match param_as_u64_from_value(params, "nonce") {
+        Some(nonce) => nonce,
+        None => {
+            #[cfg(test)]
+            {
+                next_host_native_nonce_v1(params, chain_id, nonce_owner_account_id.as_str())?
+            }
+            #[cfg(not(test))]
+            {
+                bail!(
+                    "nonce is required for signed nov_execute; the host must not choose a user's signed nonce"
+                );
+            }
+        }
+    };
     let gas_like_limit = param_as_u64_from_value(params, "gas_like_limit")
         .or_else(|| param_as_u64_from_value(params, "gas_limit"));
     let execution_mode = parse_nov_mode_v1(
@@ -15716,8 +17398,7 @@ pub fn run_nov_execute_from_params_v1(params: &serde_json::Value) -> Result<serd
         execution_policy,
         fee_policy.pay_asset.as_str(),
     );
-    let supplied_signature = parse_nov_signature_v1(params)?;
-    let mut tx = NovNativeTxWireV1 {
+    let tx = NovNativeTxWireV1 {
         chain_id,
         kind: NovTxKindV1::Execute(NovExecuteTxV1 {
             caller,
@@ -15737,9 +17418,17 @@ pub fn run_nov_execute_from_params_v1(params: &serde_json::Value) -> Result<serd
         }),
         signature: supplied_signature.unwrap_or_default(),
     };
-    if tx.signature.is_empty() {
-        sign_nov_native_tx_with_seed_v1(&mut tx, native_host_signing_seed_v1()?)?;
-    }
+    #[cfg(test)]
+    let tx = {
+        let mut tx = tx;
+        if tx.signature.is_empty() {
+            if let NovTxKindV1::Execute(execute) = &mut tx.kind {
+                execute.caller.clear();
+            }
+            sign_nov_native_tx_with_seed_v1(&mut tx, [0x42; 32])?;
+        }
+        tx
+    };
     let raw = encode_nov_native_tx_wire_v1(&tx)
         .map_err(|err| anyhow::anyhow!("nov_execute encode failed: {err}"))?;
     let mut merged = serde_json::json!({
@@ -16028,8 +17717,20 @@ mod tests {
     ) -> std::result::Result<Vec<u8>, novovm_protocol::NativeTxWireError> {
         let mut authenticated = tx.clone();
         if authenticated.signature.len() == 32 {
-            let mut signing_seed = [0u8; 32];
-            signing_seed.copy_from_slice(&authenticated.signature);
+            let placeholder_seed = authenticated.signature.clone();
+            let unsigned_commitment =
+                novovm_protocol::native_tx_unsigned_commitment_v3(&authenticated)?;
+            let signing_seed: [u8; 32] = sha256_bytes_v1(&[
+                b"novovm-native-test-fixture-signer-v1",
+                placeholder_seed.as_slice(),
+                unsigned_commitment.as_slice(),
+            ]);
+            if let NovTxKindV1::Execute(execute) = &mut authenticated.kind {
+                // Legacy fixtures named arbitrary callers. V3 is direct-signer
+                // only, so test construction must derive every subject owner
+                // from the signing key just like a real client wallet.
+                execute.caller.clear();
+            }
             sign_nov_native_tx_with_seed_v1(&mut authenticated, signing_seed)
                 .expect("authenticate native test fixture");
         }
@@ -16048,11 +17749,13 @@ mod tests {
         path.push(format!("novovm-native-exec-store-{}.json", nonce));
         let out = test_fn(path.clone());
         let lock_path = nov_native_execution_store_lock_path_v1(path.as_path());
+        let backup_path = nov_native_execution_store_json_backup_path_v1(path.as_path());
         let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(path.as_path());
         let rocksdb_path = nov_native_execution_store_rocksdb_path_v1(path.as_path());
         let aoem_owned_state_path = PathBuf::from(format!("{}.aoem-owned.rocksdb", path.display()));
         let _ = fs::remove_file(path);
         let _ = fs::remove_file(lock_path);
+        let _ = fs::remove_file(backup_path);
         let _ = fs::remove_file(mirror_path);
         let _ = fs::remove_dir_all(rocksdb_path);
         let _ = fs::remove_dir_all(aoem_owned_state_path);
@@ -16120,6 +17823,15 @@ mod tests {
     where
         F: FnOnce(&std::path::Path) -> T,
     {
+        struct ResetAoemSemanticSessionGuard;
+
+        impl Drop for ResetAoemSemanticSessionGuard {
+            fn drop(&mut self) {
+                reset_native_aoem_semantic_ingress_session_v1();
+            }
+        }
+
+        let _reset_guard = ResetAoemSemanticSessionGuard;
         let persistence_path = native_store_path.with_extension("aoem-state-rocksdb");
         let persistence_path_string = persistence_path.to_string_lossy().into_owned();
         let out = with_env_override_v1("NOVOVM_AOEM_VARIANT", "persist", || {
@@ -16143,7 +17855,6 @@ mod tests {
                 )
             })
         });
-        reset_native_aoem_semantic_ingress_session_v1();
         let _ = fs::remove_dir_all(persistence_path);
         out
     }
@@ -16208,14 +17919,14 @@ mod tests {
 
     fn build_test_native_execute_raw_hex_with_chain_v1(
         chain_id: u64,
-        nonce: u64,
+        fixture_identity: u64,
         account: &str,
         amount: u64,
     ) -> String {
         let mut native_tx = NovNativeTxWireV1 {
             chain_id,
             kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
-                caller: vec![nonce as u8; 20],
+                caller: Vec::new(),
                 account_id: Some(account.to_string()),
                 fee_owner_account_id: Some(account.to_string()),
                 nonce_owner_account_id: Some(account.to_string()),
@@ -16236,14 +17947,14 @@ mod tests {
                     slippage_bps: 100,
                 },
                 gas_like_limit: Some(90_000),
-                nonce,
+                nonce: 0,
             }),
             signature: Vec::new(),
         };
         let mut seed_hasher = sha2::Sha256::new();
         seed_hasher.update(b"novovm-native-test-signing-seed-v1");
         seed_hasher.update(chain_id.to_le_bytes());
-        seed_hasher.update(nonce.to_le_bytes());
+        seed_hasher.update(fixture_identity.to_le_bytes());
         seed_hasher.update(account.as_bytes());
         seed_hasher.update(amount.to_le_bytes());
         let signing_seed: [u8; 32] = seed_hasher.finalize().into();
@@ -16256,7 +17967,9 @@ mod tests {
         build_test_native_execute_raw_hex_with_chain_v1(77, nonce, account, amount)
     }
 
-    fn run_test_native_tx_batch_shadow_with_raws_v1(raw_txs: Vec<String>) -> serde_json::Value {
+    fn run_test_native_tx_batch_shadow_with_raws_result_v1(
+        raw_txs: Vec<String>,
+    ) -> Result<serde_json::Value> {
         with_env_override_v1(
             NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
             "false",
@@ -16276,7 +17989,6 @@ mod tests {
                                             "native_execution_store_path": path,
                                         }),
                                     )
-                                    .expect("shadow batch should preserve legacy host path")
                                 })
                             },
                         )
@@ -16286,6 +17998,11 @@ mod tests {
         )
     }
 
+    fn run_test_native_tx_batch_shadow_with_raws_v1(raw_txs: Vec<String>) -> serde_json::Value {
+        run_test_native_tx_batch_shadow_with_raws_result_v1(raw_txs)
+            .expect("shadow batch should preserve legacy host path")
+    }
+
     fn run_test_native_tx_batch_shadow_v1() -> serde_json::Value {
         run_test_native_tx_batch_shadow_with_raws_v1(vec![
             build_test_native_execute_raw_hex_v1(1, "acct-shadow-1", 25),
@@ -16293,9 +18010,9 @@ mod tests {
         ])
     }
 
-    fn run_test_native_tx_batch_production_candidate_with_raws_v1(
+    fn run_test_native_tx_batch_production_candidate_with_raws_result_v1(
         raw_txs: Vec<String>,
-    ) -> serde_json::Value {
+    ) -> Result<serde_json::Value> {
         with_env_override_v1(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, "0", || {
             with_env_override_v1(
                 NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
@@ -16315,14 +18032,18 @@ mod tests {
                                     "source": "test_actual_aoem_runtime",
                                 },
                             }))
-                            .expect(
-                                "production candidate batch should run against actual AOEM state",
-                            )
                         })
                     })
                 },
             )
         })
+    }
+
+    fn run_test_native_tx_batch_production_candidate_with_raws_v1(
+        raw_txs: Vec<String>,
+    ) -> serde_json::Value {
+        run_test_native_tx_batch_production_candidate_with_raws_result_v1(raw_txs)
+            .expect("production candidate batch should run against actual AOEM state")
     }
 
     fn run_test_native_tx_batch_production_candidate_v1() -> serde_json::Value {
@@ -16401,9 +18122,9 @@ mod tests {
         })
     }
 
-    fn run_test_native_tx_batch_receiver_pipeline_v1(
+    fn run_test_native_tx_batch_receiver_pipeline_result_v1(
         explicit_callsite: Option<&str>,
-    ) -> serde_json::Value {
+    ) -> Result<serde_json::Value> {
         let raw_txs = vec![
             build_test_native_execute_raw_hex_v1(1, "acct-pipeline-1", 25),
             build_test_native_execute_raw_hex_v1(2, "acct-pipeline-2", 35),
@@ -16442,7 +18163,6 @@ mod tests {
                                                 run_nov_send_raw_transaction_batch_from_params_v1(
                                                     &params,
                                                 )
-                                                .expect("pipeline tx_ingress batch should run")
                                             },
                                         )
                                     })
@@ -16453,6 +18173,13 @@ mod tests {
                 })
             })
         })
+    }
+
+    fn run_test_native_tx_batch_receiver_pipeline_v1(
+        explicit_callsite: Option<&str>,
+    ) -> serde_json::Value {
+        run_test_native_tx_batch_receiver_pipeline_result_v1(explicit_callsite)
+            .expect("pipeline tx_ingress batch should run")
     }
 
     fn test_aoem_candidate_result_v1(
@@ -16485,8 +18212,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn native_aoem_batch_id_is_clock_independent_and_order_bound() {
+        let store = NovNativeExecutionStoreV1::default();
+        let item = |sequence: u64, commitment: &str| novovm_exec::NovovmAoemNativeTxBatchItemV1 {
+            sequence,
+            tx_hash: format!("0x{sequence:064x}"),
+            sender_identity: format!("0x{sequence:040x}"),
+            signer_identity: Some(format!("signature:{sequence:064x}")),
+            nonce: sequence,
+            intent_type: "execute".to_string(),
+            semantic_operator: "native.execute".to_string(),
+            parameter_payload: serde_json::json!({"sequence": sequence}),
+            canonical_rebuild_commitment: commitment.to_string(),
+        };
+        let ordered = vec![item(0, "commitment-a"), item(1, "commitment-b")];
+        let first = deterministic_native_aoem_batch_id_v1(77, &store, ordered.as_slice());
+        let second = deterministic_native_aoem_batch_id_v1(77, &store, ordered.as_slice());
+        assert_eq!(first, second);
+        assert!(first.starts_with("novovm-tx-ingress-aoem-owned-v1-"));
+
+        let reversed = vec![item(1, "commitment-b"), item(0, "commitment-a")];
+        assert_ne!(
+            first,
+            deterministic_native_aoem_batch_id_v1(77, &store, reversed.as_slice())
+        );
+    }
+
     fn test_aoem_owned_commit_v1() -> NovAoemOwnedNativeStateCommitV1 {
         NovAoemOwnedNativeStateCommitV1 {
+            state_schema: NOVOVM_AOEM_OWNED_NATIVE_STATE_SCHEMA_V2.to_string(),
+            production_accepted: true,
+            production_gate_contract: NOVOVM_AOEM_OWNED_PRODUCTION_GATE_CONTRACT_V2.to_string(),
             aoem_called: true,
             aoem_execution_completed: true,
             aoem_execution_scope:
@@ -16727,22 +18484,15 @@ mod tests {
     }
 
     #[test]
-    fn tx_ingress_shadow_compare_records_mismatch_reasons() {
-        let out = run_test_native_tx_batch_shadow_with_raws_v1(vec![
+    fn tx_ingress_shadow_rejects_mixed_chain_batch_before_compare() {
+        let err = run_test_native_tx_batch_shadow_with_raws_result_v1(vec![
             build_test_native_execute_raw_hex_with_chain_v1(77, 1, "acct-shadow-mixed-1", 25),
             build_test_native_execute_raw_hex_with_chain_v1(78, 2, "acct-shadow-mixed-2", 35),
-        ]);
-        assert_eq!(out["aoem_shadow_compare_enabled"].as_bool(), Some(true));
-        assert_eq!(out["aoem_shadow_compare_result_ok"].as_bool(), Some(false));
-        let reasons = out["aoem_shadow_compare_mismatch_reasons"]
-            .as_array()
-            .expect("comparison mismatch reasons");
-        assert!(
-            reasons
-                .iter()
-                .any(|reason| reason.as_str() == Some("mixed_chain_id_in_batch")),
-            "mixed chain shadow batch should record a comparison mismatch reason"
-        );
+        ])
+        .expect_err("mixed-chain input must fail before shadow comparison");
+        assert!(err
+            .to_string()
+            .contains("mixed chain_id values are not allowed"));
     }
 
     #[test]
@@ -16818,7 +18568,7 @@ mod tests {
     }
 
     #[test]
-    fn tx_ingress_defaults_to_aoem_owned_state_persistence() {
+    fn tx_ingress_requires_explicit_or_operator_pinned_aoem_ownership() {
         let raw_txs = vec![
             build_test_native_execute_raw_hex_v1(1, "acct-default-owner-1", 25),
             build_test_native_execute_raw_hex_v1(2, "acct-default-owner-2", 35),
@@ -16833,7 +18583,7 @@ mod tests {
                             "native_execution_store_path": path,
                             "aoem_state_namespace": aoem_path.to_string_lossy(),
                         }))
-                        .expect("default native batch must use AOEM-owned persistence")
+                        .expect("unconfigured native batch should stay non-production")
                     })
                 })
             },
@@ -16848,16 +18598,16 @@ mod tests {
         );
         assert_eq!(
             out["aoem_native_tx_batch_production_candidate_enabled"].as_bool(),
-            Some(true)
+            Some(false)
         );
         assert_eq!(
             out["aoem_native_tx_batch_production_candidate_result_ok"].as_bool(),
-            Some(true),
-            "default AOEM owner output: {out:#}"
+            Some(false),
+            "unconfigured ownership output: {out:#}"
         );
         assert_eq!(
             out["tx_ingress_selected_path"].as_str(),
-            Some("aoem_runtime_owned_state_persistence")
+            Some("legacy_host_transitional")
         );
         assert_eq!(
             out["aoem_native_tx_batch_production_fallback_used"].as_bool(),
@@ -16908,6 +18658,125 @@ mod tests {
             Some(false)
         );
         assert_eq!(out["aoem_native_tx_batch_v1_built"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn aoem_owned_latest_state_checkpoint_prunes_previous_snapshot_chunks() {
+        with_env_override_v1(NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, "0", || {
+            with_env_override_v1(
+                NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+                "0",
+                || {
+                    with_test_native_execution_store_path_v1(|path| {
+                        with_test_native_aoem_persist_runtime_v1(path.as_path(), |aoem_path| {
+                            let state_namespace = aoem_path.to_string_lossy().into_owned();
+                            let params_for = |raw_tx: String| {
+                                serde_json::json!({
+                                    "raw_txs": [raw_tx],
+                                    "native_execution_store_path": path,
+                                    "aoem_state_namespace": state_namespace,
+                                    "aoem_owned_gate_config": {
+                                        "production_candidate": true,
+                                        "shadow": false,
+                                        "compare": true,
+                                        "source": "test_checkpoint_pruning",
+                                    },
+                                })
+                            };
+                            let first_params = params_for(build_test_native_execute_raw_hex_v1(
+                                1,
+                                "acct-prune-first",
+                                17,
+                            ));
+                            run_nov_send_raw_transaction_batch_from_params_v1(&first_params)
+                                .expect("first AOEM-owned checkpoint should commit");
+
+                            let chain_id = 77;
+                            let namespace_digest = native_aoem_owned_state_namespace_digest_v1(
+                                &first_params,
+                                chain_id,
+                            );
+                            let state_db_path = native_aoem_owned_state_db_path_v1(&first_params);
+                            let runtime = native_aoem_owned_runtime_config_v1()
+                                .expect("AOEM-owned test runtime should resolve");
+                            let graph_store = novovm_exec::AoemSemanticGraphStoreV1::open(
+                                &runtime,
+                                state_db_path.as_path(),
+                                &novovm_exec::AoemStorageProviderConfigV1::default(),
+                            )
+                            .expect("open first AOEM-owned checkpoint store");
+                            let head_key = native_aoem_owned_state_head_key_v1(
+                                chain_id,
+                                namespace_digest.as_str(),
+                            );
+                            let first_head: NovAoemOwnedNativeStateHeadV1 = serde_json::from_slice(
+                                graph_store
+                                    .get(head_key.as_slice())
+                                    .expect("read first AOEM-owned head")
+                                    .expect("first AOEM-owned head should exist")
+                                    .as_slice(),
+                            )
+                            .expect("decode first AOEM-owned head");
+                            drop(graph_store);
+
+                            let second_params = params_for(build_test_native_execute_raw_hex_v1(
+                                2,
+                                "acct-prune-second",
+                                19,
+                            ));
+                            run_nov_send_raw_transaction_batch_from_params_v1(&second_params)
+                                .expect("second AOEM-owned checkpoint should commit");
+
+                            let graph_store = novovm_exec::AoemSemanticGraphStoreV1::open(
+                                &runtime,
+                                state_db_path.as_path(),
+                                &novovm_exec::AoemStorageProviderConfigV1::default(),
+                            )
+                            .expect("open second AOEM-owned checkpoint store");
+                            let second_head: NovAoemOwnedNativeStateHeadV1 =
+                                serde_json::from_slice(
+                                    graph_store
+                                        .get(head_key.as_slice())
+                                        .expect("read second AOEM-owned head")
+                                        .expect("second AOEM-owned head should exist")
+                                        .as_slice(),
+                                )
+                                .expect("decode second AOEM-owned head");
+                            assert_ne!(
+                                first_head.batch_result_id, second_head.batch_result_id,
+                                "successive state checkpoints must have distinct batch identities"
+                            );
+                            for chunk_index in 0..first_head.chunk_count {
+                                let old_key = native_aoem_owned_state_chunk_key_v1(
+                                    chain_id,
+                                    namespace_digest.as_str(),
+                                    first_head.batch_result_id.as_str(),
+                                    chunk_index,
+                                )
+                                .expect("derive previous checkpoint chunk key");
+                                assert!(
+                                    graph_store
+                                        .get(old_key.as_slice())
+                                        .expect("check previous checkpoint chunk")
+                                        .is_none(),
+                                    "previous unreachable checkpoint chunk {chunk_index} was retained"
+                                );
+                            }
+                            let readback = read_native_state_envelope_from_aoem_graph_store_v1(
+                                &graph_store,
+                                chain_id,
+                                namespace_digest.as_str(),
+                            )
+                            .expect("latest AOEM-owned checkpoint must remain readable");
+                            assert_eq!(
+                                readback.batch_result.batch_result_id,
+                                second_head.batch_result_id
+                            );
+                        })
+                    })
+                },
+            )
+        })
     }
 
     #[test]
@@ -17103,74 +18972,39 @@ mod tests {
     }
 
     #[test]
-    fn tx_ingress_aoem_production_candidate_fallback_reports_reason() {
-        let out = run_test_native_tx_batch_production_candidate_with_raws_v1(vec![
+    fn tx_ingress_aoem_production_candidate_rejects_mixed_chain_batch() {
+        let err = run_test_native_tx_batch_production_candidate_with_raws_result_v1(vec![
             build_test_native_execute_raw_hex_with_chain_v1(77, 1, "acct-prod-mixed-1", 25),
             build_test_native_execute_raw_hex_with_chain_v1(78, 2, "acct-prod-mixed-2", 35),
-        ]);
-        assert_eq!(
-            out["aoem_native_tx_batch_production_candidate_enabled"].as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            out["aoem_native_tx_batch_production_candidate_result_ok"].as_bool(),
-            Some(false)
-        );
-        assert_eq!(
-            out["aoem_native_tx_batch_production_fallback_used"].as_bool(),
-            Some(true)
-        );
-        let reasons = out["aoem_native_tx_batch_production_mismatch_reasons"]
-            .as_array()
-            .expect("production mismatch reasons");
-        assert!(reasons
-            .iter()
-            .any(|reason| reason.as_str() == Some("mixed_chain_id_in_batch")));
+        ])
+        .expect_err("mixed-chain production input must fail before AOEM execution");
+        assert!(err
+            .to_string()
+            .contains("mixed chain_id values are not allowed"));
     }
 
     #[test]
-    fn production_candidate_rejects_legacy_success_when_fallback_disabled() {
-        let out = run_test_native_tx_batch_production_candidate_with_raws_v1(vec![
+    fn production_candidate_never_falls_back_for_mixed_chain_input() {
+        let err = run_test_native_tx_batch_production_candidate_with_raws_result_v1(vec![
             build_test_native_execute_raw_hex_with_chain_v1(77, 1, "acct-single-path-1", 25),
             build_test_native_execute_raw_hex_with_chain_v1(78, 2, "acct-single-path-2", 35),
-        ]);
-        assert_eq!(out["accepted"].as_bool(), Some(false));
-        assert_eq!(
-            out["fail_reason"].as_str(),
-            Some("aoem_owned_gate_requested_but_legacy_path_selected")
-        );
-        assert_eq!(out["aoem_owned_single_path_enforced"].as_bool(), Some(true));
-        assert_eq!(
-            out["legacy_host_transitional_fallback_gate_enabled"].as_bool(),
-            Some(false)
-        );
-        assert_eq!(
-            out["legacy_host_transitional_fallback_used"].as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            out["legacy_host_transitional_success_suppressed_by_aoem_gate"].as_bool(),
-            Some(true)
-        );
-        assert_eq!(out["aoem_owned_regression_signable"].as_bool(), Some(false));
+        ])
+        .expect_err("mixed-chain input must not enter any fallback path");
+        assert!(err
+            .to_string()
+            .contains("mixed chain_id values are not allowed"));
     }
 
     #[test]
-    fn production_candidate_marks_unsignable_when_legacy_fallback_used() {
-        let out = run_test_native_tx_batch_production_candidate_with_raws_v1(vec![
+    fn mixed_chain_batch_never_reaches_production_signoff() {
+        let err = run_test_native_tx_batch_production_candidate_with_raws_result_v1(vec![
             build_test_native_execute_raw_hex_with_chain_v1(77, 1, "acct-fallback-1", 25),
             build_test_native_execute_raw_hex_with_chain_v1(78, 2, "acct-fallback-2", 35),
-        ]);
-        let blockers = out["aoem_owned_signoff_blocker_reasons"]
-            .as_array()
-            .expect("blocker reasons");
-        assert!(blockers.iter().any(|reason| {
-            reason.as_str() == Some("aoem_owned_gate_requested_but_legacy_fallback_used")
-        }));
-        assert!(blockers.iter().any(|reason| {
-            reason.as_str() == Some("aoem_owned_gate_requested_but_legacy_path_selected")
-        }));
-        assert_eq!(out["aoem_owned_regression_signable"].as_bool(), Some(false));
+        ])
+        .expect_err("mixed-chain input must fail before signoff evidence exists");
+        assert!(err
+            .to_string()
+            .contains("mixed chain_id values are not allowed"));
     }
 
     #[test]
@@ -17295,33 +19129,13 @@ mod tests {
 
     #[test]
     fn receiver_pipeline_legacy_tick_not_production_signable() {
-        let out =
-            run_test_native_tx_batch_receiver_pipeline_v1(Some("nov_sendRawTransactionBatch"));
-        assert_eq!(out["accepted"].as_bool(), Some(false));
-        assert_eq!(
-            out["fail_reason"].as_str(),
-            Some("aoem_runtime_worker_pipeline_tx_ingress_callsite_not_aoem_runtime_worker")
-        );
-        assert_eq!(
-            out["network_receiver_calls_production_tx_ingress"].as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            out["tx_ingress_called_by_network_receiver"].as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            out["tx_ingress_called_by_aoem_runtime_worker"].as_bool(),
-            Some(false)
-        );
-        assert_eq!(out["aoem_owned_regression_signable"].as_bool(), Some(false));
-        let blockers = out["aoem_owned_signoff_blocker_reasons"]
-            .as_array()
-            .expect("pipeline blocker reasons");
-        assert!(blockers.iter().any(|reason| {
-            reason.as_str()
-                == Some("aoem_runtime_worker_pipeline_tx_ingress_callsite_not_aoem_runtime_worker")
-        }));
+        let err = run_test_native_tx_batch_receiver_pipeline_result_v1(Some(
+            "nov_sendRawTransactionBatch",
+        ))
+        .expect_err("non-worker callsite must fail before production ingress");
+        assert!(err.to_string().contains(
+            "AOEM runtime-worker production ingress must be called by aoem_runtime_worker"
+        ));
     }
 
     #[test]
@@ -17540,7 +19354,7 @@ mod tests {
         );
         assert_eq!(
             out["aoem_native_tx_batch_nonce_parity_scope"].as_str(),
-            Some("authenticated_ingress_reservation_only_not_restart_durable")
+            Some("authenticated_execute_committed_next_nonce_restart_durable_v1")
         );
     }
 
@@ -17628,7 +19442,7 @@ mod tests {
         let native_tx = NovNativeTxWireV1 {
             chain_id,
             kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
-                caller: vec![(sequence % 251) as u8; 20],
+                caller: Vec::new(),
                 account_id: Some(account.to_string()),
                 fee_owner_account_id: Some(account.to_string()),
                 nonce_owner_account_id: Some(account.to_string()),
@@ -17649,7 +19463,7 @@ mod tests {
                     slippage_bps: 100,
                 },
                 gas_like_limit: Some(90_000),
-                nonce: sequence.saturating_add(1),
+                nonce: 0,
             }),
             signature: vec![0x5du8; 32],
         };
@@ -17657,6 +19471,9 @@ mod tests {
         let (_, _, tx_hash) =
             ingest_local_nov_raw_tx_payload_v1(&serde_json::json!({}), raw.as_slice())
                 .expect("native pending ingress should store payload");
+        novovm_network::observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
+            chain_id, sequence, tx_hash,
+        );
         novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
             chain_id,
             tx_hash,
@@ -17776,52 +19593,301 @@ mod tests {
 
     #[test]
     fn native_execution_store_write_lock_is_scoped_to_dispatch() {
-        with_test_native_execution_store_path_v1(|path| {
-            let lock_path = nov_native_execution_store_lock_path_v1(path.as_path());
-            {
-                let _guard = acquire_nov_native_execution_store_write_lock_v1(path.as_path())
-                    .expect("write lock should be acquired");
-                assert!(
-                    lock_path.exists(),
-                    "lock file should exist while guard lives"
-                );
-            }
-            assert!(
-                !lock_path.exists(),
-                "lock file should be removed when guard drops"
-            );
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let lock_path = nov_native_execution_store_lock_path_v1(path.as_path());
+                    {
+                        let _guard =
+                            acquire_nov_native_execution_store_write_lock_v1(path.as_path())
+                                .expect("write lock should be acquired");
+                        assert!(
+                            lock_path.exists(),
+                            "lock file should exist while guard lives"
+                        );
+                        let contender = fs::OpenOptions::new()
+                            .read(true)
+                            .write(true)
+                            .open(lock_path.as_path())
+                            .expect("open lock contender");
+                        assert!(matches!(
+                            contender.try_lock(),
+                            Err(std::fs::TryLockError::WouldBlock)
+                        ));
+                    }
+                    assert!(
+                        lock_path.exists(),
+                        "coordination inode must remain stable after OS lock release"
+                    );
+                    let _reacquired =
+                        acquire_nov_native_execution_store_write_lock_v1(path.as_path())
+                            .expect("OS lock should be reacquirable after guard drop");
+                    drop(_reacquired);
 
-            let request = NovExecutionRequestV1 {
-                tx_hash: [0x92; 32],
-                chain_id: 7092,
-                caller: vec![0x92; 20],
-                target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
-                method: "deposit_reserve".to_string(),
-                args: serde_json::to_vec(&serde_json::json!({
-                    "asset": "NOV",
-                    "amount": 1u64
-                }))
-                .expect("encode args"),
-                fee_pay_asset: "NOV".to_string(),
-                fee_max_pay_amount: 10_000,
-                fee_slippage_bps: 50,
-                gas_like_limit: Some(90_000),
-                nonce: 92,
-            };
-            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
-                path.as_path(),
-                &request,
-            )
-            .expect("dispatch should succeed under write lock guard");
-            assert!(receipt.status);
-            assert!(
-                !lock_path.exists(),
-                "dispatch should release native execution store write lock"
+                    let request = NovExecutionRequestV1 {
+                        tx_hash: [0x92; 32],
+                        chain_id: 7092,
+                        caller: vec![0x92; 20],
+                        target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+                        method: "deposit_reserve".to_string(),
+                        args: serde_json::to_vec(&serde_json::json!({
+                            "asset": "NOV",
+                            "amount": 1u64
+                        }))
+                        .expect("encode args"),
+                        fee_pay_asset: "NOV".to_string(),
+                        fee_max_pay_amount: 10_000,
+                        fee_slippage_bps: 50,
+                        gas_like_limit: Some(90_000),
+                        nonce: 92,
+                    };
+                    let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                        path.as_path(),
+                        &request,
+                    )
+                    .expect("dispatch should succeed under write lock guard");
+                    assert!(receipt.status);
+                    assert!(
+                        lock_path.exists(),
+                        "dispatch should retain the stable coordination inode"
+                    );
+                    let stored = load_nov_native_execution_store_v1(path.as_path())
+                        .expect("store should remain readable after dispatch");
+                    assert!(stored.receipts.contains_key(receipt.tx_hash.as_str()));
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn native_execution_store_lock_uses_configured_physical_rocksdb_target() {
+        with_test_native_execution_store_path_v1(|path| {
+            let physical_path = path.with_extension("shared-physical.rocksdb");
+            let physical_path_string = physical_path.to_string_lossy().into_owned();
+            with_env_override_v1(
+                NOV_NATIVE_EXECUTION_STORE_BACKEND_ENV,
+                NOV_NATIVE_EXECUTION_STORE_BACKEND_ROCKSDB_V1,
+                || {
+                    with_env_override_v1(
+                        NOV_NATIVE_EXECUTION_STORE_ROCKSDB_PATH_ENV,
+                        physical_path_string.as_str(),
+                        || {
+                            let logical_a = path.with_extension("logical-a.json");
+                            let logical_b = path.with_extension("logical-b.json");
+                            let lock_a = nov_native_execution_store_lock_path_v1(&logical_a);
+                            let lock_b = nov_native_execution_store_lock_path_v1(&logical_b);
+                            assert_eq!(lock_a, lock_b);
+
+                            let _guard = acquire_nov_native_execution_store_write_lock_v1(
+                                logical_a.as_path(),
+                            )
+                            .expect("first logical path should acquire physical DB lock");
+                            let contender = fs::OpenOptions::new()
+                                .read(true)
+                                .write(true)
+                                .open(lock_b.as_path())
+                                .expect("open physical DB lock contender");
+                            assert!(matches!(
+                                contender.try_lock(),
+                                Err(std::fs::TryLockError::WouldBlock)
+                            ));
+                        },
+                    )
+                },
             );
-            let stored = load_nov_native_execution_store_v1(path.as_path())
-                .expect("store should remain readable after dispatch");
-            assert!(stored.receipts.contains_key(receipt.tx_hash.as_str()));
+            let _ = fs::remove_file(nov_native_execution_store_lock_path_v1(
+                physical_path.as_path(),
+            ));
         });
+    }
+
+    #[test]
+    fn native_execution_store_json_recovers_corrupt_primary_from_backup() {
+        with_env_override_v1(
+            NOV_NATIVE_EXECUTION_STORE_BACKEND_ENV,
+            NOV_NATIVE_EXECUTION_STORE_BACKEND_JSON_V1,
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let first = NovNativeExecutionStoreV1 {
+                        last_updated_unix_ms: 11,
+                        ..NovNativeExecutionStoreV1::default()
+                    };
+                    save_nov_native_execution_store_v1(path.as_path(), &first)
+                        .expect("save first JSON snapshot");
+
+                    let mut second = first.clone();
+                    second.last_updated_unix_ms = 22;
+                    save_nov_native_execution_store_v1(path.as_path(), &second)
+                        .expect("save second JSON snapshot and rotate backup");
+                    assert!(
+                        nov_native_execution_store_json_backup_path_v1(path.as_path()).exists()
+                    );
+
+                    fs::write(path.as_path(), []).expect("simulate crash-truncated primary");
+                    let recovered = load_nov_native_execution_store_v1(path.as_path())
+                        .expect("corrupt primary should recover from last complete backup");
+                    assert_eq!(recovered, first);
+                });
+            },
+        );
+    }
+
+    #[test]
+    fn native_semantic_mirror_repairs_only_a_partial_tail() {
+        with_test_native_execution_store_path_v1(|path| {
+            let mut store = NovNativeExecutionStoreV1::default();
+            let record = NovAoemSemanticLedgerMirrorRecordV1 {
+                schema: "novovm-native-aoem-semantic-ledger-mirror/v1".to_string(),
+                execution_kernel: "AOEM".to_string(),
+                semantic_entry: "aoem_execute_ops_wire_v1".to_string(),
+                algebraic_semantic_entry: true,
+                sequence: 1,
+                tx_hash: "test-tail-repair".to_string(),
+                plan_id: 1,
+                wire_digest: "wire".to_string(),
+                delta_digest: "delta".to_string(),
+                state_before_digest: "before".to_string(),
+                state_after_digest: "after".to_string(),
+                prev_seal: String::new(),
+                commit_seal: "seal-1".to_string(),
+                mirror_backend: "jsonl_append_only".to_string(),
+                source: "test".to_string(),
+                created_at_ms: 1,
+            };
+            store.module_state.aoem_semantic_ledger_sequence = 1;
+            store.module_state.aoem_semantic_ledger_head = record.commit_seal.clone();
+            store
+                .module_state
+                .aoem_semantic_ledger_records
+                .insert(1, record);
+            assert_eq!(
+                reconcile_nov_native_aoem_semantic_ledger_mirror_from_store_v1(
+                    path.as_path(),
+                    &store,
+                    1,
+                )
+                .expect("materialize canonical mirror"),
+                1
+            );
+            let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(path.as_path());
+            let mut writer = OpenOptions::new()
+                .append(true)
+                .open(mirror_path.as_path())
+                .expect("open mirror tail");
+            writer
+                .write_all(b"{\"partial\"")
+                .expect("append partial mirror tail");
+            writer.sync_all().expect("sync partial mirror tail");
+            drop(writer);
+
+            assert_eq!(
+                reconcile_nov_native_aoem_semantic_ledger_mirror_from_store_v1(
+                    path.as_path(),
+                    &store,
+                    2,
+                )
+                .expect("repair partial mirror tail"),
+                0
+            );
+            let records =
+                load_nov_native_aoem_semantic_ledger_mirror_records_v1(mirror_path.as_path())
+                    .expect("load repaired mirror");
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].sequence, 1);
+        });
+    }
+
+    #[test]
+    fn native_execution_store_authority_domain_rejects_chain_and_namespace_drift() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        assert!(
+            bind_native_execution_store_authority_domain_v1(&mut store, 1, "namespace-a")
+                .expect("bind authority domain")
+        );
+        verify_native_execution_store_authority_domain_v1(&store, 1, "namespace-a")
+            .expect("same authority domain remains valid");
+        assert!(
+            verify_native_execution_store_authority_domain_v1(&store, 2, "namespace-a")
+                .expect_err("chain drift must fail")
+                .to_string()
+                .contains("authority chain mismatch")
+        );
+        assert!(
+            verify_native_execution_store_authority_domain_v1(&store, 1, "namespace-b")
+                .expect_err("namespace drift must fail")
+                .to_string()
+                .contains("authority namespace mismatch")
+        );
+    }
+
+    #[test]
+    fn production_aoem_state_requires_explicit_chain_and_namespace_binding() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        assert!(verify_production_native_execution_store_authority_domain_v2(
+            &store,
+            71,
+            "namespace-a",
+        )
+        .expect_err("an unbound AOEM-owned store must fail closed")
+        .to_string()
+        .contains("chain binding is missing or mismatched"));
+
+        store.authority_chain_id = Some(71);
+        assert!(verify_production_native_execution_store_authority_domain_v2(
+            &store,
+            71,
+            "namespace-a",
+        )
+        .expect_err("a missing AOEM-owned namespace binding must fail closed")
+        .to_string()
+        .contains("namespace binding is missing or mismatched"));
+
+        store.authority_namespace_digest = "namespace-a".to_string();
+        verify_production_native_execution_store_authority_domain_v2(&store, 71, "namespace-a")
+            .expect("a fully bound AOEM-owned store should validate");
+    }
+
+    #[test]
+    fn native_state_commitment_binds_policy_accounting_and_vault_state() {
+        let before = NovNativeExecutionModuleStateV1::default();
+        let before_digest = native_semantic_ledger_state_digest_v1(&before);
+        let mut after = before.clone();
+        after.treasury_settlement_paused = true;
+        after.clearing_daily_nov_used = 17;
+        after.credit_vaults.insert(
+            9,
+            NovCreditVaultStateV1 {
+                vault_id: 9,
+                owner: "account:test-vault".to_string(),
+                collateral_asset: "NETH".to_string(),
+                collateral_amount: 50,
+                debt_asset: "NUSDT".to_string(),
+                debt_amount: 10,
+                min_collateral_ratio_bps: 15_000,
+                opened_at_unix_ms: 123,
+            },
+        );
+
+        assert_ne!(
+            native_semantic_ledger_state_digest_v1(&after),
+            before_digest,
+            "every committed business-state field must affect the state commitment"
+        );
+        let deltas = build_native_execution_semantic_deltas_v1(&before, &after);
+        assert!(deltas.iter().any(|delta| {
+            delta.get("kind").and_then(serde_json::Value::as_str)
+                == Some("native_committed_module_state_v2")
+        }));
+    }
+
+    #[test]
+    fn policy_only_host_projection_is_not_treated_as_empty() {
+        let mut store = NovNativeExecutionStoreV1::default();
+        assert!(!native_host_projection_has_state_v1(&store));
+        store.module_state.treasury_settlement_paused = true;
+        assert!(native_host_projection_has_state_v1(&store));
     }
 
     #[test]
@@ -18055,6 +20121,18 @@ mod tests {
         assert!(dirty.module_state_shards.contains(&"policy"));
         assert!(!dirty.module_state_shards.contains(&"clearing"));
         assert!(!dirty.module_state_shards.contains(&"native_execution"));
+
+        let mut nonce_next = previous.clone();
+        nonce_next
+            .module_state
+            .native_auth_nonce_reservations
+            .insert(
+                "nonce-ledger-key".to_string(),
+                "signed-intent-id".to_string(),
+            );
+        let nonce_dirty = native_execution_store_dirty_set_v1(&previous, &nonce_next, false)
+            .expect("nonce dirty set should build");
+        assert_eq!(nonce_dirty.module_state_shards, vec!["native_execution"]);
     }
 
     #[test]
@@ -18071,6 +20149,10 @@ mod tests {
                     store.module_state.treasury_reserve_bucket_nov = 123;
                     store.module_state.treasury_settlement_paused = true;
                     store.module_state.treasury_policy_source = "test-policy".to_string();
+                    store.module_state.native_auth_nonce_reservations.insert(
+                        "nonce-ledger-key".to_string(),
+                        "signed-intent-id".to_string(),
+                    );
                     save_nov_native_execution_store_v1(path.as_path(), &store)
                         .expect("save dirty module namespace store");
 
@@ -18245,148 +20327,157 @@ mod tests {
     }
 
     #[test]
-    fn native_execution_receipt_exposes_aoem_semantic_ingress_metadata() {
-        with_env_override_v1(NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV, "true", || {
-            with_env_override_v1(
-                NOV_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED_ENV,
-                "false",
-                || {
-                    with_test_native_execution_store_path_v1(|path| {
-                        let request = NovExecutionRequestV1 {
-                            tx_hash: [0xa0; 32],
-                            chain_id: 7092,
-                            caller: vec![0xa0; 20],
-                            target: NovExecutionRequestTargetV1::NativeModule(
-                                "treasury".to_string(),
-                            ),
-                            method: "deposit_reserve".to_string(),
-                            args: serde_json::to_vec(&serde_json::json!({
-                                "asset": "NOV",
-                                "amount": 3u64
-                            }))
-                            .expect("encode args"),
-                            fee_pay_asset: "NOV".to_string(),
-                            fee_max_pay_amount: 10_000,
-                            fee_slippage_bps: 50,
-                            gas_like_limit: Some(90_000),
-                            nonce: 160,
-                        };
-                        let receipt =
-                            dispatch_and_persist_nov_execution_request_with_store_path_v1(
-                                path.as_path(),
-                                &request,
-                            )
-                            .expect("dispatch should succeed with AOEM semantic metadata");
-                        assert!(receipt.status);
-                        let meta = receipt
-                            .aoem_semantic_ingress
-                            .as_ref()
-                            .expect("receipt must expose AOEM semantic ingress metadata");
-                        assert_eq!(meta.execution_kernel, "AOEM");
-                        assert_eq!(meta.semantic_entry, native_aoem_semantic_entry_v1());
-                        assert!(meta.algebraic_semantic_entry);
-                        assert!(meta.enabled);
-                        assert!(!meta.required);
-                        assert_eq!(meta.op_count, 1);
-                        assert_ne!(meta.plan_id, 0);
-                        assert_eq!(meta.wire_digest.len(), 64);
-                        assert!(
-                            meta.semantic_delta_count >= 1,
-                            "native asset execution should expose semantic deltas"
-                        );
-                        assert_eq!(meta.semantic_delta_digest.len(), 64);
-                        assert_eq!(meta.semantic_state_before_digest.len(), 64);
-                        assert_eq!(meta.semantic_state_after_digest.len(), 64);
-                        assert_ne!(
-                            meta.semantic_state_before_digest,
-                            meta.semantic_state_after_digest
-                        );
-                        assert_eq!(meta.semantic_ledger_sequence, 1);
-                        assert!(meta.semantic_ledger_prev_seal.is_empty());
-                        assert_eq!(meta.semantic_ledger_commit_seal.len(), 64);
-                        let delta_log = receipt
-                            .logs
-                            .iter()
-                            .find(|log| log.event == "aoem.native_asset.semantic_deltas")
-                            .expect("receipt should include AOEM native asset semantic delta log");
-                        assert_eq!(
-                            delta_log.data["semantic_entry"].as_str(),
-                            Some(native_aoem_semantic_entry_v1())
-                        );
-                        assert_eq!(
-                            delta_log.data["delta_digest"].as_str(),
-                            Some(meta.semantic_delta_digest.as_str())
-                        );
-                        let commit_log = receipt
-                            .logs
-                            .iter()
-                            .find(|log| log.event == "aoem.native_asset.semantic_ledger_commit")
-                            .expect("receipt should include AOEM semantic ledger commit log");
-                        assert_eq!(
-                            commit_log.data["commit_seal"].as_str(),
-                            Some(meta.semantic_ledger_commit_seal.as_str())
-                        );
-                        assert_eq!(commit_log.data["ledger_sequence"].as_u64(), Some(1));
-                        assert_eq!(
-                            commit_log.data["state_after_digest"].as_str(),
-                            Some(meta.semantic_state_after_digest.as_str())
-                        );
+    fn native_execution_receipt_exposes_aoem_semantic_ingress_metadata_without_external_session() {
+        // Keep this unit test independent from an installed AOEM DLL. The
+        // integration gates exercise the real session; here we verify that
+        // disabled/fallback metadata still binds the deterministic deltas.
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_env_override_v1(
+                    NOV_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED_ENV,
+                    "false",
+                    || {
+                        with_test_native_execution_store_path_v1(|path| {
+                            let request = NovExecutionRequestV1 {
+                                tx_hash: [0xa0; 32],
+                                chain_id: 7092,
+                                caller: vec![0xa0; 20],
+                                target: NovExecutionRequestTargetV1::NativeModule(
+                                    "treasury".to_string(),
+                                ),
+                                method: "deposit_reserve".to_string(),
+                                args: serde_json::to_vec(&serde_json::json!({
+                                    "asset": "NOV",
+                                    "amount": 3u64
+                                }))
+                                .expect("encode args"),
+                                fee_pay_asset: "NOV".to_string(),
+                                fee_max_pay_amount: 10_000,
+                                fee_slippage_bps: 50,
+                                gas_like_limit: Some(90_000),
+                                nonce: 160,
+                            };
+                            let receipt =
+                                dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                                    path.as_path(),
+                                    &request,
+                                )
+                                .expect("dispatch should succeed with AOEM semantic metadata");
+                            assert!(receipt.status);
+                            let meta = receipt
+                                .aoem_semantic_ingress
+                                .as_ref()
+                                .expect("receipt must expose AOEM semantic ingress metadata");
+                            assert_eq!(meta.execution_kernel, "AOEM");
+                            assert_eq!(meta.semantic_entry, native_aoem_semantic_entry_v1());
+                            assert!(meta.algebraic_semantic_entry);
+                            assert!(!meta.enabled);
+                            assert!(!meta.required);
+                            assert_eq!(meta.op_count, 1);
+                            assert_ne!(meta.plan_id, 0);
+                            assert_eq!(meta.wire_digest.len(), 64);
+                            assert!(
+                                meta.semantic_delta_count >= 1,
+                                "native asset execution should expose semantic deltas"
+                            );
+                            assert_eq!(meta.semantic_delta_digest.len(), 64);
+                            assert_eq!(meta.semantic_state_before_digest.len(), 64);
+                            assert_eq!(meta.semantic_state_after_digest.len(), 64);
+                            assert_ne!(
+                                meta.semantic_state_before_digest,
+                                meta.semantic_state_after_digest
+                            );
+                            assert_eq!(meta.semantic_ledger_sequence, 1);
+                            assert!(meta.semantic_ledger_prev_seal.is_empty());
+                            assert_eq!(meta.semantic_ledger_commit_seal.len(), 64);
+                            let delta_log = receipt
+                                .logs
+                                .iter()
+                                .find(|log| log.event == "aoem.native_asset.semantic_deltas")
+                                .expect(
+                                    "receipt should include AOEM native asset semantic delta log",
+                                );
+                            assert_eq!(
+                                delta_log.data["semantic_entry"].as_str(),
+                                Some(native_aoem_semantic_entry_v1())
+                            );
+                            assert_eq!(
+                                delta_log.data["delta_digest"].as_str(),
+                                Some(meta.semantic_delta_digest.as_str())
+                            );
+                            let commit_log = receipt
+                                .logs
+                                .iter()
+                                .find(|log| log.event == "aoem.native_asset.semantic_ledger_commit")
+                                .expect("receipt should include AOEM semantic ledger commit log");
+                            assert_eq!(
+                                commit_log.data["commit_seal"].as_str(),
+                                Some(meta.semantic_ledger_commit_seal.as_str())
+                            );
+                            assert_eq!(commit_log.data["ledger_sequence"].as_u64(), Some(1));
+                            assert_eq!(
+                                commit_log.data["state_after_digest"].as_str(),
+                                Some(meta.semantic_state_after_digest.as_str())
+                            );
 
-                        let stored = load_nov_native_execution_store_v1(path.as_path())
-                            .expect("store should be readable");
-                        assert_eq!(stored.module_state.aoem_semantic_ledger_sequence, 1);
-                        assert_eq!(
-                            stored.module_state.aoem_semantic_ledger_head,
-                            meta.semantic_ledger_commit_seal
-                        );
-                        let trace = stored
-                            .module_state
-                            .last_execution_trace
-                            .as_ref()
-                            .expect("trace should be persisted");
-                        assert_eq!(trace.tx_id, receipt.tx_hash);
-                        assert_eq!(
-                            trace
-                                .aoem_semantic_ingress
+                            let stored = load_nov_native_execution_store_v1(path.as_path())
+                                .expect("store should be readable");
+                            assert_eq!(stored.module_state.aoem_semantic_ledger_sequence, 1);
+                            assert_eq!(
+                                stored.module_state.aoem_semantic_ledger_head,
+                                meta.semantic_ledger_commit_seal
+                            );
+                            let trace = stored
+                                .module_state
+                                .last_execution_trace
                                 .as_ref()
-                                .map(|value| value.plan_id),
-                            Some(meta.plan_id)
-                        );
-                        assert_eq!(
-                            trace
-                                .aoem_semantic_ingress
-                                .as_ref()
-                                .map(|value| value.semantic_delta_digest.clone()),
-                            Some(meta.semantic_delta_digest.clone())
-                        );
-                        assert_eq!(
-                            trace
-                                .aoem_semantic_ingress
-                                .as_ref()
-                                .map(|value| value.semantic_ledger_commit_seal.clone()),
-                            Some(meta.semantic_ledger_commit_seal.clone())
-                        );
-                        let summary = run_nov_native_call_from_params_with_store_path_v1(
-                            &serde_json::json!({
-                                "target": {"kind": "native_module", "id": "treasury"},
-                                "method": "get_settlement_summary",
-                                "args": {},
-                            }),
-                            Some(path.as_path()),
-                        )
-                        .expect("settlement summary should expose AOEM ledger head");
-                        assert_eq!(
-                            summary["result"]["aoem_semantic_ledger"]["sequence"].as_u64(),
-                            Some(1)
-                        );
-                        assert_eq!(
-                            summary["result"]["aoem_semantic_ledger"]["head"].as_str(),
-                            Some(meta.semantic_ledger_commit_seal.as_str())
-                        );
-                    });
-                },
-            );
-        });
+                                .expect("trace should be persisted");
+                            assert_eq!(trace.tx_id, receipt.tx_hash);
+                            assert_eq!(
+                                trace
+                                    .aoem_semantic_ingress
+                                    .as_ref()
+                                    .map(|value| value.plan_id),
+                                Some(meta.plan_id)
+                            );
+                            assert_eq!(
+                                trace
+                                    .aoem_semantic_ingress
+                                    .as_ref()
+                                    .map(|value| value.semantic_delta_digest.clone()),
+                                Some(meta.semantic_delta_digest.clone())
+                            );
+                            assert_eq!(
+                                trace
+                                    .aoem_semantic_ingress
+                                    .as_ref()
+                                    .map(|value| value.semantic_ledger_commit_seal.clone()),
+                                Some(meta.semantic_ledger_commit_seal.clone())
+                            );
+                            let summary = run_nov_native_call_from_params_with_store_path_v1(
+                                &serde_json::json!({
+                                    "target": {"kind": "native_module", "id": "treasury"},
+                                    "method": "get_settlement_summary",
+                                    "args": {},
+                                }),
+                                Some(path.as_path()),
+                            )
+                            .expect("settlement summary should expose AOEM ledger head");
+                            assert_eq!(
+                                summary["result"]["aoem_semantic_ledger"]["sequence"].as_u64(),
+                                Some(1)
+                            );
+                            assert_eq!(
+                                summary["result"]["aoem_semantic_ledger"]["head"].as_str(),
+                                Some(meta.semantic_ledger_commit_seal.as_str())
+                            );
+                        });
+                    },
+                );
+            },
+        );
     }
 
     #[test]
@@ -18442,168 +20533,182 @@ mod tests {
             NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
             "false",
             || {
-                with_test_native_execution_store_path_v1(|path| {
-                    let build_raw = |nonce: u64, account: &str, amount: u64| {
-                        let native_tx = NovNativeTxWireV1 {
-                            chain_id: 77,
-                            kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
-                                caller: vec![nonce as u8; 20],
-                                account_id: Some(account.to_string()),
-                                fee_owner_account_id: Some(account.to_string()),
-                                nonce_owner_account_id: Some(account.to_string()),
-                                target: novovm_protocol::NovExecutionTargetV1::NativeModule(
-                                    "treasury".to_string(),
-                                ),
-                                method: "deposit_reserve".to_string(),
-                                args: serde_json::to_vec(&serde_json::json!({
-                                    "asset": "USDT",
-                                    "amount": amount
-                                }))
-                                .expect("encode args"),
-                                execution_mode: NovExecutionModeV1::Batch,
-                                execution_policy: NovExecutionPolicyV1::Standard,
-                                privacy_mode: NovPrivacyModeV1::Public,
-                                verification_mode: NovVerificationModeV1::Standard,
-                                fee_policy: NovFeePolicyV1 {
-                                    pay_asset: "USDT".to_string(),
-                                    max_pay_amount: 50,
-                                    slippage_bps: 100,
-                                },
-                                gas_like_limit: Some(90_000),
-                                nonce,
-                            }),
-                            signature: vec![0xabu8; 32],
-                        };
-                        let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
-                        to_hex_prefixed_v1(raw.as_slice())
-                    };
-                    let out =
-                        run_nov_send_raw_transaction_batch_from_params_v1(&serde_json::json!({
-                            "raw_txs": [
-                                build_raw(1, "acct-batch-1", 25),
-                                build_raw(2, "acct-batch-2", 35)
-                            ],
-                            "native_execution_store_path": path,
-                        }))
-                        .expect("batch should pass AOEM precommit and ordered commit");
+                with_env_override_v1(
+                    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+                    "false",
+                    || {
+                        with_test_native_execution_store_path_v1(|path| {
+                            let build_raw = |nonce: u64, account: &str, amount: u64| {
+                                let native_tx = NovNativeTxWireV1 {
+                                    chain_id: 77,
+                                    kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                                        caller: vec![nonce as u8; 20],
+                                        account_id: Some(account.to_string()),
+                                        fee_owner_account_id: Some(account.to_string()),
+                                        nonce_owner_account_id: Some(account.to_string()),
+                                        target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                                            "treasury".to_string(),
+                                        ),
+                                        method: "deposit_reserve".to_string(),
+                                        args: serde_json::to_vec(&serde_json::json!({
+                                            "asset": "USDT",
+                                            "amount": amount
+                                        }))
+                                        .expect("encode args"),
+                                        execution_mode: NovExecutionModeV1::Batch,
+                                        execution_policy: NovExecutionPolicyV1::Standard,
+                                        privacy_mode: NovPrivacyModeV1::Public,
+                                        verification_mode: NovVerificationModeV1::Standard,
+                                        fee_policy: NovFeePolicyV1 {
+                                            pay_asset: "USDT".to_string(),
+                                            max_pay_amount: 50,
+                                            slippage_bps: 100,
+                                        },
+                                        gas_like_limit: Some(90_000),
+                                        nonce: 0,
+                                    }),
+                                    signature: vec![0xabu8; 32],
+                                };
+                                let raw = encode_nov_native_tx_wire_v1(&native_tx)
+                                    .expect("encode nov tx");
+                                to_hex_prefixed_v1(raw.as_slice())
+                            };
+                            let out = run_nov_send_raw_transaction_batch_from_params_v1(
+                                &serde_json::json!({
+                                    "raw_txs": [
+                                        build_raw(1, "acct-batch-1", 25),
+                                        build_raw(2, "acct-batch-2", 35)
+                                    ],
+                                    "native_execution_store_path": path,
+                                }),
+                            )
+                            .expect("batch should pass AOEM precommit and ordered commit");
 
-                    assert_eq!(out["method"].as_str(), Some("nov_sendRawTransactionBatch"));
-                    assert_eq!(out["accepted"].as_bool(), Some(true));
-                    assert_eq!(out["batch_size"].as_u64(), Some(2));
-                    assert_eq!(
+                            assert_eq!(out["method"].as_str(), Some("nov_sendRawTransactionBatch"));
+                            assert_eq!(out["accepted"].as_bool(), Some(true));
+                            assert_eq!(out["batch_size"].as_u64(), Some(2));
+                            assert_eq!(
                         out["deterministic_commit"].as_str(),
                         Some("post_aoem_batch_precommit_deterministic_sharded_dirty_atomic_commit")
                     );
-                    assert_eq!(
-                        out["native_store_commit"]["model"].as_str(),
-                        Some("post_aoem_deterministic_dirty_store_commit")
-                    );
-                    assert_eq!(
-                        out["native_store_commit"]["runtime_ownership"].as_str(),
-                        Some("legacy_host_transitional")
-                    );
-                    assert_eq!(
-                        out["native_store_commit"]["production_target"].as_bool(),
-                        Some(false)
-                    );
-                    assert_eq!(out["native_store_commit"]["load_count"].as_u64(), Some(1));
-                    assert_eq!(out["native_store_commit"]["save_count"].as_u64(), Some(1));
-                    assert_eq!(
-                        out["native_store_commit"]["ordered_results"].as_bool(),
-                        Some(true)
-                    );
-                    assert_eq!(
-                        out["aoem_batch_ingress"]["execution_kernel"].as_str(),
-                        Some("AOEM")
-                    );
-                    assert_eq!(
-                        out["aoem_batch_ingress"]["semantic_entry"].as_str(),
-                        Some(native_aoem_raw_tx_batch_precommit_entry_v1())
-                    );
-                    assert_eq!(
-                        out["aoem_batch_ingress"]["ingress_scope"].as_str(),
-                        Some("raw_tx_batch_precommit")
-                    );
-                    assert_eq!(
-                        out["aoem_batch_ingress"]["batch_item_count"].as_u64(),
-                        Some(2)
-                    );
-                    assert_eq!(
-                        out["aoem_batch_ingress"]["batch_mode"].as_bool(),
-                        Some(true)
-                    );
-                    assert_eq!(out["aoem_batch_ingress"]["op_count"].as_u64(), Some(2));
-                    assert_eq!(out["aoem_batch_ingress"]["batch_size"].as_u64(), Some(2));
-                    assert_eq!(
-                        out["aoem_batch_ingress"]["concurrent_execution_enabled"].as_bool(),
-                        Some(true)
-                    );
-                    assert!(
-                        out["aoem_batch_ingress"]["recommended_threads"]
-                            .as_u64()
-                            .unwrap_or_default()
-                            >= 1
-                    );
-                    assert_eq!(
-                        out["aoem_batch_ingress"]["fallback_reason"].as_str(),
-                        Some("aoem_semantic_ingress_disabled")
-                    );
-                    let results = out["results"].as_array().expect("batch results");
-                    assert_eq!(results.len(), 2);
-                    assert!(results.iter().all(|item| {
-                        item["accepted"].as_bool() == Some(true)
-                            && item["native_receipt"]["status"].as_bool() == Some(true)
-                            && item["native_receipt"]["module"].as_str() == Some("treasury")
-                            && item["native_receipt"]["method"].as_str() == Some("deposit_reserve")
-                            && item["native_receipt"]["aoem_semantic_ingress"]["semantic_entry"]
-                                .as_str()
-                                == Some(native_aoem_raw_tx_batch_precommit_entry_v1())
-                            && item["native_receipt"]["aoem_semantic_ingress"]["ingress_scope"]
-                                .as_str()
-                                == Some("raw_tx_batch_precommit_item")
-                    }));
-                    assert_eq!(
-                        results[0]["native_receipt"]["aoem_semantic_ingress"]["batch_item_index"]
-                            .as_u64(),
-                        Some(0)
-                    );
-                    assert_eq!(
-                        results[1]["native_receipt"]["aoem_semantic_ingress"]["batch_item_index"]
-                            .as_u64(),
-                        Some(1)
-                    );
-                    let store = load_nov_native_execution_store_v1(path.as_path())
-                        .expect("batch store should load");
-                    assert_eq!(store.receipts.len(), 2);
-                    assert!(
-                        store
-                            .module_state
-                            .treasury_reserves
-                            .get("USDT")
-                            .copied()
-                            .unwrap_or_default()
-                            >= 60,
-                        "batch treasury reserve must include both ordered deposits"
-                    );
-                    let mirror_path =
-                        nov_native_aoem_semantic_ledger_mirror_path_v1(path.as_path());
-                    let mirror_body = fs::read_to_string(mirror_path.as_path())
-                        .expect("batch mirror should be written");
-                    assert_eq!(
-                        mirror_body
-                            .lines()
-                            .filter(|line| !line.trim().is_empty())
-                            .count(),
-                        2,
-                        "batch mirror append should persist one record per receipt"
-                    );
-                    let last_mirror = load_last_nov_native_aoem_semantic_ledger_mirror_record_v1(
-                        mirror_path.as_path(),
-                    )
-                    .expect("batch mirror should load")
-                    .expect("batch mirror should have last record");
-                    assert_eq!(last_mirror.sequence, 2);
-                })
+                            assert_eq!(
+                                out["native_store_commit"]["model"].as_str(),
+                                Some("post_aoem_deterministic_dirty_store_commit")
+                            );
+                            assert_eq!(
+                                out["native_store_commit"]["runtime_ownership"].as_str(),
+                                Some("legacy_host_transitional")
+                            );
+                            assert_eq!(
+                                out["native_store_commit"]["production_target"].as_bool(),
+                                Some(false)
+                            );
+                            assert_eq!(out["native_store_commit"]["load_count"].as_u64(), Some(1));
+                            assert_eq!(out["native_store_commit"]["save_count"].as_u64(), Some(1));
+                            assert_eq!(
+                                out["native_store_commit"]["ordered_results"].as_bool(),
+                                Some(true)
+                            );
+                            assert_eq!(
+                                out["aoem_batch_ingress"]["execution_kernel"].as_str(),
+                                Some("AOEM")
+                            );
+                            assert_eq!(
+                                out["aoem_batch_ingress"]["semantic_entry"].as_str(),
+                                Some(native_aoem_raw_tx_batch_precommit_entry_v1())
+                            );
+                            assert_eq!(
+                                out["aoem_batch_ingress"]["ingress_scope"].as_str(),
+                                Some("raw_tx_batch_precommit")
+                            );
+                            assert_eq!(
+                                out["aoem_batch_ingress"]["batch_item_count"].as_u64(),
+                                Some(2)
+                            );
+                            assert_eq!(
+                                out["aoem_batch_ingress"]["batch_mode"].as_bool(),
+                                Some(true)
+                            );
+                            assert_eq!(out["aoem_batch_ingress"]["op_count"].as_u64(), Some(2));
+                            assert_eq!(out["aoem_batch_ingress"]["batch_size"].as_u64(), Some(2));
+                            assert_eq!(
+                                out["aoem_batch_ingress"]["concurrent_execution_enabled"].as_bool(),
+                                Some(true)
+                            );
+                            assert!(
+                                out["aoem_batch_ingress"]["recommended_threads"]
+                                    .as_u64()
+                                    .unwrap_or_default()
+                                    >= 1
+                            );
+                            assert_eq!(
+                                out["aoem_batch_ingress"]["fallback_reason"].as_str(),
+                                Some("aoem_semantic_ingress_disabled")
+                            );
+                            let results = out["results"].as_array().expect("batch results");
+                            assert_eq!(results.len(), 2);
+                            assert!(results.iter().all(|item| {
+                                item["accepted"].as_bool() == Some(true)
+                                    && item["native_receipt"]["status"].as_bool() == Some(true)
+                                    && item["native_receipt"]["module"].as_str() == Some("treasury")
+                                    && item["native_receipt"]["method"].as_str()
+                                        == Some("deposit_reserve")
+                                    && item["native_receipt"]["aoem_semantic_ingress"]
+                                        ["semantic_entry"]
+                                        .as_str()
+                                        == Some(native_aoem_raw_tx_batch_precommit_entry_v1())
+                                    && item["native_receipt"]["aoem_semantic_ingress"]
+                                        ["ingress_scope"]
+                                        .as_str()
+                                        == Some("raw_tx_batch_precommit_item")
+                            }));
+                            assert_eq!(
+                                results[0]["native_receipt"]["aoem_semantic_ingress"]
+                                    ["batch_item_index"]
+                                    .as_u64(),
+                                Some(0)
+                            );
+                            assert_eq!(
+                                results[1]["native_receipt"]["aoem_semantic_ingress"]
+                                    ["batch_item_index"]
+                                    .as_u64(),
+                                Some(1)
+                            );
+                            let store = load_nov_native_execution_store_v1(path.as_path())
+                                .expect("batch store should load");
+                            assert_eq!(store.receipts.len(), 2);
+                            assert!(
+                                store
+                                    .module_state
+                                    .treasury_reserves
+                                    .get("USDT")
+                                    .copied()
+                                    .unwrap_or_default()
+                                    >= 60,
+                                "batch treasury reserve must include both ordered deposits"
+                            );
+                            let mirror_path =
+                                nov_native_aoem_semantic_ledger_mirror_path_v1(path.as_path());
+                            let mirror_body = fs::read_to_string(mirror_path.as_path())
+                                .expect("batch mirror should be written");
+                            assert_eq!(
+                                mirror_body
+                                    .lines()
+                                    .filter(|line| !line.trim().is_empty())
+                                    .count(),
+                                2,
+                                "batch mirror append should persist one record per receipt"
+                            );
+                            let last_mirror =
+                                load_last_nov_native_aoem_semantic_ledger_mirror_record_v1(
+                                    mirror_path.as_path(),
+                                )
+                                .expect("batch mirror should load")
+                                .expect("batch mirror should have last record");
+                            assert_eq!(last_mirror.sequence, 2);
+                        })
+                    },
+                )
             },
         )
     }
@@ -18643,7 +20748,7 @@ mod tests {
                                         slippage_bps: 100,
                                     },
                                     gas_like_limit: Some(90_000),
-                                    nonce,
+                                    nonce: 0,
                                 }),
                                 signature: vec![0xcdu8; 32],
                             };
@@ -18775,7 +20880,7 @@ mod tests {
                                     slippage_bps: 100,
                                 },
                                 gas_like_limit: Some(90_000),
-                                nonce,
+                                nonce: 0,
                             }),
                             signature: vec![0xefu8; 32],
                         };
@@ -18909,7 +21014,7 @@ mod tests {
                                     slippage_bps: 100,
                                 },
                                 gas_like_limit: Some(90_000),
-                                nonce,
+                                nonce: 0,
                             }),
                             signature: vec![0xeeu8; 32],
                         };
@@ -18919,6 +21024,11 @@ mod tests {
                             raw.as_slice(),
                         )
                         .expect("native pending ingress should store payload");
+                        novovm_network::observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
+                            chain_id,
+                            nonce.saturating_sub(1),
+                            tx_hash,
+                        );
                         novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
                             chain_id,
                             tx_hash,
@@ -18975,9 +21085,15 @@ mod tests {
             "false",
             || {
                 with_test_native_execution_store_path_v1(|path| {
-                    let chain_id = 88_020;
+                    let chain_id = 88_020u64;
                     let build_native =
                         |nonce: u64, account: &str, amount: u64| -> (Vec<u8>, [u8; 32]) {
+                            let signing_seed = sha256_bytes_v1(&[
+                                b"novovm-native-priority-test-signer-v1",
+                                &chain_id.to_le_bytes(),
+                                &nonce.to_le_bytes(),
+                                account.as_bytes(),
+                            ]);
                             let native_tx = NovNativeTxWireV1 {
                                 chain_id,
                                 kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
@@ -19004,9 +21120,9 @@ mod tests {
                                         slippage_bps: 100,
                                     },
                                     gas_like_limit: Some(90_000),
-                                    nonce,
+                                    nonce: 0,
                                 }),
-                                signature: vec![0xeeu8; 32],
+                                signature: signing_seed.to_vec(),
                             };
                             let raw =
                                 encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
@@ -19019,6 +21135,11 @@ mod tests {
                         };
                     let build_repair = |nonce: u64, account: &str, amount: u64| -> [u8; 32] {
                         let (raw, tx_hash) = build_native(nonce, account, amount);
+                        novovm_network::observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
+                            chain_id,
+                            nonce.saturating_sub(1),
+                            tx_hash,
+                        );
                         novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
                             chain_id,
                             tx_hash,
@@ -19117,7 +21238,7 @@ mod tests {
                                         slippage_bps: 100,
                                     },
                                     gas_like_limit: Some(90_000),
-                                    nonce,
+                                    nonce: 0,
                                 }),
                                 signature: vec![0xedu8; 32],
                             };
@@ -19132,6 +21253,11 @@ mod tests {
                         };
                     let build_repair = |nonce: u64, account: &str, amount: u64| -> [u8; 32] {
                         let (raw, tx_hash) = build_native(nonce, account, amount);
+                        novovm_network::observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
+                            chain_id,
+                            nonce.saturating_sub(1),
+                            tx_hash,
+                        );
                         novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
                             chain_id,
                             tx_hash,
@@ -19220,7 +21346,7 @@ mod tests {
                                 slippage_bps: 100,
                             },
                             gas_like_limit: Some(90_000),
-                            nonce: 14_169,
+                            nonce: 0,
                         }),
                         signature: vec![0xacu8; 32],
                     };
@@ -19228,6 +21354,9 @@ mod tests {
                     let (_, _, tx_hash) =
                         ingest_local_nov_raw_tx_payload_v1(&serde_json::json!({}), raw.as_slice())
                             .expect("native pending ingress should store payload");
+                    novovm_network::observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
+                        chain_id, 14_168, tx_hash,
+                    );
                     novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
                         chain_id,
                         tx_hash,
@@ -19310,7 +21439,7 @@ mod tests {
                                 slippage_bps: 100,
                             },
                             gas_like_limit: Some(90_000),
-                            nonce: 13_681,
+                            nonce: 0,
                         }),
                         signature: vec![0xabu8; 32],
                     };
@@ -19318,6 +21447,9 @@ mod tests {
                     let (_, _, tx_hash) =
                         ingest_local_nov_raw_tx_payload_v1(&serde_json::json!({}), raw.as_slice())
                             .expect("native pending ingress should store payload");
+                    novovm_network::observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
+                        chain_id, 13_680, tx_hash,
+                    );
                     novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
                         chain_id,
                         tx_hash,
@@ -19395,7 +21527,7 @@ mod tests {
                                 slippage_bps: 100,
                             },
                             gas_like_limit: Some(90_000),
-                            nonce: 14_113,
+                            nonce: 0,
                         }),
                         signature: vec![0x24u8; 32],
                     };
@@ -19403,6 +21535,9 @@ mod tests {
                     let (_, _, tx_hash) =
                         ingest_local_nov_raw_tx_payload_v1(&serde_json::json!({}), raw.as_slice())
                             .expect("native pending ingress should store payload");
+                    novovm_network::observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
+                        chain_id, 14_112, tx_hash,
+                    );
                     novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
                         chain_id,
                         tx_hash,
@@ -19484,7 +21619,7 @@ mod tests {
                                 slippage_bps: 100,
                             },
                             gas_like_limit: Some(90_000),
-                            nonce: 14_121,
+                            nonce: 0,
                         }),
                         signature: vec![0x25u8; 32],
                     };
@@ -19492,6 +21627,9 @@ mod tests {
                     let (_, _, tx_hash) =
                         ingest_local_nov_raw_tx_payload_v1(&serde_json::json!({}), raw.as_slice())
                             .expect("native pending ingress should store payload");
+                    novovm_network::observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
+                        chain_id, 14_120, tx_hash,
+                    );
                     novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
                         chain_id,
                         tx_hash,
@@ -19570,7 +21708,7 @@ mod tests {
                                     slippage_bps: 100,
                                 },
                                 gas_like_limit: Some(90_000),
-                                nonce: sequence + 1,
+                                nonce: 0,
                             }),
                             signature: vec![0x26u8; 32],
                         };
@@ -19580,6 +21718,9 @@ mod tests {
                             raw.as_slice(),
                         )
                         .expect("native pending ingress should store payload");
+                        novovm_network::observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
+                            chain_id, sequence, tx_hash,
+                        );
                         novovm_network::observe_network_runtime_native_pending_tx_repair_probe_v1(
                             chain_id,
                             tx_hash,
@@ -20321,6 +22462,162 @@ mod tests {
     }
 
     #[test]
+    fn execute_pending_rejected_aoem_batch_never_closes_or_projects_pending_tx() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    with_test_native_aoem_persist_runtime_v1(path.as_path(), |aoem_path| {
+                        let chain_id = 88_139_003u64;
+                        let (_, tx_hash) = ingest_test_native_repair_payload_v1(
+                            chain_id,
+                            0,
+                            "acct-rejected-aoem-pending",
+                            7,
+                        );
+                        let state_namespace = aoem_path.to_string_lossy();
+                        let out = with_env_override_v1(
+                            NOVOVM_TEST_FORCE_AOEM_SEMANTIC_GRAPH_V3_UNAVAILABLE_ENV,
+                            "true",
+                            || {
+                                run_nov_execute_pending_native_tx_batch_from_params_v1(
+                                    &serde_json::json!({
+                                        "chain_id": chain_id,
+                                        "limit": 1,
+                                        "scan_limit": 1,
+                                        "native_execution_store_path": path,
+                                        "aoem_state_namespace": state_namespace,
+                                        "aoem_owned_gate_config": {
+                                            "production_candidate": true,
+                                            "full_business_compute_required": true,
+                                            "shadow": true,
+                                            "compare": true,
+                                            "source": "receiver_child_runtime"
+                                        }
+                                    }),
+                                )
+                                .expect("AOEM rejection should return a fail-closed tick report")
+                            },
+                        );
+
+                        assert_eq!(out["accepted"].as_bool(), Some(false));
+                        assert_eq!(out["executed"].as_bool(), Some(false));
+                        assert_eq!(
+                            out["canonical_projection_skipped_for_rejection"].as_bool(),
+                            Some(true)
+                        );
+                        assert!(out["canonical_projection"].is_null());
+                        assert_eq!(
+                            out["ledger_final_missing_batch_blocked_reason"].as_str(),
+                            Some("aoem_batch_rejected_before_canonical_projection")
+                        );
+                        let pending = novovm_network::get_network_runtime_native_pending_tx_v1(
+                            chain_id, tx_hash,
+                        )
+                        .expect("rejected transaction must remain pending for retry");
+                        assert_ne!(
+                            pending.lifecycle_stage,
+                            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+                        );
+                        let store = load_nov_native_execution_store_v1(path.as_path())
+                            .expect("rejected batch Host projection should remain readable");
+                        assert!(store.receipts.is_empty());
+                    })
+                })
+            },
+        )
+    }
+
+    #[test]
+    fn rejected_aoem_precommit_never_publishes_authoritative_state_or_replays() {
+        with_test_native_execution_store_path_v1(|path| {
+            with_test_native_aoem_persist_runtime_v1(path.as_path(), |aoem_path| {
+                let chain_id = 88_139_004u64;
+                let (_, tx_hash) = ingest_test_native_repair_payload_v1(
+                    chain_id,
+                    0,
+                    "acct-rejected-aoem-precommit",
+                    7,
+                );
+                let state_namespace = aoem_path.to_string_lossy().into_owned();
+                let params = serde_json::json!({
+                    "chain_id": chain_id,
+                    "limit": 1,
+                    "scan_limit": 1,
+                    "native_execution_store_path": path,
+                    "aoem_state_namespace": state_namespace,
+                    "aoem_owned_gate_config": {
+                        "production_candidate": true,
+                        "full_business_compute_required": true,
+                        "shadow": true,
+                        "compare": true,
+                        "source": "receiver_child_runtime"
+                    }
+                });
+
+                let run_rejected_tick = || {
+                    with_env_override_v1(
+                        NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+                        "false",
+                        || {
+                            with_env_override_v1(
+                                NOV_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED_ENV,
+                                "false",
+                                || {
+                                    run_nov_execute_pending_native_tx_batch_from_params_v1(&params)
+                                        .expect("AOEM precommit rejection should return a report")
+                                },
+                            )
+                        },
+                    )
+                };
+
+                let first = run_rejected_tick();
+                assert_eq!(first["accepted"].as_bool(), Some(false));
+                assert_eq!(first["executed"].as_bool(), Some(false));
+                assert_eq!(
+                    first["batch_result"]["aoem_native_tx_batch_production_state_persisted"]
+                        .as_bool(),
+                    Some(false)
+                );
+                assert!(
+                    first["batch_result"]["aoem_native_tx_batch_production_mismatch_reasons"]
+                        .as_array()
+                        .is_some_and(|reasons| reasons.iter().any(|reason| {
+                            reason.as_str() == Some("production_aoem_precommit_not_submitted")
+                        }))
+                );
+                assert!(
+                    load_validated_native_state_envelope_from_aoem_owner_v1(&params, chain_id)
+                        .expect("AOEM authoritative state lookup should succeed")
+                        .is_none(),
+                    "a rejected precommit must not publish an AOEM authoritative head"
+                );
+
+                let second = run_rejected_tick();
+                assert_eq!(second["accepted"].as_bool(), Some(false));
+                assert_eq!(second["executed"].as_bool(), Some(false));
+                assert_ne!(
+                    second["batch_result"]["batch_replay"].as_bool(),
+                    Some(true),
+                    "a rejected batch must not become an accepted durable replay"
+                );
+                let pending =
+                    novovm_network::get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+                        .expect("rejected transaction must remain pending for retry");
+                assert_ne!(
+                    pending.lifecycle_stage,
+                    novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+                );
+                let store = load_nov_native_execution_store_v1(path.as_path())
+                    .expect("rejected batch Host projection should remain readable");
+                assert!(store.receipts.is_empty());
+            })
+        })
+    }
+
+    #[test]
     fn tail_gap_14112_14399_enters_actual_batch_under_limit() {
         with_env_override_v1(
             NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
@@ -21015,118 +23312,125 @@ mod tests {
     }
 
     #[test]
-    fn native_aoem_semantic_ledger_chains_commit_seals() {
-        with_env_override_v1(NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV, "true", || {
-            with_env_override_v1(
-                NOV_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED_ENV,
-                "false",
-                || {
-                    with_test_native_execution_store_path_v1(|path| {
-                        let first = NovExecutionRequestV1 {
-                            tx_hash: [0xb0; 32],
-                            chain_id: 7092,
-                            caller: vec![0xb0; 20],
-                            target: NovExecutionRequestTargetV1::NativeModule(
-                                "treasury".to_string(),
-                            ),
-                            method: "deposit_reserve".to_string(),
-                            args: serde_json::to_vec(&serde_json::json!({
-                                "asset": "NOV",
-                                "amount": 2u64
-                            }))
-                            .expect("encode args"),
-                            fee_pay_asset: "NOV".to_string(),
-                            fee_max_pay_amount: 10_000,
-                            fee_slippage_bps: 50,
-                            gas_like_limit: Some(90_000),
-                            nonce: 176,
-                        };
-                        let first_receipt =
-                            dispatch_and_persist_nov_execution_request_with_store_path_v1(
-                                path.as_path(),
-                                &first,
-                            )
-                            .expect("first dispatch should succeed");
-                        let first_meta = first_receipt
-                            .aoem_semantic_ingress
-                            .as_ref()
-                            .expect("first receipt should expose AOEM semantic metadata");
-                        assert_eq!(first_meta.semantic_ledger_sequence, 1);
-                        assert!(first_meta.semantic_ledger_prev_seal.is_empty());
-                        let first_seal = first_meta.semantic_ledger_commit_seal.clone();
-                        assert_eq!(first_seal.len(), 64);
+    fn native_semantic_ledger_chains_commit_seals_without_external_aoem_session() {
+        // This is a deterministic Host ledger-chain unit test. A real AOEM
+        // session belongs to the AOEM integration gates; opening one here can
+        // block indefinitely when no compatible DLL/runtime is configured.
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_env_override_v1(
+                    NOV_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED_ENV,
+                    "false",
+                    || {
+                        with_test_native_execution_store_path_v1(|path| {
+                            let first = NovExecutionRequestV1 {
+                                tx_hash: [0xb0; 32],
+                                chain_id: 7092,
+                                caller: vec![0xb0; 20],
+                                target: NovExecutionRequestTargetV1::NativeModule(
+                                    "treasury".to_string(),
+                                ),
+                                method: "deposit_reserve".to_string(),
+                                args: serde_json::to_vec(&serde_json::json!({
+                                    "asset": "NOV",
+                                    "amount": 2u64
+                                }))
+                                .expect("encode args"),
+                                fee_pay_asset: "NOV".to_string(),
+                                fee_max_pay_amount: 10_000,
+                                fee_slippage_bps: 50,
+                                gas_like_limit: Some(90_000),
+                                nonce: 176,
+                            };
+                            let first_receipt =
+                                dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                                    path.as_path(),
+                                    &first,
+                                )
+                                .expect("first dispatch should succeed");
+                            let first_meta = first_receipt
+                                .aoem_semantic_ingress
+                                .as_ref()
+                                .expect("first receipt should expose AOEM semantic metadata");
+                            assert_eq!(first_meta.semantic_ledger_sequence, 1);
+                            assert!(first_meta.semantic_ledger_prev_seal.is_empty());
+                            let first_seal = first_meta.semantic_ledger_commit_seal.clone();
+                            assert_eq!(first_seal.len(), 64);
 
-                        let second = NovExecutionRequestV1 {
-                            tx_hash: [0xb1; 32],
-                            chain_id: 7092,
-                            caller: vec![0xb1; 20],
-                            target: NovExecutionRequestTargetV1::NativeModule(
-                                "treasury".to_string(),
-                            ),
-                            method: "deposit_reserve".to_string(),
-                            args: serde_json::to_vec(&serde_json::json!({
-                                "asset": "USDT",
-                                "amount": 4u64
-                            }))
-                            .expect("encode args"),
-                            fee_pay_asset: "USDT".to_string(),
-                            fee_max_pay_amount: 10_000,
-                            fee_slippage_bps: 50,
-                            gas_like_limit: Some(90_000),
-                            nonce: 177,
-                        };
-                        let second_receipt =
-                            dispatch_and_persist_nov_execution_request_with_store_path_v1(
-                                path.as_path(),
-                                &second,
-                            )
-                            .expect("second dispatch should succeed");
-                        let second_meta = second_receipt
-                            .aoem_semantic_ingress
-                            .as_ref()
-                            .expect("second receipt should expose AOEM semantic metadata");
-                        assert_eq!(second_meta.semantic_ledger_sequence, 2);
-                        assert_eq!(second_meta.semantic_ledger_prev_seal, first_seal);
-                        assert_eq!(second_meta.semantic_ledger_commit_seal.len(), 64);
-                        assert_ne!(
-                            second_meta.semantic_ledger_commit_seal,
-                            second_meta.semantic_ledger_prev_seal
-                        );
+                            let second = NovExecutionRequestV1 {
+                                tx_hash: [0xb1; 32],
+                                chain_id: 7092,
+                                caller: vec![0xb1; 20],
+                                target: NovExecutionRequestTargetV1::NativeModule(
+                                    "treasury".to_string(),
+                                ),
+                                method: "deposit_reserve".to_string(),
+                                args: serde_json::to_vec(&serde_json::json!({
+                                    "asset": "USDT",
+                                    "amount": 4u64
+                                }))
+                                .expect("encode args"),
+                                fee_pay_asset: "USDT".to_string(),
+                                fee_max_pay_amount: 10_000,
+                                fee_slippage_bps: 50,
+                                gas_like_limit: Some(90_000),
+                                nonce: 177,
+                            };
+                            let second_receipt =
+                                dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                                    path.as_path(),
+                                    &second,
+                                )
+                                .expect("second dispatch should succeed");
+                            let second_meta = second_receipt
+                                .aoem_semantic_ingress
+                                .as_ref()
+                                .expect("second receipt should expose AOEM semantic metadata");
+                            assert_eq!(second_meta.semantic_ledger_sequence, 2);
+                            assert_eq!(second_meta.semantic_ledger_prev_seal, first_seal);
+                            assert_eq!(second_meta.semantic_ledger_commit_seal.len(), 64);
+                            assert_ne!(
+                                second_meta.semantic_ledger_commit_seal,
+                                second_meta.semantic_ledger_prev_seal
+                            );
 
-                        let store = load_nov_native_execution_store_v1(path.as_path())
-                            .expect("store should be readable");
-                        assert_eq!(store.module_state.aoem_semantic_ledger_sequence, 2);
-                        assert_eq!(
-                            store.module_state.aoem_semantic_ledger_head,
-                            second_meta.semantic_ledger_commit_seal
-                        );
+                            let store = load_nov_native_execution_store_v1(path.as_path())
+                                .expect("store should be readable");
+                            assert_eq!(store.module_state.aoem_semantic_ledger_sequence, 2);
+                            assert_eq!(
+                                store.module_state.aoem_semantic_ledger_head,
+                                second_meta.semantic_ledger_commit_seal
+                            );
 
-                        let mirror_path =
-                            nov_native_aoem_semantic_ledger_mirror_path_v1(path.as_path());
-                        let last_mirror =
-                            load_last_nov_native_aoem_semantic_ledger_mirror_record_v1(
-                                mirror_path.as_path(),
-                            )
-                            .expect("mirror should be readable")
-                            .expect("mirror should contain the latest AOEM semantic commit");
-                        assert_eq!(
-                            last_mirror.schema,
-                            "novovm-native-aoem-semantic-ledger-mirror/v1"
-                        );
-                        assert_eq!(last_mirror.execution_kernel, "AOEM");
-                        assert!(last_mirror.algebraic_semantic_entry);
-                        assert_eq!(last_mirror.sequence, 2);
-                        assert_eq!(last_mirror.tx_hash, second_receipt.tx_hash);
-                        assert_eq!(last_mirror.prev_seal, first_seal);
-                        assert_eq!(
-                            last_mirror.commit_seal,
-                            second_meta.semantic_ledger_commit_seal
-                        );
-                        assert_eq!(last_mirror.mirror_backend, "jsonl_append_only");
-                    });
-                },
-            );
-        });
+                            let mirror_path =
+                                nov_native_aoem_semantic_ledger_mirror_path_v1(path.as_path());
+                            let last_mirror =
+                                load_last_nov_native_aoem_semantic_ledger_mirror_record_v1(
+                                    mirror_path.as_path(),
+                                )
+                                .expect("mirror should be readable")
+                                .expect("mirror should contain the latest AOEM semantic commit");
+                            assert_eq!(
+                                last_mirror.schema,
+                                "novovm-native-aoem-semantic-ledger-mirror/v1"
+                            );
+                            assert_eq!(last_mirror.execution_kernel, "AOEM");
+                            assert!(last_mirror.algebraic_semantic_entry);
+                            assert_eq!(last_mirror.sequence, 2);
+                            assert_eq!(last_mirror.tx_hash, second_receipt.tx_hash);
+                            assert_eq!(last_mirror.prev_seal, first_seal);
+                            assert_eq!(
+                                last_mirror.commit_seal,
+                                second_meta.semantic_ledger_commit_seal
+                            );
+                            assert_eq!(last_mirror.mirror_backend, "jsonl_append_only");
+                        });
+                    },
+                );
+            },
+        );
     }
 
     #[test]
@@ -21267,6 +23571,205 @@ mod tests {
         novovm_protocol::encode_nov_native_tx_wire_v1(tx).expect("encode native auth test tx")
     }
 
+    fn clear_native_auth_runtime_reservations_for_chain_v1(chain_id: u64) {
+        let Some(reservations) = NOV_NATIVE_AUTH_NONCE_RESERVATIONS_V1.get() else {
+            return;
+        };
+        reservations
+            .lock()
+            .expect("native auth reservation registry")
+            .retain(|(stored_chain_id, _, _), _| *stored_chain_id != chain_id);
+    }
+
+    #[test]
+    fn remote_native_ingress_authenticates_before_pending_admission() {
+        with_test_native_execution_store_path_v1(|path| {
+            let chain_id = 90_111;
+            let source_peer_id = 71;
+            let tx = build_signed_native_auth_test_tx_v1(
+                chain_id,
+                0,
+                [0x71; 32],
+                "remote-authenticated",
+                17,
+            );
+            let raw = encode_native_auth_test_tx_v1(&tx);
+            let tx_hash = tx_hash_array_from_ir_v1(
+                &nov_native_tx_to_adapter_tx_ir_v1(&tx).expect("remote canonical ir"),
+            );
+            let params = serde_json::json!({
+                "chain_id": chain_id,
+                "native_execution_store_path": path,
+            });
+
+            assert_eq!(
+                ingest_remote_nov_raw_tx_payload_v1(
+                    &params,
+                    chain_id,
+                    source_peer_id,
+                    tx_hash,
+                    raw.as_slice(),
+                    None,
+                )
+                .expect("authenticated remote ingress"),
+                tx_hash
+            );
+            let pending =
+                novovm_network::get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+                    .expect("remote tx pending state");
+            assert_eq!(
+                pending.lifecycle_stage,
+                NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+            );
+            assert_eq!(pending.source_peer_id, Some(source_peer_id));
+            assert_eq!(
+                get_network_runtime_native_pending_tx_payload_v1(chain_id, tx_hash),
+                Some(raw)
+            );
+            clear_native_auth_runtime_reservations_for_chain_v1(chain_id);
+        });
+    }
+
+    #[test]
+    fn remote_native_ingress_rejects_outer_hash_and_signature_mismatch() {
+        with_test_native_execution_store_path_v1(|path| {
+            for (offset, corrupt_signature) in [false, true].into_iter().enumerate() {
+                let chain_id = 90_112 + offset as u64;
+                let source_peer_id = 72 + offset as u64;
+                let mut tx = build_signed_native_auth_test_tx_v1(
+                    chain_id,
+                    0,
+                    [0x72 + offset as u8; 32],
+                    "remote-rejected",
+                    18 + offset as u64,
+                );
+                if corrupt_signature {
+                    tx.signature[40] ^= 0x01;
+                }
+                let raw = encode_native_auth_test_tx_v1(&tx);
+                let canonical_hash = tx_hash_array_from_ir_v1(
+                    &nov_native_tx_to_adapter_tx_ir_v1(&tx).expect("remote rejected ir"),
+                );
+                let announced_hash = if corrupt_signature {
+                    canonical_hash
+                } else {
+                    [0xf1; 32]
+                };
+                let params = serde_json::json!({
+                    "chain_id": chain_id,
+                    "native_execution_store_path": path,
+                });
+                let err = ingest_remote_nov_raw_tx_payload_v1(
+                    &params,
+                    chain_id,
+                    source_peer_id,
+                    announced_hash,
+                    raw.as_slice(),
+                    None,
+                )
+                .expect_err("remote commitment/auth mismatch must fail before pending");
+                if corrupt_signature {
+                    assert!(err
+                        .to_string()
+                        .contains("signature or signer identity mismatch"));
+                } else {
+                    assert!(err.to_string().contains("hash commitment mismatch"));
+                }
+                assert_eq!(
+                    get_network_runtime_native_pending_tx_payload_v1(chain_id, announced_hash,),
+                    None
+                );
+                let rejected = novovm_network::get_network_runtime_native_pending_tx_v1(
+                    chain_id,
+                    announced_hash,
+                )
+                .expect("rejected remote frame state");
+                assert_eq!(
+                    rejected.lifecycle_stage,
+                    NetworkRuntimeNativePendingTxLifecycleStageV1::Rejected
+                );
+                clear_native_auth_runtime_reservations_for_chain_v1(chain_id);
+            }
+        });
+    }
+
+    #[test]
+    fn remote_native_ingress_rejects_stream_equivocation_before_pending() {
+        with_test_native_execution_store_path_v1(|path| {
+            let chain_id = 90_114;
+            let source_peer_id = 74;
+            let first =
+                build_signed_native_auth_test_tx_v1(chain_id, 0, [0x74; 32], "stream-first", 20);
+            let second =
+                build_signed_native_auth_test_tx_v1(chain_id, 0, [0x75; 32], "stream-second", 21);
+            let first_raw = encode_native_auth_test_tx_v1(&first);
+            let second_raw = encode_native_auth_test_tx_v1(&second);
+            let first_hash = tx_hash_array_from_ir_v1(
+                &nov_native_tx_to_adapter_tx_ir_v1(&first).expect("first stream ir"),
+            );
+            let second_hash = tx_hash_array_from_ir_v1(
+                &nov_native_tx_to_adapter_tx_ir_v1(&second).expect("second stream ir"),
+            );
+            let params = serde_json::json!({
+                "chain_id": chain_id,
+                "native_execution_store_path": path,
+            });
+            let mut meta = novovm_protocol::EvmNativeTransactionFrameAuthV1 {
+                scheme: "keyed_sha256_v1".to_string(),
+                domain: "novorudp_transaction_v1".to_string(),
+                frame_kind: "primary".to_string(),
+                run_id: "validated-stream-run".to_string(),
+                sequence: 0,
+                copy_index: 0,
+                tag: "validated-by-transport".to_string(),
+            };
+
+            ingest_remote_nov_raw_tx_payload_v1(
+                &params,
+                chain_id,
+                source_peer_id,
+                first_hash,
+                first_raw.as_slice(),
+                Some(&meta),
+            )
+            .expect("first scoped sequence");
+            let err = ingest_remote_nov_raw_tx_payload_v1(
+                &params,
+                chain_id,
+                source_peer_id,
+                second_hash,
+                second_raw.as_slice(),
+                Some(&meta),
+            )
+            .expect_err("same scoped sequence with a different tx must fail closed");
+            assert!(err.to_string().contains("sequence equivocation"));
+            assert_eq!(
+                get_network_runtime_native_pending_tx_payload_v1(chain_id, second_hash),
+                None
+            );
+
+            meta.sequence = 1;
+            ingest_remote_nov_raw_tx_payload_v1(
+                &params,
+                chain_id,
+                source_peer_id,
+                second_hash,
+                second_raw.as_slice(),
+                Some(&meta),
+            )
+            .expect("failed equivocation must release the second tx nonce reservation");
+            assert_eq!(
+                get_runtime_novorudp_sequence_for_tx_hash_v1(chain_id, first_hash),
+                Some(0)
+            );
+            assert_eq!(
+                get_runtime_novorudp_sequence_for_tx_hash_v1(chain_id, second_hash),
+                Some(1)
+            );
+            clear_native_auth_runtime_reservations_for_chain_v1(chain_id);
+        });
+    }
+
     #[test]
     fn nov_native_ingress_rejects_legacy_signature_before_pending() {
         let chain_id = 90_101;
@@ -21279,6 +23782,33 @@ mod tests {
         )
         .expect_err("legacy signature must be rejected");
         assert!(err.to_string().contains("expected=96"));
+    }
+
+    #[test]
+    fn signed_native_wire_maps_to_adapter_verifiable_canonical_ir() {
+        let chain_id = 90_110;
+        let tx = build_signed_native_auth_test_tx_v1(
+            chain_id,
+            1,
+            [0x3b; 32],
+            "acct-adapter-canonical",
+            12,
+        );
+        let ir = nov_native_tx_to_adapter_tx_ir_v1(&tx).expect("map canonical native tx ir");
+        let mut adapter =
+            novovm_adapter_novovm::create_native_adapter(novovm_adapter_api::ChainConfig {
+                chain_type: novovm_adapter_api::ChainType::EVM,
+                chain_id,
+                name: "native-auth-canonical".to_string(),
+                enabled: true,
+                custom_config: None,
+            })
+            .expect("create native adapter");
+        adapter.initialize().expect("initialize native adapter");
+        assert!(adapter
+            .verify_transaction(&ir)
+            .expect("verify canonical native tx ir"));
+        adapter.shutdown().expect("shutdown native adapter");
     }
 
     #[test]
@@ -21298,6 +23828,93 @@ mod tests {
         assert!(err
             .to_string()
             .contains("signature or signer identity mismatch"));
+    }
+
+    #[test]
+    fn nov_native_ingress_rejects_signed_but_unauthorized_subject_owners() {
+        with_test_native_execution_store_path_v1(|path| {
+            for (offset, field) in [
+                "account_id",
+                "fee_owner_account_id",
+                "nonce_owner_account_id",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let chain_id = 90_120 + offset as u64;
+                let signing_seed = [0x4c + offset as u8; 32];
+                let mut tx = build_signed_native_auth_test_tx_v1(
+                    chain_id,
+                    0,
+                    signing_seed,
+                    "ignored-direct-account",
+                    8,
+                );
+                let NovTxKindV1::Execute(execute) = &mut tx.kind else {
+                    panic!("expected execute tx");
+                };
+                match field {
+                    "account_id" => execute.account_id = Some("victim-account".to_string()),
+                    "fee_owner_account_id" => {
+                        execute.fee_owner_account_id = Some("victim-fee-owner".to_string())
+                    }
+                    "nonce_owner_account_id" => {
+                        execute.nonce_owner_account_id = Some("victim-nonce-owner".to_string())
+                    }
+                    _ => unreachable!("known subject owner field"),
+                }
+                sign_nov_native_tx_with_seed_v1(&mut tx, signing_seed)
+                    .expect("sign unauthorized subject claim");
+                let raw = encode_native_auth_test_tx_v1(&tx);
+                let err = ingest_local_nov_raw_tx_payload_v1(
+                    &serde_json::json!({
+                        "chain_id": chain_id,
+                        "native_execution_store_path": path,
+                    }),
+                    raw.as_slice(),
+                )
+                .expect_err("unbound subject owner must be rejected");
+                assert!(
+                    err.to_string().contains("signer is not authorized")
+                        || err.to_string().contains("not the bound Ed25519 owner")
+                        || err.to_string().contains("must equal direct signer"),
+                    "unexpected {field} rejection: {err:#}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn nov_native_ingress_rejects_mutation_of_complete_signed_wire_intent() {
+        let chain_id = 90_109;
+        let tx = build_signed_native_auth_test_tx_v1(chain_id, 1, [0x38; 32], "acct-auth-wire", 8);
+        for mutation in [
+            "execution_mode",
+            "privacy_mode",
+            "verification_mode",
+            "fee_policy",
+        ] {
+            let mut tampered = tx.clone();
+            let NovTxKindV1::Execute(execute) = &mut tampered.kind else {
+                panic!("expected execute tx");
+            };
+            match mutation {
+                "execution_mode" => execute.execution_mode = NovExecutionModeV1::HighPriority,
+                "privacy_mode" => execute.privacy_mode = NovPrivacyModeV1::Private,
+                "verification_mode" => execute.verification_mode = NovVerificationModeV1::Auditable,
+                "fee_policy" => execute.fee_policy.max_pay_amount += 1,
+                _ => unreachable!("known mutation"),
+            }
+            let raw = encode_native_auth_test_tx_v1(&tampered);
+            let err = ingest_local_nov_raw_tx_payload_v1(
+                &serde_json::json!({"chain_id": chain_id}),
+                raw.as_slice(),
+            )
+            .expect_err("unsigned wire-field mutation must be rejected");
+            assert!(err
+                .to_string()
+                .contains("signature or signer identity mismatch"));
+        }
     }
 
     #[test]
@@ -21326,109 +23943,261 @@ mod tests {
     }
 
     #[test]
-    fn nov_native_ingress_accepts_initial_zero_and_rejects_conflicting_nonce() {
-        let zero_chain_id = 90_104;
-        let zero =
-            build_signed_native_auth_test_tx_v1(zero_chain_id, 0, [0x34; 32], "acct-auth-d", 10);
-        let zero_raw = encode_native_auth_test_tx_v1(&zero);
-        ingest_local_nov_raw_tx_payload_v1(
-            &serde_json::json!({"chain_id": zero_chain_id}),
-            zero_raw.as_slice(),
-        )
-        .expect("initial zero nonce is valid for a signed account");
+    fn nov_native_ingress_requires_initial_zero_and_rejects_conflicting_nonce() {
+        with_test_native_execution_store_path_v1(|path| {
+            let chain_id = 90_104;
+            let signing_seed = [0x34; 32];
+            let params = serde_json::json!({
+                "chain_id": chain_id,
+                "native_execution_store_path": path,
+            });
+            for invalid_nonce in [1, u64::MAX] {
+                let invalid = build_signed_native_auth_test_tx_v1(
+                    chain_id,
+                    invalid_nonce,
+                    signing_seed,
+                    "acct-auth-d",
+                    10,
+                );
+                let err = ingest_local_nov_raw_tx_payload_v1(
+                    &params,
+                    encode_native_auth_test_tx_v1(&invalid).as_slice(),
+                )
+                .expect_err("a new identity must not choose its initial nonce floor");
+                assert!(err.to_string().contains("expected=0"));
+            }
 
-        let conflict_chain_id = 90_105;
-        let first = build_signed_native_auth_test_tx_v1(
-            conflict_chain_id,
-            1,
-            [0x35; 32],
-            "acct-auth-e",
-            11,
-        );
-        let mut second = build_signed_native_auth_test_tx_v1(
-            conflict_chain_id,
-            1,
-            [0x35; 32],
-            "acct-auth-e",
-            11,
-        );
-        if let NovTxKindV1::Execute(execute) = &mut second.kind {
-            execute.fee_owner_account_id = Some("acct-auth-e-alt".to_string());
-        }
-        sign_nov_native_tx_with_seed_v1(&mut second, [0x35; 32])
-            .expect("re-sign conflicting account metadata");
-        let first_hash = tx_hash_array_from_ir_v1(
-            &nov_native_tx_to_adapter_tx_ir_v1(&first).expect("build first signed tx ir"),
-        );
-        let second_hash = tx_hash_array_from_ir_v1(
-            &nov_native_tx_to_adapter_tx_ir_v1(&second).expect("build second signed tx ir"),
-        );
-        assert_eq!(
-            first_hash, second_hash,
-            "regression requires identical legacy tx hashes"
-        );
-        let first_raw = encode_native_auth_test_tx_v1(&first);
-        ingest_local_nov_raw_tx_payload_v1(
-            &serde_json::json!({"chain_id": conflict_chain_id}),
-            first_raw.as_slice(),
-        )
-        .expect("first nonce reservation should succeed");
-        let second_raw = encode_native_auth_test_tx_v1(&second);
-        let conflict_err = ingest_local_nov_raw_tx_payload_v1(
-            &serde_json::json!({"chain_id": conflict_chain_id}),
-            second_raw.as_slice(),
-        )
-        .expect_err("conflicting nonce must be rejected");
-        assert!(conflict_err.to_string().contains("nonce conflict"));
+            let first =
+                build_signed_native_auth_test_tx_v1(chain_id, 0, signing_seed, "acct-auth-d", 11);
+            let mut second = first.clone();
+            if let NovTxKindV1::Execute(execute) = &mut second.kind {
+                execute.args = serde_json::to_vec(&serde_json::json!({
+                    "asset": "USDT",
+                    "amount": 12,
+                }))
+                .expect("encode conflicting native auth args");
+            }
+            sign_nov_native_tx_with_seed_v1(&mut second, signing_seed)
+                .expect("re-sign conflicting account metadata");
+            let first_hash = tx_hash_array_from_ir_v1(
+                &nov_native_tx_to_adapter_tx_ir_v1(&first).expect("build first signed tx ir"),
+            );
+            let second_hash = tx_hash_array_from_ir_v1(
+                &nov_native_tx_to_adapter_tx_ir_v1(&second).expect("build second signed tx ir"),
+            );
+            assert_ne!(
+                first_hash, second_hash,
+                "complete signed intents must have distinct canonical native tx hashes"
+            );
+            let first_raw = encode_native_auth_test_tx_v1(&first);
+            ingest_local_nov_raw_tx_payload_v1(&params, first_raw.as_slice())
+                .expect("initial zero nonce reservation should succeed");
+            let second_raw = encode_native_auth_test_tx_v1(&second);
+            let conflict_err = ingest_local_nov_raw_tx_payload_v1(&params, second_raw.as_slice())
+                .expect_err("conflicting nonce must be rejected");
+            assert!(conflict_err.to_string().contains("nonce conflict"));
+            clear_native_auth_runtime_reservations_for_chain_v1(chain_id);
+        });
     }
 
     #[test]
-    fn nov_native_governance_authority_rejection_does_not_consume_nonce() {
-        with_env_override_v1(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "true", || {
-            let chain_id = 90_106;
-            let signing_seed = [0x36; 32];
-            let mut unauthorized = NovNativeTxWireV1 {
-                chain_id,
-                kind: NovTxKindV1::Governance(NovGovernanceTxV1 {
-                    proposer: Vec::new(),
-                    proposal_type: novovm_protocol::NovGovernanceProposalTypeV1::Parameter,
-                    payload: br#"{"limit":1}"#.to_vec(),
-                    nonce: 1,
-                }),
-                signature: Vec::new(),
-            };
-            sign_nov_native_tx_with_seed_v1(&mut unauthorized, signing_seed)
-                .expect("sign unauthorized governance tx");
-            let unauthorized_raw = encode_native_auth_test_tx_v1(&unauthorized);
-            let authority_err = ingest_local_nov_raw_tx_payload_v1(
-                &serde_json::json!({"chain_id": chain_id}),
-                unauthorized_raw.as_slice(),
-            )
-            .expect_err("missing governance authority must reject");
-            assert!(authority_err.to_string().contains("governance authority"));
+    fn same_signer_commits_consecutive_zero_then_one_nonces() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_env_override_v1(
+                    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+                    "false",
+                    || {
+                        with_test_native_execution_store_path_v1(|path| {
+                            let chain_id = 90_104_101;
+                            let signing_seed = [0x35; 32];
+                            for (nonce, amount) in [(0, 21), (1, 22)] {
+                                let tx = build_signed_native_auth_test_tx_v1(
+                                    chain_id,
+                                    nonce,
+                                    signing_seed,
+                                    "acct-sequential-single",
+                                    amount,
+                                );
+                                run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
+                                    "chain_id": chain_id,
+                                    "raw_tx": to_hex_prefixed_v1(
+                                        encode_native_auth_test_tx_v1(&tx).as_slice()
+                                    ),
+                                    "native_execution_store_path": path,
+                                }))
+                                .expect("the same signer should commit the next exact nonce");
+                            }
+                            let store = load_nov_native_execution_store_v1(path.as_path())
+                                .expect("load consecutive nonce store");
+                            assert_eq!(store.receipts.len(), 2);
+                            assert_eq!(
+                                store
+                                    .module_state
+                                    .native_auth_next_nonces
+                                    .values()
+                                    .copied()
+                                    .collect::<Vec<_>>(),
+                                vec![2]
+                            );
+                        })
+                    },
+                )
+            },
+        );
+    }
 
-            let mut authorized = NovNativeTxWireV1 {
-                chain_id,
-                kind: NovTxKindV1::Governance(NovGovernanceTxV1 {
-                    proposer: Vec::new(),
-                    proposal_type: novovm_protocol::NovGovernanceProposalTypeV1::Parameter,
-                    payload: br#"{"limit":2}"#.to_vec(),
-                    nonce: 1,
-                }),
-                signature: Vec::new(),
-            };
-            sign_nov_native_tx_with_seed_v1(&mut authorized, signing_seed)
-                .expect("sign authorized governance tx");
-            let authorized_raw = encode_native_auth_test_tx_v1(&authorized);
-            ingest_local_nov_raw_tx_payload_v1(
-                &serde_json::json!({
-                    "chain_id": chain_id,
-                    "governance_authorized": true,
-                }),
-                authorized_raw.as_slice(),
-            )
-            .expect("authority rejection must not reserve the signed nonce");
-        });
+    #[test]
+    fn same_signer_batch_commits_ordered_zero_then_one_nonces() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_env_override_v1(
+                    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+                    "false",
+                    || {
+                        with_test_native_execution_store_path_v1(|path| {
+                            let chain_id = 90_104_102;
+                            let signing_seed = [0x36; 32];
+                            let raw_txs = [(0, 31), (1, 32)]
+                                .into_iter()
+                                .map(|(nonce, amount)| {
+                                    let tx = build_signed_native_auth_test_tx_v1(
+                                        chain_id,
+                                        nonce,
+                                        signing_seed,
+                                        "acct-sequential-batch",
+                                        amount,
+                                    );
+                                    to_hex_prefixed_v1(
+                                        encode_native_auth_test_tx_v1(&tx).as_slice(),
+                                    )
+                                })
+                                .collect::<Vec<_>>();
+                            let out = run_nov_send_raw_transaction_batch_from_params_v1(
+                                &serde_json::json!({
+                                    "chain_id": chain_id,
+                                    "raw_txs": raw_txs,
+                                    "native_execution_store_path": path,
+                                }),
+                            )
+                            .expect("a same-signer batch should accept exact nonce order");
+                            assert_eq!(out["accepted"].as_bool(), Some(true));
+                            let store = load_nov_native_execution_store_v1(path.as_path())
+                                .expect("load same-signer batch store");
+                            assert_eq!(store.receipts.len(), 2);
+                            assert_eq!(
+                                store
+                                    .module_state
+                                    .native_auth_next_nonces
+                                    .values()
+                                    .copied()
+                                    .collect::<Vec<_>>(),
+                                vec![2]
+                            );
+                        })
+                    },
+                )
+            },
+        );
+    }
+
+    #[test]
+    fn durable_nonce_floor_wins_over_stale_runtime_reservation_floor() {
+        let chain_id = 90_105_001u64;
+        let identity = b"account:durable-floor-test".to_vec();
+        clear_native_auth_runtime_reservations_for_chain_v1(chain_id);
+
+        reserve_nov_native_auth_nonce_v1((chain_id, identity.clone(), 5), [0x51; 32], Some(5))
+            .expect("stale runtime reservation fixture should be admitted");
+        reserve_nov_native_auth_nonce_v1((chain_id, identity, 9), [0x52; 32], Some(9))
+            .expect("higher durable next nonce must override a stale pending floor");
+
+        clear_native_auth_runtime_reservations_for_chain_v1(chain_id);
+    }
+
+    #[test]
+    fn nov_native_non_execute_rejection_does_not_consume_or_poison_execute_nonce() {
+        let chain_id = 90_106;
+        let signing_seed = [0x36; 32];
+        let mut unsupported = NovNativeTxWireV1 {
+            chain_id,
+            kind: NovTxKindV1::Governance(novovm_protocol::NovGovernanceTxV1 {
+                proposer: Vec::new(),
+                proposal_type: novovm_protocol::NovGovernanceProposalTypeV1::Parameter,
+                payload: br#"{"limit":1}"#.to_vec(),
+                nonce: 1,
+            }),
+            signature: Vec::new(),
+        };
+        sign_nov_native_tx_with_seed_v1(&mut unsupported, signing_seed)
+            .expect("sign unsupported governance tx");
+        let unsupported_raw = encode_native_auth_test_tx_v1(&unsupported);
+        let unsupported_err = ingest_local_nov_raw_tx_payload_v1(
+            &serde_json::json!({"chain_id": chain_id}),
+            unsupported_raw.as_slice(),
+        )
+        .expect_err("non-executable governance wire must fail before pending admission");
+        assert!(unsupported_err
+            .to_string()
+            .contains("not executable by the AOEM-owned durable finalize path"));
+
+        let executable = build_signed_native_auth_test_tx_v1(
+            chain_id,
+            0,
+            signing_seed,
+            "ignored-direct-signer-owner",
+            2,
+        );
+        let executable_raw = encode_native_auth_test_tx_v1(&executable);
+        ingest_local_nov_raw_tx_payload_v1(
+            &serde_json::json!({"chain_id": chain_id}),
+            executable_raw.as_slice(),
+        )
+        .expect("rejected non-execute intent must not reserve or poison the execute nonce");
+    }
+
+    #[test]
+    fn signed_transfer_is_rejected_before_pending_admission() {
+        let chain_id = 90_107;
+        let mut transfer = NovNativeTxWireV1 {
+            chain_id,
+            kind: NovTxKindV1::Transfer(novovm_protocol::NovTransferTxV1 {
+                from: Vec::new(),
+                to: vec![0x37; 20],
+                asset: "NOV".to_string(),
+                amount: 1,
+                nonce: 1,
+                fee_policy: NovFeePolicyV1 {
+                    pay_asset: "NOV".to_string(),
+                    max_pay_amount: 1,
+                    slippage_bps: 0,
+                },
+            }),
+            signature: Vec::new(),
+        };
+        sign_nov_native_tx_with_seed_v1(&mut transfer, [0x37; 32])
+            .expect("sign unsupported transfer");
+        let raw = encode_native_auth_test_tx_v1(&transfer);
+        let err = ingest_local_nov_raw_tx_payload_v1(
+            &serde_json::json!({"chain_id": chain_id}),
+            raw.as_slice(),
+        )
+        .expect_err("transfer must remain closed until AOEM durable finalize is implemented");
+        assert!(err.to_string().contains("only execute is enabled"));
+
+        let tx_hash = tx_hash_array_from_ir_v1(
+            &nov_native_tx_to_adapter_tx_ir_v1(&transfer).expect("build transfer tx ir"),
+        );
+        let pending = novovm_network::get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+            .expect("rejected transfer should be observable");
+        assert_eq!(
+            pending.lifecycle_stage,
+            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Rejected
+        );
     }
 
     #[test]
@@ -21437,7 +24206,7 @@ mod tests {
             let mut native_tx = NovNativeTxWireV1 {
                 chain_id: 77,
                 kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
-                    caller: vec![0x11; 20],
+                    caller: Vec::new(),
                     account_id: Some("acct-pending".to_string()),
                     fee_owner_account_id: Some("acct-fee".to_string()),
                     nonce_owner_account_id: Some("acct-nonce".to_string()),
@@ -21460,12 +24229,15 @@ mod tests {
                         slippage_bps: 100,
                     },
                     gas_like_limit: Some(90_000),
-                    nonce: 6,
+                    nonce: 0,
                 }),
                 signature: Vec::new(),
             };
             sign_nov_native_tx_with_seed_v1(&mut native_tx, [0xabu8; 32])
                 .expect("sign pending native tx");
+            let expected_account = to_hex_prefixed_v1(
+                novovm_adapter_novovm::address_from_seed_v1([0xabu8; 32]).as_slice(),
+            );
             let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
             let out = run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
                 "raw_tx": to_hex_prefixed_v1(raw.as_slice()),
@@ -21477,11 +24249,11 @@ mod tests {
             assert_eq!(out["chain_id"].as_u64(), Some(77));
             assert_eq!(
                 out["execution_subject"]["account_id"].as_str(),
-                Some("acct-pending")
+                Some(expected_account.as_str())
             );
             assert_eq!(
                 out["native_receipt"]["account_id"].as_str(),
-                Some("acct-pending")
+                Some(expected_account.as_str())
             );
             assert!(out["pending_tx_hash"]
                 .as_str()
@@ -21611,102 +24383,303 @@ mod tests {
     }
 
     #[test]
+    fn committed_native_nonce_is_restart_durable_and_exact_replay_is_idempotent() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_env_override_v1(
+                    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+                    "false",
+                    || {
+                        with_test_native_execution_store_path_v1(|path| {
+                            let chain_id = 90_107;
+                            let tx = build_signed_native_auth_test_tx_v1(
+                                chain_id,
+                                0,
+                                [0x37; 32],
+                                "acct-durable-replay",
+                                27,
+                            );
+                            let raw = encode_native_auth_test_tx_v1(&tx);
+                            let params = serde_json::json!({
+                                "chain_id": chain_id,
+                                "raw_tx": to_hex_prefixed_v1(raw.as_slice()),
+                                "native_execution_store_path": path,
+                            });
+                            let first = run_nov_send_raw_transaction_from_params_v1(&params)
+                                .expect("first authenticated execution commits");
+                            let committed = load_nov_native_execution_store_v1(path.as_path())
+                                .expect("load first committed state");
+                            assert_eq!(
+                                committed.module_state.native_auth_nonce_reservations.len(),
+                                1
+                            );
+                            let committed_state_root =
+                                native_semantic_ledger_state_digest_v1(&committed.module_state);
+
+                            clear_native_auth_runtime_reservations_for_chain_v1(chain_id);
+                            let replay = run_nov_send_raw_transaction_from_params_v1(&params)
+                                .expect("exact replay after simulated restart is idempotent");
+                            let recovered = load_nov_native_execution_store_v1(path.as_path())
+                                .expect("load replayed state");
+
+                            assert_eq!(
+                                replay["native_receipt"]["tx_hash"],
+                                first["native_receipt"]["tx_hash"]
+                            );
+                            assert_eq!(recovered, committed, "exact replay must not mutate state");
+                            assert_eq!(
+                                native_semantic_ledger_state_digest_v1(&recovered.module_state),
+                                committed_state_root
+                            );
+                            clear_native_auth_runtime_reservations_for_chain_v1(chain_id);
+                            let ir = nov_native_tx_to_adapter_tx_ir_v1(&tx)
+                                .expect("build committed replay TxIR");
+                            let tx_hash = tx_hash_array_from_ir_v1(&ir);
+                            let (runtime_reservation_key, runtime_reservation_id) =
+                                verify_nov_native_auth_v1(&params, &tx, &ir, tx_hash)
+                                    .expect("rebuild the original runtime reservation");
+                            reserve_nov_native_auth_nonce_v1(
+                                runtime_reservation_key.clone(),
+                                runtime_reservation_id,
+                                None,
+                            )
+                            .expect("simulate reservation retained after AOEM commit");
+                            ingest_local_nov_raw_tx_payload_v1(&params, raw.as_slice())
+                                .expect("single-item exact replay should be idempotent");
+                            let single_replay_reservation_retained =
+                                NOV_NATIVE_AUTH_NONCE_RESERVATIONS_V1
+                                    .get()
+                                    .expect("runtime reservation registry")
+                                    .lock()
+                                    .expect("runtime reservation registry lock")
+                                    .keys()
+                                    .any(|(stored_chain_id, _, _)| *stored_chain_id == chain_id);
+                            assert!(
+                                !single_replay_reservation_retained,
+                                "single-item durable exact replay must release the stale in-process reservation"
+                            );
+                            reserve_nov_native_auth_nonce_v1(
+                                runtime_reservation_key,
+                                runtime_reservation_id,
+                                None,
+                            )
+                            .expect("restore retained reservation for batch replay coverage");
+                            let batch_replay = run_nov_send_raw_transaction_batch_from_params_v1(
+                                &serde_json::json!({
+                                    "chain_id": chain_id,
+                                    "raw_txs": [to_hex_prefixed_v1(raw.as_slice())],
+                                    "native_execution_store_path": path,
+                                    "aoem_owned_gate_config": {
+                                        "production_candidate": false,
+                                        "source": "test_exact_replay",
+                                    },
+                                }),
+                            )
+                            .expect("committed batch replay should return without execution");
+                            assert_eq!(batch_replay["batch_replay"].as_bool(), Some(true));
+                            assert_eq!(batch_replay["aoem_reexecution"].as_bool(), Some(false));
+                            let runtime_reservation_retained =
+                                NOV_NATIVE_AUTH_NONCE_RESERVATIONS_V1
+                                    .get()
+                                    .expect("runtime reservation registry")
+                                    .lock()
+                                    .expect("runtime reservation registry lock")
+                                    .keys()
+                                    .any(|(stored_chain_id, _, _)| *stored_chain_id == chain_id);
+                            assert!(
+                                !runtime_reservation_retained,
+                                "durable exact replay must release the stale in-process reservation"
+                            );
+                            assert_eq!(
+                                batch_replay["results"][0]["pending_tx_local_ingress"].as_bool(),
+                                Some(false)
+                            );
+                        })
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn committed_native_nonce_rejects_conflicting_intent_after_restart() {
+        with_env_override_v1(
+            NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
+            "false",
+            || {
+                with_test_native_execution_store_path_v1(|path| {
+                    let chain_id = 90_108;
+                    let signing_seed = [0x3a; 32];
+                    let first = build_signed_native_auth_test_tx_v1(
+                        chain_id,
+                        0,
+                        signing_seed,
+                        "acct-durable-conflict",
+                        31,
+                    );
+                    let first_raw = encode_native_auth_test_tx_v1(&first);
+                    run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
+                        "chain_id": chain_id,
+                        "raw_tx": to_hex_prefixed_v1(first_raw.as_slice()),
+                        "native_execution_store_path": path,
+                    }))
+                    .expect("first authenticated execution commits");
+                    let committed = load_nov_native_execution_store_v1(path.as_path())
+                        .expect("load first committed state");
+
+                    clear_native_auth_runtime_reservations_for_chain_v1(chain_id);
+                    let conflicting = build_signed_native_auth_test_tx_v1(
+                        chain_id,
+                        0,
+                        signing_seed,
+                        "acct-durable-conflict",
+                        32,
+                    );
+                    let conflicting_raw = encode_native_auth_test_tx_v1(&conflicting);
+                    let err = run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
+                        "chain_id": chain_id,
+                        "raw_tx": to_hex_prefixed_v1(conflicting_raw.as_slice()),
+                        "native_execution_store_path": path,
+                    }))
+                    .expect_err("conflicting signed intent must not reuse a committed nonce");
+                    assert!(err.to_string().contains("durable nonce conflict"));
+
+                    let recovered = load_nov_native_execution_store_v1(path.as_path())
+                        .expect("load state after rejected conflict");
+                    assert_eq!(
+                        recovered, committed,
+                        "rejected conflict must not mutate state"
+                    );
+                });
+            },
+        );
+    }
+
+    #[test]
     fn run_nov_send_raw_transaction_pipeline_only_waits_for_aoem_tick() {
         with_test_native_execution_store_path_v1(|path| {
             with_env_override_v1(
                 NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV,
                 "true",
                 || {
-                    let mut native_tx = NovNativeTxWireV1 {
-                        chain_id: 990_778,
-                        kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
-                            caller: vec![0x21; 20],
-                            account_id: Some("acct-pipeline-only".to_string()),
-                            fee_owner_account_id: Some("acct-pipeline-fee".to_string()),
-                            nonce_owner_account_id: Some("acct-pipeline-nonce".to_string()),
-                            target: novovm_protocol::NovExecutionTargetV1::NativeModule(
-                                "treasury".to_string(),
-                            ),
-                            method: "deposit_reserve".to_string(),
-                            args: serde_json::to_vec(&serde_json::json!({
-                                "asset": "USDT",
-                                "amount": 19u64
-                            }))
-                            .expect("encode args"),
-                            execution_mode: NovExecutionModeV1::Standard,
-                            execution_policy: NovExecutionPolicyV1::Standard,
-                            privacy_mode: NovPrivacyModeV1::Public,
-                            verification_mode: NovVerificationModeV1::Standard,
-                            fee_policy: NovFeePolicyV1 {
-                                pay_asset: "USDT".to_string(),
-                                max_pay_amount: 50,
-                                slippage_bps: 100,
-                            },
-                            gas_like_limit: Some(90_000),
-                            nonce: 7,
-                        }),
-                        signature: Vec::new(),
-                    };
-                    sign_nov_native_tx_with_seed_v1(&mut native_tx, [0xcdu8; 32])
-                        .expect("sign pipeline-only native tx");
-                    let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
-                    let out = run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
-                        "raw_tx": to_hex_prefixed_v1(raw.as_slice()),
-                        "native_execution_store_path": path,
-                    }))
-                    .expect("nov_sendRawTransaction should accept pending-only tx");
-                    assert_eq!(out["accepted"].as_bool(), Some(true));
-                    assert_eq!(out["pending_tx_local_ingress"].as_bool(), Some(true));
-                    assert_eq!(out["pipeline_only"].as_bool(), Some(true));
-                    assert_eq!(out["immediate_execution"].as_bool(), Some(false));
-                    assert_eq!(
-                        out["execution_lifecycle"].as_str(),
-                        Some("pending_runtime_to_aoem_tick")
-                    );
-                    assert!(out["execution_request"].is_object());
-                    assert!(out["native_receipt"].is_null());
+                    with_env_override_v1(
+                        NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+                        "false",
+                        || {
+                            let mut native_tx = NovNativeTxWireV1 {
+                                chain_id: 990_778,
+                                kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                                    caller: Vec::new(),
+                                    account_id: Some("acct-pipeline-only".to_string()),
+                                    fee_owner_account_id: Some("acct-pipeline-fee".to_string()),
+                                    nonce_owner_account_id: Some("acct-pipeline-nonce".to_string()),
+                                    target: novovm_protocol::NovExecutionTargetV1::NativeModule(
+                                        "treasury".to_string(),
+                                    ),
+                                    method: "deposit_reserve".to_string(),
+                                    args: serde_json::to_vec(&serde_json::json!({
+                                        "asset": "USDT",
+                                        "amount": 19u64
+                                    }))
+                                    .expect("encode args"),
+                                    execution_mode: NovExecutionModeV1::Standard,
+                                    execution_policy: NovExecutionPolicyV1::Standard,
+                                    privacy_mode: NovPrivacyModeV1::Public,
+                                    verification_mode: NovVerificationModeV1::Standard,
+                                    fee_policy: NovFeePolicyV1 {
+                                        pay_asset: "USDT".to_string(),
+                                        max_pay_amount: 50,
+                                        slippage_bps: 100,
+                                    },
+                                    gas_like_limit: Some(90_000),
+                                    nonce: 0,
+                                }),
+                                signature: Vec::new(),
+                            };
+                            sign_nov_native_tx_with_seed_v1(&mut native_tx, [0xcdu8; 32])
+                                .expect("sign pipeline-only native tx");
+                            let expected_account = to_hex_prefixed_v1(
+                                novovm_adapter_novovm::address_from_seed_v1([0xcdu8; 32])
+                                    .as_slice(),
+                            );
+                            let raw =
+                                encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                            let out =
+                                run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
+                                    "raw_tx": to_hex_prefixed_v1(raw.as_slice()),
+                                    "native_execution_store_path": path,
+                                }))
+                                .expect("nov_sendRawTransaction should accept pending-only tx");
+                            assert_eq!(out["accepted"].as_bool(), Some(true));
+                            assert_eq!(out["pending_tx_local_ingress"].as_bool(), Some(true));
+                            assert_eq!(out["pipeline_only"].as_bool(), Some(true));
+                            assert_eq!(out["immediate_execution"].as_bool(), Some(false));
+                            assert_eq!(
+                                out["execution_lifecycle"].as_str(),
+                                Some("pending_runtime_to_aoem_tick")
+                            );
+                            assert!(out["execution_request"].is_object());
+                            assert!(out["native_receipt"].is_null());
 
-                    let tx_hash_hex = out["pending_tx_hash"]
-                        .as_str()
-                        .expect("pending tx hash")
-                        .trim_start_matches("0x")
-                        .to_string();
-                    let pre_tick = get_nov_native_execution_receipt_by_hash_with_store_path_v1(
-                        path.as_path(),
-                        tx_hash_hex.as_str(),
+                            let tx_hash_hex = out["pending_tx_hash"]
+                                .as_str()
+                                .expect("pending tx hash")
+                                .trim_start_matches("0x")
+                                .to_string();
+                            let pre_tick =
+                                get_nov_native_execution_receipt_by_hash_with_store_path_v1(
+                                    path.as_path(),
+                                    tx_hash_hex.as_str(),
+                                )
+                                .expect("pre-tick receipt lookup should not fail");
+                            assert!(pre_tick.is_none());
+
+                            let tick =
+                                run_nov_native_execution_tick_from_params_v1(&serde_json::json!({
+                                    "chain_id": 990_778,
+                                    "limit": 1,
+                                    "scan_limit": 8,
+                                    "native_execution_store_path": path,
+                                }))
+                                .expect("AOEM tick should execute pending tx");
+                            assert_eq!(tick["execution_kernel"].as_str(), Some("AOEM"));
+                            assert_eq!(tick["executed_count"].as_u64(), Some(1));
+                            assert_eq!(
+                                tick["lifecycle"]["execution"].as_str(),
+                                Some("aoem_batch_precommit")
+                            );
+
+                            let stored =
+                                get_nov_native_execution_receipt_by_hash_with_store_path_v1(
+                                    path.as_path(),
+                                    tx_hash_hex.as_str(),
+                                )
+                                .expect("post-tick receipt lookup should not fail")
+                                .expect("AOEM tick should persist receipt");
+                            assert_eq!(stored.account_id, expected_account);
+                            assert!(stored.status);
+                            assert_eq!(
+                                stored
+                                    .aoem_semantic_ingress
+                                    .as_ref()
+                                    .map(|meta| meta.execution_kernel.as_str()),
+                                Some("AOEM")
+                            );
+                            clear_native_auth_runtime_reservations_for_chain_v1(990_778);
+                            let replay =
+                                run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
+                                    "raw_tx": to_hex_prefixed_v1(raw.as_slice()),
+                                    "native_execution_store_path": path,
+                                }))
+                                .expect("pipeline exact replay should return the durable receipt");
+                            assert_eq!(replay["pending_tx_local_ingress"].as_bool(), Some(false));
+                            assert_eq!(replay["durable_exact_replay"].as_bool(), Some(true));
+                            assert_eq!(replay["immediate_execution"].as_bool(), Some(false));
+                            assert_eq!(replay["native_receipt"]["tx_hash"], stored.tx_hash);
+                        },
                     )
-                    .expect("pre-tick receipt lookup should not fail");
-                    assert!(pre_tick.is_none());
-
-                    let tick = run_nov_native_execution_tick_from_params_v1(&serde_json::json!({
-                        "chain_id": 990_778,
-                        "limit": 1,
-                        "scan_limit": 8,
-                        "native_execution_store_path": path,
-                    }))
-                    .expect("AOEM tick should execute pending tx");
-                    assert_eq!(tick["execution_kernel"].as_str(), Some("AOEM"));
-                    assert_eq!(tick["executed_count"].as_u64(), Some(1));
-                    assert_eq!(
-                        tick["lifecycle"]["execution"].as_str(),
-                        Some("aoem_batch_precommit")
-                    );
-
-                    let stored = get_nov_native_execution_receipt_by_hash_with_store_path_v1(
-                        path.as_path(),
-                        tx_hash_hex.as_str(),
-                    )
-                    .expect("post-tick receipt lookup should not fail")
-                    .expect("AOEM tick should persist receipt");
-                    assert_eq!(stored.account_id.as_str(), "acct-pipeline-only");
-                    assert!(stored.status);
-                    assert_eq!(
-                        stored
-                            .aoem_semantic_ingress
-                            .as_ref()
-                            .map(|meta| meta.execution_kernel.as_str()),
-                        Some("AOEM")
-                    );
                 },
             );
         });
@@ -23461,7 +26434,6 @@ mod tests {
                 target: NovExecutionRequestTargetV1::NativeModule("governance".to_string()),
                 method: "apply_treasury_policy".to_string(),
                 args: serde_json::to_vec(&serde_json::json!({
-                    "governance_authorized": true,
                     "policy_version": 9u64,
                     "reserve_allocation_bps": 6500u64,
                     "fee_allocation_bps": 2500u64,
@@ -23489,12 +26461,19 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 17,
             };
+            let governance_allowlist = to_hex(&request.caller);
             let receipt = with_env_override_v1(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "true", || {
-                dispatch_and_persist_nov_execution_request_with_store_path_v1(
-                    path.as_path(),
-                    &request,
+                with_env_override_v1(
+                    NOV_NATIVE_GOVERNANCE_ALLOWLIST_ENV,
+                    governance_allowlist.as_str(),
+                    || {
+                        dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                            path.as_path(),
+                            &request,
+                        )
+                        .expect("dispatch should apply governance policy")
+                    },
                 )
-                .expect("dispatch should apply governance policy")
             });
             assert!(receipt.status);
             assert_eq!(receipt.module, "governance");
@@ -23806,7 +26785,6 @@ mod tests {
                 target: NovExecutionRequestTargetV1::NativeModule("governance".to_string()),
                 method: "set_reserve_proof".to_string(),
                 args: serde_json::to_vec(&serde_json::json!({
-                    "governance_authorized": true,
                     "asset": "NETH",
                     "reserve_amount": 1_000u64,
                     "proof_type": "custody_statement_v1",
@@ -23825,12 +26803,19 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 21,
             };
+            let governance_allowlist = to_hex(&request.caller);
             let receipt = with_env_override_v1(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "true", || {
-                dispatch_and_persist_nov_execution_request_with_store_path_v1(
-                    path.as_path(),
-                    &request,
+                with_env_override_v1(
+                    NOV_NATIVE_GOVERNANCE_ALLOWLIST_ENV,
+                    governance_allowlist.as_str(),
+                    || {
+                        dispatch_and_persist_nov_execution_request_with_store_path_v1(
+                            path.as_path(),
+                            &request,
+                        )
+                        .expect("dispatch should set reserve proof")
+                    },
                 )
-                .expect("dispatch should set reserve proof")
             });
             assert!(receipt.status);
             assert_eq!(receipt.module, "governance");
@@ -26562,7 +29547,7 @@ mod tests {
     }
 
     #[test]
-    fn run_nov_send_transaction_from_params_v1_accepts_structured_tx_payload() {
+    fn run_nov_send_transaction_from_params_v1_rejects_non_executable_structured_transfer() {
         let mut tx = NovNativeTxWireV1 {
             chain_id: 99,
             kind: NovTxKindV1::Transfer(novovm_protocol::NovTransferTxV1 {
@@ -26581,12 +29566,10 @@ mod tests {
         };
         sign_nov_native_tx_with_seed_v1(&mut tx, [0x39; 32]).expect("sign structured native tx");
         let tx_json = serde_json::to_value(tx).expect("serialize structured native tx");
-        let out = run_nov_send_transaction_from_params_v1(&serde_json::json!({
+        let err = run_nov_send_transaction_from_params_v1(&serde_json::json!({
             "tx": tx_json
         }))
-        .expect("nov_sendTransaction should succeed");
-        assert_eq!(out["accepted"].as_bool(), Some(true));
-        assert_eq!(out["nov_tx_kind"].as_str(), Some("transfer"));
-        assert_eq!(out["chain_id"].as_u64(), Some(99));
+        .expect_err("structured transfer must fail closed until durable finalize exists");
+        assert!(err.to_string().contains("only execute is enabled"));
     }
 }

@@ -148,6 +148,62 @@ pub fn is_mainline_unified_account_query_method(method: &str) -> bool {
     )
 }
 
+pub fn is_mainline_unified_account_mutation_method(method: &str) -> bool {
+    matches!(
+        method,
+        "ua_createUca"
+            | "ua_rotatePrimaryKey"
+            | "ua_setPolicy"
+            | "ua_bindPersona"
+            | "ua_revokePersona"
+            | "ua_route"
+            | "ua_registerMappedLock"
+            | "ua_burnMappedAsset"
+            | "ua_freezeMappedAsset"
+            | "ua_unfreezeMappedAsset"
+            | "ua_rollbackFrozenMappedAsset"
+            | "ua_autoHealMappedAssets"
+            | "ua_setMappedHeaderSourcePolicy"
+            | "ua_setMappedHeaderAttestationPolicy"
+            | "ua_releaseMappedLock"
+    )
+}
+
+fn is_mainline_unified_account_mutating_request_v1(method: &str, params: &Value) -> bool {
+    if is_mainline_unified_account_mutation_method(method) {
+        return true;
+    }
+    if method != "ua_getAuditEvents" {
+        return false;
+    }
+    let source = param_as_string_any(params, &["source"])
+        .unwrap_or_else(|| "sink".to_string())
+        .trim()
+        .to_ascii_lowercase();
+    source == "router" && param_as_bool(params, "clear").unwrap_or(false)
+}
+
+#[cfg(test)]
+mod mutation_request_guard_tests {
+    use super::*;
+
+    #[test]
+    fn router_audit_clear_is_classified_as_a_mutation() {
+        assert!(is_mainline_unified_account_mutating_request_v1(
+            "ua_getAuditEvents",
+            &serde_json::json!({"source": "router", "clear": true})
+        ));
+        assert!(!is_mainline_unified_account_mutating_request_v1(
+            "ua_getAuditEvents",
+            &serde_json::json!({"source": "router", "clear": false})
+        ));
+        assert!(!is_mainline_unified_account_mutating_request_v1(
+            "ua_getAuditEvents",
+            &serde_json::json!({"source": "sink", "clear": true})
+        ));
+    }
+}
+
 pub fn default_mainline_unified_account_store_path(query_store_path: &Path) -> PathBuf {
     if let Some(custom) = string_env_nonempty("NOVOVM_UNIFIED_ACCOUNT_DB") {
         return PathBuf::from(custom);
@@ -234,6 +290,11 @@ pub fn run_mainline_unified_account_query(
     method: &str,
     params: &Value,
 ) -> Result<Value> {
+    if !cfg!(test) && is_mainline_unified_account_mutating_request_v1(method, params) {
+        bail!(
+            "{method} is internal-only until a canonical signed UCA delegation proof is carried by the native transaction wire"
+        );
+    }
     let store = resolve_unified_account_store(query_store_path, params)?;
     let audit_sink = resolve_unified_account_audit_sink(query_store_path, params)?;
     let mut snapshot = store.load_snapshot()?;
@@ -6813,7 +6874,11 @@ mod tests {
     #[test]
     fn unified_account_identity_writes_emit_aoem_semantic_commit_chain() {
         let _guard = ENV_TEST_LOCK.lock().expect("env test lock");
-        let _aoem_enabled = EnvVarGuard::set("NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED", "true");
+        // This is a deterministic Host commit-chain unit test. Real AOEM DLL
+        // lifecycle coverage belongs to the integration gates; opening the
+        // thread-local external session here can outlive the unit-test runtime.
+        let _aoem_enabled =
+            EnvVarGuard::set("NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED", "false");
         let _aoem_required =
             EnvVarGuard::set("NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED", "false");
         let (base, store, audit) = temp_paths("uca-aoem-identity-chain");

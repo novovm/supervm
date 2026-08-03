@@ -1311,7 +1311,19 @@ pub fn is_mainline_governance_query_method(method: &str) -> bool {
     )
 }
 
+pub fn is_mainline_governance_mutation_method(method: &str) -> bool {
+    matches!(
+        method,
+        "governance_submitProposal" | "governance_sign" | "governance_vote" | "governance_execute"
+    )
+}
+
 pub fn run_mainline_governance_query(method: &str, params: &Value) -> Result<Value> {
+    if !cfg!(test) && is_mainline_governance_mutation_method(method) {
+        bail!(
+            "{method} is internal-only until governance votes and execution carry externally verifiable signatures and a canonical quorum certificate"
+        );
+    }
     let store_path = governance_store_path_from_params_or_env_v1(params);
     let verifier_config = governance_vote_verifier_config_from_params_or_env_v1(params)?;
     let mut runtime =

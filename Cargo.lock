@@ -1698,6 +1698,7 @@ version = "0.1.0"
 dependencies = [
  "postcard",
  "serde",
+ "sha2",
  "sha3",
  "thiserror 1.0.69",
 ]

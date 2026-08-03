@@ -103,7 +103,7 @@ jobs:
           $env:NOVOVM_NATIVE_EXECUTION_TICK_TARGET_BUDGET = "32"
           $env:NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET = "32"
           $env:NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS = "5"
-          $env:NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH = Join-Path $env:RUNNER_TEMP ("novovm-native-pipeline-sustained-" + [guid]::NewGuid().ToString("N") + ".json")
+          $env:NOVOVM_NATIVE_EXECUTION_STORE = Join-Path $env:RUNNER_TEMP ("novovm-native-pipeline-sustained-" + [guid]::NewGuid().ToString("N") + ".json")
           $env:NOVOVM_NATIVE_EXECUTION_STORE_BACKEND = "dual"
           $env:NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY = "true"
           $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT = "256"

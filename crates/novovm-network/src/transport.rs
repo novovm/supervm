@@ -75,14 +75,13 @@ use crate::{
     observe_network_runtime_native_pending_tx_propagated_v1,
     observe_network_runtime_native_pending_tx_propagated_with_context_v1,
     observe_network_runtime_native_pending_tx_propagation_failure_v1,
-    observe_network_runtime_native_pending_tx_remote_native_payload_v1,
-    observe_network_runtime_native_pending_tx_repair_probe_v1, observe_network_runtime_peer_head,
-    observe_network_runtime_peer_head_with_local_head_max,
+    observe_network_runtime_peer_head, observe_network_runtime_peer_head_with_local_head_max,
     observe_network_runtime_receiver_drain_first_config_v1,
     observe_network_runtime_receiver_drain_first_dequeue_v1,
     observe_network_runtime_receiver_drain_first_enqueue_v1,
     observe_network_runtime_receiver_recv_loop_iteration_v1,
     observe_network_runtime_receiver_source_pin_drop_decoded_v1,
+    observe_network_runtime_receiver_transaction_frame_auth_drop_v1,
     observe_network_runtime_receiver_udp_packet_classifier_v1,
     observe_network_runtime_receiver_udp_packet_decode_attempt_v1,
     observe_network_runtime_receiver_udp_packet_decode_error_v1,
@@ -152,8 +151,8 @@ use crate::{
 use dashmap::DashMap;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use novovm_protocol::{
-    decode as protocol_decode, decode_block_header_wire_v1, encode as protocol_encode,
-    encode_block_header_wire_v1,
+    decode as protocol_decode, decode_block_header_wire_v1, decode_nov_native_tx_wire_v1,
+    encode as protocol_encode, encode_block_header_wire_v1,
     protocol_catalog::distributed_occc::gossip::MessageType as DistributedOcccMessageType,
     BlockHeaderWireV1, ConsensusPluginBindingV1, EvmNativeBlockBodyWireV1,
     EvmNativeBlockHeaderWireV1, EvmNativeMessage, EvmNativeTransactionFrameAuthV1, FinalityMessage,
@@ -8811,6 +8810,91 @@ fn transaction_frame_expected_run_id_v1() -> Option<String> {
         })
 }
 
+fn transaction_frame_outbound_run_id_v1(local_node: NodeId) -> String {
+    let explicit = [
+        "NOVOVM_NOVORUDP_OUTBOUND_RUN_ID",
+        "NOVOVM_NETWORK_OUTBOUND_RUN_ID",
+    ]
+    .iter()
+    .find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|raw| raw.trim().to_string())
+            .filter(|raw| !raw.is_empty())
+    });
+    if let Some(run_id) = explicit.or_else(transaction_frame_expected_run_id_v1) {
+        return run_id;
+    }
+    static PROCESS_BOOT_ID: OnceLock<String> = OnceLock::new();
+    let boot_id = PROCESS_BOOT_ID.get_or_init(|| {
+        format!(
+            "{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default()
+        )
+    });
+    format!("novovm-network-session-{boot_id}-node-{}", local_node.0)
+}
+
+#[derive(Debug, Default)]
+struct OutboundTransactionSequenceStreamV1 {
+    next_sequence: u64,
+    sequence_by_tx_hash: HashMap<[u8; 32], u64>,
+    insertion_order: VecDeque<[u8; 32]>,
+}
+
+type OutboundTransactionSequenceStreamKeyV1 = (u64, u64, String);
+type OutboundTransactionSequenceStreamMapV1 =
+    HashMap<OutboundTransactionSequenceStreamKeyV1, OutboundTransactionSequenceStreamV1>;
+
+fn outbound_transaction_sequence_streams_v1(
+) -> &'static Mutex<OutboundTransactionSequenceStreamMapV1> {
+    static STREAMS: OnceLock<Mutex<OutboundTransactionSequenceStreamMapV1>> = OnceLock::new();
+    STREAMS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn outbound_transaction_sequence_cache_limit_v1() -> usize {
+    parse_env_usize("NOVOVM_NOVORUDP_OUTBOUND_SEQUENCE_CACHE_LIMIT", 262_144)
+        .clamp(1_024, 4_194_304)
+}
+
+fn reserve_outbound_transaction_sequence_v1(
+    chain_id: u64,
+    local_node: NodeId,
+    run_id: &str,
+    tx_hash: [u8; 32],
+) -> Result<u64, NetworkError> {
+    let mut streams = outbound_transaction_sequence_streams_v1()
+        .lock()
+        .map_err(|_| NetworkError::Encode("outbound transaction sequence lock poisoned".into()))?;
+    let stream = streams
+        .entry((chain_id, local_node.0, run_id.to_string()))
+        .or_default();
+    if let Some(sequence) = stream.sequence_by_tx_hash.get(&tx_hash) {
+        return Ok(*sequence);
+    }
+    if stream.next_sequence == u64::MAX {
+        return Err(NetworkError::Encode(
+            "outbound transaction sequence exhausted".to_string(),
+        ));
+    }
+    let cache_limit = outbound_transaction_sequence_cache_limit_v1();
+    while stream.sequence_by_tx_hash.len() >= cache_limit {
+        let Some(evicted) = stream.insertion_order.pop_front() else {
+            break;
+        };
+        stream.sequence_by_tx_hash.remove(&evicted);
+    }
+    let sequence = stream.next_sequence;
+    stream.next_sequence = stream.next_sequence.saturating_add(1);
+    stream.sequence_by_tx_hash.insert(tx_hash, sequence);
+    stream.insertion_order.push_back(tx_hash);
+    Ok(sequence)
+}
+
 fn source_pinning_enabled_v1() -> bool {
     parse_env_bool_v1("NOVOVM_NOVORUDP_SOURCE_PINNING_ENABLED")
         || parse_env_bool_v1("NOVOVM_NETWORK_SOURCE_PINNING_ENABLED")
@@ -8913,7 +8997,7 @@ fn receiver_transaction_frame_rate_limit_allow_v1(
     chain_id: u64,
     from: NodeId,
     transport_auth: Option<&EvmNativeTransactionFrameAuthV1>,
-    tx_count: u64,
+    _tx_count: u64,
 ) -> bool {
     if !receiver_rate_limit_enabled_v1() {
         return true;
@@ -8921,11 +9005,8 @@ fn receiver_transaction_frame_rate_limit_allow_v1(
     let frame_kind = transport_auth
         .map(|meta| meta.frame_kind.as_str())
         .unwrap_or("unsigned");
-    let run_id = transport_auth
-        .map(|meta| meta.run_id.as_str())
-        .unwrap_or("no_run_id");
     let now_ms = now_millis_v1();
-    let is_repair = frame_kind == "repair" || tx_count > 1;
+    let is_repair = frame_kind == "repair";
     let (capacity, refill_per_sec) = if is_repair {
         (
             receiver_repair_token_bucket_capacity_v1(),
@@ -8938,7 +9019,11 @@ fn receiver_transaction_frame_rate_limit_allow_v1(
         )
     };
     receiver_token_bucket_allow_v1(
-        format!("{chain_id}:{}:{run_id}:{frame_kind}", from.0),
+        format!(
+            "{chain_id}:{}:{}",
+            from.0,
+            if is_repair { "repair" } else { "primary" }
+        ),
         capacity,
         refill_per_sec,
         now_ms,
@@ -9000,6 +9085,165 @@ fn transaction_frame_auth_tag_v1(
     bytes_hex_lower_v1(hasher.finalize().as_slice())
 }
 
+/// Inputs for a keyed NovoRUDP transaction-frame authentication envelope.
+///
+/// The transport sequence is deliberately independent from the transaction
+/// nonce. It identifies delivery within one authenticated network run, while
+/// the transaction nonce orders intents owned by a signer.
+#[derive(Debug, Clone, Copy)]
+pub struct EvmNativeTransactionFrameAuthInputV1<'a> {
+    pub from: NodeId,
+    pub chain_id: u64,
+    pub tx_hash: &'a [u8; 32],
+    pub tx_count: u64,
+    pub payload: &'a [u8],
+    pub frame_kind: &'a str,
+    pub run_id: &'a str,
+    pub sequence: u64,
+    pub copy_index: u64,
+    pub key: &'a str,
+}
+
+/// Build the canonical keyed-SHA256 authentication metadata for an EVM-native
+/// transaction frame. Callers retain ownership of key provisioning and
+/// transport-sequence allocation.
+#[must_use]
+pub fn build_evm_native_transaction_frame_auth_v1(
+    input: EvmNativeTransactionFrameAuthInputV1<'_>,
+) -> EvmNativeTransactionFrameAuthV1 {
+    let EvmNativeTransactionFrameAuthInputV1 {
+        from,
+        chain_id,
+        tx_hash,
+        tx_count,
+        payload,
+        frame_kind,
+        run_id,
+        sequence,
+        copy_index,
+        key,
+    } = input;
+    let mut meta = EvmNativeTransactionFrameAuthV1 {
+        scheme: "keyed_sha256_v1".to_string(),
+        domain: "novorudp_transaction_v1".to_string(),
+        frame_kind: frame_kind.to_string(),
+        run_id: run_id.to_string(),
+        sequence,
+        copy_index,
+        tag: String::new(),
+    };
+    meta.tag =
+        transaction_frame_auth_tag_v1(from, chain_id, tx_hash, tx_count, payload, &meta, key);
+    meta
+}
+
+fn prepare_outbound_transaction_frame_v1(
+    local_node: NodeId,
+    transport_chain_id: u64,
+    mut msg: ProtocolMessage,
+) -> Result<ProtocolMessage, NetworkError> {
+    let ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+        from,
+        chain_id,
+        tx_hash,
+        tx_count,
+        payload,
+        transport_auth,
+    }) = &mut msg
+    else {
+        return Ok(msg);
+    };
+    if *from != local_node {
+        return Err(NetworkError::LocalNodeMismatch {
+            expected: local_node,
+            got: *from,
+        });
+    }
+    if *chain_id != transport_chain_id {
+        return Err(NetworkError::Encode(format!(
+            "outbound transaction frame chain_id mismatch: transport={transport_chain_id} frame={chain_id}"
+        )));
+    }
+    if transport_auth.is_some() {
+        return Ok(msg);
+    }
+    let required = control_frame_auth_required_v1();
+    let Some(key) = control_frame_auth_key_v1() else {
+        if required {
+            return Err(NetworkError::Encode(
+                "outbound transaction frame auth required but key missing".to_string(),
+            ));
+        }
+        return Ok(msg);
+    };
+    let run_id = transaction_frame_outbound_run_id_v1(local_node);
+    let sequence =
+        reserve_outbound_transaction_sequence_v1(*chain_id, local_node, run_id.as_str(), *tx_hash)?;
+    *transport_auth = Some(build_evm_native_transaction_frame_auth_v1(
+        EvmNativeTransactionFrameAuthInputV1 {
+            from: local_node,
+            chain_id: *chain_id,
+            tx_hash,
+            tx_count: *tx_count,
+            payload: payload.as_slice(),
+            frame_kind: "primary",
+            run_id: run_id.as_str(),
+            sequence,
+            copy_index: 0,
+            key: key.as_str(),
+        },
+    ));
+    Ok(msg)
+}
+
+fn validate_transaction_frame_auth_v1(
+    from: NodeId,
+    chain_id: u64,
+    tx_hash: &[u8; 32],
+    tx_count: u64,
+    payload: &[u8],
+    transport_auth: Option<&EvmNativeTransactionFrameAuthV1>,
+) -> Result<(), &'static str> {
+    let required = control_frame_auth_required_v1();
+    let Some(key) = control_frame_auth_key_v1() else {
+        return if required {
+            Err("transaction frame auth key missing")
+        } else {
+            Ok(())
+        };
+    };
+    let Some(meta) = transport_auth else {
+        return Err("transaction frame auth key metadata missing");
+    };
+    if meta.scheme != "keyed_sha256_v1" || meta.domain != "novorudp_transaction_v1" {
+        return Err("transaction frame auth domain mismatch");
+    }
+    if !matches!(meta.frame_kind.as_str(), "primary" | "repair") {
+        return Err("transaction frame kind unsupported");
+    }
+    if meta.run_id.trim().is_empty() || meta.run_id.len() > 128 || !meta.run_id.is_ascii() {
+        return Err("transaction frame run_id missing");
+    }
+    if let Some(expected_run_id) = transaction_frame_expected_run_id_v1() {
+        if meta.run_id != expected_run_id {
+            return Err("transaction frame run_id mismatch");
+        }
+    }
+    if transaction_frame_auth_tag_v1(
+        from,
+        chain_id,
+        tx_hash,
+        tx_count,
+        payload,
+        meta,
+        key.as_str(),
+    ) != meta.tag
+    {
+        return Err("transaction frame auth key mismatch");
+    }
+    Ok(())
+}
+
 fn verify_transaction_frame_auth_v1(
     from: NodeId,
     chain_id: u64,
@@ -9008,30 +9252,36 @@ fn verify_transaction_frame_auth_v1(
     payload: &[u8],
     transport_auth: Option<&EvmNativeTransactionFrameAuthV1>,
 ) -> bool {
-    let required = control_frame_auth_required_v1();
-    let Some(key) = control_frame_auth_key_v1() else {
-        return !required;
-    };
-    let Some(meta) = transport_auth else {
-        return false;
-    };
-    if meta.scheme != "keyed_sha256_v1" || meta.domain != "novorudp_transaction_v1" {
-        return false;
-    }
-    if let Some(expected_run_id) = transaction_frame_expected_run_id_v1() {
-        if meta.run_id != expected_run_id {
-            return false;
-        }
-    }
-    transaction_frame_auth_tag_v1(
+    validate_transaction_frame_auth_v1(from, chain_id, tx_hash, tx_count, payload, transport_auth)
+        .is_ok()
+}
+
+fn validate_transaction_frame_for_delivery_v1(
+    expected_chain_id: u64,
+    msg: &ProtocolMessage,
+) -> Result<(), &'static str> {
+    let ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
         from,
         chain_id,
         tx_hash,
         tx_count,
         payload,
-        meta,
-        key.as_str(),
-    ) == meta.tag
+        transport_auth,
+    }) = msg
+    else {
+        return Ok(());
+    };
+    if *chain_id != expected_chain_id {
+        return Err("transaction frame chain_id mismatch");
+    }
+    validate_transaction_frame_auth_v1(
+        *from,
+        *chain_id,
+        tx_hash,
+        *tx_count,
+        payload.as_slice(),
+        transport_auth.as_ref(),
+    )
 }
 
 fn endpoint_record_signature_material_v1(record: &NodeEndpointRecord) -> String {
@@ -9849,7 +10099,6 @@ fn maybe_update_runtime_sync_from_protocol_message_with_context(
                 transport_auth,
                 ..
             } => {
-                let _ = register_network_runtime_peer(chain_id, from.0);
                 if !verify_transaction_frame_auth_v1(
                     *from,
                     chain_id,
@@ -9868,29 +10117,35 @@ fn maybe_update_runtime_sync_from_protocol_message_with_context(
                 ) {
                     return;
                 }
-                if *tx_count > 1 {
-                    observe_network_runtime_native_pending_tx_repair_probe_v1(
-                        chain_id,
-                        *tx_hash,
-                        tx_count.saturating_sub(1),
-                        Some(payload.as_slice()),
-                    );
-                }
                 if payload.starts_with(b"NNX1") {
-                    observe_network_runtime_native_pending_tx_remote_native_payload_v1(
-                        chain_id,
-                        from.0,
-                        *tx_hash,
-                        Some(payload.as_slice()),
-                    );
-                } else {
-                    observe_network_runtime_native_pending_tx_ingress_with_payload_v1(
-                        chain_id,
-                        from.0,
-                        *tx_hash,
-                        Some(payload.as_slice()),
-                    );
+                    if *tx_count != 1 {
+                        observe_network_runtime_receiver_transaction_frame_auth_drop_v1(
+                            chain_id,
+                            "native transaction frame tx_count mismatch",
+                        );
+                        return;
+                    }
+                    let Ok(native_tx) = decode_nov_native_tx_wire_v1(payload.as_slice()) else {
+                        observe_network_runtime_receiver_transaction_frame_auth_drop_v1(
+                            chain_id,
+                            "native transaction frame decode failed",
+                        );
+                        return;
+                    };
+                    if native_tx.chain_id != chain_id {
+                        observe_network_runtime_receiver_transaction_frame_auth_drop_v1(
+                            chain_id,
+                            "native transaction frame inner chain_id mismatch",
+                        );
+                        return;
+                    }
                 }
+                let _ = register_network_runtime_peer(chain_id, from.0);
+                // Signed NOV native payloads cross the application-level
+                // Ed25519/nonce gate in novovm-node before they may enter the
+                // pending set. Generic gateway payloads likewise belong to
+                // their application decoder. Transport authentication alone
+                // never owns pending admission or sequence lifecycle mapping.
             }
             EvmNativeMessage::GetBlockHeaders { from, .. } => {
                 let _ = register_network_runtime_peer(chain_id, from.0);
@@ -10931,6 +11186,7 @@ fn should_mark_peer_disconnected(io_err: &std::io::Error) -> bool {
 
 impl Transport for UdpTransport {
     fn send(&self, to: NodeId, msg: ProtocolMessage) -> Result<(), NetworkError> {
+        let msg = prepare_outbound_transaction_frame_v1(self.node, self.chain_id, msg)?;
         self.send_internal(to, &msg)
     }
 
@@ -11058,6 +11314,13 @@ impl Transport for UdpTransport {
                 return Err(NetworkError::Decode(error));
             }
         };
+        // Authenticate transaction frames before they are allowed to create or
+        // update a UDP source pin. Otherwise a validly encoded frame with a bad
+        // tag could squat the node id from an arbitrary source address.
+        if let Err(reason) = validate_transaction_frame_for_delivery_v1(self.chain_id, &decoded) {
+            observe_network_runtime_receiver_transaction_frame_auth_drop_v1(self.chain_id, reason);
+            return Ok(None);
+        }
         if !validate_udp_source_contract_v1(&self.source_pins, self.chain_id, src, &decoded) {
             let decoded_frame_kind = match &decoded {
                 ProtocolMessage::EvmNative(EvmNativeMessage::EndpointRecord { .. }) => {
@@ -11178,6 +11441,7 @@ impl Transport for UdpTransport {
 
 impl Transport for TcpTransport {
     fn send(&self, to: NodeId, msg: ProtocolMessage) -> Result<(), NetworkError> {
+        let msg = prepare_outbound_transaction_frame_v1(self.node, self.chain_id, msg)?;
         self.send_internal(to, &msg)
     }
 
@@ -11233,6 +11497,10 @@ impl Transport for TcpTransport {
             *shared = recv_frame_buf;
         });
         let decoded = decode_outcome?;
+        if let Err(reason) = validate_transaction_frame_for_delivery_v1(self.chain_id, &decoded) {
+            observe_network_runtime_receiver_transaction_frame_auth_drop_v1(self.chain_id, reason);
+            return Ok(None);
+        }
         let msg_peer_id = runtime_peer_id_from_protocol_message(&decoded);
         let source_peer_id_hint = if msg_peer_id.is_none() {
             infer_peer_id_from_src_addr_with_index(
@@ -11554,6 +11822,152 @@ mod tests {
             b"tampered",
             Some(&meta)
         ));
+        let mut unsupported_kind = meta;
+        unsupported_kind.frame_kind = "attacker-controlled-bucket".to_string();
+        assert_eq!(
+            validate_transaction_frame_auth_v1(
+                from,
+                chain_id,
+                &tx_hash,
+                1,
+                payload,
+                Some(&unsupported_kind),
+            ),
+            Err("transaction frame kind unsupported")
+        );
+    }
+
+    #[test]
+    fn transaction_frame_delivery_gate_rejects_unsigned_or_wrong_chain() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _network_key = clear_test_env_var_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_KEY");
+        let _network_required = clear_test_env_var_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED");
+        let _network_run_id = clear_test_env_var_v1("NOVOVM_NETWORK_RUN_ID");
+        let _run_id = set_test_env_var_v1("NOVOVM_NOVORUDP_RUN_ID", "test-run");
+        let _key = set_test_env_var_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY", "dev-secret");
+        let _required = set_test_env_var_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED", "1");
+
+        let from = NodeId(12);
+        let chain_id = 43;
+        let tx_hash = [0x45; 32];
+        let payload = b"payload";
+        let unsigned = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+            from,
+            chain_id,
+            tx_hash,
+            tx_count: 1,
+            payload: payload.to_vec(),
+            transport_auth: None,
+        });
+        assert_eq!(
+            validate_transaction_frame_for_delivery_v1(chain_id, &unsigned),
+            Err("transaction frame auth key metadata missing")
+        );
+
+        let signed = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+            from,
+            chain_id,
+            tx_hash,
+            tx_count: 1,
+            payload: payload.to_vec(),
+            transport_auth: Some(build_evm_native_transaction_frame_auth_v1(
+                EvmNativeTransactionFrameAuthInputV1 {
+                    from,
+                    chain_id,
+                    tx_hash: &tx_hash,
+                    tx_count: 1,
+                    payload,
+                    frame_kind: "primary",
+                    run_id: "test-run",
+                    sequence: 0,
+                    copy_index: 0,
+                    key: "dev-secret",
+                },
+            )),
+        });
+        assert_eq!(
+            validate_transaction_frame_for_delivery_v1(chain_id, &signed),
+            Ok(())
+        );
+        assert_eq!(
+            validate_transaction_frame_for_delivery_v1(chain_id + 1, &signed),
+            Err("transaction frame chain_id mismatch")
+        );
+    }
+
+    #[test]
+    fn outbound_transaction_frame_auth_is_added_and_sequence_is_stable_per_tx() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _network_key = clear_test_env_var_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_KEY");
+        let _network_required = clear_test_env_var_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED");
+        let _network_run_id = clear_test_env_var_v1("NOVOVM_NETWORK_RUN_ID");
+        let _network_outbound_run_id = clear_test_env_var_v1("NOVOVM_NETWORK_OUTBOUND_RUN_ID");
+        let _outbound_run_id = clear_test_env_var_v1("NOVOVM_NOVORUDP_OUTBOUND_RUN_ID");
+        let _key = set_test_env_var_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY", "dev-secret");
+        let _required = set_test_env_var_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED", "1");
+        let _run_id = set_test_env_var_v1("NOVOVM_NOVORUDP_RUN_ID", "outbound-test-run");
+
+        let from = NodeId(13);
+        let chain_id = 9_880_043;
+        let payload = b"payload";
+        let build = |tx_hash| {
+            ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+                from,
+                chain_id,
+                tx_hash,
+                tx_count: 1,
+                payload: payload.to_vec(),
+                transport_auth: None,
+            })
+        };
+        let first = prepare_outbound_transaction_frame_v1(from, chain_id, build([0x51; 32]))
+            .expect("first outbound frame should be authenticated");
+        let retry = prepare_outbound_transaction_frame_v1(from, chain_id, build([0x51; 32]))
+            .expect("retry outbound frame should be authenticated");
+        let second = prepare_outbound_transaction_frame_v1(from, chain_id, build([0x52; 32]))
+            .expect("second outbound frame should be authenticated");
+
+        let sequence = |msg: &ProtocolMessage| {
+            let ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+                transport_auth: Some(meta),
+                ..
+            }) = msg
+            else {
+                panic!("outbound frame must contain authentication metadata");
+            };
+            assert_eq!(meta.run_id, "outbound-test-run");
+            meta.sequence
+        };
+        assert_eq!(sequence(&first), sequence(&retry));
+        assert_eq!(sequence(&second), sequence(&first) + 1);
+        assert_eq!(
+            validate_transaction_frame_for_delivery_v1(chain_id, &first),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn outbound_transaction_frame_auth_required_fails_before_send_without_key() {
+        let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _network_key = clear_test_env_var_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_KEY");
+        let _network_required = clear_test_env_var_v1("NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED");
+        let _key = clear_test_env_var_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY");
+        let _required = set_test_env_var_v1("NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED", "1");
+        let from = NodeId(14);
+        let chain_id = 9_880_044;
+        let msg = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
+            from,
+            chain_id,
+            tx_hash: [0x53; 32],
+            tx_count: 1,
+            payload: b"payload".to_vec(),
+            transport_auth: None,
+        });
+        assert!(matches!(
+            prepare_outbound_transaction_frame_v1(from, chain_id, msg),
+            Err(NetworkError::Encode(reason))
+                if reason == "outbound transaction frame auth required but key missing"
+        ));
     }
 
     #[test]
@@ -11585,7 +11999,7 @@ mod tests {
     }
 
     #[test]
-    fn receiver_token_bucket_limits_authenticated_primary_by_source_run_and_kind() {
+    fn receiver_token_bucket_cannot_be_evaded_by_changing_run_id() {
         let _guard = eth_rlpx_env_test_lock_v1().lock().unwrap();
         let _enabled = set_test_env_var_v1("NOVOVM_NOVORUDP_RECEIVER_RATE_LIMIT_ENABLED", "1");
         let _capacity = set_test_env_var_v1("NOVOVM_NOVORUDP_RECEIVER_TOKEN_BUCKET_CAPACITY", "1");
@@ -11612,6 +12026,14 @@ mod tests {
             9_001,
             from,
             Some(&meta),
+            1
+        ));
+        let mut changed_run = meta;
+        changed_run.run_id.push_str("-attacker-rotated");
+        assert!(!receiver_transaction_frame_rate_limit_allow_v1(
+            9_001,
+            from,
+            Some(&changed_run),
             1
         ));
     }
@@ -17130,7 +17552,7 @@ mod tests {
     }
 
     #[test]
-    fn native_pending_tx_transport_broadcast_delivers_to_peer_inbox() {
+    fn native_pending_tx_transport_broadcast_does_not_bypass_application_auth_gate() {
         let chain_id = 9_912_701_u64;
         let local = NodeId(1_270);
         let peer = NodeId(1_271);
@@ -17190,13 +17612,13 @@ mod tests {
             &ctx,
         );
         let state = get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
-            .expect("transport-delivered tx should remain tracked");
+            .expect("locally broadcast tx should remain tracked");
         assert_eq!(
             state.lifecycle_stage,
-            NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+            NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
         );
-        assert_eq!(state.origin, NetworkRuntimeNativePendingTxOriginV1::Remote);
-        assert_eq!(state.source_peer_id, Some(local.0));
+        assert_eq!(state.origin, NetworkRuntimeNativePendingTxOriginV1::Local);
+        assert_eq!(state.source_peer_id, None);
         let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
         assert_eq!(summary.broadcast_dispatch_total, 1);
         assert_eq!(summary.broadcast_dispatch_success_total, 1);

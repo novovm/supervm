@@ -382,6 +382,8 @@ fn main() -> Result<()> {
     let store_path = string_env_nonempty("NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_STORE_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| temp_store_path(profile.as_str(), chain_id));
+    let aoem_persistence_path = store_path.with_extension("aoem-persistence");
+    let aoem_owned_state_db_path = store_path.with_extension("aoem-owned.rocksdb");
     let child_summary_path =
         string_env_nonempty("NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_CHILD_SUMMARY_PATH")
             .map(PathBuf::from)
@@ -435,7 +437,7 @@ fn main() -> Result<()> {
             interval_ms.to_string(),
         ),
         (
-            "NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH",
+            "NOVOVM_NATIVE_EXECUTION_STORE",
             store_path.display().to_string(),
         ),
         (
@@ -552,6 +554,26 @@ fn main() -> Result<()> {
         ),
         ("NOVOVM_AOEM_VARIANT", "core".to_string()),
         ("NOVOVM_AOEM_PERSIST_BACKEND", "rocksdb".to_string()),
+        (
+            "AOEM_PERSISTENCE_PATH",
+            aoem_persistence_path.display().to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_OWNED_STATE_DB_PATH",
+            aoem_owned_state_db_path.display().to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_STATE_NAMESPACE",
+            format!("production-soak-{profile}-chain-{chain_id}"),
+        ),
+        (
+            "NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED",
+            "true".to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED",
+            "true".to_string(),
+        ),
         (
             "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE",
             "true".to_string(),

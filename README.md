@@ -87,10 +87,10 @@ Detailed signoffs:
 ## Architecture overview
 
 - **Native transaction authentication**
-	- Native wire version 2 requires `ed25519 public key (32) || signature (64)` before pending admission
+	- Native wire version 3 requires `ed25519 public key (32) || signature (64)` before pending admission
 	- The signed domain binds chain ID, nonce, signer identity, account ownership fields, execution target, policy, data, gas, value, and transaction hash
 	- Legacy 32-byte native authentication values remain decode-only and are rejected by ingress
-	- High-level host operations require `NOVOVM_NATIVE_HOST_SIGNING_SEED`; see [the active native authentication contract](docs/NOVOVM_NATIVE_TRANSACTION_AUTHENTICATION_V1.md)
+	- High-level public operations require the user's explicit signed intent and nonce; the host does not substitute its own signer. See [the active native authentication contract](docs/NOVOVM_NATIVE_TRANSACTION_AUTHENTICATION_V1.md)
 
 - **Unified execution kernel (`AOEM`)**
 	- Semantic concurrency with `OCCC` as the primary execution path
@@ -273,7 +273,7 @@ $env:NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS="3"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_HARD_BUDGET="1"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_TARGET_BUDGET="1"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET="1"
-$env:NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH=(Join-Path $env:TEMP ("novovm-native-pipeline-" + [guid]::NewGuid().ToString("N") + ".json"))
+$env:NOVOVM_NATIVE_EXECUTION_STORE=(Join-Path $env:TEMP ("novovm-native-pipeline-" + [guid]::NewGuid().ToString("N") + ".json"))
 $env:NOVOVM_NATIVE_EXECUTION_STORE_BACKEND="dual"
 $env:NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT="3"
@@ -384,7 +384,7 @@ $env:NOVOVM_NATIVE_EXECUTION_TICK_HARD_BUDGET="32"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_TARGET_BUDGET="32"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET="32"
 $env:NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS="5"
-$env:NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH=(Join-Path $env:TEMP ("novovm-native-pipeline-sustained-" + [guid]::NewGuid().ToString("N") + ".json"))
+$env:NOVOVM_NATIVE_EXECUTION_STORE=(Join-Path $env:TEMP ("novovm-native-pipeline-sustained-" + [guid]::NewGuid().ToString("N") + ".json"))
 $env:NOVOVM_NATIVE_EXECUTION_STORE_BACKEND="dual"
 $env:NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY="true"
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT="256"
@@ -585,7 +585,7 @@ $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH="artifacts/native-pipeline/nat
 cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
 ```
 
-This paced fanout gate starts one long-lived receiver set and runs the sender in multiple nonce-separated rounds. The gate disables the local broadcast drive inside the fixture so the only cross-node output path is UDP, then requires the sender to reach `max_product_ingress_submitted_per_tick` and `max_broadcast_tx_per_tick`, and every receiver to reach `max_network_received_per_tick`, `max_queue_admitted_per_tick`, `aoem_executed_total`, `max_aoem_batch_executed_per_tick`, `max_proof_items_per_tick`, `max_commit_items_per_tick`, `included_canonical_total`, `queue_pending_last=0`, `queue_dropped_last=0`, and `queue_rejected_last=0`.
+This paced fanout gate starts one long-lived receiver set and runs the sender in multiple fixture-identity-separated rounds. Each fixture signer starts at account nonce `0`; independently authenticated NovoRUDP frame sequences carry delivery and repair ordering. The gate disables the local broadcast drive inside the fixture so the only cross-node output path is UDP, then requires the sender to reach `max_product_ingress_submitted_per_tick` and `max_broadcast_tx_per_tick`, and every receiver to reach `max_network_received_per_tick`, `max_queue_admitted_per_tick`, `aoem_executed_total`, `max_aoem_batch_executed_per_tick`, `max_proof_items_per_tick`, `max_commit_items_per_tick`, `included_canonical_total`, `queue_pending_last=0`, `queue_dropped_last=0`, and `queue_rejected_last=0`.
 
 EVM protocol-observable equivalence scope (CN):
 

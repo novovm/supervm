@@ -135,35 +135,28 @@ fn reset_runtime_host_state_for_test() {
 }
 
 fn seed_mainline_uca_binding_for_test(
-    query_store_path: &std::path::Path,
+    router: &mut UnifiedAccountRouter,
     account_id: &str,
     chain_id: u64,
     external_address: &[u8],
     primary_key_byte: u8,
 ) {
-    run_mainline_query_from_path(
-        query_store_path,
-        "ua_createUca",
-        &serde_json::json!({
-            "account_id": account_id,
-            "primary_key_ref": format!("0x{}", to_hex(&[primary_key_byte; 32])),
-            "now": now_unix_sec(),
-        }),
-    )
-    .expect("seed mainline UCA account");
-    run_mainline_query_from_path(
-        query_store_path,
-        "ua_bindPersona",
-        &serde_json::json!({
-            "account_id": account_id,
-            "role": "owner",
-            "persona_type": "evm",
-            "chain_id": chain_id,
-            "external_address": format!("0x{}", to_hex(external_address)),
-            "now": now_unix_sec(),
-        }),
-    )
-    .expect("seed mainline UCA EVM binding");
+    let now = now_unix_sec();
+    router
+        .create_uca(account_id.to_string(), vec![primary_key_byte; 32], now)
+        .expect("seed mainline UCA account through canonical router");
+    router
+        .add_binding(
+            account_id,
+            AccountRole::Owner,
+            PersonaAddress {
+                persona_type: PersonaType::Evm,
+                chain_id,
+                external_address: external_address.to_vec(),
+            },
+            now,
+        )
+        .expect("seed mainline UCA EVM binding through canonical router");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -13791,7 +13784,7 @@ fn gateway_pending_consumer_executes_raw_tx_into_mainline_canonical() {
         .expect("recover sender should not fail")
         .expect("sender should recover");
     let uca_id = "uca:pending-consumer".to_string();
-    seed_mainline_uca_binding_for_test(&store_path, &uca_id, chain_id, &sender, 0x12);
+    seed_mainline_uca_binding_for_test(&mut router, &uca_id, chain_id, &sender, 0x12);
     let mut ctx = GatewayMethodContext {
         eth_tx_index_store: &backend,
         eth_default_chain_id: chain_id,
@@ -13959,7 +13952,8 @@ fn json_rpc_eth_send_raw_then_receipt_product_smoke() {
         .expect("sender should recover");
 
     let uca_id = "uca:jsonrpc-product-smoke".to_string();
-    seed_mainline_uca_binding_for_test(&store_path, &uca_id, chain_id, &sender, 0x34);
+    let mut mainline_uca_router = UnifiedAccountRouter::new();
+    seed_mainline_uca_binding_for_test(&mut mainline_uca_router, &uca_id, chain_id, &sender, 0x34);
 
     let server = tiny_http::Server::http("127.0.0.1:0").expect("start test gateway server");
     let addr = server
@@ -14002,7 +13996,10 @@ fn json_rpc_eth_send_raw_then_receipt_product_smoke() {
     let server_thread = std::thread::spawn(move || {
         for _ in 0..2 {
             let request = server.recv().expect("receive json-rpc request");
-            handle_gateway_request(&mut runtime, request).expect("handle json-rpc request");
+            with_gateway_test_mainline_uca_router(&mainline_uca_router, || {
+                handle_gateway_request(&mut runtime, request)
+            })
+            .expect("handle json-rpc request");
         }
     });
 

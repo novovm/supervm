@@ -182,7 +182,7 @@ fn base_env(
             tick_interval_ms.to_string(),
         ),
         (
-            "NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH",
+            "NOVOVM_NATIVE_EXECUTION_STORE",
             store_path.display().to_string(),
         ),
         (
@@ -206,6 +206,18 @@ fn base_env(
         (
             "NOVOVM_AOEM_OWNED_STATE_DB_PATH",
             aoem_owned_state_db_path.display().to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_STATE_NAMESPACE",
+            format!("rocksdb-recovery-chain-{chain_id}"),
+        ),
+        (
+            "NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED",
+            "true".to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED",
+            "true".to_string(),
         ),
         (
             "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE",
@@ -395,6 +407,12 @@ fn main() -> Result<()> {
         "NOVOVM_AOEM_OWNED_STATE_DB_PATH",
         aoem_owned_state_db_path.as_os_str(),
     );
+    std::env::set_var(
+        "NOVOVM_AOEM_STATE_NAMESPACE",
+        format!("rocksdb-recovery-chain-{chain_id}"),
+    );
+    std::env::set_var("NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED", "true");
+    std::env::set_var("NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED", "true");
     let recovery_probe = get_nov_native_execution_store_recovery_probe_v1(store_path.as_path())?;
     let aoem_owned_recovery_probe =
         get_nov_native_aoem_owned_state_recovery_probe_v1(chain_id, &aoem_state_namespace)?;

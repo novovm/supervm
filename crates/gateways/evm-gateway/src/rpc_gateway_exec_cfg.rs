@@ -152,6 +152,21 @@ fn gateway_eth_native_handle_incoming_message(msg: &ProtocolMessage) {
     gateway_eth_native_ingest_transactions_payload(*chain_id, *tx_hash, *tx_count, payload);
 }
 
+#[derive(Debug, Clone, Copy)]
+enum GatewayEthTransactionsIngressEnvelopeV1 {
+    NativeFrame { tx_hash: [u8; 32], tx_count: u64 },
+    RlpxSession { tx_hash_hint: [u8; 32] },
+}
+
+impl GatewayEthTransactionsIngressEnvelopeV1 {
+    fn tx_hash_hint(self) -> [u8; 32] {
+        match self {
+            Self::NativeFrame { tx_hash, .. } => tx_hash,
+            Self::RlpxSession { tx_hash_hint } => tx_hash_hint,
+        }
+    }
+}
+
 fn gateway_eth_native_decode_transactions_payload(
     announced_chain_id: u64,
     payload: &[u8],
@@ -242,12 +257,100 @@ fn gateway_eth_native_extract_raw_txs_from_transactions_rlp(
     Ok(out)
 }
 
+fn gateway_eth_validate_transactions_ingress_envelope_v1(
+    announced_chain_id: u64,
+    envelope: GatewayEthTransactionsIngressEnvelopeV1,
+    txs: &mut [TxIR],
+) -> Result<(), String> {
+    if txs.is_empty() {
+        return Err("transactions payload decoded as empty tx list".to_string());
+    }
+    for (index, tx) in txs.iter_mut().enumerate() {
+        if tx.chain_id != announced_chain_id {
+            return Err(format!(
+                "transaction chain_id mismatch at index {index}: announced={announced_chain_id} decoded={}",
+                tx.chain_id
+            ));
+        }
+        if tx.hash.is_empty() {
+            tx.compute_hash();
+        }
+        if tx.hash.len() != 32 {
+            return Err(format!(
+                "transaction hash length mismatch at index {index}: expected=32 decoded={}",
+                tx.hash.len()
+            ));
+        }
+    }
+
+    let GatewayEthTransactionsIngressEnvelopeV1::NativeFrame { tx_hash, tx_count } = envelope
+    else {
+        // The RLPx session authenticates its own message envelope. It has no
+        // single outer transaction hash, but every decoded transaction is
+        // still constrained to the negotiated session chain above.
+        return Ok(());
+    };
+    let decoded_count = u64::try_from(txs.len()).unwrap_or(u64::MAX);
+    if tx_count != decoded_count {
+        return Err(format!(
+            "transaction count mismatch: announced={tx_count} decoded={decoded_count}"
+        ));
+    }
+    if txs.len() != 1 {
+        return Err(format!(
+            "native transaction frame cannot bind decoded batch of {} transactions: batch commitment is undefined",
+            txs.len()
+        ));
+    }
+    let canonical_hash: [u8; 32] = txs[0]
+        .hash
+        .as_slice()
+        .try_into()
+        .map_err(|_| "single transaction canonical hash must be 32 bytes".to_string())?;
+    if tx_hash != canonical_hash {
+        return Err(format!(
+            "transaction hash mismatch: announced=0x{} canonical=0x{}",
+            to_hex(&tx_hash),
+            to_hex(&canonical_hash)
+        ));
+    }
+    Ok(())
+}
+
 fn gateway_eth_native_ingest_transactions_payload(
     announced_chain_id: u64,
     tx_hash_hint: [u8; 32],
     tx_count_hint: u64,
     payload: &[u8],
 ) {
+    gateway_eth_ingest_transactions_payload(
+        announced_chain_id,
+        GatewayEthTransactionsIngressEnvelopeV1::NativeFrame {
+            tx_hash: tx_hash_hint,
+            tx_count: tx_count_hint,
+        },
+        payload,
+    );
+}
+
+fn gateway_eth_rlpx_ingest_transactions_payload(
+    announced_chain_id: u64,
+    tx_hash_hint: [u8; 32],
+    payload: &[u8],
+) {
+    gateway_eth_ingest_transactions_payload(
+        announced_chain_id,
+        GatewayEthTransactionsIngressEnvelopeV1::RlpxSession { tx_hash_hint },
+        payload,
+    );
+}
+
+fn gateway_eth_ingest_transactions_payload(
+    announced_chain_id: u64,
+    envelope: GatewayEthTransactionsIngressEnvelopeV1,
+    payload: &[u8],
+) {
+    let tx_hash_hint = envelope.tx_hash_hint();
     let mut txs = match gateway_eth_native_decode_transactions_payload(announced_chain_id, payload)
     {
         Ok(txs) => txs,
@@ -263,18 +366,20 @@ fn gateway_eth_native_ingest_transactions_payload(
             return;
         }
     };
-    for tx in &mut txs {
-        if tx.hash.is_empty() {
-            tx.compute_hash();
+    if let Err(err) = gateway_eth_validate_transactions_ingress_envelope_v1(
+        announced_chain_id,
+        envelope,
+        txs.as_mut_slice(),
+    ) {
+        if gateway_warn_enabled() {
+            eprintln!(
+                "gateway_warn: drop transactions ingress envelope: chain_id={} tx_hash_hint=0x{} reason={}",
+                announced_chain_id,
+                to_hex(&tx_hash_hint),
+                err
+            );
         }
-    }
-    if tx_count_hint > 0 && tx_count_hint as usize != txs.len() && gateway_warn_enabled() {
-        eprintln!(
-            "gateway_warn: native transactions count hint mismatch: announced={} decoded={} tx_hash_hint=0x{}",
-            tx_count_hint,
-            txs.len(),
-            to_hex(&tx_hash_hint),
-        );
+        return;
     }
 
     let mut by_chain = BTreeMap::<u64, Vec<TxIR>>::new();
@@ -7808,7 +7913,7 @@ fn gateway_eth_rlpx_ingest_raw_txs(chain_id: u64, raw_txs: &[Vec<u8>]) -> usize 
             continue;
         }
         let tx_hash_hint = gateway_eth_rlpx_keccak256(&[raw_tx.as_slice()]);
-        gateway_eth_native_ingest_transactions_payload(chain_id, tx_hash_hint, 1, raw_tx);
+        gateway_eth_rlpx_ingest_transactions_payload(chain_id, tx_hash_hint, raw_tx);
         imported = imported.saturating_add(1);
     }
     imported
@@ -8485,10 +8590,9 @@ fn gateway_eth_plugin_peer_session_rlpx_ingest(
                                 payload.len()
                             );
                         }
-                        gateway_eth_native_ingest_transactions_payload(
+                        gateway_eth_rlpx_ingest_transactions_payload(
                             status_chain_id,
                             [0u8; 32],
-                            0,
                             payload.as_slice(),
                         );
                     }
@@ -9486,6 +9590,118 @@ mod tests {
         assert_eq!(decoded[0].chain_id, tx.chain_id);
         assert_eq!(decoded[0].nonce, tx.nonce);
         assert_eq!(decoded[0].from, tx.from);
+    }
+
+    fn native_ingress_test_tx(chain_id: u64, marker: u8) -> TxIR {
+        let mut tx = TxIR::transfer(
+            vec![marker; 20],
+            vec![marker.wrapping_add(1); 20],
+            7,
+            3,
+            chain_id,
+        );
+        tx.compute_hash();
+        tx
+    }
+
+    fn native_ingress_test_hash(tx: &TxIR) -> [u8; 32] {
+        tx.hash
+            .as_slice()
+            .try_into()
+            .expect("test transaction hash must be 32 bytes")
+    }
+
+    #[test]
+    fn native_transactions_ingress_rejects_embedded_chain_mismatch() {
+        let tx = native_ingress_test_tx(2, 0x31);
+        let tx_hash = native_ingress_test_hash(&tx);
+        let mut txs = vec![tx];
+        let err = gateway_eth_validate_transactions_ingress_envelope_v1(
+            1,
+            GatewayEthTransactionsIngressEnvelopeV1::NativeFrame {
+                tx_hash,
+                tx_count: 1,
+            },
+            txs.as_mut_slice(),
+        )
+        .expect_err("outer and embedded chain mismatch must fail closed");
+        assert!(err.contains("transaction chain_id mismatch"));
+        assert!(err.contains("announced=1 decoded=2"));
+    }
+
+    #[test]
+    fn rlpx_transactions_ingress_rejects_session_chain_mismatch() {
+        let mut txs = vec![native_ingress_test_tx(137, 0x32)];
+        let err = gateway_eth_validate_transactions_ingress_envelope_v1(
+            1,
+            GatewayEthTransactionsIngressEnvelopeV1::RlpxSession {
+                tx_hash_hint: [0u8; 32],
+            },
+            txs.as_mut_slice(),
+        )
+        .expect_err("RLPx payload must stay inside its negotiated session chain");
+        assert!(err.contains("transaction chain_id mismatch"));
+        assert!(err.contains("announced=1 decoded=137"));
+    }
+
+    #[test]
+    fn native_transactions_ingress_requires_exact_count_and_defined_batch_commitment() {
+        let first = native_ingress_test_tx(1, 0x33);
+        let first_hash = native_ingress_test_hash(&first);
+        let mut one = vec![first.clone()];
+        let count_err = gateway_eth_validate_transactions_ingress_envelope_v1(
+            1,
+            GatewayEthTransactionsIngressEnvelopeV1::NativeFrame {
+                tx_hash: first_hash,
+                tx_count: 2,
+            },
+            one.as_mut_slice(),
+        )
+        .expect_err("announced count must equal decoded count");
+        assert!(count_err.contains("transaction count mismatch"));
+
+        let mut batch = vec![first, native_ingress_test_tx(1, 0x34)];
+        let commitment_err = gateway_eth_validate_transactions_ingress_envelope_v1(
+            1,
+            GatewayEthTransactionsIngressEnvelopeV1::NativeFrame {
+                tx_hash: first_hash,
+                tx_count: 2,
+            },
+            batch.as_mut_slice(),
+        )
+        .expect_err("native batch must fail until a canonical commitment is defined");
+        assert!(commitment_err.contains("batch commitment is undefined"));
+    }
+
+    #[test]
+    fn native_transactions_ingress_binds_outer_hash_to_single_business_hash() {
+        let tx = native_ingress_test_tx(1, 0x35);
+        let canonical_hash = native_ingress_test_hash(&tx);
+        let mut mismatched = vec![tx.clone()];
+        let err = gateway_eth_validate_transactions_ingress_envelope_v1(
+            1,
+            GatewayEthTransactionsIngressEnvelopeV1::NativeFrame {
+                tx_hash: [0xabu8; 32],
+                tx_count: 1,
+            },
+            mismatched.as_mut_slice(),
+        )
+        .expect_err("outer hash must equal the decoded transaction business hash");
+        assert!(err.contains("transaction hash mismatch"));
+
+        let mut empty_hash = tx;
+        empty_hash.hash.clear();
+        let mut normalized = vec![empty_hash];
+        gateway_eth_validate_transactions_ingress_envelope_v1(
+            1,
+            GatewayEthTransactionsIngressEnvelopeV1::NativeFrame {
+                tx_hash: canonical_hash,
+                tx_count: 1,
+            },
+            normalized.as_mut_slice(),
+        )
+        .expect("empty TxIR hash should normalize with existing TxIR business-hash semantics");
+        assert_eq!(normalized[0].hash.as_slice(), canonical_hash.as_slice());
     }
 
     #[test]

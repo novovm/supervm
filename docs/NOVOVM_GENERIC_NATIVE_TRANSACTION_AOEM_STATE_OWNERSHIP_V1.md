@@ -1,8 +1,9 @@
 # NOVOVM Generic Native Transaction AOEM State Ownership v1
 
-Status: production default. The host Adapter owns product semantics and
-domain-neutral AOEM Semantic Graph V3 owns canonical state and receipt
-persistence.
+Status: production candidate, explicitly enabled by the product package. The
+host Adapter owns product semantics and domain-neutral AOEM Semantic Graph V3
+owns canonical state and receipt persistence. This ownership gate is not a
+consensus proof or a proof-sealed block-finality claim.
 
 ## Ownership boundary
 
@@ -38,6 +39,7 @@ AOEM persists all accepted step writes. Only after those writes complete does
 the mandatory completion-write callback publish the compact head record. The
 head binds:
 
+- the v2 `production_accepted=true` marker and pre-publish gate contract;
 - batch result identity;
 - envelope length and chunk count;
 - envelope digest;
@@ -46,15 +48,20 @@ head binds:
 
 Recovery reads the head and chunks through
 `aoem_storage_provider_wire_v1`, reconstructs the envelope, verifies its
-digest and roots, and rejects partial or mismatched state.
+digest and roots, and rejects partial or mismatched state. Legacy v1 heads do
+not contain the production-acceptance marker and are rejected rather than
+silently promoted; development databases must be cleared or explicitly
+migrated before using this build.
 
-## Production default
+## Production activation
 
-Generic native transaction ingress enables the AOEM-owned path by default.
-No machine-local environment variable is required. The compatibility variable
-`NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE=false` can still select the
-transitional host path for controlled A/B diagnosis; it is not the production
-default.
+Generic native transaction ingress keeps the AOEM-owned production gate off by
+default for development and library callers. The product Linux package turns
+it on explicitly with
+`NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE=true` and requires the raw
+AOEM semantic precommit with
+`NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED=true`. This prevents differences
+between machines from silently selecting a production owner.
 
 The default FULLMAX core runtime uses its generic storage-provider RocksDB
 surface. An explicit `NOVOVM_AOEM_PERSIST_BACKEND=none` is treated as an
@@ -99,13 +106,17 @@ query projection, not a second canonical owner.
 
 ## Paths
 
-No drive letter or workspace name is required. The AOEM-owned database path is
-resolved in this order:
+No drive letter or workspace name is required. For development and tests, the
+AOEM-owned database path is resolved in this order:
 
-1. request parameter `aoem_owned_state_db_path`;
-2. environment variable `NOVOVM_AOEM_OWNED_STATE_DB_PATH`;
+1. environment variable `NOVOVM_AOEM_OWNED_STATE_DB_PATH`;
+2. request parameter `aoem_owned_state_db_path`;
 3. the configured native execution-store path plus
    `.aoem-owned.rocksdb`.
+
+Production-owned ingress rejects request-level persistence-path and namespace
+overrides. Those values are node configuration, so every machine may use its
+own local paths while sharing the same chain and AOEM state namespace.
 
 The default is derived from the configured native execution-store path on every
 development machine. It never depends on a drive letter or workspace parent
@@ -128,10 +139,11 @@ The production owner is rejected when:
 - any AOEM domain-specific business logic is reported;
 - a legacy host canonical write is detected.
 
-## Production seal
+## AOEM ownership seal
 
-The v1 production seal requires all of the following with the AOEM-owned path
-enabled and legacy fallback disabled:
+The v1 ownership seal requires all of the following with the AOEM-owned path
+enabled and legacy fallback disabled. It does not establish block consensus or
+execution-validity proof finality:
 
 - AOEM-owned Semantic Graph V3 state reopens after process exit, with state
   root, receipt root, cumulative receipt count, and capability contract

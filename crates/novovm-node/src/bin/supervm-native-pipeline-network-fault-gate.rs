@@ -1,7 +1,10 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{bail, Context, Result};
-use novovm_network::{Transport, UdpTransport};
+use novovm_network::{
+    build_evm_native_transaction_frame_auth_v1, EvmNativeTransactionFrameAuthInputV1, Transport,
+    UdpTransport,
+};
 use novovm_node::tx_ingress::{
     get_nov_native_execution_store_recovery_probe_v1, nov_native_tx_to_adapter_tx_ir_v1,
     sign_nov_native_tx_with_seed_v1,
@@ -12,12 +15,13 @@ use novovm_protocol::{
     NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1, ProtocolMessage,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const REPORT_SCHEMA_V1: &str = "novovm-native-pipeline-network-fault-injection-report/v1";
 
@@ -57,6 +61,14 @@ fn div_ceil_u64(value: u64, divisor: u64) -> u64 {
         return 0;
     }
     value.saturating_add(divisor).saturating_sub(1) / divisor
+}
+
+fn native_fixture_signing_seed_v1(chain_id: u64, fixture_identity: u64) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm-native-fixture-signing-seed/v1");
+    hasher.update(chain_id.to_le_bytes());
+    hasher.update(fixture_identity.to_le_bytes());
+    hasher.finalize().into()
 }
 
 fn reserve_udp_addr() -> Result<String> {
@@ -106,20 +118,19 @@ fn novovm_node_bin() -> PathBuf {
 fn build_native_payloads(chain_id: u64, count: u64) -> Result<Vec<NativePacketV1>> {
     let mut out = Vec::with_capacity(count as usize);
     for index in 0..count {
-        let nonce = index.saturating_add(1);
-        let account_id = format!("acct-native-network-fault-{nonce}");
+        let fixture_identity = index.saturating_add(1);
         let mut tx = NovNativeTxWireV1 {
             chain_id,
             kind: NovTxKindV1::Execute(NovExecuteTxV1 {
-                caller: vec![(nonce & 0xff) as u8; 20],
-                account_id: Some(account_id.clone()),
-                fee_owner_account_id: Some(account_id.clone()),
-                nonce_owner_account_id: Some(account_id),
+                caller: Vec::new(),
+                account_id: None,
+                fee_owner_account_id: None,
+                nonce_owner_account_id: None,
                 target: NovExecutionTargetV1::NativeModule("treasury".to_string()),
                 method: "deposit_reserve".to_string(),
                 args: serde_json::to_vec(&serde_json::json!({
                     "asset": "USDT",
-                    "amount": nonce,
+                    "amount": fixture_identity,
                 }))
                 .context("encode network fault fixture args failed")?,
                 execution_mode: NovExecutionModeV1::Batch,
@@ -132,11 +143,14 @@ fn build_native_payloads(chain_id: u64, count: u64) -> Result<Vec<NativePacketV1
                     slippage_bps: 100,
                 },
                 gas_like_limit: Some(90_000),
-                nonce,
+                nonce: 0,
             }),
             signature: Vec::new(),
         };
-        sign_nov_native_tx_with_seed_v1(&mut tx, [(nonce & 0xff) as u8; 32])?;
+        sign_nov_native_tx_with_seed_v1(
+            &mut tx,
+            native_fixture_signing_seed_v1(chain_id, fixture_identity),
+        )?;
         let ir = nov_native_tx_to_adapter_tx_ir_v1(&tx)?;
         let mut tx_hash = [0u8; 32];
         let copy_len = ir.hash.len().min(32);
@@ -206,6 +220,9 @@ struct ReceiverSpawnInput<'a> {
     receiver_addr: &'a str,
     sender_addr: &'a str,
     store_path: &'a Path,
+    progress_report_path: &'a Path,
+    control_frame_auth_key: &'a str,
+    run_id: &'a str,
     receiver_ticks: u64,
     tick_interval_ms: u64,
     batch_budget: u64,
@@ -222,12 +239,17 @@ fn spawn_receiver(input: ReceiverSpawnInput<'_>) -> Result<Child> {
         receiver_addr,
         sender_addr,
         store_path,
+        progress_report_path,
+        control_frame_auth_key,
+        run_id,
         receiver_ticks,
         tick_interval_ms,
         batch_budget,
         recv_budget,
         expected_unique,
     } = input;
+    let aoem_persistence_path = store_path.with_extension("aoem-persistence");
+    let aoem_owned_state_db_path = store_path.with_extension("aoem-owned.rocksdb");
     let mut cmd = Command::new(node_bin);
     cmd.env_clear();
     for (key, value) in std::env::vars() {
@@ -235,6 +257,8 @@ fn spawn_receiver(input: ReceiverSpawnInput<'_>) -> Result<Child> {
             || key == "NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY"
             || key.starts_with("NOVOVM_NATIVE_EXECUTION_")
             || key.starts_with("NOVOVM_NATIVE_PIPELINE_")
+            || key.starts_with("NOVOVM_NOVORUDP_")
+            || key.starts_with("NOVOVM_NETWORK_")
         {
             continue;
         }
@@ -268,12 +292,20 @@ fn spawn_receiver(input: ReceiverSpawnInput<'_>) -> Result<Child> {
             batch_budget.to_string(),
         ),
         (
-            "NOVOVM_NATIVE_EXECUTION_TICK_STORE_PATH",
+            "NOVOVM_NATIVE_EXECUTION_STORE",
             store_path.display().to_string(),
         ),
         (
             "NOVOVM_NATIVE_EXECUTION_STORE_BACKEND",
             "rocksdb".to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH",
+            progress_report_path.display().to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
+            "1".to_string(),
         ),
         (
             "NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY",
@@ -309,6 +341,63 @@ fn spawn_receiver(input: ReceiverSpawnInput<'_>) -> Result<Child> {
             "false".to_string(),
         ),
         (
+            "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY",
+            control_frame_auth_key.to_string(),
+        ),
+        (
+            "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED",
+            "true".to_string(),
+        ),
+        ("NOVOVM_NOVORUDP_RUN_ID", run_id.to_string()),
+        (
+            "NOVOVM_NETWORK_CONTROL_FRAME_AUTH_KEY",
+            control_frame_auth_key.to_string(),
+        ),
+        (
+            "NOVOVM_NETWORK_CONTROL_FRAME_AUTH_REQUIRED",
+            "true".to_string(),
+        ),
+        ("NOVOVM_NETWORK_RUN_ID", run_id.to_string()),
+        (
+            "NOVOVM_NOVORUDP_SOURCE_PINNING_ENABLED",
+            "false".to_string(),
+        ),
+        ("NOVOVM_NETWORK_SOURCE_PINNING_ENABLED", "false".to_string()),
+        (
+            "NOVOVM_NOVORUDP_SOURCE_PINNING_REQUIRED",
+            "false".to_string(),
+        ),
+        (
+            "NOVOVM_NETWORK_SOURCE_PINNING_REQUIRED",
+            "false".to_string(),
+        ),
+        (
+            "NOVOVM_NOVORUDP_ENDPOINT_RECORD_REQUIRED",
+            "false".to_string(),
+        ),
+        (
+            "NOVOVM_NETWORK_ENDPOINT_RECORD_REQUIRED",
+            "false".to_string(),
+        ),
+        ("NOVOVM_NOVORUDP_SOURCE_REBIND_ALLOWED", "false".to_string()),
+        ("NOVOVM_NETWORK_SOURCE_REBIND_ALLOWED", "false".to_string()),
+        (
+            "NOVOVM_NOVORUDP_ADAPTIVE_ENDPOINT_ENABLED",
+            "false".to_string(),
+        ),
+        (
+            "NOVOVM_NETWORK_ADAPTIVE_ENDPOINT_ENABLED",
+            "false".to_string(),
+        ),
+        (
+            "NOVOVM_NOVORUDP_RECEIVER_RATE_LIMIT_ENABLED",
+            "false".to_string(),
+        ),
+        (
+            "NOVOVM_NETWORK_RECEIVER_RATE_LIMIT_ENABLED",
+            "false".to_string(),
+        ),
+        (
             "NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_ENABLED",
             "false".to_string(),
         ),
@@ -339,6 +428,26 @@ fn spawn_receiver(input: ReceiverSpawnInput<'_>) -> Result<Child> {
         ("NOVOVM_AOEM_VARIANT", "core".to_string()),
         ("NOVOVM_AOEM_PERSIST_BACKEND", "rocksdb".to_string()),
         (
+            "AOEM_PERSISTENCE_PATH",
+            aoem_persistence_path.display().to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_OWNED_STATE_DB_PATH",
+            aoem_owned_state_db_path.display().to_string(),
+        ),
+        (
+            "NOVOVM_AOEM_STATE_NAMESPACE",
+            format!("network-fault-chain-{chain_id}"),
+        ),
+        (
+            "NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED",
+            "true".to_string(),
+        ),
+        (
+            "NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED",
+            "true".to_string(),
+        ),
+        (
             "NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE",
             "true".to_string(),
         ),
@@ -361,11 +470,51 @@ fn spawn_receiver(input: ReceiverSpawnInput<'_>) -> Result<Child> {
     })
 }
 
+fn wait_receiver_ready(
+    child: &mut Child,
+    progress_report_path: &Path,
+    timeout_ms: u64,
+) -> Result<()> {
+    let started_at = Instant::now();
+    loop {
+        if let Ok(encoded) = fs::read(progress_report_path) {
+            if serde_json::from_slice::<Value>(&encoded)
+                .ok()
+                .and_then(|report| {
+                    report
+                        .get("schema")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .as_deref()
+                == Some("novovm-native-execution-pipeline-progress-report/v1")
+            {
+                return Ok(());
+            }
+        }
+        if let Some(status) = child
+            .try_wait()
+            .context("poll network fault receiver process failed")?
+        {
+            bail!("network fault receiver exited before readiness: status={status}");
+        }
+        if started_at.elapsed() >= Duration::from_millis(timeout_ms.max(1)) {
+            bail!(
+                "network fault receiver readiness timed out after {}ms: progress_report={}",
+                timeout_ms,
+                progress_report_path.display()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn parse_summary(output: Output) -> Result<Value> {
     if !output.status.success() {
         bail!(
-            "network fault receiver failed: status={} stderr={}",
+            "network fault receiver failed: status={} stdout={} stderr={}",
             output.status,
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -378,11 +527,20 @@ fn parse_summary(output: Output) -> Result<Value> {
     })
 }
 
-fn summary_u64(summary: &Value, field: &str) -> u64 {
-    summary
-        .get(field)
-        .and_then(Value::as_u64)
-        .unwrap_or_default()
+fn require_u64_field(summary: &Value, field: &str, violations: &mut Vec<String>) -> u64 {
+    match summary.get(field) {
+        Some(value) => match value.as_u64() {
+            Some(value) => value,
+            None => {
+                violations.push(format!("{field} must be present as u64"));
+                0
+            }
+        },
+        None => {
+            violations.push(format!("{field} is missing"));
+            0
+        }
+    }
 }
 
 fn summary_str<'a>(summary: &'a Value, field: &str) -> &'a str {
@@ -439,24 +597,26 @@ fn main() -> Result<()> {
     let batch_budget = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_BATCH_BUDGET", 8)?.max(1);
     let recv_budget = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_RECV_BUDGET", 64)?.max(1);
     let tick_interval_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_TICK_INTERVAL_MS", 10)?.max(1);
-    let startup_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_STARTUP_WAIT_MS", 300)?;
+    let startup_wait_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_STARTUP_WAIT_MS", 10_000)?;
     let delay_ms = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_DELAY_MS", 1)?;
     let loss_bps = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_PACKET_LOSS_BPS", 500)?.min(10_000);
     let duplicate_bps = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_DUPLICATE_BPS", 10_000)?;
     let reorder_bps = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_REORDER_BPS", 10_000)?;
     let seed = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_SEED", 0x5eed_2026)?;
     let max_unique_loss = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_MAX_UNIQUE_LOSS", 4)?;
-    let receiver_ticks = u64_env(
-        "NOVOVM_NATIVE_PIPELINE_FAULT_RECEIVER_TICKS",
-        div_ceil_u64(tx_count, batch_budget)
-            .saturating_add(div_ceil_u64(startup_wait_ms, tick_interval_ms))
-            .saturating_add(24),
-    )?;
     let sender_node = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_SENDER_NODE", 9_991_900)?;
     let receiver_node = u64_env("NOVOVM_NATIVE_PIPELINE_FAULT_RECEIVER_NODE", 9_991_901)?;
     let sender_addr = reserve_udp_addr()?;
     let receiver_addr = reserve_udp_addr()?;
     let store_path = temp_store_path(chain_id);
+    let gate_instance = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let control_frame_auth_key =
+        format!("novovm-network-fault-gate-key-{chain_id}-{gate_instance}");
+    let run_id = format!("novovm-network-fault-gate-run-{chain_id}-{gate_instance}");
+    let progress_report_path = store_path.with_extension("progress.json");
     let node_bin = novovm_node_bin();
     if !node_bin.exists() {
         bail!(
@@ -488,10 +648,17 @@ fn main() -> Result<()> {
         }
     }
     let delivered_unique_count = delivered_unique.len() as u64;
-    let duplicate_received = sent_packets.saturating_sub(delivered_unique_count);
+    let duplicate_sent_packets = sent_packets.saturating_sub(delivered_unique_count);
     let unique_loss = tx_count.saturating_sub(delivered_unique_count);
+    let send_window_ticks = div_ceil_u64(sent_packets.saturating_mul(delay_ms), tick_interval_ms);
+    let receiver_ticks = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_FAULT_RECEIVER_TICKS",
+        div_ceil_u64(delivered_unique_count, batch_budget)
+            .saturating_add(send_window_ticks)
+            .saturating_add(delivered_unique_count.saturating_mul(2).max(64)),
+    )?;
 
-    let receiver = spawn_receiver(ReceiverSpawnInput {
+    let mut receiver = spawn_receiver(ReceiverSpawnInput {
         node_bin: node_bin.as_path(),
         chain_id,
         receiver_node,
@@ -499,13 +666,20 @@ fn main() -> Result<()> {
         receiver_addr: receiver_addr.as_str(),
         sender_addr: sender_addr.as_str(),
         store_path: store_path.as_path(),
+        progress_report_path: progress_report_path.as_path(),
+        control_frame_auth_key: control_frame_auth_key.as_str(),
+        run_id: run_id.as_str(),
         receiver_ticks,
         tick_interval_ms,
         batch_budget,
         recv_budget,
         expected_unique: delivered_unique_count,
     })?;
-    std::thread::sleep(std::time::Duration::from_millis(startup_wait_ms));
+    wait_receiver_ready(
+        &mut receiver,
+        progress_report_path.as_path(),
+        startup_wait_ms,
+    )?;
 
     let sender = UdpTransport::bind_for_chain(NodeId(sender_node), sender_addr.as_str(), chain_id)
         .with_context(|| format!("bind fault sender UDP failed: {sender_addr}"))?;
@@ -517,13 +691,30 @@ fn main() -> Result<()> {
         if packet.dropped {
             continue;
         }
+        // Fault-injected duplicate copies are not explicit repair-window
+        // frames. Their copy index remains authenticated without changing the
+        // transaction count or invoking repair admission semantics.
+        let tx_count = 1;
         let msg = ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
             from: NodeId(sender_node),
             chain_id,
             tx_hash: packet.tx_hash,
-            tx_count: 1,
+            tx_count,
             payload: packet.payload.clone(),
-            transport_auth: None,
+            transport_auth: Some(build_evm_native_transaction_frame_auth_v1(
+                EvmNativeTransactionFrameAuthInputV1 {
+                    from: NodeId(sender_node),
+                    chain_id,
+                    tx_hash: &packet.tx_hash,
+                    tx_count,
+                    payload: packet.payload.as_slice(),
+                    frame_kind: "primary",
+                    run_id: run_id.as_str(),
+                    sequence: packet.index,
+                    copy_index: packet.copy_index,
+                    key: control_frame_auth_key.as_str(),
+                },
+            )),
         });
         sender.send(NodeId(receiver_node), msg).with_context(|| {
             format!(
@@ -542,8 +733,56 @@ fn main() -> Result<()> {
             .context("wait network fault receiver failed")?,
     )?;
     std::env::set_var("NOVOVM_NATIVE_EXECUTION_STORE_BACKEND", "rocksdb");
+    std::env::set_var(
+        "AOEM_PERSISTENCE_PATH",
+        store_path.with_extension("aoem-persistence"),
+    );
+    std::env::set_var(
+        "NOVOVM_AOEM_OWNED_STATE_DB_PATH",
+        store_path.with_extension("aoem-owned.rocksdb"),
+    );
+    std::env::set_var(
+        "NOVOVM_AOEM_STATE_NAMESPACE",
+        format!("network-fault-chain-{chain_id}"),
+    );
     let recovery_probe = get_nov_native_execution_store_recovery_probe_v1(store_path.as_path())?;
-    let included = summary_u64(&receiver_summary, "included_canonical_total");
+    let mut violations = Vec::<String>::new();
+    let included = require_u64_field(
+        &receiver_summary,
+        "included_canonical_total",
+        &mut violations,
+    );
+    let aoem_executed_total =
+        require_u64_field(&receiver_summary, "aoem_executed_total", &mut violations);
+    let queue_pending_last =
+        require_u64_field(&receiver_summary, "queue_pending_last", &mut violations);
+    let queue_dropped_last =
+        require_u64_field(&receiver_summary, "queue_dropped_last", &mut violations);
+    let queue_rejected_last =
+        require_u64_field(&receiver_summary, "queue_rejected_last", &mut violations);
+    let network_received_total =
+        require_u64_field(&receiver_summary, "network_received_total", &mut violations);
+    let receiver_socket_recv_count = require_u64_field(
+        &receiver_summary,
+        "receiver_udp_packet_recv_count",
+        &mut violations,
+    );
+    let receiver_decode_attempt_count = require_u64_field(
+        &receiver_summary,
+        "receiver_udp_packet_decode_attempt_count",
+        &mut violations,
+    );
+    let receiver_decode_ok_count = require_u64_field(
+        &receiver_summary,
+        "receiver_udp_packet_decode_ok_count",
+        &mut violations,
+    );
+    let receiver_data_frame_decode_ok_count = require_u64_field(
+        &receiver_summary,
+        "native_receiver_data_frame_decode_ok_count",
+        &mut violations,
+    );
+    let observed_duplicate_received = network_received_total.saturating_sub(included);
     let duplicate_canonical_included = included.saturating_sub(delivered_unique_count);
     let semantic_sequence = recovery_probe
         .get("semantic_head")
@@ -569,7 +808,6 @@ fn main() -> Result<()> {
             .unwrap_or_default()
             == delivered_unique_count;
 
-    let mut violations = Vec::<String>::new();
     if summary_str(&receiver_summary, "execution_kernel") != "AOEM" {
         violations.push(format!(
             "execution_kernel={} expected AOEM",
@@ -597,13 +835,35 @@ fn main() -> Result<()> {
             tx_count.saturating_sub(max_unique_loss)
         ));
     }
-    if duplicate_bps > 0 && duplicate_received == 0 {
-        violations.push("duplicate mode enabled but duplicate_received=0".to_string());
+    if duplicate_bps > 0 && observed_duplicate_received == 0 {
+        violations.push("duplicate mode enabled but observed_duplicate_received=0".to_string());
     }
-    if summary_u64(&receiver_summary, "aoem_executed_total") != delivered_unique_count {
+    for (field, observed) in [
+        ("network_received_total", network_received_total),
+        ("receiver_udp_packet_recv_count", receiver_socket_recv_count),
+        (
+            "receiver_udp_packet_decode_attempt_count",
+            receiver_decode_attempt_count,
+        ),
+        (
+            "receiver_udp_packet_decode_ok_count",
+            receiver_decode_ok_count,
+        ),
+        (
+            "native_receiver_data_frame_decode_ok_count",
+            receiver_data_frame_decode_ok_count,
+        ),
+    ] {
+        if observed != sent_packets {
+            violations.push(format!(
+                "{field}={observed} expected sent_packets={sent_packets}"
+            ));
+        }
+    }
+    if aoem_executed_total != delivered_unique_count {
         violations.push(format!(
             "aoem_executed_total={} expected delivered_unique={delivered_unique_count}",
-            summary_u64(&receiver_summary, "aoem_executed_total")
+            aoem_executed_total
         ));
     }
     if included != delivered_unique_count {
@@ -622,23 +882,38 @@ fn main() -> Result<()> {
     if !receipt_index_consistent {
         violations.push("receipt_index_consistent=false".to_string());
     }
-    if summary_u64(&receiver_summary, "queue_pending_last") != 0 {
+    if queue_pending_last != 0 {
         violations.push(format!(
             "queue_pending_last={} expected 0",
-            summary_u64(&receiver_summary, "queue_pending_last")
+            queue_pending_last
         ));
     }
-    if summary_u64(&receiver_summary, "queue_dropped_last") != 0 {
+    if queue_dropped_last != 0 {
         violations.push(format!(
             "queue_dropped_last={} expected 0",
-            summary_u64(&receiver_summary, "queue_dropped_last")
+            queue_dropped_last
         ));
     }
-    if summary_u64(&receiver_summary, "queue_rejected_last") != 0 {
+    if queue_rejected_last != 0 {
         violations.push(format!(
             "queue_rejected_last={} expected 0",
-            summary_u64(&receiver_summary, "queue_rejected_last")
+            queue_rejected_last
         ));
+    }
+    for field in [
+        "receiver_udp_packet_decode_error_count",
+        "native_receiver_classifier_drop_count",
+        "native_receiver_data_frame_decode_error_count",
+        "native_receiver_source_pin_drop_count",
+        "native_receiver_auth_drop_count",
+        "native_receiver_run_id_mismatch_count",
+        "ledger_receipt_proof_missing_sequence_mapping_count",
+        "ledger_canonical_proof_missing_sequence_mapping_count",
+    ] {
+        let observed = require_u64_field(&receiver_summary, field, &mut violations);
+        if observed != 0 {
+            violations.push(format!("{field}={observed} expected 0"));
+        }
     }
 
     let accepted = violations.is_empty();
@@ -678,15 +953,22 @@ fn main() -> Result<()> {
             "received_unique": delivered_unique_count,
             "unique_loss": unique_loss,
             "max_unique_loss": max_unique_loss,
-            "duplicate_received": duplicate_received
+            "duplicate_sent_packets": duplicate_sent_packets,
+            "authenticated_received_packets": network_received_total,
+            "duplicate_received": observed_duplicate_received
         },
         "validation": {
             "duplicate_canonical_included": duplicate_canonical_included,
             "semantic_head_monotonic": semantic_head_monotonic,
             "receipt_index_consistent": receipt_index_consistent,
-            "queue_pending_last": summary_u64(&receiver_summary, "queue_pending_last"),
-            "queue_dropped_last": summary_u64(&receiver_summary, "queue_dropped_last"),
-            "queue_rejected_last": summary_u64(&receiver_summary, "queue_rejected_last")
+            "receiver_socket_recv_count": receiver_socket_recv_count,
+            "receiver_decode_attempt_count": receiver_decode_attempt_count,
+            "receiver_decode_ok_count": receiver_decode_ok_count,
+            "receiver_data_frame_decode_ok_count": receiver_data_frame_decode_ok_count,
+            "network_received_total": network_received_total,
+            "queue_pending_last": queue_pending_last,
+            "queue_dropped_last": queue_dropped_last,
+            "queue_rejected_last": queue_rejected_last
         },
         "receiver_summary": receiver_summary,
         "recovery_probe": recovery_probe,
@@ -714,4 +996,55 @@ fn hex_lower(bytes: &[u8]) -> String {
         out.push_str(&format!("{byte:02x}"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn required_u64_field_rejects_missing_and_wrong_type() {
+        let summary = serde_json::json!({
+            "present": 7,
+            "wrong_type": "0",
+        });
+        let mut violations = Vec::new();
+
+        assert_eq!(require_u64_field(&summary, "present", &mut violations), 7);
+        assert_eq!(require_u64_field(&summary, "missing", &mut violations), 0);
+        assert_eq!(
+            require_u64_field(&summary, "wrong_type", &mut violations),
+            0
+        );
+        assert_eq!(
+            violations,
+            [
+                "missing is missing".to_string(),
+                "wrong_type must be present as u64".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn native_fixture_signers_remain_unique_beyond_single_byte_boundary() {
+        let chain_id = 9_998_904;
+        let fixtures = build_native_payloads(chain_id, 257).expect("build 257 native fixtures");
+        let mut callers = BTreeSet::<Vec<u8>>::new();
+        let mut hashes = BTreeSet::<[u8; 32]>::new();
+
+        for fixture in fixtures {
+            let tx = novovm_protocol::decode_nov_native_tx_wire_v1(fixture.payload.as_slice())
+                .expect("decode signed native fixture");
+            let NovTxKindV1::Execute(execute) = tx.kind else {
+                panic!("fixture must decode as execute intent");
+            };
+            assert_eq!(execute.nonce, 0);
+            assert_eq!(execute.caller.len(), 20);
+            assert!(callers.insert(execute.caller));
+            assert!(hashes.insert(fixture.tx_hash));
+        }
+
+        assert_eq!(callers.len(), 257);
+        assert_eq!(hashes.len(), 257);
+    }
 }
