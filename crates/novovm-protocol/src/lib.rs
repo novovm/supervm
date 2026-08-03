@@ -3,6 +3,7 @@
 mod bincode_compat;
 
 pub mod block_binding;
+pub mod block_execution_context;
 pub mod block_wire;
 pub mod evm_block_access_list;
 pub mod ids;
@@ -12,6 +13,7 @@ pub mod tx_wire;
 pub mod wire;
 
 pub use block_binding::*;
+pub use block_execution_context::*;
 pub use block_wire::*;
 pub use evm_block_access_list::*;
 pub use ids::*;

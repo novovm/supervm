@@ -199,6 +199,28 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Verify AOEM Linux runtime materialization
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="aoem/linux/core/bin/libaoem_ffi.so"
+          if [[ ! -f "$runtime" ]]; then
+            echo "AOEM Linux runtime is missing: $runtime" >&2
+            exit 1
+          fi
+          if head -c 128 "$runtime" | grep -q '^version https://git-lfs.github.com/spec/v1'; then
+            echo "AOEM Linux runtime is still a Git LFS pointer: $runtime" >&2
+            exit 1
+          fi
+          magic="$(od -An -N4 -tx1 "$runtime" | tr -d '[:space:]')"
+          if [[ "$magic" != "7f454c46" ]]; then
+            echo "AOEM Linux runtime is not an ELF binary: $runtime (magic=$magic)" >&2
+            exit 1
+          fi
+          echo "AOEM Linux runtime materialized: $runtime"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

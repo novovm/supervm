@@ -1,9 +1,10 @@
 # NOVOVM Generic Native Transaction AOEM State Ownership v1
 
 Status: production candidate, explicitly enabled by the product package. The
-host Adapter owns product semantics and domain-neutral AOEM Semantic Graph V3
-owns canonical state and receipt persistence. This ownership gate is not a
-consensus proof or a proof-sealed block-finality claim.
+host Adapter owns product semantics and computes every NOV business-state
+transition. Domain-neutral AOEM Semantic Graph V3 executes the resulting opaque
+atomic-write graph and owns authoritative state and receipt persistence. This
+ownership gate is not a consensus proof or a proof-sealed block-finality claim.
 
 ## Ownership boundary
 
@@ -11,8 +12,10 @@ NOVOVM/SUPERVM owns:
 
 - native ingress authentication, chain-domain and nonce policy;
 - transaction semantics and all product business policy;
-- deterministic lowering from native execution results to opaque atomic
-  key/value writes;
+- deterministic computation of balances, fees, receipts, policy effects, and
+  every other NOV business-state transition;
+- deterministic lowering of those computed results to opaque atomic key/value
+  writes;
 - query projection and verification.
 
 AOEM owns:
@@ -22,11 +25,13 @@ AOEM owns:
 - the RocksDB writer lifecycle;
 - durable ordered events;
 - completion-write publication;
-- canonical state and receipt persistence.
+- authoritative state and receipt persistence and readback.
 
 AOEM does not contain NOVOVM transaction, account, asset, receipt, route, or
 module logic. Task kinds, payloads, keys, values, graph identities, and event
-payloads remain opaque to AOEM.
+payloads remain opaque to AOEM. Executing the domain-neutral graph does not make
+AOEM the owner of NOV business-transition computation; the Host has already
+computed that transition before lowering it to the graph.
 
 ## Commit protocol
 
@@ -53,6 +58,14 @@ not contain the production-acceptance marker and are rejected rather than
 silently promoted; development databases must be cleared or explicitly
 migrated before using this build.
 
+New production commits use `novovm-consensus-native-state-wire/v1` and
+`novovm-consensus-receipt-wire/v1`. The state root binds the compact AOEM
+semantic sequence/head and a canonical commitment to every environment value
+that can select Host business policy plus its compiled defaults. Once this
+protocol-config commitment is present in authoritative state, configuration
+drift fails closed. A legacy JSON state root remains loadable only for explicit
+compatibility/recovery and cannot be committed into a new durable block.
+
 ## Production activation
 
 Generic native transaction ingress keeps the AOEM-owned production gate off by
@@ -62,6 +75,12 @@ it on explicitly with
 AOEM semantic precommit with
 `NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED=true`. This prevents differences
 between machines from silently selecting a production owner.
+
+Before enabling that owner, each machine must run
+`NOVOVM_NODE_MODE=native_protocol_config_commitment novovm-node` against the
+same binary/configuration and set the reported value as
+`NOVOVM_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT`. The four pins must match;
+the command does not depend on a shared drive letter or open AOEM state.
 
 The default FULLMAX core runtime uses its generic storage-provider RocksDB
 surface. An explicit `NOVOVM_AOEM_PERSIST_BACKEND=none` is treated as an
@@ -92,17 +111,41 @@ A successful production-owned batch reports:
 ```text
 business_semantic_planner = supervm_host_adapter
 business_policy_owner = SUPERVM_host
+business_transition_computation_owner = SUPERVM_host
 host_adapter_lowering_completed = true
 semantic_graph_v3_ready = true
 semantic_graph_v3_domain_agnostic = true
 aoem_domain_specific_logic = false
-canonical_state_transition_owned_by_aoem = true
+domain_neutral_graph_execution_owned_by_aoem = true
+authoritative_state_persistence_owned_by_aoem = true
 receipt_owner = AOEM
 legacy_host_canonical_write = false
 ```
 
+The former phrase `canonical_state_transition_owned_by_aoem` is not an accurate
+description of this boundary and must not be used as a business-computation
+claim. AOEM owns execution and durable publication of the opaque graph; the Host
+owns the NOV transition that produced that graph. Likewise, `receipt_owner =
+AOEM` means authoritative receipt persistence and verified readback, not that
+AOEM interprets or constructs NOV receipt semantics.
+
 The host-side JSON/RocksDB save that follows a successful AOEM commit is a
-query projection, not a second canonical owner.
+query projection, not a second authoritative persistence owner.
+
+AOEM ownership is a durable one-way latch for an initialized authority domain.
+The Host projection binding and block-ledger ownership record are rechecked
+while holding the Host write lock. Turning the gate off later, or setting
+`NOVOVM_LEGACY_HOST_TRANSITIONAL_FALLBACK=true` after an AOEM commit failure,
+cannot restore direct Host mutation. The legacy path may still compute shadow
+or A/B diagnostics, but a rejected AOEM production batch advances neither the
+AOEM authority nor the Host projection.
+
+The compatibility input name `full_business_compute_required` is accepted only
+as a deprecated alias that requests the Semantic Graph V3 production gate. It
+does not mean AOEM computes NOV business semantics. Runtime evidence reports
+the effective `semantic_graph_v3_required` value separately; the old
+`full_business_compute_required` claim remains `false` and is marked
+deprecated.
 
 ## Paths
 
@@ -116,7 +159,10 @@ AOEM-owned database path is resolved in this order:
 
 Production-owned ingress rejects request-level persistence-path and namespace
 overrides. Those values are node configuration, so every machine may use its
-own local paths while sharing the same chain and AOEM state namespace.
+own local paths and local AOEM storage namespace. Namespace identity enforces
+local store isolation but is excluded from consensus batch identity; chain,
+parent state, block context, ordered transactions, and protocol configuration
+remain consensus-bound.
 
 The default is derived from the configured native execution-store path on every
 development machine. It never depends on a drive letter or workspace parent
@@ -131,13 +177,24 @@ machine-specific absolute-path configuration.
 The production owner is rejected when:
 
 - the domain-neutral V3 capability or symbols are missing;
+- the Host is not reported as business-policy and transition-computation owner;
 - host lowering did not complete;
+- the persisted native protocol-config commitment is missing or differs from
+  the current/pinned commitment;
 - a graph step, event, key, or value exceeds AOEM bounds;
 - graph execution or the completion write fails;
 - readback is missing or differs;
 - state-root or receipt-root parity fails;
 - any AOEM domain-specific business logic is reported;
 - a legacy host canonical write is detected.
+
+The exceptional Host-to-AOEM migration is also fail closed. A non-empty legacy
+Host projection may initialize a missing AOEM authority only when
+`NOVOVM_ALLOW_AOEM_STATE_BOOTSTRAP_FROM_HOST=true` and
+`NOVOVM_AOEM_STATE_BOOTSTRAP_HOST_ANCHOR_COMMITMENT` equals the canonical
+commitment of the exact Host snapshot, chain, and AOEM namespace. A Host store
+that already carries an AOEM authority/protocol binding cannot bootstrap a
+missing AOEM authority again.
 
 ## AOEM ownership seal
 

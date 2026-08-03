@@ -813,6 +813,7 @@ pub enum NetworkRuntimeNativePendingTxRetrySuppressedReasonV1 {
     BudgetLimit,
     CoolingDown,
     NonRecoverable,
+    ExecutedUnsealed,
     IncludedCanonical,
 }
 
@@ -823,6 +824,7 @@ impl NetworkRuntimeNativePendingTxRetrySuppressedReasonV1 {
             Self::BudgetLimit => "budget_limit",
             Self::CoolingDown => "cooling_down",
             Self::NonRecoverable => "non_recoverable",
+            Self::ExecutedUnsealed => "executed_unsealed",
             Self::IncludedCanonical => "included_canonical",
         }
     }
@@ -3223,6 +3225,62 @@ pub fn observe_network_runtime_native_pending_tx_repair_receipt_canonical_v1(
     }
 }
 
+/// Record that AOEM produced a durable receipt for an executed transaction
+/// without claiming that the containing NOV block candidate is canonical.
+pub fn observe_network_runtime_native_pending_tx_repair_receipt_unsealed_v1(
+    chain_id: u64,
+    tx_hash: [u8; 32],
+) {
+    let sequence = runtime_native_repair_probe_map()
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .get(&chain_id)
+                .and_then(|state| state.tx_hash_to_sequence.get(&tx_hash).copied())
+        });
+    let Some(sequence) = sequence else {
+        return;
+    };
+    if let Ok(mut guard) = runtime_native_repair_probe_map().lock() {
+        let state = guard.entry(chain_id).or_default();
+        if state.sequence_receipt_written_seen.insert(sequence) {
+            state.final_missing_receipt_written_count =
+                state.final_missing_receipt_written_count.saturating_add(1);
+        }
+    }
+}
+
+/// Mark an already-known transaction as executed in a durable local block
+/// candidate without inserting that candidate into the shared network head,
+/// header, body, or canonical-chain views.
+pub fn observe_network_runtime_native_pending_tx_included_unsealed_v1(
+    chain_id: u64,
+    tx_hash: [u8; 32],
+    block_number: u64,
+    block_hash: [u8; 32],
+    observed_unix_ms: u128,
+) {
+    if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
+        let Some(tx) = guard
+            .get_mut(&chain_id)
+            .and_then(|chain_txs| chain_txs.get_mut(&tx_hash))
+        else {
+            return;
+        };
+        tx.lifecycle_stage = NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedNonCanonical;
+        tx.last_block_number = Some(block_number);
+        tx.last_block_hash = Some(block_hash);
+        tx.canonical_inclusion = Some(false);
+        tx.retry_eligible = false;
+        tx.retry_after_unix_ms = None;
+        tx.retry_suppressed_reason =
+            Some(NetworkRuntimeNativePendingTxRetrySuppressedReasonV1::ExecutedUnsealed);
+        tx.inclusion_count = tx.inclusion_count.saturating_add(1);
+        tx.last_updated_unix_ms = observed_unix_ms;
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct NetworkRuntimeNativeRepairPendingRequeueSummaryV1 {
@@ -3797,12 +3855,10 @@ fn runtime_native_pending_tx_cleanup_v1(chain_id: u64, now: u128) {
             Vec::<([u8; 32], NetworkRuntimeNativePendingTxFinalDispositionV1)>::new();
         for (tx_hash, tx) in chain_txs.iter_mut() {
             runtime_native_pending_tx_refresh_retry_window_v1(tx, now);
-            let tx_included_in_block = matches!(
+            if matches!(
                 tx.lifecycle_stage,
                 NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
-                    | NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedNonCanonical
-            );
-            if tx_included_in_block {
+            ) {
                 if let (Some(head_number), Some(block_number)) =
                     (canonical_head_number, tx.last_block_number)
                 {
@@ -4115,7 +4171,6 @@ fn runtime_native_pending_tx_broadcast_eligible_stage_v1(
         NetworkRuntimeNativePendingTxLifecycleStageV1::Seen
             | NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
             | NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
-            | NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedNonCanonical
             | NetworkRuntimeNativePendingTxLifecycleStageV1::ReorgedBackToPending
     )
 }
@@ -4212,6 +4267,14 @@ fn runtime_native_pending_tx_observe_body_v1(
                 tx.retry_suppressed_reason =
                     Some(NetworkRuntimeNativePendingTxRetrySuppressedReasonV1::IncludedCanonical);
                 canonical_tx_hashes.push(*tx_hash);
+            } else if matches!(
+                next_stage,
+                NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedNonCanonical
+            ) {
+                tx.retry_eligible = false;
+                tx.retry_after_unix_ms = None;
+                tx.retry_suppressed_reason =
+                    Some(NetworkRuntimeNativePendingTxRetrySuppressedReasonV1::ExecutedUnsealed);
             } else {
                 runtime_native_pending_tx_mark_retry_eligible_v1(tx);
             }
@@ -4604,14 +4667,21 @@ fn runtime_native_canonical_chain_mark_current_head_flags_v1(
     }
     if let Some(head) = state.snapshot.head.as_ref() {
         if let Some(block) = state.blocks_by_hash.get_mut(&head.hash) {
-            block.canonical = true;
-            block.safe = head.safe;
-            block.finalized = head.finalized;
+            block.canonical = head.canonical;
+            block.safe = head.canonical && head.safe;
+            block.finalized = head.canonical && head.finalized;
             block.body_available = head.body_available;
             block.state_root = head.state_root;
             block.source_peer_id = head.source_peer_id;
             block.observed_unix_ms = block.observed_unix_ms.max(head.observed_unix_ms);
-            block.lifecycle_stage = NetworkRuntimeNativeBlockLifecycleStageV1::Canonical;
+            block.lifecycle_stage = if head.canonical {
+                NetworkRuntimeNativeBlockLifecycleStageV1::Canonical
+            } else {
+                runtime_native_canonical_chain_infer_block_lifecycle_v1(
+                    block,
+                    &canonical_hash_by_number,
+                )
+            };
         }
     }
     if let Some(head_hash) = state.snapshot.head.as_ref().map(|head| head.hash) {
@@ -4710,6 +4780,21 @@ fn runtime_native_canonical_chain_apply_head_v1(
             observed_unix_ms: head.observed_unix_ms,
         });
 
+    if !head.canonical {
+        if let Some(block) = state.blocks_by_hash.get_mut(&head.block_hash) {
+            block.canonical = false;
+            block.safe = false;
+            block.finalized = false;
+            block.lifecycle_stage = runtime_native_canonical_chain_infer_block_lifecycle_v1(
+                block,
+                &state.canonical_hash_by_number,
+            );
+        }
+        runtime_native_canonical_chain_mark_current_head_flags_v1(state);
+        runtime_native_canonical_chain_prune_v1(state);
+        return;
+    }
+
     let previous_head = state.snapshot.head.clone();
     let lifecycle_stage = match previous_head.as_ref() {
         None => NetworkRuntimeNativeCanonicalLifecycleStageV1::Initial,
@@ -4793,7 +4878,7 @@ fn runtime_native_canonical_chain_apply_head_v1(
                 state.canonical_hash_by_number.insert(block.number, hash);
             }
         }
-    } else {
+    } else if head.canonical {
         state
             .canonical_hash_by_number
             .insert(head.block_number, head.block_hash);
@@ -9818,6 +9903,41 @@ mod tests {
             included_non_canonical.lifecycle_stage,
             NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedNonCanonical
         );
+        assert!(!included_non_canonical.retry_eligible);
+        assert_eq!(
+            included_non_canonical.retry_suppressed_reason,
+            Some(NetworkRuntimeNativePendingTxRetrySuppressedReasonV1::ExecutedUnsealed)
+        );
+
+        set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 0,
+                block_number: 88,
+                block_hash: canonical_hash,
+                parent_block_hash: [0x10; 32],
+                state_root: [0x21; 32],
+                canonical: false,
+                safe: false,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: None,
+                observed_unix_ms: 10,
+            },
+        );
+        let still_unsealed =
+            get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).expect("pending");
+        assert_eq!(
+            still_unsealed.lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedNonCanonical
+        );
+        let chain = snapshot_network_runtime_native_canonical_chain_v1(chain_id)
+            .expect("native chain state");
+        assert_eq!(chain.canonical_block_count, 0);
+        assert!(chain.head.is_none());
 
         set_network_runtime_native_head_snapshot_v1(
             chain_id,
@@ -9967,7 +10087,60 @@ mod tests {
     }
 
     #[test]
-    fn included_non_canonical_pending_tx_cleanup_skips_generic_eviction_paths() {
+    fn local_unsealed_execution_does_not_replace_shared_network_head() {
+        let chain_id = 2058_u64;
+        clear_runtime_sync_status_for_test(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        let tx_hash = [0x92; 32];
+        let canonical_hash = [0x31; 32];
+        let unsealed_hash = [0x41; 32];
+        observe_network_runtime_native_pending_tx_ingress_v1(chain_id, 7, tx_hash);
+        set_network_runtime_native_head_snapshot_v1(
+            chain_id,
+            NetworkRuntimeNativeHeadSnapshotV1 {
+                chain_id,
+                phase: NetworkRuntimeNativeSyncPhaseV1::State,
+                peer_count: 3,
+                block_number: 90,
+                block_hash: canonical_hash,
+                parent_block_hash: [0x30; 32],
+                state_root: [0x51; 32],
+                canonical: true,
+                safe: true,
+                finalized: false,
+                reorg_depth_hint: None,
+                body_available: true,
+                source_peer_id: Some(7),
+                observed_unix_ms: 10,
+            },
+        );
+        let before = get_network_runtime_native_head_snapshot_v1(chain_id).expect("head");
+        observe_network_runtime_native_pending_tx_included_unsealed_v1(
+            chain_id,
+            tx_hash,
+            91,
+            unsealed_hash,
+            11,
+        );
+        let after = get_network_runtime_native_head_snapshot_v1(chain_id).expect("head");
+        assert_eq!(after, before);
+        let pending = get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).expect("pending");
+        assert_eq!(
+            pending.lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedNonCanonical
+        );
+        assert_eq!(pending.last_block_number, Some(91));
+        assert_eq!(pending.last_block_hash, Some(unsealed_hash));
+        assert_eq!(pending.canonical_inclusion, Some(false));
+        assert!(!pending.retry_eligible);
+        assert_eq!(
+            pending.retry_suppressed_reason,
+            Some(NetworkRuntimeNativePendingTxRetrySuppressedReasonV1::ExecutedUnsealed)
+        );
+    }
+
+    #[test]
+    fn included_non_canonical_pending_tx_cleanup_is_bounded_by_generic_eviction() {
         let chain_id = 2057_u64;
         let budget = get_network_runtime_native_budget_hooks_v1(chain_id);
         clear_runtime_sync_status_for_test(chain_id);
@@ -10006,13 +10179,17 @@ mod tests {
         }
 
         runtime_native_pending_tx_cleanup_v1(chain_id, budget.pending_tx_ttl_ms as u128 + 1_000);
-        let retained =
-            get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).expect("retained tx");
+        assert!(get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).is_none());
+        let tombstone =
+            get_network_runtime_native_pending_tx_tombstone_v1(chain_id, tx_hash).expect("tomb");
         assert_eq!(
-            retained.lifecycle_stage,
+            tombstone.lifecycle_stage,
             NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedNonCanonical
         );
-        assert!(get_network_runtime_native_pending_tx_tombstone_v1(chain_id, tx_hash).is_none());
+        assert_eq!(
+            tombstone.final_disposition,
+            NetworkRuntimeNativePendingTxFinalDispositionV1::Evicted
+        );
     }
 
     #[test]

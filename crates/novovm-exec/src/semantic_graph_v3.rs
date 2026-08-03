@@ -184,7 +184,11 @@ impl AoemSemanticGraphStoreV1 {
         let prepared = PreparedGraphV1::new(request)?;
         let seeds = prepared.seeds.clone();
         let options = AoemGraphSubmitOptionsV3 {
-            max_queued_tasks: seeds.len().max(1).try_into().unwrap_or(u32::MAX),
+            // AOEM's generic semantic-graph contract reserves one queue slot
+            // beyond a runnable task and therefore admits a minimum of two.
+            // Keep this domain-neutral adapter valid for legitimate one-step
+            // graphs instead of forcing callers to invent a dummy task.
+            max_queued_tasks: seeds.len().max(2).try_into().unwrap_or(u32::MAX),
             event_capacity: prepared.event_count.max(1).try_into().unwrap_or(u32::MAX),
             initial_event_sequence: 0,
             ..AoemGraphSubmitOptionsV3::default()

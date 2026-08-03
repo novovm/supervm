@@ -176,6 +176,9 @@ NOVOVM_AOEM_OWNED_STATE_DB_PATH=/var/lib/novovm/state/aoem-owned.rocksdb
 NOVOVM_AOEM_STATE_NAMESPACE=novovm-mainnet-chain-1
 NOVOVM_AOEM_PERSIST_BACKEND=rocksdb
 AOEM_PERSISTENCE_PATH=/var/lib/novovm/state/aoem-runtime.rocksdb
+# Run NOVOVM_NODE_MODE=native_protocol_config_commitment once with the signed
+# release and final protocol env, then pin the identical reported value on all nodes.
+NOVOVM_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT=REPLACE_WITH_SIGNED_64_HEX_COMMITMENT
 NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED=true
 NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED=true
 NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE=true
@@ -304,9 +307,13 @@ Codex installation, or source workspace.
    `/var/lib/novovm`; replace chain ID `1` with the deployment chain ID.
 6. Keep the bundled generic AOEM FULLMAX runtime under `/opt/novovm/aoem`;
    `novovm-node.env` pins its core, manifest, profile, and sidecar paths.
-7. Run `novovm-product-topology` before deployment and preserve its offline
+7. Before starting the service, load the final protocol environment and run
+   `NOVOVM_NODE_MODE=native_protocol_config_commitment /opt/novovm/bin/novovm-node`.
+   Replace the example pin with its 64-hex commitment and use that exact value
+   on every node; the placeholder intentionally fails closed.
+8. Run `novovm-product-topology` before deployment and preserve its offline
    preflight report. It never claims that an external topology was executed.
-8. Generate a signed post-run evidence manifest with `novovm-product-evidence`.
+9. Generate a signed post-run evidence manifest with `novovm-product-evidence`.
 
 TLS protects the WSS transport. NOVOVM node challenge-response remains the
 protocol identity check; a CA is not the NOVOVM trust root.

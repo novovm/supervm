@@ -48,6 +48,40 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Verify AOEM host runtime materialization
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            $runtime = "aoem/windows/core/bin/aoem_ffi.dll"
+            [byte[]]$expectedMagic = 0x4d, 0x5a
+          } elseif ($IsLinux) {
+            $runtime = "aoem/linux/core/bin/libaoem_ffi.so"
+            [byte[]]$expectedMagic = 0x7f, 0x45, 0x4c, 0x46
+          } else {
+            throw "AOEM nightly gate does not have a packaged runtime for this host platform"
+          }
+
+          if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) {
+            throw "AOEM host runtime is missing: $runtime"
+          }
+          [byte[]]$header = Get-Content -LiteralPath $runtime -AsByteStream -TotalCount 128
+          $pointerHeader = [Text.Encoding]::ASCII.GetString($header)
+          if ($pointerHeader.StartsWith("version https://git-lfs.github.com/spec/v1")) {
+            throw "AOEM host runtime is still a Git LFS pointer: $runtime"
+          }
+          if ($header.Length -lt $expectedMagic.Length) {
+            throw "AOEM host runtime header is truncated: $runtime"
+          }
+          for ($index = 0; $index -lt $expectedMagic.Length; $index++) {
+            if ($header[$index] -ne $expectedMagic[$index]) {
+              $actualMagic = ($header[0..($expectedMagic.Length - 1)] | ForEach-Object { $_.ToString("x2") }) -join ""
+              throw "AOEM host runtime has invalid executable magic: $runtime (magic=$actualMagic)"
+            }
+          }
+          Write-Host "AOEM host runtime materialized: $runtime"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

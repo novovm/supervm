@@ -37,7 +37,9 @@ use crate::tx_ingress::{
     get_nov_native_treasury_clearing_summary_with_store_path_v1,
     get_nov_native_treasury_settlement_summary_with_store_path_v1,
     load_nov_native_execution_store_v1, nov_native_execution_store_path_v1,
-    run_nov_execute_from_params_v1, run_nov_execute_pending_native_tx_batch_from_params_v1,
+    run_nov_execute_pending_native_tx_batch_from_params_v1,
+    run_nov_execute_with_configured_persistence_v1,
+    run_nov_native_block_ledger_query_with_configured_persistence_v1,
     run_nov_native_call_from_params_with_store_path_v1,
     run_nov_native_execution_tick_from_params_v1,
     run_nov_send_raw_transaction_batch_from_params_v1,
@@ -301,24 +303,32 @@ fn string_env_nonempty_v1(name: &str) -> Option<String> {
 }
 
 fn native_execution_store_path_from_params_or_env_v1(params: &Value) -> PathBuf {
-    let from_params = match params {
-        Value::Object(map) => map
-            .get("native_execution_store_path")
-            .and_then(|value| value.as_str()),
-        Value::Array(items) => items
-            .first()
-            .and_then(|value| value.get("native_execution_store_path"))
-            .and_then(|value| value.as_str()),
-        _ => None,
+    let configured =
+        string_env_nonempty_v1("NOVOVM_MAINLINE_NATIVE_EXECUTION_STORE_PATH").map(PathBuf::from);
+    #[cfg(not(test))]
+    {
+        let _ = params;
+        configured.unwrap_or_else(nov_native_execution_store_path_v1)
     }
-    .map(|raw| raw.trim().to_string())
-    .filter(|raw| !raw.is_empty())
-    .map(PathBuf::from);
-    from_params
-        .or_else(|| {
-            string_env_nonempty_v1("NOVOVM_MAINLINE_NATIVE_EXECUTION_STORE_PATH").map(PathBuf::from)
-        })
-        .unwrap_or_else(nov_native_execution_store_path_v1)
+    #[cfg(test)]
+    {
+        let from_params = match params {
+            Value::Object(map) => map
+                .get("native_execution_store_path")
+                .and_then(|value| value.as_str()),
+            Value::Array(items) => items
+                .first()
+                .and_then(|value| value.get("native_execution_store_path"))
+                .and_then(|value| value.as_str()),
+            _ => None,
+        }
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
+        .map(PathBuf::from);
+        from_params
+            .or(configured)
+            .unwrap_or_else(nov_native_execution_store_path_v1)
+    }
 }
 
 fn augment_nov_user_execution_result_v1(
@@ -377,8 +387,11 @@ fn run_mainline_native_user_execute_v1(
     let privacy_mode = param_as_string_any(params, &["privacy_mode"]);
     let verification_mode = param_as_string_any(params, &["verification_mode"]);
     let signature = param_as_string_any(params, &["signature"]);
+    #[cfg(test)]
     let unified_account_store_path =
         param_as_string_any(params, &["unified_account_store_path", "ua_store_path"]);
+    #[cfg(not(test))]
+    let unified_account_store_path: Option<String> = None;
     let pay_asset = param_as_string_any(params, &["pay_asset", "fee_pay_asset"])
         .unwrap_or_else(|| default_pay_asset.to_string());
     let max_pay_amount = param_as_u128_any(params, &["max_pay_amount", "fee_max_pay_amount"])
@@ -464,7 +477,7 @@ fn run_mainline_native_user_execute_v1(
         );
     }
 
-    let out = run_nov_execute_from_params_v1(&Value::Object(execute_params))?;
+    let out = run_nov_execute_with_configured_persistence_v1(&Value::Object(execute_params))?;
     Ok(augment_nov_user_execution_result_v1(
         method,
         module,
@@ -490,6 +503,11 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getFeeOracleRates"
             | "nov_getAoemSemanticIngressStatus"
             | "nov_getNativeExecutionStoreBackendStatus"
+            | "nov_getNativeBlockLedgerStatus"
+            | "nov_getNativeBlockByNumber"
+            | "nov_getNativeBlockByHash"
+            | "nov_getNativeTransactionLocation"
+            | "nov_getNativeTransactionReceipt"
             | "nov_sendRawTransactionBatch"
             | "nov_executeBatch"
             | "nov_executePendingNativeTxBatch"
@@ -1573,6 +1591,17 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
             Ok(get_nov_native_execution_store_backend_status_v1(Some(
                 store_path.as_path(),
             )))
+        }
+        "nov_getNativeBlockLedgerStatus"
+        | "nov_getNativeBlockByNumber"
+        | "nov_getNativeBlockByHash"
+        | "nov_getNativeTransactionLocation"
+        | "nov_getNativeTransactionReceipt" => {
+            run_nov_native_block_ledger_query_with_configured_persistence_v1(
+                method,
+                params,
+                store_path.as_path(),
+            )
         }
         "nov_sendRawTransactionBatch" | "nov_executeBatch" => {
             run_nov_send_raw_transaction_batch_from_params_v1(params)
@@ -11085,6 +11114,11 @@ mod tests {
             "nov_getFeeOracleRates",
             "nov_getAoemSemanticIngressStatus",
             "nov_getNativeExecutionStoreBackendStatus",
+            "nov_getNativeBlockLedgerStatus",
+            "nov_getNativeBlockByNumber",
+            "nov_getNativeBlockByHash",
+            "nov_getNativeTransactionLocation",
+            "nov_getNativeTransactionReceipt",
             "nov_sendRawTransactionBatch",
             "nov_executeBatch",
             "nov_executePendingNativeTxBatch",

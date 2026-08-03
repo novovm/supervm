@@ -111,9 +111,11 @@ use novovm_node::tx_ingress::{
     ingest_remote_nov_raw_tx_payload_v1, load_exec_batch_from_wire_file, load_ops_wire_v1_file,
     load_ops_wire_v1_from_tx_wire_file, load_ops_wire_v1_payload_file,
     load_tx_records_from_wire_file, native_aoem_semantic_ingress_runtime_reuse_counters_v1,
-    nov_native_execution_store_path_v1, recover_nov_native_host_projection_from_aoem_v1,
+    native_business_protocol_config_commitment_v1, nov_native_execution_store_path_v1,
+    recover_nov_native_block_ledger_from_aoem_v1, recover_nov_native_host_projection_from_aoem_v1,
     run_eth_send_raw_transaction_from_params_v1, run_nov_native_execution_tick_from_params_v1,
-    sign_nov_native_tx_with_seed_v1, tx_ingress_records_to_adapter_tx_irs, TxIngressRecord,
+    sign_nov_native_tx_with_seed_v1, tx_ingress_records_to_adapter_tx_irs,
+    verify_native_business_protocol_config_pin_for_aoem_production_v1, TxIngressRecord,
     LOCAL_TX_WIRE_CODEC_WRITE_U64LE_V1, NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
     NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV,
@@ -35481,6 +35483,10 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "tx_ingress_aoem_gate_config_source",
         "tx_ingress_aoem_gate_config_explicit",
         "tx_ingress_aoem_gate_config_production_candidate",
+        "tx_ingress_aoem_gate_config_semantic_graph_v3_required",
+        "tx_ingress_aoem_gate_config_semantic_graph_v3_requested",
+        "tx_ingress_aoem_gate_config_full_business_compute_required",
+        "tx_ingress_aoem_gate_config_full_business_compute_required_deprecated",
         "tx_ingress_aoem_gate_config_shadow",
         "tx_ingress_aoem_gate_config_compare",
         "aoem_owned_child_runtime_gate_propagated_to_tx_ingress",
@@ -35538,6 +35544,28 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         "aoem_native_tx_batch_production_candidate_enabled",
         "aoem_native_tx_batch_production_candidate_result_ok",
         "aoem_native_tx_batch_production_owner",
+        "aoem_native_tx_batch_production_aoem_called",
+        "aoem_native_tx_batch_production_execution_completed",
+        "aoem_native_tx_batch_production_state_persisted",
+        "aoem_native_tx_batch_production_readback_verified",
+        "aoem_native_tx_batch_production_receipt_owner",
+        "aoem_native_tx_batch_production_execution_scope",
+        "aoem_native_tx_batch_business_semantic_planner",
+        "aoem_native_tx_batch_business_policy_owner",
+        "business_transition_computation_owner",
+        "aoem_native_tx_batch_full_business_semantic_execution_owned",
+        "nov_host_business_transition_computation_completed",
+        "aoem_native_tx_batch_host_adapter_lowering_completed",
+        "aoem_native_tx_batch_domain_neutral_graph_execution_owned_by_aoem",
+        "aoem_native_tx_batch_canonical_state_transition_owned_by_aoem",
+        "aoem_native_tx_batch_authoritative_state_persistence_owned_by_aoem",
+        "aoem_native_tx_batch_owned_state_root_parity",
+        "aoem_native_tx_batch_owned_receipt_root_parity",
+        "aoem_native_tx_batch_semantic_graph_v3_domain_agnostic",
+        "aoem_native_tx_batch_aoem_domain_specific_logic",
+        "native_state_root_codec",
+        "native_receipt_root_codec",
+        "native_protocol_config_commitment",
         "aoem_native_tx_batch_production_receipt_count",
         "aoem_native_tx_batch_production_canonical_proof_count",
         "aoem_native_tx_batch_production_ledger_close_proof_count",
@@ -35605,6 +35633,42 @@ fn compact_native_execution_tick_out_for_pipeline_report_v1(
         serde_json::json!("bounded_sustained_report_memory"),
     );
     serde_json::Value::Object(compact)
+}
+
+#[cfg(test)]
+mod compact_ownership_report_tests {
+    use super::compact_native_execution_tick_out_for_pipeline_report_v1;
+
+    #[test]
+    fn sustained_compaction_retains_aoem_ownership_and_root_evidence() {
+        let input = serde_json::json!({
+            "accepted": true,
+            "batch_result": {
+                "aoem_native_tx_batch_production_aoem_called": true,
+                "business_transition_computation_owner": "SUPERVM_host",
+                "aoem_native_tx_batch_domain_neutral_graph_execution_owned_by_aoem": true,
+                "aoem_native_tx_batch_authoritative_state_persistence_owned_by_aoem": true,
+                "native_state_root_codec": "novovm-consensus-native-state-wire/v1",
+                "native_receipt_root_codec": "novovm-consensus-receipt-wire/v1",
+                "native_protocol_config_commitment": "a".repeat(64),
+            }
+        });
+        let compact = compact_native_execution_tick_out_for_pipeline_report_v1(&input);
+        assert_eq!(
+            compact["batch_result"]["aoem_native_tx_batch_production_aoem_called"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            compact["batch_result"]["business_transition_computation_owner"].as_str(),
+            Some("SUPERVM_host")
+        );
+        assert_eq!(
+            compact["batch_result"]["native_protocol_config_commitment"]
+                .as_str()
+                .map(str::len),
+            Some(64)
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -42314,6 +42378,8 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
     apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
     let startup_recovery_params = native_execution_tick_params_from_env_v1()?;
+    verify_native_business_protocol_config_pin_for_aoem_production_v1(&startup_recovery_params)
+        .context("validate cross-machine NOV protocol configuration pin at startup failed")?;
     let startup_recovery =
         recover_nov_native_host_projection_from_aoem_v1(&startup_recovery_params)
             .context("recover native host projection from AOEM authority at startup failed")?;
@@ -42322,6 +42388,16 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
             "native_execution_startup_recovery: {}",
             serde_json::to_string(&startup_recovery)
                 .context("encode native execution startup recovery report failed")?
+        );
+    }
+    let startup_block_recovery =
+        recover_nov_native_block_ledger_from_aoem_v1(&startup_recovery_params)
+            .context("recover durable native block ledger at startup failed")?;
+    if verbose {
+        println!(
+            "native_block_ledger_startup_recovery: {}",
+            serde_json::to_string(&startup_block_recovery)
+                .context("encode native block ledger startup recovery report failed")?
         );
     }
     let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
@@ -42782,6 +42858,19 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let node_mode = std::env::var("NOVOVM_NODE_MODE").unwrap_or_else(|_| "full".to_string());
+    if node_mode.eq_ignore_ascii_case("native_protocol_config_commitment") {
+        let commitment = native_business_protocol_config_commitment_v1()
+            .context("derive NOV native business protocol configuration commitment")?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schema": "novovm-native-business-protocol-config-commitment/v1",
+                "commitment": commitment,
+                "pin_env": "NOVOVM_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT",
+            }))?
+        );
+        return Ok(());
+    }
     if node_mode.eq_ignore_ascii_case("eth_rlpx_sync")
         || node_mode.eq_ignore_ascii_case("evm_rlpx_sync")
         || node_mode.eq_ignore_ascii_case("ethereum_rlpx_sync")
