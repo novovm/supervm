@@ -672,7 +672,7 @@ fn main() -> Result<()> {
     )?;
     let sender_round_process_budget_ms = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_PROCESS_BUDGET_MS",
-        if sender_rounds > 1 { 1_000 } else { 0 },
+        if sender_rounds > 1 { 180_000 } else { 0 },
     )?;
     if string_env_nonempty("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_CANONICAL_TPS_X1000")
         .is_some()
@@ -1134,10 +1134,15 @@ fn main() -> Result<()> {
         let receiver_out = child
             .wait_with_output()
             .with_context(|| format!("wait receiver node failed: node={node} addr={addr}"))?;
-        receiver_summaries.push(parse_summary_v1(
-            &receiver_out,
-            format!("receiver_{}", idx + 1).as_str(),
-        )?);
+        receiver_summaries.push(
+            parse_summary_v1(&receiver_out, format!("receiver_{}", idx + 1).as_str())
+                .with_context(|| {
+                    format!(
+                        "receiver failed after all sender rounds; sender_summary={}",
+                        serde_json::to_string(&sender_summary).unwrap_or_else(|_| "-".to_string())
+                    )
+                })?,
+        );
     }
     let receiver_summary = receiver_summaries
         .first()
