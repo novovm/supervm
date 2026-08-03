@@ -346,7 +346,7 @@ cargo build -p novovm-node --bins
 cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
 ```
 
-The gate starts two real `novovm-node` child processes: a sender with fixture ingress and UDP broadcast, and a receiver with UDP receive plus AOEM tick/canonical projection. It validates sender broadcast counts and receiver `aoem_executed_total`, `nonempty_aoem_batch_ticks`, `nonempty_proof_ticks`, `nonempty_commit_ticks`, `included_canonical_total`, and `queue_pending_last=0`.
+The gate starts two real `novovm-node` child processes: a sender with fixture ingress and authenticated NovoRUDP broadcast, and a receiver with UDP receive plus AOEM-owned production execution. Every sender process round receives a distinct authenticated outbound `run_id`, so a restarted sequence beginning at zero cannot collide with an earlier round. The active block milestone is deliberately unsealed, so the gate requires receipt-backed transport-sequence closure, then opens every receiver's native block ledger read-only and verifies the AOEM ownership/protocol pin, durable head and blocks, transaction and receipt reverse indexes, and empty prepared slot. Every candidate must remain `proof_sealed=false`, `safe=false`, and `finalized=false`; network `included_canonical_total` and canonical-proof close must remain zero. It must not relabel local execution as chain canonical before proof sealing.
 
 Useful soak knobs:
 
@@ -375,7 +375,7 @@ Useful soak knobs:
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_RECV_BUDGET`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PER_TICK`
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_BROADCAST_TPS_X1000`
-- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_CANONICAL_TPS_X1000`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_UNSEALED_CANDIDATE_TPS_X1000` (the obsolete `...MIN_RECEIVER_CANONICAL_TPS_X1000` is rejected because this gate does not prove chain-canonical throughput)
 - `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH` (default: `artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json`)
 
 Local sustained execution-pipeline gate:
@@ -589,7 +589,7 @@ $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH="artifacts/native-pipeline/nat
 cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
 ```
 
-This paced fanout gate starts one long-lived receiver set and runs the sender in multiple fixture-identity-separated rounds. Each fixture signer starts at account nonce `0`; independently authenticated NovoRUDP frame sequences carry delivery and repair ordering. The gate disables the local broadcast drive inside the fixture so the only cross-node output path is UDP, then requires the sender to reach `max_product_ingress_submitted_per_tick` and `max_broadcast_tx_per_tick`, and every receiver to reach `max_network_received_per_tick`, `max_queue_admitted_per_tick`, `aoem_executed_total`, `max_aoem_batch_executed_per_tick`, `max_proof_items_per_tick`, `max_commit_items_per_tick`, `included_canonical_total`, `queue_pending_last=0`, `queue_dropped_last=0`, and `queue_rejected_last=0`.
+This paced fanout gate starts one long-lived receiver set and runs the sender in multiple fixture-identity-separated rounds. Each fixture signer starts at account nonce `0`; independently authenticated NovoRUDP frame sequences carry delivery and repair ordering. The gate disables the local broadcast drive inside the fixture so the only cross-node output path is UDP, then requires the sender to reach `max_product_ingress_submitted_per_tick` and `max_broadcast_tx_per_tick`, and every receiver to reach `max_network_received_per_tick`, `max_queue_admitted_per_tick`, `aoem_executed_total`, `max_aoem_batch_executed_per_tick`, `max_proof_items_per_tick`, `max_commit_items_per_tick`, receipt-backed ledger completion, `queue_included_non_canonical_last`, `queue_pending_last=0`, `queue_dropped_last=0`, and `queue_rejected_last=0`; canonical-proof close must remain zero until a later proof-seal stage exists.
 
 EVM protocol-observable equivalence scope (CN):
 

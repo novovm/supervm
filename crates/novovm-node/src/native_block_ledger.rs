@@ -325,7 +325,7 @@ impl NovNativeBlockLedgerV1 {
     /// Open an already initialized ledger without creating directories, a
     /// RocksDB database, or its schema. Query/RPC surfaces use this boundary so
     /// an unauthenticated read cannot materialize local persistence.
-    pub(crate) fn open_existing_read_only(path: &Path) -> Result<Option<Self>> {
+    pub fn open_existing_read_only(path: &Path) -> Result<Option<Self>> {
         if !path.exists() {
             return Ok(None);
         }
@@ -408,9 +408,7 @@ impl NovNativeBlockLedgerV1 {
         Ok(true)
     }
 
-    pub(crate) fn load_aoem_ownership(
-        &self,
-    ) -> Result<Option<NovNativeBlockLedgerAoemOwnershipV1>> {
+    pub fn load_aoem_ownership(&self) -> Result<Option<NovNativeBlockLedgerAoemOwnershipV1>> {
         self.ensure_schema_v1()?;
         self.load_aoem_ownership_inner_v1()
     }

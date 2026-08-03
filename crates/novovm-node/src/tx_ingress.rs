@@ -11330,6 +11330,69 @@ struct NovExecutionRequestDispatchContextV1<'a> {
     now_ms: u128,
 }
 
+#[allow(clippy::too_many_arguments)]
+fn finalize_native_execution_receipt_v1(
+    store: &mut NovNativeExecutionStoreV1,
+    request: &NovExecutionRequestV1,
+    settled_fee: &NovSettledFeeV1,
+    subject_meta: &NovExecutionSubjectMetaV1,
+    durable_auth_reservation: Option<&NovNativeDurableAuthReservationV1>,
+    aoem_semantic_ingress: Option<NovAoemSemanticIngressMetaV1>,
+    module_state_before_execution: &NovNativeExecutionModuleStateV1,
+    mirror_base_path: &Path,
+    mirror_records: Option<&mut Vec<NovAoemSemanticLedgerMirrorRecordV1>>,
+    now_ms: u128,
+    mut receipt: NovNativeExecutionReceiptV1,
+) -> Result<NovNativeExecutionReceiptV1> {
+    receipt.aoem_semantic_ingress = aoem_semantic_ingress;
+    if let Some(reservation) = durable_auth_reservation {
+        commit_nov_native_durable_auth_reservation_v1(store, reservation)?;
+    }
+    let semantic_deltas = build_native_execution_semantic_deltas_v1(
+        module_state_before_execution,
+        &store.module_state,
+    );
+    attach_native_semantic_deltas_to_receipt_v1(&mut receipt, semantic_deltas);
+    if let Some((sequence, commit_seal)) = attach_native_semantic_ledger_commit_to_receipt_v1(
+        &mut receipt,
+        module_state_before_execution,
+        &store.module_state,
+        module_state_before_execution.aoem_semantic_ledger_sequence,
+        module_state_before_execution
+            .aoem_semantic_ledger_head
+            .as_str(),
+    ) {
+        store.module_state.aoem_semantic_ledger_sequence = sequence;
+        store.module_state.aoem_semantic_ledger_head = commit_seal;
+    }
+    receipt.aoem_semantic_commit = build_native_receipt_aoem_semantic_commit_v1(&receipt);
+    store
+        .receipts
+        .insert(receipt.tx_hash.clone(), receipt.clone());
+    let trace =
+        build_execution_trace_v1(request, settled_fee, &receipt, subject_meta, store, now_ms);
+    persist_execution_trace_v1(store, trace);
+    store.last_updated_unix_ms = now_ms;
+    if let Some(mirror_record) =
+        build_native_aoem_semantic_ledger_mirror_record_v1(&receipt, now_ms)
+    {
+        store
+            .module_state
+            .aoem_semantic_ledger_records
+            .insert(mirror_record.sequence, mirror_record.clone());
+        if let Some(records) = mirror_records {
+            records.push(mirror_record);
+        } else {
+            let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(mirror_base_path);
+            append_nov_native_aoem_semantic_ledger_mirror_record_v1(
+                mirror_path.as_path(),
+                &mirror_record,
+            )?;
+        }
+    }
+    Ok(receipt)
+}
+
 fn find_nov_native_durable_auth_receipt_v1(
     store: &NovNativeExecutionStoreV1,
     reservation: &NovNativeDurableAuthReservationV1,
@@ -11471,23 +11534,20 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
                 "enforce".to_string(),
                 rejection.reason.to_string(),
             );
-            if let Some(reservation) = context.durable_auth_reservation {
-                commit_nov_native_durable_auth_reservation_v1(store, reservation)?;
-            }
-            store
-                .receipts
-                .insert(failed.tx_hash.clone(), failed.clone());
-            let trace = build_execution_trace_v1(
+            let module_state_before_execution = store.module_state.clone();
+            return finalize_native_execution_receipt_v1(
+                store,
                 request,
                 &unresolved_fee,
-                &failed,
                 &rejected_subject_meta,
-                store,
+                context.durable_auth_reservation,
+                context.aoem_semantic_ingress_override.clone(),
+                &module_state_before_execution,
+                context.mirror_base_path,
+                context.mirror_records,
                 context.now_ms,
+                failed,
             );
-            persist_execution_trace_v1(store, trace);
-            store.last_updated_unix_ms = context.now_ms;
-            return Ok(failed);
         }
     };
     let settled_fee = match settle_fee_policy_from_execution_request_v1(
@@ -11513,23 +11573,20 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
                 fee_method.to_string(),
                 reason,
             );
-            if let Some(reservation) = context.durable_auth_reservation {
-                commit_nov_native_durable_auth_reservation_v1(store, reservation)?;
-            }
-            store
-                .receipts
-                .insert(failed.tx_hash.clone(), failed.clone());
-            let trace = build_execution_trace_v1(
+            let module_state_before_execution = store.module_state.clone();
+            return finalize_native_execution_receipt_v1(
+                store,
                 request,
                 &unresolved_fee,
-                &failed,
                 &effective_subject_meta,
-                store,
+                context.durable_auth_reservation,
+                context.aoem_semantic_ingress_override.clone(),
+                &module_state_before_execution,
+                context.mirror_base_path,
+                context.mirror_records,
                 context.now_ms,
+                failed,
             );
-            persist_execution_trace_v1(store, trace);
-            store.last_updated_unix_ms = context.now_ms;
-            return Ok(failed);
         }
     };
     let aoem_semantic_ingress = if let Some(meta) = context.aoem_semantic_ingress_override {
@@ -11551,88 +11608,44 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
                     "semantic_ingress".to_string(),
                     format!("aoem.semantic_ingress.required_failed: {err}"),
                 );
-                if let Some(reservation) = context.durable_auth_reservation {
-                    commit_nov_native_durable_auth_reservation_v1(store, reservation)?;
-                }
-                store
-                    .receipts
-                    .insert(failed.tx_hash.clone(), failed.clone());
-                let trace = build_execution_trace_v1(
+                let module_state_before_execution = store.module_state.clone();
+                return finalize_native_execution_receipt_v1(
+                    store,
                     request,
                     &unresolved_fee,
-                    &failed,
                     &effective_subject_meta,
-                    store,
+                    context.durable_auth_reservation,
+                    None,
+                    &module_state_before_execution,
+                    context.mirror_base_path,
+                    context.mirror_records,
                     context.now_ms,
+                    failed,
                 );
-                persist_execution_trace_v1(store, trace);
-                store.last_updated_unix_ms = context.now_ms;
-                return Ok(failed);
             }
         }
     };
     let module_state_before_execution = store.module_state.clone();
-    let mut receipt = dispatch_native_module_execute_v1(
+    let receipt = dispatch_native_module_execute_v1(
         request,
         &settled_fee,
         &effective_subject_meta,
         store,
         context.now_ms,
     );
-    receipt.aoem_semantic_ingress = aoem_semantic_ingress;
-    if let Some(reservation) = context.durable_auth_reservation {
-        commit_nov_native_durable_auth_reservation_v1(store, reservation)?;
-    }
-    let semantic_deltas = build_native_execution_semantic_deltas_v1(
-        &module_state_before_execution,
-        &store.module_state,
-    );
-    attach_native_semantic_deltas_to_receipt_v1(&mut receipt, semantic_deltas);
-    if let Some((sequence, commit_seal)) = attach_native_semantic_ledger_commit_to_receipt_v1(
-        &mut receipt,
-        &module_state_before_execution,
-        &store.module_state,
-        module_state_before_execution.aoem_semantic_ledger_sequence,
-        module_state_before_execution
-            .aoem_semantic_ledger_head
-            .as_str(),
-    ) {
-        store.module_state.aoem_semantic_ledger_sequence = sequence;
-        store.module_state.aoem_semantic_ledger_head = commit_seal;
-    }
-    receipt.aoem_semantic_commit = build_native_receipt_aoem_semantic_commit_v1(&receipt);
-    store
-        .receipts
-        .insert(receipt.tx_hash.clone(), receipt.clone());
-    let trace = build_execution_trace_v1(
+    finalize_native_execution_receipt_v1(
+        store,
         request,
         &settled_fee,
-        &receipt,
         &effective_subject_meta,
-        store,
+        context.durable_auth_reservation,
+        aoem_semantic_ingress,
+        &module_state_before_execution,
+        context.mirror_base_path,
+        context.mirror_records,
         context.now_ms,
-    );
-    persist_execution_trace_v1(store, trace);
-    store.last_updated_unix_ms = context.now_ms;
-    if let Some(mirror_record) =
-        build_native_aoem_semantic_ledger_mirror_record_v1(&receipt, context.now_ms)
-    {
-        store
-            .module_state
-            .aoem_semantic_ledger_records
-            .insert(mirror_record.sequence, mirror_record.clone());
-        if let Some(records) = context.mirror_records {
-            records.push(mirror_record);
-        } else {
-            let mirror_path =
-                nov_native_aoem_semantic_ledger_mirror_path_v1(context.mirror_base_path);
-            append_nov_native_aoem_semantic_ledger_mirror_record_v1(
-                mirror_path.as_path(),
-                &mirror_record,
-            )?;
-        }
-    }
-    Ok(receipt)
+        receipt,
+    )
 }
 
 fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
@@ -16957,7 +16970,7 @@ fn run_nov_send_raw_transaction_batch_internal_v1(
                         Ok(commit) => Some(commit),
                         Err(err) => {
                             owned_commit_error =
-                                Some(format!("AOEM-owned state commit failed: {err}"));
+                                Some(format!("AOEM-owned state commit failed: {err:#}"));
                             None
                         }
                     }
@@ -20980,6 +20993,50 @@ mod tests {
         build_test_native_execute_raw_hex_with_chain_v1(77, nonce, account, amount)
     }
 
+    fn build_test_network_fixture_raw_hex_v1(
+        chain_id: u64,
+        fixture_identity: u64,
+        amount: u64,
+    ) -> String {
+        let mut native_tx = NovNativeTxWireV1 {
+            chain_id,
+            kind: NovTxKindV1::Execute(novovm_protocol::NovExecuteTxV1 {
+                caller: Vec::new(),
+                account_id: None,
+                fee_owner_account_id: None,
+                nonce_owner_account_id: None,
+                target: NovExecutionTargetV1::NativeModule("treasury".to_string()),
+                method: "deposit_reserve".to_string(),
+                args: serde_json::to_vec(&serde_json::json!({
+                    "asset": "USDT",
+                    "amount": amount,
+                }))
+                .expect("encode network fixture args"),
+                execution_mode: NovExecutionModeV1::Batch,
+                execution_policy: NovExecutionPolicyV1::Standard,
+                privacy_mode: NovPrivacyModeV1::Public,
+                verification_mode: NovVerificationModeV1::Standard,
+                fee_policy: NovFeePolicyV1 {
+                    pay_asset: "NOV".to_string(),
+                    max_pay_amount: 50,
+                    slippage_bps: 100,
+                },
+                gas_like_limit: Some(90_000),
+                nonce: 0,
+            }),
+            signature: Vec::new(),
+        };
+        let mut seed_hasher = sha2::Sha256::new();
+        seed_hasher.update(b"novovm-native-fixture-signing-seed/v1");
+        seed_hasher.update(chain_id.to_le_bytes());
+        seed_hasher.update(fixture_identity.to_le_bytes());
+        let signing_seed: [u8; 32] = seed_hasher.finalize().into();
+        sign_nov_native_tx_with_seed_v1(&mut native_tx, signing_seed)
+            .expect("sign network fixture tx");
+        let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode network fixture tx");
+        to_hex_prefixed_v1(raw.as_slice())
+    }
+
     fn run_test_native_tx_batch_shadow_with_raws_result_v1(
         raw_txs: Vec<String>,
     ) -> Result<serde_json::Value> {
@@ -21793,6 +21850,35 @@ mod tests {
             Some(false)
         );
         assert_eq!(out["aoem_native_tx_batch_v1_built"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn aoem_production_persists_authenticated_failed_receipt_as_versioned_state() {
+        let out = run_test_native_tx_batch_production_candidate_with_raws_v1(vec![
+            build_test_network_fixture_raw_hex_v1(77, 1, 1),
+        ]);
+        assert_eq!(out["accepted"].as_bool(), Some(true), "output: {out:#}");
+        assert_eq!(
+            out["aoem_native_tx_batch_production_candidate_result_ok"].as_bool(),
+            Some(true),
+            "output: {out:#}"
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_production_receipt_count"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            out["aoem_native_tx_batch_owned_commit"]["state_version"].as_u64(),
+            Some(1),
+            "one durable failed receipt and nonce reservation must advance the authoritative state version exactly once: {out:#}"
+        );
+        let receipt = &out["results"][0]["native_receipt"];
+        assert_eq!(receipt["status"].as_bool(), Some(false));
+        assert_eq!(
+            receipt["aoem_semantic_commit"]["sequence"].as_u64(),
+            Some(1),
+            "one failed receipt must advance the semantic ledger exactly once"
+        );
     }
 
     #[test]

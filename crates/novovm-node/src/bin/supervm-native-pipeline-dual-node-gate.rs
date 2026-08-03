@@ -1,7 +1,20 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{bail, Context, Result};
+use novovm_node::native_block_ledger::{
+    NovNativeBlockLedgerV1, NOV_NATIVE_BLOCK_LEDGER_MAX_HYDRATE_BLOCKS_V1,
+};
+use novovm_node::tx_ingress::{
+    native_business_protocol_config_commitment_v1, NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
+    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+    NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV, NOV_NATIVE_AOEM_SEMANTIC_LEDGER_MIRROR_ENV,
+    NOV_NATIVE_BLOCK_LEDGER_ROCKSDB_PATH_ENV, NOV_NATIVE_EXECUTION_STORE_ROCKSDB_PATH_ENV,
+    NOV_NATIVE_LEGACY_HOST_TRANSITIONAL_FALLBACK_ENV,
+    NOV_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT_ENV,
+    NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV,
+};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fs;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
@@ -67,6 +80,12 @@ fn temp_store_path_v1(name: &str, chain_id: u64) -> PathBuf {
     ))
 }
 
+fn append_path_suffix_v1(path: &Path, suffix: &str) -> PathBuf {
+    let mut raw = path.as_os_str().to_os_string();
+    raw.push(suffix);
+    PathBuf::from(raw)
+}
+
 fn default_report_path_v1() -> PathBuf {
     PathBuf::from("artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json")
 }
@@ -75,6 +94,21 @@ fn report_path_v1() -> PathBuf {
     string_env_nonempty("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(default_report_path_v1)
+}
+
+fn inherit_child_env_v1(key: &str) -> bool {
+    ![
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_PEERS",
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT",
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX",
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE",
+        "NOVOVM_NOVORUDP_RUN_ID",
+        "NOVOVM_NETWORK_RUN_ID",
+        "NOVOVM_NOVORUDP_OUTBOUND_RUN_ID",
+        "NOVOVM_NETWORK_OUTBOUND_RUN_ID",
+    ]
+    .iter()
+    .any(|blocked| key.eq_ignore_ascii_case(blocked))
 }
 
 fn write_report_v1(path: &Path, report: &Value) -> Result<()> {
@@ -96,11 +130,7 @@ fn run_node_v1(bin: &PathBuf, envs: &[(&str, String)]) -> Result<Output> {
     let mut cmd = Command::new(bin);
     cmd.env_clear();
     for (key, value) in std::env::vars() {
-        if key == "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_PEERS"
-            || key == "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT"
-            || key == "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX"
-            || key == "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE"
-        {
+        if !inherit_child_env_v1(key.as_str()) {
             continue;
         }
         cmd.env(key, value);
@@ -114,9 +144,24 @@ fn run_node_v1(bin: &PathBuf, envs: &[(&str, String)]) -> Result<Output> {
 
 fn parse_summary_v1(output: &Output, label: &str) -> Result<Value> {
     if !output.status.success() {
+        let diagnostic = serde_json::from_slice::<Value>(&output.stdout)
+            .map(|summary| {
+                serde_json::json!({
+                    "aoem_executed_total": summary_u64(&summary, "aoem_executed_total"),
+                    "aoem_deferred_total": summary_u64(&summary, "aoem_deferred_total"),
+                    "queue_pending_last": summary_u64(&summary, "queue_pending_last"),
+                    "tx_ingress_selected_path": summary.get("tx_ingress_selected_path"),
+                    "aoem_native_tx_batch_production_candidate_result_ok": summary.get("aoem_native_tx_batch_production_candidate_result_ok"),
+                    "aoem_native_tx_batch_production_mismatch_reasons": summary.get("aoem_native_tx_batch_production_mismatch_reasons"),
+                    "aoem_owned_signoff_blocker_reasons": summary.get("aoem_owned_signoff_blocker_reasons"),
+                })
+            })
+            .map(|summary| summary.to_string())
+            .unwrap_or_else(|_| String::from_utf8_lossy(&output.stdout).into_owned());
         bail!(
-            "{label} node failed: status={} stderr={}",
+            "{label} node failed: status={} diagnostic={} stderr={}",
             output.status,
+            diagnostic,
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -127,6 +172,18 @@ fn parse_summary_v1(output: &Output, label: &str) -> Result<Value> {
             String::from_utf8_lossy(&output.stderr)
         )
     })
+}
+
+fn terminate_receiver_children_v1(children: &mut [(u64, String, Child)]) {
+    for (_, _, child) in children {
+        match child.try_wait() {
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
 }
 
 fn summary_u64(summary: &Value, field: &str) -> u64 {
@@ -165,6 +222,284 @@ fn require_eq_str(summary: &Value, field: &str, expected: &str, label: &str) -> 
         bail!("{label} summary gate failed: {field}={actual}, expected {expected}");
     }
     Ok(())
+}
+
+fn validate_unsealed_receiver_completion_v1(
+    summary: &Value,
+    tx_count: u64,
+    label: &str,
+) -> Result<()> {
+    require_min(
+        summary,
+        "ledger_receipt_proof_close_success_count",
+        tx_count,
+        label,
+    )?;
+    require_min(summary, "ledger_completed_count", tx_count, label)?;
+    require_min(
+        summary,
+        "queue_included_non_canonical_last",
+        tx_count,
+        label,
+    )?;
+    for field in [
+        "included_canonical_total",
+        "ledger_canonical_proof_close_success_count",
+        "ledger_receipt_proof_missing_sequence_mapping_count",
+        "ledger_durable_missing_count",
+    ] {
+        let actual = summary_u64(summary, field);
+        if actual != 0 {
+            bail!(
+                "{label} summary gate failed: {field}={actual} expected 0 for an authenticated unsealed candidate"
+            );
+        }
+    }
+    for field in [
+        "aoem_native_tx_batch_production_candidate_enabled",
+        "aoem_native_tx_batch_production_candidate_result_ok",
+        "aoem_owned_child_runtime_gate_propagated_to_tx_ingress",
+        "aoem_owned_single_path_enforced",
+        "aoem_owned_regression_signable",
+    ] {
+        if summary.get(field).and_then(Value::as_bool) != Some(true) {
+            bail!("{label} summary gate failed: {field} is not true");
+        }
+    }
+    for field in [
+        "legacy_host_transitional_fallback_used",
+        "aoem_native_tx_batch_production_fallback_used",
+        "aoem_native_tx_batch_production_double_write_legacy_canonical",
+    ] {
+        if summary.get(field).and_then(Value::as_bool) != Some(false) {
+            bail!("{label} summary gate failed: {field} is not false");
+        }
+    }
+    for field in ["tx_ingress_selected_path", "tx_ingress_production_target"] {
+        require_eq_str(
+            summary,
+            field,
+            "aoem_runtime_owned_state_persistence",
+            label,
+        )?;
+    }
+    require_eq_str(
+        summary,
+        "aoem_native_tx_batch_production_owner",
+        "aoem_runtime_owned_state_persistence",
+        label,
+    )?;
+    let receipt_count = summary_u64(summary, "aoem_native_tx_batch_production_receipt_count");
+    if receipt_count != tx_count {
+        bail!(
+            "{label} summary gate failed: aoem_native_tx_batch_production_receipt_count={receipt_count} expected {tx_count}"
+        );
+    }
+    for field in [
+        "aoem_native_tx_batch_production_mismatch_reasons",
+        "aoem_owned_signoff_blocker_reasons",
+    ] {
+        let is_empty = summary
+            .get(field)
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty);
+        if !is_empty {
+            bail!("{label} summary gate failed: {field} is missing or non-empty");
+        }
+    }
+    Ok(())
+}
+
+fn validate_durable_unsealed_ledger_v1(
+    native_store: &Path,
+    chain_id: u64,
+    tx_count: u64,
+    protocol_config_commitment: &str,
+    label: &str,
+) -> Result<Value> {
+    let ledger_path = append_path_suffix_v1(native_store, ".block-ledger.rocksdb");
+    let ledger = NovNativeBlockLedgerV1::open_existing_read_only(ledger_path.as_path())?
+        .with_context(|| {
+            format!(
+                "{label} durable NOV native block ledger is missing: {}",
+                ledger_path.display()
+            )
+        })?;
+    let ownership = ledger
+        .load_aoem_ownership()?
+        .with_context(|| format!("{label} durable AOEM ownership binding is missing"))?;
+    if ownership.chain_id != chain_id
+        || ownership.protocol_config_commitment != protocol_config_commitment
+    {
+        bail!(
+            "{label} durable AOEM ownership binding mismatch: chain={} protocol={} expected_chain={} expected_protocol={}",
+            ownership.chain_id,
+            ownership.protocol_config_commitment,
+            chain_id,
+            protocol_config_commitment
+        );
+    }
+
+    let status = ledger.status(chain_id)?;
+    if status.prepared.is_some() {
+        bail!("{label} durable block ledger retained a prepared candidate after completion");
+    }
+    if !status.canonical_local || status.safe || status.finalized || status.proof_sealed {
+        bail!(
+            "{label} durable block ledger status is not local-unsealed: canonical_local={} safe={} finalized={} proof_sealed={}",
+            status.canonical_local,
+            status.safe,
+            status.finalized,
+            status.proof_sealed
+        );
+    }
+    let head = status
+        .head
+        .as_ref()
+        .with_context(|| format!("{label} durable block ledger head is missing"))?;
+    if !head.canonical_local || head.safe || head.finalized || head.proof_sealed {
+        bail!(
+            "{label} durable block ledger head is not local-unsealed: canonical_local={} safe={} finalized={} proof_sealed={}",
+            head.canonical_local,
+            head.safe,
+            head.finalized,
+            head.proof_sealed
+        );
+    }
+    if head.cumulative_tx_count != tx_count {
+        bail!(
+            "{label} durable block ledger cumulative_tx_count={} expected {tx_count}",
+            head.cumulative_tx_count
+        );
+    }
+    let block_count = usize::try_from(head.block_count)
+        .with_context(|| format!("{label} durable block count exceeds usize"))?;
+    if block_count == 0 || block_count > NOV_NATIVE_BLOCK_LEDGER_MAX_HYDRATE_BLOCKS_V1 {
+        bail!(
+            "{label} durable block count {block_count} is outside the bounded audit range 1..={} ",
+            NOV_NATIVE_BLOCK_LEDGER_MAX_HYDRATE_BLOCKS_V1
+        );
+    }
+    let blocks = ledger.load_blocks_from_height(chain_id, 1, block_count)?;
+    if blocks.len() != block_count {
+        bail!(
+            "{label} durable block range length={} expected {block_count}",
+            blocks.len()
+        );
+    }
+
+    let mut seen_tx_hashes = HashSet::<[u8; 32]>::with_capacity(tx_count as usize);
+    let mut verified_tx_count = 0u64;
+    let mut verified_body_bytes = 0u64;
+    for block in &blocks {
+        let header = &block.header;
+        let body = &block.body;
+        let evidence = &block.execution_evidence;
+        if header.candidate_kind != "local_unsealed_execution_candidate"
+            || !header.aoem_readback_verified
+            || !header.canonical_local
+            || header.safe
+            || header.finalized
+            || header.proof_sealed
+            || evidence.proof_sealed
+        {
+            bail!(
+                "{label} block height={} is not an AOEM-readback-verified local unsealed candidate",
+                header.height
+            );
+        }
+        let tx_len = body.tx_hashes.len();
+        if body.raw_txs.len() != tx_len
+            || evidence.per_block_receipt_commitments.len() != tx_len
+            || usize::try_from(header.tx_count).ok() != Some(tx_len)
+            || usize::try_from(header.receipt_count).ok() != Some(tx_len)
+        {
+            bail!(
+                "{label} block height={} transaction/body/receipt cardinality mismatch",
+                header.height
+            );
+        }
+        for (index, tx_hash) in body.tx_hashes.iter().enumerate() {
+            if !seen_tx_hashes.insert(*tx_hash) {
+                bail!(
+                    "{label} duplicate transaction hash in durable ledger at height={} index={index}",
+                    header.height
+                );
+            }
+            let tx_location = ledger
+                .load_tx_location(chain_id, *tx_hash)?
+                .with_context(|| {
+                    format!(
+                        "{label} transaction index missing at height={} index={index}",
+                        header.height
+                    )
+                })?;
+            let receipt_location = ledger
+                .load_receipt_location(chain_id, *tx_hash)?
+                .with_context(|| {
+                    format!(
+                        "{label} receipt index missing at height={} index={index}",
+                        header.height
+                    )
+                })?;
+            let expected_index = u32::try_from(index).context("durable tx index exceeds u32")?;
+            if tx_location.height != header.height
+                || tx_location.block_hash != header.block_hash
+                || tx_location.tx_index != expected_index
+                || !tx_location.canonical_local
+                || receipt_location.height != header.height
+                || receipt_location.block_hash != header.block_hash
+                || receipt_location.tx_index != expected_index
+                || !receipt_location.canonical_local
+                || receipt_location.proof_sealed
+            {
+                bail!(
+                    "{label} durable transaction/receipt reverse index mismatch at height={} index={index}",
+                    header.height
+                );
+            }
+        }
+        verified_tx_count = verified_tx_count.saturating_add(tx_len as u64);
+        verified_body_bytes = verified_body_bytes.saturating_add(header.body_bytes);
+    }
+    if verified_tx_count != tx_count || verified_body_bytes != head.cumulative_body_bytes {
+        bail!(
+            "{label} durable ledger aggregate mismatch: tx_count={verified_tx_count}/{tx_count} body_bytes={verified_body_bytes}/{}",
+            head.cumulative_body_bytes
+        );
+    }
+    let last = blocks
+        .last()
+        .with_context(|| format!("{label} durable block range is empty"))?;
+    if last.header.height != head.height
+        || last.header.block_hash != head.block_hash
+        || last.header.post_state_root != head.post_state_root
+        || last.header.cumulative_receipt_root != head.cumulative_receipt_root
+        || last.header.state_version != head.state_version
+    {
+        bail!("{label} durable block range does not terminate at the verified head");
+    }
+
+    Ok(serde_json::json!({
+        "ledger_path": ledger_path,
+        "ownership_chain_id": ownership.chain_id,
+        "ownership_namespace_digest": ownership.namespace_digest,
+        "protocol_config_commitment": ownership.protocol_config_commitment,
+        "candidate_kind": "local_unsealed_execution_candidate",
+        "block_count": head.block_count,
+        "head_height": head.height,
+        "cumulative_tx_count": head.cumulative_tx_count,
+        "cumulative_body_bytes": head.cumulative_body_bytes,
+        "verified_tx_index_count": verified_tx_count,
+        "verified_receipt_index_count": verified_tx_count,
+        "aoem_readback_verified": true,
+        "canonical_local": true,
+        "chain_canonical": false,
+        "safe": false,
+        "finalized": false,
+        "proof_sealed": false,
+        "prepared_present": false,
+    }))
 }
 
 fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
@@ -339,8 +674,15 @@ fn main() -> Result<()> {
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_PROCESS_BUDGET_MS",
         if sender_rounds > 1 { 1_000 } else { 0 },
     )?;
-    let min_receiver_canonical_tps_x1000 = u64_env(
-        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_CANONICAL_TPS_X1000",
+    if string_env_nonempty("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_CANONICAL_TPS_X1000")
+        .is_some()
+    {
+        bail!(
+            "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_CANONICAL_TPS_X1000 is obsolete: this gate verifies local unsealed candidates, not chain-canonical blocks; use NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_UNSEALED_CANDIDATE_TPS_X1000"
+        );
+    }
+    let min_receiver_unsealed_candidate_tps_x1000 = u64_env(
+        "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_UNSEALED_CANDIDATE_TPS_X1000",
         0,
     )?;
     let min_receiver_max_aoem_batch_per_tick = u64_env(
@@ -412,6 +754,11 @@ fn main() -> Result<()> {
     )?;
     let sender_node = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_NODE", 9_991_895)?;
     let receiver_node = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_NODE", 9_991_896)?;
+    let transport_run_id = format!("novovm-dual-node-gate-{chain_id}-{}", std::process::id());
+    let transport_auth_key = format!(
+        "novovm-dual-node-gate-key-{chain_id}-{}",
+        std::process::id()
+    );
     let udp_broadcast_max_propagations = u64_env(
         "NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PROPAGATIONS",
         receiver_count
@@ -449,8 +796,14 @@ fn main() -> Result<()> {
             node_bin.display()
         );
     }
+    let protocol_config_commitment = native_business_protocol_config_commitment_v1()
+        .context("compute dual-node gate NOV business protocol configuration commitment")?;
 
     let common = |ticks: u64, store: &PathBuf, node: u64, listen: &str, peer: &str| {
+        let host_rocksdb = append_path_suffix_v1(store.as_path(), ".rocksdb");
+        let block_ledger = append_path_suffix_v1(store.as_path(), ".block-ledger.rocksdb");
+        let semantic_mirror = append_path_suffix_v1(store.as_path(), ".aoem-semantic-ledger.jsonl");
+        let unified_account = append_path_suffix_v1(store.as_path(), ".unified-account.rocksdb");
         vec![
             ("NOVOVM_NODE_MODE", "native_execution_pipeline".to_string()),
             (
@@ -475,6 +828,22 @@ fn main() -> Result<()> {
                 tick_budget.to_string(),
             ),
             ("NOVOVM_NATIVE_EXECUTION_STORE", store.display().to_string()),
+            (
+                NOV_NATIVE_EXECUTION_STORE_ROCKSDB_PATH_ENV,
+                host_rocksdb.display().to_string(),
+            ),
+            (
+                NOV_NATIVE_BLOCK_LEDGER_ROCKSDB_PATH_ENV,
+                block_ledger.display().to_string(),
+            ),
+            (
+                NOV_NATIVE_AOEM_SEMANTIC_LEDGER_MIRROR_ENV,
+                semantic_mirror.display().to_string(),
+            ),
+            (
+                "NOVOVM_UNIFIED_ACCOUNT_DB",
+                unified_account.display().to_string(),
+            ),
             (
                 "NOVOVM_NATIVE_EXECUTION_STORE_BACKEND",
                 store_backend.clone(),
@@ -508,6 +877,30 @@ fn main() -> Result<()> {
                 "true".to_string(),
             ),
             (
+                NOV_NATIVE_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE_ENV,
+                "true".to_string(),
+            ),
+            (
+                NOV_NATIVE_AOEM_NATIVE_TX_BATCH_COMPARE_ENV,
+                "false".to_string(),
+            ),
+            (
+                NOV_NATIVE_AOEM_NATIVE_TX_BATCH_SHADOW_ENV,
+                "false".to_string(),
+            ),
+            (
+                NOV_NATIVE_LEGACY_HOST_TRANSITIONAL_FALLBACK_ENV,
+                "false".to_string(),
+            ),
+            (
+                NOV_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY_ENV,
+                "true".to_string(),
+            ),
+            (
+                NOV_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT_ENV,
+                protocol_config_commitment.clone(),
+            ),
+            (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_ROCKSDB_STORE",
                 "true".to_string(),
             ),
@@ -517,6 +910,14 @@ fn main() -> Result<()> {
             ),
             // The UDP underlay is valid only when it carries NovoRUDP frames.
             ("NOVOVM_NATIVE_PIPELINE_TRANSPORT", "novorudp".to_string()),
+            (
+                "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY",
+                transport_auth_key.clone(),
+            ),
+            (
+                "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_REQUIRED",
+                "true".to_string(),
+            ),
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_LISTEN_ADDR",
                 listen.to_string(),
@@ -554,16 +955,20 @@ fn main() -> Result<()> {
                 "true".to_string(),
             ),
             (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID",
+                "true".to_string(),
+            ),
+            (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK",
-                min_receiver_max_aoem_batch_per_tick.to_string(),
+                "0".to_string(),
             ),
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_PROOF_ITEMS_PER_TICK",
-                min_receiver_max_proof_items_per_tick.to_string(),
+                "0".to_string(),
             ),
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_COMMIT_ITEMS_PER_TICK",
-                min_receiver_max_commit_items_per_tick.to_string(),
+                "0".to_string(),
             ),
         ]
     };
@@ -616,7 +1021,7 @@ fn main() -> Result<()> {
             ),
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED",
-                "0".to_string(),
+                tx_count.to_string(),
             ),
             (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS",
@@ -638,10 +1043,25 @@ fn main() -> Result<()> {
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_QUEUE_ADMITTED_PER_TICK",
                 min_receiver_max_queue_admitted_per_tick.to_string(),
             ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK",
+                min_receiver_max_aoem_batch_per_tick.to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_PROOF_ITEMS_PER_TICK",
+                min_receiver_max_proof_items_per_tick.to_string(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_COMMIT_ITEMS_PER_TICK",
+                min_receiver_max_commit_items_per_tick.to_string(),
+            ),
         ]);
         let mut cmd = Command::new(&node_bin);
         cmd.env_clear();
         for (key, value) in std::env::vars() {
+            if !inherit_child_env_v1(key.as_str()) {
+                continue;
+            }
             cmd.env(key, value);
         }
         for (key, value) in &receiver_env {
@@ -670,6 +1090,10 @@ fn main() -> Result<()> {
         let mut round_env = sender_env.clone();
         round_env.extend([
             (
+                "NOVOVM_NOVORUDP_OUTBOUND_RUN_ID",
+                format!("{transport_run_id}-round-{}", round + 1),
+            ),
+            (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT",
                 round_tx_count.to_string(),
             ),
@@ -686,12 +1110,19 @@ fn main() -> Result<()> {
                 round_tx_count.to_string(),
             ),
         ]);
-        let sender_out = run_node_v1(&node_bin, round_env.as_slice())
-            .with_context(|| format!("run sender round {} failed", round + 1))?;
-        sender_summaries.push(parse_summary_v1(
-            &sender_out,
-            format!("sender_round_{}", round + 1).as_str(),
-        )?);
+        let sender_round = run_node_v1(&node_bin, round_env.as_slice())
+            .with_context(|| format!("run sender round {} failed", round + 1))
+            .and_then(|sender_out| {
+                parse_summary_v1(&sender_out, format!("sender_round_{}", round + 1).as_str())
+            });
+        let sender_round = match sender_round {
+            Ok(summary) => summary,
+            Err(error) => {
+                terminate_receiver_children_v1(receiver_children.as_mut_slice());
+                return Err(error);
+            }
+        };
+        sender_summaries.push(sender_round);
         sent_total = sent_total.saturating_add(round_tx_count);
         if round + 1 < sender_rounds && sent_total < tx_count {
             std::thread::sleep(std::time::Duration::from_millis(sender_round_interval_ms));
@@ -712,12 +1143,29 @@ fn main() -> Result<()> {
         .first()
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("dual-node gate did not collect receiver summaries"))?;
+    let durable_receiver_ledgers = receivers
+        .iter()
+        .enumerate()
+        .map(|(idx, (_, _, store))| {
+            validate_durable_unsealed_ledger_v1(
+                store.as_path(),
+                chain_id,
+                tx_count,
+                protocol_config_commitment.as_str(),
+                format!("receiver_{}", idx + 1).as_str(),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
     let sender_broadcast_tps_x1000 = tps_x1000(
         summary_u64(&sender_summary, "broadcast_tx_total_last"),
         summary_u64(&sender_summary, "elapsed_ms"),
     );
-    let receiver_canonical_tps_x1000 = tps_x1000(
-        summary_u64(&receiver_summary, "included_canonical_total"),
+    let receiver_unsealed_candidate_tps_x1000 = tps_x1000(
+        durable_receiver_ledgers
+            .first()
+            .and_then(|summary| summary.get("cumulative_tx_count"))
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
         summary_u64(&receiver_summary, "elapsed_ms"),
     );
 
@@ -815,12 +1263,7 @@ fn main() -> Result<()> {
             )?;
             require_min(summary, "proof_ticks", execution_ticks, label.as_str())?;
             require_min(summary, "commit_ticks", execution_ticks, label.as_str())?;
-            require_min(
-                summary,
-                "included_canonical_total",
-                tx_count,
-                label.as_str(),
-            )?;
+            validate_unsealed_receiver_completion_v1(summary, tx_count, label.as_str())?;
             if summary_u64(summary, "queue_pending_last") != 0 {
                 bail!(
                     "{label} summary gate failed: queue_pending_last={} expected 0",
@@ -877,11 +1320,11 @@ fn main() -> Result<()> {
                 min_sender_broadcast_tps_x1000
             );
         }
-        if receiver_canonical_tps_x1000 < min_receiver_canonical_tps_x1000 {
+        if receiver_unsealed_candidate_tps_x1000 < min_receiver_unsealed_candidate_tps_x1000 {
             bail!(
-                "receiver summary gate failed: canonical_tps_x1000={} below min {}",
-                receiver_canonical_tps_x1000,
-                min_receiver_canonical_tps_x1000
+                "receiver summary gate failed: unsealed_candidate_tps_x1000={} below min {}",
+                receiver_unsealed_candidate_tps_x1000,
+                min_receiver_unsealed_candidate_tps_x1000
             );
         }
         Ok(())
@@ -908,6 +1351,9 @@ fn main() -> Result<()> {
         "sender_round_process_budget_ms": sender_round_process_budget_ms,
         "sender_ticks": sender_ticks,
         "receiver_ticks": receiver_ticks,
+        "receiver_completion_class": "authenticated_receipt_closed_aoem_owned_durable_unsealed_candidate_not_chain_canonical",
+        "protocol_config_commitment": protocol_config_commitment,
+        "transport_run_id_base": transport_run_id,
         "store_backend": store_backend,
         "ingress_max_per_tick": ingress_max_per_tick,
         "total_ingress_ticks": total_ingress_ticks,
@@ -925,9 +1371,9 @@ fn main() -> Result<()> {
             .collect::<Vec<_>>(),
         "metrics": {
             "sender_broadcast_tps_x1000": sender_broadcast_tps_x1000,
-            "receiver_canonical_tps_x1000": receiver_canonical_tps_x1000,
+            "receiver_unsealed_candidate_tps_x1000": receiver_unsealed_candidate_tps_x1000,
             "min_sender_broadcast_tps_x1000": min_sender_broadcast_tps_x1000,
-            "min_receiver_canonical_tps_x1000": min_receiver_canonical_tps_x1000,
+            "min_receiver_unsealed_candidate_tps_x1000": min_receiver_unsealed_candidate_tps_x1000,
             "min_sender_max_product_ingress_per_tick": min_sender_max_product_ingress_per_tick,
             "min_receiver_max_network_received_per_tick": min_receiver_max_network_received_per_tick,
             "min_receiver_max_queue_admitted_per_tick": min_receiver_max_queue_admitted_per_tick,
@@ -941,6 +1387,7 @@ fn main() -> Result<()> {
         "sender_round_summaries": sender_summaries,
         "receiver_summary": receiver_summary,
         "receiver_summaries": receiver_summaries,
+        "durable_receiver_ledgers": durable_receiver_ledgers,
     });
     let report_path = report_path_v1();
     write_report_v1(report_path.as_path(), &report)?;
@@ -949,4 +1396,77 @@ fn main() -> Result<()> {
         serde_json::to_string_pretty(&report).context("encode dual node gate report failed")?
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unsealed_summary_v1() -> Value {
+        serde_json::json!({
+            "ledger_receipt_proof_close_success_count": 8,
+            "ledger_completed_count": 8,
+            "queue_included_non_canonical_last": 8,
+            "included_canonical_total": 0,
+            "ledger_canonical_proof_close_success_count": 0,
+            "ledger_receipt_proof_missing_sequence_mapping_count": 0,
+            "ledger_durable_missing_count": 0,
+            "aoem_native_tx_batch_production_candidate_enabled": true,
+            "aoem_native_tx_batch_production_candidate_result_ok": true,
+            "aoem_owned_child_runtime_gate_propagated_to_tx_ingress": true,
+            "aoem_owned_single_path_enforced": true,
+            "aoem_owned_regression_signable": true,
+            "legacy_host_transitional_fallback_used": false,
+            "aoem_native_tx_batch_production_fallback_used": false,
+            "aoem_native_tx_batch_production_double_write_legacy_canonical": false,
+            "tx_ingress_selected_path": "aoem_runtime_owned_state_persistence",
+            "tx_ingress_production_target": "aoem_runtime_owned_state_persistence",
+            "aoem_native_tx_batch_production_owner": "aoem_runtime_owned_state_persistence",
+            "aoem_native_tx_batch_production_receipt_count": 8,
+            "aoem_native_tx_batch_production_mismatch_reasons": [],
+            "aoem_owned_signoff_blocker_reasons": [],
+        })
+    }
+
+    #[test]
+    fn unsealed_receiver_completion_accepts_receipt_closed_noncanonical_execution() {
+        validate_unsealed_receiver_completion_v1(&unsealed_summary_v1(), 8, "receiver")
+            .expect("receipt-closed unsealed execution should satisfy the gate");
+    }
+
+    #[test]
+    fn unsealed_receiver_completion_rejects_false_canonical_promotion() {
+        let mut summary = unsealed_summary_v1();
+        summary["included_canonical_total"] = serde_json::json!(1);
+        let error = validate_unsealed_receiver_completion_v1(&summary, 8, "receiver")
+            .expect_err("an unsealed execution must not satisfy a canonical gate");
+        assert!(error.to_string().contains("included_canonical_total=1"));
+    }
+
+    #[test]
+    fn unsealed_receiver_completion_requires_authenticated_sequence_closure() {
+        let mut summary = unsealed_summary_v1();
+        summary["ledger_receipt_proof_missing_sequence_mapping_count"] = serde_json::json!(1);
+        let error = validate_unsealed_receiver_completion_v1(&summary, 8, "receiver")
+            .expect_err("a missing authenticated sequence mapping must fail the gate");
+        assert!(error
+            .to_string()
+            .contains("ledger_receipt_proof_missing_sequence_mapping_count=1"));
+    }
+
+    #[test]
+    fn child_environment_does_not_inherit_transport_run_identity() {
+        for key in [
+            "NOVOVM_NOVORUDP_RUN_ID",
+            "NOVOVM_NETWORK_RUN_ID",
+            "NOVOVM_NOVORUDP_OUTBOUND_RUN_ID",
+            "NOVOVM_NETWORK_OUTBOUND_RUN_ID",
+        ] {
+            assert!(!inherit_child_env_v1(key));
+            assert!(!inherit_child_env_v1(key.to_ascii_lowercase().as_str()));
+        }
+        assert!(inherit_child_env_v1(
+            "NOVOVM_NOVORUDP_CONTROL_FRAME_AUTH_KEY"
+        ));
+    }
 }
