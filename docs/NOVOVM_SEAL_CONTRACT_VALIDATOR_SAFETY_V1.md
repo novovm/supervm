@@ -2,9 +2,11 @@
 
 状态：活动实现契约；覆盖 Proof-Sealed BFT Finality 路线的 Slice 2A。
 
-本切片完成 NOV 专用 seal subject、proposal、vote、weighted QC 以及本机
-persist-before-emit 安全存储，但尚未接入 Product Overlay、leader 调度、超时证书、
-fork choice 或 canonical promotion。
+本 Slice 2A 完成 NOV 专用 seal subject、proposal、vote、weighted QC 以及本机
+persist-before-emit 安全存储；它自身不包含 Product Overlay ingress、leader 调度、
+超时证书、fork choice 或 canonical promotion。后续 Slice 2B1 已增加 authenticated
+ingress 与独立 quarantine，但 main runtime 的 `NativeSeal` route 仍 dormant，详见
+[`NOVOVM_AUTHENTICATED_SEAL_INGRESS_QUARANTINE_V1.md`](NOVOVM_AUTHENTICATED_SEAL_INGRESS_QUARANTINE_V1.md)。
 
 必须始终按下式理解当前状态：
 
@@ -24,6 +26,9 @@ finalized = false
 
 相关前置契约：
 [`NOVOVM_UNSEALED_BLOCK_CANDIDATE_GRAPH_V1.md`](NOVOVM_UNSEALED_BLOCK_CANDIDATE_GRAPH_V1.md)
+
+相关后续 ingress 契约：
+[`NOVOVM_AUTHENTICATED_SEAL_INGRESS_QUARANTINE_V1.md`](NOVOVM_AUTHENTICATED_SEAL_INGRESS_QUARANTINE_V1.md)
 
 ## 1. 所有权边界
 
@@ -222,15 +227,16 @@ chain/epoch/height 保存排序、去重后的 QC hash 集合；绝不使用单�
 不得按较大 hash 静默 fork-choice
 ```
 
-上述 object/index/evidence 存储逻辑是为后续 authenticated remote-QC ingress 预留的
-防御分支；当前 local-only 入口只能接受一个本机 AOEM-selected block，因此尚没有
-可达的“第二个竞争 block QC”产品入口，也尚未形成对应端到端测试门。不同 round 的
-竞争 QC 不自动等价于同 round equivocation，必须交由后续 locked-QC/fork-choice
-协议判断。
+上述 object/index/evidence 存储逻辑在 Slice 2A 中是为 authenticated remote-QC
+ingress 预留的防御分支。Slice 2B1 已提供独立 quarantine 的 remote proposal/vote/QC
+接收、replay 和 equivocation 入口；竞争 artifact 仍不能越过 quarantine 进入本机
+seal store。不同 round 的竞争 QC 不自动等价于同 round equivocation，必须交由后续
+locked-QC/fork-choice 协议判断。
 
-当前本机 QC 写入口要求 candidate 仍是本机 AOEM-verified candidate，并要求对应
-proposal object 已持久化。远端 QC/body 的 authenticated ingress 和独立执行验证尚未
-接入，因此当前公开节点不会通过 RPC 注入 QC。
+本机 QC 写入口和 Slice 2B1 remote-QC bridge 都要求 candidate 仍是本机
+AOEM-verified candidate，并要求对应 proposal object 已持久化。远端 seal artifact
+不能替代 body/DA 获取和本机独立执行验证；当前公开节点也没有 RPC 注入 QC，活动
+main runtime 的 `NativeSeal` route 仍 dormant。
 
 seal DB 与 candidate ledger 是两个独立 RocksDB，不存在跨库原子事务。本切片绝不
 在 QC 落盘后跨库修改 candidate：后续 `proof_sealed`/canonical promotion 必须使用
@@ -260,7 +266,11 @@ seal DB 与 candidate ledger 是两个独立 RocksDB，不存在跨库原子事�
 
 ## 9. 明确未完成
 
-以下能力均为 `NOT IMPLEMENTED` 或 `NOT EXECUTED`，不得从本切片推导完成：
+以下是 Slice 2A 封盘时的范围表，不得只从本切片推导完成。canonical wire、
+authenticated source binding、remote quarantine/replay/equivocation 和 AOEM exact-match
+bridge 的后续状态由
+[`NOVOVM_AUTHENTICATED_SEAL_INGRESS_QUARANTINE_V1.md`](NOVOVM_AUTHENTICATED_SEAL_INGRESS_QUARANTINE_V1.md)
+定义；该后续能力也没有把任何 finality 字段设为 true。
 
 ```text
 authoritative on-chain validator epoch/set activation  NOT IMPLEMENTED
@@ -278,8 +288,9 @@ public four-machine / VPS / NAT / CGNAT / VPN run       NOT EXECUTED
 Linux package smoke / self-hosted nightly soak          NOT EXECUTED
 ```
 
-下一切片应定义 canonical bounded transport wire，把权威 validator snapshot 和
-authenticated proposal/vote/QC transport 接入
-Product Overlay，同时保持签名私钥只能经过本模块的 durable safety API。只有完成
-远端 body/AOEM evidence 独立验证、leader/timeout/locked-QC 规则和跨库 promotion
+后续 Slice 2B1 已定义 canonical bounded transport wire、operator-pinned epoch
+authority、authenticated source binding 和 durable quarantine，详见上方后续 ingress
+契约。Product Overlay 自动发送和 main runtime 激活仍受 peer-local fault isolation、
+第三航 key-confirm、relay byte/session bounds、per-recipient durable ACK/journal 和
+body/DA 获取阻断。只有再完成独立执行验证、timeout/locked-QC 规则和跨库 promotion
 journal 后，才允许讨论把 candidate 从独立 QC 提升为 `proof_sealed`。

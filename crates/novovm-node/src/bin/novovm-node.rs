@@ -103,7 +103,8 @@ use novovm_node::mainline_query::{
 };
 use novovm_node::product_mainline_overlay::{
     ingest_product_mainline_overlay_payload_v1, load_product_mainline_overlay_config_v1,
-    ProductMainlineOverlayEventV1, ProductMainlineOverlayRoleV1, ProductMainlineOverlayRuntimeV1,
+    ProductMainlineOverlayEventV1, ProductMainlineOverlayPayloadClassV1,
+    ProductMainlineOverlayRoleV1, ProductMainlineOverlayRuntimeV1,
 };
 use novovm_node::tx_ingress::{
     available_ingress_codecs, decode_eth_send_raw_hex_payload_v1,
@@ -1021,7 +1022,30 @@ const L3_DISCOVERY_MEMBERSHIP_PRIORITY_FINGERPRINT: &str =
 const L3_DISCOVERY_MEMBERSHIP_PRIORITY_ORDERING: &str =
     "seen_unix_ms|source_priority|health|score|capacity|addr|region";
 const L3_DISCOVERY_MAX_DYNAMIC_CANDIDATES_PER_REFRESH: usize = 256;
-const MAINLINE_GATE_LOCKSET_V1: &str = "check_novovm_network+check_novovm_node+test_scheduler_gate_matrix+test_manual_route_env_lock_matrix+test_l2_l1_export_equivalence_batch_vs_replay+test_l2_l1_export_equivalence_batch_vs_watch+test_l2_l1_anchor_fingerprint_stable+test_mainline_status_freshness_gate_contract_is_frozen+test_discovery_membership_freshness_contract_default_is_frozen+test_discovery_membership_gossip_json_supports_single_and_vec_message+test_discovery_source_governance_contract_is_frozen+test_discovery_source_breakdown_contract_is_frozen+test_discovery_membership_priority_contract_is_frozen+test_cross_node_runtime_membership_closed_loop+test_cross_node_runtime_membership_cross_region_is_not_admitted+test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy+test_cross_node_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_cross_node_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_operator_forced_still_dominates_route_selection_across_batch_replay_watch+test_pruned_dynamic_relays_no_longer_affect_selection_across_batch_replay_watch+test_concurrent_runtime_membership_order_keeps_selection_view_stable+test_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_cross_node_gossip_membership_order_keeps_selection_view_stable+test_cross_node_gossip_membership_respects_operator_forced_selection+test_runtime_membership_unavailable_update_prunes_existing_discovered_relay+test_v2_matrix_a_order_perturbation_consistency+test_v2_matrix_b_multi_source_conflict_consistency+test_v2_matrix_c_weak_network_disturbance_consistency+test_v2_matrix_d_multi_region_view_consistency+test_v2_stage2a_large_scale_distributed_adjudication_consistency+test_v2_stage2b_weak_network_robustness_consistency+test_v2_stage2c_multi_region_real_route_consistency+test_v2_stage3a_convergence_recovery_consistency+test_v2_stage3b_convergence_time_recovery_budget_consistency+test_relay_path_tests+test_queue_replay_smoke";
+const MAINLINE_GATE_LOCKSET_V1: &str = "check_novovm_network+check_novovm_node+test_scheduler_gate_matrix+test_manual_route_env_lock_matrix+test_l2_l1_export_equivalence_batch_vs_replay+test_l2_l1_export_equivalence_batch_vs_watch+test_l2_l1_anchor_fingerprint_stable+test_mainline_status_freshness_gate_contract_is_frozen+test_discovery_membership_freshness_contract_default_is_frozen+test_discovery_membership_gossip_json_supports_single_and_vec_message+test_discovery_source_governance_contract_is_frozen+test_discovery_source_breakdown_contract_is_frozen+test_discovery_membership_priority_contract_is_frozen+test_cross_node_runtime_membership_closed_loop+test_cross_node_runtime_membership_cross_region_is_not_admitted+test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy+test_cross_node_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_cross_node_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_operator_forced_still_dominates_route_selection_across_batch_replay_watch+test_pruned_dynamic_relays_no_longer_affect_selection_across_batch_replay_watch+test_concurrent_runtime_membership_order_keeps_selection_view_stable+test_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_cross_node_gossip_membership_order_keeps_selection_view_stable+test_cross_node_gossip_membership_respects_operator_forced_selection+test_runtime_membership_unavailable_update_prunes_existing_discovered_relay+test_v2_matrix_a_order_perturbation_consistency+test_v2_matrix_b_multi_source_conflict_consistency+test_v2_matrix_c_weak_network_disturbance_consistency+test_v2_matrix_d_multi_region_view_consistency+test_v2_stage2a_large_scale_distributed_adjudication_consistency+test_v2_stage2b_weak_network_robustness_consistency+test_v2_stage2c_multi_region_real_route_consistency+test_v2_stage3a_convergence_recovery_consistency+test_v2_stage3b_convergence_time_recovery_budget_consistency+test_relay_path_tests+test_product_mainline_overlay_lifecycle+test_authenticated_seal_ingress_quarantine+test_queue_replay_smoke";
+
+fn evaluate_mainline_gate_fields_v1(status: &serde_json::Value) -> (bool, bool, Vec<String>) {
+    let expected = MAINLINE_GATE_LOCKSET_V1.split('+').collect::<Vec<_>>();
+    let Some(gate) = status.get("gate").and_then(serde_json::Value::as_object) else {
+        return (
+            false,
+            false,
+            expected.into_iter().map(str::to_string).collect(),
+        );
+    };
+    let actual = gate.keys().map(String::as_str).collect::<Vec<_>>();
+    let key_order_ok = actual == expected;
+    let failed_or_missing = expected
+        .into_iter()
+        .filter(|key| gate.get(*key).and_then(serde_json::Value::as_bool) != Some(true))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    (
+        key_order_ok && failed_or_missing.is_empty(),
+        key_order_ok,
+        failed_or_missing,
+    )
+}
 const L2_L1_EXPORT_BASELINE_PHASE: &str = "D.0-E.0";
 const L2_L1_EXPORT_BASELINE_VERSION: u32 = 1;
 const L2_L1_EXPORT_LOCK_VERSION: u32 = 1;
@@ -10290,6 +10314,43 @@ fn scheduler_hard_lock_matrix_contract_is_frozen() {
     assert!(!scheduler_context_ok("manual", true));
     assert!(!scheduler_context_ok("novovmctl", false));
     assert!(scheduler_context_ok("novovmctl", true));
+}
+
+#[cfg(test)]
+#[test]
+fn runtime_mainline_gate_requires_every_lockset_field_in_order() {
+    let mut gate = serde_json::Map::new();
+    for key in MAINLINE_GATE_LOCKSET_V1.split('+') {
+        gate.insert(key.to_string(), serde_json::Value::Bool(true));
+    }
+    let mut status = serde_json::json!({ "gate": gate });
+    let (passed, key_order_ok, failed) = evaluate_mainline_gate_fields_v1(&status);
+    assert!(passed);
+    assert!(key_order_ok);
+    assert!(failed.is_empty());
+
+    status["gate"]["test_authenticated_seal_ingress_quarantine"] = serde_json::Value::Bool(false);
+    let (passed, key_order_ok, failed) = evaluate_mainline_gate_fields_v1(&status);
+    assert!(!passed);
+    assert!(key_order_ok);
+    assert_eq!(
+        failed,
+        vec!["test_authenticated_seal_ingress_quarantine".to_string()]
+    );
+
+    status["gate"]["test_authenticated_seal_ingress_quarantine"] = serde_json::Value::Bool(true);
+    status
+        .get_mut("gate")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("gate object")
+        .remove("test_product_mainline_overlay_lifecycle");
+    let (passed, key_order_ok, failed) = evaluate_mainline_gate_fields_v1(&status);
+    assert!(!passed);
+    assert!(!key_order_ok);
+    assert_eq!(
+        failed,
+        vec!["test_product_mainline_overlay_lifecycle".to_string()]
+    );
 }
 
 #[cfg(test)]
@@ -33815,6 +33876,13 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                     self.remote_peer_id = remote_peer_id;
                 }
                 ProductMainlineOverlayEventV1::Inbound(inbound) => {
+                    if inbound.payload_class
+                        != ProductMainlineOverlayPayloadClassV1::NativeTransaction
+                    {
+                        // Seal verification has a separate owner. Never feed opaque seal bytes
+                        // into native transaction ingress or its telemetry.
+                        continue;
+                    }
                     match ingest_product_mainline_overlay_payload_v1(
                         self.chain_id,
                         inbound.frame.payload.as_slice(),
@@ -33835,22 +33903,29 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                     }
                 }
                 ProductMainlineOverlayEventV1::Delivery(delivery) => {
+                    if delivery.payload_class
+                        != ProductMainlineOverlayPayloadClassV1::NativeTransaction
+                    {
+                        // A transport delivery is not a propagated native transaction.
+                        continue;
+                    }
+                    let tx_hash = delivery.object_hash;
                     let delivery_complete =
                         self.in_flight
-                            .get_mut(&delivery.tx_hash)
+                            .get_mut(&tx_hash)
                             .is_some_and(|pending_peers| {
                                 pending_peers.remove(&delivery.remote_peer_id);
                                 pending_peers.is_empty()
                             });
                     if delivery_complete {
-                        self.in_flight.remove(&delivery.tx_hash);
+                        self.in_flight.remove(&tx_hash);
                     }
                     if delivery.delivered {
                         delivered = delivered.saturating_add(1);
                         self.delivered_total = self.delivered_total.saturating_add(1);
                         observe_network_runtime_native_pending_tx_propagated_with_context_v1(
                             self.chain_id,
-                            delivery.tx_hash,
+                            tx_hash,
                             Some(delivery.metric_peer_id),
                             Some("product_overlay_relay_novorudp"),
                             Some(self.max_propagations),
@@ -44004,6 +44079,9 @@ fn main() -> Result<()> {
         let mut test_v2_matrix_b_multi_source_conflict_consistency = false;
         let mut test_v2_matrix_c_weak_network_disturbance_consistency = false;
         let mut test_v2_matrix_d_multi_region_view_consistency = false;
+        let mut required_gate_fields_ok = false;
+        let mut required_gate_key_order_ok = false;
+        let mut required_gate_failures = Vec::<String>::new();
         let mut lockset_gate = "-".to_string();
         let mut overall: i64 = -1;
         let delivery_path = std::path::Path::new("artifacts/mainline-delivery-contract.json");
@@ -44018,6 +44096,10 @@ fn main() -> Result<()> {
             Ok(raw) => {
                 match serde_json::from_str::<serde_json::Value>(&raw) {
                     Ok(json) => {
+                        let evaluation = evaluate_mainline_gate_fields_v1(&json);
+                        required_gate_fields_ok = evaluation.0;
+                        required_gate_key_order_ok = evaluation.1;
+                        required_gate_failures = evaluation.2;
                         schema = json
                             .get("schema")
                             .and_then(|v| v.as_str())
@@ -44257,6 +44339,7 @@ fn main() -> Result<()> {
             && test_v2_matrix_b_multi_source_conflict_consistency
             && test_v2_matrix_c_weak_network_disturbance_consistency
             && test_v2_matrix_d_multi_region_view_consistency
+            && required_gate_fields_ok
             && gate_lockset_ok;
         let mut diag_codes: Vec<String> = Vec::new();
         if source != "ok" {
@@ -44416,6 +44499,12 @@ fn main() -> Result<()> {
             diag_codes
                 .push("gate.test_v2_matrix_d_multi_region_view_consistency.false".to_string());
         }
+        if !required_gate_key_order_ok {
+            diag_codes.push("gate.required_key_order_mismatch".to_string());
+        }
+        for key in &required_gate_failures {
+            diag_codes.push(format!("gate.{key}.false_or_missing"));
+        }
         if !gate_lockset_ok {
             diag_codes.push("gate.lockset_mismatch".to_string());
         }
@@ -44446,7 +44535,7 @@ fn main() -> Result<()> {
             diag_codes.join(",")
         };
         println!(
-            "mainline_status: strict={} source={} schema={} generated_utc={} gate_passed={} check_network={} check_node={} test_relay={} test_queue={} test_cross_node_runtime_membership={} test_cross_node_runtime_membership_cross_region={} test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy={} test_cross_node_runtime_membership_can_affect_route_selection={} test_cross_node_stale_runtime_membership_prune={} test_discovery_membership_freshness={} test_discovery_membership_gossip={} test_discovery_governance_contract={} test_discovery_breakdown_contract={} test_discovery_membership_priority_contract={} test_runtime_membership_route_selection={} test_operator_forced_route_selection={} test_pruned_dynamic_route_selection={} test_concurrent_runtime_membership_stability={} test_stale_runtime_membership_prune={} test_cross_node_gossip_membership_order_stability={} test_cross_node_gossip_membership_operator_forced={} test_runtime_membership_unavailable_prune={} test_v2_stage2a_large_scale_distributed_adjudication_consistency={} test_v2_stage2b_weak_network_robustness_consistency={} test_v2_stage2c_multi_region_real_route_consistency={} test_v2_stage3a_convergence_recovery_consistency={} test_v2_stage3b_convergence_time_recovery_budget_consistency={} test_v2_matrix_a_order_perturbation_consistency={} test_v2_matrix_b_multi_source_conflict_consistency={} test_v2_matrix_c_weak_network_disturbance_consistency={} test_v2_matrix_d_multi_region_view_consistency={} gate_lockset_ok={} overall={}",
+            "mainline_status: strict={} source={} schema={} generated_utc={} gate_passed={} check_network={} check_node={} test_relay={} test_queue={} test_cross_node_runtime_membership={} test_cross_node_runtime_membership_cross_region={} test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy={} test_cross_node_runtime_membership_can_affect_route_selection={} test_cross_node_stale_runtime_membership_prune={} test_discovery_membership_freshness={} test_discovery_membership_gossip={} test_discovery_governance_contract={} test_discovery_breakdown_contract={} test_discovery_membership_priority_contract={} test_runtime_membership_route_selection={} test_operator_forced_route_selection={} test_pruned_dynamic_route_selection={} test_concurrent_runtime_membership_stability={} test_stale_runtime_membership_prune={} test_cross_node_gossip_membership_order_stability={} test_cross_node_gossip_membership_operator_forced={} test_runtime_membership_unavailable_prune={} test_v2_stage2a_large_scale_distributed_adjudication_consistency={} test_v2_stage2b_weak_network_robustness_consistency={} test_v2_stage2c_multi_region_real_route_consistency={} test_v2_stage3a_convergence_recovery_consistency={} test_v2_stage3b_convergence_time_recovery_budget_consistency={} test_v2_matrix_a_order_perturbation_consistency={} test_v2_matrix_b_multi_source_conflict_consistency={} test_v2_matrix_c_weak_network_disturbance_consistency={} test_v2_matrix_d_multi_region_view_consistency={} required_gate_fields_ok={} required_gate_key_order_ok={} required_gate_failures={} gate_lockset_ok={} overall={}",
             mainline_status_strict,
             source,
             schema,
@@ -44483,6 +44572,9 @@ fn main() -> Result<()> {
             test_v2_matrix_b_multi_source_conflict_consistency,
             test_v2_matrix_c_weak_network_disturbance_consistency,
             test_v2_matrix_d_multi_region_view_consistency,
+            required_gate_fields_ok,
+            required_gate_key_order_ok,
+            required_gate_failures.join("|"),
             gate_lockset_ok,
             overall
         );

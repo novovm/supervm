@@ -1,8 +1,8 @@
 //! Product Overlay ownership inside the NOVOVM main node lifecycle.
 //!
-//! The relay remains transport-only. Decrypted payloads are returned to the node so the normal
-//! native transaction ingress can enforce chain-domain, signature, identity, and nonce policy
-//! before AOEM execution.
+//! The relay remains transport-only. Decrypted payloads retain their explicit Host-owned class.
+//! Native transactions return to normal ingress for chain-domain, signature, identity, and nonce
+//! policy before AOEM execution; native seal bytes remain opaque to this transport module.
 
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::SigningKey;
@@ -41,6 +41,10 @@ use crate::{
 const PRODUCT_MAINLINE_OVERLAY_SCOPE_V1: &str = "novovm_product_mainline_overlay_runtime_v1";
 const PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1: [u8; 16] = *b"NOVOVM-OVERLAY-1";
 const PRODUCT_MAINLINE_OVERLAY_PREAUTH_BUFFER_LIMIT_V1: usize = 64;
+const PRODUCT_MAINLINE_OVERLAY_PAYLOAD_MAGIC_V1: [u8; 8] = *b"NOVOPLD1";
+const PRODUCT_MAINLINE_OVERLAY_PAYLOAD_VERSION_V1: u16 = 1;
+const PRODUCT_MAINLINE_OVERLAY_PAYLOAD_HEADER_LEN_V1: usize = 8 + 2 + 1 + 1 + 32 + 4;
+pub const PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1: usize = 192 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +52,31 @@ pub enum ProductMainlineOverlayRoleV1 {
     Initiator,
     Responder,
     Duplex,
+}
+
+/// Host routing metadata only. This class does not authenticate or validate its opaque payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProductMainlineOverlayPayloadClassV1 {
+    NativeTransaction,
+    NativeSeal,
+}
+
+impl ProductMainlineOverlayPayloadClassV1 {
+    const fn code(self) -> u8 {
+        match self {
+            Self::NativeTransaction => 1,
+            Self::NativeSeal => 2,
+        }
+    }
+
+    fn from_code(code: u8) -> Result<Self> {
+        match code {
+            1 => Ok(Self::NativeTransaction),
+            2 => Ok(Self::NativeSeal),
+            _ => bail!("product mainline overlay payload class {code} is unsupported"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,13 +129,18 @@ pub struct ProductMainlineOverlayStartupV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductMainlineOverlayInboundV1 {
+    pub payload_class: ProductMainlineOverlayPayloadClassV1,
+    pub object_hash: [u8; 32],
     pub source_peer_id: String,
+    /// The logical transport frame. Its payload is restored to the exact caller-supplied bytes
+    /// after the authenticated Product Overlay classification envelope is removed.
     pub frame: NovoRudpTransportFrameV0,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductMainlineOverlayDeliveryV1 {
-    pub tx_hash: [u8; 32],
+    pub payload_class: ProductMainlineOverlayPayloadClassV1,
+    pub object_hash: [u8; 32],
     pub remote_peer_id: String,
     pub metric_peer_id: u64,
     pub delivered: bool,
@@ -147,7 +181,8 @@ pub enum ProductMainlineOverlayEventV1 {
 
 #[derive(Debug, Clone)]
 struct ProductMainlineOverlayOutboundV1 {
-    tx_hash: [u8; 32],
+    payload_class: ProductMainlineOverlayPayloadClassV1,
+    object_hash: [u8; 32],
     payload: Vec<u8>,
 }
 
@@ -352,16 +387,47 @@ impl ProductMainlineOverlayRuntimeV1 {
     }
 
     pub fn try_submit(&self, tx_hash: [u8; 32], payload: Vec<u8>) -> Result<bool> {
+        self.try_submit_classified_v1(
+            ProductMainlineOverlayPayloadClassV1::NativeTransaction,
+            tx_hash,
+            payload,
+        )
+    }
+
+    /// Queues opaque native-seal bytes for authenticated transport without decoding the seal.
+    pub fn try_submit_native_seal(&self, object_hash: [u8; 32], payload: Vec<u8>) -> Result<bool> {
+        self.try_submit_classified_v1(
+            ProductMainlineOverlayPayloadClassV1::NativeSeal,
+            object_hash,
+            payload,
+        )
+    }
+
+    fn try_submit_classified_v1(
+        &self,
+        payload_class: ProductMainlineOverlayPayloadClassV1,
+        object_hash: [u8; 32],
+        payload: Vec<u8>,
+    ) -> Result<bool> {
+        validate_classified_logical_payload_len_v1(payload.len())?;
         if self.role == ProductMainlineOverlayRoleV1::Responder {
             return Ok(false);
         }
         if payload.is_empty() {
-            bail!("product mainline overlay refuses an empty transaction payload");
+            match payload_class {
+                ProductMainlineOverlayPayloadClassV1::NativeTransaction => {
+                    bail!("product mainline overlay refuses an empty transaction payload")
+                }
+                ProductMainlineOverlayPayloadClassV1::NativeSeal => {
+                    bail!("product mainline overlay refuses an empty native seal payload")
+                }
+            }
         }
-        match self
-            .outbound
-            .try_send(ProductMainlineOverlayOutboundV1 { tx_hash, payload })
-        {
+        match self.outbound.try_send(ProductMainlineOverlayOutboundV1 {
+            payload_class,
+            object_hash,
+            payload,
+        }) {
             Ok(()) => Ok(true),
             Err(TrySendError::Full(_)) => Ok(false),
             Err(TrySendError::Disconnected(_)) => {
@@ -393,6 +459,108 @@ impl Drop for ProductMainlineOverlayRuntimeV1 {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+fn encode_classified_payload_v1(outbound: &ProductMainlineOverlayOutboundV1) -> Result<Vec<u8>> {
+    validate_classified_logical_payload_len_v1(outbound.payload.len())?;
+    let payload_len = u32::try_from(outbound.payload.len())
+        .context("product mainline overlay payload exceeds the v1 wire length limit")?;
+    let mut encoded = Vec::with_capacity(
+        PRODUCT_MAINLINE_OVERLAY_PAYLOAD_HEADER_LEN_V1.saturating_add(outbound.payload.len()),
+    );
+    encoded.extend_from_slice(&PRODUCT_MAINLINE_OVERLAY_PAYLOAD_MAGIC_V1);
+    encoded.extend_from_slice(&PRODUCT_MAINLINE_OVERLAY_PAYLOAD_VERSION_V1.to_le_bytes());
+    encoded.push(outbound.payload_class.code());
+    encoded.push(0);
+    encoded.extend_from_slice(&outbound.object_hash);
+    encoded.extend_from_slice(&payload_len.to_le_bytes());
+    encoded.extend_from_slice(&outbound.payload);
+    Ok(encoded)
+}
+
+fn decode_classified_payload_v1(
+    encoded: &[u8],
+) -> Result<(ProductMainlineOverlayPayloadClassV1, [u8; 32], Vec<u8>)> {
+    if encoded.len() < PRODUCT_MAINLINE_OVERLAY_PAYLOAD_HEADER_LEN_V1 {
+        bail!(
+            "product mainline overlay classified payload is too short: len={}",
+            encoded.len()
+        );
+    }
+    if encoded[..8] != PRODUCT_MAINLINE_OVERLAY_PAYLOAD_MAGIC_V1 {
+        bail!("product mainline overlay classified payload magic is invalid");
+    }
+    let version = u16::from_le_bytes([encoded[8], encoded[9]]);
+    if version != PRODUCT_MAINLINE_OVERLAY_PAYLOAD_VERSION_V1 {
+        bail!("product mainline overlay payload version {version} is unsupported");
+    }
+    let payload_class = ProductMainlineOverlayPayloadClassV1::from_code(encoded[10])?;
+    if encoded[11] != 0 {
+        bail!("product mainline overlay payload reserved byte must be zero");
+    }
+    let mut object_hash = [0u8; 32];
+    object_hash.copy_from_slice(&encoded[12..44]);
+    let payload_len =
+        u32::from_le_bytes([encoded[44], encoded[45], encoded[46], encoded[47]]) as usize;
+    validate_classified_logical_payload_len_v1(payload_len)?;
+    let expected_len = PRODUCT_MAINLINE_OVERLAY_PAYLOAD_HEADER_LEN_V1
+        .checked_add(payload_len)
+        .context("product mainline overlay classified payload length overflow")?;
+    if encoded.len() != expected_len {
+        bail!(
+            "product mainline overlay classified payload length mismatch: expected={expected_len} actual={}",
+            encoded.len()
+        );
+    }
+    if payload_len == 0 {
+        bail!("product mainline overlay classified payload must not be empty");
+    }
+    Ok((
+        payload_class,
+        object_hash,
+        encoded[PRODUCT_MAINLINE_OVERLAY_PAYLOAD_HEADER_LEN_V1..].to_vec(),
+    ))
+}
+
+fn validate_classified_logical_payload_len_v1(payload_len: usize) -> Result<()> {
+    if payload_len > PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1 {
+        bail!(
+            "product mainline overlay classified logical payload exceeds the v1 limit: len={payload_len} max={}",
+            PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1
+        );
+    }
+    Ok(())
+}
+
+fn open_classified_inbound_frame_v1(
+    frame: NovoRudpTransportFrameV0,
+    chain_id: u64,
+) -> Result<(
+    ProductMainlineOverlayPayloadClassV1,
+    [u8; 32],
+    NovoRudpTransportFrameV0,
+)> {
+    validate_inbound_frame_v1(&frame, chain_id)?;
+    let (payload_class, object_hash, payload) =
+        decode_classified_payload_v1(frame.payload.as_slice())?;
+    let expected_object_id = u64::from_le_bytes(
+        object_hash[..8]
+            .try_into()
+            .context("product mainline overlay object hash prefix is invalid")?,
+    );
+    if frame.object_id != expected_object_id {
+        bail!("product mainline overlay object hash does not match the transport object id");
+    }
+    let logical_frame = NovoRudpTransportFrameV0::new(
+        frame.kind,
+        frame.session_id,
+        frame.stream_id,
+        frame.object_id,
+        frame.sequence,
+        frame.ack_epoch,
+        payload,
+    );
+    Ok((payload_class, object_hash, logical_frame))
 }
 
 pub fn load_product_mainline_overlay_config_v1(
@@ -671,7 +839,8 @@ fn run_duplex_mesh_session_v1(
             };
             let frame_sequence = frame_sequences.entry(peer.peer_id.clone()).or_default();
             let object_id =
-                u64::from_le_bytes(outbound.tx_hash[..8].try_into().unwrap_or_default());
+                u64::from_le_bytes(outbound.object_hash[..8].try_into().unwrap_or_default());
+            let encoded_payload = encode_classified_payload_v1(&outbound)?;
             let frame = NovoRudpTransportFrameV0::new(
                 NovoRudpTransportFrameKindV0::Data,
                 PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1,
@@ -679,7 +848,7 @@ fn run_duplex_mesh_session_v1(
                 object_id,
                 *frame_sequence,
                 0,
-                outbound.payload,
+                encoded_payload,
             );
             *frame_sequence = frame_sequence.saturating_add(1);
             let envelope = channel
@@ -691,12 +860,13 @@ fn run_duplex_mesh_session_v1(
             pending_by_peer
                 .get_mut(&peer.peer_id)
                 .and_then(VecDeque::pop_front)
-                .context("multi-peer pending queue lost delivered transaction")?;
+                .context("multi-peer pending queue lost delivered payload")?;
             worker
                 .events
                 .send(ProductMainlineOverlayEventV1::Delivery(
                     ProductMainlineOverlayDeliveryV1 {
-                        tx_hash: outbound.tx_hash,
+                        payload_class: outbound.payload_class,
+                        object_hash: outbound.object_hash,
                         remote_peer_id: peer.peer_id.clone(),
                         metric_peer_id: peer.metric_peer_id,
                         delivered: true,
@@ -840,10 +1010,12 @@ fn publish_mesh_inbound_v1(
         .get_mut(&source_peer_id)
         .context("multi-peer delivery arrived without an E2E channel")?;
     let frame = channel.open_novorudp_frame(&delivery.envelope)?;
-    validate_inbound_frame_v1(&frame, chain_id)?;
+    let (payload_class, object_hash, frame) = open_classified_inbound_frame_v1(frame, chain_id)?;
     events
         .send(ProductMainlineOverlayEventV1::Inbound(
             ProductMainlineOverlayInboundV1 {
+                payload_class,
+                object_hash,
                 source_peer_id,
                 frame,
             },
@@ -1067,7 +1239,8 @@ fn run_authenticated_session_v1(
             let next = pending.pop_front().or_else(|| outbound.try_recv().ok());
             if let Some(outbound) = next {
                 let object_id =
-                    u64::from_le_bytes(outbound.tx_hash[..8].try_into().unwrap_or_default());
+                    u64::from_le_bytes(outbound.object_hash[..8].try_into().unwrap_or_default());
+                let encoded_payload = encode_classified_payload_v1(&outbound)?;
                 let frame = NovoRudpTransportFrameV0::new(
                     NovoRudpTransportFrameKindV0::Data,
                     PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1,
@@ -1075,7 +1248,7 @@ fn run_authenticated_session_v1(
                     object_id,
                     frame_sequence,
                     0,
-                    outbound.payload.clone(),
+                    encoded_payload,
                 );
                 frame_sequence = frame_sequence.saturating_add(1);
                 let send_result = channel
@@ -1091,7 +1264,8 @@ fn run_authenticated_session_v1(
                 events
                     .send(ProductMainlineOverlayEventV1::Delivery(
                         ProductMainlineOverlayDeliveryV1 {
-                            tx_hash: outbound.tx_hash,
+                            payload_class: outbound.payload_class,
+                            object_hash: outbound.object_hash,
                             remote_peer_id: channel.remote_peer_id().to_string(),
                             metric_peer_id: remote_metric_peer_id,
                             delivered: true,
@@ -1122,10 +1296,13 @@ fn run_authenticated_session_v1(
                     bail!("product overlay send-only role received an inbound payload");
                 }
                 let frame = channel.open_novorudp_frame(&delivery.envelope)?;
-                validate_inbound_frame_v1(&frame, chain_id)?;
+                let (payload_class, object_hash, frame) =
+                    open_classified_inbound_frame_v1(frame, chain_id)?;
                 events
                     .send(ProductMainlineOverlayEventV1::Inbound(
                         ProductMainlineOverlayInboundV1 {
+                            payload_class,
+                            object_hash,
                             source_peer_id: source_peer_id.clone(),
                             frame,
                         },
@@ -1366,7 +1543,8 @@ mod tests {
     };
     use novovm_network::{
         sign_bootstrap_manifest_v1, sign_relay_record_v1, BootstrapSourceKindV1,
-        PeerSignedRelayRecordV1, RelayEndpointV1, SignedBootstrapManifestV1,
+        PeerSignedRelayRecordV1, ProductRelayWireMessageV1, RelayEndpointV1,
+        SignedBootstrapManifestV1,
     };
     use novovm_protocol::{
         encode_nov_native_tx_wire_v1, NovExecuteTxV1, NovExecutionModeV1, NovExecutionPolicyV1,
@@ -1522,7 +1700,105 @@ mod tests {
     }
 
     #[test]
-    fn duplex_mainline_lifecycle_owns_authenticated_bidirectional_delivery() {
+    fn classified_payload_limit_accepts_boundary_and_rejects_oversize() {
+        let max = PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1;
+        assert_eq!(max, 192 * 1024);
+        assert!(validate_classified_logical_payload_len_v1(max).is_ok());
+        assert!(validate_classified_logical_payload_len_v1(max + 1).is_err());
+
+        let object_hash = [0x5a; 32];
+        let boundary_payload = vec![0xa5; max];
+        let boundary = ProductMainlineOverlayOutboundV1 {
+            payload_class: ProductMainlineOverlayPayloadClassV1::NativeSeal,
+            object_hash,
+            payload: boundary_payload.clone(),
+        };
+        let encoded = encode_classified_payload_v1(&boundary).unwrap();
+        assert_eq!(
+            encoded.len(),
+            PRODUCT_MAINLINE_OVERLAY_PAYLOAD_HEADER_LEN_V1 + max
+        );
+        let (payload_class, decoded_hash, decoded_payload) =
+            decode_classified_payload_v1(&encoded).unwrap();
+        assert_eq!(
+            payload_class,
+            ProductMainlineOverlayPayloadClassV1::NativeSeal
+        );
+        assert_eq!(decoded_hash, object_hash);
+        assert_eq!(decoded_payload, boundary_payload);
+
+        let oversized = ProductMainlineOverlayOutboundV1 {
+            payload_class: ProductMainlineOverlayPayloadClassV1::NativeSeal,
+            object_hash,
+            payload: vec![0xa5; max + 1],
+        };
+        assert!(encode_classified_payload_v1(&oversized)
+            .unwrap_err()
+            .to_string()
+            .contains("classified logical payload exceeds"));
+
+        let mut oversized_wire = encoded;
+        oversized_wire[44..48].copy_from_slice(&u32::try_from(max + 1).unwrap().to_le_bytes());
+        oversized_wire.push(0xa5);
+        assert!(decode_classified_payload_v1(&oversized_wire)
+            .unwrap_err()
+            .to_string()
+            .contains("classified logical payload exceeds"));
+    }
+
+    #[test]
+    fn maximum_classified_payload_fits_existing_websocket_carrier_limit() {
+        const EXISTING_WEBSOCKET_FRAME_LIMIT_BYTES_V1: usize = 1_048_576;
+
+        let initiator_identity = SigningKey::from_bytes(&[0x71; 32]);
+        let responder_identity = SigningKey::from_bytes(&[0x72; 32]);
+        let responder_peer_id =
+            peer_id_from_ed25519_public_key_v1(&responder_identity.verifying_key().to_bytes());
+        let initiator =
+            NodeHandshakeInitiatorV1::start(&initiator_identity, responder_peer_id, 1_000, 5_000)
+                .unwrap();
+        let mut responder_replay = HandshakeReplayCacheV1::default();
+        let responder = NodeHandshakeResponderV1::respond(
+            initiator.offer(),
+            &responder_identity,
+            1_100,
+            5_000,
+            &mut responder_replay,
+        )
+        .unwrap();
+        let response = responder.response().clone();
+        let mut initiator_replay = HandshakeReplayCacheV1::default();
+        let mut channel = initiator
+            .complete(&response, 1_200, &mut initiator_replay)
+            .unwrap();
+
+        let object_hash = [0x73; 32];
+        let outbound = ProductMainlineOverlayOutboundV1 {
+            payload_class: ProductMainlineOverlayPayloadClassV1::NativeSeal,
+            object_hash,
+            payload: vec![0xff; PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1],
+        };
+        let classified_payload = encode_classified_payload_v1(&outbound).unwrap();
+        let frame = NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1,
+            7,
+            u64::from_le_bytes(object_hash[..8].try_into().unwrap()),
+            0,
+            0,
+            classified_payload,
+        );
+        let envelope = channel.seal_novorudp_frame(&frame).unwrap();
+        let carrier_json = serde_json::to_vec(&ProductRelayWireMessageV1::Data(envelope)).unwrap();
+        assert!(
+            carrier_json.len() < EXISTING_WEBSOCKET_FRAME_LIMIT_BYTES_V1,
+            "maximum legal classified payload produced an oversized carrier JSON: len={} limit={EXISTING_WEBSOCKET_FRAME_LIMIT_BYTES_V1}",
+            carrier_json.len()
+        );
+    }
+
+    #[test]
+    fn duplex_mainline_lifecycle_owns_authenticated_bidirectional_classified_delivery() {
         let now = now_ms_v1();
         let root = std::env::temp_dir().join(format!("novovm-product-mainline-overlay-{now}"));
         fs::create_dir_all(&root).unwrap();
@@ -1639,6 +1915,14 @@ mod tests {
                 ProductMainlineOverlayEventV1::E2eSessionEstablished { .. }
             )
         });
+        assert!(node_a_runtime
+            .try_submit_native_seal(
+                [0x44; 32],
+                vec![0; PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1 + 1],
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("classified logical payload exceeds"));
         let node_a_tx_hash = [0x45; 32];
         let node_b_tx_hash = [0x46; 32];
         let node_a_raw_tx = signed_native_tx_v1(chain_id, &format!("overlay-a-{now}"));
@@ -1651,7 +1935,8 @@ mod tests {
                 event,
                 ProductMainlineOverlayEventV1::Delivery(
                     ProductMainlineOverlayDeliveryV1 {
-                        tx_hash: delivered_hash,
+                        payload_class: ProductMainlineOverlayPayloadClassV1::NativeTransaction,
+                        object_hash: delivered_hash,
                         delivered: true,
                         ..
                     }
@@ -1667,7 +1952,8 @@ mod tests {
                 event,
                 ProductMainlineOverlayEventV1::Delivery(
                     ProductMainlineOverlayDeliveryV1 {
-                        tx_hash: delivered_hash,
+                        payload_class: ProductMainlineOverlayPayloadClassV1::NativeTransaction,
+                        object_hash: delivered_hash,
                         delivered: true,
                         ..
                     }
@@ -1685,6 +1971,16 @@ mod tests {
         );
         assert_eq!(inbound_at_b.frame.stream_id, chain_id);
         assert_eq!(inbound_at_a.frame.stream_id, chain_id);
+        assert_eq!(
+            inbound_at_b.payload_class,
+            ProductMainlineOverlayPayloadClassV1::NativeTransaction
+        );
+        assert_eq!(inbound_at_b.object_hash, node_a_tx_hash);
+        assert_eq!(
+            inbound_at_a.payload_class,
+            ProductMainlineOverlayPayloadClassV1::NativeTransaction
+        );
+        assert_eq!(inbound_at_a.object_hash, node_b_tx_hash);
         assert_eq!(inbound_at_b.frame.payload, node_a_raw_tx);
         assert_eq!(inbound_at_a.frame.payload, node_b_raw_tx);
         for inbound in [&inbound_at_a, &inbound_at_b] {
@@ -1695,6 +1991,32 @@ mod tests {
             assert!(ingress.pending_only);
             assert_eq!(ingress.execution_owner, "aoem_runtime");
         }
+
+        let seal_object_hash = [0x47; 32];
+        let seal_payload = b"opaque-native-seal-payload-v1".to_vec();
+        assert!(node_a_runtime
+            .try_submit_native_seal(seal_object_hash, seal_payload.clone())
+            .unwrap());
+        wait_for_event_v1(&node_a_runtime, Duration::from_secs(1), |event| {
+            matches!(
+                event,
+                ProductMainlineOverlayEventV1::Delivery(
+                    ProductMainlineOverlayDeliveryV1 {
+                        payload_class: ProductMainlineOverlayPayloadClassV1::NativeSeal,
+                        object_hash,
+                        delivered: true,
+                        ..
+                    }
+                ) if *object_hash == seal_object_hash
+            )
+        });
+        let seal_inbound_at_b = wait_for_inbound_v1(&node_b_runtime, Duration::from_secs(2));
+        assert_eq!(
+            seal_inbound_at_b.payload_class,
+            ProductMainlineOverlayPayloadClassV1::NativeSeal
+        );
+        assert_eq!(seal_inbound_at_b.object_hash, seal_object_hash);
+        assert_eq!(seal_inbound_at_b.frame.payload, seal_payload);
         node_a_runtime.shutdown();
         node_b_runtime.shutdown();
         daemon.join().unwrap().unwrap();
@@ -2081,7 +2403,10 @@ mod tests {
                         }
                     }
                     ProductMainlineOverlayEventV1::Delivery(delivery)
-                        if delivery.tx_hash == tx_hash && delivery.delivered =>
+                        if delivery.payload_class
+                            == ProductMainlineOverlayPayloadClassV1::NativeTransaction
+                            && delivery.object_hash == tx_hash
+                            && delivery.delivered =>
                     {
                         delivered_after_reconnect = true;
                     }
@@ -2375,7 +2700,10 @@ mod tests {
             for event in runtime.drain_events(64) {
                 match event {
                     ProductMainlineOverlayEventV1::Delivery(delivery)
-                        if delivery.tx_hash == tx_hash && delivery.delivered =>
+                        if delivery.payload_class
+                            == ProductMainlineOverlayPayloadClassV1::NativeTransaction
+                            && delivery.object_hash == tx_hash
+                            && delivery.delivered =>
                     {
                         observed.insert(delivery.remote_peer_id);
                     }

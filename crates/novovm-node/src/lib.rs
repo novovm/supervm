@@ -13,6 +13,7 @@ pub mod mainline_query;
 pub mod mainline_soak;
 pub mod native_block_ledger;
 pub mod native_block_seal;
+pub mod native_block_seal_overlay;
 pub mod product_evidence;
 pub mod product_mainline_overlay;
 pub mod product_mainline_topology;

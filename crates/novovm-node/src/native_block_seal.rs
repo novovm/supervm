@@ -1109,6 +1109,65 @@ impl NovNativeBlockSealStoreV1 {
         Ok(vote)
     }
 
+    /// Bridge a cryptographically verified remote proposal into the durable
+    /// local seal object store only after this node independently produced the
+    /// exact AOEM-owned candidate and reconstructed the exact seal subject.
+    ///
+    /// This path deliberately creates no local proposal/vote safety lock and
+    /// no outbox entry. Receiving a peer object must never be confused with a
+    /// local signature decision.
+    pub fn persist_locally_matched_remote_proposal(
+        &self,
+        ledger: &NovNativeBlockLedgerV1,
+        proposal: &NovNativeSealProposalV1,
+        validator_set: &NovNativeSealValidatorSetV1,
+    ) -> Result<bool> {
+        proposal.verify(validator_set)?;
+        let justify = (proposal.subject.justify_qc_hash != [0u8; 32])
+            .then_some(proposal.subject.justify_qc_hash);
+        let expected_subject = self.prepare_local_subject(
+            ledger,
+            proposal.subject.chain_id,
+            proposal.subject.block_hash,
+            validator_set,
+            proposal.subject.round,
+            justify,
+        )?;
+        if expected_subject != proposal.subject {
+            bail!("NOV native remote proposal does not match the locally verified AOEM candidate");
+        }
+
+        let expected_binding = store_binding_v1(ledger, proposal.subject.chain_id)?;
+        let _guard = self.lock_writes_v1()?;
+        self.ensure_schema_v1()?;
+        self.ensure_store_binding_v1(&expected_binding)?;
+        if let Some(existing) = self.load_proposal(proposal.proposal_hash)? {
+            if existing != *proposal {
+                bail!("NOV native remote proposal hash collision or conflicting object");
+            }
+            return Ok(false);
+        }
+
+        let mut batch = RocksDbWriteBatch::default();
+        self.stage_binding_and_validator_set_v1(&mut batch, &expected_binding, validator_set)?;
+        stage_object_if_available_v1(
+            &self.db,
+            &mut batch,
+            proposal_object_key_v1(&proposal.proposal_hash).as_bytes(),
+            proposal,
+            "locally matched remote proposal object",
+        )?;
+        write_sync_v1(&self.db, batch)
+            .context("persist locally matched NOV native remote proposal")?;
+        let readback = self
+            .load_proposal(proposal.proposal_hash)?
+            .context("locally matched NOV native remote proposal readback is missing")?;
+        if readback != *proposal {
+            bail!("locally matched NOV native remote proposal readback mismatch");
+        }
+        Ok(true)
+    }
+
     pub fn persist_local_verified_qc(
         &self,
         ledger: &NovNativeBlockLedgerV1,

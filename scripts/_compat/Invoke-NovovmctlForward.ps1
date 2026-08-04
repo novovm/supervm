@@ -160,10 +160,27 @@ function Invoke-NovovmctlForward {
     $ctl = Resolve-NovovmctlBinary -RepoRoot $RepoRoot -ExplicitCtlPath $explicitCtl
     $argv = @($Subcommand) + $BaseArgs + @($normalized.ToArray())
 
-    if ($ctl) {
-        & $ctl @argv
-        exit $LASTEXITCODE
+    $hadSupervmRoot = Test-Path Env:SUPERVM_ROOT
+    $previousSupervmRoot = $env:SUPERVM_ROOT
+    $env:SUPERVM_ROOT = $RepoRoot
+    try {
+        if ($ctl) {
+            & $ctl @argv
+            $forwardExitCode = $LASTEXITCODE
+        }
+        else {
+            $manifestPath = Join-Path $RepoRoot "Cargo.toml"
+            & cargo run --manifest-path $manifestPath -p novovmctl -- @argv
+            $forwardExitCode = $LASTEXITCODE
+        }
     }
-    & cargo run -p novovmctl -- @argv
-    exit $LASTEXITCODE
+    finally {
+        if ($hadSupervmRoot) {
+            $env:SUPERVM_ROOT = $previousSupervmRoot
+        }
+        else {
+            Remove-Item Env:SUPERVM_ROOT -ErrorAction SilentlyContinue
+        }
+    }
+    exit $forwardExitCode
 }

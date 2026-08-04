@@ -236,6 +236,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --all-targets -- -D warnings
 
+      - name: NOVOVM control-plane portability tests
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovmctl
+
       - name: SuperVM Mainline Gate Runner (canonical)
         shell: bash
         run: |

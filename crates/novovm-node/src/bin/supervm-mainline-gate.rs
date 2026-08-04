@@ -48,6 +48,7 @@ struct MainlineGate {
     test_v2_stage3b_convergence_time_recovery_budget_consistency: bool,
     test_relay_path_tests: bool,
     test_product_mainline_overlay_lifecycle: bool,
+    test_authenticated_seal_ingress_quarantine: bool,
     test_queue_replay_smoke: bool,
 }
 
@@ -182,6 +183,7 @@ fn main() -> Result<()> {
         test_v2_stage3b_convergence_time_recovery_budget_consistency: false,
         test_relay_path_tests: false,
         test_product_mainline_overlay_lifecycle: false,
+        test_authenticated_seal_ingress_quarantine: false,
         test_queue_replay_smoke: false,
     };
 
@@ -682,6 +684,28 @@ fn main() -> Result<()> {
         &["test", "-p", "novovm-node", "--lib", "product_mainline_"],
     )?;
     gate.test_product_mainline_overlay_lifecycle = true;
+
+    for test_name in [
+        "native_block_seal_overlay::tests::authority_canonical_wire_and_source_binding_fail_closed",
+        "native_block_seal_overlay::tests::quarantine_replay_restart_and_local_bridge_preserve_unsealed_ledger",
+        "native_block_seal_overlay::tests::competing_same_slot_proposals_block_both_sides_across_restart",
+        "native_block_seal_overlay::tests::authority_and_ingress_bounds_reject_oversized_or_stale_domains",
+    ] {
+        run_step(
+            "test authenticated native seal ingress exact gate",
+            "cargo",
+            &[
+                "test",
+                "-p",
+                "novovm-node",
+                "--lib",
+                test_name,
+                "--",
+                "--exact",
+            ],
+        )?;
+    }
+    gate.test_authenticated_seal_ingress_quarantine = true;
 
     run_step(
         "test queue_replay_smoke",
