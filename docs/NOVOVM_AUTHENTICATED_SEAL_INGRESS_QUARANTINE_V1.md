@@ -252,12 +252,28 @@ main runtime automatic send route    = dormant
 
 在自动发送或激活 main runtime 的 NativeSeal route 前，至少必须关闭以下六个门：
 
-### 10.1 Peer-local fault isolation
+### 10.1 Mesh peer error-domain containment（已完成窄边界；完整门仍未关闭）
 
-一个 peer 的 handshake、坏 envelope、seal decode、quarantine 写入或发送失败，必须只
-隔离该 peer/session 和该 recipient obligation。它不能终止共享 relay session、断开其余
-健康 peer，或丢弃其他 recipient 的待发送 artifact。需要独立错误计数、冷却、重连和
-有界队列。
+Product Mainline Overlay 已实现
+[`Mesh Peer Error-Domain Containment v1`](NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md)：
+每个已配置 peer 独立维护 `Idle / Handshaking / Active / Cooldown`、replay、frame sequence、
+pre-auth buffer 和 session-failure backoff。可归因到单个 peer 的坏 handshake、坏 MAC /
+envelope、坏 NovoRUDP/classified frame、handshake 超时或 pre-auth overflow 只隔离该 peer，
+不再关闭或轮换共享 relay，也不重置其余健康 peer 的 channel。WSS read/write/closed、无法
+可信归因到 peer 的 relay wire 错误，以及 relay 自身认证/生命周期错误仍属于共享故障域。
+
+这只关闭了“坏 peer 不拖垮同一 mesh 中的健康 peer”这一窄边界，不能称为完整
+Peer-Local Fault Isolation。`pending_by_peer` 仍是进程内 `VecDeque`，没有 count、byte、
+TTL、durable journal 或 restart recovery；relay admission、并发 session、per-identity /
+per-source 和 aggregate byte bounds 也尚未完整执行。`Delivery=true` 仅表示本机 relay
+socket write 成功，随后内存项即被移除，并不表示目标 validator 已接收、解密或持久化。
+因此资源治理与 durable recipient ACK/journal 仍是 NativeSeal 激活的硬门。
+
+已认证且 framing 正确、但无法通过原生交易签名/身份/nonce/chain-domain ingress 的单笔
+payload 现在只记录 peer rejection，不再写入全局 worker error 或停止其他 peer 的广播；
+该交易仍 fail-closed，不会进入 pending。durable store、nonce registry、本机配置或未知
+verifier 故障由 typed 三态保持为全局 `LocalFault`，不会被降级掩盖。重复语义拒绝的资源
+预算仍归上述未关闭门。
 
 ### 10.2 第三航 key-confirm
 
@@ -321,8 +337,9 @@ promotion、reorg/rollback 或主网最终性已经完成。
 正确顺序是：
 
 ```text
-peer-local isolation + third-flight key-confirm
--> relay byte/session bounds
+mesh peer error-domain containment                       IMPLEMENTED
+-> relay admission + byte/session/queue bounds
+-> third-flight key-confirm
 -> per-recipient durable delivery journal and ACK
 -> bounded body/DA acquisition
 -> identity guard integrated into the atomic signing boundary

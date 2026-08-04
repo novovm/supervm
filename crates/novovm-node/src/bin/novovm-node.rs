@@ -102,9 +102,10 @@ use novovm_node::mainline_query::{
     mainline_query_params_from_env, run_mainline_query_from_path,
 };
 use novovm_node::product_mainline_overlay::{
-    ingest_product_mainline_overlay_payload_v1, load_product_mainline_overlay_config_v1,
-    ProductMainlineOverlayEventV1, ProductMainlineOverlayPayloadClassV1,
-    ProductMainlineOverlayRoleV1, ProductMainlineOverlayRuntimeV1,
+    ingest_product_mainline_overlay_peer_payload_v1, load_product_mainline_overlay_config_v1,
+    ProductMainlineOverlayEventV1, ProductMainlineOverlayIngressFailureClassV1,
+    ProductMainlineOverlayPayloadClassV1, ProductMainlineOverlayRoleV1,
+    ProductMainlineOverlayRuntimeV1,
 };
 use novovm_node::tx_ingress::{
     available_ingress_codecs, decode_eth_send_raw_hex_payload_v1,
@@ -33667,11 +33668,15 @@ struct NativeExecutionPipelineProductOverlayDriveV1 {
     relay_peer_id: Option<String>,
     e2e_session_established: bool,
     e2e_peer_ids: HashSet<String>,
+    isolated_peer_ids: HashSet<String>,
     remote_peer_id: String,
     remote_peer_ids: Vec<String>,
     reconnect_total: u64,
     relay_rotation_total: u64,
+    peer_isolation_total: u64,
+    peer_rejection_total: u64,
     last_relay_error: Option<String>,
+    last_peer_error: Option<String>,
     received_total: u64,
     submitted_total: u64,
     delivered_total: u64,
@@ -33826,11 +33831,15 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             relay_peer_id: None,
             e2e_session_established: false,
             e2e_peer_ids: HashSet::new(),
+            isolated_peer_ids: HashSet::new(),
             remote_peer_id,
             remote_peer_ids,
             reconnect_total: 0,
             relay_rotation_total: 0,
+            peer_isolation_total: 0,
+            peer_rejection_total: 0,
             last_relay_error: None,
+            last_peer_error: None,
             received_total: 0,
             submitted_total: 0,
             delivered_total: 0,
@@ -33860,6 +33869,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                     self.relay_connected = false;
                     self.e2e_session_established = false;
                     self.e2e_peer_ids.clear();
+                    self.isolated_peer_ids.clear();
                     self.reconnect_total = self.reconnect_total.saturating_add(1);
                     self.last_relay_error = Some(error);
                 }
@@ -33870,10 +33880,26 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                     self.relay_rotation_total = self.relay_rotation_total.saturating_add(1);
                 }
                 ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id } => {
+                    self.isolated_peer_ids.remove(&remote_peer_id);
                     self.e2e_peer_ids.insert(remote_peer_id.clone());
                     self.e2e_session_established =
                         self.e2e_peer_ids.len() == self.remote_peer_ids.len();
                     self.remote_peer_id = remote_peer_id;
+                }
+                ProductMainlineOverlayEventV1::PeerIsolated {
+                    remote_peer_id,
+                    reason,
+                    session_failure_count,
+                    retry_in_ms,
+                } => {
+                    self.e2e_peer_ids.remove(&remote_peer_id);
+                    self.e2e_session_established =
+                        self.e2e_peer_ids.len() == self.remote_peer_ids.len();
+                    self.isolated_peer_ids.insert(remote_peer_id.clone());
+                    self.peer_isolation_total = self.peer_isolation_total.saturating_add(1);
+                    self.last_peer_error = Some(format!(
+                        "peer {remote_peer_id} isolated after {session_failure_count} session failure(s): {reason}; retry in {retry_in_ms} ms"
+                    ));
                 }
                 ProductMainlineOverlayEventV1::Inbound(inbound) => {
                     if inbound.payload_class
@@ -33883,20 +33909,22 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                         // into native transaction ingress or its telemetry.
                         continue;
                     }
-                    match ingest_product_mainline_overlay_payload_v1(
+                    match classify_product_mainline_peer_ingress_v1(
                         self.chain_id,
+                        &inbound.source_peer_id,
                         inbound.frame.payload.as_slice(),
                     ) {
-                        Ok(receipt) => {
+                        ProductMainlinePeerIngressOutcomeV1::Accepted { tx_hash } => {
                             received = received.saturating_add(1);
                             self.received_total = self.received_total.saturating_add(1);
-                            tx_hashes.push(to_hex_prefixed(&receipt.tx_hash));
+                            tx_hashes.push(to_hex_prefixed(&tx_hash));
                         }
-                        Err(error) => {
-                            self.worker_error = Some(format!(
-                                "product overlay transaction ingress rejected payload from {}: {error}",
-                                inbound.source_peer_id
-                            ));
+                        ProductMainlinePeerIngressOutcomeV1::Rejected { error } => {
+                            self.peer_rejection_total = self.peer_rejection_total.saturating_add(1);
+                            self.last_peer_error = Some(error);
+                        }
+                        ProductMainlinePeerIngressOutcomeV1::LocalFault { error } => {
+                            self.worker_error = Some(error);
                             self.failed_total = self.failed_total.saturating_add(1);
                             break;
                         }
@@ -34009,9 +34037,14 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             "remote_peer_id": self.remote_peer_id,
             "remote_peer_ids": self.remote_peer_ids,
             "e2e_peer_count": self.e2e_peer_ids.len() as u64,
+            "isolated_peer_ids": self.sorted_isolated_peer_ids_v1(),
+            "isolated_peer_count": self.isolated_peer_ids.len() as u64,
             "reconnect_total": self.reconnect_total,
             "relay_rotation_total": self.relay_rotation_total,
+            "peer_isolation_total": self.peer_isolation_total,
+            "peer_rejection_total": self.peer_rejection_total,
             "last_relay_error": self.last_relay_error,
+            "last_peer_error": self.last_peer_error,
             "selected_path": self.runtime.startup().route_plan.selected_path,
             "bootstrap_candidate_count": self.runtime.startup().bootstrap.valid_relay_candidate_count,
             "payload_treated_opaque_by_relay": true,
@@ -34061,9 +34094,14 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 "remote_peer_id": self.remote_peer_id,
                 "remote_peer_ids": self.remote_peer_ids,
                 "e2e_peer_count": self.e2e_peer_ids.len() as u64,
+                "isolated_peer_ids": self.sorted_isolated_peer_ids_v1(),
+                "isolated_peer_count": self.isolated_peer_ids.len() as u64,
                 "reconnect_total": self.reconnect_total,
                 "relay_rotation_total": self.relay_rotation_total,
+                "peer_isolation_total": self.peer_isolation_total,
+                "peer_rejection_total": self.peer_rejection_total,
                 "last_relay_error": self.last_relay_error,
+                "last_peer_error": self.last_peer_error,
                 "selected_path": self.runtime.startup().route_plan.selected_path,
                 "bootstrap_candidate_count": self.runtime.startup().bootstrap.valid_relay_candidate_count,
                 "payload_treated_opaque_by_relay": true,
@@ -34085,6 +34123,12 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 "error": self.worker_error,
             }),
         );
+    }
+
+    fn sorted_isolated_peer_ids_v1(&self) -> Vec<String> {
+        let mut peer_ids = self.isolated_peer_ids.iter().cloned().collect::<Vec<_>>();
+        peer_ids.sort();
+        peer_ids
     }
 
     fn validate_signoff(&self) -> Result<()> {
@@ -34128,6 +34172,62 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             );
         }
         Ok(())
+    }
+}
+
+enum ProductMainlinePeerIngressOutcomeV1 {
+    Accepted { tx_hash: [u8; 32] },
+    Rejected { error: String },
+    LocalFault { error: String },
+}
+
+fn classify_product_mainline_peer_ingress_v1(
+    chain_id: u64,
+    source_peer_id: &str,
+    payload: &[u8],
+) -> ProductMainlinePeerIngressOutcomeV1 {
+    match ingest_product_mainline_overlay_peer_payload_v1(chain_id, payload) {
+        Ok(receipt) => ProductMainlinePeerIngressOutcomeV1::Accepted {
+            tx_hash: receipt.tx_hash,
+        },
+        Err(failure) => {
+            let error = format!(
+                "product overlay transaction ingress failed for payload from {source_peer_id}: {}",
+                failure.message
+            );
+            match failure.class {
+                ProductMainlineOverlayIngressFailureClassV1::PeerRejected => {
+                    ProductMainlinePeerIngressOutcomeV1::Rejected { error }
+                }
+                ProductMainlineOverlayIngressFailureClassV1::LocalFault => {
+                    ProductMainlinePeerIngressOutcomeV1::LocalFault { error }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod product_mainline_peer_ingress_tests {
+    use super::*;
+
+    #[test]
+    fn invalid_authenticated_peer_transaction_is_a_peer_rejection_not_worker_error() {
+        let outcome = classify_product_mainline_peer_ingress_v1(
+            7,
+            "peer-malicious",
+            b"not-a-native-transaction",
+        );
+        match outcome {
+            ProductMainlinePeerIngressOutcomeV1::Rejected { error } => {
+                assert!(error.contains("peer-malicious"));
+                assert!(error.contains("failed for payload"));
+            }
+            ProductMainlinePeerIngressOutcomeV1::Accepted { .. }
+            | ProductMainlinePeerIngressOutcomeV1::LocalFault { .. } => {
+                panic!("invalid peer payload unexpectedly entered pending state")
+            }
+        }
     }
 }
 

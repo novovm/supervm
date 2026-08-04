@@ -41,6 +41,8 @@ use crate::{
 const PRODUCT_MAINLINE_OVERLAY_SCOPE_V1: &str = "novovm_product_mainline_overlay_runtime_v1";
 const PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1: [u8; 16] = *b"NOVOVM-OVERLAY-1";
 const PRODUCT_MAINLINE_OVERLAY_PREAUTH_BUFFER_LIMIT_V1: usize = 64;
+const PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1: u64 = 30_000;
+const PRODUCT_MAINLINE_OVERLAY_PEER_FAULT_REASON_MAX_BYTES_V1: usize = 512;
 const PRODUCT_MAINLINE_OVERLAY_PAYLOAD_MAGIC_V1: [u8; 8] = *b"NOVOPLD1";
 const PRODUCT_MAINLINE_OVERLAY_PAYLOAD_VERSION_V1: u16 = 1;
 const PRODUCT_MAINLINE_OVERLAY_PAYLOAD_HEADER_LEN_V1: usize = 8 + 2 + 1 + 1 + 32 + 4;
@@ -156,6 +158,18 @@ pub struct ProductMainlineOverlayIngressReceiptV1 {
     pub execution_owner: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductMainlineOverlayIngressFailureClassV1 {
+    PeerRejected,
+    LocalFault,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductMainlineOverlayIngressFailureV1 {
+    pub class: ProductMainlineOverlayIngressFailureClassV1,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProductMainlineOverlayEventV1 {
     RelayConnected {
@@ -172,6 +186,12 @@ pub enum ProductMainlineOverlayEventV1 {
     },
     E2eSessionEstablished {
         remote_peer_id: String,
+    },
+    PeerIsolated {
+        remote_peer_id: String,
+        reason: String,
+        session_failure_count: u32,
+        retry_in_ms: u64,
     },
     Inbound(ProductMainlineOverlayInboundV1),
     Delivery(ProductMainlineOverlayDeliveryV1),
@@ -204,6 +224,38 @@ struct ProductMainlineOverlayWorkerV1 {
     outbound: Receiver<ProductMainlineOverlayOutboundV1>,
     events: SyncSender<ProductMainlineOverlayEventV1>,
     stop: Arc<AtomicBool>,
+}
+
+enum ProductMainlineMeshPeerPhaseV1 {
+    Idle,
+    Handshaking {
+        initiator: NodeHandshakeInitiatorV1,
+        expires_at_ms: u64,
+    },
+    Active(E2eSecureChannelV1),
+    Cooldown {
+        retry_at_ms: u64,
+    },
+}
+
+struct ProductMainlineMeshPeerStateV1 {
+    phase: ProductMainlineMeshPeerPhaseV1,
+    session_failure_count: u32,
+    replay: HandshakeReplayCacheV1,
+    buffered_deliveries: VecDeque<OpaqueRelayDeliveryV1>,
+    frame_sequence: u64,
+}
+
+impl Default for ProductMainlineMeshPeerStateV1 {
+    fn default() -> Self {
+        Self {
+            phase: ProductMainlineMeshPeerPhaseV1::Idle,
+            session_failure_count: 0,
+            replay: HandshakeReplayCacheV1::default(),
+            buffered_deliveries: VecDeque::new(),
+            frame_sequence: 0,
+        }
+    }
 }
 
 pub struct ProductMainlineOverlayRuntimeV1 {
@@ -632,6 +684,59 @@ pub fn ingest_product_mainline_overlay_payload_v1(
     })
 }
 
+pub fn ingest_product_mainline_overlay_peer_payload_v1(
+    chain_id: u64,
+    payload: &[u8],
+) -> std::result::Result<
+    ProductMainlineOverlayIngressReceiptV1,
+    ProductMainlineOverlayIngressFailureV1,
+> {
+    ingest_product_mainline_overlay_payload_v1(chain_id, payload).map_err(|error| {
+        ProductMainlineOverlayIngressFailureV1 {
+            class: classify_product_mainline_overlay_ingress_failure_v1(&error),
+            message: format!("{error:#}"),
+        }
+    })
+}
+
+fn classify_product_mainline_overlay_ingress_failure_v1(
+    error: &anyhow::Error,
+) -> ProductMainlineOverlayIngressFailureClassV1 {
+    const PEER_REJECTION_PREFIXES_V1: &[&str] = &[
+        "nov_sendRawTransaction payload is empty",
+        "nov_sendRawTransaction payload decode failed:",
+        "compute native signed-intent commitment failed",
+        "nov native authentication rejected: chain_id must be non-zero",
+        "nov native authentication rejected: chain domain mismatch",
+        "nov native authentication rejected: legacy or malformed signature",
+        "nov native authentication rejected: signature or signer identity mismatch",
+        "nov native authentication rejected: wire v3 carries only",
+        "nov native signer account is invalid",
+        "nov native authentication rejected: account_id=",
+        "nov native authentication rejected: fee_owner_account_id=",
+        "nov native authentication rejected: nonce_owner_account_id=",
+        "nov native authenticated ingress rejected:",
+        "nov native authentication rejected: durable nonce conflict",
+        "nov native authentication rejected: durable nonce sequence mismatch",
+        "nov native authentication rejected: nonce conflict",
+        "nov native authentication rejected: nonce sequence mismatch",
+        "product overlay native tx chain_id ",
+    ];
+    let is_peer_rejection = error.chain().any(|cause| {
+        let message = cause.to_string();
+        PEER_REJECTION_PREFIXES_V1
+            .iter()
+            .any(|prefix| message.starts_with(prefix))
+    });
+    if is_peer_rejection {
+        ProductMainlineOverlayIngressFailureClassV1::PeerRejected
+    } else {
+        // Unknown failures are conservatively node-local. This prevents a new store, lock,
+        // configuration, or verifier failure from being silently downgraded to hostile input.
+        ProductMainlineOverlayIngressFailureClassV1::LocalFault
+    }
+}
+
 pub fn validate_product_mainline_overlay_config_v1(
     config: &ProductMainlineOverlayConfigV1,
 ) -> Result<()> {
@@ -777,39 +882,16 @@ fn run_duplex_mesh_session_v1(
 ) -> Result<()> {
     let local_peer_id =
         peer_id_from_ed25519_public_key_v1(&worker.identity.verifying_key().to_bytes());
-    let metrics = worker
-        .remote_peers
-        .iter()
-        .map(|peer| (peer.peer_id.clone(), peer.metric_peer_id))
-        .collect::<BTreeMap<_, _>>();
-    let mut initiators = BTreeMap::new();
-    let mut channels = BTreeMap::<String, E2eSecureChannelV1>::new();
-    let mut buffered_deliveries = worker
+    let mut peers = worker
         .remote_peers
         .iter()
         .map(|peer| {
             (
                 peer.peer_id.clone(),
-                VecDeque::<OpaqueRelayDeliveryV1>::new(),
+                ProductMainlineMeshPeerStateV1::default(),
             )
         })
-        .collect::<BTreeMap<String, VecDeque<OpaqueRelayDeliveryV1>>>();
-    let mut frame_sequences = worker
-        .remote_peers
-        .iter()
-        .map(|peer| (peer.peer_id.clone(), 0u64))
         .collect::<BTreeMap<_, _>>();
-    let mut replay = HandshakeReplayCacheV1::default();
-
-    for peer in &worker.remote_peers {
-        let initiator =
-            NodeHandshakeInitiatorV1::start(&worker.identity, &peer.peer_id, now_ms_v1(), 30_000)?;
-        relay.send_peer_handshake(
-            peer.peer_id.clone(),
-            RelayPeerHandshakeV1::Offer(initiator.offer().clone()),
-        )?;
-        initiators.insert(peer.peer_id.clone(), initiator);
-    }
 
     let mut last_heartbeat_ms = now_ms_v1();
     while !worker.stop.load(Ordering::Acquire) {
@@ -826,6 +908,8 @@ fn run_duplex_mesh_session_v1(
             }
         }
 
+        start_due_mesh_peer_handshakes_v1(relay, worker, &mut peers)?;
+
         for peer in &worker.remote_peers {
             let Some(outbound) = pending_by_peer
                 .get(&peer.peer_id)
@@ -834,10 +918,13 @@ fn run_duplex_mesh_session_v1(
             else {
                 continue;
             };
-            let Some(channel) = channels.get_mut(&peer.peer_id) else {
+            let Some(state) = peers.get(&peer.peer_id) else {
                 continue;
             };
-            let frame_sequence = frame_sequences.entry(peer.peer_id.clone()).or_default();
+            let ProductMainlineMeshPeerPhaseV1::Active(_) = state.phase else {
+                continue;
+            };
+            let frame_sequence = state.frame_sequence;
             let object_id =
                 u64::from_le_bytes(outbound.object_hash[..8].try_into().unwrap_or_default());
             let encoded_payload = encode_classified_payload_v1(&outbound)?;
@@ -846,17 +933,40 @@ fn run_duplex_mesh_session_v1(
                 PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1,
                 worker.chain_id,
                 object_id,
-                *frame_sequence,
+                frame_sequence,
                 0,
                 encoded_payload,
             );
-            *frame_sequence = frame_sequence.saturating_add(1);
-            let envelope = channel
-                .seal_novorudp_frame(&frame)
-                .context("seal multi-peer product overlay payload")?;
+            let seal_result = {
+                let state = peers
+                    .get_mut(&peer.peer_id)
+                    .context("configured mesh peer state disappeared")?;
+                match &mut state.phase {
+                    ProductMainlineMeshPeerPhaseV1::Active(channel) => {
+                        channel.seal_novorudp_frame(&frame)
+                    }
+                    _ => continue,
+                }
+            };
+            let envelope = match seal_result {
+                Ok(envelope) => envelope,
+                Err(error) => {
+                    isolate_mesh_peer_v1(
+                        &mut peers,
+                        &peer.peer_id,
+                        format!("seal outbound E2E payload: {error:#}"),
+                        worker,
+                    )?;
+                    continue;
+                }
+            };
             relay
                 .send_envelope(envelope)
                 .context("send multi-peer product overlay payload; retained for reconnect")?;
+            peers
+                .get_mut(&peer.peer_id)
+                .context("configured mesh peer state disappeared after send")?
+                .frame_sequence = frame_sequence.saturating_add(1);
             pending_by_peer
                 .get_mut(&peer.peer_id)
                 .and_then(VecDeque::pop_front)
@@ -876,19 +986,39 @@ fn run_duplex_mesh_session_v1(
                 .context("publish multi-peer product overlay delivery")?;
         }
 
-        let buffered_ready_peer = buffered_deliveries.iter().find_map(|(peer_id, queue)| {
-            let channel = channels.get(peer_id)?;
-            queue
+        let buffered_ready_peer = peers.iter().find_map(|(peer_id, state)| {
+            let ProductMainlineMeshPeerPhaseV1::Active(channel) = &state.phase else {
+                return None;
+            };
+            state
+                .buffered_deliveries
                 .front()
                 .is_some_and(|delivery| delivery.envelope.session_id == channel.session_id())
                 .then(|| peer_id.clone())
         });
         if let Some(peer_id) = buffered_ready_peer {
-            let delivery = buffered_deliveries
+            let delivery = peers
                 .get_mut(&peer_id)
-                .and_then(VecDeque::pop_front)
+                .and_then(|state| state.buffered_deliveries.pop_front())
                 .context("multi-peer buffered delivery disappeared")?;
-            publish_mesh_inbound_v1(&mut channels, delivery, worker.chain_id, &worker.events)?;
+            match open_mesh_inbound_v1(
+                peers
+                    .get_mut(&peer_id)
+                    .context("configured mesh peer state disappeared")?,
+                delivery,
+                worker.chain_id,
+            ) {
+                Ok(inbound) => worker
+                    .events
+                    .send(ProductMainlineOverlayEventV1::Inbound(inbound))
+                    .context("publish buffered multi-peer product overlay inbound event")?,
+                Err(error) => isolate_mesh_peer_v1(
+                    &mut peers,
+                    &peer_id,
+                    format!("open buffered E2E payload: {error:#}"),
+                    worker,
+                )?,
+            }
             continue;
         }
 
@@ -905,89 +1035,164 @@ fn run_duplex_mesh_session_v1(
         match event {
             ProductRelayClientEventV1::PeerHandshake(delivery) => {
                 let source_peer_id = delivery.source_peer_id.clone();
-                if !metrics.contains_key(&source_peer_id) {
-                    bail!("product overlay mesh rejected an unconfigured handshake peer");
+                let Some(state) = peers.get(&source_peer_id) else {
+                    continue;
+                };
+                if matches!(state.phase, ProductMainlineMeshPeerPhaseV1::Cooldown { .. }) {
+                    continue;
                 }
                 match delivery.handshake {
                     RelayPeerHandshakeV1::Offer(offer) => {
                         if offer.initiator_peer_id != source_peer_id {
-                            bail!("product overlay mesh relay source does not match signed offer");
+                            isolate_mesh_peer_v1(
+                                &mut peers,
+                                &source_peer_id,
+                                "relay source does not match signed handshake offer",
+                                worker,
+                            )?;
+                            continue;
                         }
-                        let has_active_channel = channels.contains_key(&source_peer_id);
-                        if initiators.contains_key(&source_peer_id)
-                            && !has_active_channel
-                            && local_peer_id < source_peer_id
+                        if matches!(
+                            peers.get(&source_peer_id).map(|state| &state.phase),
+                            Some(ProductMainlineMeshPeerPhaseV1::Handshaking { .. })
+                        ) && local_peer_id < source_peer_id
                         {
                             continue;
                         }
-                        initiators.remove(&source_peer_id);
-                        let responder = NodeHandshakeResponderV1::respond(
-                            &offer,
-                            &worker.identity,
-                            now_ms_v1(),
-                            30_000,
-                            &mut replay,
-                        )?;
+                        let responder = {
+                            let state = peers
+                                .get_mut(&source_peer_id)
+                                .context("configured mesh peer state disappeared")?;
+                            NodeHandshakeResponderV1::respond(
+                                &offer,
+                                &worker.identity,
+                                now_ms_v1(),
+                                PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1,
+                                &mut state.replay,
+                            )
+                        };
+                        let responder = match responder {
+                            Ok(responder) => responder,
+                            Err(error) => {
+                                isolate_mesh_peer_v1(
+                                    &mut peers,
+                                    &source_peer_id,
+                                    format!("reject peer handshake offer: {error:#}"),
+                                    worker,
+                                )?;
+                                continue;
+                            }
+                        };
                         let response = responder.response().clone();
                         let channel = responder.into_channel();
-                        let session_id = channel.session_id();
                         relay.send_peer_handshake(
                             source_peer_id.clone(),
                             RelayPeerHandshakeV1::Response(response),
                         )?;
-                        channels.insert(source_peer_id.clone(), channel);
-                        buffered_deliveries
-                            .entry(source_peer_id.clone())
-                            .or_default()
-                            .retain(|delivery| delivery.envelope.session_id == session_id);
-                        worker
-                            .events
-                            .send(ProductMainlineOverlayEventV1::E2eSessionEstablished {
-                                remote_peer_id: source_peer_id,
-                            })
-                            .context("publish multi-peer responder E2E-ready event")?;
+                        activate_mesh_peer_v1(&mut peers, &source_peer_id, channel, worker)?;
                     }
                     RelayPeerHandshakeV1::Response(response) => {
-                        let Some(initiator) = initiators.remove(&source_peer_id) else {
+                        if !mesh_peer_expects_handshake_session_v1(
+                            peers
+                                .get(&source_peer_id)
+                                .context("configured mesh peer state disappeared")?,
+                            response.session_id,
+                        ) {
+                            continue;
+                        }
+                        let initiator = {
+                            let state = peers
+                                .get_mut(&source_peer_id)
+                                .context("configured mesh peer state disappeared")?;
+                            match std::mem::replace(
+                                &mut state.phase,
+                                ProductMainlineMeshPeerPhaseV1::Idle,
+                            ) {
+                                ProductMainlineMeshPeerPhaseV1::Handshaking {
+                                    initiator, ..
+                                } => Some(initiator),
+                                phase => {
+                                    state.phase = phase;
+                                    None
+                                }
+                            }
+                        };
+                        let Some(initiator) = initiator else {
                             continue;
                         };
-                        let channel = initiator.complete(&response, now_ms_v1(), &mut replay)?;
-                        let session_id = channel.session_id();
-                        channels.insert(source_peer_id.clone(), channel);
-                        buffered_deliveries
-                            .entry(source_peer_id.clone())
-                            .or_default()
-                            .retain(|delivery| delivery.envelope.session_id == session_id);
-                        worker
-                            .events
-                            .send(ProductMainlineOverlayEventV1::E2eSessionEstablished {
-                                remote_peer_id: source_peer_id,
-                            })
-                            .context("publish multi-peer initiator E2E-ready event")?;
+                        let channel = {
+                            let state = peers
+                                .get_mut(&source_peer_id)
+                                .context("configured mesh peer state disappeared")?;
+                            initiator.complete(&response, now_ms_v1(), &mut state.replay)
+                        };
+                        match channel {
+                            Ok(channel) => {
+                                activate_mesh_peer_v1(&mut peers, &source_peer_id, channel, worker)?
+                            }
+                            Err(error) => isolate_mesh_peer_v1(
+                                &mut peers,
+                                &source_peer_id,
+                                format!("reject peer handshake response: {error:#}"),
+                                worker,
+                            )?,
+                        }
                     }
                 }
             }
             ProductRelayClientEventV1::Delivery(delivery) => {
-                if !metrics.contains_key(&delivery.source_peer_id) {
-                    bail!("product overlay mesh rejected data from an unconfigured peer");
+                let peer_id = delivery.source_peer_id.clone();
+                let Some(state) = peers.get(&peer_id) else {
+                    continue;
+                };
+                if matches!(state.phase, ProductMainlineMeshPeerPhaseV1::Cooldown { .. }) {
+                    continue;
                 }
-                if channels
-                    .get(&delivery.source_peer_id)
-                    .is_some_and(|channel| channel.session_id() == delivery.envelope.session_id)
-                {
-                    publish_mesh_inbound_v1(
-                        &mut channels,
+                let matching_active_channel = matches!(
+                    &state.phase,
+                    ProductMainlineMeshPeerPhaseV1::Active(channel)
+                        if channel.session_id() == delivery.envelope.session_id
+                );
+                let has_active_channel =
+                    matches!(state.phase, ProductMainlineMeshPeerPhaseV1::Active(_));
+                if matching_active_channel {
+                    match open_mesh_inbound_v1(
+                        peers
+                            .get_mut(&peer_id)
+                            .context("configured mesh peer state disappeared")?,
                         delivery,
                         worker.chain_id,
-                        &worker.events,
-                    )?;
-                } else {
-                    let peer_id = delivery.source_peer_id.clone();
-                    buffer_preauth_delivery_v1(
-                        buffered_deliveries.entry(peer_id.clone()).or_default(),
+                    ) {
+                        Ok(inbound) => worker
+                            .events
+                            .send(ProductMainlineOverlayEventV1::Inbound(inbound))
+                            .context("publish multi-peer product overlay inbound event")?,
+                        Err(error) => isolate_mesh_peer_v1(
+                            &mut peers,
+                            &peer_id,
+                            format!("open peer E2E payload: {error:#}"),
+                            worker,
+                        )?,
+                    }
+                } else if !has_active_channel
+                    && mesh_peer_expects_handshake_session_v1(state, delivery.envelope.session_id)
+                {
+                    let buffer_result = buffer_preauth_delivery_v1(
+                        &mut peers
+                            .get_mut(&peer_id)
+                            .context("configured mesh peer state disappeared")?
+                            .buffered_deliveries,
                         delivery,
                         Some(&peer_id),
-                    )?;
+                    );
+                    if let Err(error) = buffer_result {
+                        isolate_mesh_peer_v1(
+                            &mut peers,
+                            &peer_id,
+                            format!("buffer pre-auth peer payload: {error:#}"),
+                            worker,
+                        )?;
+                    }
                 }
             }
             ProductRelayClientEventV1::HeartbeatAck => {}
@@ -999,28 +1204,153 @@ fn run_duplex_mesh_session_v1(
     Ok(())
 }
 
-fn publish_mesh_inbound_v1(
-    channels: &mut BTreeMap<String, E2eSecureChannelV1>,
+fn start_due_mesh_peer_handshakes_v1(
+    relay: &mut ProductRelayClientV1,
+    worker: &ProductMainlineOverlayWorkerV1,
+    peers: &mut BTreeMap<String, ProductMainlineMeshPeerStateV1>,
+) -> Result<()> {
+    let now_ms = now_ms_v1();
+    let peer_ids = peers.keys().cloned().collect::<Vec<_>>();
+    for peer_id in peer_ids {
+        let expired = matches!(
+            peers.get(&peer_id).map(|state| &state.phase),
+            Some(ProductMainlineMeshPeerPhaseV1::Handshaking { expires_at_ms, .. })
+                if *expires_at_ms <= now_ms
+        );
+        if expired {
+            isolate_mesh_peer_v1(
+                peers,
+                &peer_id,
+                "peer handshake expired before authentication",
+                worker,
+            )?;
+        }
+        let handshake_due = match peers.get(&peer_id).map(|state| &state.phase) {
+            Some(ProductMainlineMeshPeerPhaseV1::Idle) => true,
+            Some(ProductMainlineMeshPeerPhaseV1::Cooldown { retry_at_ms }) => {
+                *retry_at_ms <= now_ms
+            }
+            _ => false,
+        };
+        if !handshake_due {
+            continue;
+        }
+        let initiator = NodeHandshakeInitiatorV1::start(
+            &worker.identity,
+            &peer_id,
+            now_ms,
+            PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1,
+        )?;
+        relay.send_peer_handshake(
+            peer_id.clone(),
+            RelayPeerHandshakeV1::Offer(initiator.offer().clone()),
+        )?;
+        peers
+            .get_mut(&peer_id)
+            .context("configured mesh peer state disappeared")?
+            .phase = ProductMainlineMeshPeerPhaseV1::Handshaking {
+            initiator,
+            expires_at_ms: now_ms.saturating_add(PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1),
+        };
+    }
+    Ok(())
+}
+
+fn isolate_mesh_peer_v1(
+    peers: &mut BTreeMap<String, ProductMainlineMeshPeerStateV1>,
+    peer_id: &str,
+    reason: impl Into<String>,
+    worker: &ProductMainlineOverlayWorkerV1,
+) -> Result<()> {
+    let state = peers
+        .get_mut(peer_id)
+        .context("cannot isolate an unconfigured mesh peer")?;
+    state.session_failure_count = state.session_failure_count.saturating_add(1);
+    let retry_in_ms = reconnect_delay_ms_v1(
+        state.session_failure_count,
+        worker.reconnect_base_delay_ms,
+        worker.reconnect_max_delay_ms,
+    );
+    state.phase = ProductMainlineMeshPeerPhaseV1::Cooldown {
+        retry_at_ms: now_ms_v1().saturating_add(retry_in_ms),
+    };
+    state.buffered_deliveries.clear();
+    state.frame_sequence = 0;
+    let reason = bounded_peer_fault_reason_v1(reason.into());
+    worker
+        .events
+        .send(ProductMainlineOverlayEventV1::PeerIsolated {
+            remote_peer_id: peer_id.to_string(),
+            reason,
+            session_failure_count: state.session_failure_count,
+            retry_in_ms,
+        })
+        .context("publish mesh peer-isolated event")
+}
+
+fn activate_mesh_peer_v1(
+    peers: &mut BTreeMap<String, ProductMainlineMeshPeerStateV1>,
+    peer_id: &str,
+    channel: E2eSecureChannelV1,
+    worker: &ProductMainlineOverlayWorkerV1,
+) -> Result<()> {
+    let session_id = channel.session_id();
+    let state = peers
+        .get_mut(peer_id)
+        .context("cannot activate an unconfigured mesh peer")?;
+    state
+        .buffered_deliveries
+        .retain(|delivery| delivery.envelope.session_id == session_id);
+    state.phase = ProductMainlineMeshPeerPhaseV1::Active(channel);
+    state.frame_sequence = 0;
+    worker
+        .events
+        .send(ProductMainlineOverlayEventV1::E2eSessionEstablished {
+            remote_peer_id: peer_id.to_string(),
+        })
+        .context("publish multi-peer E2E-ready event")
+}
+
+fn open_mesh_inbound_v1(
+    state: &mut ProductMainlineMeshPeerStateV1,
     delivery: OpaqueRelayDeliveryV1,
     chain_id: u64,
-    events: &SyncSender<ProductMainlineOverlayEventV1>,
-) -> Result<()> {
+) -> Result<ProductMainlineOverlayInboundV1> {
     let source_peer_id = delivery.source_peer_id;
-    let channel = channels
-        .get_mut(&source_peer_id)
-        .context("multi-peer delivery arrived without an E2E channel")?;
+    let ProductMainlineMeshPeerPhaseV1::Active(channel) = &mut state.phase else {
+        bail!("multi-peer delivery arrived without an active E2E channel");
+    };
     let frame = channel.open_novorudp_frame(&delivery.envelope)?;
     let (payload_class, object_hash, frame) = open_classified_inbound_frame_v1(frame, chain_id)?;
-    events
-        .send(ProductMainlineOverlayEventV1::Inbound(
-            ProductMainlineOverlayInboundV1 {
-                payload_class,
-                object_hash,
-                source_peer_id,
-                frame,
-            },
-        ))
-        .context("publish multi-peer product overlay inbound event")
+    Ok(ProductMainlineOverlayInboundV1 {
+        payload_class,
+        object_hash,
+        source_peer_id,
+        frame,
+    })
+}
+
+fn mesh_peer_expects_handshake_session_v1(
+    state: &ProductMainlineMeshPeerStateV1,
+    session_id: [u8; 16],
+) -> bool {
+    matches!(
+        &state.phase,
+        ProductMainlineMeshPeerPhaseV1::Handshaking { initiator, .. }
+            if initiator.offer().session_id == session_id
+    )
+}
+
+fn bounded_peer_fault_reason_v1(mut reason: String) -> String {
+    if reason.len() <= PRODUCT_MAINLINE_OVERLAY_PEER_FAULT_REASON_MAX_BYTES_V1 {
+        return reason;
+    }
+    let mut boundary = PRODUCT_MAINLINE_OVERLAY_PEER_FAULT_REASON_MAX_BYTES_V1;
+    while !reason.is_char_boundary(boundary) {
+        boundary = boundary.saturating_sub(1);
+    }
+    reason.truncate(boundary);
+    reason
 }
 
 fn run_authenticated_role_v1(
@@ -1617,6 +1947,74 @@ mod tests {
     }
 
     #[test]
+    fn product_mainline_mesh_filters_stale_handshake_generation_traffic() {
+        let local_identity = SigningKey::from_bytes(&[0x68; 32]);
+        let remote_identity = SigningKey::from_bytes(&[0x69; 32]);
+        let remote_peer_id =
+            peer_id_from_ed25519_public_key_v1(&remote_identity.verifying_key().to_bytes());
+        let initiator = NodeHandshakeInitiatorV1::start(
+            &local_identity,
+            remote_peer_id,
+            1_000,
+            PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1,
+        )
+        .unwrap();
+        let current_session_id = initiator.offer().session_id;
+        let mut stale_session_id = current_session_id;
+        stale_session_id[0] ^= 0xff;
+        let mut state = ProductMainlineMeshPeerStateV1 {
+            phase: ProductMainlineMeshPeerPhaseV1::Handshaking {
+                initiator,
+                expires_at_ms: 2_000,
+            },
+            ..ProductMainlineMeshPeerStateV1::default()
+        };
+
+        assert!(mesh_peer_expects_handshake_session_v1(
+            &state,
+            current_session_id
+        ));
+        assert!(!mesh_peer_expects_handshake_session_v1(
+            &state,
+            stale_session_id
+        ));
+
+        state.phase = ProductMainlineMeshPeerPhaseV1::Cooldown { retry_at_ms: 3_000 };
+        assert!(!mesh_peer_expects_handshake_session_v1(
+            &state,
+            current_session_id
+        ));
+    }
+
+    #[test]
+    fn product_mainline_ingress_failure_classification_is_conservative() {
+        let peer_failure =
+            ingest_product_mainline_overlay_peer_payload_v1(7, b"not-a-native-transaction")
+                .unwrap_err();
+        assert_eq!(
+            peer_failure.class,
+            ProductMainlineOverlayIngressFailureClassV1::PeerRejected
+        );
+
+        for local_error in [
+            anyhow::anyhow!("load durable native authentication state failed: disk unavailable"),
+            anyhow::anyhow!("nov native authentication nonce registry poisoned"),
+            anyhow::anyhow!(
+                "nov native authentication rejected: invalid NOVOVM_NATIVE_CHAIN_ID: bad config"
+            ),
+            anyhow::anyhow!(
+                "nov native authentication rejected: configured chain domain mismatch configured=8 signed=7"
+            ),
+            anyhow::anyhow!("unknown future verifier failure"),
+        ] {
+            assert_eq!(
+                classify_product_mainline_overlay_ingress_failure_v1(&local_error),
+                ProductMainlineOverlayIngressFailureClassV1::LocalFault
+            );
+        }
+    }
+
+    #[test]
     fn config_relative_paths_are_based_on_the_config_directory() {
         let now = now_ms_v1();
         let root = std::env::temp_dir().join(format!("novovm-overlay-relative-config-{now}"));
@@ -1838,7 +2236,7 @@ mod tests {
             rate_limit_window_ms: Some(1_000),
         };
         let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
-        wait_until_v1(Duration::from_secs(1), || relay_report_path.exists());
+        wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
 
         let relay_identity = SigningKey::from_bytes(&[31; 32]);
         let relay_peer_id =
@@ -2077,7 +2475,7 @@ mod tests {
             rate_limit_window_ms: Some(1_000),
         };
         let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
-        wait_until_v1(Duration::from_secs(1), || relay_report_path.exists());
+        wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
 
         let relay_identity = SigningKey::from_bytes(&[59; 32]);
         let relay_peer_id =
@@ -2237,6 +2635,333 @@ mod tests {
     }
 
     #[test]
+    fn product_mainline_mesh_bad_mac_isolates_only_attributable_peer() {
+        let now = now_ms_v1();
+        let root =
+            std::env::temp_dir().join(format!("novovm-product-overlay-peer-error-domain-{now}"));
+        fs::create_dir_all(&root).unwrap();
+        let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let certificate_path = root.join("relay-cert.pem");
+        let tls_key_path = root.join("relay-key.pem");
+        let relay_identity_path = root.join("relay-identity.hex");
+        let node_a_identity_path = root.join("node-a.hex");
+        let node_b_identity_path = root.join("node-b.hex");
+        fs::write(&certificate_path, certificate.serialize_pem().unwrap()).unwrap();
+        fs::write(&tls_key_path, certificate.serialize_private_key_pem()).unwrap();
+        write_identity_v1(&relay_identity_path, [74; 32]);
+        write_identity_v1(&node_a_identity_path, [75; 32]);
+        write_identity_v1(&node_b_identity_path, [76; 32]);
+
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let relay_report_path = root.join("relay-report.json");
+        let daemon_config = ProductRelayDaemonConfigV1 {
+            bind_addr: format!("127.0.0.1:{port}"),
+            tls_cert_path: certificate_path,
+            tls_key_path,
+            relay_identity_key_path: relay_identity_path,
+            report_path: relay_report_path.clone(),
+            report_interval_ms: 20,
+            run_for_ms: Some(20_000),
+            session_queue_capacity: Some(32),
+            offline_queue_per_peer: Some(32),
+            offline_queue_total: Some(128),
+            session_ttl_ms: Some(15_000),
+            rate_limit_frames: Some(2_000),
+            rate_limit_window_ms: Some(1_000),
+        };
+        let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
+        wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
+
+        let relay_identity = SigningKey::from_bytes(&[74; 32]);
+        let relay_peer_id =
+            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
+        let node_a_identity = SigningKey::from_bytes(&[75; 32]);
+        let node_b_identity = SigningKey::from_bytes(&[76; 32]);
+        let malicious_identity = SigningKey::from_bytes(&[77; 32]);
+        let node_a_peer_id =
+            peer_id_from_ed25519_public_key_v1(&node_a_identity.verifying_key().to_bytes());
+        let node_b_peer_id =
+            peer_id_from_ed25519_public_key_v1(&node_b_identity.verifying_key().to_bytes());
+        let malicious_peer_id =
+            peer_id_from_ed25519_public_key_v1(&malicious_identity.verifying_key().to_bytes());
+        let bootstrap_signer = SigningKey::from_bytes(&[78; 32]);
+        let source = signed_bootstrap_source_v1(
+            &bootstrap_signer,
+            &relay_identity,
+            now.saturating_sub(1_000),
+            now.saturating_add(30_000),
+        );
+        let chain_id = 8_300_000 + now % 100_000;
+        let mut node_a_config = mainline_config_v1(
+            chain_id,
+            ProductMainlineOverlayRoleV1::Duplex,
+            node_a_identity_path,
+            root.join("node-a-cache.json"),
+            bootstrap_signer.verifying_key().to_bytes(),
+            source.clone(),
+            None,
+            None,
+        );
+        node_a_config.peers = vec![
+            ProductMainlineOverlayPeerConfigV1 {
+                peer_id: node_b_peer_id.clone(),
+                metric_peer_id: 93_001,
+            },
+            ProductMainlineOverlayPeerConfigV1 {
+                peer_id: malicious_peer_id.clone(),
+                metric_peer_id: 93_002,
+            },
+        ];
+        let node_b_config = mainline_config_v1(
+            chain_id,
+            ProductMainlineOverlayRoleV1::Duplex,
+            node_b_identity_path,
+            root.join("node-b-cache.json"),
+            bootstrap_signer.verifying_key().to_bytes(),
+            source,
+            Some(node_a_peer_id.clone()),
+            None,
+        );
+        let relay_override = ProductRelayClientConfigV1 {
+            endpoint: format!("wss://127.0.0.1:{port}/novovm"),
+            expected_relay_peer_id: relay_peer_id,
+            connect_timeout_ms: 1_000,
+            read_timeout_ms: 50,
+            tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
+        };
+        let mut node_b = ProductMainlineOverlayRuntimeV1::start_with_relay_override_v1(
+            node_b_config,
+            now_ms_v1(),
+            relay_override.clone(),
+        )
+        .unwrap();
+        let mut node_a = ProductMainlineOverlayRuntimeV1::start_with_relay_override_v1(
+            node_a_config,
+            now_ms_v1(),
+            relay_override.clone(),
+        )
+        .unwrap();
+        wait_for_event_without_relay_failure_v1(&node_a, Duration::from_secs(3), None, |event| {
+            matches!(
+                event,
+                ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id }
+                    if remote_peer_id == &node_b_peer_id
+            )
+        });
+        wait_for_event_v1(&node_b, Duration::from_secs(3), |event| {
+            matches!(
+                event,
+                ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id }
+                    if remote_peer_id == &node_a_peer_id
+            )
+        });
+
+        let malicious_relay_config = ProductRelayClientConfigV1 {
+            read_timeout_ms: 100,
+            ..relay_override
+        };
+        let mut malicious_relay =
+            ProductRelayClientV1::connect(&malicious_identity, &malicious_relay_config).unwrap();
+        let initial_offer =
+            match wait_for_relay_event_v1(&mut malicious_relay, Duration::from_secs(2), |event| {
+                matches!(
+                    event,
+                    ProductRelayClientEventV1::PeerHandshake(delivery)
+                        if delivery.source_peer_id == node_a_peer_id
+                            && matches!(delivery.handshake, RelayPeerHandshakeV1::Offer(_))
+                )
+            }) {
+                ProductRelayClientEventV1::PeerHandshake(delivery) => match delivery.handshake {
+                    RelayPeerHandshakeV1::Offer(offer) => offer,
+                    RelayPeerHandshakeV1::Response(_) => unreachable!(),
+                },
+                _ => unreachable!(),
+            };
+        let mut malicious_replay = HandshakeReplayCacheV1::default();
+        let responder = NodeHandshakeResponderV1::respond(
+            &initial_offer,
+            &malicious_identity,
+            now_ms_v1(),
+            PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1,
+            &mut malicious_replay,
+        )
+        .unwrap();
+        let response = responder.response().clone();
+        let mut malicious_channel = responder.into_channel();
+        malicious_relay
+            .send_peer_handshake(
+                node_a_peer_id.clone(),
+                RelayPeerHandshakeV1::Response(response),
+            )
+            .unwrap();
+        wait_for_event_without_relay_failure_v1(&node_a, Duration::from_secs(2), None, |event| {
+            matches!(
+                event,
+                ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id }
+                    if remote_peer_id == &malicious_peer_id
+            )
+        });
+
+        let malicious_object_hash = [0x81; 32];
+        let malicious_payload = ProductMainlineOverlayOutboundV1 {
+            payload_class: ProductMainlineOverlayPayloadClassV1::NativeTransaction,
+            object_hash: malicious_object_hash,
+            payload: signed_native_tx_v1(chain_id, &format!("malicious-peer-{now}")),
+        };
+        let malicious_frame = NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1,
+            chain_id,
+            u64::from_le_bytes(malicious_object_hash[..8].try_into().unwrap()),
+            0,
+            0,
+            encode_classified_payload_v1(&malicious_payload).unwrap(),
+        );
+        let mut bad_envelope = malicious_channel
+            .seal_novorudp_frame(&malicious_frame)
+            .unwrap();
+        let last_byte = bad_envelope.ciphertext.last_mut().unwrap();
+        *last_byte ^= 0x80;
+        malicious_relay.send_envelope(bad_envelope).unwrap();
+        let isolated = wait_for_event_without_relay_failure_v1(
+            &node_a,
+            Duration::from_secs(2),
+            Some(&node_b_peer_id),
+            |event| {
+                matches!(
+                    event,
+                    ProductMainlineOverlayEventV1::PeerIsolated { remote_peer_id, .. }
+                        if remote_peer_id == &malicious_peer_id
+                )
+            },
+        );
+        assert!(matches!(
+            isolated,
+            ProductMainlineOverlayEventV1::PeerIsolated {
+                session_failure_count: 1,
+                retry_in_ms: 10,
+                ..
+            }
+        ));
+
+        let healthy_tx_hash = [0x82; 32];
+        let healthy_raw_tx = signed_native_tx_v1(chain_id, &format!("healthy-after-attack-{now}"));
+        assert!(node_a
+            .try_submit(healthy_tx_hash, healthy_raw_tx.clone())
+            .unwrap());
+        wait_for_event_without_relay_failure_v1(
+            &node_a,
+            Duration::from_secs(2),
+            Some(&node_b_peer_id),
+            |event| {
+                matches!(
+                    event,
+                    ProductMainlineOverlayEventV1::Delivery(delivery)
+                        if delivery.remote_peer_id == node_b_peer_id
+                            && delivery.object_hash == healthy_tx_hash
+                            && delivery.delivered
+                )
+            },
+        );
+        let inbound_at_b = wait_for_inbound_v1(&node_b, Duration::from_secs(2));
+        assert_eq!(inbound_at_b.object_hash, healthy_tx_hash);
+        assert_eq!(inbound_at_b.frame.payload, healthy_raw_tx);
+
+        let retry_offer =
+            match wait_for_relay_event_v1(&mut malicious_relay, Duration::from_secs(2), |event| {
+                matches!(
+                    event,
+                    ProductRelayClientEventV1::PeerHandshake(delivery)
+                        if delivery.source_peer_id == node_a_peer_id
+                            && matches!(delivery.handshake, RelayPeerHandshakeV1::Offer(_))
+                )
+            }) {
+                ProductRelayClientEventV1::PeerHandshake(delivery) => match delivery.handshake {
+                    RelayPeerHandshakeV1::Offer(offer) => offer,
+                    RelayPeerHandshakeV1::Response(_) => unreachable!(),
+                },
+                _ => unreachable!(),
+            };
+        let responder = NodeHandshakeResponderV1::respond(
+            &retry_offer,
+            &malicious_identity,
+            now_ms_v1(),
+            PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1,
+            &mut malicious_replay,
+        )
+        .unwrap();
+        let response = responder.response().clone();
+        malicious_channel = responder.into_channel();
+        malicious_relay
+            .send_peer_handshake(
+                node_a_peer_id.clone(),
+                RelayPeerHandshakeV1::Response(response),
+            )
+            .unwrap();
+        wait_for_event_without_relay_failure_v1(
+            &node_a,
+            Duration::from_secs(2),
+            Some(&node_b_peer_id),
+            |event| {
+                matches!(
+                    event,
+                    ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id }
+                        if remote_peer_id == &malicious_peer_id
+                )
+            },
+        );
+        let delivery_after_retry =
+            match wait_for_relay_event_v1(&mut malicious_relay, Duration::from_secs(2), |event| {
+                matches!(event, ProductRelayClientEventV1::Delivery(_))
+            }) {
+                ProductRelayClientEventV1::Delivery(delivery) => delivery,
+                _ => unreachable!(),
+            };
+        let recovered_frame = malicious_channel
+            .open_novorudp_frame(&delivery_after_retry.envelope)
+            .unwrap();
+        let (_, recovered_hash, recovered_frame) =
+            open_classified_inbound_frame_v1(recovered_frame, chain_id).unwrap();
+        assert_eq!(recovered_hash, healthy_tx_hash);
+        assert_eq!(recovered_frame.payload, healthy_raw_tx);
+
+        let reverse_tx_hash = [0x83; 32];
+        let reverse_raw_tx = signed_native_tx_v1(chain_id, &format!("healthy-reverse-{now}"));
+        assert!(node_b
+            .try_submit(reverse_tx_hash, reverse_raw_tx.clone())
+            .unwrap());
+        let reverse_inbound = wait_for_event_without_relay_failure_v1(
+            &node_a,
+            Duration::from_secs(2),
+            Some(&node_b_peer_id),
+            |event| {
+                matches!(
+                    event,
+                    ProductMainlineOverlayEventV1::Inbound(inbound)
+                        if inbound.source_peer_id == node_b_peer_id
+                            && inbound.object_hash == reverse_tx_hash
+                )
+            },
+        );
+        match reverse_inbound {
+            ProductMainlineOverlayEventV1::Inbound(inbound) => {
+                assert_eq!(inbound.frame.payload, reverse_raw_tx)
+            }
+            _ => unreachable!(),
+        }
+
+        let _ = malicious_relay.close();
+        node_a.shutdown();
+        node_b.shutdown();
+        daemon.join().unwrap().unwrap();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn mainline_lifecycle_rotates_from_failed_signed_relay_candidate() {
         let now = now_ms_v1();
         let root = std::env::temp_dir().join(format!("novovm-product-overlay-rotation-{now}"));
@@ -2296,7 +3021,7 @@ mod tests {
             rate_limit_window_ms: Some(1_000),
         };
         let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
-        wait_until_v1(Duration::from_secs(1), || relay_report_path.exists());
+        wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
 
         let bootstrap_signer = SigningKey::from_bytes(&[54; 32]);
         let source = signed_bootstrap_source_with_relays_v1(
@@ -2639,6 +3364,62 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         panic!("timed out waiting for product overlay lifecycle event");
+    }
+
+    fn wait_for_event_without_relay_failure_v1(
+        runtime: &ProductMainlineOverlayRuntimeV1,
+        timeout: Duration,
+        forbidden_healthy_rehandshake_peer_id: Option<&str>,
+        predicate: impl Fn(&ProductMainlineOverlayEventV1) -> bool,
+    ) -> ProductMainlineOverlayEventV1 {
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            let mut matched = None;
+            for event in runtime.drain_events(64) {
+                match &event {
+                    ProductMainlineOverlayEventV1::RelayDisconnected { .. }
+                    | ProductMainlineOverlayEventV1::RelayRotated { .. }
+                    | ProductMainlineOverlayEventV1::WorkerStopped
+                    | ProductMainlineOverlayEventV1::WorkerFailed(_) => {
+                        panic!("unexpected relay-global failure while waiting for peer event: {event:?}")
+                    }
+                    ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id }
+                        if forbidden_healthy_rehandshake_peer_id
+                            .is_some_and(|peer_id| peer_id == remote_peer_id) =>
+                    {
+                        panic!(
+                            "healthy peer unexpectedly re-established after another peer fault: {event:?}"
+                        )
+                    }
+                    _ => {}
+                }
+                if matched.is_none() && predicate(&event) {
+                    matched = Some(event);
+                }
+            }
+            if let Some(event) = matched {
+                return event;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out waiting for peer-local product overlay lifecycle event");
+    }
+
+    fn wait_for_relay_event_v1(
+        relay: &mut ProductRelayClientV1,
+        timeout: Duration,
+        predicate: impl Fn(&ProductRelayClientEventV1) -> bool,
+    ) -> ProductRelayClientEventV1 {
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            match relay.recv_event() {
+                Ok(event) if predicate(&event) => return event,
+                Ok(_) => {}
+                Err(error) if relay_read_timed_out_v1(&error) => {}
+                Err(error) => panic!("failed while waiting for direct relay event: {error:#}"),
+            }
+        }
+        panic!("timed out waiting for direct relay event");
     }
 
     fn wait_for_inbound_v1(
