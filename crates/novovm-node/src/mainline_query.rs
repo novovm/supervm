@@ -506,6 +506,9 @@ pub fn is_mainline_native_execution_query_method(method: &str) -> bool {
             | "nov_getNativeBlockLedgerStatus"
             | "nov_getNativeBlockByNumber"
             | "nov_getNativeBlockByHash"
+            | "nov_getNativeBlockCandidatesByNumber"
+            | "nov_getNativeBlockCandidateByHash"
+            | "nov_getNativeBlockCandidateChildren"
             | "nov_getNativeTransactionLocation"
             | "nov_getNativeTransactionReceipt"
             | "nov_sendRawTransactionBatch"
@@ -1595,6 +1598,9 @@ fn run_mainline_native_execution_query(method: &str, params: &Value) -> Result<V
         "nov_getNativeBlockLedgerStatus"
         | "nov_getNativeBlockByNumber"
         | "nov_getNativeBlockByHash"
+        | "nov_getNativeBlockCandidatesByNumber"
+        | "nov_getNativeBlockCandidateByHash"
+        | "nov_getNativeBlockCandidateChildren"
         | "nov_getNativeTransactionLocation"
         | "nov_getNativeTransactionReceipt" => {
             run_nov_native_block_ledger_query_with_configured_persistence_v1(
@@ -11117,6 +11123,9 @@ mod tests {
             "nov_getNativeBlockLedgerStatus",
             "nov_getNativeBlockByNumber",
             "nov_getNativeBlockByHash",
+            "nov_getNativeBlockCandidatesByNumber",
+            "nov_getNativeBlockCandidateByHash",
+            "nov_getNativeBlockCandidateChildren",
             "nov_getNativeTransactionLocation",
             "nov_getNativeTransactionReceipt",
             "nov_sendRawTransactionBatch",

@@ -14783,6 +14783,70 @@ fn empty_native_block_ledger_query_v1(
                 "block": null,
             }))
         }
+        "nov_getNativeBlockCandidatesByNumber" => {
+            let height =
+                native_block_query_u64_v1(params, &["block_number", "height", "number"], 0)
+                    .ok_or_else(|| anyhow::anyhow!("block_number is required"))?;
+            Ok(serde_json::json!({
+                "method": method,
+                "chain_id": chain_id,
+                "block_number": height,
+                "found": false,
+                "trust_class": "unsealed_candidate_graph",
+                "chain_canonical": false,
+                "proof_sealed": false,
+                "safe": false,
+                "finalized": false,
+                "candidates": [],
+            }))
+        }
+        "nov_getNativeBlockCandidateByHash" => {
+            let raw_hash =
+                native_block_query_string_v1(params, &["block_hash", "blockHash", "hash"], 0)
+                    .ok_or_else(|| anyhow::anyhow!("block_hash is required"))?;
+            let block_hash = parse_fixed_hex_32_v1(raw_hash.as_str(), "block_hash")?;
+            Ok(serde_json::json!({
+                "method": method,
+                "chain_id": chain_id,
+                "block_hash": to_hex_prefixed_v1(&block_hash),
+                "found": false,
+                "trust_class": "unsealed_candidate_graph",
+                "artifact_header_canonical_local_scope": "producer_local_claim_not_receiver_selection",
+                "chain_canonical": false,
+                "proof_sealed": false,
+                "safe": false,
+                "finalized": false,
+                "candidate": null,
+                "block": null,
+            }))
+        }
+        "nov_getNativeBlockCandidateChildren" => {
+            let raw_hash = native_block_query_string_v1(
+                params,
+                &[
+                    "parent_block_hash",
+                    "parentBlockHash",
+                    "block_hash",
+                    "blockHash",
+                    "hash",
+                ],
+                0,
+            )
+            .ok_or_else(|| anyhow::anyhow!("parent_block_hash is required"))?;
+            let parent_block_hash = parse_fixed_hex_32_v1(raw_hash.as_str(), "parent_block_hash")?;
+            Ok(serde_json::json!({
+                "method": method,
+                "chain_id": chain_id,
+                "parent_block_hash": to_hex_prefixed_v1(&parent_block_hash),
+                "found": false,
+                "trust_class": "unsealed_candidate_graph",
+                "chain_canonical": false,
+                "proof_sealed": false,
+                "safe": false,
+                "finalized": false,
+                "children": [],
+            }))
+        }
         "nov_getNativeTransactionLocation" | "nov_getNativeTransactionReceipt" => {
             let raw_hash =
                 native_block_query_string_v1(params, &["tx_hash", "transaction_hash", "hash"], 0)
@@ -14911,6 +14975,74 @@ fn run_nov_native_block_ledger_query_internal_v1(
                 "safe": false,
                 "finalized": false,
                 "block": block,
+            }))
+        }
+        "nov_getNativeBlockCandidatesByNumber" => {
+            let height =
+                native_block_query_u64_v1(params, &["block_number", "height", "number"], 0)
+                    .ok_or_else(|| anyhow::anyhow!("block_number is required"))?;
+            let candidates = ledger.load_candidate_records_by_height(chain_id, height)?;
+            Ok(serde_json::json!({
+                "method": method,
+                "chain_id": chain_id,
+                "block_number": height,
+                "found": !candidates.is_empty(),
+                "trust_class": "unsealed_candidate_graph",
+                "chain_canonical": false,
+                "proof_sealed": false,
+                "safe": false,
+                "finalized": false,
+                "candidates": candidates,
+            }))
+        }
+        "nov_getNativeBlockCandidateByHash" => {
+            let raw_hash =
+                native_block_query_string_v1(params, &["block_hash", "blockHash", "hash"], 0)
+                    .ok_or_else(|| anyhow::anyhow!("block_hash is required"))?;
+            let block_hash = parse_fixed_hex_32_v1(raw_hash.as_str(), "block_hash")?;
+            let candidate = ledger.load_candidate_record(chain_id, block_hash)?;
+            let block = ledger.load_candidate_block(chain_id, block_hash)?;
+            Ok(serde_json::json!({
+                "method": method,
+                "chain_id": chain_id,
+                "block_hash": to_hex_prefixed_v1(&block_hash),
+                "found": candidate.is_some() && block.is_some(),
+                "trust_class": "unsealed_candidate_graph",
+                "artifact_header_canonical_local_scope": "producer_local_claim_not_receiver_selection",
+                "chain_canonical": false,
+                "proof_sealed": false,
+                "safe": false,
+                "finalized": false,
+                "candidate": candidate,
+                "block": block,
+            }))
+        }
+        "nov_getNativeBlockCandidateChildren" => {
+            let raw_hash = native_block_query_string_v1(
+                params,
+                &[
+                    "parent_block_hash",
+                    "parentBlockHash",
+                    "block_hash",
+                    "blockHash",
+                    "hash",
+                ],
+                0,
+            )
+            .ok_or_else(|| anyhow::anyhow!("parent_block_hash is required"))?;
+            let parent_block_hash = parse_fixed_hex_32_v1(raw_hash.as_str(), "parent_block_hash")?;
+            let children = ledger.load_candidate_children(chain_id, parent_block_hash)?;
+            Ok(serde_json::json!({
+                "method": method,
+                "chain_id": chain_id,
+                "parent_block_hash": to_hex_prefixed_v1(&parent_block_hash),
+                "found": !children.is_empty(),
+                "trust_class": "unsealed_candidate_graph",
+                "chain_canonical": false,
+                "proof_sealed": false,
+                "safe": false,
+                "finalized": false,
+                "children": children,
             }))
         }
         "nov_getNativeTransactionLocation" => {
@@ -20730,6 +20862,59 @@ mod tests {
     };
     use sha2::Digest;
 
+    #[test]
+    fn empty_native_candidate_graph_queries_are_explicitly_unsealed() {
+        let chain_id = 88_139_000u64;
+        let ledger_path = std::path::Path::new("missing-native-block-ledger.rocksdb");
+        let zero_hash = to_hex_prefixed_v1(&[0u8; 32]);
+        for (method, params, collection_field) in [
+            (
+                "nov_getNativeBlockCandidatesByNumber",
+                serde_json::json!({"block_number": 1}),
+                "candidates",
+            ),
+            (
+                "nov_getNativeBlockCandidateChildren",
+                serde_json::json!({"parent_block_hash": zero_hash}),
+                "children",
+            ),
+        ] {
+            let out = empty_native_block_ledger_query_v1(method, &params, chain_id, ledger_path)
+                .expect("empty candidate graph query should succeed");
+            assert_eq!(out["found"].as_bool(), Some(false));
+            assert_eq!(
+                out["trust_class"].as_str(),
+                Some("unsealed_candidate_graph")
+            );
+            assert_eq!(out[collection_field].as_array().map(Vec::len), Some(0));
+            for flag in ["chain_canonical", "proof_sealed", "safe", "finalized"] {
+                assert_eq!(out[flag].as_bool(), Some(false), "unexpected {flag}");
+            }
+        }
+
+        let by_hash = empty_native_block_ledger_query_v1(
+            "nov_getNativeBlockCandidateByHash",
+            &serde_json::json!({"block_hash": zero_hash}),
+            chain_id,
+            ledger_path,
+        )
+        .expect("empty candidate-by-hash query should succeed");
+        assert_eq!(by_hash["found"].as_bool(), Some(false));
+        assert!(by_hash["candidate"].is_null());
+        assert!(by_hash["block"].is_null());
+        assert_eq!(
+            by_hash["trust_class"].as_str(),
+            Some("unsealed_candidate_graph")
+        );
+        assert_eq!(
+            by_hash["artifact_header_canonical_local_scope"].as_str(),
+            Some("producer_local_claim_not_receiver_selection")
+        );
+        for flag in ["chain_canonical", "proof_sealed", "safe", "finalized"] {
+            assert_eq!(by_hash[flag].as_bool(), Some(false), "unexpected {flag}");
+        }
+    }
+
     fn encode_nov_native_tx_wire_v1(
         tx: &NovNativeTxWireV1,
     ) -> std::result::Result<Vec<u8>, novovm_protocol::NativeTxWireError> {
@@ -26314,6 +26499,79 @@ mod tests {
                         )
                         .expect("block by height query should succeed");
                         assert_eq!(by_height["found"].as_bool(), Some(true));
+                        let candidates_by_height = run_nov_native_block_ledger_query_internal_v1(
+                            "nov_getNativeBlockCandidatesByNumber",
+                            &serde_json::json!({
+                                "chain_id": chain_id,
+                                "native_execution_store_path": path,
+                                "block_number": 1,
+                            }),
+                            true,
+                            None,
+                        )
+                        .expect("block candidates by height query should succeed");
+                        assert_eq!(candidates_by_height["found"].as_bool(), Some(true));
+                        assert_eq!(
+                            candidates_by_height["trust_class"].as_str(),
+                            Some("unsealed_candidate_graph")
+                        );
+                        assert_eq!(
+                            candidates_by_height["candidates"].as_array().map(Vec::len),
+                            Some(1)
+                        );
+                        assert_eq!(
+                            candidates_by_height["candidates"][0]["height"].as_u64(),
+                            Some(1)
+                        );
+                        let candidate_by_hash = run_nov_native_block_ledger_query_internal_v1(
+                            "nov_getNativeBlockCandidateByHash",
+                            &serde_json::json!({
+                                "chain_id": chain_id,
+                                "native_execution_store_path": path,
+                                "block_hash": to_hex_prefixed_v1(&block.header.block_hash),
+                            }),
+                            true,
+                            None,
+                        )
+                        .expect("block candidate by hash query should succeed");
+                        assert_eq!(candidate_by_hash["found"].as_bool(), Some(true));
+                        assert_eq!(
+                            candidate_by_hash["candidate"]["execution_selected_local"].as_bool(),
+                            Some(true)
+                        );
+                        assert_eq!(
+                            candidate_by_hash["artifact_header_canonical_local_scope"].as_str(),
+                            Some("producer_local_claim_not_receiver_selection")
+                        );
+                        assert_eq!(
+                            candidate_by_hash["block"]["header"]["height"].as_u64(),
+                            Some(1)
+                        );
+                        let candidate_children = run_nov_native_block_ledger_query_internal_v1(
+                            "nov_getNativeBlockCandidateChildren",
+                            &serde_json::json!({
+                                "chain_id": chain_id,
+                                "native_execution_store_path": path,
+                                "parent_block_hash": to_hex_prefixed_v1(&[0u8; 32]),
+                            }),
+                            true,
+                            None,
+                        )
+                        .expect("native candidate children query should succeed");
+                        assert_eq!(candidate_children["found"].as_bool(), Some(true));
+                        assert_eq!(
+                            candidate_children["children"].as_array().map(Vec::len),
+                            Some(1)
+                        );
+                        for out in [
+                            &candidates_by_height,
+                            &candidate_by_hash,
+                            &candidate_children,
+                        ] {
+                            for flag in ["chain_canonical", "proof_sealed", "safe", "finalized"] {
+                                assert_eq!(out[flag].as_bool(), Some(false), "unexpected {flag}");
+                            }
+                        }
                         let location = run_nov_native_block_ledger_query_internal_v1(
                             "nov_getNativeTransactionLocation",
                             &serde_json::json!({

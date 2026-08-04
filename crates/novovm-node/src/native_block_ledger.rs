@@ -12,12 +12,18 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
 pub const NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1: &str = "novovm-native-block-ledger/v1";
+pub const NOV_NATIVE_BLOCK_CANDIDATE_GRAPH_SCHEMA_V1: &str =
+    "novovm-native-block-candidate-graph/v1";
 pub const NOV_NATIVE_BLOCK_LEDGER_MAX_TXS_V1: usize = 1_024;
 pub const NOV_NATIVE_BLOCK_LEDGER_MAX_BODY_BYTES_V1: usize = 2 * 1024 * 1024;
 pub const NOV_NATIVE_BLOCK_LEDGER_MAX_HYDRATE_BLOCKS_V1: usize = 4_096;
+pub const NOV_NATIVE_BLOCK_CANDIDATE_GRAPH_MAX_LINKS_V1: usize = 4_096;
+pub const NOV_NATIVE_BLOCK_CANDIDATE_GRAPH_MAX_TRAVERSAL_NODES_V1: usize = 4_096;
 
 const KEY_PREFIX_V1: &str = "native_block_ledger/v1/";
 const KEY_SCHEMA_V1: &[u8] = b"native_block_ledger/v1/schema";
+const KEY_CANDIDATE_GRAPH_SCHEMA_V1: &[u8] =
+    b"native_block_ledger/v1/extension/candidate_graph/v1/schema";
 const KEY_AOEM_OWNERSHIP_V1: &[u8] = b"native_block_ledger/v1/ownership/aoem";
 const AOEM_OWNERSHIP_SCHEMA_V1: &str = "novovm-native-block-ledger-aoem-ownership/v1";
 const PREPARED_SCHEMA_V1: &str = "novovm-native-prepared-block/v1";
@@ -28,7 +34,15 @@ const HEAD_SCHEMA_V1: &str = "novovm-native-block-ledger-head/v1";
 const TX_LOCATION_SCHEMA_V1: &str = "novovm-native-block-tx-location/v1";
 const RECEIPT_LOCATION_SCHEMA_V1: &str = "novovm-native-block-receipt-location/v1";
 const EXTERNAL_ID_INDEX_SCHEMA_V1: &str = "novovm-native-block-external-id-index/v1";
+const CANDIDATE_RECORD_SCHEMA_V1: &str = "novovm-native-block-candidate-record/v1";
+const CANDIDATE_HEIGHT_INDEX_SCHEMA_V1: &str = "novovm-native-block-candidate-height-index/v1";
+const CANDIDATE_CHILDREN_INDEX_SCHEMA_V1: &str = "novovm-native-block-candidate-children-index/v1";
 const CANDIDATE_KIND_V1: &str = "local_unsealed_execution_candidate";
+const CANDIDATE_SOURCE_LOCAL_AOEM_V1: &str = "local_aoem_owned_execution";
+const CANDIDATE_SOURCE_OBSERVED_V1: &str = "observed_unsealed_candidate";
+const CANDIDATE_STATUS_ACTIVE_V1: &str = "active_unsealed";
+const CANDIDATE_STATUS_ABORTED_V1: &str = "aborted_unsealed";
+const CANDIDATE_ABORT_REASON_MAX_BYTES_V1: usize = 512;
 const POST_STATE_ROOT_CODEC_V1: &str = "novovm-consensus-native-state-wire/v1";
 const CUMULATIVE_RECEIPT_ROOT_CODEC_V1: &str = "novovm-consensus-receipt-wire/v1";
 
@@ -165,6 +179,73 @@ pub struct NovNativeDurableBlockV1 {
     pub header: NovNativeBlockHeaderV1,
     pub body: NovNativeBlockBodyV1,
     pub execution_evidence: NovNativeBlockExecutionEvidenceV1,
+}
+
+/// Mutable local-view metadata for an immutable, fully materialized block
+/// candidate. This record deliberately lives outside the block header: abort,
+/// local execution selection, and future fork-choice input must never rewrite
+/// a block commitment. In v1 this graph is strictly unsealed and cannot confer
+/// chain canonicality or finality.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NovNativeBlockCandidateRecordV1 {
+    pub schema: String,
+    pub chain_id: u64,
+    pub height: u64,
+    pub slot: u64,
+    pub timestamp_unix_ms: u64,
+    pub block_hash: [u8; 32],
+    pub parent_block_hash: [u8; 32],
+    pub candidate_id: [u8; 32],
+    pub execution_context_commitment: [u8; 32],
+    pub pre_state_root: [u8; 32],
+    pub post_state_root: [u8; 32],
+    pub ordered_tx_root: [u8; 32],
+    pub block_receipt_root: [u8; 32],
+    pub cumulative_receipt_root: [u8; 32],
+    pub body_digest: [u8; 32],
+    pub body_bytes: u64,
+    pub tx_count: u32,
+    pub state_version: u64,
+    pub aoem_batch_id: String,
+    pub aoem_batch_result_id: String,
+    pub aoem_evidence_commitment: [u8; 32],
+    pub candidate_source: String,
+    pub lifecycle_status: String,
+    /// Monotonic lifecycle revision for future compare-and-swap transitions.
+    pub revision: u64,
+    pub commitment_bindings_verified: bool,
+    pub parent_continuity_verified: bool,
+    pub body_data_available: bool,
+    /// True only when this process accepted the result through its own
+    /// AOEM-owned execution/readback path. A peer's assertion is never
+    /// upgraded into local AOEM verification.
+    pub local_aoem_readback_verified: bool,
+    /// The existing linear execution projection selected by local AOEM state.
+    /// This is not network fork choice and is not chain canonicality.
+    pub execution_selected_local: bool,
+    pub fork_choice_selected: bool,
+    pub chain_canonical: bool,
+    pub proof_sealed: bool,
+    pub safe: bool,
+    pub finalized: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abort_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct NovNativeBlockCandidateHeightIndexV1 {
+    schema: String,
+    chain_id: u64,
+    height: u64,
+    block_hashes: Vec<[u8; 32]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct NovNativeBlockCandidateChildrenIndexV1 {
+    schema: String,
+    chain_id: u64,
+    parent_block_hash: [u8; 32],
+    block_hashes: Vec<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -594,6 +675,17 @@ impl NovNativeBlockLedgerV1 {
             self.load_by_height_inner_v1(prepared.context.chain_id, prepared.context.block_height)?
         {
             if existing == expected {
+                self.validate_legacy_local_candidate_parent_inner_v1(&existing)?;
+                let record = candidate_record_from_block_v1(
+                    &existing,
+                    CANDIDATE_SOURCE_LOCAL_AOEM_V1,
+                    true,
+                    true,
+                )?;
+                let mut batch = RocksDbWriteBatch::default();
+                self.stage_candidate_graph_record_v1(&mut batch, &record)?;
+                write_sync_v1(&self.db, batch)
+                    .context("backfill local NOV native candidate graph entry")?;
                 return Ok(existing);
             }
             bail!(
@@ -604,6 +696,7 @@ impl NovNativeBlockLedgerV1 {
         }
 
         self.validate_prepared_against_head_v1(prepared)?;
+        self.validate_candidate_parent_inner_v1(&expected)?;
         let stored_prepared = self
             .load_prepared_inner_v1(prepared.context.chain_id)?
             .context("NOV native block must be durably prepared before commit")?;
@@ -681,7 +774,10 @@ impl NovNativeBlockLedgerV1 {
             proof_sealed: false,
         };
 
+        let candidate_record =
+            candidate_record_from_block_v1(&expected, CANDIDATE_SOURCE_LOCAL_AOEM_V1, true, true)?;
         let mut batch = RocksDbWriteBatch::default();
+        self.stage_candidate_graph_record_v1(&mut batch, &candidate_record)?;
         put_json_v1(
             &mut batch,
             header_key_v1(expected.header.chain_id, &expected.header.block_hash).as_bytes(),
@@ -788,6 +884,12 @@ impl NovNativeBlockLedgerV1 {
         if readback != expected {
             bail!("NOV native durable block readback mismatch");
         }
+        let candidate_readback = self
+            .load_candidate_record_inner_v1(expected.header.chain_id, expected.header.block_hash)?
+            .context("NOV native local candidate graph readback is missing")?;
+        if candidate_readback != candidate_record {
+            bail!("NOV native local candidate graph readback mismatch");
+        }
         Ok(readback)
     }
 
@@ -867,6 +969,190 @@ impl NovNativeBlockLedgerV1 {
             }
         }
         Ok(location)
+    }
+
+    /// Persist a fully materialized candidate observed from another node.
+    /// The immutable artifact and graph indexes are stored in a sidecar
+    /// keyspace. This method never changes the AOEM execution head, legacy
+    /// height/transaction indexes, or any finality flag.
+    // Reserved for the authenticated consensus ingress. There is deliberately
+    // no public RPC mutation route in candidate_graph/v1.
+    #[allow(dead_code)]
+    pub(crate) fn register_observed_unsealed_candidate(
+        &self,
+        block: NovNativeDurableBlockV1,
+    ) -> Result<NovNativeBlockCandidateRecordV1> {
+        validate_durable_block_v1(&block)?;
+        let _guard = self.lock_writes_v1()?;
+        self.ensure_schema_v1()?;
+
+        if let Some(existing) =
+            self.load_candidate_record_inner_v1(block.header.chain_id, block.header.block_hash)?
+        {
+            let existing_block = self
+                .load_candidate_block_for_record_inner_v1(&existing)?
+                .context("NOV native candidate record points to a missing block artifact")?;
+            if existing_block != block {
+                bail!("NOV native candidate block hash collision or conflicting artifact");
+            }
+            return Ok(existing);
+        }
+
+        self.validate_candidate_parent_inner_v1(&block)?;
+        if let Some(existing_artifact) = read_json_v1::<NovNativeDurableBlockV1>(
+            &self.db,
+            candidate_artifact_key_v1(block.header.chain_id, &block.header.block_hash).as_bytes(),
+            "existing observed block candidate artifact",
+        )? {
+            validate_durable_block_v1(&existing_artifact)?;
+            if existing_artifact != block {
+                bail!("NOV native candidate artifact conflicts with an existing block hash");
+            }
+        }
+        let record =
+            candidate_record_from_block_v1(&block, CANDIDATE_SOURCE_OBSERVED_V1, false, false)?;
+        let mut batch = RocksDbWriteBatch::default();
+        put_json_v1(
+            &mut batch,
+            candidate_artifact_key_v1(block.header.chain_id, &block.header.block_hash).as_bytes(),
+            &block,
+            "observed block candidate artifact",
+        )?;
+        self.stage_candidate_graph_record_v1(&mut batch, &record)?;
+        write_sync_v1(&self.db, batch)
+            .context("persist observed NOV native block candidate graph entry")?;
+
+        let readback = self
+            .load_candidate_record_inner_v1(record.chain_id, record.block_hash)?
+            .context("observed NOV native candidate graph readback is missing")?;
+        if readback != record {
+            bail!("observed NOV native candidate graph readback mismatch");
+        }
+        Ok(readback)
+    }
+
+    /// Durably abort an unselected candidate and all of its graph descendants.
+    /// Artifacts and indexes remain intact for audit/restart recovery. This is
+    /// not an AOEM state rollback and refuses to touch the selected execution
+    /// projection.
+    // Reserved for the authenticated consensus lifecycle. There is
+    // deliberately no public RPC mutation route in candidate_graph/v1.
+    #[allow(dead_code)]
+    pub(crate) fn abort_unselected_candidate_branch(
+        &self,
+        chain_id: u64,
+        root_block_hash: [u8; 32],
+        reason: &str,
+    ) -> Result<Vec<NovNativeBlockCandidateRecordV1>> {
+        let reason = validate_candidate_abort_reason_v1(reason)?;
+        let _guard = self.lock_writes_v1()?;
+        self.ensure_schema_v1()?;
+
+        let mut pending = vec![root_block_hash];
+        let mut visited = HashSet::new();
+        let mut records = Vec::new();
+        while let Some(block_hash) = pending.pop() {
+            if !visited.insert(block_hash) {
+                continue;
+            }
+            if visited.len() > NOV_NATIVE_BLOCK_CANDIDATE_GRAPH_MAX_TRAVERSAL_NODES_V1 {
+                bail!("NOV native candidate abort branch exceeds the bounded traversal node limit");
+            }
+            let record = self
+                .load_candidate_record_inner_v1(chain_id, block_hash)?
+                .context("NOV native candidate abort target is missing")?;
+            if record.execution_selected_local
+                || record.fork_choice_selected
+                || record.chain_canonical
+                || record.proof_sealed
+                || record.safe
+                || record.finalized
+            {
+                bail!(
+                    "NOV native selected or sealed candidate cannot use unselected abort: height={} hash={}",
+                    record.height,
+                    hex_v1(&record.block_hash)
+                );
+            }
+            for child in self.load_candidate_children_inner_v1(chain_id, block_hash)? {
+                pending.push(child.block_hash);
+            }
+            records.push(record);
+        }
+
+        records.sort_by_key(|record| (record.height, record.block_hash));
+        let mut batch = RocksDbWriteBatch::default();
+        let mut changed = false;
+        for record in &mut records {
+            if record.lifecycle_status == CANDIDATE_STATUS_ACTIVE_V1 {
+                record.lifecycle_status = CANDIDATE_STATUS_ABORTED_V1.to_string();
+                record.revision = record
+                    .revision
+                    .checked_add(1)
+                    .context("NOV native candidate lifecycle revision overflow")?;
+                record.abort_reason = Some(reason.clone());
+                validate_candidate_record_v1(record)?;
+                put_json_v1(
+                    &mut batch,
+                    candidate_record_key_v1(record.chain_id, &record.block_hash).as_bytes(),
+                    record,
+                    "aborted block candidate record",
+                )?;
+                changed = true;
+            }
+        }
+        if changed {
+            write_sync_v1(&self.db, batch)
+                .context("persist aborted NOV native candidate branch")?;
+        }
+        for expected in &records {
+            let actual = self
+                .load_candidate_record_inner_v1(chain_id, expected.block_hash)?
+                .context("aborted NOV native candidate readback is missing")?;
+            if actual != *expected {
+                bail!("aborted NOV native candidate readback mismatch");
+            }
+        }
+        Ok(records)
+    }
+
+    pub fn load_candidate_record(
+        &self,
+        chain_id: u64,
+        block_hash: [u8; 32],
+    ) -> Result<Option<NovNativeBlockCandidateRecordV1>> {
+        self.ensure_schema_v1()?;
+        self.load_candidate_record_inner_v1(chain_id, block_hash)
+    }
+
+    pub fn load_candidate_block(
+        &self,
+        chain_id: u64,
+        block_hash: [u8; 32],
+    ) -> Result<Option<NovNativeDurableBlockV1>> {
+        self.ensure_schema_v1()?;
+        let Some(record) = self.load_candidate_record_inner_v1(chain_id, block_hash)? else {
+            return Ok(None);
+        };
+        self.load_candidate_block_for_record_inner_v1(&record)
+    }
+
+    pub fn load_candidate_records_by_height(
+        &self,
+        chain_id: u64,
+        height: u64,
+    ) -> Result<Vec<NovNativeBlockCandidateRecordV1>> {
+        self.ensure_schema_v1()?;
+        self.load_candidate_records_by_height_inner_v1(chain_id, height)
+    }
+
+    pub fn load_candidate_children(
+        &self,
+        chain_id: u64,
+        parent_block_hash: [u8; 32],
+    ) -> Result<Vec<NovNativeBlockCandidateRecordV1>> {
+        self.ensure_schema_v1()?;
+        self.load_candidate_children_inner_v1(chain_id, parent_block_hash)
     }
 
     pub fn status(&self, chain_id: u64) -> Result<NovNativeBlockLedgerStatusV1> {
@@ -1214,6 +1500,330 @@ impl NovNativeBlockLedgerV1 {
         Ok(location)
     }
 
+    fn load_candidate_record_inner_v1(
+        &self,
+        chain_id: u64,
+        block_hash: [u8; 32],
+    ) -> Result<Option<NovNativeBlockCandidateRecordV1>> {
+        if chain_id == 0 {
+            bail!("NOV native candidate graph chain_id must be non-zero");
+        }
+        if let Some(record) = read_json_v1::<NovNativeBlockCandidateRecordV1>(
+            &self.db,
+            candidate_record_key_v1(chain_id, &block_hash).as_bytes(),
+            "block candidate record",
+        )? {
+            self.ensure_candidate_graph_schema_v1()?;
+            validate_candidate_record_v1(&record)?;
+            if record.chain_id != chain_id || record.block_hash != block_hash {
+                bail!("NOV native candidate record key binding mismatch");
+            }
+            let block = self
+                .load_candidate_block_for_record_inner_v1(&record)?
+                .context("NOV native candidate record points to a missing block artifact")?;
+            validate_candidate_record_against_block_v1(&record, &block)?;
+            return Ok(Some(record));
+        }
+
+        // Databases written before candidate_graph/v1 remain readable without
+        // an eager migration. Their selected local block is represented by a
+        // deterministic synthesized record and is backfilled by repeat commit.
+        let Some(block) = self.load_by_hash_inner_v1(chain_id, block_hash)? else {
+            return Ok(None);
+        };
+        self.validate_legacy_local_candidate_parent_inner_v1(&block)?;
+        Ok(Some(candidate_record_from_block_v1(
+            &block,
+            CANDIDATE_SOURCE_LOCAL_AOEM_V1,
+            true,
+            true,
+        )?))
+    }
+
+    fn load_candidate_block_for_record_inner_v1(
+        &self,
+        record: &NovNativeBlockCandidateRecordV1,
+    ) -> Result<Option<NovNativeDurableBlockV1>> {
+        let block = match record.candidate_source.as_str() {
+            CANDIDATE_SOURCE_LOCAL_AOEM_V1 => {
+                self.load_by_hash_inner_v1(record.chain_id, record.block_hash)?
+            }
+            CANDIDATE_SOURCE_OBSERVED_V1 => {
+                let block = read_json_v1::<NovNativeDurableBlockV1>(
+                    &self.db,
+                    candidate_artifact_key_v1(record.chain_id, &record.block_hash).as_bytes(),
+                    "observed block candidate artifact",
+                )?;
+                if let Some(block) = block.as_ref() {
+                    validate_durable_block_v1(block)?;
+                    if block.header.chain_id != record.chain_id
+                        || block.header.block_hash != record.block_hash
+                    {
+                        bail!("NOV native observed candidate artifact key binding mismatch");
+                    }
+                }
+                block
+            }
+            _ => bail!("NOV native candidate record has an unsupported source"),
+        };
+        if let Some(block) = block.as_ref() {
+            validate_candidate_record_against_block_v1(record, block)?;
+        }
+        Ok(block)
+    }
+
+    fn load_candidate_height_index_inner_v1(
+        &self,
+        chain_id: u64,
+        height: u64,
+    ) -> Result<Option<NovNativeBlockCandidateHeightIndexV1>> {
+        let index = read_json_v1::<NovNativeBlockCandidateHeightIndexV1>(
+            &self.db,
+            candidate_height_index_key_v1(chain_id, height).as_bytes(),
+            "block candidate height index",
+        )?;
+        if let Some(index) = index.as_ref() {
+            self.ensure_candidate_graph_schema_v1()?;
+            validate_candidate_height_index_v1(index, chain_id, height)?;
+        }
+        Ok(index)
+    }
+
+    fn load_candidate_children_index_inner_v1(
+        &self,
+        chain_id: u64,
+        parent_block_hash: [u8; 32],
+    ) -> Result<Option<NovNativeBlockCandidateChildrenIndexV1>> {
+        let index = read_json_v1::<NovNativeBlockCandidateChildrenIndexV1>(
+            &self.db,
+            candidate_children_index_key_v1(chain_id, &parent_block_hash).as_bytes(),
+            "block candidate children index",
+        )?;
+        if let Some(index) = index.as_ref() {
+            self.ensure_candidate_graph_schema_v1()?;
+            validate_candidate_children_index_v1(index, chain_id, parent_block_hash)?;
+        }
+        Ok(index)
+    }
+
+    fn load_candidate_records_by_height_inner_v1(
+        &self,
+        chain_id: u64,
+        height: u64,
+    ) -> Result<Vec<NovNativeBlockCandidateRecordV1>> {
+        if chain_id == 0 || height == 0 {
+            return Ok(Vec::new());
+        }
+        let mut block_hashes = self
+            .load_candidate_height_index_inner_v1(chain_id, height)?
+            .map_or_else(Vec::new, |index| index.block_hashes);
+        if let Some(local) = self.load_by_height_inner_v1(chain_id, height)? {
+            block_hashes.push(local.header.block_hash);
+        }
+        sort_and_validate_candidate_hashes_v1(&mut block_hashes)?;
+        let mut records = Vec::with_capacity(block_hashes.len());
+        for block_hash in block_hashes {
+            let record = self
+                .load_candidate_record_inner_v1(chain_id, block_hash)?
+                .context("NOV native candidate height index points to a missing record")?;
+            if record.height != height {
+                bail!("NOV native candidate height index binding mismatch");
+            }
+            records.push(record);
+        }
+        Ok(records)
+    }
+
+    fn load_candidate_children_inner_v1(
+        &self,
+        chain_id: u64,
+        parent_block_hash: [u8; 32],
+    ) -> Result<Vec<NovNativeBlockCandidateRecordV1>> {
+        if chain_id == 0 {
+            bail!("NOV native candidate graph chain_id must be non-zero");
+        }
+        let mut block_hashes = self
+            .load_candidate_children_index_inner_v1(chain_id, parent_block_hash)?
+            .map_or_else(Vec::new, |index| index.block_hashes);
+
+        // Compatibility fallback for a selected block written before the graph
+        // extension existed.
+        let next_height = if parent_block_hash == [0u8; 32] {
+            Some(1)
+        } else {
+            self.load_candidate_record_inner_v1(chain_id, parent_block_hash)?
+                .and_then(|parent| parent.height.checked_add(1))
+        };
+        if let Some(next_height) = next_height {
+            if let Some(local_child) = self.load_by_height_inner_v1(chain_id, next_height)? {
+                if local_child.header.parent_block_hash == parent_block_hash {
+                    block_hashes.push(local_child.header.block_hash);
+                }
+            }
+        }
+
+        sort_and_validate_candidate_hashes_v1(&mut block_hashes)?;
+        let mut records = Vec::with_capacity(block_hashes.len());
+        for block_hash in block_hashes {
+            let record = self
+                .load_candidate_record_inner_v1(chain_id, block_hash)?
+                .context("NOV native candidate children index points to a missing record")?;
+            if record.parent_block_hash != parent_block_hash {
+                bail!("NOV native candidate children index binding mismatch");
+            }
+            records.push(record);
+        }
+        Ok(records)
+    }
+
+    fn validate_candidate_parent_inner_v1(&self, block: &NovNativeDurableBlockV1) -> Result<()> {
+        if block.header.height == 1 {
+            if block.header.parent_block_hash != [0u8; 32] || block.header.aoem_parent.is_some() {
+                bail!("NOV native candidate genesis parent binding is invalid");
+            }
+            if self
+                .load_candidate_records_by_height_inner_v1(block.header.chain_id, 1)?
+                .iter()
+                .any(|record| record.block_hash != block.header.block_hash)
+            {
+                bail!("NOV native candidate graph rejects a competing genesis block");
+            }
+            return Ok(());
+        }
+        if block.header.parent_block_hash == [0u8; 32] {
+            bail!("NOV native non-genesis candidate has a zero parent hash");
+        }
+        let parent_record = self
+            .load_candidate_record_inner_v1(block.header.chain_id, block.header.parent_block_hash)?
+            .context("NOV native candidate parent is missing")?;
+        if parent_record.lifecycle_status != CANDIDATE_STATUS_ACTIVE_V1 {
+            bail!("NOV native candidate cannot extend an aborted parent");
+        }
+        let parent = self
+            .load_candidate_block_for_record_inner_v1(&parent_record)?
+            .context("NOV native candidate parent artifact is missing")?;
+        validate_block_continuity_v1(&parent, block)
+            .context("validate NOV native candidate parent continuity")
+    }
+
+    fn validate_legacy_local_candidate_parent_inner_v1(
+        &self,
+        block: &NovNativeDurableBlockV1,
+    ) -> Result<()> {
+        if block.header.height == 1 {
+            if block.header.parent_block_hash != [0u8; 32] || block.header.aoem_parent.is_some() {
+                bail!("NOV native legacy genesis candidate parent binding is invalid");
+            }
+            return Ok(());
+        }
+        let parent_height = block
+            .header
+            .height
+            .checked_sub(1)
+            .context("NOV native legacy candidate parent height underflow")?;
+        let parent = self
+            .load_by_height_inner_v1(block.header.chain_id, parent_height)?
+            .context("NOV native legacy candidate parent block is missing")?;
+        validate_block_continuity_v1(&parent, block)
+            .context("validate NOV native legacy candidate parent continuity")
+    }
+
+    fn stage_candidate_graph_record_v1(
+        &self,
+        batch: &mut RocksDbWriteBatch,
+        record: &NovNativeBlockCandidateRecordV1,
+    ) -> Result<()> {
+        validate_candidate_record_v1(record)?;
+        if let Some(raw) = self
+            .db
+            .get(KEY_CANDIDATE_GRAPH_SCHEMA_V1)
+            .context("read existing NOV native candidate graph schema failed")?
+        {
+            if raw.as_slice() != NOV_NATIVE_BLOCK_CANDIDATE_GRAPH_SCHEMA_V1.as_bytes() {
+                bail!(
+                    "unsupported NOV native candidate graph schema: {}",
+                    String::from_utf8_lossy(raw.as_slice())
+                );
+            }
+        }
+        if let Some(existing) = read_json_v1::<NovNativeBlockCandidateRecordV1>(
+            &self.db,
+            candidate_record_key_v1(record.chain_id, &record.block_hash).as_bytes(),
+            "existing block candidate record",
+        )? {
+            validate_candidate_record_v1(&existing)?;
+            if existing != *record
+                && !(existing.candidate_source == CANDIDATE_SOURCE_OBSERVED_V1
+                    && existing.lifecycle_status == CANDIDATE_STATUS_ACTIVE_V1
+                    && record.candidate_source == CANDIDATE_SOURCE_LOCAL_AOEM_V1
+                    && candidate_records_bind_same_artifact_v1(&existing, record))
+            {
+                bail!("NOV native candidate record conflicts with an existing lifecycle record");
+            }
+        }
+
+        let mut height_index = self
+            .load_candidate_height_index_inner_v1(record.chain_id, record.height)?
+            .unwrap_or_else(|| NovNativeBlockCandidateHeightIndexV1 {
+                schema: CANDIDATE_HEIGHT_INDEX_SCHEMA_V1.to_string(),
+                chain_id: record.chain_id,
+                height: record.height,
+                block_hashes: Vec::new(),
+            });
+        height_index.block_hashes.push(record.block_hash);
+        sort_and_validate_candidate_hashes_v1(&mut height_index.block_hashes)?;
+
+        let mut children_index = self
+            .load_candidate_children_index_inner_v1(record.chain_id, record.parent_block_hash)?
+            .unwrap_or_else(|| NovNativeBlockCandidateChildrenIndexV1 {
+                schema: CANDIDATE_CHILDREN_INDEX_SCHEMA_V1.to_string(),
+                chain_id: record.chain_id,
+                parent_block_hash: record.parent_block_hash,
+                block_hashes: Vec::new(),
+            });
+        children_index.block_hashes.push(record.block_hash);
+        sort_and_validate_candidate_hashes_v1(&mut children_index.block_hashes)?;
+
+        put_json_v1(
+            batch,
+            candidate_record_key_v1(record.chain_id, &record.block_hash).as_bytes(),
+            record,
+            "block candidate record",
+        )?;
+        put_json_v1(
+            batch,
+            candidate_height_index_key_v1(record.chain_id, record.height).as_bytes(),
+            &height_index,
+            "block candidate height index",
+        )?;
+        put_json_v1(
+            batch,
+            candidate_children_index_key_v1(record.chain_id, &record.parent_block_hash).as_bytes(),
+            &children_index,
+            "block candidate children index",
+        )?;
+        batch.put(
+            KEY_CANDIDATE_GRAPH_SCHEMA_V1,
+            NOV_NATIVE_BLOCK_CANDIDATE_GRAPH_SCHEMA_V1.as_bytes(),
+        );
+        Ok(())
+    }
+
+    fn ensure_candidate_graph_schema_v1(&self) -> Result<()> {
+        let raw = self
+            .db
+            .get(KEY_CANDIDATE_GRAPH_SCHEMA_V1)
+            .context("read NOV native candidate graph schema failed")?
+            .context("NOV native candidate graph schema is missing")?;
+        if raw.as_slice() != NOV_NATIVE_BLOCK_CANDIDATE_GRAPH_SCHEMA_V1.as_bytes() {
+            bail!(
+                "unsupported NOV native candidate graph schema: {}",
+                String::from_utf8_lossy(raw.as_slice())
+            );
+        }
+        Ok(())
+    }
+
     fn validate_prepared_against_head_v1(&self, prepared: &NovNativePreparedBlockV1) -> Result<()> {
         let head = self.load_head_verified_inner_v1(prepared.context.chain_id)?;
         match head {
@@ -1344,6 +1954,218 @@ fn validate_aoem_ownership_v1(ownership: &NovNativeBlockLedgerAoemOwnershipV1) -
         }
     }
     Ok(())
+}
+
+fn candidate_record_from_block_v1(
+    block: &NovNativeDurableBlockV1,
+    candidate_source: &str,
+    local_aoem_readback_verified: bool,
+    execution_selected_local: bool,
+) -> Result<NovNativeBlockCandidateRecordV1> {
+    validate_durable_block_v1(block)?;
+    let record = NovNativeBlockCandidateRecordV1 {
+        schema: CANDIDATE_RECORD_SCHEMA_V1.to_string(),
+        chain_id: block.header.chain_id,
+        height: block.header.height,
+        slot: block.header.slot,
+        timestamp_unix_ms: block.header.timestamp_unix_ms,
+        block_hash: block.header.block_hash,
+        parent_block_hash: block.header.parent_block_hash,
+        candidate_id: block.header.candidate_id,
+        execution_context_commitment: block.header.execution_context_commitment,
+        pre_state_root: block.header.pre_state_root,
+        post_state_root: block.header.post_state_root,
+        ordered_tx_root: block.header.ordered_tx_root,
+        block_receipt_root: block.header.block_receipt_root,
+        cumulative_receipt_root: block.header.cumulative_receipt_root,
+        body_digest: block.header.body_digest,
+        body_bytes: block.header.body_bytes,
+        tx_count: block.header.tx_count,
+        state_version: block.header.state_version,
+        aoem_batch_id: block.header.aoem_batch_id.clone(),
+        aoem_batch_result_id: block.header.aoem_batch_result_id.clone(),
+        aoem_evidence_commitment: block.header.aoem_evidence_commitment,
+        candidate_source: candidate_source.to_string(),
+        lifecycle_status: CANDIDATE_STATUS_ACTIVE_V1.to_string(),
+        revision: 1,
+        commitment_bindings_verified: true,
+        parent_continuity_verified: true,
+        body_data_available: true,
+        local_aoem_readback_verified,
+        execution_selected_local,
+        fork_choice_selected: false,
+        chain_canonical: false,
+        proof_sealed: false,
+        safe: false,
+        finalized: false,
+        abort_reason: None,
+    };
+    validate_candidate_record_v1(&record)?;
+    validate_candidate_record_against_block_v1(&record, block)?;
+    Ok(record)
+}
+
+fn validate_candidate_record_v1(record: &NovNativeBlockCandidateRecordV1) -> Result<()> {
+    if record.schema != CANDIDATE_RECORD_SCHEMA_V1
+        || record.chain_id == 0
+        || record.height == 0
+        || record.revision == 0
+        || !record.commitment_bindings_verified
+        || !record.parent_continuity_verified
+        || !record.body_data_available
+        || record.fork_choice_selected
+        || record.chain_canonical
+        || record.proof_sealed
+        || record.safe
+        || record.finalized
+    {
+        bail!("NOV native candidate record is invalid or falsely sealed");
+    }
+    match record.candidate_source.as_str() {
+        CANDIDATE_SOURCE_LOCAL_AOEM_V1 => {
+            if !record.local_aoem_readback_verified || !record.execution_selected_local {
+                bail!("NOV native local candidate record lacks AOEM execution ownership");
+            }
+        }
+        CANDIDATE_SOURCE_OBSERVED_V1 => {
+            if record.local_aoem_readback_verified || record.execution_selected_local {
+                bail!("NOV native observed candidate falsely claims local AOEM execution");
+            }
+        }
+        _ => bail!("NOV native candidate record source is unsupported"),
+    }
+    match record.lifecycle_status.as_str() {
+        CANDIDATE_STATUS_ACTIVE_V1 if record.abort_reason.is_none() => {}
+        CANDIDATE_STATUS_ABORTED_V1
+            if record.candidate_source == CANDIDATE_SOURCE_OBSERVED_V1
+                && !record.execution_selected_local
+                && record.abort_reason.is_some() =>
+        {
+            validate_candidate_abort_reason_v1(record.abort_reason.as_deref().unwrap_or_default())?;
+        }
+        _ => bail!("NOV native candidate lifecycle status is invalid"),
+    }
+    validate_external_id_v1("candidate AOEM batch id", record.aoem_batch_id.as_str())?;
+    validate_hex_commitment_v1(
+        "candidate AOEM batch result id",
+        record.aoem_batch_result_id.as_str(),
+    )?;
+    Ok(())
+}
+
+fn validate_candidate_record_against_block_v1(
+    record: &NovNativeBlockCandidateRecordV1,
+    block: &NovNativeDurableBlockV1,
+) -> Result<()> {
+    validate_durable_block_v1(block)?;
+    if record.chain_id != block.header.chain_id
+        || record.height != block.header.height
+        || record.slot != block.header.slot
+        || record.timestamp_unix_ms != block.header.timestamp_unix_ms
+        || record.block_hash != block.header.block_hash
+        || record.parent_block_hash != block.header.parent_block_hash
+        || record.candidate_id != block.header.candidate_id
+        || record.execution_context_commitment != block.header.execution_context_commitment
+        || record.pre_state_root != block.header.pre_state_root
+        || record.post_state_root != block.header.post_state_root
+        || record.ordered_tx_root != block.header.ordered_tx_root
+        || record.block_receipt_root != block.header.block_receipt_root
+        || record.cumulative_receipt_root != block.header.cumulative_receipt_root
+        || record.body_digest != block.header.body_digest
+        || record.body_bytes != block.header.body_bytes
+        || record.tx_count != block.header.tx_count
+        || record.state_version != block.header.state_version
+        || record.aoem_batch_id != block.header.aoem_batch_id
+        || record.aoem_batch_result_id != block.header.aoem_batch_result_id
+        || record.aoem_evidence_commitment != block.header.aoem_evidence_commitment
+    {
+        bail!("NOV native candidate record/artifact commitment binding mismatch");
+    }
+    Ok(())
+}
+
+fn candidate_records_bind_same_artifact_v1(
+    left: &NovNativeBlockCandidateRecordV1,
+    right: &NovNativeBlockCandidateRecordV1,
+) -> bool {
+    left.chain_id == right.chain_id
+        && left.height == right.height
+        && left.slot == right.slot
+        && left.timestamp_unix_ms == right.timestamp_unix_ms
+        && left.block_hash == right.block_hash
+        && left.parent_block_hash == right.parent_block_hash
+        && left.candidate_id == right.candidate_id
+        && left.execution_context_commitment == right.execution_context_commitment
+        && left.pre_state_root == right.pre_state_root
+        && left.post_state_root == right.post_state_root
+        && left.ordered_tx_root == right.ordered_tx_root
+        && left.block_receipt_root == right.block_receipt_root
+        && left.cumulative_receipt_root == right.cumulative_receipt_root
+        && left.body_digest == right.body_digest
+        && left.body_bytes == right.body_bytes
+        && left.tx_count == right.tx_count
+        && left.state_version == right.state_version
+        && left.aoem_batch_id == right.aoem_batch_id
+        && left.aoem_batch_result_id == right.aoem_batch_result_id
+        && left.aoem_evidence_commitment == right.aoem_evidence_commitment
+}
+
+fn validate_candidate_height_index_v1(
+    index: &NovNativeBlockCandidateHeightIndexV1,
+    chain_id: u64,
+    height: u64,
+) -> Result<()> {
+    if index.schema != CANDIDATE_HEIGHT_INDEX_SCHEMA_V1
+        || index.chain_id != chain_id
+        || index.height != height
+    {
+        bail!("NOV native candidate height index metadata is invalid");
+    }
+    validate_stored_candidate_hashes_v1(index.block_hashes.as_slice())
+}
+
+fn validate_candidate_children_index_v1(
+    index: &NovNativeBlockCandidateChildrenIndexV1,
+    chain_id: u64,
+    parent_block_hash: [u8; 32],
+) -> Result<()> {
+    if index.schema != CANDIDATE_CHILDREN_INDEX_SCHEMA_V1
+        || index.chain_id != chain_id
+        || index.parent_block_hash != parent_block_hash
+    {
+        bail!("NOV native candidate children index metadata is invalid");
+    }
+    validate_stored_candidate_hashes_v1(index.block_hashes.as_slice())
+}
+
+fn validate_stored_candidate_hashes_v1(block_hashes: &[[u8; 32]]) -> Result<()> {
+    if block_hashes.is_empty()
+        || block_hashes.len() > NOV_NATIVE_BLOCK_CANDIDATE_GRAPH_MAX_LINKS_V1
+        || block_hashes.windows(2).any(|pair| pair[0] >= pair[1])
+    {
+        bail!("NOV native candidate graph index is empty, unsorted, duplicated, or oversized");
+    }
+    Ok(())
+}
+
+fn sort_and_validate_candidate_hashes_v1(block_hashes: &mut Vec<[u8; 32]>) -> Result<()> {
+    block_hashes.sort_unstable();
+    block_hashes.dedup();
+    if block_hashes.len() > NOV_NATIVE_BLOCK_CANDIDATE_GRAPH_MAX_LINKS_V1 {
+        bail!("NOV native candidate graph index exceeds the bounded link limit");
+    }
+    Ok(())
+}
+
+fn validate_candidate_abort_reason_v1(reason: &str) -> Result<String> {
+    let reason = reason.trim();
+    if reason.is_empty()
+        || reason.len() > CANDIDATE_ABORT_REASON_MAX_BYTES_V1
+        || reason.chars().any(char::is_control)
+    {
+        bail!("NOV native candidate abort reason is empty, oversized, or contains control data");
+    }
+    Ok(reason.to_string())
 }
 
 fn native_block_ledger_process_registry_v1(
@@ -1817,6 +2639,11 @@ fn validate_block_continuity_v1(
     parent: &NovNativeDurableBlockV1,
     child: &NovNativeDurableBlockV1,
 ) -> Result<()> {
+    let expected_child_height = parent
+        .header
+        .height
+        .checked_add(1)
+        .context("NOV native durable block parent height overflow")?;
     let expected_aoem_parent = NovNativePreparedAoemParentV1 {
         batch_id: parent.header.aoem_batch_id.clone(),
         batch_result_id: parent.header.aoem_batch_result_id.clone(),
@@ -1827,7 +2654,7 @@ fn validate_block_continuity_v1(
         state_version: parent.header.state_version,
     };
     if child.header.chain_id != parent.header.chain_id
-        || child.header.height != parent.header.height.saturating_add(1)
+        || child.header.height != expected_child_height
         || child.header.parent_block_hash != parent.header.block_hash
         || child.header.pre_state_root != parent.header.post_state_root
         || child.header.aoem_parent.as_ref() != Some(&expected_aoem_parent)
@@ -2047,6 +2874,38 @@ fn candidate_key_v1(chain_id: u64, candidate_id: &[u8; 32]) -> String {
     )
 }
 
+fn candidate_graph_prefix_v1(chain_id: u64) -> String {
+    format!("{}candidate_graph/v1/", chain_prefix_v1(chain_id))
+}
+
+fn candidate_record_key_v1(chain_id: u64, block_hash: &[u8; 32]) -> String {
+    format!(
+        "{}record/{}",
+        candidate_graph_prefix_v1(chain_id),
+        hex_v1(block_hash)
+    )
+}
+
+fn candidate_artifact_key_v1(chain_id: u64, block_hash: &[u8; 32]) -> String {
+    format!(
+        "{}artifact/{}",
+        candidate_graph_prefix_v1(chain_id),
+        hex_v1(block_hash)
+    )
+}
+
+fn candidate_height_index_key_v1(chain_id: u64, height: u64) -> String {
+    format!("{}height/{height:020}", candidate_graph_prefix_v1(chain_id))
+}
+
+fn candidate_children_index_key_v1(chain_id: u64, parent_block_hash: &[u8; 32]) -> String {
+    format!(
+        "{}children/{}",
+        candidate_graph_prefix_v1(chain_id),
+        hex_v1(parent_block_hash)
+    )
+}
+
 fn head_key_v1(chain_id: u64) -> String {
     format!("{}execution_head", chain_prefix_v1(chain_id))
 }
@@ -2223,6 +3082,16 @@ mod tests {
             expected_output_commitment.as_str(),
         )?;
         ledger.commit(&bound, input)
+    }
+
+    fn build_observed_block_v1(
+        input: NovNativeBlockCandidateInputV1,
+        commit: NovNativeBlockCommitInputV1,
+    ) -> NovNativeDurableBlockV1 {
+        let mut prepared = build_prepared_block_v1(input).expect("build observed prepared block");
+        prepared.expected_aoem_batch_id = Some(commit.aoem_batch_id.clone());
+        prepared.expected_aoem_output_commitment = Some(format!("{:064x}", commit.state_version));
+        build_durable_block_v1(&prepared, commit).expect("build observed durable block")
     }
 
     #[test]
@@ -2495,6 +3364,521 @@ mod tests {
                 .expect_err("state version must advance")
                 .to_string()
                 .contains("state_version must advance")
+        );
+    }
+
+    #[test]
+    fn legacy_linear_candidates_are_lazily_verified_and_backfilled() {
+        let mut test = TestLedgerV1::new("legacy-candidate-backfill");
+        let chain_id = 71_013;
+        let first = test
+            .ledger()
+            .prepare(candidate_input_v1(
+                context_v1(chain_id, 1, [0u8; 32]),
+                [0x23; 32],
+                0x33,
+                1,
+            ))
+            .expect("prepare first");
+        let first_block = commit_bound_v1(test.ledger(), &first, commit_input_v1(0x43, 1, 1))
+            .expect("commit first");
+        let second = test
+            .ledger()
+            .prepare(with_aoem_parent_v1(
+                candidate_input_v1(
+                    context_v1(chain_id, 2, first_block.header.block_hash),
+                    first_block.header.post_state_root,
+                    0x34,
+                    1,
+                ),
+                &first_block,
+            ))
+            .expect("prepare second");
+        let second_commit = commit_input_v1(0x44, 1, 2);
+        let second_block =
+            commit_bound_v1(test.ledger(), &second, second_commit.clone()).expect("commit second");
+
+        let mut remove_graph = RocksDbWriteBatch::default();
+        remove_graph.delete(KEY_CANDIDATE_GRAPH_SCHEMA_V1);
+        for block in [&first_block, &second_block] {
+            remove_graph
+                .delete(candidate_record_key_v1(chain_id, &block.header.block_hash).as_bytes());
+            remove_graph
+                .delete(candidate_height_index_key_v1(chain_id, block.header.height).as_bytes());
+            remove_graph.delete(
+                candidate_children_index_key_v1(chain_id, &block.header.parent_block_hash)
+                    .as_bytes(),
+            );
+        }
+        write_sync_v1(&test.ledger().db, remove_graph).expect("simulate pre-graph database");
+        test.reopen();
+
+        let synthesized = test
+            .ledger()
+            .load_candidate_record(chain_id, second_block.header.block_hash)
+            .expect("load verified legacy candidate")
+            .expect("legacy candidate exists");
+        assert_eq!(synthesized.candidate_source, CANDIDATE_SOURCE_LOCAL_AOEM_V1);
+        assert!(synthesized.parent_continuity_verified);
+        assert!(test
+            .ledger()
+            .db
+            .get(candidate_record_key_v1(chain_id, &second_block.header.block_hash).as_bytes())
+            .expect("read absent synthesized record")
+            .is_none());
+
+        let competing = build_observed_block_v1(
+            with_aoem_parent_v1(
+                candidate_input_v1(
+                    context_v1(chain_id, 2, first_block.header.block_hash),
+                    first_block.header.post_state_root,
+                    0x35,
+                    1,
+                ),
+                &first_block,
+            ),
+            commit_input_v1(0x45, 1, 2),
+        );
+        test.ledger()
+            .register_observed_unsealed_candidate(competing)
+            .expect("first graph write on legacy database");
+        assert_eq!(
+            test.ledger()
+                .load_candidate_records_by_height(chain_id, 2)
+                .expect("merge legacy selected and graph candidates")
+                .len(),
+            2
+        );
+
+        commit_bound_v1(test.ledger(), &second, second_commit)
+            .expect("repeat commit backfills selected graph record");
+        assert!(test
+            .ledger()
+            .db
+            .get(candidate_record_key_v1(chain_id, &second_block.header.block_hash).as_bytes())
+            .expect("read backfilled selected record")
+            .is_some());
+        assert_eq!(
+            test.ledger()
+                .load_candidate_records_by_height(chain_id, 2)
+                .expect("load persisted merged height")
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn legacy_candidate_synthesis_fails_closed_when_its_parent_is_missing() {
+        let mut test = TestLedgerV1::new("legacy-candidate-missing-parent");
+        let chain_id = 71_014;
+        let first = test
+            .ledger()
+            .prepare(candidate_input_v1(
+                context_v1(chain_id, 1, [0u8; 32]),
+                [0x24; 32],
+                0x36,
+                1,
+            ))
+            .expect("prepare first");
+        let first_block = commit_bound_v1(test.ledger(), &first, commit_input_v1(0x46, 1, 1))
+            .expect("commit first");
+        let second = test
+            .ledger()
+            .prepare(with_aoem_parent_v1(
+                candidate_input_v1(
+                    context_v1(chain_id, 2, first_block.header.block_hash),
+                    first_block.header.post_state_root,
+                    0x37,
+                    1,
+                ),
+                &first_block,
+            ))
+            .expect("prepare second");
+        let second_block = commit_bound_v1(test.ledger(), &second, commit_input_v1(0x47, 1, 2))
+            .expect("commit second");
+
+        let mut corrupt_legacy = RocksDbWriteBatch::default();
+        corrupt_legacy.delete(KEY_CANDIDATE_GRAPH_SCHEMA_V1);
+        for block in [&first_block, &second_block] {
+            corrupt_legacy
+                .delete(candidate_record_key_v1(chain_id, &block.header.block_hash).as_bytes());
+            corrupt_legacy
+                .delete(candidate_height_index_key_v1(chain_id, block.header.height).as_bytes());
+            corrupt_legacy.delete(
+                candidate_children_index_key_v1(chain_id, &block.header.parent_block_hash)
+                    .as_bytes(),
+            );
+        }
+        corrupt_legacy.delete(header_key_v1(chain_id, &first_block.header.block_hash).as_bytes());
+        write_sync_v1(&test.ledger().db, corrupt_legacy)
+            .expect("simulate corrupt pre-graph parent");
+        test.reopen();
+        assert!(
+            test.ledger()
+                .load_candidate_record(chain_id, second_block.header.block_hash)
+                .is_err(),
+            "legacy synthesis must fail closed when its parent artifact is missing"
+        );
+    }
+
+    #[test]
+    fn competing_candidates_are_isolated_from_the_local_execution_projection() {
+        let test = TestLedgerV1::new("candidate-graph");
+        let chain_id = 71_010;
+        let first = test
+            .ledger()
+            .prepare(candidate_input_v1(
+                context_v1(chain_id, 1, [0u8; 32]),
+                [0x20; 32],
+                0x30,
+                1,
+            ))
+            .expect("prepare first");
+        let first_block = commit_bound_v1(test.ledger(), &first, commit_input_v1(0x40, 1, 1))
+            .expect("commit first");
+
+        let selected = test
+            .ledger()
+            .prepare(with_aoem_parent_v1(
+                candidate_input_v1(
+                    context_v1(chain_id, 2, first_block.header.block_hash),
+                    first_block.header.post_state_root,
+                    0x50,
+                    1,
+                ),
+                &first_block,
+            ))
+            .expect("prepare selected child");
+        let selected_block = commit_bound_v1(test.ledger(), &selected, commit_input_v1(0x60, 1, 2))
+            .expect("commit selected child");
+
+        let competing_block = build_observed_block_v1(
+            with_aoem_parent_v1(
+                candidate_input_v1(
+                    context_v1(chain_id, 2, first_block.header.block_hash),
+                    first_block.header.post_state_root,
+                    0x51,
+                    1,
+                ),
+                &first_block,
+            ),
+            commit_input_v1(0x61, 1, 2),
+        );
+        let competing_record = test
+            .ledger()
+            .register_observed_unsealed_candidate(competing_block.clone())
+            .expect("register competing candidate");
+        assert_eq!(
+            competing_record.candidate_source,
+            CANDIDATE_SOURCE_OBSERVED_V1
+        );
+        assert_eq!(
+            competing_record.lifecycle_status,
+            CANDIDATE_STATUS_ACTIVE_V1
+        );
+        assert!(!competing_record.local_aoem_readback_verified);
+        assert!(!competing_record.execution_selected_local);
+        assert!(!competing_record.fork_choice_selected);
+        assert!(!competing_record.chain_canonical);
+        assert!(!competing_record.proof_sealed);
+        assert!(!competing_record.safe);
+        assert!(!competing_record.finalized);
+
+        let candidates = test
+            .ledger()
+            .load_candidate_records_by_height(chain_id, 2)
+            .expect("load competing height");
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates
+            .windows(2)
+            .all(|pair| pair[0].block_hash < pair[1].block_hash));
+        assert_eq!(
+            candidates
+                .iter()
+                .filter(|record| record.execution_selected_local)
+                .count(),
+            1
+        );
+        let children = test
+            .ledger()
+            .load_candidate_children(chain_id, first_block.header.block_hash)
+            .expect("load candidate children");
+        assert_eq!(children, candidates);
+
+        assert_eq!(
+            test.ledger()
+                .load_by_height(chain_id, 2)
+                .expect("load selected height"),
+            Some(selected_block.clone())
+        );
+        assert_eq!(
+            test.ledger()
+                .load_head(chain_id)
+                .expect("load selected head")
+                .expect("selected head exists")
+                .block_hash,
+            selected_block.header.block_hash
+        );
+        assert!(test
+            .ledger()
+            .load_tx_location(chain_id, competing_block.body.tx_hashes[0])
+            .expect("load selected transaction projection")
+            .is_none());
+        assert!(test
+            .ledger()
+            .load_receipt_location(chain_id, competing_block.body.tx_hashes[0])
+            .expect("load selected receipt projection")
+            .is_none());
+        for (kind, id) in [
+            ("batch", competing_block.header.aoem_batch_id.as_str()),
+            (
+                "result",
+                competing_block.header.aoem_batch_result_id.as_str(),
+            ),
+        ] {
+            assert!(test
+                .ledger()
+                .db
+                .get(external_id_key_v1(chain_id, kind, id).as_bytes())
+                .expect("read legacy AOEM external-id projection")
+                .is_none());
+        }
+        assert_eq!(
+            test.ledger()
+                .load_candidate_block(chain_id, competing_block.header.block_hash)
+                .expect("load competing artifact"),
+            Some(competing_block.clone())
+        );
+        assert_eq!(
+            test.ledger()
+                .register_observed_unsealed_candidate(competing_block)
+                .expect("repeat candidate registration"),
+            competing_record
+        );
+    }
+
+    #[test]
+    fn candidate_abort_is_recursive_auditable_and_restart_durable() {
+        let mut test = TestLedgerV1::new("candidate-abort");
+        let chain_id = 71_011;
+        let first = test
+            .ledger()
+            .prepare(candidate_input_v1(
+                context_v1(chain_id, 1, [0u8; 32]),
+                [0x21; 32],
+                0x31,
+                1,
+            ))
+            .expect("prepare first");
+        let first_block = commit_bound_v1(test.ledger(), &first, commit_input_v1(0x41, 1, 1))
+            .expect("commit first");
+        let competing_parent = build_observed_block_v1(
+            with_aoem_parent_v1(
+                candidate_input_v1(
+                    context_v1(chain_id, 2, first_block.header.block_hash),
+                    first_block.header.post_state_root,
+                    0x52,
+                    1,
+                ),
+                &first_block,
+            ),
+            commit_input_v1(0x62, 1, 2),
+        );
+        test.ledger()
+            .register_observed_unsealed_candidate(competing_parent.clone())
+            .expect("register competing parent");
+        let competing_child = build_observed_block_v1(
+            with_aoem_parent_v1(
+                candidate_input_v1(
+                    context_v1(chain_id, 3, competing_parent.header.block_hash),
+                    competing_parent.header.post_state_root,
+                    0x53,
+                    1,
+                ),
+                &competing_parent,
+            ),
+            commit_input_v1(0x63, 1, 3),
+        );
+        test.ledger()
+            .register_observed_unsealed_candidate(competing_child.clone())
+            .expect("register competing child");
+
+        let aborted = test
+            .ledger()
+            .abort_unselected_candidate_branch(
+                chain_id,
+                competing_parent.header.block_hash,
+                "parent lost deterministic candidate preference",
+            )
+            .expect("abort competing branch");
+        assert_eq!(aborted.len(), 2);
+        assert!(aborted.iter().all(|record| {
+            record.lifecycle_status == CANDIDATE_STATUS_ABORTED_V1
+                && record.revision == 2
+                && record.abort_reason.as_deref()
+                    == Some("parent lost deterministic candidate preference")
+                && !record.chain_canonical
+                && !record.proof_sealed
+                && !record.safe
+                && !record.finalized
+        }));
+
+        test.reopen();
+        for block in [&competing_parent, &competing_child] {
+            let record = test
+                .ledger()
+                .load_candidate_record(chain_id, block.header.block_hash)
+                .expect("load aborted candidate after reopen")
+                .expect("aborted candidate exists");
+            assert_eq!(record.lifecycle_status, CANDIDATE_STATUS_ABORTED_V1);
+            assert_eq!(record.revision, 2);
+            assert_eq!(
+                test.ledger()
+                    .load_candidate_block(chain_id, block.header.block_hash)
+                    .expect("load retained aborted artifact"),
+                Some(block.clone())
+            );
+        }
+        let repeated = test
+            .ledger()
+            .abort_unselected_candidate_branch(
+                chain_id,
+                competing_parent.header.block_hash,
+                "a later reason must not rewrite the audit record",
+            )
+            .expect("repeat abort is idempotent");
+        assert!(repeated.iter().all(|record| {
+            record.revision == 2
+                && record.abort_reason.as_deref()
+                    == Some("parent lost deterministic candidate preference")
+        }));
+        let late_child = build_observed_block_v1(
+            with_aoem_parent_v1(
+                candidate_input_v1(
+                    context_v1(chain_id, 3, competing_parent.header.block_hash),
+                    competing_parent.header.post_state_root,
+                    0x56,
+                    1,
+                ),
+                &competing_parent,
+            ),
+            commit_input_v1(0x66, 1, 3),
+        );
+        assert!(test
+            .ledger()
+            .register_observed_unsealed_candidate(late_child)
+            .expect_err("aborted parent cannot accept a new child")
+            .to_string()
+            .contains("aborted parent"));
+        assert!(test
+            .ledger()
+            .abort_unselected_candidate_branch(
+                chain_id,
+                first_block.header.block_hash,
+                "selected execution branch must reject ordinary abort",
+            )
+            .expect_err("selected local candidate cannot be aborted")
+            .to_string()
+            .contains("cannot use unselected abort"));
+        assert_eq!(
+            test.ledger()
+                .load_head(chain_id)
+                .expect("load unchanged AOEM execution head")
+                .expect("head exists")
+                .block_hash,
+            first_block.header.block_hash
+        );
+    }
+
+    #[test]
+    fn invalid_or_orphaned_candidates_leave_no_graph_state() {
+        let test = TestLedgerV1::new("candidate-invalid");
+        let chain_id = 71_012;
+        let first = test
+            .ledger()
+            .prepare(candidate_input_v1(
+                context_v1(chain_id, 1, [0u8; 32]),
+                [0x22; 32],
+                0x32,
+                1,
+            ))
+            .expect("prepare first");
+        let first_block = commit_bound_v1(test.ledger(), &first, commit_input_v1(0x42, 1, 1))
+            .expect("commit first");
+
+        let competing_genesis = build_observed_block_v1(
+            candidate_input_v1(context_v1(chain_id, 1, [0u8; 32]), [0x25; 32], 0x57, 1),
+            commit_input_v1(0x67, 1, 1),
+        );
+        assert!(test
+            .ledger()
+            .register_observed_unsealed_candidate(competing_genesis)
+            .expect_err("competing genesis must fail")
+            .to_string()
+            .contains("competing genesis"));
+        assert_eq!(
+            test.ledger()
+                .load_candidate_records_by_height(chain_id, 1)
+                .expect("load unique genesis")
+                .len(),
+            1
+        );
+
+        let orphan = build_observed_block_v1(
+            with_aoem_parent_v1(
+                candidate_input_v1(
+                    context_v1(chain_id, 2, [0x99; 32]),
+                    first_block.header.post_state_root,
+                    0x54,
+                    1,
+                ),
+                &first_block,
+            ),
+            commit_input_v1(0x64, 1, 2),
+        );
+        assert!(test
+            .ledger()
+            .register_observed_unsealed_candidate(orphan)
+            .expect_err("orphan candidate must fail")
+            .to_string()
+            .contains("parent is missing"));
+        assert!(test
+            .ledger()
+            .load_candidate_records_by_height(chain_id, 2)
+            .expect("load empty candidate height")
+            .is_empty());
+
+        let mut tampered = build_observed_block_v1(
+            with_aoem_parent_v1(
+                candidate_input_v1(
+                    context_v1(chain_id, 2, first_block.header.block_hash),
+                    first_block.header.post_state_root,
+                    0x55,
+                    1,
+                ),
+                &first_block,
+            ),
+            commit_input_v1(0x65, 1, 2),
+        );
+        tampered.body.raw_txs[0][0] ^= 1;
+        assert!(test
+            .ledger()
+            .register_observed_unsealed_candidate(tampered)
+            .expect_err("tampered candidate must fail before persistence")
+            .to_string()
+            .contains("commitment binding mismatch"));
+        assert!(test
+            .ledger()
+            .load_candidate_records_by_height(chain_id, 2)
+            .expect("load still-empty candidate height")
+            .is_empty());
+        assert_eq!(
+            test.ledger()
+                .load_head(chain_id)
+                .expect("load unchanged head")
+                .expect("head exists")
+                .block_hash,
+            first_block.header.block_hash
         );
     }
 

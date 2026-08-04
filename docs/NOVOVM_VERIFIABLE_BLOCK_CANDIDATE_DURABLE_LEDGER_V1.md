@@ -548,3 +548,12 @@ The implementation is complete only when tests demonstrate:
 
 Until all gates pass, the durable ledger remains an implementation target, not
 evidence of proof sealing or mainnet finality.
+
+## 11. Candidate graph extension
+
+Same-height competing candidates, observed-vs-local trust classes,
+parent/children indexes, durable abort tombstones, and the explicit boundary
+before QC/fork choice are specified separately in
+[`NOVOVM_UNSEALED_BLOCK_CANDIDATE_GRAPH_V1.md`](NOVOVM_UNSEALED_BLOCK_CANDIDATE_GRAPH_V1.md).
+That sidecar extension does not promote any candidate to chain canonical,
+proof-sealed, safe, or finalized state.
