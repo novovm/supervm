@@ -1827,7 +1827,9 @@ mod tests {
             relay_identity_key_path: relay_identity_path,
             report_path: relay_report_path.clone(),
             report_interval_ms: 20,
-            run_for_ms: Some(3_000),
+            // Keep the bounded test relay alive for the complete duplex transaction and seal
+            // exchange, including every assertion timeout on a loaded CI runner.
+            run_for_ms: Some(20_000),
             session_queue_capacity: Some(16),
             offline_queue_per_peer: Some(16),
             offline_queue_total: Some(32),
