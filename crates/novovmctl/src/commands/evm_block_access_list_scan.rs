@@ -421,6 +421,9 @@ mod tests {
     };
     use serde_json::json;
     use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_STORE_ID: AtomicU64 = AtomicU64::new(0);
 
     fn sample_store_json_v1() -> serde_json::Value {
         json!({
@@ -531,9 +534,10 @@ mod tests {
 
     fn with_sample_store_path<T>(f: impl FnOnce(&Path, Vec<String>) -> T) -> T {
         let temp_root = std::env::temp_dir().join(format!(
-            "novovmctl-evm-bal-scan-{}-{}",
+            "novovmctl-evm-bal-scan-{}-{}-{}",
             std::process::id(),
-            output::now_unix_ms()
+            output::now_unix_ms(),
+            NEXT_TEMP_STORE_ID.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&temp_root).expect("create temp root");
         let store_path = temp_root.join("canonical.json");
