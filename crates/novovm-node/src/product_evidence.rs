@@ -14,6 +14,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::product_relay_daemon::{ProductRelayDaemonReportV1, PRODUCT_RELAY_DAEMON_VERSION_V2};
+
 pub const PRODUCT_EVIDENCE_VERSION_V1: u16 = 1;
 const PRODUCT_EVIDENCE_DOMAIN_V1: &[u8] = b"novovm-product-overlay-evidence-v1";
 
@@ -205,6 +207,9 @@ fn validate_product_report_v1(path: &Path) -> Result<()> {
             {
                 bail!("relay daemon trust boundary invalid");
             }
+            let report: ProductRelayDaemonReportV1 = serde_json::from_value(value.clone())
+                .context("decode bounded relay daemon report")?;
+            validate_relay_daemon_report_v2(&report)?;
         }
         "novovm_product_nat_runtime_v1" => {
             if value.get("network_only").and_then(Value::as_bool) != Some(true) {
@@ -330,6 +335,100 @@ fn validate_product_report_v1(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn validate_relay_daemon_report_v2(report: &ProductRelayDaemonReportV1) -> Result<()> {
+    if report.daemon_version != PRODUCT_RELAY_DAEMON_VERSION_V2 {
+        bail!("relay daemon evidence requires daemon_version={PRODUCT_RELAY_DAEMON_VERSION_V2}");
+    }
+    let runtime = &report.relay_runtime;
+    let limits = &runtime.limits;
+    if report.transport != "wss"
+        || report.websocket_path != "/novovm"
+        || !report.tls_transport_enabled
+        || report.ca_trust_required_for_novovm_identity
+        || report.business_semantics_interpreted_by_relay
+        || report.listen_addr.is_empty()
+        || report.report_updated_at_ms == 0
+    {
+        bail!("relay daemon transport or semantic boundary is invalid");
+    }
+    if report.max_connection_count == 0
+        || report.max_connection_count <= limits.max_sessions
+        || report.active_connection_count > report.max_connection_count
+    {
+        bail!("relay daemon physical connection limits are invalid");
+    }
+    if limits.max_sessions == 0
+        || limits.max_tracked_sources < limits.max_sessions
+        || limits.session_queue_capacity == 0
+        || limits.session_queue_bytes == 0
+        || limits.active_queue_total < limits.session_queue_capacity
+        || limits.active_queue_bytes_total < limits.session_queue_bytes
+        || limits.offline_queue_per_peer == 0
+        || limits.offline_queue_bytes_per_peer == 0
+        || limits.offline_queue_per_source == 0
+        || limits.offline_queue_bytes_per_source == 0
+        || limits.offline_queue_total < limits.offline_queue_per_peer
+        || limits.offline_queue_total < limits.offline_queue_per_source
+        || limits.offline_queue_bytes_total < limits.offline_queue_bytes_per_peer
+        || limits.offline_queue_bytes_total < limits.offline_queue_bytes_per_source
+        || limits.offline_queue_ttl_ms == 0
+        || limits.session_ttl_ms == 0
+        || limits.rate_limit_frames == 0
+        || limits.max_frames_per_window < limits.rate_limit_frames
+        || limits.rate_limit_window_ms == 0
+        || limits.source_bytes_per_minute == 0
+        || limits.max_bytes_per_minute < limits.source_bytes_per_minute
+        || limits.max_wire_message_bytes != novovm_network::PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1
+    {
+        bail!("relay daemon runtime limit snapshot is invalid");
+    }
+    if runtime.active_session_count > limits.max_sessions
+        || runtime.tracked_source_count > limits.max_tracked_sources
+        || runtime.active_session_count != runtime.active_peer_ids.len()
+        || runtime.active_session_count != runtime.active_sessions.len()
+        || runtime.active_queued_frame_count > limits.active_queue_total
+        || runtime.active_queued_bytes > limits.active_queue_bytes_total
+        || runtime.offline_queued_frame_count > limits.offline_queue_total
+        || runtime.offline_queued_bytes > limits.offline_queue_bytes_total
+        || runtime.queued_frame_count
+            != runtime
+                .active_queued_frame_count
+                .saturating_add(runtime.offline_queued_frame_count)
+        || runtime.queued_bytes
+            != runtime
+                .active_queued_bytes
+                .saturating_add(runtime.offline_queued_bytes)
+        || runtime.active_sessions.iter().any(|session| {
+            session.pending_delivery_capacity > limits.session_queue_capacity
+                || session.pending_control_capacity > limits.session_queue_capacity
+                || session.queued_frame_count > limits.session_queue_capacity
+                || session.queued_bytes > limits.session_queue_bytes
+        })
+        || !runtime.payload_treated_opaque
+        || runtime.relay_is_trusted_authority
+        || (report.graceful_shutdown && runtime.accepting_new_work)
+    {
+        bail!("relay daemon runtime snapshot contradicts its bounded limits");
+    }
+    let mut peer_ids = runtime.active_peer_ids.clone();
+    peer_ids.sort();
+    peer_ids.dedup();
+    let mut session_peer_ids = runtime
+        .active_sessions
+        .iter()
+        .map(|session| session.peer_id.clone())
+        .collect::<Vec<_>>();
+    session_peer_ids.sort();
+    session_peer_ids.dedup();
+    if peer_ids.len() != runtime.active_peer_ids.len()
+        || session_peer_ids.len() != runtime.active_sessions.len()
+        || peer_ids != session_peer_ids
+    {
+        bail!("relay daemon active session identity snapshot is inconsistent");
+    }
+    Ok(())
+}
+
 fn canonical_root_v1(root: &Path) -> Result<PathBuf> {
     root.canonicalize()
         .with_context(|| format!("canonicalize evidence root: {}", root.display()))
@@ -404,6 +503,166 @@ pub fn now_ms_v1() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bounded_relay_report_v2() -> Value {
+        serde_json::json!({
+            "accepted": true,
+            "scope": "novovm_product_relay_daemon_v1",
+            "daemon_version": 2,
+            "listen_addr": "127.0.0.1:9443",
+            "websocket_path": "/novovm",
+            "transport": "wss",
+            "report_updated_at_ms": 1_000,
+            "graceful_shutdown": false,
+            "tls_transport_enabled": true,
+            "ca_trust_required_for_novovm_identity": false,
+            "node_identity_challenge_response_required": true,
+            "payload_treated_opaque": true,
+            "relay_is_trusted_authority": false,
+            "business_semantics_interpreted_by_relay": false,
+            "novorudp_wire_changed": false,
+            "max_connection_count": 8,
+            "active_connection_count": 0,
+            "rejected_connection_total": 0,
+            "relay_runtime": {
+                "accepting_new_work": true,
+                "active_session_count": 0,
+                "tracked_source_count": 0,
+                "active_peer_ids": [],
+                "active_sessions": [],
+                "queued_frame_count": 0,
+                "queued_bytes": 0,
+                "active_queued_frame_count": 0,
+                "active_queued_bytes": 0,
+                "offline_queued_frame_count": 0,
+                "offline_queued_bytes": 0,
+                "limits": {
+                    "max_sessions": 4,
+                    "max_tracked_sources": 16,
+                    "session_queue_capacity": 8,
+                    "session_queue_bytes": 1048576,
+                    "active_queue_total": 32,
+                    "active_queue_bytes_total": 4194304,
+                    "offline_queue_per_peer": 8,
+                    "offline_queue_bytes_per_peer": 1048576,
+                    "offline_queue_per_source": 16,
+                    "offline_queue_bytes_per_source": 2097152,
+                    "offline_queue_total": 16,
+                    "offline_queue_bytes_total": 2097152,
+                    "offline_queue_ttl_ms": 5000,
+                    "session_ttl_ms": 5000,
+                    "rate_limit_frames": 100,
+                    "max_frames_per_window": 1000,
+                    "rate_limit_window_ms": 1000,
+                    "source_bytes_per_minute": 16777216,
+                    "max_bytes_per_minute": 33554432,
+                    "max_wire_message_bytes": 1048576
+                },
+                "registered_session_total": 0,
+                "session_limit_rejection_total": 0,
+                "shutdown_rejection_total": 0,
+                "replaced_session_total": 0,
+                "disconnected_session_total": 0,
+                "expired_session_total": 0,
+                "forwarded_frame_total": 0,
+                "queued_frame_total": 0,
+                "rate_limited_frame_total": 0,
+                "aggregate_rate_limited_frame_total": 0,
+                "wire_message_too_large_total": 0,
+                "source_byte_limited_frame_total": 0,
+                "aggregate_byte_limited_frame_total": 0,
+                "admitted_wire_bytes_total": 0,
+                "rejected_wire_bytes_total": 0,
+                "active_queue_byte_limited_frame_total": 0,
+                "active_queue_count_limited_frame_total": 0,
+                "offline_peer_limited_frame_total": 0,
+                "offline_source_limited_frame_total": 0,
+                "offline_total_limited_frame_total": 0,
+                "expired_queued_frame_total": 0,
+                "expired_queued_bytes_total": 0,
+                "offline_full_sweep_total": 0,
+                "protocol_rejected_frame_total": 0,
+                "rejected_frame_total": 0,
+                "payload_treated_opaque": true,
+                "relay_is_trusted_authority": false
+            }
+        })
+    }
+
+    #[test]
+    fn relay_evidence_requires_self_consistent_bounded_daemon_v2() {
+        let root = std::env::temp_dir().join(format!("novovm-relay-evidence-{}", now_ms_v1()));
+        fs::create_dir_all(&root).unwrap();
+        let report_path = root.join("relay.json");
+        let mut report = bounded_relay_report_v2();
+        fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
+        validate_product_report_v1(&report_path).unwrap();
+
+        report["daemon_version"] = Value::from(1);
+        fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
+        assert!(validate_product_report_v1(&report_path)
+            .unwrap_err()
+            .to_string()
+            .contains("daemon_version=2"));
+
+        report = bounded_relay_report_v2();
+        report["relay_runtime"]["limits"]["max_frames_per_window"] = Value::from(99);
+        fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
+        assert!(validate_product_report_v1(&report_path)
+            .unwrap_err()
+            .to_string()
+            .contains("limit snapshot"));
+
+        report = bounded_relay_report_v2();
+        report["relay_runtime"]["queued_frame_count"] = Value::from(1);
+        fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
+        assert!(validate_product_report_v1(&report_path)
+            .unwrap_err()
+            .to_string()
+            .contains("contradicts"));
+
+        report = bounded_relay_report_v2();
+        report["transport"] = Value::from("ws");
+        fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
+        assert!(validate_product_report_v1(&report_path)
+            .unwrap_err()
+            .to_string()
+            .contains("transport or semantic"));
+
+        let active_session = serde_json::json!({
+            "peer_id": "peer-a",
+            "session_id": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            "authenticated_at_ms": 1,
+            "last_seen_ms": 2,
+            "pending_delivery_capacity": 8,
+            "pending_control_capacity": 8,
+            "queued_frame_count": 9,
+            "queued_bytes": 0
+        });
+        report = bounded_relay_report_v2();
+        report["relay_runtime"]["active_session_count"] = Value::from(1);
+        report["relay_runtime"]["active_peer_ids"] = serde_json::json!(["peer-a"]);
+        report["relay_runtime"]["active_sessions"] = serde_json::json!([active_session]);
+        fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
+        assert!(validate_product_report_v1(&report_path)
+            .unwrap_err()
+            .to_string()
+            .contains("contradicts"));
+
+        let mut session_a = report["relay_runtime"]["active_sessions"][0].clone();
+        session_a["queued_frame_count"] = Value::from(0);
+        report = bounded_relay_report_v2();
+        report["relay_runtime"]["active_session_count"] = Value::from(2);
+        report["relay_runtime"]["active_peer_ids"] = serde_json::json!(["peer-a", "peer-b"]);
+        report["relay_runtime"]["active_sessions"] =
+            serde_json::json!([session_a.clone(), session_a]);
+        fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
+        assert!(validate_product_report_v1(&report_path)
+            .unwrap_err()
+            .to_string()
+            .contains("identity snapshot"));
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn signed_evidence_rejects_tampered_validated_report() {

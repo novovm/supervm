@@ -59,6 +59,8 @@ This file defines the current public documentation surface for NOVOVM and lists 
    - `docs/novovm-product-topology-preflight-v1.md`
    - `docs/novovm-product-relay-daemon-v1.md`
    - `docs/novovm-product-relay-client-v1.md`
+   - `docs/NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md`
+   - `docs/NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md`
    - `docs/novovm-product-node-overlay-v1.md`
    - `docs/novovm-product-nat-runtime-v1.md`
    - `docs/novovm-product-peer-runtime-v1.md`

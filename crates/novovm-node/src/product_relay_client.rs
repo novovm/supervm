@@ -5,9 +5,11 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ed25519_dalek::SigningKey;
 use novovm_network::{
     HandshakeReplayCacheV1, NodeHandshakeInitiatorV1, OpaqueRelayDeliveryV1,
-    ProductRelayWireMessageV1, RelayPeerHandshakeDeliveryV1, RelayPeerHandshakeV1,
-    SecureNovoRudpEnvelopeV1,
+    ProductRelayWireMessageV1, RelayForwardDispositionV1, RelayForwardOutcomeV1,
+    RelayPeerHandshakeDeliveryV1, RelayPeerHandshakeV1, SecureNovoRudpEnvelopeV1,
+    PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1,
 };
+use rand::{rngs::OsRng, RngCore};
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::{pem::PemObject, CertificateDer, ServerName, UnixTime},
@@ -16,14 +18,20 @@ use rustls::{
 use serde::{Deserialize, Serialize};
 use sha1::{Digest as Sha1Digest, Sha1};
 use std::{
-    io::{Read, Write},
+    collections::VecDeque,
+    io::{self, Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::PathBuf,
     sync::Arc,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
-const MAX_WEBSOCKET_FRAME_BYTES_V1: usize = 1_048_576;
+const MAX_WEBSOCKET_CONTROL_FRAME_BYTES_V1: usize = 125;
+const PRODUCT_RELAY_FRAME_DEADLINE_MS_V1: u64 = 10_000;
+const PRODUCT_RELAY_PROTOCOL_ITEM_DEADLINE_MS_V1: u64 = 10_000;
+const PRODUCT_RELAY_MAX_CONTROL_FRAMES_PER_PROTOCOL_ITEM_V1: usize = 64;
+pub(crate) const PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_EVENTS_V1: usize = 64;
+pub(crate) const PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_BYTES_V1: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,7 +40,8 @@ pub enum ProductRelayTlsTrustV1 {
     ExplicitCa {
         certificate_path: PathBuf,
     },
-    /// The post-upgrade signed node handshake, not TLS PKI, authenticates the relay.
+    /// Test-only transport encryption for a relay resolved to loopback. The post-upgrade signed
+    /// node handshake does not bind subsequent relay wire messages to that identity.
     NodeKeyBoundEncrypted,
 }
 
@@ -65,10 +74,164 @@ pub enum ProductRelayClientEventV1 {
     Closed,
 }
 
+#[derive(Debug)]
+enum ProductRelayClientProtocolItemV1 {
+    Event {
+        event: Box<ProductRelayClientEventV1>,
+        wire_bytes: usize,
+    },
+    ForwardOutcome(RelayForwardOutcomeV1),
+}
+
+#[derive(Debug)]
+struct ProductRelayPendingEventV1 {
+    event: ProductRelayClientEventV1,
+    wire_bytes: usize,
+}
+
 pub struct ProductRelayClientV1 {
-    stream: rustls::StreamOwned<rustls::ClientConnection, TcpStream>,
+    stream: rustls::StreamOwned<rustls::ClientConnection, ProductRelayDeadlineTcpStreamV1>,
     session: ProductRelayClientSessionV1,
     read_buffer: Vec<u8>,
+    read_buffer_offset: usize,
+    pending_events: VecDeque<ProductRelayPendingEventV1>,
+    pending_event_bytes: usize,
+}
+
+#[derive(Debug)]
+struct ProductRelayDeadlineTcpStreamV1 {
+    inner: TcpStream,
+    handshake_deadline: Option<Instant>,
+    frame_deadline: Option<Instant>,
+}
+
+impl ProductRelayDeadlineTcpStreamV1 {
+    fn new(inner: TcpStream, handshake_deadline: Instant) -> Self {
+        Self {
+            inner,
+            handshake_deadline: Some(handshake_deadline),
+            frame_deadline: None,
+        }
+    }
+
+    fn finish_handshake_v1(
+        &mut self,
+        read_timeout: Duration,
+        write_timeout: Duration,
+    ) -> io::Result<()> {
+        self.check_io_deadlines_v1()?;
+        self.inner.set_read_timeout(Some(read_timeout))?;
+        self.inner.set_write_timeout(Some(write_timeout))?;
+        self.handshake_deadline = None;
+        self.frame_deadline = None;
+        Ok(())
+    }
+
+    fn finish_frame_v1(&mut self, buffered_next_frame: bool) -> io::Result<()> {
+        self.check_io_deadlines_v1()?;
+        self.frame_deadline = if buffered_next_frame {
+            Some(self.new_frame_deadline_v1()?)
+        } else {
+            None
+        };
+        Ok(())
+    }
+
+    fn ensure_frame_deadline_v1(&mut self) -> io::Result<()> {
+        if self.handshake_deadline.is_none() && self.frame_deadline.is_none() {
+            self.frame_deadline = Some(self.new_frame_deadline_v1()?);
+        }
+        self.check_io_deadlines_v1()
+    }
+
+    fn ensure_frame_deadline_until_v1(&mut self, operation_deadline: Instant) -> io::Result<()> {
+        if self.handshake_deadline.is_none() {
+            let frame_deadline = match self.frame_deadline {
+                Some(frame_deadline) => frame_deadline.min(operation_deadline),
+                None => self.new_frame_deadline_v1()?.min(operation_deadline),
+            };
+            self.frame_deadline = Some(frame_deadline);
+        }
+        self.check_io_deadlines_v1()
+    }
+
+    fn begin_authenticated_write_v1(&mut self) -> io::Result<()> {
+        if self.handshake_deadline.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "product relay client authenticated write began during handshake",
+            ));
+        }
+        self.frame_deadline = Some(self.new_frame_deadline_v1()?);
+        self.check_io_deadlines_v1()
+    }
+
+    fn finish_authenticated_write_v1(&mut self) -> io::Result<()> {
+        self.check_io_deadlines_v1()?;
+        self.frame_deadline = None;
+        Ok(())
+    }
+
+    fn new_frame_deadline_v1(&self) -> io::Result<Instant> {
+        Instant::now()
+            .checked_add(Duration::from_millis(PRODUCT_RELAY_FRAME_DEADLINE_MS_V1))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "product relay client frame deadline overflow",
+                )
+            })
+    }
+
+    fn check_io_deadlines_v1(&self) -> io::Result<()> {
+        if self
+            .handshake_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "product relay client absolute handshake deadline exceeded",
+            ));
+        }
+        if self
+            .frame_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "product relay client absolute frame deadline exceeded",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Read for ProductRelayDeadlineTcpStreamV1 {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        self.check_io_deadlines_v1()?;
+        let result = self.inner.read(output);
+        if result.as_ref().is_ok_and(|read| *read > 0) {
+            self.ensure_frame_deadline_v1()?;
+        }
+        self.check_io_deadlines_v1()?;
+        result
+    }
+}
+
+impl Write for ProductRelayDeadlineTcpStreamV1 {
+    fn write(&mut self, input: &[u8]) -> io::Result<usize> {
+        self.check_io_deadlines_v1()?;
+        let result = self.inner.write(input);
+        self.check_io_deadlines_v1()?;
+        result
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.check_io_deadlines_v1()?;
+        let result = self.inner.flush();
+        self.check_io_deadlines_v1()?;
+        result
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,21 +269,25 @@ impl ProductRelayClientV1 {
             bail!("expected_relay_peer_id is required");
         }
         let endpoint = parse_endpoint_v1(&config.endpoint)?;
-        let tcp = TcpStream::connect_timeout(
-            &endpoint.socket_addr,
-            Duration::from_millis(config.connect_timeout_ms.max(1)),
-        )
-        .with_context(|| format!("connect relay endpoint: {}", config.endpoint))?;
-        tcp.set_read_timeout(Some(Duration::from_millis(config.read_timeout_ms.max(1))))?;
-        tcp.set_write_timeout(Some(Duration::from_millis(
-            config.connect_timeout_ms.max(1),
-        )))?;
-        let tls_config = build_tls_config_v1(&config.tls_trust)?;
+        let tls_config = build_tls_config_v1(&config.tls_trust, endpoint.socket_addr.ip())?;
+        let connect_timeout = Duration::from_millis(config.connect_timeout_ms.max(1));
+        let read_timeout = Duration::from_millis(config.read_timeout_ms.max(1));
+        let handshake_deadline = Instant::now()
+            .checked_add(connect_timeout)
+            .context("product relay client handshake deadline overflow")?;
+        let tcp = TcpStream::connect_timeout(&endpoint.socket_addr, connect_timeout)
+            .with_context(|| format!("connect relay endpoint: {}", config.endpoint))?;
+        let handshake_io_timeout = read_timeout.min(connect_timeout);
+        tcp.set_read_timeout(Some(handshake_io_timeout))?;
+        tcp.set_write_timeout(Some(connect_timeout))?;
         let server_name = ServerName::try_from(endpoint.host.clone())
             .context("relay endpoint must use a DNS hostname")?;
         let connection = rustls::ClientConnection::new(tls_config, server_name)
             .context("create relay TLS client")?;
-        let mut stream = rustls::StreamOwned::new(connection, tcp);
+        let mut stream = rustls::StreamOwned::new(
+            connection,
+            ProductRelayDeadlineTcpStreamV1::new(tcp, handshake_deadline),
+        );
         websocket_upgrade_v1(&mut stream, &endpoint)?;
         let initiator = NodeHandshakeInitiatorV1::start(
             identity,
@@ -145,6 +312,10 @@ impl ProductRelayClientV1 {
         initiator
             .complete(&response, now_ms_v1(), &mut replay)
             .context("relay node identity challenge-response failed")?;
+        stream
+            .sock
+            .finish_handshake_v1(read_timeout, connect_timeout)
+            .context("finish product relay client handshake deadline")?;
         Ok(Self {
             stream,
             session: ProductRelayClientSessionV1 {
@@ -155,6 +326,9 @@ impl ProductRelayClientV1 {
                 tls_is_novorudp_identity_root: false,
             },
             read_buffer: Vec::new(),
+            read_buffer_offset: 0,
+            pending_events: VecDeque::new(),
+            pending_event_bytes: 0,
         })
     }
 
@@ -164,7 +338,27 @@ impl ProductRelayClientV1 {
     }
 
     pub fn send_envelope(&mut self, envelope: SecureNovoRudpEnvelopeV1) -> Result<()> {
-        write_wire_v1(&mut self.stream, &ProductRelayWireMessageV1::Data(envelope))
+        let outcome = self.send_envelope_with_outcome_v1(envelope)?;
+        ensure_forward_outcome_accepted_v1(&outcome)
+    }
+
+    pub fn send_envelope_with_outcome_v1(
+        &mut self,
+        envelope: SecureNovoRudpEnvelopeV1,
+    ) -> Result<RelayForwardOutcomeV1> {
+        let source_peer_id = envelope.sender_peer_id.clone();
+        let target_peer_id = envelope.recipient_peer_id.clone();
+        let envelope_session_id = envelope.session_id;
+        let envelope_sequence = envelope.sequence;
+        let admitted_wire_bytes =
+            self.write_authenticated_wire_v1(&ProductRelayWireMessageV1::Data(envelope))?;
+        self.wait_for_forward_outcome_v1(
+            &source_peer_id,
+            &target_peer_id,
+            Some(envelope_session_id),
+            Some(envelope_sequence),
+            admitted_wire_bytes,
+        )
     }
 
     pub fn send_peer_handshake(
@@ -172,48 +366,253 @@ impl ProductRelayClientV1 {
         target_peer_id: impl Into<String>,
         handshake: RelayPeerHandshakeV1,
     ) -> Result<()> {
-        write_wire_v1(
-            &mut self.stream,
-            &ProductRelayWireMessageV1::PeerHandshake {
-                target_peer_id: target_peer_id.into(),
+        let outcome = self.send_peer_handshake_with_outcome_v1(target_peer_id, handshake)?;
+        ensure_forward_outcome_accepted_v1(&outcome)
+    }
+
+    pub fn send_peer_handshake_with_outcome_v1(
+        &mut self,
+        target_peer_id: impl Into<String>,
+        handshake: RelayPeerHandshakeV1,
+    ) -> Result<RelayForwardOutcomeV1> {
+        let target_peer_id = target_peer_id.into();
+        let source_peer_id = match &handshake {
+            RelayPeerHandshakeV1::Offer(offer) => offer.initiator_peer_id.clone(),
+            RelayPeerHandshakeV1::Response(response) => response.responder_peer_id.clone(),
+        };
+        let admitted_wire_bytes =
+            self.write_authenticated_wire_v1(&ProductRelayWireMessageV1::PeerHandshake {
+                target_peer_id: target_peer_id.clone(),
                 handshake,
-            },
+            })?;
+        self.wait_for_forward_outcome_v1(
+            &source_peer_id,
+            &target_peer_id,
+            None,
+            None,
+            admitted_wire_bytes,
         )
     }
 
     pub fn heartbeat(&mut self) -> Result<()> {
-        write_wire_v1(&mut self.stream, &ProductRelayWireMessageV1::Heartbeat)
+        self.write_authenticated_wire_v1(&ProductRelayWireMessageV1::Heartbeat)
+            .map(|_| ())
     }
 
     pub fn recv_event(&mut self) -> Result<ProductRelayClientEventV1> {
-        loop {
-            match read_buffered_frame_v1(&mut self.stream, &mut self.read_buffer)? {
-                RelayClientFrameV1::Binary(bytes) => {
-                    match serde_json::from_slice(&bytes).context("decode relay event")? {
-                        ProductRelayWireMessageV1::Delivery(delivery) => {
-                            return Ok(ProductRelayClientEventV1::Delivery(delivery))
-                        }
-                        ProductRelayWireMessageV1::PeerHandshakeDelivery(delivery) => {
-                            return Ok(ProductRelayClientEventV1::PeerHandshake(delivery))
-                        }
-                        ProductRelayWireMessageV1::HeartbeatAck => {
-                            return Ok(ProductRelayClientEventV1::HeartbeatAck)
-                        }
-                        _ => bail!("unexpected relay event"),
-                    }
-                }
-                RelayClientFrameV1::Ping(payload) => {
-                    write_masked_frame_v1(&mut self.stream, 0xA, &payload)?
-                }
-                RelayClientFrameV1::Pong => {}
-                RelayClientFrameV1::Close => return Ok(ProductRelayClientEventV1::Closed),
+        if let Some(event) =
+            pop_pending_relay_event_v1(&mut self.pending_events, &mut self.pending_event_bytes)
+        {
+            return Ok(event);
+        }
+        match self.read_protocol_item_v1()? {
+            ProductRelayClientProtocolItemV1::Event { event, .. } => Ok(*event),
+            ProductRelayClientProtocolItemV1::ForwardOutcome(_) => {
+                bail!("relay returned an unsolicited forward outcome")
             }
         }
     }
 
     pub fn close(mut self) -> Result<()> {
-        write_wire_v1(&mut self.stream, &ProductRelayWireMessageV1::Close)
+        self.write_authenticated_wire_v1(&ProductRelayWireMessageV1::Close)
+            .map(|_| ())
     }
+
+    fn wait_for_forward_outcome_v1(
+        &mut self,
+        expected_source_peer_id: &str,
+        expected_target_peer_id: &str,
+        expected_envelope_session_id: Option<[u8; 16]>,
+        expected_envelope_sequence: Option<u64>,
+        expected_admitted_wire_bytes: usize,
+    ) -> Result<RelayForwardOutcomeV1> {
+        let outcome_deadline = Instant::now()
+            .checked_add(Duration::from_millis(
+                PRODUCT_RELAY_PROTOCOL_ITEM_DEADLINE_MS_V1,
+            ))
+            .context("product relay forward-outcome deadline overflow")?;
+        loop {
+            match self.read_protocol_item_until_v1(outcome_deadline)? {
+                ProductRelayClientProtocolItemV1::Event { event, .. }
+                    if matches!(event.as_ref(), ProductRelayClientEventV1::Closed) =>
+                {
+                    bail!("relay closed before returning a forward outcome")
+                }
+                ProductRelayClientProtocolItemV1::Event { event, wire_bytes } => {
+                    push_pending_relay_event_v1(
+                        &mut self.pending_events,
+                        &mut self.pending_event_bytes,
+                        *event,
+                        wire_bytes,
+                    )?;
+                }
+                ProductRelayClientProtocolItemV1::ForwardOutcome(outcome) => {
+                    if outcome.source_peer_id != expected_source_peer_id
+                        || outcome.target_peer_id != expected_target_peer_id
+                        || outcome.envelope_session_id != expected_envelope_session_id
+                        || outcome.envelope_sequence != expected_envelope_sequence
+                        || outcome.admitted_wire_bytes != expected_admitted_wire_bytes
+                        || !outcome.payload_treated_opaque
+                    {
+                        bail!("relay forward outcome correlation mismatch");
+                    }
+                    let flags_match_disposition = match outcome.disposition {
+                        RelayForwardDispositionV1::Forwarded => {
+                            outcome.forwarded && !outcome.queued
+                        }
+                        RelayForwardDispositionV1::QueuedTargetOffline
+                        | RelayForwardDispositionV1::QueuedBackpressure => {
+                            !outcome.forwarded && outcome.queued
+                        }
+                        _ => !outcome.forwarded && !outcome.queued,
+                    };
+                    if !flags_match_disposition {
+                        bail!("relay forward outcome flags contradict its disposition");
+                    }
+                    return Ok(outcome);
+                }
+            }
+        }
+    }
+
+    fn read_protocol_item_v1(&mut self) -> Result<ProductRelayClientProtocolItemV1> {
+        let protocol_item_deadline = Instant::now()
+            .checked_add(Duration::from_millis(
+                PRODUCT_RELAY_PROTOCOL_ITEM_DEADLINE_MS_V1,
+            ))
+            .context("product relay protocol-item deadline overflow")?;
+        self.read_protocol_item_until_v1(protocol_item_deadline)
+    }
+
+    fn read_protocol_item_until_v1(
+        &mut self,
+        protocol_item_deadline: Instant,
+    ) -> Result<ProductRelayClientProtocolItemV1> {
+        let mut control_frame_count = 0usize;
+        loop {
+            ensure_protocol_item_progress_v1(protocol_item_deadline, control_frame_count)?;
+            match read_buffered_frame_v1(
+                &mut self.stream,
+                &mut self.read_buffer,
+                &mut self.read_buffer_offset,
+                protocol_item_deadline,
+            )? {
+                RelayClientFrameV1::Binary(bytes) => {
+                    let wire_bytes = bytes.len();
+                    let message = serde_json::from_slice(&bytes).context("decode relay event")?;
+                    return match message {
+                        ProductRelayWireMessageV1::Delivery(delivery) => {
+                            Ok(ProductRelayClientProtocolItemV1::Event {
+                                event: Box::new(ProductRelayClientEventV1::Delivery(delivery)),
+                                wire_bytes,
+                            })
+                        }
+                        ProductRelayWireMessageV1::PeerHandshakeDelivery(delivery) => {
+                            Ok(ProductRelayClientProtocolItemV1::Event {
+                                event: Box::new(ProductRelayClientEventV1::PeerHandshake(delivery)),
+                                wire_bytes,
+                            })
+                        }
+                        ProductRelayWireMessageV1::HeartbeatAck => {
+                            Ok(ProductRelayClientProtocolItemV1::Event {
+                                event: Box::new(ProductRelayClientEventV1::HeartbeatAck),
+                                wire_bytes,
+                            })
+                        }
+                        ProductRelayWireMessageV1::ForwardOutcome(outcome) => {
+                            Ok(ProductRelayClientProtocolItemV1::ForwardOutcome(outcome))
+                        }
+                        _ => bail!("unexpected relay event"),
+                    };
+                }
+                RelayClientFrameV1::Ping(payload) => {
+                    control_frame_count = control_frame_count.saturating_add(1);
+                    ensure_protocol_item_progress_v1(protocol_item_deadline, control_frame_count)?;
+                    self.write_authenticated_frame_v1(0xA, &payload)?;
+                }
+                RelayClientFrameV1::Pong => {
+                    control_frame_count = control_frame_count.saturating_add(1);
+                    ensure_protocol_item_progress_v1(protocol_item_deadline, control_frame_count)?;
+                }
+                RelayClientFrameV1::Close => {
+                    return Ok(ProductRelayClientProtocolItemV1::Event {
+                        event: Box::new(ProductRelayClientEventV1::Closed),
+                        wire_bytes: 0,
+                    })
+                }
+            }
+        }
+    }
+
+    fn write_authenticated_wire_v1(
+        &mut self,
+        message: &ProductRelayWireMessageV1,
+    ) -> Result<usize> {
+        self.stream.sock.begin_authenticated_write_v1()?;
+        let write_result = write_wire_v1(&mut self.stream, message);
+        let finish_result = self.stream.sock.finish_authenticated_write_v1();
+        let written = write_result?;
+        finish_result?;
+        Ok(written)
+    }
+
+    fn write_authenticated_frame_v1(&mut self, opcode: u8, payload: &[u8]) -> Result<()> {
+        self.stream.sock.begin_authenticated_write_v1()?;
+        let write_result = write_masked_frame_v1(&mut self.stream, opcode, payload);
+        let finish_result = self.stream.sock.finish_authenticated_write_v1();
+        write_result?;
+        finish_result?;
+        Ok(())
+    }
+}
+
+fn ensure_protocol_item_progress_v1(deadline: Instant, control_frame_count: usize) -> Result<()> {
+    if Instant::now() >= deadline {
+        bail!("product relay protocol-item absolute deadline exceeded");
+    }
+    if control_frame_count > PRODUCT_RELAY_MAX_CONTROL_FRAMES_PER_PROTOCOL_ITEM_V1 {
+        bail!("product relay protocol-item control-frame budget exceeded");
+    }
+    Ok(())
+}
+
+fn ensure_forward_outcome_accepted_v1(outcome: &RelayForwardOutcomeV1) -> Result<()> {
+    match outcome.disposition {
+        RelayForwardDispositionV1::Forwarded
+        | RelayForwardDispositionV1::QueuedTargetOffline
+        | RelayForwardDispositionV1::QueuedBackpressure => Ok(()),
+        disposition => bail!("relay rejected forward admission: {disposition:?}"),
+    }
+}
+
+fn push_pending_relay_event_v1(
+    pending_events: &mut VecDeque<ProductRelayPendingEventV1>,
+    pending_event_bytes: &mut usize,
+    event: ProductRelayClientEventV1,
+    wire_bytes: usize,
+) -> Result<()> {
+    let next_bytes = pending_event_bytes
+        .checked_add(wire_bytes)
+        .context("relay pending event byte accounting overflow")?;
+    if pending_events.len() >= PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_EVENTS_V1
+        || next_bytes > PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_BYTES_V1
+    {
+        bail!(
+            "relay event buffer reached its bounded count or byte capacity while awaiting a forward outcome"
+        );
+    }
+    pending_events.push_back(ProductRelayPendingEventV1 { event, wire_bytes });
+    *pending_event_bytes = next_bytes;
+    Ok(())
+}
+
+fn pop_pending_relay_event_v1(
+    pending_events: &mut VecDeque<ProductRelayPendingEventV1>,
+    pending_event_bytes: &mut usize,
+) -> Option<ProductRelayClientEventV1> {
+    let pending = pending_events.pop_front()?;
+    *pending_event_bytes = (*pending_event_bytes).saturating_sub(pending.wire_bytes);
+    Some(pending.event)
 }
 
 impl ProductRelayConnectorV1 {
@@ -357,7 +756,11 @@ fn parse_endpoint_v1(endpoint: &str) -> Result<RelayEndpointV1> {
     })
 }
 
-fn build_tls_config_v1(trust: &ProductRelayTlsTrustV1) -> Result<Arc<rustls::ClientConfig>> {
+fn build_tls_config_v1(
+    trust: &ProductRelayTlsTrustV1,
+    resolved_ip: std::net::IpAddr,
+) -> Result<Arc<rustls::ClientConfig>> {
+    validate_tls_trust_endpoint_v1(trust, resolved_ip)?;
     let mut roots = rustls::RootCertStore::empty();
     match trust {
         ProductRelayTlsTrustV1::NativeWebPki => {
@@ -405,12 +808,25 @@ fn build_tls_config_v1(trust: &ProductRelayTlsTrustV1) -> Result<Arc<rustls::Cli
     }
 }
 
+fn validate_tls_trust_endpoint_v1(
+    trust: &ProductRelayTlsTrustV1,
+    resolved_ip: std::net::IpAddr,
+) -> Result<()> {
+    if matches!(trust, ProductRelayTlsTrustV1::NodeKeyBoundEncrypted) && !resolved_ip.is_loopback()
+    {
+        bail!(
+            "node_key_bound_encrypted is restricted to loopback relay endpoints; non-loopback relay {resolved_ip} must use native_web_pki or explicit_ca"
+        );
+    }
+    Ok(())
+}
+
 fn tls_crypto_provider_v1() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::aws_lc_rs::default_provider())
 }
 
 fn websocket_upgrade_v1<S: Read + Write>(stream: &mut S, endpoint: &RelayEndpointV1) -> Result<()> {
-    let key = BASE64_STANDARD.encode([17u8; 16]);
+    let key = fresh_websocket_key_v1();
     write!(
         stream,
         "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {}\r\nSec-WebSocket-Version: 13\r\n\r\n",
@@ -431,12 +847,22 @@ fn websocket_upgrade_v1<S: Read + Write>(stream: &mut S, endpoint: &RelayEndpoin
     Ok(())
 }
 
-fn write_wire_v1<S: Write>(stream: &mut S, message: &ProductRelayWireMessageV1) -> Result<()> {
-    write_masked_frame_v1(stream, 0x2, &serde_json::to_vec(message)?)
+fn fresh_websocket_key_v1() -> String {
+    let mut nonce = [0u8; 16];
+    OsRng.fill_bytes(&mut nonce);
+    BASE64_STANDARD.encode(nonce)
+}
+
+fn write_wire_v1<S: Write>(stream: &mut S, message: &ProductRelayWireMessageV1) -> Result<usize> {
+    let payload = serde_json::to_vec(message)?;
+    write_masked_frame_v1(stream, 0x2, &payload)?;
+    Ok(payload.len())
 }
 
 fn write_masked_frame_v1<S: Write>(stream: &mut S, opcode: u8, payload: &[u8]) -> Result<()> {
-    let mask = [0x13, 0x37, 0x39, 0x41];
+    validate_websocket_payload_size_v1(opcode, payload.len())?;
+    let mut mask = [0u8; 4];
+    OsRng.fill_bytes(&mut mask);
     let mut frame = Vec::with_capacity(payload.len() + 14);
     frame.push(0x80 | (opcode & 0x0f));
     match payload.len() {
@@ -462,13 +888,34 @@ fn write_masked_frame_v1<S: Write>(stream: &mut S, opcode: u8, payload: &[u8]) -
     Ok(())
 }
 
-fn read_buffered_frame_v1<S: Read>(
-    stream: &mut S,
+fn read_buffered_frame_v1(
+    stream: &mut rustls::StreamOwned<rustls::ClientConnection, ProductRelayDeadlineTcpStreamV1>,
     read_buffer: &mut Vec<u8>,
+    read_buffer_offset: &mut usize,
+    operation_deadline: Instant,
 ) -> Result<RelayClientFrameV1> {
     loop {
-        if let Some((frame, consumed)) = decode_buffered_frame_v1(read_buffer)? {
-            read_buffer.drain(..consumed);
+        stream
+            .sock
+            .ensure_frame_deadline_until_v1(operation_deadline)?;
+        let unread = read_buffer
+            .get(*read_buffer_offset..)
+            .context("relay read buffer cursor is out of bounds")?;
+        if let Some((frame, consumed)) = decode_buffered_frame_v1(unread)? {
+            *read_buffer_offset = read_buffer_offset
+                .checked_add(consumed)
+                .context("relay read buffer cursor overflow")?;
+            let buffered_next_frame = *read_buffer_offset < read_buffer.len();
+            if !buffered_next_frame {
+                read_buffer.clear();
+                *read_buffer_offset = 0;
+            } else if *read_buffer_offset >= 16 * 1024
+                && *read_buffer_offset >= read_buffer.len().saturating_div(2)
+            {
+                read_buffer.drain(..*read_buffer_offset);
+                *read_buffer_offset = 0;
+            }
+            stream.sock.finish_frame_v1(buffered_next_frame)?;
             return Ok(frame);
         }
         let mut chunk = [0u8; 16 * 1024];
@@ -477,9 +924,7 @@ fn read_buffered_frame_v1<S: Read>(
             bail!("relay WebSocket stream closed");
         }
         read_buffer.extend_from_slice(&chunk[..read]);
-        if read_buffer.len() > MAX_WEBSOCKET_FRAME_BYTES_V1.saturating_add(14) {
-            bail!("relay WebSocket buffered frame too large");
-        }
+        stream.sock.ensure_frame_deadline_v1()?;
     }
 }
 
@@ -490,8 +935,14 @@ fn decode_buffered_frame_v1(bytes: &[u8]) -> Result<Option<(RelayClientFrameV1, 
     if bytes[0] & 0x80 == 0 {
         bail!("fragmented relay WebSocket frames are unsupported");
     }
+    if bytes[0] & 0x70 != 0 {
+        bail!("relay WebSocket RSV bits are unsupported");
+    }
     let opcode = bytes[0] & 0x0f;
     let masked = bytes[1] & 0x80 != 0;
+    if masked {
+        bail!("relay server WebSocket frames must not be masked");
+    }
     let length_tag = bytes[1] & 0x7f;
     let mut cursor = 2usize;
     let length = match length_tag {
@@ -513,9 +964,10 @@ fn decode_buffered_frame_v1(bytes: &[u8]) -> Result<Option<(RelayClientFrameV1, 
         }
         length => u64::from(length),
     };
-    if length > MAX_WEBSOCKET_FRAME_BYTES_V1 as u64 {
+    if length > PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1 as u64 {
         bail!("relay WebSocket frame too large");
     }
+    validate_websocket_payload_size_v1(opcode, length as usize)?;
     let mask = if masked {
         if bytes.len() < cursor + 4 {
             return Ok(None);
@@ -555,8 +1007,14 @@ fn read_frame_v1<S: Read>(stream: &mut S) -> Result<RelayClientFrameV1> {
     if header[0] & 0x80 == 0 {
         bail!("fragmented relay WebSocket frames are unsupported");
     }
+    if header[0] & 0x70 != 0 {
+        bail!("relay WebSocket RSV bits are unsupported");
+    }
     let opcode = header[0] & 0x0f;
     let masked = header[1] & 0x80 != 0;
+    if masked {
+        bail!("relay server WebSocket frames must not be masked");
+    }
     let mut length = (header[1] & 0x7f) as u64;
     if length == 126 {
         let mut extended = [0u8; 2];
@@ -568,9 +1026,10 @@ fn read_frame_v1<S: Read>(stream: &mut S) -> Result<RelayClientFrameV1> {
         stream.read_exact(&mut extended)?;
         length = u64::from_be_bytes(extended);
     }
-    if length > MAX_WEBSOCKET_FRAME_BYTES_V1 as u64 {
+    if length > PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1 as u64 {
         bail!("relay WebSocket frame too large");
     }
+    validate_websocket_payload_size_v1(opcode, length as usize)?;
     let mask = if masked {
         let mut mask = [0u8; 4];
         stream.read_exact(&mut mask)?;
@@ -592,6 +1051,16 @@ fn read_frame_v1<S: Read>(stream: &mut S) -> Result<RelayClientFrameV1> {
         0x8 => Ok(RelayClientFrameV1::Close),
         _ => bail!("unsupported relay WebSocket opcode"),
     }
+}
+
+fn validate_websocket_payload_size_v1(opcode: u8, payload_len: usize) -> Result<()> {
+    if payload_len > PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1 {
+        bail!("relay WebSocket frame too large");
+    }
+    if opcode & 0x08 != 0 && payload_len > MAX_WEBSOCKET_CONTROL_FRAME_BYTES_V1 {
+        bail!("relay WebSocket control frame exceeds 125 bytes");
+    }
+    Ok(())
 }
 
 fn read_http_headers_v1<S: Read>(stream: &mut S) -> Result<String> {
@@ -635,6 +1104,169 @@ mod tests {
     use std::{fs, net::TcpListener, thread};
 
     #[test]
+    fn client_websocket_bounds_writes_and_rejects_masked_server_frames() {
+        let first_key = fresh_websocket_key_v1();
+        let second_key = fresh_websocket_key_v1();
+        assert_ne!(first_key, second_key);
+        assert_eq!(BASE64_STANDARD.decode(first_key).unwrap().len(), 16);
+
+        let mut wire = Vec::new();
+        let oversized = vec![0u8; PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1 + 1];
+        assert!(write_masked_frame_v1(&mut wire, 0x2, &oversized)
+            .unwrap_err()
+            .to_string()
+            .contains("too large"));
+        assert!(write_masked_frame_v1(
+            &mut wire,
+            0x9,
+            &[0u8; MAX_WEBSOCKET_CONTROL_FRAME_BYTES_V1 + 1],
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("control frame"));
+
+        let mut masked_server_frame = Vec::new();
+        write_masked_frame_v1(&mut masked_server_frame, 0x2, b"server").unwrap();
+        assert!(decode_buffered_frame_v1(&masked_server_frame)
+            .unwrap_err()
+            .to_string()
+            .contains("must not be masked"));
+    }
+
+    #[test]
+    fn node_key_bound_tls_is_loopback_only_before_connect() {
+        let identity = SigningKey::from_bytes(&[140; 32]);
+        let config = ProductRelayClientConfigV1 {
+            endpoint: "wss://192.0.2.1:443/novovm".into(),
+            expected_relay_peer_id: "novovm-ed25519:test-relay".into(),
+            connect_timeout_ms: 60_000,
+            read_timeout_ms: 1_000,
+            tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
+        };
+        let error = ProductRelayClientV1::connect(&identity, &config)
+            .err()
+            .expect("non-loopback node-key-only TLS must fail before TCP connect");
+        let message = error.to_string();
+        assert!(message.contains("restricted to loopback"));
+        assert!(message.contains("native_web_pki"));
+        assert!(message.contains("explicit_ca"));
+
+        let trust = ProductRelayTlsTrustV1::NodeKeyBoundEncrypted;
+        assert!(build_tls_config_v1(&trust, "127.0.0.1".parse().unwrap()).is_ok());
+        assert!(build_tls_config_v1(&trust, "::1".parse().unwrap()).is_ok());
+        assert!(validate_tls_trust_endpoint_v1(
+            &ProductRelayTlsTrustV1::NativeWebPki,
+            "192.0.2.1".parse().unwrap(),
+        )
+        .is_ok());
+        assert!(validate_tls_trust_endpoint_v1(
+            &ProductRelayTlsTrustV1::ExplicitCa {
+                certificate_path: "unused-in-validation.pem".into(),
+            },
+            "192.0.2.1".parse().unwrap(),
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn client_handshake_deadline_is_not_reset_by_byte_progress() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            for byte in 0u8..8 {
+                if socket.write_all(&[byte]).is_err() {
+                    break;
+                }
+                let _ = socket.flush();
+                thread::sleep(Duration::from_millis(15));
+            }
+        });
+        let tcp = TcpStream::connect(address).unwrap();
+        tcp.set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let mut guarded =
+            ProductRelayDeadlineTcpStreamV1::new(tcp, Instant::now() + Duration::from_millis(35));
+        let mut bytes = [0u8; 8];
+        let error = guarded.read_exact(&mut bytes).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("absolute handshake deadline"));
+        drop(guarded);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn protocol_item_control_frames_and_wall_clock_are_bounded() {
+        let future = Instant::now() + Duration::from_secs(1);
+        ensure_protocol_item_progress_v1(
+            future,
+            PRODUCT_RELAY_MAX_CONTROL_FRAMES_PER_PROTOCOL_ITEM_V1,
+        )
+        .unwrap();
+        assert!(ensure_protocol_item_progress_v1(
+            future,
+            PRODUCT_RELAY_MAX_CONTROL_FRAMES_PER_PROTOCOL_ITEM_V1 + 1,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("control-frame budget"));
+        assert!(ensure_protocol_item_progress_v1(Instant::now(), 0)
+            .unwrap_err()
+            .to_string()
+            .contains("absolute deadline"));
+    }
+
+    #[test]
+    fn forward_wait_event_buffer_enforces_count_and_wire_byte_caps() {
+        let mut pending = VecDeque::new();
+        let mut pending_bytes = 0usize;
+        for _ in 0..PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_EVENTS_V1 {
+            push_pending_relay_event_v1(
+                &mut pending,
+                &mut pending_bytes,
+                ProductRelayClientEventV1::HeartbeatAck,
+                1,
+            )
+            .unwrap();
+        }
+        assert!(push_pending_relay_event_v1(
+            &mut pending,
+            &mut pending_bytes,
+            ProductRelayClientEventV1::HeartbeatAck,
+            1,
+        )
+        .is_err());
+        while pop_pending_relay_event_v1(&mut pending, &mut pending_bytes).is_some() {}
+        assert_eq!(pending_bytes, 0);
+
+        assert!(push_pending_relay_event_v1(
+            &mut pending,
+            &mut pending_bytes,
+            ProductRelayClientEventV1::HeartbeatAck,
+            PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_BYTES_V1 + 1,
+        )
+        .is_err());
+        push_pending_relay_event_v1(
+            &mut pending,
+            &mut pending_bytes,
+            ProductRelayClientEventV1::HeartbeatAck,
+            PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_BYTES_V1,
+        )
+        .unwrap();
+        assert!(push_pending_relay_event_v1(
+            &mut pending,
+            &mut pending_bytes,
+            ProductRelayClientEventV1::HeartbeatAck,
+            1,
+        )
+        .is_err());
+        assert_eq!(
+            pending_bytes,
+            PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_BYTES_V1
+        );
+    }
+
+    #[test]
     fn formal_client_establishes_peer_e2e_session_through_relay() {
         let root =
             std::env::temp_dir().join(format!("novovm-product-relay-client-{}", now_ms_v1()));
@@ -661,13 +1293,28 @@ mod tests {
                     relay_identity_key_path: identity_path,
                     report_path: root.join("relay-report.json"),
                     report_interval_ms: 20,
-                    run_for_ms: Some(1_800),
+                    run_for_ms: Some(3_000),
+                    max_connections: Some(8),
+                    handshake_timeout_ms: Some(1_000),
+                    max_sessions: Some(4),
+                    max_tracked_sources: Some(16),
                     session_queue_capacity: Some(8),
+                    session_queue_bytes: Some(1024 * 1024),
+                    active_queue_total: Some(32),
+                    active_queue_bytes_total: Some(4 * 1024 * 1024),
                     offline_queue_per_peer: Some(8),
+                    offline_queue_bytes_per_peer: Some(1024 * 1024),
+                    offline_queue_per_source: Some(16),
+                    offline_queue_bytes_per_source: Some(2 * 1024 * 1024),
                     offline_queue_total: Some(16),
+                    offline_queue_bytes_total: Some(2 * 1024 * 1024),
+                    offline_queue_ttl_ms: Some(5_000),
                     session_ttl_ms: Some(5_000),
                     rate_limit_frames: Some(100),
+                    max_frames_per_window: Some(1_000),
                     rate_limit_window_ms: Some(1_000),
+                    source_bytes_per_minute: Some(16 * 1024 * 1024),
+                    max_bytes_per_minute: Some(32 * 1024 * 1024),
                 })
             }
         });
@@ -724,6 +1371,18 @@ mod tests {
         let mut channel_a = peer_initiator
             .complete(&response, now_ms_v1(), &mut response_replay)
             .unwrap();
+        let reverse_frame = NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            [145; 16],
+            5,
+            6,
+            7,
+            8,
+            b"event buffered while awaiting relay acceptance".to_vec(),
+        );
+        client_b
+            .send_envelope(channel_b.seal_novorudp_frame(&reverse_frame).unwrap())
+            .unwrap();
         let frame = NovoRudpTransportFrameV0::new(
             NovoRudpTransportFrameKindV0::Data,
             [144; 16],
@@ -744,6 +1403,28 @@ mod tests {
             channel_b.open_novorudp_frame(&delivery.envelope).unwrap(),
             frame
         );
+        let reverse_delivery = match client_a.recv_event().unwrap() {
+            ProductRelayClientEventV1::Delivery(delivery) => delivery,
+            other => panic!("unexpected buffered client A delivery event: {other:?}"),
+        };
+        assert_eq!(
+            channel_a
+                .open_novorudp_frame(&reverse_delivery.envelope)
+                .unwrap(),
+            reverse_frame
+        );
+        let mut replacement_a = ProductRelayClientV1::connect(&node_a, &config).unwrap();
+        let _ = client_a.heartbeat();
+        assert!(matches!(
+            client_a.recv_event(),
+            Err(_) | Ok(ProductRelayClientEventV1::Closed)
+        ));
+        replacement_a.heartbeat().unwrap();
+        assert_eq!(
+            replacement_a.recv_event().unwrap(),
+            ProductRelayClientEventV1::HeartbeatAck
+        );
+        drop(replacement_a);
         drop(client_a);
         drop(client_b);
         daemon.join().unwrap().unwrap();

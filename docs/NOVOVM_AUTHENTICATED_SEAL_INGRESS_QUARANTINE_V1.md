@@ -252,7 +252,7 @@ main runtime automatic send route    = dormant
 
 在自动发送或激活 main runtime 的 NativeSeal route 前，至少必须关闭以下六个门：
 
-### 10.1 Mesh peer error-domain containment（已完成窄边界；完整门仍未关闭）
+### 10.1 Mesh peer error-domain containment 与资源边界（已完成进程内边界）
 
 Product Mainline Overlay 已实现
 [`Mesh Peer Error-Domain Containment v1`](NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md)：
@@ -262,12 +262,13 @@ envelope、坏 NovoRUDP/classified frame、handshake 超时或 pre-auth overflow
 不再关闭或轮换共享 relay，也不重置其余健康 peer 的 channel。WSS read/write/closed、无法
 可信归因到 peer 的 relay wire 错误，以及 relay 自身认证/生命周期错误仍属于共享故障域。
 
-这只关闭了“坏 peer 不拖垮同一 mesh 中的健康 peer”这一窄边界，不能称为完整
-Peer-Local Fault Isolation。`pending_by_peer` 仍是进程内 `VecDeque`，没有 count、byte、
-TTL、durable journal 或 restart recovery；relay admission、并发 session、per-identity /
-per-source 和 aggregate byte bounds 也尚未完整执行。`Delivery=true` 仅表示本机 relay
-socket write 成功，随后内存项即被移除，并不表示目标 validator 已接收、解密或持久化。
-因此资源治理与 durable recipient ACK/journal 仍是 NativeSeal 激活的硬门。
+[`Product Relay Admission & Resource Bounds v1`](NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md)
+进一步关闭了进程内资源门：`pending_by_peer`、pre-auth、event channel、物理连接、认证
+session、identity/aggregate ingress 以及 active/offline relay queue 均具有明确的 count、
+byte 和适用的 TTL/deadline 边界。`Delivery=true` 现在表示 relay 返回严格关联的 accepted
+`ForwardOutcome`，不是单纯 socket write；但它仍不表示目标 validator 已接收、解密或
+持久化。因此 durable recipient ACK/journal 与 restart recovery 仍是 NativeSeal 激活的
+硬门。
 
 已认证且 framing 正确、但无法通过原生交易签名/身份/nonce/chain-domain ingress 的单笔
 payload 现在只记录 peer rejection，不再写入全局 worker error 或停止其他 peer 的广播；
@@ -283,13 +284,13 @@ responder 在验证 confirm 前不得把 session 标记为可接收共识 artifa
 QC 或 delivery ACK。confirm 必须绑定双方 identity、session id、handshake transcript、
 chain 和协议版本，并具备 replay/expiry 防护。
 
-### 10.3 Relay byte/session bounds
+### 10.3 Relay byte/session bounds（已完成进程内边界）
 
-node 侧 192 KiB seal/classified payload 上限还不能替代 relay 端到端资源治理。relay 和
-client 必须在读取或分配大对象前共同执行明确的 handshake/envelope/frame byte 上限、
-每 session 未完成字节数、每 peer 队列、并发 session、消息率和 pre-auth buffer 上限，
-并有超限关闭与隔离测试。不能让外层 envelope/header 或队列复制绕过 logical payload
-限制。
+node 侧 192 KiB seal/classified payload 上限与 relay/client 读写侧 1 MiB wire 上限共同
+执行；handshake/control 具有更小独立上限。物理连接、绝对 handshake deadline、并发
+session、每 identity/aggregate 速率、active/offline queue 与 pre-auth buffer 均已纳入
+count/byte/time enforcement 和负向测试。该完成项只证明当前进程内资源所有权，不替代
+上游 DDoS 防护，也不提供 durable delivery。
 
 ### 10.4 Per-recipient durable ACK/journal
 

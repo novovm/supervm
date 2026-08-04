@@ -9,7 +9,8 @@ use ed25519_dalek::SigningKey;
 use novovm_network::{
     peer_id_from_ed25519_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
     NodeHandshakeInitiatorV1, NodeHandshakeResponderV1, NovoRudpTransportFrameKindV0,
-    NovoRudpTransportFrameV0, OpaqueRelayDeliveryV1, RelayPeerHandshakeV1, RelayTransportV1,
+    NovoRudpTransportFrameV0, OpaqueRelayDeliveryV1, ProductRelayWireMessageV1,
+    RelayForwardDispositionV1, RelayForwardOutcomeV1, RelayPeerHandshakeV1, RelayTransportV1,
     StrategyPathV1,
 };
 use serde::{Deserialize, Serialize};
@@ -18,9 +19,9 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
-        Arc,
+        Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -47,6 +48,10 @@ const PRODUCT_MAINLINE_OVERLAY_PAYLOAD_MAGIC_V1: [u8; 8] = *b"NOVOPLD1";
 const PRODUCT_MAINLINE_OVERLAY_PAYLOAD_VERSION_V1: u16 = 1;
 const PRODUCT_MAINLINE_OVERLAY_PAYLOAD_HEADER_LEN_V1: usize = 8 + 2 + 1 + 1 + 32 + 4;
 pub const PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1: usize = 192 * 1024;
+const PRODUCT_MAINLINE_OVERLAY_EVENT_SLOT_OVERHEAD_BYTES_V1: usize = 4 * 1024;
+const PRODUCT_MAINLINE_OVERLAY_EVENT_RETRY_DELAY_MS_V1: u64 = 5;
+const PRODUCT_MAINLINE_OVERLAY_EVENT_TEXT_MAX_BYTES_V1: usize = 4 * 1024;
+const PRODUCT_MAINLINE_OVERLAY_EVENT_DRAIN_MAX_BATCH_V1: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,6 +67,40 @@ pub enum ProductMainlineOverlayRoleV1 {
 pub enum ProductMainlineOverlayPayloadClassV1 {
     NativeTransaction,
     NativeSeal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProductMainlineOverlayResourceLimitsV1 {
+    pub pending_per_peer_count: usize,
+    pub pending_per_peer_bytes: usize,
+    pub pending_total_count: usize,
+    pub pending_total_bytes: usize,
+    pub pending_ttl_ms: u64,
+    pub event_total_bytes: usize,
+    pub preauth_per_peer_count: usize,
+    pub preauth_per_peer_bytes: usize,
+    pub preauth_total_count: usize,
+    pub preauth_total_bytes: usize,
+    pub preauth_ttl_ms: u64,
+}
+
+impl Default for ProductMainlineOverlayResourceLimitsV1 {
+    fn default() -> Self {
+        Self {
+            pending_per_peer_count: 1_024,
+            pending_per_peer_bytes: 64 * 1024 * 1024,
+            pending_total_count: 16_384,
+            pending_total_bytes: 256 * 1024 * 1024,
+            pending_ttl_ms: 60_000,
+            event_total_bytes: 256 * 1024 * 1024,
+            preauth_per_peer_count: PRODUCT_MAINLINE_OVERLAY_PREAUTH_BUFFER_LIMIT_V1,
+            preauth_per_peer_bytes: 4 * 1024 * 1024,
+            preauth_total_count: 1_024,
+            preauth_total_bytes: 64 * 1024 * 1024,
+            preauth_ttl_ms: PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1,
+        }
+    }
 }
 
 impl ProductMainlineOverlayPayloadClassV1 {
@@ -87,32 +126,88 @@ pub struct ProductMainlineOverlayPeerConfigV1 {
     pub metric_peer_id: u64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProductMainlineOverlayConfigV1 {
     pub chain_id: u64,
     pub role: ProductMainlineOverlayRoleV1,
     pub identity_key_path: PathBuf,
     pub overlay: ProductNodeOverlayConfigV1,
-    #[serde(default)]
     pub target_peer_id: Option<String>,
-    #[serde(default)]
     pub expected_source_peer_id: Option<String>,
-    #[serde(default)]
     pub peers: Vec<ProductMainlineOverlayPeerConfigV1>,
-    #[serde(default = "default_connect_timeout_ms_v1")]
     pub connect_timeout_ms: u64,
-    #[serde(default = "default_read_timeout_ms_v1")]
     pub read_timeout_ms: u64,
-    #[serde(default = "default_tls_trust_v1")]
     pub tls_trust: ProductRelayTlsTrustV1,
-    #[serde(default = "default_channel_capacity_v1")]
     pub channel_capacity: usize,
-    #[serde(default = "default_metric_peer_id_v1")]
+    pub resource_limits: ProductMainlineOverlayResourceLimitsV1,
     pub metric_peer_id: u64,
-    #[serde(default = "default_reconnect_base_delay_ms_v1")]
     pub reconnect_base_delay_ms: u64,
-    #[serde(default = "default_reconnect_max_delay_ms_v1")]
     pub reconnect_max_delay_ms: u64,
+}
+
+#[derive(Deserialize)]
+struct ProductMainlineOverlayConfigSerdeV1 {
+    chain_id: u64,
+    role: ProductMainlineOverlayRoleV1,
+    identity_key_path: PathBuf,
+    overlay: ProductNodeOverlayConfigV1,
+    #[serde(default)]
+    target_peer_id: Option<String>,
+    #[serde(default)]
+    expected_source_peer_id: Option<String>,
+    #[serde(default)]
+    peers: Vec<ProductMainlineOverlayPeerConfigV1>,
+    #[serde(default = "default_connect_timeout_ms_v1")]
+    connect_timeout_ms: u64,
+    #[serde(default = "default_read_timeout_ms_v1")]
+    read_timeout_ms: u64,
+    #[serde(default = "default_tls_trust_v1")]
+    tls_trust: ProductRelayTlsTrustV1,
+    #[serde(default = "default_channel_capacity_v1")]
+    channel_capacity: usize,
+    #[serde(default)]
+    resource_limits: Option<ProductMainlineOverlayResourceLimitsV1>,
+    #[serde(default = "default_metric_peer_id_v1")]
+    metric_peer_id: u64,
+    #[serde(default = "default_reconnect_base_delay_ms_v1")]
+    reconnect_base_delay_ms: u64,
+    #[serde(default = "default_reconnect_max_delay_ms_v1")]
+    reconnect_max_delay_ms: u64,
+}
+
+impl<'de> Deserialize<'de> for ProductMainlineOverlayConfigV1 {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let decoded = ProductMainlineOverlayConfigSerdeV1::deserialize(deserializer)?;
+        let resource_limits = decoded
+            .resource_limits
+            .unwrap_or_else(|| omitted_resource_limits_compatibility_v1(decoded.channel_capacity));
+        Ok(Self {
+            chain_id: decoded.chain_id,
+            role: decoded.role,
+            identity_key_path: decoded.identity_key_path,
+            overlay: decoded.overlay,
+            target_peer_id: decoded.target_peer_id,
+            expected_source_peer_id: decoded.expected_source_peer_id,
+            peers: decoded.peers,
+            connect_timeout_ms: decoded.connect_timeout_ms,
+            read_timeout_ms: decoded.read_timeout_ms,
+            tls_trust: decoded.tls_trust,
+            channel_capacity: decoded.channel_capacity,
+            resource_limits,
+            metric_peer_id: decoded.metric_peer_id,
+            reconnect_base_delay_ms: decoded.reconnect_base_delay_ms,
+            reconnect_max_delay_ms: decoded.reconnect_max_delay_ms,
+        })
+    }
+}
+
+fn omitted_resource_limits_compatibility_v1(
+    _channel_capacity: usize,
+) -> ProductMainlineOverlayResourceLimitsV1 {
+    ProductMainlineOverlayResourceLimitsV1::default()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,11 +294,364 @@ pub enum ProductMainlineOverlayEventV1 {
     WorkerFailed(String),
 }
 
-#[derive(Debug, Clone)]
-struct ProductMainlineOverlayOutboundV1 {
+#[derive(Clone)]
+struct ProductMainlineOverlayEventSenderV1 {
+    sender: SyncSender<ProductMainlineOverlayAccountedEventV1>,
+    bytes_in_flight: Arc<AtomicUsize>,
+    max_bytes: usize,
+}
+
+struct ProductMainlineOverlayAccountedEventV1 {
+    event: ProductMainlineOverlayEventV1,
+    _permit: ProductMainlineOverlayEventPermitV1,
+}
+
+struct ProductMainlineOverlayEventPermitV1 {
+    bytes_in_flight: Arc<AtomicUsize>,
+    bytes: usize,
+}
+
+impl Drop for ProductMainlineOverlayEventPermitV1 {
+    fn drop(&mut self) {
+        let previous = self.bytes_in_flight.fetch_sub(self.bytes, Ordering::AcqRel);
+        debug_assert!(previous >= self.bytes);
+    }
+}
+
+impl ProductMainlineOverlayEventSenderV1 {
+    fn try_reserve_v1(&self, bytes: usize) -> Option<ProductMainlineOverlayEventPermitV1> {
+        if bytes > self.max_bytes {
+            return None;
+        }
+        self.bytes_in_flight
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                current
+                    .checked_add(bytes)
+                    .filter(|next| *next <= self.max_bytes)
+            })
+            .ok()?;
+        Some(ProductMainlineOverlayEventPermitV1 {
+            bytes_in_flight: Arc::clone(&self.bytes_in_flight),
+            bytes,
+        })
+    }
+}
+
+fn bound_product_mainline_overlay_event_text_v1(event: &mut ProductMainlineOverlayEventV1) {
+    let text = match event {
+        ProductMainlineOverlayEventV1::RelayDisconnected { error, .. } => Some(error),
+        ProductMainlineOverlayEventV1::PeerIsolated { reason, .. } => Some(reason),
+        ProductMainlineOverlayEventV1::Delivery(delivery) => delivery.error.as_mut(),
+        ProductMainlineOverlayEventV1::WorkerFailed(error) => Some(error),
+        _ => None,
+    };
+    if let Some(text) = text {
+        let mut boundary = PRODUCT_MAINLINE_OVERLAY_EVENT_TEXT_MAX_BYTES_V1.min(text.len());
+        while !text.is_char_boundary(boundary) {
+            boundary = boundary.saturating_sub(1);
+        }
+        text.truncate(boundary);
+        text.shrink_to_fit();
+    }
+}
+
+fn product_mainline_overlay_event_owned_bytes_v1(event: &ProductMainlineOverlayEventV1) -> usize {
+    let dynamic = match event {
+        ProductMainlineOverlayEventV1::RelayConnected { relay_peer_id } => relay_peer_id.capacity(),
+        ProductMainlineOverlayEventV1::RelayDisconnected {
+            relay_peer_id,
+            error,
+            ..
+        } => relay_peer_id.capacity().saturating_add(error.capacity()),
+        ProductMainlineOverlayEventV1::RelayRotated {
+            previous_relay_peer_id,
+            next_relay_peer_id,
+        } => previous_relay_peer_id
+            .capacity()
+            .saturating_add(next_relay_peer_id.capacity()),
+        ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id } => {
+            remote_peer_id.capacity()
+        }
+        ProductMainlineOverlayEventV1::PeerIsolated {
+            remote_peer_id,
+            reason,
+            ..
+        } => remote_peer_id.capacity().saturating_add(reason.capacity()),
+        ProductMainlineOverlayEventV1::Inbound(inbound) => inbound
+            .source_peer_id
+            .capacity()
+            .saturating_add(inbound.frame.payload.capacity()),
+        ProductMainlineOverlayEventV1::Delivery(delivery) => delivery
+            .remote_peer_id
+            .capacity()
+            .saturating_add(delivery.error.as_ref().map_or(0, String::capacity)),
+        ProductMainlineOverlayEventV1::WorkerStopped => 0,
+        ProductMainlineOverlayEventV1::WorkerFailed(error) => error.capacity(),
+    };
+    std::mem::size_of::<ProductMainlineOverlayAccountedEventV1>().saturating_add(dynamic)
+}
+
+fn publish_product_mainline_overlay_event_v1(
+    events: &ProductMainlineOverlayEventSenderV1,
+    stop: &AtomicBool,
+    mut event: ProductMainlineOverlayEventV1,
+) -> Result<()> {
+    bound_product_mainline_overlay_event_text_v1(&mut event);
+    let event_bytes = product_mainline_overlay_event_owned_bytes_v1(&event);
+    if event_bytes > events.max_bytes {
+        bail!(
+            "product mainline overlay event exceeds event_total_bytes: event={event_bytes} limit={}",
+            events.max_bytes
+        );
+    }
+    let permit = loop {
+        if stop.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        if let Some(permit) = events.try_reserve_v1(event_bytes) {
+            break permit;
+        }
+        thread::sleep(Duration::from_millis(
+            PRODUCT_MAINLINE_OVERLAY_EVENT_RETRY_DELAY_MS_V1,
+        ));
+    };
+    let mut accounted = ProductMainlineOverlayAccountedEventV1 {
+        event,
+        _permit: permit,
+    };
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        match events.sender.try_send(accounted) {
+            Ok(()) => return Ok(()),
+            Err(TrySendError::Full(returned)) => {
+                accounted = returned;
+                thread::sleep(Duration::from_millis(
+                    PRODUCT_MAINLINE_OVERLAY_EVENT_RETRY_DELAY_MS_V1,
+                ));
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                bail!("product mainline overlay event receiver is disconnected")
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ProductMainlineOverlayOutboundItemV1 {
     payload_class: ProductMainlineOverlayPayloadClassV1,
     object_hash: [u8; 32],
-    payload: Vec<u8>,
+    payload: Arc<[u8]>,
+    enqueued_at_ms: u64,
+    expires_at_ms: u64,
+}
+
+impl ProductMainlineOverlayOutboundItemV1 {
+    fn expired_at(&self, now_ms: u64) -> bool {
+        now_ms >= self.expires_at_ms
+    }
+}
+
+struct ProductMainlineOverlayOutboundV1 {
+    item: Arc<ProductMainlineOverlayOutboundItemV1>,
+    reservations: BTreeMap<String, ProductMainlineOverlayPendingPermitV1>,
+}
+
+struct ProductMainlineOverlayPendingV1 {
+    item: Arc<ProductMainlineOverlayOutboundItemV1>,
+    _reservation: ProductMainlineOverlayPendingPermitV1,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ProductMainlineOverlayResourceUsageV1 {
+    pending_count: usize,
+    pending_bytes: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ProductMainlineOverlayPeerUsageV1 {
+    count: usize,
+    bytes: usize,
+}
+
+struct ProductMainlineOverlayPendingBudgetV1 {
+    limits: ProductMainlineOverlayResourceLimitsV1,
+    total: ProductMainlineOverlayPeerUsageV1,
+    by_peer: BTreeMap<String, ProductMainlineOverlayPeerUsageV1>,
+}
+
+struct ProductMainlineOverlayPendingPermitV1 {
+    budget: Arc<Mutex<ProductMainlineOverlayPendingBudgetV1>>,
+    peer_id: String,
+    bytes: usize,
+}
+
+impl Drop for ProductMainlineOverlayPendingPermitV1 {
+    fn drop(&mut self) {
+        let mut budget = self
+            .budget
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        budget.total.count = budget.total.count.saturating_sub(1);
+        budget.total.bytes = budget.total.bytes.saturating_sub(self.bytes);
+        let remove_peer = if let Some(peer) = budget.by_peer.get_mut(&self.peer_id) {
+            peer.count = peer.count.saturating_sub(1);
+            peer.bytes = peer.bytes.saturating_sub(self.bytes);
+            peer.count == 0 && peer.bytes == 0
+        } else {
+            false
+        };
+        if remove_peer {
+            budget.by_peer.remove(&self.peer_id);
+        }
+    }
+}
+
+impl ProductMainlineOverlayPendingBudgetV1 {
+    fn new(limits: ProductMainlineOverlayResourceLimitsV1) -> Self {
+        Self {
+            limits,
+            total: ProductMainlineOverlayPeerUsageV1::default(),
+            by_peer: BTreeMap::new(),
+        }
+    }
+}
+
+struct ProductMainlineOverlayPreauthBudgetV1 {
+    limits: ProductMainlineOverlayResourceLimitsV1,
+    total: ProductMainlineOverlayPeerUsageV1,
+    by_peer: BTreeMap<String, ProductMainlineOverlayPeerUsageV1>,
+}
+
+struct ProductMainlineOverlayPreauthPermitV1 {
+    budget: Arc<Mutex<ProductMainlineOverlayPreauthBudgetV1>>,
+    peer_id: String,
+    bytes: usize,
+}
+
+impl Drop for ProductMainlineOverlayPreauthPermitV1 {
+    fn drop(&mut self) {
+        let mut budget = self
+            .budget
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        budget.total.count = budget.total.count.saturating_sub(1);
+        budget.total.bytes = budget.total.bytes.saturating_sub(self.bytes);
+        let remove_peer = if let Some(peer) = budget.by_peer.get_mut(&self.peer_id) {
+            peer.count = peer.count.saturating_sub(1);
+            peer.bytes = peer.bytes.saturating_sub(self.bytes);
+            peer.count == 0 && peer.bytes == 0
+        } else {
+            false
+        };
+        if remove_peer {
+            budget.by_peer.remove(&self.peer_id);
+        }
+    }
+}
+
+impl ProductMainlineOverlayPreauthBudgetV1 {
+    fn new(limits: ProductMainlineOverlayResourceLimitsV1) -> Self {
+        Self {
+            limits,
+            total: ProductMainlineOverlayPeerUsageV1::default(),
+            by_peer: BTreeMap::new(),
+        }
+    }
+}
+
+struct ProductMainlineOverlayBufferedDeliveryV1 {
+    delivery: OpaqueRelayDeliveryV1,
+    buffered_at_ms: u64,
+    ttl_ms: u64,
+    _reservation: ProductMainlineOverlayPreauthPermitV1,
+}
+
+impl ProductMainlineOverlayBufferedDeliveryV1 {
+    fn expired_at(&self, now_ms: u64) -> bool {
+        now_ms.saturating_sub(self.buffered_at_ms) >= self.ttl_ms
+    }
+}
+
+fn try_reserve_pending_fanout_v1(
+    budget: &Arc<Mutex<ProductMainlineOverlayPendingBudgetV1>>,
+    peer_ids: &[String],
+    bytes_per_peer: usize,
+) -> Option<BTreeMap<String, ProductMainlineOverlayPendingPermitV1>> {
+    let required_count = peer_ids.len();
+    let required_bytes = bytes_per_peer.checked_mul(required_count)?;
+    let mut state = budget
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if state.total.count.checked_add(required_count)? > state.limits.pending_total_count
+        || state.total.bytes.checked_add(required_bytes)? > state.limits.pending_total_bytes
+    {
+        return None;
+    }
+    for peer_id in peer_ids {
+        let peer = state.by_peer.get(peer_id).copied().unwrap_or_default();
+        if peer.count.checked_add(1)? > state.limits.pending_per_peer_count
+            || peer.bytes.checked_add(bytes_per_peer)? > state.limits.pending_per_peer_bytes
+        {
+            return None;
+        }
+    }
+
+    state.total.count += required_count;
+    state.total.bytes += required_bytes;
+    for peer_id in peer_ids {
+        let peer = state.by_peer.entry(peer_id.clone()).or_default();
+        peer.count += 1;
+        peer.bytes += bytes_per_peer;
+    }
+    drop(state);
+
+    Some(
+        peer_ids
+            .iter()
+            .map(|peer_id| {
+                (
+                    peer_id.clone(),
+                    ProductMainlineOverlayPendingPermitV1 {
+                        budget: Arc::clone(budget),
+                        peer_id: peer_id.clone(),
+                        bytes: bytes_per_peer,
+                    },
+                )
+            })
+            .collect(),
+    )
+}
+
+fn try_reserve_preauth_v1(
+    budget: &Arc<Mutex<ProductMainlineOverlayPreauthBudgetV1>>,
+    peer_id: &str,
+    bytes: usize,
+) -> Option<ProductMainlineOverlayPreauthPermitV1> {
+    let mut state = budget
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let peer = state.by_peer.get(peer_id).copied().unwrap_or_default();
+    if state.total.count.checked_add(1)? > state.limits.preauth_total_count
+        || state.total.bytes.checked_add(bytes)? > state.limits.preauth_total_bytes
+        || peer.count.checked_add(1)? > state.limits.preauth_per_peer_count
+        || peer.bytes.checked_add(bytes)? > state.limits.preauth_per_peer_bytes
+    {
+        return None;
+    }
+    state.total.count += 1;
+    state.total.bytes += bytes;
+    let peer = state.by_peer.entry(peer_id.to_string()).or_default();
+    peer.count += 1;
+    peer.bytes += bytes;
+    drop(state);
+    Some(ProductMainlineOverlayPreauthPermitV1 {
+        budget: Arc::clone(budget),
+        peer_id: peer_id.to_string(),
+        bytes,
+    })
 }
 
 struct ProductMainlineOverlayWorkerV1 {
@@ -222,7 +670,8 @@ struct ProductMainlineOverlayWorkerV1 {
     expected_source_peer_id: Option<String>,
     chain_id: u64,
     outbound: Receiver<ProductMainlineOverlayOutboundV1>,
-    events: SyncSender<ProductMainlineOverlayEventV1>,
+    resource_limits: ProductMainlineOverlayResourceLimitsV1,
+    events: ProductMainlineOverlayEventSenderV1,
     stop: Arc<AtomicBool>,
 }
 
@@ -242,7 +691,7 @@ struct ProductMainlineMeshPeerStateV1 {
     phase: ProductMainlineMeshPeerPhaseV1,
     session_failure_count: u32,
     replay: HandshakeReplayCacheV1,
-    buffered_deliveries: VecDeque<OpaqueRelayDeliveryV1>,
+    buffered_deliveries: VecDeque<ProductMainlineOverlayBufferedDeliveryV1>,
     frame_sequence: u64,
 }
 
@@ -264,7 +713,8 @@ pub struct ProductMainlineOverlayRuntimeV1 {
     metric_peer_id: u64,
     remote_peer_ids: Vec<String>,
     outbound: SyncSender<ProductMainlineOverlayOutboundV1>,
-    events: Receiver<ProductMainlineOverlayEventV1>,
+    pending_budget: Arc<Mutex<ProductMainlineOverlayPendingBudgetV1>>,
+    events: Receiver<ProductMainlineOverlayAccountedEventV1>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -340,7 +790,16 @@ impl ProductMainlineOverlayRuntimeV1 {
         };
         let capacity = config.channel_capacity.clamp(1, 65_536);
         let (outbound_tx, outbound_rx) = mpsc::sync_channel(capacity);
-        let (event_tx, event_rx) = mpsc::sync_channel(capacity);
+        let (event_sender, event_rx) = mpsc::sync_channel(capacity);
+        let event_tx = ProductMainlineOverlayEventSenderV1 {
+            sender: event_sender,
+            bytes_in_flight: Arc::new(AtomicUsize::new(0)),
+            max_bytes: config.resource_limits.event_total_bytes,
+        };
+        let pending_budget = Arc::new(Mutex::new(ProductMainlineOverlayPendingBudgetV1::new(
+            config.resource_limits.clone(),
+        )));
+        let worker_resource_limits = config.resource_limits.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let worker_role = config.role;
@@ -372,15 +831,22 @@ impl ProductMainlineOverlayRuntimeV1 {
                     expected_source_peer_id,
                     chain_id,
                     outbound: outbound_rx,
+                    resource_limits: worker_resource_limits,
                     events: event_tx.clone(),
-                    stop: worker_stop,
+                    stop: Arc::clone(&worker_stop),
                 });
                 if let Err(error) = result {
-                    let _ = event_tx.send(ProductMainlineOverlayEventV1::WorkerFailed(
-                        error.to_string(),
-                    ));
+                    let _ = publish_product_mainline_overlay_event_v1(
+                        &event_tx,
+                        &worker_stop,
+                        ProductMainlineOverlayEventV1::WorkerFailed(error.to_string()),
+                    );
                 }
-                let _ = event_tx.send(ProductMainlineOverlayEventV1::WorkerStopped);
+                let _ = publish_product_mainline_overlay_event_v1(
+                    &event_tx,
+                    &worker_stop,
+                    ProductMainlineOverlayEventV1::WorkerStopped,
+                );
             })
             .context("spawn product overlay mainline lifecycle worker")?;
 
@@ -390,6 +856,7 @@ impl ProductMainlineOverlayRuntimeV1 {
             metric_peer_id: config.metric_peer_id,
             remote_peer_ids,
             outbound: outbound_tx,
+            pending_budget,
             events: event_rx,
             stop,
             worker: Some(worker),
@@ -475,11 +942,31 @@ impl ProductMainlineOverlayRuntimeV1 {
                 }
             }
         }
-        match self.outbound.try_send(ProductMainlineOverlayOutboundV1 {
+        let Some(reservations) = try_reserve_pending_fanout_v1(
+            &self.pending_budget,
+            &self.remote_peer_ids,
+            payload.len(),
+        ) else {
+            return Ok(false);
+        };
+        let enqueued_at_ms = now_ms_v1();
+        let item = Arc::new(ProductMainlineOverlayOutboundItemV1 {
             payload_class,
             object_hash,
-            payload,
-        }) {
+            payload: Arc::from(payload),
+            enqueued_at_ms,
+            expires_at_ms: enqueued_at_ms.saturating_add(
+                self.pending_budget
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .limits
+                    .pending_ttl_ms,
+            ),
+        });
+        match self
+            .outbound
+            .try_send(ProductMainlineOverlayOutboundV1 { item, reservations })
+        {
             Ok(()) => Ok(true),
             Err(TrySendError::Full(_)) => Ok(false),
             Err(TrySendError::Disconnected(_)) => {
@@ -490,13 +977,31 @@ impl ProductMainlineOverlayRuntimeV1 {
 
     pub fn drain_events(&self, limit: usize) -> Vec<ProductMainlineOverlayEventV1> {
         let mut events = Vec::new();
-        for _ in 0..limit.max(1) {
+        // Byte permits protect the runtime-owned channel backlog. Ownership transfers to the
+        // caller when an event is popped, so cap one transfer batch as a separate caller-side
+        // memory guard rather than claiming returned values remain charged to the runtime.
+        for _ in 0..limit.clamp(1, PRODUCT_MAINLINE_OVERLAY_EVENT_DRAIN_MAX_BATCH_V1) {
             match self.events.try_recv() {
-                Ok(event) => events.push(event),
+                Ok(accounted) => {
+                    let ProductMainlineOverlayAccountedEventV1 { event, _permit } = accounted;
+                    events.push(event);
+                }
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
         }
         events
+    }
+
+    #[cfg(test)]
+    fn pending_resource_usage_v1(&self) -> ProductMainlineOverlayResourceUsageV1 {
+        let budget = self
+            .pending_budget
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ProductMainlineOverlayResourceUsageV1 {
+            pending_count: budget.total.count,
+            pending_bytes: budget.total.bytes,
+        }
     }
 
     pub fn shutdown(&mut self) {
@@ -513,7 +1018,9 @@ impl Drop for ProductMainlineOverlayRuntimeV1 {
     }
 }
 
-fn encode_classified_payload_v1(outbound: &ProductMainlineOverlayOutboundV1) -> Result<Vec<u8>> {
+fn encode_classified_payload_v1(
+    outbound: &ProductMainlineOverlayOutboundItemV1,
+) -> Result<Vec<u8>> {
     validate_classified_logical_payload_len_v1(outbound.payload.len())?;
     let payload_len = u32::try_from(outbound.payload.len())
         .context("product mainline overlay payload exceeds the v1 wire length limit")?;
@@ -526,7 +1033,7 @@ fn encode_classified_payload_v1(outbound: &ProductMainlineOverlayOutboundV1) -> 
     encoded.push(0);
     encoded.extend_from_slice(&outbound.object_hash);
     encoded.extend_from_slice(&payload_len.to_le_bytes());
-    encoded.extend_from_slice(&outbound.payload);
+    encoded.extend_from_slice(outbound.payload.as_ref());
     Ok(encoded)
 }
 
@@ -753,23 +1260,31 @@ pub fn product_mainline_overlay_local_peer_id_v1(
 }
 
 fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
-    let mut pending = VecDeque::new();
+    let mut pending = VecDeque::<ProductMainlineOverlayPendingV1>::new();
     let mut mesh_pending = worker
         .remote_peers
         .iter()
-        .map(|remote| (remote.peer_id.clone(), VecDeque::new()))
+        .map(|remote| {
+            (
+                remote.peer_id.clone(),
+                VecDeque::<ProductMainlineOverlayPendingV1>::new(),
+            )
+        })
         .collect::<BTreeMap<_, _>>();
     let mut consecutive_failures = 0u32;
     while !worker.stop.load(Ordering::Acquire) {
+        service_pending_resources_v1(&worker, &mut pending, &mut mesh_pending, 256)?;
         if worker.route_plan.selected_relay.is_none() {
-            wait_for_stop_v1(
-                &worker.stop,
+            wait_for_reconnect_servicing_pending_v1(
+                &worker,
+                &mut pending,
+                &mut mesh_pending,
                 reconnect_delay_ms_v1(
                     consecutive_failures.max(1),
                     worker.reconnect_base_delay_ms,
                     worker.reconnect_max_delay_ms,
                 ),
-            );
+            )?;
             if worker.stop.load(Ordering::Acquire) {
                 break;
             }
@@ -810,12 +1325,14 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
                     now_ms_v1(),
                 );
                 consecutive_failures = 0;
-                worker
-                    .events
-                    .send(ProductMainlineOverlayEventV1::RelayConnected {
+                publish_product_mainline_overlay_event_v1(
+                    &worker.events,
+                    &worker.stop,
+                    ProductMainlineOverlayEventV1::RelayConnected {
                         relay_peer_id: relay.session().relay_peer_id.clone(),
-                    })
-                    .context("publish product overlay relay-connected event")?;
+                    },
+                )
+                .context("publish product overlay relay-connected event")?;
                 let result = if worker.role == ProductMainlineOverlayRoleV1::Duplex
                     && worker.remote_peers.len() > 1
                 {
@@ -852,33 +1369,231 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
         );
         if let Some(next) = next_route.selected_relay.as_ref() {
             if next.relay_peer_id != relay_peer_id {
-                worker
-                    .events
-                    .send(ProductMainlineOverlayEventV1::RelayRotated {
+                publish_product_mainline_overlay_event_v1(
+                    &worker.events,
+                    &worker.stop,
+                    ProductMainlineOverlayEventV1::RelayRotated {
                         previous_relay_peer_id: relay_peer_id.clone(),
                         next_relay_peer_id: next.relay_peer_id.clone(),
-                    })
-                    .context("publish product overlay relay-rotation event")?;
+                    },
+                )
+                .context("publish product overlay relay-rotation event")?;
             }
         }
-        worker
-            .events
-            .send(ProductMainlineOverlayEventV1::RelayDisconnected {
+        publish_product_mainline_overlay_event_v1(
+            &worker.events,
+            &worker.stop,
+            ProductMainlineOverlayEventV1::RelayDisconnected {
                 relay_peer_id,
                 error: error.to_string(),
                 reconnect_in_ms,
-            })
-            .context("publish product overlay relay-disconnected event")?;
+            },
+        )
+        .context("publish product overlay relay-disconnected event")?;
         worker.route_plan = next_route;
-        wait_for_stop_v1(&worker.stop, reconnect_in_ms);
+        wait_for_reconnect_servicing_pending_v1(
+            &worker,
+            &mut pending,
+            &mut mesh_pending,
+            reconnect_in_ms,
+        )?;
     }
     Ok(())
+}
+
+fn service_pending_resources_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
+    pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayPendingV1>>,
+    drain_limit: usize,
+) -> Result<()> {
+    if worker.role == ProductMainlineOverlayRoleV1::Duplex && worker.remote_peers.len() > 1 {
+        drain_mesh_outbound_v1(worker, pending_by_peer, drain_limit)?;
+        expire_mesh_pending_v1(worker, pending_by_peer, now_ms_v1())
+    } else {
+        drain_single_outbound_v1(worker, pending, drain_limit)?;
+        expire_single_pending_v1(worker, pending, now_ms_v1())
+    }
+}
+
+fn drain_mesh_outbound_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayPendingV1>>,
+    limit: usize,
+) -> Result<()> {
+    for _ in 0..limit.max(1) {
+        let mut outbound = match worker.outbound.try_recv() {
+            Ok(outbound) => outbound,
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+        };
+        if outbound.item.expired_at(now_ms_v1()) {
+            publish_submission_expired_v1(worker, &outbound)?;
+            continue;
+        }
+        for peer in &worker.remote_peers {
+            let reservation = outbound
+                .reservations
+                .remove(&peer.peer_id)
+                .context("mesh outbound lost its peer resource reservation")?;
+            pending_by_peer
+                .get_mut(&peer.peer_id)
+                .context("mesh outbound target queue disappeared")?
+                .push_back(ProductMainlineOverlayPendingV1 {
+                    item: Arc::clone(&outbound.item),
+                    _reservation: reservation,
+                });
+        }
+        if !outbound.reservations.is_empty() {
+            bail!("mesh outbound retained unknown peer resource reservations");
+        }
+    }
+    Ok(())
+}
+
+fn drain_single_outbound_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
+    limit: usize,
+) -> Result<()> {
+    for _ in 0..limit.max(1) {
+        let mut outbound = match worker.outbound.try_recv() {
+            Ok(outbound) => outbound,
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+        };
+        if outbound.item.expired_at(now_ms_v1()) {
+            publish_submission_expired_v1(worker, &outbound)?;
+            continue;
+        }
+        let peer_id = worker
+            .remote_peers
+            .first()
+            .context("single-peer product overlay has no remote peer")?
+            .peer_id
+            .clone();
+        let reservation = outbound
+            .reservations
+            .remove(&peer_id)
+            .context("single-peer outbound lost its resource reservation")?;
+        if !outbound.reservations.is_empty() {
+            bail!("single-peer outbound retained unknown resource reservations");
+        }
+        pending.push_back(ProductMainlineOverlayPendingV1 {
+            item: outbound.item,
+            _reservation: reservation,
+        });
+    }
+    Ok(())
+}
+
+fn publish_submission_expired_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    outbound: &ProductMainlineOverlayOutboundV1,
+) -> Result<()> {
+    let peer_ids = outbound.reservations.keys().cloned().collect::<Vec<_>>();
+    for peer_id in peer_ids {
+        publish_pending_expired_v1(worker, &outbound.item, &peer_id)?;
+    }
+    Ok(())
+}
+
+fn expire_mesh_pending_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayPendingV1>>,
+    now_ms: u64,
+) -> Result<()> {
+    for peer in &worker.remote_peers {
+        let queue = pending_by_peer
+            .get_mut(&peer.peer_id)
+            .context("mesh pending queue disappeared during expiry")?;
+        while queue
+            .front()
+            .is_some_and(|pending| pending.item.expired_at(now_ms))
+        {
+            let pending = queue
+                .pop_front()
+                .context("expired mesh pending item disappeared")?;
+            publish_pending_expired_v1(worker, &pending.item, &peer.peer_id)?;
+        }
+    }
+    Ok(())
+}
+
+fn expire_single_pending_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
+    now_ms: u64,
+) -> Result<()> {
+    let peer_id = worker
+        .remote_peers
+        .first()
+        .context("single-peer product overlay has no remote peer")?
+        .peer_id
+        .clone();
+    while pending
+        .front()
+        .is_some_and(|pending| pending.item.expired_at(now_ms))
+    {
+        let expired = pending
+            .pop_front()
+            .context("expired single-peer pending item disappeared")?;
+        publish_pending_expired_v1(worker, &expired.item, &peer_id)?;
+    }
+    Ok(())
+}
+
+fn publish_pending_expired_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    item: &ProductMainlineOverlayOutboundItemV1,
+    peer_id: &str,
+) -> Result<()> {
+    let metric_peer_id = worker
+        .remote_peers
+        .iter()
+        .find(|peer| peer.peer_id == peer_id)
+        .context("expired pending item belongs to an unconfigured peer")?
+        .metric_peer_id;
+    publish_product_mainline_overlay_event_v1(
+        &worker.events,
+        &worker.stop,
+        ProductMainlineOverlayEventV1::Delivery(
+            ProductMainlineOverlayDeliveryV1 {
+                payload_class: item.payload_class,
+                object_hash: item.object_hash,
+                remote_peer_id: peer_id.to_string(),
+                metric_peer_id,
+                delivered: false,
+                error: Some(format!(
+                    "product overlay pending delivery expired for remote peer {peer_id}: ttl_ms={} enqueued_at_ms={} expires_at_ms={}",
+                    item.expires_at_ms.saturating_sub(item.enqueued_at_ms),
+                    item.enqueued_at_ms,
+                    item.expires_at_ms
+                )),
+            },
+        ),
+    )
+        .context("publish expired product overlay delivery")
+}
+
+fn wait_for_reconnect_servicing_pending_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
+    pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayPendingV1>>,
+    delay_ms: u64,
+) -> Result<()> {
+    let mut remaining = delay_ms;
+    while remaining > 0 && !worker.stop.load(Ordering::Acquire) {
+        service_pending_resources_v1(worker, pending, pending_by_peer, 256)?;
+        let slice = remaining.min(25);
+        thread::sleep(Duration::from_millis(slice));
+        remaining = remaining.saturating_sub(slice);
+    }
+    service_pending_resources_v1(worker, pending, pending_by_peer, 256)
 }
 
 fn run_duplex_mesh_session_v1(
     relay: &mut ProductRelayClientV1,
     worker: &ProductMainlineOverlayWorkerV1,
-    pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayOutboundV1>>,
+    pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayPendingV1>>,
 ) -> Result<()> {
     let local_peer_id =
         peer_id_from_ed25519_public_key_v1(&worker.identity.verifying_key().to_bytes());
@@ -892,32 +1607,39 @@ fn run_duplex_mesh_session_v1(
             )
         })
         .collect::<BTreeMap<_, _>>();
+    let preauth_budget = Arc::new(Mutex::new(ProductMainlineOverlayPreauthBudgetV1::new(
+        worker.resource_limits.clone(),
+    )));
 
     let mut last_heartbeat_ms = now_ms_v1();
+    let mut next_outbound_peer_index = 0usize;
     while !worker.stop.load(Ordering::Acquire) {
-        for _ in 0..256 {
-            let outbound = match worker.outbound.try_recv() {
-                Ok(outbound) => outbound,
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
-            };
-            for peer in &worker.remote_peers {
-                pending_by_peer
-                    .entry(peer.peer_id.clone())
-                    .or_default()
-                    .push_back(outbound.clone());
-            }
-        }
+        drain_mesh_outbound_v1(worker, pending_by_peer, 256)?;
+        expire_mesh_pending_v1(worker, pending_by_peer, now_ms_v1())?;
+        expire_mesh_preauth_v1(&mut peers, now_ms_v1());
 
         start_due_mesh_peer_handshakes_v1(relay, worker, &mut peers)?;
 
-        for peer in &worker.remote_peers {
+        let peer_count = worker.remote_peers.len();
+        for offset in 0..peer_count {
+            let peer_index = (next_outbound_peer_index + offset) % peer_count;
+            let peer = &worker.remote_peers[peer_index];
             let Some(outbound) = pending_by_peer
                 .get(&peer.peer_id)
                 .and_then(|queue| queue.front())
-                .cloned()
+                .map(|pending| Arc::clone(&pending.item))
             else {
                 continue;
             };
+            if outbound.expired_at(now_ms_v1()) {
+                let expired = pending_by_peer
+                    .get_mut(&peer.peer_id)
+                    .and_then(VecDeque::pop_front)
+                    .context("expired mesh pending item disappeared before send")?;
+                publish_pending_expired_v1(worker, &expired.item, &peer.peer_id)?;
+                next_outbound_peer_index = (peer_index + 1) % peer_count;
+                break;
+            }
             let Some(state) = peers.get(&peer.peer_id) else {
                 continue;
             };
@@ -957,12 +1679,25 @@ fn run_duplex_mesh_session_v1(
                         format!("seal outbound E2E payload: {error:#}"),
                         worker,
                     )?;
-                    continue;
+                    next_outbound_peer_index = (peer_index + 1) % peer_count;
+                    break;
                 }
             };
-            relay
-                .send_envelope(envelope)
+            let outcome = relay
+                .send_envelope_with_outcome_v1(envelope)
                 .context("send multi-peer product overlay payload; retained for reconnect")?;
+            if outcome.disposition == RelayForwardDispositionV1::RejectedQueuePeerLimit {
+                isolate_mesh_peer_v1(
+                    &mut peers,
+                    &peer.peer_id,
+                    "relay rejected target-local offline queue admission",
+                    worker,
+                )?;
+                next_outbound_peer_index = (peer_index + 1) % peer_count;
+                break;
+            }
+            ensure_shared_relay_forward_accepted_v1(&outcome)
+                .context("shared relay rejected multi-peer payload admission")?;
             peers
                 .get_mut(&peer.peer_id)
                 .context("configured mesh peer state disappeared after send")?
@@ -971,19 +1706,21 @@ fn run_duplex_mesh_session_v1(
                 .get_mut(&peer.peer_id)
                 .and_then(VecDeque::pop_front)
                 .context("multi-peer pending queue lost delivered payload")?;
-            worker
-                .events
-                .send(ProductMainlineOverlayEventV1::Delivery(
-                    ProductMainlineOverlayDeliveryV1 {
-                        payload_class: outbound.payload_class,
-                        object_hash: outbound.object_hash,
-                        remote_peer_id: peer.peer_id.clone(),
-                        metric_peer_id: peer.metric_peer_id,
-                        delivered: true,
-                        error: None,
-                    },
-                ))
-                .context("publish multi-peer product overlay delivery")?;
+            publish_product_mainline_overlay_event_v1(
+                &worker.events,
+                &worker.stop,
+                ProductMainlineOverlayEventV1::Delivery(ProductMainlineOverlayDeliveryV1 {
+                    payload_class: outbound.payload_class,
+                    object_hash: outbound.object_hash,
+                    remote_peer_id: peer.peer_id.clone(),
+                    metric_peer_id: peer.metric_peer_id,
+                    delivered: true,
+                    error: None,
+                }),
+            )
+            .context("publish multi-peer product overlay delivery")?;
+            next_outbound_peer_index = (peer_index + 1) % peer_count;
+            break;
         }
 
         let buffered_ready_peer = peers.iter().find_map(|(peer_id, state)| {
@@ -993,11 +1730,13 @@ fn run_duplex_mesh_session_v1(
             state
                 .buffered_deliveries
                 .front()
-                .is_some_and(|delivery| delivery.envelope.session_id == channel.session_id())
+                .is_some_and(|delivery| {
+                    delivery.delivery.envelope.session_id == channel.session_id()
+                })
                 .then(|| peer_id.clone())
         });
         if let Some(peer_id) = buffered_ready_peer {
-            let delivery = peers
+            let buffered = peers
                 .get_mut(&peer_id)
                 .and_then(|state| state.buffered_deliveries.pop_front())
                 .context("multi-peer buffered delivery disappeared")?;
@@ -1005,13 +1744,15 @@ fn run_duplex_mesh_session_v1(
                 peers
                     .get_mut(&peer_id)
                     .context("configured mesh peer state disappeared")?,
-                delivery,
+                buffered.delivery,
                 worker.chain_id,
             ) {
-                Ok(inbound) => worker
-                    .events
-                    .send(ProductMainlineOverlayEventV1::Inbound(inbound))
-                    .context("publish buffered multi-peer product overlay inbound event")?,
+                Ok(inbound) => publish_product_mainline_overlay_event_v1(
+                    &worker.events,
+                    &worker.stop,
+                    ProductMainlineOverlayEventV1::Inbound(inbound),
+                )
+                .context("publish buffered multi-peer product overlay inbound event")?,
                 Err(error) => isolate_mesh_peer_v1(
                     &mut peers,
                     &peer_id,
@@ -1085,10 +1826,22 @@ fn run_duplex_mesh_session_v1(
                         };
                         let response = responder.response().clone();
                         let channel = responder.into_channel();
-                        relay.send_peer_handshake(
+                        let outcome = relay.send_peer_handshake_with_outcome_v1(
                             source_peer_id.clone(),
                             RelayPeerHandshakeV1::Response(response),
                         )?;
+                        if outcome.disposition == RelayForwardDispositionV1::RejectedQueuePeerLimit
+                        {
+                            isolate_mesh_peer_v1(
+                                &mut peers,
+                                &source_peer_id,
+                                "relay rejected target-local peer response admission",
+                                worker,
+                            )?;
+                            continue;
+                        }
+                        ensure_shared_relay_forward_accepted_v1(&outcome)
+                            .context("shared relay rejected peer response admission")?;
                         activate_mesh_peer_v1(&mut peers, &source_peer_id, channel, worker)?;
                     }
                     RelayPeerHandshakeV1::Response(response) => {
@@ -1163,10 +1916,12 @@ fn run_duplex_mesh_session_v1(
                         delivery,
                         worker.chain_id,
                     ) {
-                        Ok(inbound) => worker
-                            .events
-                            .send(ProductMainlineOverlayEventV1::Inbound(inbound))
-                            .context("publish multi-peer product overlay inbound event")?,
+                        Ok(inbound) => publish_product_mainline_overlay_event_v1(
+                            &worker.events,
+                            &worker.stop,
+                            ProductMainlineOverlayEventV1::Inbound(inbound),
+                        )
+                        .context("publish multi-peer product overlay inbound event")?,
                         Err(error) => isolate_mesh_peer_v1(
                             &mut peers,
                             &peer_id,
@@ -1184,6 +1939,8 @@ fn run_duplex_mesh_session_v1(
                             .buffered_deliveries,
                         delivery,
                         Some(&peer_id),
+                        &preauth_budget,
+                        worker.resource_limits.preauth_ttl_ms,
                     );
                     if let Err(error) = buffer_result {
                         isolate_mesh_peer_v1(
@@ -1241,10 +1998,21 @@ fn start_due_mesh_peer_handshakes_v1(
             now_ms,
             PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1,
         )?;
-        relay.send_peer_handshake(
+        let outcome = relay.send_peer_handshake_with_outcome_v1(
             peer_id.clone(),
             RelayPeerHandshakeV1::Offer(initiator.offer().clone()),
         )?;
+        if outcome.disposition == RelayForwardDispositionV1::RejectedQueuePeerLimit {
+            isolate_mesh_peer_v1(
+                peers,
+                &peer_id,
+                "relay rejected target-local peer offer admission",
+                worker,
+            )?;
+            break;
+        }
+        ensure_shared_relay_forward_accepted_v1(&outcome)
+            .context("shared relay rejected peer offer admission")?;
         peers
             .get_mut(&peer_id)
             .context("configured mesh peer state disappeared")?
@@ -1252,8 +2020,18 @@ fn start_due_mesh_peer_handshakes_v1(
             initiator,
             expires_at_ms: now_ms.saturating_add(PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1),
         };
+        break;
     }
     Ok(())
+}
+
+fn ensure_shared_relay_forward_accepted_v1(outcome: &RelayForwardOutcomeV1) -> Result<()> {
+    match outcome.disposition {
+        RelayForwardDispositionV1::Forwarded
+        | RelayForwardDispositionV1::QueuedTargetOffline
+        | RelayForwardDispositionV1::QueuedBackpressure => Ok(()),
+        disposition => bail!("relay forward admission rejected: {disposition:?}"),
+    }
 }
 
 fn isolate_mesh_peer_v1(
@@ -1277,15 +2055,17 @@ fn isolate_mesh_peer_v1(
     state.buffered_deliveries.clear();
     state.frame_sequence = 0;
     let reason = bounded_peer_fault_reason_v1(reason.into());
-    worker
-        .events
-        .send(ProductMainlineOverlayEventV1::PeerIsolated {
+    publish_product_mainline_overlay_event_v1(
+        &worker.events,
+        &worker.stop,
+        ProductMainlineOverlayEventV1::PeerIsolated {
             remote_peer_id: peer_id.to_string(),
             reason,
             session_failure_count: state.session_failure_count,
             retry_in_ms,
-        })
-        .context("publish mesh peer-isolated event")
+        },
+    )
+    .context("publish mesh peer-isolated event")
 }
 
 fn activate_mesh_peer_v1(
@@ -1298,17 +2078,30 @@ fn activate_mesh_peer_v1(
     let state = peers
         .get_mut(peer_id)
         .context("cannot activate an unconfigured mesh peer")?;
-    state
-        .buffered_deliveries
-        .retain(|delivery| delivery.envelope.session_id == session_id);
+    state.buffered_deliveries.retain(|delivery| {
+        !delivery.expired_at(now_ms_v1()) && delivery.delivery.envelope.session_id == session_id
+    });
     state.phase = ProductMainlineMeshPeerPhaseV1::Active(channel);
     state.frame_sequence = 0;
-    worker
-        .events
-        .send(ProductMainlineOverlayEventV1::E2eSessionEstablished {
+    publish_product_mainline_overlay_event_v1(
+        &worker.events,
+        &worker.stop,
+        ProductMainlineOverlayEventV1::E2eSessionEstablished {
             remote_peer_id: peer_id.to_string(),
-        })
-        .context("publish multi-peer E2E-ready event")
+        },
+    )
+    .context("publish multi-peer E2E-ready event")
+}
+
+fn expire_mesh_preauth_v1(
+    peers: &mut BTreeMap<String, ProductMainlineMeshPeerStateV1>,
+    now_ms: u64,
+) {
+    for state in peers.values_mut() {
+        state
+            .buffered_deliveries
+            .retain(|delivery| !delivery.expired_at(now_ms));
+    }
 }
 
 fn open_mesh_inbound_v1(
@@ -1356,8 +2149,11 @@ fn bounded_peer_fault_reason_v1(mut reason: String) -> String {
 fn run_authenticated_role_v1(
     relay: &mut ProductRelayClientV1,
     worker: &ProductMainlineOverlayWorkerV1,
-    pending: &mut VecDeque<ProductMainlineOverlayOutboundV1>,
+    pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
 ) -> Result<()> {
+    let preauth_budget = Arc::new(Mutex::new(ProductMainlineOverlayPreauthBudgetV1::new(
+        worker.resource_limits.clone(),
+    )));
     let remote_metric_peer_id = worker
         .remote_peers
         .first()
@@ -1371,6 +2167,10 @@ fn run_authenticated_role_v1(
                 &worker.remote_peer_id,
                 &worker.events,
                 &worker.stop,
+                &preauth_budget,
+                worker.resource_limits.preauth_ttl_ms,
+                worker,
+                pending,
             )?;
             (channel, buffered, true, false)
         }
@@ -1381,6 +2181,10 @@ fn run_authenticated_role_v1(
                 worker.expected_source_peer_id.as_deref(),
                 &worker.events,
                 &worker.stop,
+                &preauth_budget,
+                worker.resource_limits.preauth_ttl_ms,
+                worker,
+                pending,
             )?;
             (channel, buffered, false, true)
         }
@@ -1394,6 +2198,10 @@ fn run_authenticated_role_v1(
                     &worker.remote_peer_id,
                     &worker.events,
                     &worker.stop,
+                    &preauth_budget,
+                    worker.resource_limits.preauth_ttl_ms,
+                    worker,
+                    pending,
                 )?
             } else {
                 establish_responder_channel_v1(
@@ -1402,6 +2210,10 @@ fn run_authenticated_role_v1(
                     Some(&worker.remote_peer_id),
                     &worker.events,
                     &worker.stop,
+                    &preauth_budget,
+                    worker.resource_limits.preauth_ttl_ms,
+                    worker,
+                    pending,
                 )?
             };
             (channel, buffered, true, true)
@@ -1410,11 +2222,8 @@ fn run_authenticated_role_v1(
     run_authenticated_session_v1(
         relay,
         channel,
-        worker.chain_id,
-        &worker.outbound,
+        worker,
         pending,
-        &worker.events,
-        &worker.stop,
         buffered_deliveries,
         allow_outbound,
         allow_inbound,
@@ -1422,13 +2231,21 @@ fn run_authenticated_role_v1(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn establish_initiator_channel_v1(
     relay: &mut ProductRelayClientV1,
     identity: &SigningKey,
     remote_peer_id: &str,
-    events: &SyncSender<ProductMainlineOverlayEventV1>,
+    events: &ProductMainlineOverlayEventSenderV1,
     stop: &AtomicBool,
-) -> Result<(E2eSecureChannelV1, VecDeque<OpaqueRelayDeliveryV1>)> {
+    preauth_budget: &Arc<Mutex<ProductMainlineOverlayPreauthBudgetV1>>,
+    preauth_ttl_ms: u64,
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
+) -> Result<(
+    E2eSecureChannelV1,
+    VecDeque<ProductMainlineOverlayBufferedDeliveryV1>,
+)> {
     let mut buffered_deliveries = VecDeque::new();
     let initiator = NodeHandshakeInitiatorV1::start(identity, remote_peer_id, now_ms_v1(), 30_000)?;
     relay.send_peer_handshake(
@@ -1438,6 +2255,12 @@ fn establish_initiator_channel_v1(
     let response = loop {
         if stop.load(Ordering::Acquire) {
             bail!("product overlay stopped while awaiting peer response");
+        }
+        drain_single_outbound_v1(worker, pending, 256)?;
+        expire_single_pending_v1(worker, pending, now_ms_v1())?;
+        expire_buffered_preauth_v1(&mut buffered_deliveries, now_ms_v1());
+        if now_ms_v1() >= initiator.offer().expires_at_ms {
+            bail!("product overlay peer handshake expired while awaiting response");
         }
         let Some(event) = recv_relay_event_or_idle_v1(relay)? else {
             continue;
@@ -1458,32 +2281,48 @@ fn establish_initiator_channel_v1(
                     &mut buffered_deliveries,
                     delivery,
                     Some(remote_peer_id),
+                    preauth_budget,
+                    preauth_ttl_ms,
                 )?;
             }
         }
     };
     let mut replay = HandshakeReplayCacheV1::default();
     let channel = initiator.complete(&response, now_ms_v1(), &mut replay)?;
-    events
-        .send(ProductMainlineOverlayEventV1::E2eSessionEstablished {
+    publish_product_mainline_overlay_event_v1(
+        events,
+        stop,
+        ProductMainlineOverlayEventV1::E2eSessionEstablished {
             remote_peer_id: remote_peer_id.into(),
-        })
-        .context("publish product overlay E2E-ready event")?;
+        },
+    )
+    .context("publish product overlay E2E-ready event")?;
     Ok((channel, buffered_deliveries))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn establish_responder_channel_v1(
     relay: &mut ProductRelayClientV1,
     identity: &SigningKey,
     expected_source_peer_id: Option<&str>,
-    events: &SyncSender<ProductMainlineOverlayEventV1>,
+    events: &ProductMainlineOverlayEventSenderV1,
     stop: &AtomicBool,
-) -> Result<(E2eSecureChannelV1, VecDeque<OpaqueRelayDeliveryV1>)> {
+    preauth_budget: &Arc<Mutex<ProductMainlineOverlayPreauthBudgetV1>>,
+    preauth_ttl_ms: u64,
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
+) -> Result<(
+    E2eSecureChannelV1,
+    VecDeque<ProductMainlineOverlayBufferedDeliveryV1>,
+)> {
     let mut buffered_deliveries = VecDeque::new();
     let offer = loop {
         if stop.load(Ordering::Acquire) {
             bail!("product overlay stopped while awaiting peer offer");
         }
+        drain_single_outbound_v1(worker, pending, 256)?;
+        expire_single_pending_v1(worker, pending, now_ms_v1())?;
+        expire_buffered_preauth_v1(&mut buffered_deliveries, now_ms_v1());
         let Some(event) = recv_relay_event_or_idle_v1(relay)? else {
             continue;
         };
@@ -1510,6 +2349,8 @@ fn establish_responder_channel_v1(
                     &mut buffered_deliveries,
                     delivery,
                     expected_source_peer_id,
+                    preauth_budget,
+                    preauth_ttl_ms,
                 )?;
             }
         }
@@ -1524,39 +2365,57 @@ fn establish_responder_channel_v1(
         source_peer_id.clone(),
         RelayPeerHandshakeV1::Response(response),
     )?;
-    events
-        .send(ProductMainlineOverlayEventV1::E2eSessionEstablished {
+    publish_product_mainline_overlay_event_v1(
+        events,
+        stop,
+        ProductMainlineOverlayEventV1::E2eSessionEstablished {
             remote_peer_id: source_peer_id.clone(),
-        })
-        .context("publish product overlay E2E-ready event")?;
+        },
+    )
+    .context("publish product overlay E2E-ready event")?;
     Ok((channel, buffered_deliveries))
 }
 
 fn buffer_preauth_delivery_v1(
-    buffered: &mut VecDeque<OpaqueRelayDeliveryV1>,
+    buffered: &mut VecDeque<ProductMainlineOverlayBufferedDeliveryV1>,
     delivery: OpaqueRelayDeliveryV1,
     expected_source_peer_id: Option<&str>,
+    budget: &Arc<Mutex<ProductMainlineOverlayPreauthBudgetV1>>,
+    ttl_ms: u64,
 ) -> Result<()> {
     if expected_source_peer_id.is_some_and(|expected| expected != delivery.source_peer_id) {
         bail!("product overlay rejected pre-auth data from an unexpected source peer");
     }
-    if buffered.len() >= PRODUCT_MAINLINE_OVERLAY_PREAUTH_BUFFER_LIMIT_V1 {
-        bail!("product overlay pre-auth delivery buffer limit exceeded");
-    }
-    buffered.push_back(delivery);
+    let source_peer_id = delivery.source_peer_id.clone();
+    let bytes = serde_json::to_vec(&ProductRelayWireMessageV1::Delivery(delivery.clone()))
+        .context("measure product overlay pre-auth relay delivery bytes")?
+        .len();
+    let reservation = try_reserve_preauth_v1(budget, &source_peer_id, bytes)
+        .context("product overlay pre-auth count or byte resource limit exceeded")?;
+    let buffered_at_ms = now_ms_v1();
+    buffered.push_back(ProductMainlineOverlayBufferedDeliveryV1 {
+        delivery,
+        buffered_at_ms,
+        ttl_ms,
+        _reservation: reservation,
+    });
     Ok(())
+}
+
+fn expire_buffered_preauth_v1(
+    buffered: &mut VecDeque<ProductMainlineOverlayBufferedDeliveryV1>,
+    now_ms: u64,
+) {
+    buffered.retain(|delivery| !delivery.expired_at(now_ms));
 }
 
 #[allow(clippy::too_many_arguments)]
 fn run_authenticated_session_v1(
     relay: &mut ProductRelayClientV1,
     mut channel: E2eSecureChannelV1,
-    chain_id: u64,
-    outbound: &Receiver<ProductMainlineOverlayOutboundV1>,
-    pending: &mut VecDeque<ProductMainlineOverlayOutboundV1>,
-    events: &SyncSender<ProductMainlineOverlayEventV1>,
-    stop: &AtomicBool,
-    mut buffered_deliveries: VecDeque<OpaqueRelayDeliveryV1>,
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
+    mut buffered_deliveries: VecDeque<ProductMainlineOverlayBufferedDeliveryV1>,
     allow_outbound: bool,
     allow_inbound: bool,
     remote_metric_peer_id: u64,
@@ -1564,17 +2423,25 @@ fn run_authenticated_session_v1(
     let source_peer_id = channel.remote_peer_id().to_string();
     let mut frame_sequence = 0u64;
     let mut last_heartbeat_ms = now_ms_v1();
-    while !stop.load(Ordering::Acquire) {
+    while !worker.stop.load(Ordering::Acquire) {
         if allow_outbound {
-            let next = pending.pop_front().or_else(|| outbound.try_recv().ok());
-            if let Some(outbound) = next {
-                let object_id =
-                    u64::from_le_bytes(outbound.object_hash[..8].try_into().unwrap_or_default());
-                let encoded_payload = encode_classified_payload_v1(&outbound)?;
+            drain_single_outbound_v1(worker, pending, 256)?;
+            expire_single_pending_v1(worker, pending, now_ms_v1())?;
+            if let Some(outbound) = pending.pop_front() {
+                if outbound.item.expired_at(now_ms_v1()) {
+                    publish_pending_expired_v1(worker, &outbound.item, &source_peer_id)?;
+                    continue;
+                }
+                let object_id = u64::from_le_bytes(
+                    outbound.item.object_hash[..8]
+                        .try_into()
+                        .unwrap_or_default(),
+                );
+                let encoded_payload = encode_classified_payload_v1(&outbound.item)?;
                 let frame = NovoRudpTransportFrameV0::new(
                     NovoRudpTransportFrameKindV0::Data,
                     PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1,
-                    chain_id,
+                    worker.chain_id,
                     object_id,
                     frame_sequence,
                     0,
@@ -1591,20 +2458,22 @@ fn run_authenticated_session_v1(
                         "send encrypted product overlay payload; transaction retained for reconnect",
                     ));
                 }
-                events
-                    .send(ProductMainlineOverlayEventV1::Delivery(
-                        ProductMainlineOverlayDeliveryV1 {
-                            payload_class: outbound.payload_class,
-                            object_hash: outbound.object_hash,
-                            remote_peer_id: channel.remote_peer_id().to_string(),
-                            metric_peer_id: remote_metric_peer_id,
-                            delivered: true,
-                            error: None,
-                        },
-                    ))
-                    .context("publish product overlay delivery event")?;
+                publish_product_mainline_overlay_event_v1(
+                    &worker.events,
+                    &worker.stop,
+                    ProductMainlineOverlayEventV1::Delivery(ProductMainlineOverlayDeliveryV1 {
+                        payload_class: outbound.item.payload_class,
+                        object_hash: outbound.item.object_hash,
+                        remote_peer_id: channel.remote_peer_id().to_string(),
+                        metric_peer_id: remote_metric_peer_id,
+                        delivered: true,
+                        error: None,
+                    }),
+                )
+                .context("publish product overlay delivery event")?;
             }
         }
+        expire_buffered_preauth_v1(&mut buffered_deliveries, now_ms_v1());
         let now_ms = now_ms_v1();
         if now_ms.saturating_sub(last_heartbeat_ms) >= 2_000 {
             relay
@@ -1613,7 +2482,7 @@ fn run_authenticated_session_v1(
             last_heartbeat_ms = now_ms;
         }
         let event = if let Some(delivery) = buffered_deliveries.pop_front() {
-            ProductRelayClientEventV1::Delivery(delivery)
+            ProductRelayClientEventV1::Delivery(delivery.delivery)
         } else {
             let Some(event) = recv_relay_event_or_idle_v1(relay)? else {
                 continue;
@@ -1627,17 +2496,18 @@ fn run_authenticated_session_v1(
                 }
                 let frame = channel.open_novorudp_frame(&delivery.envelope)?;
                 let (payload_class, object_hash, frame) =
-                    open_classified_inbound_frame_v1(frame, chain_id)?;
-                events
-                    .send(ProductMainlineOverlayEventV1::Inbound(
-                        ProductMainlineOverlayInboundV1 {
-                            payload_class,
-                            object_hash,
-                            source_peer_id: source_peer_id.clone(),
-                            frame,
-                        },
-                    ))
-                    .context("publish product overlay inbound event")?;
+                    open_classified_inbound_frame_v1(frame, worker.chain_id)?;
+                publish_product_mainline_overlay_event_v1(
+                    &worker.events,
+                    &worker.stop,
+                    ProductMainlineOverlayEventV1::Inbound(ProductMainlineOverlayInboundV1 {
+                        payload_class,
+                        object_hash,
+                        source_peer_id: source_peer_id.clone(),
+                        frame,
+                    }),
+                )
+                .context("publish product overlay inbound event")?;
             }
             ProductRelayClientEventV1::HeartbeatAck => {}
             ProductRelayClientEventV1::Closed => {
@@ -1657,6 +2527,48 @@ fn validate_config_v1(config: &ProductMainlineOverlayConfigV1) -> Result<()> {
     }
     if config.channel_capacity == 0 {
         bail!("product mainline overlay channel_capacity must be positive");
+    }
+    if config.channel_capacity > 65_536 {
+        bail!("product mainline overlay channel_capacity must not exceed 65536");
+    }
+    let limits = &config.resource_limits;
+    if limits.pending_per_peer_count == 0
+        || limits.pending_per_peer_bytes == 0
+        || limits.pending_total_count == 0
+        || limits.pending_total_bytes == 0
+        || limits.pending_ttl_ms == 0
+    {
+        bail!("product mainline overlay pending resource limits must be positive");
+    }
+    if limits.pending_per_peer_count > limits.pending_total_count
+        || limits.pending_per_peer_bytes > limits.pending_total_bytes
+    {
+        bail!("product mainline overlay per-peer pending limits must not exceed total limits");
+    }
+    if limits.event_total_bytes == 0 {
+        bail!("product mainline overlay event_total_bytes must be positive");
+    }
+    let event_slot_max_bytes = PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1
+        .checked_add(PRODUCT_MAINLINE_OVERLAY_EVENT_SLOT_OVERHEAD_BYTES_V1)
+        .context("product mainline overlay event slot byte ceiling overflow")?;
+    if event_slot_max_bytes > limits.event_total_bytes {
+        bail!(
+            "product mainline overlay maximum event exceeds event_total_bytes: event={event_slot_max_bytes} limit={}",
+            limits.event_total_bytes
+        );
+    }
+    if limits.preauth_per_peer_count == 0
+        || limits.preauth_per_peer_bytes == 0
+        || limits.preauth_total_count == 0
+        || limits.preauth_total_bytes == 0
+        || limits.preauth_ttl_ms == 0
+    {
+        bail!("product mainline overlay pre-auth resource limits must be positive");
+    }
+    if limits.preauth_per_peer_count > limits.preauth_total_count
+        || limits.preauth_per_peer_bytes > limits.preauth_total_bytes
+    {
+        bail!("product mainline overlay per-peer pre-auth limits must not exceed total limits");
     }
     if config.reconnect_base_delay_ms == 0
         || config.reconnect_max_delay_ms < config.reconnect_base_delay_ms
@@ -1787,15 +2699,6 @@ fn reconnect_delay_ms_v1(consecutive_failures: u32, base_delay_ms: u64, max_dela
         .min(max_delay_ms)
 }
 
-fn wait_for_stop_v1(stop: &AtomicBool, delay_ms: u64) {
-    let mut remaining = delay_ms;
-    while remaining > 0 && !stop.load(Ordering::Acquire) {
-        let slice = remaining.min(25);
-        thread::sleep(Duration::from_millis(slice));
-        remaining = remaining.saturating_sub(slice);
-    }
-}
-
 fn validate_inbound_frame_v1(frame: &NovoRudpTransportFrameV0, chain_id: u64) -> Result<()> {
     if frame.kind != NovoRudpTransportFrameKindV0::Data {
         bail!("product mainline overlay accepts only NovoRUDP data frames");
@@ -1844,7 +2747,7 @@ fn default_read_timeout_ms_v1() -> u64 {
 }
 
 fn default_tls_trust_v1() -> ProductRelayTlsTrustV1 {
-    ProductRelayTlsTrustV1::NodeKeyBoundEncrypted
+    ProductRelayTlsTrustV1::NativeWebPki
 }
 
 fn default_channel_capacity_v1() -> usize {
@@ -1873,7 +2776,7 @@ mod tests {
     };
     use novovm_network::{
         sign_bootstrap_manifest_v1, sign_relay_record_v1, BootstrapSourceKindV1,
-        PeerSignedRelayRecordV1, ProductRelayWireMessageV1, RelayEndpointV1,
+        PeerSignedRelayRecordV1, RelayEndpointV1, SecureNovoRudpEnvelopeV1,
         SignedBootstrapManifestV1,
     };
     use novovm_protocol::{
@@ -1903,10 +2806,387 @@ mod tests {
             read_timeout_ms: 250,
             tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
             channel_capacity: 16,
+            resource_limits: ProductMainlineOverlayResourceLimitsV1::default(),
             metric_peer_id: 91,
             reconnect_base_delay_ms: 10,
             reconnect_max_delay_ms: 100,
         }
+    }
+
+    fn outbound_item_v1(
+        payload_class: ProductMainlineOverlayPayloadClassV1,
+        object_hash: [u8; 32],
+        payload: Vec<u8>,
+    ) -> ProductMainlineOverlayOutboundItemV1 {
+        ProductMainlineOverlayOutboundItemV1 {
+            payload_class,
+            object_hash,
+            payload: Arc::from(payload),
+            enqueued_at_ms: 0,
+            expires_at_ms: u64::MAX,
+        }
+    }
+
+    #[test]
+    fn product_mainline_pending_fanout_reservation_is_atomic_bounded_and_shared() {
+        let limits = ProductMainlineOverlayResourceLimitsV1 {
+            pending_per_peer_count: 2,
+            pending_per_peer_bytes: 8,
+            pending_total_count: 4,
+            pending_total_bytes: 16,
+            ..ProductMainlineOverlayResourceLimitsV1::default()
+        };
+        let budget = Arc::new(Mutex::new(ProductMainlineOverlayPendingBudgetV1::new(
+            limits,
+        )));
+        let peers = vec!["peer-a".to_string(), "peer-b".to_string()];
+
+        let first = try_reserve_pending_fanout_v1(&budget, &peers, 4).unwrap();
+        let second = try_reserve_pending_fanout_v1(&budget, &peers, 4).unwrap();
+        assert!(try_reserve_pending_fanout_v1(&budget, &peers, 1).is_none());
+        {
+            let state = budget.lock().unwrap();
+            assert_eq!(state.total.count, 4);
+            assert_eq!(state.total.bytes, 16);
+            assert_eq!(state.by_peer["peer-a"].count, 2);
+            assert_eq!(state.by_peer["peer-b"].bytes, 8);
+        }
+
+        let shared = Arc::new(outbound_item_v1(
+            ProductMainlineOverlayPayloadClassV1::NativeTransaction,
+            [0x31; 32],
+            vec![1, 2, 3, 4],
+        ));
+        let peer_a_payload = Arc::clone(&shared);
+        let peer_b_payload = Arc::clone(&shared);
+        assert!(Arc::ptr_eq(&peer_a_payload, &peer_b_payload));
+
+        drop(first);
+        assert!(try_reserve_pending_fanout_v1(&budget, &peers, 5).is_none());
+        drop(second);
+        let state = budget.lock().unwrap();
+        assert_eq!(state.total.count, 0);
+        assert_eq!(state.total.bytes, 0);
+        assert!(state.by_peer.is_empty());
+    }
+
+    #[test]
+    fn product_mainline_preauth_uses_local_age_and_shared_count_byte_bounds() {
+        let delivery = |source: &str, ciphertext_len: usize| OpaqueRelayDeliveryV1 {
+            source_peer_id: source.to_string(),
+            target_peer_id: "local-peer".into(),
+            received_at_ms: u64::MAX,
+            envelope: SecureNovoRudpEnvelopeV1 {
+                version: 1,
+                session_id: [1; 16],
+                sender_peer_id: source.to_string(),
+                recipient_peer_id: "local-peer".into(),
+                sequence: 0,
+                nonce: [0; 12],
+                ciphertext: vec![0x5a; ciphertext_len],
+            },
+        };
+        let one_delivery_bytes =
+            serde_json::to_vec(&ProductRelayWireMessageV1::Delivery(delivery("peer-a", 6)))
+                .unwrap()
+                .len();
+        let limits = ProductMainlineOverlayResourceLimitsV1 {
+            preauth_per_peer_count: 2,
+            preauth_per_peer_bytes: one_delivery_bytes,
+            preauth_total_count: 3,
+            preauth_total_bytes: one_delivery_bytes * 2,
+            preauth_ttl_ms: 5,
+            ..ProductMainlineOverlayResourceLimitsV1::default()
+        };
+        let budget = Arc::new(Mutex::new(ProductMainlineOverlayPreauthBudgetV1::new(
+            limits,
+        )));
+        let mut peer_a = VecDeque::new();
+        let mut peer_b = VecDeque::new();
+        let mut peer_c = VecDeque::new();
+        buffer_preauth_delivery_v1(
+            &mut peer_a,
+            delivery("peer-a", 6),
+            Some("peer-a"),
+            &budget,
+            5,
+        )
+        .unwrap();
+        assert!(buffer_preauth_delivery_v1(
+            &mut peer_a,
+            delivery("peer-a", 5),
+            Some("peer-a"),
+            &budget,
+            5,
+        )
+        .is_err());
+        buffer_preauth_delivery_v1(
+            &mut peer_b,
+            delivery("peer-b", 6),
+            Some("peer-b"),
+            &budget,
+            5,
+        )
+        .unwrap();
+        assert!(buffer_preauth_delivery_v1(
+            &mut peer_c,
+            delivery("peer-c", 4),
+            Some("peer-c"),
+            &budget,
+            5,
+        )
+        .is_err());
+        {
+            let state = budget.lock().unwrap();
+            assert_eq!(state.total.count, 2);
+            assert_eq!(state.total.bytes, one_delivery_bytes * 2);
+        }
+
+        expire_buffered_preauth_v1(&mut peer_a, u64::MAX);
+        expire_buffered_preauth_v1(&mut peer_b, u64::MAX);
+        assert!(peer_a.is_empty() && peer_b.is_empty());
+        let state = budget.lock().unwrap();
+        assert_eq!(state.total.count, 0);
+        assert_eq!(state.total.bytes, 0);
+        assert!(state.by_peer.is_empty());
+        drop(state);
+
+        let count_limits = ProductMainlineOverlayResourceLimitsV1 {
+            preauth_per_peer_count: 1,
+            preauth_per_peer_bytes: usize::MAX,
+            preauth_total_count: 2,
+            preauth_total_bytes: usize::MAX,
+            preauth_ttl_ms: 5,
+            ..ProductMainlineOverlayResourceLimitsV1::default()
+        };
+        let count_budget = Arc::new(Mutex::new(ProductMainlineOverlayPreauthBudgetV1::new(
+            count_limits,
+        )));
+        let mut count_peer_a = VecDeque::new();
+        let mut count_peer_b = VecDeque::new();
+        let mut count_peer_c = VecDeque::new();
+        buffer_preauth_delivery_v1(
+            &mut count_peer_a,
+            delivery("peer-a", 1),
+            Some("peer-a"),
+            &count_budget,
+            5,
+        )
+        .unwrap();
+        assert!(buffer_preauth_delivery_v1(
+            &mut count_peer_a,
+            delivery("peer-a", 1),
+            Some("peer-a"),
+            &count_budget,
+            5,
+        )
+        .is_err());
+        buffer_preauth_delivery_v1(
+            &mut count_peer_b,
+            delivery("peer-b", 1),
+            Some("peer-b"),
+            &count_budget,
+            5,
+        )
+        .unwrap();
+        assert!(buffer_preauth_delivery_v1(
+            &mut count_peer_c,
+            delivery("peer-c", 1),
+            Some("peer-c"),
+            &count_budget,
+            5,
+        )
+        .is_err());
+        {
+            let state = count_budget.lock().unwrap();
+            assert_eq!(state.total.count, 2);
+            assert_eq!(state.by_peer["peer-a"].count, 1);
+            assert_eq!(state.by_peer["peer-b"].count, 1);
+        }
+        expire_buffered_preauth_v1(&mut count_peer_a, u64::MAX);
+        expire_buffered_preauth_v1(&mut count_peer_b, u64::MAX);
+        let state = count_budget.lock().unwrap();
+        assert_eq!(state.total.count, 0);
+        assert_eq!(state.total.bytes, 0);
+        assert!(state.by_peer.is_empty());
+    }
+
+    #[test]
+    fn product_mainline_disconnected_pending_expires_once_without_true_delivery() {
+        let now = now_ms_v1();
+        let root =
+            std::env::temp_dir().join(format!("novovm-product-overlay-pending-expiry-{now}"));
+        fs::create_dir_all(&root).unwrap();
+        let local_identity_path = root.join("local.hex");
+        write_identity_v1(&local_identity_path, [0x34; 32]);
+        let relay_identity = SigningKey::from_bytes(&[0x35; 32]);
+        let remote_identity = SigningKey::from_bytes(&[0x36; 32]);
+        let remote_peer_id =
+            peer_id_from_ed25519_public_key_v1(&remote_identity.verifying_key().to_bytes());
+        let relay_peer_id =
+            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
+        let bootstrap_signer = SigningKey::from_bytes(&[0x37; 32]);
+        let source = signed_bootstrap_source_v1(
+            &bootstrap_signer,
+            &relay_identity,
+            now.saturating_sub(1_000),
+            now.saturating_add(30_000),
+        );
+        let chain_id = 8_400_000 + now % 100_000;
+        let mut runtime_config = mainline_config_v1(
+            chain_id,
+            ProductMainlineOverlayRoleV1::Duplex,
+            local_identity_path,
+            root.join("cache.json"),
+            bootstrap_signer.verifying_key().to_bytes(),
+            source,
+            Some(remote_peer_id.clone()),
+            None,
+        );
+        runtime_config.connect_timeout_ms = 20;
+        runtime_config.reconnect_base_delay_ms = 10;
+        runtime_config.reconnect_max_delay_ms = 20;
+        runtime_config.resource_limits = ProductMainlineOverlayResourceLimitsV1 {
+            pending_per_peer_count: 1,
+            pending_per_peer_bytes: 1024 * 1024,
+            pending_total_count: 1,
+            pending_total_bytes: 1024 * 1024,
+            pending_ttl_ms: 200,
+            ..ProductMainlineOverlayResourceLimitsV1::default()
+        };
+        let dead_port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let relay_override = ProductRelayClientConfigV1 {
+            endpoint: format!("wss://127.0.0.1:{dead_port}/novovm"),
+            expected_relay_peer_id: relay_peer_id,
+            connect_timeout_ms: 20,
+            read_timeout_ms: 20,
+            tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
+        };
+        let mut runtime = ProductMainlineOverlayRuntimeV1::start_with_relay_override_v1(
+            runtime_config,
+            now_ms_v1(),
+            relay_override,
+        )
+        .unwrap();
+        let object_hash = [0x38; 32];
+        assert!(runtime
+            .try_submit(
+                object_hash,
+                signed_native_tx_v1(chain_id, &format!("pending-expiry-{now}")),
+            )
+            .unwrap());
+        assert!(!runtime.try_submit([0x39; 32], vec![0x39]).unwrap());
+
+        let started = Instant::now();
+        let mut expiration = None;
+        while started.elapsed() < Duration::from_secs(2) && expiration.is_none() {
+            for event in runtime.drain_events(64) {
+                match event {
+                    ProductMainlineOverlayEventV1::Delivery(delivery)
+                        if delivery.object_hash == object_hash =>
+                    {
+                        assert!(!delivery.delivered, "expired delivery was reported true");
+                        assert!(delivery
+                            .error
+                            .as_deref()
+                            .is_some_and(|error| error.contains("expired")));
+                        expiration = Some(delivery);
+                    }
+                    ProductMainlineOverlayEventV1::WorkerFailed(error) => {
+                        panic!("resource expiry worker failed: {error}")
+                    }
+                    _ => {}
+                }
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            expiration.is_some(),
+            "disconnected pending item did not expire"
+        );
+        wait_until_v1(Duration::from_secs(1), || {
+            runtime.pending_resource_usage_v1().pending_count == 0
+                && runtime.pending_resource_usage_v1().pending_bytes == 0
+        });
+
+        runtime.shutdown();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn product_mainline_shutdown_returns_when_event_channel_is_full() {
+        let now = now_ms_v1();
+        let root =
+            std::env::temp_dir().join(format!("novovm-product-overlay-full-event-shutdown-{now}"));
+        fs::create_dir_all(&root).unwrap();
+        let local_identity_path = root.join("local.hex");
+        write_identity_v1(&local_identity_path, [0x41; 32]);
+        let relay_identity = SigningKey::from_bytes(&[0x42; 32]);
+        let remote_identity = SigningKey::from_bytes(&[0x43; 32]);
+        let remote_peer_id =
+            peer_id_from_ed25519_public_key_v1(&remote_identity.verifying_key().to_bytes());
+        let relay_peer_id =
+            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
+        let bootstrap_signer = SigningKey::from_bytes(&[0x44; 32]);
+        let source = signed_bootstrap_source_v1(
+            &bootstrap_signer,
+            &relay_identity,
+            now.saturating_sub(1_000),
+            now.saturating_add(30_000),
+        );
+        let mut runtime_config = mainline_config_v1(
+            8_500_000 + now % 100_000,
+            ProductMainlineOverlayRoleV1::Duplex,
+            local_identity_path,
+            root.join("cache.json"),
+            bootstrap_signer.verifying_key().to_bytes(),
+            source,
+            Some(remote_peer_id),
+            None,
+        );
+        runtime_config.channel_capacity = 1;
+        runtime_config.connect_timeout_ms = 20;
+        runtime_config.reconnect_base_delay_ms = 10;
+        runtime_config.reconnect_max_delay_ms = 10;
+
+        let dead_port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let relay_override = ProductRelayClientConfigV1 {
+            endpoint: format!("wss://127.0.0.1:{dead_port}/novovm"),
+            expected_relay_peer_id: relay_peer_id,
+            connect_timeout_ms: 20,
+            read_timeout_ms: 20,
+            tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
+        };
+        let runtime = ProductMainlineOverlayRuntimeV1::start_with_relay_override_v1(
+            runtime_config,
+            now_ms_v1(),
+            relay_override,
+        )
+        .unwrap();
+
+        thread::sleep(Duration::from_millis(150));
+        let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::sync_channel(1);
+        let shutdown = thread::spawn(move || {
+            let mut runtime = runtime;
+            runtime.shutdown();
+            let _ = shutdown_complete_tx.send(());
+        });
+        assert!(
+            shutdown_complete_rx
+                .recv_timeout(Duration::from_secs(2))
+                .is_ok(),
+            "full product overlay event channel blocked shutdown"
+        );
+        shutdown.join().unwrap();
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1944,6 +3224,124 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("metric_peer_id values must be unique"));
+    }
+
+    #[test]
+    fn product_mainline_default_tls_trust_requires_native_web_pki() {
+        let decoded: ProductMainlineOverlayConfigV1 = serde_json::from_value(serde_json::json!({
+            "chain_id": 7,
+            "role": "duplex",
+            "identity_key_path": "node.hex",
+            "target_peer_id": "peer-b",
+            "overlay": {
+                "cache_path": "bootstrap-cache.json",
+                "trusted_signer_public_keys": [],
+                "embedded_sources": []
+            }
+        }))
+        .unwrap();
+        assert!(matches!(
+            decoded.tls_trust,
+            ProductRelayTlsTrustV1::NativeWebPki
+        ));
+    }
+
+    #[test]
+    fn product_mainline_event_channel_has_checked_byte_ceiling() {
+        let mut bounded_default = config(ProductMainlineOverlayRoleV1::Initiator);
+        bounded_default.target_peer_id = Some("peer-a".into());
+        bounded_default.channel_capacity = default_channel_capacity_v1();
+        assert!(validate_config_v1(&bounded_default).is_ok());
+
+        let mut oversized = bounded_default.clone();
+        oversized.channel_capacity = 65_536;
+        assert!(validate_config_v1(&oversized).is_ok());
+
+        let mut overflow = bounded_default;
+        overflow.channel_capacity = usize::MAX;
+        let error = validate_config_v1(&overflow).unwrap_err().to_string();
+        assert!(error.contains("channel_capacity must not exceed"));
+
+        oversized.resource_limits.event_total_bytes = 1;
+        let error = validate_config_v1(&oversized).unwrap_err().to_string();
+        assert!(error.contains("maximum event exceeds"));
+    }
+
+    #[test]
+    fn omitted_resource_limits_preserve_legacy_channel_capacity() {
+        let legacy_json = serde_json::json!({
+            "chain_id": 7,
+            "role": "duplex",
+            "identity_key_path": "node.hex",
+            "target_peer_id": "peer-b",
+            "overlay": {
+                "cache_path": "bootstrap-cache.json",
+                "trusted_signer_public_keys": [],
+                "embedded_sources": []
+            },
+            "channel_capacity": 4096
+        });
+        let decoded: ProductMainlineOverlayConfigV1 =
+            serde_json::from_value(legacy_json.clone()).unwrap();
+        assert_eq!(
+            decoded.resource_limits.event_total_bytes,
+            ProductMainlineOverlayResourceLimitsV1::default().event_total_bytes
+        );
+        validate_config_v1(&decoded).unwrap();
+
+        let mut explicit_json = legacy_json;
+        explicit_json["resource_limits"] =
+            serde_json::to_value(ProductMainlineOverlayResourceLimitsV1::default()).unwrap();
+        let explicit: ProductMainlineOverlayConfigV1 =
+            serde_json::from_value(explicit_json).unwrap();
+        validate_config_v1(&explicit).unwrap();
+    }
+
+    #[test]
+    fn event_byte_permit_tracks_actual_owned_payload_until_receive() {
+        let (sender, receiver) = mpsc::sync_channel(2);
+        let bytes_in_flight = Arc::new(AtomicUsize::new(0));
+        let events = ProductMainlineOverlayEventSenderV1 {
+            sender,
+            bytes_in_flight: Arc::clone(&bytes_in_flight),
+            max_bytes: 1024 * 1024,
+        };
+        let stop = AtomicBool::new(false);
+        let event = ProductMainlineOverlayEventV1::Inbound(ProductMainlineOverlayInboundV1 {
+            payload_class: ProductMainlineOverlayPayloadClassV1::NativeTransaction,
+            object_hash: [7; 32],
+            source_peer_id: "peer-a".into(),
+            frame: NovoRudpTransportFrameV0::new(
+                NovoRudpTransportFrameKindV0::Data,
+                [1; 16],
+                7,
+                8,
+                9,
+                10,
+                vec![11; 4_096],
+            ),
+        });
+        let expected = product_mainline_overlay_event_owned_bytes_v1(&event);
+        publish_product_mainline_overlay_event_v1(&events, &stop, event).unwrap();
+        assert_eq!(bytes_in_flight.load(Ordering::Acquire), expected);
+        let accounted = receiver.recv().unwrap();
+        assert!(matches!(
+            accounted.event,
+            ProductMainlineOverlayEventV1::Inbound(_)
+        ));
+        drop(accounted);
+        assert_eq!(bytes_in_flight.load(Ordering::Acquire), 0);
+
+        let isolated = ProductMainlineOverlayEventV1::PeerIsolated {
+            remote_peer_id: String::with_capacity(128),
+            reason: String::with_capacity(4_096),
+            session_failure_count: 1,
+            retry_in_ms: 50,
+        };
+        assert!(
+            product_mainline_overlay_event_owned_bytes_v1(&isolated)
+                >= std::mem::size_of::<ProductMainlineOverlayAccountedEventV1>() + 4_224
+        );
     }
 
     #[test]
@@ -2106,11 +3504,11 @@ mod tests {
 
         let object_hash = [0x5a; 32];
         let boundary_payload = vec![0xa5; max];
-        let boundary = ProductMainlineOverlayOutboundV1 {
-            payload_class: ProductMainlineOverlayPayloadClassV1::NativeSeal,
+        let boundary = outbound_item_v1(
+            ProductMainlineOverlayPayloadClassV1::NativeSeal,
             object_hash,
-            payload: boundary_payload.clone(),
-        };
+            boundary_payload.clone(),
+        );
         let encoded = encode_classified_payload_v1(&boundary).unwrap();
         assert_eq!(
             encoded.len(),
@@ -2125,11 +3523,11 @@ mod tests {
         assert_eq!(decoded_hash, object_hash);
         assert_eq!(decoded_payload, boundary_payload);
 
-        let oversized = ProductMainlineOverlayOutboundV1 {
-            payload_class: ProductMainlineOverlayPayloadClassV1::NativeSeal,
+        let oversized = outbound_item_v1(
+            ProductMainlineOverlayPayloadClassV1::NativeSeal,
             object_hash,
-            payload: vec![0xa5; max + 1],
-        };
+            vec![0xa5; max + 1],
+        );
         assert!(encode_classified_payload_v1(&oversized)
             .unwrap_err()
             .to_string()
@@ -2171,11 +3569,11 @@ mod tests {
             .unwrap();
 
         let object_hash = [0x73; 32];
-        let outbound = ProductMainlineOverlayOutboundV1 {
-            payload_class: ProductMainlineOverlayPayloadClassV1::NativeSeal,
+        let outbound = outbound_item_v1(
+            ProductMainlineOverlayPayloadClassV1::NativeSeal,
             object_hash,
-            payload: vec![0xff; PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1],
-        };
+            vec![0xff; PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1],
+        );
         let classified_payload = encode_classified_payload_v1(&outbound).unwrap();
         let frame = NovoRudpTransportFrameV0::new(
             NovoRudpTransportFrameKindV0::Data,
@@ -2228,12 +3626,27 @@ mod tests {
             // Keep the bounded test relay alive for the complete duplex transaction and seal
             // exchange, including every assertion timeout on a loaded CI runner.
             run_for_ms: Some(20_000),
+            max_connections: None,
+            handshake_timeout_ms: None,
+            max_sessions: None,
+            max_tracked_sources: None,
             session_queue_capacity: Some(16),
+            session_queue_bytes: None,
+            active_queue_total: None,
+            active_queue_bytes_total: None,
             offline_queue_per_peer: Some(16),
+            offline_queue_bytes_per_peer: None,
+            offline_queue_per_source: Some(32),
+            offline_queue_bytes_per_source: None,
             offline_queue_total: Some(32),
+            offline_queue_bytes_total: None,
+            offline_queue_ttl_ms: None,
             session_ttl_ms: Some(5_000),
             rate_limit_frames: Some(1_000),
+            max_frames_per_window: Some(10_000),
             rate_limit_window_ms: Some(1_000),
+            source_bytes_per_minute: None,
+            max_bytes_per_minute: None,
         };
         let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
         wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
@@ -2467,12 +3880,27 @@ mod tests {
             report_path: relay_report_path.clone(),
             report_interval_ms: 20,
             run_for_ms: Some(8_000),
+            max_connections: None,
+            handshake_timeout_ms: None,
+            max_sessions: None,
+            max_tracked_sources: None,
             session_queue_capacity: Some(32),
+            session_queue_bytes: None,
+            active_queue_total: None,
+            active_queue_bytes_total: None,
             offline_queue_per_peer: Some(32),
+            offline_queue_bytes_per_peer: None,
+            offline_queue_per_source: Some(128),
+            offline_queue_bytes_per_source: None,
             offline_queue_total: Some(128),
+            offline_queue_bytes_total: None,
+            offline_queue_ttl_ms: None,
             session_ttl_ms: Some(10_000),
             rate_limit_frames: Some(2_000),
+            max_frames_per_window: Some(10_000),
             rate_limit_window_ms: Some(1_000),
+            source_bytes_per_minute: None,
+            max_bytes_per_minute: None,
         };
         let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
         wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
@@ -2666,12 +4094,27 @@ mod tests {
             report_path: relay_report_path.clone(),
             report_interval_ms: 20,
             run_for_ms: Some(20_000),
+            max_connections: None,
+            handshake_timeout_ms: None,
+            max_sessions: None,
+            max_tracked_sources: None,
             session_queue_capacity: Some(32),
+            session_queue_bytes: None,
+            active_queue_total: None,
+            active_queue_bytes_total: None,
             offline_queue_per_peer: Some(32),
+            offline_queue_bytes_per_peer: None,
+            offline_queue_per_source: Some(128),
+            offline_queue_bytes_per_source: None,
             offline_queue_total: Some(128),
+            offline_queue_bytes_total: None,
+            offline_queue_ttl_ms: None,
             session_ttl_ms: Some(15_000),
             rate_limit_frames: Some(2_000),
+            max_frames_per_window: Some(10_000),
             rate_limit_window_ms: Some(1_000),
+            source_bytes_per_minute: None,
+            max_bytes_per_minute: None,
         };
         let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
         wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
@@ -2807,11 +4250,11 @@ mod tests {
         });
 
         let malicious_object_hash = [0x81; 32];
-        let malicious_payload = ProductMainlineOverlayOutboundV1 {
-            payload_class: ProductMainlineOverlayPayloadClassV1::NativeTransaction,
-            object_hash: malicious_object_hash,
-            payload: signed_native_tx_v1(chain_id, &format!("malicious-peer-{now}")),
-        };
+        let malicious_payload = outbound_item_v1(
+            ProductMainlineOverlayPayloadClassV1::NativeTransaction,
+            malicious_object_hash,
+            signed_native_tx_v1(chain_id, &format!("malicious-peer-{now}")),
+        );
         let malicious_frame = NovoRudpTransportFrameV0::new(
             NovoRudpTransportFrameKindV0::Data,
             PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1,
@@ -3013,12 +4456,27 @@ mod tests {
             report_path: relay_report_path.clone(),
             report_interval_ms: 20,
             run_for_ms: Some(5_000),
+            max_connections: None,
+            handshake_timeout_ms: None,
+            max_sessions: None,
+            max_tracked_sources: None,
             session_queue_capacity: Some(16),
+            session_queue_bytes: None,
+            active_queue_total: None,
+            active_queue_bytes_total: None,
             offline_queue_per_peer: Some(16),
+            offline_queue_bytes_per_peer: None,
+            offline_queue_per_source: Some(32),
+            offline_queue_bytes_per_source: None,
             offline_queue_total: Some(32),
+            offline_queue_bytes_total: None,
+            offline_queue_ttl_ms: None,
             session_ttl_ms: Some(5_000),
             rate_limit_frames: Some(1_000),
+            max_frames_per_window: Some(10_000),
             rate_limit_window_ms: Some(1_000),
+            source_bytes_per_minute: None,
+            max_bytes_per_minute: None,
         };
         let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
         wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
@@ -3232,6 +4690,7 @@ mod tests {
             read_timeout_ms: 50,
             tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
             channel_capacity: 16,
+            resource_limits: ProductMainlineOverlayResourceLimitsV1::default(),
             metric_peer_id: 91,
             reconnect_base_delay_ms: 10,
             reconnect_max_delay_ms: 100,

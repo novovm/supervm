@@ -63,6 +63,9 @@ real_public_topology_proven=false
 real_cross_nat_proven=false
 ```
 
-An accepted preflight means the deployment configs agree. It does not mean
-that WSS, VPS, NAT, cellular, CGNAT, VPN/TUN, cross-machine AOEM execution, or
-long-run recovery has been executed.
+An accepted preflight means only that the topology fields listed above agree. It does not compare
+release fingerprints, relay wire/report versions, resource-limit profiles, package checksums, or
+signed-directory capacity against live daemon reports. It also does not mean that WSS, VPS, NAT,
+cellular, CGNAT, VPN/TUN, cross-machine AOEM execution, or long-run recovery has been executed.
+Deploy the identical clean-worktree package checksum to every node; mixed-version rolling operation
+is not claimed by this preflight.

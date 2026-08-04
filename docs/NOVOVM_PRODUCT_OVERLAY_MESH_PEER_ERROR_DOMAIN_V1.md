@@ -68,8 +68,9 @@ CPU/byte/rate budget 仍属于资源治理门。
 Delivery { delivered: true }
 ```
 
-只表示 encrypted envelope 的本机 relay socket write 返回成功。成功后对应内存项会被
-弹出。它不证明：
+经 `NOVOVM Product Relay Admission & Resource Bounds v1` 收紧后，只表示 relay 返回了与
+该请求相关的 accepted `ForwardOutcome`：消息已交给目标 active session，或进入有
+count/bytes/TTL 上限的 relay 内存队列。它不证明：
 
 ```text
 recipient received
@@ -79,24 +80,23 @@ native transaction accepted
 artifact executed/voted/QC-sealed
 ```
 
-当前没有绑定 `(epoch, object_hash, recipient)` 的 durable ACK 或 journal。socket write
-之后、recipient ACK 之前发生断线时，sent-but-unacknowledged obligation 可能丢失；进程
+当前没有绑定 `(epoch, object_hash, recipient)` 的 recipient durable ACK 或 journal。relay
+接纳之后、recipient ACK 之前发生断线时，sent-but-unacknowledged obligation 仍可能丢失；进程
 重启也不能恢复内存 pending queue。因此本切片不提供 exactly-once、at-least-once 或
 restart-safe delivery 保证。
 
-## 5. 尚未关闭的资源边界
+`Delivery(false)` 只更新 `peer_delivery_failure_total`、
+`peer_delivery_failure_counts[remote_peer_id]` 和 `last_peer_error`。它不会写入全局
+`worker_error` / `failed_total`，也不会因单个 peer 的 TTL 或 relay admission 失败冻结其他
+健康 peer 的广播。
 
-当前 `pending_by_peer` 是无 count、byte 和 TTL 上限的进程内 `VecDeque`。64-envelope
-上限只约束 handshake 完成前的单 peer opaque buffer，不约束：
+## 5. 资源边界
 
-- 已认证 peer 的 outbound pending queue；
-- 多 peer fan-out 后的总 queue count/bytes；
-- relay concurrent connection/session admission；
-- per-identity/per-source reconnect 与 aggregate byte budgets；
-- envelope write-side 上限和进程级总内存。
-
-manifest 中出现 `max_sessions` 或 `max_bytes_per_minute` 不等于这些策略已经在全部接入
-点完成 enforcement。资源 admission/session/byte/queue bounds 必须有独立实现和攻击测试。
+上述资源风险已由 `docs/NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md` 接管：
+outbound fan-out、pre-auth、event channel、relay physical/authenticated admission、active/
+offline queues、per-source 与 aggregate ingress 都具有 count/byte/TTL 或速率边界。该签收
+仍只覆盖进程内 ownership；recipient durable journal、source fairness、wire capability
+协商和公网容量实测不在其范围内。
 
 ## 6. 准确签收语言
 
@@ -109,13 +109,13 @@ manifest 中出现 `max_sessions` 或 `max_bytes_per_minute` 不等于这些策�
 
 ```text
 full Peer-Local Fault Isolation = SEALED
-per-peer obligation is bounded or durable
+per-peer obligation is durable
 Delivery=true means recipient ACK
-relay resource governance is complete
+relay resource governance includes recipient durability or source fairness
 NativeSeal automatic runtime is activation-ready
 public four-machine topology has passed
 ```
 
-后续至少仍需：relay admission/resource bounds、third-flight key-confirm、per-recipient
+后续至少仍需：third-flight key-confirm、per-recipient
 durable ACK/journal、bounded body/DA、identity guard 原子签名接入，以及公网四机与 Linux
 package/long-soak 证据。

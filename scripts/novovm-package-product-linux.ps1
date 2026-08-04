@@ -8,6 +8,14 @@ $ErrorActionPreference = "Stop"
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $repo
 try {
+  $dirty = @(git status --porcelain=v1 --untracked-files=all)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to verify the Git worktree before packaging."
+  }
+  if ($dirty.Count -ne 0) {
+    throw "Linux release packaging requires a clean Git worktree so binaries and git_commit describe the same source. Commit or remove local changes first."
+  }
+
   $installedTargets = @(rustup target list --installed)
   if ($installedTargets -notcontains $Target) {
     throw "Rust target '$Target' is not installed. Install it with: rustup target add $Target. A Linux package was not generated."
@@ -90,7 +98,28 @@ try {
   "tls_key_path": "/etc/novovm/tls/privkey.pem",
   "relay_identity_key_path": "/etc/novovm/relay-ed25519.hex",
   "report_path": "/var/lib/novovm/reports/relay.json",
-  "report_interval_ms": 5000
+  "report_interval_ms": 5000,
+  "max_connections": 512,
+  "handshake_timeout_ms": 5000,
+  "max_sessions": 256,
+  "max_tracked_sources": 1024,
+  "session_queue_capacity": 256,
+  "session_queue_bytes": 8388608,
+  "active_queue_total": 16384,
+  "active_queue_bytes_total": 268435456,
+  "offline_queue_per_peer": 512,
+  "offline_queue_bytes_per_peer": 16777216,
+  "offline_queue_per_source": 1024,
+  "offline_queue_bytes_per_source": 33554432,
+  "offline_queue_total": 16384,
+  "offline_queue_bytes_total": 268435456,
+  "offline_queue_ttl_ms": 60000,
+  "session_ttl_ms": 45000,
+  "rate_limit_frames": 4096,
+  "max_frames_per_window": 65536,
+  "rate_limit_window_ms": 1000,
+  "source_bytes_per_minute": 67108864,
+  "max_bytes_per_minute": 1073741824
 }
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\relay.json.example")
 
@@ -154,7 +183,20 @@ try {
   "connect_timeout_ms": 10000,
   "read_timeout_ms": 250,
   "tls_trust": "native_web_pki",
-  "channel_capacity": 4096,
+  "channel_capacity": 1024,
+  "resource_limits": {
+    "pending_per_peer_count": 1024,
+    "pending_per_peer_bytes": 67108864,
+    "pending_total_count": 16384,
+    "pending_total_bytes": 268435456,
+    "pending_ttl_ms": 60000,
+    "event_total_bytes": 268435456,
+    "preauth_per_peer_count": 64,
+    "preauth_per_peer_bytes": 4194304,
+    "preauth_total_count": 1024,
+    "preauth_total_bytes": 67108864,
+    "preauth_ttl_ms": 30000
+  },
   "metric_peer_id": 9991000,
   "reconnect_base_delay_ms": 250,
   "reconnect_max_delay_ms": 30000
@@ -290,6 +332,8 @@ WantedBy=multi-user.target
   Copy-Item -Force (Join-Path $repo "docs\novovm-product-peer-runtime-v1.md") (Join-Path $packagePath "docs\")
   Copy-Item -Force (Join-Path $repo "docs\novovm-product-evidence-v1.md") (Join-Path $packagePath "docs\")
   Copy-Item -Force (Join-Path $repo "docs\novovm-product-relay-client-v1.md") (Join-Path $packagePath "docs\")
+  Copy-Item -Force (Join-Path $repo "docs\NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md") (Join-Path $packagePath "docs\")
+  Copy-Item -Force (Join-Path $repo "docs\NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md") (Join-Path $packagePath "docs\")
 
   @'
 # NOVOVM Product Overlay Linux Package
@@ -314,6 +358,9 @@ Codex installation, or source workspace.
 8. Run `novovm-product-topology` before deployment and preserve its offline
    preflight report. It never claims that an external topology was executed.
 9. Generate a signed post-run evidence manifest with `novovm-product-evidence`.
+10. Deploy the identical package checksum and release manifest to every node.
+    Relay daemon report version 2 and its bounded wire contract are a homogeneous-release
+    boundary; rolling mixed-version operation is not claimed by this package.
 
 TLS protects the WSS transport. NOVOVM node challenge-response remains the
 protocol identity check; a CA is not the NOVOVM trust root.

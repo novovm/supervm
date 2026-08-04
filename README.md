@@ -143,7 +143,7 @@ Verification is **value‑aware**:
 
 Current block-ledger boundary: [NOVOVM Verifiable Block Candidate Durable Ledger V1](docs/NOVOVM_VERIFIABLE_BLOCK_CANDIDATE_DURABLE_LEDGER_V1.md) defines the active Host-side durability contract. Its output is only a local unsealed execution candidate; in this milestone `chain_canonical=false`, `proof_sealed=false`, `safe=false`, and `finalized=false`. QC, proof sealing, consensus finality, block period, and production retention/capacity policy are not implemented by this contract; V1 only enforces a 1,024-transaction/2 MiB safety ceiling, and it adds no NOV-specific business logic to AOEM.
 
-Four-machine native production activation is configuration-pinned, not path-pinned. Run `NOVOVM_NODE_MODE=native_protocol_config_commitment novovm-node` on the exact packaged binary/configuration, set its reported `NOVOVM_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT` on every node, and require all four values to match. Local database paths and AOEM namespaces may differ; public RPC cannot override them.
+Four-machine native production activation is configuration-pinned, not path-pinned. Run `NOVOVM_NODE_MODE=native_protocol_config_commitment novovm-node`, set its reported `NOVOVM_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT` on every node, and require all four values to match. That commitment covers the native business-protocol environment and compiled defaults; it does not hash the executable, Overlay config, relay wire/report version, or package contents. Binary/wire homogeneity is enforced separately by building from a clean worktree and deploying the identical package checksum/release manifest to all four machines. Local database paths and AOEM namespaces may differ; public RPC cannot override them.
 
 ## Governance & evolution
 
@@ -318,14 +318,18 @@ bypasses native authentication or becomes an AOEM policy owner. See
 The product-mainline `duplex` role propagates in both directions over one
 authenticated E2E session per configured peer, multiplexed over one relay
 connection for the local node identity. Relay disconnects use bounded
-reconnect backoff and rotate only to another verified signed candidate; queued
-outbound payloads remain node-owned per peer until each encrypted relay write
-succeeds. An individual peer restart can replace only that peer's E2E channel
+reconnect backoff and rotate only to another verified signed candidate; bounded
+outbound obligations remain node-owned per peer until the relay returns a
+correlated accepted `ForwardOutcome`. This is relay admission, not a durable
+recipient ACK. An individual peer restart can replace only that peer's E2E channel
 without requiring the other nodes to reconnect their relay sessions.
 Before distributing configs to multiple machines, run
 `novovm-product-topology <topology-plan.json>` to verify chain consistency,
 unique peer metrics, and a symmetric full mesh. This is an offline config gate
-and always reports external/public topology as not executed. See
+and always reports external/public topology as not executed. It does not compare
+release fingerprints or resource-limit profiles: deploy the identical clean-worktree
+package checksum on all machines; mixed relay wire versions are not a supported rolling
+upgrade. See
 `docs/novovm-product-topology-preflight-v1.md`.
 
 For UDP node-to-node pipeline probes, enable the UDP drive on each node:

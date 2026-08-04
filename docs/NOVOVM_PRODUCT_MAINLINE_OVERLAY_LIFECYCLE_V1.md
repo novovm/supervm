@@ -1,8 +1,10 @@
 # NOVOVM Product Mainline Overlay Lifecycle v1
 
-Status: implementation candidate and opt-in only. It is not production-
-activation-ready until relay admission/resource bounds, durable recipient
-acknowledgement, and real public-topology evidence are closed.
+Status: resource-bounded implementation candidate and opt-in only. Relay and
+Overlay process-memory admission is closed by
+[`Product Relay Admission & Resource Bounds v1`](NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md),
+but production activation still requires durable recipient acknowledgement and
+real public-topology evidence.
 
 The Product Overlay can now be owned by the `novovm-node` native execution
 pipeline instead of running only as the standalone `novovm-product-peer`
@@ -71,6 +73,19 @@ Recommended duplex config:
   "read_timeout_ms": 250,
   "tls_trust": "native_web_pki",
   "channel_capacity": 1024,
+  "resource_limits": {
+    "pending_per_peer_count": 1024,
+    "pending_per_peer_bytes": 67108864,
+    "pending_total_count": 16384,
+    "pending_total_bytes": 268435456,
+    "pending_ttl_ms": 60000,
+    "event_total_bytes": 268435456,
+    "preauth_per_peer_count": 64,
+    "preauth_per_peer_bytes": 4194304,
+    "preauth_total_count": 1024,
+    "preauth_total_bytes": 67108864,
+    "preauth_ttl_ms": 30000
+  },
   "metric_peer_id": 9990777,
   "reconnect_base_delay_ms": 250,
   "reconnect_max_delay_ms": 30000
@@ -92,11 +107,12 @@ Idle -> Handshaking -> Active
 ```
 
 `Cooldown` applies bounded exponential retry delay to that peer only. It does
-not close the shared relay or reset another peer's active channel. The current
-`pending_by_peer` queue is nevertheless not resource-bounded: there is no
-per-peer count limit, byte limit, TTL, durable journal, or restart recovery for
-queued obligations. Session independence must not be interpreted as bounded or
-durable delivery.
+not close the shared relay or reset another peer's active channel. Every
+`pending_by_peer` obligation is admitted atomically against per-peer and global
+count/byte limits and a local TTL. Logical payload bytes are shared across
+recipients, while each recipient keeps an independent accounting permit. These
+queues remain in-memory only: bounded delivery must not be interpreted as a
+durable journal or restart recovery.
 
 Both ends may propagate pending transactions and both return decrypted
 payloads to the same native ingress boundary. For a compatibility two-node
@@ -130,11 +146,11 @@ delivery. They remain useful for constrained or staged deployments, but
 
 ## Peer error-domain containment and signed relay rotation
 
-While the worker process remains alive, the node keeps not-yet-written outbound
-transactions in separate in-memory queues when a relay session or individual
-peer channel is unavailable. One peer succeeding does not clear another peer's
-not-yet-written queue entry. These entries are recipient-specific but are not
-bounded or durable obligations.
+While the worker process remains alive, the node keeps not-yet-admitted outbound
+transactions in separate bounded in-memory queues when a relay session or
+individual peer channel is unavailable. One peer succeeding does not clear
+another peer's obligation. Each entry is recipient-specific and subject to
+per-peer/global count, byte and TTL policy, but is not durable across restart.
 
 Errors attributable to a configured peer are contained in that peer's state
 machine. Invalid handshake material, handshake expiry, an invalid authenticated
@@ -155,8 +171,9 @@ it does not set the relay worker's global error, stop healthy-peer broadcast,
 or rotate the relay. The typed ingress outcome keeps local durable-store,
 nonce-registry, configuration, and unknown verifier faults fail-closed as
 worker-global errors; unknown failures are never downgraded to hostile input.
-Per-peer compute and byte budgets for repeated semantic rejections remain part
-of the open resource-governance gate.
+Relay ingress frame/byte budgets now bound transport abuse. A separate
+application-level compute budget for repeated but well-framed semantic
+rejections remains open.
 
 Only faults in the shared carrier remain relay-scoped: WSS read/write/close,
 relay-wire failure for which no trustworthy peer can be attributed, or relay
@@ -179,30 +196,34 @@ transaction authority.
 
 Relay concurrency may deliver queued ciphertext immediately beside the peer
 handshake response. Before E2E authentication completes, the node may retain
-at most 64 opaque envelopes from each configured remote peer. It cannot decrypt
-or ingest them until the signed handshake succeeds. Overflow or a
+at most 64 opaque envelopes from each configured remote peer, additionally
+bounded by per-peer/global bytes, global count, and local age. It cannot decrypt
+or ingest them until the signed handshake succeeds. Overflow, expiry, or a
 post-handshake authentication failure isolates that peer and enters its
-cooldown; it does not close the shared relay. This 64-envelope pre-authentication
-limit does not bound `pending_by_peer`, total bytes, authenticated traffic, or
-the relay's aggregate resource use.
+cooldown; it does not close the shared relay. Authenticated traffic and relay
+queues have their own independent limits.
 
-## Delivery semantics and remaining resource gates
+## Delivery semantics and remaining durability gate
 
-The current `Delivery { delivered: true }` event means only that the encrypted
-envelope was accepted by the local relay socket write. At that point the
-in-memory queue entry is removed. It does not prove that the recipient read the
-envelope, opened the E2E frame, persisted quarantine state, or accepted a native
-transaction. There is no per-recipient durable ACK or delivery journal, so a
-disconnect after socket write can lose a sent-but-unacknowledged obligation and
-a process restart cannot reconstruct in-memory pending entries.
+The current `Delivery { delivered: true }` event means the relay returned a
+strictly correlated `ForwardOutcome` saying it forwarded the encrypted envelope
+to an active target session or accepted it into a bounded in-memory offline/
+backpressure queue. At that point the node releases its in-memory obligation.
+It does not prove that the recipient read the envelope, opened the E2E frame,
+persisted quarantine state, or accepted a native transaction. There is no
+per-recipient durable ACK or delivery journal, so a disconnect after relay
+admission can still lose a sent-but-unacknowledged obligation and a process
+restart cannot reconstruct in-memory pending entries.
 
-The relay manifest exposes session and byte-rate policy fields, but end-to-end
-enforcement is not yet complete. In particular, concurrent relay admission,
-per-identity/per-source session accounting, aggregate bytes, and pending queue
-count/byte/TTL limits remain open. Consequently this slice is accurately named
-**Mesh Peer Error-Domain Containment v1**. It is not full Peer-Local Fault
-Isolation, a complete delivery guarantee, or an activation-ready production
-boundary.
+Physical connections, absolute handshake time, authenticated sessions,
+identity/aggregate ingress, active/offline relay queues, node pending queues,
+pre-auth buffers, and event channels now have explicit count/byte/time bounds.
+Data and control traffic share the declared queue accounts. These are
+process-memory safety properties, not a complete delivery guarantee or an
+activation-ready production boundary.
+Event byte permits cover only runtime-owned channel backlog and are released when ownership moves
+to the caller. One `drain_events` call transfers at most 256 events; returned values are caller-owned
+and are not falsely counted as still resident in the runtime channel.
 
 ## Fail-closed rules
 
@@ -215,11 +236,13 @@ boundary.
   native transaction ingress.
 - Invalid signature, identity, nonce, chain domain, empty payload, or wrong
   frame type is rejected before pending state.
-- A transaction is counted as locally written only after the encrypted relay
-  socket write succeeds. Failure reported before that write completes leaves
-  the not-yet-written in-memory queue entry available for retry; success removes
-  it without waiting for recipient acknowledgement.
-- `Delivery=true` is telemetry for that socket write, not a durable recipient
+- A decoded transaction is counted as relay-admitted only after a correlated accepted
+  `ForwardOutcome`. A rejected outcome leaves the bounded in-memory obligation
+  available for retry; accepted relay ownership removes it without waiting for
+  recipient acknowledgement.
+- A raw predecode rate/byte rejection or malformed wire closes that relay lifecycle because no
+  trustworthy correlation fields exist; the pending obligation remains available for retry.
+- `Delivery=true` is telemetry for bounded relay admission, not a durable recipient
   ACK, quarantine admission, execution acceptance, vote, QC, or finality.
 - The worker stops and joins with the owning node runtime.
 
@@ -252,9 +275,8 @@ failed-candidate cooldown, signed relay rotation, reconnect, and lifecycle
 shutdown.
 
 This does not claim a public VPS, cellular, VPN, NAT, or CGNAT result. Those
-remain topology evidence work. It also does not claim relay admission/resource
-bounds, a durable per-recipient ACK/journal, restart-safe pending delivery, or
-production activation readiness.
+remain topology evidence work. It also does not claim a durable per-recipient
+ACK/journal, restart-safe pending delivery, or production activation readiness.
 
 The exact containment boundary and its negative claims are frozen in
 [`NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md`](NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md).

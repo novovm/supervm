@@ -132,7 +132,7 @@ use novovm_protocol::{
 use rand::seq::SliceRandom;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use std::collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque};
+use std::collections::{hash_map::DefaultHasher, BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::Write;
@@ -33675,6 +33675,8 @@ struct NativeExecutionPipelineProductOverlayDriveV1 {
     relay_rotation_total: u64,
     peer_isolation_total: u64,
     peer_rejection_total: u64,
+    peer_delivery_failure_total: u64,
+    peer_delivery_failure_counts: BTreeMap<String, u64>,
     last_relay_error: Option<String>,
     last_peer_error: Option<String>,
     received_total: u64,
@@ -33838,6 +33840,8 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             relay_rotation_total: 0,
             peer_isolation_total: 0,
             peer_rejection_total: 0,
+            peer_delivery_failure_total: 0,
+            peer_delivery_failure_counts: BTreeMap::new(),
             last_relay_error: None,
             last_peer_error: None,
             received_total: 0,
@@ -33960,8 +33964,13 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                         );
                     } else {
                         delivery_failed = delivery_failed.saturating_add(1);
-                        self.failed_total = self.failed_total.saturating_add(1);
-                        self.worker_error = delivery.error;
+                        record_product_mainline_peer_delivery_failure_v1(
+                            &delivery.remote_peer_id,
+                            delivery.error,
+                            &mut self.peer_delivery_failure_total,
+                            &mut self.peer_delivery_failure_counts,
+                            &mut self.last_peer_error,
+                        );
                     }
                 }
                 ProductMainlineOverlayEventV1::WorkerStopped => {
@@ -34021,7 +34030,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 delivery_failed == 0,
             );
         }
-        serde_json::json!({
+        let mut report = serde_json::json!({
             "enabled": true,
             "ok": self.worker_error.is_none() && !self.worker_stopped,
             "source": NATIVE_EXECUTION_PIPELINE_PRODUCT_OVERLAY_SOURCE_V1,
@@ -34070,59 +34079,78 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             "worker_stopped": self.worker_stopped,
             "error": self.worker_error,
             "tx_hashes": tx_hashes,
-        })
+        });
+        if let Some(report) = report.as_object_mut() {
+            report.insert(
+                "peer_delivery_failure_total".to_string(),
+                self.peer_delivery_failure_total.into(),
+            );
+            report.insert(
+                "peer_delivery_failure_counts".to_string(),
+                serde_json::json!(&self.peer_delivery_failure_counts),
+            );
+        }
+        report
     }
 
     fn decorate_summary(&self, summary: &mut serde_json::Value) {
         let Some(object) = summary.as_object_mut() else {
             return;
         };
-        object.insert(
-            "product_mainline_overlay".to_string(),
-            serde_json::json!({
-                "enabled": true,
-                "source": NATIVE_EXECUTION_PIPELINE_PRODUCT_OVERLAY_SOURCE_V1,
-                "lifecycle_owner": "novovm_node",
-                "role": match self.runtime.role() {
-                    ProductMainlineOverlayRoleV1::Initiator => "initiator",
-                    ProductMainlineOverlayRoleV1::Responder => "responder",
-                    ProductMainlineOverlayRoleV1::Duplex => "duplex",
-                },
-                "relay_connected": self.relay_connected,
-                "relay_peer_id": self.relay_peer_id,
-                "e2e_session_established": self.e2e_session_established,
-                "remote_peer_id": self.remote_peer_id,
-                "remote_peer_ids": self.remote_peer_ids,
-                "e2e_peer_count": self.e2e_peer_ids.len() as u64,
-                "isolated_peer_ids": self.sorted_isolated_peer_ids_v1(),
-                "isolated_peer_count": self.isolated_peer_ids.len() as u64,
-                "reconnect_total": self.reconnect_total,
-                "relay_rotation_total": self.relay_rotation_total,
-                "peer_isolation_total": self.peer_isolation_total,
-                "peer_rejection_total": self.peer_rejection_total,
-                "last_relay_error": self.last_relay_error,
-                "last_peer_error": self.last_peer_error,
-                "selected_path": self.runtime.startup().route_plan.selected_path,
-                "bootstrap_candidate_count": self.runtime.startup().bootstrap.valid_relay_candidate_count,
-                "payload_treated_opaque_by_relay": true,
-                "relay_is_trusted_authority": false,
-                "inbound_entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
-                "inbound_policy": "signature_identity_nonce_chain_domain_before_pending",
-                "execution_owner_after_ingress": "aoem_runtime",
-                "received_total": self.received_total,
-                "submitted_total": self.submitted_total,
-                "delivered_total": self.delivered_total,
-                "failed_total": self.failed_total,
-                "in_flight": self.in_flight.len() as u64,
-                "in_flight_peer_deliveries": self
-                    .in_flight
-                    .values()
-                    .map(HashSet::len)
-                    .sum::<usize>() as u64,
-                "worker_stopped": self.worker_stopped,
-                "error": self.worker_error,
-            }),
-        );
+        let mut overlay = serde_json::json!({
+            "enabled": true,
+            "source": NATIVE_EXECUTION_PIPELINE_PRODUCT_OVERLAY_SOURCE_V1,
+            "lifecycle_owner": "novovm_node",
+            "role": match self.runtime.role() {
+                ProductMainlineOverlayRoleV1::Initiator => "initiator",
+                ProductMainlineOverlayRoleV1::Responder => "responder",
+                ProductMainlineOverlayRoleV1::Duplex => "duplex",
+            },
+            "relay_connected": self.relay_connected,
+            "relay_peer_id": self.relay_peer_id,
+            "e2e_session_established": self.e2e_session_established,
+            "remote_peer_id": self.remote_peer_id,
+            "remote_peer_ids": self.remote_peer_ids,
+            "e2e_peer_count": self.e2e_peer_ids.len() as u64,
+            "isolated_peer_ids": self.sorted_isolated_peer_ids_v1(),
+            "isolated_peer_count": self.isolated_peer_ids.len() as u64,
+            "reconnect_total": self.reconnect_total,
+            "relay_rotation_total": self.relay_rotation_total,
+            "peer_isolation_total": self.peer_isolation_total,
+            "peer_rejection_total": self.peer_rejection_total,
+            "last_relay_error": self.last_relay_error,
+            "last_peer_error": self.last_peer_error,
+            "selected_path": self.runtime.startup().route_plan.selected_path,
+            "bootstrap_candidate_count": self.runtime.startup().bootstrap.valid_relay_candidate_count,
+            "payload_treated_opaque_by_relay": true,
+            "relay_is_trusted_authority": false,
+            "inbound_entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
+            "inbound_policy": "signature_identity_nonce_chain_domain_before_pending",
+            "execution_owner_after_ingress": "aoem_runtime",
+            "received_total": self.received_total,
+            "submitted_total": self.submitted_total,
+            "delivered_total": self.delivered_total,
+            "failed_total": self.failed_total,
+            "in_flight": self.in_flight.len() as u64,
+            "in_flight_peer_deliveries": self
+                .in_flight
+                .values()
+                .map(HashSet::len)
+                .sum::<usize>() as u64,
+            "worker_stopped": self.worker_stopped,
+            "error": self.worker_error,
+        });
+        if let Some(overlay) = overlay.as_object_mut() {
+            overlay.insert(
+                "peer_delivery_failure_total".to_string(),
+                self.peer_delivery_failure_total.into(),
+            );
+            overlay.insert(
+                "peer_delivery_failure_counts".to_string(),
+                serde_json::json!(&self.peer_delivery_failure_counts),
+            );
+        }
+        object.insert("product_mainline_overlay".to_string(), overlay);
     }
 
     fn sorted_isolated_peer_ids_v1(&self) -> Vec<String> {
@@ -34175,6 +34203,24 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
     }
 }
 
+fn record_product_mainline_peer_delivery_failure_v1(
+    remote_peer_id: &str,
+    error: Option<String>,
+    peer_delivery_failure_total: &mut u64,
+    peer_delivery_failure_counts: &mut BTreeMap<String, u64>,
+    last_peer_error: &mut Option<String>,
+) {
+    *peer_delivery_failure_total = (*peer_delivery_failure_total).saturating_add(1);
+    let failure_count = peer_delivery_failure_counts
+        .entry(remote_peer_id.to_string())
+        .or_default();
+    *failure_count = (*failure_count).saturating_add(1);
+    let error = error.unwrap_or_else(|| "delivery failed without a relay reason".to_string());
+    *last_peer_error = Some(format!(
+        "product overlay delivery to peer {remote_peer_id} failed: {error}"
+    ));
+}
+
 enum ProductMainlinePeerIngressOutcomeV1 {
     Accepted { tx_hash: [u8; 32] },
     Rejected { error: String },
@@ -34210,6 +34256,27 @@ fn classify_product_mainline_peer_ingress_v1(
 #[cfg(test)]
 mod product_mainline_peer_ingress_tests {
     use super::*;
+
+    #[test]
+    fn failed_delivery_is_counted_and_reported_as_peer_error() {
+        let mut peer_delivery_failure_total = 0u64;
+        let mut peer_delivery_failure_counts = BTreeMap::new();
+        let mut last_peer_error = None;
+
+        record_product_mainline_peer_delivery_failure_v1(
+            "peer-expired",
+            Some("relay admission expired at ttl".to_string()),
+            &mut peer_delivery_failure_total,
+            &mut peer_delivery_failure_counts,
+            &mut last_peer_error,
+        );
+
+        assert_eq!(peer_delivery_failure_total, 1);
+        assert_eq!(peer_delivery_failure_counts.get("peer-expired"), Some(&1));
+        assert!(last_peer_error
+            .as_deref()
+            .is_some_and(|error| error.contains("peer-expired") && error.contains("ttl")));
+    }
 
     #[test]
     fn invalid_authenticated_peer_transaction_is_a_peer_rejection_not_worker_error() {
