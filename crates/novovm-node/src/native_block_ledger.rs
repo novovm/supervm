@@ -1137,6 +1137,50 @@ impl NovNativeBlockLedgerV1 {
         self.load_candidate_block_for_record_inner_v1(&record)
     }
 
+    /// Load the only candidate class that seal/v1 may sign. This deliberately
+    /// stays crate-private: the public seal API must derive its subject from a
+    /// locally persisted AOEM result instead of trusting caller-supplied
+    /// lifecycle booleans or a peer's execution claim.
+    pub(crate) fn load_seal_eligible_local_candidate_v1(
+        &self,
+        chain_id: u64,
+        block_hash: [u8; 32],
+    ) -> Result<(NovNativeBlockCandidateRecordV1, NovNativeDurableBlockV1)> {
+        self.ensure_schema_v1()?;
+        let record = self
+            .load_candidate_record_inner_v1(chain_id, block_hash)?
+            .context("NOV native seal candidate is missing from the durable candidate graph")?;
+        let block = self
+            .load_candidate_block_for_record_inner_v1(&record)?
+            .context("NOV native seal candidate artifact is missing")?;
+
+        if record.candidate_source != CANDIDATE_SOURCE_LOCAL_AOEM_V1
+            || record.lifecycle_status != CANDIDATE_STATUS_ACTIVE_V1
+            || !record.commitment_bindings_verified
+            || !record.parent_continuity_verified
+            || !record.body_data_available
+            || !record.local_aoem_readback_verified
+            || !record.execution_selected_local
+            || record.fork_choice_selected
+            || record.chain_canonical
+            || record.proof_sealed
+            || record.safe
+            || record.finalized
+            || record.abort_reason.is_some()
+        {
+            bail!("NOV native seal requires an active, locally AOEM-verified unsealed candidate");
+        }
+        if !block.header.aoem_readback_verified
+            || block.header.safe
+            || block.header.finalized
+            || block.header.proof_sealed
+            || block.execution_evidence.proof_sealed
+        {
+            bail!("NOV native seal candidate artifact violates the unsealed AOEM policy");
+        }
+        Ok((record, block))
+    }
+
     pub fn load_candidate_records_by_height(
         &self,
         chain_id: u64,

@@ -289,3 +289,9 @@ Slice 2 的完成最多允许把经过完整验证和有效 QC 的候选标记�
 `proof_sealed = true`。`chain_canonical`、`safe` 和 `finalized` 的晋升、同高度
 双 QC 处理、fork choice、AOEM state promotion、reorg/rollback 与跨崩溃点恢复，
 仍属于后续 canonical-promotion 切片，不能在 QC 写入时顺带宣称完成。
+
+Slice 2A 的 NOV 专用 seal signing contract/artifacts、weighted QC 和本机
+persist-before-emit 安全存储
+已由 [`NOVOVM_SEAL_CONTRACT_VALIDATOR_SAFETY_V1.md`](NOVOVM_SEAL_CONTRACT_VALIDATOR_SAFETY_V1.md)
+定义和实现。该切片仍不修改本候选图的任何 finality 字段；网络投票和
+canonical promotion 继续属于后续切片。
