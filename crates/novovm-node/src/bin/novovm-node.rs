@@ -3,6 +3,7 @@
 // Author: Xonovo Technology
 
 #![forbid(unsafe_code)]
+#![recursion_limit = "512"]
 
 use anyhow::{bail, Context, Result};
 use base64::Engine;
@@ -101,14 +102,24 @@ use novovm_node::mainline_query::{
     is_mainline_native_execution_query_method, mainline_query_method_from_env,
     mainline_query_params_from_env, run_mainline_query_from_path,
 };
+use novovm_node::product_delivery_journal::{
+    product_delivery_payload_sha256_v1, ProductDeliveryCleanupSummaryV1,
+    ProductDeliveryInboundPrepareDispositionV1, ProductDeliveryInboundRecordV1,
+    ProductDeliveryInboundStateV1, ProductDeliveryJournalConfigV1, ProductDeliveryJournalScopeV1,
+    ProductDeliveryJournalV1, ProductDeliveryPrepareDispositionV1, ProductDeliveryRecipientAckV1,
+    PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_SEAL_V1,
+    PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1,
+};
 use novovm_node::product_mainline_overlay::{
     ingest_product_mainline_overlay_peer_payload_v1, load_product_mainline_overlay_config_v1,
-    ProductMainlineOverlayEventV1, ProductMainlineOverlayIngressFailureClassV1,
-    ProductMainlineOverlayPayloadClassV1, ProductMainlineOverlayRoleV1,
+    ProductMainlineOverlayEventV1, ProductMainlineOverlayInboundV1,
+    ProductMainlineOverlayIngressFailureClassV1, ProductMainlineOverlayPayloadClassV1,
+    ProductMainlineOverlayRecipientAckV1, ProductMainlineOverlayRoleV1,
     ProductMainlineOverlayRuntimeV1,
 };
 use novovm_node::tx_ingress::{
-    available_ingress_codecs, decode_eth_send_raw_hex_payload_v1,
+    available_ingress_codecs, canonical_nov_native_tx_hash_from_payload_v1,
+    decode_eth_send_raw_hex_payload_v1, get_nov_native_execution_receipt_by_hash_v1,
     ingest_local_eth_raw_tx_payload_v1, ingest_local_nov_raw_tx_payload_v1,
     ingest_remote_nov_raw_tx_payload_v1, load_exec_batch_from_wire_file, load_ops_wire_v1_file,
     load_ops_wire_v1_from_tx_wire_file, load_ops_wire_v1_payload_file,
@@ -33660,7 +33671,11 @@ struct NativeExecutionPipelineIngressDriveV1 {
 struct NativeExecutionPipelineProductOverlayDriveV1 {
     chain_id: u64,
     runtime: ProductMainlineOverlayRuntimeV1,
+    delivery_journal: ProductDeliveryJournalV1,
+    journal_scan_limit: usize,
+    startup_recovery_pending: bool,
     in_flight: HashMap<[u8; 32], HashSet<String>>,
+    recipient_acks_in_flight: HashSet<[u8; 32]>,
     max_per_tick: usize,
     max_propagations: u64,
     event_budget: usize,
@@ -33681,6 +33696,18 @@ struct NativeExecutionPipelineProductOverlayDriveV1 {
     last_peer_error: Option<String>,
     received_total: u64,
     submitted_total: u64,
+    relay_admitted_total: u64,
+    recipient_ack_queued_total: u64,
+    recipient_ack_relay_admitted_total: u64,
+    recipient_acked_total: u64,
+    recipient_ack_duplicate_total: u64,
+    inbound_duplicate_total: u64,
+    inbound_commitment_rejection_total: u64,
+    journal_recovered_outbound_total: u64,
+    journal_recovered_inbound_total: u64,
+    journal_completed_inbound_total: u64,
+    journal_outbound_expired_total: u64,
+    journal_inbound_prepared_expired_total: u64,
     delivered_total: u64,
     failed_total: u64,
     worker_stopped: bool,
@@ -33805,16 +33832,63 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 chain_id
             );
         }
+        let journal_path = config
+            .delivery_journal_path
+            .clone()
+            .context("product mainline overlay delivery journal path is missing")?;
+        let journal_limits = config.resource_limits.clone();
         let runtime = ProductMainlineOverlayRuntimeV1::start(config, now_unix_ms())?;
+        let local_peer_id = runtime.startup().local_peer_id.clone();
         let remote_peer_ids = runtime.remote_peer_ids().to_vec();
         let remote_peer_id = remote_peer_ids
             .first()
             .cloned()
             .context("product mainline overlay remote peer id is missing")?;
+        let delivery_journal = ProductDeliveryJournalV1::open(
+            ProductDeliveryJournalConfigV1 {
+                path: journal_path,
+                max_entries: journal_limits.journal_max_entries,
+                max_bytes: journal_limits.journal_max_bytes,
+                obligation_ttl_ms: journal_limits.journal_obligation_ttl_ms,
+                terminal_retention_ms: journal_limits.journal_terminal_retention_ms,
+                retry_interval_ms: journal_limits.journal_retry_interval_ms,
+            },
+            ProductDeliveryJournalScopeV1 {
+                chain_id,
+                local_peer_id,
+            },
+            now_unix_ms(),
+        )?;
+        let recovered_outbound =
+            delivery_journal.load_due_outbound(u64::MAX, journal_limits.journal_max_entries)?;
+        let recovered_inbound =
+            delivery_journal.load_inbound_recovery(journal_limits.journal_max_entries)?;
+        let mut in_flight = HashMap::<[u8; 32], HashSet<String>>::new();
+        for record in &recovered_outbound {
+            if !remote_peer_ids
+                .iter()
+                .any(|configured| configured == &record.recipient_peer_id)
+            {
+                bail!(
+                    "product delivery journal contains obligation for unconfigured peer {}",
+                    record.recipient_peer_id
+                );
+            }
+            if record.payload_class == PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1 {
+                in_flight
+                    .entry(record.object_hash)
+                    .or_default()
+                    .insert(record.recipient_peer_id.clone());
+            }
+        }
         Ok(Some(Self {
             chain_id,
             runtime,
-            in_flight: HashMap::new(),
+            delivery_journal,
+            journal_scan_limit: journal_limits.journal_max_entries,
+            startup_recovery_pending: true,
+            in_flight,
+            recipient_acks_in_flight: HashSet::new(),
             max_per_tick: usize_env_allow_zero(
                 "NOVOVM_PRODUCT_MAINLINE_OVERLAY_MAX_PER_TICK",
                 1_024,
@@ -33846,6 +33920,18 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             last_peer_error: None,
             received_total: 0,
             submitted_total: 0,
+            relay_admitted_total: 0,
+            recipient_ack_queued_total: 0,
+            recipient_ack_relay_admitted_total: 0,
+            recipient_acked_total: 0,
+            recipient_ack_duplicate_total: 0,
+            inbound_duplicate_total: 0,
+            inbound_commitment_rejection_total: 0,
+            journal_recovered_outbound_total: recovered_outbound.len() as u64,
+            journal_recovered_inbound_total: recovered_inbound.len() as u64,
+            journal_completed_inbound_total: 0,
+            journal_outbound_expired_total: 0,
+            journal_inbound_prepared_expired_total: 0,
             delivered_total: 0,
             failed_total: 0,
             worker_stopped: false,
@@ -33858,6 +33944,9 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
         let mut delivered = 0u64;
         let mut delivery_failed = 0u64;
         let mut tx_hashes = Vec::new();
+        if let Err(error) = self.maintain_delivery_journal_v1() {
+            self.record_local_delivery_journal_fault_v1(error);
+        }
         for event in self.runtime.drain_events(self.event_budget) {
             match event {
                 ProductMainlineOverlayEventV1::RelayConnected { relay_peer_id } => {
@@ -33906,73 +33995,111 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                     ));
                 }
                 ProductMainlineOverlayEventV1::Inbound(inbound) => {
-                    if inbound.payload_class
-                        != ProductMainlineOverlayPayloadClassV1::NativeTransaction
-                    {
-                        // Seal verification has a separate owner. Never feed opaque seal bytes
-                        // into native transaction ingress or its telemetry.
-                        continue;
-                    }
-                    match classify_product_mainline_peer_ingress_v1(
-                        self.chain_id,
-                        &inbound.source_peer_id,
-                        inbound.frame.payload.as_slice(),
-                    ) {
-                        ProductMainlinePeerIngressOutcomeV1::Accepted { tx_hash } => {
+                    match self.accept_product_overlay_inbound_v1(inbound) {
+                        Ok(Some(tx_hash)) => {
                             received = received.saturating_add(1);
-                            self.received_total = self.received_total.saturating_add(1);
                             tx_hashes.push(to_hex_prefixed(&tx_hash));
                         }
-                        ProductMainlinePeerIngressOutcomeV1::Rejected { error } => {
-                            self.peer_rejection_total = self.peer_rejection_total.saturating_add(1);
-                            self.last_peer_error = Some(error);
-                        }
-                        ProductMainlinePeerIngressOutcomeV1::LocalFault { error } => {
-                            self.worker_error = Some(error);
-                            self.failed_total = self.failed_total.saturating_add(1);
+                        Ok(None) => {}
+                        Err(error) => {
+                            self.record_local_delivery_journal_fault_v1(error);
                             break;
                         }
                     }
                 }
-                ProductMainlineOverlayEventV1::Delivery(delivery) => {
-                    if delivery.payload_class
+                ProductMainlineOverlayEventV1::RelayAdmission(admission) => {
+                    if admission.payload_class
                         != ProductMainlineOverlayPayloadClassV1::NativeTransaction
                     {
-                        // A transport delivery is not a propagated native transaction.
+                        // Seal verification and durable seal ownership remain a separate slice.
                         continue;
                     }
-                    let tx_hash = delivery.object_hash;
-                    let delivery_complete =
-                        self.in_flight
-                            .get_mut(&tx_hash)
-                            .is_some_and(|pending_peers| {
-                                pending_peers.remove(&delivery.remote_peer_id);
-                                pending_peers.is_empty()
-                            });
-                    if delivery_complete {
-                        self.in_flight.remove(&tx_hash);
-                    }
-                    if delivery.delivered {
-                        delivered = delivered.saturating_add(1);
-                        self.delivered_total = self.delivered_total.saturating_add(1);
-                        observe_network_runtime_native_pending_tx_propagated_with_context_v1(
-                            self.chain_id,
-                            tx_hash,
-                            Some(delivery.metric_peer_id),
-                            Some("product_overlay_relay_novorudp"),
-                            Some(self.max_propagations),
-                        );
+                    if admission.admitted {
+                        match self
+                            .delivery_journal
+                            .load_outbound(admission.delivery_id)
+                            .and_then(|record| match record {
+                                Some(_) => self
+                                    .delivery_journal
+                                    .mark_outbound_relay_admitted(
+                                        admission.delivery_id,
+                                        now_unix_ms(),
+                                    )
+                                    .map(Some),
+                                None => Ok(None),
+                            }) {
+                            Ok(Some(_)) => {
+                                self.relay_admitted_total =
+                                    self.relay_admitted_total.saturating_add(1);
+                            }
+                            Ok(None) => {
+                                // A recipient ACK can race a stale relay-admission event. The
+                                // durable ACK tombstone remains authoritative.
+                            }
+                            Err(error) => {
+                                self.record_local_delivery_journal_fault_v1(error);
+                                break;
+                            }
+                        }
                     } else {
                         delivery_failed = delivery_failed.saturating_add(1);
                         record_product_mainline_peer_delivery_failure_v1(
-                            &delivery.remote_peer_id,
-                            delivery.error,
+                            &admission.remote_peer_id,
+                            admission.error,
                             &mut self.peer_delivery_failure_total,
                             &mut self.peer_delivery_failure_counts,
                             &mut self.last_peer_error,
                         );
                     }
                 }
+                ProductMainlineOverlayEventV1::RecipientAckRelayAdmission(admission) => {
+                    if admission.admitted {
+                        self.recipient_acks_in_flight.remove(&admission.delivery_id);
+                        match self.delivery_journal.load_inbound(admission.delivery_id) {
+                            Ok(Some(_)) => {
+                                if let Err(error) = self
+                                    .delivery_journal
+                                    .mark_inbound_ack_emitted(admission.delivery_id, now_unix_ms())
+                                {
+                                    self.record_local_delivery_journal_fault_v1(error);
+                                    break;
+                                }
+                            }
+                            Ok(None) => {
+                                // AOEM completion may already have compacted the active inbox
+                                // to a durable tombstone while this ACK was in transit.
+                            }
+                            Err(error) => {
+                                self.record_local_delivery_journal_fault_v1(error);
+                                break;
+                            }
+                        }
+                        self.recipient_ack_relay_admitted_total =
+                            self.recipient_ack_relay_admitted_total.saturating_add(1);
+                    } else {
+                        record_product_mainline_peer_delivery_failure_v1(
+                            admission.original_sender_peer_id.as_str(),
+                            admission.error,
+                            &mut self.peer_delivery_failure_total,
+                            &mut self.peer_delivery_failure_counts,
+                            &mut self.last_peer_error,
+                        );
+                    }
+                }
+                ProductMainlineOverlayEventV1::RecipientAck {
+                    ack,
+                    metric_peer_id,
+                } => match self.accept_product_overlay_recipient_ack_v1(ack, metric_peer_id) {
+                    Ok(completed) => {
+                        if completed {
+                            delivered = delivered.saturating_add(1);
+                        }
+                    }
+                    Err(error) => {
+                        self.record_local_delivery_journal_fault_v1(error);
+                        break;
+                    }
+                },
                 ProductMainlineOverlayEventV1::WorkerStopped => {
                     self.worker_stopped = true;
                 }
@@ -34000,24 +34127,89 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 if self.in_flight.contains_key(&candidate.tx_hash) {
                     continue;
                 }
-                match self
-                    .runtime
-                    .try_submit(candidate.tx_hash, candidate.tx_payload)
-                {
-                    Ok(true) => {
-                        self.in_flight.insert(
-                            candidate.tx_hash,
-                            self.remote_peer_ids.iter().cloned().collect(),
-                        );
-                        submitted = submitted.saturating_add(1);
-                        self.submitted_total = self.submitted_total.saturating_add(1);
+                match self.delivery_journal.prepare_outbound_fanout(
+                    PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1,
+                    candidate.tx_hash,
+                    candidate.tx_payload.as_slice(),
+                    self.runtime.startup().local_peer_id.as_str(),
+                    self.remote_peer_ids.as_slice(),
+                    now_unix_ms(),
+                ) {
+                    Ok(prepared) => {
+                        if let Err(error) =
+                            self.apply_delivery_cleanup_summary_v1(&prepared.cleanup)
+                        {
+                            self.record_local_delivery_journal_fault_v1(error);
+                            break;
+                        }
+                        let pending_peers = prepared
+                            .recipients
+                            .into_iter()
+                            .filter(|recipient| {
+                                matches!(
+                                    recipient.disposition,
+                                    ProductDeliveryPrepareDispositionV1::Inserted
+                                        | ProductDeliveryPrepareDispositionV1::ExistingActive
+                                )
+                            })
+                            .map(|recipient| recipient.recipient_peer_id)
+                            .collect::<HashSet<_>>();
+                        if !pending_peers.is_empty() {
+                            self.in_flight.insert(candidate.tx_hash, pending_peers);
+                        }
                     }
-                    Ok(false) => break,
                     Err(error) => {
-                        self.worker_error = Some(error.to_string());
-                        self.failed_total = self.failed_total.saturating_add(1);
+                        self.record_local_delivery_journal_fault_v1(error);
                         break;
                     }
+                }
+            }
+            if self.worker_error.is_none() {
+                let due_limit = self
+                    .max_per_tick
+                    .saturating_mul(self.remote_peer_ids.len().max(1))
+                    .clamp(1, self.journal_scan_limit);
+                match self
+                    .delivery_journal
+                    .load_due_outbound(now_unix_ms(), due_limit)
+                {
+                    Ok(due) => {
+                        for record in due {
+                            let payload_class = match product_overlay_payload_class_from_label_v1(
+                                record.payload_class.as_str(),
+                            ) {
+                                Ok(payload_class) => payload_class,
+                                Err(error) => {
+                                    self.record_local_delivery_journal_fault_v1(error);
+                                    break;
+                                }
+                            };
+                            match self.runtime.try_submit_to_peer(
+                                record.recipient_peer_id.as_str(),
+                                payload_class,
+                                record.object_hash,
+                                record.payload,
+                            ) {
+                                Ok(true) => {
+                                    if let Err(error) = self
+                                        .delivery_journal
+                                        .mark_outbound_attempt(record.delivery_id, now_unix_ms())
+                                    {
+                                        self.record_local_delivery_journal_fault_v1(error);
+                                        break;
+                                    }
+                                    submitted = submitted.saturating_add(1);
+                                    self.submitted_total = self.submitted_total.saturating_add(1);
+                                }
+                                Ok(false) => break,
+                                Err(error) => {
+                                    self.record_local_delivery_journal_fault_v1(error);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => self.record_local_delivery_journal_fault_v1(error),
                 }
             }
         }
@@ -34030,6 +34222,13 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 delivery_failed == 0,
             );
         }
+        let journal_usage = match self.delivery_journal.usage() {
+            Ok(usage) => Some(usage),
+            Err(error) => {
+                self.record_local_delivery_journal_fault_v1(error);
+                None
+            }
+        };
         let mut report = serde_json::json!({
             "enabled": true,
             "ok": self.worker_error.is_none() && !self.worker_stopped,
@@ -34061,11 +34260,30 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             "inbound_entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
             "inbound_policy": "signature_identity_nonce_chain_domain_before_pending",
             "execution_owner_after_ingress": "aoem_runtime",
+            "delivery_completion_authority": "recipient_identity_signed_durable_journal_ack",
+            "relay_admission_is_delivery_completion": false,
+            "recipient_ack_proves_aoem_execution": false,
+            "recipient_ack_proves_consensus_finality": false,
+            "delivery_journal_path": self.delivery_journal.path(),
+            "delivery_journal_entries": journal_usage.as_ref().map(|usage| usage.entries),
+            "delivery_journal_payload_bytes": journal_usage.as_ref().map(|usage| usage.payload_bytes),
+            "journal_recovered_outbound_total": self.journal_recovered_outbound_total,
+            "journal_recovered_inbound_total": self.journal_recovered_inbound_total,
+            "journal_completed_inbound_total": self.journal_completed_inbound_total,
+            "journal_outbound_expired_total": self.journal_outbound_expired_total,
+            "journal_inbound_prepared_expired_total": self.journal_inbound_prepared_expired_total,
             "received": received,
             "received_total": self.received_total,
+            "inbound_duplicate_total": self.inbound_duplicate_total,
+            "inbound_commitment_rejection_total": self.inbound_commitment_rejection_total,
             "candidate_count": candidate_count,
             "submitted": submitted,
             "submitted_total": self.submitted_total,
+            "relay_admitted_total": self.relay_admitted_total,
+            "recipient_ack_queued_total": self.recipient_ack_queued_total,
+            "recipient_ack_relay_admitted_total": self.recipient_ack_relay_admitted_total,
+            "recipient_acked_total": self.recipient_acked_total,
+            "recipient_ack_duplicate_total": self.recipient_ack_duplicate_total,
             "delivered": delivered,
             "delivered_total": self.delivered_total,
             "delivery_failed": delivery_failed,
@@ -34076,6 +34294,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 .values()
                 .map(HashSet::len)
                 .sum::<usize>() as u64,
+            "recipient_acks_in_flight": self.recipient_acks_in_flight.len() as u64,
             "worker_stopped": self.worker_stopped,
             "error": self.worker_error,
             "tx_hashes": tx_hashes,
@@ -34093,10 +34312,400 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
         report
     }
 
+    fn record_local_delivery_journal_fault_v1(&mut self, error: impl std::fmt::Display) {
+        if self.worker_error.is_none() {
+            self.worker_error = Some(format!("product delivery journal local fault: {error}"));
+        }
+        self.failed_total = self.failed_total.saturating_add(1);
+    }
+
+    fn record_peer_ingress_rejection_v1(&mut self, error: impl Into<String>) {
+        self.peer_rejection_total = self.peer_rejection_total.saturating_add(1);
+        self.last_peer_error = Some(error.into());
+    }
+
+    fn maintain_delivery_journal_v1(&mut self) -> Result<()> {
+        let now_ms = now_unix_ms();
+        let cleanup = self.delivery_journal.cleanup_expired(now_ms)?;
+        self.apply_delivery_cleanup_summary_v1(&cleanup)?;
+        let startup_recovery = self.startup_recovery_pending;
+        let inbound = self
+            .delivery_journal
+            .load_inbound_recovery(self.journal_scan_limit)?;
+        for record in inbound {
+            self.maintain_inbound_record_v1(record, startup_recovery, now_ms)?;
+        }
+        if startup_recovery {
+            self.startup_recovery_pending = false;
+        }
+        let unobserved = self
+            .delivery_journal
+            .load_unobserved_completed_fanouts(self.journal_scan_limit)?;
+        for fanout in unobserved {
+            self.observe_completed_outbound_fanout_v1(fanout.fanout_id, None, now_ms)?;
+        }
+        Ok(())
+    }
+
+    fn apply_delivery_cleanup_summary_v1(
+        &mut self,
+        cleanup: &ProductDeliveryCleanupSummaryV1,
+    ) -> Result<()> {
+        self.journal_outbound_expired_total = self
+            .journal_outbound_expired_total
+            .saturating_add(cleanup.outbound_expired as u64);
+        self.journal_inbound_prepared_expired_total = self
+            .journal_inbound_prepared_expired_total
+            .saturating_add(cleanup.inbound_prepared_expired as u64);
+        if cleanup.outbound_expired > 0 {
+            self.rebuild_native_outbound_in_flight_v1()?;
+        }
+        Ok(())
+    }
+
+    fn rebuild_native_outbound_in_flight_v1(&mut self) -> Result<()> {
+        let active = self
+            .delivery_journal
+            .load_due_outbound(u64::MAX, self.journal_scan_limit)?;
+        let mut rebuilt = HashMap::<[u8; 32], HashSet<String>>::new();
+        for record in active {
+            if !self
+                .remote_peer_ids
+                .iter()
+                .any(|configured| configured == &record.recipient_peer_id)
+            {
+                bail!(
+                    "active product delivery obligation targets unconfigured peer {}",
+                    record.recipient_peer_id
+                );
+            }
+            if record.payload_class == PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1 {
+                rebuilt
+                    .entry(record.object_hash)
+                    .or_default()
+                    .insert(record.recipient_peer_id);
+            }
+        }
+        self.in_flight = rebuilt;
+        Ok(())
+    }
+
+    fn maintain_inbound_record_v1(
+        &mut self,
+        record: ProductDeliveryInboundRecordV1,
+        startup_recovery: bool,
+        now_ms: u64,
+    ) -> Result<()> {
+        if record.payload_class != PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1 {
+            // Native seals require their own durable verification/quarantine owner before ACK.
+            return Ok(());
+        }
+        let receipt_exists = get_nov_native_execution_receipt_by_hash_v1(
+            to_hex_prefixed(&record.object_hash).as_str(),
+        )?
+        .is_some();
+        match record.state {
+            ProductDeliveryInboundStateV1::Prepared if startup_recovery => {
+                let preview = canonical_nov_native_tx_hash_from_payload_v1(&record.payload)
+                    .context("recover product delivery canonical transaction hash")?;
+                if preview != record.object_hash {
+                    bail!("recovered product delivery object hash commitment mismatch");
+                }
+                match classify_product_mainline_peer_ingress_v1(
+                    self.chain_id,
+                    record.original_sender_peer_id.as_str(),
+                    record.object_hash,
+                    record.payload.as_slice(),
+                ) {
+                    ProductMainlinePeerIngressOutcomeV1::Accepted { tx_hash } => {
+                        if tx_hash != record.object_hash {
+                            bail!("recovered ingress returned a different canonical tx hash");
+                        }
+                        let accepted = self
+                            .delivery_journal
+                            .accept_inbound(record.delivery_id, now_ms)?;
+                        self.queue_recipient_ack_for_record_v1(&accepted)?;
+                    }
+                    ProductMainlinePeerIngressOutcomeV1::Rejected { error } => {
+                        self.record_peer_ingress_rejection_v1(error);
+                    }
+                    ProductMainlinePeerIngressOutcomeV1::LocalFault { error } => bail!(error),
+                }
+            }
+            ProductDeliveryInboundStateV1::Prepared => {}
+            ProductDeliveryInboundStateV1::Accepted => {
+                if startup_recovery && !receipt_exists {
+                    match classify_product_mainline_peer_ingress_v1(
+                        self.chain_id,
+                        record.original_sender_peer_id.as_str(),
+                        record.object_hash,
+                        record.payload.as_slice(),
+                    ) {
+                        ProductMainlinePeerIngressOutcomeV1::Accepted { tx_hash }
+                            if tx_hash == record.object_hash => {}
+                        ProductMainlinePeerIngressOutcomeV1::Accepted { .. } => {
+                            bail!("recovered accepted ingress returned a different tx hash")
+                        }
+                        ProductMainlinePeerIngressOutcomeV1::Rejected { error }
+                        | ProductMainlinePeerIngressOutcomeV1::LocalFault { error } => {
+                            bail!("recover accepted product delivery failed: {error}")
+                        }
+                    }
+                }
+                if record.ack_pending {
+                    self.queue_recipient_ack_for_record_v1(&record)?;
+                }
+                if receipt_exists && !record.ack_pending {
+                    self.delivery_journal
+                        .complete_inbound(record.delivery_id, now_ms)?;
+                    self.journal_completed_inbound_total =
+                        self.journal_completed_inbound_total.saturating_add(1);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn accept_product_overlay_inbound_v1(
+        &mut self,
+        inbound: ProductMainlineOverlayInboundV1,
+    ) -> Result<Option<[u8; 32]>> {
+        if inbound.payload_class != ProductMainlineOverlayPayloadClassV1::NativeTransaction {
+            return Ok(None);
+        }
+        let payload = inbound.frame.payload.as_slice();
+        let preview = match canonical_nov_native_tx_hash_from_payload_v1(payload) {
+            Ok(preview) => preview,
+            Err(error) => {
+                self.inbound_commitment_rejection_total =
+                    self.inbound_commitment_rejection_total.saturating_add(1);
+                self.record_peer_ingress_rejection_v1(format!(
+                    "product overlay canonical transaction preview failed for peer {}: {error}",
+                    inbound.source_peer_id
+                ));
+                return Ok(None);
+            }
+        };
+        if preview != inbound.object_hash {
+            self.inbound_commitment_rejection_total =
+                self.inbound_commitment_rejection_total.saturating_add(1);
+            self.record_peer_ingress_rejection_v1(format!(
+                "product overlay object hash commitment mismatch for peer {}",
+                inbound.source_peer_id
+            ));
+            return Ok(None);
+        }
+        if product_delivery_payload_sha256_v1(payload) != inbound.payload_sha256 {
+            bail!("authenticated product overlay payload digest changed before journal prepare");
+        }
+        let now_ms = now_unix_ms();
+        let prepared = self.delivery_journal.prepare_inbound(
+            inbound.delivery_id,
+            inbound.payload_class.label(),
+            inbound.object_hash,
+            payload,
+            inbound.source_peer_id.as_str(),
+            now_ms,
+        )?;
+        self.apply_delivery_cleanup_summary_v1(&prepared.cleanup)?;
+        match prepared.disposition {
+            ProductDeliveryInboundPrepareDispositionV1::ExistingCompleted => {
+                self.inbound_duplicate_total = self.inbound_duplicate_total.saturating_add(1);
+                let tombstone = prepared
+                    .tombstone
+                    .context("completed inbound delivery tombstone is missing")?;
+                self.queue_recipient_ack_binding_v1(
+                    inbound.payload_class,
+                    inbound.object_hash,
+                    inbound.payload_sha256,
+                    inbound.delivery_id,
+                    inbound.source_peer_id.as_str(),
+                    tombstone.terminal_at_unix_ms,
+                )?;
+                Ok(None)
+            }
+            ProductDeliveryInboundPrepareDispositionV1::ExistingAccepted => {
+                self.inbound_duplicate_total = self.inbound_duplicate_total.saturating_add(1);
+                let record = prepared
+                    .record
+                    .context("accepted inbound delivery record is missing")?;
+                self.queue_recipient_ack_for_record_v1(&record)?;
+                Ok(None)
+            }
+            ProductDeliveryInboundPrepareDispositionV1::ExistingExpired => {
+                self.record_peer_ingress_rejection_v1(format!(
+                    "product overlay delivery from peer {} replayed after journal expiry",
+                    inbound.source_peer_id
+                ));
+                Ok(None)
+            }
+            ProductDeliveryInboundPrepareDispositionV1::Inserted
+            | ProductDeliveryInboundPrepareDispositionV1::ExistingPrepared => {
+                match classify_product_mainline_peer_ingress_v1(
+                    self.chain_id,
+                    inbound.source_peer_id.as_str(),
+                    inbound.object_hash,
+                    payload,
+                ) {
+                    ProductMainlinePeerIngressOutcomeV1::Accepted { tx_hash } => {
+                        if tx_hash != inbound.object_hash {
+                            bail!("native ingress hash changed after commitment validation");
+                        }
+                        let accepted = self
+                            .delivery_journal
+                            .accept_inbound(inbound.delivery_id, now_ms)?;
+                        self.queue_recipient_ack_for_record_v1(&accepted)?;
+                        self.received_total = self.received_total.saturating_add(1);
+                        Ok(Some(tx_hash))
+                    }
+                    ProductMainlinePeerIngressOutcomeV1::Rejected { error } => {
+                        self.record_peer_ingress_rejection_v1(error);
+                        Ok(None)
+                    }
+                    ProductMainlinePeerIngressOutcomeV1::LocalFault { error } => bail!(error),
+                }
+            }
+        }
+    }
+
+    fn queue_recipient_ack_for_record_v1(
+        &mut self,
+        record: &ProductDeliveryInboundRecordV1,
+    ) -> Result<bool> {
+        let payload_class =
+            product_overlay_payload_class_from_label_v1(record.payload_class.as_str())?;
+        self.queue_recipient_ack_binding_v1(
+            payload_class,
+            record.object_hash,
+            record.payload_sha256,
+            record.delivery_id,
+            record.original_sender_peer_id.as_str(),
+            record
+                .accepted_at_unix_ms
+                .context("accepted inbound delivery timestamp is missing")?,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn queue_recipient_ack_binding_v1(
+        &mut self,
+        payload_class: ProductMainlineOverlayPayloadClassV1,
+        object_hash: [u8; 32],
+        payload_sha256: [u8; 32],
+        delivery_id: [u8; 32],
+        original_sender_peer_id: &str,
+        accepted_at_ms: u64,
+    ) -> Result<bool> {
+        if self.recipient_acks_in_flight.contains(&delivery_id) {
+            return Ok(true);
+        }
+        let queued = self.runtime.try_submit_recipient_ack_binding(
+            payload_class,
+            object_hash,
+            payload_sha256,
+            delivery_id,
+            original_sender_peer_id,
+            accepted_at_ms,
+        )?;
+        if queued {
+            self.recipient_acks_in_flight.insert(delivery_id);
+            self.recipient_ack_queued_total = self.recipient_ack_queued_total.saturating_add(1);
+        }
+        Ok(queued)
+    }
+
+    fn accept_product_overlay_recipient_ack_v1(
+        &mut self,
+        ack: ProductMainlineOverlayRecipientAckV1,
+        metric_peer_id: u64,
+    ) -> Result<bool> {
+        let result = self.delivery_journal.mark_outbound_recipient_ack(
+            &ProductDeliveryRecipientAckV1 {
+                delivery_id: ack.delivery_id,
+                chain_id: ack.chain_id,
+                payload_class: ack.payload_class.label().to_string(),
+                object_hash: ack.object_hash,
+                payload_sha256: ack.payload_sha256,
+                original_sender_peer_id: ack.original_sender_peer_id,
+                recipient_peer_id: ack.recipient_peer_id.clone(),
+            },
+            now_unix_ms(),
+        )?;
+        self.apply_delivery_cleanup_summary_v1(&result.cleanup)?;
+        if result.late_after_expiry {
+            record_product_mainline_peer_delivery_failure_v1(
+                ack.recipient_peer_id.as_str(),
+                Some("recipient ACK arrived after durable obligation expiry".to_string()),
+                &mut self.peer_delivery_failure_total,
+                &mut self.peer_delivery_failure_counts,
+                &mut self.last_peer_error,
+            );
+            return Ok(false);
+        }
+        if result.duplicate {
+            self.recipient_ack_duplicate_total =
+                self.recipient_ack_duplicate_total.saturating_add(1);
+        } else {
+            self.recipient_acked_total = self.recipient_acked_total.saturating_add(1);
+        }
+        let tx_hash = result.tombstone.object_hash;
+        let delivery_complete = self
+            .in_flight
+            .get_mut(&tx_hash)
+            .is_some_and(|pending_peers| {
+                pending_peers.remove(&ack.recipient_peer_id);
+                pending_peers.is_empty()
+            });
+        if delivery_complete {
+            self.in_flight.remove(&tx_hash);
+        }
+        if result.fanout_all_acked {
+            let fanout_id = result
+                .tombstone
+                .fanout_id
+                .context("recipient ACK tombstone is missing its fanout id")?;
+            return self.observe_completed_outbound_fanout_v1(
+                fanout_id,
+                Some(metric_peer_id),
+                now_unix_ms(),
+            );
+        }
+        Ok(false)
+    }
+
+    fn observe_completed_outbound_fanout_v1(
+        &mut self,
+        fanout_id: [u8; 32],
+        metric_peer_id: Option<u64>,
+        now_ms: u64,
+    ) -> Result<bool> {
+        let Some(claim) = self
+            .delivery_journal
+            .claim_outbound_completion(fanout_id, now_ms)?
+        else {
+            return Ok(false);
+        };
+        if claim.fanout.payload_class == PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1 {
+            observe_network_runtime_native_pending_tx_propagated_with_context_v1(
+                self.chain_id,
+                claim.fanout.object_hash,
+                metric_peer_id.or(Some(self.runtime.metric_peer_id())),
+                Some("product_overlay_recipient_durable_ack"),
+                Some(self.max_propagations),
+            );
+            self.in_flight.remove(&claim.fanout.object_hash);
+            self.delivered_total = self.delivered_total.saturating_add(1);
+        }
+        self.delivery_journal
+            .mark_outbound_completion_observed(fanout_id, now_ms)?;
+        Ok(claim.fanout.payload_class == PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1)
+    }
+
     fn decorate_summary(&self, summary: &mut serde_json::Value) {
         let Some(object) = summary.as_object_mut() else {
             return;
         };
+        let journal_usage = self.delivery_journal.usage().ok();
         let mut overlay = serde_json::json!({
             "enabled": true,
             "source": NATIVE_EXECUTION_PIPELINE_PRODUCT_OVERLAY_SOURCE_V1,
@@ -34127,8 +34736,27 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             "inbound_entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
             "inbound_policy": "signature_identity_nonce_chain_domain_before_pending",
             "execution_owner_after_ingress": "aoem_runtime",
+            "delivery_completion_authority": "recipient_identity_signed_durable_journal_ack",
+            "relay_admission_is_delivery_completion": false,
+            "recipient_ack_proves_aoem_execution": false,
+            "recipient_ack_proves_consensus_finality": false,
+            "delivery_journal_path": self.delivery_journal.path(),
+            "delivery_journal_entries": journal_usage.as_ref().map(|usage| usage.entries),
+            "delivery_journal_payload_bytes": journal_usage.as_ref().map(|usage| usage.payload_bytes),
+            "journal_recovered_outbound_total": self.journal_recovered_outbound_total,
+            "journal_recovered_inbound_total": self.journal_recovered_inbound_total,
+            "journal_completed_inbound_total": self.journal_completed_inbound_total,
+            "journal_outbound_expired_total": self.journal_outbound_expired_total,
+            "journal_inbound_prepared_expired_total": self.journal_inbound_prepared_expired_total,
             "received_total": self.received_total,
+            "inbound_duplicate_total": self.inbound_duplicate_total,
+            "inbound_commitment_rejection_total": self.inbound_commitment_rejection_total,
             "submitted_total": self.submitted_total,
+            "relay_admitted_total": self.relay_admitted_total,
+            "recipient_ack_queued_total": self.recipient_ack_queued_total,
+            "recipient_ack_relay_admitted_total": self.recipient_ack_relay_admitted_total,
+            "recipient_acked_total": self.recipient_acked_total,
+            "recipient_ack_duplicate_total": self.recipient_ack_duplicate_total,
             "delivered_total": self.delivered_total,
             "failed_total": self.failed_total,
             "in_flight": self.in_flight.len() as u64,
@@ -34137,6 +34765,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 .values()
                 .map(HashSet::len)
                 .sum::<usize>() as u64,
+            "recipient_acks_in_flight": self.recipient_acks_in_flight.len() as u64,
             "worker_stopped": self.worker_stopped,
             "error": self.worker_error,
         });
@@ -34162,6 +34791,9 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
     fn validate_signoff(&self) -> Result<()> {
         if !bool_env("NOVOVM_PRODUCT_MAINLINE_OVERLAY_SIGNOFF_REQUIRED") {
             return Ok(());
+        }
+        if self.startup_recovery_pending {
+            bail!("product mainline overlay signoff did not run journal startup recovery");
         }
         if let Some(error) = self.worker_error.as_deref() {
             bail!("product mainline overlay worker failed: {error}");
@@ -34199,7 +34831,68 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 self.in_flight.len()
             );
         }
+        if !self.recipient_acks_in_flight.is_empty() {
+            bail!(
+                "product mainline overlay signoff has {} recipient ACKs not yet relay-admitted",
+                self.recipient_acks_in_flight.len()
+            );
+        }
+        let active_outbound = self
+            .delivery_journal
+            .load_due_outbound(u64::MAX, self.journal_scan_limit)?;
+        if !active_outbound.is_empty() {
+            bail!(
+                "product mainline overlay signoff has {} durable outbound recipient obligations",
+                active_outbound.len()
+            );
+        }
+        let inbound = self
+            .delivery_journal
+            .load_inbound_recovery(self.journal_scan_limit)?;
+        let unresolved_inbound = inbound
+            .iter()
+            .filter(|record| {
+                record.state == ProductDeliveryInboundStateV1::Prepared || record.ack_pending
+            })
+            .count();
+        if unresolved_inbound > 0 {
+            bail!(
+                "product mainline overlay signoff has {unresolved_inbound} durable inbound obligations not ACK-admitted"
+            );
+        }
+        let unobserved = self
+            .delivery_journal
+            .load_unobserved_completed_fanouts(self.journal_scan_limit)?;
+        if !unobserved.is_empty() {
+            bail!(
+                "product mainline overlay signoff has {} unobserved durable fanout completions",
+                unobserved.len()
+            );
+        }
+        if self.journal_outbound_expired_total > 0
+            || self.journal_inbound_prepared_expired_total > 0
+        {
+            bail!(
+                "product mainline overlay signoff observed durable delivery expiry: outbound={} inbound_prepared={}",
+                self.journal_outbound_expired_total,
+                self.journal_inbound_prepared_expired_total
+            );
+        }
         Ok(())
+    }
+}
+
+fn product_overlay_payload_class_from_label_v1(
+    label: &str,
+) -> Result<ProductMainlineOverlayPayloadClassV1> {
+    match label {
+        PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1 => {
+            Ok(ProductMainlineOverlayPayloadClassV1::NativeTransaction)
+        }
+        PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_SEAL_V1 => {
+            Ok(ProductMainlineOverlayPayloadClassV1::NativeSeal)
+        }
+        _ => bail!("unsupported product delivery payload class {label}"),
     }
 }
 
@@ -34230,8 +34923,26 @@ enum ProductMainlinePeerIngressOutcomeV1 {
 fn classify_product_mainline_peer_ingress_v1(
     chain_id: u64,
     source_peer_id: &str,
+    announced_object_hash: [u8; 32],
     payload: &[u8],
 ) -> ProductMainlinePeerIngressOutcomeV1 {
+    match canonical_nov_native_tx_hash_from_payload_v1(payload) {
+        Ok(actual) if actual == announced_object_hash => {}
+        Ok(_) => {
+            return ProductMainlinePeerIngressOutcomeV1::Rejected {
+                error: format!(
+                    "product overlay transaction object hash mismatch for payload from {source_peer_id}"
+                ),
+            };
+        }
+        Err(error) => {
+            return ProductMainlinePeerIngressOutcomeV1::Rejected {
+                error: format!(
+                    "product overlay transaction commitment validation failed for payload from {source_peer_id}: {error}"
+                ),
+            };
+        }
+    }
     match ingest_product_mainline_overlay_peer_payload_v1(chain_id, payload) {
         Ok(receipt) => ProductMainlinePeerIngressOutcomeV1::Accepted {
             tx_hash: receipt.tx_hash,
@@ -34283,18 +34994,49 @@ mod product_mainline_peer_ingress_tests {
         let outcome = classify_product_mainline_peer_ingress_v1(
             7,
             "peer-malicious",
+            [0u8; 32],
             b"not-a-native-transaction",
         );
         match outcome {
             ProductMainlinePeerIngressOutcomeV1::Rejected { error } => {
                 assert!(error.contains("peer-malicious"));
-                assert!(error.contains("failed for payload"));
+                assert!(error.contains("commitment validation failed"));
             }
             ProductMainlinePeerIngressOutcomeV1::Accepted { .. }
             | ProductMainlinePeerIngressOutcomeV1::LocalFault { .. } => {
                 panic!("invalid peer payload unexpectedly entered pending state")
             }
         }
+    }
+
+    #[test]
+    fn announced_hash_mismatch_is_rejected_before_pending_ingress() {
+        let chain_id = 9_991_337;
+        let payload = build_native_execution_pipeline_fixture_payloads_v1(chain_id, 1)
+            .expect("build signed fixture")
+            .remove(0);
+        let actual_hash =
+            canonical_nov_native_tx_hash_from_payload_v1(&payload).expect("canonical hash");
+        let mut announced_hash = actual_hash;
+        announced_hash[0] ^= 0xff;
+
+        let outcome = classify_product_mainline_peer_ingress_v1(
+            chain_id,
+            "peer-equivocation",
+            announced_hash,
+            &payload,
+        );
+
+        match outcome {
+            ProductMainlinePeerIngressOutcomeV1::Rejected { error } => {
+                assert!(error.contains("object hash mismatch"));
+            }
+            ProductMainlinePeerIngressOutcomeV1::Accepted { .. }
+            | ProductMainlinePeerIngressOutcomeV1::LocalFault { .. } => {
+                panic!("mismatched commitment unexpectedly entered pending state")
+            }
+        }
+        assert!(get_network_runtime_native_pending_tx_v1(chain_id, actual_hash).is_none());
     }
 }
 

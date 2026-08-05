@@ -223,6 +223,9 @@ $report = [ordered]@{
         apfl_interpreted = $false
         aoem_called = $false
         ledger_semantics = $false
+        product_mainline_runtime = $false
+        recipient_ack_verified = $false
+        durable_delivery_journal = $false
         novorudp_wire_changed = $false
     }
     max_frames = $MaxFrames

@@ -60,12 +60,12 @@ CPU/byte/rate budget 仍属于资源治理门。
 共享 relay 被轮换时，所有 peer 都必须在新 relay 上建立新 E2E channel；新 endpoint 仍
 只能从已验证的 signed bootstrap pool 中选择。
 
-## 4. Delivery 的精确定义
+## 4. RelayAdmission 与 RecipientAck 的精确定义
 
 当前事件：
 
 ```text
-Delivery { delivered: true }
+RelayAdmission { admitted: true }
 ```
 
 经 `NOVOVM Product Relay Admission & Resource Bounds v1` 收紧后，只表示 relay 返回了与
@@ -76,16 +76,25 @@ count/bytes/TTL 上限的 relay 内存队列。它不证明：
 recipient received
 recipient decrypted/authenticated
 quarantine persisted
-native transaction accepted
+Host ingress accepted
 artifact executed/voted/QC-sealed
 ```
 
-当前没有绑定 `(epoch, object_hash, recipient)` 的 recipient durable ACK 或 journal。relay
-接纳之后、recipient ACK 之前发生断线时，sent-but-unacknowledged obligation 仍可能丢失；进程
-重启也不能恢复内存 pending queue。因此本切片不提供 exactly-once、at-least-once 或
-restart-safe delivery 保证。
+NativeTransaction 主线现在使用 Host-owned、per-recipient RocksDB delivery journal，并要求
+验证 recipient 签名的 `journal_persisted` ACK 后才终结对应 obligation。Relay admission 只释放
+Overlay worker 的进程内 queue permit；未 ACK obligation 可以在重启后从 journal 恢复并按
+retry/TTL 策略重投。该 ACK 只证明 recipient Host journal 已 durable Accepted，且 payload 已
+进入 pending-only native ingress；它不证明 AOEM 已执行、receipt 已生成或任何 seal/QC/finality
+状态。ACK 可以在 AOEM 执行前发送；recipient inbound terminal tombstone 仍要求 ACK 已获得
+relay admission（`ack_pending=false`）与 AOEM execution receipt 两个条件同时满足。
 
-`Delivery(false)` 只更新 `peer_delivery_failure_total`、
+这仍不是 exactly-once delivery。准确语义是 retry-until-ACK-or-expiry、duplicate-tolerant；
+completion projection 也可能在 claim 已落盘而 observed 尚未落盘时重驱。NativeSeal 虽有
+transport payload class 和 quarantine API，但活动 main runtime 仍跳过 NativeSeal，尚没有把
+durable verification/quarantine owner 接到 ACK 生成路径，因此不得外推 transaction ACK 的
+完成状态。
+
+`RelayAdmission(admitted=false)` 只更新 `peer_delivery_failure_total`、
 `peer_delivery_failure_counts[remote_peer_id]` 和 `last_peer_error`。它不会写入全局
 `worker_error` / `failed_total`，也不会因单个 peer 的 TTL 或 relay admission 失败冻结其他
 健康 peer 的广播。
@@ -95,8 +104,10 @@ restart-safe delivery 保证。
 上述资源风险已由 `docs/NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md` 接管：
 outbound fan-out、pre-auth、event channel、relay physical/authenticated admission、active/
 offline queues、per-source 与 aggregate ingress 都具有 count/byte/TTL 或速率边界。该签收
-仍只覆盖进程内 ownership；recipient durable journal、source fairness、wire capability
-协商和公网容量实测不在其范围内。
+仍只覆盖进程内 ownership。NativeTransaction 的 Host durable journal/recipient ACK 由
+[`NOVOVM Product Durable Recipient ACK & Delivery Journal v1`](NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md)
+单独治理；NativeSeal durable owner、source fairness、wire capability 协商和公网容量实测
+不在本资源切片范围内。
 
 ## 6. 准确签收语言
 
@@ -109,13 +120,14 @@ offline queues、per-source 与 aggregate ingress 都具有 count/byte/TTL 或�
 
 ```text
 full Peer-Local Fault Isolation = SEALED
-per-peer obligation is durable
-Delivery=true means recipient ACK
-relay resource governance includes recipient durability or source fairness
+RelayAdmission means recipient ACK
+NativeTransaction recipient ACK means AOEM execution or receipt
+NativeSeal durable verification/quarantine ACK owner is active
+relay resource governance itself proves recipient durability or source fairness
 NativeSeal automatic runtime is activation-ready
 public four-machine topology has passed
 ```
 
-后续至少仍需：third-flight key-confirm、per-recipient
-durable ACK/journal、bounded body/DA、identity guard 原子签名接入，以及公网四机与 Linux
-package/long-soak 证据。
+后续至少仍需：third-flight key-confirm、NativeSeal per-recipient durable
+verification/quarantine ACK owner、bounded body/DA、identity guard 原子签名接入，以及公网
+四机与 Linux package/long-soak 证据。

@@ -5,7 +5,7 @@
 //! policy before AOEM execution; native seal bytes remain opaque to this transport module.
 
 use anyhow::{bail, Context, Result};
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use novovm_network::{
     peer_id_from_ed25519_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
     NodeHandshakeInitiatorV1, NodeHandshakeResponderV1, NovoRudpTransportFrameKindV0,
@@ -14,6 +14,7 @@ use novovm_network::{
     StrategyPathV1,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
@@ -28,6 +29,7 @@ use std::{
 };
 
 use crate::{
+    product_delivery_journal::product_delivery_id_v1,
     product_node_overlay::{
         ProductNodeBootstrapStatusV1, ProductNodeOverlayConfigV1, ProductNodeOverlayRuntimeV1,
         ProductNodeRoutePlanV1,
@@ -52,6 +54,14 @@ const PRODUCT_MAINLINE_OVERLAY_EVENT_SLOT_OVERHEAD_BYTES_V1: usize = 4 * 1024;
 const PRODUCT_MAINLINE_OVERLAY_EVENT_RETRY_DELAY_MS_V1: u64 = 5;
 const PRODUCT_MAINLINE_OVERLAY_EVENT_TEXT_MAX_BYTES_V1: usize = 4 * 1024;
 const PRODUCT_MAINLINE_OVERLAY_EVENT_DRAIN_MAX_BATCH_V1: usize = 256;
+const PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_MAGIC_V1: [u8; 8] = *b"NOVACK01";
+const PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1: &[u8] =
+    b"novovm-product-mainline-recipient-ack/v1";
+const PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_VERSION_V1: u16 = 1;
+const PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_SIGNATURE_BYTES_V1: usize = 64;
+const PRODUCT_MAINLINE_OVERLAY_PEER_ID_MAX_BYTES_V1: usize = 256;
+const DEFAULT_PRODUCT_MAINLINE_OVERLAY_DELIVERY_JOURNAL_NAME_V1: &str =
+    "novovm-product-delivery-journal.rocksdb";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -83,6 +93,11 @@ pub struct ProductMainlineOverlayResourceLimitsV1 {
     pub preauth_total_count: usize,
     pub preauth_total_bytes: usize,
     pub preauth_ttl_ms: u64,
+    pub journal_max_entries: usize,
+    pub journal_max_bytes: usize,
+    pub journal_obligation_ttl_ms: u64,
+    pub journal_terminal_retention_ms: u64,
+    pub journal_retry_interval_ms: u64,
 }
 
 impl Default for ProductMainlineOverlayResourceLimitsV1 {
@@ -99,6 +114,11 @@ impl Default for ProductMainlineOverlayResourceLimitsV1 {
             preauth_total_count: 1_024,
             preauth_total_bytes: 64 * 1024 * 1024,
             preauth_ttl_ms: PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1,
+            journal_max_entries: 65_536,
+            journal_max_bytes: 512 * 1024 * 1024,
+            journal_obligation_ttl_ms: 24 * 60 * 60 * 1_000,
+            journal_terminal_retention_ms: 7 * 24 * 60 * 60 * 1_000,
+            journal_retry_interval_ms: 1_000,
         }
     }
 }
@@ -118,6 +138,13 @@ impl ProductMainlineOverlayPayloadClassV1 {
             _ => bail!("product mainline overlay payload class {code} is unsupported"),
         }
     }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NativeTransaction => "native_transaction",
+            Self::NativeSeal => "native_seal",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,6 +158,7 @@ pub struct ProductMainlineOverlayConfigV1 {
     pub chain_id: u64,
     pub role: ProductMainlineOverlayRoleV1,
     pub identity_key_path: PathBuf,
+    pub delivery_journal_path: Option<PathBuf>,
     pub overlay: ProductNodeOverlayConfigV1,
     pub target_peer_id: Option<String>,
     pub expected_source_peer_id: Option<String>,
@@ -150,6 +178,8 @@ struct ProductMainlineOverlayConfigSerdeV1 {
     chain_id: u64,
     role: ProductMainlineOverlayRoleV1,
     identity_key_path: PathBuf,
+    #[serde(default)]
+    delivery_journal_path: Option<PathBuf>,
     overlay: ProductNodeOverlayConfigV1,
     #[serde(default)]
     target_peer_id: Option<String>,
@@ -188,6 +218,7 @@ impl<'de> Deserialize<'de> for ProductMainlineOverlayConfigV1 {
             chain_id: decoded.chain_id,
             role: decoded.role,
             identity_key_path: decoded.identity_key_path,
+            delivery_journal_path: decoded.delivery_journal_path,
             overlay: decoded.overlay,
             target_peer_id: decoded.target_peer_id,
             expected_source_peer_id: decoded.expected_source_peer_id,
@@ -228,6 +259,9 @@ pub struct ProductMainlineOverlayStartupV1 {
 pub struct ProductMainlineOverlayInboundV1 {
     pub payload_class: ProductMainlineOverlayPayloadClassV1,
     pub object_hash: [u8; 32],
+    pub delivery_id: [u8; 32],
+    pub payload_sha256: [u8; 32],
+    pub original_frame_sequence: u64,
     pub source_peer_id: String,
     /// The logical transport frame. Its payload is restored to the exact caller-supplied bytes
     /// after the authenticated Product Overlay classification envelope is removed.
@@ -235,13 +269,79 @@ pub struct ProductMainlineOverlayInboundV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProductMainlineOverlayDeliveryV1 {
+pub struct ProductMainlineOverlayRelayAdmissionV1 {
     pub payload_class: ProductMainlineOverlayPayloadClassV1,
     pub object_hash: [u8; 32],
+    pub delivery_id: [u8; 32],
+    pub payload_sha256: [u8; 32],
     pub remote_peer_id: String,
     pub metric_peer_id: u64,
-    pub delivered: bool,
+    pub admitted: bool,
+    pub disposition: Option<RelayForwardDispositionV1>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductMainlineOverlayRecipientAckDispositionV1 {
+    JournalPersisted,
+}
+
+impl ProductMainlineOverlayRecipientAckDispositionV1 {
+    const fn code(self) -> u8 {
+        match self {
+            Self::JournalPersisted => 1,
+        }
+    }
+
+    fn from_code(code: u8) -> Result<Self> {
+        match code {
+            1 => Ok(Self::JournalPersisted),
+            _ => bail!("product mainline overlay recipient ACK disposition {code} is unsupported"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductMainlineOverlayRecipientAckV1 {
+    pub version: u16,
+    pub chain_id: u64,
+    pub payload_class: ProductMainlineOverlayPayloadClassV1,
+    pub object_hash: [u8; 32],
+    pub payload_sha256: [u8; 32],
+    pub delivery_id: [u8; 32],
+    pub original_sender_peer_id: String,
+    pub recipient_peer_id: String,
+    pub accepted_at_ms: u64,
+    pub disposition: ProductMainlineOverlayRecipientAckDispositionV1,
+    pub signature: [u8; PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_SIGNATURE_BYTES_V1],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductMainlineOverlayRecipientAckRelayAdmissionV1 {
+    pub delivery_id: [u8; 32],
+    pub original_sender_peer_id: String,
+    pub metric_peer_id: u64,
+    pub admitted: bool,
+    pub disposition: Option<RelayForwardDispositionV1>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProductMainlineOverlayRecipientAckRequestV1 {
+    payload_class: ProductMainlineOverlayPayloadClassV1,
+    object_hash: [u8; 32],
+    payload_sha256: [u8; 32],
+    delivery_id: [u8; 32],
+    original_sender_peer_id: String,
+    recipient_peer_id: String,
+    accepted_at_ms: u64,
+    disposition: ProductMainlineOverlayRecipientAckDispositionV1,
+}
+
+#[derive(Debug)]
+enum ProductMainlineOverlayOpenedInboundV1 {
+    Data(ProductMainlineOverlayInboundV1),
+    RecipientAck(ProductMainlineOverlayRecipientAckV1),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -289,7 +389,12 @@ pub enum ProductMainlineOverlayEventV1 {
         retry_in_ms: u64,
     },
     Inbound(ProductMainlineOverlayInboundV1),
-    Delivery(ProductMainlineOverlayDeliveryV1),
+    RelayAdmission(ProductMainlineOverlayRelayAdmissionV1),
+    RecipientAck {
+        ack: ProductMainlineOverlayRecipientAckV1,
+        metric_peer_id: u64,
+    },
+    RecipientAckRelayAdmission(ProductMainlineOverlayRecipientAckRelayAdmissionV1),
     WorkerStopped,
     WorkerFailed(String),
 }
@@ -341,7 +446,10 @@ fn bound_product_mainline_overlay_event_text_v1(event: &mut ProductMainlineOverl
     let text = match event {
         ProductMainlineOverlayEventV1::RelayDisconnected { error, .. } => Some(error),
         ProductMainlineOverlayEventV1::PeerIsolated { reason, .. } => Some(reason),
-        ProductMainlineOverlayEventV1::Delivery(delivery) => delivery.error.as_mut(),
+        ProductMainlineOverlayEventV1::RelayAdmission(admission) => admission.error.as_mut(),
+        ProductMainlineOverlayEventV1::RecipientAckRelayAdmission(admission) => {
+            admission.error.as_mut()
+        }
         ProductMainlineOverlayEventV1::WorkerFailed(error) => Some(error),
         _ => None,
     };
@@ -381,10 +489,18 @@ fn product_mainline_overlay_event_owned_bytes_v1(event: &ProductMainlineOverlayE
             .source_peer_id
             .capacity()
             .saturating_add(inbound.frame.payload.capacity()),
-        ProductMainlineOverlayEventV1::Delivery(delivery) => delivery
+        ProductMainlineOverlayEventV1::RelayAdmission(admission) => admission
             .remote_peer_id
             .capacity()
-            .saturating_add(delivery.error.as_ref().map_or(0, String::capacity)),
+            .saturating_add(admission.error.as_ref().map_or(0, String::capacity)),
+        ProductMainlineOverlayEventV1::RecipientAck { ack, .. } => ack
+            .original_sender_peer_id
+            .capacity()
+            .saturating_add(ack.recipient_peer_id.capacity()),
+        ProductMainlineOverlayEventV1::RecipientAckRelayAdmission(admission) => admission
+            .original_sender_peer_id
+            .capacity()
+            .saturating_add(admission.error.as_ref().map_or(0, String::capacity)),
         ProductMainlineOverlayEventV1::WorkerStopped => 0,
         ProductMainlineOverlayEventV1::WorkerFailed(error) => error.capacity(),
     };
@@ -442,6 +558,7 @@ fn publish_product_mainline_overlay_event_v1(
 struct ProductMainlineOverlayOutboundItemV1 {
     payload_class: ProductMainlineOverlayPayloadClassV1,
     object_hash: [u8; 32],
+    payload_sha256: [u8; 32],
     payload: Arc<[u8]>,
     enqueued_at_ms: u64,
     expires_at_ms: u64,
@@ -670,6 +787,7 @@ struct ProductMainlineOverlayWorkerV1 {
     expected_source_peer_id: Option<String>,
     chain_id: u64,
     outbound: Receiver<ProductMainlineOverlayOutboundV1>,
+    recipient_acks: Receiver<ProductMainlineOverlayRecipientAckRequestV1>,
     resource_limits: ProductMainlineOverlayResourceLimitsV1,
     events: ProductMainlineOverlayEventSenderV1,
     stop: Arc<AtomicBool>,
@@ -709,10 +827,12 @@ impl Default for ProductMainlineMeshPeerStateV1 {
 
 pub struct ProductMainlineOverlayRuntimeV1 {
     startup: ProductMainlineOverlayStartupV1,
+    chain_id: u64,
     role: ProductMainlineOverlayRoleV1,
     metric_peer_id: u64,
     remote_peer_ids: Vec<String>,
     outbound: SyncSender<ProductMainlineOverlayOutboundV1>,
+    recipient_acks: SyncSender<ProductMainlineOverlayRecipientAckRequestV1>,
     pending_budget: Arc<Mutex<ProductMainlineOverlayPendingBudgetV1>>,
     events: Receiver<ProductMainlineOverlayAccountedEventV1>,
     stop: Arc<AtomicBool>,
@@ -790,6 +910,7 @@ impl ProductMainlineOverlayRuntimeV1 {
         };
         let capacity = config.channel_capacity.clamp(1, 65_536);
         let (outbound_tx, outbound_rx) = mpsc::sync_channel(capacity);
+        let (recipient_ack_tx, recipient_ack_rx) = mpsc::sync_channel(capacity);
         let (event_sender, event_rx) = mpsc::sync_channel(capacity);
         let event_tx = ProductMainlineOverlayEventSenderV1 {
             sender: event_sender,
@@ -831,6 +952,7 @@ impl ProductMainlineOverlayRuntimeV1 {
                     expected_source_peer_id,
                     chain_id,
                     outbound: outbound_rx,
+                    recipient_acks: recipient_ack_rx,
                     resource_limits: worker_resource_limits,
                     events: event_tx.clone(),
                     stop: Arc::clone(&worker_stop),
@@ -852,10 +974,12 @@ impl ProductMainlineOverlayRuntimeV1 {
 
         Ok(Self {
             startup,
+            chain_id: config.chain_id,
             role: config.role,
             metric_peer_id: config.metric_peer_id,
             remote_peer_ids,
             outbound: outbound_tx,
+            recipient_acks: recipient_ack_tx,
             pending_budget,
             events: event_rx,
             stop,
@@ -910,6 +1034,7 @@ impl ProductMainlineOverlayRuntimeV1 {
             ProductMainlineOverlayPayloadClassV1::NativeTransaction,
             tx_hash,
             payload,
+            self.remote_peer_ids.as_slice(),
         )
     }
 
@@ -919,7 +1044,108 @@ impl ProductMainlineOverlayRuntimeV1 {
             ProductMainlineOverlayPayloadClassV1::NativeSeal,
             object_hash,
             payload,
+            self.remote_peer_ids.as_slice(),
         )
+    }
+
+    /// Queues one classified payload for exactly one configured recipient. The recipient-specific
+    /// delivery id is stable across relay and E2E session replacement.
+    pub fn try_submit_to_peer(
+        &self,
+        target_peer_id: &str,
+        payload_class: ProductMainlineOverlayPayloadClassV1,
+        object_hash: [u8; 32],
+        payload: Vec<u8>,
+    ) -> Result<bool> {
+        if !self
+            .remote_peer_ids
+            .iter()
+            .any(|configured| configured == target_peer_id)
+        {
+            bail!("product mainline overlay target peer is not configured");
+        }
+        self.try_submit_classified_v1(
+            payload_class,
+            object_hash,
+            payload,
+            &[target_peer_id.to_string()],
+        )
+    }
+
+    /// Queues a recipient acknowledgement after the caller has durably journaled the inbound
+    /// payload. ACK transport is available to every role, including responder/send-only pairs.
+    pub fn try_submit_recipient_ack(
+        &self,
+        inbound: &ProductMainlineOverlayInboundV1,
+    ) -> Result<bool> {
+        self.try_submit_recipient_ack_at_v1(inbound, now_ms_v1())
+    }
+
+    pub fn try_submit_recipient_ack_at_v1(
+        &self,
+        inbound: &ProductMainlineOverlayInboundV1,
+        accepted_at_ms: u64,
+    ) -> Result<bool> {
+        self.try_submit_recipient_ack_binding(
+            inbound.payload_class,
+            inbound.object_hash,
+            inbound.payload_sha256,
+            inbound.delivery_id,
+            inbound.source_peer_id.as_str(),
+            accepted_at_ms,
+        )
+    }
+
+    /// Queues an ACK from a durable journal binding when the original in-memory frame is no
+    /// longer available (for example, after node restart). The delivery id is always recomputed
+    /// before enqueueing so journal contents cannot redirect or forge an acknowledgement.
+    pub fn try_submit_recipient_ack_binding(
+        &self,
+        payload_class: ProductMainlineOverlayPayloadClassV1,
+        object_hash: [u8; 32],
+        payload_sha256: [u8; 32],
+        delivery_id: [u8; 32],
+        original_sender_peer_id: &str,
+        accepted_at_ms: u64,
+    ) -> Result<bool> {
+        if accepted_at_ms == 0 {
+            bail!("product mainline overlay recipient ACK accepted_at_ms must be positive");
+        }
+        if !self
+            .remote_peer_ids
+            .iter()
+            .any(|configured| configured == original_sender_peer_id)
+        {
+            bail!("product mainline overlay recipient ACK source peer is not configured");
+        }
+        let expected_delivery_id = product_delivery_id_v1(
+            self.chain_id,
+            payload_class.label(),
+            object_hash,
+            payload_sha256,
+            original_sender_peer_id,
+            self.startup.local_peer_id.as_str(),
+        );
+        if delivery_id != expected_delivery_id {
+            bail!("product mainline overlay recipient ACK delivery id is invalid");
+        }
+        let request = ProductMainlineOverlayRecipientAckRequestV1 {
+            payload_class,
+            object_hash,
+            payload_sha256,
+            delivery_id,
+            original_sender_peer_id: original_sender_peer_id.to_string(),
+            recipient_peer_id: self.startup.local_peer_id.clone(),
+            accepted_at_ms,
+            disposition: ProductMainlineOverlayRecipientAckDispositionV1::JournalPersisted,
+        };
+        match self.recipient_acks.try_send(request) {
+            Ok(()) => Ok(true),
+            Err(TrySendError::Full(_)) => Ok(false),
+            Err(TrySendError::Disconnected(_)) => {
+                bail!("product mainline overlay ACK worker is disconnected")
+            }
+        }
     }
 
     fn try_submit_classified_v1(
@@ -927,10 +1153,21 @@ impl ProductMainlineOverlayRuntimeV1 {
         payload_class: ProductMainlineOverlayPayloadClassV1,
         object_hash: [u8; 32],
         payload: Vec<u8>,
+        target_peer_ids: &[String],
     ) -> Result<bool> {
         validate_classified_logical_payload_len_v1(payload.len())?;
         if self.role == ProductMainlineOverlayRoleV1::Responder {
             return Ok(false);
+        }
+        if target_peer_ids.is_empty()
+            || target_peer_ids.iter().any(|target| {
+                !self
+                    .remote_peer_ids
+                    .iter()
+                    .any(|configured| configured == target)
+            })
+        {
+            bail!("product mainline overlay classified target set is invalid");
         }
         if payload.is_empty() {
             match payload_class {
@@ -942,17 +1179,17 @@ impl ProductMainlineOverlayRuntimeV1 {
                 }
             }
         }
-        let Some(reservations) = try_reserve_pending_fanout_v1(
-            &self.pending_budget,
-            &self.remote_peer_ids,
-            payload.len(),
-        ) else {
+        let Some(reservations) =
+            try_reserve_pending_fanout_v1(&self.pending_budget, target_peer_ids, payload.len())
+        else {
             return Ok(false);
         };
         let enqueued_at_ms = now_ms_v1();
+        let payload_sha256 = sha256_v1(payload.as_slice());
         let item = Arc::new(ProductMainlineOverlayOutboundItemV1 {
             payload_class,
             object_hash,
+            payload_sha256,
             payload: Arc::from(payload),
             enqueued_at_ms,
             expires_at_ms: enqueued_at_ms.saturating_add(
@@ -1016,6 +1253,290 @@ impl Drop for ProductMainlineOverlayRuntimeV1 {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+fn sha256_v1(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
+fn build_recipient_ack_v1(
+    identity: &SigningKey,
+    chain_id: u64,
+    request: &ProductMainlineOverlayRecipientAckRequestV1,
+) -> Result<ProductMainlineOverlayRecipientAckV1> {
+    let recipient_peer_id =
+        peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
+    if request.recipient_peer_id != recipient_peer_id {
+        bail!("product mainline overlay recipient ACK signer does not own recipient peer id");
+    }
+    let expected_delivery_id = product_delivery_id_v1(
+        chain_id,
+        request.payload_class.label(),
+        request.object_hash,
+        request.payload_sha256,
+        request.original_sender_peer_id.as_str(),
+        request.recipient_peer_id.as_str(),
+    );
+    if request.delivery_id != expected_delivery_id {
+        bail!("product mainline overlay recipient ACK request delivery id mismatch");
+    }
+    let mut ack = ProductMainlineOverlayRecipientAckV1 {
+        version: PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_VERSION_V1,
+        chain_id,
+        payload_class: request.payload_class,
+        object_hash: request.object_hash,
+        payload_sha256: request.payload_sha256,
+        delivery_id: request.delivery_id,
+        original_sender_peer_id: request.original_sender_peer_id.clone(),
+        recipient_peer_id: request.recipient_peer_id.clone(),
+        accepted_at_ms: request.accepted_at_ms,
+        disposition: request.disposition,
+        signature: [0u8; PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_SIGNATURE_BYTES_V1],
+    };
+    let signing_bytes = recipient_ack_signing_bytes_v1(&ack)?;
+    ack.signature = identity.sign(signing_bytes.as_slice()).to_bytes();
+    Ok(ack)
+}
+
+fn recipient_ack_signing_bytes_v1(ack: &ProductMainlineOverlayRecipientAckV1) -> Result<Vec<u8>> {
+    if ack.version != PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_VERSION_V1
+        || ack.chain_id == 0
+        || ack.accepted_at_ms == 0
+    {
+        bail!("product mainline overlay recipient ACK header is invalid");
+    }
+    validate_ack_peer_id_v1(ack.original_sender_peer_id.as_str())?;
+    validate_ack_peer_id_v1(ack.recipient_peer_id.as_str())?;
+    let domain_len = u16::try_from(PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1.len())
+        .context("product mainline overlay recipient ACK domain is too long")?;
+    let source_len = u16::try_from(ack.original_sender_peer_id.len())
+        .context("product mainline overlay recipient ACK sender peer id is too long")?;
+    let recipient_len = u16::try_from(ack.recipient_peer_id.len())
+        .context("product mainline overlay recipient ACK recipient peer id is too long")?;
+    let mut bytes = Vec::with_capacity(
+        8 + 2
+            + PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1.len()
+            + 2
+            + 8
+            + 4
+            + 32 * 3
+            + 8
+            + 2
+            + ack.original_sender_peer_id.len()
+            + 2
+            + ack.recipient_peer_id.len(),
+    );
+    bytes.extend_from_slice(&PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_MAGIC_V1);
+    bytes.extend_from_slice(&domain_len.to_be_bytes());
+    bytes.extend_from_slice(PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1);
+    bytes.extend_from_slice(&ack.version.to_be_bytes());
+    bytes.extend_from_slice(&ack.chain_id.to_be_bytes());
+    bytes.push(ack.payload_class.code());
+    bytes.push(ack.disposition.code());
+    bytes.extend_from_slice(&0u16.to_be_bytes());
+    bytes.extend_from_slice(&ack.object_hash);
+    bytes.extend_from_slice(&ack.payload_sha256);
+    bytes.extend_from_slice(&ack.delivery_id);
+    bytes.extend_from_slice(&ack.accepted_at_ms.to_be_bytes());
+    bytes.extend_from_slice(&source_len.to_be_bytes());
+    bytes.extend_from_slice(ack.original_sender_peer_id.as_bytes());
+    bytes.extend_from_slice(&recipient_len.to_be_bytes());
+    bytes.extend_from_slice(ack.recipient_peer_id.as_bytes());
+    Ok(bytes)
+}
+
+fn encode_recipient_ack_v1(ack: &ProductMainlineOverlayRecipientAckV1) -> Result<Vec<u8>> {
+    let mut bytes = recipient_ack_signing_bytes_v1(ack)?;
+    bytes.extend_from_slice(&ack.signature);
+    Ok(bytes)
+}
+
+fn decode_and_verify_recipient_ack_v1(
+    bytes: &[u8],
+    expected_chain_id: u64,
+    expected_original_sender_peer_id: &str,
+    expected_recipient_peer_id: &str,
+) -> Result<ProductMainlineOverlayRecipientAckV1> {
+    let signed_len = bytes
+        .len()
+        .checked_sub(PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_SIGNATURE_BYTES_V1)
+        .context("product mainline overlay recipient ACK is truncated")?;
+    let (signed, signature_bytes) = bytes.split_at(signed_len);
+    let mut cursor = 0usize;
+    if read_ack_bytes_v1(signed, &mut cursor, 8)? != PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_MAGIC_V1
+    {
+        bail!("product mainline overlay recipient ACK magic is invalid");
+    }
+    let domain_len = read_ack_u16_v1(signed, &mut cursor)? as usize;
+    if read_ack_bytes_v1(signed, &mut cursor, domain_len)?
+        != PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1
+    {
+        bail!("product mainline overlay recipient ACK domain is invalid");
+    }
+    let version = read_ack_u16_v1(signed, &mut cursor)?;
+    let chain_id = read_ack_u64_v1(signed, &mut cursor)?;
+    let payload_class = ProductMainlineOverlayPayloadClassV1::from_code(
+        *read_ack_bytes_v1(signed, &mut cursor, 1)?
+            .first()
+            .context("product mainline overlay recipient ACK payload class is missing")?,
+    )?;
+    let disposition = ProductMainlineOverlayRecipientAckDispositionV1::from_code(
+        *read_ack_bytes_v1(signed, &mut cursor, 1)?
+            .first()
+            .context("product mainline overlay recipient ACK disposition is missing")?,
+    )?;
+    if read_ack_u16_v1(signed, &mut cursor)? != 0 {
+        bail!("product mainline overlay recipient ACK reserved flags are non-zero");
+    }
+    let object_hash = read_ack_array_32_v1(signed, &mut cursor)?;
+    let payload_sha256 = read_ack_array_32_v1(signed, &mut cursor)?;
+    let delivery_id = read_ack_array_32_v1(signed, &mut cursor)?;
+    let accepted_at_ms = read_ack_u64_v1(signed, &mut cursor)?;
+    let source_len = read_ack_u16_v1(signed, &mut cursor)? as usize;
+    if source_len == 0 || source_len > PRODUCT_MAINLINE_OVERLAY_PEER_ID_MAX_BYTES_V1 {
+        bail!("product mainline overlay recipient ACK sender peer id length is invalid");
+    }
+    let original_sender_peer_id =
+        std::str::from_utf8(read_ack_bytes_v1(signed, &mut cursor, source_len)?)
+            .context("product mainline overlay recipient ACK sender peer id is not UTF-8")?
+            .to_string();
+    let recipient_len = read_ack_u16_v1(signed, &mut cursor)? as usize;
+    if recipient_len == 0 || recipient_len > PRODUCT_MAINLINE_OVERLAY_PEER_ID_MAX_BYTES_V1 {
+        bail!("product mainline overlay recipient ACK recipient peer id length is invalid");
+    }
+    let recipient_peer_id =
+        std::str::from_utf8(read_ack_bytes_v1(signed, &mut cursor, recipient_len)?)
+            .context("product mainline overlay recipient ACK recipient peer id is not UTF-8")?
+            .to_string();
+    if cursor != signed.len() {
+        bail!("product mainline overlay recipient ACK has trailing signed bytes");
+    }
+    let signature: [u8; PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_SIGNATURE_BYTES_V1] =
+        signature_bytes
+            .try_into()
+            .context("product mainline overlay recipient ACK signature width is invalid")?;
+    let ack = ProductMainlineOverlayRecipientAckV1 {
+        version,
+        chain_id,
+        payload_class,
+        object_hash,
+        payload_sha256,
+        delivery_id,
+        original_sender_peer_id,
+        recipient_peer_id,
+        accepted_at_ms,
+        disposition,
+        signature,
+    };
+    if ack.version != PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_VERSION_V1
+        || ack.chain_id != expected_chain_id
+        || ack.original_sender_peer_id != expected_original_sender_peer_id
+        || ack.recipient_peer_id != expected_recipient_peer_id
+        || ack.accepted_at_ms == 0
+    {
+        bail!("product mainline overlay recipient ACK route or domain correlation mismatch");
+    }
+    let expected_delivery_id = product_delivery_id_v1(
+        ack.chain_id,
+        ack.payload_class.label(),
+        ack.object_hash,
+        ack.payload_sha256,
+        ack.original_sender_peer_id.as_str(),
+        ack.recipient_peer_id.as_str(),
+    );
+    if ack.delivery_id != expected_delivery_id {
+        bail!("product mainline overlay recipient ACK delivery id mismatch");
+    }
+    let public_key = ed25519_public_key_from_peer_id_v1(ack.recipient_peer_id.as_str())?;
+    let verifying_key = VerifyingKey::from_bytes(&public_key)
+        .context("product mainline overlay recipient ACK public key is invalid")?;
+    verifying_key
+        .verify(signed, &Signature::from_bytes(&ack.signature))
+        .context("product mainline overlay recipient ACK signature is invalid")?;
+    Ok(ack)
+}
+
+fn read_ack_bytes_v1<'a>(bytes: &'a [u8], cursor: &mut usize, len: usize) -> Result<&'a [u8]> {
+    let end = cursor
+        .checked_add(len)
+        .context("product mainline overlay recipient ACK length overflow")?;
+    let value = bytes
+        .get(*cursor..end)
+        .context("product mainline overlay recipient ACK is truncated")?;
+    *cursor = end;
+    Ok(value)
+}
+
+fn read_ack_u16_v1(bytes: &[u8], cursor: &mut usize) -> Result<u16> {
+    Ok(u16::from_be_bytes(
+        read_ack_bytes_v1(bytes, cursor, 2)?
+            .try_into()
+            .context("product mainline overlay recipient ACK u16 width mismatch")?,
+    ))
+}
+
+fn read_ack_u64_v1(bytes: &[u8], cursor: &mut usize) -> Result<u64> {
+    Ok(u64::from_be_bytes(
+        read_ack_bytes_v1(bytes, cursor, 8)?
+            .try_into()
+            .context("product mainline overlay recipient ACK u64 width mismatch")?,
+    ))
+}
+
+fn read_ack_array_32_v1(bytes: &[u8], cursor: &mut usize) -> Result<[u8; 32]> {
+    read_ack_bytes_v1(bytes, cursor, 32)?
+        .try_into()
+        .context("product mainline overlay recipient ACK hash width mismatch")
+}
+
+fn validate_ack_peer_id_v1(peer_id: &str) -> Result<()> {
+    if peer_id.is_empty() || peer_id.len() > PRODUCT_MAINLINE_OVERLAY_PEER_ID_MAX_BYTES_V1 {
+        bail!("product mainline overlay recipient ACK peer id length is invalid");
+    }
+    ed25519_public_key_from_peer_id_v1(peer_id).map(|_| ())
+}
+
+fn ed25519_public_key_from_peer_id_v1(peer_id: &str) -> Result<[u8; 32]> {
+    const PREFIX: &str = "novovm-ed25519:";
+    let encoded = peer_id
+        .strip_prefix(PREFIX)
+        .context("product mainline overlay recipient ACK peer id is not Ed25519")?;
+    if encoded.len() != 64 || encoded.bytes().any(|byte| !byte.is_ascii_hexdigit()) {
+        bail!("product mainline overlay recipient ACK peer id key is not canonical hex");
+    }
+    let mut public_key = [0u8; 32];
+    for (index, output) in public_key.iter_mut().enumerate() {
+        *output = u8::from_str_radix(&encoded[index * 2..index * 2 + 2], 16)
+            .context("decode product mainline overlay recipient ACK peer id key")?;
+    }
+    if peer_id_from_ed25519_public_key_v1(&public_key) != peer_id {
+        bail!("product mainline overlay recipient ACK peer id is not canonical");
+    }
+    Ok(public_key)
+}
+
+fn recipient_ack_frame_v1(
+    identity: &SigningKey,
+    chain_id: u64,
+    frame_sequence: u64,
+    request: &ProductMainlineOverlayRecipientAckRequestV1,
+) -> Result<NovoRudpTransportFrameV0> {
+    let ack = build_recipient_ack_v1(identity, chain_id, request)?;
+    let payload = encode_recipient_ack_v1(&ack)?;
+    let object_id = u64::from_le_bytes(
+        ack.delivery_id[..8]
+            .try_into()
+            .context("product mainline overlay recipient ACK delivery id prefix is invalid")?,
+    );
+    Ok(NovoRudpTransportFrameV0::new(
+        NovoRudpTransportFrameKindV0::Ack,
+        PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1,
+        chain_id,
+        object_id,
+        frame_sequence,
+        0,
+        payload,
+    ))
 }
 
 fn encode_classified_payload_v1(
@@ -1122,6 +1643,93 @@ fn open_classified_inbound_frame_v1(
     Ok((payload_class, object_hash, logical_frame))
 }
 
+fn open_product_mainline_inbound_v1(
+    channel: &mut E2eSecureChannelV1,
+    delivery: OpaqueRelayDeliveryV1,
+    chain_id: u64,
+) -> Result<ProductMainlineOverlayOpenedInboundV1> {
+    let source_peer_id = delivery.source_peer_id.clone();
+    let target_peer_id = delivery.target_peer_id.clone();
+    let frame = channel.open_novorudp_frame(&delivery.envelope)?;
+    if frame.stream_id != chain_id || frame.session_id != PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1 {
+        bail!("product mainline overlay inbound frame route is invalid");
+    }
+    match frame.kind {
+        NovoRudpTransportFrameKindV0::Data => {
+            let original_frame_sequence = frame.sequence;
+            let (payload_class, object_hash, frame) =
+                open_classified_inbound_frame_v1(frame, chain_id)?;
+            let payload_sha256 = sha256_v1(frame.payload.as_slice());
+            let delivery_id = product_delivery_id_v1(
+                chain_id,
+                payload_class.label(),
+                object_hash,
+                payload_sha256,
+                source_peer_id.as_str(),
+                target_peer_id.as_str(),
+            );
+            Ok(ProductMainlineOverlayOpenedInboundV1::Data(
+                ProductMainlineOverlayInboundV1 {
+                    payload_class,
+                    object_hash,
+                    delivery_id,
+                    payload_sha256,
+                    original_frame_sequence,
+                    source_peer_id,
+                    frame,
+                },
+            ))
+        }
+        NovoRudpTransportFrameKindV0::Ack => {
+            if frame.ack_epoch != 0 || frame.payload.is_empty() {
+                bail!("product mainline overlay recipient ACK transport frame is invalid");
+            }
+            let ack = decode_and_verify_recipient_ack_v1(
+                frame.payload.as_slice(),
+                chain_id,
+                target_peer_id.as_str(),
+                source_peer_id.as_str(),
+            )?;
+            let expected_object_id =
+                u64::from_le_bytes(ack.delivery_id[..8].try_into().context(
+                    "product mainline overlay recipient ACK object id prefix is invalid",
+                )?);
+            if frame.object_id != expected_object_id {
+                bail!("product mainline overlay recipient ACK transport object id mismatch");
+            }
+            Ok(ProductMainlineOverlayOpenedInboundV1::RecipientAck(ack))
+        }
+        NovoRudpTransportFrameKindV0::Repair
+        | NovoRudpTransportFrameKindV0::Endpoint
+        | NovoRudpTransportFrameKindV0::Done => {
+            bail!("product mainline overlay accepts only NovoRUDP data or recipient ACK frames")
+        }
+    }
+}
+
+fn publish_opened_inbound_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    opened: ProductMainlineOverlayOpenedInboundV1,
+    metric_peer_id: u64,
+    allow_data: bool,
+) -> Result<()> {
+    let event = match opened {
+        ProductMainlineOverlayOpenedInboundV1::Data(inbound) => {
+            if !allow_data {
+                bail!("product overlay send-only role received an inbound data payload");
+            }
+            ProductMainlineOverlayEventV1::Inbound(inbound)
+        }
+        ProductMainlineOverlayOpenedInboundV1::RecipientAck(ack) => {
+            ProductMainlineOverlayEventV1::RecipientAck {
+                ack,
+                metric_peer_id,
+            }
+        }
+    };
+    publish_product_mainline_overlay_event_v1(&worker.events, &worker.stop, event)
+}
+
 pub fn load_product_mainline_overlay_config_v1(
     path: impl AsRef<Path>,
 ) -> Result<ProductMainlineOverlayConfigV1> {
@@ -1150,6 +1758,10 @@ pub fn load_product_mainline_overlay_config_v1(
         .context("product mainline overlay config has no parent directory")?;
     rebase_relative_path_v1(base, &mut config.identity_key_path);
     rebase_relative_path_v1(base, &mut config.overlay.cache_path);
+    let journal_path = config.delivery_journal_path.get_or_insert_with(|| {
+        PathBuf::from(DEFAULT_PRODUCT_MAINLINE_OVERLAY_DELIVERY_JOURNAL_NAME_V1)
+    });
+    rebase_relative_path_v1(base, journal_path);
     if let ProductRelayTlsTrustV1::ExplicitCa { certificate_path } = &mut config.tls_trust {
         rebase_relative_path_v1(base, certificate_path);
     }
@@ -1261,6 +1873,7 @@ pub fn product_mainline_overlay_local_peer_id_v1(
 
 fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
     let mut pending = VecDeque::<ProductMainlineOverlayPendingV1>::new();
+    let mut pending_acks = VecDeque::<ProductMainlineOverlayRecipientAckRequestV1>::new();
     let mut mesh_pending = worker
         .remote_peers
         .iter()
@@ -1271,14 +1884,33 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
             )
         })
         .collect::<BTreeMap<_, _>>();
+    let mut mesh_pending_acks = worker
+        .remote_peers
+        .iter()
+        .map(|remote| {
+            (
+                remote.peer_id.clone(),
+                VecDeque::<ProductMainlineOverlayRecipientAckRequestV1>::new(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut consecutive_failures = 0u32;
     while !worker.stop.load(Ordering::Acquire) {
-        service_pending_resources_v1(&worker, &mut pending, &mut mesh_pending, 256)?;
+        service_pending_resources_v1(
+            &worker,
+            &mut pending,
+            &mut mesh_pending,
+            &mut pending_acks,
+            &mut mesh_pending_acks,
+            256,
+        )?;
         if worker.route_plan.selected_relay.is_none() {
             wait_for_reconnect_servicing_pending_v1(
                 &worker,
                 &mut pending,
                 &mut mesh_pending,
+                &mut pending_acks,
+                &mut mesh_pending_acks,
                 reconnect_delay_ms_v1(
                     consecutive_failures.max(1),
                     worker.reconnect_base_delay_ms,
@@ -1336,9 +1968,14 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
                 let result = if worker.role == ProductMainlineOverlayRoleV1::Duplex
                     && worker.remote_peers.len() > 1
                 {
-                    run_duplex_mesh_session_v1(&mut relay, &worker, &mut mesh_pending)
+                    run_duplex_mesh_session_v1(
+                        &mut relay,
+                        &worker,
+                        &mut mesh_pending,
+                        &mut mesh_pending_acks,
+                    )
                 } else {
-                    run_authenticated_role_v1(&mut relay, &worker, &mut pending)
+                    run_authenticated_role_v1(&mut relay, &worker, &mut pending, &mut pending_acks)
                 };
                 if worker.stop.load(Ordering::Acquire) {
                     let _ = relay.close();
@@ -1395,6 +2032,8 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
             &worker,
             &mut pending,
             &mut mesh_pending,
+            &mut pending_acks,
+            &mut mesh_pending_acks,
             reconnect_in_ms,
         )?;
     }
@@ -1405,8 +2044,14 @@ fn service_pending_resources_v1(
     worker: &ProductMainlineOverlayWorkerV1,
     pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
     pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayPendingV1>>,
+    pending_acks: &mut VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
+    pending_acks_by_peer: &mut BTreeMap<
+        String,
+        VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
+    >,
     drain_limit: usize,
 ) -> Result<()> {
+    drain_recipient_ack_outbound_v1(worker, pending_acks, pending_acks_by_peer, drain_limit)?;
     if worker.role == ProductMainlineOverlayRoleV1::Duplex && worker.remote_peers.len() > 1 {
         drain_mesh_outbound_v1(worker, pending_by_peer, drain_limit)?;
         expire_mesh_pending_v1(worker, pending_by_peer, now_ms_v1())
@@ -1414,6 +2059,69 @@ fn service_pending_resources_v1(
         drain_single_outbound_v1(worker, pending, drain_limit)?;
         expire_single_pending_v1(worker, pending, now_ms_v1())
     }
+}
+
+fn drain_recipient_ack_outbound_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending: &mut VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
+    pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayRecipientAckRequestV1>>,
+    limit: usize,
+) -> Result<()> {
+    for _ in 0..limit.max(1) {
+        let queued = pending
+            .len()
+            .saturating_add(pending_by_peer.values().map(VecDeque::len).sum::<usize>());
+        if queued >= worker.resource_limits.journal_max_entries {
+            break;
+        }
+        let ack = match worker.recipient_acks.try_recv() {
+            Ok(ack) => ack,
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+        };
+        if !worker
+            .remote_peers
+            .iter()
+            .any(|peer| peer.peer_id == ack.original_sender_peer_id)
+        {
+            bail!("product mainline overlay ACK target is not configured");
+        }
+        if worker.role == ProductMainlineOverlayRoleV1::Duplex && worker.remote_peers.len() > 1 {
+            pending_by_peer
+                .get_mut(&ack.original_sender_peer_id)
+                .context("product mainline overlay ACK target queue disappeared")?
+                .push_back(ack);
+        } else {
+            pending.push_back(ack);
+        }
+    }
+    Ok(())
+}
+
+fn drain_single_recipient_ack_outbound_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending: &mut VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
+    limit: usize,
+) -> Result<()> {
+    let expected_peer_id = worker
+        .remote_peers
+        .first()
+        .context("single-peer product overlay has no remote peer")?
+        .peer_id
+        .as_str();
+    for _ in 0..limit.max(1) {
+        if pending.len() >= worker.resource_limits.journal_max_entries {
+            break;
+        }
+        let ack = match worker.recipient_acks.try_recv() {
+            Ok(ack) => ack,
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+        };
+        if ack.original_sender_peer_id != expected_peer_id {
+            bail!("product mainline overlay single-peer ACK target is not configured");
+        }
+        pending.push_back(ack);
+    }
+    Ok(())
 }
 
 fn drain_mesh_outbound_v1(
@@ -1430,13 +2138,14 @@ fn drain_mesh_outbound_v1(
             publish_submission_expired_v1(worker, &outbound)?;
             continue;
         }
-        for peer in &worker.remote_peers {
+        let target_peer_ids = outbound.reservations.keys().cloned().collect::<Vec<_>>();
+        for peer_id in target_peer_ids {
             let reservation = outbound
                 .reservations
-                .remove(&peer.peer_id)
+                .remove(&peer_id)
                 .context("mesh outbound lost its peer resource reservation")?;
             pending_by_peer
-                .get_mut(&peer.peer_id)
+                .get_mut(&peer_id)
                 .context("mesh outbound target queue disappeared")?
                 .push_back(ProductMainlineOverlayPendingV1 {
                     item: Arc::clone(&outbound.item),
@@ -1555,13 +2264,16 @@ fn publish_pending_expired_v1(
     publish_product_mainline_overlay_event_v1(
         &worker.events,
         &worker.stop,
-        ProductMainlineOverlayEventV1::Delivery(
-            ProductMainlineOverlayDeliveryV1 {
+        ProductMainlineOverlayEventV1::RelayAdmission(
+            ProductMainlineOverlayRelayAdmissionV1 {
                 payload_class: item.payload_class,
                 object_hash: item.object_hash,
+                delivery_id: outbound_delivery_id_v1(worker, item, peer_id),
+                payload_sha256: item.payload_sha256,
                 remote_peer_id: peer_id.to_string(),
                 metric_peer_id,
-                delivered: false,
+                admitted: false,
+                disposition: None,
                 error: Some(format!(
                     "product overlay pending delivery expired for remote peer {peer_id}: ttl_ms={} enqueued_at_ms={} expires_at_ms={}",
                     item.expires_at_ms.saturating_sub(item.enqueued_at_ms),
@@ -1574,26 +2286,211 @@ fn publish_pending_expired_v1(
         .context("publish expired product overlay delivery")
 }
 
+fn outbound_delivery_id_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    item: &ProductMainlineOverlayOutboundItemV1,
+    recipient_peer_id: &str,
+) -> [u8; 32] {
+    let sender_peer_id =
+        peer_id_from_ed25519_public_key_v1(&worker.identity.verifying_key().to_bytes());
+    product_delivery_id_v1(
+        worker.chain_id,
+        item.payload_class.label(),
+        item.object_hash,
+        item.payload_sha256,
+        sender_peer_id.as_str(),
+        recipient_peer_id,
+    )
+}
+
+fn publish_recipient_ack_relay_admission_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    request: &ProductMainlineOverlayRecipientAckRequestV1,
+    metric_peer_id: u64,
+    admitted: bool,
+    disposition: Option<RelayForwardDispositionV1>,
+    error: Option<String>,
+) -> Result<()> {
+    publish_product_mainline_overlay_event_v1(
+        &worker.events,
+        &worker.stop,
+        ProductMainlineOverlayEventV1::RecipientAckRelayAdmission(
+            ProductMainlineOverlayRecipientAckRelayAdmissionV1 {
+                delivery_id: request.delivery_id,
+                original_sender_peer_id: request.original_sender_peer_id.clone(),
+                metric_peer_id,
+                admitted,
+                disposition,
+                error,
+            },
+        ),
+    )
+}
+
 fn wait_for_reconnect_servicing_pending_v1(
     worker: &ProductMainlineOverlayWorkerV1,
     pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
     pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayPendingV1>>,
+    pending_acks: &mut VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
+    pending_acks_by_peer: &mut BTreeMap<
+        String,
+        VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
+    >,
     delay_ms: u64,
 ) -> Result<()> {
     let mut remaining = delay_ms;
     while remaining > 0 && !worker.stop.load(Ordering::Acquire) {
-        service_pending_resources_v1(worker, pending, pending_by_peer, 256)?;
+        service_pending_resources_v1(
+            worker,
+            pending,
+            pending_by_peer,
+            pending_acks,
+            pending_acks_by_peer,
+            256,
+        )?;
         let slice = remaining.min(25);
         thread::sleep(Duration::from_millis(slice));
         remaining = remaining.saturating_sub(slice);
     }
-    service_pending_resources_v1(worker, pending, pending_by_peer, 256)
+    service_pending_resources_v1(
+        worker,
+        pending,
+        pending_by_peer,
+        pending_acks,
+        pending_acks_by_peer,
+        256,
+    )
+}
+
+fn drain_mesh_recipient_ack_outbound_v1(
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayRecipientAckRequestV1>>,
+    limit: usize,
+) -> Result<()> {
+    for _ in 0..limit.max(1) {
+        if pending_by_peer.values().map(VecDeque::len).sum::<usize>()
+            >= worker.resource_limits.journal_max_entries
+        {
+            break;
+        }
+        let ack = match worker.recipient_acks.try_recv() {
+            Ok(ack) => ack,
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+        };
+        pending_by_peer
+            .get_mut(&ack.original_sender_peer_id)
+            .context("product mainline overlay mesh ACK target is not configured")?
+            .push_back(ack);
+    }
+    Ok(())
+}
+
+fn send_one_mesh_recipient_ack_v1(
+    relay: &mut ProductRelayClientV1,
+    worker: &ProductMainlineOverlayWorkerV1,
+    peers: &mut BTreeMap<String, ProductMainlineMeshPeerStateV1>,
+    pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayRecipientAckRequestV1>>,
+) -> Result<bool> {
+    for peer in &worker.remote_peers {
+        let Some(request) = pending_by_peer
+            .get(&peer.peer_id)
+            .and_then(|queue| queue.front())
+            .cloned()
+        else {
+            continue;
+        };
+        let Some(state) = peers.get(&peer.peer_id) else {
+            continue;
+        };
+        if !matches!(state.phase, ProductMainlineMeshPeerPhaseV1::Active(_)) {
+            continue;
+        }
+        let frame_sequence = state.frame_sequence;
+        let frame =
+            recipient_ack_frame_v1(&worker.identity, worker.chain_id, frame_sequence, &request)
+                .context("build multi-peer recipient ACK frame")?;
+        let envelope = {
+            let state = peers
+                .get_mut(&peer.peer_id)
+                .context("configured mesh peer state disappeared while sealing ACK")?;
+            let ProductMainlineMeshPeerPhaseV1::Active(channel) = &mut state.phase else {
+                continue;
+            };
+            channel
+                .seal_novorudp_frame(&frame)
+                .context("seal multi-peer recipient ACK")?
+        };
+        let outcome = match relay.send_envelope_with_outcome_v1(envelope) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                publish_recipient_ack_relay_admission_v1(
+                    worker,
+                    &request,
+                    peer.metric_peer_id,
+                    false,
+                    None,
+                    Some(format!("send multi-peer recipient ACK: {error:#}")),
+                )?;
+                return Err(error.context("send multi-peer recipient ACK; retained for reconnect"));
+            }
+        };
+        if outcome.disposition == RelayForwardDispositionV1::RejectedQueuePeerLimit {
+            publish_recipient_ack_relay_admission_v1(
+                worker,
+                &request,
+                peer.metric_peer_id,
+                false,
+                Some(outcome.disposition),
+                Some("relay rejected recipient ACK target-local offline queue admission".into()),
+            )?;
+            isolate_mesh_peer_v1(
+                peers,
+                &peer.peer_id,
+                "relay rejected recipient ACK target-local offline queue admission",
+                worker,
+            )?;
+            return Ok(true);
+        }
+        if let Err(error) = ensure_shared_relay_forward_accepted_v1(&outcome) {
+            publish_recipient_ack_relay_admission_v1(
+                worker,
+                &request,
+                peer.metric_peer_id,
+                false,
+                Some(outcome.disposition),
+                Some(error.to_string()),
+            )?;
+            return Err(error.context("shared relay rejected recipient ACK admission"));
+        }
+        publish_recipient_ack_relay_admission_v1(
+            worker,
+            &request,
+            peer.metric_peer_id,
+            true,
+            Some(outcome.disposition),
+            None,
+        )?;
+        peers
+            .get_mut(&peer.peer_id)
+            .context("configured mesh peer state disappeared after ACK")?
+            .frame_sequence = frame_sequence.saturating_add(1);
+        pending_by_peer
+            .get_mut(&peer.peer_id)
+            .and_then(VecDeque::pop_front)
+            .context("multi-peer recipient ACK queue lost admitted item")?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn run_duplex_mesh_session_v1(
     relay: &mut ProductRelayClientV1,
     worker: &ProductMainlineOverlayWorkerV1,
     pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayPendingV1>>,
+    pending_acks_by_peer: &mut BTreeMap<
+        String,
+        VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
+    >,
 ) -> Result<()> {
     let local_peer_id =
         peer_id_from_ed25519_public_key_v1(&worker.identity.verifying_key().to_bytes());
@@ -1614,11 +2511,14 @@ fn run_duplex_mesh_session_v1(
     let mut last_heartbeat_ms = now_ms_v1();
     let mut next_outbound_peer_index = 0usize;
     while !worker.stop.load(Ordering::Acquire) {
+        drain_mesh_recipient_ack_outbound_v1(worker, pending_acks_by_peer, 256)?;
         drain_mesh_outbound_v1(worker, pending_by_peer, 256)?;
         expire_mesh_pending_v1(worker, pending_by_peer, now_ms_v1())?;
         expire_mesh_preauth_v1(&mut peers, now_ms_v1());
 
         start_due_mesh_peer_handshakes_v1(relay, worker, &mut peers)?;
+
+        send_one_mesh_recipient_ack_v1(relay, worker, &mut peers, pending_acks_by_peer)?;
 
         let peer_count = worker.remote_peers.len();
         for offset in 0..peer_count {
@@ -1709,14 +2609,19 @@ fn run_duplex_mesh_session_v1(
             publish_product_mainline_overlay_event_v1(
                 &worker.events,
                 &worker.stop,
-                ProductMainlineOverlayEventV1::Delivery(ProductMainlineOverlayDeliveryV1 {
-                    payload_class: outbound.payload_class,
-                    object_hash: outbound.object_hash,
-                    remote_peer_id: peer.peer_id.clone(),
-                    metric_peer_id: peer.metric_peer_id,
-                    delivered: true,
-                    error: None,
-                }),
+                ProductMainlineOverlayEventV1::RelayAdmission(
+                    ProductMainlineOverlayRelayAdmissionV1 {
+                        payload_class: outbound.payload_class,
+                        object_hash: outbound.object_hash,
+                        delivery_id: outbound_delivery_id_v1(worker, &outbound, &peer.peer_id),
+                        payload_sha256: outbound.payload_sha256,
+                        remote_peer_id: peer.peer_id.clone(),
+                        metric_peer_id: peer.metric_peer_id,
+                        admitted: true,
+                        disposition: Some(outcome.disposition),
+                        error: None,
+                    },
+                ),
             )
             .context("publish multi-peer product overlay delivery")?;
             next_outbound_peer_index = (peer_index + 1) % peer_count;
@@ -1740,6 +2645,12 @@ fn run_duplex_mesh_session_v1(
                 .get_mut(&peer_id)
                 .and_then(|state| state.buffered_deliveries.pop_front())
                 .context("multi-peer buffered delivery disappeared")?;
+            let metric_peer_id = worker
+                .remote_peers
+                .iter()
+                .find(|peer| peer.peer_id == peer_id)
+                .context("buffered multi-peer delivery belongs to an unconfigured peer")?
+                .metric_peer_id;
             match open_mesh_inbound_v1(
                 peers
                     .get_mut(&peer_id)
@@ -1747,12 +2658,8 @@ fn run_duplex_mesh_session_v1(
                 buffered.delivery,
                 worker.chain_id,
             ) {
-                Ok(inbound) => publish_product_mainline_overlay_event_v1(
-                    &worker.events,
-                    &worker.stop,
-                    ProductMainlineOverlayEventV1::Inbound(inbound),
-                )
-                .context("publish buffered multi-peer product overlay inbound event")?,
+                Ok(opened) => publish_opened_inbound_v1(worker, opened, metric_peer_id, true)
+                    .context("publish buffered multi-peer product overlay inbound event")?,
                 Err(error) => isolate_mesh_peer_v1(
                     &mut peers,
                     &peer_id,
@@ -1909,6 +2816,12 @@ fn run_duplex_mesh_session_v1(
                 let has_active_channel =
                     matches!(state.phase, ProductMainlineMeshPeerPhaseV1::Active(_));
                 if matching_active_channel {
+                    let metric_peer_id = worker
+                        .remote_peers
+                        .iter()
+                        .find(|peer| peer.peer_id == peer_id)
+                        .context("multi-peer delivery belongs to an unconfigured peer")?
+                        .metric_peer_id;
                     match open_mesh_inbound_v1(
                         peers
                             .get_mut(&peer_id)
@@ -1916,12 +2829,10 @@ fn run_duplex_mesh_session_v1(
                         delivery,
                         worker.chain_id,
                     ) {
-                        Ok(inbound) => publish_product_mainline_overlay_event_v1(
-                            &worker.events,
-                            &worker.stop,
-                            ProductMainlineOverlayEventV1::Inbound(inbound),
-                        )
-                        .context("publish multi-peer product overlay inbound event")?,
+                        Ok(opened) => {
+                            publish_opened_inbound_v1(worker, opened, metric_peer_id, true)
+                                .context("publish multi-peer product overlay inbound event")?
+                        }
                         Err(error) => isolate_mesh_peer_v1(
                             &mut peers,
                             &peer_id,
@@ -2108,19 +3019,11 @@ fn open_mesh_inbound_v1(
     state: &mut ProductMainlineMeshPeerStateV1,
     delivery: OpaqueRelayDeliveryV1,
     chain_id: u64,
-) -> Result<ProductMainlineOverlayInboundV1> {
-    let source_peer_id = delivery.source_peer_id;
+) -> Result<ProductMainlineOverlayOpenedInboundV1> {
     let ProductMainlineMeshPeerPhaseV1::Active(channel) = &mut state.phase else {
         bail!("multi-peer delivery arrived without an active E2E channel");
     };
-    let frame = channel.open_novorudp_frame(&delivery.envelope)?;
-    let (payload_class, object_hash, frame) = open_classified_inbound_frame_v1(frame, chain_id)?;
-    Ok(ProductMainlineOverlayInboundV1 {
-        payload_class,
-        object_hash,
-        source_peer_id,
-        frame,
-    })
+    open_product_mainline_inbound_v1(channel, delivery, chain_id)
 }
 
 fn mesh_peer_expects_handshake_session_v1(
@@ -2150,6 +3053,7 @@ fn run_authenticated_role_v1(
     relay: &mut ProductRelayClientV1,
     worker: &ProductMainlineOverlayWorkerV1,
     pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
+    pending_acks: &mut VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
 ) -> Result<()> {
     let preauth_budget = Arc::new(Mutex::new(ProductMainlineOverlayPreauthBudgetV1::new(
         worker.resource_limits.clone(),
@@ -2171,6 +3075,7 @@ fn run_authenticated_role_v1(
                 worker.resource_limits.preauth_ttl_ms,
                 worker,
                 pending,
+                pending_acks,
             )?;
             (channel, buffered, true, false)
         }
@@ -2185,6 +3090,7 @@ fn run_authenticated_role_v1(
                 worker.resource_limits.preauth_ttl_ms,
                 worker,
                 pending,
+                pending_acks,
             )?;
             (channel, buffered, false, true)
         }
@@ -2202,6 +3108,7 @@ fn run_authenticated_role_v1(
                     worker.resource_limits.preauth_ttl_ms,
                     worker,
                     pending,
+                    pending_acks,
                 )?
             } else {
                 establish_responder_channel_v1(
@@ -2214,6 +3121,7 @@ fn run_authenticated_role_v1(
                     worker.resource_limits.preauth_ttl_ms,
                     worker,
                     pending,
+                    pending_acks,
                 )?
             };
             (channel, buffered, true, true)
@@ -2224,6 +3132,7 @@ fn run_authenticated_role_v1(
         channel,
         worker,
         pending,
+        pending_acks,
         buffered_deliveries,
         allow_outbound,
         allow_inbound,
@@ -2242,6 +3151,7 @@ fn establish_initiator_channel_v1(
     preauth_ttl_ms: u64,
     worker: &ProductMainlineOverlayWorkerV1,
     pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
+    pending_acks: &mut VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
 ) -> Result<(
     E2eSecureChannelV1,
     VecDeque<ProductMainlineOverlayBufferedDeliveryV1>,
@@ -2256,6 +3166,7 @@ fn establish_initiator_channel_v1(
         if stop.load(Ordering::Acquire) {
             bail!("product overlay stopped while awaiting peer response");
         }
+        drain_single_recipient_ack_outbound_v1(worker, pending_acks, 256)?;
         drain_single_outbound_v1(worker, pending, 256)?;
         expire_single_pending_v1(worker, pending, now_ms_v1())?;
         expire_buffered_preauth_v1(&mut buffered_deliveries, now_ms_v1());
@@ -2311,6 +3222,7 @@ fn establish_responder_channel_v1(
     preauth_ttl_ms: u64,
     worker: &ProductMainlineOverlayWorkerV1,
     pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
+    pending_acks: &mut VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
 ) -> Result<(
     E2eSecureChannelV1,
     VecDeque<ProductMainlineOverlayBufferedDeliveryV1>,
@@ -2320,6 +3232,7 @@ fn establish_responder_channel_v1(
         if stop.load(Ordering::Acquire) {
             bail!("product overlay stopped while awaiting peer offer");
         }
+        drain_single_recipient_ack_outbound_v1(worker, pending_acks, 256)?;
         drain_single_outbound_v1(worker, pending, 256)?;
         expire_single_pending_v1(worker, pending, now_ms_v1())?;
         expire_buffered_preauth_v1(&mut buffered_deliveries, now_ms_v1());
@@ -2409,12 +3322,81 @@ fn expire_buffered_preauth_v1(
     buffered.retain(|delivery| !delivery.expired_at(now_ms));
 }
 
+fn send_one_single_recipient_ack_v1(
+    relay: &mut ProductRelayClientV1,
+    channel: &mut E2eSecureChannelV1,
+    worker: &ProductMainlineOverlayWorkerV1,
+    pending_acks: &mut VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
+    frame_sequence: &mut u64,
+) -> Result<bool> {
+    let Some(request) = pending_acks.front().cloned() else {
+        return Ok(false);
+    };
+    if request.original_sender_peer_id != channel.remote_peer_id() {
+        bail!("product mainline overlay recipient ACK target does not match the E2E peer");
+    }
+    let frame =
+        recipient_ack_frame_v1(&worker.identity, worker.chain_id, *frame_sequence, &request)
+            .context("build single-peer recipient ACK frame")?;
+    let envelope = channel
+        .seal_novorudp_frame(&frame)
+        .context("seal single-peer recipient ACK")?;
+    let outcome = match relay.send_envelope_with_outcome_v1(envelope) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            publish_recipient_ack_relay_admission_v1(
+                worker,
+                &request,
+                worker
+                    .remote_peers
+                    .first()
+                    .context("single-peer product overlay has no metric peer")?
+                    .metric_peer_id,
+                false,
+                None,
+                Some(format!("send single-peer recipient ACK: {error:#}")),
+            )?;
+            return Err(error.context("send single-peer recipient ACK; retained for reconnect"));
+        }
+    };
+    let metric_peer_id = worker
+        .remote_peers
+        .first()
+        .context("single-peer product overlay has no metric peer")?
+        .metric_peer_id;
+    if let Err(error) = ensure_shared_relay_forward_accepted_v1(&outcome) {
+        publish_recipient_ack_relay_admission_v1(
+            worker,
+            &request,
+            metric_peer_id,
+            false,
+            Some(outcome.disposition),
+            Some(error.to_string()),
+        )?;
+        return Err(error.context("shared relay rejected single-peer recipient ACK admission"));
+    }
+    publish_recipient_ack_relay_admission_v1(
+        worker,
+        &request,
+        metric_peer_id,
+        true,
+        Some(outcome.disposition),
+        None,
+    )?;
+    pending_acks
+        .pop_front()
+        .context("single-peer recipient ACK queue lost admitted item")?;
+    *frame_sequence = frame_sequence.saturating_add(1);
+    Ok(true)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_authenticated_session_v1(
     relay: &mut ProductRelayClientV1,
     mut channel: E2eSecureChannelV1,
     worker: &ProductMainlineOverlayWorkerV1,
     pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
+    pending_acks: &mut VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
     mut buffered_deliveries: VecDeque<ProductMainlineOverlayBufferedDeliveryV1>,
     allow_outbound: bool,
     allow_inbound: bool,
@@ -2424,7 +3406,15 @@ fn run_authenticated_session_v1(
     let mut frame_sequence = 0u64;
     let mut last_heartbeat_ms = now_ms_v1();
     while !worker.stop.load(Ordering::Acquire) {
-        if allow_outbound {
+        drain_single_recipient_ack_outbound_v1(worker, pending_acks, 256)?;
+        let ack_sent = send_one_single_recipient_ack_v1(
+            relay,
+            &mut channel,
+            worker,
+            pending_acks,
+            &mut frame_sequence,
+        )?;
+        if allow_outbound && !ack_sent {
             drain_single_outbound_v1(worker, pending, 256)?;
             expire_single_pending_v1(worker, pending, now_ms_v1())?;
             if let Some(outbound) = pending.pop_front() {
@@ -2447,30 +3437,46 @@ fn run_authenticated_session_v1(
                     0,
                     encoded_payload,
                 );
-                frame_sequence = frame_sequence.saturating_add(1);
                 let send_result = channel
                     .seal_novorudp_frame(&frame)
                     .map_err(anyhow::Error::from)
-                    .and_then(|envelope| relay.send_envelope(envelope));
-                if let Err(error) = send_result {
+                    .and_then(|envelope| relay.send_envelope_with_outcome_v1(envelope));
+                let outcome = match send_result {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        pending.push_front(outbound);
+                        return Err(error.context(
+                            "send encrypted product overlay payload; transaction retained for reconnect",
+                        ));
+                    }
+                };
+                if let Err(error) = ensure_shared_relay_forward_accepted_v1(&outcome) {
                     pending.push_front(outbound);
-                    return Err(error.context(
-                        "send encrypted product overlay payload; transaction retained for reconnect",
-                    ));
+                    return Err(error.context("shared relay rejected product overlay admission"));
                 }
+                frame_sequence = frame_sequence.saturating_add(1);
                 publish_product_mainline_overlay_event_v1(
                     &worker.events,
                     &worker.stop,
-                    ProductMainlineOverlayEventV1::Delivery(ProductMainlineOverlayDeliveryV1 {
-                        payload_class: outbound.item.payload_class,
-                        object_hash: outbound.item.object_hash,
-                        remote_peer_id: channel.remote_peer_id().to_string(),
-                        metric_peer_id: remote_metric_peer_id,
-                        delivered: true,
-                        error: None,
-                    }),
+                    ProductMainlineOverlayEventV1::RelayAdmission(
+                        ProductMainlineOverlayRelayAdmissionV1 {
+                            payload_class: outbound.item.payload_class,
+                            object_hash: outbound.item.object_hash,
+                            delivery_id: outbound_delivery_id_v1(
+                                worker,
+                                &outbound.item,
+                                channel.remote_peer_id(),
+                            ),
+                            payload_sha256: outbound.item.payload_sha256,
+                            remote_peer_id: channel.remote_peer_id().to_string(),
+                            metric_peer_id: remote_metric_peer_id,
+                            admitted: true,
+                            disposition: Some(outcome.disposition),
+                            error: None,
+                        },
+                    ),
                 )
-                .context("publish product overlay delivery event")?;
+                .context("publish product overlay relay-admission event")?;
             }
         }
         expire_buffered_preauth_v1(&mut buffered_deliveries, now_ms_v1());
@@ -2491,23 +3497,10 @@ fn run_authenticated_session_v1(
         };
         match event {
             ProductRelayClientEventV1::Delivery(delivery) => {
-                if !allow_inbound {
-                    bail!("product overlay send-only role received an inbound payload");
-                }
-                let frame = channel.open_novorudp_frame(&delivery.envelope)?;
-                let (payload_class, object_hash, frame) =
-                    open_classified_inbound_frame_v1(frame, worker.chain_id)?;
-                publish_product_mainline_overlay_event_v1(
-                    &worker.events,
-                    &worker.stop,
-                    ProductMainlineOverlayEventV1::Inbound(ProductMainlineOverlayInboundV1 {
-                        payload_class,
-                        object_hash,
-                        source_peer_id: source_peer_id.clone(),
-                        frame,
-                    }),
-                )
-                .context("publish product overlay inbound event")?;
+                let opened =
+                    open_product_mainline_inbound_v1(&mut channel, delivery, worker.chain_id)?;
+                publish_opened_inbound_v1(worker, opened, remote_metric_peer_id, allow_inbound)
+                    .context("publish product overlay inbound event")?;
             }
             ProductRelayClientEventV1::HeartbeatAck => {}
             ProductRelayClientEventV1::Closed => {
@@ -2530,6 +3523,13 @@ fn validate_config_v1(config: &ProductMainlineOverlayConfigV1) -> Result<()> {
     }
     if config.channel_capacity > 65_536 {
         bail!("product mainline overlay channel_capacity must not exceed 65536");
+    }
+    if config
+        .delivery_journal_path
+        .as_ref()
+        .is_some_and(|path| path.as_os_str().is_empty())
+    {
+        bail!("product mainline overlay delivery_journal_path must not be empty");
     }
     let limits = &config.resource_limits;
     if limits.pending_per_peer_count == 0
@@ -2569,6 +3569,14 @@ fn validate_config_v1(config: &ProductMainlineOverlayConfigV1) -> Result<()> {
         || limits.preauth_per_peer_bytes > limits.preauth_total_bytes
     {
         bail!("product mainline overlay per-peer pre-auth limits must not exceed total limits");
+    }
+    if limits.journal_max_entries == 0
+        || limits.journal_max_bytes == 0
+        || limits.journal_obligation_ttl_ms == 0
+        || limits.journal_terminal_retention_ms == 0
+        || limits.journal_retry_interval_ms == 0
+    {
+        bail!("product mainline overlay journal resource limits must be positive");
     }
     if config.reconnect_base_delay_ms == 0
         || config.reconnect_max_delay_ms < config.reconnect_base_delay_ms
@@ -2791,6 +3799,7 @@ mod tests {
             chain_id: 7,
             role,
             identity_key_path: PathBuf::from("identity.hex"),
+            delivery_journal_path: None,
             overlay: ProductNodeOverlayConfigV1 {
                 cache_path: PathBuf::from("cache.json"),
                 trusted_signer_public_keys: Vec::new(),
@@ -2818,9 +3827,11 @@ mod tests {
         object_hash: [u8; 32],
         payload: Vec<u8>,
     ) -> ProductMainlineOverlayOutboundItemV1 {
+        let payload_sha256 = sha256_v1(payload.as_slice());
         ProductMainlineOverlayOutboundItemV1 {
             payload_class,
             object_hash,
+            payload_sha256,
             payload: Arc::from(payload),
             enqueued_at_ms: 0,
             expires_at_ms: u64::MAX,
@@ -3086,10 +4097,10 @@ mod tests {
         while started.elapsed() < Duration::from_secs(2) && expiration.is_none() {
             for event in runtime.drain_events(64) {
                 match event {
-                    ProductMainlineOverlayEventV1::Delivery(delivery)
+                    ProductMainlineOverlayEventV1::RelayAdmission(delivery)
                         if delivery.object_hash == object_hash =>
                     {
-                        assert!(!delivery.delivered, "expired delivery was reported true");
+                        assert!(!delivery.admitted, "expired delivery was reported admitted");
                         assert!(delivery
                             .error
                             .as_deref()
@@ -3310,6 +4321,9 @@ mod tests {
         let event = ProductMainlineOverlayEventV1::Inbound(ProductMainlineOverlayInboundV1 {
             payload_class: ProductMainlineOverlayPayloadClassV1::NativeTransaction,
             object_hash: [7; 32],
+            delivery_id: [8; 32],
+            payload_sha256: [9; 32],
+            original_frame_sequence: 9,
             source_peer_id: "peer-a".into(),
             frame: NovoRudpTransportFrameV0::new(
                 NovoRudpTransportFrameKindV0::Data,
@@ -3450,6 +4464,12 @@ mod tests {
             loaded.overlay.cache_path,
             absolute_config_dir.join("runtime/bootstrap-cache.json")
         );
+        assert_eq!(
+            loaded.delivery_journal_path,
+            Some(
+                absolute_config_dir.join(DEFAULT_PRODUCT_MAINLINE_OVERLAY_DELIVERY_JOURNAL_NAME_V1)
+            )
+        );
         assert!(matches!(
             loaded.tls_trust,
             ProductRelayTlsTrustV1::ExplicitCa { certificate_path }
@@ -3493,6 +4513,65 @@ mod tests {
         );
         assert!(validate_inbound_frame_v1(&empty, 7).is_err());
         assert!(ingest_product_mainline_overlay_payload_v1(7, &[1, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn recipient_ack_wire_is_canonical_signed_and_delivery_bound() {
+        let sender_identity = SigningKey::from_bytes(&[0x71; 32]);
+        let recipient_identity = SigningKey::from_bytes(&[0x72; 32]);
+        let original_sender_peer_id =
+            peer_id_from_ed25519_public_key_v1(&sender_identity.verifying_key().to_bytes());
+        let recipient_peer_id =
+            peer_id_from_ed25519_public_key_v1(&recipient_identity.verifying_key().to_bytes());
+        let object_hash = [0x73; 32];
+        let payload_sha256 = [0x74; 32];
+        let delivery_id = product_delivery_id_v1(
+            7,
+            ProductMainlineOverlayPayloadClassV1::NativeSeal.label(),
+            object_hash,
+            payload_sha256,
+            original_sender_peer_id.as_str(),
+            recipient_peer_id.as_str(),
+        );
+        let request = ProductMainlineOverlayRecipientAckRequestV1 {
+            payload_class: ProductMainlineOverlayPayloadClassV1::NativeSeal,
+            object_hash,
+            payload_sha256,
+            delivery_id,
+            original_sender_peer_id: original_sender_peer_id.clone(),
+            recipient_peer_id: recipient_peer_id.clone(),
+            accepted_at_ms: 1_234,
+            disposition: ProductMainlineOverlayRecipientAckDispositionV1::JournalPersisted,
+        };
+        let ack = build_recipient_ack_v1(&recipient_identity, 7, &request).unwrap();
+        let encoded = encode_recipient_ack_v1(&ack).unwrap();
+        assert_eq!(
+            decode_and_verify_recipient_ack_v1(
+                encoded.as_slice(),
+                7,
+                original_sender_peer_id.as_str(),
+                recipient_peer_id.as_str(),
+            )
+            .unwrap(),
+            ack
+        );
+        assert!(decode_and_verify_recipient_ack_v1(
+            encoded.as_slice(),
+            8,
+            original_sender_peer_id.as_str(),
+            recipient_peer_id.as_str(),
+        )
+        .is_err());
+
+        let mut tampered = encoded;
+        *tampered.last_mut().unwrap() ^= 0x80;
+        assert!(decode_and_verify_recipient_ack_v1(
+            tampered.as_slice(),
+            7,
+            original_sender_peer_id.as_str(),
+            recipient_peer_id.as_str(),
+        )
+        .is_err());
     }
 
     #[test]
@@ -3746,11 +4825,11 @@ mod tests {
         wait_for_event_v1(&node_a_runtime, Duration::from_secs(1), |event| {
             matches!(
                 event,
-                ProductMainlineOverlayEventV1::Delivery(
-                    ProductMainlineOverlayDeliveryV1 {
+                ProductMainlineOverlayEventV1::RelayAdmission(
+                    ProductMainlineOverlayRelayAdmissionV1 {
                         payload_class: ProductMainlineOverlayPayloadClassV1::NativeTransaction,
                         object_hash: delivered_hash,
-                        delivered: true,
+                        admitted: true,
                         ..
                     }
                 ) if *delivered_hash == node_a_tx_hash
@@ -3763,11 +4842,11 @@ mod tests {
         wait_for_event_v1(&node_b_runtime, Duration::from_secs(1), |event| {
             matches!(
                 event,
-                ProductMainlineOverlayEventV1::Delivery(
-                    ProductMainlineOverlayDeliveryV1 {
+                ProductMainlineOverlayEventV1::RelayAdmission(
+                    ProductMainlineOverlayRelayAdmissionV1 {
                         payload_class: ProductMainlineOverlayPayloadClassV1::NativeTransaction,
                         object_hash: delivered_hash,
-                        delivered: true,
+                        admitted: true,
                         ..
                     }
                 ) if *delivered_hash == node_b_tx_hash
@@ -3805,6 +4884,60 @@ mod tests {
             assert_eq!(ingress.execution_owner, "aoem_runtime");
         }
 
+        let acked_at_ms = now_ms_v1();
+        assert!(node_b_runtime
+            .try_submit_recipient_ack_binding(
+                inbound_at_b.payload_class,
+                inbound_at_b.object_hash,
+                inbound_at_b.payload_sha256,
+                inbound_at_b.delivery_id,
+                inbound_at_b.source_peer_id.as_str(),
+                acked_at_ms,
+            )
+            .unwrap());
+        let ack_admission = wait_for_event_without_relay_failure_v1(
+            &node_b_runtime,
+            Duration::from_secs(2),
+            None,
+            |event| {
+                matches!(
+                    event,
+                    ProductMainlineOverlayEventV1::RecipientAckRelayAdmission(admission)
+                        if admission.delivery_id == inbound_at_b.delivery_id
+                            && admission.admitted
+                )
+            },
+        );
+        assert!(matches!(
+            ack_admission,
+            ProductMainlineOverlayEventV1::RecipientAckRelayAdmission(admission)
+                if admission.original_sender_peer_id == node_a_runtime.startup().local_peer_id
+                    && admission.disposition.is_some()
+        ));
+        let ack_event = wait_for_event_without_relay_failure_v1(
+            &node_a_runtime,
+            Duration::from_secs(2),
+            None,
+            |event| {
+                matches!(
+                    event,
+                    ProductMainlineOverlayEventV1::RecipientAck { ack, .. }
+                        if ack.delivery_id == inbound_at_b.delivery_id
+                )
+            },
+        );
+        assert!(matches!(
+            ack_event,
+            ProductMainlineOverlayEventV1::RecipientAck {
+                ack: ProductMainlineOverlayRecipientAckV1 {
+                    disposition: ProductMainlineOverlayRecipientAckDispositionV1::JournalPersisted,
+                    accepted_at_ms,
+                    ..
+                },
+                ..
+            } if accepted_at_ms == acked_at_ms
+        ));
+
         let seal_object_hash = [0x47; 32];
         let seal_payload = b"opaque-native-seal-payload-v1".to_vec();
         assert!(node_a_runtime
@@ -3813,11 +4946,11 @@ mod tests {
         wait_for_event_v1(&node_a_runtime, Duration::from_secs(1), |event| {
             matches!(
                 event,
-                ProductMainlineOverlayEventV1::Delivery(
-                    ProductMainlineOverlayDeliveryV1 {
+                ProductMainlineOverlayEventV1::RelayAdmission(
+                    ProductMainlineOverlayRelayAdmissionV1 {
                         payload_class: ProductMainlineOverlayPayloadClassV1::NativeSeal,
                         object_hash,
-                        delivered: true,
+                        admitted: true,
                         ..
                     }
                 ) if *object_hash == seal_object_hash
@@ -4303,10 +5436,10 @@ mod tests {
             |event| {
                 matches!(
                     event,
-                    ProductMainlineOverlayEventV1::Delivery(delivery)
+                    ProductMainlineOverlayEventV1::RelayAdmission(delivery)
                         if delivery.remote_peer_id == node_b_peer_id
                             && delivery.object_hash == healthy_tx_hash
-                            && delivery.delivered
+                            && delivery.admitted
                 )
             },
         );
@@ -4587,11 +5720,11 @@ mod tests {
                             node_a_connected_to_live = true;
                         }
                     }
-                    ProductMainlineOverlayEventV1::Delivery(delivery)
+                    ProductMainlineOverlayEventV1::RelayAdmission(delivery)
                         if delivery.payload_class
                             == ProductMainlineOverlayPayloadClassV1::NativeTransaction
                             && delivery.object_hash == tx_hash
-                            && delivery.delivered =>
+                            && delivery.admitted =>
                     {
                         delivered_after_reconnect = true;
                     }
@@ -4675,6 +5808,7 @@ mod tests {
             chain_id,
             role,
             identity_key_path,
+            delivery_journal_path: None,
             overlay: ProductNodeOverlayConfigV1 {
                 cache_path,
                 trusted_signer_public_keys: vec![trusted_signer],
@@ -4941,11 +6075,11 @@ mod tests {
         while started.elapsed() < timeout {
             for event in runtime.drain_events(64) {
                 match event {
-                    ProductMainlineOverlayEventV1::Delivery(delivery)
+                    ProductMainlineOverlayEventV1::RelayAdmission(delivery)
                         if delivery.payload_class
                             == ProductMainlineOverlayPayloadClassV1::NativeTransaction
                             && delivery.object_hash == tx_hash
-                            && delivery.delivered =>
+                            && delivery.admitted =>
                     {
                         observed.insert(delivery.remote_peer_id);
                     }

@@ -265,10 +265,12 @@ envelope、坏 NovoRUDP/classified frame、handshake 超时或 pre-auth overflow
 [`Product Relay Admission & Resource Bounds v1`](NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md)
 进一步关闭了进程内资源门：`pending_by_peer`、pre-auth、event channel、物理连接、认证
 session、identity/aggregate ingress 以及 active/offline relay queue 均具有明确的 count、
-byte 和适用的 TTL/deadline 边界。`Delivery=true` 现在表示 relay 返回严格关联的 accepted
-`ForwardOutcome`，不是单纯 socket write；但它仍不表示目标 validator 已接收、解密或
-持久化。因此 durable recipient ACK/journal 与 restart recovery 仍是 NativeSeal 激活的
-硬门。
+byte 和适用的 TTL/deadline 边界。`RelayAdmission(admitted=true)` 现在表示 relay 返回严格
+关联的 accepted `ForwardOutcome`，不是单纯 socket write；但它仍不表示目标 validator 已
+接收、解密或持久化。NativeTransaction 已有独立 Host delivery journal 与签名 recipient ACK；
+该 ACK 只证明 pending-only native ingress acceptance，不证明 AOEM 执行。活动 main runtime
+仍跳过 NativeSeal，因此 seal artifact 的 durable verification/quarantine owner、ACK 与重启
+恢复仍是 NativeSeal 激活的硬门。
 
 已认证且 framing 正确、但无法通过原生交易签名/身份/nonce/chain-domain ingress 的单笔
 payload 现在只记录 peer rejection，不再写入全局 worker error 或停止其他 peer 的广播；
@@ -290,15 +292,20 @@ node 侧 192 KiB seal/classified payload 上限与 relay/client 读写侧 1 MiB 
 执行；handshake/control 具有更小独立上限。物理连接、绝对 handshake deadline、并发
 session、每 identity/aggregate 速率、active/offline queue 与 pre-auth buffer 均已纳入
 count/byte/time enforcement 和负向测试。该完成项只证明当前进程内资源所有权，不替代
-上游 DDoS 防护，也不提供 durable delivery。
+上游 DDoS 防护，也不独立提供 NativeSeal durable delivery。NativeTransaction journal/ACK
+的完成状态不能外推到 dormant NativeSeal route。
 
-### 10.4 Per-recipient durable ACK/journal
+### 10.4 NativeSeal per-recipient durable verification/ACK owner
 
 relay socket write 成功不等于目标 validator 已接收，更不等于 quarantine 已持久化。
-每个 `(epoch, object_hash, recipient_validator)` 必须有独立、可重启恢复的 delivery
-journal；只有目标 peer 在认证 session 上返回绑定 artifact/wire hash 的 durable ACK 后，
-才可关闭该 recipient obligation。一个 peer 的 ACK 不能清除其他 peer 的任务，ACK 也
-绝不能删除 signer safety lock，或被解释成 vote、QC、proof seal 或 finality。
+通用 delivery journal、稳定 per-recipient delivery ID 与签名 ACK wire 已在
+NativeTransaction 主线实现，但不能直接把 transaction 的 `journal_persisted` disposition
+解释成 seal quarantine admission。每个 `(epoch, object_hash, recipient_validator)` 必须有
+独立、可重启恢复的 seal delivery obligation；只有目标 peer 在认证 session 上完成 canonical
+wire 验证、authority/source binding 和 durable quarantine write/readback，并返回绑定 epoch、
+artifact kind、object/wire hash 与 recipient 的 ACK 后，才可关闭该 obligation。一个 peer 的
+ACK 不能清除其他 peer 的任务，ACK 也绝不能删除 signer safety lock，或被解释成 vote、QC、
+proof seal 或 finality。
 
 ### 10.5 Body/DA 与本机执行验证
 
@@ -340,8 +347,9 @@ promotion、reorg/rollback 或主网最终性已经完成。
 ```text
 mesh peer error-domain containment                       IMPLEMENTED
 -> relay admission + byte/session/queue bounds
+-> NativeTransaction per-recipient delivery journal/ACK IMPLEMENTED
 -> third-flight key-confirm
--> per-recipient durable delivery journal and ACK
+-> NativeSeal durable verification/quarantine ACK owner
 -> bounded body/DA acquisition
 -> identity guard integrated into the atomic signing boundary
 -> authenticated NativeSeal runtime ingress

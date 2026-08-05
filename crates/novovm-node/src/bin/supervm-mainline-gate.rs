@@ -679,7 +679,19 @@ fn main() -> Result<()> {
     gate.test_relay_path_tests = true;
 
     run_step(
-        "test product mainline overlay mesh, recovery, and topology preflight",
+        "test product delivery journal durability and recovery",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-node",
+            "--lib",
+            "product_delivery_journal::tests",
+        ],
+    )?;
+
+    run_step(
+        "test product mainline overlay mesh, ACK, recovery, and topology preflight",
         "cargo",
         &["test", "-p", "novovm-node", "--lib", "product_mainline_"],
     )?;

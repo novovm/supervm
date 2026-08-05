@@ -98,6 +98,7 @@ When documentation conflicts occur, resolve in this order:
 - If you add a new public interface, runtime entry, or gate entry, update this file in the same change.
 - Runtime artifacts are evidence only after the corresponding command or CI job succeeds; missing generated artifacts prove no result and must not be replaced with placeholders.
 - The product overlay now has an opt-in `novovm-node` native-pipeline lifecycle and AOEM ingress bridge defined by `docs/NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md`. Local real-WSS lifecycle coverage is not a claim of a public VPS, NAT, cellular, VPN, or CGNAT result; those claims still require signed topology evidence.
+- Product Overlay durable NativeTransaction delivery semantics are defined by `docs/NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md`: relay admission and verified recipient ACK are separate facts, and ACK proves only Host journal plus pending-only ingress acceptance, never AOEM execution, QC, or finality. NativeSeal durable verification/quarantine ownership remains a separate unfinished activation gate.
 - Current public documents should describe established capabilities, current boundaries, and current reading order rather than development history.
 - If the project adds a new sealed capability or decision policy, publish that seal first and then update this entry point.
 - Unified account should be read from the current `Account Protocol v1-min` document rather than inferred from legacy or migration material.

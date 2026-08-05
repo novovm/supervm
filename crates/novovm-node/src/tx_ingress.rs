@@ -3605,6 +3605,20 @@ pub fn nov_native_tx_to_adapter_tx_ir_v1(tx: &NovNativeTxWireV1) -> Result<TxIR>
     Ok(ir)
 }
 
+/// Computes the canonical NOV native transaction hash without reserving a nonce or admitting
+/// the payload into the pending runtime. Product transports use this as a fail-closed commitment
+/// check before they persist an inbound delivery obligation or invoke authenticated ingress.
+pub fn canonical_nov_native_tx_hash_from_payload_v1(payload: &[u8]) -> Result<[u8; 32]> {
+    if payload.is_empty() {
+        bail!("NOV native transaction payload is empty");
+    }
+    let native_tx = decode_nov_native_tx_wire_v1(payload).map_err(|error| {
+        anyhow::anyhow!("decode NOV native transaction payload failed: {error}")
+    })?;
+    let ir = nov_native_tx_to_adapter_tx_ir_v1(&native_tx)?;
+    Ok(tx_hash_array_from_ir_v1(&ir))
+}
+
 pub fn sign_nov_native_tx_with_seed_v1(
     tx: &mut NovNativeTxWireV1,
     signing_seed: [u8; 32],
@@ -21176,6 +21190,20 @@ mod tests {
 
     fn build_test_native_execute_raw_hex_v1(nonce: u64, account: &str, amount: u64) -> String {
         build_test_native_execute_raw_hex_with_chain_v1(77, nonce, account, amount)
+    }
+
+    #[test]
+    fn canonical_native_hash_preview_matches_decoded_ir_without_ingress() {
+        let raw_hex = build_test_native_execute_raw_hex_v1(7, "acct-hash-preview", 19);
+        let raw = decode_eth_send_raw_hex_payload_v1(&raw_hex, "raw_tx").expect("decode raw tx");
+        let native_tx = decode_nov_native_tx_wire_v1(&raw).expect("decode native tx");
+        let ir = nov_native_tx_to_adapter_tx_ir_v1(&native_tx).expect("build canonical ir");
+
+        assert_eq!(
+            canonical_nov_native_tx_hash_from_payload_v1(&raw).expect("preview hash"),
+            tx_hash_array_from_ir_v1(&ir)
+        );
+        assert!(canonical_nov_native_tx_hash_from_payload_v1(b"not-a-native-tx").is_err());
     }
 
     fn build_test_network_fixture_raw_hex_v1(

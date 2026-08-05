@@ -16,7 +16,8 @@ Overlay 的进程内资源所有权，不把 relay 提升为 NOVOVM 信任根，
 - data/control 两类队列若分别计数，会让声明的 per-peer 上限翻倍；
 - 小数量的大 frame 仍能越过只有 count 的队列策略；
 - mesh fan-out 会把一份 logical payload 变成多个 recipient obligation；
-- relay 拒绝一帧后，如果 sender 只看本机 socket write，会产生假 `Delivery=true`。
+- relay 拒绝一帧后，如果 sender 只看本机 socket write，会产生假的
+  `RelayAdmission(admitted=true)`。
 
 ## 2. Relay admission
 
@@ -95,9 +96,10 @@ required_bytes = logical_payload_bytes * recipient_count
 
 只有 per-peer 和 global count/bytes 全部满足，`try_submit` 才返回 `true`。payload body 使用
 共享 `Arc`，避免 mesh fan-out 深拷贝；每个 recipient obligation 持有独立 RAII permit，
-在 relay admission 成功、TTL 过期、worker 停止或 queue drop 时释放。即使 relay 断线或
-当前无可用 route，worker 也必须持续 drain bounded ingress 并清理 TTL，不能让过期项目
-永久占用预算。
+在 relay admission 成功、TTL 过期、worker 停止或 queue drop 时释放。这里释放的只是
+Overlay worker 进程内 permit；Host-owned delivery journal 中的 durable obligation 必须继续
+保留，直到验证对应 recipient ACK 或进入显式 terminal expiry。即使 relay 断线或当前无可用
+route，worker 也必须持续 drain bounded ingress 并清理 TTL，不能让过期项目永久占用预算。
 
 peer E2E handshake 完成前的 opaque delivery buffer 同样具有 per-peer/global count、bytes
 和本机 age 上限。该 age 不信任 relay 提供的 `received_at_ms`。
@@ -107,17 +109,18 @@ payload capacity）预留 RAII permit；错误文本先截断到 4 KiB。该上�
 channel backlog，不声称覆盖已经转移给调用方的返回值或 allocator metadata；`drain_events`
 每次最多转移 256 个 event，形成独立的调用方批量边界。
 
-## 5. Delivery 的新下界
+## 5. Relay admission 与 durable recipient ACK 下界
 
 通过 raw wire/速率 admission 并成功解码的 `Data` 和 peer-handshake write 后，client 必须等待与该请求相关的
 `ForwardOutcome`。只有 disposition 为 `forwarded`、`queued_target_offline` 或
-`queued_backpressure`，本机 pending obligation 才能移除并产生成功事件。超限、旧 session、
-route mismatch 或 shutdown rejection 均保留 obligation，并令当前 relay lifecycle 失败。
+`queued_backpressure`，Overlay worker 的进程内 pending item 才能移除并产生
+`RelayAdmission(admitted=true)`。超限、旧 session、route mismatch 或 shutdown rejection
+均保留 worker item 与 Host durable obligation，并令当前 relay lifecycle 失败。
 
 因此本切片完成后：
 
-> `Delivery=true` 表示 relay 已明确接管该 envelope（已转发到目标 session，或已放入受限
-> 内存队列），不再只表示 sender socket write/flush 成功。
+> `RelayAdmission(admitted=true)` 表示 relay 已明确接管该 envelope（已转发到目标
+> session，或已放入受限内存队列），不再只表示 sender socket write/flush 成功。
 
 它仍然不表示：
 
@@ -130,7 +133,12 @@ exactly-once or at-least-once
 transaction executed or proof-sealed
 ```
 
-recipient-bound durable ACK/journal 仍是后续独立切片。
+Host-owned durable delivery journal 与签名 recipient ACK 是独立于
+`ForwardOutcome` 的后续状态机，定义见
+[`Product Durable Recipient ACK & Delivery Journal v1`](NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md)。
+`journal_persisted` ACK 只证明 recipient Host journal durable acceptance 与 pending-only
+native ingress acceptance，仍不表示 AOEM 执行、AOEM receipt、proof seal、vote、QC、safe
+或 finalized。Sender 收到并验证 ACK 前，不得终结对应 journal obligation。
 
 等待 outcome 时，client 最多临时保存 64 个、合计 16 MiB 的交错入站事件，超限即失败。
 整个 outcome 等待、每个 protocol item 和认证后写入都有不可被事件/Ping/Pong 重置的绝对
@@ -163,6 +171,10 @@ relay egress、WebSocket/TLS/TCP overhead。offline queue 有 target/source/glob
 因此四机部署必须整体升级到同一提交；旧 client/new daemon 或 new client/旧 daemon 混跑
 不属于支持的滚动升级路径。显式 capability/version 协商仍是后续协议治理项。
 
+LAN 多机验证必须分发同一个校验后的 release/package，并核对 checksums/package fingerprint、
+Overlay/ACK wire 与 journal schema compatibility。各机器可使用不同盘符、工作区和相对数据
+路径；这些本机路径不参与协议或版本相等判断。
+
 `node_key_bound_encrypted` 也不能作为公网绕过证书验证的模式：当前 signed relay handshake
 尚未 channel-bind 后续 wire，主动 MITM 可转发一次合法握手后篡改 relay admission 结果。
 代码因此将该兼容模式限制为 resolved loopback；公网必须使用 `native_web_pki` 或
@@ -185,10 +197,13 @@ one source across many targets                -> per-source rejection
 offline queue item beyond local TTL           -> expired, never drained
 oversized inbound/outbound/control frame      -> rejected before allocation/write
 mesh fan-out over per-peer/global budget      -> try_submit=false
-pending/pre-auth item beyond local TTL        -> failure event, no Delivery=true
+pending/pre-auth item beyond local TTL        -> RelayAdmission(admitted=false)
 predecode RateLimited/invalid wire            -> lifecycle fails; pending retained
 decoded RejectedQueuePeer/Source/TotalLimit   -> pending retained
-accepted ForwardOutcome                      -> pending released once
+accepted ForwardOutcome                      -> worker pending released once
+accepted ForwardOutcome                      -> durable journal obligation retained
+verified signed recipient ACK                -> matching sender-side recipient becomes terminal
+recipient ACK                                -> no AOEM/QC/finality inference
 ```
 
 公网四机、VPS、NAT/CGNAT/VPN、Linux 安装包和 self-hosted nightly 长跑不由这些本机测试
@@ -199,7 +214,8 @@ accepted ForwardOutcome                      -> pending released once
 ```text
 novovm-network product_relay tests          19/19 PASS
 novovm-node product_relay tests             20/20 PASS
-novovm-node product_mainline_overlay tests  19/19 PASS
+novovm-node product_mainline_overlay tests  20/20 PASS
+novovm-node product_delivery_journal tests   9/9 PASS
 novovm-node product_evidence tests           4/4 PASS
 cargo clippy --workspace --all-targets      PASS (-D warnings)
 supervm-mainline-gate                       PASS

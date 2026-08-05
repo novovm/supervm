@@ -3,8 +3,10 @@
 Status: resource-bounded implementation candidate and opt-in only. Relay and
 Overlay process-memory admission is closed by
 [`Product Relay Admission & Resource Bounds v1`](NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md),
-but production activation still requires durable recipient acknowledgement and
-real public-topology evidence.
+and the Host-owned durable obligation/recipient-ACK boundary is defined by
+[`Product Durable Recipient ACK & Delivery Journal v1`](NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md).
+Production activation still requires complete main-runtime signoff and real
+public-topology evidence.
 
 The Product Overlay can now be owned by the `novovm-node` native execution
 pipeline instead of running only as the standalone `novovm-product-peer`
@@ -39,8 +41,9 @@ NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG=<path-to-config.json>
 
 The config path is supplied by the operator. No repository, drive-letter, or
 workspace-parent absolute path is built into the runtime. Relative identity,
-bootstrap-cache, and explicit-CA paths inside the config are resolved from the
-config file's own directory, not from the process working directory.
+delivery-journal, bootstrap-cache, and explicit-CA paths inside the config are
+resolved from the config file's own directory, not from the process working
+directory.
 
 Recommended duplex config:
 
@@ -49,6 +52,7 @@ Recommended duplex config:
   "chain_id": 1,
   "role": "duplex",
   "identity_key_path": "runtime/node-ed25519.hex",
+  "delivery_journal_path": "runtime/novovm-product-delivery-journal.rocksdb",
   "peers": [
     {
       "peer_id": "novovm-ed25519:<peer-b-public-key>",
@@ -84,7 +88,12 @@ Recommended duplex config:
     "preauth_per_peer_bytes": 4194304,
     "preauth_total_count": 1024,
     "preauth_total_bytes": 67108864,
-    "preauth_ttl_ms": 30000
+    "preauth_ttl_ms": 30000,
+    "journal_max_entries": 65536,
+    "journal_max_bytes": 536870912,
+    "journal_obligation_ttl_ms": 86400000,
+    "journal_terminal_retention_ms": 604800000,
+    "journal_retry_interval_ms": 1000
   },
   "metric_peer_id": 9990777,
   "reconnect_base_delay_ms": 250,
@@ -111,8 +120,10 @@ not close the shared relay or reset another peer's active channel. Every
 `pending_by_peer` obligation is admitted atomically against per-peer and global
 count/byte limits and a local TTL. Logical payload bytes are shared across
 recipients, while each recipient keeps an independent accounting permit. These
-queues remain in-memory only: bounded delivery must not be interpreted as a
-durable journal or restart recovery.
+worker queues remain in-memory only; the separate Host delivery journal retains
+the restart-safe per-recipient obligation. Bounded worker admission must not be
+interpreted as durable completion, and relay admission must not remove the Host
+journal obligation.
 
 Both ends may propagate pending transactions and both return decrypted
 payloads to the same native ingress boundary. For a compatibility two-node
@@ -126,6 +137,7 @@ The original one-way compatibility roles remain available. A responder uses:
   "chain_id": 1,
   "role": "responder",
   "identity_key_path": "runtime/node-ed25519.hex",
+  "delivery_journal_path": "runtime/novovm-product-delivery-journal.rocksdb",
   "expected_source_peer_id": "novovm-ed25519:<peer-public-key>",
   "overlay": {
     "cache_path": "runtime/bootstrap-cache.json",
@@ -203,17 +215,42 @@ post-handshake authentication failure isolates that peer and enters its
 cooldown; it does not close the shared relay. Authenticated traffic and relay
 queues have their own independent limits.
 
-## Delivery semantics and remaining durability gate
+## Relay admission and durable recipient ACK semantics
 
-The current `Delivery { delivered: true }` event means the relay returned a
+The `RelayAdmission { admitted: true }` event means the relay returned a
 strictly correlated `ForwardOutcome` saying it forwarded the encrypted envelope
 to an active target session or accepted it into a bounded in-memory offline/
-backpressure queue. At that point the node releases its in-memory obligation.
-It does not prove that the recipient read the envelope, opened the E2E frame,
-persisted quarantine state, or accepted a native transaction. There is no
-per-recipient durable ACK or delivery journal, so a disconnect after relay
-admission can still lose a sent-but-unacknowledged obligation and a process
-restart cannot reconstruct in-memory pending entries.
+backpressure queue. At that point the Overlay worker releases its in-memory
+queue permit, but the Host journal retains the recipient-specific durable
+obligation. Relay admission does not prove that the recipient read the envelope,
+opened the E2E frame, persisted journal state, or accepted native ingress.
+
+A distinct signed recipient ACK binds the chain, payload class, object and
+payload hashes, stable delivery ID, original sender, recipient and a
+journal-evidence timestamp. The wire field is named `accepted_at_ms`, but a
+completed duplicate currently reuses its tombstone terminal time; it is not a
+universal proof of the original ingress time. The ACK permits only that
+matching sender-side outbound recipient obligation to transition to an
+outbound-recipient tombstone. It
+proves durable Host journal acceptance plus pending-only native ingress
+acceptance; it does not prove AOEM execution or persistence, an AOEM receipt, a
+candidate block, proof seal, validator vote, QC, fork choice, safe or finalized
+status.
+
+The worker queue and the durable journal therefore have different release
+points:
+
+```text
+accepted ForwardOutcome  -> release worker in-memory permit
+verified recipient ACK   -> terminalize Host recipient obligation
+AOEM / QC / finality     -> independent lifecycle, never inferred here
+```
+
+On the recipient inbound side, ACK relay admission and AOEM execution are
+independent branches. The ACK may be emitted before AOEM executes and remains
+only pending-ingress evidence. The active inbound record becomes a terminal
+tombstone only after both `ack_pending=false` and an AOEM execution receipt is
+observable; neither branch alone may compact it.
 
 Physical connections, absolute handshake time, authenticated sessions,
 identity/aggregate ingress, active/offline relay queues, node pending queues,
@@ -238,12 +275,19 @@ and are not falsely counted as still resident in the runtime channel.
   frame type is rejected before pending state.
 - A decoded transaction is counted as relay-admitted only after a correlated accepted
   `ForwardOutcome`. A rejected outcome leaves the bounded in-memory obligation
-  available for retry; accepted relay ownership removes it without waiting for
-  recipient acknowledgement.
+  available for retry; accepted relay ownership removes only the worker-owned
+  in-memory item. The Host journal obligation remains until a verified recipient
+  ACK or its explicit terminal expiry policy.
 - A raw predecode rate/byte rejection or malformed wire closes that relay lifecycle because no
   trustworthy correlation fields exist; the pending obligation remains available for retry.
-- `Delivery=true` is telemetry for bounded relay admission, not a durable recipient
+- `RelayAdmission(admitted=true)` is telemetry for bounded relay admission, not a durable recipient
   ACK, quarantine admission, execution acceptance, vote, QC, or finality.
+- A signed `journal_persisted` recipient ACK proves only Host journal/ingress
+  acceptance into the pending-only lifecycle. It is not an AOEM execution
+  receipt and cannot set proof-sealed, safe or finalized state.
+- Journal paths must be operator-configurable and support resolution relative to
+  their owning config file. Repository roots, drive letters and workspace-parent
+  names are not protocol inputs.
 - The worker stops and joins with the owning node runtime.
 
 `NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_ENABLED` defaults to disabled when
@@ -261,9 +305,30 @@ NOVOVM_PRODUCT_MAINLINE_OVERLAY_EXPECTED_RECEIVED=<count>
 NOVOVM_PRODUCT_MAINLINE_OVERLAY_EXPECTED_DELIVERED=<count>
 ```
 
+`EXPECTED_RECEIVED` and `EXPECTED_DELIVERED` are thresholds for the current
+`novovm-node` process counters only. They reset on process restart and must not
+be presented as cumulative cross-restart totals. Restart recovery is reported
+separately by `journal_recovered_outbound_total` and
+`journal_recovered_inbound_total`, together with the recovered journal records.
+
+Required signoff also fails closed while any of the following remains:
+
+```text
+journal startup recovery not yet driven
+in-memory transaction or recipient-ACK work in flight
+active durable outbound recipient obligation
+inbound Prepared record
+inbound Accepted record with ack_pending=true
+all-ACKed fanout whose completion projection is still unobserved
+outbound or inbound-Prepared journal expiry observed during the process
+```
+
+Consequently, passing the expected per-process counters alone is never enough
+to sign off durable delivery or restart recovery.
+
 The final pipeline summary includes `product_mainline_overlay` with lifecycle,
 bootstrap, relay, E2E peer count, per-peer in-flight delivery count, ingress,
-delivery, reconnect/rotation, and ownership evidence.
+relay-admission, verified-recipient-ACK delivery, reconnect/rotation, and ownership evidence.
 
 The mainline gate runs local real-WSS tests with node-owned Overlay runtimes.
 It verifies signed relay selection, relay identity authentication,
@@ -274,9 +339,12 @@ peer-attributable error containment without rotating the healthy shared relay,
 failed-candidate cooldown, signed relay rotation, reconnect, and lifecycle
 shutdown.
 
-This does not claim a public VPS, cellular, VPN, NAT, or CGNAT result. Those
-remain topology evidence work. It also does not claim a durable per-recipient
-ACK/journal, restart-safe pending delivery, or production activation readiness.
+This does not claim a public VPS, cellular, VPN, NAT, CGNAT, Linux package or
+self-hosted nightly result. Those remain `NOT EXECUTED` until their own evidence
+exists. Local durable recipient ACK/journal coverage also does not claim AOEM
+execution, QC/finality, mixed-version rolling upgrade support, or production
+activation readiness. LAN nodes must run the same verified release/package;
+local drive and data paths may differ.
 
 The exact containment boundary and its negative claims are frozen in
 [`NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md`](NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md).

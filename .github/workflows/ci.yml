@@ -248,6 +248,9 @@ jobs:
       - name: Product mainline overlay resource-bound tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib product_mainline_overlay::tests
 
+      - name: Product durable delivery journal tests
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib product_delivery_journal::tests
+
       - name: Product evidence bounded-relay tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib product_evidence::tests
 

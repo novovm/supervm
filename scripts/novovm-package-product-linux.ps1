@@ -158,6 +158,7 @@ try {
   "chain_id": 1,
   "role": "duplex",
   "identity_key_path": "/etc/novovm/node-ed25519.hex",
+  "delivery_journal_path": "/var/lib/novovm/state/product-delivery-journal.rocksdb",
   "peers": [
     {
       "peer_id": "novovm-ed25519:<peer-b-public-key>",
@@ -195,7 +196,12 @@ try {
     "preauth_per_peer_bytes": 4194304,
     "preauth_total_count": 1024,
     "preauth_total_bytes": 67108864,
-    "preauth_ttl_ms": 30000
+    "preauth_ttl_ms": 30000,
+    "journal_max_entries": 65536,
+    "journal_max_bytes": 536870912,
+    "journal_obligation_ttl_ms": 86400000,
+    "journal_terminal_retention_ms": 604800000,
+    "journal_retry_interval_ms": 1000
   },
   "metric_peer_id": 9991000,
   "reconnect_base_delay_ms": 250,
@@ -325,6 +331,7 @@ WantedBy=multi-user.target
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "systemd\novovm-node.service")
 
   Copy-Item -Force (Join-Path $repo "docs\NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md") (Join-Path $packagePath "docs\")
+  Copy-Item -Force (Join-Path $repo "docs\NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md") (Join-Path $packagePath "docs\")
   Copy-Item -Force (Join-Path $repo "docs\novovm-product-topology-preflight-v1.md") (Join-Path $packagePath "docs\")
   Copy-Item -Force (Join-Path $repo "docs\novovm-product-relay-daemon-v1.md") (Join-Path $packagePath "docs\")
   Copy-Item -Force (Join-Path $repo "docs\novovm-product-node-overlay-v1.md") (Join-Path $packagePath "docs\")
@@ -348,7 +355,8 @@ Codex installation, or source workspace.
 5. For a main node, install `node-mainline-overlay.json` and `novovm-node.env`,
    then review the included main-node systemd unit. The example pins an
    infinite native-execution loop (`MAX_TICKS=0`) and durable state under
-   `/var/lib/novovm`; replace chain ID `1` with the deployment chain ID.
+   `/var/lib/novovm`, including the recipient-ACK delivery journal; replace
+   chain ID `1` with the deployment chain ID and retain the journal across restarts.
 6. Keep the bundled generic AOEM FULLMAX runtime under `/opt/novovm/aoem`;
    `novovm-node.env` pins its core, manifest, profile, and sidecar paths.
 7. Before starting the service, load the final protocol environment and run
@@ -379,11 +387,24 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
     } | Sort-Object path
   $entries | ForEach-Object { "$($_.sha256)  $($_.path)" } | Set-Content -Encoding ascii (Join-Path $packagePath "CHECKSUMS.sha256")
   $commit = (git rev-parse HEAD).Trim()
+  $ackWireVersion = "novovm-product-mainline-recipient-ack/v1"
+  $journalSchema = "novovm-product-delivery-journal/v1"
+  $overlaySource = Get-Content -Raw -LiteralPath (Join-Path $repo "crates\novovm-node\src\product_mainline_overlay.rs")
+  $journalSource = Get-Content -Raw -LiteralPath (Join-Path $repo "crates\novovm-node\src\product_delivery_journal.rs")
+  if (-not $overlaySource.Contains($ackWireVersion)) {
+    throw "Release manifest ACK wire version does not match the Product Overlay source."
+  }
+  if (-not $journalSource.Contains($journalSchema)) {
+    throw "Release manifest journal schema does not match the delivery-journal source."
+  }
   [PSCustomObject]@{
     scope = "novovm_product_overlay_linux_release_v1"
     target = $Target
     git_commit = $commit
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
+    product_overlay_ack_wire = $ackWireVersion
+    delivery_journal_schema = $journalSchema
+    mixed_version_rolling_upgrade_supported = $false
     signed_evidence_included = $false
     note = "Generate signed runtime evidence after deployment; this build manifest is checksum-only."
     artifacts = $entries
