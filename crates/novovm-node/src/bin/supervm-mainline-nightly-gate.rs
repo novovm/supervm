@@ -4,11 +4,12 @@ use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use novovm_network::load_eth_fullnode_native_worker_runtime_snapshot_from_path_v1;
 use novovm_node::mainline_soak::{
-    apply_mainline_soak_threshold_env_overrides_v1, default_mainline_soak_duration_seconds_v1,
-    default_mainline_soak_report_path_v1, default_mainline_soak_snapshot_path_v1,
-    default_mainline_soak_thresholds_v1, run_mainline_soak_v1, write_mainline_soak_report_v1,
-    MainlineNightlySoakGateReportV1, MainlineNightlySoakProfileResultV1, MainlineSoakConfigV1,
-    MAINLINE_NIGHTLY_SOAK_GATE_REPORT_SCHEMA_V1,
+    apply_mainline_soak_evidence_env_overrides_v2, apply_mainline_soak_threshold_env_overrides_v1,
+    default_mainline_soak_duration_seconds_v1, default_mainline_soak_report_path_v1,
+    default_mainline_soak_snapshot_path_v1, default_mainline_soak_thresholds_v1,
+    run_mainline_soak_v1, write_mainline_soak_report_v1, MainlineNightlySoakGateReportV1,
+    MainlineNightlySoakProfileResultV1, MainlineSoakConfigV1, MainlineSoakEvidencePolicyV2,
+    MainlineSoakModeV2, MAINLINE_NIGHTLY_SOAK_GATE_REPORT_SCHEMA_V1,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -159,6 +160,12 @@ fn resolve_profile_config_v1(
         profile_threshold_prefix_v1(profile).as_str(),
         &mut thresholds,
     )?;
+    let mut evidence_policy = MainlineSoakEvidencePolicyV2::default();
+    apply_mainline_soak_evidence_env_overrides_v2("NOVOVM_MAINLINE_SOAK_", &mut evidence_policy)?;
+    apply_mainline_soak_evidence_env_overrides_v2(
+        profile_threshold_prefix_v1(profile).as_str(),
+        &mut evidence_policy,
+    )?;
 
     Ok(MainlineSoakConfigV1 {
         profile: profile.to_string(),
@@ -168,7 +175,16 @@ fn resolve_profile_config_v1(
         snapshot_path: snapshot_path.to_path_buf(),
         report_path,
         thresholds,
+        evidence_policy,
     })
+}
+
+fn profile_counts_as_soak_success_v2(
+    evaluation_pass: bool,
+    mode: MainlineSoakModeV2,
+    duration_requirement_met: bool,
+) -> bool {
+    evaluation_pass && mode == MainlineSoakModeV2::Workload && duration_requirement_met
 }
 
 fn main() -> Result<()> {
@@ -206,19 +222,30 @@ fn main() -> Result<()> {
         let report = run_mainline_soak_v1(&config)?;
         write_mainline_soak_report_v1(config.report_path.as_path(), &report)?;
         println!(
-            "nightly soak profile done: profile={} pass={} sample_count={} elapsed={}s violations={} report={}",
+            "nightly soak profile done: profile={} scope={} pass={} sample_count={} elapsed={}s nominal={}s duration_requirement_met={} violations={} report={}",
             report.profile,
+            report.validation_scope,
             report.evaluation.pass,
             report.sample_count,
             report.observed_elapsed_seconds,
+            report.nominal_duration_seconds,
+            report.duration_requirement_met,
             report.evaluation.violation_count,
             config.report_path.display()
         );
-        overall_pass &= report.evaluation.pass;
+        overall_pass &= profile_counts_as_soak_success_v2(
+            report.evaluation.pass,
+            report.mode,
+            report.duration_requirement_met,
+        );
         profile_results.push(MainlineNightlySoakProfileResultV1 {
             profile: report.profile.clone(),
+            mode: report.mode,
+            validation_scope: report.validation_scope,
             report_path: config.report_path.display().to_string(),
             requested_duration_seconds: report.requested_duration_seconds,
+            nominal_duration_seconds: report.nominal_duration_seconds,
+            duration_requirement_met: report.duration_requirement_met,
             observed_elapsed_seconds: report.observed_elapsed_seconds,
             sample_interval_seconds: report.sample_interval_seconds,
             sample_count: report.sample_count,
@@ -270,4 +297,33 @@ fn main() -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nightly_requires_passing_workload_and_full_profile_duration() {
+        assert!(!profile_counts_as_soak_success_v2(
+            true,
+            MainlineSoakModeV2::Workload,
+            false,
+        ));
+        assert!(!profile_counts_as_soak_success_v2(
+            true,
+            MainlineSoakModeV2::IdleHealth,
+            true,
+        ));
+        assert!(!profile_counts_as_soak_success_v2(
+            false,
+            MainlineSoakModeV2::Workload,
+            true,
+        ));
+        assert!(profile_counts_as_soak_success_v2(
+            true,
+            MainlineSoakModeV2::Workload,
+            true,
+        ));
+    }
 }

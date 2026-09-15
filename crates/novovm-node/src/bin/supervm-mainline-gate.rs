@@ -47,6 +47,9 @@ struct MainlineGate {
     test_v2_stage3a_convergence_recovery_consistency: bool,
     test_v2_stage3b_convergence_time_recovery_budget_consistency: bool,
     test_relay_path_tests: bool,
+    test_mainline_soak_evidence: bool,
+    test_mainline_soak_cli: bool,
+    test_mainline_duty_report_evidence: bool,
     test_product_mainline_overlay_lifecycle: bool,
     test_authenticated_seal_ingress_quarantine: bool,
     test_queue_replay_smoke: bool,
@@ -182,6 +185,9 @@ fn main() -> Result<()> {
         test_v2_stage3a_convergence_recovery_consistency: false,
         test_v2_stage3b_convergence_time_recovery_budget_consistency: false,
         test_relay_path_tests: false,
+        test_mainline_soak_evidence: false,
+        test_mainline_soak_cli: false,
+        test_mainline_duty_report_evidence: false,
         test_product_mainline_overlay_lifecycle: false,
         test_authenticated_seal_ingress_quarantine: false,
         test_queue_replay_smoke: false,
@@ -200,6 +206,33 @@ fn main() -> Result<()> {
         &["check", "-p", "novovm-node"],
     )?;
     gate.check_novovm_node = true;
+
+    run_step(
+        "test mainline soak freshness, coverage, and progress evidence",
+        "cargo",
+        &["test", "-p", "novovm-node", "--lib", "mainline_soak::tests"],
+    )?;
+    gate.test_mainline_soak_evidence = true;
+
+    run_step(
+        "test mainline soak CLI failure status and nightly duration boundary",
+        "cargo",
+        &["test", "-p", "novovm-node", "--test", "mainline_soak_cli"],
+    )?;
+    gate.test_mainline_soak_cli = true;
+
+    run_step(
+        "test mainline duty report evidence acceptance",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-node",
+            "--lib",
+            "mainline_duty_report::tests",
+        ],
+    )?;
+    gate.test_mainline_duty_report_evidence = true;
 
     run_step(
         "test scheduler_gate_matrix",

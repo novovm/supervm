@@ -3,8 +3,13 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::mainline_soak::{
+    MAINLINE_NIGHTLY_SOAK_GATE_REPORT_SCHEMA_V1, MAINLINE_SOAK_REPORT_SCHEMA_V1,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MainlineDutyLevelV1 {
@@ -119,14 +124,6 @@ fn v_as_f64(v: Option<&Value>) -> f64 {
     }
 }
 
-fn v_as_bool(v: Option<&Value>) -> bool {
-    match v {
-        Some(Value::Bool(value)) => *value,
-        Some(Value::String(raw)) => matches!(raw.as_str(), "true" | "1" | "yes" | "on"),
-        _ => false,
-    }
-}
-
 fn v_as_string(v: Option<&Value>) -> String {
     match v {
         Some(Value::String(value)) => value.trim().to_string(),
@@ -147,11 +144,38 @@ fn map_get<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
     v.as_object()?.get(key)
 }
 
-fn parse_soak_digest_v1(raw: &Value, fallback_profile: &str) -> MainlineSoakProfileDigestV1 {
+fn soak_profile_qualifies_v2(raw: &Value, expected_profile: &str) -> bool {
+    let nominal = match expected_profile {
+        "1h" => 3_600,
+        "6h" => 21_600,
+        "24h" => 86_400,
+        _ => return false,
+    };
+    let requested = map_get(raw, "requested_duration_seconds").and_then(Value::as_u64);
+    map_get(raw, "profile").and_then(Value::as_str) == Some(expected_profile)
+        && map_get(raw, "mode").and_then(Value::as_str) == Some("workload")
+        && map_get(raw, "validation_scope").and_then(Value::as_str) == Some("soak")
+        && map_get(raw, "duration_requirement_met").and_then(Value::as_bool) == Some(true)
+        && map_get(raw, "nominal_duration_seconds").and_then(Value::as_u64) == Some(nominal)
+        && requested.is_some_and(|value| value >= nominal)
+        && map_get(raw, "observed_elapsed_seconds")
+            .and_then(Value::as_u64)
+            .zip(requested)
+            .is_some_and(|(observed, requested)| observed >= requested)
+        && map_get(raw, "sample_count")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count >= 2)
+        && map_get(raw, "sample_interval_seconds")
+            .and_then(Value::as_u64)
+            .zip(requested)
+            .is_some_and(|(interval, requested)| interval > 0 && interval <= requested)
+}
+
+fn parse_soak_digest_v1(raw: &Value, expected_profile: &str) -> MainlineSoakProfileDigestV1 {
     let metrics = map_get(raw, "metrics").cloned().unwrap_or(Value::Null);
     let thresholds = map_get(raw, "thresholds").cloned().unwrap_or(Value::Null);
     let evaluation = map_get(raw, "evaluation").cloned().unwrap_or(Value::Null);
-    let violation_codes = map_get(&evaluation, "violations")
+    let mut violation_codes = map_get(&evaluation, "violations")
         .and_then(Value::as_array)
         .map(|items| {
             items
@@ -163,24 +187,61 @@ fn parse_soak_digest_v1(raw: &Value, fallback_profile: &str) -> MainlineSoakProf
         })
         .unwrap_or_default();
 
+    let schema_valid =
+        map_get(raw, "schema").and_then(Value::as_str) == Some(MAINLINE_SOAK_REPORT_SCHEMA_V1);
+    let profile_valid = soak_profile_qualifies_v2(raw, expected_profile);
+    let evaluation_valid = map_get(&evaluation, "pass").and_then(Value::as_bool) == Some(true)
+        && map_get(&evaluation, "violation_count").and_then(Value::as_u64) == Some(0)
+        && map_get(&evaluation, "violations")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty);
+    let elapsed_valid = map_get(raw, "observed_elapsed_ms")
+        .and_then(Value::as_u64)
+        .zip(map_get(raw, "observed_elapsed_seconds").and_then(Value::as_u64))
+        .is_some_and(|(milliseconds, seconds)| milliseconds / 1_000 == seconds);
+    let sampled_body_rate =
+        map_get(&metrics, "sampled_body_updates_per_hour").and_then(Value::as_f64);
+    let sampled_progress_valid = map_get(raw, "counters")
+        .and_then(|counters| map_get(counters, "sampled_body_updates"))
+        .and_then(Value::as_u64)
+        .is_some_and(|count| count > 0)
+        && sampled_body_rate.is_some_and(|rate| rate.is_finite() && rate > 0.0);
+    for (valid, code) in [
+        (schema_valid, "soak_report_v2_schema_required"),
+        (profile_valid, "soak_profile_or_duration_ineligible"),
+        (evaluation_valid, "soak_evaluation_not_passed"),
+        (elapsed_valid, "soak_elapsed_evidence_invalid"),
+        (sampled_progress_valid, "soak_sampled_progress_missing"),
+    ] {
+        if !valid {
+            violation_codes.push(code.to_string());
+        }
+    }
+    let pass = schema_valid
+        && profile_valid
+        && evaluation_valid
+        && elapsed_valid
+        && sampled_progress_valid;
+
     MainlineSoakProfileDigestV1 {
         profile: {
             let p = v_as_string(map_get(raw, "profile"));
             if p.is_empty() {
-                fallback_profile.to_string()
+                expected_profile.to_string()
             } else {
                 p
             }
         },
-        pass: v_as_bool(map_get(&evaluation, "pass")),
-        violation_count: v_as_u64(map_get(&evaluation, "violation_count")),
+        pass,
+        violation_count: v_as_u64(map_get(&evaluation, "violation_count"))
+            .max(violation_codes.len() as u64),
         sample_count: v_as_u64(map_get(raw, "sample_count")),
         observed_elapsed_seconds: v_as_u64(map_get(raw, "observed_elapsed_seconds")),
         throttle_hit_rate_bps_estimated: v_as_u64(map_get(
             &metrics,
             "throttle_hit_rate_bps_estimated",
         )),
-        body_updates_per_hour: v_as_f64(map_get(&metrics, "body_updates_per_hour")),
+        body_updates_per_hour: sampled_body_rate.unwrap_or_default(),
         pending_queue_depth_peak: v_as_u64(map_get(&metrics, "pending_queue_depth_peak")),
         pending_queue_recovery_per_hour: v_as_f64(map_get(
             &metrics,
@@ -215,7 +276,8 @@ fn parse_soak_digest_v1(raw: &Value, fallback_profile: &str) -> MainlineSoakProf
 }
 
 fn parse_nightly_summary_v1(raw: &Value) -> (bool, Vec<(String, bool, u64)>) {
-    let overall = v_as_bool(map_get(raw, "overall_pass"));
+    let mut seen = BTreeSet::new();
+    let mut duplicate_profile = false;
     let profiles = map_get(raw, "profile_results")
         .and_then(Value::as_array)
         .map(|items| {
@@ -223,13 +285,26 @@ fn parse_nightly_summary_v1(raw: &Value) -> (bool, Vec<(String, bool, u64)>) {
                 .iter()
                 .map(|item| {
                     let profile = v_as_string(map_get(item, "profile"));
-                    let pass = v_as_bool(map_get(item, "pass"));
-                    let violations = v_as_u64(map_get(item, "violation_count"));
+                    duplicate_profile |= !seen.insert(profile.clone());
+                    let pass = soak_profile_qualifies_v2(item, &profile)
+                        && map_get(item, "pass").and_then(Value::as_bool) == Some(true)
+                        && map_get(item, "violation_count").and_then(Value::as_u64) == Some(0);
+                    let violations =
+                        v_as_u64(map_get(item, "violation_count")).max(u64::from(!pass));
                     (profile, pass, violations)
                 })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    // This daily report covers both 6h and 24h. A partial nightly selection or
+    // an old boolean-only report cannot establish that combined result.
+    let overall = map_get(raw, "schema").and_then(Value::as_str)
+        == Some(MAINLINE_NIGHTLY_SOAK_GATE_REPORT_SCHEMA_V1)
+        && map_get(raw, "overall_pass").and_then(Value::as_bool) == Some(true)
+        && !duplicate_profile
+        && seen.contains("6h")
+        && seen.contains("24h")
+        && profiles.iter().all(|(_, pass, _)| *pass);
     (overall, profiles)
 }
 
@@ -310,7 +385,7 @@ fn derive_level_and_issue_v1(input: &MainlineDutyReportInputV1) -> (MainlineDuty
 
 fn profile_block_v1(title: &str, digest: &MainlineSoakProfileDigestV1) -> String {
     format!(
-        "- {title}\n  - pass: {}\n  - sample_count: {}\n  - observed_elapsed_seconds: {}\n  - violation_count: {}\n  - throttle_hit_rate_bps_estimated: {}\n  - body_updates_per_hour: {:.3}\n  - pending_queue_depth_peak: {}\n  - pending_queue_recovery_per_hour: {:.3}\n  - target_oscillation_bps: {}\n  - time_slice_target_utilization_peak_bps: {}\n  - top_execution_target_reason: {}\n  - top_execution_target_reason_share_bps: {}\n",
+        "- {title}\n  - pass: {}\n  - sample_count: {}\n  - observed_elapsed_seconds: {}\n  - violation_count: {}\n  - throttle_hit_rate_bps_estimated: {}\n  - sampled_body_updates_per_hour: {:.3}\n  - pending_queue_depth_peak: {}\n  - pending_queue_recovery_per_hour: {:.3}\n  - target_oscillation_bps: {}\n  - time_slice_target_utilization_peak_bps: {}\n  - top_execution_target_reason: {}\n  - top_execution_target_reason_share_bps: {}\n",
         digest.pass,
         digest.sample_count,
         digest.observed_elapsed_seconds,
@@ -442,6 +517,173 @@ pub fn write_mainline_duty_markdown_v1(path: &Path, markdown: &str) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn full_soak_report(profile: &str) -> Value {
+        let seconds = match profile {
+            "6h" => 21_600u64,
+            "24h" => 86_400u64,
+            _ => panic!("test profile must be 6h or 24h"),
+        };
+        serde_json::json!({
+            "schema": MAINLINE_SOAK_REPORT_SCHEMA_V1,
+            "profile": profile,
+            "mode": "workload",
+            "validation_scope": "soak",
+            "nominal_duration_seconds": seconds,
+            "duration_requirement_met": true,
+            "requested_duration_seconds": seconds,
+            "observed_elapsed_seconds": seconds,
+            "observed_elapsed_ms": seconds * 1_000,
+            "sample_interval_seconds": 60,
+            "sample_count": seconds / 60 + 1,
+            "counters": { "sampled_body_updates": 25 },
+            "metrics": { "sampled_body_updates_per_hour": 12.5 },
+            "thresholds": {},
+            "evaluation": { "pass": true, "violation_count": 0, "violations": [] }
+        })
+    }
+
+    fn full_nightly_report() -> Value {
+        let profiles = ["6h", "24h"].map(|profile| {
+            let mut item = full_soak_report(profile);
+            item["pass"] = Value::Bool(true);
+            item["violation_count"] = Value::from(0);
+            item
+        });
+        serde_json::json!({
+            "schema": MAINLINE_NIGHTLY_SOAK_GATE_REPORT_SCHEMA_V1,
+            "overall_pass": true,
+            "profile_results": profiles
+        })
+    }
+
+    fn render_parsed_reports(
+        nightly: &Value,
+        six_hour: &Value,
+        day: &Value,
+    ) -> MainlineDutyReportOutputV1 {
+        let (nightly_overall_pass, nightly_profile_summary) = parse_nightly_summary_v1(nightly);
+        render_mainline_duty_markdown_v1(&MainlineDutyReportInputV1 {
+            generated_utc: "2026-09-16T00:00:00Z".to_string(),
+            owner: "ops".to_string(),
+            workflow_run_url: None,
+            nightly_overall_pass,
+            nightly_profile_summary,
+            six_hour: parse_soak_digest_v1(six_hour, "6h"),
+            twenty_four_hour: parse_soak_digest_v1(day, "24h"),
+        })
+    }
+
+    #[test]
+    fn v2_full_workload_reports_can_be_green_and_preserve_sampled_rate() {
+        let six_hour = full_soak_report("6h");
+        let digest = parse_soak_digest_v1(&six_hour, "6h");
+        assert!(digest.pass);
+        assert_eq!(digest.body_updates_per_hour, 12.5);
+        let output =
+            render_parsed_reports(&full_nightly_report(), &six_hour, &full_soak_report("24h"));
+        assert_eq!(output.level, MainlineDutyLevelV1::Green);
+        assert!(output
+            .markdown
+            .contains("sampled_body_updates_per_hour: 12.500"));
+    }
+
+    #[test]
+    fn legacy_or_missing_schema_cannot_be_promoted_to_green() {
+        for schema in [Value::from("supervm-mainline-soak-report/v1"), Value::Null] {
+            let mut six_hour = full_soak_report("6h");
+            six_hour["schema"] = schema;
+            let output =
+                render_parsed_reports(&full_nightly_report(), &six_hour, &full_soak_report("24h"));
+            assert_eq!(output.level, MainlineDutyLevelV1::Red);
+            assert_eq!(output.primary_issue, "soak_report_v2_schema_required");
+        }
+        let mut nightly = full_nightly_report();
+        nightly["schema"] = Value::from("supervm-mainline-nightly-soak-gate-report/v1");
+        assert_eq!(
+            render_parsed_reports(&nightly, &full_soak_report("6h"), &full_soak_report("24h"))
+                .level,
+            MainlineDutyLevelV1::Red
+        );
+    }
+
+    #[test]
+    fn smoke_idle_wrong_profile_and_false_duration_evidence_are_rejected() {
+        for (key, value) in [
+            ("validation_scope", Value::from("short_smoke")),
+            ("mode", Value::from("idle_health")),
+            ("profile", Value::from("24h")),
+            ("profile", Value::Null),
+            ("duration_requirement_met", Value::Bool(false)),
+            ("duration_requirement_met", Value::from("true")),
+            ("requested_duration_seconds", Value::from(2)),
+            ("observed_elapsed_seconds", Value::from(2)),
+            ("nominal_duration_seconds", Value::from(2)),
+            ("sample_count", Value::from(1)),
+            ("observed_elapsed_ms", Value::from(2_000)),
+        ] {
+            let mut six_hour = full_soak_report("6h");
+            six_hour[key] = value;
+            assert!(
+                !parse_soak_digest_v1(&six_hour, "6h").pass,
+                "accepted invalid {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn pass_boolean_cannot_override_violations_or_missing_progress() {
+        let mut report = full_soak_report("6h");
+        report["evaluation"]["violations"] = serde_json::json!([{ "code": "stale_snapshot" }]);
+        assert!(!parse_soak_digest_v1(&report, "6h").pass);
+        report = full_soak_report("6h");
+        report["evaluation"]["violation_count"] = Value::from(1);
+        assert!(!parse_soak_digest_v1(&report, "6h").pass);
+        report = full_soak_report("6h");
+        report["evaluation"]["pass"] = Value::from("true");
+        assert!(!parse_soak_digest_v1(&report, "6h").pass);
+        report = full_soak_report("6h");
+        report["counters"]["sampled_body_updates"] = Value::from(0);
+        assert!(!parse_soak_digest_v1(&report, "6h").pass);
+        report = full_soak_report("6h");
+        report["metrics"] = serde_json::json!({ "body_updates_per_hour": 12.5 });
+        assert!(!parse_soak_digest_v1(&report, "6h").pass);
+    }
+
+    #[test]
+    fn nightly_requires_both_distinct_complete_profiles() {
+        let mut nightly = full_nightly_report();
+        nightly["profile_results"] = serde_json::json!([]);
+        assert!(!parse_nightly_summary_v1(&nightly).0);
+        nightly = full_nightly_report();
+        nightly["profile_results"].as_array_mut().unwrap().pop();
+        assert!(!parse_nightly_summary_v1(&nightly).0);
+        nightly = full_nightly_report();
+        let duplicate = nightly["profile_results"][0].clone();
+        nightly["profile_results"]
+            .as_array_mut()
+            .unwrap()
+            .push(duplicate);
+        assert!(!parse_nightly_summary_v1(&nightly).0);
+        for (key, value) in [
+            ("mode", Value::from("idle_health")),
+            ("validation_scope", Value::from("short_smoke")),
+            ("duration_requirement_met", Value::Bool(false)),
+            ("nominal_duration_seconds", Value::Null),
+            ("requested_duration_seconds", Value::from(2)),
+            ("observed_elapsed_seconds", Value::from(2)),
+            ("pass", Value::from("true")),
+            ("violation_count", Value::from(1)),
+            ("sample_interval_seconds", Value::from(0)),
+        ] {
+            nightly = full_nightly_report();
+            nightly["profile_results"][0][key] = value;
+            assert!(
+                !parse_nightly_summary_v1(&nightly).0,
+                "accepted invalid nightly {key}"
+            );
+        }
+    }
 
     #[test]
     fn level_is_red_when_nightly_failed() {
