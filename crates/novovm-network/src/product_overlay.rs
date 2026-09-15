@@ -14,6 +14,9 @@ use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const PRODUCT_OVERLAY_PROTOCOL_VERSION_V1: u16 = 1;
+/// Bound differences between independently synchronized device clocks. This
+/// tolerates future issuance only; signed expiration remains a strict deadline.
+pub const PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1: u64 = 5_000;
 pub const PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1: &[u8] = b"novovm-product-overlay-handshake-v1";
 pub const PRODUCT_OVERLAY_SECURE_FRAME_DOMAIN_V1: &[u8] = b"novovm-product-overlay-secure-frame-v1";
 
@@ -547,7 +550,10 @@ pub fn validate_handshake_offer_v1(
     if offer.version != PRODUCT_OVERLAY_PROTOCOL_VERSION_V1 {
         return Err(ProductOverlayErrorV1::UnsupportedVersion(offer.version));
     }
-    if offer.issued_at_ms > now_ms || now_ms > offer.expires_at_ms {
+    if offer.issued_at_ms > now_ms.saturating_add(PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1)
+        || offer.expires_at_ms < offer.issued_at_ms
+        || now_ms > offer.expires_at_ms
+    {
         return Err(ProductOverlayErrorV1::HandshakeExpired);
     }
     let expected_peer_id = peer_id_from_ed25519_public_key_v1(&offer.initiator_identity_public_key);
@@ -576,10 +582,15 @@ pub fn validate_handshake_response_v1(
     if response.version != PRODUCT_OVERLAY_PROTOCOL_VERSION_V1 {
         return Err(ProductOverlayErrorV1::UnsupportedVersion(response.version));
     }
-    if offer.issued_at_ms > now_ms
+    if offer.issued_at_ms > now_ms.saturating_add(PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1)
+        || offer.expires_at_ms < offer.issued_at_ms
         || now_ms > offer.expires_at_ms
-        || response.issued_at_ms < offer.issued_at_ms
-        || response.issued_at_ms > now_ms
+        || response
+            .issued_at_ms
+            .saturating_add(PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1)
+            < offer.issued_at_ms
+        || response.issued_at_ms > now_ms.saturating_add(PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1)
+        || response.expires_at_ms < response.issued_at_ms
         || now_ms > response.expires_at_ms
     {
         return Err(ProductOverlayErrorV1::HandshakeExpired);
@@ -856,6 +867,71 @@ mod tests {
         assert!(matches!(
             validate_handshake_offer_v1(&signature_tamper, 1_100, &mut cache),
             Err(ProductOverlayErrorV1::InvalidHandshakeSignature)
+        ));
+    }
+
+    #[test]
+    fn independent_device_clocks_allow_bounded_skew_in_both_directions() {
+        for skew in [-5_000_i64, 5_000] {
+            let (a, b) = identities();
+            let peer = peer_id_from_ed25519_public_key_v1(&b.verifying_key().to_bytes());
+            let initiator = NodeHandshakeInitiatorV1::start(&a, peer, 100_000, 30_000).unwrap();
+            let responder_time = (100_000_i64 + skew) as u64;
+            let responder = NodeHandshakeResponderV1::respond(
+                initiator.offer(),
+                &b,
+                responder_time,
+                30_000,
+                &mut HandshakeReplayCacheV1::default(),
+            )
+            .unwrap();
+            let response = responder.response().clone();
+            let mut receiving = responder.into_channel();
+            let mut sending = initiator
+                .complete(&response, 100_000, &mut HandshakeReplayCacheV1::default())
+                .unwrap();
+            let packet = sending.seal_novorudp_frame(&frame(91)).unwrap();
+            assert_eq!(receiving.open_novorudp_frame(&packet).unwrap(), frame(91));
+        }
+    }
+
+    #[test]
+    fn excessive_clock_skew_is_rejected_without_extending_expiration() {
+        let (a, b) = identities();
+        let peer = peer_id_from_ed25519_public_key_v1(&b.verifying_key().to_bytes());
+        let initiator = NodeHandshakeInitiatorV1::start(&a, peer, 100_000, 30_000).unwrap();
+        assert!(matches!(
+            validate_handshake_offer_v1(
+                initiator.offer(),
+                94_999,
+                &mut HandshakeReplayCacheV1::default(),
+            ),
+            Err(ProductOverlayErrorV1::HandshakeExpired)
+        ));
+        let responder = NodeHandshakeResponderV1::respond(
+            initiator.offer(),
+            &b,
+            105_001,
+            30_000,
+            &mut HandshakeReplayCacheV1::default(),
+        )
+        .unwrap();
+        assert!(matches!(
+            validate_handshake_response_v1(
+                initiator.offer(),
+                responder.response(),
+                100_000,
+                &mut HandshakeReplayCacheV1::default(),
+            ),
+            Err(ProductOverlayErrorV1::HandshakeExpired)
+        ));
+        assert!(matches!(
+            validate_handshake_offer_v1(
+                initiator.offer(),
+                130_001,
+                &mut HandshakeReplayCacheV1::default(),
+            ),
+            Err(ProductOverlayErrorV1::HandshakeExpired)
         ));
     }
 
