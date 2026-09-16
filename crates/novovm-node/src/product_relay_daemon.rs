@@ -44,7 +44,13 @@ const MAX_HANDSHAKE_WIRE_MESSAGE_BYTES_V1: usize = 16 * 1024;
 const MAX_WEBSOCKET_CONTROL_FRAME_BYTES_V1: usize = 125;
 const PRODUCT_RELAY_FRAME_DEADLINE_MS_V1: u64 = 10_000;
 const PRODUCT_RELAY_MAINTENANCE_INTERVAL_MS_V1: u64 = 1_000;
-const MAX_DATA_DELIVERIES_PER_CONNECTION_TICK_V1: usize = 4;
+// Use the available client byte budget rather than leaving most of each idle
+// tick unused. Reserve control deliveries and one maximum-sized frame of slack.
+const MAX_DATA_DELIVERIES_PER_CONNECTION_TICK_V1: usize =
+    PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_BYTES_V1
+        / PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1
+        - MAX_PEER_HANDSHAKE_DELIVERIES_PER_CONNECTION_TICK_V1
+        - 1;
 const MAX_PEER_HANDSHAKE_DELIVERIES_PER_CONNECTION_TICK_V1: usize = 4;
 const _: () = assert!(
     MAX_DATA_DELIVERIES_PER_CONNECTION_TICK_V1

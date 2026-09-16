@@ -111,3 +111,9 @@ deployments omit it and manage process lifetime through the operating system.
 `ForwardOutcome` changes the v1 relay wire contract. This release does not negotiate relay
 protocol capabilities during handshake, so daemon and clients must be upgraded as one
 homogeneous deployment. Mixed old/new relay processes are not rolling-upgrade compatible.
+
+## 2026-09-16 idle relay file recovery
+
+The KINGCLUB native integration test reproduced timeout after closing the receiver UDP socket mid-file while retaining its authenticated WSS session. The former four-data-frame idle tick accumulated retransmission backlog. Use the existing client pending-byte budget to derive the data allowance: 11 maximum-sized data frames plus four reserved control frames, below both the 64-event and 16 MiB client limits. Admission, payload size, authentication and shutdown checks are unchanged.
+
+Validation: all 12 product_relay_daemon tests passed; rebuilt local daemon. Actual native AEAD/UDP/WSS tests passed in relay, LAN, and LAN-interrupted modes plus endpoint recovery. Interrupted transfer delivered and hash-verified the same 262161-byte file after a deliberately lost final receipt (14.298 s on this computer). This is not handset, WAN, throughput, or production-scale acceptance.
