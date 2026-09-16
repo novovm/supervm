@@ -239,6 +239,15 @@ jobs:
       - name: NOVOVM control-plane portability tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovmctl
 
+      - name: Mainline soak freshness coverage and progress tests
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib mainline_soak::tests
+
+      - name: Mainline soak CLI and nightly acceptance boundary tests
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --test mainline_soak_cli
+
+      - name: Mainline duty report evidence acceptance tests
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib mainline_duty_report::tests
+
       - name: Product relay admission and resource-bound tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-network product_relay::tests
 

@@ -18,11 +18,11 @@ on:
         required: false
         default: ""
       soak_6h_duration_seconds:
-        description: "Override 6h profile duration seconds (optional)"
+        description: "Override 6h duration (shorter runs cannot pass nightly v2)"
         required: false
         default: ""
       soak_24h_duration_seconds:
-        description: "Override 24h profile duration seconds (optional)"
+        description: "Override 24h duration (shorter runs cannot pass nightly v2)"
         required: false
         default: ""
       soak_6h_interval_seconds:
@@ -45,6 +45,10 @@ jobs:
   nightly_soak:
     name: Nightly 6h/24h soak gate
     runs-on: self-hosted
+    # Default profiles run sequentially for 30h, plus setup and regression gates.
+    # This job budget does not extend the 24h GITHUB_TOKEN lifetime. Validate
+    # long-run artifact delivery on the provisioned runner before signoff.
+    timeout-minutes: 2160
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -192,16 +196,18 @@ jobs:
           $env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH = "artifacts/native-pipeline/native-pipeline-dual-node-fanout-report.json"
           cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
 
-      - name: Run native pipeline production soak skeleton
+      - name: Run native pipeline production smoke (2 seconds, not 30min soak)
         shell: pwsh
         run: |
           Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue
           cargo build -p novovm-node --bins
           $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_PROFILE = "30min"
+          # Exercise the existing profile with a short smoke budget only.
           $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_DURATION_SECONDS = "2"
           $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_TX_COUNT = "64"
           $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_BATCH_BUDGET = "16"
-          $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_REPORT_PATH = "artifacts/native-pipeline/native-pipeline-production-soak-30min.json"
+          $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_REPORT_PATH = "artifacts/native-pipeline/native-pipeline-production-smoke.json"
+          $env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_CHILD_SUMMARY_PATH = "artifacts/native-pipeline/native-pipeline-production-smoke-summary.json"
           cargo run -p novovm-node --bin supervm-native-pipeline-production-soak
 
       - name: Run native pipeline RocksDB recovery gate
@@ -273,8 +279,8 @@ jobs:
             artifacts/mainline/mainline-duty-report-nightly.md
             artifacts/native-pipeline/native-pipeline-sustained-report.json
             artifacts/native-pipeline/native-pipeline-dual-node-fanout-report.json
-            artifacts/native-pipeline/native-pipeline-production-soak-30min.json
-            artifacts/native-pipeline/native-pipeline-production-soak-30min-summary.json
+            artifacts/native-pipeline/native-pipeline-production-smoke.json
+            artifacts/native-pipeline/native-pipeline-production-smoke-summary.json
             artifacts/native-pipeline/native-pipeline-rocksdb-recovery-report.json
             artifacts/native-pipeline/native-pipeline-network-fault-injection-report.json
             artifacts/native-pipeline/native-pipeline-pending-crash-recovery-report.json

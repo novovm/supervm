@@ -1,12 +1,13 @@
 #![forbid(unsafe_code)]
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use novovm_network::load_eth_fullnode_native_worker_runtime_snapshot_from_path_v1;
 use novovm_node::mainline_soak::{
-    apply_mainline_soak_threshold_env_overrides_v1, default_mainline_soak_duration_seconds_v1,
-    default_mainline_soak_report_path_v1, default_mainline_soak_snapshot_path_v1,
-    default_mainline_soak_thresholds_v1, run_mainline_soak_v1, write_mainline_soak_report_v1,
-    MainlineSoakConfigV1,
+    apply_mainline_soak_evidence_env_overrides_v2, apply_mainline_soak_threshold_env_overrides_v1,
+    default_mainline_soak_duration_seconds_v1, default_mainline_soak_report_path_v1,
+    default_mainline_soak_snapshot_path_v1, default_mainline_soak_thresholds_v1,
+    run_mainline_soak_v1, write_mainline_soak_report_v1, MainlineSoakConfigV1,
+    MainlineSoakEvidencePolicyV2,
 };
 use std::path::PathBuf;
 
@@ -65,6 +66,8 @@ fn main() -> Result<()> {
 
     let mut thresholds = default_mainline_soak_thresholds_v1(profile.as_str());
     apply_mainline_soak_threshold_env_overrides_v1("NOVOVM_MAINLINE_SOAK_", &mut thresholds)?;
+    let mut evidence_policy = MainlineSoakEvidencePolicyV2::default();
+    apply_mainline_soak_evidence_env_overrides_v2("NOVOVM_MAINLINE_SOAK_", &mut evidence_policy)?;
 
     let config = MainlineSoakConfigV1 {
         profile: profile.clone(),
@@ -74,6 +77,7 @@ fn main() -> Result<()> {
         snapshot_path: snapshot_path.clone(),
         report_path: report_path.clone(),
         thresholds,
+        evidence_policy,
     };
     println!(
         "mainline soak start: profile={} chain_id={} duration={}s interval={}s snapshot={} report={}",
@@ -87,12 +91,18 @@ fn main() -> Result<()> {
     let report = run_mainline_soak_v1(&config)?;
     write_mainline_soak_report_v1(report_path.as_path(), &report)?;
     println!(
-        "mainline soak done: profile={} pass={} sample_count={} elapsed={}s report={}",
+        "mainline soak done: profile={} scope={} pass={} sample_count={} elapsed={}s nominal={}s duration_requirement_met={} report={}",
         report.profile,
+        report.validation_scope,
         report.evaluation.pass,
         report.sample_count,
         report.observed_elapsed_seconds,
+        report.nominal_duration_seconds,
+        report.duration_requirement_met,
         report_path.display()
     );
+    if !report.evaluation.pass {
+        bail!("mainline soak failed: see {}", report_path.display());
+    }
     Ok(())
 }

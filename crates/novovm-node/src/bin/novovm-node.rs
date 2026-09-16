@@ -1034,7 +1034,7 @@ const L3_DISCOVERY_MEMBERSHIP_PRIORITY_FINGERPRINT: &str =
 const L3_DISCOVERY_MEMBERSHIP_PRIORITY_ORDERING: &str =
     "seen_unix_ms|source_priority|health|score|capacity|addr|region";
 const L3_DISCOVERY_MAX_DYNAMIC_CANDIDATES_PER_REFRESH: usize = 256;
-const MAINLINE_GATE_LOCKSET_V1: &str = "check_novovm_network+check_novovm_node+test_scheduler_gate_matrix+test_manual_route_env_lock_matrix+test_l2_l1_export_equivalence_batch_vs_replay+test_l2_l1_export_equivalence_batch_vs_watch+test_l2_l1_anchor_fingerprint_stable+test_mainline_status_freshness_gate_contract_is_frozen+test_discovery_membership_freshness_contract_default_is_frozen+test_discovery_membership_gossip_json_supports_single_and_vec_message+test_discovery_source_governance_contract_is_frozen+test_discovery_source_breakdown_contract_is_frozen+test_discovery_membership_priority_contract_is_frozen+test_cross_node_runtime_membership_closed_loop+test_cross_node_runtime_membership_cross_region_is_not_admitted+test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy+test_cross_node_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_cross_node_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_operator_forced_still_dominates_route_selection_across_batch_replay_watch+test_pruned_dynamic_relays_no_longer_affect_selection_across_batch_replay_watch+test_concurrent_runtime_membership_order_keeps_selection_view_stable+test_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_cross_node_gossip_membership_order_keeps_selection_view_stable+test_cross_node_gossip_membership_respects_operator_forced_selection+test_runtime_membership_unavailable_update_prunes_existing_discovered_relay+test_v2_matrix_a_order_perturbation_consistency+test_v2_matrix_b_multi_source_conflict_consistency+test_v2_matrix_c_weak_network_disturbance_consistency+test_v2_matrix_d_multi_region_view_consistency+test_v2_stage2a_large_scale_distributed_adjudication_consistency+test_v2_stage2b_weak_network_robustness_consistency+test_v2_stage2c_multi_region_real_route_consistency+test_v2_stage3a_convergence_recovery_consistency+test_v2_stage3b_convergence_time_recovery_budget_consistency+test_relay_path_tests+test_product_mainline_overlay_lifecycle+test_authenticated_seal_ingress_quarantine+test_queue_replay_smoke";
+const MAINLINE_GATE_LOCKSET_V1: &str = "check_novovm_network+check_novovm_node+test_scheduler_gate_matrix+test_manual_route_env_lock_matrix+test_l2_l1_export_equivalence_batch_vs_replay+test_l2_l1_export_equivalence_batch_vs_watch+test_l2_l1_anchor_fingerprint_stable+test_mainline_status_freshness_gate_contract_is_frozen+test_discovery_membership_freshness_contract_default_is_frozen+test_discovery_membership_gossip_json_supports_single_and_vec_message+test_discovery_source_governance_contract_is_frozen+test_discovery_source_breakdown_contract_is_frozen+test_discovery_membership_priority_contract_is_frozen+test_cross_node_runtime_membership_closed_loop+test_cross_node_runtime_membership_cross_region_is_not_admitted+test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy+test_cross_node_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_cross_node_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_operator_forced_still_dominates_route_selection_across_batch_replay_watch+test_pruned_dynamic_relays_no_longer_affect_selection_across_batch_replay_watch+test_concurrent_runtime_membership_order_keeps_selection_view_stable+test_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_cross_node_gossip_membership_order_keeps_selection_view_stable+test_cross_node_gossip_membership_respects_operator_forced_selection+test_runtime_membership_unavailable_update_prunes_existing_discovered_relay+test_v2_matrix_a_order_perturbation_consistency+test_v2_matrix_b_multi_source_conflict_consistency+test_v2_matrix_c_weak_network_disturbance_consistency+test_v2_matrix_d_multi_region_view_consistency+test_v2_stage2a_large_scale_distributed_adjudication_consistency+test_v2_stage2b_weak_network_robustness_consistency+test_v2_stage2c_multi_region_real_route_consistency+test_v2_stage3a_convergence_recovery_consistency+test_v2_stage3b_convergence_time_recovery_budget_consistency+test_relay_path_tests+test_mainline_soak_evidence+test_mainline_soak_cli+test_mainline_duty_report_evidence+test_product_mainline_overlay_lifecycle+test_authenticated_seal_ingress_quarantine+test_queue_replay_smoke";
 
 fn evaluate_mainline_gate_fields_v1(status: &serde_json::Value) -> (bool, bool, Vec<String>) {
     let expected = MAINLINE_GATE_LOCKSET_V1.split('+').collect::<Vec<_>>();
@@ -10341,6 +10341,25 @@ fn runtime_mainline_gate_requires_every_lockset_field_in_order() {
     assert!(key_order_ok);
     assert!(failed.is_empty());
 
+    for key in [
+        "test_mainline_soak_evidence",
+        "test_mainline_soak_cli",
+        "test_mainline_duty_report_evidence",
+    ] {
+        let mut failed_status = status.clone();
+        failed_status["gate"][key] = serde_json::Value::Bool(false);
+        let (passed, key_order_ok, failed) = evaluate_mainline_gate_fields_v1(&failed_status);
+        assert!(!passed, "failed evidence gate must reject: {key}");
+        assert!(key_order_ok);
+        assert_eq!(failed, vec![key.to_string()]);
+
+        failed_status["gate"].as_object_mut().unwrap().remove(key);
+        let (passed, key_order_ok, failed) = evaluate_mainline_gate_fields_v1(&failed_status);
+        assert!(!passed, "missing evidence gate must reject: {key}");
+        assert!(!key_order_ok);
+        assert_eq!(failed, vec![key.to_string()]);
+    }
+
     status["gate"]["test_authenticated_seal_ingress_quarantine"] = serde_json::Value::Bool(false);
     let (passed, key_order_ok, failed) = evaluate_mainline_gate_fields_v1(&status);
     assert!(!passed);
@@ -10414,6 +10433,58 @@ fn mainline_status_freshness_gate_contract_is_frozen() {
 
     let preflight_core =
         std::fs::read_to_string(&preflight_core_path).expect("read mainline_preflight.rs");
+    let preflight_lockset = preflight_core
+        .lines()
+        .find(|line| line.starts_with("pub const MAINLINE_GATE_LOCKSET_V1:"))
+        .and_then(|line| line.split_once('"'))
+        .and_then(|(_, tail)| tail.strip_suffix("\";"))
+        .expect("preflight lockset literal");
+    assert_eq!(
+        MAINLINE_GATE_LOCKSET_V1, preflight_lockset,
+        "runtime and preflight must require the same evidence gates",
+    );
+    let preflight_keys: Vec<&str> = preflight_core
+        .split_once("pub const REQUIRED_GATE_KEYS_IN_ORDER:")
+        .and_then(|(_, tail)| tail.split_once("= ["))
+        .and_then(|(_, tail)| tail.split_once("];"))
+        .expect("preflight ordered gate key list")
+        .0
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix('"')?.strip_suffix("\","))
+        .collect();
+    assert_eq!(preflight_keys.join("+"), MAINLINE_GATE_LOCKSET_V1);
+    let producer = std::fs::read_to_string(
+        root.join("crates")
+            .join("novovm-node")
+            .join("src")
+            .join("bin")
+            .join("supervm-mainline-gate.rs"),
+    )
+    .expect("read mainline gate serializer");
+    let producer_fields: Vec<&str> = producer
+        .split_once("struct MainlineGate {")
+        .and_then(|(_, tail)| tail.split_once('}'))
+        .expect("mainline gate serialized fields")
+        .0
+        .lines()
+        .filter_map(|line| line.split_once(':').map(|(field, _)| field.trim()))
+        .collect();
+    assert_eq!(
+        producer_fields, preflight_keys,
+        "serialized gate fields must match preflight key order exactly",
+    );
+    assert_eq!(
+        &preflight_keys[35..39],
+        &[
+            "test_relay_path_tests",
+            "test_mainline_soak_evidence",
+            "test_mainline_soak_cli",
+            "test_mainline_duty_report_evidence",
+        ],
+    );
+    // This frozen-contract test runs in the canonical gate. Exercise runtime
+    // rejection too, so newly added checks cannot become optional by drift.
+    runtime_mainline_gate_requires_every_lockset_field_in_order();
     assert!(
         preflight_core.contains("MAINLINE_GATE_LOCKSET_V1"),
         "preflight lockset contract missing"
