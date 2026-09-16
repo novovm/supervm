@@ -2022,7 +2022,7 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
             &worker.stop,
             ProductMainlineOverlayEventV1::RelayDisconnected {
                 relay_peer_id,
-                error: error.to_string(),
+                error: format!("{error:#}"),
                 reconnect_in_ms,
             },
         )
@@ -3659,14 +3659,7 @@ fn recv_relay_event_or_idle_v1(
 }
 
 fn relay_read_timed_out_v1(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
-            matches!(
-                io.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            )
-        })
-    })
+    crate::product_relay_client::product_relay_client_read_is_idle_timeout_v1(error)
 }
 
 fn configured_remote_peer_id_v1(config: &ProductMainlineOverlayConfigV1) -> Result<&str> {
@@ -3779,7 +3772,10 @@ mod tests {
     use super::*;
     use crate::{
         product_node_overlay::ProductBootstrapSourceV1,
-        product_relay_daemon::{run_product_relay_daemon_v1, ProductRelayDaemonConfigV1},
+        product_relay_daemon::{
+            run_product_relay_daemon_v1, run_product_relay_daemon_with_shutdown_v1,
+            ProductRelayDaemonConfigV1,
+        },
         tx_ingress::sign_nov_native_tx_with_seed_v1,
     };
     use novovm_network::{
@@ -3793,6 +3789,45 @@ mod tests {
         NovVerificationModeV1,
     };
     use std::{net::TcpListener, thread, time::Instant};
+
+    // Scenario completion (including unwinding), not a short wall-clock lease,
+    // owns the relay. Individual network operations retain their deadlines.
+    struct ScopedRelayDaemonV1 {
+        stopping: Arc<AtomicBool>,
+        worker: Option<thread::JoinHandle<Result<()>>>,
+    }
+
+    impl ScopedRelayDaemonV1 {
+        fn start(config: ProductRelayDaemonConfigV1) -> Self {
+            assert!(config.run_for_ms.is_none());
+            let stopping = Arc::new(AtomicBool::new(false));
+            let daemon_stopping = Arc::clone(&stopping);
+            Self {
+                stopping,
+                worker: Some(thread::spawn(move || {
+                    run_product_relay_daemon_with_shutdown_v1(config, daemon_stopping)
+                })),
+            }
+        }
+
+        fn stop_and_join(&mut self) -> Result<()> {
+            self.stopping.store(true, Ordering::Release);
+            if let Some(worker) = self.worker.take() {
+                worker
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("scoped relay daemon panicked"))??;
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for ScopedRelayDaemonV1 {
+        fn drop(&mut self) {
+            if let Err(error) = self.stop_and_join() {
+                eprintln!("scoped relay cleanup failed: {error:#}");
+            }
+        }
+    }
 
     fn config(role: ProductMainlineOverlayRoleV1) -> ProductMainlineOverlayConfigV1 {
         ProductMainlineOverlayConfigV1 {
@@ -4702,9 +4737,8 @@ mod tests {
             relay_identity_key_path: relay_identity_path,
             report_path: relay_report_path.clone(),
             report_interval_ms: 20,
-            // Keep the bounded test relay alive for the complete duplex transaction and seal
-            // exchange, including every assertion timeout on a loaded CI runner.
-            run_for_ms: Some(20_000),
+            // The scenario owns the relay through all duplex and ingress assertions.
+            run_for_ms: None,
             max_connections: None,
             handshake_timeout_ms: None,
             max_sessions: None,
@@ -4727,7 +4761,7 @@ mod tests {
             source_bytes_per_minute: None,
             max_bytes_per_minute: None,
         };
-        let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
+        let mut daemon = ScopedRelayDaemonV1::start(daemon_config);
         wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
 
         let relay_identity = SigningKey::from_bytes(&[31; 32]);
@@ -4965,14 +4999,31 @@ mod tests {
         assert_eq!(seal_inbound_at_b.frame.payload, seal_payload);
         node_a_runtime.shutdown();
         node_b_runtime.shutdown();
-        daemon.join().unwrap().unwrap();
+        daemon.stop_and_join().unwrap();
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn one_relay_session_multiplexes_three_node_duplex_mesh() {
+        assert_three_node_duplex_mesh_v1(Duration::ZERO);
+    }
+
+    #[test]
+    fn three_node_mesh_survives_delayed_restart() {
+        assert_three_node_duplex_mesh_v1(Duration::from_millis(8_500));
+    }
+
+    fn assert_three_node_duplex_mesh_v1(pre_restart_delay: Duration) {
+        let scenario_started = Instant::now();
         let now = now_ms_v1();
-        let root = std::env::temp_dir().join(format!("novovm-product-overlay-mesh-{now}"));
+        let root = std::env::temp_dir().join(format!(
+            "novovm-product-overlay-mesh-{now}-{}",
+            pre_restart_delay.as_millis()
+        ));
+        eprintln!(
+            "mesh scenario start: pre_restart_delay_ms={}",
+            pre_restart_delay.as_millis()
+        );
         fs::create_dir_all(&root).unwrap();
         let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let certificate_path = root.join("relay-cert.pem");
@@ -5012,7 +5063,7 @@ mod tests {
             relay_identity_key_path: relay_identity_path,
             report_path: relay_report_path.clone(),
             report_interval_ms: 20,
-            run_for_ms: Some(8_000),
+            run_for_ms: None,
             max_connections: None,
             handshake_timeout_ms: None,
             max_sessions: None,
@@ -5035,7 +5086,7 @@ mod tests {
             source_bytes_per_minute: None,
             max_bytes_per_minute: None,
         };
-        let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
+        let mut daemon = ScopedRelayDaemonV1::start(daemon_config);
         wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
 
         let relay_identity = SigningKey::from_bytes(&[59; 32]);
@@ -5048,7 +5099,13 @@ mod tests {
             now.saturating_sub(1_000),
             now.saturating_add(30_000),
         );
-        let chain_id = 8_200_000 + now % 100_000;
+        let chain_id = 8_200_000
+            + now % 100_000
+            + if pre_restart_delay.is_zero() {
+                0
+            } else {
+                300_000
+            };
         let relay_override = ProductRelayClientConfigV1 {
             endpoint: format!("wss://127.0.0.1:{port}/novovm"),
             expected_relay_peer_id: relay_peer_id,
@@ -5105,18 +5162,28 @@ mod tests {
             &node_a,
             &[node_peer_ids[1].clone(), node_peer_ids[2].clone()],
             Duration::from_secs(3),
+            "initial/node-a",
+            scenario_started,
         );
         wait_for_e2e_peers_v1(
             &node_b,
             &[node_peer_ids[0].clone(), node_peer_ids[2].clone()],
             Duration::from_secs(3),
+            "initial/node-b",
+            scenario_started,
         );
         wait_for_e2e_peers_v1(
             &node_c,
             &[node_peer_ids[0].clone(), node_peer_ids[1].clone()],
             Duration::from_secs(3),
+            "initial/node-c",
+            scenario_started,
         );
 
+        eprintln!(
+            "mesh phase=initial-delivery elapsed_ms={}",
+            scenario_started.elapsed().as_millis()
+        );
         let tx_hash_a = [0x51; 32];
         let raw_tx_a = signed_native_tx_v1(chain_id, &format!("overlay-mesh-a-{now}"));
         assert!(node_a.try_submit(tx_hash_a, raw_tx_a.clone()).unwrap());
@@ -5157,6 +5224,12 @@ mod tests {
             assert_eq!(receipt.execution_owner, "aoem_runtime");
         }
 
+        eprintln!(
+            "mesh phase=pre-restart elapsed_ms={} injected_delay_ms={}",
+            scenario_started.elapsed().as_millis(),
+            pre_restart_delay.as_millis()
+        );
+        thread::sleep(pre_restart_delay);
         node_c.shutdown();
         let mut node_c_restarted = ProductMainlineOverlayRuntimeV1::start_with_relay_override_v1(
             node_c_restart_config,
@@ -5168,10 +5241,28 @@ mod tests {
             &node_c_restarted,
             &[node_peer_ids[0].clone(), node_peer_ids[1].clone()],
             Duration::from_secs(2),
+            "restart/node-c",
+            scenario_started,
         );
-        wait_for_e2e_peers_v1(&node_a, &[node_peer_ids[2].clone()], Duration::from_secs(2));
-        wait_for_e2e_peers_v1(&node_b, &[node_peer_ids[2].clone()], Duration::from_secs(2));
+        wait_for_e2e_peers_v1(
+            &node_a,
+            &[node_peer_ids[2].clone()],
+            Duration::from_secs(2),
+            "restart/node-a-observes-c",
+            scenario_started,
+        );
+        wait_for_e2e_peers_v1(
+            &node_b,
+            &[node_peer_ids[2].clone()],
+            Duration::from_secs(2),
+            "restart/node-b-observes-c",
+            scenario_started,
+        );
 
+        eprintln!(
+            "mesh phase=post-restart-delivery elapsed_ms={}",
+            scenario_started.elapsed().as_millis()
+        );
         let tx_hash_c = [0x53; 32];
         let raw_tx_c = signed_native_tx_v1(chain_id, &format!("overlay-mesh-c-restart-{now}"));
         assert!(node_c_restarted
@@ -5191,7 +5282,7 @@ mod tests {
         node_a.shutdown();
         node_b.shutdown();
         node_c_restarted.shutdown();
-        daemon.join().unwrap().unwrap();
+        daemon.stop_and_join().unwrap();
         let _ = fs::remove_dir_all(root);
     }
 
@@ -5226,7 +5317,7 @@ mod tests {
             relay_identity_key_path: relay_identity_path,
             report_path: relay_report_path.clone(),
             report_interval_ms: 20,
-            run_for_ms: Some(20_000),
+            run_for_ms: None,
             max_connections: None,
             handshake_timeout_ms: None,
             max_sessions: None,
@@ -5249,7 +5340,7 @@ mod tests {
             source_bytes_per_minute: None,
             max_bytes_per_minute: None,
         };
-        let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
+        let mut daemon = ScopedRelayDaemonV1::start(daemon_config);
         wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
 
         let relay_identity = SigningKey::from_bytes(&[74; 32]);
@@ -5533,7 +5624,7 @@ mod tests {
         let _ = malicious_relay.close();
         node_a.shutdown();
         node_b.shutdown();
-        daemon.join().unwrap().unwrap();
+        daemon.stop_and_join().unwrap();
         let _ = fs::remove_dir_all(root);
     }
 
@@ -6039,18 +6130,34 @@ mod tests {
         runtime: &ProductMainlineOverlayRuntimeV1,
         expected: &[String],
         timeout: Duration,
+        phase: &str,
+        scenario_started: Instant,
     ) {
         let expected = expected.iter().cloned().collect::<BTreeSet<_>>();
         let mut observed = BTreeSet::new();
+        let mut recent_events = VecDeque::new();
         let started = Instant::now();
         while started.elapsed() < timeout {
             for event in runtime.drain_events(64) {
+                let description = match &event {
+                    ProductMainlineOverlayEventV1::Inbound(_) => "Inbound".to_string(),
+                    _ => format!("{event:?}"),
+                };
+                let diagnostic = format!(
+                    "phase={phase} elapsed_ms={} event={description}",
+                    scenario_started.elapsed().as_millis()
+                );
+                eprintln!("mesh {diagnostic}");
+                if recent_events.len() == 32 {
+                    recent_events.pop_front();
+                }
+                recent_events.push_back(diagnostic);
                 match event {
                     ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id } => {
                         observed.insert(remote_peer_id);
                     }
                     ProductMainlineOverlayEventV1::WorkerFailed(error) => {
-                        panic!("product overlay worker failed: {error}")
+                        panic!("mesh phase={phase} worker failed: {error}; recent_events={recent_events:?}")
                     }
                     _ => {}
                 }
@@ -6060,7 +6167,7 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(10));
         }
-        panic!("timed out waiting for E2E peers: expected={expected:?} observed={observed:?}");
+        panic!("timed out waiting for E2E peers: phase={phase} elapsed_ms={} expected={expected:?} observed={observed:?} recent_events={recent_events:?}", scenario_started.elapsed().as_millis());
     }
 
     fn wait_for_delivery_peers_v1(

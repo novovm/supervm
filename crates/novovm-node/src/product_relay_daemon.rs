@@ -228,6 +228,18 @@ pub fn load_product_relay_daemon_config_v1(
 }
 
 pub fn run_product_relay_daemon_v1(config: ProductRelayDaemonConfigV1) -> Result<()> {
+    run_product_relay_daemon_with_shutdown_v1(config, Arc::new(AtomicBool::new(false)))
+}
+
+/// Run until the configured duration elapses or the caller requests shutdown.
+///
+/// The signal is shared with all connection workers. A caller that spawns this
+/// function owns its thread and must signal shutdown and join it before dropping
+/// the surrounding service or test scope. Do not reset the signal while running.
+pub fn run_product_relay_daemon_with_shutdown_v1(
+    config: ProductRelayDaemonConfigV1,
+    stopping: Arc<AtomicBool>,
+) -> Result<()> {
     if config.report_interval_ms == 0 {
         bail!("report_interval_ms must be positive");
     }
@@ -271,91 +283,111 @@ pub fn run_product_relay_daemon_v1(config: ProductRelayDaemonConfigV1) -> Result
         .block_on(async { ProductRelaySessionManagerV1::new(relay_runtime_config) })
         .context("create product relay session manager")?;
     let replay_cache = Arc::new(Mutex::new(HandshakeReplayCacheV1::default()));
-    let stopping = Arc::new(AtomicBool::new(false));
-    let started_at_ms = now_ms_v1();
+    let started_at = Instant::now();
     let mut last_report_ms = 0u64;
     let mut last_maintenance_ms = 0u64;
     let mut connection_workers = Vec::new();
 
-    loop {
-        if config
-            .run_for_ms
-            .is_some_and(|duration| now_ms_v1().saturating_sub(started_at_ms) >= duration)
-        {
-            stopping.store(true, Ordering::Release);
-        }
-        if stopping.load(Ordering::Acquire) {
-            break;
-        }
-        match listener.accept() {
-            Ok((tcp, _)) => {
-                if let Some(permit) = admission.try_acquire() {
-                    let connection_context = ProductRelayConnectionContextV1 {
-                        tls_config: Arc::clone(&tls_config),
-                        relay_identity: relay_identity.clone(),
-                        manager: manager.clone(),
-                        runtime: Arc::clone(&runtime),
-                        replay_cache: Arc::clone(&replay_cache),
-                        stopping: Arc::clone(&stopping),
-                        handshake_timeout_ms,
-                    };
-                    let worker = thread::Builder::new()
-                        .name("novovm-product-relay-connection".into())
-                        .spawn(move || {
-                            let _permit = permit;
-                            if let Err(error) =
-                                serve_product_relay_connection_v1(tcp, connection_context)
-                            {
-                                eprintln!("product relay connection closed: {error:#}");
-                            }
-                        })
-                        .context("spawn product relay connection worker")?;
-                    connection_workers.push(worker);
-                } else {
-                    drop(tcp);
+    // Capture all loop errors so report, accept, or spawn failures cannot detach
+    // already-running connection workers or leave their Tokio runtime alive.
+    let run_result = (|| -> Result<&'static str> {
+        loop {
+            if stopping.load(Ordering::Acquire) {
+                return Ok("external_request");
+            }
+            if config
+                .run_for_ms
+                .is_some_and(|duration| started_at.elapsed() >= Duration::from_millis(duration))
+            {
+                return Ok("run_duration_elapsed");
+            }
+            match listener.accept() {
+                Ok((tcp, _)) => {
+                    if let Some(permit) = admission.try_acquire() {
+                        let connection_context = ProductRelayConnectionContextV1 {
+                            tls_config: Arc::clone(&tls_config),
+                            relay_identity: relay_identity.clone(),
+                            manager: manager.clone(),
+                            runtime: Arc::clone(&runtime),
+                            replay_cache: Arc::clone(&replay_cache),
+                            stopping: Arc::clone(&stopping),
+                            handshake_timeout_ms,
+                        };
+                        let worker = thread::Builder::new()
+                            .name("novovm-product-relay-connection".into())
+                            .spawn(move || {
+                                let _permit = permit;
+                                if let Err(error) =
+                                    serve_product_relay_connection_v1(tcp, connection_context)
+                                {
+                                    eprintln!("product relay connection closed: {error:#}");
+                                }
+                            })
+                            .context("spawn product relay connection worker")?;
+                        connection_workers.push(worker);
+                    } else {
+                        drop(tcp);
+                    }
                 }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error).context("accept product relay connection"),
             }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(10));
+
+            reap_finished_connection_workers_v1(&mut connection_workers);
+
+            let now_ms = now_ms_v1();
+            if now_ms.saturating_sub(last_maintenance_ms)
+                >= PRODUCT_RELAY_MAINTENANCE_INTERVAL_MS_V1
+            {
+                runtime.block_on(manager.expire_stale_sessions(now_ms));
+                last_maintenance_ms = now_ms;
             }
-            Err(error) => return Err(error).context("accept product relay connection"),
+            if now_ms.saturating_sub(last_report_ms) >= config.report_interval_ms {
+                write_product_relay_report_v1(
+                    &config.report_path,
+                    &listen_addr,
+                    &runtime,
+                    &manager,
+                    &admission,
+                    false,
+                )?;
+                last_report_ms = now_ms;
+            }
         }
+    })();
 
-        reap_finished_connection_workers_v1(&mut connection_workers);
-
-        let now_ms = now_ms_v1();
-        if now_ms.saturating_sub(last_maintenance_ms) >= PRODUCT_RELAY_MAINTENANCE_INTERVAL_MS_V1 {
-            runtime.block_on(manager.expire_stale_sessions(now_ms));
-            last_maintenance_ms = now_ms;
-        }
-        if now_ms.saturating_sub(last_report_ms) >= config.report_interval_ms {
-            write_product_relay_report_v1(
-                &config.report_path,
-                &listen_addr,
-                &runtime,
-                &manager,
-                &admission,
-                false,
-            )?;
-            last_report_ms = now_ms;
-        }
-    }
-
+    stopping.store(true, Ordering::Release);
+    drop(listener);
     manager.begin_graceful_shutdown();
     for worker in connection_workers {
         if worker.join().is_err() {
             eprintln!("product relay connection worker panicked during shutdown");
         }
     }
-    write_product_relay_report_v1(
+    eprintln!(
+        "product relay stopped: reason={} elapsed_ms={}",
+        run_result.as_ref().copied().unwrap_or("error"),
+        started_at.elapsed().as_millis(),
+    );
+    let shutdown_report = write_product_relay_report_v1(
         &config.report_path,
         &listen_addr,
         &runtime,
         &manager,
         &admission,
         true,
-    )?;
-    Ok(())
+    );
+    match run_result {
+        Ok(_) => shutdown_report,
+        Err(error) => {
+            if let Err(report_error) = shutdown_report {
+                eprintln!("product relay shutdown report failed: {report_error:#}");
+            }
+            Err(error)
+        }
+    }
 }
 
 fn validate_connection_session_headroom_v1(
@@ -1476,6 +1508,199 @@ mod tests {
     use std::{cell::Cell, collections::VecDeque, io::Cursor, net::SocketAddr, time::Instant};
 
     type TestClientWebSocketV1 = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
+
+    struct TestControlledRelayDaemonV1 {
+        root: PathBuf,
+        report_path: PathBuf,
+        stopping: Arc<AtomicBool>,
+        worker: Option<thread::JoinHandle<Result<()>>>,
+        spawned_at: Instant,
+    }
+
+    impl TestControlledRelayDaemonV1 {
+        fn start(run_for_ms: Option<u64>) -> Self {
+            static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "novovm-controlled-relay-{}-{}-{}",
+                std::process::id(),
+                now_ms_v1(),
+                NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed),
+            ));
+            fs::create_dir_all(&root).unwrap();
+            let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+            let certificate_path = root.join("relay-cert.pem");
+            let key_path = root.join("relay-key.pem");
+            let identity_path = root.join("relay-identity.hex");
+            let report_path = root.join("reports/relay.json");
+            fs::write(&certificate_path, certificate.serialize_pem().unwrap()).unwrap();
+            fs::write(&key_path, certificate.serialize_private_key_pem()).unwrap();
+            fs::write(&identity_path, hex_encode_v1(&[71; 32])).unwrap();
+            let config: ProductRelayDaemonConfigV1 = serde_json::from_value(serde_json::json!({
+                "bind_addr": "127.0.0.1:0",
+                "tls_cert_path": certificate_path,
+                "tls_key_path": key_path,
+                "relay_identity_key_path": identity_path,
+                "report_path": report_path,
+                "report_interval_ms": 10,
+                "run_for_ms": run_for_ms,
+                "max_connections": 4,
+                "max_sessions": 2,
+                // Stopping an idle handshake must not wait for this deadline.
+                "handshake_timeout_ms": 60_000,
+            }))
+            .unwrap();
+            let stopping = Arc::new(AtomicBool::new(false));
+            let worker_stopping = Arc::clone(&stopping);
+            let spawned_at = Instant::now();
+            let worker = thread::spawn(move || {
+                run_product_relay_daemon_with_shutdown_v1(config, worker_stopping)
+            });
+            Self {
+                root,
+                report_path,
+                stopping,
+                worker: Some(worker),
+                spawned_at,
+            }
+        }
+
+        fn report(&self) -> Option<ProductRelayDaemonReportV1> {
+            let bytes = fs::read(&self.report_path).ok()?;
+            serde_json::from_slice(&bytes).ok()
+        }
+
+        fn wait_for_report(
+            &self,
+            predicate: impl Fn(&ProductRelayDaemonReportV1) -> bool,
+        ) -> ProductRelayDaemonReportV1 {
+            let started_at = Instant::now();
+            loop {
+                if let Some(report) = self.report().filter(|report| predicate(report)) {
+                    return report;
+                }
+                assert!(
+                    started_at.elapsed() < Duration::from_secs(5),
+                    "controlled relay report predicate exceeded its deadline",
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        fn join_within(&mut self, budget: Duration) -> Result<()> {
+            let started_at = Instant::now();
+            while !self.worker.as_ref().unwrap().is_finished() {
+                assert!(
+                    started_at.elapsed() < budget,
+                    "controlled relay shutdown exceeded its deadline",
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+            self.worker
+                .take()
+                .unwrap()
+                .join()
+                .expect("controlled relay thread panicked")
+        }
+
+        fn stop_and_join(&mut self) -> Result<()> {
+            self.stopping.store(true, Ordering::Release);
+            self.join_within(Duration::from_secs(5))
+        }
+    }
+
+    impl Drop for TestControlledRelayDaemonV1 {
+        fn drop(&mut self) {
+            // Also own cleanup on a failed assertion. Dropping a JoinHandle
+            // alone would detach an otherwise unbounded daemon.
+            self.stopping.store(true, Ordering::Release);
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn daemon_external_shutdown_without_duration_or_clients_is_joined() {
+        let mut daemon = TestControlledRelayDaemonV1::start(None);
+        let running = daemon.wait_for_report(|report| !report.graceful_shutdown);
+        assert_eq!(running.active_connection_count, 0);
+        assert!(!daemon.stopping.load(Ordering::Acquire));
+        daemon.stop_and_join().unwrap();
+        let stopped = daemon.report().unwrap();
+        assert!(stopped.graceful_shutdown);
+        assert_eq!(stopped.active_connection_count, 0);
+        assert!(daemon.stopping.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn daemon_external_shutdown_interrupts_idle_handshake_and_joins_worker() {
+        let mut daemon = TestControlledRelayDaemonV1::start(None);
+        let running = daemon.wait_for_report(|report| !report.graceful_shutdown);
+        let idle_connection = TcpStream::connect(&running.listen_addr).unwrap();
+        daemon.wait_for_report(|report| report.active_connection_count == 1);
+        daemon.stop_and_join().unwrap();
+        let stopped = daemon.report().unwrap();
+        assert!(stopped.graceful_shutdown);
+        assert_eq!(stopped.active_connection_count, 0);
+        drop(idle_connection);
+    }
+
+    #[test]
+    fn daemon_configured_duration_still_stops_without_external_request() {
+        let duration = Duration::from_millis(150);
+        let mut daemon = TestControlledRelayDaemonV1::start(Some(duration.as_millis() as u64));
+        daemon.join_within(Duration::from_secs(5)).unwrap();
+        assert!(daemon.spawned_at.elapsed() >= duration);
+        assert!(daemon.stopping.load(Ordering::Acquire));
+        let stopped = daemon.report().unwrap();
+        assert!(stopped.graceful_shutdown);
+        assert_eq!(stopped.active_connection_count, 0);
+    }
+
+    #[test]
+    fn daemon_report_failure_stops_and_joins_existing_idle_connection() {
+        let mut daemon = TestControlledRelayDaemonV1::start(None);
+        let running = daemon.wait_for_report(|report| !report.graceful_shutdown);
+        let mut idle_connection = TcpStream::connect(&running.listen_addr).unwrap();
+        daemon.wait_for_report(|report| report.active_connection_count == 1);
+        assert!(!daemon.stopping.load(Ordering::Acquire));
+
+        // Atomically occupy the report's temporary pathname with a directory.
+        // Retry only if a report write currently owns the path; once successful,
+        // the next report must fail even though connection workers are active.
+        let temporary_report = daemon.report_path.with_extension("json.tmp");
+        let started_at = Instant::now();
+        loop {
+            match fs::create_dir(&temporary_report) {
+                Ok(()) => break,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    assert!(started_at.elapsed() < Duration::from_secs(5));
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("install controlled relay report fault: {error}"),
+            }
+        }
+        let error = daemon.join_within(Duration::from_secs(5)).unwrap_err();
+        assert!(error.to_string().contains("write relay report"));
+        assert!(daemon.stopping.load(Ordering::Acquire));
+
+        // Even with the client still open and the 60-second handshake deadline
+        // outstanding, the connection worker must have closed its socket.
+        idle_connection
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut byte = [0u8; 1];
+        match idle_connection.read(&mut byte) {
+            Ok(0) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted
+                ) => {}
+            other => panic!("relay error left its idle connection alive: {other:?}"),
+        }
+    }
 
     struct ScriptedWebSocketV1 {
         reads: Cursor<Vec<u8>>,

@@ -101,17 +101,66 @@ pub struct ProductRelayClientV1 {
 #[derive(Debug)]
 struct ProductRelayDeadlineTcpStreamV1 {
     inner: TcpStream,
+    read_timeout: Option<Duration>,
+    write_timeout: Option<Duration>,
     handshake_deadline: Option<Instant>,
     frame_deadline: Option<Instant>,
+    write_deadline: Option<Instant>,
+    read_operation_deadline: Option<Instant>,
+    retry_idle_reads: bool,
+}
+
+#[derive(Debug)]
+struct ProductRelayAbsoluteDeadlineErrorV1(&'static str);
+
+impl std::fmt::Display for ProductRelayAbsoluteDeadlineErrorV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+impl std::error::Error for ProductRelayAbsoluteDeadlineErrorV1 {}
+
+/// A polling timeout is idle; an exhausted absolute protocol/frame budget is terminal.
+pub fn product_relay_client_read_is_idle_timeout_v1(error: &anyhow::Error) -> bool {
+    let terminal = error.chain().any(|cause| {
+        cause.is::<ProductRelayAbsoluteDeadlineErrorV1>()
+            || cause.downcast_ref::<io::Error>().is_some_and(|error| {
+                error
+                    .get_ref()
+                    .is_some_and(|inner| inner.is::<ProductRelayAbsoluteDeadlineErrorV1>())
+            })
+    });
+    !terminal
+        && error.chain().any(|cause| {
+            cause.downcast_ref::<io::Error>().is_some_and(|error| {
+                matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                )
+            })
+        })
+}
+
+fn absolute_deadline_error_v1(message: &'static str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::TimedOut,
+        ProductRelayAbsoluteDeadlineErrorV1(message),
+    )
 }
 
 impl ProductRelayDeadlineTcpStreamV1 {
-    fn new(inner: TcpStream, handshake_deadline: Instant) -> Self {
-        Self {
+    fn new(inner: TcpStream, handshake_deadline: Instant) -> io::Result<Self> {
+        Ok(Self {
+            read_timeout: inner.read_timeout()?,
+            write_timeout: inner.write_timeout()?,
             inner,
             handshake_deadline: Some(handshake_deadline),
             frame_deadline: None,
-        }
+            write_deadline: None,
+            read_operation_deadline: None,
+            retry_idle_reads: false,
+        })
     }
 
     fn finish_handshake_v1(
@@ -122,6 +171,8 @@ impl ProductRelayDeadlineTcpStreamV1 {
         self.check_io_deadlines_v1()?;
         self.inner.set_read_timeout(Some(read_timeout))?;
         self.inner.set_write_timeout(Some(write_timeout))?;
+        self.read_timeout = Some(read_timeout);
+        self.write_timeout = Some(write_timeout);
         self.handshake_deadline = None;
         self.frame_deadline = None;
         Ok(())
@@ -145,31 +196,30 @@ impl ProductRelayDeadlineTcpStreamV1 {
     }
 
     fn ensure_frame_deadline_until_v1(&mut self, operation_deadline: Instant) -> io::Result<()> {
-        if self.handshake_deadline.is_none() {
-            let frame_deadline = match self.frame_deadline {
-                Some(frame_deadline) => frame_deadline.min(operation_deadline),
-                None => self.new_frame_deadline_v1()?.min(operation_deadline),
-            };
-            self.frame_deadline = Some(frame_deadline);
+        // Idle polling is not a partially received frame. Start the frame budget only
+        // when transport bytes arrive, retaining it across subsequent idle polls.
+        if let Some(frame_deadline) = self.frame_deadline {
+            self.frame_deadline = Some(frame_deadline.min(operation_deadline));
         }
         self.check_io_deadlines_v1()
     }
 
     fn begin_authenticated_write_v1(&mut self) -> io::Result<()> {
+        self.check_io_deadlines_v1()?;
         if self.handshake_deadline.is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "product relay client authenticated write began during handshake",
             ));
         }
-        self.frame_deadline = Some(self.new_frame_deadline_v1()?);
+        self.write_deadline = Some(self.new_frame_deadline_v1()?);
         self.check_io_deadlines_v1()
     }
 
     fn finish_authenticated_write_v1(&mut self) -> io::Result<()> {
-        self.check_io_deadlines_v1()?;
-        self.frame_deadline = None;
-        Ok(())
+        let result = self.check_io_deadlines_v1();
+        self.write_deadline = None;
+        result
     }
 
     fn new_frame_deadline_v1(&self) -> io::Result<Instant> {
@@ -188,8 +238,7 @@ impl ProductRelayDeadlineTcpStreamV1 {
             .handshake_deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
         {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
+            return Err(absolute_deadline_error_v1(
                 "product relay client absolute handshake deadline exceeded",
             ));
         }
@@ -197,31 +246,94 @@ impl ProductRelayDeadlineTcpStreamV1 {
             .frame_deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
         {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
+            return Err(absolute_deadline_error_v1(
                 "product relay client absolute frame deadline exceeded",
             ));
         }
+        if self
+            .write_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(absolute_deadline_error_v1(
+                "product relay client absolute write deadline exceeded",
+            ));
+        }
+        if self
+            .read_operation_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(absolute_deadline_error_v1(
+                "product relay protocol-item absolute deadline exceeded",
+            ));
+        }
         Ok(())
+    }
+
+    fn bounded_io_timeout_v1(&self, configured: Option<Duration>) -> io::Result<Option<Duration>> {
+        self.check_io_deadlines_v1()?;
+        let deadline = [
+            self.handshake_deadline,
+            self.frame_deadline,
+            self.write_deadline,
+            self.read_operation_deadline,
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        Ok(match deadline {
+            Some(deadline) => {
+                let remaining = deadline
+                    .saturating_duration_since(Instant::now())
+                    .max(Duration::from_millis(1));
+                Some(configured.map_or(remaining, |timeout| timeout.min(remaining)))
+            }
+            None => configured,
+        })
     }
 }
 
 impl Read for ProductRelayDeadlineTcpStreamV1 {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
-        self.check_io_deadlines_v1()?;
-        let result = self.inner.read(output);
-        if result.as_ref().is_ok_and(|read| *read > 0) {
-            self.ensure_frame_deadline_v1()?;
+        loop {
+            let timeout = self.bounded_io_timeout_v1(self.read_timeout)?;
+            if timeout != self.read_timeout {
+                self.inner.set_read_timeout(timeout)?;
+            }
+            let result = self.inner.read(output);
+            if timeout != self.read_timeout {
+                self.inner.set_read_timeout(self.read_timeout)?;
+            }
+            if result.as_ref().is_ok_and(|read| *read > 0) {
+                self.ensure_frame_deadline_v1()?;
+            }
+            self.check_io_deadlines_v1()?;
+            if (self.handshake_deadline.is_some() || self.retry_idle_reads)
+                && result.as_ref().is_err_and(|error| {
+                    matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    )
+                })
+            {
+                // Retry below rustls and read_exact, without unwinding partial TLS,
+                // HTTP or WebSocket parsing, resetting a budget, or resending a frame.
+                continue;
+            }
+            return result;
         }
-        self.check_io_deadlines_v1()?;
-        result
     }
 }
 
 impl Write for ProductRelayDeadlineTcpStreamV1 {
     fn write(&mut self, input: &[u8]) -> io::Result<usize> {
-        self.check_io_deadlines_v1()?;
+        let timeout = self.bounded_io_timeout_v1(self.write_timeout)?;
+        if timeout != self.write_timeout {
+            self.inner.set_write_timeout(timeout)?;
+        }
         let result = self.inner.write(input);
+        if timeout != self.write_timeout {
+            self.inner.set_write_timeout(self.write_timeout)?;
+        }
         self.check_io_deadlines_v1()?;
         result
     }
@@ -277,8 +389,10 @@ impl ProductRelayClientV1 {
             .context("product relay client handshake deadline overflow")?;
         let tcp = TcpStream::connect_timeout(&endpoint.socket_addr, connect_timeout)
             .with_context(|| format!("connect relay endpoint: {}", config.endpoint))?;
-        let handshake_io_timeout = read_timeout.min(connect_timeout);
-        tcp.set_read_timeout(Some(handshake_io_timeout))?;
+        // The post-authentication idle poll interval must not shorten TLS, HTTP
+        // upgrade or the signed node handshake. The wrapper caps every I/O at
+        // the same absolute connect deadline.
+        tcp.set_read_timeout(Some(connect_timeout))?;
         tcp.set_write_timeout(Some(connect_timeout))?;
         let server_name = ServerName::try_from(endpoint.host.clone())
             .context("relay endpoint must use a DNS hostname")?;
@@ -286,7 +400,7 @@ impl ProductRelayClientV1 {
             .context("create relay TLS client")?;
         let mut stream = rustls::StreamOwned::new(
             connection,
-            ProductRelayDeadlineTcpStreamV1::new(tcp, handshake_deadline),
+            ProductRelayDeadlineTcpStreamV1::new(tcp, handshake_deadline)?,
         );
         websocket_upgrade_v1(&mut stream, &endpoint)?;
         let initiator = NodeHandshakeInitiatorV1::start(
@@ -431,7 +545,28 @@ impl ProductRelayClientV1 {
                 PRODUCT_RELAY_PROTOCOL_ITEM_DEADLINE_MS_V1,
             ))
             .context("product relay forward-outcome deadline overflow")?;
-        loop {
+        self.wait_for_forward_outcome_until_v1(
+            expected_source_peer_id,
+            expected_target_peer_id,
+            expected_envelope_session_id,
+            expected_envelope_sequence,
+            expected_admitted_wire_bytes,
+            outcome_deadline,
+        )
+    }
+
+    fn wait_for_forward_outcome_until_v1(
+        &mut self,
+        expected_source_peer_id: &str,
+        expected_target_peer_id: &str,
+        expected_envelope_session_id: Option<[u8; 16]>,
+        expected_envelope_sequence: Option<u64>,
+        expected_admitted_wire_bytes: usize,
+        outcome_deadline: Instant,
+    ) -> Result<RelayForwardOutcomeV1> {
+        let previous_retry_idle_reads = self.stream.sock.retry_idle_reads;
+        self.stream.sock.retry_idle_reads = true;
+        let result = (|| loop {
             match self.read_protocol_item_until_v1(outcome_deadline)? {
                 ProductRelayClientProtocolItemV1::Event { event, .. }
                     if matches!(event.as_ref(), ProductRelayClientEventV1::Closed) =>
@@ -472,7 +607,9 @@ impl ProductRelayClientV1 {
                     return Ok(outcome);
                 }
             }
-        }
+        })();
+        self.stream.sock.retry_idle_reads = previous_retry_idle_reads;
+        result
     }
 
     fn read_protocol_item_v1(&mut self) -> Result<ProductRelayClientProtocolItemV1> {
@@ -485,6 +622,20 @@ impl ProductRelayClientV1 {
     }
 
     fn read_protocol_item_until_v1(
+        &mut self,
+        protocol_item_deadline: Instant,
+    ) -> Result<ProductRelayClientProtocolItemV1> {
+        let previous_deadline = self
+            .stream
+            .sock
+            .read_operation_deadline
+            .replace(protocol_item_deadline);
+        let result = self.read_protocol_item_until_inner_v1(protocol_item_deadline);
+        self.stream.sock.read_operation_deadline = previous_deadline;
+        result
+    }
+
+    fn read_protocol_item_until_inner_v1(
         &mut self,
         protocol_item_deadline: Instant,
     ) -> Result<ProductRelayClientProtocolItemV1> {
@@ -568,7 +719,10 @@ impl ProductRelayClientV1 {
 
 fn ensure_protocol_item_progress_v1(deadline: Instant, control_frame_count: usize) -> Result<()> {
     if Instant::now() >= deadline {
-        bail!("product relay protocol-item absolute deadline exceeded");
+        return Err(absolute_deadline_error_v1(
+            "product relay protocol-item absolute deadline exceeded",
+        )
+        .into());
     }
     if control_frame_count > PRODUCT_RELAY_MAX_CONTROL_FRAMES_PER_PROTOCOL_ITEM_V1 {
         bail!("product relay protocol-item control-frame budget exceeded");
@@ -1186,13 +1340,380 @@ mod tests {
         tcp.set_read_timeout(Some(Duration::from_millis(100)))
             .unwrap();
         let mut guarded =
-            ProductRelayDeadlineTcpStreamV1::new(tcp, Instant::now() + Duration::from_millis(35));
+            ProductRelayDeadlineTcpStreamV1::new(tcp, Instant::now() + Duration::from_millis(35))
+                .unwrap();
         let mut bytes = [0u8; 8];
         let error = guarded.read_exact(&mut bytes).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert!(error.to_string().contains("absolute handshake deadline"));
         drop(guarded);
         server.join().unwrap();
+    }
+
+    #[test]
+    fn handshake_read_exact_keeps_partial_bytes_across_idle_socket_timeouts() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        tcp.set_read_timeout(Some(Duration::from_millis(5)))
+            .unwrap();
+        let server = thread::spawn(move || {
+            peer.write_all(b"a").unwrap();
+            thread::sleep(Duration::from_millis(40));
+            peer.write_all(b"bcd").unwrap();
+        });
+        let mut guarded =
+            ProductRelayDeadlineTcpStreamV1::new(tcp, Instant::now() + Duration::from_secs(2))
+                .unwrap();
+        let mut bytes = [0; 4];
+        let result = guarded.read_exact(&mut bytes);
+        server.join().unwrap();
+        result.unwrap();
+        assert_eq!(&bytes, b"abcd");
+        assert_eq!(guarded.inner.read_timeout().unwrap(), guarded.read_timeout);
+    }
+
+    #[test]
+    fn delayed_tls_upgrade_and_forward_outcome_outlive_idle_polls_without_desync() {
+        let fixture = delayed_test_relay_v1(|stream| {
+            let (message, wire_bytes) = read_test_client_wire_v1(stream)?;
+            let ProductRelayWireMessageV1::PeerHandshake {
+                target_peer_id,
+                handshake: RelayPeerHandshakeV1::Offer(offer),
+            } = message
+            else {
+                bail!("test relay expected exactly one peer handshake offer");
+            };
+            // Both an ordinary event and a control frame precede the correlated outcome.
+            write_fragmented_test_server_wire_v1(stream, &ProductRelayWireMessageV1::HeartbeatAck)?;
+            stream.write_all(&[0x8a, 0])?;
+            stream.flush()?;
+            write_fragmented_test_server_wire_v1(
+                stream,
+                &ProductRelayWireMessageV1::ForwardOutcome(RelayForwardOutcomeV1 {
+                    disposition: RelayForwardDispositionV1::Forwarded,
+                    source_peer_id: offer.initiator_peer_id,
+                    target_peer_id,
+                    forwarded: true,
+                    queued: false,
+                    payload_treated_opaque: true,
+                    envelope_session_id: None,
+                    envelope_sequence: None,
+                    admitted_wire_bytes: wire_bytes,
+                }),
+            )
+        });
+        let identity = SigningKey::from_bytes(&[203; 32]);
+        let mut client = ProductRelayClientV1::connect(&identity, &fixture.config).unwrap();
+        let target = peer_id_from_ed25519_public_key_v1(
+            &SigningKey::from_bytes(&[204; 32])
+                .verifying_key()
+                .to_bytes(),
+        );
+        let initiator =
+            NodeHandshakeInitiatorV1::start(&identity, target.clone(), now_ms_v1(), 5_000).unwrap();
+        let result = client.send_peer_handshake_with_outcome_v1(
+            target,
+            RelayPeerHandshakeV1::Offer(initiator.offer().clone()),
+        );
+        assert_eq!(
+            result.unwrap().disposition,
+            RelayForwardDispositionV1::Forwarded
+        );
+        assert!(!client.stream.sock.retry_idle_reads);
+        assert!(client.stream.sock.read_operation_deadline.is_none());
+        assert_eq!(
+            client.recv_event().unwrap(),
+            ProductRelayClientEventV1::HeartbeatAck
+        );
+        assert_eq!(client.pending_event_bytes, 0);
+        let started = Instant::now();
+        let idle = client.recv_event().unwrap_err();
+        assert!(product_relay_client_read_is_idle_timeout_v1(&idle));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(client.stream.sock.frame_deadline.is_none());
+        assert_eq!(
+            client.stream.sock.inner.read_timeout().unwrap(),
+            client.stream.sock.read_timeout
+        );
+        assert_eq!(
+            client.stream.sock.inner.write_timeout().unwrap(),
+            client.stream.sock.write_timeout
+        );
+        drop(client);
+        fixture.finish();
+    }
+
+    #[test]
+    fn outcome_absolute_timeout_is_terminal_and_restores_idle_read_scope() {
+        let fixture = delayed_test_relay_v1(|_| Ok(()));
+        let mut client =
+            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[205; 32]), &fixture.config)
+                .unwrap();
+        let deadline = Instant::now() + Duration::from_millis(80);
+        let error = client
+            .wait_for_forward_outcome_until_v1("source", "target", None, None, 0, deadline)
+            .unwrap_err();
+        assert!(!product_relay_client_read_is_idle_timeout_v1(&error));
+        assert!(error.to_string().contains("absolute deadline"));
+        assert!(!client.stream.sock.retry_idle_reads);
+        assert!(client.stream.sock.read_operation_deadline.is_none());
+        assert!(client.stream.sock.frame_deadline.is_none());
+        assert_eq!(
+            client.stream.sock.inner.read_timeout().unwrap(),
+            client.stream.sock.read_timeout
+        );
+        // Scope cleanup is independent of the caller's decision to close a timed-out
+        // in-flight operation; it must not turn later ordinary polls into long waits.
+        assert!(product_relay_client_read_is_idle_timeout_v1(
+            &client.recv_event().unwrap_err()
+        ));
+        drop(client);
+        fixture.finish();
+    }
+
+    #[test]
+    fn partial_inbound_frame_deadline_survives_idle_and_outbound_heartbeat() {
+        let fixture = delayed_test_relay_v1(|stream| {
+            stream.write_all(&[0x82, 126, 0, 200, b'{'])?;
+            stream.flush()?;
+            Ok(())
+        });
+        let mut client =
+            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[206; 32]), &fixture.config)
+                .unwrap();
+        let receive_deadline = Instant::now() + Duration::from_secs(3);
+        while client.read_buffer.is_empty() {
+            let error = client.recv_event().unwrap_err();
+            assert!(product_relay_client_read_is_idle_timeout_v1(&error));
+            assert!(
+                Instant::now() < receive_deadline,
+                "partial fixture frame did not arrive"
+            );
+        }
+        assert_eq!(client.read_buffer, [0x82, 126, 0, 200, b'{']);
+        let frame_deadline = client.stream.sock.frame_deadline.unwrap();
+        assert!(product_relay_client_read_is_idle_timeout_v1(
+            &client.recv_event().unwrap_err()
+        ));
+        assert_eq!(client.stream.sock.frame_deadline, Some(frame_deadline));
+        client.heartbeat().unwrap();
+        assert_eq!(client.stream.sock.frame_deadline, Some(frame_deadline));
+        assert!(client.stream.sock.write_deadline.is_none());
+        assert_eq!(
+            client.stream.sock.inner.write_timeout().unwrap(),
+            client.stream.sock.write_timeout
+        );
+
+        // Deterministically expire the same partial-frame budget without a 10 s sleep.
+        let expired = Instant::now() - Duration::from_millis(1);
+        client.stream.sock.frame_deadline = Some(expired);
+        let error = client
+            .wait_for_forward_outcome_until_v1(
+                "source",
+                "target",
+                None,
+                None,
+                0,
+                Instant::now() + Duration::from_secs(1),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("absolute frame deadline"));
+        assert!(!product_relay_client_read_is_idle_timeout_v1(&error));
+        assert!(
+            client.heartbeat().is_err(),
+            "outbound traffic must not revive an expired inbound frame"
+        );
+        assert_eq!(client.stream.sock.frame_deadline, Some(expired));
+        assert_eq!(client.read_buffer, [0x82, 126, 0, 200, b'{']);
+        assert!(!client.stream.sock.retry_idle_reads);
+        assert!(client.stream.sock.read_operation_deadline.is_none());
+        drop(client);
+        fixture.finish();
+    }
+
+    type TestRelayTlsStreamV1 = rustls::StreamOwned<rustls::ServerConnection, TcpStream>;
+
+    struct DelayedTestRelayV1 {
+        config: ProductRelayClientConfigV1,
+        stop: std::sync::mpsc::Sender<()>,
+        server: Option<thread::JoinHandle<Result<()>>>,
+    }
+
+    impl DelayedTestRelayV1 {
+        fn finish(mut self) {
+            let _ = self.stop.send(());
+            self.server.take().unwrap().join().unwrap().unwrap();
+        }
+    }
+
+    impl Drop for DelayedTestRelayV1 {
+        fn drop(&mut self) {
+            let _ = self.stop.send(());
+            if let Some(server) = self.server.take() {
+                let _ = server.join();
+            }
+        }
+    }
+
+    fn delayed_test_relay_v1(
+        after_handshake: impl FnOnce(&mut TestRelayTlsStreamV1) -> Result<()> + Send + 'static,
+    ) -> DelayedTestRelayV1 {
+        let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let server_config = rustls::ServerConfig::builder_with_provider(tls_crypto_provider_v1())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from(certificate.serialize_der().unwrap())],
+                rustls::pki_types::PrivateKeyDer::Pkcs8(
+                    rustls::pki_types::PrivatePkcs8KeyDer::from(
+                        certificate.serialize_private_key_der(),
+                    ),
+                ),
+            )
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("wss://{}/novovm", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let relay_identity = SigningKey::from_bytes(&[202; 32]);
+        let relay_peer_id =
+            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
+        let (stop, stopping) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || -> Result<()> {
+            let accept_deadline = Instant::now() + Duration::from_secs(5);
+            let tcp = loop {
+                match listener.accept() {
+                    Ok((tcp, _)) => break tcp,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        if stopping.try_recv().is_ok() || Instant::now() >= accept_deadline {
+                            bail!("test relay stopped before connect");
+                        }
+                        thread::sleep(Duration::from_millis(2));
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            };
+            // Windows can inherit nonblocking mode from the listening socket.
+            // This fixture uses blocking rustls I/O with bounded socket timeouts.
+            tcp.set_nonblocking(false)?;
+            tcp.set_read_timeout(Some(Duration::from_secs(3)))?;
+            tcp.set_write_timeout(Some(Duration::from_secs(3)))?;
+            tcp.set_nodelay(true)?;
+            // Delay the first TLS response beyond the configured 10 ms idle poll.
+            thread::sleep(Duration::from_millis(40));
+            let mut stream = rustls::StreamOwned::new(
+                rustls::ServerConnection::new(Arc::new(server_config))?,
+                tcp,
+            );
+            let request = read_http_headers_v1(&mut stream)?;
+            let key = request
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("Sec-WebSocket-Key")
+                        .then(|| value.trim())
+                })
+                .context("missing test WebSocket key")?;
+            let mut hasher = Sha1::new();
+            hasher.update(key.as_bytes());
+            hasher.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+            let response = format!("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n", BASE64_STANDARD.encode(hasher.finalize()));
+            stream.write_all(&response.as_bytes()[..8])?;
+            stream.flush()?;
+            thread::sleep(Duration::from_millis(40));
+            stream.write_all(&response.as_bytes()[8..])?;
+            stream.flush()?;
+            let (ProductRelayWireMessageV1::HandshakeOffer(offer), _) =
+                read_test_client_wire_v1(&mut stream)?
+            else {
+                bail!("test relay expected a signed handshake offer");
+            };
+            let responder = NodeHandshakeResponderV1::respond(
+                &offer,
+                &relay_identity,
+                now_ms_v1(),
+                30_000,
+                &mut HandshakeReplayCacheV1::default(),
+            )?;
+            write_fragmented_test_server_wire_v1(
+                &mut stream,
+                &ProductRelayWireMessageV1::HandshakeResponse(responder.response().clone()),
+            )?;
+            after_handshake(&mut stream)?;
+            let _ = stopping.recv_timeout(Duration::from_secs(5));
+            Ok(())
+        });
+        DelayedTestRelayV1 {
+            config: ProductRelayClientConfigV1 {
+                endpoint,
+                expected_relay_peer_id: relay_peer_id,
+                connect_timeout_ms: 5_000,
+                read_timeout_ms: 10,
+                tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
+            },
+            stop,
+            server: Some(server),
+        }
+    }
+
+    fn read_test_client_wire_v1(
+        stream: &mut TestRelayTlsStreamV1,
+    ) -> Result<(ProductRelayWireMessageV1, usize)> {
+        let mut header = [0; 2];
+        stream.read_exact(&mut header)?;
+        if header[0] != 0x82 || header[1] & 0x80 == 0 {
+            bail!("test relay requires a masked binary client frame");
+        }
+        let length = match header[1] & 0x7f {
+            126 => {
+                let mut length = [0; 2];
+                stream.read_exact(&mut length)?;
+                usize::from(u16::from_be_bytes(length))
+            }
+            127 => bail!("test relay fixture only accepts small messages"),
+            length => usize::from(length),
+        };
+        let mut mask = [0; 4];
+        stream.read_exact(&mut mask)?;
+        let mut bytes = vec![0; length];
+        stream.read_exact(&mut bytes)?;
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte ^= mask[index % 4];
+        }
+        Ok((serde_json::from_slice(&bytes)?, length))
+    }
+
+    fn write_fragmented_test_server_wire_v1(
+        stream: &mut TestRelayTlsStreamV1,
+        message: &ProductRelayWireMessageV1,
+    ) -> Result<()> {
+        let payload = serde_json::to_vec(message)?;
+        let mut frame = vec![0x82];
+        if payload.len() <= 125 {
+            frame.push(payload.len() as u8);
+        } else {
+            frame.push(126);
+            frame.extend_from_slice(&u16::try_from(payload.len())?.to_be_bytes());
+        }
+        frame.extend_from_slice(&payload);
+        // First split WebSocket framing across TLS records, then split a TLS record
+        // across raw TCP reads. Each gap exceeds the client's ordinary idle poll.
+        stream.write_all(&frame[..1])?;
+        stream.flush()?;
+        thread::sleep(Duration::from_millis(40));
+        stream.conn.writer().write_all(&frame[1..])?;
+        let mut encrypted = Vec::new();
+        while stream.conn.wants_write() {
+            stream.conn.write_tls(&mut encrypted)?;
+        }
+        let split = encrypted.len() / 2;
+        stream.sock.write_all(&encrypted[..split])?;
+        stream.sock.flush()?;
+        thread::sleep(Duration::from_millis(40));
+        stream.sock.write_all(&encrypted[split..])?;
+        stream.sock.flush()?;
+        Ok(())
     }
 
     #[test]

@@ -76,6 +76,14 @@ novovm-product-relay /etc/novovm/relay.json
 For a bounded smoke run only, add `"run_for_ms": 60000` to the config. Normal
 deployments omit it and manage process lifetime through the operating system.
 
+Embedded callers can use `run_product_relay_daemon_with_shutdown_v1(config, stopping)`
+with a shared `Arc<AtomicBool>` and their own thread handle. Set the signal to true and
+join the thread when the owning scope ends; do not reset it during a run. The original
+entry point remains available. Configured run duration uses a monotonic clock.
+External stop, duration expiry and accept/spawn/report errors all close the listener,
+request graceful session shutdown and join connection workers before returning.
+This library API does not add OS signal handling to the standalone executable.
+
 ## Runtime Boundary
 
 - Client WebSocket frames must use a fresh unpredictable mask and are limited to 1 MiB;
@@ -95,7 +103,7 @@ deployments omit it and manage process lifetime through the operating system.
   target session; it is not a recipient ACK or durable persistence receipt.
 - Authenticated sender requests and their outcomes have priority. After an outcome/ACK, or a
   Ping/Pong, the daemon fairly emits at most one alternating data/control delivery. After an idle
-  read timeout it may additionally drain at most four data and four peer-handshake deliveries.
+  read timeout it may additionally drain at most 11 data and four peer-handshake deliveries.
 - TLS/HTTP/signed-handshake and authenticated frame/read-response-write operations have absolute
   lower-TCP deadlines, so TLS-record slow drip and blocked writes cannot renew progress forever.
 - Raw authenticated bytes are frame/byte admitted before JSON decode. A predecode budget or
@@ -117,3 +125,19 @@ homogeneous deployment. Mixed old/new relay processes are not rolling-upgrade co
 The KINGCLUB native integration test reproduced timeout after closing the receiver UDP socket mid-file while retaining its authenticated WSS session. The former four-data-frame idle tick accumulated retransmission backlog. Use the existing client pending-byte budget to derive the data allowance: 11 maximum-sized data frames plus four reserved control frames, below both the 64-event and 16 MiB client limits. Admission, payload size, authentication and shutdown checks are unchanged.
 
 Validation: all 12 product_relay_daemon tests passed; rebuilt local daemon. Actual native AEAD/UDP/WSS tests passed in relay, LAN, and LAN-interrupted modes plus endpoint recovery. Interrupted transfer delivered and hash-verified the same 262161-byte file after a deliberately lost final receipt (14.298 s on this computer). This is not handset, WAN, throughput, or production-scale acceptance.
+
+## 2026-09-16 scoped lifecycle regression
+
+The Linux CI run for `5ac0f0e` failed in the three-node mesh E2E wait. Its logs do
+not identify whether this was C's initial connection or restart. A controlled local
+regression delays C's restart by 8.5 seconds: the old eight-second daemon duration
+expires first and reproduces an empty peer set at restart. Owning the daemon until
+scenario completion fixes that regression without increasing per-operation assertions
+or the mesh session TTL. Phase and elapsed-time diagnostics now distinguish initial
+connections, restart and post-restart delivery.
+
+Windows validation: 28 relay client/daemon tests passed; all 21 mainline Overlay tests
+passed three consecutive default-parallel runs and one serial run. Tests include real
+TLS/HTTP/WebSocket split input delayed beyond the idle poll, fixed absolute deadlines,
+partial-frame expiry across outbound heartbeats, idle-handshake shutdown and report-error
+cleanup. These are local regressions, not a multi-device, public-network or finality sign-off.

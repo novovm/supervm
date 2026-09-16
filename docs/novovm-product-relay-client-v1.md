@@ -26,6 +26,20 @@ interleaved events. A single protocol-item read also has an absolute deadline an
 Read buffering uses a cursor with bounded compaction rather than shifting the whole buffer for
 every small frame.
 
+Connection establishment uses the configured absolute `connect_timeout_ms` budget for
+TCP, TLS, HTTP upgrade and signed relay authentication. The shorter authenticated
+`read_timeout_ms` is an idle polling interval, not a handshake or correlated-outcome
+deadline. During these active waits, idle reads are retried below TLS/HTTP/WebSocket
+parsing so partial input is retained, without resending or renewing the absolute budget.
+Each socket operation is capped by the remaining absolute budget.
+
+Ordinary `recv_event` idle polls still return promptly. Callers should use
+`product_relay_client_read_is_idle_timeout_v1` to distinguish them from terminal absolute
+deadline errors. A partial inbound frame keeps its deadline across idle polls and
+outbound heartbeat/Pong writes; an empty idle poll does not start a sticky frame deadline.
+Waiting for an in-flight `ForwardOutcome` remains bounded by 10 seconds; synchronous
+overlay shutdown may wait for this operation and does not yet actively cancel its socket.
+
 Rate/byte admission happens on raw authenticated wire bytes before JSON decode. If that predecode
 gate rejects, or the frame is malformed, no trustworthy correlation fields exist and the daemon
 closes the connection instead of returning an invented outcome. The overlay retains its pending
