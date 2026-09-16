@@ -16330,10 +16330,80 @@ pub fn run_nov_send_raw_transaction_batch_from_params_v1(
     run_nov_send_raw_transaction_batch_internal_v1(params, false)
 }
 
+/// Execute an explicitly selected local Host plan, never a remote/RPC proposal.
+///
+/// This advances the local unsealed AOEM execution head. It is not speculative
+/// execution, proposer authentication, fork choice, or finality. Callers must
+/// select one plan locally; untrusted network proposals need isolated candidate
+/// state and a durable scheduler before they may use this boundary.
+pub fn run_nov_native_candidate_execution_plan_v1(
+    plan: &crate::native_candidate_plan::NovNativeCandidateExecutionPlanV1,
+    node_params: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    plan.validate()?;
+    let mut params = node_params
+        .as_object()
+        .context("candidate execution plan requires local Host configuration")?
+        .clone();
+    for key in [
+        "raw_txs",
+        "raw_transactions",
+        "transactions",
+        "block_execution_context",
+        "blockExecutionContext",
+    ] {
+        if params.contains_key(key) {
+            bail!("candidate execution plan input cannot be overridden by {key}");
+        }
+    }
+    let gates = tx_ingress_aoem_ownership_gates_from_params_v1(node_params);
+    if !gates.explicit || !(gates.production_candidate || gates.semantic_graph_v3_required) {
+        bail!("candidate execution plan requires explicit AOEM production ownership");
+    }
+    params.insert(
+        "raw_txs".to_string(),
+        serde_json::json!(plan
+            .raw_txs
+            .iter()
+            .map(|raw| to_hex_prefixed_v1(raw))
+            .collect::<Vec<_>>()),
+    );
+    let mut out = run_nov_send_raw_transaction_batch_with_plan_v1(
+        &serde_json::Value::Object(params),
+        true,
+        Some(plan),
+    )?;
+    out["candidate_execution_plan_commitment"] =
+        serde_json::json!(to_hex_prefixed_v1(&plan.plan_commitment));
+    out["candidate_execution_plan_source"] = serde_json::json!("explicit_local_host_input");
+    Ok(out)
+}
+
 fn run_nov_send_raw_transaction_batch_internal_v1(
     params: &serde_json::Value,
     trusted_internal_call: bool,
 ) -> Result<serde_json::Value> {
+    run_nov_send_raw_transaction_batch_with_plan_v1(params, trusted_internal_call, None)
+}
+
+fn run_nov_send_raw_transaction_batch_with_plan_v1(
+    params: &serde_json::Value,
+    trusted_internal_call: bool,
+    execution_plan: Option<&crate::native_candidate_plan::NovNativeCandidateExecutionPlanV1>,
+) -> Result<serde_json::Value> {
+    // Reject caller-controlled context even for replay and internal JSON paths.
+    // Only the separate, typed Host plan may supply execution context.
+    if requested_nov_block_execution_context_v1(params)?.is_some() {
+        bail!(
+            "block_execution_context is Host-owned and cannot be supplied through transaction/RPC parameters"
+        );
+    }
+    if let Some(plan) = execution_plan {
+        plan.validate()?;
+        if !trusted_internal_call {
+            bail!("candidate execution plan is a local Host-only input");
+        }
+    }
     if !trusted_internal_call && !cfg!(test) && native_persistence_selected_by_request_v1(params) {
         bail!(
             "native persistence paths and AOEM namespace are node configuration, not request parameters"
@@ -16426,6 +16496,18 @@ fn run_nov_send_raw_transaction_batch_internal_v1(
             bail!("duplicate signed intent within native transaction batch");
         }
     }
+    if let Some(plan) = execution_plan {
+        if plan.context.chain_id != chain_id
+            || plan.raw_txs != raw_payloads
+            || !plan
+                .tx_hashes
+                .iter()
+                .copied()
+                .eq(prepared.iter().map(|item| item.tx_hash))
+        {
+            bail!("candidate execution plan differs from authenticated ordered transactions");
+        }
+    }
     let now_ms = now_unix_millis_v1();
     let env_shadow_enabled = native_aoem_native_tx_batch_shadow_enabled_v1();
     let env_production_candidate_enabled =
@@ -16438,6 +16520,16 @@ fn run_nov_send_raw_transaction_batch_internal_v1(
     let compare_enabled = aoem_gate_config.compare;
     let protocol_config_commitment =
         verify_native_business_protocol_config_pin_for_aoem_production_v1(params)?;
+    if let Some(plan) = execution_plan {
+        if !production_candidate_enabled
+            || protocol_config_commitment.as_deref()
+                != Some(to_hex(&plan.protocol_config_commitment).as_str())
+        {
+            bail!(
+                "candidate execution plan protocol configuration differs from the local AOEM pin"
+            );
+        }
+    }
     let tx_ingress_real_callsite = tx_ingress_real_callsite_v1(
         params,
         production_candidate_enabled,
@@ -16572,6 +16664,26 @@ fn run_nov_send_raw_transaction_batch_internal_v1(
             }
         }
     }
+    // Replays must match the entire original plan, not just already-consumed
+    // transaction hashes. In particular a changed time/body/parent is not a replay.
+    let completed_plan_candidate = if let Some(plan) = execution_plan {
+        let ledger = NovNativeBlockLedgerV1::open(block_ledger_path.as_path())?;
+        let completed = ledger.load_by_height(chain_id, plan.context.block_height)?;
+        if let Some(block) = completed.as_ref() {
+            plan.validate_against_block(block)?;
+            if replay_count != prepared.len() {
+                bail!("completed candidate execution plan is missing durable auth receipts");
+            }
+        } else if replay_count > 0 {
+            let staged = ledger
+                .load_prepared(chain_id)?
+                .context("candidate execution plan replay has no matching durable candidate")?;
+            plan.validate_against_prepared(&staged)?;
+        }
+        completed
+    } else {
+        None
+    };
     if replay_count > 0 {
         if replay_count != prepared.len() {
             bail!(
@@ -16592,19 +16704,20 @@ fn run_nov_send_raw_transaction_batch_internal_v1(
                 Ok(count) => (count, None),
                 Err(err) => (0, Some(format!("{err:#}"))),
             };
-        let durable_block_candidate_committed =
-            if trusted_internal_call && production_candidate_enabled && {
-                let ledger = NovNativeBlockLedgerV1::open(block_ledger_path.as_path())?;
-                ledger.load_prepared(chain_id)?.is_some()
-            } {
-                Some(commit_prepared_native_block_from_aoem_v1(
-                    params,
-                    chain_id,
-                    block_ledger_path.as_path(),
-                )?)
-            } else {
-                None
-            };
+        let durable_block_candidate_committed = if completed_plan_candidate.is_some() {
+            completed_plan_candidate
+        } else if trusted_internal_call && production_candidate_enabled && {
+            let ledger = NovNativeBlockLedgerV1::open(block_ledger_path.as_path())?;
+            ledger.load_prepared(chain_id)?.is_some()
+        } {
+            Some(commit_prepared_native_block_from_aoem_v1(
+                params,
+                chain_id,
+                block_ledger_path.as_path(),
+            )?)
+        } else {
+            None
+        };
         return Ok(serde_json::json!({
             "method": "nov_sendRawTransactionBatch",
             "accepted": true,
@@ -16651,13 +16764,6 @@ fn run_nov_send_raw_transaction_batch_internal_v1(
         }
         *expected = expected.saturating_add(1);
     }
-    for (item, payload) in prepared.iter().zip(raw_payloads.iter()) {
-        observe_network_runtime_native_pending_tx_local_native_payload_v1(
-            item.native_tx.chain_id,
-            item.tx_hash,
-            Some(payload.as_slice()),
-        );
-    }
     let precommit_store_materialized_receipts = store.receipts.len();
     let precommit_store_materialized_estimated_bytes =
         estimate_native_execution_store_retained_bytes_v1(&store);
@@ -16688,12 +16794,7 @@ fn run_nov_send_raw_transaction_batch_internal_v1(
     let previous_store_clone_receipts = previous_store.receipts.len();
     let previous_store_clone_estimated_bytes =
         estimate_native_execution_store_retained_bytes_v1(&previous_store);
-    let requested_block_context = requested_nov_block_execution_context_v1(params)?;
-    if requested_block_context.is_some() {
-        bail!(
-            "block_execution_context is Host-owned and cannot be supplied through transaction/RPC parameters"
-        );
-    }
+    let requested_block_context = execution_plan.map(|plan| plan.context);
     let mut prepared_block_candidate = if trusted_internal_call && production_candidate_enabled {
         let ledger = NovNativeBlockLedgerV1::open(block_ledger_path.as_path())?;
         let durable_head = ledger.load_head(chain_id)?;
@@ -16723,6 +16824,14 @@ fn run_nov_send_raw_transaction_batch_internal_v1(
         };
         let tx_hashes = prepared.iter().map(|item| item.tx_hash).collect::<Vec<_>>();
         let raw_txs = raw_payloads.clone();
+        if let Some(plan) = execution_plan {
+            if plan.pre_state_root != pre_state_root || plan.aoem_parent != aoem_parent {
+                bail!("candidate execution plan does not match the local AOEM parent state");
+            }
+            if let Some(staged) = existing_prepared.as_ref() {
+                plan.validate_against_prepared(staged)?;
+            }
+        }
         let context = match existing_prepared {
             Some(staged) => {
                 if staged.pre_state_root != pre_state_root
@@ -16769,6 +16878,13 @@ fn run_nov_send_raw_transaction_batch_internal_v1(
     } else {
         None
     };
+    for (item, payload) in prepared.iter().zip(raw_payloads.iter()) {
+        observe_network_runtime_native_pending_tx_local_native_payload_v1(
+            item.native_tx.chain_id,
+            item.tx_hash,
+            Some(payload.as_slice()),
+        );
+    }
     let block_execution_context = prepared_block_candidate
         .as_ref()
         .map(|candidate| candidate.context);
@@ -20870,6 +20986,7 @@ pub fn load_ops_wire_v1_from_tx_wire_file(path: &Path) -> Result<OpsWirePayload>
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("native_candidate_plan_execution_tests.rs");
     use novovm_protocol::{
         NovExecutionModeV1, NovFeePolicyV1, NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1,
         NovVerificationModeV1,
