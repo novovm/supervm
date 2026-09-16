@@ -251,6 +251,9 @@ jobs:
       - name: Product relay admission and resource-bound tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-network product_relay::tests
 
+      - name: Product overlay handshake clock-skew and authentication tests
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-network --lib product_overlay::tests
+
       - name: Product relay client daemon and overlay tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib product_relay_
 
