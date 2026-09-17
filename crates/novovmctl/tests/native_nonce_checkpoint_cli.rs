@@ -136,6 +136,90 @@ fn verify_command(bundle: &Path, checkpoint: &NonceMigrationCheckpointV1, digest
     command
 }
 
+fn upgrade_command(
+    action: &str,
+    bundle: &Path,
+    checkpoint: &NonceMigrationCheckpointV1,
+    digest: &str,
+    target_protocol: &str,
+    workspace: &Path,
+) -> Command {
+    let mut command = cli(action);
+    command
+        .arg("--bundle")
+        .arg(bundle)
+        .arg("--bundle-digest")
+        .arg(digest)
+        .arg("--target-protocol-commitment")
+        .arg(target_protocol)
+        .arg("--workspace")
+        .arg(workspace);
+    add_checkpoint(&mut command, checkpoint);
+    command
+}
+
+fn observed_target_protocol() -> String {
+    let report = run_json(cli("target-protocol"), true);
+    assert_eq!(report["data"]["action"], "target-protocol");
+    assert_eq!(report["data"]["observed_only"], true);
+    for field in [
+        "authority_state_published",
+        "activation_ready",
+        "import_performed",
+    ] {
+        assert_eq!(report["data"][field], false);
+    }
+    let target = report["data"]["target_protocol_commitment"]
+        .as_str()
+        .unwrap();
+    assert_eq!(target.len(), 64);
+    assert!(target
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+    target.to_string()
+}
+
+fn workspace_files(workspace: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<_> = fs::read_dir(workspace)
+        .unwrap()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            assert!(entry.file_type().unwrap().is_file());
+            (
+                entry.file_name().into_string().unwrap(),
+                fs::read(entry.path()).unwrap(),
+            )
+        })
+        .collect();
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
+}
+
+fn assert_upgrade_report(report: &Value, action: &str, complete: bool) {
+    assert_eq!(report["data"]["action"], action);
+    assert_eq!(report["data"]["report"]["artifact_complete"], complete);
+    assert_eq!(
+        report["data"]["report"]["phase"],
+        if complete { "complete" } else { "prepared" }
+    );
+    assert!(report["data"]["report"]["transition_id"].is_string());
+    assert!(report["data"]["report"]["proposed_state_root"].is_string());
+    for field in [
+        "authority_state_published",
+        "activation_ready",
+        "import_performed",
+    ] {
+        assert_eq!(
+            report["data"][field], false,
+            "command must not promote {field}"
+        );
+        assert_eq!(
+            report["data"]["report"][field], false,
+            "journal must not promote {field}"
+        );
+    }
+}
+
 fn run_json(mut command: Command, success: bool) -> Value {
     let output = command.output().expect("launch actual novovmctl binary");
     assert_eq!(
@@ -339,8 +423,276 @@ fn native_nonce_checkpoint_cli_rejects_malformed_bundle_and_missing_arguments_as
         false,
     );
     assert!(!missing.exists());
-    for action in ["inspect", "export", "verify"] {
+    for action in [
+        "inspect",
+        "export",
+        "verify",
+        "prepare-upgrade",
+        "resume-upgrade",
+        "inspect-upgrade",
+    ] {
         let report = run_json(cli(action), false);
         assert_eq!(report["error"]["kind"], "InvalidArgument");
+    }
+}
+
+#[test]
+fn native_nonce_upgrade_cli_stages_pinned_proposal_without_source_mutation_or_activation() {
+    let root = fixture_root();
+    let (fixture, snapshot, ledger) = restore_source(&root);
+    let source_records = ledger_records(&ledger);
+    let source_snapshot = fs::read(&snapshot).unwrap();
+    let bundle = root.join("checkpoint.bin");
+    let exported = run_json(
+        export_command(&snapshot, &ledger, &fixture.checkpoint, &bundle),
+        true,
+    );
+    let digest = exported["data"]["bundle_digest"].as_str().unwrap();
+    let target_protocol = observed_target_protocol();
+    let workspace = root.join("upgrade-proposal");
+    let wrong_target = if target_protocol == "00".repeat(32) {
+        "01".repeat(32)
+    } else {
+        "00".repeat(32)
+    };
+    run_json(
+        upgrade_command(
+            "prepare-upgrade",
+            &bundle,
+            &fixture.checkpoint,
+            digest,
+            &wrong_target,
+            &workspace,
+        ),
+        false,
+    );
+    assert!(
+        !workspace.exists(),
+        "wrong target must fail before creating output"
+    );
+    let mut wrong_checkpoint = fixture.checkpoint.clone();
+    wrong_checkpoint.snapshot_digest = "00".repeat(32);
+    run_json(
+        upgrade_command(
+            "prepare-upgrade",
+            &bundle,
+            &wrong_checkpoint,
+            digest,
+            &target_protocol,
+            &workspace,
+        ),
+        false,
+    );
+    assert!(
+        !workspace.exists(),
+        "wrong source pins must fail before creating output"
+    );
+    run_json(
+        upgrade_command(
+            "prepare-upgrade",
+            &bundle,
+            &fixture.checkpoint,
+            digest,
+            &target_protocol,
+            &ledger,
+        ),
+        false,
+    );
+    assert_eq!(ledger_records(&ledger), source_records);
+
+    let prepared = run_json(
+        upgrade_command(
+            "prepare-upgrade",
+            &bundle,
+            &fixture.checkpoint,
+            digest,
+            &target_protocol,
+            &workspace,
+        ),
+        true,
+    );
+    assert_upgrade_report(&prepared, "prepare-upgrade", true);
+    assert_eq!(prepared["data"]["report"]["source_bundle_digest"], digest);
+    let original_files = workspace_files(&workspace);
+    assert!(!original_files.is_empty());
+    run_json(
+        upgrade_command(
+            "prepare-upgrade",
+            &bundle,
+            &fixture.checkpoint,
+            digest,
+            &target_protocol,
+            &workspace,
+        ),
+        false,
+    );
+    assert_eq!(workspace_files(&workspace), original_files);
+
+    // No original snapshot or ledger remains at the exported source paths.
+    let moved = root.join("source-moved-away");
+    fs::rename(root.join("source"), &moved).unwrap();
+    for action in ["inspect-upgrade", "resume-upgrade"] {
+        let checked = run_json(
+            upgrade_command(
+                action,
+                &bundle,
+                &fixture.checkpoint,
+                digest,
+                &target_protocol,
+                &workspace,
+            ),
+            true,
+        );
+        assert_upgrade_report(&checked, action, true);
+        assert_eq!(checked["data"]["report"], prepared["data"]["report"]);
+        assert_eq!(workspace_files(&workspace), original_files);
+        run_json(
+            upgrade_command(
+                action,
+                &bundle,
+                &wrong_checkpoint,
+                digest,
+                &target_protocol,
+                &workspace,
+            ),
+            false,
+        );
+        assert_eq!(workspace_files(&workspace), original_files);
+    }
+
+    let second = root.join("same-proposal-independent-workspace");
+    let repeated = run_json(
+        upgrade_command(
+            "prepare-upgrade",
+            &bundle,
+            &fixture.checkpoint,
+            digest,
+            &target_protocol,
+            &second,
+        ),
+        true,
+    );
+    assert_eq!(repeated["data"]["report"], prepared["data"]["report"]);
+    assert_eq!(
+        workspace_files(&second),
+        original_files,
+        "proposal artifacts must be deterministic"
+    );
+    assert_eq!(
+        ledger_records(&moved.join("ledger.rocksdb")),
+        source_records
+    );
+    assert_eq!(
+        fs::read(moved.join("legacy-store.json")).unwrap(),
+        source_snapshot
+    );
+}
+
+#[test]
+fn native_nonce_upgrade_cli_inspects_partial_artifact_resumes_and_rejects_corruption() {
+    let root = fixture_root();
+    let (fixture, snapshot, ledger) = restore_source(&root);
+    let bundle = root.join("checkpoint.bin");
+    let exported = run_json(
+        export_command(&snapshot, &ledger, &fixture.checkpoint, &bundle),
+        true,
+    );
+    let digest = exported["data"]["bundle_digest"].as_str().unwrap();
+    let target_protocol = observed_target_protocol();
+    let workspace = root.join("interrupted-proposal");
+    let completed = run_json(
+        upgrade_command(
+            "prepare-upgrade",
+            &bundle,
+            &fixture.checkpoint,
+            digest,
+            &target_protocol,
+            &workspace,
+        ),
+        true,
+    );
+    let complete_files = workspace_files(&workspace);
+    let artifact_path = workspace.join("transition.json");
+    let artifact = fs::read(&artifact_path).unwrap();
+    assert!(artifact.len() > 2);
+
+    // Fault injection touches only files created by this test. This models a
+    // valid interrupted prefix, not a real power-loss or filesystem guarantee.
+    fs::remove_file(workspace.join("complete.json")).unwrap();
+    fs::write(&artifact_path, &artifact[..artifact.len() / 2]).unwrap();
+    let partial_files = workspace_files(&workspace);
+    let inspected = run_json(
+        upgrade_command(
+            "inspect-upgrade",
+            &bundle,
+            &fixture.checkpoint,
+            digest,
+            &target_protocol,
+            &workspace,
+        ),
+        true,
+    );
+    assert_upgrade_report(&inspected, "inspect-upgrade", false);
+    assert_eq!(
+        workspace_files(&workspace),
+        partial_files,
+        "inspection must be read-only"
+    );
+    let resumed = run_json(
+        upgrade_command(
+            "resume-upgrade",
+            &bundle,
+            &fixture.checkpoint,
+            digest,
+            &target_protocol,
+            &workspace,
+        ),
+        true,
+    );
+    assert_upgrade_report(&resumed, "resume-upgrade", true);
+    assert_eq!(resumed["data"]["report"], completed["data"]["report"]);
+    assert_eq!(workspace_files(&workspace), complete_files);
+
+    // A completion marker must never authorize a partial or modified artifact.
+    fs::write(&artifact_path, &artifact[..artifact.len() / 2]).unwrap();
+    let invalid_complete = workspace_files(&workspace);
+    for action in ["inspect-upgrade", "resume-upgrade"] {
+        run_json(
+            upgrade_command(
+                action,
+                &bundle,
+                &fixture.checkpoint,
+                digest,
+                &target_protocol,
+                &workspace,
+            ),
+            false,
+        );
+        assert_eq!(workspace_files(&workspace), invalid_complete);
+    }
+    fs::remove_file(workspace.join("complete.json")).unwrap();
+    fs::write(
+        &artifact_path,
+        b"not a prefix of the verified state transition",
+    )
+    .unwrap();
+    let corrupt_files = workspace_files(&workspace);
+    for action in ["inspect-upgrade", "resume-upgrade"] {
+        run_json(
+            upgrade_command(
+                action,
+                &bundle,
+                &fixture.checkpoint,
+                digest,
+                &target_protocol,
+                &workspace,
+            ),
+            false,
+        );
+        assert_eq!(
+            workspace_files(&workspace),
+            corrupt_files,
+            "corruption must not be overwritten"
+        );
     }
 }

@@ -12,6 +12,12 @@ pub mod native_nonce_checkpoint;
 #[path = "native_nonce_bundle.rs"]
 pub mod native_nonce_bundle;
 
+#[path = "native_nonce_upgrade.rs"]
+pub mod native_nonce_upgrade;
+
+#[path = "native_nonce_upgrade_journal.rs"]
+pub mod native_nonce_upgrade_journal;
+
 use crate::clearing_router::{NovClearingRouterImplV1, NovClearingRouterV1};
 use crate::clearing_types::{
     NovClearingFailureCodeV1, NovClearingRouteQuoteV1, NovExecutionFeeRequestV1,

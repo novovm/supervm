@@ -2,16 +2,21 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use novovm_node::tx_ingress::native_business_protocol_config_commitment_v1;
 use novovm_node::tx_ingress::native_nonce_bundle::{
     checkpoint_bundle_digest_v1, export_nonce_checkpoint_bundle_v1,
     inspect_nonce_checkpoint_source_v1, read_nonce_checkpoint_bundle_v1,
     verify_nonce_checkpoint_bundle_v1, MAX_CHECKPOINT_BUNDLE_BYTES_V1,
 };
 use novovm_node::tx_ingress::native_nonce_checkpoint::NonceMigrationCheckpointV1;
+use novovm_node::tx_ingress::native_nonce_upgrade_journal::{
+    inspect_nonce_upgrade_v1, stage_nonce_upgrade_v1,
+};
 use serde_json::{json, Value};
 
 use crate::cli::native_nonce_migration::{
     NativeNonceCheckpointArgs, NativeNonceMigrationArgs, NativeNonceMigrationCommand,
+    NativeNonceUpgradeArgs, NativeNonceVerifyArgs,
 };
 use crate::error::CtlError;
 use crate::output;
@@ -71,17 +76,8 @@ fn inner_run(args: &NativeNonceMigrationArgs) -> Result<Value, CtlError> {
                 "report": report, "activation_ready": false, "import_performed": false}))
         }
         NativeNonceMigrationCommand::Verify(args) => {
-            require_digest_v1(&args.bundle_digest)?;
-            let bytes = read_nonce_checkpoint_bundle_v1(&args.bundle).map_err(|error| {
-                CtlError::FileReadFailed(format!("offline evidence bundle: {error:#}"))
-            })?;
+            let bytes = read_pinned_bundle_v1(args)?;
             let actual_digest = checkpoint_bundle_digest_v1(&bytes);
-            if actual_digest != args.bundle_digest {
-                return Err(CtlError::IntegrationFailed(
-                    "evidence bundle digest does not match the independently supplied digest"
-                        .into(),
-                ));
-            }
             let report = verify_nonce_checkpoint_bundle_v1(&bytes, &checkpoint(&args.checkpoint))
                 .map_err(|error| {
                 CtlError::IntegrationFailed(format!("offline checkpoint verification: {error:#}"))
@@ -90,7 +86,82 @@ fn inner_run(args: &NativeNonceMigrationArgs) -> Result<Value, CtlError> {
                 "bundle_digest_verified": true, "report": report,
                 "activation_ready": false, "import_performed": false}))
         }
+        NativeNonceMigrationCommand::TargetProtocol => {
+            let commitment = current_target_protocol_v1()?;
+            Ok(
+                json!({"action": "target-protocol", "target_protocol_commitment": commitment,
+                "observed_only": true, "authority_state_published": false,
+                "activation_ready": false, "import_performed": false}),
+            )
+        }
+        NativeNonceMigrationCommand::PrepareUpgrade(args) => {
+            run_upgrade_v1(args, "prepare-upgrade", Some(false))
+        }
+        NativeNonceMigrationCommand::ResumeUpgrade(args) => {
+            run_upgrade_v1(args, "resume-upgrade", Some(true))
+        }
+        NativeNonceMigrationCommand::InspectUpgrade(args) => {
+            run_upgrade_v1(args, "inspect-upgrade", None)
+        }
     }
+}
+
+fn current_target_protocol_v1() -> Result<String, CtlError> {
+    native_business_protocol_config_commitment_v1().map_err(|error| {
+        CtlError::IntegrationFailed(format!("current V2 protocol commitment: {error:#}"))
+    })
+}
+
+fn read_pinned_bundle_v1(args: &NativeNonceVerifyArgs) -> Result<Vec<u8>, CtlError> {
+    require_digest_v1(&args.bundle_digest)?;
+    let bytes = read_nonce_checkpoint_bundle_v1(&args.bundle)
+        .map_err(|error| CtlError::FileReadFailed(format!("offline evidence bundle: {error:#}")))?;
+    if checkpoint_bundle_digest_v1(&bytes) != args.bundle_digest {
+        return Err(CtlError::IntegrationFailed(
+            "evidence bundle digest does not match the independently supplied digest".into(),
+        ));
+    }
+    Ok(bytes)
+}
+
+fn run_upgrade_v1(
+    args: &NativeNonceUpgradeArgs,
+    action: &'static str,
+    resume: Option<bool>,
+) -> Result<Value, CtlError> {
+    // A supplied target is an explicit compatibility pin, never authority to
+    // publish this proposal. Recheck before accessing or creating a workspace.
+    if args.target_protocol_commitment != current_target_protocol_v1()? {
+        return Err(CtlError::InvalidArgument(
+            "--target-protocol-commitment does not match this binary's current environment; use target-protocol to observe it, then independently approve the intended configuration".into(),
+        ));
+    }
+    let bytes = read_pinned_bundle_v1(&args.evidence)?;
+    let pinned = checkpoint(&args.evidence.checkpoint);
+    let report = match resume {
+        Some(resume) => stage_nonce_upgrade_v1(
+            &args.workspace,
+            &bytes,
+            &args.evidence.bundle_digest,
+            &pinned,
+            &args.target_protocol_commitment,
+            resume,
+        ),
+        None => inspect_nonce_upgrade_v1(
+            &args.workspace,
+            &bytes,
+            &args.evidence.bundle_digest,
+            &pinned,
+            &args.target_protocol_commitment,
+        ),
+    }
+    .map_err(|error| {
+        CtlError::IntegrationFailed(format!("offline nonce upgrade proposal: {error:#}"))
+    })?;
+    Ok(json!({"action": action, "workspace": args.workspace,
+        "target_protocol_commitment": args.target_protocol_commitment,
+        "report": report, "authority_state_published": false,
+        "activation_ready": false, "import_performed": false}))
 }
 
 fn require_digest_v1(value: &str) -> Result<(), CtlError> {
@@ -211,7 +282,7 @@ fn write_new_bundle_v1(path: &Path, bytes: &[u8]) -> Result<(), CtlError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::native_nonce_migration::{NativeNonceInspectArgs, NativeNonceVerifyArgs};
+    use crate::cli::native_nonce_migration::NativeNonceInspectArgs;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -361,5 +432,34 @@ mod tests {
             assert!(require_digest_v1(value).is_err());
         }
         assert!(require_digest_v1(&"ab".repeat(32)).is_ok());
+    }
+
+    #[test]
+    fn native_nonce_upgrade_target_mismatch_rejects_before_workspace_access() {
+        let root = fixture();
+        let workspace = root.join("must-not-create");
+        let current = current_target_protocol_v1().unwrap();
+        let wrong_target = if current == "00".repeat(32) {
+            "01".repeat(32)
+        } else {
+            "00".repeat(32)
+        };
+        let args = NativeNonceMigrationArgs {
+            command: NativeNonceMigrationCommand::PrepareUpgrade(NativeNonceUpgradeArgs {
+                evidence: NativeNonceVerifyArgs {
+                    bundle: root.join("missing.bundle"),
+                    checkpoint: pinned_args(),
+                    bundle_digest: "34".repeat(32),
+                },
+                target_protocol_commitment: wrong_target,
+                workspace: workspace.clone(),
+            }),
+        };
+        assert!(inner_run(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("does not match this binary's current environment"));
+        assert!(!workspace.exists());
+        assert_eq!(fs::read_dir(root).unwrap().count(), 0);
     }
 }

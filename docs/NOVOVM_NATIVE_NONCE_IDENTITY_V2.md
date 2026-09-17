@@ -128,6 +128,9 @@ adds an offline CLI to export exact snapshot and ledger-history inputs and
 verify their commitments against independently supplied checkpoint anchors.
 That CLI does not import or activate the proposed maps and does not itself
 establish execution correctness, source provenance, QC or finality.
+The later [upgrade staging slice](NOVOVM_NATIVE_NONCE_UPGRADE_STAGING_V1.md)
+constructs an explicit proposed state transition and resumable offline
+artifacts, still without importing or activating chain state.
 
 ## Verification contract
 
@@ -140,9 +143,10 @@ cargo test -p novovm-node --lib native_nonce -- --test-threads=1
 
 The subsequent checkpoint bundle slice adds
 `test_native_nonce_checkpoint_bundle`, which requires the offline CLI tests.
-Producer, preflight and node-runtime locksets now require 46 fields in the
-same order. A missing or false nonce-identity or checkpoint-bundle field
-rejects. Older 44-field or 45-field reports must be regenerated, not reused
+The later upgrade staging slice adds `test_native_nonce_upgrade_staging`.
+Producer, preflight and node-runtime locksets now require 47 fields in the
+same order. A missing or false nonce-identity, checkpoint-bundle or
+upgrade-staging field rejects. Older reports must be regenerated, not reused
 as current evidence.
 
 Required cases include same-key address/text aliases sharing one nonce,

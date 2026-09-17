@@ -177,9 +177,11 @@ by the existing `test_native_candidate_workspace` field. Execution introduced
 no additional field. The subsequent nonce-identity slice adds the required
 `test_native_nonce_identity_v2` field. The later
 [offline checkpoint bundle](NOVOVM_NATIVE_NONCE_CHECKPOINT_BUNDLE_V1.md) adds
-`test_native_nonce_checkpoint_bundle`, making the current contract 46 fields.
-Bundle verification does not activate legacy-state migration or promote a
-candidate.
+`test_native_nonce_checkpoint_bundle`. The subsequent
+[upgrade staging slice](NOVOVM_NATIVE_NONCE_UPGRADE_STAGING_V1.md) adds
+`test_native_nonce_upgrade_staging`, making the current contract 47 fields.
+Bundle verification and staged upgrade artifacts do not activate legacy-state
+migration or promote a candidate.
 The direct execution-only filter is `candidate_workspace_execution`.
 
 Before recording a pass, verification must establish:

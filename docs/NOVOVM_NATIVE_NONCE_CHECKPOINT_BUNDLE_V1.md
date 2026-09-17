@@ -151,6 +151,9 @@ V2 genesis, upgraded protocol pin, canonical promotion, or finalized block.
 No automatic migration RPC, startup fallback, or old-state execution bypass
 is added. A later upgrade must define and verify an explicit state transition
 or an explicitly authorized new-chain/bootstrap procedure.
+The subsequent [upgrade staging slice](NOVOVM_NATIVE_NONCE_UPGRADE_STAGING_V1.md)
+constructs a deterministic proposed transition in a separate resumable
+artifact workspace. It does not import or activate that proposal.
 
 ## Required tests and gate
 
@@ -169,9 +172,12 @@ cargo test -p novovmctl native_nonce -- --test-threads=1
 ```
 
 This includes the `native_nonce_checkpoint_cli` real-binary integration test.
-Producer, preflight and node-runtime locksets contain 46 required fields in
-the same order. Missing or false bundle evidence rejects; older 45-field
-reports must be regenerated rather than accepted as current sign-off.
+This slice introduced the 46-field lockset. The subsequent
+[upgrade staging slice](NOVOVM_NATIVE_NONCE_UPGRADE_STAGING_V1.md) adds
+`test_native_nonce_upgrade_staging`; producer, preflight and node-runtime
+locksets now contain 47 required fields in the same order. Missing or false
+bundle or upgrade-staging evidence rejects; older reports must be regenerated
+rather than accepted as current sign-off.
 
 Required negative cases cover tampered/truncated/oversized framing, missing or
 reordered blocks, incorrect checkpoint anchors, snapshot/root/receipt/raw-wire

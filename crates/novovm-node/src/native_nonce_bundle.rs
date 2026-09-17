@@ -176,7 +176,7 @@ fn append_frame(output: &mut BoundedBytes, payload: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn encode_bundle(
+pub(super) fn encode_bundle(
     snapshot: &[u8],
     head: &NovNativeBlockLedgerHeadV1,
     blocks: &[NovNativeDurableBlockV1],
@@ -303,6 +303,19 @@ pub fn verify_nonce_checkpoint_bundle_v1(
     bytes: &[u8],
     checkpoint: &NonceMigrationCheckpointV1,
 ) -> Result<NonceMigrationCheckpointReportV1> {
+    Ok(verified_nonce_checkpoint_inputs_v1(bytes, checkpoint)?.2)
+}
+
+/// Preserve exact source bytes for a separate, non-authoritative upgrade proposal.
+/// Callers cannot obtain this tuple without the complete checkpoint validation.
+pub(super) fn verified_nonce_checkpoint_inputs_v1<'a>(
+    bytes: &'a [u8],
+    checkpoint: &NonceMigrationCheckpointV1,
+) -> Result<(
+    &'a [u8],
+    NovNativeBlockLedgerHeadV1,
+    NonceMigrationCheckpointReportV1,
+)> {
     if bytes.len() > MAX_CHECKPOINT_BUNDLE_BYTES_V1 || !bytes.starts_with(MAGIC_V1) {
         bail!("invalid or oversized native nonce checkpoint bundle");
     }
@@ -338,7 +351,8 @@ pub fn verify_nonce_checkpoint_bundle_v1(
     if !frames.remaining.is_empty() {
         bail!("checkpoint bundle has trailing bytes");
     }
-    verify_nonce_checkpoint_v1(snapshot, &head, &blocks, checkpoint)
+    let report = verify_nonce_checkpoint_v1(snapshot, &head, &blocks, checkpoint)?;
+    Ok((snapshot, head, report))
 }
 
 #[cfg(test)]
