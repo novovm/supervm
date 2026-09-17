@@ -145,10 +145,13 @@ execution extension reuses this required field. The subsequent
 `test_native_nonce_checkpoint_bundle` without enabling migration or promotion.
 The subsequent [upgrade staging slice](NOVOVM_NATIVE_NONCE_UPGRADE_STAGING_V1.md)
 adds `test_native_nonce_upgrade_staging`, still without chain activation.
+The later [upgrade authorization slice](NOVOVM_NATIVE_NONCE_UPGRADE_AUTHORIZATION_V1.md)
+adds `test_native_nonce_upgrade_authorization`; validator consent is separate
+from source canonicality, AOEM publication and activation.
 
-The serializer, preflight and node-runtime locksets now contain 47 required
+The serializer, preflight and node-runtime locksets now contain 48 required
 fields in the same order. The frozen contract includes rejection when the
-workspace, nonce-identity, checkpoint-bundle or upgrade-staging evidence field
+workspace, nonce-identity, checkpoint, staging or authorization evidence field
 is missing or false. Older reports with fewer required fields must be
 regenerated rather than reused as current evidence.
 

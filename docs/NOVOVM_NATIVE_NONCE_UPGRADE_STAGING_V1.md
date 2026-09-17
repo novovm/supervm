@@ -145,9 +145,12 @@ cargo test -p novovm-node --lib native_nonce_upgrade -- --test-threads=1
 cargo test -p novovmctl native_nonce_upgrade -- --test-threads=1
 ```
 
-The producer, preflight and node-runtime locksets now require 47 fields in
-the same order. Missing or false upgrade-staging evidence rejects. Older
-46-field reports must be regenerated, not relabeled as current evidence.
+This slice introduced the 47-field lockset. The subsequent
+[upgrade authorization slice](NOVOVM_NATIVE_NONCE_UPGRADE_AUTHORIZATION_V1.md)
+adds `test_native_nonce_upgrade_authorization`; producer, preflight and
+node-runtime locksets now require 48 fields in the same order. Missing or
+false staging or authorization evidence rejects. Older reports must be
+regenerated, not relabeled as current evidence.
 
 Required cases include deterministic exact-four-field transformation,
 unchanged business state/receipts/version, explicit source and target pins,
@@ -161,6 +164,11 @@ a record that the commands or real-network scenarios have passed.
 A production upgrade still needs an explicitly authorized protocol transition
 that binds the old checkpoint and new roots to the ledger, AOEM authority and
 seal/consensus domain, with recoverable publication across those owners.
+The subsequent [authorization slice](NOVOVM_NATIVE_NONCE_UPGRADE_AUTHORIZATION_V1.md)
+verifies a separate weighted-validator consent certificate against an
+independently pinned old authority. That certificate does not establish source
+canonicality or perform cross-owner publication; the staged transition and
+its false activation/provenance flags are not rewritten after verification.
 This slice provides neither an importer nor that cross-owner commit protocol.
 Do not copy `transition.json` into a node data directory, substitute its
 proposed store for authority, or change the running protocol pin to bypass

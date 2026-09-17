@@ -113,7 +113,7 @@ pub fn plan_nonce_upgrade_v1(
     if checkpoint_bundle_digest_v1(bundle) != expected_bundle_digest {
         bail!("nonce upgrade source bundle digest mismatch");
     }
-    let (snapshot, head, verified) = verified_nonce_checkpoint_inputs_v1(bundle, checkpoint)?;
+    let (snapshot, head, verified, _) = verified_nonce_checkpoint_inputs_v1(bundle, checkpoint)?;
     let source: NovNativeExecutionStoreV1 = serde_json::from_slice(snapshot)?;
     let source_value: serde_json::Value = serde_json::from_slice(snapshot)?;
     let typed_source_value = serde_json::to_value(&source)

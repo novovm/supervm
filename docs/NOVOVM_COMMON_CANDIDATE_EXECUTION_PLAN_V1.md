@@ -84,12 +84,14 @@ lockset to 44 fields; [nonce identity V2](NOVOVM_NATIVE_NONCE_IDENTITY_V2.md)
 extended it to 45. The subsequent
 [offline checkpoint bundle](NOVOVM_NATIVE_NONCE_CHECKPOINT_BUNDLE_V1.md)
 extended it to 46 with `test_native_nonce_checkpoint_bundle`. The later
-[upgrade staging slice](NOVOVM_NATIVE_NONCE_UPGRADE_STAGING_V1.md) now extends
-it to 47 with `test_native_nonce_upgrade_staging`. Serializer, preflight and
-node-runtime locksets remain synchronized; older status reports must be
+[upgrade staging slice](NOVOVM_NATIVE_NONCE_UPGRADE_STAGING_V1.md) extended
+it to 47 with `test_native_nonce_upgrade_staging`. The subsequent
+[upgrade authorization slice](NOVOVM_NATIVE_NONCE_UPGRADE_AUTHORIZATION_V1.md)
+extends it to 48 with `test_native_nonce_upgrade_authorization`. Serializer,
+preflight and node-runtime locksets remain synchronized; older reports must be
 regenerated, not reused as current evidence. Offline bundle checks and
-staged upgrade artifacts do not activate migration or promote candidate
-execution results.
+staged upgrade artifacts and separate validator consent certificates do not
+activate migration or promote candidate execution results.
 
 Two isolated stores in one test process are not two physical nodes. Matching
 local candidates are not a quorum certificate or proof seal. All produced

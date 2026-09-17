@@ -174,10 +174,12 @@ cargo test -p novovmctl native_nonce -- --test-threads=1
 This includes the `native_nonce_checkpoint_cli` real-binary integration test.
 This slice introduced the 46-field lockset. The subsequent
 [upgrade staging slice](NOVOVM_NATIVE_NONCE_UPGRADE_STAGING_V1.md) adds
-`test_native_nonce_upgrade_staging`; producer, preflight and node-runtime
-locksets now contain 47 required fields in the same order. Missing or false
-bundle or upgrade-staging evidence rejects; older reports must be regenerated
-rather than accepted as current sign-off.
+`test_native_nonce_upgrade_staging`. The later
+[upgrade authorization slice](NOVOVM_NATIVE_NONCE_UPGRADE_AUTHORIZATION_V1.md)
+adds `test_native_nonce_upgrade_authorization`; producer, preflight and
+node-runtime locksets now contain 48 required fields in the same order.
+Missing or false bundle, staging or authorization evidence rejects; older
+reports must be regenerated rather than accepted as current sign-off.
 
 Required negative cases cover tampered/truncated/oversized framing, missing or
 reordered blocks, incorrect checkpoint anchors, snapshot/root/receipt/raw-wire

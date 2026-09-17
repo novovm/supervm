@@ -1,7 +1,8 @@
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use novovm_node::native_block_seal_overlay::NovNativeSealEpochAuthorityV1;
 use novovm_node::tx_ingress::native_business_protocol_config_commitment_v1;
 use novovm_node::tx_ingress::native_nonce_bundle::{
     checkpoint_bundle_digest_v1, export_nonce_checkpoint_bundle_v1,
@@ -9,6 +10,9 @@ use novovm_node::tx_ingress::native_nonce_bundle::{
     verify_nonce_checkpoint_bundle_v1, MAX_CHECKPOINT_BUNDLE_BYTES_V1,
 };
 use novovm_node::tx_ingress::native_nonce_checkpoint::NonceMigrationCheckpointV1;
+use novovm_node::tx_ingress::native_nonce_upgrade_authorization::{
+    verify_nonce_upgrade_authorization_json_v1, NonceUpgradeAuthorizationInputsV1,
+};
 use novovm_node::tx_ingress::native_nonce_upgrade_journal::{
     inspect_nonce_upgrade_v1, stage_nonce_upgrade_v1,
 };
@@ -16,12 +20,14 @@ use serde_json::{json, Value};
 
 use crate::cli::native_nonce_migration::{
     NativeNonceCheckpointArgs, NativeNonceMigrationArgs, NativeNonceMigrationCommand,
-    NativeNonceUpgradeArgs, NativeNonceVerifyArgs,
+    NativeNonceUpgradeArgs, NativeNonceUpgradeAuthorizationArgs, NativeNonceVerifyArgs,
 };
 use crate::error::CtlError;
 use crate::output;
 
 const COMMAND_NAME: &str = "native-nonce-migration";
+const MAX_AUTHORITY_JSON_BYTES_V1: usize = 128 * 1024;
+const MAX_CERTIFICATE_JSON_BYTES_V1: usize = 256 * 1024;
 
 pub fn run(args: NativeNonceMigrationArgs) -> Result<(), CtlError> {
     let result =
@@ -103,6 +109,9 @@ fn inner_run(args: &NativeNonceMigrationArgs) -> Result<Value, CtlError> {
         NativeNonceMigrationCommand::InspectUpgrade(args) => {
             run_upgrade_v1(args, "inspect-upgrade", None)
         }
+        NativeNonceMigrationCommand::VerifyUpgradeAuthorization(args) => {
+            run_upgrade_authorization_v1(args)
+        }
     }
 }
 
@@ -110,6 +119,95 @@ fn current_target_protocol_v1() -> Result<String, CtlError> {
     native_business_protocol_config_commitment_v1().map_err(|error| {
         CtlError::IntegrationFailed(format!("current V2 protocol commitment: {error:#}"))
     })
+}
+
+fn run_upgrade_authorization_v1(
+    args: &NativeNonceUpgradeAuthorizationArgs,
+) -> Result<Value, CtlError> {
+    // Environment compatibility is checked before any input file is accessed.
+    // A match is not permission to sign, import, activate, or publish anything.
+    if args.target_protocol_commitment != current_target_protocol_v1()? {
+        return Err(CtlError::InvalidArgument(
+            "--target-protocol-commitment does not match this binary's current environment; use target-protocol to observe it, then independently approve the intended configuration".into(),
+        ));
+    }
+    let bytes = read_pinned_bundle_v1(&args.evidence)?;
+    let authority_bytes = read_bounded_document_v1(
+        &args.authority,
+        MAX_AUTHORITY_JSON_BYTES_V1,
+        "epoch authority",
+    )?;
+    let authority = decode_authority_v1(&authority_bytes)?;
+    let certificate = read_bounded_document_v1(
+        &args.certificate,
+        MAX_CERTIFICATE_JSON_BYTES_V1,
+        "upgrade certificate",
+    )?;
+    let pinned = checkpoint(&args.evidence.checkpoint);
+    let inputs = NonceUpgradeAuthorizationInputsV1 {
+        bundle: &bytes,
+        bundle_digest: &args.evidence.bundle_digest,
+        checkpoint: &pinned,
+        target_protocol: &args.target_protocol_commitment,
+        authority: &authority,
+        expected_authority_commitment: &args.expected_authority_commitment,
+    };
+    let report =
+        verify_nonce_upgrade_authorization_json_v1(&certificate, &inputs).map_err(|error| {
+            CtlError::IntegrationFailed(format!("offline nonce upgrade authorization: {error:#}"))
+        })?;
+    Ok(
+        json!({"action": "verify-upgrade-authorization", "report": report,
+        "authority_state_published": false, "activation_ready": false,
+        "import_performed": false}),
+    )
+}
+
+fn decode_authority_v1(bytes: &[u8]) -> Result<NovNativeSealEpochAuthorityV1, CtlError> {
+    let invalid = |error| CtlError::InvalidArgument(format!("epoch authority JSON: {error}"));
+    // Parse the typed document directly so duplicate known fields are rejected.
+    // The shared authority type predates deny_unknown_fields; round-trip equality
+    // additionally rejects every silently dropped field, including nested ones.
+    let authority: NovNativeSealEpochAuthorityV1 =
+        serde_json::from_slice(bytes).map_err(invalid)?;
+    let source: Value = serde_json::from_slice(bytes).map_err(invalid)?;
+    let encoded = serde_json::to_value(&authority).map_err(invalid)?;
+    if source != encoded {
+        return Err(CtlError::InvalidArgument(
+            "epoch authority JSON contains unknown fields or noncanonical field values".into(),
+        ));
+    }
+    authority.validate().map_err(|error| {
+        CtlError::InvalidArgument(format!("epoch authority validation: {error:#}"))
+    })?;
+    Ok(authority)
+}
+
+fn read_bounded_document_v1(path: &Path, maximum: usize, label: &str) -> Result<Vec<u8>, CtlError> {
+    let failed = |error| CtlError::FileReadFailed(format!("{label} {}: {error}", path.display()));
+    let metadata = fs::metadata(path).map_err(failed)?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > maximum as u64 {
+        return Err(CtlError::FileReadFailed(format!(
+            "{label} must be a nonempty regular file of at most {maximum} bytes"
+        )));
+    }
+    let file = File::open(path).map_err(failed)?;
+    let opened = file.metadata().map_err(failed)?;
+    if !opened.is_file() || opened.len() == 0 || opened.len() > maximum as u64 {
+        return Err(CtlError::FileReadFailed(format!(
+            "{label} changed or is outside its regular-file size bound"
+        )));
+    }
+    let mut bytes = Vec::new();
+    file.take(maximum as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(failed)?;
+    if bytes.is_empty() || bytes.len() > maximum {
+        return Err(CtlError::FileReadFailed(format!(
+            "{label} changed or is outside its nonempty size bound"
+        )));
+    }
+    Ok(bytes)
 }
 
 fn read_pinned_bundle_v1(args: &NativeNonceVerifyArgs) -> Result<Vec<u8>, CtlError> {
@@ -461,5 +559,56 @@ mod tests {
             .contains("does not match this binary's current environment"));
         assert!(!workspace.exists());
         assert_eq!(fs::read_dir(root).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn native_nonce_upgrade_authorization_target_mismatch_rejects_before_file_access() {
+        let root = fixture();
+        let current = current_target_protocol_v1().unwrap();
+        let wrong_target = if current == "00".repeat(32) {
+            "01".repeat(32)
+        } else {
+            "00".repeat(32)
+        };
+        let args = NativeNonceUpgradeAuthorizationArgs {
+            evidence: NativeNonceVerifyArgs {
+                bundle: root.join("missing.bundle"),
+                checkpoint: pinned_args(),
+                bundle_digest: "34".repeat(32),
+            },
+            target_protocol_commitment: wrong_target,
+            authority: root.join("missing-authority.json"),
+            expected_authority_commitment: "56".repeat(32),
+            certificate: root.join("missing-certificate.json"),
+        };
+        assert!(run_upgrade_authorization_v1(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("does not match this binary's current environment"));
+        assert_eq!(fs::read_dir(root).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn native_nonce_upgrade_authorization_documents_are_regular_nonempty_and_bounded() {
+        let root = fixture();
+        for (label, maximum) in [
+            ("authority", MAX_AUTHORITY_JSON_BYTES_V1),
+            ("certificate", MAX_CERTIFICATE_JSON_BYTES_V1),
+        ] {
+            assert!(read_bounded_document_v1(&root, maximum, label).is_err());
+            let path = root.join(format!("{label}.json"));
+            assert!(read_bounded_document_v1(&path, maximum, label).is_err());
+            let file = File::create(&path).unwrap();
+            assert!(read_bounded_document_v1(&path, maximum, label).is_err());
+            file.set_len(maximum as u64 + 1).unwrap();
+            assert!(read_bounded_document_v1(&path, maximum, label).is_err());
+            drop(file);
+            fs::write(&path, b"{}").unwrap();
+            assert_eq!(
+                read_bounded_document_v1(&path, maximum, label).unwrap(),
+                b"{}"
+            );
+            assert_eq!(fs::read(path).unwrap(), b"{}");
+        }
     }
 }

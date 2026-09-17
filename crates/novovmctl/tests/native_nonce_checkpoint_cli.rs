@@ -21,6 +21,96 @@ struct SourceFixture {
     records: Vec<[String; 2]>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorizationFixture {
+    authority: Value,
+    certificate: Value,
+    expected_authority_commitment: String,
+    target_protocol_commitment: String,
+}
+
+struct AuthorizationCli {
+    bundle: PathBuf,
+    checkpoint: NonceMigrationCheckpointV1,
+    digest: String,
+    target_protocol: String,
+    authority: PathBuf,
+    expected_authority_commitment: String,
+    certificate: PathBuf,
+}
+
+impl AuthorizationCli {
+    fn command(&self) -> Command {
+        let mut command = cli("verify-upgrade-authorization");
+        // The frozen certificate authorizes the compiled default protocol, not
+        // a developer shell's overrides. Do not modify the parent environment.
+        for (name, _) in std::env::vars_os() {
+            if name
+                .to_string_lossy()
+                .to_ascii_uppercase()
+                .starts_with("NOVOVM_NATIVE_")
+            {
+                command.env_remove(name);
+            }
+        }
+        command
+            .arg("--bundle")
+            .arg(&self.bundle)
+            .arg("--bundle-digest")
+            .arg(&self.digest)
+            .arg("--target-protocol-commitment")
+            .arg(&self.target_protocol)
+            .arg("--authority")
+            .arg(&self.authority)
+            .arg("--expected-authority-commitment")
+            .arg(&self.expected_authority_commitment)
+            .arg("--certificate")
+            .arg(&self.certificate);
+        add_checkpoint(&mut command, &self.checkpoint);
+        command
+    }
+}
+
+fn authorization_inputs(
+    root: &Path,
+    source: &SourceFixture,
+    snapshot: &Path,
+    ledger: &Path,
+) -> (AuthorizationFixture, AuthorizationCli) {
+    let fixture: AuthorizationFixture = serde_json::from_str(include_str!(
+        "fixtures/native_nonce_upgrade_authorization_v1.json"
+    ))
+    .expect("decode frozen test-only upgrade certificate");
+    let bundle = root.join("checkpoint.bin");
+    let exported = run_json(
+        export_command(snapshot, ledger, &source.checkpoint, &bundle),
+        true,
+    );
+    let digest = exported["data"]["bundle_digest"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let authority = root.join("authority.json");
+    let certificate = root.join("certificate.json");
+    fs::write(&authority, serde_json::to_vec(&fixture.authority).unwrap()).unwrap();
+    fs::write(
+        &certificate,
+        serde_json::to_vec(&fixture.certificate).unwrap(),
+    )
+    .unwrap();
+    let inputs = AuthorizationCli {
+        bundle,
+        checkpoint: source.checkpoint.clone(),
+        digest,
+        target_protocol: fixture.target_protocol_commitment.clone(),
+        authority,
+        expected_authority_commitment: fixture.expected_authority_commitment.clone(),
+        certificate,
+    };
+    (fixture, inputs)
+}
+
 fn fixture_root() -> PathBuf {
     static NEXT_ID: AtomicU64 = AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
@@ -430,6 +520,7 @@ fn native_nonce_checkpoint_cli_rejects_malformed_bundle_and_missing_arguments_as
         "prepare-upgrade",
         "resume-upgrade",
         "inspect-upgrade",
+        "verify-upgrade-authorization",
     ] {
         let report = run_json(cli(action), false);
         assert_eq!(report["error"]["kind"], "InvalidArgument");
@@ -695,4 +786,143 @@ fn native_nonce_upgrade_cli_inspects_partial_artifact_resumes_and_rejects_corrup
             "corruption must not be overwritten"
         );
     }
+}
+
+#[test]
+fn native_nonce_upgrade_authorization_cli_verifies_quorum_without_source_mutation_or_activation() {
+    let root = fixture_root();
+    let (source, snapshot, ledger) = restore_source(&root);
+    let source_records = ledger_records(&ledger);
+    let source_snapshot = fs::read(&snapshot).unwrap();
+    let (_, inputs) = authorization_inputs(&root, &source, &snapshot, &ledger);
+    let bundle_before = fs::read(&inputs.bundle).unwrap();
+    let authority_before = fs::read(&inputs.authority).unwrap();
+    let certificate_before = fs::read(&inputs.certificate).unwrap();
+    let entry_count = fs::read_dir(&root).unwrap().count();
+    let verified = run_json(inputs.command(), true);
+    assert_eq!(verified["data"]["action"], "verify-upgrade-authorization");
+    assert_eq!(verified["data"]["report"]["quorum_verified"], true);
+    for field in [
+        "authority_state_published",
+        "activation_ready",
+        "import_performed",
+    ] {
+        assert_eq!(
+            verified["data"][field], false,
+            "command must not promote {field}"
+        );
+        assert_eq!(
+            verified["data"]["report"][field], false,
+            "certificate must not promote {field}"
+        );
+    }
+    assert_eq!(fs::read_dir(&root).unwrap().count(), entry_count);
+    assert_eq!(fs::read(&inputs.bundle).unwrap(), bundle_before);
+    assert_eq!(fs::read(&inputs.authority).unwrap(), authority_before);
+    assert_eq!(fs::read(&inputs.certificate).unwrap(), certificate_before);
+    assert_eq!(fs::read(&snapshot).unwrap(), source_snapshot);
+    assert_eq!(ledger_records(&ledger), source_records);
+
+    // The verifier consumes only portable documents, never the source ledger.
+    let moved = root.join("source-not-at-original-path");
+    fs::rename(root.join("source"), &moved).unwrap();
+    let repeated = run_json(inputs.command(), true);
+    assert_eq!(verified["data"], repeated["data"]);
+    assert_eq!(
+        ledger_records(&moved.join("ledger.rocksdb")),
+        source_records
+    );
+}
+
+#[test]
+fn native_nonce_upgrade_authorization_cli_rejects_forged_quorum_roots_domains_and_pins() {
+    let root = fixture_root();
+    let (source, snapshot, ledger) = restore_source(&root);
+    let before_records = ledger_records(&ledger);
+    let before_snapshot = fs::read(&snapshot).unwrap();
+    let (fixture, mut inputs) = authorization_inputs(&root, &source, &snapshot, &ledger);
+    let before_bundle = fs::read(&inputs.bundle).unwrap();
+
+    let mut two_votes = fixture.certificate.clone();
+    two_votes["votes"]
+        .as_array_mut()
+        .expect("test certificate votes")
+        .truncate(2);
+    // Keep or forge claimed quorum counts: verification must count signatures.
+    two_votes["signature_count"] = 3.into();
+    two_votes["signed_weight"] = 3.into();
+    let mut wrong_root = fixture.certificate.clone();
+    let root_bytes = wrong_root["subject"]["proposed_state_root"]
+        .as_array_mut()
+        .expect("test certificate binds proposed state root");
+    root_bytes[0] = (root_bytes[0].as_u64().unwrap() ^ 1).into();
+    let mut block_qc_domain = fixture.certificate.clone();
+    block_qc_domain["schema"] = "novovm-native-block-seal-qc/v1".into();
+    let mut unknown_field = fixture.certificate.clone();
+    unknown_field["activate"] = true.into();
+    for document in [two_votes, wrong_root, block_qc_domain, unknown_field] {
+        let bytes = serde_json::to_vec(&document).unwrap();
+        fs::write(&inputs.certificate, &bytes).unwrap();
+        run_json(inputs.command(), false);
+        assert_eq!(fs::read(&inputs.certificate).unwrap(), bytes);
+    }
+    fs::write(
+        &inputs.certificate,
+        serde_json::to_vec(&fixture.certificate).unwrap(),
+    )
+    .unwrap();
+
+    let mut unknown_authority = fixture.authority.clone();
+    unknown_authority["activate"] = true.into();
+    let mut nested_unknown_authority = fixture.authority.clone();
+    nested_unknown_authority["validator_set"]["quorum_override"] = 2.into();
+    let mut forged_authority = fixture.authority.clone();
+    forged_authority["validator_set"]["quorum_weight"] = 2.into();
+    for document in [
+        unknown_authority,
+        nested_unknown_authority,
+        forged_authority,
+    ] {
+        let bytes = serde_json::to_vec(&document).unwrap();
+        fs::write(&inputs.authority, &bytes).unwrap();
+        run_json(inputs.command(), false);
+        assert_eq!(fs::read(&inputs.authority).unwrap(), bytes);
+    }
+    let authority_json = serde_json::to_string(&fixture.authority).unwrap();
+    let duplicate = format!(
+        "{{\"chain_id\":{},{}",
+        source.checkpoint.chain_id,
+        &authority_json[1..]
+    );
+    fs::write(&inputs.authority, duplicate.as_bytes()).unwrap();
+    run_json(inputs.command(), false);
+    assert_eq!(fs::read(&inputs.authority).unwrap(), duplicate.as_bytes());
+    fs::write(&inputs.authority, authority_json.as_bytes()).unwrap();
+
+    inputs.expected_authority_commitment = "00".repeat(32);
+    run_json(inputs.command(), false);
+    inputs.expected_authority_commitment = fixture.expected_authority_commitment;
+    inputs.checkpoint.tip_block_hash = "00".repeat(32);
+    run_json(inputs.command(), false);
+    inputs.checkpoint = source.checkpoint;
+    inputs.digest = "00".repeat(32);
+    run_json(inputs.command(), false);
+    inputs.digest = checkpoint_bundle_digest_v1(&before_bundle);
+    inputs.target_protocol = "00".repeat(32);
+    inputs.authority = root.join("missing-authority.json");
+    inputs.certificate = root.join("missing-certificate.json");
+    inputs.bundle = root.join("missing-bundle.bin");
+    let rejected = run_json(inputs.command(), false);
+    assert!(rejected["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("does not match this binary's current environment"));
+    assert!(!inputs.authority.exists() && !inputs.certificate.exists() && !inputs.bundle.exists());
+    run_json(cli("verify-upgrade-authorization"), false);
+    assert_eq!(
+        fs::read(root.join("checkpoint.bin")).unwrap(),
+        before_bundle
+    );
+    assert_eq!(fs::read(snapshot).unwrap(), before_snapshot);
+    assert_eq!(ledger_records(&ledger), before_records);
 }

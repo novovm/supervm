@@ -55,6 +55,7 @@ struct MainlineGate {
     test_native_nonce_identity_v2: bool,
     test_native_nonce_checkpoint_bundle: bool,
     test_native_nonce_upgrade_staging: bool,
+    test_native_nonce_upgrade_authorization: bool,
     test_product_mainline_overlay_lifecycle: bool,
     test_authenticated_seal_ingress_quarantine: bool,
     test_queue_replay_smoke: bool,
@@ -198,6 +199,7 @@ fn main() -> Result<()> {
         test_native_nonce_identity_v2: false,
         test_native_nonce_checkpoint_bundle: false,
         test_native_nonce_upgrade_staging: false,
+        test_native_nonce_upgrade_authorization: false,
         test_product_mainline_overlay_lifecycle: false,
         test_authenticated_seal_ingress_quarantine: false,
         test_queue_replay_smoke: false,
@@ -329,6 +331,33 @@ fn main() -> Result<()> {
         ],
     )?;
     gate.test_native_nonce_upgrade_staging = true;
+
+    run_step(
+        "test native nonce upgrade authorization and durable validator signing fence",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-node",
+            "--lib",
+            "native_nonce_upgrade_authorization",
+            "--",
+            "--test-threads=1",
+        ],
+    )?;
+    run_step(
+        "test native nonce upgrade authorization verification CLI",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovmctl",
+            "native_nonce_upgrade_authorization",
+            "--",
+            "--test-threads=1",
+        ],
+    )?;
+    gate.test_native_nonce_upgrade_authorization = true;
 
     run_step(
         "test scheduler_gate_matrix",

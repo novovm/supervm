@@ -315,6 +315,7 @@ pub(super) fn verified_nonce_checkpoint_inputs_v1<'a>(
     &'a [u8],
     NovNativeBlockLedgerHeadV1,
     NonceMigrationCheckpointReportV1,
+    [u8; 32],
 )> {
     if bytes.len() > MAX_CHECKPOINT_BUNDLE_BYTES_V1 || !bytes.starts_with(MAGIC_V1) {
         bail!("invalid or oversized native nonce checkpoint bundle");
@@ -352,7 +353,12 @@ pub(super) fn verified_nonce_checkpoint_inputs_v1<'a>(
         bail!("checkpoint bundle has trailing bytes");
     }
     let report = verify_nonce_checkpoint_v1(snapshot, &head, &blocks, checkpoint)?;
-    Ok((snapshot, head, report))
+    let genesis = blocks
+        .first()
+        .context("verified checkpoint has no genesis")?
+        .header
+        .block_hash;
+    Ok((snapshot, head, report, genesis))
 }
 
 #[cfg(test)]

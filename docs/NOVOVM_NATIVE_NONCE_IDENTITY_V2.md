@@ -144,10 +144,12 @@ cargo test -p novovm-node --lib native_nonce -- --test-threads=1
 The subsequent checkpoint bundle slice adds
 `test_native_nonce_checkpoint_bundle`, which requires the offline CLI tests.
 The later upgrade staging slice adds `test_native_nonce_upgrade_staging`.
-Producer, preflight and node-runtime locksets now require 47 fields in the
-same order. A missing or false nonce-identity, checkpoint-bundle or
-upgrade-staging field rejects. Older reports must be regenerated, not reused
-as current evidence.
+The subsequent [upgrade authorization slice](NOVOVM_NATIVE_NONCE_UPGRADE_AUTHORIZATION_V1.md)
+adds `test_native_nonce_upgrade_authorization`, without importing or activating
+the proposed state. Producer, preflight and node-runtime locksets now require
+48 fields in the same order. A missing or false nonce-identity, checkpoint,
+staging or authorization field rejects. Older reports must be regenerated,
+not reused as current evidence.
 
 Required cases include same-key address/text aliases sharing one nonce,
 distinct signer/chain separation, signature/subject forgery rejection,

@@ -25,6 +25,8 @@ pub enum NativeNonceMigrationCommand {
     ResumeUpgrade(NativeNonceUpgradeArgs),
     /// Revalidate an existing proposal journal without writing any artifacts.
     InspectUpgrade(NativeNonceUpgradeArgs),
+    /// Verify a separately supplied upgrade certificate without signing or publishing state.
+    VerifyUpgradeAuthorization(NativeNonceUpgradeAuthorizationArgs),
 }
 
 #[derive(Debug, Args)]
@@ -85,6 +87,23 @@ pub struct NativeNonceUpgradeArgs {
     /// Separate proposal directory; prepare requires a new directory.
     #[arg(long, value_name = "DIRECTORY")]
     pub workspace: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct NativeNonceUpgradeAuthorizationArgs {
+    #[command(flatten)]
+    pub evidence: NativeNonceVerifyArgs,
+    /// Explicit V2 commitment; must match this binary's current environment.
+    #[arg(long, value_name = "LOWERCASE_HEX_32")]
+    pub target_protocol_commitment: String,
+    /// Existing epoch authority document, not a request to create authority.
+    #[arg(long, value_name = "FILE")]
+    pub authority: PathBuf,
+    /// Authority commitment obtained independently of the supplied documents.
+    #[arg(long, value_name = "LOWERCASE_HEX_32")]
+    pub expected_authority_commitment: String,
+    #[arg(long, value_name = "FILE")]
+    pub certificate: PathBuf,
 }
 
 #[cfg(test)]
@@ -189,6 +208,43 @@ mod tests {
             assert!(Cli::try_parse_from(&args).is_ok());
             args.push("--force".into());
             assert!(Cli::try_parse_from(&args).is_err());
+        }
+    }
+
+    #[test]
+    fn native_nonce_upgrade_authorization_parser_requires_all_pins_and_documents() {
+        let mut args = vec![
+            "novovmctl".into(),
+            "native-nonce-migration".into(),
+            "verify-upgrade-authorization".into(),
+            "--bundle".into(),
+            "checkpoint.bin".into(),
+            "--bundle-digest".into(),
+            "34".repeat(32),
+            "--target-protocol-commitment".into(),
+            "56".repeat(32),
+            "--authority".into(),
+            "authority.json".into(),
+            "--expected-authority-commitment".into(),
+            "78".repeat(32),
+            "--certificate".into(),
+            "certificate.json".into(),
+        ];
+        args.extend(checkpoint_flags());
+        assert!(Cli::try_parse_from(&args).is_ok());
+        for offset in (3..args.len()).step_by(2) {
+            let mut missing = args.clone();
+            missing.drain(offset..offset + 2);
+            assert!(
+                Cli::try_parse_from(&missing).is_err(),
+                "required {}",
+                args[offset]
+            );
+        }
+        for forbidden in ["--private-key", "--sign", "--activate", "--force"] {
+            let mut unsupported = args.clone();
+            unsupported.push(forbidden.into());
+            assert!(Cli::try_parse_from(&unsupported).is_err());
         }
     }
 }
