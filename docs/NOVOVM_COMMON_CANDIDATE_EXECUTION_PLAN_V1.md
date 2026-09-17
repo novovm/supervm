@@ -79,8 +79,9 @@ helpers temporarily set process environment variables.
 
 This slice introduced the 43-field mainline lockset, including
 `test_common_candidate_execution_plan`. The subsequent
-[candidate workspace slice](NOVOVM_CANDIDATE_WORKSPACE_V1.md) extends the current
-lockset to 44 fields. Serializer, preflight and node-runtime locksets remain
+[candidate workspace slice](NOVOVM_CANDIDATE_WORKSPACE_V1.md) extended the
+lockset to 44 fields; [nonce identity V2](NOVOVM_NATIVE_NONCE_IDENTITY_V2.md)
+now extends it to 45. Serializer, preflight and node-runtime locksets remain
 synchronized; older status reports must be regenerated, not reused as current
 evidence.
 

@@ -148,24 +148,21 @@ revived. Abort is not authority rollback. Execution uses the workspace's same
 physical lock and uncertain-commit poison fence; an unknown graph commit
 outcome requires process exit before durable recovery can proceed safely.
 
-## Known nonce-identity protocol debt
+## Versioned nonce identity
 
-Candidate authentication deliberately reuses the authority path's current
-`native_auth_nonce_identity_v1` derivation for A/B parity. For an explicit nonce
-owner or account it uses `account:` plus the supplied account spelling after
-trim/lowercase; without those account fields it uses `signer:` plus signer
-bytes. This is not a single canonical identity derivation shared with subject
-address normalization. Alternate accepted account spellings, or explicit
-account versus signer fallback, can address distinct nonce identities for the
-same signer.
+Candidate authentication shares the authority and ingress rule in
+[Native Nonce Identity V2](NOVOVM_NATIVE_NONCE_IDENTITY_V2.md). The authenticated
+Ed25519 public key now identifies the nonce domain, so account-text aliases
+and the same key's accepted 20-byte/32-byte caller forms cannot open separate
+nonce buckets. Signed intent hashes and business account keys are unchanged.
 
-This remains a real protocol/security risk, not a risk solved by isolated
-execution or a passing parity test. V1 must not silently normalize identities
-only in the candidate path, which would change nonce acceptance and state roots
-relative to authority. Closing it requires an explicit versioned protocol
-decision, protocol-pin update, durable nonce-state migration and compatible
-authority/candidate/ingress regression coverage. This work must be completed
-before claiming the public admission/replay boundary is signed off.
+Legacy or unknown parent-state identity markers fail closed. The compiled
+protocol pin changes with the new rule; there is no candidate-only rewrite or
+automatic legacy-state normalization. The pure offline migration preflight
+requires complete signed history and rejects canonical duplicate nonce use.
+It does not authorize an import or activation. An existing chain still needs
+an explicit, verified upgrade/bootstrap procedure before V2 can be activated;
+a passing isolated parity test does not establish that transition.
 
 ## Verification contract
 
@@ -175,10 +172,11 @@ The canonical required gate already runs:
 cargo test -p novovm-node --lib candidate_workspace -- --test-threads=1
 ```
 
-The new execution tests use `candidate_workspace_execution` names and are
-covered by the existing `test_native_candidate_workspace` field. Producer,
-preflight and node runtime retain the 44-field contract; execution adds no new
-gate field. The direct execution-only filter is `candidate_workspace_execution`.
+The execution tests use `candidate_workspace_execution` names and are covered
+by the existing `test_native_candidate_workspace` field. Execution introduced
+no additional field. The subsequent nonce-identity slice adds the required
+`test_native_nonce_identity_v2` field, making the current contract 45 fields.
+The direct execution-only filter is `candidate_workspace_execution`.
 
 Before recording a pass, verification must establish:
 

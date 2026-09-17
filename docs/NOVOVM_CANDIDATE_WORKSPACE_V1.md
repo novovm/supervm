@@ -138,12 +138,15 @@ The canonical mainline gate runs this filter as a required step. Its
 `test_native_candidate_workspace` field is initially false and becomes true
 only after the command succeeds. This filter covers input persistence/recovery
 and the `candidate_workspace_execution` tests for isolated execution. The
-execution extension reuses this required field; it does not add a 45th field.
+execution extension reuses this required field. The subsequent
+[nonce-identity slice](NOVOVM_NATIVE_NONCE_IDENTITY_V2.md) adds a separate
+`test_native_nonce_identity_v2` field.
 
-The serializer, preflight and node-runtime locksets now contain 44 required
-fields in the same order. The frozen contract includes rejection when the
-workspace evidence field is missing or false. An old 43-field status must be
-regenerated rather than reused to sign off this slice.
+The serializer, preflight and node-runtime locksets now contain 45 required
+fields in the same order. The frozen contract includes rejection when either
+the workspace or nonce-identity evidence field is missing or false. Older
+43-field or 44-field reports must be regenerated rather than reused as current
+evidence.
 
 Local targeted tests and the canonical gate must be run against the actual
 checkout and available AOEM runtime before recording a pass. This document is
@@ -164,8 +167,9 @@ cross-process contention and hard-crash injection remain separate boundaries.
 
 ## Next boundary
 
-Before remote proposals can drive the chain, remaining work includes closing
-the nonce-identity protocol migration described in the execution document,
+Before remote proposals can drive the chain, remaining work includes an
+explicit activation/upgrade procedure for legacy state under
+[Native Nonce Identity V2](NOVOVM_NATIVE_NONCE_IDENTITY_V2.md),
 independent validator execution/evidence verification, authority-bound body
 acquisition, an exclusive durable scheduling owner, voting/QC, fork choice,
 and recoverable canonical promotion. A persisted ready input workspace is

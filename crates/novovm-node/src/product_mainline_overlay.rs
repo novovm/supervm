@@ -3790,6 +3790,84 @@ mod tests {
     };
     use std::{net::TcpListener, thread, time::Instant};
 
+    static NATIVE_INGRESS_FIXTURE_ENV_LOCK_V1: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct ScopedNativeIngressFixtureEnvV1 {
+        previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl Drop for ScopedNativeIngressFixtureEnvV1 {
+        fn drop(&mut self) {
+            for (key, previous) in self.previous.iter().rev() {
+                if let Some(value) = previous {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
+
+    fn ingest_native_payload_with_fixture_v1(
+        root: &Path,
+        chain_id: u64,
+        payload: &[u8],
+    ) -> Result<ProductMainlineOverlayIngressReceiptV1> {
+        use crate::tx_ingress::{
+            NovNativeExecutionStoreV1, NOV_NATIVE_CHAIN_ID_ENV,
+            NOV_NATIVE_EXECUTION_STORE_BACKEND_ENV, NOV_NATIVE_EXECUTION_STORE_ENV,
+        };
+
+        // The production API deliberately resolves node configuration, not RPC
+        // persistence parameters. Scope only this synchronous call's test
+        // configuration; relay workers never own or mutate these variables.
+        let _lock = NATIVE_INGRESS_FIXTURE_ENV_LOCK_V1
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let store_path = root.join("native-ingress-store.json");
+        if !store_path.exists() {
+            fs::write(
+                &store_path,
+                serde_json::to_vec(&NovNativeExecutionStoreV1::default())?,
+            )?;
+        }
+        let before = fs::read(&store_path)?;
+        let values = [
+            (
+                NOV_NATIVE_EXECUTION_STORE_ENV,
+                store_path.as_os_str().to_owned(),
+            ),
+            (
+                NOV_NATIVE_EXECUTION_STORE_BACKEND_ENV,
+                std::ffi::OsString::from("json"),
+            ),
+            (
+                NOV_NATIVE_CHAIN_ID_ENV,
+                std::ffi::OsString::from(chain_id.to_string()),
+            ),
+        ];
+        let _env = ScopedNativeIngressFixtureEnvV1 {
+            previous: values
+                .iter()
+                .map(|(key, _)| (*key, std::env::var_os(key)))
+                .collect(),
+        };
+        for (key, value) in &values {
+            std::env::set_var(key, value);
+        }
+        assert_eq!(
+            crate::tx_ingress::nov_native_execution_store_path_v1(),
+            store_path
+        );
+        let result = ingest_product_mainline_overlay_payload_v1(chain_id, payload);
+        assert_eq!(
+            fs::read(&store_path)?,
+            before,
+            "pending admission must not mutate the fixture ledger"
+        );
+        result
+    }
+
     // Scenario completion (including unwinding), not a short wall-clock lease,
     // owns the relay. Individual network operations retain their deadlines.
     struct ScopedRelayDaemonV1 {
@@ -4911,7 +4989,7 @@ mod tests {
         assert_eq!(inbound_at_a.frame.payload, node_b_raw_tx);
         for inbound in [&inbound_at_a, &inbound_at_b] {
             let ingress =
-                ingest_product_mainline_overlay_payload_v1(chain_id, &inbound.frame.payload)
+                ingest_native_payload_with_fixture_v1(&root, chain_id, &inbound.frame.payload)
                     .unwrap();
             assert_eq!(ingress.chain_id, chain_id);
             assert!(ingress.pending_only);
@@ -5219,7 +5297,7 @@ mod tests {
             second_inbound_at_c,
         ] {
             let receipt =
-                ingest_product_mainline_overlay_payload_v1(chain_id, &inbound.frame.payload)
+                ingest_native_payload_with_fixture_v1(&root, chain_id, &inbound.frame.payload)
                     .unwrap();
             assert_eq!(receipt.execution_owner, "aoem_runtime");
         }
@@ -5875,7 +5953,7 @@ mod tests {
         });
         assert_eq!(inbound.frame.payload, raw_tx);
         let ingress =
-            ingest_product_mainline_overlay_payload_v1(chain_id, &inbound.frame.payload).unwrap();
+            ingest_native_payload_with_fixture_v1(&root, chain_id, &inbound.frame.payload).unwrap();
         assert_eq!(ingress.execution_owner, "aoem_runtime");
 
         node_a_runtime.shutdown();

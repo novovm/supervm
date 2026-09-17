@@ -27,6 +27,7 @@ pub(super) fn authenticate_plan(
     params: &serde_json::Value,
 ) -> Result<Vec<AuthenticatedItem>> {
     plan.validate()?;
+    verify_native_nonce_identity_scheme_v2(parent)?;
     if parent.authority_chain_id != Some(plan.context.chain_id) {
         bail!("candidate authentication parent authority chain mismatch");
     }
@@ -73,11 +74,8 @@ pub(super) fn authenticate_plan(
         let execution_request = nov_native_tx_to_execution_request_v1(&native_tx)?
             .context("candidate authentication requires an executable native request")?;
 
-        // Preserve the current protocol's identity derivation for parity with
-        // authority execution. Its raw account spelling versus signer fallback
-        // alias debt must be closed by an explicit protocol migration, not by
-        // silently choosing different nonce identities for candidate branches.
-        let reservation = nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash);
+        // Candidates and authority execution share the pinned V2 signer domain.
+        let reservation = nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash)?;
         if !seen_nonce_keys.insert(reservation.ledger_key.clone()) {
             bail!("candidate authentication duplicate nonce key at transaction {index}");
         }

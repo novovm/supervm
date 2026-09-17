@@ -3,6 +3,9 @@
 #[path = "native_candidate_workspace.rs"]
 pub mod candidate_workspace;
 
+#[path = "native_nonce_migration.rs"]
+pub mod native_nonce_migration;
+
 use crate::clearing_router::{NovClearingRouterImplV1, NovClearingRouterV1};
 use crate::clearing_types::{
     NovClearingFailureCodeV1, NovClearingRouteQuoteV1, NovExecutionFeeRequestV1,
@@ -71,6 +74,8 @@ pub const LOCAL_TX_WIRE_V1_BYTES: usize = 4 + 1 + (8 * 5) + 32;
 pub const NOV_NATIVE_GOVERNANCE_ALLOWLIST_ENV: &str = "NOVOVM_NATIVE_GOVERNANCE_PROPOSERS";
 pub const NOV_NATIVE_GOVERNANCE_ENABLED_ENV: &str = "NOVOVM_NATIVE_GOVERNANCE_ENABLED";
 pub const NOV_NATIVE_CHAIN_ID_ENV: &str = "NOVOVM_NATIVE_CHAIN_ID";
+pub(crate) const NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2: &str =
+    "novovm-native-auth/ed25519-public-key/v2";
 pub const NOV_NATIVE_EXECUTION_STORE_ENV: &str = "NOVOVM_NATIVE_EXECUTION_STORE";
 pub const NOV_NATIVE_EXECUTION_STORE_BACKEND_ENV: &str = "NOVOVM_NATIVE_EXECUTION_STORE_BACKEND";
 pub const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_PATH_ENV: &str =
@@ -827,10 +832,11 @@ pub struct NovNativeExecutionModuleStateV1 {
     pub treasury_reserve_proofs: BTreeMap<String, NovTreasuryReserveProofV1>,
     #[serde(default)]
     pub account_asset_balances: BTreeMap<String, BTreeMap<String, u128>>,
-    #[serde(default)]
     pub native_auth_nonce_reservations: BTreeMap<String, String>,
-    #[serde(default)]
     pub native_auth_next_nonces: BTreeMap<String, u64>,
+    // A missing persisted marker means legacy, not the new-genesis default.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub native_auth_nonce_identity_scheme: String,
     #[serde(default)]
     pub protocol_config_commitment: String,
     #[serde(default)]
@@ -1027,6 +1033,7 @@ impl Default for NovNativeExecutionModuleStateV1 {
             account_asset_balances: BTreeMap::new(),
             native_auth_nonce_reservations: BTreeMap::new(),
             native_auth_next_nonces: BTreeMap::new(),
+            native_auth_nonce_identity_scheme: NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2.to_string(),
             protocol_config_commitment: String::new(),
             governance_proposals: BTreeMap::new(),
             next_governance_proposal_id: 0,
@@ -1136,7 +1143,7 @@ pub struct NovNativeExecutionStoreV1 {
     pub authority_namespace_digest: String,
     #[serde(default)]
     pub receipts: BTreeMap<String, NovNativeExecutionReceiptV1>,
-    #[serde(default)]
+    #[serde(default = "legacy_native_execution_module_state_v1")]
     pub module_state: NovNativeExecutionModuleStateV1,
     #[serde(default)]
     pub last_updated_unix_ms: u128,
@@ -3254,11 +3261,12 @@ pub fn mutate_nov_native_execution_store_with_aoem_semantic_commit_v1<T, F>(
 where
     F: FnOnce(&mut NovNativeExecutionStoreV1) -> Result<T>,
 {
-    let mut meta =
-        execute_native_semantic_mutation_aoem_ingress_v1(source, tx_ref, subject, action)?;
     let _write_lock = acquire_nov_native_execution_store_write_lock_v1(path)?;
     let mut store = load_nov_native_execution_store_v1(path)?;
+    verify_native_nonce_identity_scheme_v2(&store)?;
     reject_native_aoem_ownership_downgrade_for_locked_store_v1(path, &store)?;
+    let mut meta =
+        execute_native_semantic_mutation_aoem_ingress_v1(source, tx_ref, subject, action)?;
     let previous_store = store.clone();
     let before = store.module_state.clone();
     let output = mutate(&mut store)?;
@@ -3676,24 +3684,34 @@ fn native_tx_nonce_for_auth_v1(tx: &NovNativeTxWireV1) -> u64 {
     }
 }
 
-fn native_auth_nonce_identity_v1(tx: &NovNativeTxWireV1, ir: &TxIR) -> Vec<u8> {
-    match &tx.kind {
-        NovTxKindV1::Execute(execute) => {
-            let account = execute
-                .nonce_owner_account_id
-                .as_deref()
-                .or(execute.account_id.as_deref());
-            if let Some(account) = account {
-                let mut identity = b"account:".to_vec();
-                identity.extend_from_slice(account.trim().to_ascii_lowercase().as_bytes());
-                return identity;
-            }
-        }
-        NovTxKindV1::Transfer(_) | NovTxKindV1::Governance(_) => {}
+fn legacy_native_execution_module_state_v1() -> NovNativeExecutionModuleStateV1 {
+    NovNativeExecutionModuleStateV1 {
+        native_auth_nonce_identity_scheme: String::new(),
+        ..Default::default()
     }
-    let mut identity = b"signer:".to_vec();
-    identity.extend_from_slice(&ir.from);
-    identity
+}
+
+fn native_auth_nonce_identity_v1(tx: &NovNativeTxWireV1, _ir: &TxIR) -> Result<Vec<u8>> {
+    // Called after authentication: the signed public key, not an address spelling
+    // (nor the optional 20-byte/32-byte caller form), owns the nonce sequence.
+    if tx.signature.len() != 96 {
+        bail!("native nonce identity requires an authenticated 96-byte Ed25519 payload");
+    }
+    let mut identity = NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2.as_bytes().to_vec();
+    identity.push(0);
+    identity.extend_from_slice(&tx.signature[..32]);
+    Ok(identity)
+}
+
+fn verify_native_nonce_identity_scheme_v2(store: &NovNativeExecutionStoreV1) -> Result<()> {
+    if store.module_state.native_auth_nonce_identity_scheme != NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2
+    {
+        bail!(
+            "native nonce identity scheme is legacy or unsupported: {:?}; offline migration preflight and explicit protocol activation are required",
+            store.module_state.native_auth_nonce_identity_scheme
+        );
+    }
+    Ok(())
 }
 
 fn native_auth_nonce_identity_key_v1(chain_id: u64, identity: &[u8]) -> String {
@@ -3727,15 +3745,15 @@ fn nov_native_durable_auth_reservation_v1(
     native_tx: &NovNativeTxWireV1,
     ir: &TxIR,
     tx_hash: [u8; 32],
-) -> NovNativeDurableAuthReservationV1 {
+) -> Result<NovNativeDurableAuthReservationV1> {
     let reservation_key = (
         native_tx.chain_id,
-        native_auth_nonce_identity_v1(native_tx, ir),
+        native_auth_nonce_identity_v1(native_tx, ir)?,
         native_tx_nonce_for_auth_v1(native_tx),
     );
     let reservation_id =
         native_auth_nonce_reservation_id_v1(tx_hash, native_tx.signature.as_slice());
-    NovNativeDurableAuthReservationV1 {
+    Ok(NovNativeDurableAuthReservationV1 {
         runtime_key: reservation_key.clone(),
         ledger_key: native_auth_nonce_ledger_key_v1(&reservation_key),
         identity_key: native_auth_nonce_identity_key_v1(
@@ -3745,26 +3763,27 @@ fn nov_native_durable_auth_reservation_v1(
         nonce: reservation_key.2,
         reservation_id: to_hex(&reservation_id),
         tx_hash: to_hex(&tx_hash),
-    }
+    })
 }
 
 #[cfg(test)]
 fn next_host_native_nonce_v1(
     params: &serde_json::Value,
     chain_id: u64,
-    nonce_owner_account_id: &str,
+    signature: &[u8],
 ) -> Result<u64> {
-    let mut identity = b"account:".to_vec();
-    identity.extend_from_slice(
-        nonce_owner_account_id
-            .trim()
-            .to_ascii_lowercase()
-            .as_bytes(),
-    );
+    if signature.len() != 96 {
+        bail!("test host nonce allocator requires a full signature payload");
+    }
+    let mut identity = NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2.as_bytes().to_vec();
+    identity.push(0);
+    identity.extend_from_slice(&signature[..32]);
     let identity_key = native_auth_nonce_identity_key_v1(chain_id, identity.as_slice());
     let store_path = resolve_native_execution_store_path_from_params_v1(params)
         .unwrap_or_else(nov_native_execution_store_path_v1);
-    let durable_floor = load_nov_native_execution_store_v1(store_path.as_path())?
+    let store = load_nov_native_execution_store_v1(store_path.as_path())?;
+    verify_native_nonce_identity_scheme_v2(&store)?;
+    let durable_floor = store
         .module_state
         .native_auth_next_nonces
         .get(identity_key.as_str())
@@ -3787,9 +3806,14 @@ fn next_host_native_nonce_v1(
         })
         .map(|(_, _, nonce)| *nonce)
         .max()
-        .map_or(durable_floor, |nonce| {
-            nonce.saturating_add(1).max(durable_floor)
-        });
+        .map(|nonce| {
+            nonce
+                .checked_add(1)
+                .context("native nonce sequence exhausted")
+        })
+        .transpose()?
+        .unwrap_or(durable_floor)
+        .max(durable_floor);
     let next = next_guard
         .entry((chain_id, identity))
         .or_insert(reservation_floor);
@@ -3797,7 +3821,9 @@ fn next_host_native_nonce_v1(
         *next = reservation_floor;
     }
     let allocated = *next;
-    *next = (*next).saturating_add(1);
+    *next = (*next)
+        .checked_add(1)
+        .context("native nonce sequence exhausted")?;
     Ok(allocated)
 }
 
@@ -3886,6 +3912,9 @@ fn verify_nov_native_auth_v1(
         }
     }
     let nonce = native_tx_nonce_for_auth_v1(native_tx);
+    if nonce == u64::MAX {
+        bail!("nov native authentication rejected: nonce sequence exhausted");
+    }
     if native_tx.signature.len() != 96 {
         bail!(
             "nov native authentication rejected: legacy or malformed signature payload length={}, expected=96",
@@ -3899,7 +3928,7 @@ fn verify_nov_native_auth_v1(
 
     let reservation_key = (
         native_tx.chain_id,
-        native_auth_nonce_identity_v1(native_tx, ir),
+        native_auth_nonce_identity_v1(native_tx, ir)?,
         nonce,
     );
     let reservation_id =
@@ -3991,6 +4020,7 @@ fn verify_nov_native_durable_auth_nonce_v1(
             store_path.display()
         )
     })?;
+    verify_native_nonce_identity_scheme_v2(&store)?;
     if let Some(existing_reservation_id) = store
         .module_state
         .native_auth_nonce_reservations
@@ -4116,7 +4146,7 @@ pub fn ingest_remote_nov_raw_tx_payload_v1(
             canonical_tx_hash,
         ) {
             let durable_reservation =
-                nov_native_durable_auth_reservation_v1(&native_tx, &ir, canonical_tx_hash);
+                nov_native_durable_auth_reservation_v1(&native_tx, &ir, canonical_tx_hash)?;
             release_nov_native_auth_nonce_reservation_v1(&durable_reservation)?;
             observe_network_runtime_native_pending_tx_rejected_v1(
                 announced_chain_id,
@@ -4185,7 +4215,7 @@ fn ingest_local_nov_raw_tx_payload_internal_v1(
             native_tx_kind_label_v1(&native_tx)
         );
     }
-    let durable_reservation = nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash);
+    let durable_reservation = nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash)?;
     let durable_check = if check_durable_nonce {
         match verify_nov_native_durable_auth_nonce_v1(params, &durable_reservation) {
             Ok(check) => check,
@@ -5227,7 +5257,7 @@ fn native_module_state_shard_value_v1(
     module_state: &NovNativeExecutionModuleStateV1,
     shard: &str,
 ) -> Result<Vec<u8>> {
-    let value = match shard {
+    let mut value = match shard {
         "treasury" => serde_json::json!({
             "treasury_reserves": module_state.treasury_reserves,
             "treasury_reserve_proofs": module_state.treasury_reserve_proofs,
@@ -5327,6 +5357,7 @@ fn native_module_state_shard_value_v1(
             "execution_trace_order": module_state.execution_trace_order,
             "native_auth_nonce_reservations": module_state.native_auth_nonce_reservations,
             "native_auth_next_nonces": module_state.native_auth_next_nonces,
+            "native_auth_nonce_identity_scheme": module_state.native_auth_nonce_identity_scheme,
             "protocol_config_commitment": module_state.protocol_config_commitment,
             "aoem_semantic_ledger_sequence": module_state.aoem_semantic_ledger_sequence,
             "aoem_semantic_ledger_head": module_state.aoem_semantic_ledger_head,
@@ -5339,6 +5370,13 @@ fn native_module_state_shard_value_v1(
         }),
         _ => bail!("unknown nov native execution module_state shard: {shard}"),
     };
+    // Preserve the exact legacy shard representation for read-only verification.
+    if shard == "native_execution" && module_state.native_auth_nonce_identity_scheme.is_empty() {
+        value
+            .as_object_mut()
+            .expect("native execution shard is an object")
+            .remove("native_auth_nonce_identity_scheme");
+    }
     serde_json::to_vec(&value)
         .with_context(|| format!("serialize nov native execution module_state/{shard} failed"))
 }
@@ -5350,6 +5388,17 @@ fn native_apply_module_state_shard_v1(
 ) -> Result<()> {
     let value: serde_json::Value = serde_json::from_slice(raw)
         .with_context(|| format!("parse nov native execution module_state/{shard} failed"))?;
+    if shard == "native_execution"
+        && value
+            .get("native_auth_nonce_identity_scheme")
+            .and_then(|v| v.as_str())
+            == Some(NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2)
+        && ["native_auth_nonce_reservations", "native_auth_next_nonces"]
+            .iter()
+            .any(|key| !value.get(key).is_some_and(serde_json::Value::is_object))
+    {
+        bail!("V2 native execution shard is missing required nonce maps");
+    }
     macro_rules! assign_field {
         ($field:ident) => {
             if let Some(raw_field) = value.get(stringify!($field)) {
@@ -5459,6 +5508,8 @@ fn native_apply_module_state_shard_v1(
             assign_field!(next_governance_proposal_id);
         }
         "native_execution" => {
+            module_state.native_auth_nonce_identity_scheme.clear();
+            assign_field!(native_auth_nonce_identity_scheme);
             assign_field!(last_execution_trace);
             assign_field!(execution_traces_by_tx);
             assign_field!(execution_trace_order);
@@ -5796,6 +5847,14 @@ fn load_nov_native_execution_store_rocksdb_v1(path: &Path) -> Result<NovNativeEx
         }
         return Ok(store);
     }
+    if db
+        .iterator(RocksDbIteratorMode::Start)
+        .next()
+        .transpose()?
+        .is_some()
+    {
+        bail!("existing native execution RocksDB has data but no snapshot metadata; recovery is required before execution");
+    }
     Ok(NovNativeExecutionStoreV1::default())
 }
 
@@ -5856,6 +5915,8 @@ fn materialize_nov_native_execution_store_from_rocksdb_v1(
     path: &Path,
 ) -> Result<NovNativeExecutionStoreV1> {
     let mut module_state = NovNativeExecutionModuleStateV1::default();
+    // Existing stores must prove their codec; a missing shard is not new genesis.
+    module_state.native_auth_nonce_identity_scheme.clear();
     let mut loaded_namespaced_module_state = false;
     for (key, shard) in native_rocksdb_module_state_shard_keys_v1() {
         if let Some(raw) = db.get(key).with_context(|| {
@@ -6234,6 +6295,7 @@ where
 {
     let _write_lock = acquire_nov_native_execution_store_write_lock_v1(path)?;
     let mut store = load_nov_native_execution_store_v1(path)?;
+    verify_native_nonce_identity_scheme_v2(&store)?;
     let previous_store = store.clone();
     let output = mutate(&mut store)?;
     save_nov_native_execution_store_with_previous_v1(path, Some(&previous_store), &store)?;
@@ -11416,6 +11478,7 @@ fn find_nov_native_durable_auth_receipt_v1(
     store: &NovNativeExecutionStoreV1,
     reservation: &NovNativeDurableAuthReservationV1,
 ) -> Result<Option<NovNativeExecutionReceiptV1>> {
+    verify_native_nonce_identity_scheme_v2(store)?;
     if let Some(existing_reservation_id) = store
         .module_state
         .native_auth_nonce_reservations
@@ -11472,6 +11535,11 @@ fn commit_nov_native_durable_auth_reservation_v1(
     store: &mut NovNativeExecutionStoreV1,
     reservation: &NovNativeDurableAuthReservationV1,
 ) -> Result<()> {
+    verify_native_nonce_identity_scheme_v2(store)?;
+    let next_nonce = reservation
+        .nonce
+        .checked_add(1)
+        .context("native nonce sequence exhausted")?;
     if let Some(existing) = store
         .module_state
         .native_auth_nonce_reservations
@@ -11505,10 +11573,10 @@ fn commit_nov_native_durable_auth_reservation_v1(
         reservation.ledger_key.clone(),
         reservation.reservation_id.clone(),
     );
-    store.module_state.native_auth_next_nonces.insert(
-        reservation.identity_key.clone(),
-        reservation.nonce.saturating_add(1),
-    );
+    store
+        .module_state
+        .native_auth_next_nonces
+        .insert(reservation.identity_key.clone(), next_nonce);
     Ok(())
 }
 
@@ -11517,6 +11585,7 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
     request: &NovExecutionRequestV1,
     context: NovExecutionRequestDispatchContextV1<'_>,
 ) -> Result<NovNativeExecutionReceiptV1> {
+    verify_native_nonce_identity_scheme_v2(store)?;
     if let Some(reservation) = context.durable_auth_reservation {
         if reservation.tx_hash != to_hex(&request.tx_hash) {
             bail!("nov native durable authentication transaction hash mismatch");
@@ -12938,7 +13007,8 @@ fn run_nov_send_raw_transaction_internal_v1(
         _ => None,
     };
     let execution_request = nov_native_tx_to_execution_request_v1(&native_tx)?;
-    let durable_auth_reservation = nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash);
+    let durable_auth_reservation =
+        nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash)?;
     let store_path_override = resolve_native_execution_store_path_from_params_v1(params);
     let effective_native_store_path = store_path_override
         .clone()
@@ -13682,9 +13752,10 @@ pub fn native_business_protocol_config_commitment_v1() -> Result<String> {
         })
         .collect::<BTreeMap<_, _>>();
     let snapshot = serde_json::json!({
-        "schema": "novovm-native-business-protocol-config/v1",
+        "schema": "novovm-native-business-protocol-config/v2",
         "environment": env,
         "compiled_defaults": {
+            "native_auth_nonce_identity_scheme": NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2,
             "fee_rate_ppm": {
                 "NOV": NOV_FEE_RATE_PPM_NOV_V1,
                 "USDT": NOV_FEE_RATE_PPM_USDT_V1,
@@ -13729,7 +13800,7 @@ pub fn native_business_protocol_config_commitment_v1() -> Result<String> {
     let encoded = canonical_json_value_wire_v1(&snapshot)
         .context("encode NOV native business protocol config")?;
     Ok(to_hex(&sha256_bytes_v1(&[
-        b"novovm-native-business-protocol-config-commitment-v1\0",
+        b"novovm-native-business-protocol-config-commitment-v2\0",
         encoded.as_slice(),
     ])))
 }
@@ -13800,6 +13871,7 @@ fn verify_required_native_business_protocol_config_pin_v1() -> Result<String> {
 }
 
 fn bind_native_business_protocol_config_v1(store: &mut NovNativeExecutionStoreV1) -> Result<bool> {
+    verify_native_nonce_identity_scheme_v2(store)?;
     let commitment = native_business_protocol_config_commitment_v1()?;
     verify_expected_native_business_protocol_config_v1(commitment.as_str())?;
     if store.module_state.protocol_config_commitment.is_empty() {
@@ -13817,6 +13889,7 @@ fn bind_native_business_protocol_config_v1(store: &mut NovNativeExecutionStoreV1
 }
 
 fn verify_native_business_protocol_config_v1(store: &NovNativeExecutionStoreV1) -> Result<()> {
+    verify_native_nonce_identity_scheme_v2(store)?;
     let commitment = native_business_protocol_config_commitment_v1()?;
     verify_expected_native_business_protocol_config_v1(commitment.as_str())?;
     if store.module_state.protocol_config_commitment.is_empty()
@@ -13836,6 +13909,7 @@ fn bind_native_execution_store_authority_domain_v1(
     chain_id: u64,
     namespace_digest: &str,
 ) -> Result<bool> {
+    verify_native_nonce_identity_scheme_v2(store)?;
     if let Some(bound_chain_id) = store.authority_chain_id {
         if bound_chain_id != chain_id {
             bail!(
@@ -14113,6 +14187,7 @@ fn validate_production_native_state_envelope_v1(
     chain_id: u64,
     namespace_digest: &str,
 ) -> Result<(String, String)> {
+    verify_native_nonce_identity_scheme_v2(&envelope.store)?;
     if envelope.schema != NOVOVM_AOEM_OWNED_NATIVE_STATE_SCHEMA_V2
         || !envelope.production_accepted
         || envelope.production_gate_contract != NOVOVM_AOEM_OWNED_PRODUCTION_GATE_CONTRACT_V2
@@ -16508,7 +16583,7 @@ fn run_nov_send_raw_transaction_batch_with_plan_v1(
         };
         let execution_request = nov_native_tx_to_execution_request_v1(&native_tx)?;
         let durable_auth_reservation =
-            nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash);
+            nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash)?;
         raw_payloads.push(payload);
         prepared.push(PreparedNovRawBatchItemV1 {
             native_tx,
@@ -16615,16 +16690,6 @@ fn run_nov_send_raw_transaction_batch_with_plan_v1(
     reject_native_aoem_ownership_downgrade_v1(params, chain_id, production_candidate_enabled)?;
     let _write_lock =
         acquire_nov_native_execution_store_write_lock_v1(effective_native_store_path.as_path())?;
-    if production_candidate_enabled {
-        let ledger = NovNativeBlockLedgerV1::open(block_ledger_path.as_path())?;
-        ledger.bind_aoem_ownership(
-            chain_id,
-            native_aoem_owned_state_namespace_digest_v1(params, chain_id).as_str(),
-            protocol_config_commitment
-                .as_deref()
-                .context("production protocol configuration commitment disappeared")?,
-        )?;
-    }
     let (mut store, host_projection_recovered_from_aoem) = if production_candidate_enabled {
         load_and_reconcile_native_host_projection_from_aoem_owner_locked_v1(
             params,
@@ -16637,6 +16702,17 @@ fn run_nov_send_raw_transaction_batch_with_plan_v1(
             false,
         )
     };
+    verify_native_nonce_identity_scheme_v2(&store)?;
+    if production_candidate_enabled {
+        let ledger = NovNativeBlockLedgerV1::open(block_ledger_path.as_path())?;
+        ledger.bind_aoem_ownership(
+            chain_id,
+            native_aoem_owned_state_namespace_digest_v1(params, chain_id).as_str(),
+            protocol_config_commitment
+                .as_deref()
+                .context("production protocol configuration commitment disappeared")?,
+        )?;
+    }
     if !production_candidate_enabled {
         reject_native_aoem_ownership_downgrade_for_locked_store_v1(
             effective_native_store_path.as_path(),
@@ -16803,7 +16879,9 @@ fn run_nov_send_raw_transaction_batch_with_plan_v1(
                 reservation.nonce
             );
         }
-        *expected = expected.saturating_add(1);
+        *expected = expected
+            .checked_add(1)
+            .context("native batch nonce sequence exhausted")?;
     }
     let precommit_store_materialized_receipts = store.receipts.len();
     let precommit_store_materialized_estimated_bytes =
@@ -19124,6 +19202,9 @@ fn run_nov_execute_pending_native_tx_batch_internal_v1(
     } else {
         None
     };
+    verify_native_nonce_identity_scheme_v2(&load_nov_native_execution_store_v1(
+        native_store_path.as_path(),
+    )?)?;
     let receipt_lookup = NovNativeExecutionReceiptLookupV1::open(native_store_path.as_path())?;
     let ledger_final_missing_admission =
         snapshot_network_runtime_novorudp_ledger_final_missing_admission_candidates_v1(
@@ -19377,7 +19458,7 @@ fn run_nov_execute_pending_native_tx_batch_internal_v1(
                     &native_tx,
                     &pending_ir,
                     pending_tx.tx_hash,
-                );
+                )?;
                 release_nov_native_auth_nonce_reservation_v1(&durable_reservation)?;
                 observe_network_runtime_native_pending_tx_dropped_v1(chain_id, pending_tx.tx_hash);
                 continue;
@@ -19403,7 +19484,7 @@ fn run_nov_execute_pending_native_tx_batch_internal_v1(
                         &native_tx,
                         &pending_ir,
                         pending_tx.tx_hash,
-                    );
+                    )?;
                     release_nov_native_auth_nonce_reservation_v1(&durable_reservation)?;
                     observe_network_runtime_native_pending_tx_rejected_v1(
                         chain_id,
@@ -20665,7 +20746,17 @@ fn run_nov_execute_internal_v1(
         None => {
             #[cfg(test)]
             {
-                next_host_native_nonce_v1(params, chain_id, nonce_owner_account_id.as_str())?
+                let mut test_signature = vec![0; 96];
+                test_signature[..32].copy_from_slice(
+                    ed25519_dalek::SigningKey::from_bytes(&[0x42; 32])
+                        .verifying_key()
+                        .as_bytes(),
+                );
+                next_host_native_nonce_v1(
+                    params,
+                    chain_id,
+                    supplied_signature.as_deref().unwrap_or(&test_signature),
+                )?
             }
             #[cfg(not(test))]
             {
@@ -21029,6 +21120,7 @@ pub fn load_ops_wire_v1_from_tx_wire_file(path: &Path) -> Result<OpsWirePayload>
 mod tests {
     use super::*;
     include!("native_candidate_plan_execution_tests.rs");
+    include!("native_nonce_identity_tests.rs");
     use novovm_protocol::{
         NovExecutionModeV1, NovFeePolicyV1, NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1,
         NovVerificationModeV1,
@@ -23754,8 +23846,19 @@ mod tests {
         let base_v3 = native_semantic_ledger_state_digest_v1(&base);
         let base_legacy = native_semantic_ledger_state_digest_legacy_v2(&base);
         assert_eq!(
-            base_v3, "57fc2ab202f177b1dd45f96765b064fe79182e7f4de1b96ba17b1ddd6416df28",
-            "state-root v3 wire changes require an explicit protocol-vector review"
+            base_v3, "35b5f7bf45e2e4707ffe853c82b4348e02182f29e8e71f611118fcee2b581038",
+            "V2 signer identity marker is committed under the V2 protocol pin"
+        );
+        let mut unversioned = base.clone();
+        unversioned.native_auth_nonce_identity_scheme.clear();
+        assert_eq!(
+            native_semantic_ledger_state_digest_v1(&unversioned),
+            "57fc2ab202f177b1dd45f96765b064fe79182e7f4de1b96ba17b1ddd6416df28",
+            "read-only legacy state retains its exact previously frozen V3 root"
+        );
+        assert_ne!(
+            native_semantic_ledger_state_digest_v1(&unversioned),
+            base_v3
         );
 
         let mut semantic_head_changed = base.clone();
@@ -25116,7 +25219,7 @@ mod tests {
                         };
                         let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
                         let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
-                            &serde_json::json!({}),
+                            &serde_json::json!({ "native_execution_store_path": path }),
                             raw.as_slice(),
                         )
                         .expect("native pending ingress should store payload");
@@ -25251,7 +25354,7 @@ mod tests {
                         };
                         let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
                         let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
-                            &serde_json::json!({}),
+                            &serde_json::json!({ "native_execution_store_path": path }),
                             raw.as_slice(),
                         )
                         .expect("native pending ingress should store payload");
@@ -28714,7 +28817,8 @@ mod tests {
             let raw = encode_native_auth_test_tx_v1(&tx);
             let ir = nov_native_tx_to_adapter_tx_ir_v1(&tx).expect("remote replay canonical ir");
             let tx_hash = tx_hash_array_from_ir_v1(&ir);
-            let reservation = nov_native_durable_auth_reservation_v1(&tx, &ir, tx_hash);
+            let reservation = nov_native_durable_auth_reservation_v1(&tx, &ir, tx_hash)
+                .expect("authenticated replay reservation");
             let mut store = NovNativeExecutionStoreV1::default();
             store.module_state.native_auth_nonce_reservations.insert(
                 reservation.ledger_key.clone(),
