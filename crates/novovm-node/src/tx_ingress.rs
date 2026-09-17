@@ -11341,6 +11341,8 @@ struct NovExecutionRequestDispatchContextV1<'a> {
     requested_behavior: Option<&'a NovRequestedExecutionBehaviorV1>,
     authenticated_key_algo: Option<UcaKeyAlgo>,
     unified_account_store_path: Option<&'a Path>,
+    // Isolated candidates enforce the same policy without publishing live demand events.
+    emit_policy_observability: bool,
     durable_auth_reservation: Option<&'a NovNativeDurableAuthReservationV1>,
     aoem_semantic_ingress_override: Option<NovAoemSemanticIngressMetaV1>,
     mirror_records: Option<&'a mut Vec<NovAoemSemanticLedgerMirrorRecordV1>>,
@@ -11527,12 +11529,23 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
         .subject_meta
         .cloned()
         .unwrap_or_else(|| fallback_execution_subject_meta_v1(request));
-    let effective_subject_meta = match enforce_requested_execution_behavior_v1(
-        &effective_subject_meta,
-        context.requested_behavior,
-        context.authenticated_key_algo,
-        context.unified_account_store_path,
-    ) {
+    let policy_result = if context.emit_policy_observability {
+        enforce_requested_execution_behavior_v1(
+            &effective_subject_meta,
+            context.requested_behavior,
+            context.authenticated_key_algo,
+            context.unified_account_store_path,
+        )
+    } else {
+        enforce_requested_execution_behavior_with_observability_v1(
+            &effective_subject_meta,
+            context.requested_behavior,
+            context.authenticated_key_algo,
+            context.unified_account_store_path,
+            false,
+        )
+    };
+    let effective_subject_meta = match policy_result {
         Ok(meta) => meta,
         Err(rejection) => {
             let rejected_subject_meta = subject_meta_with_execution_policy_v1(
@@ -11689,6 +11702,7 @@ fn dispatch_and_persist_nov_execution_request_with_subjects_and_store_path_v1(
             requested_behavior,
             authenticated_key_algo,
             unified_account_store_path,
+            emit_policy_observability: true,
             durable_auth_reservation,
             aoem_semantic_ingress_override: None,
             mirror_records: Some(&mut mirror_records),
@@ -11948,6 +11962,22 @@ fn enforce_requested_execution_behavior_v1(
     authenticated_key_algo: Option<UcaKeyAlgo>,
     unified_account_store_path: Option<&Path>,
 ) -> std::result::Result<NovExecutionSubjectMetaV1, NovExecutionPolicyRejectionV1> {
+    enforce_requested_execution_behavior_with_observability_v1(
+        subject_meta,
+        requested_behavior,
+        authenticated_key_algo,
+        unified_account_store_path,
+        true,
+    )
+}
+
+fn enforce_requested_execution_behavior_with_observability_v1(
+    subject_meta: &NovExecutionSubjectMetaV1,
+    requested_behavior: Option<&NovRequestedExecutionBehaviorV1>,
+    authenticated_key_algo: Option<UcaKeyAlgo>,
+    unified_account_store_path: Option<&Path>,
+    emit_policy_observability: bool,
+) -> std::result::Result<NovExecutionSubjectMetaV1, NovExecutionPolicyRejectionV1> {
     let requested = requested_behavior
         .copied()
         .unwrap_or_else(default_execution_behavior_v1);
@@ -11972,20 +12002,24 @@ fn enforce_requested_execution_behavior_v1(
         NovExecutionPolicyV1::Standard => Ok(with_success()),
         NovExecutionPolicyV1::PqRequired => {
             if resolved_key_algo == Some(UcaKeyAlgo::Mldsa87) {
-                emit_runtime_policy_observability_event_v1(
-                    subject_meta,
-                    requested.execution_policy,
-                    true,
-                    None,
-                );
+                if emit_policy_observability {
+                    emit_runtime_policy_observability_event_v1(
+                        subject_meta,
+                        requested.execution_policy,
+                        true,
+                        None,
+                    );
+                }
                 Ok(with_success())
             } else {
-                emit_runtime_policy_observability_event_v1(
-                    subject_meta,
-                    requested.execution_policy,
-                    false,
-                    Some(ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ),
-                );
+                if emit_policy_observability {
+                    emit_runtime_policy_observability_event_v1(
+                        subject_meta,
+                        requested.execution_policy,
+                        false,
+                        Some(ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ),
+                    );
+                }
                 Err(NovExecutionPolicyRejectionV1 {
                     key_algo: resolved_key_algo,
                     execution_policy: requested.execution_policy,
@@ -11995,24 +12029,28 @@ fn enforce_requested_execution_behavior_v1(
         }
         NovExecutionPolicyV1::PrivacyRequired => {
             if matches!(requested.privacy_mode, NovPrivacyModeV1::Public) {
-                emit_runtime_policy_observability_event_v1(
-                    subject_meta,
-                    requested.execution_policy,
-                    false,
-                    Some(ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE),
-                );
+                if emit_policy_observability {
+                    emit_runtime_policy_observability_event_v1(
+                        subject_meta,
+                        requested.execution_policy,
+                        false,
+                        Some(ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE),
+                    );
+                }
                 Err(NovExecutionPolicyRejectionV1 {
                     key_algo: resolved_key_algo,
                     execution_policy: requested.execution_policy,
                     reason: ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE,
                 })
             } else {
-                emit_runtime_policy_observability_event_v1(
-                    subject_meta,
-                    requested.execution_policy,
-                    true,
-                    None,
-                );
+                if emit_policy_observability {
+                    emit_runtime_policy_observability_event_v1(
+                        subject_meta,
+                        requested.execution_policy,
+                        true,
+                        None,
+                    );
+                }
                 Ok(with_success())
             }
         }
@@ -17097,6 +17135,7 @@ fn run_nov_send_raw_transaction_batch_with_plan_v1(
                     requested_behavior: item.requested_execution_behavior.as_ref(),
                     authenticated_key_algo: Some(UcaKeyAlgo::Ed25519),
                     unified_account_store_path: unified_account_store_path.as_deref(),
+                    emit_policy_observability: true,
                     durable_auth_reservation: Some(&item.durable_auth_reservation),
                     aoem_semantic_ingress_override: Some(native_aoem_batch_item_ingress_meta_v1(
                         item_batch_ingress,
@@ -23809,6 +23848,73 @@ mod tests {
         .expect("wire-authenticated key algorithm must be machine independent");
         assert_eq!(first, second);
         assert_eq!(first.key_algo, "ed25519");
+    }
+
+    #[test]
+    fn candidate_workspace_execution_policy_evaluation_preserves_decisions_with_observability_disabled(
+    ) {
+        let subject = NovExecutionSubjectMetaV1 {
+            account_id: "0x1111111111111111111111111111111111111111".to_string(),
+            fee_owner_account_id: "0x1111111111111111111111111111111111111111".to_string(),
+            nonce_owner_account_id: "0x1111111111111111111111111111111111111111".to_string(),
+            key_algo: String::new(),
+            execution_policy: NovExecutionPolicyV1::Standard.as_str().to_string(),
+            policy_enforced: false,
+            policy_rejection_reason: None,
+        };
+        for (policy, privacy_mode, key_algo, expected_rejection) in [
+            (
+                NovExecutionPolicyV1::Standard,
+                NovPrivacyModeV1::Public,
+                UcaKeyAlgo::Ed25519,
+                None,
+            ),
+            (
+                NovExecutionPolicyV1::PqRequired,
+                NovPrivacyModeV1::Public,
+                UcaKeyAlgo::Ed25519,
+                Some(ERR_PQ_REQUIRED_BUT_KEY_NOT_PQ),
+            ),
+            (
+                NovExecutionPolicyV1::PqRequired,
+                NovPrivacyModeV1::Public,
+                UcaKeyAlgo::Mldsa87,
+                None,
+            ),
+            (
+                NovExecutionPolicyV1::PrivacyRequired,
+                NovPrivacyModeV1::Public,
+                UcaKeyAlgo::Ed25519,
+                Some(ERR_PRIVACY_REQUIRED_BUT_PATH_NOT_AVAILABLE),
+            ),
+            (
+                NovExecutionPolicyV1::PrivacyRequired,
+                NovPrivacyModeV1::Private,
+                UcaKeyAlgo::Ed25519,
+                None,
+            ),
+        ] {
+            let requested = requested_execution_behavior_v1(policy, privacy_mode);
+            let result = enforce_requested_execution_behavior_with_observability_v1(
+                &subject,
+                Some(&requested),
+                Some(key_algo),
+                Some(Path::new("candidate-must-not-read-machine-local-uca-db")),
+                false,
+            );
+            if let Some(reason) = expected_rejection {
+                let rejection = result.expect_err("candidate policy must still reject");
+                assert_eq!(rejection.key_algo, Some(key_algo));
+                assert_eq!(rejection.execution_policy, policy);
+                assert_eq!(rejection.reason, reason);
+            } else {
+                let accepted = result.expect("candidate policy must preserve acceptance");
+                assert_eq!(accepted.account_id, subject.account_id);
+                assert_eq!(accepted.execution_policy, policy.as_str());
+                assert!(accepted.policy_enforced);
+                assert_eq!(accepted.policy_rejection_reason, None);
+            }
+        }
     }
 
     #[test]

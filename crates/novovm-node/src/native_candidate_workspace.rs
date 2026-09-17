@@ -1,7 +1,18 @@
 #![forbid(unsafe_code)]
 
-//! Local input/parent staging only. Never calls ingress, executes a transaction,
-//! writes the authority head, or promotes a block. Not a remote proposal API.
+//! Local input/parent staging and isolated execution. Never calls pending
+//! ingress, writes the authority head, or promotes a block. Not a remote API.
+
+#[path = "native_candidate_auth.rs"]
+mod auth;
+#[path = "native_candidate_execution.rs"]
+mod execution;
+#[cfg(test)]
+pub(super) use execution::{
+    corrupt_execution_output_for_test_v1, execute_with_checkpoint_v1,
+    load_execution_snapshot_for_test_v1, ExecutionCheckpointV1,
+};
+pub use execution::{execute_v1, load_execution_v1, ExecutionInfoV1};
 
 use super::*;
 use crate::native_candidate_plan::NovNativeCandidateExecutionPlanV1;

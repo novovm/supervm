@@ -1,7 +1,8 @@
 # NOVOVM Candidate Workspace V1
 
-Status: local candidate input staging and recovery slice; not candidate
-execution, network consensus, canonical promotion, or mainnet sign-off.
+Status: local candidate input staging and recovery API. Isolated execution is
+documented separately in [Candidate Execution V1](NOVOVM_CANDIDATE_EXECUTION_V1.md);
+neither API provides consensus, canonical promotion, or mainnet sign-off.
 
 ## Purpose and ownership
 
@@ -9,11 +10,14 @@ The common candidate execution-plan API advances a single local execution
 head. It must not be used to try competing untrusted proposals against
 authoritative balances and nonces. This slice introduces a bounded local
 workspace for storing a complete plan and copying its locally verified parent
-snapshot before a future isolated executor is connected.
+snapshot. The separate execution API consumes that immutable input; creating
+or loading an input workspace does not execute its transactions.
 
-Workspace state belongs to the NOVOVM Host. AOEM is used only through its
-domain-neutral persistence interface; no NOV-specific business rules, opcodes,
-exports, DLL changes, or sibling AOEM repository edits are part of this slice.
+Workspace layout and lifecycle belong to the NOVOVM Host. AOEM is used through
+its domain-neutral persistence interface; no NOV-specific business rules,
+opcodes, exports, DLL changes, or sibling AOEM repository edits are part of
+this slice. The execution extension also uses existing AOEM generic precommit
+operations, while the Host still computes NOV business transitions.
 Local paths and storage namespaces are not network plan fields.
 
 The local Host API is
@@ -67,8 +71,13 @@ V1 deliberately has fixed local resource limits per chain and storage-namespace
 scope:
 
 - At most 32 workspace slots, including staging and aborted slots.
-- At most 8 MiB for each persisted workspace payload and 64 MiB in aggregate.
+- At most 8 MiB for each persisted input payload and 64 MiB for inputs in aggregate.
 - Slots are not reused and there is no workspace garbage collection in V1.
+
+The execution extension has a separate 8 MiB per-result and 64 MiB aggregate
+output budget, attached to the same 32 input slots. Input and output limits
+must not be combined into a claim of a 64 MiB total database limit. Aborting
+does not refund either budget.
 
 Ready and abort use independent, bound lifecycle markers. An abort marker
 takes precedence even if a ready marker is present. Abort does not return a
@@ -100,17 +109,22 @@ process to exit before another process can reacquire the workspace lock and
 inspect durable facts; a commit error must not be treated as proof that no
 write occurred.
 
-All workspaces retain:
+All `WorkspaceInfoV1` responses from the input API retain:
 
 ```text
 execution_completed = false
 transactions_authenticated = false
 ```
 
-No workspace state authorizes `proof_sealed`, `chain_canonical`, `safe`, or
-`finalized` to become true. This slice does not add transaction execution,
-voting/QC, fork choice, promotion, a network proposal scheduler, a CLI command,
-an RPC method, or a new automatic node execution mode.
+These fields describe input preparation only, even if an independently stored
+execution result exists. Use `execute_v1` or `load_execution_v1` and its
+`ExecutionInfoV1` response to establish authenticated, completed candidate
+execution. An input `ready` marker is never execution evidence.
+
+No workspace or execution result authorizes `proof_sealed`, `chain_canonical`,
+`safe`, or `finalized` to become true. Neither API adds voting/QC, fork choice,
+promotion, a network proposal scheduler, a CLI command, an RPC method, or a
+new automatic node execution mode.
 
 ## Verification contract
 
@@ -122,8 +136,9 @@ cargo test -p novovm-node --lib candidate_workspace -- --test-threads=1
 
 The canonical mainline gate runs this filter as a required step. Its
 `test_native_candidate_workspace` field is initially false and becomes true
-only after the command succeeds. This tests workspace persistence and recovery
-using AOEM; it does not claim to execute NOV transactions in the workspace.
+only after the command succeeds. This filter covers input persistence/recovery
+and the `candidate_workspace_execution` tests for isolated execution. The
+execution extension reuses this required field; it does not add a 45th field.
 
 The serializer, preflight and node-runtime locksets now contain 44 required
 fields in the same order. The frozen contract includes rejection when the
@@ -136,19 +151,22 @@ the verification contract, not a record that those commands have passed.
 Linux CI, multiple processes, physical LAN devices, public-network operation
 and long-run testing are separate evidence boundaries.
 
-The filter includes three codec/capacity/lock unit tests and five AOEM-backed
-integration tests. Its ignored worker is invoked explicitly by the parent test
-in three separate process lifetimes: create ready, reopen and abort, then reopen
-aborted and reject revival. A phase/PID manifest rejects accidental zero-test
-execution. This covers clean process-exit recovery, not forced termination or
-power loss. Checkpoint tests interrupt after acknowledged commits; the poison
-unit test exercises retained OS-lock behavior, not a real uncertain AOEM commit.
-Concurrent cross-process contention and hard-crash injection remain untested.
+The input tests include codec/capacity/lock checks and AOEM-backed integration
+tests. Their ignored worker is invoked explicitly by the parent test in three
+separate process lifetimes: create ready, reopen and abort, then reopen aborted
+and reject revival. A phase/PID manifest rejects accidental zero-test execution.
+This covers clean process-exit input recovery, not forced termination or power
+loss, and must not be relabeled as an execution-result restart test. Checkpoint
+tests interrupt after acknowledged commits; the poison unit test exercises
+retained OS-lock behavior, not a real uncertain AOEM commit. Execution-specific
+evidence requirements are listed in the execution document. Concurrent
+cross-process contention and hard-crash injection remain separate boundaries.
 
 ## Next boundary
 
-Before remote proposals can drive the chain, the remaining work includes
-isolated candidate execution, output and evidence validation, authority-bound
-body acquisition, an exclusive durable scheduling owner, voting/QC, fork
-choice, and recoverable canonical promotion. A persisted ready workspace is
+Before remote proposals can drive the chain, remaining work includes closing
+the nonce-identity protocol migration described in the execution document,
+independent validator execution/evidence verification, authority-bound body
+acquisition, an exclusive durable scheduling owner, voting/QC, fork choice,
+and recoverable canonical promotion. A persisted ready input workspace is
 only the input-and-parent preparation step toward that pipeline.

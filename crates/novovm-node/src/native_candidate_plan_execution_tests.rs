@@ -540,4 +540,5 @@ mod candidate_workspace_tests {
     use std::sync::Mutex;
 
     include!("native_candidate_workspace_tests.rs");
+    include!("native_candidate_execution_tests.rs");
 }
