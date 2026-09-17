@@ -51,6 +51,7 @@ struct MainlineGate {
     test_mainline_soak_cli: bool,
     test_mainline_duty_report_evidence: bool,
     test_common_candidate_execution_plan: bool,
+    test_native_candidate_workspace: bool,
     test_product_mainline_overlay_lifecycle: bool,
     test_authenticated_seal_ingress_quarantine: bool,
     test_queue_replay_smoke: bool,
@@ -190,6 +191,7 @@ fn main() -> Result<()> {
         test_mainline_soak_cli: false,
         test_mainline_duty_report_evidence: false,
         test_common_candidate_execution_plan: false,
+        test_native_candidate_workspace: false,
         test_product_mainline_overlay_lifecycle: false,
         test_authenticated_seal_ingress_quarantine: false,
         test_queue_replay_smoke: false,
@@ -250,6 +252,21 @@ fn main() -> Result<()> {
         ],
     )?;
     gate.test_common_candidate_execution_plan = true;
+
+    run_step(
+        "test native candidate workspace persistence, isolation, and recovery",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-node",
+            "--lib",
+            "candidate_workspace",
+            "--",
+            "--test-threads=1",
+        ],
+    )?;
+    gate.test_native_candidate_workspace = true;
 
     run_step(
         "test scheduler_gate_matrix",

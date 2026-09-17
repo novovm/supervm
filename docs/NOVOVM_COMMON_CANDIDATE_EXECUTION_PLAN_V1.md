@@ -77,10 +77,12 @@ and the AOEM-before-block-commit recovery fault point. The canonical mainline
 gate runs this filter with one test thread because the existing AOEM fixture
 helpers temporarily set process environment variables.
 
-The mainline lockset now contains 43 required fields, including
-`test_common_candidate_execution_plan`. Serializer, preflight and node-runtime
-locksets are synchronized; an old 42-field status must be regenerated, not
-reused as evidence for this slice.
+This slice introduced the 43-field mainline lockset, including
+`test_common_candidate_execution_plan`. The subsequent
+[candidate workspace slice](NOVOVM_CANDIDATE_WORKSPACE_V1.md) extends the current
+lockset to 44 fields. Serializer, preflight and node-runtime locksets remain
+synchronized; older status reports must be regenerated, not reused as current
+evidence.
 
 Two isolated stores in one test process are not two physical nodes. Matching
 local candidates are not a quorum certificate or proof seal. All produced

@@ -5,9 +5,9 @@ mod common_candidate_plan_tests {
 
     // The existing AOEM fixture helpers scope process environment and reset the
     // shared session. Keep this group serialized even with the default runner.
-    static PLAN_RUNTIME_TEST_LOCK: Mutex<()> = Mutex::new(());
+    pub(super) static PLAN_RUNTIME_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-    fn raw_fixture(chain_id: u64, identity: u64) -> Vec<u8> {
+    pub(super) fn raw_fixture(chain_id: u64, identity: u64) -> Vec<u8> {
         let raw = build_test_native_execute_raw_hex_with_chain_v1(
             chain_id,
             identity,
@@ -25,7 +25,7 @@ mod common_candidate_plan_tests {
         .expect("decode protocol commitment")
     }
 
-    fn make_plan(
+    pub(super) fn make_plan(
         context: NovBlockExecutionContextV1,
         pre_state_root: [u8; 32],
         aoem_parent: Option<NovNativePreparedAoemParentV1>,
@@ -46,7 +46,7 @@ mod common_candidate_plan_tests {
         .expect("build self-consistent local execution plan")
     }
 
-    fn genesis_plan(chain_id: u64, raw_txs: Vec<Vec<u8>>) -> NovNativeCandidateExecutionPlanV1 {
+    pub(super) fn genesis_plan(chain_id: u64, raw_txs: Vec<Vec<u8>>) -> NovNativeCandidateExecutionPlanV1 {
         let mut genesis = NovNativeExecutionStoreV1::default();
         bind_native_business_protocol_config_v1(&mut genesis).expect("bind genesis protocol");
         make_plan(
@@ -68,7 +68,7 @@ mod common_candidate_plan_tests {
         )
     }
 
-    fn successor_plan(
+    pub(super) fn successor_plan(
         parent: &NovNativeDurableBlockV1,
         raw_txs: Vec<Vec<u8>>,
     ) -> NovNativeCandidateExecutionPlanV1 {
@@ -95,7 +95,7 @@ mod common_candidate_plan_tests {
         )
     }
 
-    fn with_plan_runtime<T>(test: impl FnOnce(&Path, &serde_json::Value) -> T) -> T {
+    pub(super) fn with_plan_runtime<T>(test: impl FnOnce(&Path, &serde_json::Value) -> T) -> T {
         with_test_native_execution_store_path_v1(|path| {
             with_test_native_aoem_persist_runtime_v1(path.as_path(), |aoem_path| {
                 let params = serde_json::json!({
@@ -114,7 +114,7 @@ mod common_candidate_plan_tests {
         })
     }
 
-    fn committed_block(out: &serde_json::Value) -> NovNativeDurableBlockV1 {
+    pub(super) fn committed_block(out: &serde_json::Value) -> NovNativeDurableBlockV1 {
         let block: NovNativeDurableBlockV1 = serde_json::from_value(
             out.get("durable_block_candidate_committed")
                 .expect("durable committed candidate output")
@@ -129,7 +129,7 @@ mod common_candidate_plan_tests {
         block
     }
 
-    fn heads(path: &Path, params: &serde_json::Value, chain_id: u64) -> serde_json::Value {
+    pub(super) fn heads(path: &Path, params: &serde_json::Value, chain_id: u64) -> serde_json::Value {
         let envelope = load_validated_native_state_envelope_from_aoem_owner_v1(params, chain_id)
             .expect("read AOEM authority head");
         let ledger = NovNativeBlockLedgerV1::open(&nov_native_block_ledger_rocksdb_path_v1(path))
@@ -528,4 +528,16 @@ mod common_candidate_plan_tests {
             assert_eq!(heads(path, params, chain_id), recovered);
         });
     }
+}
+
+mod candidate_workspace_tests {
+    use super::*;
+    use super::common_candidate_plan_tests::{
+        committed_block, genesis_plan, heads, make_plan, raw_fixture, successor_plan,
+        with_plan_runtime, PLAN_RUNTIME_TEST_LOCK,
+    };
+    use crate::native_candidate_plan::NovNativeCandidateExecutionPlanV1;
+    use std::sync::Mutex;
+
+    include!("native_candidate_workspace_tests.rs");
 }

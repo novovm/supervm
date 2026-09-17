@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+#[path = "native_candidate_workspace.rs"]
+pub mod candidate_workspace;
+
 use crate::clearing_router::{NovClearingRouterImplV1, NovClearingRouterV1};
 use crate::clearing_types::{
     NovClearingFailureCodeV1, NovClearingRouteQuoteV1, NovExecutionFeeRequestV1,

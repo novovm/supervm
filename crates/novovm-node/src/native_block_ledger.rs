@@ -2524,7 +2524,7 @@ fn validate_prepared_block_v1(prepared: &NovNativePreparedBlockV1) -> Result<()>
     Ok(())
 }
 
-fn validate_durable_block_v1(block: &NovNativeDurableBlockV1) -> Result<()> {
+pub(crate) fn validate_durable_block_v1(block: &NovNativeDurableBlockV1) -> Result<()> {
     if block.header.schema != HEADER_SCHEMA_V1
         || block.body.schema != BODY_SCHEMA_V1
         || block.execution_evidence.schema != EVIDENCE_SCHEMA_V1
