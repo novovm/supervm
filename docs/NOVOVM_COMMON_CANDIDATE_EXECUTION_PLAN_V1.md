@@ -81,9 +81,12 @@ This slice introduced the 43-field mainline lockset, including
 `test_common_candidate_execution_plan`. The subsequent
 [candidate workspace slice](NOVOVM_CANDIDATE_WORKSPACE_V1.md) extended the
 lockset to 44 fields; [nonce identity V2](NOVOVM_NATIVE_NONCE_IDENTITY_V2.md)
-now extends it to 45. Serializer, preflight and node-runtime locksets remain
-synchronized; older status reports must be regenerated, not reused as current
-evidence.
+extended it to 45. The subsequent
+[offline checkpoint bundle](NOVOVM_NATIVE_NONCE_CHECKPOINT_BUNDLE_V1.md) now
+extends it to 46 with `test_native_nonce_checkpoint_bundle`. Serializer,
+preflight and node-runtime locksets remain synchronized; older status reports
+must be regenerated, not reused as current evidence. Offline bundle checks
+do not activate migration or promote candidate execution results.
 
 Two isolated stores in one test process are not two physical nodes. Matching
 local candidates are not a quorum certificate or proof seal. All produced

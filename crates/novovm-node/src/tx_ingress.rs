@@ -6,6 +6,12 @@ pub mod candidate_workspace;
 #[path = "native_nonce_migration.rs"]
 pub mod native_nonce_migration;
 
+#[path = "native_nonce_checkpoint.rs"]
+pub mod native_nonce_checkpoint;
+
+#[path = "native_nonce_bundle.rs"]
+pub mod native_nonce_bundle;
+
 use crate::clearing_router::{NovClearingRouterImplV1, NovClearingRouterV1};
 use crate::clearing_types::{
     NovClearingFailureCodeV1, NovClearingRouteQuoteV1, NovExecutionFeeRequestV1,

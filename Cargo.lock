@@ -1740,6 +1740,7 @@ dependencies = [
  "clap",
  "novovm-governance-observability",
  "novovm-node",
+ "rocksdb",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

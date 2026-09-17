@@ -11,3 +11,6 @@ serde_json = "1"
 thiserror = "1"
 novovm-governance-observability = { path = "../novovm-governance-observability" }
 novovm-node = { path = "../novovm-node" }
+
+[dev-dependencies]
+rocksdb = { version = "0.22", default-features = false }

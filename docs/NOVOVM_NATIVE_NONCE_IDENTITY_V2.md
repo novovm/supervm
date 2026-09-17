@@ -121,8 +121,13 @@ import_performed = false
 
 Signature and receipt-metadata checks do not verify the Host business results,
 block ordering/finality, QC, or the provenance of a caller-supplied snapshot.
-The operator must establish those facts independently. The API adds no CLI,
+The operator must establish those facts independently. The pure API adds no
 RPC, automatic startup migration or online fallback to legacy nonce rules.
+The subsequent [checkpoint bundle slice](NOVOVM_NATIVE_NONCE_CHECKPOINT_BUNDLE_V1.md)
+adds an offline CLI to export exact snapshot and ledger-history inputs and
+verify their commitments against independently supplied checkpoint anchors.
+That CLI does not import or activate the proposed maps and does not itself
+establish execution correctness, source provenance, QC or finality.
 
 ## Verification contract
 
@@ -133,9 +138,12 @@ and set true only after this command succeeds:
 cargo test -p novovm-node --lib native_nonce -- --test-threads=1
 ```
 
-Producer, preflight and node-runtime locksets now require 45 fields in the
-same order. A missing or false nonce-identity field rejects. Older 44-field
-reports must be regenerated, not reused as current evidence.
+The subsequent checkpoint bundle slice adds
+`test_native_nonce_checkpoint_bundle`, which requires the offline CLI tests.
+Producer, preflight and node-runtime locksets now require 46 fields in the
+same order. A missing or false nonce-identity or checkpoint-bundle field
+rejects. Older 44-field or 45-field reports must be regenerated, not reused
+as current evidence.
 
 Required cases include same-key address/text aliases sharing one nonce,
 distinct signer/chain separation, signature/subject forgery rejection,

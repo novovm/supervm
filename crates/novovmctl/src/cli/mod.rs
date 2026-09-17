@@ -3,6 +3,7 @@ pub mod evm_block_access_list;
 pub mod evm_block_access_list_scan;
 pub mod governance_stats;
 pub mod lifecycle;
+pub mod native_nonce_migration;
 pub mod rollout;
 pub mod rollout_control;
 pub mod up;
@@ -14,6 +15,7 @@ pub use evm_block_access_list::EvmBlockAccessListArgs;
 pub use evm_block_access_list_scan::EvmBlockAccessListScanArgs;
 pub use governance_stats::GovernanceStatsArgs;
 pub use lifecycle::LifecycleArgs;
+pub use native_nonce_migration::NativeNonceMigrationArgs;
 pub use rollout::RolloutArgs;
 pub use rollout_control::RolloutControlArgs;
 pub use up::UpArgs;
@@ -32,6 +34,7 @@ pub enum TopCommand {
     EvmBlockAccessList(EvmBlockAccessListArgs),
     EvmBlockAccessListScan(EvmBlockAccessListScanArgs),
     GovernanceStats(GovernanceStatsArgs),
+    NativeNonceMigration(NativeNonceMigrationArgs),
     RolloutControl(RolloutControlArgs),
     Rollout(RolloutArgs),
     Lifecycle(LifecycleArgs),

@@ -140,13 +140,15 @@ only after the command succeeds. This filter covers input persistence/recovery
 and the `candidate_workspace_execution` tests for isolated execution. The
 execution extension reuses this required field. The subsequent
 [nonce-identity slice](NOVOVM_NATIVE_NONCE_IDENTITY_V2.md) adds a separate
-`test_native_nonce_identity_v2` field.
+`test_native_nonce_identity_v2` field. The later
+[offline checkpoint bundle](NOVOVM_NATIVE_NONCE_CHECKPOINT_BUNDLE_V1.md) adds
+`test_native_nonce_checkpoint_bundle` without enabling migration or promotion.
 
-The serializer, preflight and node-runtime locksets now contain 45 required
-fields in the same order. The frozen contract includes rejection when either
-the workspace or nonce-identity evidence field is missing or false. Older
-43-field or 44-field reports must be regenerated rather than reused as current
-evidence.
+The serializer, preflight and node-runtime locksets now contain 46 required
+fields in the same order. The frozen contract includes rejection when the
+workspace, nonce-identity or checkpoint-bundle evidence field is missing or
+false. Older reports with fewer required fields must be regenerated rather
+than reused as current evidence.
 
 Local targeted tests and the canonical gate must be run against the actual
 checkout and available AOEM runtime before recording a pass. This document is
