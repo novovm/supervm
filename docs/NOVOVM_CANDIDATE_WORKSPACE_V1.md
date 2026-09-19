@@ -151,9 +151,11 @@ from source canonicality, AOEM publication and activation.
 
 The subsequent [source prepare-QC slice](NOVOVM_NATIVE_NONCE_SOURCE_QC_V1.md)
 adds `test_native_nonce_source_qc`, still without source finality.
-The serializer, preflight and node-runtime locksets now contain 49 required
+The later [native seal new-view slice](NOVOVM_NATIVE_SEAL_NEW_VIEW_V1.md)
+adds `test_native_seal_new_view`, without unlocking candidate height locks.
+The serializer, preflight and node-runtime locksets now contain 50 required
 fields in the same order. The frozen contract includes rejection when the
-workspace, nonce-identity, checkpoint, staging, authorization or source-QC evidence field
+workspace, nonce-identity, checkpoint, staging, authorization, source-QC or new-view evidence field
 is missing or false. Older reports with fewer required fields must be
 regenerated rather than reused as current evidence.
 

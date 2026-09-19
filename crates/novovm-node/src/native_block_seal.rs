@@ -10,6 +10,9 @@
 #[path = "native_block_seal_timeout.rs"]
 pub mod timeout;
 
+#[path = "native_block_seal_newview.rs"]
+pub mod newview;
+
 #[cfg(test)]
 #[path = "native_nonce_source_qc_fixture.rs"]
 mod source_qc_tests;
@@ -2887,6 +2890,10 @@ fn competing_qc_evidence_key_v1(
 
 #[cfg(test)]
 mod tests {
+    mod native_block_seal_newview {
+        include!("native_block_seal_newview_tests.rs");
+    }
+
     use super::*;
     use crate::native_block_ledger::{
         NovNativeBlockCandidateInputV1, NovNativeBlockCommitInputV1, NovNativePreparedAoemParentV1,

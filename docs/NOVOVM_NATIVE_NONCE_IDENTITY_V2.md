@@ -148,9 +148,11 @@ The subsequent [upgrade authorization slice](NOVOVM_NATIVE_NONCE_UPGRADE_AUTHORI
 adds `test_native_nonce_upgrade_authorization`, without importing or activating
 the proposed state. The later [source prepare-QC slice](NOVOVM_NATIVE_NONCE_SOURCE_QC_V1.md)
 adds `test_native_nonce_source_qc`, without proving execution or finality.
-Producer, preflight and node-runtime locksets now require 49 fields in the same
+The later [native seal new-view slice](NOVOVM_NATIVE_SEAL_NEW_VIEW_V1.md)
+adds `test_native_seal_new_view`, without candidate unlock or finality.
+Producer, preflight and node-runtime locksets now require 50 fields in the same
 order. A missing or false nonce-identity, checkpoint, staging, authorization
-or source-QC field rejects. Older reports must be regenerated,
+or source-QC/new-view field rejects. Older reports must be regenerated,
 not reused as current evidence.
 
 Required cases include same-key address/text aliases sharing one nonce,

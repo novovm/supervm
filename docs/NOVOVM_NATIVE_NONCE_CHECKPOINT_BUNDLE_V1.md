@@ -178,9 +178,11 @@ This slice introduced the 46-field lockset. The subsequent
 [upgrade authorization slice](NOVOVM_NATIVE_NONCE_UPGRADE_AUTHORIZATION_V1.md)
 adds `test_native_nonce_upgrade_authorization`; the subsequent
 [source prepare-QC slice](NOVOVM_NATIVE_NONCE_SOURCE_QC_V1.md) adds
-`test_native_nonce_source_qc`. Producer, preflight and node-runtime locksets
-now contain 49 required fields in the same order.
-Missing or false bundle, staging, authorization or source-QC evidence rejects; older
+`test_native_nonce_source_qc`. The later
+[native seal new-view slice](NOVOVM_NATIVE_SEAL_NEW_VIEW_V1.md) adds
+`test_native_seal_new_view`; producer, preflight and node-runtime locksets
+now contain 50 required fields in the same order.
+Missing or false bundle, staging, authorization, source-QC or new-view evidence rejects; older
 reports must be regenerated rather than accepted as current sign-off.
 
 Required negative cases cover tampered/truncated/oversized framing, missing or

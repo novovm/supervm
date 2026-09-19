@@ -42,9 +42,9 @@ pub const NOV_NATIVE_SEAL_OVERLAY_MAX_DIRECT_VALIDATORS_V1: usize = 64;
 pub const NOV_NATIVE_SEAL_OVERLAY_MAX_SLOT_OBJECTS_V1: usize = 4;
 pub const NOV_NATIVE_SEAL_OVERLAY_MAX_HEIGHT_BEHIND_V1: u64 = 128;
 pub const NOV_NATIVE_SEAL_OVERLAY_MAX_HEIGHT_AHEAD_V1: u64 = 2;
-/// Slice 2B1 has no durable pacemaker or timeout certificate. Accepting a
-/// future round would let an otherwise valid leader pre-lock a height, so the
-/// network ingress is deliberately restricted to round zero.
+/// Local timeout/new-view evidence is not yet a network-admitted safe-proposal
+/// protocol. Accepting a future round would let an otherwise valid leader
+/// pre-lock a height, so network ingress remains restricted to round zero.
 pub const NOV_NATIVE_SEAL_OVERLAY_MAX_ROUND_V1: u64 = 0;
 
 const WIRE_MAGIC_V1: &[u8; 8] = b"NOVSLW01";
@@ -182,8 +182,17 @@ impl NovNativeSealEpochAuthorityV1 {
     }
 
     pub fn expected_leader(&self, height: u64, round: u64) -> Result<[u8; 32]> {
+        if round > NOV_NATIVE_SEAL_OVERLAY_MAX_ROUND_V1 {
+            bail!("NOV native seal leader request is outside the authority domain");
+        }
+        self.scheduled_leader_v1(height, round)
+    }
+
+    /// Pure schedule calculation for offline evidence validation. This does not
+    /// relax the round-zero network admission rule enforced by expected_leader.
+    pub(crate) fn scheduled_leader_v1(&self, height: u64, round: u64) -> Result<[u8; 32]> {
         self.validate()?;
-        if height < self.activation_height || round > NOV_NATIVE_SEAL_OVERLAY_MAX_ROUND_V1 {
+        if height < self.activation_height {
             bail!("NOV native seal leader request is outside the authority domain");
         }
         let offset = height

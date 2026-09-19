@@ -273,10 +273,23 @@ impl NovNativeBlockSealStoreV1 {
             height: subject.height,
             round: subject.round,
         };
-        self.ensure_tracked_round_v1(&context, set)?;
-        if let Some(previous) = load_watermark(self, subject.chain_id, subject.epoch, signer, set)?
+        self.ensure_timeout_signer_active_v1(&context, signer, set)
+    }
+
+    pub(super) fn ensure_timeout_signer_active_v1(
+        &self,
+        context: &NovNativeSealTimeoutContextV1,
+        signer: [u8; 32],
+        set: &NovNativeSealValidatorSetV1,
+    ) -> Result<()> {
+        context.validate(set)?;
+        self.ensure_tracked_round_v1(context, set)?;
+        if let Some(previous) = load_watermark(self, context.chain_id, context.epoch, signer, set)?
         {
-            if (subject.height, subject.round) <= (previous.context.height, previous.context.round)
+            if previous.context.genesis_block_hash != context.genesis_block_hash
+                || previous.context.protocol_config_commitment != context.protocol_config_commitment
+                || (context.height, context.round)
+                    <= (previous.context.height, previous.context.round)
             {
                 bail!("native seal signer has already timed out this height/round");
             }

@@ -119,9 +119,11 @@ cargo test -p novovm-node --lib native_nonce_source_qc -- --test-threads=1
 cargo test -p novovmctl native_nonce_source_qc -- --test-threads=1
 ```
 
-Producer, preflight and node-runtime contracts require 49 fields in the same
-frozen order. A missing or false source-QC field rejects. Earlier 48-field
-gate artifacts must be regenerated, not relabeled.
+This slice introduced 49 required fields. The subsequent
+[native seal new-view slice](NOVOVM_NATIVE_SEAL_NEW_VIEW_V1.md) adds
+`test_native_seal_new_view`; producer, preflight and node-runtime contracts
+now require 50 fields in the same frozen order. Missing or false source-QC
+or new-view fields reject. Older gate artifacts must be regenerated, not relabeled.
 
 Required tests cover a complete equal-weight 3-of-4 source history, weighted
 quorum accounting, insufficient/duplicate/unknown voters, bad signatures,

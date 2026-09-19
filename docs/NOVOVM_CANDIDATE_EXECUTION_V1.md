@@ -183,7 +183,9 @@ no additional field. The subsequent nonce-identity slice adds the required
 later [upgrade authorization slice](NOVOVM_NATIVE_NONCE_UPGRADE_AUTHORIZATION_V1.md)
 adds `test_native_nonce_upgrade_authorization`. The subsequent
 [source prepare-QC slice](NOVOVM_NATIVE_NONCE_SOURCE_QC_V1.md) adds
-`test_native_nonce_source_qc`, making the current contract 49 fields.
+`test_native_nonce_source_qc`, extending the contract to 49 fields. The later
+[native seal new-view slice](NOVOVM_NATIVE_SEAL_NEW_VIEW_V1.md) adds
+`test_native_seal_new_view`, making the current contract 50 fields.
 Source prepare votes do not establish execution or finality.
 Bundle verification, staged upgrade artifacts and separate
 validator consent certificates do not activate legacy-state migration or
