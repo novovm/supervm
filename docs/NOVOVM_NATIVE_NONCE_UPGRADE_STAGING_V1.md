@@ -147,9 +147,11 @@ cargo test -p novovmctl native_nonce_upgrade -- --test-threads=1
 
 This slice introduced the 47-field lockset. The subsequent
 [upgrade authorization slice](NOVOVM_NATIVE_NONCE_UPGRADE_AUTHORIZATION_V1.md)
-adds `test_native_nonce_upgrade_authorization`; producer, preflight and
-node-runtime locksets now require 48 fields in the same order. Missing or
-false staging or authorization evidence rejects. Older reports must be
+adds `test_native_nonce_upgrade_authorization`; the subsequent
+[source prepare-QC slice](NOVOVM_NATIVE_NONCE_SOURCE_QC_V1.md) adds
+`test_native_nonce_source_qc`. Producer, preflight and node-runtime locksets
+now require 49 fields in the same order. Missing or false staging,
+authorization or source-QC evidence rejects. Older reports must be
 regenerated, not relabeled as current evidence.
 
 Required cases include deterministic exact-four-field transformation,

@@ -176,7 +176,7 @@ fn append_frame(output: &mut BoundedBytes, payload: &[u8]) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn encode_bundle(
+pub(crate) fn encode_bundle(
     snapshot: &[u8],
     head: &NovNativeBlockLedgerHeadV1,
     blocks: &[NovNativeDurableBlockV1],
@@ -317,6 +317,29 @@ pub(super) fn verified_nonce_checkpoint_inputs_v1<'a>(
     NonceMigrationCheckpointReportV1,
     [u8; 32],
 )> {
+    let verified = verified_nonce_checkpoint_history_v1(bytes, checkpoint)?;
+    let genesis = verified
+        .blocks
+        .first()
+        .context("verified checkpoint has no genesis")?
+        .header
+        .block_hash;
+    Ok((verified.snapshot, verified.head, verified.report, genesis))
+}
+
+/// Complete verified history retained for offline source-certificate matching.
+/// None of these fields grants signing, execution, or finality authority.
+pub(super) struct VerifiedNonceCheckpointHistoryV1<'a> {
+    pub(super) snapshot: &'a [u8],
+    pub(super) head: NovNativeBlockLedgerHeadV1,
+    pub(super) report: NonceMigrationCheckpointReportV1,
+    pub(super) blocks: Vec<crate::native_block_ledger::NovNativeDurableBlockV1>,
+}
+
+pub(super) fn verified_nonce_checkpoint_history_v1<'a>(
+    bytes: &'a [u8],
+    checkpoint: &NonceMigrationCheckpointV1,
+) -> Result<VerifiedNonceCheckpointHistoryV1<'a>> {
     if bytes.len() > MAX_CHECKPOINT_BUNDLE_BYTES_V1 || !bytes.starts_with(MAGIC_V1) {
         bail!("invalid or oversized native nonce checkpoint bundle");
     }
@@ -353,12 +376,12 @@ pub(super) fn verified_nonce_checkpoint_inputs_v1<'a>(
         bail!("checkpoint bundle has trailing bytes");
     }
     let report = verify_nonce_checkpoint_v1(snapshot, &head, &blocks, checkpoint)?;
-    let genesis = blocks
-        .first()
-        .context("verified checkpoint has no genesis")?
-        .header
-        .block_hash;
-    Ok((snapshot, head, report, genesis))
+    Ok(VerifiedNonceCheckpointHistoryV1 {
+        snapshot,
+        head,
+        report,
+        blocks,
+    })
 }
 
 #[cfg(test)]

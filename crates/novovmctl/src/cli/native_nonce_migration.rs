@@ -27,6 +27,8 @@ pub enum NativeNonceMigrationCommand {
     InspectUpgrade(NativeNonceUpgradeArgs),
     /// Verify a separately supplied upgrade certificate without signing or publishing state.
     VerifyUpgradeAuthorization(NativeNonceUpgradeAuthorizationArgs),
+    /// Verify source prepare-QC coverage without claiming finality or replaying execution.
+    VerifySourceQc(NativeNonceSourceQcArgs),
 }
 
 #[derive(Debug, Args)]
@@ -104,6 +106,20 @@ pub struct NativeNonceUpgradeAuthorizationArgs {
     pub expected_authority_commitment: String,
     #[arg(long, value_name = "FILE")]
     pub certificate: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct NativeNonceSourceQcArgs {
+    #[command(flatten)]
+    pub evidence: NativeNonceVerifyArgs,
+    /// Existing old-chain authority document, not newly granted authority.
+    #[arg(long, value_name = "FILE")]
+    pub authority: PathBuf,
+    /// Old-chain authority commitment obtained independently of these documents.
+    #[arg(long, value_name = "LOWERCASE_HEX_32")]
+    pub expected_authority_commitment: String,
+    #[arg(long, value_name = "FILE")]
+    pub source_qc: PathBuf,
 }
 
 #[cfg(test)]
@@ -245,6 +261,58 @@ mod tests {
             let mut unsupported = args.clone();
             unsupported.push(forbidden.into());
             assert!(Cli::try_parse_from(&unsupported).is_err());
+        }
+    }
+
+    #[test]
+    fn native_nonce_source_qc_parser_requires_old_chain_pins_without_upgrade_authority() {
+        let mut args = vec![
+            "novovmctl".into(),
+            "native-nonce-migration".into(),
+            "verify-source-qc".into(),
+            "--bundle".into(),
+            "checkpoint.bin".into(),
+            "--bundle-digest".into(),
+            "34".repeat(32),
+            "--authority".into(),
+            "authority.json".into(),
+            "--expected-authority-commitment".into(),
+            "56".repeat(32),
+            "--source-qc".into(),
+            "source-qc.json".into(),
+        ];
+        args.extend(checkpoint_flags());
+        let cli = Cli::try_parse_from(&args).unwrap();
+        assert!(matches!(
+            cli.command,
+            TopCommand::NativeNonceMigration(NativeNonceMigrationArgs {
+                command: NativeNonceMigrationCommand::VerifySourceQc(_)
+            })
+        ));
+        for offset in (3..args.len()).step_by(2) {
+            let mut missing = args.clone();
+            missing.drain(offset..offset + 2);
+            assert!(
+                Cli::try_parse_from(&missing).is_err(),
+                "required {}",
+                args[offset]
+            );
+        }
+        for forbidden in [
+            "--target-protocol-commitment",
+            "--certificate",
+            "--workspace",
+            "--private-key",
+            "--sign",
+            "--activate",
+            "--force",
+        ] {
+            let mut unsupported = args.clone();
+            unsupported.extend([forbidden.into(), "forbidden".into()]);
+            assert!(Cli::try_parse_from(&unsupported).is_err());
+        }
+        for command in ["export-source-qc", "sign-source-qc", "import-source-qc"] {
+            assert!(Cli::try_parse_from(["novovmctl", "native-nonce-migration", command]).is_err());
         }
     }
 }

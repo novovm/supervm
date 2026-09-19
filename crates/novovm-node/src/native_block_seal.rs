@@ -10,6 +10,10 @@
 #[path = "native_block_seal_timeout.rs"]
 pub mod timeout;
 
+#[cfg(test)]
+#[path = "native_nonce_source_qc_fixture.rs"]
+mod source_qc_tests;
+
 use crate::native_block_ledger::{
     NovNativeBlockCandidateRecordV1, NovNativeBlockLedgerV1, NovNativeDurableBlockV1,
 };
@@ -865,8 +869,7 @@ impl NovNativeBlockSealStoreV1 {
             .block_hash;
         let justify_qc_hash = justify_qc_hash.unwrap_or([0u8; 32]);
         self.validate_justify_qc_v1(&record, validator_set, justify_qc_hash)?;
-        subject_from_candidate_v1(
-            &record,
+        subject_from_block_v1(
             &block,
             validator_set,
             round,
@@ -2008,8 +2011,10 @@ impl NovNativeBlockSealStoreV1 {
     }
 }
 
-fn subject_from_candidate_v1(
-    record: &NovNativeBlockCandidateRecordV1,
+/// Reconstruct only the signed commitment from a validated block. This pure
+/// helper does not grant local AOEM ownership, signing eligibility or finality;
+/// the live signer still requires its independently loaded eligible record.
+pub(crate) fn subject_from_block_v1(
     block: &NovNativeDurableBlockV1,
     validator_set: &NovNativeSealValidatorSetV1,
     round: u64,
@@ -2017,6 +2022,8 @@ fn subject_from_candidate_v1(
     genesis_block_hash: [u8; 32],
     protocol_config_commitment: [u8; 32],
 ) -> Result<NovNativeSealSubjectV1> {
+    crate::native_block_ledger::validate_durable_block_v1(block)?;
+    let record = &block.header;
     validator_set.validate()?;
     if record.chain_id != validator_set.chain_id || record.height < validator_set.activation_height
     {

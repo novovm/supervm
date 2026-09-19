@@ -87,7 +87,9 @@ extended it to 46 with `test_native_nonce_checkpoint_bundle`. The later
 [upgrade staging slice](NOVOVM_NATIVE_NONCE_UPGRADE_STAGING_V1.md) extended
 it to 47 with `test_native_nonce_upgrade_staging`. The subsequent
 [upgrade authorization slice](NOVOVM_NATIVE_NONCE_UPGRADE_AUTHORIZATION_V1.md)
-extends it to 48 with `test_native_nonce_upgrade_authorization`. Serializer,
+extended it to 48 with `test_native_nonce_upgrade_authorization`. The later
+[source prepare-QC slice](NOVOVM_NATIVE_NONCE_SOURCE_QC_V1.md) extends it to 49
+with `test_native_nonce_source_qc`, without source finality. Serializer,
 preflight and node-runtime locksets remain synchronized; older reports must be
 regenerated, not reused as current evidence. Offline bundle checks and
 staged upgrade artifacts and separate validator consent certificates do not

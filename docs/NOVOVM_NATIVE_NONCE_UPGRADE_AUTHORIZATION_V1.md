@@ -130,9 +130,12 @@ cargo test -p novovm-node --lib native_nonce_upgrade_authorization -- --test-thr
 cargo test -p novovmctl native_nonce_upgrade_authorization -- --test-threads=1
 ```
 
-Producer, preflight and node-runtime locksets now require 48 fields in the
-same order. The frozen contract rejects a missing or false authorization
-field. Older 47-field evidence must be regenerated, not relabeled.
+This slice introduced 48 required fields. The subsequent
+[source prepare-QC slice](NOVOVM_NATIVE_NONCE_SOURCE_QC_V1.md) adds
+`test_native_nonce_source_qc`; producer, preflight and node-runtime locksets
+now require 49 fields in the same order. The frozen contract rejects missing
+or false authorization/source-QC fields. Older evidence must be regenerated,
+not relabeled. Source prepare-QC acceptance is still not finality or execution proof.
 
 Required cases include independently pinned authority validation, exact
 subject reconstruction, equal and unequal weighted thresholds, duplicate and

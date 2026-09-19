@@ -24,6 +24,9 @@ pub mod native_nonce_upgrade_authorization;
 #[path = "native_nonce_upgrade_vote_store.rs"]
 pub mod native_nonce_upgrade_vote_store;
 
+#[path = "native_nonce_source_qc.rs"]
+pub mod native_nonce_source_qc;
+
 use crate::clearing_router::{NovClearingRouterImplV1, NovClearingRouterV1};
 use crate::clearing_types::{
     NovClearingFailureCodeV1, NovClearingRouteQuoteV1, NovExecutionFeeRequestV1,

@@ -10,6 +10,9 @@ use novovm_node::tx_ingress::native_nonce_bundle::{
     verify_nonce_checkpoint_bundle_v1, MAX_CHECKPOINT_BUNDLE_BYTES_V1,
 };
 use novovm_node::tx_ingress::native_nonce_checkpoint::NonceMigrationCheckpointV1;
+use novovm_node::tx_ingress::native_nonce_source_qc::{
+    verify_nonce_source_qc_json_v1, NonceSourceQcInputsV1, MAX_NONCE_SOURCE_QC_BYTES_V1,
+};
 use novovm_node::tx_ingress::native_nonce_upgrade_authorization::{
     verify_nonce_upgrade_authorization_json_v1, NonceUpgradeAuthorizationInputsV1,
 };
@@ -20,7 +23,8 @@ use serde_json::{json, Value};
 
 use crate::cli::native_nonce_migration::{
     NativeNonceCheckpointArgs, NativeNonceMigrationArgs, NativeNonceMigrationCommand,
-    NativeNonceUpgradeArgs, NativeNonceUpgradeAuthorizationArgs, NativeNonceVerifyArgs,
+    NativeNonceSourceQcArgs, NativeNonceUpgradeArgs, NativeNonceUpgradeAuthorizationArgs,
+    NativeNonceVerifyArgs,
 };
 use crate::error::CtlError;
 use crate::output;
@@ -112,7 +116,38 @@ fn inner_run(args: &NativeNonceMigrationArgs) -> Result<Value, CtlError> {
         NativeNonceMigrationCommand::VerifyUpgradeAuthorization(args) => {
             run_upgrade_authorization_v1(args)
         }
+        NativeNonceMigrationCommand::VerifySourceQc(args) => run_source_qc_v1(args),
     }
+}
+
+fn run_source_qc_v1(args: &NativeNonceSourceQcArgs) -> Result<Value, CtlError> {
+    // Source evidence is interpreted under independently pinned old rules. The
+    // current V2 environment is neither required nor authority to approve it.
+    let bytes = read_pinned_bundle_v1(&args.evidence)?;
+    let authority_bytes = read_bounded_document_v1(
+        &args.authority,
+        MAX_AUTHORITY_JSON_BYTES_V1,
+        "source epoch authority",
+    )?;
+    let authority = decode_authority_v1(&authority_bytes)?;
+    let source_qc = read_bounded_document_v1(
+        &args.source_qc,
+        MAX_NONCE_SOURCE_QC_BYTES_V1,
+        "source prepare-QC evidence",
+    )?;
+    let pinned = checkpoint(&args.evidence.checkpoint);
+    let inputs = NonceSourceQcInputsV1 {
+        bundle: &bytes,
+        bundle_digest: &args.evidence.bundle_digest,
+        checkpoint: &pinned,
+        authority: &authority,
+        expected_authority_commitment: &args.expected_authority_commitment,
+    };
+    let report = verify_nonce_source_qc_json_v1(&source_qc, &inputs).map_err(|error| {
+        CtlError::IntegrationFailed(format!("offline source prepare-QC verification: {error:#}"))
+    })?;
+    Ok(json!({"action": "verify-source-qc", "report": report,
+        "activation_ready": false, "import_performed": false}))
 }
 
 fn current_target_protocol_v1() -> Result<String, CtlError> {
@@ -610,5 +645,26 @@ mod tests {
             );
             assert_eq!(fs::read(path).unwrap(), b"{}");
         }
+    }
+
+    #[test]
+    fn native_nonce_source_qc_document_is_regular_nonempty_and_bounded() {
+        let root = fixture();
+        let maximum = MAX_NONCE_SOURCE_QC_BYTES_V1;
+        assert_eq!(maximum, 64 * 1024 * 1024);
+        assert!(read_bounded_document_v1(&root, maximum, "source QC").is_err());
+        let path = root.join("source-qc.json");
+        assert!(read_bounded_document_v1(&path, maximum, "source QC").is_err());
+        let file = File::create(&path).unwrap();
+        assert!(read_bounded_document_v1(&path, maximum, "source QC").is_err());
+        file.set_len(maximum as u64 + 1).unwrap();
+        assert!(read_bounded_document_v1(&path, maximum, "source QC").is_err());
+        drop(file);
+        fs::write(&path, b"{}").unwrap();
+        assert_eq!(
+            read_bounded_document_v1(&path, maximum, "source QC").unwrap(),
+            b"{}"
+        );
+        assert_eq!(fs::read(path).unwrap(), b"{}");
     }
 }

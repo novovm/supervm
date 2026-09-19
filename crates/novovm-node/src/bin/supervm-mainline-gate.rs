@@ -56,6 +56,7 @@ struct MainlineGate {
     test_native_nonce_checkpoint_bundle: bool,
     test_native_nonce_upgrade_staging: bool,
     test_native_nonce_upgrade_authorization: bool,
+    test_native_nonce_source_qc: bool,
     test_product_mainline_overlay_lifecycle: bool,
     test_authenticated_seal_ingress_quarantine: bool,
     test_queue_replay_smoke: bool,
@@ -200,6 +201,7 @@ fn main() -> Result<()> {
         test_native_nonce_checkpoint_bundle: false,
         test_native_nonce_upgrade_staging: false,
         test_native_nonce_upgrade_authorization: false,
+        test_native_nonce_source_qc: false,
         test_product_mainline_overlay_lifecycle: false,
         test_authenticated_seal_ingress_quarantine: false,
         test_queue_replay_smoke: false,
@@ -358,6 +360,33 @@ fn main() -> Result<()> {
         ],
     )?;
     gate.test_native_nonce_upgrade_authorization = true;
+
+    run_step(
+        "test native nonce source prepare-QC history verification",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-node",
+            "--lib",
+            "native_nonce_source_qc",
+            "--",
+            "--test-threads=1",
+        ],
+    )?;
+    run_step(
+        "test native nonce source prepare-QC read-only CLI",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovmctl",
+            "native_nonce_source_qc",
+            "--",
+            "--test-threads=1",
+        ],
+    )?;
+    gate.test_native_nonce_source_qc = true;
 
     run_step(
         "test scheduler_gate_matrix",
