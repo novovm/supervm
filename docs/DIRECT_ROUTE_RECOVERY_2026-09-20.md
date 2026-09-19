@@ -54,3 +54,29 @@ ObservedEndpoint 与 NAT punch 请求现在只接受来自预期 SocketAddr、�
 
 本次不实现持续直连 RTT/吞吐监测，不变更共识；手机接入和公网验证尚未完成。
 验证：cargo test -p novovm-network --lib product_nat -- --test-threads=2，4 项通过，含真实 loopback UDP 探测及错误来源、坏包、nonce、超时恢复回归。
+
+## 持续直连探测运行入口
+
+现有 novovm-product-nat 增加 mode: nat_punch_monitor。复用签名 punch 协议及已绑定目标身份，不改线协议。每秒最多发起一次探测，无补发突发；run_for_ms 必须显式设置为 1..120000，最多保留 120 条样本。timeout_ms 沿用配置，最后一次探测受剩余总预算限制。
+
+第一次有效应答即可建议直连；已验证路径连续 3 次失败后建议中继（无候选则队列），恢复需要连续 2 次有效应答，夹杂失败会重新计数。记录单调经过时间、成功探测耗时、平滑值、失败次数和 suggested_path；失败不伪造耗时，退出直连时清除旧平滑值。
+
+示例配置（真实目标地址和可信 peer ID 由运行者提供）：
+
+```json
+{
+  "mode": "nat_punch_monitor",
+  "bind_addr": "0.0.0.0:0",
+  "identity_key_path": "node-identity.hex",
+  "peer_addr": "127.0.0.1:41001",
+  "expected_peer_id": "REPLACE_WITH_TRUSTED_TARGET_PEER_ID",
+  "timeout_ms": 1000,
+  "relay_candidate_available": true,
+  "run_for_ms": 30000
+}
+```
+
+运行：novovm-product-nat <nat-config.json>；目标使用既有 nat_punch_target 模式。relay_candidate_available 只是调用方声明，不代表程序已验证备用中继。
+
+这是持续运行的诊断入口，不是手机数据通道的自动切换。探测耗时包含签名与调度，不等于纯网络 RTT；当前不基于慢应答主动切路，也不能区分人为节流与拥塞。后续应在独占探测 socket 与真实业务通道之间明确质量绑定，避免把可达性样本当作业务吞吐证据。
+验证：cargo test -p novovm-node --lib product_nat_runtime -- --test-threads=2，3 项通过，包括防抖状态转换、真实 UDP 连续签名探测、配置边界与 socket 超时恢复。未做手机或公网验收。

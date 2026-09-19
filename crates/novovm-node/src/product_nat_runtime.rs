@@ -4,14 +4,14 @@ use anyhow::{bail, Context, Result};
 use ed25519_dalek::SigningKey;
 use novovm_network::{
     attempt_signed_nat_punch_v1, request_observed_endpoint_v1, serve_nat_punch_once_v1,
-    serve_observed_endpoint_once_v1, NatPunchAttemptV1,
+    serve_observed_endpoint_once_v1, NatPunchAttemptV1, NatSelectedPathV1,
 };
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
     net::{SocketAddr, UdpSocket},
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -21,6 +21,7 @@ pub enum ProductNatRuntimeModeV1 {
     NatPunchTarget,
     ObservedEndpointProbe,
     NatPunchProbe,
+    NatPunchMonitor,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -50,12 +51,121 @@ pub struct ProductNatRuntimeReportV1 {
     pub bind_addr: String,
     pub observed_endpoint: Option<String>,
     pub punch_attempt: Option<NatPunchAttemptV1>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub quality_samples: Vec<ProductNatQualitySampleV1>,
     pub network_only: bool,
     pub payload_treated_opaque: bool,
     pub apfl_interpreted: bool,
     pub aoem_called: bool,
     pub ledger_semantics: bool,
     pub novorudp_wire_changed: bool,
+}
+
+/// Local diagnostic samples, not a command to migrate application traffic.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProductNatQualitySampleV1 {
+    pub elapsed_ms: u64,
+    pub probe_response_ms: Option<u64>,
+    pub smoothed_response_ms: Option<u64>,
+    pub consecutive_failures: u32,
+    pub suggested_path: NatSelectedPathV1,
+}
+
+#[derive(Default)]
+struct DirectProbeHealthV1 {
+    direct: bool,
+    ever_direct: bool,
+    successes: u32,
+    failures: u32,
+    smoothed_ms: Option<u64>,
+}
+impl DirectProbeHealthV1 {
+    fn observe(
+        &mut self,
+        valid: bool,
+        elapsed: Duration,
+        relay_available: bool,
+    ) -> NatSelectedPathV1 {
+        if valid {
+            self.failures = 0;
+            self.successes = self.successes.saturating_add(1);
+            let sample = elapsed.as_millis().min(u64::MAX as u128) as u64;
+            self.smoothed_ms = Some(match self.smoothed_ms {
+                Some(previous) => ((u128::from(previous) * 7 + u128::from(sample)) / 8) as u64,
+                None => sample,
+            });
+            if !self.ever_direct || self.successes >= 2 {
+                self.direct = true;
+                self.ever_direct = true;
+            }
+        } else {
+            self.successes = 0;
+            self.failures = self.failures.saturating_add(1);
+            if self.failures >= 3 {
+                self.direct = false;
+                self.smoothed_ms = None;
+            }
+        }
+        if self.direct {
+            NatSelectedPathV1::PunchedDirect
+        } else if relay_available {
+            NatSelectedPathV1::RelayNovoRudp
+        } else {
+            NatSelectedPathV1::QueueFallback
+        }
+    }
+}
+
+fn monitor_direct_v1(
+    socket: &UdpSocket,
+    identity: &SigningKey,
+    config: &ProductNatRuntimeConfigV1,
+) -> Result<Vec<ProductNatQualitySampleV1>> {
+    let run_ms = config
+        .run_for_ms
+        .context("nat_punch_monitor requires run_for_ms")?;
+    if !(1..=120_000).contains(&run_ms) {
+        bail!("nat_punch_monitor run_for_ms must be 1..120000");
+    }
+    let address = parse_required_peer_addr_v1(config)?;
+    let peer = required_expected_peer_id_v1(config)?;
+    let start = Instant::now();
+    let budget = Duration::from_millis(run_ms);
+    let mut health = DirectProbeHealthV1::default();
+    let mut samples = Vec::new();
+    while start.elapsed() < budget && samples.len() < 120 {
+        let probe_started = Instant::now();
+        let timeout =
+            Duration::from_millis(config.timeout_ms).min(budget.saturating_sub(start.elapsed()));
+        if timeout.is_zero() {
+            break;
+        }
+        let attempt = attempt_signed_nat_punch_v1(
+            socket,
+            address,
+            identity,
+            peer,
+            timeout,
+            config.relay_candidate_available,
+        );
+        let elapsed = probe_started.elapsed();
+        let path = health.observe(attempt.ack_valid, elapsed, config.relay_candidate_available);
+        samples.push(ProductNatQualitySampleV1 {
+            elapsed_ms: start.elapsed().as_millis() as u64,
+            probe_response_ms: attempt.ack_valid.then_some(elapsed.as_millis() as u64),
+            smoothed_response_ms: health.smoothed_ms,
+            consecutive_failures: health.failures,
+            suggested_path: path,
+        });
+        // At most one probe per second, no catch-up burst after a slow probe.
+        let pause = Duration::from_secs(1)
+            .saturating_sub(probe_started.elapsed())
+            .min(budget.saturating_sub(start.elapsed()));
+        if !pause.is_zero() {
+            std::thread::sleep(pause);
+        }
+    }
+    Ok(samples)
 }
 
 pub fn load_product_nat_runtime_config_v1(
@@ -116,6 +226,12 @@ pub fn run_product_nat_runtime_v1(
                 Some(ack.observed_endpoint),
                 None,
             )
+        }
+        ProductNatRuntimeModeV1::NatPunchMonitor => {
+            let samples = monitor_direct_v1(&socket, &identity, &config)?;
+            let mut report = base_report_v1("nat_punch_monitor", bind_addr, None, None);
+            report.quality_samples = samples;
+            report
         }
         ProductNatRuntimeModeV1::NatPunchProbe => {
             let peer_addr = parse_required_peer_addr_v1(&config)?;
@@ -178,6 +294,7 @@ fn base_report_v1(
         bind_addr,
         observed_endpoint,
         punch_attempt,
+        quality_samples: Vec::new(),
         network_only: true,
         payload_treated_opaque: true,
         apfl_interpreted: false,
@@ -240,6 +357,90 @@ fn now_ms_v1() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_probe_hysteresis_requires_failures_and_recovery_streaks() {
+        let mut health = DirectProbeHealthV1::default();
+        let dt = Duration::from_millis(50);
+        assert_eq!(
+            health.observe(true, dt, true),
+            NatSelectedPathV1::PunchedDirect
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                health.observe(false, dt, true),
+                NatSelectedPathV1::PunchedDirect
+            );
+        }
+        assert_eq!(
+            health.observe(false, dt, true),
+            NatSelectedPathV1::RelayNovoRudp
+        );
+        assert_eq!(health.smoothed_ms, None);
+        assert_eq!(
+            health.observe(true, dt, true),
+            NatSelectedPathV1::RelayNovoRudp
+        );
+        assert_eq!(
+            health.observe(false, dt, true),
+            NatSelectedPathV1::RelayNovoRudp
+        );
+        assert_eq!(
+            health.observe(true, dt, true),
+            NatSelectedPathV1::RelayNovoRudp
+        );
+        assert_eq!(
+            health.observe(true, dt, true),
+            NatSelectedPathV1::PunchedDirect
+        );
+        let mut unknown = DirectProbeHealthV1::default();
+        assert_eq!(
+            unknown.observe(false, dt, false),
+            NatSelectedPathV1::QueueFallback
+        );
+    }
+
+    #[test]
+    fn direct_monitor_collects_authenticated_udp_samples() {
+        let target_key = SigningKey::from_bytes(&[217; 32]);
+        let peer = novovm_network::peer_id_from_ed25519_public_key_v1(
+            &target_key.verifying_key().to_bytes(),
+        );
+        let target = UdpSocket::bind("127.0.0.1:0").unwrap();
+        target
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let address = target.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                serve_nat_punch_once_v1(&target, &target_key, 5000).unwrap();
+            }
+        });
+        let config = ProductNatRuntimeConfigV1 {
+            mode: ProductNatRuntimeModeV1::NatPunchMonitor,
+            bind_addr: "127.0.0.1:0".into(),
+            identity_key_path: "unused".into(),
+            peer_addr: Some(address.to_string()),
+            expected_peer_id: Some(peer),
+            timeout_ms: 500,
+            relay_candidate_available: true,
+            report_path: None,
+            run_for_ms: Some(1500),
+        };
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let samples =
+            monitor_direct_v1(&socket, &SigningKey::from_bytes(&[218; 32]), &config).unwrap();
+        server.join().unwrap();
+        assert_eq!(samples.len(), 2);
+        assert!(samples.iter().all(|s| s.probe_response_ms.is_some()
+            && s.suggested_path == NatSelectedPathV1::PunchedDirect));
+        assert_eq!(socket.read_timeout().unwrap(), None);
+        let invalid = ProductNatRuntimeConfigV1 {
+            run_for_ms: None,
+            ..config
+        };
+        assert!(monitor_direct_v1(&socket, &SigningKey::from_bytes(&[218; 32]), &invalid).is_err());
+    }
 
     #[test]
     fn probe_modes_require_a_peer_and_expected_identity() {
