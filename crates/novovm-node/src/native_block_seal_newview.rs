@@ -11,8 +11,11 @@ use super::*;
 use crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[path = "native_block_seal_newview_admission.rs"]
+mod admission;
 #[path = "native_block_seal_newview_store.rs"]
 mod store;
+pub use admission::NovNativeSealNewViewAdmissionV1;
 
 pub(super) const OBSERVATION_SCHEMA_V1: &str = "novovm-native-seal-new-view-observation/v1";
 pub(super) const CERTIFICATE_SCHEMA_V1: &str = "novovm-native-seal-new-view-certificate/v1";

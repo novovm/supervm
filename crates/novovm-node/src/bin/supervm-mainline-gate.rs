@@ -58,6 +58,7 @@ struct MainlineGate {
     test_native_nonce_upgrade_authorization: bool,
     test_native_nonce_source_qc: bool,
     test_native_seal_new_view: bool,
+    test_native_seal_new_view_admission: bool,
     test_product_mainline_overlay_lifecycle: bool,
     test_authenticated_seal_ingress_quarantine: bool,
     test_queue_replay_smoke: bool,
@@ -204,6 +205,7 @@ fn main() -> Result<()> {
         test_native_nonce_upgrade_authorization: false,
         test_native_nonce_source_qc: false,
         test_native_seal_new_view: false,
+        test_native_seal_new_view_admission: false,
         test_product_mainline_overlay_lifecycle: false,
         test_authenticated_seal_ingress_quarantine: false,
         test_queue_replay_smoke: false,
@@ -404,6 +406,21 @@ fn main() -> Result<()> {
         ],
     )?;
     gate.test_native_seal_new_view = true;
+
+    run_step(
+        "test native new-view candidate admission and mandatory signing guards",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-node",
+            "--lib",
+            "native_seal_new_view_admission",
+            "--",
+            "--test-threads=1",
+        ],
+    )?;
+    gate.test_native_seal_new_view_admission = true;
 
     run_step(
         "test scheduler_gate_matrix",

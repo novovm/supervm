@@ -882,9 +882,10 @@ impl NovNativeBlockSealStoreV1 {
         )
     }
 
-    /// Persist-before-emit proposal signing. The returned proposal is safe to
-    /// hand to the network only because its immutable object, local safety
-    /// locks, and outbox record were synchronously committed and read back.
+    /// Persist-before-emit proposal signing. The immutable object, local safety
+    /// locks and outbox are synchronously committed and read back. Nonzero rounds
+    /// also require candidate-bound new-view admission; this does not relax the
+    /// separate round-zero-only Overlay transport contract.
     pub fn sign_local_proposal(
         &self,
         ledger: &NovNativeBlockLedgerV1,
@@ -909,6 +910,7 @@ impl NovNativeBlockSealStoreV1 {
         self.ensure_schema_v1()?;
         self.ensure_store_binding_v1(&expected_binding)?;
 
+        self.ensure_active_new_view_admission_v1(ledger, &subject, proposer_id, validator_set)?;
         self.ensure_not_timed_out_v1(&subject, proposer_id, validator_set)?;
         let proposal_lock_key = proposal_lock_key_v1(&subject, proposer_id);
         if let Some(lock) = read_json_v1::<NovNativeSealProposalLockV1>(
@@ -1027,6 +1029,12 @@ impl NovNativeBlockSealStoreV1 {
         self.ensure_schema_v1()?;
         self.ensure_store_binding_v1(&expected_binding)?;
 
+        self.ensure_active_new_view_admission_v1(
+            ledger,
+            &proposal.subject,
+            proposal.proposer_id,
+            validator_set,
+        )?;
         self.ensure_not_timed_out_v1(&proposal.subject, validator_id, validator_set)?;
         let vote_lock_key = vote_lock_key_v1(&proposal.subject, validator_id);
         if let Some(lock) = read_json_v1::<NovNativeSealVoteLockV1>(
@@ -1152,6 +1160,7 @@ impl NovNativeBlockSealStoreV1 {
         let _guard = self.lock_writes_v1()?;
         self.ensure_schema_v1()?;
         self.ensure_store_binding_v1(&expected_binding)?;
+        self.ensure_new_view_admission_v1(&proposal.subject, proposal.proposer_id, validator_set)?;
         if let Some(existing) = self.load_proposal(proposal.proposal_hash)? {
             if existing != *proposal {
                 bail!("NOV native remote proposal hash collision or conflicting object");
@@ -1210,6 +1219,7 @@ impl NovNativeBlockSealStoreV1 {
         let _guard = self.lock_writes_v1()?;
         self.ensure_schema_v1()?;
         self.ensure_store_binding_v1(&expected_binding)?;
+        self.ensure_new_view_admission_v1(&qc.subject, proposal.proposer_id, validator_set)?;
         if let Some(existing) = self.load_qc(qc.qc_hash)? {
             if existing != *qc {
                 bail!("NOV native seal QC hash collision or conflicting object");
@@ -1832,6 +1842,7 @@ impl NovNativeBlockSealStoreV1 {
                 let proposal = self
                     .load_proposal(entry.object_hash)?
                     .context("NOV native seal outbox points to a missing proposal")?;
+                self.validate_new_view_outbox_proposal_v1(&proposal)?;
                 if proposal.subject_hash != entry.subject_hash
                     || proposal.subject.chain_id != entry.chain_id
                     || proposal.subject.epoch != entry.epoch
@@ -1860,6 +1871,7 @@ impl NovNativeBlockSealStoreV1 {
                 let proposal = self
                     .load_proposal(vote.proposal_hash)?
                     .context("NOV native seal vote outbox is missing its proposal")?;
+                self.validate_new_view_outbox_proposal_v1(&proposal)?;
                 if vote.subject_hash != entry.subject_hash
                     || vote.chain_id != entry.chain_id
                     || vote.epoch != entry.epoch
@@ -1885,6 +1897,19 @@ impl NovNativeBlockSealStoreV1 {
             _ => bail!("NOV native seal outbox object kind is unsupported"),
         }
         Ok(())
+    }
+
+    fn validate_new_view_outbox_proposal_v1(
+        &self,
+        proposal: &NovNativeSealProposalV1,
+    ) -> Result<()> {
+        if proposal.subject.round == 0 {
+            return Ok(());
+        }
+        let set = self
+            .load_validator_set(proposal.subject.chain_id, proposal.subject.epoch)?
+            .context("NOV native new-view outbox requires a durable validator set")?;
+        self.ensure_new_view_admission_v1(&proposal.subject, proposal.proposer_id, &set)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2892,6 +2917,7 @@ fn competing_qc_evidence_key_v1(
 mod tests {
     mod native_block_seal_newview {
         include!("native_block_seal_newview_tests.rs");
+        include!("native_block_seal_newview_admission_tests.rs");
     }
 
     use super::*;
@@ -3462,6 +3488,8 @@ mod tests {
     fn safety_lock_allows_same_candidate_new_round_and_rejects_competing_candidate() {
         let chain_id = 81_005;
         let (mut node, block, keys, set) = genesis_fixture_v1("safety-lock", chain_id);
+        let authority = native_block_seal_newview::authority_v1(&node, &set);
+        let next_leader = native_block_seal_newview::leader_key_v1(&authority, 1, 2, &keys);
         let first = node
             .store()
             .sign_local_proposal(
@@ -3473,23 +3501,14 @@ mod tests {
                     justify_qc_hash: None,
                 },
                 &set,
-                &keys[0],
+                next_leader,
             )
             .expect("sign first round");
-        let second = node
-            .store()
-            .sign_local_proposal(
-                node.ledger(),
-                &NovNativeSealLocalProposalRequestV1 {
-                    chain_id,
-                    block_hash: block.header.block_hash,
-                    round: 2,
-                    justify_qc_hash: None,
-                },
-                &set,
-                &keys[0],
-            )
-            .expect("sign next round for same candidate");
+        native_block_seal_newview::advance_v1(&node, &authority, &keys, 0);
+        native_block_seal_newview::advance_v1(&node, &authority, &keys, 1);
+        let second = native_block_seal_newview::local_qc_v1(&node, &block, &authority, &keys, 2)
+            .0
+            .proposal;
         assert_ne!(first.subject_hash, second.subject_hash);
         assert_eq!(first.subject.block_hash, second.subject.block_hash);
 
@@ -4007,9 +4026,14 @@ mod tests {
             .sign_local_proposal(node.ledger(), &request, &set, &keys[3])
             .is_err());
         request.round = 1;
-        node.store()
-            .sign_local_proposal(node.ledger(), &request, &set, &keys[3])
-            .unwrap();
+        assert!(
+            node.store()
+                .sign_local_proposal(node.ledger(), &request, &set, &keys[3])
+                .is_err(),
+            "TC advancement alone cannot authorize a proposal"
+        );
+        let authority = native_block_seal_newview::authority_v1(&node, &set);
+        native_block_seal_newview::local_qc_v1(&node, &block, &authority, &keys, 1);
         let readonly = NovNativeBlockSealStoreV1::open_existing_read_only(node.store().path())
             .unwrap()
             .unwrap();

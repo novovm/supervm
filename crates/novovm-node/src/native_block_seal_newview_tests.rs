@@ -12,7 +12,7 @@ use crate::native_block_seal_overlay::{
     NOV_NATIVE_SEAL_OVERLAY_MAX_ROUND_V1,
 };
 
-fn authority_v1(
+pub(super) fn authority_v1(
     node: &TestNodeV1,
     set: &NovNativeSealValidatorSetV1,
 ) -> NovNativeSealEpochAuthorityV1 {
@@ -35,7 +35,7 @@ fn authority_v1(
     .unwrap()
 }
 
-fn leader_key_v1<'a>(
+pub(super) fn leader_key_v1<'a>(
     authority: &NovNativeSealEpochAuthorityV1,
     height: u64,
     round: u64,
@@ -49,13 +49,41 @@ fn leader_key_v1<'a>(
         .unwrap()
 }
 
-fn local_qc_v1(
+pub(super) fn local_qc_v1(
     node: &TestNodeV1,
     block: &NovNativeDurableBlockV1,
     authority: &NovNativeSealEpochAuthorityV1,
     keys: &[SigningKey],
     round: u64,
 ) -> (NovNativeSealNewViewQcV1, Vec<NovNativeSealVoteV1>) {
+    if round > 0 {
+        let state = node
+            .store()
+            .load_round_tracking(node.ledger(), &authority.validator_set, block.header.height)
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.current.round, round);
+        let observations = observations_v1(node, authority, &keys[..3], round);
+        let certificate = certificate_v1(
+            authority,
+            state.current,
+            state.previous_timeout.unwrap(),
+            observations,
+        );
+        node.store()
+            .admit_local_new_view_candidate(
+                node.ledger(),
+                authority,
+                &certificate,
+                &NovNativeSealLocalProposalRequestV1 {
+                    chain_id: authority.chain_id,
+                    block_hash: block.header.block_hash,
+                    round,
+                    justify_qc_hash: None,
+                },
+            )
+            .unwrap();
+    }
     let proposal = node
         .store()
         .sign_local_proposal(
@@ -87,7 +115,7 @@ fn local_qc_v1(
     (NovNativeSealNewViewQcV1 { proposal, qc }, votes)
 }
 
-fn advance_v1(
+pub(super) fn advance_v1(
     node: &TestNodeV1,
     authority: &NovNativeSealEpochAuthorityV1,
     keys: &[SigningKey],
@@ -557,12 +585,17 @@ fn native_seal_new_view_valid_signatures_cannot_authorize_wrong_leader_or_future
     future.qc.verify(&set).unwrap();
     let observation = raw_observation_v1(&expected, &authority, Some(future.clone()), &keys[0]);
     assert!(observation.verify(&expected, &authority).is_err());
-    node.store()
+    assert!(node
+        .store()
         .persist_locally_matched_remote_proposal(node.ledger(), &future.proposal, &set)
-        .unwrap();
-    node.store()
+        .is_err());
+    assert!(node
+        .store()
         .persist_local_verified_qc(node.ledger(), &future.qc, &set)
-        .unwrap();
+        .is_err());
+    // Production ingress now rejects this future-round object before writing.
+    // Raw test corruption retains coverage of the independent inventory fence.
+    inject_test_qc_v1(&node, &future);
     // A known future QC cannot be silently omitted to issue an empty report.
     assert!(node
         .store()

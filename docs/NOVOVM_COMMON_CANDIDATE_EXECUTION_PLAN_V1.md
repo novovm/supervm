@@ -91,8 +91,10 @@ extended it to 48 with `test_native_nonce_upgrade_authorization`. The later
 [source prepare-QC slice](NOVOVM_NATIVE_NONCE_SOURCE_QC_V1.md) extends it to 49
 with `test_native_nonce_source_qc`, without source finality. The later
 [native seal new-view slice](NOVOVM_NATIVE_SEAL_NEW_VIEW_V1.md) extends it to 50
-with `test_native_seal_new_view`, without unlocking candidates. Serializer,
-preflight and node-runtime locksets remain synchronized; older reports must be
+with `test_native_seal_new_view`, without unlocking candidates. The subsequent
+[new-view candidate admission slice](NOVOVM_NATIVE_SEAL_NEW_VIEW_ADMISSION_V1.md)
+extends the current contract to 51 with `test_native_seal_new_view_admission`.
+Serializer, preflight and node-runtime locksets remain synchronized; older reports must be
 regenerated, not reused as current evidence. Offline bundle checks and
 staged upgrade artifacts and separate validator consent certificates do not
 activate migration or promote candidate execution results.
