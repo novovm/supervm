@@ -45,3 +45,28 @@ The 6,296,112-byte Linux executable also passed bounded TLS startup/shutdown on
 the deployment host, including the sample queue/connection limits. Those smoke
 runs used loopback and test-only credentials and have exited. No permanent
 public relay, firewall opening or mobile public route is claimed by these tests.
+
+The standalone service was subsequently installed as an enabled systemd unit
+on the deployment host, still bound exclusively to `127.0.0.1:45172`. It uses
+a persistent Ed25519 identity and root-private credential files. The existing
+application and commerce services were not restarted by this installation.
+
+Five native-client integration cases passed against this Linux service over
+an SSH tunnel with certificate and peer-identity verification: candidate
+failover/rebinding, lost final receipt over relay and LAN, interrupted LAN
+falling back to relay, and interrupted LAN through the application's actual
+file downloader. Each file case verified all 262,161 bytes. Interrupted cases
+completed in about 15 seconds; this does not establish acceptable mobile
+handoff latency or cross-carrier reachability.
+
+The first run loaded a stale host DLL and failed handshake freshness checks.
+Rebuilding the client's reviewed source revision fixed the failure without
+changing protocol validation. Local-clock-only tests had not exposed the stale
+artifact. Public ingress and device cross-network acceptance remain pending.
+
+`config/relay/nginx-location.conf` is a prepared exact-path WebSocket proxy for
+an existing operator-managed TLS server. It keeps the relay private, verifies
+the upstream localhost certificate, disables access logging for the endpoint,
+and retains the relay's signed-node handshake. Its isolated Nginx configuration
+check passed on the deployment host. The snippet is staged but not included in
+the live server; enabling public access still requires the operator's decision.
