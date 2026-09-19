@@ -195,6 +195,7 @@ impl NovNativeBlockSealStoreV1 {
         let _guard = self.lock_writes_v1()?;
         self.ensure_schema_v1()?;
         self.ensure_store_binding_v1(&binding)?;
+        self.ensure_tracked_round_v1(&context, set)?;
         let base = prefix(set.chain_id, set.epoch, signer);
         let vote_key = format!("{base}vote/{height}/{round}");
         let previous = load_watermark(self, set.chain_id, set.epoch, signer, set)?;
@@ -263,6 +264,16 @@ impl NovNativeBlockSealStoreV1 {
         signer: [u8; 32],
         set: &NovNativeSealValidatorSetV1,
     ) -> Result<()> {
+        let context = NovNativeSealTimeoutContextV1 {
+            chain_id: subject.chain_id,
+            genesis_block_hash: subject.genesis_block_hash,
+            protocol_config_commitment: subject.protocol_config_commitment,
+            epoch: subject.epoch,
+            validator_set_hash: subject.validator_set_hash,
+            height: subject.height,
+            round: subject.round,
+        };
+        self.ensure_tracked_round_v1(&context, set)?;
         if let Some(previous) = load_watermark(self, subject.chain_id, subject.epoch, signer, set)?
         {
             if (subject.height, subject.round) <= (previous.context.height, previous.context.round)
@@ -271,5 +282,240 @@ impl NovNativeBlockSealStoreV1 {
             }
         }
         Ok(())
+    }
+}
+
+const ROUND_STATE_SCHEMA: &str = "novovm-native-seal-round-state/v1";
+
+/// Durable local round, not a canonical chain head or an unlock certificate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NovNativeSealRoundStateV1 {
+    pub schema: String,
+    pub current: NovNativeSealTimeoutContextV1,
+    pub previous_timeout: Option<NovNativeSealTimeoutCertificateV1>,
+}
+
+fn round_key(chain: u64, epoch: u64, height: u64) -> String {
+    format!("native_block_seal/v1/round-state/{chain}/{epoch}/{height}")
+}
+
+fn local_context(
+    ledger: &NovNativeBlockLedgerV1,
+    set: &NovNativeSealValidatorSetV1,
+    height: u64,
+) -> Result<NovNativeSealTimeoutContextV1> {
+    let binding = store_binding_v1(ledger, set.chain_id)?;
+    let context = NovNativeSealTimeoutContextV1 {
+        chain_id: set.chain_id,
+        genesis_block_hash: binding.genesis_block_hash,
+        protocol_config_commitment: binding.protocol_config_commitment,
+        epoch: set.epoch,
+        validator_set_hash: set.validator_set_hash,
+        height,
+        round: 0,
+    };
+    context.validate(set)?;
+    let head = ledger
+        .load_head(set.chain_id)?
+        .context("round state requires local head")?;
+    if height > head.height.saturating_add(1) {
+        bail!("round height too far ahead");
+    }
+    Ok(context)
+}
+
+impl NovNativeBlockSealStoreV1 {
+    fn read_round_state_v1(
+        &self,
+        expected: &NovNativeSealTimeoutContextV1,
+        set: &NovNativeSealValidatorSetV1,
+    ) -> Result<Option<NovNativeSealRoundStateV1>> {
+        expected.validate(set)?;
+        let state = read_json_v1::<NovNativeSealRoundStateV1>(
+            &self.db,
+            round_key(expected.chain_id, expected.epoch, expected.height).as_bytes(),
+            "round state",
+        )?;
+        if let Some(state) = &state {
+            state.current.validate(set)?;
+            let mut pinned = expected.clone();
+            pinned.round = state.current.round;
+            if state.schema != ROUND_STATE_SCHEMA || state.current != pinned {
+                bail!("round state domain mismatch");
+            }
+            match &state.previous_timeout {
+                None if state.current.round == 0 => (),
+                Some(tc) if state.current.round > 0 => {
+                    pinned.round -= 1;
+                    tc.verify(&pinned, set)?;
+                }
+                _ => bail!("round state lacks the preceding timeout certificate"),
+            }
+        }
+        Ok(state)
+    }
+
+    /// Explicit opt-in for a local scheduler. Never resets existing round state.
+    pub fn start_round_tracking(
+        &self,
+        ledger: &NovNativeBlockLedgerV1,
+        set: &NovNativeSealValidatorSetV1,
+        height: u64,
+    ) -> Result<NovNativeSealRoundStateV1> {
+        let context = local_context(ledger, set, height)?;
+        let binding = store_binding_v1(ledger, set.chain_id)?;
+        let _guard = self.lock_writes_v1()?;
+        self.ensure_schema_v1()?;
+        self.ensure_store_binding_v1(&binding)?;
+        if let Some(state) = self.read_round_state_v1(&context, set)? {
+            return Ok(state);
+        }
+        let state = NovNativeSealRoundStateV1 {
+            schema: ROUND_STATE_SCHEMA.into(),
+            current: context,
+            previous_timeout: None,
+        };
+        let mut batch = RocksDbWriteBatch::default();
+        self.stage_binding_and_validator_set_v1(&mut batch, &binding, set)?;
+        put_json_v1(
+            &mut batch,
+            round_key(set.chain_id, set.epoch, height).as_bytes(),
+            &state,
+            "round state",
+        )?;
+        write_sync_v1(&self.db, batch)?;
+        let stored = self.read_round_state_v1(&state.current, set)?;
+        if stored.as_ref() != Some(&state) {
+            bail!("round initialization readback mismatch");
+        }
+        Ok(state)
+    }
+
+    pub fn load_round_tracking(
+        &self,
+        ledger: &NovNativeBlockLedgerV1,
+        set: &NovNativeSealValidatorSetV1,
+        height: u64,
+    ) -> Result<Option<NovNativeSealRoundStateV1>> {
+        let context = local_context(ledger, set, height)?;
+        self.ensure_schema_v1()?;
+        self.ensure_store_binding_v1(&store_binding_v1(ledger, set.chain_id)?)?;
+        self.read_round_state_v1(&context, set)
+    }
+
+    /// Only sequential timeout certificates advance this local tracker. Keeps
+    /// every existing candidate height lock; it never chooses a safe proposal.
+    pub fn advance_round_tracking(
+        &self,
+        ledger: &NovNativeBlockLedgerV1,
+        set: &NovNativeSealValidatorSetV1,
+        tc: &NovNativeSealTimeoutCertificateV1,
+    ) -> Result<NovNativeSealRoundStateV1> {
+        let mut expected = local_context(ledger, set, tc.context.height)?;
+        expected.round = tc.context.round;
+        tc.verify(&expected, set)?;
+        let _guard = self.lock_writes_v1()?;
+        self.ensure_schema_v1()?;
+        self.ensure_store_binding_v1(&store_binding_v1(ledger, set.chain_id)?)?;
+        self.ensure_registered_validator_set_v1(set)?;
+        let mut state = self
+            .read_round_state_v1(&expected, set)?
+            .context("round tracking not initialized")?;
+        if tc.context.round < state.current.round {
+            return Ok(state);
+        }
+        if tc.context.round != state.current.round {
+            bail!("timeout certificate skips a local round");
+        }
+        let next = state
+            .current
+            .round
+            .checked_add(1)
+            .context("round overflow")?;
+        if next == u64::MAX {
+            bail!("round limit reached");
+        }
+        state.current.round = next;
+        state.previous_timeout = Some(tc.clone());
+        let mut batch = RocksDbWriteBatch::default();
+        put_json_v1(
+            &mut batch,
+            round_key(set.chain_id, set.epoch, state.current.height).as_bytes(),
+            &state,
+            "round state",
+        )?;
+        write_sync_v1(&self.db, batch)?;
+        if self.read_round_state_v1(&expected, set)?.as_ref() != Some(&state) {
+            bail!("round advance readback mismatch");
+        }
+        Ok(state)
+    }
+
+    fn ensure_tracked_round_v1(
+        &self,
+        context: &NovNativeSealTimeoutContextV1,
+        set: &NovNativeSealValidatorSetV1,
+    ) -> Result<()> {
+        if let Some(state) = self.read_round_state_v1(context, set)? {
+            if state.current.round != context.round {
+                bail!("signature does not match durable active round");
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Process-local monotonic timer. On restart, construct from the loaded durable
+/// state and wait a fresh interval; wall-clock changes never expire it early.
+/// An owner polls this timer and sends the returned persisted vote. No network
+/// callback or remote timeout is allowed to manufacture local elapsed time.
+pub struct NovNativeSealRoundTimerV1 {
+    context: NovNativeSealTimeoutContextV1,
+    started: std::time::Instant,
+    interval: std::time::Duration,
+}
+impl NovNativeSealRoundTimerV1 {
+    pub fn new(
+        state: &NovNativeSealRoundStateV1,
+        now: std::time::Instant,
+        interval: std::time::Duration,
+    ) -> Result<Self> {
+        if interval.is_zero() || interval > std::time::Duration::from_secs(300) {
+            bail!("round timer interval must be positive and at most 300 seconds");
+        }
+        Ok(Self {
+            context: state.current.clone(),
+            started: now,
+            interval,
+        })
+    }
+    pub fn poll(
+        &self,
+        now: std::time::Instant,
+        store: &NovNativeBlockSealStoreV1,
+        ledger: &NovNativeBlockLedgerV1,
+        set: &NovNativeSealValidatorSetV1,
+        key: &SigningKey,
+    ) -> Result<Option<NovNativeSealTimeoutVoteV1>> {
+        let state = store
+            .load_round_tracking(ledger, set, self.context.height)?
+            .context("round timer has no durable state")?;
+        if state.current != self.context {
+            return Ok(None);
+        }
+        if now
+            .checked_duration_since(self.started)
+            .is_none_or(|d| d < self.interval)
+        {
+            return Ok(None);
+        }
+        Ok(Some(store.sign_local_timeout(
+            ledger,
+            set,
+            self.context.height,
+            self.context.round,
+            key,
+        )?))
     }
 }

@@ -3909,4 +3909,205 @@ mod tests {
             .collect();
         assert!(cert.verify(&expected, &set).is_err());
     }
+
+    #[test]
+    fn tracked_rounds_require_sequential_quorum_and_survive_restart() {
+        use timeout::*;
+        let (mut node, block, keys, set) = genesis_fixture_v1("round-state", 82_005);
+        let initial = node
+            .store()
+            .start_round_tracking(node.ledger(), &set, 1)
+            .unwrap();
+        assert_eq!(initial.current.round, 0);
+        let make_tc = |store: &NovNativeBlockSealStoreV1, round| {
+            let votes: Vec<_> = keys
+                .iter()
+                .take(3)
+                .map(|key| {
+                    store
+                        .sign_local_timeout(node.ledger(), &set, 1, round, key)
+                        .unwrap()
+                })
+                .collect();
+            NovNativeSealTimeoutCertificateV1 {
+                context: votes[0].context.clone(),
+                votes,
+            }
+        };
+        let external = NovNativeBlockSealStoreV1::open(&node.root.join("external-seal")).unwrap();
+        let future_tc = make_tc(&external, 2);
+        assert!(node
+            .store()
+            .advance_round_tracking(node.ledger(), &set, &future_tc)
+            .is_err());
+        let tc = make_tc(node.store(), 0);
+        let mut insufficient = tc.clone();
+        insufficient.votes.pop();
+        assert!(node
+            .store()
+            .advance_round_tracking(node.ledger(), &set, &insufficient)
+            .is_err());
+        assert_eq!(
+            node.store()
+                .load_round_tracking(node.ledger(), &set, 1)
+                .unwrap()
+                .unwrap(),
+            initial
+        );
+        let advanced = node
+            .store()
+            .advance_round_tracking(node.ledger(), &set, &tc)
+            .unwrap();
+        assert_eq!(advanced.current.round, 1);
+        assert_eq!(
+            node.store()
+                .advance_round_tracking(node.ledger(), &set, &tc)
+                .unwrap(),
+            advanced
+        );
+        node.reopen_store();
+        assert_eq!(
+            node.store()
+                .start_round_tracking(node.ledger(), &set, 1)
+                .unwrap(),
+            advanced
+        );
+        // Fourth signer did not issue a timeout: the durable round still fences it.
+        let mut request = NovNativeSealLocalProposalRequestV1 {
+            chain_id: set.chain_id,
+            block_hash: block.header.block_hash,
+            round: 0,
+            justify_qc_hash: None,
+        };
+        assert!(node
+            .store()
+            .sign_local_proposal(node.ledger(), &request, &set, &keys[3])
+            .is_err());
+        assert!(node
+            .store()
+            .sign_local_timeout(node.ledger(), &set, 1, 0, &keys[3])
+            .is_err());
+        request.round = 2;
+        assert!(node
+            .store()
+            .sign_local_proposal(node.ledger(), &request, &set, &keys[3])
+            .is_err());
+        request.round = 1;
+        node.store()
+            .sign_local_proposal(node.ledger(), &request, &set, &keys[3])
+            .unwrap();
+        let readonly = NovNativeBlockSealStoreV1::open_existing_read_only(node.store().path())
+            .unwrap()
+            .unwrap();
+        assert!(readonly
+            .advance_round_tracking(node.ledger(), &set, &tc)
+            .is_err());
+        assert!(
+            !node
+                .ledger()
+                .load_head(set.chain_id)
+                .unwrap()
+                .unwrap()
+                .finalized
+        );
+    }
+
+    #[test]
+    fn round_timer_uses_monotonic_deadline_and_drops_stale_rounds() {
+        use std::time::{Duration, Instant};
+        use timeout::*;
+        let (node, _, keys, set) = genesis_fixture_v1("round-timer", 82_006);
+        let initial = node
+            .store()
+            .start_round_tracking(node.ledger(), &set, 1)
+            .unwrap();
+        let now = Instant::now();
+        assert!(NovNativeSealRoundTimerV1::new(&initial, now, Duration::ZERO).is_err());
+        let timer = NovNativeSealRoundTimerV1::new(&initial, now, Duration::from_secs(2)).unwrap();
+        assert!(timer
+            .poll(
+                now + Duration::from_millis(1999),
+                node.store(),
+                node.ledger(),
+                &set,
+                &keys[0]
+            )
+            .unwrap()
+            .is_none());
+        let first = timer
+            .poll(
+                now + Duration::from_secs(2),
+                node.store(),
+                node.ledger(),
+                &set,
+                &keys[0],
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            timer
+                .poll(
+                    now + Duration::from_secs(3),
+                    node.store(),
+                    node.ledger(),
+                    &set,
+                    &keys[0]
+                )
+                .unwrap(),
+            Some(first.clone())
+        );
+        let mut votes = vec![first.clone()];
+        for key in keys.iter().take(3).skip(1) {
+            votes.push(
+                node.store()
+                    .sign_local_timeout(node.ledger(), &set, 1, 0, key)
+                    .unwrap(),
+            );
+        }
+        let tc = NovNativeSealTimeoutCertificateV1 {
+            context: first.context,
+            votes,
+        };
+        let next = node
+            .store()
+            .advance_round_tracking(node.ledger(), &set, &tc)
+            .unwrap();
+        assert!(timer
+            .poll(
+                now + Duration::from_secs(20),
+                node.store(),
+                node.ledger(),
+                &set,
+                &keys[0]
+            )
+            .unwrap()
+            .is_none());
+        let restarted = NovNativeSealRoundTimerV1::new(
+            &next,
+            now + Duration::from_secs(20),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert!(restarted
+            .poll(
+                now + Duration::from_secs(21),
+                node.store(),
+                node.ledger(),
+                &set,
+                &keys[0]
+            )
+            .unwrap()
+            .is_none());
+        let vote = restarted
+            .poll(
+                now + Duration::from_secs(22),
+                node.store(),
+                node.ledger(),
+                &set,
+                &keys[0],
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(vote.context.round, 1);
+    }
 }
