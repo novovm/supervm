@@ -43,3 +43,14 @@ ProductRelayClientV1 复用现有已认证连接上的 Heartbeat/HeartbeatAck，
 
 V1 应答没有探测 ID，单个待确认请求只适用于现有有序连接；不能据此声称支持无序 UDP 探测、防恶意中继伪报或抗追踪。端到端质量探测、吞吐/丢包采样及手机端接入仍待完成。
 本批验证：product_relay_client::tests 13 项、product_mainline_overlay::tests 23 项通过。较宽的 product_ 筛选共 84 项在长时间无进度时中止，未记为通过。真实中继客户端测试检查应答测量、重复心跳不重置计时、模拟过期后的终止性错误；尚无手机或公网故障注入验收。
+
+## 直连打洞探测接收修复
+
+直连入口目前是 product_nat 的签名探测，product_peer_runtime 仍明确为 relay-first 验证入口；本次没有把它描述成已完成的持续 P2P 数据通道。
+
+ObservedEndpoint 与 NAT punch 请求现在只接受来自预期 SocketAddr、且通过现有签名/身份/nonce 校验的应答。杂包、错误 JSON、旧 nonce 不再立即结束探测，后续合法应答可在原期限内成功。使用单调时钟限制总接收时间，同时最多处理 64 个包，防止输入洪泛无限占用 CPU；因此持续洪泛仍可能导致失败回退，不承诺抗阻断。
+
+保留原有签名和回退策略，不修改线协议。操作退出时恢复调用方原始 socket read timeout。该函数需要独占探测 socket，不能与业务消息接收器并发使用，因为它会消费并丢弃无关数据报。
+
+本次不实现持续直连 RTT/吞吐监测，不变更共识；手机接入和公网验证尚未完成。
+验证：cargo test -p novovm-network --lib product_nat -- --test-threads=2，4 项通过，含真实 loopback UDP 探测及错误来源、坏包、nonce、超时恢复回归。

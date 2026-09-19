@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     io,
     net::{SocketAddr, UdpSocket},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
@@ -184,15 +184,13 @@ pub fn request_observed_endpoint_v1(
         observer_addr,
         &NatDatagramV1::ObservedProbe(probe.clone()),
     )?;
-    socket
-        .set_read_timeout(Some(timeout))
-        .map_err(io_error_v1)?;
-    let (packet, _) = receive_datagram_v1(socket)?;
-    let NatDatagramV1::ObservedAck(ack) = packet else {
-        return Err(ProductNatErrorV1::UnexpectedPacket);
-    };
-    validate_observed_endpoint_ack_v1(&ack, &probe, expected_observer_peer_id, now_ms_v1())?;
-    Ok(ack)
+    receive_expected_ack_v1(socket, observer_addr, timeout, |packet| {
+        let NatDatagramV1::ObservedAck(ack) = packet else {
+            return Err(ProductNatErrorV1::UnexpectedPacket);
+        };
+        validate_observed_endpoint_ack_v1(&ack, &probe, expected_observer_peer_id, now_ms_v1())?;
+        Ok(ack)
+    })
 }
 
 pub fn serve_observed_endpoint_once_v1(
@@ -310,15 +308,13 @@ pub fn attempt_signed_nat_punch_v1(
             target_addr,
             &NatDatagramV1::PunchRequest(request.clone()),
         )?;
-        socket
-            .set_read_timeout(Some(timeout))
-            .map_err(io_error_v1)?;
-        let (packet, _) = receive_datagram_v1(socket)?;
-        let NatDatagramV1::PunchAck(ack) = packet else {
-            return Err(ProductNatErrorV1::UnexpectedPacket);
-        };
-        validate_nat_punch_ack_v1(&ack, &request, expected_target_peer_id, now_ms_v1())?;
-        Ok(ack)
+        receive_expected_ack_v1(socket, target_addr, timeout, |packet| {
+            let NatDatagramV1::PunchAck(ack) = packet else {
+                return Err(ProductNatErrorV1::UnexpectedPacket);
+            };
+            validate_nat_punch_ack_v1(&ack, &request, expected_target_peer_id, now_ms_v1())?;
+            Ok(ack)
+        })
     })();
     match result {
         Ok(_) => NatPunchAttemptV1 {
@@ -485,6 +481,66 @@ fn send_datagram_v1(
     Ok(())
 }
 
+// Dedicated probe socket: unrelated datagrams are discarded, never dispatched.
+// A bounded packet budget and monotonic deadline prevent an attacker extending
+// the operation indefinitely. Restore caller timeout on success and failure.
+fn receive_expected_ack_v1<T>(
+    socket: &UdpSocket,
+    expected_source: SocketAddr,
+    timeout: Duration,
+    mut validate: impl FnMut(NatDatagramV1) -> Result<T, ProductNatErrorV1>,
+) -> Result<T, ProductNatErrorV1> {
+    let previous_timeout = socket.read_timeout().map_err(io_error_v1)?;
+    let started = Instant::now();
+    let result = (|| {
+        let mut last_rejection = None;
+        let mut bytes = [0u8; 16 * 1024];
+        for _ in 0..64 {
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                break;
+            }
+            socket
+                .set_read_timeout(Some(remaining))
+                .map_err(io_error_v1)?;
+            let (length, source) = match socket.recv_from(&mut bytes) {
+                Ok(received) => received,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    break
+                }
+                Err(error) => return Err(io_error_v1(error)),
+            };
+            if started.elapsed() >= timeout {
+                break;
+            }
+            if source != expected_source {
+                continue;
+            }
+            let packet = match serde_json::from_slice(&bytes[..length]) {
+                Ok(packet) => packet,
+                Err(_) => continue,
+            };
+            match validate(packet) {
+                Ok(ack) if started.elapsed() < timeout => return Ok(ack),
+                Ok(_) => break,
+                Err(error) => last_rejection = Some(error),
+            }
+        }
+        Err(last_rejection.unwrap_or_else(|| {
+            ProductNatErrorV1::Io("NAT probe deadline or packet budget exhausted".into())
+        }))
+    })();
+    socket
+        .set_read_timeout(previous_timeout)
+        .map_err(io_error_v1)?;
+    result
+}
+
 fn receive_datagram_v1(
     socket: &UdpSocket,
 ) -> Result<(NatDatagramV1, SocketAddr), ProductNatErrorV1> {
@@ -568,6 +624,78 @@ fn now_ms_v1() -> u64 {
 mod tests {
     use super::*;
     use std::thread;
+
+    #[test]
+    fn signed_punch_ignores_wrong_source_and_stale_nonce_then_accepts_target() {
+        let source = SigningKey::from_bytes(&[211; 32]);
+        let target_key = SigningKey::from_bytes(&[212; 32]);
+        let target_id = peer_id_from_ed25519_public_key_v1(&target_key.verifying_key().to_bytes());
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(7)))
+            .unwrap();
+        let original = socket.read_timeout().unwrap();
+        let target = UdpSocket::bind("127.0.0.1:0").unwrap();
+        target
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let addr = target.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (packet, client) = receive_datagram_v1(&target).unwrap();
+            let NatDatagramV1::PunchRequest(request) = packet else {
+                panic!("expected request")
+            };
+            let ack = handle_nat_punch_request_v1(&target_key, &request, client, now_ms_v1(), 5000)
+                .unwrap();
+            let other = UdpSocket::bind("127.0.0.1:0").unwrap();
+            send_datagram_v1(&other, client, &NatDatagramV1::PunchAck(ack.clone())).unwrap();
+            target.send_to(b"invalid-json", client).unwrap();
+            let mut stale = ack.clone();
+            stale.punch_nonce = [0; 16];
+            send_datagram_v1(&target, client, &NatDatagramV1::PunchAck(stale)).unwrap();
+            send_datagram_v1(&target, client, &NatDatagramV1::PunchAck(ack)).unwrap();
+        });
+        let result = attempt_signed_nat_punch_v1(
+            &socket,
+            addr,
+            &source,
+            &target_id,
+            Duration::from_secs(2),
+            true,
+        );
+        server.join().unwrap();
+        assert!(result.ack_valid);
+        assert_eq!(socket.read_timeout().unwrap(), original);
+    }
+
+    #[test]
+    fn probe_budget_rejects_foreign_packets_and_restores_timeout() {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let target = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let stranger = UdpSocket::bind("127.0.0.1:0").unwrap();
+        for _ in 0..64 {
+            stranger
+                .send_to(b"{}", socket.local_addr().unwrap())
+                .unwrap();
+        }
+        let started = Instant::now();
+        let result: Result<(), _> = receive_expected_ack_v1(
+            &socket,
+            target.local_addr().unwrap(),
+            Duration::from_millis(80),
+            |_| panic!("foreign packet reached validator"),
+        );
+        assert!(result.is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(socket.read_timeout().unwrap(), None);
+        assert!(receive_expected_ack_v1::<()>(
+            &socket,
+            target.local_addr().unwrap(),
+            Duration::ZERO,
+            |_| Ok(())
+        )
+        .is_err());
+    }
 
     #[test]
     fn signed_observed_endpoint_and_cooperative_punch_use_real_udp_sockets() {
