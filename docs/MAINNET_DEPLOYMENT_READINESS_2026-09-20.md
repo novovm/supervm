@@ -29,3 +29,20 @@
 ## 待确认及限制
 
 没有完成完整节点容量压测、候选与共识端到端验收、公网多节点恢复验收。现有机器性能快照只能支持“资源余量偏小”的判断，不能据此推导固定承载人数或主网 TPS。正式采购和创世参数尚未确定。
+
+## 接续核对：原生封印协议的真实进度
+
+进一步检查 native_block_seal.rs 与 native_block_seal_overlay.rs 后，需细化前述“接线待核对”：原生候选已经具备独立签名安全存储、加权 QC、已认证传输身份绑定、远端隔离接收库及本地候选精确重建后的对账，不应表述为只有旧共识模块或需要从零实现。
+
+当前明确剩余边界：
+
+- 自动传播及网络驱动的投票聚合闭环尚不能仅凭隔离接收模块判为完成。
+- 原生封印入口 NOV_NATIVE_SEAL_OVERLAY_MAX_ROUND_V1 固定为 0；代码明确说明该阶段缺少持久化 pacemaker 和 timeout certificate。不能简单放宽轮次上限，否则未来轮次可能提前锁定高度。
+- 原生 QC 持久化不提升候选的 proof_sealed、canonical、safe、finalized；正式晋升规则尚需独立实现与验证。
+- epoch 权威当前固定为初始配置，治理驱动的历史 epoch 激活与验证者轮换尚未接入。
+
+下一开发单元应按依赖推进：持久化轮次/超时证书与重启锁保护 → 认证网络驱动的提案/投票/QC 自动传播 → 明确封印及链选择/最终确认规则 → 多节点故障恢复与容量测试。沿用原生封印域，不直接拿旧 VOTE 签名格式替换原生签名域，不修改 AOEM 业务边界。
+
+本轮实跑 cargo test -p novovm-consensus --lib -- --test-threads=2：83 项通过。该结果仅证明现有共识库回归通过，不是 native_block_seal 集成、多机器网络或主网验收。未部署节点、未生成正式创世密钥、未改动最终确认标志。
+
+参考：docs/NOVOVM_SEAL_CONTRACT_VALIDATOR_SAFETY_V1.md；docs/NOVOVM_AUTHENTICATED_SEAL_INGRESS_QUARANTINE_V1.md。
