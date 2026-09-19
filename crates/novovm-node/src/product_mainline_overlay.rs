@@ -2508,9 +2508,15 @@ fn run_duplex_mesh_session_v1(
         worker.resource_limits.clone(),
     )));
 
-    let mut last_heartbeat_ms = now_ms_v1();
+    let mut last_heartbeat = std::time::Instant::now();
     let mut next_outbound_peer_index = 0usize;
     while !worker.stop.load(Ordering::Acquire) {
+        if product_overlay_heartbeat_due_v1(last_heartbeat, std::time::Instant::now()) {
+            relay
+                .heartbeat()
+                .context("send multi-peer product overlay relay heartbeat")?;
+            last_heartbeat = std::time::Instant::now();
+        }
         drain_mesh_recipient_ack_outbound_v1(worker, pending_acks_by_peer, 256)?;
         drain_mesh_outbound_v1(worker, pending_by_peer, 256)?;
         expire_mesh_pending_v1(worker, pending_by_peer, now_ms_v1())?;
@@ -2670,13 +2676,6 @@ fn run_duplex_mesh_session_v1(
             continue;
         }
 
-        let now_ms = now_ms_v1();
-        if now_ms.saturating_sub(last_heartbeat_ms) >= 2_000 {
-            relay
-                .heartbeat()
-                .context("send multi-peer product overlay relay heartbeat")?;
-            last_heartbeat_ms = now_ms;
-        }
         let Some(event) = recv_relay_event_or_idle_v1(relay)? else {
             continue;
         };
@@ -3404,8 +3403,14 @@ fn run_authenticated_session_v1(
 ) -> Result<()> {
     let source_peer_id = channel.remote_peer_id().to_string();
     let mut frame_sequence = 0u64;
-    let mut last_heartbeat_ms = now_ms_v1();
+    let mut last_heartbeat = std::time::Instant::now();
     while !worker.stop.load(Ordering::Acquire) {
+        if product_overlay_heartbeat_due_v1(last_heartbeat, std::time::Instant::now()) {
+            relay
+                .heartbeat()
+                .context("send product overlay relay heartbeat")?;
+            last_heartbeat = std::time::Instant::now();
+        }
         drain_single_recipient_ack_outbound_v1(worker, pending_acks, 256)?;
         let ack_sent = send_one_single_recipient_ack_v1(
             relay,
@@ -3480,13 +3485,6 @@ fn run_authenticated_session_v1(
             }
         }
         expire_buffered_preauth_v1(&mut buffered_deliveries, now_ms_v1());
-        let now_ms = now_ms_v1();
-        if now_ms.saturating_sub(last_heartbeat_ms) >= 2_000 {
-            relay
-                .heartbeat()
-                .context("send product overlay relay heartbeat")?;
-            last_heartbeat_ms = now_ms;
-        }
         let event = if let Some(delivery) = buffered_deliveries.pop_front() {
             ProductRelayClientEventV1::Delivery(delivery.delivery)
         } else {
@@ -3739,6 +3737,12 @@ fn now_ms_v1() -> u64 {
         .as_millis() as u64
 }
 
+// Local scheduling must not depend on wall-clock adjustments. Check this at
+// the top of each live loop, including iterations that drain buffered payloads.
+fn product_overlay_heartbeat_due_v1(last: std::time::Instant, now: std::time::Instant) -> bool {
+    now.saturating_duration_since(last) >= Duration::from_secs(2)
+}
+
 fn default_connect_timeout_ms_v1() -> u64 {
     5_000
 }
@@ -3949,6 +3953,24 @@ mod tests {
             enqueued_at_ms: 0,
             expires_at_ms: u64::MAX,
         }
+    }
+
+    #[test]
+    fn heartbeat_uses_monotonic_deadline_without_catchup_bursts() {
+        let start = Instant::now();
+        assert!(!product_overlay_heartbeat_due_v1(
+            start,
+            start + Duration::from_millis(1999)
+        ));
+        assert!(product_overlay_heartbeat_due_v1(
+            start,
+            start + Duration::from_secs(2)
+        ));
+        let after_pause = start + Duration::from_secs(60);
+        assert!(product_overlay_heartbeat_due_v1(start, after_pause));
+        // The live loop records actual send time, not the previous deadline.
+        assert!(!product_overlay_heartbeat_due_v1(after_pause, after_pause));
+        assert!(!product_overlay_heartbeat_due_v1(after_pause, start));
     }
 
     #[test]
