@@ -89,6 +89,44 @@ struct ProductRelayPendingEventV1 {
     wire_bytes: usize,
 }
 
+// Heartbeat V1 has no nonce: allow only one outstanding request per ordered,
+// authenticated connection. Never rearm its deadline while waiting for its ack.
+#[derive(Default)]
+struct RelayHeartbeatHealthV1 {
+    sent_at: Option<Instant>,
+    smoothed_response_ms: Option<u64>,
+}
+
+impl RelayHeartbeatHealthV1 {
+    fn check(&self, now: Instant) -> Result<()> {
+        if self
+            .sent_at
+            .is_some_and(|sent| now.saturating_duration_since(sent) >= Duration::from_secs(15))
+        {
+            return Err(
+                absolute_deadline_error_v1("relay heartbeat response deadline exceeded").into(),
+            );
+        }
+        Ok(())
+    }
+
+    fn acknowledge(&mut self, now: Instant) -> Result<()> {
+        self.check(now)?;
+        if let Some(sent) = self.sent_at.take() {
+            let sample = now
+                .saturating_duration_since(sent)
+                .as_millis()
+                .min(u64::MAX as u128) as u64;
+            let sample = sample.max(1);
+            self.smoothed_response_ms = Some(match self.smoothed_response_ms {
+                Some(previous) => ((u128::from(previous) * 7 + u128::from(sample)) / 8) as u64,
+                None => sample,
+            });
+        }
+        Ok(())
+    }
+}
+
 pub struct ProductRelayClientV1 {
     stream: rustls::StreamOwned<rustls::ClientConnection, ProductRelayDeadlineTcpStreamV1>,
     session: ProductRelayClientSessionV1,
@@ -96,6 +134,7 @@ pub struct ProductRelayClientV1 {
     read_buffer_offset: usize,
     pending_events: VecDeque<ProductRelayPendingEventV1>,
     pending_event_bytes: usize,
+    heartbeat_health: RelayHeartbeatHealthV1,
 }
 
 #[derive(Debug)]
@@ -443,6 +482,7 @@ impl ProductRelayClientV1 {
             read_buffer_offset: 0,
             pending_events: VecDeque::new(),
             pending_event_bytes: 0,
+            heartbeat_health: RelayHeartbeatHealthV1::default(),
         })
     }
 
@@ -509,11 +549,25 @@ impl ProductRelayClientV1 {
     }
 
     pub fn heartbeat(&mut self) -> Result<()> {
-        self.write_authenticated_wire_v1(&ProductRelayWireMessageV1::Heartbeat)
-            .map(|_| ())
+        self.stream.sock.check_io_deadlines_v1()?;
+        let now = Instant::now();
+        self.heartbeat_health.check(now)?;
+        if self.heartbeat_health.sent_at.is_some() {
+            return Ok(());
+        }
+        self.write_authenticated_wire_v1(&ProductRelayWireMessageV1::Heartbeat)?;
+        self.heartbeat_health.sent_at = Some(now);
+        Ok(())
+    }
+
+    /// Application heartbeat round-trip, including relay processing and local
+    /// scheduling; not a pure network RTT and not evidence of peer delivery.
+    pub fn smoothed_heartbeat_response_ms(&self) -> Option<u64> {
+        self.heartbeat_health.smoothed_response_ms
     }
 
     pub fn recv_event(&mut self) -> Result<ProductRelayClientEventV1> {
+        self.heartbeat_health.check(Instant::now())?;
         if let Some(event) =
             pop_pending_relay_event_v1(&mut self.pending_events, &mut self.pending_event_bytes)
         {
@@ -641,6 +695,7 @@ impl ProductRelayClientV1 {
     ) -> Result<ProductRelayClientProtocolItemV1> {
         let mut control_frame_count = 0usize;
         loop {
+            self.heartbeat_health.check(Instant::now())?;
             ensure_protocol_item_progress_v1(protocol_item_deadline, control_frame_count)?;
             match read_buffered_frame_v1(
                 &mut self.stream,
@@ -665,6 +720,7 @@ impl ProductRelayClientV1 {
                             })
                         }
                         ProductRelayWireMessageV1::HeartbeatAck => {
+                            self.heartbeat_health.acknowledge(Instant::now())?;
                             Ok(ProductRelayClientProtocolItemV1::Event {
                                 event: Box::new(ProductRelayClientEventV1::HeartbeatAck),
                                 wire_bytes,
@@ -1256,6 +1312,34 @@ mod tests {
         NovoRudpTransportFrameV0,
     };
     use std::{fs, net::TcpListener, thread};
+
+    #[test]
+    fn heartbeat_health_measures_response_and_silence_is_terminal() {
+        let start = Instant::now();
+        let mut health = RelayHeartbeatHealthV1::default();
+        health.acknowledge(start).unwrap();
+        assert_eq!(health.smoothed_response_ms, None);
+        health.sent_at = Some(start);
+        health
+            .acknowledge(start + Duration::from_millis(80))
+            .unwrap();
+        assert_eq!(health.smoothed_response_ms, Some(80));
+        health
+            .acknowledge(start + Duration::from_millis(100))
+            .unwrap();
+        assert_eq!(health.smoothed_response_ms, Some(80));
+        health.sent_at = Some(start + Duration::from_secs(2));
+        health
+            .acknowledge(start + Duration::from_millis(2160))
+            .unwrap();
+        assert_eq!(health.smoothed_response_ms, Some(90));
+        health.sent_at = Some(start + Duration::from_secs(3));
+        assert!(health.check(start + Duration::from_millis(17999)).is_ok());
+        let error = health.check(start + Duration::from_secs(18)).unwrap_err();
+        assert!(!product_relay_client_read_is_idle_timeout_v1(&error));
+        assert!(health.acknowledge(start + Duration::from_secs(18)).is_err());
+        assert!(health.sent_at.is_some());
+    }
 
     #[test]
     fn client_websocket_bounds_writes_and_rejects_masked_server_frames() {
@@ -1941,10 +2025,18 @@ mod tests {
             Err(_) | Ok(ProductRelayClientEventV1::Closed)
         ));
         replacement_a.heartbeat().unwrap();
+        let sent_at = replacement_a.heartbeat_health.sent_at;
+        replacement_a.heartbeat().unwrap();
+        assert_eq!(replacement_a.heartbeat_health.sent_at, sent_at);
         assert_eq!(
             replacement_a.recv_event().unwrap(),
             ProductRelayClientEventV1::HeartbeatAck
         );
+        assert!(replacement_a.smoothed_heartbeat_response_ms().is_some());
+        replacement_a.heartbeat_health.sent_at = Some(Instant::now() - Duration::from_secs(16));
+        let stalled = replacement_a.recv_event().unwrap_err();
+        assert!(!product_relay_client_read_is_idle_timeout_v1(&stalled));
+        assert!(replacement_a.heartbeat().is_err());
         drop(replacement_a);
         drop(client_a);
         drop(client_b);

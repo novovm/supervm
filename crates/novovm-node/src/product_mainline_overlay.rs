@@ -1951,11 +1951,6 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
 
         let session_result = match ProductRelayClientV1::connect(&worker.identity, &relay_config) {
             Ok(mut relay) => {
-                worker.overlay.record_relay_success(
-                    relay.session().relay_peer_id.as_str(),
-                    1,
-                    now_ms_v1(),
-                );
                 let connected_at = std::time::Instant::now();
                 publish_product_mainline_overlay_event_v1(
                     &worker.events,
@@ -1980,6 +1975,15 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
                 if worker.stop.load(Ordering::Acquire) {
                     let _ = relay.close();
                     return Ok(());
+                }
+                // Route feedback uses an observed authenticated heartbeat response,
+                // never the old fabricated 1 ms sample or full handshake duration.
+                if let Some(response_ms) = relay.smoothed_heartbeat_response_ms() {
+                    worker.overlay.record_relay_success(
+                        relay.session().relay_peer_id.as_str(),
+                        response_ms,
+                        now_ms_v1(),
+                    );
                 }
                 let stable_for = connected_at.elapsed();
                 consecutive_failures =
