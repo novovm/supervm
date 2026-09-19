@@ -1489,6 +1489,10 @@ mod tests {
         });
         let identity = SigningKey::from_bytes(&[203; 32]);
         let mut client = ProductRelayClientV1::connect(&identity, &fixture.config).unwrap();
+        // Kernels may round socket timeouts (for example 10ms to 12ms).
+        // Verify restoration to the effective baseline, not the requested duration.
+        let original_read_timeout = client.stream.sock.inner.read_timeout().unwrap();
+        let original_write_timeout = client.stream.sock.inner.write_timeout().unwrap();
         let target = peer_id_from_ed25519_public_key_v1(
             &SigningKey::from_bytes(&[204; 32])
                 .verifying_key()
@@ -1518,11 +1522,11 @@ mod tests {
         assert!(client.stream.sock.frame_deadline.is_none());
         assert_eq!(
             client.stream.sock.inner.read_timeout().unwrap(),
-            client.stream.sock.read_timeout
+            original_read_timeout
         );
         assert_eq!(
             client.stream.sock.inner.write_timeout().unwrap(),
-            client.stream.sock.write_timeout
+            original_write_timeout
         );
         drop(client);
         fixture.finish();
@@ -1534,6 +1538,9 @@ mod tests {
         let mut client =
             ProductRelayClientV1::connect(&SigningKey::from_bytes(&[205; 32]), &fixture.config)
                 .unwrap();
+        // Kernels may round socket timeouts (for example 10ms to 12ms).
+        // Verify restoration to the effective baseline, not the requested duration.
+        let original_read_timeout = client.stream.sock.inner.read_timeout().unwrap();
         let deadline = Instant::now() + Duration::from_millis(80);
         let error = client
             .wait_for_forward_outcome_until_v1("source", "target", None, None, 0, deadline)
@@ -1545,7 +1552,7 @@ mod tests {
         assert!(client.stream.sock.frame_deadline.is_none());
         assert_eq!(
             client.stream.sock.inner.read_timeout().unwrap(),
-            client.stream.sock.read_timeout
+            original_read_timeout
         );
         // Scope cleanup is independent of the caller's decision to close a timed-out
         // in-flight operation; it must not turn later ordinary polls into long waits.

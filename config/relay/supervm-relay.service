@@ -1,0 +1,30 @@
+[Unit]
+Description=SuperVM opaque authenticated relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/supervm/bin/supervm-relay /etc/supervm/relay.json
+Restart=on-failure
+RestartSec=3
+DynamicUser=yes
+StateDirectory=supervm-relay
+StateDirectoryMode=0700
+LoadCredential=tls.cert:/etc/supervm/tls.cert
+LoadCredential=tls.key:/etc/supervm/tls.key
+LoadCredential=identity.hex:/etc/supervm/identity.hex
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+MemoryMax=256M
+TasksMax=128
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

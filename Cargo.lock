@@ -1714,6 +1714,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "novovm-relay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "ed25519-dalek",
+ "novovm-network",
+ "rand 0.8.5",
+ "rcgen",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "serde_json",
+ "sha1",
+ "tokio",
+]
+
+[[package]]
 name = "novovm-rollout-policy"
 version = "0.1.0"
 dependencies = [
