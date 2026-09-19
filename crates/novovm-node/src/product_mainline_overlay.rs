@@ -1956,7 +1956,7 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
                     1,
                     now_ms_v1(),
                 );
-                consecutive_failures = 0;
+                let connected_at = std::time::Instant::now();
                 publish_product_mainline_overlay_event_v1(
                     &worker.events,
                     &worker.stop,
@@ -1981,6 +1981,9 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
                     let _ = relay.close();
                     return Ok(());
                 }
+                let stable_for = connected_at.elapsed();
+                consecutive_failures =
+                    relay_failure_streak_after_session_v1(consecutive_failures, stable_for);
                 let _ = relay.close();
                 result
             }
@@ -2338,8 +2341,9 @@ fn wait_for_reconnect_servicing_pending_v1(
     >,
     delay_ms: u64,
 ) -> Result<()> {
-    let mut remaining = delay_ms;
-    while remaining > 0 && !worker.stop.load(Ordering::Acquire) {
+    let started = std::time::Instant::now();
+    let delay = Duration::from_millis(delay_ms);
+    while started.elapsed() < delay && !worker.stop.load(Ordering::Acquire) {
         service_pending_resources_v1(
             worker,
             pending,
@@ -2348,9 +2352,11 @@ fn wait_for_reconnect_servicing_pending_v1(
             pending_acks_by_peer,
             256,
         )?;
-        let slice = remaining.min(25);
-        thread::sleep(Duration::from_millis(slice));
-        remaining = remaining.saturating_sub(slice);
+        // Servicing queued work is part of the delay, not extra waiting time.
+        let remaining = delay.saturating_sub(started.elapsed());
+        if !remaining.is_zero() && !worker.stop.load(Ordering::Acquire) {
+            thread::sleep(remaining.min(Duration::from_millis(25)));
+        }
     }
     service_pending_resources_v1(
         worker,
@@ -3691,6 +3697,16 @@ fn configured_remote_peers_v1(
     }])
 }
 
+// A short-lived successful connect is still a flapping path. Only a sustained
+// session earns a fresh reconnect budget. This is stability, not RTT evidence.
+fn relay_failure_streak_after_session_v1(failures: u32, uptime: Duration) -> u32 {
+    if uptime >= Duration::from_secs(30) {
+        0
+    } else {
+        failures
+    }
+}
+
 fn reconnect_delay_ms_v1(consecutive_failures: u32, base_delay_ms: u64, max_delay_ms: u64) -> u64 {
     let exponent = consecutive_failures.saturating_sub(1).min(16);
     base_delay_ms
@@ -3953,6 +3969,28 @@ mod tests {
             enqueued_at_ms: 0,
             expires_at_ms: u64::MAX,
         }
+    }
+
+    #[test]
+    fn flapping_relay_sessions_keep_backoff_until_stable() {
+        let mut failures = 0u32;
+        let mut delays = Vec::new();
+        for _ in 0..8 {
+            failures = relay_failure_streak_after_session_v1(failures, Duration::from_millis(100));
+            failures = failures.saturating_add(1);
+            delays.push(reconnect_delay_ms_v1(failures, 1000, 30000));
+        }
+        assert_eq!(
+            delays,
+            vec![1000, 2000, 4000, 8000, 16000, 30000, 30000, 30000]
+        );
+        assert_eq!(
+            relay_failure_streak_after_session_v1(failures, Duration::from_millis(29999)),
+            failures
+        );
+        failures = relay_failure_streak_after_session_v1(failures, Duration::from_secs(30));
+        assert_eq!(reconnect_delay_ms_v1(failures + 1, 1000, 30000), 1000);
+        assert_eq!(reconnect_delay_ms_v1(u32::MAX, u64::MAX, 30000), 30000);
     }
 
     #[test]
