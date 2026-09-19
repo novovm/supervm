@@ -2417,7 +2417,65 @@ mod tests {
         )
         .is_err());
 
-        let round_one = sign_proposal_v1(&node, &block, &keys, &set, &authority, None, 1);
+        // A legitimately admitted local round-one proposal still must not enter
+        // the round-zero-only Overlay protocol.
+        use crate::native_block_seal::{
+            newview::NovNativeSealNewViewCertificateV1, timeout::NovNativeSealTimeoutCertificateV1,
+        };
+        node.store()
+            .start_round_tracking(node.ledger(), &set, 1)
+            .unwrap();
+        let timeout_votes = keys
+            .iter()
+            .take(3)
+            .map(|key| {
+                node.store()
+                    .sign_local_timeout(node.ledger(), &set, 1, 0, key)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let tc = NovNativeSealTimeoutCertificateV1 {
+            context: timeout_votes[0].context.clone(),
+            votes: timeout_votes,
+        };
+        let state = node
+            .store()
+            .advance_round_tracking(node.ledger(), &set, &tc)
+            .unwrap();
+        let certificate = NovNativeSealNewViewCertificateV1 {
+            schema: "novovm-native-seal-new-view-certificate/v1".into(),
+            authority_commitment: authority.authority_commitment,
+            context: state.current,
+            previous_timeout: tc,
+            observations: keys
+                .iter()
+                .take(3)
+                .map(|key| {
+                    node.store()
+                        .sign_local_new_view(node.ledger(), &authority, 1, 1, key)
+                        .unwrap()
+                })
+                .collect(),
+        };
+        let request = NovNativeSealLocalProposalRequestV1 {
+            chain_id,
+            block_hash: block.header.block_hash,
+            round: 1,
+            justify_qc_hash: None,
+        };
+        node.store()
+            .admit_local_new_view_candidate(node.ledger(), &authority, &certificate, &request)
+            .unwrap();
+        let leader = authority.scheduled_leader_v1(1, 1).unwrap();
+        let round_one = node
+            .store()
+            .sign_local_proposal(
+                node.ledger(),
+                &request,
+                &set,
+                key_for_validator_v1(&keys, &set, leader),
+            )
+            .unwrap();
         assert!(encode_nov_native_seal_overlay_wire_v1(
             &NovNativeSealOverlayArtifactV1::Proposal(Box::new(round_one)),
             &authority

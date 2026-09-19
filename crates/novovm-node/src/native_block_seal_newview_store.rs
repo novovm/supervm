@@ -26,14 +26,14 @@ fn observation_key(context: &NovNativeSealTimeoutContextV1, signer: [u8; 32]) ->
     )
 }
 
-fn authority_key(authority: &NovNativeSealEpochAuthorityV1) -> String {
+pub(super) fn authority_key(authority: &NovNativeSealEpochAuthorityV1) -> String {
     format!(
         "native_block_seal/v1/new-view-authority/{}/{}",
         authority.chain_id, authority.epoch
     )
 }
 
-fn context_v1(
+pub(super) fn context_v1(
     authority: &NovNativeSealEpochAuthorityV1,
     height: u64,
     round: u64,
@@ -52,14 +52,66 @@ fn context_v1(
 }
 
 impl NovNativeBlockSealStoreV1 {
+    /// Validate retained admission references and return their bounded count.
+    /// Call under the shared write lock for signature and capacity decisions.
+    pub(super) fn new_view_admission_inventory_count_v1(
+        &self,
+        context: &NovNativeSealTimeoutContextV1,
+    ) -> Result<usize> {
+        // A retained admission is also durable knowledge of its highest QC.
+        // Recheck those references even if both a QC object and all secondary
+        // indexes disappeared; absence must not become a signed "no QC".
+        let admission_prefix = format!(
+            "native_block_seal/v1/new-view-admission/{}/{}/{}/",
+            context.chain_id, context.epoch, context.height
+        );
+        let mut admission_count = 0usize;
+        for item in self.db.iterator(IteratorMode::From(
+            admission_prefix.as_bytes(),
+            Direction::Forward,
+        )) {
+            let (key, value) = item.context("scan new-view admission QC references")?;
+            if !key.starts_with(admission_prefix.as_bytes()) {
+                break;
+            }
+            admission_count += 1;
+            if admission_count > NOV_NATIVE_BLOCK_SEAL_MAX_QCS_PER_INDEX_V1 {
+                bail!("new-view admission inventory exceeds bounded per-height recovery scan");
+            }
+            let record: NovNativeSealNewViewAdmissionV1 =
+                serde_json::from_slice(&value).context("decode new-view admission reference")?;
+            let subject = &record.subject;
+            if (subject.chain_id, subject.epoch, subject.height)
+                != (context.chain_id, context.epoch, context.height)
+                || key.as_ref() != format!("{admission_prefix}{}", subject.round).as_bytes()
+            {
+                bail!("new-view admission inventory object/key mismatch");
+            }
+            if self
+                .load_local_new_view_admission(
+                    context.chain_id,
+                    context.epoch,
+                    context.height,
+                    subject.round,
+                )?
+                .as_ref()
+                != Some(&record)
+            {
+                bail!("new-view admission inventory failed durable reference verification");
+            }
+        }
+        Ok(admission_count)
+    }
+
     /// Until a separately authenticated per-height inventory is available,
     /// cross-check the secondary index against a bounded scan of durable QC
     /// objects. A missing/truncated index must not become a signed "no QC".
     /// Called under the shared seal write lock, before any new signature.
-    fn new_view_qc_inventory_v1(
+    pub(super) fn new_view_qc_inventory_v1(
         &self,
         context: &NovNativeSealTimeoutContextV1,
     ) -> Result<Vec<NovNativeSealQuorumCertificateV1>> {
+        self.new_view_admission_inventory_count_v1(context)?;
         let indexed = self.load_qcs_by_height(context.chain_id, context.epoch, context.height)?;
         let indexed_hashes = indexed.iter().map(|qc| qc.qc_hash).collect::<BTreeSet<_>>();
         let prefix = format!("{KEY_PREFIX_V1}qc/object/");
@@ -100,7 +152,7 @@ impl NovNativeBlockSealStoreV1 {
         Ok(indexed)
     }
 
-    fn ensure_new_view_authority_v1(
+    pub(super) fn ensure_new_view_authority_v1(
         &self,
         authority: &NovNativeSealEpochAuthorityV1,
         required: bool,
@@ -150,7 +202,7 @@ impl NovNativeBlockSealStoreV1 {
         Ok(())
     }
 
-    fn verify_new_view_local_qc_v1(
+    pub(super) fn verify_new_view_local_qc_v1(
         &self,
         ledger: &NovNativeBlockLedgerV1,
         authority: &NovNativeSealEpochAuthorityV1,

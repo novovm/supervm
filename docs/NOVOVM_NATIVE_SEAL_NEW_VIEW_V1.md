@@ -88,11 +88,13 @@ cargo test -p novovm-node --lib native_block_seal -- --test-threads=1
 ```
 
 该过滤器同时覆盖 new-view、既有 seal、timeout、round、Overlay 以及位于
-seal 测试模块中的源 QC 夹具。producer、preflight、节点运行时的字段顺序、
-lockset 和数量锁同步为 50；字段缺失或 false 必须拒绝，旧 49 字段报告需
+seal 测试模块中的源 QC 夹具。该观察切片引入的 lockset 和数量锁为 50；后续
+[新轮候选准入切片](NOVOVM_NATIVE_SEAL_NEW_VIEW_ADMISSION_V1.md) 新增
+`test_native_seal_new_view_admission`，当前 producer、preflight 与节点运行时
+同步要求 51 个字段。字段缺失或 false 必须拒绝，旧 50 字段及更早报告需
 重新生成，不能改标签复用。
 
-2026-09-20 本机验收：在 `e8c36d3` 加本切片代码的合并基线上，完整 gate 和
+2026-09-20 本观察切片的历史本机验收：在 `e8c36d3` 加本切片代码的合并基线上，完整 gate 和
 preflight 通过，50/50 必需字段为 true；生成时间为
 `2026-09-19T19:20:27.491963700+00:00`。封印回归 40 项通过，其中新增
 new-view 15 项，覆盖不足权重、重复/非法签名者、域/根/轮次/leader 篡改、
@@ -102,7 +104,12 @@ Clippy `-D warnings`、格式和 diff 检查通过。完整日志位于
 `artifacts/audit/seal-newview-20260920/mainline-gate.log`（本机忽略的验收产物）。
 这些是软件回归结果，不是主网完成率或物理多机测试结果。
 
-尚未接入节点主循环自动换主、new-view 网络传播、完整安全提案/锁迁移、
+后续 [新轮候选准入 V1](NOVOVM_NATIVE_SEAL_NEW_VIEW_ADMISSION_V1.md) 已将本地
+非零轮次 proposal / vote 约束到完整 NVC、当前轮次、本地 QC 库存及原候选锁，
+并为历史持久对象恢复增加证据校验。准入不等于解锁，不开放 Overlay 非零轮次，
+其验收结果独立记录，不能复用上面的历史测试数量。
+
+尚未接入节点主循环自动换主、new-view 网络传播、完整锁迁移与活性规则、
 commit finality、AOEM/账本晋升或升级激活。`chain_canonical`、`proof_sealed`、
 `safe`、`finalized` 不因这些证据而晋升。物理多机、公网/NAT/CGNAT、Linux
 安装、nightly 长跑、断电恢复和主网签收均需独立记录，不能由本地单测推导。

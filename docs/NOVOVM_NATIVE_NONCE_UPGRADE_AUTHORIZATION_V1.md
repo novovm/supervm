@@ -134,9 +134,11 @@ This slice introduced 48 required fields. The subsequent
 [source prepare-QC slice](NOVOVM_NATIVE_NONCE_SOURCE_QC_V1.md) adds
 `test_native_nonce_source_qc`. The later
 [native seal new-view slice](NOVOVM_NATIVE_SEAL_NEW_VIEW_V1.md) adds
-`test_native_seal_new_view`; producer, preflight and node-runtime locksets
-now require 50 fields in the same order. The frozen contract rejects missing
-or false authorization/source-QC/new-view fields. Older evidence must be regenerated,
+`test_native_seal_new_view`, extending the contract to 50 fields. The subsequent
+[new-view candidate admission slice](NOVOVM_NATIVE_SEAL_NEW_VIEW_ADMISSION_V1.md)
+adds `test_native_seal_new_view_admission`; producer, preflight and node-runtime
+locksets now require 51 fields in the same order. The frozen contract rejects missing
+or false authorization/source-QC/new-view/new-view-admission fields. Older evidence must be regenerated,
 not relabeled. Source prepare-QC acceptance is still not finality or execution proof.
 
 Required cases include independently pinned authority validation, exact
