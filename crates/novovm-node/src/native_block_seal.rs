@@ -7,6 +7,9 @@
 //! independently durable quorum attestation: it does not mutate candidate
 //! lifecycle flags and does not confer canonicality, safety, or finality.
 
+#[path = "native_block_seal_timeout.rs"]
+pub mod timeout;
+
 use crate::native_block_ledger::{
     NovNativeBlockCandidateRecordV1, NovNativeBlockLedgerV1, NovNativeDurableBlockV1,
 };
@@ -900,6 +903,7 @@ impl NovNativeBlockSealStoreV1 {
         self.ensure_schema_v1()?;
         self.ensure_store_binding_v1(&expected_binding)?;
 
+        self.ensure_not_timed_out_v1(&subject, proposer_id, validator_set)?;
         let proposal_lock_key = proposal_lock_key_v1(&subject, proposer_id);
         if let Some(lock) = read_json_v1::<NovNativeSealProposalLockV1>(
             &self.db,
@@ -1017,6 +1021,7 @@ impl NovNativeBlockSealStoreV1 {
         self.ensure_schema_v1()?;
         self.ensure_store_binding_v1(&expected_binding)?;
 
+        self.ensure_not_timed_out_v1(&proposal.subject, validator_id, validator_set)?;
         let vote_lock_key = vote_lock_key_v1(&proposal.subject, validator_id);
         if let Some(lock) = read_json_v1::<NovNativeSealVoteLockV1>(
             &self.db,
@@ -3718,5 +3723,190 @@ mod tests {
                 None,
             )
             .is_err());
+    }
+
+    #[test]
+    fn timeout_votes_are_durable_fence_old_signatures_and_do_not_finalize() {
+        let (mut node, block, keys, set) = genesis_fixture_v1("timeout-restart", 82_001);
+        let (proposal, _) = proposal_and_votes_v1(&node, &block, &keys, &set, 0, 1);
+        let vote = node
+            .store()
+            .sign_local_timeout(node.ledger(), &set, 1, 0, &keys[1])
+            .unwrap();
+        vote.verify(&set).unwrap();
+        let request = NovNativeSealLocalProposalRequestV1 {
+            chain_id: set.chain_id,
+            block_hash: block.header.block_hash,
+            round: 0,
+            justify_qc_hash: None,
+        };
+        assert!(node
+            .store()
+            .sign_local_proposal(node.ledger(), &request, &set, &keys[1])
+            .is_err());
+        assert!(node
+            .store()
+            .sign_local_vote(node.ledger(), &proposal, &set, &keys[1])
+            .is_err());
+        node.reopen_store();
+        assert_eq!(
+            vote,
+            node.store()
+                .sign_local_timeout(node.ledger(), &set, 1, 0, &keys[1])
+                .unwrap()
+        );
+        assert!(node
+            .store()
+            .sign_local_vote(node.ledger(), &proposal, &set, &keys[1])
+            .is_err());
+        let newer = node
+            .store()
+            .sign_local_timeout(node.ledger(), &set, 1, 2, &keys[1])
+            .unwrap();
+        assert_eq!(newer.context.round, 2);
+        assert!(node
+            .store()
+            .sign_local_timeout(node.ledger(), &set, 1, 1, &keys[1])
+            .is_err());
+        assert!(node
+            .store()
+            .sign_local_timeout(node.ledger(), &set, 3, 0, &keys[1])
+            .is_err());
+        assert!(node
+            .store()
+            .sign_local_timeout(node.ledger(), &set, 1, u64::MAX, &keys[1])
+            .is_err());
+        let head = node.ledger().load_head(set.chain_id).unwrap().unwrap();
+        assert!(!head.finalized && !head.safe && !head.proof_sealed);
+        let readonly = NovNativeBlockSealStoreV1::open_existing_read_only(node.store().path())
+            .unwrap()
+            .unwrap();
+        assert!(readonly
+            .sign_local_timeout(node.ledger(), &set, 2, 0, &keys[1])
+            .is_err());
+    }
+
+    #[test]
+    fn timeout_certificate_requires_matching_domain_unique_valid_quorum() {
+        use timeout::NovNativeSealTimeoutCertificateV1;
+        let (node, _, keys, set) = genesis_fixture_v1("timeout-cert", 82_002);
+        let votes: Vec<_> = keys
+            .iter()
+            .take(3)
+            .map(|key| {
+                node.store()
+                    .sign_local_timeout(node.ledger(), &set, 1, 0, key)
+                    .unwrap()
+            })
+            .collect();
+        let expected = votes[0].context.clone();
+        let mut cert = NovNativeSealTimeoutCertificateV1 {
+            context: expected.clone(),
+            votes: votes.clone(),
+        };
+        assert_eq!(cert.verify(&expected, &set).unwrap(), 3);
+        cert.votes.pop();
+        assert!(cert.verify(&expected, &set).is_err());
+        cert.votes = vec![votes[0].clone(), votes[1].clone(), votes[1].clone()];
+        assert!(cert.verify(&expected, &set).is_err());
+        cert.votes = votes.clone();
+        cert.votes[0].signature[0] ^= 1;
+        assert!(cert.verify(&expected, &set).is_err());
+        cert.votes = votes;
+        let mut wrong_domain = expected.clone();
+        wrong_domain.genesis_block_hash[0] ^= 1;
+        assert!(cert.verify(&wrong_domain, &set).is_err());
+        cert.votes[0].context.round += 1;
+        assert!(cert.verify(&expected, &set).is_err());
+        assert!(node
+            .store()
+            .sign_local_timeout(
+                node.ledger(),
+                &set,
+                1,
+                0,
+                &SigningKey::from_bytes(&[90; 32])
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn timeout_durable_vote_missing_after_watermark_fails_closed() {
+        let (mut node, _, keys, set) = genesis_fixture_v1("timeout-corrupt", 82_003);
+        let vote = node
+            .store()
+            .sign_local_timeout(node.ledger(), &set, 1, 0, &keys[0])
+            .unwrap();
+        let key = format!(
+            "native_block_seal/v1/timeout/{}/{}/{}/vote/1/0",
+            set.chain_id,
+            set.epoch,
+            hex_v1(&vote.validator_id)
+        );
+        node.store().db.delete(key.as_bytes()).unwrap();
+        node.reopen_store();
+        assert!(node
+            .store()
+            .sign_local_timeout(node.ledger(), &set, 1, 0, &keys[0])
+            .is_err());
+    }
+
+    #[test]
+    fn timeout_certificate_counts_weight_and_concurrent_signing_is_idempotent() {
+        use timeout::NovNativeSealTimeoutCertificateV1;
+        let (node, _, keys, _) = genesis_fixture_v1("timeout-weighted", 82_004);
+        let set = NovNativeSealValidatorSetV1::new(
+            82_004,
+            1,
+            1,
+            keys.iter()
+                .enumerate()
+                .map(|(i, k)| {
+                    NovNativeSealValidatorV1::new(
+                        *k.verifying_key().as_bytes(),
+                        if i == 0 { 4 } else { 1 },
+                    )
+                    .unwrap()
+                })
+                .collect(),
+        )
+        .unwrap();
+        let second = NovNativeBlockSealStoreV1::open(node.store().path()).unwrap();
+        let (a, b) = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                node.store()
+                    .sign_local_timeout(node.ledger(), &set, 1, 0, &keys[0])
+                    .unwrap()
+            });
+            let other = scope.spawn(|| {
+                second
+                    .sign_local_timeout(node.ledger(), &set, 1, 0, &keys[0])
+                    .unwrap()
+            });
+            (first.join().unwrap(), other.join().unwrap())
+        });
+        assert_eq!(a, b);
+        let expected = a.context.clone();
+        let mut cert = NovNativeSealTimeoutCertificateV1 {
+            context: expected.clone(),
+            votes: vec![a],
+        };
+        assert!(cert.verify(&expected, &set).is_err());
+        cert.votes.push(
+            node.store()
+                .sign_local_timeout(node.ledger(), &set, 1, 0, &keys[1])
+                .unwrap(),
+        );
+        assert_eq!(cert.verify(&expected, &set).unwrap(), 5);
+        cert.votes = keys
+            .iter()
+            .skip(1)
+            .map(|key| {
+                node.store()
+                    .sign_local_timeout(node.ledger(), &set, 1, 0, key)
+                    .unwrap()
+            })
+            .collect();
+        assert!(cert.verify(&expected, &set).is_err());
     }
 }
