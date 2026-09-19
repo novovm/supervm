@@ -110,6 +110,10 @@ impl OverlayRouteHealthSnapshot {
         if health.cooldown_until_unix_ms > self.observed_unix_ms {
             return OverlayRouteHealthState::CoolingDown;
         }
+        // Expiry permits a new attempt; it does not prove successful delivery.
+        if health.state == OverlayRouteHealthState::CoolingDown {
+            return OverlayRouteHealthState::Degraded;
+        }
         health.state
     }
 
@@ -147,10 +151,15 @@ pub fn overlay_route_health_from_observations_v0(
             .observed_unix_ms
             .saturating_add(observation.cooldown_ms);
         for peer_id in failed_path_peer_ids(&observation.decision) {
-            if !hops
-                .iter()
-                .any(|hop: &OverlayHopHealth| hop.peer_id == peer_id)
+            if let Some(hop) = hops
+                .iter_mut()
+                .find(|hop: &&mut OverlayHopHealth| hop.peer_id == peer_id)
             {
+                // Preserve every active failure interval regardless of input order.
+                hop.last_failure_unix_ms =
+                    hop.last_failure_unix_ms.max(observation.observed_unix_ms);
+                hop.cooldown_until_unix_ms = hop.cooldown_until_unix_ms.max(cooldown_until_unix_ms);
+            } else {
                 hops.push(OverlayHopHealth::cooling_down(
                     peer_id,
                     observation.observed_unix_ms,
@@ -569,6 +578,62 @@ mod tests {
                 content_address_hint: Some("cid-multihop".into()),
             },
         ]
+    }
+
+    #[test]
+    fn cooldown_expiry_retries_direct_without_reviving_failed_routes() {
+        let mut registry = registry();
+        let peer = PeerId::new("recovery-target");
+        register_native_peer(&mut registry, &peer);
+        registry.register_route_set(mixed_direct_relay_route(peer.clone()));
+        let mut health = OverlayRouteHealthSnapshot::new(
+            1999,
+            vec![OverlayHopHealth::cooling_down(peer.clone(), 1000, 2000)],
+        );
+        assert_eq!(
+            decide_overlay_runtime_route_with_health_v0(&registry, &peer, &health).selected_path,
+            OverlayRuntimeSelectedPath::MultiHopRelay
+        );
+        health.observed_unix_ms = 2000;
+        assert_eq!(
+            health.hop_state(&peer),
+            super::OverlayRouteHealthState::Degraded
+        );
+        assert_eq!(
+            decide_overlay_runtime_route_with_health_v0(&registry, &peer, &health).selected_path,
+            OverlayRuntimeSelectedPath::DirectNovoRudp
+        );
+        health.hops[0].state = super::OverlayRouteHealthState::Failed;
+        assert!(!health.hop_is_usable(&peer));
+    }
+
+    #[test]
+    fn repeated_failures_extend_cooldown_independent_of_observation_order() {
+        let mut registry = registry();
+        let peer = PeerId::new("repeated-target");
+        register_native_peer(&mut registry, &peer);
+        registry.register_route_set(RouteSet::direct(peer.clone()));
+        let decision = decide_overlay_runtime_route_v0(&registry, &peer);
+        let first = OverlayRouteAttemptObservation {
+            decision,
+            delivered: false,
+            queued: false,
+            observed_unix_ms: 1000,
+            cooldown_ms: 1000,
+        };
+        let mut later = first.clone();
+        later.observed_unix_ms = 1900;
+        let a = overlay_route_health_from_observations_v0(&[first.clone(), later.clone()]);
+        let b = overlay_route_health_from_observations_v0(&[later, first]);
+        assert_eq!(a, b);
+        assert_eq!(a.hops.len(), 1);
+        assert_eq!(a.hops[0].last_failure_unix_ms, 1900);
+        assert_eq!(a.hops[0].cooldown_until_unix_ms, 2900);
+        let mut health = a;
+        health.observed_unix_ms = 2000;
+        assert!(!health.hop_is_usable(&peer));
+        health.observed_unix_ms = 2900;
+        assert!(health.hop_is_usable(&peer));
     }
 
     #[test]
