@@ -13,6 +13,11 @@ pub mod timeout;
 #[path = "native_block_seal_newview.rs"]
 pub mod newview;
 
+#[path = "native_block_seal_round_driver.rs"]
+pub mod round_driver;
+#[path = "native_block_seal_round_message.rs"]
+pub mod round_message;
+
 #[cfg(test)]
 #[path = "native_nonce_source_qc_fixture.rs"]
 mod source_qc_tests;
@@ -2915,6 +2920,9 @@ fn competing_qc_evidence_key_v1(
 
 #[cfg(test)]
 mod tests {
+    mod round_driver {
+        include!("native_block_seal_round_driver_tests.rs");
+    }
     mod native_block_seal_newview {
         include!("native_block_seal_newview_tests.rs");
         include!("native_block_seal_newview_admission_tests.rs");

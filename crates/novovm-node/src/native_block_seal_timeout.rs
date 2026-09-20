@@ -158,6 +158,56 @@ fn load_watermark(
 }
 
 impl NovNativeBlockSealStoreV1 {
+    /// Recovers the original durable timeout without signing or authorizing the
+    /// active round. A scheduler may retransmit it after restart immediately;
+    /// absence of a record does not manufacture elapsed local timer time.
+    pub fn load_local_timeout(
+        &self,
+        ledger: &NovNativeBlockLedgerV1,
+        set: &NovNativeSealValidatorSetV1,
+        height: u64,
+        round: u64,
+        validator_id: [u8; 32],
+    ) -> Result<Option<NovNativeSealTimeoutVoteV1>> {
+        let mut expected = local_context(ledger, set, height)?;
+        expected.round = round;
+        expected.validate(set)?;
+        if set.validator(validator_id).is_none() {
+            bail!("timeout recovery signer is not a validator");
+        }
+        self.ensure_schema_v1()?;
+        self.ensure_store_binding_v1(&store_binding_v1(ledger, set.chain_id)?)?;
+        self.ensure_registered_validator_set_v1(set)?;
+        let watermark = load_watermark(self, set.chain_id, set.epoch, validator_id, set)?;
+        if watermark.as_ref().is_some_and(|record| {
+            record.context.genesis_block_hash != expected.genesis_block_hash
+                || record.context.protocol_config_commitment != expected.protocol_config_commitment
+        }) {
+            bail!("timeout recovery watermark network domain mismatch");
+        }
+        let record = read_json_v1::<NovNativeSealTimeoutVoteV1>(
+            &self.db,
+            format!(
+                "{}vote/{height}/{round}",
+                prefix(set.chain_id, set.epoch, validator_id)
+            )
+            .as_bytes(),
+            "recovered timeout vote",
+        )?;
+        if let Some(record) = &record {
+            record.verify(set)?;
+            if record.context != expected
+                || record.validator_id != validator_id
+                || watermark.as_ref().is_none_or(|watermark| {
+                    (watermark.context.height, watermark.context.round) < (height, round)
+                })
+            {
+                bail!("timeout recovery does not match durable safety state");
+            }
+        }
+        Ok(record)
+    }
+
     /// Persists the signed observation and monotonic signer watermark in one
     /// synchronous batch. The vote key is also the durable retransmission item;
     /// calling with the same slot after restart returns the identical vote.
