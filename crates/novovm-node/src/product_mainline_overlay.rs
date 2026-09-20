@@ -42,7 +42,7 @@ use crate::{
 };
 
 const PRODUCT_MAINLINE_OVERLAY_SCOPE_V1: &str = "novovm_product_mainline_overlay_runtime_v1";
-const PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1: [u8; 16] = *b"NOVOVM-OVERLAY-1";
+pub(crate) const PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1: [u8; 16] = *b"NOVOVM-OVERLAY-1";
 const PRODUCT_MAINLINE_OVERLAY_PREAUTH_BUFFER_LIMIT_V1: usize = 64;
 const PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1: u64 = 30_000;
 const PRODUCT_MAINLINE_OVERLAY_PEER_FAULT_REASON_MAX_BYTES_V1: usize = 512;
@@ -988,7 +988,7 @@ impl ProductMainlineOverlayRuntimeV1 {
     }
 
     #[cfg(test)]
-    fn start_with_relay_override_v1(
+    pub(crate) fn start_with_relay_override_v1(
         config: ProductMainlineOverlayConfigV1,
         now_ms: u64,
         relay: ProductRelayClientConfigV1,
@@ -1012,6 +1012,11 @@ impl ProductMainlineOverlayRuntimeV1 {
     #[must_use]
     pub fn startup(&self) -> &ProductMainlineOverlayStartupV1 {
         &self.startup
+    }
+
+    /// Chain bound by the authenticated logical transport frames.
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
     }
 
     #[must_use]

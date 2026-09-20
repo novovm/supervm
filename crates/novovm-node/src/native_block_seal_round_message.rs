@@ -1,20 +1,21 @@
 //! Typed, authenticated inputs to the opt-in single-height round driver.
 //!
-//! These are not a network codec and do not widen the existing Overlay's
-//! round-zero proposal contract. Serialization is used only to bound the total
-//! nested input before signature verification. A caller must obtain the source
-//! peer from an authenticated transport, never from an untrusted message field.
+//! The dedicated round wire codec bounds and authenticates network messages;
+//! this type does not widen the existing Overlay's round-zero proposal contract.
+//! A caller must obtain the source peer from an authenticated transport, never
+//! from an untrusted message field.
 
 use super::newview::{NovNativeSealNewViewCertificateV1, NovNativeSealNewViewObservationV1};
+use super::round_wire::NOV_NATIVE_SEAL_ROUND_MAX_PAYLOAD_BYTES_V1;
 use super::timeout::{
     NovNativeSealTimeoutCertificateV1, NovNativeSealTimeoutContextV1, NovNativeSealTimeoutVoteV1,
 };
 use super::*;
-use crate::native_block_seal_overlay::{
-    NovNativeSealEpochAuthorityV1, NOV_NATIVE_SEAL_OVERLAY_MAX_WIRE_BYTES_V1,
-};
+use crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) const NOV_NATIVE_SEAL_ROUND_MAX_NVC_BYTES_V1: usize = 128 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NovNativeSealRoundMessageV1 {
     Timeout(Box<NovNativeSealTimeoutVoteV1>),
     TimeoutCertificate(Box<NovNativeSealTimeoutCertificateV1>),
@@ -78,9 +79,17 @@ impl NovNativeSealRoundMessageV1 {
         // A fixed output buffer fails as soon as serialization exceeds the
         // budget, including nested QC/observation vectors and signature bytes.
         // Do not allocate an unbounded serialization merely to measure it.
-        let mut bounded = vec![0u8; NOV_NATIVE_SEAL_OVERLAY_MAX_WIRE_BYTES_V1];
+        let mut bounded = vec![0u8; NOV_NATIVE_SEAL_ROUND_MAX_PAYLOAD_BYTES_V1];
         postcard::to_slice(self, &mut bounded)
             .context("native round message exceeds the bounded typed-input size")?;
+        // Reject evidence the local signer could never admit before it enters
+        // the driver's cache. Otherwise a valid oversized remote certificate
+        // would defer failure until poll, unnecessarily halting the local owner.
+        if let Some(certificate) = self.certificate() {
+            let mut budget = vec![0u8; NOV_NATIVE_SEAL_ROUND_MAX_NVC_BYTES_V1];
+            postcard::to_slice(certificate, &mut budget)
+                .context("native round new-view certificate exceeds its admission budget")?;
+        }
         authority.validate()?;
         if height < authority.activation_height || self.round() == u64::MAX {
             bail!("native round message is outside the local height/round domain");

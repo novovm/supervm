@@ -67,6 +67,15 @@ pub struct NovNativeSealRoundDriverV1 {
 }
 
 impl NovNativeSealRoundDriverV1 {
+    /// Read-only transport binding; attaching a transport cannot replace it.
+    pub fn authority(&self) -> &NovNativeSealEpochAuthorityV1 {
+        &self.binding.authority
+    }
+
+    pub fn local_validator_id(&self) -> [u8; 32] {
+        self.binding.local_validator_id
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn open(
         ledger: &NovNativeBlockLedgerV1,
@@ -644,7 +653,8 @@ impl NovNativeSealRoundDriverV1 {
         // Reserve 64 KiB of the 192 KiB typed-message budget for proposal/QC
         // wrappers: at most 64 validators, two bounded subjects and vote fields.
         // Reject before saving admission or creating local proposal/vote signatures.
-        let mut certificate_budget = vec![0u8; 128 * 1024];
+        let mut certificate_budget =
+            vec![0u8; super::round_message::NOV_NATIVE_SEAL_ROUND_MAX_NVC_BYTES_V1];
         postcard::to_slice(certificate, &mut certificate_budget)
             .context("round driver new-view certificate exceeds its admission budget")?;
         store.admit_local_new_view_candidate(
