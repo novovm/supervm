@@ -405,6 +405,28 @@ fn main() -> Result<()> {
             "--test-threads=1",
         ],
     )?;
+    run_step(
+        "test native seal persistence sidecar inventory",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-node",
+            "--lib",
+            "native_seal_service_write_inventory",
+        ],
+    )?;
+    run_step(
+        "test native seal main-node explicit opt-in and pre-startup refusal",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-node",
+            "--test",
+            "native_seal_service_cli",
+        ],
+    )?;
     gate.test_native_seal_new_view = true;
 
     run_step(

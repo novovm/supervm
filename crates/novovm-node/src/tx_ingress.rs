@@ -14452,6 +14452,29 @@ fn native_persistence_paths_v1(params: &serde_json::Value) -> Vec<(&'static str,
     paths
 }
 
+/// Read-only inventory for protecting operator inputs from native persistence
+/// writes, including fixed-name sidecars that can truncate or remove files.
+/// Keep this separate from `native_persistence_paths_v1`: sidecars are not new
+/// storage owners and must not change existing isolation/retention semantics.
+/// The JSON staging name is intentionally excluded: it is time-dependent and
+/// opened with `create_new(true)`, so an existing protected file is not replaced.
+pub fn native_persistence_write_paths_v1(
+    params: &serde_json::Value,
+) -> Vec<(&'static str, PathBuf)> {
+    let host_store_path = resolve_native_execution_store_path_from_params_v1(params)
+        .unwrap_or_else(nov_native_execution_store_path_v1);
+    let mut paths = native_persistence_paths_v1(params);
+    paths.push((
+        "Host coordination lock",
+        nov_native_execution_store_lock_path_v1(&host_store_path),
+    ));
+    paths.push((
+        "Host JSON backup",
+        nov_native_execution_store_json_backup_path_v1(&host_store_path),
+    ));
+    paths
+}
+
 fn validate_native_persistence_path_isolation_v1(params: &serde_json::Value) -> Result<()> {
     let persistence_paths = native_persistence_paths_v1(params);
     let comparable_paths = persistence_paths
@@ -27515,6 +27538,31 @@ mod tests {
             .expect("overflowing suffix should be classified"),
             NativeBlockBodyAdmissionV1::DeferToNextCandidate
         );
+    }
+
+    #[test]
+    fn native_seal_service_write_inventory_adds_sidecars_without_changing_storage_owners() {
+        let native_path = PathBuf::from("artifacts/audit/native-seal-inventory/native.json");
+        let params = serde_json::json!({ "native_execution_store_path": native_path });
+        let owners = native_persistence_paths_v1(&params);
+        let writes = native_persistence_write_paths_v1(&params);
+        assert_eq!(writes.len(), owners.len() + 2);
+        assert_eq!(&writes[..owners.len()], owners.as_slice());
+        assert_eq!(
+            writes[owners.len()],
+            (
+                "Host coordination lock",
+                nov_native_execution_store_lock_path_v1(&native_path),
+            )
+        );
+        assert_eq!(
+            writes[owners.len() + 1],
+            (
+                "Host JSON backup",
+                nov_native_execution_store_json_backup_path_v1(&native_path),
+            )
+        );
+        assert_eq!(native_persistence_paths_v1(&params), owners);
     }
 
     #[test]

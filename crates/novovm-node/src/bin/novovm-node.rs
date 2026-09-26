@@ -102,6 +102,11 @@ use novovm_node::mainline_query::{
     is_mainline_native_execution_query_method, mainline_query_method_from_env,
     mainline_query_params_from_env, run_mainline_query_from_path,
 };
+use novovm_node::native_block_seal::service::{
+    native_seal_config_selection_v1, NovNativeSealServiceV1,
+};
+use novovm_node::native_block_seal::service_config::NovNativeSealServiceConfigV1;
+use novovm_node::native_block_seal::service_paths::validate_service_paths_v1;
 use novovm_node::product_delivery_journal::{
     product_delivery_payload_sha256_v1, ProductDeliveryCleanupSummaryV1,
     ProductDeliveryInboundPrepareDispositionV1, ProductDeliveryInboundRecordV1,
@@ -33765,6 +33770,7 @@ struct NativeExecutionPipelineIngressDriveV1 {
 struct NativeExecutionPipelineProductOverlayDriveV1 {
     chain_id: u64,
     runtime: ProductMainlineOverlayRuntimeV1,
+    seal_service: Option<NovNativeSealServiceV1>,
     delivery_journal: ProductDeliveryJournalV1,
     journal_scan_limit: usize,
     startup_recovery_pending: bool,
@@ -33911,8 +33917,14 @@ impl NativeExecutionPipelineIngressDriveV1 {
 }
 
 impl NativeExecutionPipelineProductOverlayDriveV1 {
-    fn from_env(chain_id: u64) -> Result<Option<Self>> {
+    fn from_env(
+        chain_id: u64,
+        seal_config: Option<NovNativeSealServiceConfigV1>,
+    ) -> Result<Option<Self>> {
         if !bool_env("NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED") {
+            if seal_config.is_some() {
+                bail!("native seal requires Product Overlay");
+            }
             return Ok(None);
         }
         let config_path = string_env_nonempty("NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG").context(
@@ -33932,6 +33944,17 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             .context("product mainline overlay delivery journal path is missing")?;
         let journal_limits = config.resource_limits.clone();
         let runtime = ProductMainlineOverlayRuntimeV1::start(config, now_unix_ms())?;
+        let seal_service = seal_config
+            .map(|config| {
+                let ledger_path = novovm_node::tx_ingress::nov_native_block_ledger_rocksdb_path_v1(
+                    &nov_native_execution_store_path_v1(),
+                );
+                NovNativeSealServiceV1::open(config, &ledger_path, &runtime, Instant::now())
+            })
+            .transpose()?;
+        if let Some(service) = &seal_service {
+            println!("native_seal_service_startup: {}", service.status_json());
+        }
         let local_peer_id = runtime.startup().local_peer_id.clone();
         let remote_peer_ids = runtime.remote_peer_ids().to_vec();
         let remote_peer_id = remote_peer_ids
@@ -33978,6 +34001,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
         Ok(Some(Self {
             chain_id,
             runtime,
+            seal_service,
             delivery_journal,
             journal_scan_limit: journal_limits.journal_max_entries,
             startup_recovery_pending: true,
@@ -34089,6 +34113,13 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                     ));
                 }
                 ProductMainlineOverlayEventV1::Inbound(inbound) => {
+                    if inbound.payload_class == ProductMainlineOverlayPayloadClassV1::NativeSeal {
+                        if let Some(service) = self.seal_service.as_mut() {
+                            service.enqueue(inbound);
+                        }
+                        // Seal evidence is not a transaction or a journal-persisted ACK.
+                        continue;
+                    }
                     match self.accept_product_overlay_inbound_v1(inbound) {
                         Ok(Some(tx_hash)) => {
                             received = received.saturating_add(1);
@@ -34105,7 +34136,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                     if admission.payload_class
                         != ProductMainlineOverlayPayloadClassV1::NativeTransaction
                     {
-                        // Seal verification and durable seal ownership remain a separate slice.
+                        // Seal queues do not participate in transaction delivery accounting.
                         continue;
                     }
                     if admission.admitted {
@@ -34323,6 +34354,13 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 None
             }
         };
+        if let Some(service) = self.seal_service.as_mut() {
+            if self.worker_error.is_some() || self.worker_stopped {
+                service.halt("overlay_worker_fault");
+            } else if let Err(error) = service.poll(&self.runtime, Instant::now()) {
+                self.worker_error = Some(format!("native seal local fault: {error:#}"));
+            }
+        }
         let mut report = serde_json::json!({
             "enabled": true,
             "ok": self.worker_error.is_none() && !self.worker_stopped,
@@ -34394,6 +34432,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             "tx_hashes": tx_hashes,
         });
         if let Some(report) = report.as_object_mut() {
+            report.insert("native_seal".to_string(), self.native_seal_status_v1());
             report.insert(
                 "peer_delivery_failure_total".to_string(),
                 self.peer_delivery_failure_total.into(),
@@ -34404,6 +34443,25 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             );
         }
         report
+    }
+
+    fn native_seal_status_v1(&self) -> serde_json::Value {
+        self.seal_service.as_ref().map(NovNativeSealServiceV1::status_json)
+            .unwrap_or_else(|| serde_json::json!({"enabled":false,"ok":true,"prepared":false,"finalized":false}))
+    }
+
+    fn ensure_native_seal_healthy_v1(&self) -> Result<()> {
+        if self
+            .seal_service
+            .as_ref()
+            .is_some_and(NovNativeSealServiceV1::halted)
+        {
+            bail!(
+                "native seal service halted: {}",
+                self.native_seal_status_v1()
+            );
+        }
+        Ok(())
     }
 
     fn record_local_delivery_journal_fault_v1(&mut self, error: impl std::fmt::Display) {
@@ -34864,6 +34922,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
             "error": self.worker_error,
         });
         if let Some(overlay) = overlay.as_object_mut() {
+            overlay.insert("native_seal".to_string(), self.native_seal_status_v1());
             overlay.insert(
                 "peer_delivery_failure_total".to_string(),
                 self.peer_delivery_failure_total.into(),
@@ -34883,6 +34942,12 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
     }
 
     fn validate_signoff(&self) -> Result<()> {
+        self.ensure_native_seal_healthy_v1()?;
+        if let Some(service) = &self.seal_service {
+            if service.status_json()["prepared"] != true {
+                bail!("native seal stopped without a prepare QC; this is not successful consensus completion");
+            }
+        }
         if !bool_env("NOVOVM_PRODUCT_MAINLINE_OVERLAY_SIGNOFF_REQUIRED") {
             return Ok(());
         }
@@ -43437,7 +43502,10 @@ mod native_execution_pipeline_tests {
     }
 }
 
-fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
+fn run_native_execution_tick_node_mode_v1(
+    verbose: bool,
+    seal_config_path: Option<PathBuf>,
+) -> Result<()> {
     let max_ticks = u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", 1)?;
     let interval_ms = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", 250)?;
     let full_async_runtime_engine_enabled = bool_env("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE");
@@ -43454,8 +43522,51 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
         },
     )?;
     let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
-    apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
     let startup_recovery_params = native_execution_tick_params_from_env_v1()?;
+    let seal_config = seal_config_path
+        .as_ref()
+        .map(|path| NovNativeSealServiceConfigV1::load(path, chain_id))
+        .transpose()?;
+    if let Some(config) = &seal_config {
+        let native_path = nov_native_execution_store_path_v1();
+        let ledger_path =
+            novovm_node::tx_ingress::nov_native_block_ledger_rocksdb_path_v1(&native_path);
+        let overlay_path = PathBuf::from(
+            string_env_nonempty("NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG")
+                .context("native seal requires the Product Overlay configuration")?,
+        );
+        let overlay = load_product_mainline_overlay_config_v1(&overlay_path)?;
+        let mut writes =
+            novovm_node::tx_ingress::native_persistence_write_paths_v1(&startup_recovery_params)
+                .into_iter()
+                .filter(|(label, _)| *label != "native block ledger")
+                .map(|(_, path)| path)
+                .collect::<Vec<_>>();
+        writes.push(overlay.overlay.cache_path.clone());
+        // Bootstrap cache replacement writes this fixed staging file first.
+        writes.push(overlay.overlay.cache_path.with_extension("json.tmp"));
+        if let Some(journal) = overlay.delivery_journal_path {
+            writes.push(journal);
+        }
+        for name in [
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH",
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH",
+        ] {
+            if let Some(path) = string_env_nonempty(name) {
+                writes.push(PathBuf::from(path));
+            }
+        }
+        let mut reads = vec![overlay_path, overlay.identity_key_path];
+        if let novovm_node::product_relay_client::ProductRelayTlsTrustV1::ExplicitCa {
+            certificate_path,
+        } = overlay.tls_trust
+        {
+            reads.push(certificate_path);
+        }
+        // Before startup AOEM recovery, cache updates, journal creation or report writes.
+        validate_service_paths_v1(config, &ledger_path, &writes, &reads)?;
+    }
+    apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
     verify_native_business_protocol_config_pin_for_aoem_production_v1(&startup_recovery_params)
         .context("validate cross-machine NOV protocol configuration pin at startup failed")?;
     let startup_recovery =
@@ -43481,7 +43592,7 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
     let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
     let mut ingress_drive = NativeExecutionPipelineIngressDriveV1::from_env(chain_id)?;
     let mut product_overlay_drive =
-        NativeExecutionPipelineProductOverlayDriveV1::from_env(chain_id)?;
+        NativeExecutionPipelineProductOverlayDriveV1::from_env(chain_id, seal_config)?;
     let udp_drive = NativeExecutionPipelineUdpDriveV1::from_env(chain_id)?;
     let broadcast_drive = NativeExecutionPipelineBroadcastDriveV1::from_env(
         chain_id,
@@ -43562,6 +43673,9 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
                 "reason": "NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED is not set",
             }),
         };
+        if let Some(drive) = &product_overlay_drive {
+            drive.ensure_native_seal_healthy_v1()?;
+        }
         let network_enabled = network_drive_out
             .get("enabled")
             .and_then(|value| value.as_bool())
@@ -43837,6 +43951,18 @@ fn run_native_execution_tick_node_mode_v1(verbose: bool) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    let node_mode = std::env::var("NOVOVM_NODE_MODE").unwrap_or_else(|_| "full".to_string());
+    let seal_native_mode = mainline_query_method_from_env().is_none()
+        && (node_mode.eq_ignore_ascii_case("native_execution_pipeline")
+            || node_mode.eq_ignore_ascii_case("native_execution_tick")
+            || (node_mode.eq_ignore_ascii_case("full")
+                && bool_env("NOVOVM_NATIVE_EXECUTION_TICK_ENABLED")));
+    let seal_config_path = native_seal_config_selection_v1(
+        std::env::var("NOVOVM_NATIVE_SEAL_ENABLED").ok().as_deref(),
+        std::env::var("NOVOVM_NATIVE_SEAL_CONFIG").ok().as_deref(),
+        seal_native_mode,
+        bool_env("NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED"),
+    )?;
     let cli_overrides = parse_node_cli_overrides_v1()?;
     let verbose = bool_env("NOVOVM_NODE_VERBOSE");
     if let Some(method) = mainline_query_method_from_env() {
@@ -43935,7 +44061,6 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
-    let node_mode = std::env::var("NOVOVM_NODE_MODE").unwrap_or_else(|_| "full".to_string());
     if node_mode.eq_ignore_ascii_case("native_protocol_config_commitment") {
         let commitment = native_business_protocol_config_commitment_v1()
             .context("derive NOV native business protocol configuration commitment")?;
@@ -43959,7 +44084,7 @@ fn main() -> Result<()> {
         || node_mode.eq_ignore_ascii_case("native_execution_tick")
         || bool_env("NOVOVM_NATIVE_EXECUTION_TICK_ENABLED")
     {
-        return run_native_execution_tick_node_mode_v1(verbose);
+        return run_native_execution_tick_node_mode_v1(verbose, seal_config_path);
     }
     if !node_mode.eq_ignore_ascii_case("full") {
         bail!("non-full node_mode is disabled: novovm-node keeps only production path");

@@ -21,6 +21,12 @@ pub mod round_message;
 pub mod round_overlay;
 #[path = "native_block_seal_round_wire.rs"]
 pub mod round_wire;
+#[path = "native_block_seal_service.rs"]
+pub mod service;
+#[path = "native_block_seal_service_config.rs"]
+pub mod service_config;
+#[path = "native_block_seal_service_paths.rs"]
+pub mod service_paths;
 
 #[cfg(test)]
 #[path = "native_nonce_source_qc_fixture.rs"]
@@ -2926,6 +2932,7 @@ fn competing_qc_evidence_key_v1(
 mod tests {
     mod native_seal_round_network {
         include!("native_block_seal_round_network_tests.rs");
+        include!("native_block_seal_service_tests.rs");
     }
     mod round_driver {
         include!("native_block_seal_round_driver_tests.rs");
