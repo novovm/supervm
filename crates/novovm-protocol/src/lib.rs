@@ -8,6 +8,7 @@ pub mod block_wire;
 pub mod evm_block_access_list;
 pub mod ids;
 pub mod messages;
+pub mod native_arithmetic;
 pub mod protocol_catalog;
 pub mod tx_wire;
 pub mod wire;

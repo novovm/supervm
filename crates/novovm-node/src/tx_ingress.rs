@@ -72,6 +72,9 @@ use novovm_network::{
     NetworkRuntimeNativeExecutionBudgetTargetObservationV1,
     NetworkRuntimeNativePendingTxLifecycleStageV1,
 };
+use novovm_protocol::native_arithmetic::{
+    amm_output_for_exact_input_v1, amm_reserves_after_swap_v1, credit_balance_v1, debit_balance_v1,
+};
 use novovm_protocol::{
     decode_local_tx_wire_v1 as decode_tx_wire_v1, decode_nov_native_tx_wire_v1,
     encode_nov_native_tx_wire_v1, LocalTxWireV1, NovBlockExecutionContextV1, NovExecuteTxV1,
@@ -4464,7 +4467,7 @@ fn credit_native_account_asset_balance_v1(
         .entry(account_key)
         .or_default();
     let entry = balances.entry(asset_key).or_insert(0);
-    *entry = entry.saturating_add(amount);
+    *entry = credit_balance_v1(*entry, amount);
     *entry
 }
 
@@ -4483,7 +4486,7 @@ fn debit_native_account_asset_balance_v1(
         .entry(account_key.clone())
         .or_default();
     let entry = balances.entry(asset_key.clone()).or_insert(0);
-    if *entry < amount {
+    let Some(balance_after) = debit_balance_v1(*entry, amount) else {
         bail!(
             "insufficient user balance: account={} asset={} requested={} available={}",
             account_key,
@@ -4491,8 +4494,8 @@ fn debit_native_account_asset_balance_v1(
             amount,
             *entry
         );
-    }
-    *entry = entry.saturating_sub(amount);
+    };
+    *entry = balance_after;
     Ok(*entry)
 }
 
@@ -9803,29 +9806,6 @@ fn enforce_user_market_risk_gate_v1(
     Ok(())
 }
 
-fn amm_output_for_exact_input_v1(
-    reserve_in: u128,
-    reserve_out: u128,
-    amount_in: u128,
-    fee_ppm: u32,
-) -> Option<u128> {
-    if reserve_in == 0 || reserve_out == 0 || amount_in == 0 {
-        return None;
-    }
-    let fee_den = 1_000_000u128;
-    let amount_in_after_fee =
-        amount_in.saturating_mul(fee_den.saturating_sub(u128::from(fee_ppm))) / fee_den;
-    if amount_in_after_fee == 0 {
-        return None;
-    }
-    let numerator = amount_in_after_fee.saturating_mul(reserve_out);
-    let denominator = reserve_in.saturating_add(amount_in_after_fee);
-    if denominator == 0 {
-        return None;
-    }
-    Some(numerator / denominator)
-}
-
 fn dispatch_treasury_redeem_v1(
     request: &NovExecutionRequestV1,
     settled_fee: &NovSettledFeeV1,
@@ -10406,13 +10386,13 @@ fn dispatch_amm_swap_exact_in_v1(
         .clearing_static_amm_pools
         .get_mut(selected_pool_id.as_str())
     {
-        if reversed {
-            pool.reserve_y = pool.reserve_y.saturating_add(amount_in);
-            pool.reserve_x = pool.reserve_x.saturating_sub(amount_out);
-        } else {
-            pool.reserve_x = pool.reserve_x.saturating_add(amount_in);
-            pool.reserve_y = pool.reserve_y.saturating_sub(amount_out);
-        }
+        (pool.reserve_x, pool.reserve_y) = amm_reserves_after_swap_v1(
+            pool.reserve_x,
+            pool.reserve_y,
+            amount_in,
+            amount_out,
+            reversed,
+        );
     }
     store.module_state.clearing_daily_nov_used = store
         .module_state
@@ -34650,6 +34630,140 @@ mod tests {
                 Some(1_000)
             );
         });
+    }
+
+    #[test]
+    fn native_arithmetic_host_balance_adapter_preserves_errors_and_map_effects() {
+        let account = format!("0x{}", "51".repeat(20));
+        let mut store = NovNativeExecutionStoreV1::default();
+        let err = debit_native_account_asset_balance_v1(&mut store, &account, "nov", 1)
+            .expect_err("missing balance must reject");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "insufficient user balance: account={account} asset=NOV requested=1 available=0"
+            )
+        );
+        // Preserve legacy insertion of an explicit zero entry on debit failure.
+        assert_eq!(
+            store.module_state.account_asset_balances[&account]["NOV"],
+            0
+        );
+        assert_eq!(
+            credit_native_account_asset_balance_v1(&mut store, &account, "NOV", u128::MAX),
+            u128::MAX
+        );
+        assert_eq!(
+            credit_native_account_asset_balance_v1(&mut store, &account, "NOV", 1),
+            u128::MAX
+        );
+        assert_eq!(
+            debit_native_account_asset_balance_v1(&mut store, &account, "NOV", u128::MAX).unwrap(),
+            0
+        );
+        assert_eq!(
+            debit_native_account_asset_balance_v1(&mut store, &account, "NOV", 0).unwrap(),
+            0
+        );
+        let before = store.module_state.account_asset_balances.clone();
+        assert_eq!(
+            debit_native_account_asset_balance_v1(&mut store, "", "NOV", 1)
+                .unwrap_err()
+                .to_string(),
+            "invalid account reference"
+        );
+        assert_eq!(store.module_state.account_asset_balances, before);
+    }
+
+    #[test]
+    fn native_arithmetic_amm_dispatch_preserves_both_directions_and_rejections() {
+        for reversed in [false, true] {
+            for (balance, min_out, success, reason) in [
+                (1_000u128, 1u128, true, ""),
+                (99, 1, false, "amm.insufficient_user_balance:"),
+                (1_000, 99, false, "amm.slippage_exceeded:"),
+            ] {
+                let mut store = NovNativeExecutionStoreV1::default();
+                store.module_state.clearing_enabled = true;
+                store.module_state.clearing_require_healthy_risk_buffer = false;
+                store.module_state.treasury_min_reserve_bucket_nov = 0;
+                store.module_state.treasury_min_risk_buffer_nov = 0;
+                store.module_state.clearing_static_amm_pools.insert(
+                    "pool".to_string(),
+                    NovStaticAmmPoolStateV1 {
+                        pool_id: "pool".to_string(),
+                        asset_x: if reversed { "NOV" } else { "USDT" }.to_string(),
+                        asset_y: if reversed { "USDT" } else { "NOV" }.to_string(),
+                        reserve_x: 1_000_000,
+                        reserve_y: 1_000_000,
+                        swap_fee_ppm: 3_000,
+                        enabled: true,
+                    },
+                );
+                let args = serde_json::json!({"asset_in":"USDT", "asset_out":"NOV", "amount_in":100, "min_amount_out":min_out, "slippage_bps":25});
+                let request = NovExecutionRequestV1 {
+                    tx_hash: [0xa2; 32],
+                    chain_id: 8022,
+                    caller: vec![0x51; 20],
+                    target: NovExecutionRequestTargetV1::NativeModule("amm".to_string()),
+                    method: "swap_exact_in".to_string(),
+                    args: serde_json::to_vec(&args).unwrap(),
+                    fee_pay_asset: "NOV".to_string(),
+                    fee_max_pay_amount: 500,
+                    fee_slippage_bps: 0,
+                    gas_like_limit: Some(90_000),
+                    nonce: 42,
+                };
+                let subject = fallback_execution_subject_meta_v1(&request);
+                credit_native_account_asset_balance_v1(
+                    &mut store,
+                    &subject.account_id,
+                    "USDT",
+                    balance,
+                );
+                let balances_before = store.module_state.account_asset_balances.clone();
+                let receipt = dispatch_amm_swap_exact_in_v1(
+                    &request,
+                    &unresolved_settled_fee_v1(&request),
+                    &subject,
+                    &mut store,
+                    &args,
+                    0,
+                );
+                assert_eq!(receipt.status, success, "{:?}", receipt.failure_reason);
+                let pool = &store.module_state.clearing_static_amm_pools["pool"];
+                if success {
+                    assert_eq!(
+                        native_account_asset_balance_v1(&store, &subject.account_id, "USDT"),
+                        900
+                    );
+                    assert_eq!(
+                        native_account_asset_balance_v1(&store, &subject.account_id, "NOV"),
+                        98
+                    );
+                    assert_eq!(
+                        (pool.reserve_x, pool.reserve_y),
+                        if reversed {
+                            (999_902, 1_000_100)
+                        } else {
+                            (1_000_100, 999_902)
+                        }
+                    );
+                    assert_eq!(receipt.logs[0].event, "amm.swap_exact_in.applied");
+                    assert_eq!(receipt.logs[0].data["amount_out"], 98);
+                    assert_eq!(store.module_state.clearing_daily_nov_used, 98);
+                } else {
+                    assert!(receipt
+                        .failure_reason
+                        .as_deref()
+                        .unwrap()
+                        .starts_with(reason));
+                    assert_eq!(store.module_state.account_asset_balances, balances_before);
+                    assert_eq!((pool.reserve_x, pool.reserve_y), (1_000_000, 1_000_000));
+                    assert_eq!(store.module_state.clearing_daily_nov_used, 0);
+                }
+            }
+        }
     }
 
     #[test]
