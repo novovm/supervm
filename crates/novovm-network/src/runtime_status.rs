@@ -6375,7 +6375,7 @@ pub fn observe_network_runtime_native_pending_tx_propagated_with_context_v1(
     chain_id: u64,
     tx_hash: [u8; 32],
     source_peer_id: Option<u64>,
-    phase: Option<&str>,
+    _phase: Option<&str>,
     max_propagation_count: Option<u64>,
 ) {
     let now = now_unix_millis();
@@ -6421,33 +6421,27 @@ pub fn observe_network_runtime_native_pending_tx_propagated_with_context_v1(
                 pending_final_disposition:
                     NetworkRuntimeNativePendingTxFinalDispositionV1::Retained,
             });
-        if !matches!(
-            tx.lifecycle_stage,
-            NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
-        ) {
-            tx.lifecycle_stage = NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated;
+        // A late send completion must not resurrect rejected/dropped work or
+        // regress an already executed candidate back into the execution queue.
+        if !runtime_native_pending_tx_broadcast_eligible_stage_v1(tx.lifecycle_stage) {
+            return;
         }
+        tx.lifecycle_stage = NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated;
         if matches!(tx.origin, NetworkRuntimeNativePendingTxOriginV1::Unknown) {
             tx.origin = NetworkRuntimeNativePendingTxOriginV1::Local;
         }
         tx.propagation_count = tx.propagation_count.saturating_add(1);
         tx.last_updated_unix_ms = now;
         runtime_native_pending_tx_set_propagation_success_metadata_v1(tx, now, source_peer_id);
-        if let Some(max) = max_propagation_count.filter(|max| *max > 0) {
-            if tx.propagation_count >= max
-                && !matches!(
-                    tx.lifecycle_stage,
-                    NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
-                )
-            {
-                runtime_native_pending_tx_set_dropped_v1(
-                    tx,
-                    now,
-                    source_peer_id,
-                    NetworkRuntimeNativePendingTxPropagationStopReasonV1::BudgetLimit,
-                    phase.or(Some("broadcast_candidate")),
-                );
-            }
+        if max_propagation_count.is_some_and(|max| max > 0 && tx.propagation_count >= max) {
+            // Broadcast budget is not transaction validity or execution expiry.
+            // Keep the payload and active stage; only suppress further sends.
+            tx.retry_eligible = false;
+            tx.retry_after_unix_ms = None;
+            tx.retry_suppressed_reason =
+                Some(NetworkRuntimeNativePendingTxRetrySuppressedReasonV1::BudgetLimit);
+            tx.propagation_stop_reason =
+                Some(NetworkRuntimeNativePendingTxPropagationStopReasonV1::BudgetLimit);
         }
     }
 }
@@ -11288,7 +11282,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_tx_propagation_context_tracks_peer_and_budget_drop() {
+    fn pending_tx_propagation_budget_stops_broadcast_not_execution() {
         let chain_id = 2062_u64;
         clear_runtime_sync_status_for_test(chain_id);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
@@ -11315,6 +11309,13 @@ mod tests {
         assert_eq!(first.propagation_count, 1);
         assert_eq!(first.last_propagation_peer_id, Some(21));
         assert_eq!(first.last_propagation_failure_class, None);
+        assert_eq!(
+            snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1(
+                chain_id, 8, 2
+            )
+            .len(),
+            1
+        );
 
         observe_network_runtime_native_pending_tx_propagated_with_context_v1(
             chain_id,
@@ -11326,29 +11327,90 @@ mod tests {
         let second = get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).expect("second");
         assert_eq!(
             second.lifecycle_stage,
-            NetworkRuntimeNativePendingTxLifecycleStageV1::Dropped
+            NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
         );
-        assert_eq!(second.drop_count, 1);
+        assert_eq!(second.drop_count, 0);
         assert_eq!(second.propagation_count, 2);
-        assert_eq!(
-            second.last_propagation_failure_class.as_deref(),
-            Some("budget_limit")
-        );
-        assert_eq!(
-            second.last_propagation_failure_phase.as_deref(),
-            Some("transactions_dispatch")
-        );
+        assert_eq!(second.propagation_failure_count, 0);
+        assert_eq!(second.last_propagation_failure_class, None);
+        assert_eq!(second.last_propagation_failure_phase, None);
         assert_eq!(
             second.propagation_disposition,
-            Some(NetworkRuntimeNativePendingTxPropagationDispositionV1::Dropped)
+            Some(NetworkRuntimeNativePendingTxPropagationDispositionV1::Propagated)
         );
         assert_eq!(
             second.propagation_stop_reason,
             Some(NetworkRuntimeNativePendingTxPropagationStopReasonV1::BudgetLimit)
         );
+        assert_eq!(second.propagation_recoverability, None);
+        assert!(!second.retry_eligible);
         assert_eq!(
-            second.propagation_recoverability,
-            Some(NetworkRuntimeNativePendingTxPropagationRecoverabilityV1::Recoverable)
+            second.retry_suppressed_reason,
+            Some(NetworkRuntimeNativePendingTxRetrySuppressedReasonV1::BudgetLimit)
+        );
+        assert_eq!(
+            snapshot_network_runtime_native_active_pending_txs_v1(chain_id, 8).len(),
+            1
+        );
+        assert!(get_network_runtime_native_pending_tx_payload_v1(chain_id, tx_hash).is_some());
+        assert!(
+            snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1(chain_id, 8, 2)
+                .is_empty()
+        );
+        let compacted = compact_network_runtime_native_pending_tx_history_v1(chain_id, 0);
+        assert!(
+            snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1(
+                chain_id, 8, 2
+            )
+            .is_empty()
+        );
+        assert_eq!(compacted.historical_compacted_total, 0);
+        assert!(get_network_runtime_native_pending_tx_payload_v1(chain_id, tx_hash).is_some());
+    }
+
+    #[test]
+    fn pending_tx_propagation_late_success_preserves_terminal_states() {
+        let chain_id = 206_291_u64;
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        for (index, stage) in [
+            NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedNonCanonical,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::Rejected,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::Dropped,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let tx_hash = [index as u8 + 1; 32];
+            observe_network_runtime_native_pending_tx_ingress_with_payload_v1(
+                chain_id,
+                21,
+                tx_hash,
+                Some(&[0xf8, 0x01, 0x01]),
+            );
+            let before = {
+                let mut guard = runtime_native_pending_tx_map().lock().unwrap();
+                let state = guard.get_mut(&chain_id).unwrap().get_mut(&tx_hash).unwrap();
+                state.lifecycle_stage = stage;
+                state.retry_eligible = false;
+                state.clone()
+            };
+            observe_network_runtime_native_pending_tx_propagated_with_context_v1(
+                chain_id,
+                tx_hash,
+                Some(22),
+                Some("late_completion"),
+                Some(1),
+            );
+            assert_eq!(
+                get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).unwrap(),
+                before
+            );
+        }
+        assert!(snapshot_network_runtime_native_active_pending_txs_v1(chain_id, 8).is_empty());
+        assert!(
+            snapshot_network_runtime_native_pending_tx_broadcast_candidates_v1(chain_id, 8, 3)
+                .is_empty()
         );
     }
 

@@ -142,7 +142,17 @@ fn run_node_v1(bin: &PathBuf, envs: &[(&str, String)]) -> Result<Output> {
         .with_context(|| format!("run novovm-node child failed: {}", bin.display()))
 }
 
-fn parse_summary_v1(output: &Output, label: &str) -> Result<Value> {
+fn parse_summary_v1(output: &Output, label: &str, evidence_dir: &Path) -> Result<Value> {
+    // Preserve the actual node output before interpreting the summary. A later
+    // aggregate gate error must not hide the earlier ingress/execution failure.
+    fs::write(
+        evidence_dir.join(format!("{label}.stdout.log")),
+        &output.stdout,
+    )?;
+    fs::write(
+        evidence_dir.join(format!("{label}.stderr.log")),
+        &output.stderr,
+    )?;
     if !output.status.success() {
         let diagnostic = serde_json::from_slice::<Value>(&output.stdout)
             .map(|summary| {
@@ -159,10 +169,11 @@ fn parse_summary_v1(output: &Output, label: &str) -> Result<Value> {
             .map(|summary| summary.to_string())
             .unwrap_or_else(|_| String::from_utf8_lossy(&output.stdout).into_owned());
         bail!(
-            "{label} node failed: status={} diagnostic={} stderr={}",
+            "{label} node failed: status={} diagnostic={} stderr={} evidence={}",
             output.status,
             diagnostic,
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8_lossy(&output.stderr),
+            evidence_dir.display()
         );
     }
     serde_json::from_slice::<Value>(&output.stdout).with_context(|| {
@@ -650,6 +661,22 @@ fn sender_round_aggregate_v1(summaries: &[Value]) -> Value {
 }
 
 fn main() -> Result<()> {
+    let evidence_dir = append_path_suffix_v1(
+        &report_path_v1(),
+        &format!(
+            ".evidence-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ),
+    );
+    if let Some(parent) = evidence_dir
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    fs::create_dir(&evidence_dir)?;
+    eprintln!("dual-node process evidence: {}", evidence_dir.display());
     let chain_id = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_CHAIN_ID", 9_998_895)?;
     let tx_count = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT", 8)?;
     let tick_budget = u64_env("NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET", 4)?.max(1);
@@ -1113,7 +1140,11 @@ fn main() -> Result<()> {
         let sender_round = run_node_v1(&node_bin, round_env.as_slice())
             .with_context(|| format!("run sender round {} failed", round + 1))
             .and_then(|sender_out| {
-                parse_summary_v1(&sender_out, format!("sender_round_{}", round + 1).as_str())
+                parse_summary_v1(
+                    &sender_out,
+                    format!("sender_round_{}", round + 1).as_str(),
+                    &evidence_dir,
+                )
             });
         let sender_round = match sender_round {
             Ok(summary) => summary,
@@ -1135,13 +1166,17 @@ fn main() -> Result<()> {
             .wait_with_output()
             .with_context(|| format!("wait receiver node failed: node={node} addr={addr}"))?;
         receiver_summaries.push(
-            parse_summary_v1(&receiver_out, format!("receiver_{}", idx + 1).as_str())
-                .with_context(|| {
-                    format!(
-                        "receiver failed after all sender rounds; sender_summary={}",
-                        serde_json::to_string(&sender_summary).unwrap_or_else(|_| "-".to_string())
-                    )
-                })?,
+            parse_summary_v1(
+                &receiver_out,
+                format!("receiver_{}", idx + 1).as_str(),
+                &evidence_dir,
+            )
+            .with_context(|| {
+                format!(
+                    "receiver failed after all sender rounds; sender_summary={}",
+                    serde_json::to_string(&sender_summary).unwrap_or_else(|_| "-".to_string())
+                )
+            })?,
         );
     }
     let receiver_summary = receiver_summaries
@@ -1393,6 +1428,7 @@ fn main() -> Result<()> {
         "receiver_summary": receiver_summary,
         "receiver_summaries": receiver_summaries,
         "durable_receiver_ledgers": durable_receiver_ledgers,
+        "process_evidence_dir": evidence_dir,
     });
     let report_path = report_path_v1();
     write_report_v1(report_path.as_path(), &report)?;

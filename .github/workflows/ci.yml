@@ -279,6 +279,9 @@ jobs:
           set -euo pipefail
           unset CARGO_TARGET_DIR || true
           export NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT=8
+          # Fan out to three independent receivers: exhausting the send
+          # budget must never discard the sender's unexecuted transactions.
+          export NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT=3
           export NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS=2
           export NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_PROCESS_BUDGET_MS=180000
           export NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET=4
@@ -298,10 +301,13 @@ jobs:
           if-no-files-found: error
 
       - name: Upload native pipeline artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: supervm-native-pipeline-dual-node-gate
-          path: artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json
+          path: |
+            artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json
+            artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json.evidence-*/*.log
           if-no-files-found: error
 
   rust_security:

@@ -954,6 +954,20 @@ fn main() -> Result<()> {
     )?;
     gate.test_product_mainline_overlay_lifecycle = true;
 
+    run_step(
+        "test propagation budgets preserve execution and terminal states",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-network",
+            "--lib",
+            "pending_tx_propagation_",
+            "--",
+            "--test-threads=1",
+        ],
+    )?;
+
     for test_name in [
         "native_block_seal_overlay::tests::authority_canonical_wire_and_source_binding_fail_closed",
         "native_block_seal_overlay::tests::quarantine_replay_restart_and_local_bridge_preserve_unsealed_ledger",
