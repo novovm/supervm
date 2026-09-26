@@ -2157,11 +2157,25 @@ fn with_native_aoem_semantic_ingress_session_v1<T>(
     })
 }
 
-#[cfg(test)]
+/// Own the current thread's semantic-session lifetime. Create before using the
+/// cached session and drop before the thread exits: destroying an AOEM worker
+/// pool from Windows TLS teardown can wait under the loader lock.
+/// Thread-affine; this neither controls other workers nor changes AOEM state.
+/// Use once around the owning thread's entry point, not around individual ticks
+/// or nested calls. Other threads must manage their own cached sessions.
+#[derive(Default)]
+pub struct NativeAoemSemanticSessionScopeV1(std::marker::PhantomData<std::rc::Rc<()>>);
+
+impl Drop for NativeAoemSemanticSessionScopeV1 {
+    fn drop(&mut self) {
+        reset_native_aoem_semantic_ingress_session_v1();
+    }
+}
+
 fn reset_native_aoem_semantic_ingress_session_v1() {
-    NATIVE_AOEM_SEMANTIC_INGRESS_RUNTIME_V1.with(|slot| {
-        *slot.borrow_mut() = None;
-    });
+    // Release the RefCell borrow before destroying/joining the runtime workers.
+    let cached = NATIVE_AOEM_SEMANTIC_INGRESS_RUNTIME_V1.with(|slot| slot.borrow_mut().take());
+    drop(cached);
 }
 
 fn native_aoem_semantic_ingress_error_reason_v1(err: &anyhow::Error) -> String {

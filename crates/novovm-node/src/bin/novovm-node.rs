@@ -41607,6 +41607,7 @@ fn native_execution_pipeline_repair_final_missing_sequence_start_v1(
 #[cfg(test)]
 mod native_execution_pipeline_tests {
     use super::*;
+    include!("../native_pipeline_test_process.rs");
 
     #[test]
     fn child_progress_summary_reports_child_runtime_ledger_expected_count() {
@@ -42480,6 +42481,13 @@ mod native_execution_pipeline_tests {
 
     #[test]
     fn native_execution_pipeline_ingress_drive_feeds_aoem_tick_closed_loop() {
+        if isolated_pipeline_case(
+            "native_execution_pipeline_ingress_drive_feeds_aoem_tick_closed_loop",
+        ) {
+            return;
+        }
+        let _semantic_session_scope =
+            novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
         let chain_id = 9_998_885u64;
         let raw = build_native_execution_pipeline_fixture_payloads_v1(chain_id, 1)
             .expect("build authenticated native fixture")
@@ -42509,23 +42517,17 @@ mod native_execution_pipeline_tests {
         assert_eq!(broadcast_drive_out["ok"].as_bool(), Some(true));
         assert_eq!(broadcast_drive_out["broadcast_tx_count"].as_u64(), Some(1));
 
-        let store_path = std::env::temp_dir().join(format!(
-            "novovm-native-pipeline-ingress-{}-{}.json",
-            chain_id,
-            std::process::id()
-        ));
-        let _ = fs::remove_file(&store_path);
         let out = run_nov_native_execution_tick_from_params_v1(&serde_json::json!({
             "chain_id": chain_id,
             "hard_budget_per_tick": 4u64,
             "target_budget_per_tick": 4u64,
             "effective_budget_per_tick": 4u64,
-            "native_execution_store_path": store_path,
         }))
         .expect("AOEM tick should consume ingress pending tx");
         assert_eq!(out["execution_kernel"].as_str(), Some("AOEM"));
         assert_eq!(out["aoem_concurrency_owner"].as_str(), Some("AOEM_runtime"));
         assert_eq!(out["executed_count"].as_u64(), Some(1));
+        assert_unsealed_pipeline_execution(&out, chain_id, 1);
 
         let report = build_native_execution_pipeline_report_v1(
             1,
@@ -42562,12 +42564,12 @@ mod native_execution_pipeline_tests {
         assert_eq!(summary["nonempty_commit_ticks"].as_u64(), Some(1));
         assert_eq!(summary["proof_ticks"].as_u64(), Some(1));
         assert_eq!(summary["commit_ticks"].as_u64(), Some(1));
-        assert_eq!(summary["included_canonical_last"].as_u64(), Some(1));
+        assert_eq!(summary["included_canonical_last"].as_u64(), Some(0));
         assert_eq!(summary["broadcast_tx_total_last"].as_u64(), Some(1));
-        NativeExecutionPipelineSoakGateV1 {
+        let mut execution_gate = NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
             require_progress: true,
-            require_full_lifecycle: true,
+            require_full_lifecycle: false,
             require_product_ingress: true,
             require_rocksdb_store: false,
             min_ticks: 1,
@@ -42591,19 +42593,34 @@ mod native_execution_pipeline_tests {
             min_broadcast_tx_total: 1,
             min_broadcast_dispatch_total: 1,
             min_broadcast_candidates: 0,
-            min_included_canonical: 1,
-            min_included_canonical_total: 1,
+            min_included_canonical: 0,
+            min_included_canonical_total: 0,
             min_ingress_total: 1,
             max_queue_pending_last: 0,
             min_ticks_per_sec_x1000: 0,
-        }
-        .validate_summary(&summary)
-        .expect("closed-loop summary must satisfy ingress and AOEM gates");
-        let _ = fs::remove_file(&store_path);
+        };
+        execution_gate
+            .validate_summary(&summary)
+            .expect("execution-only gate");
+        execution_gate.require_full_lifecycle = true;
+        assert!(execution_gate.validate_summary(&summary).is_err());
+        execution_gate.require_full_lifecycle = false;
+        execution_gate.min_included_canonical = 1;
+        assert!(
+            execution_gate.validate_summary(&summary).is_err(),
+            "execution cannot satisfy a canonical-chain gate"
+        );
     }
 
     #[test]
     fn native_execution_pipeline_multitick_keeps_aoem_batch_as_concurrency_boundary() {
+        if isolated_pipeline_case(
+            "native_execution_pipeline_multitick_keeps_aoem_batch_as_concurrency_boundary",
+        ) {
+            return;
+        }
+        let _semantic_session_scope =
+            novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
         let chain_id = 9_998_886u64;
         let mut ingress_drive = NativeExecutionPipelineIngressDriveV1 {
             chain_id,
@@ -42619,12 +42636,6 @@ mod native_execution_pipeline_tests {
             max_propagations: 3,
             enabled: true,
         };
-        let store_path = std::env::temp_dir().join(format!(
-            "novovm-native-pipeline-multitick-{}-{}.json",
-            chain_id,
-            std::process::id()
-        ));
-        let _ = fs::remove_file(&store_path);
         let mut aggregate = NativeExecutionPipelineAggregateV1::new();
 
         for tick in 1..=3u64 {
@@ -42651,12 +42662,12 @@ mod native_execution_pipeline_tests {
                 "hard_budget_per_tick": 2u64,
                 "target_budget_per_tick": 2u64,
                 "effective_budget_per_tick": 2u64,
-                "native_execution_store_path": store_path,
             }))
             .expect("AOEM tick should consume the budgeted native pending slice");
             assert_eq!(out["execution_kernel"].as_str(), Some("AOEM"));
             assert_eq!(out["aoem_concurrency_owner"].as_str(), Some("AOEM_runtime"));
             assert_eq!(out["executed_count"].as_u64(), Some(expected_this_tick));
+            assert_unsealed_pipeline_execution(&out, chain_id, expected_this_tick);
             assert_eq!(
                 out["batch_result"]["batch_result"]["aoem_concurrency_owner"].as_str(),
                 Some("AOEM_runtime")
@@ -42704,21 +42715,22 @@ mod native_execution_pipeline_tests {
         assert_eq!(summary["proof_ticks"].as_u64(), Some(3));
         assert_eq!(summary["commit_ticks"].as_u64(), Some(3));
         assert_eq!(summary["queue_pending_last"].as_u64(), Some(0));
-        assert_eq!(summary["included_canonical_last"].as_u64(), Some(5));
-        assert_eq!(summary["included_canonical_total"].as_u64(), Some(5));
+        assert_eq!(summary["included_canonical_last"].as_u64(), Some(0));
+        assert_eq!(summary["included_canonical_total"].as_u64(), Some(0));
         assert_eq!(summary["broadcast_tx_total_last"].as_u64(), Some(5));
         let pending_summary =
             novovm_network::snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
         assert_eq!(pending_summary.reorged_back_to_pending_count, 0);
-        assert_eq!(pending_summary.included_canonical_count, 5);
+        assert_eq!(pending_summary.included_canonical_count, 0);
+        assert_eq!(pending_summary.included_non_canonical_count, 5);
         assert_eq!(
             summary["host_concurrency_policy"].as_str(),
             Some("host_drives_lifecycle_only_no_rust_execution_scheduler")
         );
-        NativeExecutionPipelineSoakGateV1 {
+        let mut execution_gate = NativeExecutionPipelineSoakGateV1 {
             emit_tick_reports: false,
             require_progress: true,
-            require_full_lifecycle: true,
+            require_full_lifecycle: false,
             require_product_ingress: true,
             require_rocksdb_store: false,
             min_ticks: 3,
@@ -42742,20 +42754,34 @@ mod native_execution_pipeline_tests {
             min_broadcast_tx_total: 5,
             min_broadcast_dispatch_total: 3,
             min_broadcast_candidates: 0,
-            min_included_canonical: 5,
-            min_included_canonical_total: 5,
+            min_included_canonical: 0,
+            min_included_canonical_total: 0,
             min_ingress_total: 5,
             max_queue_pending_last: 0,
             min_ticks_per_sec_x1000: 0,
-        }
-        .validate_summary(&summary)
-        .expect("multitick summary must satisfy high-frequency lifecycle gates");
-
-        let _ = fs::remove_file(&store_path);
+        };
+        execution_gate
+            .validate_summary(&summary)
+            .expect("multitick execution-only gate");
+        execution_gate.require_full_lifecycle = true;
+        assert!(execution_gate.validate_summary(&summary).is_err());
+        execution_gate.require_full_lifecycle = false;
+        execution_gate.min_included_canonical_total = 5;
+        assert!(
+            execution_gate.validate_summary(&summary).is_err(),
+            "unsealed candidates cannot satisfy canonical totals"
+        );
     }
 
     #[test]
-    fn native_execution_pipeline_transport_peer_output_reenters_aoem_tick() {
+    fn native_execution_pipeline_transport_replay_preserves_stage_then_executes() {
+        if isolated_pipeline_case(
+            "native_execution_pipeline_transport_replay_preserves_stage_then_executes",
+        ) {
+            return;
+        }
+        let _semantic_session_scope =
+            novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
         let chain_id = 9_998_887u64;
         let local = NodeId(9_991_887);
         let remote = NodeId(9_991_888);
@@ -42782,41 +42808,40 @@ mod native_execution_pipeline_tests {
             .try_recv(remote)
             .expect("remote transport inbox should be readable")
             .expect("remote node should receive native tx output");
+        assert_pipeline_transport_message(&msg, chain_id, local, tx_hash, &raw);
         observe_network_runtime_protocol_message_v1(chain_id, &msg, None, Some(local.0));
         let remote_pending = get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
-            .expect("remote transport receive should re-enter pending runtime");
+            .expect("shared-process replay must retain the propagated transaction");
+        // The two transport endpoints share one process-global registry; replay
+        // must not regress Propagated to Pending or imply independent node state.
+        assert_eq!(remote_pending.tx_hash, tx_hash);
+        assert!(remote_pending.propagation_count > 0);
         assert_eq!(
             remote_pending.lifecycle_stage,
-            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
         );
 
-        let store_path = std::env::temp_dir().join(format!(
-            "novovm-native-pipeline-transport-{}-{}.json",
-            chain_id,
-            std::process::id()
-        ));
-        let _ = fs::remove_file(&store_path);
         let out = run_nov_native_execution_tick_from_params_v1(&serde_json::json!({
             "chain_id": chain_id,
             "hard_budget_per_tick": 4u64,
             "target_budget_per_tick": 4u64,
             "effective_budget_per_tick": 4u64,
-            "native_execution_store_path": store_path,
         }))
         .expect("remote pending tx should execute through AOEM tick");
 
         assert_eq!(out["execution_kernel"].as_str(), Some("AOEM"));
         assert_eq!(out["aoem_concurrency_owner"].as_str(), Some("AOEM_runtime"));
         assert_eq!(out["executed_count"].as_u64(), Some(1));
+        assert_unsealed_pipeline_execution(&out, chain_id, 1);
         assert_eq!(
             out["batch_result"]["batch_result"]["native_store_commit"]["model"].as_str(),
             Some("post_aoem_deterministic_dirty_store_commit")
         );
         let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
-        assert_eq!(summary.included_canonical_count, 1);
+        assert_eq!(summary.included_canonical_count, 0);
+        assert_eq!(summary.included_non_canonical_count, 1);
         assert_eq!(summary.pending_count, 0);
         assert_eq!(summary.broadcast_tx_total, 1);
-        let _ = fs::remove_file(&store_path);
     }
 
     #[test]
@@ -42860,7 +42885,14 @@ mod native_execution_pipeline_tests {
     }
 
     #[test]
-    fn native_execution_pipeline_udp_peer_output_reenters_aoem_tick() {
+    fn native_execution_pipeline_udp_replay_preserves_stage_then_executes() {
+        if isolated_pipeline_case(
+            "native_execution_pipeline_udp_replay_preserves_stage_then_executes",
+        ) {
+            return;
+        }
+        let _semantic_session_scope =
+            novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
         let chain_id = 9_998_891u64;
         let local = NodeId(9_991_891);
         let remote = NodeId(9_991_892);
@@ -42899,11 +42931,11 @@ mod native_execution_pipeline_tests {
         let started = Instant::now();
         let mut received = false;
         while started.elapsed() < Duration::from_millis(500) {
-            if remote_transport
+            if let Some(message) = remote_transport
                 .try_recv(remote)
                 .expect("remote udp inbox should be readable")
-                .is_some()
             {
+                assert_pipeline_transport_message(&message, chain_id, local, tx_hash, &payloads[0]);
                 received = true;
                 break;
             }
@@ -42912,43 +42944,45 @@ mod native_execution_pipeline_tests {
         assert!(received, "remote UDP node should receive native tx output");
 
         let remote_pending = get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
-            .expect("UDP receive should re-enter native pending runtime");
+            .expect("UDP replay must retain the shared-process propagated transaction");
+        assert_eq!(remote_pending.tx_hash, tx_hash);
+        assert!(remote_pending.propagation_count > 0);
         assert_eq!(
             remote_pending.lifecycle_stage,
-            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
         );
 
-        let store_path = std::env::temp_dir().join(format!(
-            "novovm-native-pipeline-udp-{}-{}.json",
-            chain_id,
-            std::process::id()
-        ));
-        let _ = fs::remove_file(&store_path);
         let out = run_nov_native_execution_tick_from_params_v1(&serde_json::json!({
             "chain_id": chain_id,
             "hard_budget_per_tick": 4u64,
             "target_budget_per_tick": 4u64,
             "effective_budget_per_tick": 4u64,
-            "native_execution_store_path": store_path,
         }))
         .expect("UDP-delivered pending tx should execute through AOEM tick");
 
         assert_eq!(out["execution_kernel"].as_str(), Some("AOEM"));
         assert_eq!(out["aoem_concurrency_owner"].as_str(), Some("AOEM_runtime"));
         assert_eq!(out["executed_count"].as_u64(), Some(1));
+        assert_unsealed_pipeline_execution(&out, chain_id, 1);
         assert_eq!(
             out["batch_result"]["batch_result"]["native_store_commit"]["model"].as_str(),
             Some("post_aoem_deterministic_dirty_store_commit")
         );
         let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
-        assert_eq!(summary.included_canonical_count, 1);
+        assert_eq!(summary.included_canonical_count, 0);
+        assert_eq!(summary.included_non_canonical_count, 1);
         assert_eq!(summary.pending_count, 0);
         assert_eq!(summary.broadcast_tx_total, 1);
-        let _ = fs::remove_file(&store_path);
     }
 
     #[test]
-    fn native_execution_pipeline_udp_drive_broadcasts_pending_to_peer() {
+    fn native_execution_pipeline_udp_drive_preserves_propagated_state() {
+        if isolated_pipeline_case("native_execution_pipeline_udp_drive_preserves_propagated_state")
+        {
+            return;
+        }
+        let _semantic_session_scope =
+            novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
         let chain_id = 9_998_892u64;
         let local = NodeId(9_991_893);
         let remote = NodeId(9_991_894);
@@ -42991,11 +43025,11 @@ mod native_execution_pipeline_tests {
         let started = Instant::now();
         let mut received = false;
         while started.elapsed() < Duration::from_millis(500) {
-            if remote_transport
+            if let Some(message) = remote_transport
                 .try_recv(remote)
                 .expect("remote udp inbox should be readable")
-                .is_some()
             {
+                assert_pipeline_transport_message(&message, chain_id, local, tx_hash, &payloads[0]);
                 received = true;
                 break;
             }
@@ -43004,10 +43038,12 @@ mod native_execution_pipeline_tests {
         assert!(received, "remote UDP node should receive drive output");
 
         let remote_pending = get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
-            .expect("UDP drive receive should re-enter native pending runtime");
+            .expect("UDP delivery must retain the shared-process propagated transaction");
+        assert_eq!(remote_pending.tx_hash, tx_hash);
+        assert!(remote_pending.propagation_count > 0);
         assert_eq!(
             remote_pending.lifecycle_stage,
-            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Pending
+            novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::Propagated
         );
     }
 
@@ -43506,6 +43542,8 @@ fn run_native_execution_tick_node_mode_v1(
     verbose: bool,
     seal_config_path: Option<PathBuf>,
 ) -> Result<()> {
+    let _semantic_session_scope =
+        novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
     let max_ticks = u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", 1)?;
     let interval_ms = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", 250)?;
     let full_async_runtime_engine_enabled = bool_env("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE");

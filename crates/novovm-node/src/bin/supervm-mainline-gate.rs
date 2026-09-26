@@ -938,6 +938,20 @@ fn main() -> Result<()> {
         "cargo",
         &["test", "-p", "novovm-node", "--lib", "product_mainline_"],
     )?;
+    run_step(
+        "test main-node pipeline execution, unsealed state and session shutdown",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-node",
+            "--bin",
+            "novovm-node",
+            "native_execution_pipeline_tests",
+            "--",
+            "--test-threads=1",
+        ],
+    )?;
     gate.test_product_mainline_overlay_lifecycle = true;
 
     for test_name in [
