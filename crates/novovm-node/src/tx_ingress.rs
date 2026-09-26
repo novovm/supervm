@@ -21253,7 +21253,16 @@ mod tests {
             .expect("clock should be >= epoch")
             .as_nanos();
         path.push(format!("novovm-native-exec-store-{}.json", nonce));
-        let out = test_fn(path.clone());
+        let out = {
+            // The fixture owns this thread's cached session. Close worker pools
+            // before deleting stores and before Windows TLS/loader-lock teardown.
+            // RAII also releases the session when the test assertion unwinds.
+            let _session_scope = NativeAoemSemanticSessionScopeV1::default();
+            test_fn(path.clone())
+        };
+        NATIVE_AOEM_SEMANTIC_INGRESS_RUNTIME_V1.with(|slot| {
+            assert!(slot.borrow().is_none(), "fixture leaked an AOEM session");
+        });
         let lock_path = nov_native_execution_store_lock_path_v1(path.as_path());
         let backup_path = nov_native_execution_store_json_backup_path_v1(path.as_path());
         let mirror_path = nov_native_aoem_semantic_ledger_mirror_path_v1(path.as_path());
