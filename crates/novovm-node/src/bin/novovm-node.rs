@@ -43988,8 +43988,15 @@ fn run_native_execution_tick_node_mode_v1(
     Ok(())
 }
 
+#[path = "../native_candidate_node_mode.rs"]
+mod native_candidate_node_mode;
+
 fn main() -> Result<()> {
     let node_mode = std::env::var("NOVOVM_NODE_MODE").unwrap_or_else(|_| "full".to_string());
+    let candidate_mode = native_candidate_node_mode::selected(
+        &node_mode,
+        mainline_query_method_from_env().is_some(),
+    )?;
     let seal_native_mode = mainline_query_method_from_env().is_none()
         && (node_mode.eq_ignore_ascii_case("native_execution_pipeline")
             || node_mode.eq_ignore_ascii_case("native_execution_tick")
@@ -44003,6 +44010,9 @@ fn main() -> Result<()> {
     )?;
     let cli_overrides = parse_node_cli_overrides_v1()?;
     let verbose = bool_env("NOVOVM_NODE_VERBOSE");
+    if candidate_mode {
+        return native_candidate_node_mode::run(&native_execution_tick_params_from_env_v1()?);
+    }
     if let Some(method) = mainline_query_method_from_env() {
         let params = mainline_query_params_from_env()
             .context("parse NOVOVM_MAINLINE_QUERY_PARAMS failed")?;

@@ -953,6 +953,19 @@ fn main() -> Result<()> {
         ],
     )?;
     gate.test_product_mainline_overlay_lifecycle = true;
+    run_step(
+        "test real main processes execute a common AOEM candidate and restart",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "novovm-node",
+            "--test",
+            "native_candidate_node_cli",
+            "--",
+            "--test-threads=1",
+        ],
+    )?;
 
     run_step(
         "test propagation budgets preserve execution and terminal states",
