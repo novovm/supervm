@@ -1767,6 +1767,7 @@ pub fn load_product_mainline_overlay_config_v1(
         PathBuf::from(DEFAULT_PRODUCT_MAINLINE_OVERLAY_DELIVERY_JOURNAL_NAME_V1)
     });
     rebase_relative_path_v1(base, journal_path);
+    *journal_path = crate::database_path::native_database_path(journal_path.clone())?;
     if let ProductRelayTlsTrustV1::ExplicitCa { certificate_path } = &mut config.tls_trust {
         rebase_relative_path_v1(base, certificate_path);
     }
@@ -4649,9 +4650,27 @@ mod tests {
         assert_eq!(
             loaded.delivery_journal_path,
             Some(
-                absolute_config_dir.join(DEFAULT_PRODUCT_MAINLINE_OVERLAY_DELIVERY_JOURNAL_NAME_V1)
+                crate::database_path::native_database_path(
+                    absolute_config_dir
+                        .join(DEFAULT_PRODUCT_MAINLINE_OVERLAY_DELIVERY_JOURNAL_NAME_V1)
+                )
+                .unwrap()
             )
         );
+        // Exercise RocksDB itself, not just PathBuf equality: Windows verbatim
+        // config roots used to fail when RocksDB appended `/LOG`.
+        let database =
+            rocksdb::DB::open_default(loaded.delivery_journal_path.as_ref().unwrap()).unwrap();
+        database.put(b"path-probe", b"ok").unwrap();
+        database.flush().unwrap();
+        drop(database);
+        let database =
+            rocksdb::DB::open_default(loaded.delivery_journal_path.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            database.get(b"path-probe").unwrap().as_deref(),
+            Some(b"ok".as_slice())
+        );
+        drop(database);
         assert!(matches!(
             loaded.tls_trust,
             ProductRelayTlsTrustV1::ExplicitCa { certificate_path }

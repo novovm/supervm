@@ -4,6 +4,7 @@
 mod bincode_compat;
 mod clearing_router;
 mod clearing_types;
+mod database_path;
 pub mod governance_surface;
 mod governance_verifier_ext;
 mod liquidity_sources;

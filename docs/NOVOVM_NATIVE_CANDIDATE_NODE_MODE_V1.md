@@ -62,6 +62,6 @@ node/novovmctl 全目标 Clippy -D warnings 及格式检查通过。没有重跑
 cargo test -p novovm-node --test native_candidate_node_cli -- --test-threads=1
 ```
 
-该测试已加入 mainline gate。下一步仍是把这些真实共同候选接入多个主节点的
-封印服务，验证 prepare QC 与重启恢复；连续高度、最终确认及权威状态晋升
-仍不能由本切片推出。AOEM 内核/DLL 和现有聊天服务未改动。
+该测试已加入 mainline gate。后续已另行完成[真实主节点封印联调](NOVOVM_NATIVE_SEAL_MAIN_PROCESS_V1.md)，
+覆盖 prepare QC 与正常重启恢复；该需要回环 443 的专项默认不运行。
+连续高度、最终确认及权威状态晋升仍不能由本切片推出。AOEM 内核/DLL 和现有聊天服务未改动。

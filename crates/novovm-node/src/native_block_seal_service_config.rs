@@ -1,6 +1,7 @@
 //! Strict, explicit configuration for the single-candidate seal service.
 //! Loading is read-only: it never creates a database, generates a key, or signs.
 
+use crate::database_path::native_database_path;
 use crate::native_block_seal::{NovNativeSealValidatorSetV1, NovNativeSealValidatorV1};
 use crate::native_block_seal_overlay::{
     NovNativeSealEpochAuthorityV1, NovNativeSealValidatorTransportBindingV1,
@@ -341,44 +342,6 @@ fn resolve_store_path(config_dir: &Path, value: &Path) -> Result<PathBuf> {
         .file_name()
         .context("native seal store has no final directory name")?;
     Ok(canonical_parent.join(name))
-}
-
-/// Windows canonicalization returns a verbatim path. RocksDB's Windows backend
-/// appends slash-separated children (e.g. `/LOG`), which verbatim paths reject.
-/// Convert only the prefix of an already resolved filesystem path; do not use
-/// this function as a substitute for canonicalization or isolation checks.
-#[cfg(windows)]
-fn native_database_path(canonical: PathBuf) -> Result<PathBuf> {
-    use std::ffi::OsString;
-    use std::path::Prefix;
-    let mut components = canonical.components();
-    let Some(Component::Prefix(prefix)) = components.next() else {
-        bail!("native seal canonical database path has no Windows volume prefix");
-    };
-    let mut native = match prefix.kind() {
-        Prefix::VerbatimDisk(letter) => PathBuf::from(format!("{}:\\", char::from(letter))),
-        Prefix::VerbatimUNC(server, share) => {
-            let mut prefix = OsString::from(r"\\");
-            prefix.push(server);
-            prefix.push(r"\");
-            prefix.push(share);
-            prefix.push(r"\");
-            PathBuf::from(prefix)
-        }
-        Prefix::Disk(_) | Prefix::UNC(_, _) => return Ok(canonical),
-        _ => bail!("native seal database path uses an unsupported Windows device namespace"),
-    };
-    for component in components {
-        if component != Component::RootDir {
-            native.push(component.as_os_str());
-        }
-    }
-    Ok(native)
-}
-
-#[cfg(not(windows))]
-fn native_database_path(canonical: PathBuf) -> Result<PathBuf> {
-    Ok(canonical)
 }
 
 #[cfg(test)]

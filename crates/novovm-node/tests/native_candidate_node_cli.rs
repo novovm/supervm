@@ -187,8 +187,11 @@ fn candidate_node_cli_rejects_implicit_or_query_execution_before_persistence() {
     }
 }
 
-#[test]
-fn candidate_node_cli_real_aoem_common_plan_and_restart_match_across_processes() {
+fn source_candidate() -> (
+    Node,
+    NovNativeDurableBlockV1,
+    NovNativeCandidateExecutionPlanV1,
+) {
     // Produce an authentic source candidate through the unchanged normal node
     // pipeline, then extract INPUTS ONLY; never copy its DB/output into peers.
     let source = Node::new("source");
@@ -229,6 +232,12 @@ fn candidate_node_cli_real_aoem_common_plan_and_restart_match_across_processes()
     )
     .unwrap();
     drop(ledger);
+    (source, block, plan)
+}
+
+#[test]
+fn candidate_node_cli_real_aoem_common_plan_and_restart_match_across_processes() {
+    let (_source, block, plan) = source_candidate();
     for (label, pin, chain) in [
         ("wrong-pin", "00".repeat(32), CHAIN),
         ("wrong-chain", hex(&plan.plan_commitment), CHAIN + 1),
@@ -364,6 +373,9 @@ fn candidate_node_cli_real_aoem_common_plan_and_restart_match_across_processes()
         assert_eq!(node.ledger().load_head(CHAIN).unwrap(), first);
     }
 }
+
+#[path = "support/native_seal_main_process.rs"]
+mod native_seal_main_process;
 
 #[test]
 fn candidate_node_cli_rejects_malformed_and_oversized_files_before_persistence() {

@@ -166,12 +166,16 @@ cargo clippy -p novovm-node -p novovmctl --all-targets -- -D warnings
 已增加[主节点共同候选本地执行模式](NOVOVM_NATIVE_CANDIDATE_NODE_MODE_V1.md)，
 两个独立主进程可按同一计划真实执行 AOEM 并重启幂等回放；这不包含封印服务联动。
 
-尚未完成：真实 AOEM 环境下开启封印服务的完整 `novovm-node` 正向多进程运行、局域网多台
+本机已完成[真实 AOEM 主节点 prepare QC 联调](NOVOVM_NATIVE_SEAL_MAIN_PROCESS_V1.md)：
+四个固定成员、初始负责人离线，2/4 不取得 QC、3/4 实际取得并持久保存 QC，
+活动主节点正常重启恢复；这不是最终确认，测试需要独占回环 443 且默认不随 CI 执行。
+
+尚未完成：局域网多台
 实体机器部署、公网混合拓扑、物理断电恢复、连续高度推进、未知候选获取与
 独立重放、最终确认和可恢复状态晋升。`proof_sealed`、`chain_canonical`、
 `safe`、`finalized` 不因此变成 true。AOEM ABI/DLL/内核和聊天服务未改变。
 
 前置说明：[加密通信适配](NOVOVM_NATIVE_SEAL_ROUND_OVERLAY_V1.md)、
 [Product Overlay 主节点生命周期](NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md)。
-下一步把真实 AOEM 共同候选接入完整节点的封印服务，再做局域网故障接替演示；
+下一步可做局域网故障接替验收，并继续补最终确认和可恢复状态晋升；
 不能把本文件当成已经完成部署的证明。
