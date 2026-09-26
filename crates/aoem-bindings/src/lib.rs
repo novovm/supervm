@@ -12,6 +12,8 @@ use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
+mod portable_receipt;
+
 pub type AoemAbiVersion = unsafe extern "C" fn() -> u32;
 pub type AoemVersionString = unsafe extern "C" fn() -> *const c_char;
 pub type AoemGlobalInit = unsafe extern "C" fn() -> i32;
@@ -466,6 +468,8 @@ pub struct AoemDyn {
     recommend_parallelism: Option<AoemRecommendParallelism>,
     zkvm_supported: Option<AoemZkvmSupported>,
     zkvm_prove_verify_v1: Option<AoemZkvmProveVerifyV1>,
+    risc0_prove_v1: Option<portable_receipt::ProveFn>,
+    risc0_verify_v1: Option<portable_receipt::VerifyFn>,
     zkvm_trace_fib_prove_verify: Option<AoemZkvmTraceFibProveVerify>,
     mldsa_supported: Option<AoemMldsaSupported>,
     mldsa_pubkey_size: Option<AoemMldsaPubkeySize>,
@@ -636,6 +640,14 @@ impl AoemDyn {
             .map(|f| *f);
         let zkvm_trace_fib_prove_verify: Option<AoemZkvmTraceFibProveVerify> = lib
             .get::<AoemZkvmTraceFibProveVerify>(b"aoem_zkvm_trace_fib_prove_verify")
+            .ok()
+            .map(|f| *f);
+        let risc0_prove_v1 = lib
+            .get::<portable_receipt::ProveFn>(b"aoem_risc0_prove_v1")
+            .ok()
+            .map(|f| *f);
+        let risc0_verify_v1 = lib
+            .get::<portable_receipt::VerifyFn>(b"aoem_risc0_verify_v1")
             .ok()
             .map(|f| *f);
         let mldsa_supported: Option<AoemMldsaSupported> = lib
@@ -847,6 +859,8 @@ impl AoemDyn {
             recommend_parallelism,
             zkvm_supported,
             zkvm_prove_verify_v1,
+            risc0_prove_v1,
+            risc0_verify_v1,
             zkvm_trace_fib_prove_verify,
             mldsa_supported,
             mldsa_pubkey_size,

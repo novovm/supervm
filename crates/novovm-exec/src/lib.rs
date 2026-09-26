@@ -2049,6 +2049,22 @@ impl AoemCapabilityContract {
 }
 
 impl AoemExecFacade {
+    /// Symbol presence only; backend availability is checked by the actual call.
+    pub fn has_risc0_portable_exports_v1(&self) -> bool {
+        self.dynlib.has_risc0_portable_exports_v1()
+    }
+
+    /// Proves a host-owned guest. Does not prove NOV semantics without a NOV guest.
+    pub fn risc0_prove_v1(&self, elf: &[u8], input: &[u8], image: &[u32; 8]) -> Result<Vec<u8>> {
+        self.dynlib.risc0_prove_v1(elf, input, image)
+    }
+
+    /// Checks a receipt against independently trusted program and output pins.
+    /// Does not authorize a candidate or change any finality state.
+    pub fn risc0_verify_v1(&self, receipt: &[u8], image: &[u32; 8], journal: &[u8]) -> Result<()> {
+        self.dynlib.risc0_verify_v1(receipt, image, journal)
+    }
+
     /// Opens AOEM from unified runtime config entry (core/persist/wasm).
     pub fn open_with_runtime(config: &AoemRuntimeConfig) -> Result<Self> {
         config.apply_process_env();
