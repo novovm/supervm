@@ -92,16 +92,15 @@ pub(super) fn authenticate_plan(
         let expected = expected_nonces
             .entry(reservation.identity_key.clone())
             .or_insert(0);
-        if reservation.nonce != *expected {
-            bail!(
+        *expected = match novovm_protocol::native_nonce::advance_nonce_v1(*expected, reservation.nonce) {
+            Ok(next) => next,
+            Err(novovm_protocol::native_nonce::NonceSequenceErrorV1::Mismatch) => bail!(
                 "candidate authentication nonce sequence mismatch transaction={index} expected={} got={}",
                 *expected,
                 reservation.nonce
-            );
-        }
-        *expected = expected
-            .checked_add(1)
-            .context("candidate authentication nonce sequence overflow")?;
+            ),
+            Err(novovm_protocol::native_nonce::NonceSequenceErrorV1::Exhausted) => bail!("candidate authentication nonce sequence overflow"),
+        };
 
         authenticated.push(AuthenticatedItem {
             native_tx,

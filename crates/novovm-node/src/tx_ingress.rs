@@ -98,8 +98,7 @@ pub const LOCAL_TX_WIRE_V1_BYTES: usize = 4 + 1 + (8 * 5) + 32;
 pub const NOV_NATIVE_GOVERNANCE_ALLOWLIST_ENV: &str = "NOVOVM_NATIVE_GOVERNANCE_PROPOSERS";
 pub const NOV_NATIVE_GOVERNANCE_ENABLED_ENV: &str = "NOVOVM_NATIVE_GOVERNANCE_ENABLED";
 pub const NOV_NATIVE_CHAIN_ID_ENV: &str = "NOVOVM_NATIVE_CHAIN_ID";
-pub(crate) const NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2: &str =
-    "novovm-native-auth/ed25519-public-key/v2";
+pub(crate) use novovm_protocol::native_nonce::NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2;
 pub const NOV_NATIVE_EXECUTION_STORE_ENV: &str = "NOVOVM_NATIVE_EXECUTION_STORE";
 pub const NOV_NATIVE_EXECUTION_STORE_BACKEND_ENV: &str = "NOVOVM_NATIVE_EXECUTION_STORE_BACKEND";
 pub const NOV_NATIVE_EXECUTION_STORE_ROCKSDB_PATH_ENV: &str =
@@ -3735,10 +3734,11 @@ fn native_auth_nonce_identity_v1(tx: &NovNativeTxWireV1, _ir: &TxIR) -> Result<V
     if tx.signature.len() != 96 {
         bail!("native nonce identity requires an authenticated 96-byte Ed25519 payload");
     }
-    let mut identity = NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2.as_bytes().to_vec();
-    identity.push(0);
-    identity.extend_from_slice(&tx.signature[..32]);
-    Ok(identity)
+    Ok(novovm_protocol::native_nonce::signer_nonce_identity_v2(
+        tx.signature[..32]
+            .try_into()
+            .expect("validated signature length"),
+    ))
 }
 
 fn verify_native_nonce_identity_scheme_v2(store: &NovNativeExecutionStoreV1) -> Result<()> {
@@ -3753,30 +3753,21 @@ fn verify_native_nonce_identity_scheme_v2(store: &NovNativeExecutionStoreV1) -> 
 }
 
 fn native_auth_nonce_identity_key_v1(chain_id: u64, identity: &[u8]) -> String {
-    to_hex(&sha256_bytes_v1(&[
-        b"novovm-native-auth-nonce-identity-v1",
-        &chain_id.to_be_bytes(),
-        identity,
-    ]))
+    to_hex(&novovm_protocol::native_nonce::nonce_identity_digest_v1(
+        chain_id, identity,
+    ))
 }
 
 fn native_auth_nonce_reservation_id_v1(tx_hash: [u8; 32], signature: &[u8]) -> [u8; 32] {
-    sha256_bytes_v1(&[
-        b"novovm-native-auth-nonce-reservation-v1",
-        &tx_hash,
-        signature,
-    ])
+    novovm_protocol::native_nonce::nonce_reservation_digest_v1(&tx_hash, signature)
 }
 
 fn native_auth_nonce_ledger_key_v1(reservation_key: &NativeAuthNonceReservationKeyV1) -> String {
-    let chain_id_bytes = reservation_key.0.to_be_bytes();
-    let nonce_bytes = reservation_key.2.to_be_bytes();
-    to_hex(&sha256_bytes_v1(&[
-        b"novovm-native-auth-durable-nonce-key-v1",
-        &chain_id_bytes,
-        reservation_key.1.as_slice(),
-        &nonce_bytes,
-    ]))
+    to_hex(&novovm_protocol::native_nonce::nonce_ledger_digest_v1(
+        reservation_key.0,
+        &reservation_key.1,
+        reservation_key.2,
+    ))
 }
 
 fn nov_native_durable_auth_reservation_v1(
@@ -11551,9 +11542,7 @@ fn commit_nov_native_durable_auth_reservation_v1(
     reservation: &NovNativeDurableAuthReservationV1,
 ) -> Result<()> {
     verify_native_nonce_identity_scheme_v2(store)?;
-    let next_nonce = reservation
-        .nonce
-        .checked_add(1)
+    let next_nonce = novovm_protocol::native_nonce::nonce_successor_v1(reservation.nonce)
         .context("native nonce sequence exhausted")?;
     if let Some(existing) = store
         .module_state
@@ -16909,17 +16898,16 @@ fn run_nov_send_raw_transaction_batch_with_plan_v1(
         let expected = batch_expected_nonces
             .entry(reservation.identity_key.clone())
             .or_insert(0);
-        if reservation.nonce != *expected {
-            bail!(
+        *expected = match novovm_protocol::native_nonce::advance_nonce_v1(*expected, reservation.nonce) {
+            Ok(next) => next,
+            Err(novovm_protocol::native_nonce::NonceSequenceErrorV1::Mismatch) => bail!(
                 "native transaction batch nonce sequence mismatch identity_key={} expected={} got={}",
                 reservation.identity_key,
                 *expected,
                 reservation.nonce
-            );
-        }
-        *expected = expected
-            .checked_add(1)
-            .context("native batch nonce sequence exhausted")?;
+            ),
+            Err(novovm_protocol::native_nonce::NonceSequenceErrorV1::Exhausted) => bail!("native batch nonce sequence exhausted"),
+        };
     }
     let precommit_store_materialized_receipts = store.receipts.len();
     let precommit_store_materialized_estimated_bytes =
