@@ -3052,6 +3052,24 @@ fn native_semantic_ledger_state_digest_v1(state: &NovNativeExecutionModuleStateV
     to_hex(&novovm_protocol::native_parent_nonce::native_state_wire_root_v3(&bytes))
 }
 
+/// Read-only proof witness export. The caller must independently select a valid
+/// parent and supply its root; this does not select or finalize a parent block.
+pub fn export_native_parent_state_wire_v3(
+    state: &NovNativeExecutionModuleStateV1,
+    expected_parent_root: &[u8; 32],
+) -> Result<Vec<u8>> {
+    let wire = canonical_json_value_wire_v1(&native_committed_module_state_projection_v3(state))?;
+    if wire.len() > novovm_protocol::native_parent_nonce::MAX_PARENT_WIRE_BYTES {
+        bail!("parent state exceeds proof witness limit");
+    }
+    if novovm_protocol::native_parent_nonce::native_state_wire_root_v3(&wire)
+        != *expected_parent_root
+    {
+        bail!("selected parent state root mismatch");
+    }
+    Ok(wire)
+}
+
 fn native_semantic_ledger_state_digest_legacy_v2(
     state: &NovNativeExecutionModuleStateV1,
 ) -> String {

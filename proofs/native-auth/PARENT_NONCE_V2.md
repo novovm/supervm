@@ -52,13 +52,67 @@ explicit design, not truncation or omission of committed state.
   Parent core fixtures are synthetic; they are not chain-finalized snapshots.
 - The V2 RISC-V guest builds with the installed RISC0 toolchain, without skip.
 
-V2 proof generation, independent V2 receipt verification, and a product witness
-export/verification entrypoint are **NOT EXECUTED / NOT INTEGRATED**. The existing
-host probe still runs V1, not V2. V1's previous real receipt is not evidence for
+V2 has a separate `parent_nonce` diagnostic entrypoint; the original default
+host probe still runs V1. V1's previous real receipt is not evidence for
 this new guest. Always pin the image from the matching trusted build; a rebuild
 is not a promise of the same image ID. Never obtain pins from an untrusted proof.
 
-The next step is to export the node's exact selected-parent projection and test
-V2 generation/verification against independently pinned parent root and journal.
+## Node export and opt-in V2 roundtrip
+
+`export_native_parent_state_wire_v3(state, expected_parent_root)` is a read-only
+node API. It uses the production projection/encoder, rejects a root mismatch or
+oversize witness, and does not choose a parent or access a running database.
+
+The ignored `export_parent_proof_fixture_v2` test exports a constructed node
+state and a transaction created by the node's normal signing/TxIR conversion
+functions. This is actual node encoding, but NOT a captured finalized/live
+parent. It sets chain 1 and signer nonce 19. The destination must be new, with
+an existing parent inside the current repository.
+
+From repository root in PowerShell:
+
+```powershell
+$env:NOVOVM_PARENT_PROOF_EXPORT_DIR = Join-Path (Get-Location) 'artifacts/audit/parent-proof-new'
+cargo test -p novovm-node --lib export_parent_proof_fixture_v2 --locked -- --ignored --nocapture --test-threads=1
+```
+
+From the same repository in Linux/WSL (use the same exported directory):
+
+```sh
+export RUSTFLAGS="--diagnostic-width=120"
+cargo build --manifest-path proofs/native-auth/Cargo.toml \
+  -p novovm-auth-proof-probe --bin parent_nonce --locked
+target/debug/parent_nonce prepare artifacts/audit/parent-proof-new 1
+target/debug/parent_nonce run <trusted-AOEM-library> artifacts/audit/parent-proof-new
+```
+
+`prepare` is a TRUSTED controller step: it reads the local node export and
+creates `witness.postcard` and `expected.journal` without overwriting anything.
+Do not run it on a prover-supplied snapshot and call that trusted parent selection.
+`run` passes only the witness to the producer, waits for producer exit, then
+passes only the pre-existing expected journal and receipt to the verifier.
+Both processes pin the guest image from their trusted build. Verification runs
+with development mode enabled to check that receipt acceptance is not relaxed.
+No snapshot, transaction signature, or private witness is read by the verifier.
+
+To verify a completed receipt again without regenerating it:
+
+```sh
+RISC0_DEV_MODE=1 target/debug/parent_nonce verify <trusted-AOEM-library> \
+  <trusted-expected.journal> <receipt.bin>
+```
+
+2026-09-27 export/probe validation: the opt-in export passed, as did three normal
+parent tests, eight proof-workspace host/core tests, strict node/proof host
+Clippy and the real guest build. The node-exported fixture root was
+`5054c01fdfedea751cfb56dc4b6297f24ea00ca210090af03794bff8bd999e62`.
+The real V2 guest rejected an altered root, altered snapshot and damaged
+signature. Valid V2 generation was started in
+`artifacts/audit/parent-proof-v2-20260927`; at this handoff it is **RUNNING, NOT
+SIGNED OFF**, and independent V2 receipt verification is still pending. No
+claim of a successful V2 receipt is made by the unit tests or previous V1 run.
+
+The next step is to collect this V2 receipt and independent verification result,
+then integrate independently selected real parents instead of the test fixture.
 Business execution, resulting balance/state roots, receipt roots, delegated
 authority, finality and public/multi-device acceptance remain outside this slice.

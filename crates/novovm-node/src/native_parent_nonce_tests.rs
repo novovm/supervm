@@ -1,4 +1,53 @@
 mod native_parent_nonce_tests {
+
+    #[test]
+    #[ignore = "opt-in node-encoded proof fixture export; never reads a running database"]
+    fn export_parent_proof_fixture_v2() {
+        use std::io::Write;
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let requested =
+            std::env::var("NOVOVM_PARENT_PROOF_EXPORT_DIR").expect("set fresh export directory");
+        let path = PathBuf::from(requested);
+        let parent = path
+            .parent()
+            .expect("parent")
+            .canonicalize()
+            .expect("existing parent directory");
+        assert!(parent.starts_with(&root), "export must stay inside SUPERVM");
+        let directory = parent.join(path.file_name().expect("output name"));
+        std::fs::create_dir(&directory).expect("fresh export directory");
+        let tx = build_signed_native_auth_test_tx_v1(1, 19, [7; 32], "fixture", 19);
+        let ir = nov_native_tx_to_adapter_tx_ir_v1(&tx).unwrap();
+        assert!(novovm_adapter_novovm::verify_native_tx_signature_v1(&ir).unwrap());
+        let key: [u8; 32] = ir.signature[..32].try_into().unwrap();
+        let identity = novovm_protocol::native_nonce::signer_nonce_identity_v2(&key);
+        let mut state = NovNativeExecutionModuleStateV1::default();
+        state
+            .native_auth_next_nonces
+            .insert(native_auth_nonce_identity_key_v1(1, &identity), 19);
+        let root = native_state_wire_root_v3(&snapshot(&state));
+        let wire = export_native_parent_state_wire_v3(&state, &root).unwrap();
+        for (name, bytes) in [
+            ("parent.wire", wire),
+            ("parent.root", root.to_vec()),
+            ("tx.postcard", postcard::to_allocvec(&ir).unwrap()),
+        ] {
+            let mut file = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(directory.join(name))
+                .unwrap();
+            file.write_all(&bytes).unwrap();
+            file.sync_all().unwrap();
+        }
+        println!(
+            "NODE_FIXTURE parent_root={} nonce=19 chain=1 live_parent=false",
+            to_hex(&root)
+        );
+    }
     use super::*;
     use novovm_protocol::native_parent_nonce::{native_state_wire_root_v3, parent_nonce_v3};
 
@@ -14,6 +63,11 @@ mod native_parent_nonce_tests {
         state.native_auth_next_nonces.insert(index, 19);
         let wire = snapshot(&state);
         let root = native_state_wire_root_v3(&wire);
+        assert_eq!(
+            export_native_parent_state_wire_v3(&state, &root).unwrap(),
+            wire
+        );
+        assert!(export_native_parent_state_wire_v3(&state, &[0; 32]).is_err());
         assert_eq!(
             to_hex(&root),
             native_semantic_ledger_state_digest_v1(&state)

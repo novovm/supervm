@@ -2,6 +2,7 @@
 name = "novovm-auth-proof-probe"
 version = "0.1.0"
 edition = "2021"
+default-run = "novovm-auth-proof-probe"
 [dependencies]
 novovm-auth-methods = { path = "../methods" }
 novovm-auth-statement = { path = "../core" }
