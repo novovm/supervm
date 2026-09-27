@@ -10652,7 +10652,7 @@ fn dispatch_native_module_execute_v1(
                     },
                 );
             let reserve_after =
-                match novovm_protocol::native_treasury::deposit_reserve_transition_v1(
+                match novovm_protocol::native_treasury::deposit_reserve_encodable_transition_v1(
                     &asset, current, amount, proof, now_ms,
                 ) {
                     Ok(value) => value,

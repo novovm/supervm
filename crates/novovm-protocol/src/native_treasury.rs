@@ -59,6 +59,32 @@ pub fn deposit_reserve_transition_v1(
     Ok(after)
 }
 
+/// Production admission for the existing JSON state/receipt encoding.
+/// Preserve legacy proof rejection precedence; never publish an unencodable
+/// reserve or log amount. This is not full u128 persistence support.
+pub fn deposit_reserve_encodable_transition_v1(
+    asset: &str,
+    current: u128,
+    amount: u128,
+    proof: Option<ReserveProofViewV1<'_>>,
+    now_ms: u128,
+) -> Result<u128, DepositRejectionV1> {
+    let after = deposit_reserve_transition_v1(asset, current, amount, proof, now_ms)?;
+    if amount > u64::MAX as u128 || after > u64::MAX as u128 {
+        return Err(DepositRejectionV1 {
+            code: "reserve_encoding_limit_exceeded",
+            reason: format!(
+                "asset={} amount={} projected_reserve_after={} encoding_max={}",
+                asset,
+                amount,
+                after,
+                u64::MAX
+            ),
+        });
+    }
+    Ok(after)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

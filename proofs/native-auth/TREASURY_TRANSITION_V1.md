@@ -55,3 +55,37 @@ then share/bind argument decoding, fee settlement, parent-derived inputs and
 canonical time, nonce update, full post-state and receipt commitments in the
 proof relation. Do not prove an isolated reserve addition and label it a complete
 transaction. No mainnet, multi-device, recovery or finality acceptance is added.
+
+## Follow-up: fail-closed deposit encoding admission
+
+The production dispatcher now calls `deposit_reserve_encodable_transition_v1`.
+It retains the existing proof checks and rejection precedence, then rejects
+`amount > u64::MAX` or resulting reserve `> u64::MAX` with
+`reserve_encoding_limit_exceeded` BEFORE writing the reserve or success log.
+The only module-state change on rejection is the existing failure counter.
+Outer fee/nonce processing is unchanged; this is not full transaction rollback.
+The original pure u128 arithmetic helper remains available but is not the
+production admission function. No serde features or canonical encoders changed.
+Successful legacy inputs keep identical state/receipt commitments; previously
+crashing inputs now have a defined failure outcome. Deploy the same code on all
+validators; this does not authorize mixed-version handling of those inputs.
+
+Eight dispatcher cases (NOV and USDT, single excessive amount and accumulation
+overflow) verify rejection, no reserve/balance mutation, serializable receipt,
+state commitment and treasury shard encode/decode round-trip. The 1,080 legacy
+combinations and six argument cases remain regression requirements.
+
+This is containment, not a global u128 fix. It does not repair already invalid
+in-memory states, validate all proof metadata, or bound unrelated fee/governance/
+vault writes. A versioned full-integer encoding remains required for those paths.
+The deposit amount parser still uses its legacy fallback for malformed or
+unquoted out-of-range JSON numbers; strict argument decoding is not claimed.
+
+Authorization review: `dispatch_native_module_execute_v1` does not invoke
+`governance_execute_authorized_v1` for `treasury.deposit_reserve`; the deposit
+branch neither debits the caller nor requires an independently verified deposit
+event. Signature authentication alone is not deposit authority. This scoped
+finding is not proof that a public RPC can currently exploit it. Do not declare
+permissionless deposit safety. A consensus-bound authorization policy and/or
+verified source event is needed; do not import a node-local environment allowlist
+as a consensus rule or invent an administrator during this encoding patch.

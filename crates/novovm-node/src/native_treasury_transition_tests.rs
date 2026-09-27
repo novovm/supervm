@@ -182,6 +182,63 @@ mod native_treasury_transition_tests {
         }
     }
     #[test]
+    fn treasury_deposit_transition_rejects_unencodable_amounts_before_reserve_mutation() {
+        for asset in ["NOV", "USDT"] {
+            for (current, amount) in [
+                (0, u64::MAX as u128 + 1),
+                (u64::MAX as u128, 1),
+                (1, u64::MAX as u128),
+                (0, u128::MAX),
+            ] {
+                let mut state = NovNativeExecutionStoreV1::default();
+                state
+                    .module_state
+                    .treasury_reserves
+                    .insert(asset.into(), current);
+                let mut expected = state.clone();
+                increment_settlement_failure_v1(&mut expected, "reserve_encoding_limit_exceeded");
+                let req = request(
+                    serde_json::to_vec(&serde_json::json!({
+                        "asset": asset, "amount": amount.to_string()
+                    }))
+                    .unwrap(),
+                );
+                let receipt = dispatch_native_module_execute_v1(
+                    &req,
+                    &unresolved_settled_fee_v1(&req),
+                    &fallback_execution_subject_meta_v1(&req),
+                    &mut state,
+                    10,
+                );
+                assert!(!receipt.status);
+                assert!(receipt.logs.is_empty());
+                assert!(receipt
+                    .failure_reason
+                    .as_deref()
+                    .unwrap()
+                    .contains("reserve_encoding_limit_exceeded"));
+                assert_eq!(
+                    serde_json::to_vec(&state).unwrap(),
+                    serde_json::to_vec(&expected).unwrap()
+                );
+                assert_eq!(
+                    native_semantic_ledger_state_digest_v1(&state.module_state),
+                    native_semantic_ledger_state_digest_v1(&expected.module_state)
+                );
+                full_native_receipt_commitment_v1(&receipt).unwrap();
+                let raw =
+                    native_module_state_shard_value_v1(&state.module_state, "treasury").unwrap();
+                let mut recovered = NovNativeExecutionModuleStateV1::default();
+                native_apply_module_state_shard_v1(&mut recovered, "treasury", &raw).unwrap();
+                assert_eq!(
+                    native_module_state_shard_value_v1(&recovered, "treasury").unwrap(),
+                    raw
+                );
+            }
+        }
+    }
+
+    #[test]
     fn treasury_deposit_transition_preserves_argument_fallbacks_and_normalization() {
         for args in [
             vec![],
