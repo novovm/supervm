@@ -1,5 +1,9 @@
 # NOV signature/nonce relation proof v1 (diagnostic only)
 
+The separate [parent-bound V2 relation](PARENT_NONCE_V2.md) now derives nonce from
+the committed full parent snapshot. Its guest builds and rule tests pass, but
+its real proof roundtrip is not yet executed; the probe below remains V1-only.
+
 This opt-in workspace builds an actual RISC0 guest. It is intentionally separate
 from the product workspace: ordinary node builds do not install a zkVM toolchain.
 It calls AOEM through the existing `AoemExecFacade`, not a new crypto backend in

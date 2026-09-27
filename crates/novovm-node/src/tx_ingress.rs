@@ -3049,10 +3049,7 @@ fn native_semantic_ledger_state_digest_v1(state: &NovNativeExecutionModuleStateV
     let projection = native_committed_module_state_projection_v3(state);
     let bytes = canonical_json_value_wire_v1(&projection)
         .expect("canonical NOV native state projection must encode");
-    to_hex(&sha256_bytes_v1(&[
-        b"novovm-native-aoem-semantic-ledger-state-digest-v3\0",
-        bytes.as_slice(),
-    ]))
+    to_hex(&novovm_protocol::native_parent_nonce::native_state_wire_root_v3(&bytes))
 }
 
 fn native_semantic_ledger_state_digest_legacy_v2(
@@ -21147,6 +21144,7 @@ mod tests {
     use super::*;
     include!("native_candidate_plan_execution_tests.rs");
     include!("native_nonce_identity_tests.rs");
+    include!("native_parent_nonce_tests.rs");
     use novovm_protocol::{
         NovExecutionModeV1, NovFeePolicyV1, NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1,
         NovVerificationModeV1,

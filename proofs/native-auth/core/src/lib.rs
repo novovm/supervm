@@ -8,6 +8,7 @@ use novovm_protocol::native_nonce::{
     advance_nonce_v1, nonce_identity_digest_v1, signer_nonce_identity_v2,
 };
 use serde::{Deserialize, Serialize};
+pub mod parent;
 
 pub const MAX_INPUT_BYTES: usize = 64 * 1024;
 
@@ -81,7 +82,7 @@ mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
     use novovm_adapter_api::{native_signing::native_signer_address_v1, TxType};
-    fn fixture() -> AuthInput {
+    pub(super) fn fixture() -> AuthInput {
         let key = SigningKey::from_bytes(&[7; 32]);
         let mut tx = TxIR {
             hash: vec![0x41; 32],
@@ -134,7 +135,7 @@ mod tests {
         assert_eq!(journal.nonce_identity, alias_journal.nonce_identity);
         assert_ne!(journal.message, alias_journal.message);
     }
-    fn resign(input: &mut AuthInput) {
+    pub(super) fn resign(input: &mut AuthInput) {
         let key = SigningKey::from_bytes(&[7; 32]);
         input.tx.signature = key.verifying_key().to_bytes().to_vec();
         input

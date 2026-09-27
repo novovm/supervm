@@ -36,6 +36,7 @@ jobs:
         run: |
           cargo fmt --manifest-path proofs/native-auth/Cargo.toml --all -- --check
           rustfmt --check --edition 2021 proofs/native-auth/methods/guest/src/main.rs
+          rustfmt --check --edition 2021 proofs/native-auth/methods/guest/src/bin/novovm-parent-nonce-guest.rs
       - name: Signature relation and frozen statement tests
         run: cargo test --manifest-path proofs/native-auth/Cargo.toml --workspace --locked
       - name: Host and core strict Clippy
