@@ -2,7 +2,8 @@
 
 The separate [parent-bound V2 relation](PARENT_NONCE_V2.md) now derives nonce from
 the committed full parent snapshot. Node export and the separate `parent_nonce`
-probe are connected; its real proof roundtrip is running but not yet signed off.
+probe are connected; the node-fixture real proof roundtrip and independent
+verification passed (2026-09-28). This does not authenticate a live finalized parent.
 The default probe below remains V1-only.
 
 This opt-in workspace builds an actual RISC0 guest. It is intentionally separate

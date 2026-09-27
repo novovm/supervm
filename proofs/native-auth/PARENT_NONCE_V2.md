@@ -107,12 +107,35 @@ parent tests, eight proof-workspace host/core tests, strict node/proof host
 Clippy and the real guest build. The node-exported fixture root was
 `5054c01fdfedea751cfb56dc4b6297f24ea00ca210090af03794bff8bd999e62`.
 The real V2 guest rejected an altered root, altered snapshot and damaged
-signature. Valid V2 generation was started in
-`artifacts/audit/parent-proof-v2-20260927`; at this handoff it is **RUNNING, NOT
-SIGNED OFF**, and independent V2 receipt verification is still pending. No
-claim of a successful V2 receipt is made by the unit tests or previous V1 run.
+signature. The real V2 run completed successfully; its result was collected and
+independently reverified on 2026-09-28. The original controller exited with code 0
+after the producer exited and the fresh verifier accepted the receipt.
 
-The next step is to collect this V2 receipt and independent verification result,
-then integrate independently selected real parents instead of the test fixture.
+## V2 fixture proof acceptance (2026-09-28)
+
+- Receipt: `artifacts/audit/parent-proof-v2-20260927/receipt.bin`, 1,643,504 bytes.
+- Receipt SHA256: `34ef47928cdac12a83650a2d45102fc8ed36a4b22c4e94d7aa441c6405c309eb`.
+- Pre-pinned expected journal SHA256:
+  `0831aba12d3a30dc781c002d157ba8562ec260712f6789ddbe71984c038424ab`.
+- Trusted compiled image words: `[4271428485, 664905082, 1097516772, 1629651488,
+  1454212260, 2451898230, 2455128016, 3299132115]`.
+- The final host verifier was rebuilt, then accepted this same receipt with
+  `RISC0_DEV_MODE=1`. No private transaction or parent snapshot was supplied to it.
+- Negative checks cover both domains, parent root, nonce identity, nonce and
+  successor, chain, message and public key; appended/empty journal, wrong image,
+  mutated receipt and truncated receipt are also rejected.
+- Nine proof-workspace host/core tests and strict Clippy pass. The guest was
+  built without skip mode for real verification. No new proof generation was
+  needed for these host-only negative-test changes.
+- Both normal CI and host-only proof CI passed for baseline `2703ed5`.
+  CI does not generate this proof; local proof verification is separate evidence.
+
+The generated binary receipt is local and not committed. The recorded hashes
+identify the tested artifacts, not additional trust anchors or consensus proofs.
+No AOEM source, release DLL, node state, or finality flag changed in this acceptance.
+
+The next functional stage is to reuse actual production business state transitions
+inside the proof, binding their output state/receipt roots, while integrating
+independently selected real parents instead of the test fixture.
 Business execution, resulting balance/state roots, receipt roots, delegated
 authority, finality and public/multi-device acceptance remain outside this slice.
