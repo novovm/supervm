@@ -1,0 +1,12 @@
+[package]
+name = "novovm-auth-proof-probe"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+novovm-auth-methods = { path = "../methods" }
+novovm-auth-statement = { path = "../core" }
+novovm-adapter-api = { path = "../../../crates/novovm-adapter-api" }
+novovm-exec = { path = "../../../crates/novovm-exec" }
+ed25519-dalek = "=2.2.0"
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+anyhow = "1"
