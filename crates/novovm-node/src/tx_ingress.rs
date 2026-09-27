@@ -29736,13 +29736,27 @@ mod tests {
                     || {
                         with_test_native_execution_store_path_v1(|path| {
                             let chain_id = 90_107;
-                            let tx = build_signed_native_auth_test_tx_v1(
+                            let mut tx = build_signed_native_auth_test_tx_v1(
                                 chain_id,
                                 0,
                                 [0x37; 32],
                                 "acct-durable-replay",
                                 27,
                             );
+                            let NovTxKindV1::Execute(execute) = &mut tx.kind else {
+                                unreachable!();
+                            };
+                            // Explicit fixture funding, before signed ingress;
+                            // no production transaction may create this money.
+                            execute.fee_policy.pay_asset = "NOV".into();
+                            execute.fee_policy.max_pay_amount = 10_000;
+                            let account = execute.account_id.clone().unwrap();
+                            let mut seed = NovNativeExecutionStoreV1::default();
+                            credit_native_account_asset_balance_v1(
+                                &mut seed, &account, "USDT", 100,
+                            );
+                            save_nov_native_execution_store_v1(path.as_path(), &seed).unwrap();
+                            sign_nov_native_tx_with_seed_v1(&mut tx, [0x37; 32]).unwrap();
                             let raw = encode_native_auth_test_tx_v1(&tx);
                             let params = serde_json::json!({
                                 "chain_id": chain_id,
@@ -29753,6 +29767,15 @@ mod tests {
                                 .expect("first authenticated execution commits");
                             let committed = load_nov_native_execution_store_v1(path.as_path())
                                 .expect("load first committed state");
+                            assert_eq!(
+                                first["native_receipt"]["status"], true,
+                                "funded deposit must succeed: {first}"
+                            );
+                            assert_eq!(
+                                native_account_asset_balance_v1(&committed, &account, "USDT"),
+                                73
+                            );
+                            assert_eq!(committed.module_state.treasury_reserves["USDT"], 27);
                             assert_eq!(
                                 committed.module_state.native_auth_nonce_reservations.len(),
                                 1

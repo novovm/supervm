@@ -56,12 +56,35 @@ a mainnet-ready or four-device-ready release.
   single/cumulative encoding overflow, manual attestation without funds.
 - Local persistence read-back: USDT balance 10 -> 3, treasury 0 -> 7;
   repeated reads recover the same complete state and successful receipt.
-- Internal dispatcher repeats are NOT a replay API. Existing signed-ingress
-  restart/nonce regression is separate and passed; no new funded signed-ingress
-  multi-process crash acceptance is claimed.
+- Internal dispatcher repeats are NOT a replay API. The signed-ingress
+  restart/nonce regression now explicitly seeds 100 USDT in its isolated test
+  store BEFORE submitting the signed transaction, pays fees in NOV, and asserts
+  a successful receipt plus USDT balances of account=73 and treasury=27.
+  Clearing the runtime nonce registry and resubmitting must leave the complete
+  persisted state unchanged. This is a simulated restart, not multi-process
+  crash acceptance. Its test profile disables AOEM semantic ingress and the
+  production-candidate gate; it is not an AOEM production-mode acceptance test.
 - Governance end-to-end regression passed after correcting a stale delta count:
   proof metadata changes both policy and full committed-state V3 projections.
 - Configuration drift and reserve-proof fee/redeem regressions passed.
 
 No full business execution zkVM proof, network upgrade, crash-injection campaign
 or complete legacy fixture migration is accepted by this slice.
+
+## Fixture migration status
+
+The funded signed-ingress regression, deposit/attestation boundary tests and
+production configuration pin regression are now explicit CI steps. Local funded
+replay and Clippy passed; adding CI steps does not establish remote CI success.
+
+Known remaining blocker, reproduced on this branch:
+`candidate_workspace_execution_competing_results_match_authority_and_survive_parent_gc`
+fails at the successful first receipt assertion. Its successor spends from a
+zero-funded parent. The success assertion is retained; do not reclassify a failed
+deposit as successful execution coverage. The shared `genesis_plan` fixture binds
+the default empty account state. Candidate/soak migration requires an explicit
+agreed initial allocation represented in the actual parent snapshot AND its
+state root, not a test-only bypass inside business execution.
+
+No active database was funded, no service was restarted, and this branch remains
+unmerged while that bootstrap and full integration regression are unfinished.
