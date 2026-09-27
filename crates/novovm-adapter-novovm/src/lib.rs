@@ -41,7 +41,6 @@ const ADAPTER_UCA_ID_PREFIX: &str = "uca:adapter:";
 const ADAPTER_UA_INGRESS_GUARD_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_INGRESS_GUARD";
 const ADAPTER_UA_AUTOPROVISION_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_AUTOPROVISION";
 const ADAPTER_UA_SIGNATURE_DOMAIN_ENV: &str = "NOVOVM_UNIFIED_ACCOUNT_ADAPTER_SIGNATURE_DOMAIN";
-const ADAPTER_TX_SIG_DOMAIN: &[u8] = b"novovm_adapter_tx_sig_v2";
 const ADAPTER_UA_SUBJECT_ACCOUNT_KEY_PREFIX: &[u8] = b"ua:subject:v1:";
 const ADAPTER_UA_SUBJECT_NONCE_KEY_PREFIX: &[u8] = b"ua:nonce:v1:";
 const TX_SIG_VERIFY_PARALLEL_MIN_BATCH: usize = 128;
@@ -154,14 +153,7 @@ impl NovoVmAdapter {
     }
 
     fn tx_from_matches_pubkey_bytes(tx: &TxIR, pubkey_bytes: &[u8; 32]) -> bool {
-        let expected_from = address_from_pubkey_bytes_v1(pubkey_bytes);
-        if tx.from.len() == 20 {
-            tx.from == expected_from
-        } else if tx.from.len() == 32 {
-            tx.from == *pubkey_bytes
-        } else {
-            false
-        }
+        novovm_adapter_api::native_signing::native_signer_matches_v1(&tx.from, pubkey_bytes)
     }
 
     fn supports_evm_raw_signature_path(&self) -> bool {
@@ -2053,18 +2045,6 @@ fn normalize_root32(root: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-fn tx_type_tag(tx_type: TxType) -> u8 {
-    match tx_type {
-        TxType::Transfer => 0,
-        TxType::ContractCall => 1,
-        TxType::ContractDeploy => 2,
-        TxType::Privacy => 3,
-        TxType::CrossShard => 4,
-        TxType::CrossChainTransfer => 5,
-        TxType::CrossChainCall => 6,
-    }
-}
-
 fn compute_tx_ir_hash(tx: &TxIR) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(&tx.from);
@@ -2077,80 +2057,13 @@ fn compute_tx_ir_hash(tx: &TxIR) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
-pub fn tx_signing_message_v1(tx: &TxIR) -> [u8; 32] {
-    fn update_len_prefixed(hasher: &mut Sha256, value: &[u8]) {
-        hasher.update((value.len() as u64).to_le_bytes());
-        hasher.update(value);
-    }
+pub use novovm_adapter_api::native_signing::tx_signing_message_v1;
 
-    fn update_optional_string(hasher: &mut Sha256, value: Option<&str>) {
-        match value {
-            Some(value) => {
-                hasher.update([1u8]);
-                update_len_prefixed(hasher, value.as_bytes());
-            }
-            None => hasher.update([0u8]),
-        }
-    }
-
-    let mut hasher = Sha256::new();
-    hasher.update(ADAPTER_TX_SIG_DOMAIN);
-    hasher.update(tx.chain_id.to_le_bytes());
-    hasher.update([tx_type_tag(tx.tx_type)]);
-    hasher.update(tx.nonce.to_le_bytes());
-    hasher.update(tx.value.to_le_bytes());
-    hasher.update(tx.gas_limit.to_le_bytes());
-    hasher.update(tx.gas_price.to_le_bytes());
-    update_len_prefixed(&mut hasher, &tx.from);
-    update_optional_string(&mut hasher, tx.account_id.as_deref());
-    update_optional_string(&mut hasher, tx.fee_owner_account_id.as_deref());
-    update_optional_string(&mut hasher, tx.nonce_owner_account_id.as_deref());
-    if let Some(to) = &tx.to {
-        hasher.update([1u8]);
-        update_len_prefixed(&mut hasher, to);
-    } else {
-        hasher.update([0u8]);
-    }
-    update_len_prefixed(&mut hasher, &tx.data);
-    hasher.update([match tx.execution_policy {
-        novovm_adapter_api::TxExecutionPolicyV1::Standard => 0,
-        novovm_adapter_api::TxExecutionPolicyV1::PqRequired => 1,
-        novovm_adapter_api::TxExecutionPolicyV1::PrivacyRequired => 2,
-    }]);
-    hasher.update((tx.evm_access_list.len() as u64).to_le_bytes());
-    for entry in &tx.evm_access_list {
-        update_len_prefixed(&mut hasher, &entry.address);
-        hasher.update((entry.storage_keys.len() as u64).to_le_bytes());
-        for storage_key in &entry.storage_keys {
-            update_len_prefixed(&mut hasher, storage_key);
-        }
-    }
-    match tx.source_chain {
-        Some(chain_id) => {
-            hasher.update([1u8]);
-            hasher.update(chain_id.to_le_bytes());
-        }
-        None => hasher.update([0u8]),
-    }
-    match tx.target_chain {
-        Some(chain_id) => {
-            hasher.update([1u8]);
-            hasher.update(chain_id.to_le_bytes());
-        }
-        None => hasher.update([0u8]),
-    }
-    update_len_prefixed(&mut hasher, &tx.hash);
-    hasher.finalize().into()
-}
+#[cfg(test)]
+mod native_signing_tests;
 
 pub fn address_from_pubkey_v1(pubkey: &VerifyingKey) -> Vec<u8> {
-    let digest: [u8; 32] = Sha256::digest(pubkey.as_bytes()).into();
-    digest[12..32].to_vec()
-}
-
-fn address_from_pubkey_bytes_v1(pubkey_bytes: &[u8; 32]) -> Vec<u8> {
-    let digest: [u8; 32] = Sha256::digest(pubkey_bytes).into();
-    digest[12..32].to_vec()
+    novovm_adapter_api::native_signing::native_signer_address_v1(pubkey.as_bytes()).to_vec()
 }
 
 pub fn address_from_seed_v1(seed: [u8; 32]) -> Vec<u8> {
@@ -2326,15 +2239,7 @@ pub fn verify_native_tx_signature_v1(tx: &TxIR) -> Result<bool> {
         return Ok(false);
     }
 
-    let expected_from = address_from_pubkey_bytes_v1(&pubkey_bytes);
-    let from_matches = if tx.from.len() == 20 {
-        tx.from == expected_from
-    } else if tx.from.len() == 32 {
-        tx.from == pubkey_bytes
-    } else {
-        false
-    };
-    Ok(from_matches)
+    Ok(novovm_adapter_api::native_signing::native_signer_matches_v1(&tx.from, &pubkey_bytes))
 }
 
 fn verify_evm_raw_tx_signature_v1(chain_type: ChainType, tx: &TxIR) -> Result<bool> {
@@ -2586,7 +2491,7 @@ mod tests {
         assert!(!supports_native_chain(ChainType::Solana));
     }
 
-    fn sample_tx(tx_type: TxType) -> TxIR {
+    pub(super) fn sample_tx(tx_type: TxType) -> TxIR {
         let seed = [7u8; 32];
         let from = address_from_seed_v1(seed);
         let mut tx = TxIR {
