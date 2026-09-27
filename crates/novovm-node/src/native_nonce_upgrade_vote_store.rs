@@ -295,15 +295,9 @@ mod tests {
         path
     }
 
-    #[test]
-    fn native_nonce_upgrade_authorization_cli_fixture_matches_durable_signers() {
+    fn signed_cli_fixture(target: &str) -> serde_json::Value {
         use super::super::native_nonce_upgrade_authorization::NonceUpgradeAuthorizationCertificateV1;
         let fixture = native_nonce_upgrade_authorization_fixture_v1();
-        let expected: serde_json::Value = serde_json::from_str(include_str!(
-            "../../novovmctl/tests/fixtures/native_nonce_upgrade_authorization_v1.json"
-        ))
-        .unwrap();
-        let target = expected["target_protocol_commitment"].as_str().unwrap();
         let verified = fixture.prepare(target);
         let path = root();
         let votes = fixture
@@ -324,12 +318,29 @@ mod tests {
             .collect();
         let certificate =
             NonceUpgradeAuthorizationCertificateV1::from_votes(&verified, votes).unwrap();
-        let json = serde_json::json!({
+        serde_json::json!({
             "authority": fixture.authority,
             "certificate": certificate,
             "expected_authority_commitment": verified.subject().authority_commitment.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
             "target_protocol_commitment": target,
-        });
+        })
+    }
+
+    #[test]
+    #[ignore = "explicit test-only certificate regeneration; prints JSON, never activates state"]
+    fn print_current_native_nonce_upgrade_authorization_cli_fixture() {
+        let target = crate::tx_ingress::native_business_protocol_config_commitment_v1().unwrap();
+        println!("FIXTURE_JSON={}", signed_cli_fixture(&target));
+    }
+
+    #[test]
+    fn native_nonce_upgrade_authorization_cli_fixture_matches_durable_signers() {
+        let expected: serde_json::Value = serde_json::from_str(include_str!(
+            "../../novovmctl/tests/fixtures/native_nonce_upgrade_authorization_v1.json"
+        ))
+        .unwrap();
+        let target = expected["target_protocol_commitment"].as_str().unwrap();
+        let json = signed_cli_fixture(target);
         assert_eq!(
             json, expected,
             "static CLI fixture must match real durable test-key signing"

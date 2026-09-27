@@ -160,3 +160,22 @@ must remain enforced; regenerate test-only certificates with valid signatures
 for the new intended target rather than editing a signed commitment or weakening
 verification. Format, Clippy and security checks passed in that run; later
 pipeline stages were not reached. The current branch is not merge-ready.
+
+### Test authorization fixture re-signing
+
+The frozen CLI authorization fixture was regenerated for target protocol
+`f20c3b5166f6bd870d2789c9bc279d0327758e59e6a71f6176f08c3634980160`
+using the existing three durable test-key vote stores and certificate builder.
+Authority and source checkpoint were not changed; votes, subject commitments,
+proposed state and certificate commitments were recomputed through the real
+implementation. No actual validator key, network authorization, activation or
+ledger import is involved.
+
+An explicitly ignored test,
+`print_current_native_nonce_upgrade_authorization_cli_fixture`, reproduces the
+JSON on stdout without overwriting a fixture. Run only with reviewed protocol
+configuration in a clean environment; validate its target independently before
+applying the output. Normal fixture tests continue to compare against actual
+durable signing. All eight checkpoint/upgrade CLI integration tests, including
+forged quorum/root/domain/pin rejections, passed locally after re-signing.
+Remote CI must be rerun on this revision before claiming Linux acceptance.
