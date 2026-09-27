@@ -125,3 +125,38 @@ passed without relaxing successful deposit assertions. The six treasury
 transition tests and node library/test Clippy with warnings denied passed.
 CI now includes the funded candidate suite; remote Linux execution is not claimed
 by these Windows-local results.
+
+### Dual-node lifecycle fixture migration
+
+The dual-node gate now prepares identical explicit initial allocations in its
+fresh per-process Host RocksDB stores before any child starts. Identity i owns
+i USDT plus 10,000 NOV; the fixture transaction deposits exactly i USDT and uses
+NOV for fees. Both identity and amount advance across sender rounds. Namespaces
+have distinct exact-snapshot import anchors, while the allocation is identical.
+Preparation refuses existing stores, reads the written snapshot back, and uses
+the existing one-shot Host-to-AOEM bootstrap authorization. No running node or
+operator-selected authority database is funded. Public startup tooling and
+general long-run soak fixture migration remain outside this slice.
+
+The gate now requires successful persisted deposit receipts on every receiver
+and checks USDT conservation, not only receipt counts. Local acceptance:
+
+- One sender, one receiver, one round: 8 successes, receiver reserve 36 USDT,
+  account USDT remaining 0; durable block and reverse-index checks passed.
+- One sender, three receivers, two sender processes: each receiver independently
+  has 8 successes, reserve 36 USDT and account USDT remaining 0.
+- Fixture determinism/bounds and existing-store refusal tests passed, as did
+  gate Clippy with warnings denied.
+
+Reports: `artifacts/native-pipeline/funded-v2-local-gate.json` and
+`artifacts/native-pipeline/funded-v2-fanout-gate.json` (local generated evidence).
+These are loopback processes, NOT four physical machines or long-run acceptance.
+
+Linux CI run 36352667760 on the preceding 4f51504 revision failed at
+`native_nonce_upgrade_authorization_cli_verifies_quorum_without_source_mutation_or_activation`:
+the frozen authorization fixture's target protocol commitment no longer matches
+the binary after V2 activation was added to compiled defaults. The rejection
+must remain enforced; regenerate test-only certificates with valid signatures
+for the new intended target rather than editing a signed commitment or weakening
+verification. Format, Clippy and security checks passed in that run; later
+pipeline stages were not reached. The current branch is not merge-ready.

@@ -14618,7 +14618,9 @@ fn load_validated_native_state_envelope_from_aoem_owner_v1(
     Ok(Some(envelope))
 }
 
-fn native_host_projection_bootstrap_anchor_commitment_v1(
+/// Read-only exact-snapshot commitment for explicitly authorized bootstrap
+/// tooling. Computing this value does not authorize or perform an import.
+pub fn native_host_projection_bootstrap_anchor_commitment_v1(
     host_store: &NovNativeExecutionStoreV1,
     chain_id: u64,
     namespace_digest: &str,

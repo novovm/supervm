@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod dual_node_funded_fixture;
+
 use anyhow::{bail, Context, Result};
 use novovm_node::native_block_ledger::{
     NovNativeBlockLedgerV1, NOV_NATIVE_BLOCK_LEDGER_MAX_HYDRATE_BLOCKS_V1,
@@ -826,12 +828,41 @@ fn main() -> Result<()> {
     let protocol_config_commitment = native_business_protocol_config_commitment_v1()
         .context("compute dual-node gate NOV business protocol configuration commitment")?;
 
+    let mut bootstrap_anchors = std::collections::BTreeMap::new();
+    bootstrap_anchors.insert(
+        sender_node,
+        dual_node_funded_fixture::prepare(&sender_store, chain_id, sender_node, tx_count)?,
+    );
+    for (node, _, store) in &receivers {
+        bootstrap_anchors.insert(
+            *node,
+            dual_node_funded_fixture::prepare(store, chain_id, *node, tx_count)?,
+        );
+    }
+
     let common = |ticks: u64, store: &PathBuf, node: u64, listen: &str, peer: &str| {
         let host_rocksdb = append_path_suffix_v1(store.as_path(), ".rocksdb");
         let block_ledger = append_path_suffix_v1(store.as_path(), ".block-ledger.rocksdb");
         let semantic_mirror = append_path_suffix_v1(store.as_path(), ".aoem-semantic-ledger.jsonl");
         let unified_account = append_path_suffix_v1(store.as_path(), ".unified-account.rocksdb");
         vec![
+            ("NOVOVM_ALLOW_AOEM_STATE_BOOTSTRAP_FROM_HOST", "true".into()),
+            (
+                novovm_node::tx_ingress::NOV_NATIVE_AOEM_STATE_BOOTSTRAP_HOST_ANCHOR_ENV,
+                bootstrap_anchors[&node].clone(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_ASSET",
+                "USDT".into(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_FEE_ASSET",
+                "NOV".into(),
+            ),
+            (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_MAX_PAY_AMOUNT",
+                "10000".into(),
+            ),
             ("NOVOVM_NODE_MODE", "native_execution_pipeline".to_string()),
             (
                 "NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID",
@@ -1129,6 +1160,10 @@ fn main() -> Result<()> {
                 sent_total.saturating_add(1).to_string(),
             ),
             (
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_AMOUNT_START",
+                sent_total.saturating_add(1).to_string(),
+            ),
+            (
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_SUBMITTED",
                 round_tx_count.to_string(),
             ),
@@ -1377,7 +1412,15 @@ fn main() -> Result<()> {
         );
     }
 
+    let mut funded_receivers = Vec::new();
+    for (node, _, store) in &receivers {
+        funded_receivers.push(serde_json::json!({
+            "node": node,
+            "accounting": dual_node_funded_fixture::verify(store, tx_count)?,
+        }));
+    }
     let report = serde_json::json!({
+        "funded_receiver_accounting": funded_receivers,
         "method": "supervm_native_pipeline_dual_node_gate",
         "accepted": true,
         "chain_id": chain_id,
