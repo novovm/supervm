@@ -85,6 +85,39 @@ pub fn deposit_reserve_encodable_transition_v1(
     Ok(after)
 }
 
+/// Balance-backed deposit v2. All checks complete before the host writes either
+/// side. A manual external reserve attestation is not a funding source.
+pub fn deposit_from_balance_transition_v2(
+    asset: &str,
+    current: u128,
+    balance: u128,
+    amount: u128,
+    proof: Option<ReserveProofViewV1<'_>>,
+    now_ms: u128,
+) -> Result<(u128, u128), DepositRejectionV1> {
+    if amount == 0 {
+        return Err(DepositRejectionV1 {
+            code: "reserve_deposit_amount_required",
+            reason: "deposit amount must be positive".into(),
+        });
+    }
+    let reserve_after =
+        deposit_reserve_encodable_transition_v1(asset, current, amount, proof, now_ms)?;
+    if balance > u64::MAX as u128 {
+        return Err(DepositRejectionV1 {
+            code: "reserve_encoding_limit_exceeded",
+            reason: "source balance exceeds current state encoding limit".into(),
+        });
+    }
+    let balance_after = balance
+        .checked_sub(amount)
+        .ok_or_else(|| DepositRejectionV1 {
+            code: "reserve_deposit_insufficient_balance",
+            reason: format!("asset={} requested={} available={}", asset, amount, balance),
+        })?;
+    Ok((reserve_after, balance_after))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

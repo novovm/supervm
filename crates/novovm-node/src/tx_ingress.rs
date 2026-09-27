@@ -10622,15 +10622,32 @@ fn dispatch_native_module_execute_v1(
         .unwrap_or_else(|| fallback_execute_args_value_v1(request.args.as_slice()));
     match (module_name.as_str(), request.method.as_str()) {
         ("treasury", "deposit_reserve") => {
-            let asset = args_json
+            let reject_args = || {
+                build_failed_native_receipt_v1(
+                request, settled_fee, subject_meta, "treasury".into(), "deposit_reserve".into(),
+                "reserve_deposit_args_invalid: explicit asset and positive integer amount required".into(),
+            )
+            };
+            // No fallback from malformed deposit arguments to the fee budget.
+            let Some(asset_arg) = args_json
                 .get("asset")
-                .and_then(|value| value.as_str())
-                .map(normalize_asset_symbol_v1)
-                .unwrap_or_else(|| normalize_asset_symbol_v1(request.fee_pay_asset.as_str()));
-            let amount = args_json
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            else {
+                return reject_args();
+            };
+            let Some(amount) = args_json
                 .get("amount")
                 .and_then(parse_u128_from_json_value_v1)
-                .unwrap_or_else(|| request.fee_max_pay_amount.max(1));
+                .filter(|v| *v > 0)
+            else {
+                return reject_args();
+            };
+            let Some(account) = normalize_account_ref_v1(&subject_meta.account_id) else {
+                return reject_args();
+            };
+            let asset = normalize_asset_symbol_v1(asset_arg);
+            let balance = native_account_asset_balance_v1(store, &account, &asset);
             let current = store
                 .module_state
                 .treasury_reserves
@@ -10651,9 +10668,9 @@ fn dispatch_native_module_execute_v1(
                         proof_reference: &proof.proof_reference,
                     },
                 );
-            let reserve_after =
-                match novovm_protocol::native_treasury::deposit_reserve_encodable_transition_v1(
-                    &asset, current, amount, proof, now_ms,
+            let (reserve_after, balance_after) =
+                match novovm_protocol::native_treasury::deposit_from_balance_transition_v2(
+                    &asset, current, balance, amount, proof, now_ms,
                 ) {
                     Ok(value) => value,
                     Err(rejection) => {
@@ -10668,6 +10685,15 @@ fn dispatch_native_module_execute_v1(
                         );
                     }
                 };
+            // Both outputs were checked without mutation. No fallible business
+            // operation occurs between the two in-memory writes; outer AOEM
+            // state publication persists the complete module-state transition.
+            store
+                .module_state
+                .account_asset_balances
+                .entry(account.clone())
+                .or_default()
+                .insert(asset.clone(), balance_after);
             store
                 .module_state
                 .treasury_reserves
@@ -10681,6 +10707,9 @@ fn dispatch_native_module_execute_v1(
                     "amount": amount,
                     "reserve_after": reserve_after,
                     "fee_route": settled_fee.route,
+                    "funding_source": "native_account_balance",
+                    "source_account": account,
+                    "source_balance_after": balance_after,
                 }),
             };
             build_success_native_receipt_v1(
@@ -13768,6 +13797,7 @@ pub fn native_business_protocol_config_commitment_v1() -> Result<String> {
         "schema": "novovm-native-business-protocol-config/v2",
         "environment": env,
         "compiled_defaults": {
+            "treasury_deposit_contract": "balance_backed_v2",
             "native_auth_nonce_identity_scheme": NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2,
             "fee_rate_ppm": {
                 "NOV": NOV_FEE_RATE_PPM_NOV_V1,
@@ -32149,7 +32179,9 @@ mod tests {
                 aoem_commit.commit_seal,
                 aoem_meta.semantic_ledger_commit_seal
             );
-            assert_eq!(aoem_commit.semantic_delta_count, 1);
+            // Manual proof changes both the policy projection and the full
+            // committed module-state v3 projection, not a reserve balance.
+            assert_eq!(aoem_commit.semantic_delta_count, 2);
             assert_eq!(
                 receipt.logs[0].data["claims"]["nov_mint_authorized"].as_bool(),
                 Some(false)

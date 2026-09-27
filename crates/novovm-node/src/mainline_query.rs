@@ -639,7 +639,9 @@ fn run_mainline_nov_deposit_reserve_v1(params: &Value) -> Result<Value> {
         "deposit_reserve",
         json!({
             "asset": asset,
-            "amount": amount,
+            // Preserve full integer input until execution admission rejects
+            // unsupported values; json!(u128) can panic before that gate.
+            "amount": amount.to_string(),
         }),
         params,
         "NOV",

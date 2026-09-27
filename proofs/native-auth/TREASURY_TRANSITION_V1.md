@@ -1,5 +1,9 @@
 # Treasury deposit shared transition v1
 
+Historical V1 acceptance below. Production deposit behavior is superseded by
+[balance-backed deposit V2](../../docs/NOVOVM_TREASURY_DEPOSIT_V2.md); do not apply
+the old no-debit/fallback compatibility claims to V2.
+
 Status: production branch extraction and local differential regression only.
 This is NOT a new zkVM business-execution receipt or a full transaction proof.
 
