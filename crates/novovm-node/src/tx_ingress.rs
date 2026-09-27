@@ -10631,53 +10631,47 @@ fn dispatch_native_module_execute_v1(
                 .get("amount")
                 .and_then(parse_u128_from_json_value_v1)
                 .unwrap_or_else(|| request.fee_max_pay_amount.max(1));
-            if asset != "NOV" {
-                if let Some(reason) =
-                    reserve_proof_block_reason_for_asset_v1(store, asset.as_str(), now_ms)
-                {
-                    increment_settlement_failure_v1(store, "reserve_proof_not_active");
-                    return build_failed_native_receipt_v1(
-                        request,
-                        settled_fee,
-                        subject_meta,
-                        "treasury".to_string(),
-                        "deposit_reserve".to_string(),
-                        fee_settlement_reason_v1("reserve_proof_not_active", reason.as_str()),
-                    );
-                }
-                let current_reserve = store
-                    .module_state
-                    .treasury_reserves
-                    .get(asset.as_str())
-                    .copied()
-                    .unwrap_or(0);
-                let projected_reserve_after = current_reserve.saturating_add(amount);
-                if let Some(reason) = reserve_proof_capacity_block_reason_v1(
-                    store,
-                    asset.as_str(),
-                    projected_reserve_after,
-                    now_ms,
-                ) {
-                    increment_settlement_failure_v1(store, "reserve_proof_capacity_exceeded");
-                    return build_failed_native_receipt_v1(
-                        request,
-                        settled_fee,
-                        subject_meta,
-                        "treasury".to_string(),
-                        "deposit_reserve".to_string(),
-                        fee_settlement_reason_v1(
-                            "reserve_proof_capacity_exceeded",
-                            reason.as_str(),
-                        ),
-                    );
-                }
-            }
-            let reserve_entry = store
+            let current = store
                 .module_state
                 .treasury_reserves
-                .entry(asset.clone())
-                .or_insert(0);
-            *reserve_entry = reserve_entry.saturating_add(amount);
+                .get(&asset)
+                .copied()
+                .unwrap_or(0);
+            let proof = store
+                .module_state
+                .treasury_reserve_proofs
+                .get(&asset)
+                .map(
+                    |proof| novovm_protocol::native_treasury::ReserveProofViewV1 {
+                        status: &proof.status,
+                        expires_at_unix_ms: proof.expires_at_unix_ms,
+                        reserve_amount: proof.reserve_amount,
+                        proof_type: &proof.proof_type,
+                        proof_source: &proof.proof_source,
+                        proof_reference: &proof.proof_reference,
+                    },
+                );
+            let reserve_after =
+                match novovm_protocol::native_treasury::deposit_reserve_transition_v1(
+                    &asset, current, amount, proof, now_ms,
+                ) {
+                    Ok(value) => value,
+                    Err(rejection) => {
+                        increment_settlement_failure_v1(store, rejection.code);
+                        return build_failed_native_receipt_v1(
+                            request,
+                            settled_fee,
+                            subject_meta,
+                            "treasury".to_string(),
+                            "deposit_reserve".to_string(),
+                            fee_settlement_reason_v1(rejection.code, &rejection.reason),
+                        );
+                    }
+                };
+            store
+                .module_state
+                .treasury_reserves
+                .insert(asset.clone(), reserve_after);
             let log = NovNativeExecutionLogV1 {
                 module: "treasury".to_string(),
                 method: "deposit_reserve".to_string(),
@@ -10685,7 +10679,7 @@ fn dispatch_native_module_execute_v1(
                 data: serde_json::json!({
                     "asset": asset,
                     "amount": amount,
-                    "reserve_after": *reserve_entry,
+                    "reserve_after": reserve_after,
                     "fee_route": settled_fee.route,
                 }),
             };
@@ -21163,6 +21157,7 @@ mod tests {
     include!("native_candidate_plan_execution_tests.rs");
     include!("native_nonce_identity_tests.rs");
     include!("native_parent_nonce_tests.rs");
+    include!("native_treasury_transition_tests.rs");
     use novovm_protocol::{
         NovExecutionModeV1, NovFeePolicyV1, NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1,
         NovVerificationModeV1,
