@@ -248,6 +248,10 @@ jobs:
       - name: Production business configuration pin regression
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib production_aoem_gate_requires_matching_cross_machine_protocol_pin --locked -- --test-threads=1
 
+      - name: Funded candidate execution and multi-process recovery
+        timeout-minutes: 15
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib tx_ingress::tests::candidate_workspace_tests::candidate_workspace_execution_ --locked -- --test-threads=1
+
       - name: Mainline soak freshness coverage and progress tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib mainline_soak::tests
 

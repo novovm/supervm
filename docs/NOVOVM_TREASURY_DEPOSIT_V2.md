@@ -77,7 +77,7 @@ The funded signed-ingress regression, deposit/attestation boundary tests and
 production configuration pin regression are now explicit CI steps. Local funded
 replay and Clippy passed; adding CI steps does not establish remote CI success.
 
-Known remaining blocker, reproduced on this branch:
+Previously reproduced blocker (fixture migration described below):
 `candidate_workspace_execution_competing_results_match_authority_and_survive_parent_gc`
 fails at the successful first receipt assertion. Its successor spends from a
 zero-funded parent. The success assertion is retained; do not reclassify a failed
@@ -88,3 +88,40 @@ state root, not a test-only bypass inside business execution.
 
 No active database was funded, no service was restarted, and this branch remains
 unmerged while that bootstrap and full integration regression are unfinished.
+
+### Funded candidate parent fixture
+
+Candidate execution fixtures now reuse the existing production one-shot
+Host-to-AOEM snapshot bootstrap, not a new mint or an execution-time credit:
+
+1. Require absent AOEM authority and an empty isolated Host store.
+2. Allocate exactly 1,000 NOV to each explicitly enumerated test signer before
+   executing transactions. Never use these known test seeds on a real network.
+3. Compute the full Host snapshot anchor, including chain and namespace binding.
+4. Derive the expected initial state root from the same allocation with the
+   protocol config commitment bound, and put that root in the execution plan.
+5. Enable import only inside the test's scoped initialization call; execute the
+   ordinary AOEM production path, then read back the unchanged initial balances
+   and check the block's pre-state root. The initial fixture transaction may be
+   rejected; successful *funded successor deposits* remain mandatory assertions.
+
+Every fixture checks rejection of a changed balance, wrong chain, wrong
+namespace and already protocol-bound import image. These checks invoke the real
+bootstrap verifier. The same helper supplies the competing-candidate, batch
+authentication, checkpoint recovery and three-process recovery fixtures.
+
+This is test initialization using an existing import mechanism, NOT a deployed
+genesis allocation tool, a network-approved issuance schedule or a migration of
+running nodes. The namespace-specific import anchor is distinct from the shared
+business state root. Cross-machine operators still need independently agreed
+chain, protocol configuration and initial allocations. Public startup/soak
+configuration migration remains pending; do not merge solely on these fixtures.
+
+Local funded candidate suite: 4 passed, 0 failed in 129.96 seconds. The worker
+entry is ignored in ordinary enumeration but is explicitly launched by the
+passing three-process parent (execute, recover/abort, recover-aborted). Competing
+branches, whole-batch authentication and all four checkpoint interruptions also
+passed without relaxing successful deposit assertions. The six treasury
+transition tests and node library/test Clippy with warnings denied passed.
+CI now includes the funded candidate suite; remote Linux execution is not claimed
+by these Windows-local results.

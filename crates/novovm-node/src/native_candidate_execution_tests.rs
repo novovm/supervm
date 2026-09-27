@@ -1,3 +1,111 @@
+// Explicit isolated fixture allocation, imported through the production
+// one-shot exact-snapshot bootstrap guard. Never fund inside execution.
+fn funded_candidate_parent(
+    path: &Path,
+    params: &serde_json::Value,
+    chain_id: u64,
+    seeds: &[[u8; 32]],
+    raw: Vec<u8>,
+) -> NovNativeDurableBlockV1 {
+    assert!(
+        load_validated_native_state_envelope_from_aoem_owner_v1(params, chain_id)
+            .unwrap()
+            .is_none()
+    );
+    let existing = load_nov_native_execution_store_v1(path).unwrap();
+    assert!(!native_host_projection_has_state_v1(&existing));
+    let mut allocation = NovNativeExecutionStoreV1::default();
+    for seed in seeds {
+        let account = to_hex_prefixed_v1(&novovm_adapter_novovm::address_from_seed_v1(*seed));
+        credit_native_account_asset_balance_v1(&mut allocation, &account, "NOV", 1_000);
+    }
+    let namespace = native_aoem_owned_state_namespace_digest_v1(params, chain_id);
+    let anchor =
+        native_host_projection_bootstrap_anchor_commitment_v1(&allocation, chain_id, &namespace)
+            .unwrap();
+    save_nov_native_execution_store_v1(path, &allocation).unwrap();
+    // Bind protocol config only in the expected execution snapshot, not the
+    // unowned import image (already-owned images cannot bootstrap again).
+    let mut expected = allocation.clone();
+    bind_native_business_protocol_config_v1(&mut expected).unwrap();
+    let base = genesis_plan(chain_id, vec![raw]);
+    let plan = make_plan(
+        base.context,
+        parse_fixed_hex_32_v1(
+            &native_semantic_ledger_state_digest_v1(&expected.module_state),
+            "funded genesis root",
+        )
+        .unwrap(),
+        None,
+        base.raw_txs,
+    );
+    with_env_override_v1(
+        "NOVOVM_ALLOW_AOEM_STATE_BOOTSTRAP_FROM_HOST",
+        "true",
+        || {
+            with_env_override_v1(
+                NOV_NATIVE_AOEM_STATE_BOOTSTRAP_HOST_ANCHOR_ENV,
+                &anchor,
+                || {
+                    verify_native_aoem_state_bootstrap_from_host_authorization_v1(
+                        &allocation,
+                        chain_id,
+                        &namespace,
+                    )
+                    .unwrap();
+                    let mut tampered = allocation.clone();
+                    *tampered
+                        .module_state
+                        .account_asset_balances
+                        .values_mut()
+                        .next()
+                        .unwrap()
+                        .get_mut("NOV")
+                        .unwrap() += 1;
+                    assert!(
+                        verify_native_aoem_state_bootstrap_from_host_authorization_v1(
+                            &tampered, chain_id, &namespace
+                        )
+                        .is_err()
+                    );
+                    assert!(
+                        verify_native_aoem_state_bootstrap_from_host_authorization_v1(
+                            &allocation,
+                            chain_id + 1,
+                            &namespace
+                        )
+                        .is_err()
+                    );
+                    assert!(
+                        verify_native_aoem_state_bootstrap_from_host_authorization_v1(
+                            &allocation,
+                            chain_id,
+                            "wrong-namespace"
+                        )
+                        .is_err()
+                    );
+                    assert!(
+                        verify_native_aoem_state_bootstrap_from_host_authorization_v1(
+                            &expected, chain_id, &namespace
+                        )
+                        .is_err()
+                    );
+                    let block = committed_block(
+                        &run_nov_native_candidate_execution_plan_v1(&plan, params).unwrap(),
+                    );
+                    assert_eq!(block.header.pre_state_root, plan.pre_state_root);
+                    let recovered = load_nov_native_execution_store_v1(path).unwrap();
+                    assert_eq!(
+                        recovered.module_state.account_asset_balances,
+                        allocation.module_state.account_asset_balances
+                    );
+                    block
+                },
+            )
+        },
+    )
+}
+
 fn candidate_workspace_execution_raw(
     chain_id: u64,
     nonce: u64,
@@ -49,12 +157,12 @@ fn candidate_workspace_execution_competing_results_match_authority_and_survive_p
         .unwrap_or_else(|error| error.into_inner());
     let chain_id = 98_917_301;
     with_plan_runtime(|path, params| {
-        let parent = committed_block(
-            &run_nov_native_candidate_execution_plan_v1(
-                &genesis_plan(chain_id, vec![raw_fixture(chain_id, 601)]),
-                params,
-            )
-            .unwrap(),
+        let parent = funded_candidate_parent(
+            path,
+            params,
+            chain_id,
+            &[[0xc1; 32], [0xc2; 32]],
+            raw_fixture(chain_id, 601),
         );
         let left_plan = successor_plan(
             &parent,
@@ -263,9 +371,13 @@ fn candidate_workspace_execution_authenticates_the_entire_batch_before_any_outpu
         .unwrap_or_else(|error| error.into_inner());
     let chain_id = 98_917_302;
     with_plan_runtime(|path, params| {
-        let genesis = genesis_plan(chain_id, vec![raw_fixture(chain_id, 701)]);
-        let parent =
-            committed_block(&run_nov_native_candidate_execution_plan_v1(&genesis, params).unwrap());
+        let parent = funded_candidate_parent(
+            path,
+            params,
+            chain_id,
+            &[[0xd1; 32]],
+            raw_fixture(chain_id, 701),
+        );
         let valid =
             candidate_workspace_execution_raw(chain_id, 0, [0xd1; 32], 41, "deposit_reserve");
         let mut invalid_signature = decode_nov_native_tx_wire_v1(&valid).unwrap();
@@ -320,7 +432,7 @@ fn candidate_workspace_execution_authenticates_the_entire_batch_before_any_outpu
                     encode_native_auth_test_tx_v1(&last_bad_signature),
                 ],
             ),
-            ("already committed", genesis.raw_txs.clone()),
+            ("already committed", vec![raw_fixture(chain_id, 701)]),
         ];
         for (label, raws) in cases {
             let plan = successor_plan(&parent, raws);
@@ -375,12 +487,12 @@ fn candidate_workspace_execution_completed_checkpoints_resume_and_abort_fail_clo
         .unwrap_or_else(|error| error.into_inner());
     let chain_id = 98_917_303;
     with_plan_runtime(|path, params| {
-        let parent = committed_block(
-            &run_nov_native_candidate_execution_plan_v1(
-                &genesis_plan(chain_id, vec![raw_fixture(chain_id, 801)]),
-                params,
-            )
-            .unwrap(),
+        let parent = funded_candidate_parent(
+            path,
+            params,
+            chain_id,
+            &[[0xe1; 32], [0xe2; 32], [0xe3; 32], [0xe4; 32], [0xef; 32]],
+            raw_fixture(chain_id, 801),
         );
         for (index, checkpoint) in [
             workspace::ExecutionCheckpointV1::OutputReserved,
@@ -606,12 +718,12 @@ fn candidate_workspace_execution_process_worker() {
         )
         .unwrap();
         let governance_before = fs::read(&event_path).unwrap();
-        let parent = committed_block(
-            &run_nov_native_candidate_execution_plan_v1(
-                &genesis_plan(chain_id, vec![raw_fixture(chain_id, 901)]),
-                &params,
-            )
-            .unwrap(),
+        let parent = funded_candidate_parent(
+            &path,
+            &params,
+            chain_id,
+            &[[0xf1; 32]],
+            raw_fixture(chain_id, 901),
         );
         let mut explicit_privacy = decode_nov_native_tx_wire_v1(
             &candidate_workspace_execution_raw(chain_id, 1, [0xf1; 32], 82, "deposit_reserve"),
