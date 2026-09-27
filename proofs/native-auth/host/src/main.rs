@@ -42,10 +42,14 @@ fn fixture() -> AuthInput {
     }
 }
 
-fn child(mode: &str, lib: &str, proof: &str) -> Result<()> {
-    let mut command = Command::new(std::env::current_exe()?);
+fn child(executable: &Path, mode: &str, lib: &str, proof: &str) -> Result<()> {
+    let mut command = Command::new(executable);
     command.args([mode, lib, proof]);
-    command.env_remove("RISC0_DEV_MODE");
+    if mode == "verify" {
+        command.env("RISC0_DEV_MODE", "1");
+    } else {
+        command.env_remove("RISC0_DEV_MODE");
+    }
     if !command.status()?.success() {
         bail!("{mode} failed");
     }
@@ -79,6 +83,50 @@ fn expected_statement() -> AuthJournal {
 fn frozen_public_statement_matches_signed_fixture() {
     assert_eq!(check(&fixture()).unwrap(), expected_statement());
 }
+fn wrong_statements() -> Vec<(&'static str, Vec<u8>)> {
+    let mut cases = Vec::new();
+    for label in [
+        "domain",
+        "message",
+        "public_key",
+        "nonce_identity",
+        "chain",
+        "nonce",
+        "next_nonce",
+    ] {
+        let mut statement = expected_statement();
+        match label {
+            "domain" => statement.domain.push('x'),
+            "message" => statement.message[0] ^= 1,
+            "public_key" => statement.public_key[0] ^= 1,
+            "nonce_identity" => statement.nonce_identity[0] ^= 1,
+            "chain" => statement.chain += 1,
+            "nonce" => statement.nonce += 1,
+            _ => statement.next_nonce += 1,
+        }
+        cases.push((
+            label,
+            postcard::to_allocvec(&statement).expect("fixed statement encoding"),
+        ));
+    }
+    cases.push(("empty", Vec::new()));
+    let mut appended = postcard::to_allocvec(&expected_statement()).unwrap();
+    appended.push(0);
+    cases.push(("appended", appended));
+    cases
+}
+
+#[test]
+fn negative_statements_are_distinct_and_not_the_expected_statement() {
+    let expected = postcard::to_allocvec(&expected_statement()).unwrap();
+    let cases = wrong_statements();
+    assert_eq!(cases.len(), 9);
+    for (index, (_, bytes)) in cases.iter().enumerate() {
+        assert_ne!(bytes, &expected);
+        assert!(cases[..index].iter().all(|(_, previous)| previous != bytes));
+    }
+}
+
 fn rejected(result: Result<()>, label: &str) -> Result<()> {
     if result.is_ok() {
         bail!("accepted {label}");
@@ -94,11 +142,15 @@ fn main() -> Result<()> {
         bail!("usage: run|produce|verify <trusted-AOEM-library> <new-output-dir|receipt>");
     };
     if mode == "run" {
+        // Resolve before a long proof: on Linux, current_exe() may later name a
+        // deleted inode if a concurrent build replaced the diagnostic binary.
+        // A replacement verifier still enforces its own image/statement pins.
+        let executable = std::env::current_exe()?;
         fs::create_dir(output).context("output must be new; parent must exist")?;
         let proof = Path::new(output).join("receipt.bin");
         let proof = proof.to_str().context("non UTF-8 path")?;
-        child("produce", lib, proof)?;
-        child("verify", lib, proof)?;
+        child(&executable, "produce", lib, proof)?;
+        child(&executable, "verify", lib, proof)?;
         println!("PASS: real signature/nonce relation proof, independent verifier. Full NOV validity NOT PROVEN");
         return Ok(());
     }
@@ -150,12 +202,13 @@ fn main() -> Result<()> {
             let proof = fs::read(output)?;
             // Expected statement and image come from this verifier, not the proof sender.
             host.risc0_verify_v1(&proof, &NOVOVM_AUTH_GUEST_ID, &expected)?;
-            let mut wrong = expected.clone();
-            *wrong.last_mut().context("empty journal")? ^= 1;
-            rejected(
-                host.risc0_verify_v1(&proof, &NOVOVM_AUTH_GUEST_ID, &wrong),
-                "wrong statement",
-            )?;
+            for (label, wrong) in wrong_statements() {
+                rejected(
+                    host.risc0_verify_v1(&proof, &NOVOVM_AUTH_GUEST_ID, &wrong),
+                    label,
+                )?;
+                println!("rejected public statement mutation: {label}");
+            }
             rejected(
                 host.risc0_verify_v1(&proof, &[0; 8], &expected),
                 "wrong program",
