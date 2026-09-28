@@ -299,6 +299,94 @@ fn source_candidate() -> (
     (source, block, plan)
 }
 
+// Hash persistence files without opening databases (opening can itself update
+// RocksDB metadata). Only the test harness's stdout/stderr captures are excluded.
+fn persistence_files(root: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
+    use sha2::{Digest, Sha256};
+    fn visit(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let kind = entry.file_type().unwrap();
+            assert!(
+                !kind.is_symlink(),
+                "isolated fixture must not contain symlinks"
+            );
+            if kind.is_dir() {
+                out.push((path.strip_prefix(root).unwrap().to_path_buf(), Vec::new()));
+                visit(root, &path, out);
+            } else {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if dir == root && (name.ends_with(".stdout.log") || name.ends_with(".stderr.log")) {
+                    continue;
+                }
+                out.push((
+                    path.strip_prefix(root).unwrap().to_path_buf(),
+                    Sha256::digest(fs::read(path).unwrap()).to_vec(),
+                ));
+            }
+        }
+    }
+    let mut files = Vec::new();
+    visit(root, root, &mut files);
+    files.sort();
+    files
+}
+
+#[test]
+fn production_startup_bad_pin_refuses_before_new_or_existing_persistence() {
+    let fresh = Node::new("startup-pin-empty");
+    let (existing, _, _) = source_candidate();
+    for node in [&fresh, &existing] {
+        let before = persistence_files(&node.0);
+        for mode in ["native_execution_tick", "native_execution_pipeline"] {
+            for (label, configured, drift) in [
+                ("missing", None, false),
+                ("empty", Some(""), false),
+                ("malformed", Some("bad"), false),
+                (
+                    "mismatch",
+                    Some("0000000000000000000000000000000000000000000000000000000000000000"),
+                    false,
+                ),
+                ("business-drift", None, true),
+            ] {
+                let mut command = node.command();
+                command
+                    .env("NOVOVM_NODE_MODE", mode)
+                    .env("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", "1");
+                if drift {
+                    command.env("NOVOVM_NATIVE_FEE_RATE_PPM", "1234567");
+                } else if let Some(pin) = configured {
+                    command.env(NOV_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT_ENV, pin);
+                } else {
+                    command.env_remove(NOV_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT_ENV);
+                }
+                let result = node.run(&mut command, &format!("{mode}-{label}"));
+                assert!(
+                    !result.0,
+                    "invalid production configuration must refuse startup"
+                );
+                assert!(
+                    result.2.contains(
+                        "validate cross-machine NOV protocol configuration pin at startup failed"
+                    ),
+                    "{}",
+                    result.2
+                );
+                assert_eq!(
+                    persistence_files(&node.0),
+                    before,
+                    "{mode}/{label} changed persistence before refusing startup"
+                );
+            }
+        }
+    }
+    assert!(persistence_files(&fresh.0).is_empty());
+    existing.assert_funded_result();
+}
+
 #[test]
 fn candidate_node_cli_real_aoem_common_plan_and_restart_match_across_processes() {
     let (_source, block, plan) = source_candidate();

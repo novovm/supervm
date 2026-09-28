@@ -309,3 +309,23 @@ This is still a check of the CLI process environment, not the environment of a
 Windows service, daemon or already-running node. All no-activation/no-database
 claims above remain unchanged. Real-process CLI tests cover missing, malformed,
 wrong and matching pins, and require zero files created in the isolated cwd.
+
+### Real-node startup refusal before persistence
+
+The real-node CLI integration suite now tests production startup refusal, not
+just the control CLI's read-only comparison. Twenty child launches cover both
+`native_execution_tick` and `native_execution_pipeline`, a fresh directory and
+an independently executed funded node's existing state, and missing/empty/
+malformed/mismatched pins plus business-configuration drift. Every launch must
+fail specifically at the startup protocol-pin check.
+
+Before and after each rejection the test recursively inventories directories and
+hashes persistence files without opening databases. Only top-level harness
+stdout/stderr captures are excluded; RocksDB logs and metadata remain covered.
+Fresh state stays absent and existing file hashes stay unchanged. The existing
+node still has its two successful funded receipts afterwards. Local targeted
+test and Clippy passed; existing CI already runs this integration suite.
+
+This protects against regression in rejection ordering. It does not test
+successful migration of a V1 database, authorize a network upgrade, or claim
+physical multi-machine acceptance. No production execution behavior was changed.
