@@ -258,6 +258,10 @@ jobs:
         timeout-minutes: 30
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib tx_ingress::tests::candidate_workspace_tests::candidate_workspace_execution_ --locked -- --test-threads=1
 
+      - name: Funded real-node candidate and restart parity
+        timeout-minutes: 15
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --test native_candidate_node_cli --locked -- --test-threads=1
+
       - name: Mainline soak freshness coverage and progress tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib mainline_soak::tests
 

@@ -216,3 +216,28 @@ The sequential suite now has a bounded 30-minute CI budget. Its test selection,
 assertions and individual recovery-child 90-second deadlines are unchanged.
 The short funded pipeline suite runs before it so pipeline regressions are
 reported earlier. Linux acceptance still requires a successful new run.
+
+### Real-node candidate fixture migration
+
+Run 36381457257 passed both the funded pipeline regression and the candidate
+multi-process suite (the latter in about nine minutes). Its complete mainline
+gate was still running when the next local check reproduced a separate failure:
+`candidate_node_cli_real_aoem_common_plan_and_restart_match_across_processes`
+required successful receipts but started its source and replicas unfunded.
+
+Positive CLI fixtures now independently construct the same initial allocation
+(signer i owns i USDT and 10,000 NOV, i=1..2). Each fresh directory receives an
+exclusive-created JSON import image and its namespace-specific exact snapshot
+anchor. No source execution output or database is copied to replicas. The real
+production AOEM path imports that image, and common-plan pre-state/commitment
+checks remain enforced. Negative CLI cases still use empty, unfunded directories
+and retain their no-persistence checks.
+
+Source and replicas require two successful receipts, reserve=3 USDT and all
+account USDT balances=0. Both replicas still compare complete durable blocks
+and reverse indexes, then restart with the same plan and require the full
+persisted execution snapshot to remain unchanged (no second debit/credit).
+Local result: 3 passed, 0 failed, 1 explicitly ignored; targeted Clippy passed.
+The ignored seal-service loopback scenario shares the migrated allocation helper
+but was NOT EXECUTED. CI now runs the CLI suite before the full mainline gate;
+Linux acceptance of this revision and physical multi-device tests remain pending.

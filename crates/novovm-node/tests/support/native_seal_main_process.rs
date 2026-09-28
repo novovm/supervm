@@ -108,7 +108,7 @@ fn real_aoem_main_nodes_prepare_three_of_four_and_recover() {
     let (source, block, plan) = source_candidate();
     let mut nodes = vec![source];
     for index in 1..4 {
-        let node = Node::new(&format!("seal-validator-{index}"));
+        let node = Node::funded(&format!("seal-validator-{index}"));
         let out = node.execute(&plan, "candidate");
         let actual: NovNativeDurableBlockV1 =
             serde_json::from_value(out["durable_block_candidate_committed"].clone()).unwrap();

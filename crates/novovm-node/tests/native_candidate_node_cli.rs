@@ -13,7 +13,7 @@ use std::{
 };
 
 const CHAIN: u64 = 98_919_601;
-struct Node(PathBuf);
+struct Node(PathBuf, Option<String>);
 impl Node {
     fn new(label: &str) -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -33,7 +33,66 @@ impl Node {
                     .as_nanos()
             ));
         fs::create_dir_all(&dir).unwrap();
-        Self(dir)
+        Self(dir, None)
+    }
+    fn funded(label: &str) -> Self {
+        use sha2::{Digest, Sha256};
+        use std::io::Write;
+        let mut node = Self::new(label);
+        assert_eq!(fs::read_dir(&node.0).unwrap().count(), 0);
+        let mut allocation = NovNativeExecutionStoreV1::default();
+        for identity in 1u64..=2 {
+            let mut hash = Sha256::new();
+            hash.update(b"novovm-native-fixture-signing-seed/v1");
+            hash.update(CHAIN.to_le_bytes());
+            hash.update(identity.to_le_bytes());
+            let address = novovm_adapter_novovm::address_from_seed_v1(hash.finalize().into());
+            allocation.module_state.account_asset_balances.insert(
+                format!("0x{}", hex(&address)),
+                std::collections::BTreeMap::from([
+                    ("USDT".into(), u128::from(identity)),
+                    ("NOV".into(), 10_000),
+                ]),
+            );
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"novovm-native-aoem-state-namespace-v1");
+        hash.update(node.0.to_str().unwrap().as_bytes());
+        node.1 = Some(
+            native_host_projection_bootstrap_anchor_commitment_v1(
+                &allocation,
+                CHAIN,
+                &hex(&hash.finalize()),
+            )
+            .unwrap(),
+        );
+        // Fresh test-only import image, not a copy of another node's execution.
+        // Use create_new and no process-global storage environment overrides.
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(node.0.join("native.json"))
+            .unwrap();
+        file.write_all(&serde_json::to_vec(&allocation).unwrap())
+            .unwrap();
+        file.sync_all().unwrap();
+        assert_eq!(node.snapshot(), allocation);
+        node
+    }
+    fn snapshot(&self) -> NovNativeExecutionStoreV1 {
+        serde_json::from_slice(&fs::read(self.0.join("native.json")).unwrap()).unwrap()
+    }
+    fn assert_funded_result(&self) {
+        let store = self.snapshot();
+        assert_eq!(store.receipts.len(), 2);
+        assert!(store.receipts.values().all(|receipt| receipt.status));
+        assert_eq!(store.module_state.treasury_reserves["USDT"], 3);
+        assert_eq!(store.module_state.account_asset_balances.len(), 2);
+        assert!(store
+            .module_state
+            .account_asset_balances
+            .values()
+            .all(|assets| assets.get("USDT").copied().unwrap_or_default() == 0));
     }
     fn command(&self) -> Command {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -78,6 +137,10 @@ impl Node {
                 NOV_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT_ENV,
                 native_business_protocol_config_commitment_v1().unwrap(),
             );
+        if let Some(anchor) = &self.1 {
+            cmd.env("NOVOVM_ALLOW_AOEM_STATE_BOOTSTRAP_FROM_HOST", "true")
+                .env(NOV_NATIVE_AOEM_STATE_BOOTSTRAP_HOST_ANCHOR_ENV, anchor);
+        }
         cmd
     }
     fn run(&self, cmd: &mut Command, label: &str) -> (bool, String, String) {
@@ -194,7 +257,7 @@ fn source_candidate() -> (
 ) {
     // Produce an authentic source candidate through the unchanged normal node
     // pipeline, then extract INPUTS ONLY; never copy its DB/output into peers.
-    let source = Node::new("source");
+    let source = Node::funded("source");
     let result = source.run(
         source
             .command()
@@ -208,7 +271,7 @@ fn source_candidate() -> (
             )
             .env(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_ASSET",
-                "NOV",
+                "USDT",
             )
             .env(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_MAX_PAY_AMOUNT",
@@ -217,6 +280,7 @@ fn source_candidate() -> (
         "seed",
     );
     assert!(result.0, "{}", result.2);
+    source.assert_funded_result();
     let ledger = source.ledger();
     let block = ledger.load_by_height(CHAIN, 1).unwrap().unwrap();
     let commitment = native_business_protocol_config_commitment_v1().unwrap();
@@ -326,7 +390,7 @@ fn candidate_node_cli_real_aoem_common_plan_and_restart_match_across_processes()
         assert!(ledger.load_prepared(CHAIN).unwrap().is_none());
     }
     for name in ["replica-a", "replica-b"] {
-        let node = Node::new(name);
+        let node = Node::funded(name);
         let out = node.execute(&plan, "execute");
         let actual: NovNativeDurableBlockV1 =
             serde_json::from_value(out["durable_block_candidate_committed"].clone()).unwrap();
@@ -344,6 +408,8 @@ fn candidate_node_cli_real_aoem_common_plan_and_restart_match_across_processes()
         for result in out["results"].as_array().unwrap() {
             assert_eq!(result["native_receipt"]["status"], true);
         }
+        node.assert_funded_result();
+        let first_state = node.snapshot();
         let persisted = node.ledger();
         assert_eq!(persisted.load_by_height(CHAIN, 1).unwrap().unwrap(), actual);
         for hash in &plan.tx_hashes {
@@ -371,6 +437,11 @@ fn candidate_node_cli_real_aoem_common_plan_and_restart_match_across_processes()
         assert_eq!(replay["batch_replay"], true);
         assert_eq!(replay["aoem_reexecution"], false);
         assert_eq!(node.ledger().load_head(CHAIN).unwrap(), first);
+        assert_eq!(
+            node.snapshot(),
+            first_state,
+            "replay must not debit or credit again"
+        );
     }
 }
 
