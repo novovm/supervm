@@ -16,7 +16,7 @@
 | 项目 | 当前状态 | 完成所需证据 |
 | --- | --- | --- |
 | V3 签名/归档/有界收发 | `0a0a916` 本地完整 seal 回归 147 项通过，Linux CI 待验收 | 同一提交的本地与 Linux CI 测试 |
-| 自动服务接管与版本绑定 | 显式 V3 单候选配置与持久模式绑定已接入，三项本机服务测试通过 | 实际节点进程/AOEM 候选端到端与实体多机验收仍需完成 |
+| 自动服务接管与版本绑定 | 显式 V3 单候选接入、模式绑定、真实 AOEM 主进程三票确认与重启通过 | 隔离候选自动准入、实体多机验收仍需完成 |
 | 共同 proposal/body/context 与独立执行核验 | 待现代码逐项追踪与集成验收 | 不同机器收到同一候选，独立执行及根/回执对齐，错误结果拒绝 |
 | 新轮签名调度与分区恢复 | prepare 前故障换轮与返回追赶有服务测试；prepare 后决策分票恢复尚未完成 | 不重签冲突决策，分票/分区/恢复后可进展，确定性测试 |
 | 最终祖先、链选择、状态晋升 | 未完成 | 验证规则与 ledger/AOEM 可恢复提交；不能直接翻转 finality 字段 |
@@ -52,7 +52,15 @@
 
 - 隔离输出块重建：增强的真实 AOEM 竞争分支/完整块等价/GC 后重开/损坏与中止测试
   通过（34.71 秒）；14 项账本回归通过；lib/tests Clippy 与格式检查通过。
-  7 项 `candidate_workspace_execution` 扩展回归仍在执行，尚未计为全通过。
+  `candidate_workspace_execution` 扩展回归结束：6 passed / 0 failed / 1 ignored，
+  135.20 秒；ignored 是由已通过的三进程父测试显式调用的 worker。
+- 真实候选 CLI：4 passed / 0 failed / 1 ignored，36.22 秒；该次忽略的是需独占
+  回环 443 的 prepare 联调，不代表执行过它。
+- 后续新增并显式执行 V3 主进程联调：1 passed / 0 failed，196.81 秒。
+  四个固定验证者、独立 AOEM 执行与数据库、WSS/TLS/E2E，2/4 无证书，3/4
+  确认且重启保持同一凭证与未封印账本。证据位于
+  `artifacts/audit/candidate-node-processes/seal-relay-6976-1790636293581648200/acceptance.json`。
+  这是同机真实进程，候选预先本地执行，不是自动隔离候选准入、硬崩溃或实体 LAN。
 
 - 后续 V3 服务接入切片 `0a0a916`：三个新增服务用例通过，主节点二进制 `cargo check`、
   lib/tests Clippy `-D warnings`、格式与 diff 检查通过。完整 seal 回归结束：

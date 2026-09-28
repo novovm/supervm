@@ -40,7 +40,14 @@ impl Drop for Child {
     }
 }
 
-fn run_cluster(nodes: &[Node], active: &[usize], label: &str, ticks: u64, expect_prepared: bool) {
+fn run_cluster(
+    nodes: &[Node],
+    active: &[usize],
+    label: &str,
+    ticks: u64,
+    expect_prepared: bool,
+    decision_v3: bool,
+) {
     let mut children = Vec::new();
     for &index in active {
         let node = &nodes[index];
@@ -93,6 +100,8 @@ fn run_cluster(nodes: &[Node], active: &[usize], label: &str, ticks: u64, expect
         let summary: Value = serde_json::from_str(&text[start..]).unwrap();
         let seal = &summary["product_mainline_overlay"]["native_seal"];
         assert_eq!(seal["prepared"], expect_prepared);
+        assert_eq!(seal["decision_v3_enabled"], decision_v3);
+        assert_eq!(seal["decision_confirmed"], decision_v3 && expect_prepared);
         assert_eq!(seal["halted"], false);
         for field in ["finalized", "safe", "proof_sealed", "chain_canonical"] {
             assert_eq!(seal[field], false);
@@ -103,6 +112,16 @@ fn run_cluster(nodes: &[Node], active: &[usize], label: &str, ticks: u64, expect
 #[test]
 #[ignore = "requires exclusive loopback 127.0.0.2:443; run explicitly on a prepared host"]
 fn real_aoem_main_nodes_prepare_three_of_four_and_recover() {
+    run_real_aoem_main_nodes(false);
+}
+
+#[test]
+#[ignore = "requires exclusive loopback 127.0.0.2:443; run explicitly on a prepared host"]
+fn real_aoem_main_nodes_decision_v3_three_of_four_and_recover() {
+    run_real_aoem_main_nodes(true);
+}
+
+fn run_real_aoem_main_nodes(decision_v3: bool) {
     let reserve = std::net::TcpListener::bind("127.0.0.2:443")
         .expect("exclusive loopback 443 required; do not stop other services");
     let (source, block, plan) = source_candidate();
@@ -242,21 +261,27 @@ fn real_aoem_main_nodes_prepare_three_of_four_and_recover() {
         .unwrap();
         fs::write(node.0.join("seal.json"),serde_json::to_vec(&serde_json::json!({
             "schema":"novovm-native-seal-service/v1","enabled":true,"chain_id":CHAIN,"height":1,
+            "decision_v3_enabled":decision_v3,
             "block_hash":hex(&block.header.block_hash),"authority_path":"authority.json", "signer_key_path":"signer.hex",
             "seal_store_path":"seal-db","round_timeout_ms":15000,"poll_interval_ms":100,
             "ingress_per_source_per_second":8,"ingress_per_poll":16})).unwrap()).unwrap();
     }
     // Same fixed four-member authority throughout. No fake clock or test-driver votes.
-    run_cluster(&nodes, &active[..2], "two-of-four", 70, false);
+    run_cluster(&nodes, &active[..2], "two-of-four", 70, false, decision_v3);
     for &index in &active[..2] {
         let store =
             NovNativeBlockSealStoreV1::open_existing_read_only(&nodes[index].0.join("seal-db"))
                 .unwrap()
                 .unwrap();
         assert!(store.load_qcs_by_height(CHAIN, 1, 1).unwrap().is_empty());
+        assert!(store
+            .load_decision_certificate_by_height_v3(CHAIN, 1, 1)
+            .unwrap()
+            .is_none());
     }
-    run_cluster(&nodes, &active, "three-of-four", 100, true);
+    run_cluster(&nodes, &active, "three-of-four", 100, true, decision_v3);
     let mut previous_qcs = Vec::new();
+    let mut previous_decisions = Vec::new();
     for &index in &active {
         let store =
             NovNativeBlockSealStoreV1::open_existing_read_only(&nodes[index].0.join("seal-db"))
@@ -272,6 +297,20 @@ fn real_aoem_main_nodes_prepare_three_of_four_and_recover() {
             assert!(qc.threshold_satisfied);
         }
         previous_qcs.push(qcs);
+        let decision = store
+            .load_decision_certificate_by_height_v3(CHAIN, 1, 1)
+            .unwrap();
+        assert_eq!(decision.is_some(), decision_v3);
+        if let Some(certificate) = &decision {
+            certificate.verify(&authority.validator_set).unwrap();
+            assert_eq!(
+                certificate.prepare.subject.block_hash,
+                block.header.block_hash
+            );
+            assert_eq!(certificate.signed_weight, 3);
+            assert_eq!(certificate.votes.len(), 3);
+        }
+        previous_decisions.push(decision);
         assert_eq!(
             nodes[index]
                 .ledger()
@@ -281,7 +320,7 @@ fn real_aoem_main_nodes_prepare_three_of_four_and_recover() {
             block
         );
     }
-    run_cluster(&nodes, &active, "restart", 12, true);
+    run_cluster(&nodes, &active, "restart", 12, true, decision_v3);
     for (offset, &index) in active.iter().enumerate() {
         let store =
             NovNativeBlockSealStoreV1::open_existing_read_only(&nodes[index].0.join("seal-db"))
@@ -290,6 +329,12 @@ fn real_aoem_main_nodes_prepare_three_of_four_and_recover() {
         assert_eq!(
             store.load_qcs_by_height(CHAIN, 1, 1).unwrap(),
             previous_qcs[offset]
+        );
+        assert_eq!(
+            store
+                .load_decision_certificate_by_height_v3(CHAIN, 1, 1)
+                .unwrap(),
+            previous_decisions[offset]
         );
         assert_eq!(
             nodes[index]
@@ -301,12 +346,13 @@ fn real_aoem_main_nodes_prepare_three_of_four_and_recover() {
         );
     }
     fs::write(root.join("acceptance.json"), serde_json::to_vec_pretty(&serde_json::json!({
-        "scope":"local_real_aoem_main_process_prepare_qc",
+        "scope":if decision_v3 { "local_real_aoem_main_process_decision_v3" } else { "local_real_aoem_main_process_prepare_qc" },
         "chain_id":CHAIN, "height":1, "block_hash":hex(&block.header.block_hash),
         "validator_count":4, "offline_initial_leader_index":leader_index, "active_validator_indices":active,
         "round_timeout_ms":15000, "tick_interval_ms":250,
         "node_evidence_paths":nodes.iter().map(|node| &node.0).collect::<Vec<_>>(),
         "two_of_four_persisted_qc_count":0, "three_of_four_qcs":previous_qcs,
+        "decision_v3_enabled":decision_v3, "three_of_four_decisions":previous_decisions,
         "restart_preserved_qcs_and_unsealed_ledger":true,
         "proof_sealed":false,"chain_canonical":false,"safe":false,"finalized":false,
         "physical_lan_executed":false,"public_network_executed":false

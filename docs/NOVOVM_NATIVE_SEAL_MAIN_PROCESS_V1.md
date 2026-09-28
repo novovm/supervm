@@ -62,6 +62,23 @@ node/novovmctl 全目标 Clippy 与格式检查通过。完整主线门禁本次
 
 ## 仍未完成
 
+### V3 主进程确认补充验收（2026-09-29）
+
+同一夹具增加显式 V3 模式，不更换固定验证者、不用测试代码代签。专项命令：
+
+```sh
+cargo test -p novovm-node --test native_candidate_node_cli real_aoem_main_nodes_decision_v3_three_of_four_and_recover --locked -- --ignored --test-threads=1
+```
+
+本机通过：1 passed / 0 failed，196.81 秒。两节点阶段没有 prepare QC 或 V3
+证书；三个节点自行形成 V3 确认，每份证书均验证三名签名者、权重 3 与正确块 hash；
+正常重启后原始凭证、QC 和未封印执行账本不变。最终报告保留完整证书与节点日志路径：
+`artifacts/audit/candidate-node-processes/seal-relay-6976-1790636293581648200/acceptance.json`。
+
+此用例继续默认 ignored，普通 CI 不自动覆盖它；使用与 prepare 用例相同的
+回环端口独占要求。它验证的是预先本地执行候选上的真实主进程 V3 服务，不证明
+隔离工作区自动准入、网络取块或权威状态晋升；所有最终性标志继续为 false。
+
 实体多机 LAN、公网/NAT/CGNAT、Linux 安装实机、物理断电与长期运行未由本测试
 覆盖。远端候选自动获取和独立重放、连续高度推进、最终确认及可恢复权威状态
 晋升仍需后续工作。本测试只处理预先在本地执行好的固定高度候选。
