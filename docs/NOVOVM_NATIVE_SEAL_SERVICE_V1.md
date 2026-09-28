@@ -179,3 +179,7 @@ cargo clippy -p novovm-node -p novovmctl --all-targets -- -D warnings
 [Product Overlay 主节点生命周期](NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md)。
 下一步可做局域网故障接替验收，并继续补最终确认和可恢复状态晋升；
 不能把本文件当成已经完成部署的证明。
+
+已补充[第二轮确认基础接口](NOVOVM_NATIVE_SEAL_COMMIT_PRIMITIVES_V1.md)：独立签名、
+权重证书、持久化防重复签名及确认凭证按高度归档/重启校验。当前服务仍仅推进 prepare，没有自动调用 commit，
+也没有因此启用最终确认。

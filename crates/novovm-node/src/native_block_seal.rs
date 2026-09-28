@@ -10,6 +10,9 @@
 #[path = "native_block_seal_timeout.rs"]
 pub mod timeout;
 
+#[path = "native_block_seal_commit.rs"]
+pub mod commit;
+
 #[path = "native_block_seal_newview.rs"]
 pub mod newview;
 
@@ -2930,6 +2933,9 @@ fn competing_qc_evidence_key_v1(
 
 #[cfg(test)]
 mod tests {
+    mod commit {
+        include!("native_block_seal_commit_tests.rs");
+    }
     mod native_seal_round_network {
         include!("native_block_seal_round_network_tests.rs");
         include!("native_block_seal_service_tests.rs");
