@@ -4,6 +4,209 @@ use crate::native_block_seal::commit_v3::{
     NovNativeSealDecisionVoteV3 as Vote,
 };
 
+fn durable_v3_fixture(
+    label: &str,
+    chain: u64,
+) -> (
+    TestNodeV1,
+    Vec<SigningKey>,
+    NovNativeSealValidatorSetV1,
+    NovNativeSealQuorumCertificateV1,
+) {
+    let (node, block, keys, set) = genesis_fixture_v1(label, chain);
+    let (proposal, raw) = proposal_and_votes_v1(&node, &block, &keys, &set, 0, 4);
+    let qc = NovNativeSealQuorumCertificateV1::from_votes(proposal.subject, &set, raw).unwrap();
+    node.store()
+        .persist_local_verified_qc(node.ledger(), &qc, &set)
+        .unwrap();
+    (node, keys, set, qc)
+}
+
+#[test]
+fn commit_v3_durable_decision_replays_across_round_and_restart_without_new_signature() {
+    use super::native_block_seal_newview::{advance_v1, authority_v1, local_qc_v1};
+    let (mut node, block, keys, set) = genesis_fixture_v1("v3-round-replay", 85_410);
+    let authority = authority_v1(&node, &set);
+    let (first, _) = local_qc_v1(&node, &block, &authority, &keys, 0);
+    node.store()
+        .persist_local_verified_qc(node.ledger(), &first.qc, &set)
+        .unwrap();
+    let vote = node
+        .store()
+        .sign_local_decision_vote_v3(node.ledger(), &first.qc, &set, &keys[0])
+        .unwrap();
+    advance_v1(&node, &authority, &keys, 0);
+    let (next, _) = local_qc_v1(&node, &block, &authority, &keys, 1);
+    node.store()
+        .persist_local_verified_qc(node.ledger(), &next.qc, &set)
+        .unwrap();
+    node.reopen_store();
+    let before = node
+        .store()
+        .db
+        .iterator(IteratorMode::Start)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        node.store()
+            .sign_local_decision_vote_v3(node.ledger(), &next.qc, &set, &keys[0])
+            .unwrap(),
+        vote
+    );
+    assert_eq!(
+        node.store()
+            .db
+            .iterator(IteratorMode::Start)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+        before
+    );
+    let mut votes = vec![vote];
+    for key in &keys[1..3] {
+        votes.push(
+            node.store()
+                .sign_local_decision_vote_v3(node.ledger(), &next.qc, &set, key)
+                .unwrap(),
+        );
+    }
+    Certificate::from_votes(next.qc, &set, votes)
+        .unwrap()
+        .verify(&set)
+        .unwrap();
+    assert!(
+        !node
+            .ledger()
+            .load_candidate_record(set.chain_id, block.header.block_hash)
+            .unwrap()
+            .unwrap()
+            .finalized
+    );
+}
+
+#[test]
+fn commit_v3_durable_lock_versions_are_mutually_exclusive() {
+    for old_version in [1, 2, 3] {
+        let (mut node, keys, set, qc) = durable_v3_fixture("v3-version-lock", 85_411 + old_version);
+        match old_version {
+            1 => {
+                node.store()
+                    .sign_local_commit_vote(node.ledger(), &qc, &set, &keys[0])
+                    .unwrap();
+            }
+            2 => {
+                node.store()
+                    .sign_local_commit_vote_v2(node.ledger(), &qc, &set, &keys[0])
+                    .unwrap();
+            }
+            _ => {
+                node.store()
+                    .sign_local_decision_vote_v3(node.ledger(), &qc, &set, &keys[0])
+                    .unwrap();
+            }
+        }
+        node.reopen_store();
+        if old_version == 3 {
+            assert!(node
+                .store()
+                .sign_local_commit_vote(node.ledger(), &qc, &set, &keys[0])
+                .is_err());
+            assert!(node
+                .store()
+                .sign_local_commit_vote_v2(node.ledger(), &qc, &set, &keys[0])
+                .is_err());
+        } else {
+            assert!(node
+                .store()
+                .sign_local_decision_vote_v3(node.ledger(), &qc, &set, &keys[0])
+                .is_err());
+        }
+    }
+}
+
+#[test]
+fn commit_v3_durable_signer_rejects_another_execution_and_serializes_replay() {
+    let (node, keys, set, qc) = durable_v3_fixture("v3-conflict", 85_430);
+    let votes = std::thread::scope(|scope| {
+        let first = scope.spawn(|| {
+            node.store()
+                .sign_local_decision_vote_v3(node.ledger(), &qc, &set, &keys[0])
+                .unwrap()
+        });
+        let second = scope.spawn(|| {
+            node.store()
+                .sign_local_decision_vote_v3(node.ledger(), &qc, &set, &keys[0])
+                .unwrap()
+        });
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    assert_eq!(votes.0, votes.1);
+    let before = node
+        .store()
+        .db
+        .iterator(IteratorMode::Start)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let mut subject = qc.subject.clone();
+    subject.post_state_root[0] ^= 1;
+    let other = witness(subject, &set, &keys, 0);
+    assert!(node
+        .store()
+        .sign_local_decision_vote_v3(node.ledger(), &other, &set, &keys[0])
+        .is_err());
+    assert!(node
+        .store()
+        .sign_local_decision_vote_v3(node.ledger(), &qc, &set, &SigningKey::from_bytes(&[99; 32]))
+        .is_err());
+    assert_eq!(
+        node.store()
+            .db
+            .iterator(IteratorMode::Start)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+        before
+    );
+}
+
+#[test]
+fn commit_v3_durable_timeout_and_missing_evidence_fail_closed() {
+    for removed in 0..5 {
+        let (mut node, keys, set, qc) = durable_v3_fixture("v3-durable-loss", 85_420 + removed);
+        let vote = node
+            .store()
+            .sign_local_decision_vote_v3(node.ledger(), &qc, &set, &keys[0])
+            .unwrap();
+        for key in &keys[..2] {
+            node.store()
+                .sign_local_timeout(node.ledger(), &set, 1, 0, key)
+                .unwrap();
+        }
+        assert_eq!(
+            node.store()
+                .sign_local_decision_vote_v3(node.ledger(), &qc, &set, &keys[0])
+                .unwrap(),
+            vote
+        );
+        assert!(node
+            .store()
+            .sign_local_decision_vote_v3(node.ledger(), &qc, &set, &keys[1])
+            .is_err());
+        let slot = crate::native_block_seal::commit::lock_key(&qc.subject, vote.validator_id);
+        let key = match removed {
+            0 => slot,
+            1 => format!("{slot}/decision-v3-vote-hash"),
+            2 => qc_object_key_v1(&qc.qc_hash),
+            3 => round_lock_key_v1(&qc.subject, vote.validator_id),
+            _ => height_lock_key_v1(&qc.subject, vote.validator_id),
+        };
+        node.store().db.delete(key.as_bytes()).unwrap();
+        node.reopen_store();
+        assert!(node
+            .store()
+            .sign_local_decision_vote_v3(node.ledger(), &qc, &set, &keys[0])
+            .is_err());
+    }
+}
+
 // Test-only raw signing deliberately supplies cryptographic witnesses, not
 // production new-view admission or local durable signing permission.
 fn witness(

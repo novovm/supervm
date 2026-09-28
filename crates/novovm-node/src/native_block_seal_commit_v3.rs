@@ -1,6 +1,8 @@
-//! Experimental decision attestations: verification primitives only.
-//! No production signer, durable lock, network activation or finality API.
+//! Experimental decision attestations and explicit local durable signing.
+//! No network activation, certificate storage, unlock or finality API.
 use super::*;
+#[path = "native_block_seal_commit_v3_store.rs"]
+mod store;
 
 const VOTE_SCHEMA: &str = "novovm-native-seal-decision-vote/v3";
 const CERT_SCHEMA: &str = "novovm-native-seal-decision-certificate/v3";
