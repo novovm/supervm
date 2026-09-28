@@ -21,6 +21,7 @@ const MAX_AUTHORITY_BYTES: usize = 256 * 1024;
 /// Intentionally neither Debug nor Serialize: this contains the operator's key.
 /// Callers cannot bypass validation by constructing a public configuration.
 pub struct NovNativeSealServiceConfigV1 {
+    pub(crate) isolated_workspace_id: Option<[u8; 32]>,
     pub(crate) decision_v3_enabled: bool,
     pub(crate) commit_v2_enabled: bool,
     pub(crate) chain_id: u64,
@@ -41,6 +42,8 @@ pub struct NovNativeSealServiceConfigV1 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ServiceFile {
+    #[serde(default)]
+    isolated_workspace_id: Option<String>,
     #[serde(default)]
     decision_v3_enabled: bool,
     #[serde(default)]
@@ -196,6 +199,10 @@ impl NovNativeSealServiceConfigV1 {
             .map(|validator| validator.validator_id)
             .context("native seal signer key is not a pinned validator")?;
         let config = Self {
+            isolated_workspace_id: raw
+                .isolated_workspace_id
+                .map(|id| decode_hex_32(id.as_bytes(), "isolated workspace ID"))
+                .transpose()?,
             chain_id: raw.chain_id,
             height: raw.height,
             block_hash: decode_hex_32(raw.block_hash.as_bytes(), "candidate block hash")?,
@@ -221,6 +228,11 @@ impl NovNativeSealServiceConfigV1 {
 
     /// Recheck the configuration at the service boundary, before database opens.
     pub(crate) fn validate(&self, expected_chain_id: u64) -> Result<()> {
+        if self.isolated_workspace_id.is_some()
+            && (!self.decision_v3_enabled || self.isolated_workspace_id == Some([0; 32]))
+        {
+            bail!("isolated workspace signing requires V3 and a nonzero workspace ID");
+        }
         if self.commit_v2_enabled && self.decision_v3_enabled {
             bail!("V2 and V3 decision modes are mutually exclusive");
         }
@@ -535,6 +547,35 @@ mod tests {
         assert_eq!(loaded.signer.to_bytes(), [1; 32]);
         assert!(!loaded.commit_v2_enabled);
         assert!(loaded.validate(22923).is_err());
+    }
+
+    #[test]
+    fn native_seal_service_config_isolated_workspace_requires_v3_and_exact_id() {
+        let mut fixture = Fixture::new();
+        assert!(fixture.load().unwrap().isolated_workspace_id.is_none());
+        fixture.config["isolated_workspace_id"] = json!("31".repeat(32));
+        fixture.write();
+        assert!(fixture.load().is_err());
+        fixture.config["decision_v3_enabled"] = json!(true);
+        fixture.write();
+        assert_eq!(
+            fixture.load().unwrap().isolated_workspace_id,
+            Some([0x31; 32])
+        );
+        for invalid in [
+            json!("00".repeat(32)),
+            json!("31".repeat(31)),
+            json!(true),
+            json!("workspace/path"),
+        ] {
+            fixture.config["isolated_workspace_id"] = invalid;
+            fixture.write();
+            assert!(fixture.load().is_err());
+        }
+        fixture.config["isolated_workspace_id"] = json!("31".repeat(32));
+        fixture.config["commit_v2_enabled"] = json!(true);
+        fixture.write();
+        assert!(fixture.load().is_err());
     }
 
     #[test]

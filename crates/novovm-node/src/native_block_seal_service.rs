@@ -61,6 +61,7 @@ struct PeerInbox {
 }
 
 pub struct NovNativeSealServiceV1 {
+    isolated_params: Option<serde_json::Value>,
     decision: Option<NovNativeSealDecisionLoopV3>,
     config: NovNativeSealServiceConfigV1,
     ledger: Arc<NovNativeBlockLedgerV1>,
@@ -80,12 +81,45 @@ pub struct NovNativeSealServiceV1 {
 }
 
 impl NovNativeSealServiceV1 {
+    /// Main-node entry: opt-in workspace uses the same pinned execution params
+    /// as startup recovery. Never creates, executes or registers a workspace.
+    pub fn open_configured(
+        config: NovNativeSealServiceConfigV1,
+        ledger_path: &Path,
+        execution_params: &serde_json::Value,
+        runtime: &ProductMainlineOverlayRuntimeV1,
+        now: Instant,
+    ) -> Result<Self> {
+        let Some(id) = config.isolated_workspace_id else {
+            return Self::open(config, ledger_path, runtime, now);
+        };
+        config.validate(runtime.chain_id())?;
+        validate_service_paths_v1(&config, ledger_path, &[], &[])?;
+        check_runtime(&config, runtime)?;
+        let mut service = crate::tx_ingress::candidate_workspace::with_verified_block_candidate_v1(
+            config.chain_id,
+            id,
+            execution_params,
+            |view| {
+                if std::fs::canonicalize(view.path())? != std::fs::canonicalize(ledger_path)? {
+                    bail!("isolated workspace resolves to a different service ledger");
+                }
+                Self::open_with_candidate_view(config, view, runtime, now)
+            },
+        )?;
+        service.isolated_params = Some(execution_params.clone());
+        Ok(service)
+    }
+
     pub fn open(
         config: NovNativeSealServiceConfigV1,
         ledger_path: &Path,
         runtime: &ProductMainlineOverlayRuntimeV1,
         now: Instant,
     ) -> Result<Self> {
+        if config.isolated_workspace_id.is_some() {
+            bail!("isolated workspace service requires configured live verification");
+        }
         config.validate(runtime.chain_id())?;
         validate_service_paths_v1(&config, ledger_path, &[], &[])?;
         check_runtime(&config, runtime)?;
@@ -118,8 +152,17 @@ impl NovNativeSealServiceV1 {
         validate_service_paths_v1(&config, ledger_path, &[], &[])?;
         check_runtime(&config, runtime)?;
         config.authority.validate_against_ledger(candidate_view)?;
-        let (_, block) = candidate_view
+        let (record, block) = candidate_view
             .load_seal_eligible_local_candidate_v1(config.chain_id, config.block_hash)?;
+        if config.isolated_workspace_id.is_some_and(|id| {
+            record
+                .isolated_execution_binding
+                .as_ref()
+                .map(|binding| binding.workspace_id)
+                != Some(id)
+        }) {
+            bail!("service isolated workspace binding mismatch");
+        }
         if block.header.height != config.height {
             bail!("native seal candidate height mismatch");
         }
@@ -155,6 +198,7 @@ impl NovNativeSealServiceV1 {
             })
             .collect();
         Ok(Self {
+            isolated_params: None,
             decision: None,
             config,
             ledger,
@@ -195,6 +239,28 @@ impl NovNativeSealServiceV1 {
     }
 
     pub fn poll(&mut self, runtime: &ProductMainlineOverlayRuntimeV1, now: Instant) -> Result<()> {
+        if let Some(id) = self.config.isolated_workspace_id {
+            if self.halted {
+                bail!("native seal service is halted; inspect and restart explicitly");
+            }
+            let result = match self.isolated_params.clone() {
+                Some(params) => {
+                    crate::tx_ingress::candidate_workspace::with_verified_block_candidate_v1(
+                        self.config.chain_id,
+                        id,
+                        &params,
+                        |view| self.poll_with_candidate_view(view, runtime, now),
+                    )
+                }
+                None => Err(anyhow::anyhow!(
+                    "isolated service has no pinned execution parameters"
+                )),
+            };
+            if result.is_err() {
+                self.halt("isolated_verification_fault");
+            }
+            return result;
+        }
         let ledger = Arc::clone(&self.ledger);
         self.poll_with_candidate_view(&ledger, runtime, now)
     }

@@ -97,6 +97,20 @@ fn wall_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// Transport-only fixture for real AOEM service tests. The synthetic fixture
+/// ledgers/adapters are never polled or used as candidate evidence by the caller.
+pub(crate) fn with_service_test_transports<T>(
+    chain: u64,
+    test: impl FnOnce(Vec<(&ProductMainlineOverlayRuntimeV1, &SigningKey)>) -> T,
+) -> T {
+    let mut cluster = NetworkCluster::new(chain);
+    for index in 0..4 {
+        cluster.start_peer(index, cluster.started);
+        cluster.peers[index].adapter.take();
+    }
+    test(cluster.peers.iter().map(|peer| (peer.runtime.as_ref().unwrap(), &peer.key)).collect())
+}
+
 fn durable_seal_facts(store: &NovNativeBlockSealStoreV1) -> Vec<(Vec<u8>, Vec<u8>)> {
     store
         .db

@@ -315,6 +315,19 @@ state promotion. The seal service exposes `open_with_candidate_view` and
 in this live scope. The service retains only an ordinary shared ledger handle,
 not the temporary permission. A foreign ledger or lost eligibility halts before
 poll throttling or peer processing. Prepare and V3 decision work use the same
-borrowed view. Existing main-node configuration still selects the ordinary path;
-isolated-workspace configuration wiring and real AOEM service integration remain
-to be validated before claiming automatic isolated-candidate operation.
+borrowed view.
+
+Main-node seal configuration may explicitly set `isolated_workspace_id` to an
+exact nonzero 32-byte hex ID. It requires `decision_v3_enabled=true`; omitted
+means the existing selected-candidate path. Startup uses `open_configured` with
+the same execution parameters as native startup recovery. It requires an already
+executed, registered workspace, the pinned block and the exact local ledger.
+Each service poll re-enters live verification; failures halt without falling
+back to selected execution. It does not create or execute a workspace on demand.
+No workspace paths or business rules are added to AOEM.
+
+A real AOEM library-level service test checks actual durable proposal emission,
+same-signature reopening, workspace-abort halt and unchanged authority state.
+It uses local WSS transport fixtures, not four independently executing candidate
+services or main-process deployment. Full isolated-candidate multi-process
+confirmation, final-state promotion and production acceptance remain pending.

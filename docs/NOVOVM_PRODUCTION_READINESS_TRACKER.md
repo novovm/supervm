@@ -53,6 +53,13 @@
 
 ## 本次 CI 修复证据
 
+- 显式 `isolated_workspace_id` 已接主节点配置与 `open_configured`：仅 V3、精确非零
+  ID，复用启动恢复参数，不自动创建或执行工作区。9 项配置测试、主节点编译、
+  严格 Clippy 与格式检查通过。真实 AOEM 配置服务专项 1 passed（15.93 秒），
+  检查持久化候选提案、重开不新增签名、中止后停机及权威状态不变。
+  这是单服务接合测试，四个网络身份仅提供本机 WSS transport fixture；
+  不是四个隔离候选服务形成 QC 或主进程部署证据。27 项服务回归通过（93.74 秒）。
+
 - 服务接合入口新增 `open_with_candidate_view` / `poll_with_candidate_view`：
   不保留临时核验权限，同一轮 prepare 与 V3 调度借用同一视图。错误账本即使在
   轮询间隔内也先拒绝并停机（专项 1 passed，0.46 秒）；既有四节点真实 WSS

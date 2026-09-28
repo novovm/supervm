@@ -33920,6 +33920,7 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
     fn from_env(
         chain_id: u64,
         seal_config: Option<NovNativeSealServiceConfigV1>,
+        execution_params: &serde_json::Value,
     ) -> Result<Option<Self>> {
         if !bool_env("NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED") {
             if seal_config.is_some() {
@@ -33949,7 +33950,13 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
                 let ledger_path = novovm_node::tx_ingress::nov_native_block_ledger_rocksdb_path_v1(
                     &nov_native_execution_store_path_v1(),
                 );
-                NovNativeSealServiceV1::open(config, &ledger_path, &runtime, Instant::now())
+                NovNativeSealServiceV1::open_configured(
+                    config,
+                    &ledger_path,
+                    execution_params,
+                    &runtime,
+                    Instant::now(),
+                )
             })
             .transpose()?;
         if let Some(service) = &seal_service {
@@ -43633,8 +43640,11 @@ fn run_native_execution_tick_node_mode_v1(
     }
     let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
     let mut ingress_drive = NativeExecutionPipelineIngressDriveV1::from_env(chain_id)?;
-    let mut product_overlay_drive =
-        NativeExecutionPipelineProductOverlayDriveV1::from_env(chain_id, seal_config)?;
+    let mut product_overlay_drive = NativeExecutionPipelineProductOverlayDriveV1::from_env(
+        chain_id,
+        seal_config,
+        &startup_recovery_params,
+    )?;
     let udp_drive = NativeExecutionPipelineUdpDriveV1::from_env(chain_id)?;
     let broadcast_drive = NativeExecutionPipelineBroadcastDriveV1::from_env(
         chain_id,
