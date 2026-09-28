@@ -65,3 +65,7 @@ cargo clippy -p novovm-node -p novovmctl --all-targets -- -D warnings
 
 下一阶段：先解决确认目标与换轮的在线协议，再接确认消息与证书归档接口，最后
 补最终祖先/fork choice 与可恢复晋升。不要把本轮证书类型直接用来改 finalized。
+
+后续新增 [V2 统一确认目标](NOVOVM_NATIVE_SEAL_COMMIT_TARGET_V2.md)，解决同 subject/
+proposal 的 prepare 签名子集分票问题。V1 语义保持不变；两版同一签名槽互斥，
+没有自动迁移。V2 仍是本地接口，不表示在线确认和跨轮活性已经完成。

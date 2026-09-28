@@ -154,7 +154,7 @@ fn checked_weight(
     Ok(weight)
 }
 
-fn lock_key(subject: &NovNativeSealSubjectV1, validator_id: [u8; 32]) -> String {
+pub(super) fn lock_key(subject: &NovNativeSealSubjectV1, validator_id: [u8; 32]) -> String {
     format!(
         "{KEY_PREFIX_V1}commit/local/{:020}/{:020}/{:020}/{}",
         subject.chain_id,
@@ -373,6 +373,6 @@ impl NovNativeBlockSealStoreV1 {
     }
 }
 
-fn certificate_height_key(chain_id: u64, epoch: u64, height: u64) -> String {
+pub(super) fn certificate_height_key(chain_id: u64, epoch: u64, height: u64) -> String {
     format!("{KEY_PREFIX_V1}commit/certificate/{chain_id:020}/{epoch:020}/{height:020}")
 }
