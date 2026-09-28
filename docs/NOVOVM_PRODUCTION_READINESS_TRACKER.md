@@ -44,11 +44,21 @@
   不能直接用于不可信网络候选的试执行。
 - `native_candidate_workspace.rs` / `native_candidate_execution.rs` 已有隔离输出持久化，
   返回 `authority_state_published=false`；新增 `load_block_artifact_v1` 可从已校验持久输出
-  重建完整块，但没有新增账本准入或权威状态晋升。
+  重建完整块。显式 `register_block_candidate_v1` 现可将已重新校验的隔离输出登记到
+  候选图，绑定工作区/计划/输出摘要；不写当前状态头、不提供投票资格或权威晋升。
 - `native_block_ledger.rs::load_seal_eligible_local_candidate_v1` 仍要求本地账本候选，
   因此“隔离输出 -> 可验证候选 -> 决策 -> 可恢复权威发布”的生产路径还须接合。
 
 ## 本次 CI 修复证据
+
+- 隔离候选登记专项：真实 AOEM 测试通过（16.26 秒），覆盖 observed 升级、
+  不改变 AOEM/账本当前头与余额/nonce/索引、旧执行路径提前拒绝、重开与中止拒绝。
+  最终能力标记版本的 15 项账本回归通过（0.46 秒），包含绑定 pin 丢失、记录丢失、
+  篡改与能力标记降级拒绝；严格 Clippy、格式与 diff 检查通过。
+  完整 seal 回归 147 passed / 0 failed（485.36 秒，在最后能力标记改动前构建）；
+  候选执行扩展回归 7 passed / 0 failed / 1 ignored（144.79 秒，同样在该改动前）。
+  ignored worker 由父进程用例执行；最后能力标记改动已由上述账本与真实 AOEM 专项补验。
+  CI 补入完整账本回归，候选登记用例由已有 funded candidate filter 覆盖。
 
 - 隔离输出块重建：增强的真实 AOEM 竞争分支/完整块等价/GC 后重开/损坏与中止测试
   通过（34.71 秒）；14 项账本回归通过；lib/tests Clippy 与格式检查通过。

@@ -13,7 +13,8 @@ pub(super) use execution::{
     load_execution_snapshot_for_test_v1, ExecutionCheckpointV1,
 };
 pub use execution::{
-    execute_v1, load_block_artifact_v1, load_execution_v1, ExecutionInfoV1, IsolatedBlockArtifactV1,
+    execute_v1, load_block_artifact_v1, load_execution_v1, register_block_candidate_v1,
+    ExecutionInfoV1, IsolatedBlockArtifactV1,
 };
 
 use super::*;

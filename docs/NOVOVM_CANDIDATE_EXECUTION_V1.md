@@ -250,8 +250,45 @@ and rejects corrupted or aborted output. A session reopen after parent-state
 GC must reproduce the same artifact. This is not hard-crash or public-network
 acceptance.
 
+### Durable isolated candidate registration
+
+`register_block_candidate_v1(chain_id, workspace_id, params)` is an explicit
+local Host operation. It reconstructs the artifact again while holding the
+workspace OS lock, then holds the authority lock through ledger registration.
+It does not accept a caller-built artifact as proof. The ledger ownership must
+match the local AOEM namespace and protocol; unresolved authority preparation
+or a non-current parent prevents a first registration.
+
+The graph distinguishes `local_aoem_isolated_execution` from observed blocks
+and selected local execution. Its `local_aoem_readback_verified=true` describes
+the successful registration readback, not a promise of perpetual availability.
+`execution_selected_local`, fork choice and all chain-finality flags stay false.
+Workspace ID, plan commitment and output digest are written with the artifact,
+graph indexes and a separate immutable binding pin in one synchronous batch.
+Changed/missing record or pin fails closed; active observed evidence can upgrade
+only through this local readback path. Selected or aborted records cannot be
+replaced. Identical replay preserves the original record.
+
+Registration does not grant seal eligibility. Future signing/promotion must
+revalidate the live AOEM workspace, including abort/completion evidence, under
+the proper locks. A graph record remains historical if its workspace is later
+aborted; its flags cannot be used as a substitute for that live check.
+The old linear execution path rejects a registered isolated plan before AOEM
+publication: it must not bypass the future recoverable promotion protocol.
+There is no automatic registration, RPC or configuration switch in this slice.
+
+Old binaries do not implement this candidate source and must not be used to
+write a ledger containing these registrations. First registration atomically
+sets the database capability marker to
+`novovm-native-block-ledger/v1+isolated-candidates-v1`; old binaries reject it at
+open/prepare instead of advancing AOEM and failing only at ledger commit.
+New readers also reject an isolated record whose marker was downgraded.
+No automatic rollback, deletion,
+or conversion of existing records is provided. Existing records retain their
+original encoding when the optional binding is absent.
+
 This API adds no remote proposer admission, body-acquisition authority, durable
 network scheduler, voting/QC, fork choice, authoritative head publication,
-ledger block insertion, canonical promotion, CLI/RPC command, or automatic node
+selected ledger block insertion, canonical promotion, CLI/RPC command, or automatic node
 mode. Isolated candidate execution is preparation for independently verified
 consensus and recoverable promotion, not proof-sealed mainnet finality.

@@ -1,7 +1,11 @@
 //! Reconstruct a block from independently authenticated, durable isolated output.
-//! This does not register a signing candidate or publish any authoritative state.
+//! Explicit graph registration is separate and never grants signing permission
+//! or publishes authoritative state.
 use super::*;
 use crate::native_block_ledger::{build_durable_block_v1, build_prepared_block_v1};
+use crate::native_block_ledger::{
+    NovNativeBlockCandidateRecordV1, NovNativeIsolatedExecutionBindingV1,
+};
 
 /// An in-memory artifact, not a ledger membership or current-state capability.
 /// The legacy block codec's canonical_local field describes local continuity;
@@ -29,19 +33,27 @@ pub fn load_block_artifact_v1(
     params: &serde_json::Value,
 ) -> Result<Option<IsolatedBlockArtifactV1>> {
     let workspace = WorkspaceStore::open(chain_id, params)?;
+    load_block_artifact_inner_v1(&workspace, id, params)
+}
+
+fn load_block_artifact_inner_v1(
+    workspace: &WorkspaceStore,
+    id: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<Option<IsolatedBlockArtifactV1>> {
     if !workspace.catalog()?.iter().any(|(_, input)| input.id == id) {
         return Ok(None);
     }
-    let input = ready_input(&workspace, id)?;
-    let outputs = catalog(&workspace)?;
+    let input = ready_input(workspace, id)?;
+    let outputs = catalog(workspace)?;
     let Some((_, descriptor)) = outputs.iter().find(|(known, _)| *known == id) else {
         return Ok(None);
     };
-    if !is_complete(&workspace, &input, descriptor)? {
+    if !is_complete(workspace, &input, descriptor)? {
         return Ok(None);
     }
     let payload = workspace.read_payload(&input)?;
-    let output = read_output(&workspace, &input, descriptor, &payload, params)?
+    let output = read_output(workspace, &input, descriptor, &payload, params)?
         .context("completed isolated block output missing")?;
     let plan = &payload.plan;
     let mut prepared = build_prepared_block_v1(NovNativeBlockCandidateInputV1 {
@@ -94,4 +106,34 @@ pub fn load_block_artifact_v1(
         output_digest: descriptor.digest,
         block,
     }))
+}
+
+/// Explicit local registration, not a network admission or signing API. Holds
+/// the workspace lock through ledger readback so abort cannot race the read.
+pub fn register_block_candidate_v1(
+    chain_id: u64,
+    id: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<NovNativeBlockCandidateRecordV1> {
+    let workspace = WorkspaceStore::open(chain_id, params)?;
+    let artifact = load_block_artifact_inner_v1(&workspace, id, params)?
+        .context("isolated candidate has no complete verified output")?;
+    let store_path = resolve_native_execution_store_path_from_params_v1(params)
+        .unwrap_or_else(nov_native_execution_store_path_v1);
+    let _authority_lock = acquire_nov_native_execution_store_write_lock_v1(&store_path)?;
+    let ledger_path = nov_native_block_ledger_rocksdb_path_v1(&store_path);
+    let probe = NovNativeBlockLedgerV1::open_existing_read_only(&ledger_path)?
+        .context("isolated registration requires an existing ledger")?;
+    drop(probe);
+    let ledger = NovNativeBlockLedgerV1::open(&ledger_path)?;
+    ledger.register_isolated_candidate_v1(
+        artifact.block,
+        NovNativeIsolatedExecutionBindingV1 {
+            workspace_id: id,
+            plan_commitment: artifact.plan_commitment,
+            output_digest: artifact.output_digest,
+        },
+        &workspace.namespace,
+        &to_hex(&workspace.protocol),
+    )
 }

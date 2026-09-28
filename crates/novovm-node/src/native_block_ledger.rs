@@ -11,7 +11,17 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
+#[path = "native_block_isolated_candidate.rs"]
+mod isolated_candidate;
+pub use isolated_candidate::NovNativeIsolatedExecutionBindingV1;
+
 pub const NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1: &str = "novovm-native-block-ledger/v1";
+const ISOLATED_LEDGER_SCHEMA_V1: &str = "novovm-native-block-ledger/v1+isolated-candidates-v1";
+
+fn supported_ledger_schema_v1(raw: &[u8]) -> bool {
+    raw == NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1.as_bytes()
+        || raw == ISOLATED_LEDGER_SCHEMA_V1.as_bytes()
+}
 pub const NOV_NATIVE_BLOCK_CANDIDATE_GRAPH_SCHEMA_V1: &str =
     "novovm-native-block-candidate-graph/v1";
 pub const NOV_NATIVE_BLOCK_LEDGER_MAX_TXS_V1: usize = 1_024;
@@ -40,6 +50,7 @@ const CANDIDATE_CHILDREN_INDEX_SCHEMA_V1: &str = "novovm-native-block-candidate-
 const CANDIDATE_KIND_V1: &str = "local_unsealed_execution_candidate";
 const CANDIDATE_SOURCE_LOCAL_AOEM_V1: &str = "local_aoem_owned_execution";
 const CANDIDATE_SOURCE_OBSERVED_V1: &str = "observed_unsealed_candidate";
+const CANDIDATE_SOURCE_ISOLATED_V1: &str = "local_aoem_isolated_execution";
 const CANDIDATE_STATUS_ACTIVE_V1: &str = "active_unsealed";
 const CANDIDATE_STATUS_ABORTED_V1: &str = "aborted_unsealed";
 const CANDIDATE_ABORT_REASON_MAX_BYTES_V1: usize = 512;
@@ -188,6 +199,8 @@ pub struct NovNativeDurableBlockV1 {
 /// chain canonicality or finality.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NovNativeBlockCandidateRecordV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub isolated_execution_binding: Option<NovNativeIsolatedExecutionBindingV1>,
     pub schema: String,
     pub chain_id: u64,
     pub height: u64,
@@ -382,7 +395,7 @@ impl NovNativeBlockLedgerV1 {
             .get(KEY_SCHEMA_V1)
             .context("read NOV native block ledger schema failed")?
         {
-            Some(raw) if raw.as_slice() != NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1.as_bytes() => {
+            Some(raw) if !supported_ledger_schema_v1(raw.as_slice()) => {
                 bail!(
                     "unsupported NOV native block ledger schema: {}",
                     String::from_utf8_lossy(raw.as_slice())
@@ -516,6 +529,18 @@ impl NovNativeBlockLedgerV1 {
         }
 
         self.validate_prepared_against_head_v1(&prepared)?;
+        // A registered isolated plan must use the future recoverable promotion
+        // protocol, not mutate AOEM first through the old linear commit path.
+        for record in self.load_candidate_records_by_height(
+            prepared.context.chain_id,
+            prepared.context.block_height,
+        )? {
+            if record.candidate_source == CANDIDATE_SOURCE_ISOLATED_V1
+                && record.candidate_id == prepared.candidate_id
+            {
+                bail!("registered isolated candidate requires explicit state promotion");
+            }
+        }
         for tx_hash in &prepared.tx_hashes {
             if let Some(location) =
                 self.load_tx_location_inner_v1(prepared.context.chain_id, *tx_hash)?
@@ -1302,7 +1327,7 @@ impl NovNativeBlockLedgerV1 {
             .get(KEY_SCHEMA_V1)
             .context("read NOV native block ledger schema failed")?
             .context("NOV native block ledger schema is missing")?;
-        if raw.as_slice() != NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1.as_bytes() {
+        if !supported_ledger_schema_v1(raw.as_slice()) {
             bail!(
                 "unsupported NOV native block ledger schema: {}",
                 String::from_utf8_lossy(raw.as_slice())
@@ -1559,6 +1584,7 @@ impl NovNativeBlockLedgerV1 {
         )? {
             self.ensure_candidate_graph_schema_v1()?;
             validate_candidate_record_v1(&record)?;
+            self.verify_isolated_binding_pin_v1(&record)?;
             if record.chain_id != chain_id || record.block_hash != block_hash {
                 bail!("NOV native candidate record key binding mismatch");
             }
@@ -1569,6 +1595,7 @@ impl NovNativeBlockLedgerV1 {
             return Ok(Some(record));
         }
 
+        self.reject_orphaned_isolated_pin_v1(chain_id, block_hash)?;
         // Databases written before candidate_graph/v1 remain readable without
         // an eager migration. Their selected local block is represented by a
         // deterministic synthesized record and is backfilled by repeat commit.
@@ -1592,7 +1619,7 @@ impl NovNativeBlockLedgerV1 {
             CANDIDATE_SOURCE_LOCAL_AOEM_V1 => {
                 self.load_by_hash_inner_v1(record.chain_id, record.block_hash)?
             }
-            CANDIDATE_SOURCE_OBSERVED_V1 => {
+            CANDIDATE_SOURCE_OBSERVED_V1 | CANDIDATE_SOURCE_ISOLATED_V1 => {
                 let block = read_json_v1::<NovNativeDurableBlockV1>(
                     &self.db,
                     candidate_artifact_key_v1(record.chain_id, &record.block_hash).as_bytes(),
@@ -1799,7 +1826,10 @@ impl NovNativeBlockLedgerV1 {
             if existing != *record
                 && !(existing.candidate_source == CANDIDATE_SOURCE_OBSERVED_V1
                     && existing.lifecycle_status == CANDIDATE_STATUS_ACTIVE_V1
-                    && record.candidate_source == CANDIDATE_SOURCE_LOCAL_AOEM_V1
+                    && matches!(
+                        record.candidate_source.as_str(),
+                        CANDIDATE_SOURCE_LOCAL_AOEM_V1 | CANDIDATE_SOURCE_ISOLATED_V1
+                    )
                     && candidate_records_bind_same_artifact_v1(&existing, record))
             {
                 bail!("NOV native candidate record conflicts with an existing lifecycle record");
@@ -2008,6 +2038,7 @@ fn candidate_record_from_block_v1(
 ) -> Result<NovNativeBlockCandidateRecordV1> {
     validate_durable_block_v1(block)?;
     let record = NovNativeBlockCandidateRecordV1 {
+        isolated_execution_binding: None,
         schema: CANDIDATE_RECORD_SCHEMA_V1.to_string(),
         chain_id: block.header.chain_id,
         height: block.header.height,
@@ -2050,6 +2081,11 @@ fn candidate_record_from_block_v1(
 }
 
 fn validate_candidate_record_v1(record: &NovNativeBlockCandidateRecordV1) -> Result<()> {
+    if record.candidate_source != CANDIDATE_SOURCE_ISOLATED_V1
+        && record.isolated_execution_binding.is_some()
+    {
+        bail!("non-isolated candidate carries an isolated execution binding");
+    }
     if record.schema != CANDIDATE_RECORD_SCHEMA_V1
         || record.chain_id == 0
         || record.height == 0
@@ -2066,6 +2102,16 @@ fn validate_candidate_record_v1(record: &NovNativeBlockCandidateRecordV1) -> Res
         bail!("NOV native candidate record is invalid or falsely sealed");
     }
     match record.candidate_source.as_str() {
+        CANDIDATE_SOURCE_ISOLATED_V1 => {
+            if !record.local_aoem_readback_verified || record.execution_selected_local {
+                bail!("isolated candidate must be verified but not selected");
+            }
+            record
+                .isolated_execution_binding
+                .as_ref()
+                .context("isolated candidate execution binding missing")?
+                .validate()?;
+        }
         CANDIDATE_SOURCE_LOCAL_AOEM_V1 => {
             if !record.local_aoem_readback_verified || !record.execution_selected_local {
                 bail!("NOV native local candidate record lacks AOEM execution ownership");
@@ -2081,8 +2127,10 @@ fn validate_candidate_record_v1(record: &NovNativeBlockCandidateRecordV1) -> Res
     match record.lifecycle_status.as_str() {
         CANDIDATE_STATUS_ACTIVE_V1 if record.abort_reason.is_none() => {}
         CANDIDATE_STATUS_ABORTED_V1
-            if record.candidate_source == CANDIDATE_SOURCE_OBSERVED_V1
-                && !record.execution_selected_local
+            if matches!(
+                record.candidate_source.as_str(),
+                CANDIDATE_SOURCE_OBSERVED_V1 | CANDIDATE_SOURCE_ISOLATED_V1
+            ) && !record.execution_selected_local
                 && record.abort_reason.is_some() =>
         {
             validate_candidate_abort_reason_v1(record.abort_reason.as_deref().unwrap_or_default())?;
@@ -3004,6 +3052,7 @@ fn hex_v1(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("native_block_isolated_candidate_tests.rs");
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
