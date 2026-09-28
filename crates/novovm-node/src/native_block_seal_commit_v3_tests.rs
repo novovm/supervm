@@ -69,10 +69,23 @@ fn commit_v3_durable_decision_replays_across_round_and_restart_without_new_signa
                 .unwrap(),
         );
     }
-    Certificate::from_votes(next.qc, &set, votes)
-        .unwrap()
-        .verify(&set)
-        .unwrap();
+    let original = Certificate::from_votes(first.qc, &set, votes.clone()).unwrap();
+    let equivalent = Certificate::from_votes(next.qc, &set, votes).unwrap();
+    assert!(node
+        .store()
+        .persist_local_verified_decision_certificate_v3(node.ledger(), &original, &set)
+        .unwrap());
+    node.reopen_store();
+    assert!(!node
+        .store()
+        .persist_local_verified_decision_certificate_v3(node.ledger(), &equivalent, &set)
+        .unwrap());
+    assert_eq!(
+        node.store()
+            .load_decision_certificate_by_height_v3(set.chain_id, set.epoch, 1)
+            .unwrap(),
+        Some(original)
+    );
     assert!(
         !node
             .ledger()
@@ -80,6 +93,166 @@ fn commit_v3_durable_decision_replays_across_round_and_restart_without_new_signa
             .unwrap()
             .unwrap()
             .finalized
+    );
+}
+
+#[test]
+fn commit_v3_archive_detects_loss_tampering_and_wrong_height() {
+    for fault in 0..6 {
+        let (mut node, keys, set, qc) = durable_v3_fixture("v3-archive-loss", 85_440 + fault);
+        assert!(node
+            .store()
+            .load_decision_certificate_by_height_v3(set.chain_id, set.epoch, 1)
+            .unwrap()
+            .is_none());
+        let votes = keys[..3]
+            .iter()
+            .map(|key| {
+                node.store()
+                    .sign_local_decision_vote_v3(node.ledger(), &qc, &set, key)
+                    .unwrap()
+            })
+            .collect();
+        let cert = Certificate::from_votes(qc.clone(), &set, votes).unwrap();
+        let head = node.ledger().load_head(set.chain_id).unwrap();
+        let archived = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                node.store()
+                    .persist_local_verified_decision_certificate_v3(node.ledger(), &cert, &set)
+                    .unwrap()
+            });
+            let second = scope.spawn(|| {
+                node.store()
+                    .persist_local_verified_decision_certificate_v3(node.ledger(), &cert, &set)
+                    .unwrap()
+            });
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        assert_ne!(archived.0, archived.1);
+        node.reopen_store();
+        assert_eq!(
+            node.store()
+                .load_decision_certificate_by_height_v3(set.chain_id, set.epoch, 1)
+                .unwrap(),
+            Some(cert.clone())
+        );
+        assert_eq!(node.ledger().load_head(set.chain_id).unwrap(), head);
+        assert!(node
+            .store()
+            .load_commit_certificate_by_height(set.chain_id, set.epoch, 1)
+            .is_err());
+        assert!(node
+            .store()
+            .load_commit_certificate_by_height_v2(set.chain_id, set.epoch, 1)
+            .is_err());
+        let slot =
+            crate::native_block_seal::commit::certificate_height_key(set.chain_id, set.epoch, 1);
+        let marker = format!("{slot}/decision-v3-certificate-hash");
+        match fault {
+            0 => node.store().db.delete(slot.as_bytes()).unwrap(),
+            1 => node.store().db.delete(marker.as_bytes()).unwrap(),
+            2 => node
+                .store()
+                .db
+                .delete(qc_object_key_v1(&qc.qc_hash))
+                .unwrap(),
+            3 => node
+                .store()
+                .db
+                .put(marker.as_bytes(), serde_json::to_vec(&[0u8; 32]).unwrap())
+                .unwrap(),
+            4 => {
+                let mut bad = cert.clone();
+                bad.votes[0].signature[0] ^= 1;
+                node.store()
+                    .db
+                    .put(slot.as_bytes(), serde_json::to_vec(&bad).unwrap())
+                    .unwrap();
+            }
+            _ => {
+                let wrong = crate::native_block_seal::commit::certificate_height_key(
+                    set.chain_id,
+                    set.epoch,
+                    2,
+                );
+                node.store()
+                    .db
+                    .put(wrong.as_bytes(), serde_json::to_vec(&cert).unwrap())
+                    .unwrap();
+                assert!(node
+                    .store()
+                    .load_decision_certificate_by_height_v3(set.chain_id, set.epoch, 2)
+                    .is_err());
+                continue;
+            }
+        }
+        node.reopen_store();
+        assert!(node
+            .store()
+            .load_decision_certificate_by_height_v3(set.chain_id, set.epoch, 1)
+            .is_err());
+        assert!(node
+            .store()
+            .persist_local_verified_decision_certificate_v3(node.ledger(), &cert, &set)
+            .is_err());
+        assert!(node
+            .store()
+            .sign_local_decision_vote_v3(node.ledger(), &qc, &set, &keys[3])
+            .is_err());
+    }
+}
+
+#[test]
+fn commit_v3_archive_rejects_old_version_and_foreign_execution() {
+    let (node, keys, set, qc) = durable_v3_fixture("v3-archive-version", 85_450);
+    let raw = keys[..3]
+        .iter()
+        .map(|k| {
+            node.store()
+                .sign_local_commit_vote_v2(node.ledger(), &qc, &set, k)
+                .unwrap()
+        })
+        .collect();
+    let old = crate::native_block_seal::commit_v2::NovNativeSealCommitCertificateV2::from_votes(
+        qc.clone(),
+        &set,
+        raw,
+    )
+    .unwrap();
+    node.store()
+        .persist_local_verified_commit_certificate_v2(node.ledger(), &old, &set)
+        .unwrap();
+    // Test-only signatures: prove a valid V3 aggregate cannot overwrite V2.
+    let raw = keys[..3]
+        .iter()
+        .map(|k| decision_vote(&qc, &set, k))
+        .collect();
+    let cert = Certificate::from_votes(qc.clone(), &set, raw).unwrap();
+    assert!(node
+        .store()
+        .load_decision_certificate_by_height_v3(set.chain_id, set.epoch, 1)
+        .is_err());
+    assert!(node
+        .store()
+        .persist_local_verified_decision_certificate_v3(node.ledger(), &cert, &set)
+        .is_err());
+    let mut subject = qc.subject.clone();
+    subject.post_state_root[0] ^= 1;
+    let other = witness(subject, &set, &keys, 0);
+    let raw = keys[..3]
+        .iter()
+        .map(|k| decision_vote(&other, &set, k))
+        .collect();
+    let foreign = Certificate::from_votes(other, &set, raw).unwrap();
+    assert!(node
+        .store()
+        .persist_local_verified_decision_certificate_v3(node.ledger(), &foreign, &set)
+        .is_err());
+    assert_eq!(
+        node.store()
+            .load_commit_certificate_by_height_v2(set.chain_id, set.epoch, 1)
+            .unwrap(),
+        Some(old)
     );
 }
 

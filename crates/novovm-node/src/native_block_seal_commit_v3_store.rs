@@ -10,6 +10,120 @@ struct DecisionLock {
 }
 
 impl NovNativeBlockSealStoreV1 {
+    /// Archive the first complete local decision. Equivalent witnesses never
+    /// replace its original evidence. Shares the V1/V2 height slot deliberately.
+    pub fn persist_local_verified_decision_certificate_v3(
+        &self,
+        ledger: &NovNativeBlockLedgerV1,
+        certificate: &NovNativeSealDecisionCertificateV3,
+        set: &NovNativeSealValidatorSetV1,
+    ) -> Result<bool> {
+        certificate.verify(set)?;
+        let subject = &certificate.prepare.subject;
+        let local = self.prepare_local_subject(
+            ledger,
+            subject.chain_id,
+            subject.block_hash,
+            set,
+            subject.round,
+            (subject.justify_qc_hash != [0; 32]).then_some(subject.justify_qc_hash),
+        )?;
+        if local != *subject {
+            bail!("decision v3 certificate does not match local execution");
+        }
+        let binding = store_binding_v1(ledger, subject.chain_id)?;
+        let _guard = self.lock_writes_v1()?;
+        self.ensure_schema_v1()?;
+        self.ensure_store_binding_v1(&binding)?;
+        self.ensure_registered_validator_set_v1(set)?;
+        self.verify_decision_witness_v3(&certificate.prepare, set)?;
+        let target = decision_target_v3(&certificate.prepare, set)?;
+        for other in self.load_qcs_by_height(subject.chain_id, subject.epoch, subject.height)? {
+            if decision_target_v3(&other, set)? != target {
+                bail!("competing decision QC prevents v3 certificate persistence");
+            }
+        }
+        if let Some(original) = self.load_decision_certificate_by_height_v3(
+            subject.chain_id,
+            subject.epoch,
+            subject.height,
+        )? {
+            if decision_target_v3(&original.prepare, set)? != target {
+                bail!("decision v3 height already contains another decision");
+            }
+            return Ok(false);
+        }
+        let slot = commit::certificate_height_key(subject.chain_id, subject.epoch, subject.height);
+        let marker = format!("{slot}/decision-v3-certificate-hash");
+        let mut batch = RocksDbWriteBatch::default();
+        put_json_v1(
+            &mut batch,
+            slot.as_bytes(),
+            certificate,
+            "decision v3 certificate",
+        )?;
+        put_json_v1(
+            &mut batch,
+            marker.as_bytes(),
+            &certificate.certificate_hash,
+            "decision v3 certificate marker",
+        )?;
+        write_sync_v1(&self.db, batch)?;
+        if self
+            .load_decision_certificate_by_height_v3(
+                subject.chain_id,
+                subject.epoch,
+                subject.height,
+            )?
+            .as_ref()
+            != Some(certificate)
+        {
+            bail!("decision v3 certificate readback mismatch");
+        }
+        Ok(true)
+    }
+
+    /// Historical verified evidence, not current DA, canonicality or finality.
+    /// Absence is only legitimate when both the certificate and marker are absent.
+    pub fn load_decision_certificate_by_height_v3(
+        &self,
+        chain_id: u64,
+        epoch: u64,
+        height: u64,
+    ) -> Result<Option<NovNativeSealDecisionCertificateV3>> {
+        self.ensure_schema_v1()?;
+        let slot = commit::certificate_height_key(chain_id, epoch, height);
+        let certificate = read_json_v1::<NovNativeSealDecisionCertificateV3>(
+            &self.db,
+            slot.as_bytes(),
+            "decision v3 certificate",
+        )?;
+        let pin = read_json_v1::<[u8; 32]>(
+            &self.db,
+            format!("{slot}/decision-v3-certificate-hash").as_bytes(),
+            "decision v3 certificate marker",
+        )?;
+        let Some(certificate) = certificate else {
+            if pin.is_some() {
+                bail!("decision v3 certificate disappeared");
+            }
+            return Ok(None);
+        };
+        let subject = &certificate.prepare.subject;
+        if (subject.chain_id, subject.epoch, subject.height) != (chain_id, epoch, height) {
+            bail!("decision v3 certificate height slot mismatch");
+        }
+        let set = self
+            .load_validator_set(chain_id, epoch)?
+            .context("decision v3 certificate validator set missing")?;
+        certificate.verify(&set)?;
+        self.verify_decision_witness_v3(&certificate.prepare, &set)?;
+        if pin != Some(certificate.certificate_hash) {
+            bail!("decision v3 certificate marker missing or changed");
+        }
+        Ok(Some(certificate))
+    }
+
     /// Explicit local call only. Persist before releasing a signature. A replay
     /// returns the original bytes, even under another valid round witness.
     pub fn sign_local_decision_vote_v3(
@@ -49,10 +163,10 @@ impl NovNativeBlockSealStoreV1 {
         }
         // No automatic protocol migration of an already confirmed height.
         if self
-            .db
-            .get(
-                commit::certificate_height_key(subject.chain_id, subject.epoch, subject.height)
-                    .as_bytes(),
+            .load_decision_certificate_by_height_v3(
+                subject.chain_id,
+                subject.epoch,
+                subject.height,
             )?
             .is_some()
         {

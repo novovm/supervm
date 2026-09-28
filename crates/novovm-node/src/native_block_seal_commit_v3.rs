@@ -1,5 +1,5 @@
 //! Experimental decision attestations and explicit local durable signing.
-//! No network activation, certificate storage, unlock or finality API.
+//! No network activation, unlock or finality API.
 use super::*;
 #[path = "native_block_seal_commit_v3_store.rs"]
 mod store;
