@@ -248,8 +248,14 @@ jobs:
       - name: Production business configuration pin regression
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib production_aoem_gate_requires_matching_cross_machine_protocol_pin --locked -- --test-threads=1
 
+      - name: Funded pipeline execution and session recovery regression
+        timeout-minutes: 10
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --bin novovm-node native_execution_pipeline_tests --locked -- --test-threads=1
+
       - name: Funded candidate execution and multi-process recovery
-        timeout-minutes: 15
+        # Run 36374466713 spent ~13 minutes passing the first three cases.
+        # Allow the full sequential suite; per-worker 90s deadlines stay intact.
+        timeout-minutes: 30
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib tx_ingress::tests::candidate_workspace_tests::candidate_workspace_execution_ --locked -- --test-threads=1
 
       - name: Mainline soak freshness coverage and progress tests
@@ -278,10 +284,6 @@ jobs:
 
       - name: Product evidence bounded-relay tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib product_evidence::tests
-
-      - name: Funded pipeline execution and session recovery regression
-        timeout-minutes: 10
-        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --bin novovm-node native_execution_pipeline_tests --locked -- --test-threads=1
 
       - name: SuperVM Mainline Gate Runner (canonical)
         shell: bash

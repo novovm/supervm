@@ -202,3 +202,17 @@ or an operator deployment/allocation mechanism.
 CI runs this suite explicitly before the long mainline gate, retaining the gate's
 original coverage. Local suite: 33 passed, 0 failed. Remote rerun remains required;
 this change does not authorize merging, repinning or upgrading live nodes.
+
+### Linux suite time budget
+
+Run 36374466713 on b7f59d3 timed out at the candidate suite's 15-minute
+workflow deadline, with no assertion failure reported. The first three cases
+passed by 03:55:06 UTC after starting at 03:42:12; the last multi-process case
+had not completed when Actions stopped the step. This is incomplete evidence,
+not a pass or proof that the last case is healthy. The missing dual-node artifact
+is a downstream consequence of that step never running.
+
+The sequential suite now has a bounded 30-minute CI budget. Its test selection,
+assertions and individual recovery-child 90-second deadlines are unchanged.
+The short funded pipeline suite runs before it so pipeline regressions are
+reported earlier. Linux acceptance still requires a successful new run.
