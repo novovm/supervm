@@ -31,3 +31,21 @@ relative and absolute targets, build failure, missing binary, and location
 restoration. It does not execute these sentinels or claim real network coverage.
 Windows and Linux CI run the same launcher regression. Existing example network
 configs are not automatically rewritten or deployed by this change.
+
+## Aggregate report acceptance
+
+The adaptive script now requires boolean success, the adaptive-node report scope,
+and matching sender/receiver node identities. Delivered routes require exactly
+one configured target listener, unique listeners and the route's expected relay
+count (direct=0, relay=1, multihop=2). Sender transmission totals and every
+participating listener's success/counters must agree. A failed listener, wrong
+node report or a missing target cannot be hidden by matching frame totals.
+Queue fallback remains queued-only evidence, not delivery.
+
+`scripts/tests/adaptive-overlay-aggregate.tests.ps1` invokes the actual aggregator
+against synthetic JSON files: four positive route cases and thirteen rejection
+cases. No sockets or services are started. These checks are not cryptographic
+report authentication or freshness guarantees: reports with the same identities
+from an older run are not yet distinguished by a wire-bound run identifier. Use
+separate report directories for each attempt and never mix runs. None of this
+proves production mainline execution, blockchain finality or real LAN acceptance.

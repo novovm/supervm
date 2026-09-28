@@ -26,6 +26,9 @@ jobs:
       - name: Reject stale builds and resolve local target paths
         shell: pwsh
         run: ./scripts/tests/overlay-gate-build.tests.ps1
+      - name: Reject failed and misattributed LAN reports
+        shell: pwsh
+        run: ./scripts/tests/adaptive-overlay-aggregate.tests.ps1
 
   governance_pr_gate_observability:
     name: Governance PR Gate observability

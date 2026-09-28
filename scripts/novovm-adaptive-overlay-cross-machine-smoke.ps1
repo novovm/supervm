@@ -145,27 +145,55 @@ function Run-Aggregate {
     }
 
     $accepted = $null -ne $senderReport -and
-        [bool]$senderReport.accepted -and
-        $senderReport.selected_path -eq $CaseConfig.expected_path
+        $senderReport.accepted -is [bool] -and $senderReport.accepted -and
+        $senderReport.scope -ceq 'adaptive_overlay_node_process_gate_v0' -and
+        $senderReport.node_id -ceq $CaseConfig.sender_node_id -and
+        $senderReport.target_peer_id -ceq $Config.target_peer_id -and
+        $senderReport.selected_path -ceq $CaseConfig.expected_path
 
     if ($CaseConfig.expected_path -eq "QueueFallback") {
-        $accepted = $accepted -and
-            [int]$senderReport.queued_count -eq [int]$Config.max_frames -and
-            [int]$senderReport.sent_frame_count -eq 0 -and
-            [int]$senderReport.sent_bytes_total -eq 0
+        if ($null -ne $senderReport) {
+            $accepted = $accepted -and
+                [int]$senderReport.queued_count -eq [int]$Config.max_frames -and
+                [int]$senderReport.sent_frame_count -eq 0 -and
+                [int]$senderReport.sent_bytes_total -eq 0
+        }
     } else {
+        $ids = @($CaseConfig.listener_node_ids)
+        $accepted = $accepted -and
+            @($ids | Where-Object { $_ -ceq $Config.target_peer_id }).Count -eq 1 -and
+            @($ids | Select-Object -Unique).Count -eq $ids.Count -and
+            $CaseConfig.expected_path -cin @('DirectNovoRudp', 'RelayNovoRudp', 'MultiHopRelay')
+        if ($null -ne $senderReport) {
+            $accepted = $accepted -and [long]$senderReport.sent_frame_count -eq [long]$Config.max_frames -and
+                [long]$senderReport.queued_count -eq 0
+        }
+        $relayCount = 0
         foreach ($entry in $listenerReports) {
             if ($null -eq $entry.report) {
                 $accepted = $false
                 continue
             }
-            $isTarget = $entry.node_id -eq $Config.target_peer_id
+            $accepted = $accepted -and $entry.report.accepted -is [bool] -and $entry.report.accepted -and
+                $entry.report.scope -ceq 'adaptive_overlay_node_process_gate_v0' -and
+                $entry.report.node_id -ceq $entry.node_id
+            $isTarget = $entry.node_id -ceq $Config.target_peer_id
             if ($isTarget) {
                 $accepted = $accepted -and [int]$entry.report.direct_frames_received -eq [int]$Config.max_frames
             } elseif ([bool](Get-ConfigNode $Config $entry.node_id).relay_enabled) {
+                $relayCount++
                 $accepted = $accepted -and [int]$entry.report.relay_frames_forwarded -eq [int]$Config.max_frames
+            } else {
+                $accepted = $false
             }
         }
+        $expectedRelays = switch ($CaseConfig.expected_path) {
+            'DirectNovoRudp' { 0 }
+            'RelayNovoRudp' { 1 }
+            'MultiHopRelay' { 2 }
+            default { -1 }
+        }
+        $accepted = $accepted -and $relayCount -eq $expectedRelays
     }
 
     $report = [ordered]@{
