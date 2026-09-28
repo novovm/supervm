@@ -15,6 +15,8 @@ pub mod commit;
 
 #[path = "native_block_seal_commit_v2.rs"]
 pub mod commit_v2;
+#[path = "native_block_seal_commit_v3.rs"]
+pub mod commit_v3;
 
 #[path = "native_block_seal_newview.rs"]
 pub mod newview;
@@ -2936,6 +2938,9 @@ fn competing_qc_evidence_key_v1(
 
 #[cfg(test)]
 mod tests {
+    mod commit_v3 {
+        include!("native_block_seal_commit_v3_tests.rs");
+    }
     mod commit_v2 {
         include!("native_block_seal_commit_v2_tests.rs");
     }
