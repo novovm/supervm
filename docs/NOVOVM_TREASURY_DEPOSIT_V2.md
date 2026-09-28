@@ -289,3 +289,23 @@ keeps `running_node_verified=false`, `existing_database_verified=false`,
 `activation_ready=false` and `import_performed=false`. This command reads no ledger,
 creates no files and cannot repin or migrate state. Keep old bound databases
 unchanged until the existing offline upgrade/authorization workflow is reviewed.
+
+To also check the production pin already configured in the intended launch
+environment, append `--check-production-pin`:
+
+```powershell
+cargo run -p novovmctl -- native-nonce-migration target-protocol --expected-commitment <approved-64-lowercase-hex> --check-production-pin
+```
+
+This requires `--expected-commitment` and calls the node's existing production
+pin verifier with production ownership explicitly required. Missing, empty,
+malformed or mismatched `NOVOVM_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT`
+rejects. The CLI never sets that variable on the operator's behalf. Successful
+checks report `production_pin_verified=true`; without the flag it remains false.
+The node verifier's accepted `0x` prefix is preserved for the environment pin;
+the independently approved CLI argument remains 64 lowercase hex characters.
+
+This is still a check of the CLI process environment, not the environment of a
+Windows service, daemon or already-running node. All no-activation/no-database
+claims above remain unchanged. Real-process CLI tests cover missing, malformed,
+wrong and matching pins, and require zero files created in the isolated cwd.

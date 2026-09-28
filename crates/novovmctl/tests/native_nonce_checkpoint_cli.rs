@@ -353,6 +353,7 @@ fn target_protocol_checks_approved_pin_without_writes_or_activation() {
     };
     let observed = run_json(command(), true);
     assert_eq!(observed["data"]["expected_commitment_verified"], false);
+    assert_eq!(observed["data"]["production_pin_verified"], false);
     let pin = observed["data"]["target_protocol_commitment"]
         .as_str()
         .unwrap();
@@ -360,6 +361,7 @@ fn target_protocol_checks_approved_pin_without_writes_or_activation() {
     matched.args(["--expected-commitment", pin]);
     let report = run_json(matched, true);
     assert_eq!(report["data"]["expected_commitment_verified"], true);
+    assert_eq!(report["data"]["production_pin_verified"], false);
     for field in [
         "running_node_verified",
         "existing_database_verified",
@@ -396,6 +398,32 @@ fn target_protocol_checks_approved_pin_without_writes_or_activation() {
     let mut missing = command();
     missing.arg("--expected-commitment");
     run_json(missing, false);
+    let mut no_approved_pin = command();
+    no_approved_pin.arg("--check-production-pin");
+    run_json(no_approved_pin, false);
+    let pin_env = novovm_node::tx_ingress::NOV_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT_ENV;
+    for configured in [None, Some(""), Some("bad"), Some(wrong.as_str())] {
+        let mut invalid = command();
+        invalid.args(["--expected-commitment", pin, "--check-production-pin"]);
+        if let Some(value) = configured {
+            invalid.env(pin_env, value);
+        }
+        let error = run_json(invalid, false);
+        assert!(error
+            .to_string()
+            .contains("production protocol pin preflight"));
+    }
+    for configured in [pin.to_string(), format!("0x{pin}")] {
+        let mut valid = command();
+        valid
+            .args(["--expected-commitment", pin, "--check-production-pin"])
+            .env(pin_env, configured);
+        let report = run_json(valid, true);
+        assert_eq!(report["data"]["production_pin_verified"], true);
+        assert_eq!(report["data"]["running_node_verified"], false);
+        assert_eq!(report["data"]["existing_database_verified"], false);
+        assert_eq!(report["data"]["activation_ready"], false);
+    }
     assert_eq!(
         fs::read_dir(&root).unwrap().count(),
         0,

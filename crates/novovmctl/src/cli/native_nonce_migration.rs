@@ -36,6 +36,9 @@ pub struct NativeTargetProtocolArgs {
     /// Independently approved 64-character lowercase hex commitment; never auto-pin.
     #[arg(long)]
     pub expected_commitment: Option<String>,
+    /// Also enforce the node's production pin check in this process environment.
+    #[arg(long, requires = "expected_commitment")]
+    pub check_production_pin: bool,
 }
 
 #[derive(Debug, Args)]

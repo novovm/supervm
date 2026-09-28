@@ -114,9 +114,27 @@ fn inner_run(args: &NativeNonceMigrationArgs) -> Result<Value, CtlError> {
                     )));
                 }
             }
+            let production_pin_verified = if args.check_production_pin {
+                let verified = novovm_node::tx_ingress::verify_native_business_protocol_config_pin_for_aoem_production_v1(
+                    &json!({"aoem_owned_gate_config": {
+                        "production_candidate": true,
+                        "source": "readonly_cli_preflight"
+                    }}),
+                ).map_err(|error| CtlError::InvalidArgument(format!("production protocol pin preflight: {error:#}")))?;
+                if verified.as_deref() != Some(commitment.as_str()) {
+                    return Err(CtlError::IntegrationFailed(
+                        "production protocol pin check did not verify the observed commitment"
+                            .into(),
+                    ));
+                }
+                true
+            } else {
+                false
+            };
             Ok(
                 json!({"action": "target-protocol", "target_protocol_commitment": commitment,
                 "expected_commitment_verified": args.expected_commitment.is_some(),
+                "production_pin_verified": production_pin_verified,
                 "scope": "this_cli_binary_and_current_environment",
                 "running_node_verified": false, "existing_database_verified": false,
                 "observed_only": true, "authority_state_published": false,
