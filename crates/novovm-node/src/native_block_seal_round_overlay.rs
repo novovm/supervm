@@ -268,7 +268,7 @@ impl NovNativeSealRoundOverlayV1 {
     }
 }
 
-fn submit_frames(
+pub(super) fn submit_frames(
     frames: &[([u8; 32], Vec<u8>)],
     peers: &BTreeSet<String>,
     attempted: &mut BTreeMap<([u8; 32], String), Instant>,

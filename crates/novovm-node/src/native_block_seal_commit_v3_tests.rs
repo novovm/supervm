@@ -5,6 +5,223 @@ use crate::native_block_seal::commit_v3::{
 };
 
 #[test]
+fn commit_v3_sender_retries_durable_frames_and_stops_on_missing_evidence() {
+    use super::native_block_seal_newview::{authority_v1, local_qc_v1};
+    use crate::native_block_seal::commit_v3::sender::NovNativeSealDecisionSenderV3 as Sender;
+    use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1 as Message;
+    let (mut node, block, keys, set) = genesis_fixture_v1("v3-sender", 85_480);
+    let authority = authority_v1(&node, &set);
+    let (evidence, _) = local_qc_v1(&node, &block, &authority, &keys, 0);
+    node.store()
+        .persist_local_verified_qc(node.ledger(), &evidence.qc, &set)
+        .unwrap();
+    let id = validator_id_v1(keys[0].verifying_key().as_bytes());
+    let unsigned_storage = Message::DecisionVoteV3 {
+        proposal: Box::new(evidence.proposal.clone()),
+        qc: Box::new(evidence.qc.clone()),
+        vote: Box::new(decision_vote(&evidence.qc, &set, &keys[0])),
+        certificate: None,
+    };
+    assert!(Sender::new(
+        node.ledger(),
+        node.store(),
+        authority.clone(),
+        id,
+        unsigned_storage
+    )
+    .is_err());
+    let vote = node
+        .store()
+        .sign_local_decision_vote_v3(node.ledger(), &evidence.qc, &set, &keys[0])
+        .unwrap();
+    let message = Message::DecisionVoteV3 {
+        proposal: Box::new(evidence.proposal.clone()),
+        qc: Box::new(evidence.qc.clone()),
+        vote: Box::new(vote.clone()),
+        certificate: None,
+    };
+    let mut sender = Sender::new(
+        node.ledger(),
+        node.store(),
+        authority.clone(),
+        id,
+        message.clone(),
+    )
+    .unwrap();
+    let now = std::time::Instant::now();
+    let mut reached = std::collections::BTreeSet::new();
+    let before = node
+        .store()
+        .db
+        .iterator(IteratorMode::Start)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    for _ in 0..3 {
+        let mut capacity = 1;
+        assert_eq!(
+            sender
+                .poll_with(node.ledger(), node.store(), now, |peer, _, _| {
+                    if capacity == 0 {
+                        return Ok(false);
+                    }
+                    capacity -= 1;
+                    assert!(reached.insert(peer.to_owned()));
+                    Ok(true)
+                })
+                .unwrap(),
+            1
+        );
+    }
+    assert_eq!(
+        sender
+            .poll_with(node.ledger(), node.store(), now, |_, _, _| panic!(
+                "too early retry"
+            ))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sender
+            .poll_with(
+                node.ledger(),
+                node.store(),
+                now + std::time::Duration::from_millis(250),
+                |_, _, _| Ok(true)
+            )
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        node.store()
+            .db
+            .iterator(IteratorMode::Start)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+        before
+    );
+    let mut votes = vec![vote];
+    for key in &keys[1..3] {
+        votes.push(
+            node.store()
+                .sign_local_decision_vote_v3(node.ledger(), &evidence.qc, &set, key)
+                .unwrap(),
+        );
+    }
+    let cert = Certificate::from_votes(evidence.qc, &set, votes).unwrap();
+    let complete = Message::DecisionCertificateV3 {
+        proposal: Box::new(evidence.proposal),
+        decision: Box::new(cert.clone()),
+        certificate: None,
+    };
+    assert!(Sender::new(
+        node.ledger(),
+        node.store(),
+        authority.clone(),
+        id,
+        complete.clone()
+    )
+    .is_err());
+    node.store()
+        .persist_local_verified_decision_certificate_v3(node.ledger(), &cert, &set)
+        .unwrap();
+    assert!(sender
+        .poll_with(
+            node.ledger(),
+            node.store(),
+            now + std::time::Duration::from_secs(1),
+            |_, _, _| panic!("old vote after completion")
+        )
+        .is_err());
+    assert!(sender.halted());
+    node.reopen_store();
+    let mut complete_sender =
+        Sender::new(node.ledger(), node.store(), authority, id, complete).unwrap();
+    assert_eq!(
+        complete_sender
+            .poll_with(node.ledger(), node.store(), now, |_, _, _| Ok(true))
+            .unwrap(),
+        3
+    );
+    let slot = crate::native_block_seal::commit::certificate_height_key(set.chain_id, set.epoch, 1);
+    node.store()
+        .db
+        .delete(format!("{slot}/decision-v3-certificate-hash"))
+        .unwrap();
+    assert!(complete_sender
+        .poll_with(
+            node.ledger(),
+            node.store(),
+            now + std::time::Duration::from_secs(1),
+            |_, _, _| panic!("send corrupt archive")
+        )
+        .is_err());
+    assert!(complete_sender.halted());
+}
+
+#[test]
+fn commit_v3_sender_clock_and_queue_errors_halt_without_false_success() {
+    use super::native_block_seal_newview::{authority_v1, local_qc_v1};
+    use crate::native_block_seal::commit_v3::sender::NovNativeSealDecisionSenderV3 as Sender;
+    use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1 as Message;
+    let (node, block, keys, set) = genesis_fixture_v1("v3-sender-errors", 85_481);
+    let authority = authority_v1(&node, &set);
+    let (evidence, _) = local_qc_v1(&node, &block, &authority, &keys, 0);
+    node.store()
+        .persist_local_verified_qc(node.ledger(), &evidence.qc, &set)
+        .unwrap();
+    let vote = node
+        .store()
+        .sign_local_decision_vote_v3(node.ledger(), &evidence.qc, &set, &keys[0])
+        .unwrap();
+    let id = vote.validator_id;
+    let message = Message::DecisionVoteV3 {
+        proposal: Box::new(evidence.proposal),
+        qc: Box::new(evidence.qc),
+        vote: Box::new(vote),
+        certificate: None,
+    };
+    for clock_error in [true, false] {
+        let mut sender = Sender::new(
+            node.ledger(),
+            node.store(),
+            authority.clone(),
+            id,
+            message.clone(),
+        )
+        .unwrap();
+        let now = std::time::Instant::now();
+        assert_eq!(
+            sender
+                .poll_with(node.ledger(), node.store(), now, |_, _, _| Ok(false))
+                .unwrap(),
+            0
+        );
+        if clock_error {
+            assert!(sender
+                .poll_with(
+                    node.ledger(),
+                    node.store(),
+                    now - std::time::Duration::from_millis(1),
+                    |_, _, _| panic!("backwards clock sent")
+                )
+                .is_err());
+        } else {
+            assert!(sender
+                .poll_with(node.ledger(), node.store(), now, |_, _, _| anyhow::bail!(
+                    "queue worker gone"
+                ))
+                .is_err());
+        }
+        assert!(sender.halted());
+        assert!(sender
+            .poll_with(node.ledger(), node.store(), now, |_, _, _| panic!(
+                "halted sender sent"
+            ))
+            .is_err());
+    }
+}
+
+#[test]
 fn commit_v3_collector_cross_round_quorum_is_bounded_read_only_and_replayable() {
     use super::native_block_seal_newview::{advance_v1, authority_v1, local_qc_v1};
     use crate::native_block_seal::commit_v3::collector::NovNativeSealDecisionCollectorV3 as Collector;

@@ -10,6 +10,51 @@ struct DecisionLock {
 }
 
 impl NovNativeBlockSealStoreV1 {
+    /// Read-only check before transmitting an already durable local signature.
+    /// Never signs, repairs evidence or grants permission in another round.
+    pub(super) fn verify_decision_outbound_vote_v3(
+        &self,
+        prepare: &NovNativeSealQuorumCertificateV1,
+        vote: &NovNativeSealDecisionVoteV3,
+        set: &NovNativeSealValidatorSetV1,
+    ) -> Result<()> {
+        self.ensure_schema_v1()?;
+        self.ensure_registered_validator_set_v1(set)?;
+        self.verify_decision_witness_v3(prepare, set)?;
+        vote.verify(prepare, set)?;
+        let slot = commit::lock_key(&prepare.subject, vote.validator_id);
+        let lock =
+            read_json_v1::<DecisionLock>(&self.db, slot.as_bytes(), "outbound decision lock")?
+                .context("outbound decision lock missing")?;
+        if lock.schema != "novovm-native-seal-decision-lock/v3" || lock.vote != *vote {
+            bail!("outbound decision differs from durable signature");
+        }
+        let original = self
+            .load_qc(lock.prepare_qc_hash)?
+            .context("outbound decision original witness missing")?;
+        self.verify_decision_witness_v3(&original, set)?;
+        vote.verify(&original, set)?;
+        self.validate_existing_safety_locks_v1(&original.subject, vote.validator_id)?;
+        if read_json_v1::<[u8; 32]>(
+            &self.db,
+            format!("{slot}/decision-v3-vote-hash").as_bytes(),
+            "outbound decision marker",
+        )? != Some(vote.vote_hash)
+        {
+            bail!("outbound decision marker missing or changed");
+        }
+        if self
+            .load_decision_certificate_by_height_v3(
+                prepare.subject.chain_id,
+                prepare.subject.epoch,
+                prepare.subject.height,
+            )?
+            .is_some()
+        {
+            bail!("send durable complete decision instead of its individual vote");
+        }
+        Ok(())
+    }
     /// Archive the first complete local decision. Equivalent witnesses never
     /// replace its original evidence. Shares the V1/V2 height slot deliberately.
     pub fn persist_local_verified_decision_certificate_v3(
