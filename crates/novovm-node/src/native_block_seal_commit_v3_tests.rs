@@ -5,6 +5,193 @@ use crate::native_block_seal::commit_v3::{
 };
 
 #[test]
+fn commit_v3_collector_cross_round_quorum_is_bounded_read_only_and_replayable() {
+    use super::native_block_seal_newview::{advance_v1, authority_v1, local_qc_v1};
+    use crate::native_block_seal::commit_v3::collector::NovNativeSealDecisionCollectorV3 as Collector;
+    use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1 as Message;
+    use crate::native_block_seal::round_wire::encode_nov_native_seal_round_wire_v1 as encode;
+    let (node, block, keys, set) = genesis_fixture_v1("v3-collector", 85_470);
+    let authority = authority_v1(&node, &set);
+    let (first, _) = local_qc_v1(&node, &block, &authority, &keys, 0);
+    node.store()
+        .persist_local_verified_qc(node.ledger(), &first.qc, &set)
+        .unwrap();
+    let vote = node
+        .store()
+        .sign_local_decision_vote_v3(node.ledger(), &first.qc, &set, &keys[0])
+        .unwrap();
+    let mut collector =
+        Collector::new(node.ledger(), node.store(), authority.clone(), &first.qc).unwrap();
+    let mut packets = Vec::new();
+    packets.push((
+        vote.validator_id,
+        Message::DecisionVoteV3 {
+            proposal: Box::new(first.proposal),
+            qc: Box::new(first.qc.clone()),
+            vote: Box::new(vote),
+            certificate: None,
+        },
+    ));
+    advance_v1(&node, &authority, &keys, 0);
+    let (next, _) = local_qc_v1(&node, &block, &authority, &keys, 1);
+    node.store()
+        .persist_local_verified_qc(node.ledger(), &next.qc, &set)
+        .unwrap();
+    let admission = node
+        .store()
+        .load_local_new_view_admission(set.chain_id, set.epoch, 1, 1)
+        .unwrap()
+        .unwrap()
+        .certificate;
+    for key in &keys[1..3] {
+        let vote = node
+            .store()
+            .sign_local_decision_vote_v3(node.ledger(), &next.qc, &set, key)
+            .unwrap();
+        packets.push((
+            vote.validator_id,
+            Message::DecisionVoteV3 {
+                proposal: Box::new(next.proposal.clone()),
+                qc: Box::new(next.qc.clone()),
+                vote: Box::new(vote),
+                certificate: Some(Box::new(admission.clone())),
+            },
+        ));
+    }
+    let before = node
+        .store()
+        .db
+        .iterator(IteratorMode::Start)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    for (index, (id, message)) in packets.iter().enumerate() {
+        let source = authority.transport_peer_id(*id).unwrap();
+        let wire = encode(message, &authority, 1, source).unwrap();
+        assert!(collector.ingest_wire("unknown-peer", &wire).is_err());
+        assert_eq!(collector.signed_weight(), index as u64);
+        assert!(collector.ingest_wire(source, &wire).unwrap());
+        for _ in 0..10 {
+            assert!(!collector.ingest_wire(source, &wire).unwrap());
+        }
+        assert_eq!(collector.signed_weight(), index as u64 + 1);
+        assert_eq!(collector.certificate_message().is_some(), index == 2);
+    }
+    assert_eq!(
+        node.store()
+            .db
+            .iterator(IteratorMode::Start)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+        before
+    );
+    let complete = collector.certificate_message().unwrap().clone();
+    let relay = authority
+        .transport_peer_id(validator_id_v1(keys[3].verifying_key().as_bytes()))
+        .unwrap();
+    let wire = encode(&complete, &authority, 1, relay).unwrap();
+    // A newly constructed collector has no hidden durable partial votes.
+    let mut restarted =
+        Collector::new(node.ledger(), node.store(), authority.clone(), &next.qc).unwrap();
+    assert_eq!(restarted.signed_weight(), 0);
+    assert!(restarted.ingest_wire(relay, &wire).unwrap());
+    assert_eq!(restarted.certificate_message(), Some(&complete));
+    assert!(!restarted.ingest_wire(relay, &wire).unwrap());
+    let Message::DecisionCertificateV3 { decision, .. } = complete else {
+        panic!("missing aggregate")
+    };
+    assert!(node
+        .store()
+        .persist_local_verified_decision_certificate_v3(node.ledger(), &decision, &set)
+        .unwrap());
+    assert!(
+        !node
+            .ledger()
+            .load_candidate_record(set.chain_id, block.header.block_hash)
+            .unwrap()
+            .unwrap()
+            .finalized
+    );
+}
+
+#[test]
+fn commit_v3_collector_uses_weight_and_rejects_foreign_target_without_poisoning() {
+    use super::native_block_seal_newview::{authority_v1, local_qc_v1};
+    use crate::native_block_seal::commit_v3::collector::NovNativeSealDecisionCollectorV3 as Collector;
+    use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1 as Message;
+    use crate::native_block_seal::round_wire::encode_nov_native_seal_round_wire_v1 as encode;
+    let (node, block, keys, _) = genesis_fixture_v1("v3-collector-weight", 85_471);
+    let set = NovNativeSealValidatorSetV1::new(
+        block.header.chain_id,
+        1,
+        1,
+        keys.iter()
+            .zip([4, 3, 2, 1])
+            .map(|(k, w)| NovNativeSealValidatorV1::new(*k.verifying_key().as_bytes(), w).unwrap())
+            .collect(),
+    )
+    .unwrap();
+    let authority = authority_v1(&node, &set);
+    let (evidence, _) = local_qc_v1(&node, &block, &authority, &keys, 0);
+    let mut collector =
+        Collector::new(node.ledger(), node.store(), authority.clone(), &evidence.qc).unwrap();
+    let source = authority
+        .transport_peer_id(validator_id_v1(keys[0].verifying_key().as_bytes()))
+        .unwrap();
+    let proposal_only = Message::Proposal {
+        proposal: Box::new(evidence.proposal.clone()),
+        certificate: None,
+    };
+    let proposer_source = authority
+        .transport_peer_id(evidence.proposal.proposer_id)
+        .unwrap();
+    assert!(collector
+        .ingest_wire(
+            proposer_source,
+            &encode(&proposal_only, &authority, 1, proposer_source).unwrap()
+        )
+        .is_err());
+    let mut subject = evidence.qc.subject.clone();
+    subject.post_state_root[0] ^= 1;
+    subject.subject_hash = subject_hash_v1(&subject);
+    let leader = keys
+        .iter()
+        .find(|k| validator_id_v1(k.verifying_key().as_bytes()) == evidence.proposal.proposer_id)
+        .unwrap();
+    let foreign_proposal = sign_proposal_v1(subject.clone(), &set, leader).unwrap();
+    let raw = keys
+        .iter()
+        .map(|k| sign_vote_v1(&foreign_proposal, &set, k).unwrap())
+        .collect();
+    let foreign = NovNativeSealQuorumCertificateV1::from_votes(subject, &set, raw).unwrap();
+    let bad = Message::DecisionVoteV3 {
+        proposal: Box::new(foreign_proposal),
+        vote: Box::new(decision_vote(&foreign, &set, &keys[0])),
+        qc: Box::new(foreign.clone()),
+        certificate: None,
+    };
+    assert!(Collector::new(node.ledger(), node.store(), authority.clone(), &foreign).is_err());
+    assert!(collector
+        .ingest_wire(source, &encode(&bad, &authority, 1, source).unwrap())
+        .is_err());
+    assert_eq!(collector.signed_weight(), 0);
+    for index in [3usize, 2, 1, 0] {
+        let vote = decision_vote(&evidence.qc, &set, &keys[index]);
+        let source = authority.transport_peer_id(vote.validator_id).unwrap();
+        let message = Message::DecisionVoteV3 {
+            proposal: Box::new(evidence.proposal.clone()),
+            qc: Box::new(evidence.qc.clone()),
+            vote: Box::new(vote),
+            certificate: None,
+        };
+        collector
+            .ingest_wire(source, &encode(&message, &authority, 1, source).unwrap())
+            .unwrap();
+        assert_eq!(collector.certificate_message().is_some(), index == 0);
+    }
+    assert_eq!(collector.signed_weight(), 10);
+}
+
+#[test]
 fn commit_v3_wire_roundtrip_authentication_bounds_and_disabled_driver() {
     use super::native_block_seal_newview::{advance_v1, authority_v1, local_qc_v1};
     use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1 as Message;
