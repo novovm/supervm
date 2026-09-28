@@ -14,7 +14,7 @@ pub(super) use execution::{
 };
 pub use execution::{
     execute_v1, load_block_artifact_v1, load_execution_v1, register_block_candidate_v1,
-    ExecutionInfoV1, IsolatedBlockArtifactV1,
+    with_verified_block_candidate_v1, ExecutionInfoV1, IsolatedBlockArtifactV1,
 };
 
 use super::*;
@@ -522,8 +522,17 @@ fn capture_parent(
     let store_path = resolve_native_execution_store_path_from_params_v1(params)
         .unwrap_or_else(nov_native_execution_store_path_v1);
     let _authority_lock = acquire_nov_native_execution_store_write_lock_v1(&store_path)?;
+    capture_parent_locked(plan, &store_path, workspace)
+}
+
+// Caller must hold the authority OS lock, after the workspace OS lock.
+fn capture_parent_locked(
+    plan: &NovNativeCandidateExecutionPlanV1,
+    store_path: &Path,
+    workspace: &WorkspaceStore,
+) -> Result<Payload> {
     let ledger = NovNativeBlockLedgerV1::open_existing_read_only(
-        &nov_native_block_ledger_rocksdb_path_v1(&store_path),
+        &nov_native_block_ledger_rocksdb_path_v1(store_path),
     )?
     .context("candidate workspace requires an existing local block ledger")?;
     let ownership = ledger

@@ -30,6 +30,49 @@ fn pin_key(chain: u64, hash: &[u8; 32]) -> String {
 }
 
 impl NovNativeBlockLedgerV1 {
+    /// The caller holds workspace and authority OS locks and has re-read both
+    /// complete AOEM output and the current parent. The borrowed view cannot
+    /// escape the callback; graph mutation is fenced for its entire lifetime.
+    pub(crate) fn with_isolated_seal_scope_v1<T>(
+        &self,
+        block: &NovNativeDurableBlockV1,
+        binding: &NovNativeIsolatedExecutionBindingV1,
+        action: impl FnOnce(&Self) -> Result<T>,
+    ) -> Result<T> {
+        let _guard = self.lock_writes_v1()?;
+        self.ensure_schema_v1()?;
+        let record = self
+            .load_candidate_record_inner_v1(block.header.chain_id, block.header.block_hash)?
+            .context("isolated signing candidate is not registered")?;
+        if record.candidate_source != CANDIDATE_SOURCE_ISOLATED_V1
+            || record.lifecycle_status != CANDIDATE_STATUS_ACTIVE_V1
+            || record.isolated_execution_binding.as_ref() != Some(binding)
+            || self
+                .load_candidate_block_for_record_inner_v1(&record)?
+                .as_ref()
+                != Some(block)
+        {
+            bail!("isolated signing candidate no longer matches live execution");
+        }
+        let head = self
+            .load_head_inner_v1(record.chain_id)?
+            .context("isolated signing parent missing")?;
+        if head.block_hash != record.parent_block_hash
+            || head.height.checked_add(1) != Some(record.height)
+            || self.load_prepared_inner_v1(record.chain_id)?.is_some()
+        {
+            bail!("isolated signing parent changed or authority preparation is unresolved");
+        }
+        let view = Self {
+            path: self.path.clone(),
+            db: Arc::clone(&self.db),
+            write_lock: Arc::clone(&self.write_lock),
+            read_only: true,
+            isolated_seal_scope: Some(record),
+        };
+        action(&view)
+    }
+
     pub(super) fn reject_orphaned_isolated_pin_v1(&self, chain: u64, hash: [u8; 32]) -> Result<()> {
         if self.db.get(pin_key(chain, &hash).as_bytes())?.is_some() {
             bail!("isolated candidate record disappeared while its evidence pin remains");

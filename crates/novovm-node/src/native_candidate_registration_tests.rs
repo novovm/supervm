@@ -55,6 +55,52 @@ fn candidate_workspace_execution_registration_is_durable_unselected_and_fenced()
         assert!(ledger
             .load_seal_eligible_local_candidate_v1(chain, record.block_hash)
             .is_err());
+        workspace::with_verified_block_candidate_v1(chain, input.workspace_id, params, |view| {
+            assert_eq!(view.load_seal_eligible_local_candidate_v1(chain, record.block_hash)?.0, record);
+            assert!(view.load_seal_eligible_local_candidate_v1(chain, [0x73; 32]).is_err());
+            assert!(view.abort_unselected_candidate_branch(chain, record.block_hash, "forbidden").is_err());
+            Ok(())
+        }).unwrap();
+        assert!(ledger.load_seal_eligible_local_candidate_v1(chain, record.block_hash).is_err());
+        use crate::native_block_seal::{NovNativeBlockSealStoreV1, NovNativeSealValidatorV1,
+            NovNativeSealValidatorSetV1, NovNativeSealLocalProposalRequestV1};
+        let key = ed25519_dalek::SigningKey::from_bytes(&[0xd4; 32]);
+        let set = NovNativeSealValidatorSetV1::new(chain, 1, 1, vec![
+            NovNativeSealValidatorV1::new(key.verifying_key().to_bytes(), 1).unwrap()
+        ]).unwrap();
+        let seal = NovNativeBlockSealStoreV1::open(&path.with_extension("isolated-seal-test")).unwrap();
+        let parent_request = NovNativeSealLocalProposalRequestV1 {
+            chain_id: chain, block_hash: record.parent_block_hash, round: 0, justify_qc_hash: None,
+        };
+        let parent_proposal = seal.sign_local_proposal(&ledger, &parent_request, &set, &key).unwrap();
+        let parent_vote = seal.sign_local_vote(&ledger, &parent_proposal, &set, &key).unwrap();
+        let parent_qc = crate::native_block_seal::NovNativeSealQuorumCertificateV1::from_votes(
+            parent_proposal.subject, &set, vec![parent_vote]).unwrap();
+        seal.persist_local_verified_qc(&ledger, &parent_qc, &set).unwrap();
+        let request = NovNativeSealLocalProposalRequestV1 {
+            chain_id: chain, block_hash: record.block_hash, round: 0, justify_qc_hash: Some(parent_qc.qc_hash),
+        };
+        let mut no_justify = request.clone();
+        no_justify.justify_qc_hash = None;
+        assert!(workspace::with_verified_block_candidate_v1(chain, input.workspace_id, params,
+            |view| seal.sign_local_proposal(view, &no_justify, &set, &key)).is_err());
+        assert!(seal.sign_local_proposal(&ledger, &request, &set, &key).is_err());
+        let proposal = workspace::with_verified_block_candidate_v1(chain, input.workspace_id, params,
+            |view| seal.sign_local_proposal(view, &request, &set, &key)).unwrap();
+        let vote = workspace::with_verified_block_candidate_v1(chain, input.workspace_id, params,
+            |view| seal.sign_local_vote(view, &proposal, &set, &key)).unwrap();
+        assert!(seal.sign_local_vote(&ledger, &proposal, &set, &key).is_err());
+        assert_eq!(workspace::with_verified_block_candidate_v1(chain, input.workspace_id, params,
+            |view| seal.sign_local_vote(view, &proposal, &set, &key)).unwrap(), vote);
+        let candidate_qc = crate::native_block_seal::NovNativeSealQuorumCertificateV1::from_votes(
+            proposal.subject.clone(), &set, vec![vote]).unwrap();
+        workspace::with_verified_block_candidate_v1(chain, input.workspace_id, params,
+            |view| seal.persist_local_verified_qc(view, &candidate_qc, &set)).unwrap();
+        let decision = workspace::with_verified_block_candidate_v1(chain, input.workspace_id, params,
+            |view| seal.sign_local_decision_vote_v3(view, &candidate_qc, &set, &key)).unwrap();
+        assert!(seal.sign_local_decision_vote_v3(&ledger, &candidate_qc, &set, &key).is_err());
+        assert_eq!(workspace::with_verified_block_candidate_v1(chain, input.workspace_id, params,
+            |view| seal.sign_local_decision_vote_v3(view, &candidate_qc, &set, &key)).unwrap(), decision);
         assert_eq!(
             workspace::register_block_candidate_v1(chain, input.workspace_id, params).unwrap(),
             record
@@ -83,6 +129,11 @@ fn candidate_workspace_execution_registration_is_durable_unselected_and_fenced()
         drop(ledger);
         reset_native_aoem_semantic_ingress_session_v1();
         let ledger = NovNativeBlockLedgerV1::open(&ledger_path).unwrap();
+        drop(seal);
+        let seal = NovNativeBlockSealStoreV1::open(&path.with_extension("isolated-seal-test")).unwrap();
+        assert_eq!(workspace::with_verified_block_candidate_v1(chain, input.workspace_id, params,
+            |view| seal.sign_local_decision_vote_v3(view, &candidate_qc, &set, &key)).unwrap(), decision);
+        assert!(seal.sign_local_decision_vote_v3(&ledger, &candidate_qc, &set, &key).is_err());
         assert_eq!(
             ledger
                 .load_candidate_record(chain, record.block_hash)
@@ -108,6 +159,9 @@ fn candidate_workspace_execution_registration_is_durable_unselected_and_fenced()
             .abort_unselected_candidate_branch(chain, record.block_hash, "test cancellation")
             .unwrap();
         assert_eq!(aborted[0].lifecycle_status, "aborted_unsealed");
+        assert!(workspace::with_verified_block_candidate_v1::<()>(chain, input.workspace_id, params, |_| {
+            panic!("aborted candidate must not enter signing callback")
+        }).is_err());
         assert!(workspace::register_block_candidate_v1(chain, input.workspace_id, params).is_err());
         workspace::abort_v1(chain, input.workspace_id, params).unwrap();
         assert!(workspace::register_block_candidate_v1(chain, input.workspace_id, params).is_err());
@@ -123,4 +177,34 @@ fn candidate_workspace_execution_registration_is_durable_unselected_and_fenced()
             .remove("ledger_children");
         assert_eq!(after_abort, before);
     });
+}
+
+#[test]
+fn candidate_workspace_execution_registration_live_scope_rejects_stale_parent_and_aborted_workspace() {
+    let _guard = PLAN_RUNTIME_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for abort_workspace in [false, true] {
+        let chain = 98_917_308 + u64::from(abort_workspace);
+        with_plan_runtime(|path, params| {
+            let parent = funded_candidate_parent(path, params, chain, &[[0xc2; 32]], raw_fixture(chain, 608));
+            let plan = successor_plan(&parent, vec![candidate_workspace_execution_raw(
+                chain, 0, [0xc2; 32], 31, "deposit_reserve")]);
+            let input = workspace::create_v1(&plan, params).unwrap();
+            workspace::execute_v1(chain, input.workspace_id, params).unwrap();
+            let record = workspace::register_block_candidate_v1(chain, input.workspace_id, params).unwrap();
+            workspace::with_verified_block_candidate_v1(chain, input.workspace_id, params, |_| Ok(())).unwrap();
+            if abort_workspace {
+                workspace::abort_v1(chain, input.workspace_id, params).unwrap();
+            } else {
+                let competing = successor_plan(&parent, vec![candidate_workspace_execution_raw(
+                    chain, 0, [0xc2; 32], 32, "deposit_reserve")]);
+                run_nov_native_candidate_execution_plan_v1(&competing, params).unwrap();
+            }
+            let before = candidate_workspace_authority_fingerprint(path, params, chain, &plan.tx_hashes);
+            assert!(workspace::with_verified_block_candidate_v1::<()>(chain, input.workspace_id, params,
+                |_| panic!("invalid live evidence must never reach signing")).is_err());
+            let ledger = NovNativeBlockLedgerV1::open(&nov_native_block_ledger_rocksdb_path_v1(path)).unwrap();
+            assert_eq!(ledger.load_candidate_record(chain, record.block_hash).unwrap(), Some(record));
+            assert_eq!(candidate_workspace_authority_fingerprint(path, params, chain, &plan.tx_hashes), before);
+        });
+    }
 }

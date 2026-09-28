@@ -137,3 +137,42 @@ pub fn register_block_candidate_v1(
         &to_hex(&workspace.protocol),
     )
 }
+
+/// Revalidate isolated execution and its current authoritative parent, then
+/// permit seal operations only within this synchronous callback. Holds workspace,
+/// authority and ledger locks in that order. The callback must not re-enter
+/// execution/workspace APIs or mutate this ledger through another handle.
+/// It may persist seal votes using the existing seal safety rules. No promotion.
+pub fn with_verified_block_candidate_v1<T>(
+    chain_id: u64,
+    id: [u8; 32],
+    params: &serde_json::Value,
+    action: impl FnOnce(&NovNativeBlockLedgerV1) -> Result<T>,
+) -> Result<T> {
+    let workspace = WorkspaceStore::open(chain_id, params)?;
+    let artifact = load_block_artifact_inner_v1(&workspace, id, params)?
+        .context("isolated signing requires complete live execution output")?;
+    let input = ready_input(&workspace, id)?;
+    let payload = workspace.read_payload(&input)?;
+    let store_path = resolve_native_execution_store_path_from_params_v1(params)
+        .unwrap_or_else(nov_native_execution_store_path_v1);
+    let _authority_lock = acquire_nov_native_execution_store_write_lock_v1(&store_path)?;
+    let current = capture_parent_locked(&payload.plan, &store_path, &workspace)?;
+    if current.parent_block != payload.parent_block
+        || serde_json::to_value(&current.parent_snapshot)?
+            != serde_json::to_value(&payload.parent_snapshot)?
+    {
+        bail!("isolated signing authoritative parent no longer matches captured state");
+    }
+    let ledger =
+        NovNativeBlockLedgerV1::open(&nov_native_block_ledger_rocksdb_path_v1(&store_path))?;
+    ledger.with_isolated_seal_scope_v1(
+        &artifact.block,
+        &NovNativeIsolatedExecutionBindingV1 {
+            workspace_id: id,
+            plan_commitment: artifact.plan_commitment,
+            output_digest: artifact.output_digest,
+        },
+        action,
+    )
+}

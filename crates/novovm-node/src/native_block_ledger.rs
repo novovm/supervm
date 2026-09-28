@@ -356,6 +356,7 @@ pub struct NovNativeBlockLedgerV1 {
     db: Arc<NovNativeBlockLedgerProcessEntryV1>,
     write_lock: Arc<Mutex<()>>,
     read_only: bool,
+    isolated_seal_scope: Option<NovNativeBlockCandidateRecordV1>,
 }
 
 impl NovNativeBlockLedgerV1 {
@@ -413,6 +414,7 @@ impl NovNativeBlockLedgerV1 {
             write_lock: Arc::clone(&db.write_lock),
             db,
             read_only: false,
+            isolated_seal_scope: None,
         })
     }
 
@@ -449,6 +451,7 @@ impl NovNativeBlockLedgerV1 {
             write_lock: Arc::clone(&db.write_lock),
             db,
             read_only: true,
+            isolated_seal_scope: None,
         };
         ledger.ensure_schema_v1()?;
         Ok(Some(ledger))
@@ -1162,7 +1165,8 @@ impl NovNativeBlockLedgerV1 {
         self.load_candidate_block_for_record_inner_v1(&record)
     }
 
-    /// Load the only candidate class that seal/v1 may sign. This deliberately
+    /// Load a selected candidate, or an isolated candidate only through a live
+    /// lock-scoped verified view. This deliberately
     /// stays crate-private: the public seal API must derive its subject from a
     /// locally persisted AOEM result instead of trusting caller-supplied
     /// lifecycle booleans or a peer's execution claim.
@@ -1179,13 +1183,17 @@ impl NovNativeBlockLedgerV1 {
             .load_candidate_block_for_record_inner_v1(&record)?
             .context("NOV native seal candidate artifact is missing")?;
 
-        if record.candidate_source != CANDIDATE_SOURCE_LOCAL_AOEM_V1
+        let selected = record.candidate_source == CANDIDATE_SOURCE_LOCAL_AOEM_V1
+            && record.execution_selected_local;
+        let scoped_isolated = record.candidate_source == CANDIDATE_SOURCE_ISOLATED_V1
+            && !record.execution_selected_local
+            && self.isolated_seal_scope.as_ref() == Some(&record);
+        if !(selected || scoped_isolated)
             || record.lifecycle_status != CANDIDATE_STATUS_ACTIVE_V1
             || !record.commitment_bindings_verified
             || !record.parent_continuity_verified
             || !record.body_data_available
             || !record.local_aoem_readback_verified
-            || !record.execution_selected_local
             || record.fork_choice_selected
             || record.chain_canonical
             || record.proof_sealed

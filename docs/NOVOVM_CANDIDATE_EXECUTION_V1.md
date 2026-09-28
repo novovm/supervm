@@ -269,7 +269,7 @@ Changed/missing record or pin fails closed; active observed evidence can upgrade
 only through this local readback path. Selected or aborted records cannot be
 replaced. Identical replay preserves the original record.
 
-Registration does not grant seal eligibility. Future signing/promotion must
+Registration does not grant seal eligibility. Signing/promotion must
 revalidate the live AOEM workspace, including abort/completion evidence, under
 the proper locks. A graph record remains historical if its workspace is later
 aborted; its flags cannot be used as a substitute for that live check.
@@ -287,8 +287,27 @@ No automatic rollback, deletion,
 or conversion of existing records is provided. Existing records retain their
 original encoding when the optional binding is absent.
 
-This API adds no remote proposer admission, body-acquisition authority, durable
-network scheduler, voting/QC, fork choice, authoritative head publication,
+This registration API adds no remote proposer admission, body-acquisition authority, durable
+network scheduler, fork choice, authoritative head publication,
 selected ledger block insertion, canonical promotion, CLI/RPC command, or automatic node
 mode. Isolated candidate execution is preparation for independently verified
 consensus and recoverable promotion, not proof-sealed mainnet finality.
+
+### Live signing scope
+
+`with_verified_block_candidate_v1` explicitly re-reads the complete isolated
+output and current authoritative AOEM parent before calling a synchronous local
+callback with a borrowed, read-only ledger view. Workspace, authority and ledger
+locks remain held in that order through the callback. Only the exact registered
+candidate and binding are admitted; the normal ledger handle remains ineligible.
+Aborted workspaces, aborted graph records, changed parents, unresolved authority
+preparation and damaged execution evidence reject admission. No permanent
+eligibility flag or process-global permission is installed.
+
+The callback may use the existing seal store to persist proposals/votes. Parent
+QC, validator-set, safety-lock, round and persist-before-emit rules remain intact.
+It must not re-enter execution/workspace operations or mutate this ledger through
+another handle while these locks are held. The view cannot be retained after
+the callback. Registration alone and loading a historical record never suffice.
+This is an explicit library boundary, not automatic service scheduling or final
+state promotion. Existing services still use their ordinary ledger handles.
