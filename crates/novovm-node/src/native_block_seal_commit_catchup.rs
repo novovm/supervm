@@ -13,6 +13,92 @@ struct Observation {
 }
 
 impl NovNativeSealRoundDriverV1 {
+    // One authenticated envelope per pinned validator bounds both targets and
+    // memory. These remote votes never authorize a local signature or admission.
+    pub(super) fn ingest_observed_vote(
+        &mut self,
+        ledger: &NovNativeBlockLedgerV1,
+        store: &NovNativeBlockSealStoreV1,
+        message: &Message,
+    ) -> Result<bool> {
+        if self.observed_commit.is_some() || self.pending_observed_commit.is_some() {
+            return Ok(false);
+        }
+        let Message::CommitVoteV2 { proposal, vote, .. } = message else {
+            bail!("commit vote observation requires a vote");
+        };
+        message.validate_authenticated(
+            &self.binding.authority,
+            self.binding.height,
+            self.binding
+                .authority
+                .transport_peer_id(vote.validator_id)?,
+        )?;
+        self.match_subject(ledger, store, &proposal.subject)?;
+        if let Some(Message::CommitVoteV2 { vote: previous, .. }) =
+            self.observed_votes.get(&vote.validator_id)
+        {
+            if previous != vote {
+                bail!("observed commit signer supplied conflicting votes");
+            }
+            return Ok(false);
+        }
+        self.observed_votes
+            .insert(vote.validator_id, message.clone());
+        Ok(true)
+    }
+
+    fn assemble_observed_commit(
+        &mut self,
+        ledger: &NovNativeBlockLedgerV1,
+        store: &NovNativeBlockSealStoreV1,
+    ) -> Result<()> {
+        if self.observed_commit.is_some() || self.pending_observed_commit.is_some() {
+            return Ok(());
+        }
+        for message in self.observed_votes.values() {
+            let Message::CommitVoteV2 {
+                proposal,
+                qc,
+                vote,
+                certificate,
+            } = message
+            else {
+                bail!("invalid observed vote cache");
+            };
+            let votes = self
+                .observed_votes
+                .values()
+                .filter_map(|message| match message {
+                    Message::CommitVoteV2 { vote: other, .. }
+                        if other.target_hash == vote.target_hash =>
+                    {
+                        Some(other.as_ref().clone())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if !self.has_quorum(votes.iter().map(|v| &v.validator_id))? {
+                continue;
+            }
+            let commit =
+                crate::native_block_seal::commit_v2::NovNativeSealCommitCertificateV2::from_votes(
+                    qc.as_ref().clone(),
+                    self.set(),
+                    votes,
+                )?;
+            let message = Message::CommitCertificateV2 {
+                proposal: proposal.clone(),
+                commit: Box::new(commit),
+                certificate: certificate.clone(),
+            };
+            self.validate_observation(ledger, store, &message)?;
+            self.pending_observed_commit = Some(message);
+            break;
+        }
+        Ok(())
+    }
+
     fn observation_key(&self) -> String {
         format!("{}/commit-v2/observed", Self::binding_key(&self.binding))
     }
@@ -120,6 +206,7 @@ impl NovNativeSealRoundDriverV1 {
             return Ok(None);
         }
         self.recover_observed_commit(ledger, store)?;
+        self.assemble_observed_commit(ledger, store)?;
         if let (Some(stored), Some(pending)) =
             (&self.observed_commit, &self.pending_observed_commit)
         {
@@ -162,6 +249,9 @@ impl NovNativeSealRoundDriverV1 {
             }
         }
         self.pending_observed_commit = None;
+        if self.observed_commit.is_some() {
+            self.observed_votes.clear();
+        }
         Ok(self.observed_commit.clone().map(|message| vec![message]))
     }
 }

@@ -156,13 +156,9 @@ impl NovNativeSealRoundOverlayV1 {
             self.driver.status().height,
             &inbound.source_peer_id,
         )?;
-        // A fully accepted commit certificate can be terminal evidence even
-        // when its signing round is ahead of this observer's unchanged tracker.
-        let cacheable = message.round() <= round
-            || matches!(
-                message,
-                super::round_message::NovNativeSealRoundMessageV1::CommitCertificateV2 { .. }
-            );
+        // Accepted remote-round votes and certificates are retained observations
+        // even when the observer's own round tracker has not advanced.
+        let cacheable = message.round() <= round || message.is_commit_v2();
         let commit_message = message.is_commit_v2();
         let accepted =
             self.driver

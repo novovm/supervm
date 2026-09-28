@@ -57,3 +57,4 @@ prepared；本刀没有声称解决 prepared 跨轮分裂。安全处理是保�
 后续已补[跨轮完整确认凭证追赶](NOVOVM_NATIVE_SEAL_COMMIT_CATCHUP_V2.md)：
 观察并归档其他轮次已有的完整凭证，不改变自己的轮次或签名锁。新增
 `commit_round` 和 `commit_observed` 区分凭证轮次/来源；零散票跨轮活性仍未解决。
+观察路径也可从其他轮次同一目标的足额认证确认票组装凭证；不同目标/轮次不混票。

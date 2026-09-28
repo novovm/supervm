@@ -11,6 +11,15 @@ fn catchup_snapshot(store: &NovNativeBlockSealStoreV1) -> Vec<(Vec<u8>, Vec<u8>)
 
 #[test]
 fn native_commit_catchup_old_prepared_round_preserves_its_existing_signature() {
+    catchup_preserves_existing_signature(false);
+}
+
+#[test]
+fn native_commit_catchup_assembles_remote_round_votes_without_resigning() {
+    catchup_preserves_existing_signature(true);
+}
+
+fn catchup_preserves_existing_signature(votes_only: bool) {
     let mut cluster = DriverCluster::new_with_commit(85_301, true);
     let active = cluster.without_initial_leader();
     let delayed = (0..4).find(|index| !active.contains(index)).unwrap();
@@ -42,12 +51,13 @@ fn native_commit_catchup_old_prepared_round_preserves_its_existing_signature() {
         .iter()
         .all(|i| cluster.peers[*i].driver.status().commit_confirmed));
     let messages = cluster.poll(&[active[0]], now);
-    let (_, certificate) = messages
+    let (_, mut certificate) = messages
         .into_iter()
         .find(|(_, m)| matches!(m, RoundMessage::CommitCertificateV2 { .. }))
         .unwrap();
     assert_eq!(certificate.round(), 1);
     let source = cluster.source(active[0]);
+    let authority = cluster.authority.clone();
     let id = cluster.id(delayed);
     let peer = &mut cluster.peers[delayed];
     assert_eq!(peer.driver.status().round, 0);
@@ -63,45 +73,109 @@ fn native_commit_catchup_old_prepared_round_preserves_its_existing_signature() {
         .driver
         .ingest_authenticated(peer.node.ledger(), peer.node.store(), &source, bad)
         .is_err());
-    assert!(peer
-        .driver
-        .ingest_authenticated(
-            peer.node.ledger(),
-            peer.node.store(),
-            "unknown-source",
-            certificate.clone()
-        )
-        .is_err());
-    assert!(!peer.driver.status().commit_confirmed);
-    assert_eq!(catchup_snapshot(peer.node.store()), before);
-    assert!(peer
-        .driver
-        .ingest_authenticated(
-            peer.node.ledger(),
-            peer.node.store(),
-            &source,
-            certificate.clone()
-        )
-        .unwrap());
-    assert_eq!(
-        catchup_snapshot(peer.node.store()),
-        before,
-        "ingress must not persist or sign"
-    );
-    assert!(!peer
-        .driver
-        .ingest_authenticated(
-            peer.node.ledger(),
-            peer.node.store(),
-            &source,
-            certificate.clone()
-        )
-        .unwrap());
-    let output = peer
-        .driver
-        .poll(peer.node.ledger(), peer.node.store(), &peer.key, now)
-        .unwrap();
-    assert_eq!(output, vec![certificate.clone()]);
+    if votes_only {
+        let RoundMessage::CommitCertificateV2 {
+            proposal,
+            commit,
+            certificate: admission,
+        } = &certificate
+        else {
+            panic!("expected certificate");
+        };
+        for (index, vote) in commit.votes.iter().enumerate() {
+            let message = RoundMessage::CommitVoteV2 {
+                proposal: proposal.clone(),
+                qc: Box::new(commit.prepare.clone()),
+                vote: Box::new(vote.clone()),
+                certificate: admission.clone(),
+            };
+            let sender = authority.transport_peer_id(vote.validator_id).unwrap();
+            assert!(peer
+                .driver
+                .ingest_authenticated(
+                    peer.node.ledger(),
+                    peer.node.store(),
+                    "unknown-source",
+                    message.clone()
+                )
+                .is_err());
+            assert!(peer
+                .driver
+                .ingest_authenticated(
+                    peer.node.ledger(),
+                    peer.node.store(),
+                    sender,
+                    message.clone()
+                )
+                .unwrap());
+            assert!(!peer
+                .driver
+                .ingest_authenticated(peer.node.ledger(), peer.node.store(), sender, message)
+                .unwrap());
+            assert_eq!(catchup_snapshot(peer.node.store()), before);
+            if index < 2 {
+                let output = peer
+                    .driver
+                    .poll(peer.node.ledger(), peer.node.store(), &peer.key, now)
+                    .unwrap();
+                assert!(!output
+                    .iter()
+                    .any(|m| matches!(m, RoundMessage::CommitCertificateV2 { .. })));
+                assert!(!peer.driver.status().commit_confirmed);
+                assert_eq!(catchup_snapshot(peer.node.store()), before);
+            }
+        }
+        let output = peer
+            .driver
+            .poll(peer.node.ledger(), peer.node.store(), &peer.key, now)
+            .unwrap();
+        assert_eq!(output.len(), 1);
+        certificate = output[0].clone();
+        assert!(matches!(
+            certificate,
+            RoundMessage::CommitCertificateV2 { .. }
+        ));
+    } else {
+        assert!(peer
+            .driver
+            .ingest_authenticated(
+                peer.node.ledger(),
+                peer.node.store(),
+                "unknown-source",
+                certificate.clone()
+            )
+            .is_err());
+        assert!(!peer.driver.status().commit_confirmed);
+        assert_eq!(catchup_snapshot(peer.node.store()), before);
+        assert!(peer
+            .driver
+            .ingest_authenticated(
+                peer.node.ledger(),
+                peer.node.store(),
+                &source,
+                certificate.clone()
+            )
+            .unwrap());
+        assert_eq!(
+            catchup_snapshot(peer.node.store()),
+            before,
+            "ingress must not persist or sign"
+        );
+        assert!(!peer
+            .driver
+            .ingest_authenticated(
+                peer.node.ledger(),
+                peer.node.store(),
+                &source,
+                certificate.clone()
+            )
+            .unwrap());
+        let output = peer
+            .driver
+            .poll(peer.node.ledger(), peer.node.store(), &peer.key, now)
+            .unwrap();
+        assert_eq!(output, vec![certificate.clone()]);
+    }
     let status = peer.driver.status();
     assert_eq!(status.round, 0);
     assert_eq!(status.commit_round, Some(1));
