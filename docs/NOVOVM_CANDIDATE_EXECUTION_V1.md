@@ -310,4 +310,11 @@ It must not re-enter execution/workspace operations or mutate this ledger throug
 another handle while these locks are held. The view cannot be retained after
 the callback. Registration alone and loading a historical record never suffice.
 This is an explicit library boundary, not automatic service scheduling or final
-state promotion. Existing services still use their ordinary ledger handles.
+state promotion. The seal service exposes `open_with_candidate_view` and
+`poll_with_candidate_view` so a caller can wrap startup and each complete tick
+in this live scope. The service retains only an ordinary shared ledger handle,
+not the temporary permission. A foreign ledger or lost eligibility halts before
+poll throttling or peer processing. Prepare and V3 decision work use the same
+borrowed view. Existing main-node configuration still selects the ordinary path;
+isolated-workspace configuration wiring and real AOEM service integration remain
+to be validated before claiming automatic isolated-candidate operation.

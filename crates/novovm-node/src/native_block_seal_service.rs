@@ -21,6 +21,7 @@ use anyhow::{bail, Context, Result};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -62,7 +63,7 @@ struct PeerInbox {
 pub struct NovNativeSealServiceV1 {
     decision: Option<NovNativeSealDecisionLoopV3>,
     config: NovNativeSealServiceConfigV1,
-    ledger: NovNativeBlockLedgerV1,
+    ledger: Arc<NovNativeBlockLedgerV1>,
     store: NovNativeBlockSealStoreV1,
     bridge: NovNativeSealRoundOverlayV1,
     inbox: BTreeMap<String, PeerInbox>,
@@ -99,13 +100,36 @@ impl NovNativeSealServiceV1 {
             bail!("native seal candidate height mismatch");
         }
         drop(probe);
+        let ledger = NovNativeBlockLedgerV1::open(ledger_path)?;
+        Self::open_with_candidate_view(config, &ledger, runtime, now)
+    }
+
+    /// Open within a live candidate verification scope. The service retains
+    /// only an ordinary ledger handle, never the view's signing capability.
+    /// Isolated candidates must supply a freshly verified view on every poll.
+    pub fn open_with_candidate_view(
+        config: NovNativeSealServiceConfigV1,
+        candidate_view: &NovNativeBlockLedgerV1,
+        runtime: &ProductMainlineOverlayRuntimeV1,
+        now: Instant,
+    ) -> Result<Self> {
+        let ledger_path = candidate_view.path();
+        config.validate(runtime.chain_id())?;
+        validate_service_paths_v1(&config, ledger_path, &[], &[])?;
+        check_runtime(&config, runtime)?;
+        config.authority.validate_against_ledger(candidate_view)?;
+        let (_, block) = candidate_view
+            .load_seal_eligible_local_candidate_v1(config.chain_id, config.block_hash)?;
+        if block.header.height != config.height {
+            bail!("native seal candidate height mismatch");
+        }
         // Join the process-shared live ledger handle, never retain a detached
         // read-only snapshot while the main execution owner updates its ledger.
         // The service invokes no ledger mutation methods.
-        let ledger = NovNativeBlockLedgerV1::open(ledger_path)?;
+        let ledger = Arc::new(NovNativeBlockLedgerV1::open(ledger_path)?);
         let store = NovNativeBlockSealStoreV1::open(&config.seal_store_path)?;
         let driver = NovNativeSealRoundDriverV1::open_with_decision_mode(
-            &ledger,
+            candidate_view,
             &store,
             config.authority.clone(),
             config.block_hash,
@@ -171,10 +195,22 @@ impl NovNativeSealServiceV1 {
     }
 
     pub fn poll(&mut self, runtime: &ProductMainlineOverlayRuntimeV1, now: Instant) -> Result<()> {
+        let ledger = Arc::clone(&self.ledger);
+        self.poll_with_candidate_view(&ledger, runtime, now)
+    }
+
+    /// The view is borrowed only for this poll. Ordinary handles cannot admit
+    /// isolated candidates; callers must wrap this call in live verification.
+    pub fn poll_with_candidate_view(
+        &mut self,
+        candidate_view: &NovNativeBlockLedgerV1,
+        runtime: &ProductMainlineOverlayRuntimeV1,
+        now: Instant,
+    ) -> Result<()> {
         if self.halted {
             bail!("native seal service is halted; inspect and restart explicitly");
         }
-        let result = self.poll_inner(runtime, now);
+        let result = self.poll_inner(candidate_view, runtime, now);
         if result.is_err() {
             self.halt("local_poll_fault");
         }
@@ -183,10 +219,20 @@ impl NovNativeSealServiceV1 {
 
     fn poll_inner(
         &mut self,
+        candidate_view: &NovNativeBlockLedgerV1,
         runtime: &ProductMainlineOverlayRuntimeV1,
         now: Instant,
     ) -> Result<()> {
         check_runtime(&self.config, runtime)?;
+        // Before rate limiting or processing peer messages, reject a detached
+        // ledger or lost live capability. Errors halt and suppress confirmation.
+        if std::fs::canonicalize(candidate_view.path())?
+            != std::fs::canonicalize(self.ledger.path())?
+        {
+            bail!("native seal poll candidate ledger changed");
+        }
+        candidate_view
+            .load_seal_eligible_local_candidate_v1(self.config.chain_id, self.config.block_hash)?;
         if now < self.last_seen {
             bail!("native seal service monotonic clock moved backwards");
         }
@@ -246,7 +292,7 @@ impl NovNativeSealServiceV1 {
                 }
                 match self
                     .bridge
-                    .ingest(&self.ledger, &self.store, runtime, &inbound)
+                    .ingest(candidate_view, &self.store, runtime, &inbound)
                 {
                     Ok(true) => self.accepted = self.accepted.saturating_add(1),
                     Ok(false) => (),
@@ -260,11 +306,15 @@ impl NovNativeSealServiceV1 {
         self.next_peer = (self.next_peer + 1) % peers.len();
         // Always recheck local durable ownership, even after malformed input.
         // A local store error cannot be indefinitely disguised as peer rejects.
-        let sent =
-            self.bridge
-                .poll(&self.ledger, &self.store, &self.config.signer, runtime, now)?;
+        let sent = self.bridge.poll(
+            candidate_view,
+            &self.store,
+            &self.config.signer,
+            runtime,
+            now,
+        )?;
         self.sent = self.sent.saturating_add(sent as u64);
-        self.poll_decision_v3(runtime, now)?;
+        self.poll_decision_v3(candidate_view, runtime, now)?;
         Ok(())
     }
 

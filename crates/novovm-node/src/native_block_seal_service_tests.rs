@@ -7,6 +7,29 @@ use crate::native_block_seal::service_config::NovNativeSealServiceConfigV1;
 include!("native_block_seal_service_v3_tests.rs");
 
 #[test]
+fn native_seal_service_candidate_view_cannot_switch_ledger_even_inside_poll_interval() {
+    let mut cluster = NetworkCluster::new(9_782_313);
+    let now = cluster.started;
+    cluster.start_peer(0, now);
+    cluster.peers[0].adapter.take();
+    let path = write_service_config(&cluster, 0);
+    let peer = &cluster.peers[0];
+    let runtime = peer.runtime.as_ref().unwrap();
+    let mut service = NovNativeSealServiceV1::open_with_candidate_view(
+        NovNativeSealServiceConfigV1::load(&path, cluster.authority.chain_id).unwrap(),
+        peer.node.ledger(), runtime, now,
+    ).unwrap();
+    service.poll_with_candidate_view(peer.node.ledger(), runtime, now).unwrap();
+    let before = durable_seal_facts(peer.node.store());
+    // Same candidate/chain, different local database. Must reject even before
+    // the next tick is due, rather than let throttling hide an ownership error.
+    assert!(service.poll_with_candidate_view(cluster.peers[1].node.ledger(), runtime, now).is_err());
+    assert!(service.halted());
+    assert_eq!(durable_seal_facts(peer.node.store()), before);
+    assert!(service.poll_with_candidate_view(peer.node.ledger(), runtime, now).is_err());
+}
+
+#[test]
 fn native_commit_catchup_real_wss_future_certificate_without_round_adoption() {
     let mut cluster = NetworkCluster::new(9_782_230);
     let initial = cluster.started;

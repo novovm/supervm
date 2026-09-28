@@ -6,6 +6,7 @@ use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1 as Mess
 impl NovNativeSealServiceV1 {
     pub(super) fn poll_decision_v3(
         &mut self,
+        candidate_view: &NovNativeBlockLedgerV1,
         runtime: &ProductMainlineOverlayRuntimeV1,
         now: Instant,
     ) -> Result<()> {
@@ -25,7 +26,7 @@ impl NovNativeSealServiceV1 {
                 certificate_envelope(&self.store, stored)?
             } else {
                 let vote = self.store.sign_local_decision_vote_v3(
-                    &self.ledger,
+                    candidate_view,
                     &qc,
                     &self.config.authority.validator_set,
                     &self.config.signer,
@@ -51,7 +52,7 @@ impl NovNativeSealServiceV1 {
                 }
             };
             self.decision = Some(NovNativeSealDecisionLoopV3::attach(
-                &self.ledger,
+                candidate_view,
                 &self.store,
                 self.config.authority.clone(),
                 self.config.local_validator_id,
@@ -64,7 +65,7 @@ impl NovNativeSealServiceV1 {
             .decision
             .as_mut()
             .context("V3 service lifecycle missing")?
-            .poll(&self.ledger, &self.store, runtime, now)?;
+            .poll(candidate_view, &self.store, runtime, now)?;
         self.sent = self.sent.saturating_add(sent as u64);
         Ok(())
     }
