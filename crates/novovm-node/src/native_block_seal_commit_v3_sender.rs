@@ -68,7 +68,7 @@ impl NovNativeSealDecisionSenderV3 {
         Ok(sender)
     }
 
-    fn verify_durable(
+    pub(super) fn verify_durable(
         &self,
         ledger: &NovNativeBlockLedgerV1,
         store: &NovNativeBlockSealStoreV1,

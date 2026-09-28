@@ -3,6 +3,8 @@
 use super::*;
 #[path = "native_block_seal_commit_v3_collector.rs"]
 pub mod collector;
+#[path = "native_block_seal_commit_v3_loop.rs"]
+pub mod lifecycle;
 #[path = "native_block_seal_commit_v3_sender.rs"]
 pub mod sender;
 #[path = "native_block_seal_commit_v3_store.rs"]

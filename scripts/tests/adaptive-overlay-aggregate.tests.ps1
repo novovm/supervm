@@ -57,3 +57,7 @@ foreach ($case in $cases) {
     if (!$report.boundary.network_only -or $report.boundary.aoem_called) { throw 'boundary changed' }
 }
 Write-Output "PASS: $($cases.Count) aggregate cases; synthetic reports only, no network. Evidence: $root"
+# The last case intentionally launches a child process that exits nonzero.
+# GitHub's pwsh wrapper propagates LASTEXITCODE unless this completed suite
+# explicitly exits successfully. Assertion failures above still terminate first.
+exit 0

@@ -33,6 +33,8 @@ use std::{
 const ROUND_INTERVAL: Duration = Duration::from_secs(60);
 const NETWORK_DEADLINE: Duration = Duration::from_secs(30);
 
+include!("native_block_seal_commit_v3_loop_tests.rs");
+
 struct RelayGuard {
     stopping: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<Result<()>>>,
