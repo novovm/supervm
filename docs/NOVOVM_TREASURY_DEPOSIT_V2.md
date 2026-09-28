@@ -241,3 +241,25 @@ Local result: 3 passed, 0 failed, 1 explicitly ignored; targeted Clippy passed.
 The ignored seal-service loopback scenario shares the migrated allocation helper
 but was NOT EXECUTED. CI now runs the CLI suite before the full mainline gate;
 Linux acceptance of this revision and physical multi-device tests remain pending.
+
+### Linux integration accepted; accounting verifier negatives
+
+Run 36384319170 on 36f0169 completed successfully, including the full mainline
+gate and the three-receiver, two-round dual-node lifecycle gate. Rust security
+and Python syntax checks also passed. Root Node checks were skipped, not verified.
+This supersedes the pending Linux status above for that exact revision only;
+it does not establish physical LAN/public topology, long-run acceptance or a
+coordinated protocol activation. The feature branch is not deployed or merged.
+
+The funded gate's accounting verifier now has direct synthetic-snapshot negative
+tests for missing/excess/failed/unrelated deposit receipts, incorrect reserves,
+unspent USDT and balance-sum overflow. Expected transaction counts must stay in
+the same 1..=100000 range as initialization. Balance summation uses checked
+arithmetic and returns an error rather than panicking or wrapping on overflow.
+All four fixture/verifier unit tests and targeted Clippy passed locally. These
+synthetic inputs test the verifier, not actual AOEM execution. CI explicitly runs
+them before the longer integration gates; the new revision needs its own CI run.
+The updated verifier also passed a local real-process gate: one sender, one
+receiver, eight successful deposits, reserve=36 USDT and remaining accounts=0,
+with durable block/index checks passing. Report:
+`artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json`.

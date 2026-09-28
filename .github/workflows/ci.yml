@@ -252,6 +252,9 @@ jobs:
         timeout-minutes: 10
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --bin novovm-node native_execution_pipeline_tests --locked -- --test-threads=1
 
+      - name: Funded gate accounting rejection tests
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --bin supervm-native-pipeline-dual-node-gate dual_node_funded_fixture --locked
+
       - name: Funded candidate execution and multi-process recovery
         # Run 36374466713 spent ~13 minutes passing the first three cases.
         # Allow the full sequential suite; per-worker 90s deadlines stay intact.
