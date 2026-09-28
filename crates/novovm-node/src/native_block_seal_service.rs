@@ -99,7 +99,7 @@ impl NovNativeSealServiceV1 {
         // The service invokes no ledger mutation methods.
         let ledger = NovNativeBlockLedgerV1::open(ledger_path)?;
         let store = NovNativeBlockSealStoreV1::open(&config.seal_store_path)?;
-        let driver = NovNativeSealRoundDriverV1::open(
+        let driver = NovNativeSealRoundDriverV1::open_with_commit_v2(
             &ledger,
             &store,
             config.authority.clone(),
@@ -108,6 +108,7 @@ impl NovNativeSealServiceV1 {
             config.local_validator_id,
             now,
             config.round_timeout,
+            config.commit_v2_enabled,
         )?;
         let bridge = NovNativeSealRoundOverlayV1::attach(driver, runtime)?;
         let inbox = runtime
@@ -259,9 +260,13 @@ impl NovNativeSealServiceV1 {
             "chain_id": self.config.chain_id,
             "block_hash": super::hex_v1(&self.config.block_hash),
             "local_validator_id": super::hex_v1(&self.config.local_validator_id),
-            "scope": "single_height_prepare_only", "height": status.height, "round": status.round,
+            "scope": if self.config.commit_v2_enabled { "single_height_fixed_round_commit_v2_experimental" } else { "single_height_prepare_only" },
+            "height": status.height, "round": status.round,
             "phase": if self.halted { "Halted".to_string() } else { format!("{:?}", status.phase) },
             "prepared": !self.halted && status.prepared,
+            "commit_v2_enabled": self.config.commit_v2_enabled,
+            "commit_confirmed": !self.halted && status.commit_confirmed,
+            "commit_certificate_hash": if self.halted { None } else { status.commit_certificate_hash.map(|hash| super::hex_v1(&hash)) },
             "qc_hash": if self.halted { None } else { status.qc_hash },
             "finalized": false, "safe": false, "proof_sealed": false, "chain_canonical": false,
             "queued_ingress": self.inbox.values().map(|peer| peer.pending.len()).sum::<usize>(),

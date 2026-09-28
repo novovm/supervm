@@ -157,13 +157,16 @@ impl NovNativeSealRoundOverlayV1 {
             &inbound.source_peer_id,
         )?;
         let cacheable = message.round() <= round;
+        let commit_message = message.is_commit_v2();
         let accepted =
             self.driver
                 .ingest_authenticated(ledger, store, &inbound.source_peer_id, message)?;
         // At most eight exact previously verified frames per authenticated
         // peer; no global eviction by one faulty validator. Never cache errors
         // or future-round messages; clear on each local round transition.
-        if cacheable {
+        // A commit may arrive before local prepare. Do not suppress its retry
+        // after the prerequisite becomes available.
+        if cacheable && (!commit_message || accepted) {
             let hashes = self
                 .received
                 .entry(inbound.source_peer_id.clone())
@@ -246,6 +249,8 @@ impl NovNativeSealRoundOverlayV1 {
             status.phase = NovNativeSealRoundDriverPhaseV1::Halted;
             status.prepared = false;
             status.qc_hash = None;
+            status.commit_confirmed = false;
+            status.commit_certificate_hash = None;
         }
         status
     }

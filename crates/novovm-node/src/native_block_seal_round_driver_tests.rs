@@ -18,6 +18,7 @@ struct DriverPeer {
 }
 
 struct DriverCluster {
+    commit_v2: bool,
     peers: Vec<DriverPeer>,
     authority: NovNativeSealEpochAuthorityV1,
     block_hash: [u8; 32],
@@ -26,6 +27,10 @@ struct DriverCluster {
 
 impl DriverCluster {
     fn new(chain_id: u64) -> Self {
+        Self::new_with_commit(chain_id, false)
+    }
+
+    fn new_with_commit(chain_id: u64, commit_v2: bool) -> Self {
         let started = Instant::now();
         let mut peers = Vec::new();
         let mut expected_authority = None;
@@ -42,7 +47,7 @@ impl DriverCluster {
                 block_hash = block.header.block_hash;
             }
             let key = keys.into_iter().nth(index).unwrap();
-            let driver = NovNativeSealRoundDriverV1::open(
+            let driver = NovNativeSealRoundDriverV1::open_with_commit_v2(
                 node.ledger(),
                 node.store(),
                 authority,
@@ -51,6 +56,7 @@ impl DriverCluster {
                 validator_id_v1(key.verifying_key().as_bytes()),
                 started,
                 DRIVER_INTERVAL,
+                commit_v2,
             )
             .expect("open independent single-validator driver");
             peers.push(DriverPeer { node, key, driver });
@@ -59,6 +65,7 @@ impl DriverCluster {
             .iter()
             .all(|other| other.node.root != peer.node.root)));
         Self {
+            commit_v2,
             peers,
             authority: expected_authority.unwrap(),
             block_hash,
@@ -150,7 +157,7 @@ impl DriverCluster {
         let local_id = self.id(index);
         let peer = &mut self.peers[index];
         peer.node.reopen_store();
-        peer.driver = NovNativeSealRoundDriverV1::open(
+        peer.driver = NovNativeSealRoundDriverV1::open_with_commit_v2(
             peer.node.ledger(),
             peer.node.store(),
             self.authority.clone(),
@@ -159,6 +166,7 @@ impl DriverCluster {
             local_id,
             now,
             DRIVER_INTERVAL,
+            self.commit_v2,
         )
         .expect("recover driver from its own durable state");
     }

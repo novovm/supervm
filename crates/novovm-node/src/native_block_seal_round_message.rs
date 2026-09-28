@@ -37,9 +37,26 @@ pub enum NovNativeSealRoundMessageV1 {
         qc: Box<NovNativeSealQuorumCertificateV1>,
         certificate: Option<Box<NovNativeSealNewViewCertificateV1>>,
     },
+    CommitVoteV2 {
+        proposal: Box<NovNativeSealProposalV1>,
+        qc: Box<NovNativeSealQuorumCertificateV1>,
+        vote: Box<commit_v2::NovNativeSealCommitVoteV2>,
+        certificate: Option<Box<NovNativeSealNewViewCertificateV1>>,
+    },
+    CommitCertificateV2 {
+        proposal: Box<NovNativeSealProposalV1>,
+        commit: Box<commit_v2::NovNativeSealCommitCertificateV2>,
+        certificate: Option<Box<NovNativeSealNewViewCertificateV1>>,
+    },
 }
 
 impl NovNativeSealRoundMessageV1 {
+    pub fn is_commit_v2(&self) -> bool {
+        matches!(
+            self,
+            Self::CommitVoteV2 { .. } | Self::CommitCertificateV2 { .. }
+        )
+    }
     /// A TC identifies the round it timed out, not the next target round.
     pub fn round(&self) -> u64 {
         match self {
@@ -48,7 +65,9 @@ impl NovNativeSealRoundMessageV1 {
             Self::NewView { observation, .. } => observation.context.round,
             Self::Proposal { proposal, .. }
             | Self::Vote { proposal, .. }
-            | Self::QuorumCertificate { proposal, .. } => proposal.subject.round,
+            | Self::QuorumCertificate { proposal, .. }
+            | Self::CommitVoteV2 { proposal, .. }
+            | Self::CommitCertificateV2 { proposal, .. } => proposal.subject.round,
         }
     }
 
@@ -56,7 +75,9 @@ impl NovNativeSealRoundMessageV1 {
         match self {
             Self::Proposal { proposal, .. }
             | Self::Vote { proposal, .. }
-            | Self::QuorumCertificate { proposal, .. } => Some(proposal),
+            | Self::QuorumCertificate { proposal, .. }
+            | Self::CommitVoteV2 { proposal, .. }
+            | Self::CommitCertificateV2 { proposal, .. } => Some(proposal),
             Self::Timeout(_) | Self::TimeoutCertificate(_) | Self::NewView { .. } => None,
         }
     }
@@ -65,7 +86,9 @@ impl NovNativeSealRoundMessageV1 {
         match self {
             Self::Proposal { certificate, .. }
             | Self::Vote { certificate, .. }
-            | Self::QuorumCertificate { certificate, .. } => certificate.as_deref(),
+            | Self::QuorumCertificate { certificate, .. }
+            | Self::CommitVoteV2 { certificate, .. }
+            | Self::CommitCertificateV2 { certificate, .. } => certificate.as_deref(),
             Self::Timeout(_) | Self::TimeoutCertificate(_) | Self::NewView { .. } => None,
         }
     }
@@ -102,9 +125,12 @@ impl NovNativeSealRoundMessageV1 {
             Self::NewView { observation, .. } => Some(observation.validator_id),
             Self::Proposal { proposal, .. } => Some(proposal.proposer_id),
             Self::Vote { vote, .. } => Some(vote.validator_id),
+            Self::CommitVoteV2 { vote, .. } => Some(vote.validator_id),
             // Aggregate certificates may be relayed by any pinned validator;
             // relaying never substitutes the sender for the actual signers.
-            Self::TimeoutCertificate(_) | Self::QuorumCertificate { .. } => None,
+            Self::TimeoutCertificate(_)
+            | Self::QuorumCertificate { .. }
+            | Self::CommitCertificateV2 { .. } => None,
         };
         if direct_signer.is_some_and(|signer| signer != source_validator) {
             bail!("native round message signer differs from its authenticated source");
@@ -141,7 +167,11 @@ impl NovNativeSealRoundMessageV1 {
                     .context("native round new-view requires a nonzero target round")?;
                 previous_timeout.verify(&preceding, set)?;
             }
-            Self::Proposal { .. } | Self::Vote { .. } | Self::QuorumCertificate { .. } => {
+            Self::Proposal { .. }
+            | Self::Vote { .. }
+            | Self::QuorumCertificate { .. }
+            | Self::CommitVoteV2 { .. }
+            | Self::CommitCertificateV2 { .. } => {
                 let proposal = self
                     .proposal()
                     .context("native round proposal is missing")?;
@@ -179,6 +209,20 @@ impl NovNativeSealRoundMessageV1 {
                     }
                 }
                 match self {
+                    Self::CommitVoteV2 { qc, vote, .. } => {
+                        vote.verify(qc, set)?;
+                        if qc.subject != *subject || qc.proposal_hash != proposal.proposal_hash {
+                            bail!("commit vote witness does not bind its proposal");
+                        }
+                    }
+                    Self::CommitCertificateV2 { commit, .. } => {
+                        commit.verify(set)?;
+                        if commit.prepare.subject != *subject
+                            || commit.prepare.proposal_hash != proposal.proposal_hash
+                        {
+                            bail!("commit certificate does not bind its proposal");
+                        }
+                    }
                     Self::Vote { vote, .. } => vote.verify(subject, proposal.proposal_hash, set)?,
                     Self::QuorumCertificate { qc, .. } => {
                         qc.verify(set)?;

@@ -11,6 +11,9 @@ use crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+#[path = "native_block_seal_commit_runtime.rs"]
+mod commit_runtime;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NovNativeSealRoundDriverPhaseV1 {
     WaitingProposal,
@@ -18,11 +21,14 @@ pub enum NovNativeSealRoundDriverPhaseV1 {
     CollectingNewViews,
     CollectingVotes,
     Prepared,
+    CommitConfirmed,
     Halted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NovNativeSealRoundDriverStatusV1 {
+    pub commit_confirmed: bool,
+    pub commit_certificate_hash: Option<[u8; 32]>,
     pub height: u64,
     pub round: u64,
     pub leader_id: [u8; 32],
@@ -35,6 +41,8 @@ pub struct NovNativeSealRoundDriverStatusV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DriverBinding {
+    #[serde(default)]
+    commit_v2: bool,
     schema: String,
     authority: NovNativeSealEpochAuthorityV1,
     height: u64,
@@ -47,6 +55,9 @@ struct DriverBinding {
 /// Remote caches are bounded by the pinned validator set and may be recollected.
 /// Keys are never stored here; the local scheduler supplies its key to `poll`.
 pub struct NovNativeSealRoundDriverV1 {
+    commit_votes: BTreeMap<[u8; 32], commit_v2::NovNativeSealCommitVoteV2>,
+    pending_commit: Option<commit_v2::NovNativeSealCommitCertificateV2>,
+    committed: Option<commit_v2::NovNativeSealCommitCertificateV2>,
     binding: DriverBinding,
     store_path: PathBuf,
     ledger_path: PathBuf,
@@ -87,6 +98,31 @@ impl NovNativeSealRoundDriverV1 {
         now: Instant,
         interval: Duration,
     ) -> Result<Self> {
+        Self::open_with_commit_v2(
+            ledger,
+            store,
+            authority,
+            block_hash,
+            justify_qc_hash,
+            local_validator_id,
+            now,
+            interval,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_with_commit_v2(
+        ledger: &NovNativeBlockLedgerV1,
+        store: &NovNativeBlockSealStoreV1,
+        authority: NovNativeSealEpochAuthorityV1,
+        block_hash: [u8; 32],
+        justify_qc_hash: Option<[u8; 32]>,
+        local_validator_id: [u8; 32],
+        now: Instant,
+        interval: Duration,
+        commit_v2: bool,
+    ) -> Result<Self> {
         authority.validate_against_ledger(ledger)?;
         if interval.is_zero() || interval > Duration::from_secs(300) {
             bail!("round driver interval must be positive and at most 300 seconds");
@@ -108,6 +144,7 @@ impl NovNativeSealRoundDriverV1 {
         )?;
         ensure_subject_budget(&subject)?;
         let binding = DriverBinding {
+            commit_v2,
             schema: "novovm-native-seal-round-driver-binding/v1".into(),
             authority,
             height: subject.height,
@@ -144,6 +181,9 @@ impl NovNativeSealRoundDriverV1 {
             .scheduled_leader_v1(binding.height, state.current.round)?;
         let timer = NovNativeSealRoundTimerV1::new(&state, now, interval)?;
         let mut driver = Self {
+            commit_votes: BTreeMap::new(),
+            pending_commit: None,
+            committed: None,
             binding,
             store_path: fs::canonicalize(store.path())?,
             ledger_path: fs::canonicalize(ledger.path())?,
@@ -164,6 +204,7 @@ impl NovNativeSealRoundDriverV1 {
         };
         driver.check_owner(ledger, store)?;
         driver.recover_local(ledger, store)?;
+        driver.recover_commit(store)?;
         Ok(driver)
     }
 
@@ -405,6 +446,9 @@ impl NovNativeSealRoundDriverV1 {
             self.binding.height,
             source_peer_id,
         )?;
+        if message.is_commit_v2() {
+            return self.ingest_commit(ledger, store, &message);
+        }
         if message.round() != self.state.current.round || self.prepared.is_some() {
             return Ok(false);
         }
@@ -451,6 +495,7 @@ impl NovNativeSealRoundDriverV1 {
                 self.pending_qc = Some(qc.as_ref().clone());
             }
             Message::Proposal { .. } => (),
+            Message::CommitVoteV2 { .. } | Message::CommitCertificateV2 { .. } => unreachable!(),
         }
         if self.certificate.is_none() {
             self.certificate = message.certificate().cloned();
@@ -497,7 +542,7 @@ impl NovNativeSealRoundDriverV1 {
         self.last_poll = now;
         self.recover_local(ledger, store)?;
         if self.prepared.is_some() {
-            return self.completed_output();
+            return self.poll_commit(ledger, store, key);
         }
         if let Some(qc) = self.pending_qc.clone() {
             self.admit(ledger, store)?;
@@ -509,7 +554,7 @@ impl NovNativeSealRoundDriverV1 {
             store.persist_local_verified_qc(ledger, &qc, self.set())?;
             self.prepared = Some(qc);
             self.pin_prepared(store)?;
-            return self.completed_output();
+            return self.poll_commit(ledger, store, key);
         }
         let mut output = Vec::new();
         if !self.timeouts.contains_key(&self.binding.local_validator_id) {
@@ -736,6 +781,8 @@ impl NovNativeSealRoundDriverV1 {
         use NovNativeSealRoundDriverPhaseV1 as Phase;
         let phase = if self.halted {
             Phase::Halted
+        } else if self.committed.is_some() {
+            Phase::CommitConfirmed
         } else if self.prepared.is_some() {
             Phase::Prepared
         } else if self.timeouts.contains_key(&self.binding.local_validator_id) {
@@ -748,6 +795,12 @@ impl NovNativeSealRoundDriverV1 {
             Phase::WaitingProposal
         };
         NovNativeSealRoundDriverStatusV1 {
+            commit_confirmed: !self.halted && self.committed.is_some(),
+            commit_certificate_hash: if self.halted {
+                None
+            } else {
+                self.committed.as_ref().map(|c| c.certificate_hash)
+            },
             height: self.binding.height,
             round: self.state.current.round,
             leader_id: self.leader_id,

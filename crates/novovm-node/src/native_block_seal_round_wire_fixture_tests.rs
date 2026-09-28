@@ -102,6 +102,9 @@ fn native_seal_round_wire_roundtrips_all_six_authenticated_message_variants() {
                 RoundMessage::Proposal { .. } => 3,
                 RoundMessage::Vote { .. } => 4,
                 RoundMessage::QuorumCertificate { .. } => 5,
+                RoundMessage::CommitVoteV2 { .. } | RoundMessage::CommitCertificateV2 { .. } => {
+                    panic!("prepare-only fixture emitted commit")
+                }
             };
             seen.insert(kind);
             if matches!(kind, 0 | 2 | 3 | 4) {

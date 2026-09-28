@@ -2948,6 +2948,7 @@ mod tests {
     }
     mod round_driver {
         include!("native_block_seal_round_driver_tests.rs");
+        include!("native_block_seal_commit_runtime_tests.rs");
         include!("native_block_seal_round_wire_fixture_tests.rs");
     }
     mod native_block_seal_newview {

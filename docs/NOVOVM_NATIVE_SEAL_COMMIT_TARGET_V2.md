@@ -49,3 +49,6 @@ fork choice 或 AOEM/ledger 可恢复晋升。V1 服务仍为 prepare-only，默
 
 下一刀：在此显式版本契约上设计并验证在线 commit 驱动和跨轮行为，再接网络；
 不能因为本地 V2 凭证成立就设置 finalized。
+
+后续已增加[固定 prepared 轮次的实验性在线确认](NOVOVM_NATIVE_SEAL_COMMIT_RUNTIME_V2.md)。
+该模式显式开启，跨轮 commit 活性及最终晋升仍未完成。

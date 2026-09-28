@@ -90,7 +90,7 @@ pub fn decode_nov_native_seal_round_wire_v1(
     }
     if !is_nov_native_seal_round_wire_v1(wire)
         || wire[8..10] != VERSION.to_be_bytes()
-        || !(1..=6).contains(&wire[10])
+        || !(1..=8).contains(&wire[10])
         || wire[11] != 0
     {
         bail!("native seal round wire magic/version/kind/flags is invalid");
@@ -142,6 +142,8 @@ fn kind(message: &Message) -> u8 {
         Message::Proposal { .. } => 4,
         Message::Vote { .. } => 5,
         Message::QuorumCertificate { .. } => 6,
+        Message::CommitVoteV2 { .. } => 7,
+        Message::CommitCertificateV2 { .. } => 8,
     }
 }
 

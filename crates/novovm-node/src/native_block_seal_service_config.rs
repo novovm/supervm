@@ -21,6 +21,7 @@ const MAX_AUTHORITY_BYTES: usize = 256 * 1024;
 /// Intentionally neither Debug nor Serialize: this contains the operator's key.
 /// Callers cannot bypass validation by constructing a public configuration.
 pub struct NovNativeSealServiceConfigV1 {
+    pub(crate) commit_v2_enabled: bool,
     pub(crate) chain_id: u64,
     pub(crate) height: u64,
     pub(crate) block_hash: [u8; 32],
@@ -39,6 +40,8 @@ pub struct NovNativeSealServiceConfigV1 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ServiceFile {
+    #[serde(default)]
+    commit_v2_enabled: bool,
     schema: String,
     enabled: bool,
     chain_id: u64,
@@ -199,6 +202,7 @@ impl NovNativeSealServiceConfigV1 {
             local_validator_id,
             seal_store_path,
             protected_paths: vec![config_path, authority_path, signer_path],
+            commit_v2_enabled: raw.commit_v2_enabled,
             round_timeout: Duration::from_millis(raw.round_timeout_ms),
             poll_interval: Duration::from_millis(raw.poll_interval_ms),
             ingress_per_source_per_second: raw.ingress_per_source_per_second,
@@ -519,6 +523,7 @@ mod tests {
         assert!(loaded.protected_paths.iter().all(|path| path.is_absolute()));
         assert!(loaded.protected_paths.iter().all(|path| path.is_file()));
         assert_eq!(loaded.signer.to_bytes(), [1; 32]);
+        assert!(!loaded.commit_v2_enabled);
         assert!(loaded.validate(22923).is_err());
     }
 
@@ -528,6 +533,7 @@ mod tests {
         let original = fixture.config.clone();
         for (field, value) in [
             ("enabled", json!(false)),
+            ("commit_v2_enabled", json!("true")),
             ("schema", json!("legacy")),
             ("silent_unsafe_mode", json!(true)),
             ("chain_id", json!(22923)),

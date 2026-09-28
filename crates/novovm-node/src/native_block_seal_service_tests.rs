@@ -5,6 +5,14 @@ use crate::native_block_seal::service::NovNativeSealServiceV1;
 use crate::native_block_seal::service_config::NovNativeSealServiceConfigV1;
 
 fn write_service_config(cluster: &NetworkCluster, index: usize) -> PathBuf {
+    write_service_config_with_commit(cluster, index, false)
+}
+
+fn write_service_config_with_commit(
+    cluster: &NetworkCluster,
+    index: usize,
+    commit_v2: bool,
+) -> PathBuf {
     let peer = &cluster.peers[index];
     let directory = peer.node.root.join("service-config");
     fs::create_dir_all(&directory).unwrap();
@@ -20,6 +28,7 @@ fn write_service_config(cluster: &NetworkCluster, index: usize) -> PathBuf {
         serde_json::to_vec_pretty(&serde_json::json!({
             "schema": "novovm-native-seal-service/v1",
             "enabled": true,
+            "commit_v2_enabled": commit_v2,
             "chain_id": cluster.authority.chain_id,
             "height": 1,
             "block_hash": hex_v1(&cluster.block_hash),
@@ -58,12 +67,183 @@ fn start_test_service(
     index: usize,
     now: Instant,
 ) -> NovNativeSealServiceV1 {
-    cluster.start_peer(index, now);
+    start_test_service_with_commit(cluster, index, now, false)
+}
+
+fn start_test_service_with_commit(
+    cluster: &mut NetworkCluster,
+    index: usize,
+    now: Instant,
+    commit_v2: bool,
+) -> NovNativeSealServiceV1 {
+    cluster.start_peer_with_commit(index, now, commit_v2);
     // Never poll the fixture's lower-level adapter: only the service owns the
     // signing lifecycle under test. Opening an adapter itself makes no signature.
     cluster.peers[index].adapter.take();
-    let path = write_service_config(cluster, index);
+    let path = write_service_config_with_commit(cluster, index, commit_v2);
     open_test_service(cluster, index, &path, now).unwrap()
+}
+
+#[test]
+fn native_commit_runtime_service_real_wss_confirm_and_restart() {
+    let mut cluster = NetworkCluster::new(9_782_220);
+    let initial = cluster.started;
+    let mut services = (0..4)
+        .map(|index| {
+            Some(start_test_service_with_commit(
+                &mut cluster,
+                index,
+                initial,
+                true,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let wall_start = Instant::now();
+    let completion = loop {
+        let now = initial + wall_start.elapsed();
+        step_test_services(&cluster, &mut services, &[0, 1, 2, 3], now);
+        if services
+            .iter()
+            .all(|s| s.as_ref().unwrap().status_json()["commit_confirmed"] == true)
+        {
+            break now;
+        }
+        assert!(
+            wall_start.elapsed() < NETWORK_DEADLINE,
+            "commit WSS deadline: {:?}",
+            services
+                .iter()
+                .map(|s| s.as_ref().unwrap().status_json())
+                .collect::<Vec<_>>()
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    for (index, service) in services.iter().enumerate() {
+        let status = service.as_ref().unwrap().status_json();
+        assert_eq!(status["commit_v2_enabled"], true);
+        assert_eq!(
+            status["scope"],
+            "single_height_fixed_round_commit_v2_experimental"
+        );
+        let certificate = cluster.peers[index]
+            .node
+            .store()
+            .load_commit_certificate_by_height_v2(cluster.authority.chain_id, 1, 1)
+            .unwrap()
+            .unwrap();
+        certificate
+            .verify(&cluster.authority.validator_set)
+            .unwrap();
+        assert_eq!(
+            status["commit_certificate_hash"],
+            hex_v1(&certificate.certificate_hash)
+        );
+        assert!(certificate.signed_weight >= 3);
+    }
+    let original = services[0].as_ref().unwrap().status_json()["commit_certificate_hash"].clone();
+    services[0].take();
+    cluster.peers[0].runtime.take().unwrap().shutdown();
+    cluster.peers[0].node.reopen_store();
+    services[0] = Some(start_test_service_with_commit(
+        &mut cluster,
+        0,
+        completion + Duration::from_millis(1),
+        true,
+    ));
+    assert_eq!(
+        services[0].as_ref().unwrap().status_json()["commit_confirmed"],
+        true
+    );
+    assert_eq!(
+        services[0].as_ref().unwrap().status_json()["commit_certificate_hash"],
+        original
+    );
+    cluster.assert_unfinalized();
+}
+
+#[test]
+fn native_commit_runtime_early_wss_certificate_can_retry_after_prepare() {
+    let mut cluster = NetworkCluster::new(9_782_221);
+    let initial = cluster.started;
+    let delayed = (cluster.initial_leader() + 1) % 4;
+    let active = (0..4).filter(|i| *i != delayed).collect::<Vec<_>>();
+    for index in 0..4 {
+        cluster.start_peer_with_commit(index, initial, true);
+    }
+    let mut early = None;
+    let mut prepared = None;
+    let started = Instant::now();
+    let now = loop {
+        let now = initial + started.elapsed();
+        cluster.step(&active, now);
+        for event in cluster.peers[delayed]
+            .runtime
+            .as_ref()
+            .unwrap()
+            .drain_events(128)
+        {
+            if let ProductMainlineOverlayEventV1::Inbound(inbound) = event {
+                match inbound.frame.payload.get(10) {
+                    Some(6) => prepared = Some(inbound),
+                    Some(8) => early = Some(inbound),
+                    _ => (),
+                }
+            }
+        }
+        if early.is_some() && prepared.is_some() {
+            break now;
+        }
+        assert!(
+            started.elapsed() < NETWORK_DEADLINE,
+            "early commit WSS deadline"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    let peer = &mut cluster.peers[delayed];
+    let runtime = peer.runtime.as_ref().unwrap();
+    let adapter = peer.adapter.as_mut().unwrap();
+    let early = early.unwrap();
+    assert!(!adapter.status().prepared);
+    let before = durable_seal_facts(peer.node.store());
+    assert!(!adapter
+        .ingest(peer.node.ledger(), peer.node.store(), runtime, &early)
+        .unwrap());
+    assert_eq!(durable_seal_facts(peer.node.store()), before);
+    assert!(adapter
+        .ingest(
+            peer.node.ledger(),
+            peer.node.store(),
+            runtime,
+            &prepared.unwrap()
+        )
+        .unwrap());
+    adapter
+        .poll(
+            peer.node.ledger(),
+            peer.node.store(),
+            &peer.key,
+            runtime,
+            now,
+        )
+        .unwrap();
+    assert!(adapter.status().prepared);
+    assert!(
+        adapter
+            .ingest(peer.node.ledger(), peer.node.store(), runtime, &early)
+            .unwrap(),
+        "unprocessed early frame must not be deduplicated forever"
+    );
+    adapter
+        .poll(
+            peer.node.ledger(),
+            peer.node.store(),
+            &peer.key,
+            runtime,
+            now,
+        )
+        .unwrap();
+    assert!(adapter.status().commit_confirmed);
+    cluster.assert_unfinalized();
 }
 
 fn step_test_services(
