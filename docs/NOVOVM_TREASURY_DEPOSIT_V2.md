@@ -263,3 +263,29 @@ The updated verifier also passed a local real-process gate: one sender, one
 receiver, eight successful deposits, reserve=36 USDT and remaining accounts=0,
 with durable block/index checks passing. Report:
 `artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json`.
+
+### Read-only cross-machine protocol comparison
+
+The existing CLI observation command now accepts an independently approved pin:
+
+```powershell
+# From each machine's own repository root, using the intended business environment:
+cargo run -p novovmctl -- native-nonce-migration target-protocol
+cargo run -p novovmctl -- native-nonce-migration target-protocol --expected-commitment <approved-64-lowercase-hex>
+```
+
+Replace the placeholder with the same independently reviewed commitment on every
+machine. Do not automatically feed each machine's observed value back as its own
+expected value: that defeats comparison. No particular drive/workspace name is
+required. Without the option the command retains observation-only behavior.
+Malformed pins and mismatches return nonzero status and a JSON error; successful
+comparison sets `expected_commitment_verified=true`. Business environment drift
+(for example fee configuration) is detected by the existing shared commitment.
+
+Scope is explicitly `this_cli_binary_and_current_environment`: matching does NOT
+prove that a separately installed/running node binary, its launch environment,
+chain/genesis, validator keys, AOEM build or existing database matches. The report
+keeps `running_node_verified=false`, `existing_database_verified=false`,
+`activation_ready=false` and `import_performed=false`. This command reads no ledger,
+creates no files and cannot repin or migrate state. Keep old bound databases
+unchanged until the existing offline upgrade/authorization workflow is reviewed.

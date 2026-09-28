@@ -338,6 +338,72 @@ fn observed_target_protocol() -> String {
     target.to_string()
 }
 
+#[test]
+fn target_protocol_checks_approved_pin_without_writes_or_activation() {
+    let root = fixture_root();
+    let command = || {
+        let mut command = cli("target-protocol");
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().starts_with("NOVOVM_") {
+                command.env_remove(key);
+            }
+        }
+        command.current_dir(&root);
+        command
+    };
+    let observed = run_json(command(), true);
+    assert_eq!(observed["data"]["expected_commitment_verified"], false);
+    let pin = observed["data"]["target_protocol_commitment"]
+        .as_str()
+        .unwrap();
+    let mut matched = command();
+    matched.args(["--expected-commitment", pin]);
+    let report = run_json(matched, true);
+    assert_eq!(report["data"]["expected_commitment_verified"], true);
+    for field in [
+        "running_node_verified",
+        "existing_database_verified",
+        "activation_ready",
+        "import_performed",
+        "authority_state_published",
+    ] {
+        assert_eq!(report["data"][field], false);
+    }
+    let wrong = if pin == "00".repeat(32) {
+        "11".repeat(32)
+    } else {
+        "00".repeat(32)
+    };
+    for rejected in [
+        wrong.as_str(),
+        "",
+        "abc",
+        &"AA".repeat(32),
+        &"gg".repeat(32),
+    ] {
+        let mut invalid = command();
+        invalid.args(["--expected-commitment", rejected]);
+        run_json(invalid, false);
+    }
+    let mut drift = command();
+    drift
+        .args(["--expected-commitment", pin])
+        .env("NOVOVM_NATIVE_FEE_RATE_PPM", "1234567");
+    let error = run_json(drift, false);
+    assert!(error
+        .to_string()
+        .contains("protocol configuration mismatch"));
+    let mut missing = command();
+    missing.arg("--expected-commitment");
+    run_json(missing, false);
+    assert_eq!(
+        fs::read_dir(&root).unwrap().count(),
+        0,
+        "read-only preflight must not create files"
+    );
+    fs::remove_dir(root).unwrap();
+}
+
 fn workspace_files(workspace: &Path) -> Vec<(String, Vec<u8>)> {
     let mut files: Vec<_> = fs::read_dir(workspace)
         .unwrap()

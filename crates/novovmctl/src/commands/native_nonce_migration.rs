@@ -96,10 +96,29 @@ fn inner_run(args: &NativeNonceMigrationArgs) -> Result<Value, CtlError> {
                 "bundle_digest_verified": true, "report": report,
                 "activation_ready": false, "import_performed": false}))
         }
-        NativeNonceMigrationCommand::TargetProtocol => {
+        NativeNonceMigrationCommand::TargetProtocol(args) => {
             let commitment = current_target_protocol_v1()?;
+            if let Some(expected) = &args.expected_commitment {
+                if expected.len() != 64
+                    || !expected
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                {
+                    return Err(CtlError::InvalidArgument(
+                        "--expected-commitment must be 64 lowercase hex characters".into(),
+                    ));
+                }
+                if expected != &commitment {
+                    return Err(CtlError::InvalidArgument(format!(
+                        "protocol configuration mismatch: expected={expected} observed={commitment}; do not repin or migrate existing state automatically"
+                    )));
+                }
+            }
             Ok(
                 json!({"action": "target-protocol", "target_protocol_commitment": commitment,
+                "expected_commitment_verified": args.expected_commitment.is_some(),
+                "scope": "this_cli_binary_and_current_environment",
+                "running_node_verified": false, "existing_database_verified": false,
                 "observed_only": true, "authority_state_published": false,
                 "activation_ready": false, "import_performed": false}),
             )

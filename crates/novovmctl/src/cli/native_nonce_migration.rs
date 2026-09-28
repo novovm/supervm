@@ -18,7 +18,7 @@ pub enum NativeNonceMigrationCommand {
     /// Verify a transported bundle against independently supplied digest and pins.
     Verify(NativeNonceVerifyArgs),
     /// Observe this binary's current V2 protocol commitment; not upgrade authority.
-    TargetProtocol,
+    TargetProtocol(NativeTargetProtocolArgs),
     /// Stage a verified V2 state proposal in a new, separate offline workspace.
     PrepareUpgrade(NativeNonceUpgradeArgs),
     /// Resume an existing offline proposal journal without publishing chain state.
@@ -29,6 +29,13 @@ pub enum NativeNonceMigrationCommand {
     VerifyUpgradeAuthorization(NativeNonceUpgradeAuthorizationArgs),
     /// Verify source prepare-QC coverage without claiming finality or replaying execution.
     VerifySourceQc(NativeNonceSourceQcArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct NativeTargetProtocolArgs {
+    /// Independently approved 64-character lowercase hex commitment; never auto-pin.
+    #[arg(long)]
+    pub expected_commitment: Option<String>,
 }
 
 #[derive(Debug, Args)]
