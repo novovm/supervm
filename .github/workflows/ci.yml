@@ -279,6 +279,10 @@ jobs:
       - name: Product evidence bounded-relay tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib product_evidence::tests
 
+      - name: Funded pipeline execution and session recovery regression
+        timeout-minutes: 10
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --bin novovm-node native_execution_pipeline_tests --locked -- --test-threads=1
+
       - name: SuperVM Mainline Gate Runner (canonical)
         shell: bash
         run: |

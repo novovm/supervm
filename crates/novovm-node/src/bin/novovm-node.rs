@@ -42489,6 +42489,7 @@ mod native_execution_pipeline_tests {
         let _semantic_session_scope =
             novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
         let chain_id = 9_998_885u64;
+        prepare_funded_pipeline_case(chain_id, 1);
         let raw = build_native_execution_pipeline_fixture_payloads_v1(chain_id, 1)
             .expect("build authenticated native fixture")
             .remove(0);
@@ -42622,6 +42623,7 @@ mod native_execution_pipeline_tests {
         let _semantic_session_scope =
             novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
         let chain_id = 9_998_886u64;
+        prepare_funded_pipeline_case(chain_id, 5);
         let mut ingress_drive = NativeExecutionPipelineIngressDriveV1 {
             chain_id,
             payloads: build_native_execution_pipeline_fixture_payloads_v1(chain_id, 5)
@@ -42783,6 +42785,7 @@ mod native_execution_pipeline_tests {
         let _semantic_session_scope =
             novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
         let chain_id = 9_998_887u64;
+        prepare_funded_pipeline_case(chain_id, 1);
         let local = NodeId(9_991_887);
         let remote = NodeId(9_991_888);
         let transport = InMemoryTransport::new(8);
@@ -42894,6 +42897,7 @@ mod native_execution_pipeline_tests {
         let _semantic_session_scope =
             novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
         let chain_id = 9_998_891u64;
+        prepare_funded_pipeline_case(chain_id, 1);
         let local = NodeId(9_991_891);
         let remote = NodeId(9_991_892);
         let local_transport =

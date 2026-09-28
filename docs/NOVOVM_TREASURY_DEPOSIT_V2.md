@@ -179,3 +179,26 @@ applying the output. Normal fixture tests continue to compare against actual
 durable signing. All eight checkpoint/upgrade CLI integration tests, including
 forged quorum/root/domain/pin rejections, passed locally after re-signing.
 Remote CI must be rerun on this revision before claiming Linux acceptance.
+
+### Isolated pipeline fixture migration
+
+Linux run 36353187741 passed the funded deposit, replay, candidate recovery and
+CLI certificate regressions, then failed five main-node pipeline tests: their
+unfunded NOV deposits correctly rejected with
+`reserve_deposit_insufficient_balance`. The subsequent missing artifact failure
+was secondary; the dual-node step was not reached.
+
+Those five test-only child processes now receive an explicit allocation before
+ingress: signer i owns i USDT and 10,000 NOV for fees. Initialization requires
+the isolated child path and an empty store, uses an exclusive marker, reads back
+the allocation, and supplies the existing exact-snapshot bootstrap anchor.
+Production transaction construction and balance checks are unchanged. Successful
+persisted receipts and AOEM semantic evidence remain required; every checked tick
+also verifies the exact cumulative USDT reserve and account/reserve conservation.
+A negative test refuses repeated initialization without changing the snapshot.
+These tests cover the existing unsealed pipeline profile, not production finality
+or an operator deployment/allocation mechanism.
+
+CI runs this suite explicitly before the long mainline gate, retaining the gate's
+original coverage. Local suite: 33 passed, 0 failed. Remote rerun remains required;
+this change does not authorize merging, repinning or upgrading live nodes.
