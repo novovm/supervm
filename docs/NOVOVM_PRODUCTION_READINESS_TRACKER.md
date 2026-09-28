@@ -15,7 +15,7 @@
 
 | 项目 | 当前状态 | 完成所需证据 |
 | --- | --- | --- |
-| V3 签名/归档/有界收发 | 本地完整 seal 回归 144 项通过，Linux CI 待验收 | 同一提交的本地与 Linux CI 测试 |
+| V3 签名/归档/有界收发 | `0a0a916` 本地完整 seal 回归 147 项通过，Linux CI 待验收 | 同一提交的本地与 Linux CI 测试 |
 | 自动服务接管与版本绑定 | 显式 V3 单候选配置与持久模式绑定已接入，三项本机服务测试通过 | 实际节点进程/AOEM 候选端到端与实体多机验收仍需完成 |
 | 共同 proposal/body/context 与独立执行核验 | 待现代码逐项追踪与集成验收 | 不同机器收到同一候选，独立执行及根/回执对齐，错误结果拒绝 |
 | 新轮签名调度与分区恢复 | prepare 前故障换轮与返回追赶有服务测试；prepare 后决策分票恢复尚未完成 | 不重签冲突决策，分票/分区/恢复后可进展，确定性测试 |
@@ -43,15 +43,20 @@
   `run_nov_native_candidate_execution_plan_v1`，推进的是本地未封印执行头，
   不能直接用于不可信网络候选的试执行。
 - `native_candidate_workspace.rs` / `native_candidate_execution.rs` 已有隔离输出持久化，
-  返回 `authority_state_published=false`；本次没有新增权威状态晋升。
+  返回 `authority_state_published=false`；新增 `load_block_artifact_v1` 可从已校验持久输出
+  重建完整块，但没有新增账本准入或权威状态晋升。
 - `native_block_ledger.rs::load_seal_eligible_local_candidate_v1` 仍要求本地账本候选，
   因此“隔离输出 -> 可验证候选 -> 决策 -> 可恢复权威发布”的生产路径还须接合。
 
 ## 本次 CI 修复证据
 
-- 后续 V3 服务接入切片：三个新增服务用例通过，主节点二进制 `cargo check`、
-  lib/tests Clippy `-D warnings`、格式与 diff 检查通过。完整 147 项 seal 回归正在执行，
-  完成结果须另行记录，不以已通过的三个用例替代整套回归。
+- 隔离输出块重建：增强的真实 AOEM 竞争分支/完整块等价/GC 后重开/损坏与中止测试
+  通过（34.71 秒）；14 项账本回归通过；lib/tests Clippy 与格式检查通过。
+  7 项 `candidate_workspace_execution` 扩展回归仍在执行，尚未计为全通过。
+
+- 后续 V3 服务接入切片 `0a0a916`：三个新增服务用例通过，主节点二进制 `cargo check`、
+  lib/tests Clippy `-D warnings`、格式与 diff 检查通过。完整 seal 回归结束：
+  **147 passed / 0 failed，484.53 秒**。该结果不替代实体多机或主网最终性验收。
 - 基线 `2c3200a` 的 CI 运行 `36492950313`：Windows/Linux launcher、Rust security、
   Python 均通过；Rust 主任务仍在执行。此结果不代表后续接入提交的 CI 已通过。
 

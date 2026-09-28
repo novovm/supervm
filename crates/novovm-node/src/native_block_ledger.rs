@@ -2265,7 +2265,7 @@ pub fn nov_native_block_receipt_root_v1(
     Ok(hasher.finalize().into())
 }
 
-fn build_prepared_block_v1(
+pub(crate) fn build_prepared_block_v1(
     input: NovNativeBlockCandidateInputV1,
 ) -> Result<NovNativePreparedBlockV1> {
     input
@@ -2313,7 +2313,7 @@ fn build_prepared_block_v1(
     })
 }
 
-fn build_durable_block_v1(
+pub(crate) fn build_durable_block_v1(
     prepared: &NovNativePreparedBlockV1,
     input: NovNativeBlockCommitInputV1,
 ) -> Result<NovNativeDurableBlockV1> {

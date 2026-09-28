@@ -224,8 +224,19 @@ fn candidate_workspace_execution_competing_results_match_authority_and_survive_p
                 .unwrap()
                 .is_none()
         );
+        assert!(workspace::load_block_artifact_v1(chain_id, left.workspace_id, params)
+            .unwrap().is_none());
         let left_result = workspace::execute_v1(chain_id, left.workspace_id, params).unwrap();
         let right_result = workspace::execute_v1(chain_id, right.workspace_id, params).unwrap();
+        let left_block = workspace::load_block_artifact_v1(chain_id, left.workspace_id, params)
+            .unwrap().unwrap();
+        let right_block = workspace::load_block_artifact_v1(chain_id, right.workspace_id, params)
+            .unwrap().unwrap();
+        assert_eq!(left_block.output_digest, left_result.output_digest);
+        assert_eq!(left_block.plan_commitment, left_plan.plan_commitment);
+        assert_ne!(left_block.block().header.block_hash,
+            right_block.block().header.block_hash);
+        assert!(!left_block.block().header.finalized && !left_block.block().header.proof_sealed);
         for (input, result) in [(&left, &left_result), (&right, &right_result)] {
             assert_candidate_workspace_execution_complete(result);
             assert_eq!(result.workspace_id, input.workspace_id);
@@ -281,6 +292,8 @@ fn candidate_workspace_execution_competing_results_match_authority_and_survive_p
             load_validated_native_state_envelope_from_aoem_owner_v1(params, chain_id)
                 .unwrap()
                 .unwrap();
+        assert_eq!(left_block.block(), &committed,
+            "isolated block must match complete authoritative artifact");
         assert_eq!(left_result.post_state_root, authoritative.state_root);
         assert_eq!(left_result.receipt_root, authoritative.receipt_root);
         assert_eq!(
@@ -312,6 +325,8 @@ fn candidate_workspace_execution_competing_results_match_authority_and_survive_p
         }
         drop(graph);
         reset_native_aoem_semantic_ingress_session_v1();
+        assert_eq!(workspace::load_block_artifact_v1(chain_id, left.workspace_id, params)
+            .unwrap().unwrap(), left_block);
         let after_advance =
             candidate_workspace_authority_fingerprint(path, params, chain_id, &watched);
         assert!(
@@ -339,6 +354,7 @@ fn candidate_workspace_execution_competing_results_match_authority_and_survive_p
         workspace::corrupt_execution_output_for_test_v1(chain_id, late.workspace_id, params)
             .unwrap();
         assert!(workspace::load_execution_v1(chain_id, late.workspace_id, params).is_err());
+        assert!(workspace::load_block_artifact_v1(chain_id, late.workspace_id, params).is_err());
         assert!(workspace::execute_v1(chain_id, late.workspace_id, params).is_err());
         assert_eq!(
             workspace::abort_v1(chain_id, late.workspace_id, params)
@@ -350,6 +366,7 @@ fn candidate_workspace_execution_competing_results_match_authority_and_survive_p
         assert_eq!(aborted.status, workspace::WorkspaceStatusV1::Aborted);
         assert!(workspace::execute_v1(chain_id, right.workspace_id, params).is_err());
         assert!(workspace::load_execution_v1(chain_id, right.workspace_id, params).is_err());
+        assert!(workspace::load_block_artifact_v1(chain_id, right.workspace_id, params).is_err());
         assert!(workspace::load_execution_snapshot_for_test_v1(
             chain_id,
             right.workspace_id,

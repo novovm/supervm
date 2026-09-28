@@ -6,6 +6,10 @@
 use super::auth::{authenticate_plan, AuthenticatedItem};
 use super::*;
 
+#[path = "native_candidate_block_artifact.rs"]
+mod block_artifact;
+pub use block_artifact::{load_block_artifact_v1, IsolatedBlockArtifactV1};
+
 const OUTPUT_SCHEMA: &str = "novovm-native-candidate-execution/v1";
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TOTAL_OUTPUT_BYTES: usize = 64 * 1024 * 1024;

@@ -227,6 +227,29 @@ contention and long-running operation each require separate evidence.
 
 ## Remaining boundary
 
+### Block artifact reconstruction
+
+`load_block_artifact_v1(chain_id, workspace_id, params)` now reconstructs an
+`IsolatedBlockArtifactV1` from the completed AOEM workspace. It reloads and
+validates the input, output chunks/digest/completion marker, transaction
+authentication, state and receipt bindings before using the same block codec
+as the authoritative execution path. It accepts no caller-supplied result.
+Full native receipt commitments are used, not just receipt success booleans.
+
+This is an in-memory block artifact: it does not execute transactions, register
+a seal-eligible ledger candidate, change the authority head, reserve pending
+nonces, or sign. The legacy block field `canonical_local=true` denotes local
+parent continuity in this codec, not selected ledger membership or finality.
+Do not treat the artifact object or its public metadata as a publication permit;
+future admission/publication must revalidate durable workspace and chain state.
+
+The AOEM persistence regression compares the complete reconstructed artifact
+with the authoritative block from the same plan, distinguishes competing
+branches, checks authority/pending fingerprints remain unchanged during reads,
+and rejects corrupted or aborted output. A session reopen after parent-state
+GC must reproduce the same artifact. This is not hard-crash or public-network
+acceptance.
+
 This API adds no remote proposer admission, body-acquisition authority, durable
 network scheduler, voting/QC, fork choice, authoritative head publication,
 ledger block insertion, canonical promotion, CLI/RPC command, or automatic node
