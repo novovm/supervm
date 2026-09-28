@@ -148,11 +148,12 @@ proposal、V3 certificate 和 new-view 证据。前者要求认证发送者正�
 本刀用可控队列回调测试容量为一时的公平性、250ms 重发、持久证据检查、归档后
 单票停止、重启后凭证发送、marker 丢失、队列故障和时钟倒退；该回调在内部复用
 公共 poll 的调度逻辑，但不等于实际 WSS 发送验收。现有 Overlay 的队列回归继续运行。
-V3 服务生命周期、认证事件分发及实际多节点收发仍待接入；没有修改现有部署。
+上述发送器切片本身不含服务生命周期；后续接入见下文，没有修改现有部署。
 
 ## 显式 V3 运行循环（库接口，非默认主节点启用）
 
 `NovNativeSealDecisionLoopV3::attach` 接管已持久签名的本地 V3 票及其合法见证，
+也接受已经归档的完整凭证以恢复发送（不接受未归档的内存凭证冒充恢复），
 绑定固定 runtime 身份/peer 集合。它不持有私钥，不在构造、接收或 poll 中新签名。
 每 peer 至多暂存 4 个认证运行时事件，每 poll 至多处理 8 个，每 peer 每秒至多
 处理 16 个；非法包也消耗该来源预算，轮转公平处理，错误远端输入不使本地停机。
@@ -174,5 +175,26 @@ runtime 身份/mesh 不符视为本地故障。confirmed 仅表示本循环最�
 错 runtime/时钟倒退、marker 丢失后停止并清除成功状态。候选仍是合成执行事实，
 不是四台实体机、Linux 安装实机或公网长跑验收。
 
-仍未加入主节点配置选择/自动接管，也未自动推进到下一候选或为新轮签名。
-旧 `NovNativeSealServiceV1` 和 round driver 的 V2 路径保持原样。
+## 主节点显式 V3 服务接管
+
+`NovNativeSealServiceV1` 的配置现在接受 `decision_v3_enabled: true`，默认 false，
+与 `commit_v2_enabled: true` 互斥。沿用现有明确启用环境变量和固定候选配置。
+round driver 将 V3 选择与候选/身份/authority 一起持久绑定；同一高度不能通过
+修改配置从准备/V2 切入 V3，或从 V3 切回旧模式。没有自动迁移或清除签名锁。
+
+主节点原有 Overlay 事件接收与本地 tick 自动驱动该服务：先独立验证本地已执行
+候选并完成 prepare；只有本地 poll 才调用 V3 持久签名，再接管有界决策循环。
+准备完成前收到的 V3 数据不触发签名，依靠发送端重传。构造服务和 enqueue 不签名。
+恢复时如果已有完整归档，则直接恢复凭证发送器，不需要重新签本地单票。
+
+状态新增 `decision_v3_enabled`、`decision_confirmed`、`decision_certificate_hash`，
+成功阶段为 `DecisionConfirmedV3`；V2 的 `commit_confirmed` 不冒充 V3 状态。
+服务刚打开、尚未 poll 时不宣称 V3 已确认；本地故障后清除成功状态和凭证哈希。
+`finalized`、`safe`、`proof_sealed`、`chain_canonical` 仍为 false。
+
+这仍是显式固定单候选服务，不是自动连续出块或生产发布。
+
+真实 loopback WSS 服务测试覆盖普通四节点、leader 缺席后的新轮确认和旧 leader
+返回追赶、重启归档不重签、双模式拒绝、已绑定模式不可切换，以及归档 marker
+丢失后的 halt/成功状态清除。故障切换与返回追赶各自使用有界阶段预算；
+候选执行仍为合成 fixture，不是实体四机或 AOEM 执行正确性验收。

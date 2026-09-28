@@ -1,5 +1,6 @@
 //! Opt-in main-node lifecycle for one explicitly pinned, already executed candidate.
 //! Staging is bounded and does not sign. Local poll is the sole signing scheduler.
+use super::commit_v3::lifecycle::NovNativeSealDecisionLoopV3;
 use super::round_driver::NovNativeSealRoundDriverV1;
 use super::round_overlay::NovNativeSealRoundOverlayV1;
 use super::round_wire::{
@@ -8,6 +9,9 @@ use super::round_wire::{
 use super::service_config::NovNativeSealServiceConfigV1;
 use super::service_paths::validate_service_paths_v1;
 use super::NovNativeBlockSealStoreV1;
+
+#[path = "native_block_seal_service_v3.rs"]
+mod decision_v3;
 use crate::native_block_ledger::NovNativeBlockLedgerV1;
 use crate::product_mainline_overlay::{
     ProductMainlineOverlayInboundV1, ProductMainlineOverlayPayloadClassV1,
@@ -56,6 +60,7 @@ struct PeerInbox {
 }
 
 pub struct NovNativeSealServiceV1 {
+    decision: Option<NovNativeSealDecisionLoopV3>,
     config: NovNativeSealServiceConfigV1,
     ledger: NovNativeBlockLedgerV1,
     store: NovNativeBlockSealStoreV1,
@@ -99,7 +104,7 @@ impl NovNativeSealServiceV1 {
         // The service invokes no ledger mutation methods.
         let ledger = NovNativeBlockLedgerV1::open(ledger_path)?;
         let store = NovNativeBlockSealStoreV1::open(&config.seal_store_path)?;
-        let driver = NovNativeSealRoundDriverV1::open_with_commit_v2(
+        let driver = NovNativeSealRoundDriverV1::open_with_decision_mode(
             &ledger,
             &store,
             config.authority.clone(),
@@ -109,6 +114,7 @@ impl NovNativeSealServiceV1 {
             now,
             config.round_timeout,
             config.commit_v2_enabled,
+            config.decision_v3_enabled,
         )?;
         let bridge = NovNativeSealRoundOverlayV1::attach(driver, runtime)?;
         let inbox = runtime
@@ -125,6 +131,7 @@ impl NovNativeSealServiceV1 {
             })
             .collect();
         Ok(Self {
+            decision: None,
             config,
             ledger,
             store,
@@ -218,6 +225,25 @@ impl NovNativeSealServiceV1 {
                 peer.admitted_at.push_back(now);
                 budget -= 1;
                 self.processed = self.processed.saturating_add(1);
+                if self.config.decision_v3_enabled
+                    && inbound
+                        .frame
+                        .payload
+                        .get(10)
+                        .is_some_and(|kind| matches!(kind, 9 | 10))
+                {
+                    if self
+                        .decision
+                        .as_mut()
+                        .is_some_and(|decision| decision.enqueue(inbound))
+                    {
+                        self.accepted = self.accepted.saturating_add(1);
+                    } else {
+                        // Before local prepare, peers retry; ingress never signs.
+                        self.dropped = self.dropped.saturating_add(1);
+                    }
+                    continue;
+                }
                 match self
                     .bridge
                     .ingest(&self.ledger, &self.store, runtime, &inbound)
@@ -238,6 +264,7 @@ impl NovNativeSealServiceV1 {
             self.bridge
                 .poll(&self.ledger, &self.store, &self.config.signer, runtime, now)?;
         self.sent = self.sent.saturating_add(sent as u64);
+        self.poll_decision_v3(runtime, now)?;
         Ok(())
     }
 
@@ -255,16 +282,26 @@ impl NovNativeSealServiceV1 {
 
     pub fn status_json(&self) -> serde_json::Value {
         let status = self.bridge.status();
+        let decision_hash = if self.halted {
+            None
+        } else {
+            self.decision
+                .as_ref()
+                .and_then(|decision| decision.certificate_hash())
+        };
         serde_json::json!({
             "enabled": true, "ok": !self.halted, "halted": self.halted,
             "chain_id": self.config.chain_id,
             "block_hash": super::hex_v1(&self.config.block_hash),
             "local_validator_id": super::hex_v1(&self.config.local_validator_id),
-            "scope": if self.config.commit_v2_enabled { "single_height_fixed_round_commit_v2_experimental" } else { "single_height_prepare_only" },
+            "scope": if self.config.decision_v3_enabled { "single_height_decision_v3_experimental" } else if self.config.commit_v2_enabled { "single_height_fixed_round_commit_v2_experimental" } else { "single_height_prepare_only" },
             "height": status.height, "round": status.round,
-            "phase": if self.halted { "Halted".to_string() } else { format!("{:?}", status.phase) },
+            "phase": if self.halted { "Halted".to_string() } else if decision_hash.is_some() { "DecisionConfirmedV3".to_string() } else { format!("{:?}", status.phase) },
             "prepared": !self.halted && status.prepared,
             "commit_v2_enabled": self.config.commit_v2_enabled,
+            "decision_v3_enabled": self.config.decision_v3_enabled,
+            "decision_confirmed": decision_hash.is_some(),
+            "decision_certificate_hash": decision_hash.map(|hash| super::hex_v1(&hash)),
             "commit_confirmed": !self.halted && status.commit_confirmed,
             "commit_round": if self.halted { None } else { status.commit_round },
             "commit_observed": !self.halted && status.commit_observed,

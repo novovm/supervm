@@ -21,6 +21,7 @@ const MAX_AUTHORITY_BYTES: usize = 256 * 1024;
 /// Intentionally neither Debug nor Serialize: this contains the operator's key.
 /// Callers cannot bypass validation by constructing a public configuration.
 pub struct NovNativeSealServiceConfigV1 {
+    pub(crate) decision_v3_enabled: bool,
     pub(crate) commit_v2_enabled: bool,
     pub(crate) chain_id: u64,
     pub(crate) height: u64,
@@ -40,6 +41,8 @@ pub struct NovNativeSealServiceConfigV1 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ServiceFile {
+    #[serde(default)]
+    decision_v3_enabled: bool,
     #[serde(default)]
     commit_v2_enabled: bool,
     schema: String,
@@ -161,6 +164,9 @@ impl NovNativeSealServiceConfigV1 {
         if raw.schema != NOV_NATIVE_SEAL_SERVICE_SCHEMA_V1 || !raw.enabled {
             bail!("native seal config requires the v1 schema and explicit enabled=true");
         }
+        if raw.commit_v2_enabled && raw.decision_v3_enabled {
+            bail!("V2 and V3 decision modes are mutually exclusive");
+        }
         let authority_path = fs::canonicalize(resolve_path(config_dir, &raw.authority_path)?)
             .context("resolve native seal authority file")?;
         let signer_path = fs::canonicalize(resolve_path(config_dir, &raw.signer_key_path)?)
@@ -203,6 +209,7 @@ impl NovNativeSealServiceConfigV1 {
             seal_store_path,
             protected_paths: vec![config_path, authority_path, signer_path],
             commit_v2_enabled: raw.commit_v2_enabled,
+            decision_v3_enabled: raw.decision_v3_enabled,
             round_timeout: Duration::from_millis(raw.round_timeout_ms),
             poll_interval: Duration::from_millis(raw.poll_interval_ms),
             ingress_per_source_per_second: raw.ingress_per_source_per_second,
@@ -214,6 +221,9 @@ impl NovNativeSealServiceConfigV1 {
 
     /// Recheck the configuration at the service boundary, before database opens.
     pub(crate) fn validate(&self, expected_chain_id: u64) -> Result<()> {
+        if self.commit_v2_enabled && self.decision_v3_enabled {
+            bail!("V2 and V3 decision modes are mutually exclusive");
+        }
         self.authority.validate()?;
         if expected_chain_id == 0
             || self.chain_id != expected_chain_id

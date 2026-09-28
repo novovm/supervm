@@ -5,7 +5,8 @@
 
 默认关闭，未部署到现有节点、聊天服务或手机。默认模式只完成**一个固定高度、
 一个已执行候选的 prepare QC**。可显式开启[实验性 V2 在线确认](NOVOVM_NATIVE_SEAL_COMMIT_RUNTIME_V2.md)，
-但两种模式都不是连续出块，也不是主网最终确认。
+或[实验性 V3 决策确认](NOVOVM_NATIVE_SEAL_DECISION_V3.md)。这些模式都不是连续出块，
+也不是主网最终确认。
 
 ## 启动前必须具备什么
 
@@ -184,3 +185,9 @@ cargo clippy -p novovm-node -p novovmctl --all-targets -- -D warnings
 已补充[第二轮确认基础接口](NOVOVM_NATIVE_SEAL_COMMIT_PRIMITIVES_V1.md)：独立签名、
 权重证书、持久化防重复签名及确认凭证按高度归档/重启校验。默认服务仍仅推进 prepare；
 `commit_v2_enabled=true` 可开启实验性在线确认，没有因此启用最终确认。
+
+V3 可显式配置 `decision_v3_enabled=true`（默认 false），与 V2 开关互斥。
+所选模式随 round driver 持久绑定，不能在已有高度上改开关绕过旧约束。
+V3 服务在本地 prepare 成功后自动持久签票、收集足额确认和恢复归档；
+开启服务或收到网络消息本身不签名。参见 [V3 运行边界](NOVOVM_NATIVE_SEAL_DECISION_V3.md)。
+这不是模式迁移工具，不要删除现有数据库、锁或证据来强行切换。

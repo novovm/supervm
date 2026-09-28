@@ -46,6 +46,8 @@ pub struct NovNativeSealRoundDriverStatusV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DriverBinding {
+    #[serde(default, skip_serializing_if = "decision_mode_disabled")]
+    decision_v3: bool,
     #[serde(default)]
     commit_v2: bool,
     schema: String,
@@ -54,6 +56,10 @@ struct DriverBinding {
     block_hash: [u8; 32],
     justify_qc_hash: Option<[u8; 32]>,
     local_validator_id: [u8; 32],
+}
+
+fn decision_mode_disabled(enabled: &bool) -> bool {
+    !enabled
 }
 
 /// One owner, one signer identity, one already locally executed candidate.
@@ -131,6 +137,36 @@ impl NovNativeSealRoundDriverV1 {
         interval: Duration,
         commit_v2: bool,
     ) -> Result<Self> {
+        Self::open_with_decision_mode(
+            ledger,
+            store,
+            authority,
+            block_hash,
+            justify_qc_hash,
+            local_validator_id,
+            now,
+            interval,
+            commit_v2,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn open_with_decision_mode(
+        ledger: &NovNativeBlockLedgerV1,
+        store: &NovNativeBlockSealStoreV1,
+        authority: NovNativeSealEpochAuthorityV1,
+        block_hash: [u8; 32],
+        justify_qc_hash: Option<[u8; 32]>,
+        local_validator_id: [u8; 32],
+        now: Instant,
+        interval: Duration,
+        commit_v2: bool,
+        decision_v3: bool,
+    ) -> Result<Self> {
+        if commit_v2 && decision_v3 {
+            bail!("V2 and V3 decision modes are mutually exclusive");
+        }
         authority.validate_against_ledger(ledger)?;
         if interval.is_zero() || interval > Duration::from_secs(300) {
             bail!("round driver interval must be positive and at most 300 seconds");
@@ -152,6 +188,7 @@ impl NovNativeSealRoundDriverV1 {
         )?;
         ensure_subject_budget(&subject)?;
         let binding = DriverBinding {
+            decision_v3,
             commit_v2,
             schema: "novovm-native-seal-round-driver-binding/v1".into(),
             authority,

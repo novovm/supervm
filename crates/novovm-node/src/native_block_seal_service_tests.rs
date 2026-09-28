@@ -4,6 +4,8 @@
 use crate::native_block_seal::service::NovNativeSealServiceV1;
 use crate::native_block_seal::service_config::NovNativeSealServiceConfigV1;
 
+include!("native_block_seal_service_v3_tests.rs");
+
 #[test]
 fn native_commit_catchup_real_wss_future_certificate_without_round_adoption() {
     let mut cluster = NetworkCluster::new(9_782_230);

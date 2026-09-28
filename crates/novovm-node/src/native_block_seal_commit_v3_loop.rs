@@ -48,8 +48,10 @@ impl NovNativeSealDecisionLoopV3 {
         runtime: &Runtime,
         now: Instant,
     ) -> Result<Self> {
-        let Message::DecisionVoteV3 { qc, .. } = &local_vote else {
-            bail!("V3 lifecycle requires a local vote envelope");
+        let qc = match &local_vote {
+            Message::DecisionVoteV3 { qc, .. } => qc.as_ref(),
+            Message::DecisionCertificateV3 { decision, .. } => &decision.prepare,
+            _ => bail!("V3 lifecycle requires a local vote or durable certificate envelope"),
         };
         let local_peer = authority.transport_peer_id(id)?.to_owned();
         encode(&local_vote, &authority, qc.subject.height, &local_peer)?;
@@ -68,6 +70,9 @@ impl NovNativeSealDecisionLoopV3 {
             let hash = cert.certificate_hash;
             (certificate_envelope(store, cert)?, Some(hash))
         } else {
+            if !matches!(&local_vote, Message::DecisionVoteV3 { .. }) {
+                bail!("V3 lifecycle cannot recover an unarchived certificate");
+            }
             (local_vote.clone(), None)
         };
         let sender = Sender::new(ledger, store, authority.clone(), id, outbound)?;
@@ -151,6 +156,13 @@ impl NovNativeSealDecisionLoopV3 {
 
     pub fn confirmed(&self) -> bool {
         !self.halted && self.durable_hash.is_some()
+    }
+    pub fn certificate_hash(&self) -> Option<[u8; 32]> {
+        if self.halted {
+            None
+        } else {
+            self.durable_hash
+        }
     }
     pub fn halted(&self) -> bool {
         self.halted
@@ -295,7 +307,7 @@ fn qc_height(message: &Message) -> Result<u64> {
         .height)
 }
 
-fn certificate_envelope(
+pub(in crate::native_block_seal) fn certificate_envelope(
     store: &NovNativeBlockSealStoreV1,
     decision: NovNativeSealDecisionCertificateV3,
 ) -> Result<Message> {

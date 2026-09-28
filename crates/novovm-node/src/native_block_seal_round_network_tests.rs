@@ -262,6 +262,10 @@ impl NetworkCluster {
     }
 
     fn start_peer_with_commit(&mut self, index: usize, now: Instant, commit_v2: bool) {
+        self.start_peer_with_decision(index, now, commit_v2, false);
+    }
+
+    fn start_peer_with_decision(&mut self, index: usize, now: Instant, commit_v2: bool, decision_v3: bool) {
         let remote_peers = self
             .peers
             .iter()
@@ -307,7 +311,7 @@ impl NetworkCluster {
             self.relay_override.clone(),
         )
         .expect("start real loopback WSS node runtime");
-        let driver = NovNativeSealRoundDriverV1::open_with_commit_v2(
+        let driver = NovNativeSealRoundDriverV1::open_with_decision_mode(
             peer.node.ledger(),
             peer.node.store(),
             self.authority.clone(),
@@ -317,6 +321,7 @@ impl NetworkCluster {
             now,
             ROUND_INTERVAL,
             commit_v2,
+            decision_v3,
         )
         .unwrap();
         peer.adapter = Some(NovNativeSealRoundOverlayV1::attach(driver, &runtime).unwrap());

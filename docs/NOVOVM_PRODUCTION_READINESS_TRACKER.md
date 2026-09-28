@@ -9,16 +9,16 @@
 
 **NOT READY FOR PRODUCTION。** V3 决策锁、凭证、线格式、收票器和发送器已实现；
 显式库级运行循环已在本机真实 WSS 四独立数据库完成定向验证。
-这些事实不等于主节点自动参与共识，更不等于候选已成为最终块。
+现在显式启用的固定候选主节点服务可接管 V3；这不等于默认启用、连续出块或候选已成为最终块。
 
 ## 验收路径
 
 | 项目 | 当前状态 | 完成所需证据 |
 | --- | --- | --- |
 | V3 签名/归档/有界收发 | 本地完整 seal 回归 144 项通过，Linux CI 待验收 | 同一提交的本地与 Linux CI 测试 |
-| 自动服务接管与版本绑定 | 未完成 | 明确 opt-in，不能切配置绕过已有锁；生产入口端到端测试 |
+| 自动服务接管与版本绑定 | 显式 V3 单候选配置与持久模式绑定已接入，三项本机服务测试通过 | 实际节点进程/AOEM 候选端到端与实体多机验收仍需完成 |
 | 共同 proposal/body/context 与独立执行核验 | 待现代码逐项追踪与集成验收 | 不同机器收到同一候选，独立执行及根/回执对齐，错误结果拒绝 |
-| 新轮签名调度与分区恢复 | 未完成 | 不重签冲突决策，分票/分区/恢复后可进展，确定性测试 |
+| 新轮签名调度与分区恢复 | prepare 前故障换轮与返回追赶有服务测试；prepare 后决策分票恢复尚未完成 | 不重签冲突决策，分票/分区/恢复后可进展，确定性测试 |
 | 最终祖先、链选择、状态晋升 | 未完成 | 验证规则与 ledger/AOEM 可恢复提交；不能直接翻转 finality 字段 |
 | 连续高度、重启与追赶 | 待端到端验收 | 多块连续推进、落后节点恢复、旧状态不被错误接受 |
 | 版本/创世/验证集合/密钥方案 | 待确认 | 固定发布参数、密钥不复制多开、回滚边界与操作手册 |
@@ -37,7 +37,23 @@
 - 在完成线上配置接入前，V3 库接口不冒充可部署的完整节点能力。
 - 更新结论应引用具体提交/测试结果；未执行项目不得标 PASS。
 
+## 下一接合点的代码事实
+
+- `native_candidate_node_mode.rs` 的显式本地计划入口最终调用
+  `run_nov_native_candidate_execution_plan_v1`，推进的是本地未封印执行头，
+  不能直接用于不可信网络候选的试执行。
+- `native_candidate_workspace.rs` / `native_candidate_execution.rs` 已有隔离输出持久化，
+  返回 `authority_state_published=false`；本次没有新增权威状态晋升。
+- `native_block_ledger.rs::load_seal_eligible_local_candidate_v1` 仍要求本地账本候选，
+  因此“隔离输出 -> 可验证候选 -> 决策 -> 可恢复权威发布”的生产路径还须接合。
+
 ## 本次 CI 修复证据
+
+- 后续 V3 服务接入切片：三个新增服务用例通过，主节点二进制 `cargo check`、
+  lib/tests Clippy `-D warnings`、格式与 diff 检查通过。完整 147 项 seal 回归正在执行，
+  完成结果须另行记录，不以已通过的三个用例替代整套回归。
+- 基线 `2c3200a` 的 CI 运行 `36492950313`：Windows/Linux launcher、Rust security、
+  Python 均通过；Rust 主任务仍在执行。此结果不代表后续接入提交的 CI 已通过。
 
 - 本机 `cargo test -p novovm-node --lib native_block_seal --locked -- --test-threads=2`：
   144 passed / 0 failed，437.97 秒；包含四独立数据库真实 loopback WSS 的 V3 确认、
