@@ -458,6 +458,9 @@ impl NovNativeSealRoundDriverV1 {
             self.binding.height,
             source_peer_id,
         )?;
+        if message.is_decision_v3() {
+            bail!("decision v3 online driver is not enabled");
+        }
         if message.is_commit_v2() {
             return self.ingest_commit(ledger, store, &message);
         }
@@ -510,7 +513,10 @@ impl NovNativeSealRoundDriverV1 {
                 self.pending_qc = Some(qc.as_ref().clone());
             }
             Message::Proposal { .. } => (),
-            Message::CommitVoteV2 { .. } | Message::CommitCertificateV2 { .. } => unreachable!(),
+            Message::CommitVoteV2 { .. }
+            | Message::CommitCertificateV2 { .. }
+            | Message::DecisionVoteV3 { .. }
+            | Message::DecisionCertificateV3 { .. } => unreachable!(),
         }
         if self.certificate.is_none() {
             self.certificate = message.certificate().cloned();

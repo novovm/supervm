@@ -4,6 +4,133 @@ use crate::native_block_seal::commit_v3::{
     NovNativeSealDecisionVoteV3 as Vote,
 };
 
+#[test]
+fn commit_v3_wire_roundtrip_authentication_bounds_and_disabled_driver() {
+    use super::native_block_seal_newview::{advance_v1, authority_v1, local_qc_v1};
+    use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1 as Message;
+    use crate::native_block_seal::round_wire::{
+        decode_nov_native_seal_round_wire_v1 as decode,
+        encode_nov_native_seal_round_wire_v1 as encode, NOV_NATIVE_SEAL_ROUND_MAX_WIRE_BYTES_V1,
+    };
+    let (node, block, keys, set) = genesis_fixture_v1("v3-wire", 85_460);
+    let authority = authority_v1(&node, &set);
+    let mut votes = Vec::new();
+    for round in 0..2 {
+        if round != 0 {
+            advance_v1(&node, &authority, &keys, 0);
+        }
+        let (evidence, _) = local_qc_v1(&node, &block, &authority, &keys, round);
+        node.store()
+            .persist_local_verified_qc(node.ledger(), &evidence.qc, &set)
+            .unwrap();
+        if round == 0 {
+            votes = keys[..3]
+                .iter()
+                .map(|key| {
+                    node.store()
+                        .sign_local_decision_vote_v3(node.ledger(), &evidence.qc, &set, key)
+                        .unwrap()
+                })
+                .collect();
+        }
+        let admission = node
+            .store()
+            .load_local_new_view_admission(set.chain_id, set.epoch, 1, round)
+            .unwrap()
+            .map(|a| Box::new(a.certificate));
+        let single = Message::DecisionVoteV3 {
+            proposal: Box::new(evidence.proposal.clone()),
+            qc: Box::new(evidence.qc.clone()),
+            vote: Box::new(votes[0].clone()),
+            certificate: admission.clone(),
+        };
+        let complete = Message::DecisionCertificateV3 {
+            proposal: Box::new(evidence.proposal),
+            decision: Box::new(Certificate::from_votes(evidence.qc, &set, votes.clone()).unwrap()),
+            certificate: admission,
+        };
+        let signer = authority.transport_peer_id(votes[0].validator_id).unwrap();
+        let relay = authority
+            .transport_peer_id(validator_id_v1(keys[3].verifying_key().as_bytes()))
+            .unwrap();
+        assert!(encode(&single, &authority, 1, relay).is_err());
+        for (message, sender, kind) in [(&single, signer, 9u8), (&complete, relay, 10u8)] {
+            let before = node
+                .store()
+                .db
+                .iterator(IteratorMode::Start)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            let frame = encode(message, &authority, 1, sender).unwrap();
+            assert_eq!(frame[10], kind);
+            assert_eq!(decode(&frame, &authority, 1, sender).unwrap(), *message);
+            assert!(decode(&frame, &authority, 2, sender).is_err());
+            assert!(decode(&frame, &authority, 1, "unknown-peer").is_err());
+            assert!(decode(&frame[..frame.len() - 1], &authority, 1, sender).is_err());
+            let mut wrong_kind = frame.clone();
+            wrong_kind[10] = 7;
+            // Valid checksum cannot conceal a V3 payload mislabeled as V2.
+            let end = wrong_kind.len() - 32;
+            let mut hash = Sha256::new();
+            hash.update(b"novovm-native-seal-round-wire-checksum-v1\0");
+            hash.update(&wrong_kind[..end]);
+            wrong_kind[end..].copy_from_slice(&hash.finalize());
+            assert!(decode(&wrong_kind, &authority, 1, sender).is_err());
+            assert!(decode(
+                &vec![0; NOV_NATIVE_SEAL_ROUND_MAX_WIRE_BYTES_V1 + 1],
+                &authority,
+                1,
+                sender
+            )
+            .is_err());
+            assert_eq!(
+                node.store()
+                    .db
+                    .iterator(IteratorMode::Start)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+                before
+            );
+        }
+        let mut malformed = single.clone();
+        if let Message::DecisionVoteV3 { vote, .. } = &mut malformed {
+            vote.signature[0] ^= 1;
+        }
+        assert!(encode(&malformed, &authority, 1, signer).is_err());
+        let mut insufficient = complete.clone();
+        if let Message::DecisionCertificateV3 { decision, .. } = &mut insufficient {
+            decision.votes.truncate(2);
+        }
+        assert!(encode(&insufficient, &authority, 1, relay).is_err());
+        if round == 1 {
+            let mut missing = single.clone();
+            if let Message::DecisionVoteV3 { certificate, .. } = &mut missing {
+                *certificate = None;
+            }
+            assert!(encode(&missing, &authority, 1, signer).is_err());
+        }
+        if round == 1 {
+            let mut driver =
+                crate::native_block_seal::round_driver::NovNativeSealRoundDriverV1::open(
+                    node.ledger(),
+                    node.store(),
+                    authority.clone(),
+                    block.header.block_hash,
+                    None,
+                    votes[0].validator_id,
+                    std::time::Instant::now(),
+                    std::time::Duration::from_secs(1),
+                )
+                .unwrap();
+            let before = driver.status();
+            assert!(driver
+                .ingest_authenticated(node.ledger(), node.store(), signer, single)
+                .is_err());
+            assert_eq!(driver.status(), before);
+        }
+    }
+}
+
 fn durable_v3_fixture(
     label: &str,
     chain: u64,
