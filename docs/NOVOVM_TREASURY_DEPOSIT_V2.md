@@ -1,5 +1,45 @@
 # Balance-backed treasury deposits V2
 
+## Current acceptance checkpoint (2026-09-29)
+
+Code revision `0e015ce2087560899932f5ad14f2f7b9cca18a0e` passed complete
+[Linux CI run 36406027860](https://github.com/novovm/supervm/actions/runs/36406027860),
+including the mainline gate and funded real-process regressions. Earlier pending
+or failed-run notes below are historical and do not override this checkpoint.
+
+The downloaded `supervm-native-pipeline-dual-node-gate` artifact was inspected:
+three receivers, two sender rounds, eight successful deposits on each receiver,
+36 USDT reserve and zero remaining account USDT on each. Every receiver reports
+two durable candidate blocks, eight transaction indexes, eight receipt indexes
+and verified AOEM readback. `chain_canonical`, `proof_sealed`, `safe` and
+`finalized` remain false. This is same-runner process evidence, not three physical
+devices or finality acceptance.
+
+Rust checks, Rust security checks and Python syntax checks passed. Node checks
+were skipped; at this revision `git ls-files -- package.json '**/package.json'`
+returns no tracked Node manifests. Earlier statements attributing the current
+skip to a missed root package are stale. This does not verify a separate mobile
+or chat repository.
+
+The feature branch is not merged or deployed. Existing node databases, protocol
+pins and sibling AOEM code were not changed. Unrelated local seal changes are
+outside this checkpoint. No further generic test hardening is a prerequisite to
+choosing the rollout track below; neither track is authorized by CI success:
+
+- **Separate private test chain:** use new state directories and an independently
+  agreed chain/genesis, initial allocation and validator identity set. Preserve
+  existing services and databases. Never use deterministic test keys/funds as
+  live assets. This needs an operator choice and allocation plan before setup.
+- **Existing-chain upgrade:** first identify and preserve its real checkpoint,
+  protocol pin, validator authority and balances. Use the existing offline
+  inspection/staging/authorization workflow; do not clear pins, discard state,
+  silently fund accounts or treat a staged proposal as activated consensus.
+
+Cross-machine/long-run fixture migration, physical LAN/public-network acceptance
+and coordinated activation remain unfinished. The next deployment-affecting
+step must select one of these tracks explicitly instead of assuming a reset or
+an in-place upgrade.
+
 ## Two separate operations
 
 - `treasury.deposit_reserve`: transfer an explicitly specified, positive amount
