@@ -6,7 +6,8 @@ $root = Join-Path $repo ('artifacts/audit/aggregate-test-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $root | Out-Null
 $cases = @('direct', 'relay', 'multihop', 'queue', 'receiver-failed', 'sender-string-bool',
     'wrong-receiver', 'wrong-sender', 'wrong-scope', 'missing-report', 'missing-target',
-    'duplicate-target', 'missing-relay', 'short-send', 'unexpected-queue', 'missing-sender', 'missing-queue-sender')
+    'duplicate-target', 'missing-relay', 'short-send', 'unexpected-queue', 'missing-sender', 'missing-queue-sender',
+    'stale-sender', 'stale-receiver', 'wrong-case', 'legacy-report')
 foreach ($case in $cases) {
     $config = Get-Content (Join-Path $repo 'configs/network-overlay/adaptive-cross-machine-4node.example.json') -Raw | ConvertFrom-Json
     $index = switch ($case) { 'relay' { 1 }; 'multihop' { 2 }; 'queue' { 3 }; 'missing-queue-sender' { 3 }; 'missing-relay' { 1 }; default { 0 } }
@@ -18,6 +19,7 @@ foreach ($case in $cases) {
         accepted = $true; scope = 'adaptive_overlay_node_process_gate_v0'; node_id = 'node-a'
         target_peer_id = 'node-b'; selected_path = $selection.expected_path
         sent_frame_count = 4; queued_count = 0; sent_bytes_total = 100
+        diagnostic_run_id = 'test-attempt'; diagnostic_case = $selection.name
     }
     if ($case -eq 'queue') { $sender.sent_frame_count = 0; $sender.queued_count = 4; $sender.sent_bytes_total = 0 }
     if ($case -eq 'sender-string-bool') { $sender.accepted = 'false' }
@@ -25,6 +27,8 @@ foreach ($case in $cases) {
     if ($case -eq 'wrong-scope') { $sender.scope = 'unrelated' }
     if ($case -eq 'short-send') { $sender.sent_frame_count = 3 }
     if ($case -eq 'unexpected-queue') { $sender.queued_count = 1 }
+    if ($case -eq 'stale-sender') { $sender.diagnostic_run_id = 'previous-attempt' }
+    if ($case -eq 'legacy-report') { $sender.Remove('diagnostic_run_id') }
     if ($case -eq 'missing-target') { $selection.listener_node_ids = @() }
     if ($case -eq 'duplicate-target') { $selection.listener_node_ids = @('node-b', 'node-b') }
     if ($case -eq 'missing-relay') { $selection.listener_node_ids = @('node-b') }
@@ -37,12 +41,14 @@ foreach ($case in $cases) {
             accepted = $case -ne 'receiver-failed'; scope = 'adaptive_overlay_node_process_gate_v0'
             node_id = if ($case -eq 'wrong-receiver') { 'someone-else' } else { $id }
             direct_frames_received = 4; relay_frames_forwarded = 4
+            diagnostic_run_id = if ($case -eq 'stale-receiver') { 'previous-attempt' } else { 'test-attempt' }
+            diagnostic_case = if ($case -eq 'wrong-case') { 'unrelated-case' } else { $selection.name }
         }
         $listener | ConvertTo-Json | Set-Content (Join-Path $reportDir "$id.json")
     }
     $configPath = Join-Path $out 'config.json'
     $config | ConvertTo-Json -Depth 10 | Set-Content $configPath
-    & pwsh -NoProfile -File $scriptPath -Action aggregate -RepoRoot $repo -ConfigPath $configPath -Case $selection.name -ReportRoot $out *> (Join-Path $out 'process.log')
+    & pwsh -NoProfile -File $scriptPath -Action aggregate -RunId test-attempt -RepoRoot $repo -ConfigPath $configPath -Case $selection.name -ReportRoot $out *> (Join-Path $out 'process.log')
     $code = $LASTEXITCODE
     $expected = $case -in @('direct', 'relay', 'multihop', 'queue')
     if (($code -eq 0) -ne $expected) { throw "unexpected exit $code for $case; inspect $out" }

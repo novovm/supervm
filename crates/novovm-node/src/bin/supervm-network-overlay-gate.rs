@@ -4887,6 +4887,9 @@ fn run_adaptive_node_gate() -> Result<()> {
     let report = json!({
         "accepted": accepted,
         "scope": "adaptive_overlay_node_process_gate_v0",
+        // Diagnostic provenance only; these labels do not authenticate wire traffic.
+        "diagnostic_run_id": env_string("NOVOVM_OVERLAY_DIAGNOSTIC_RUN_ID"),
+        "diagnostic_case": env_string("NOVOVM_OVERLAY_DIAGNOSTIC_CASE"),
         "boundary": network_boundary_json(),
         "payload_treated_opaque": true,
         "node_id": node_id,

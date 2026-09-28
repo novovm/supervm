@@ -43,9 +43,29 @@ node report or a missing target cannot be hidden by matching frame totals.
 Queue fallback remains queued-only evidence, not delivery.
 
 `scripts/tests/adaptive-overlay-aggregate.tests.ps1` invokes the actual aggregator
-against synthetic JSON files: four positive route cases and thirteen rejection
+against synthetic JSON files: four positive route cases and seventeen rejection
 cases. No sockets or services are started. These checks are not cryptographic
-report authentication or freshness guarantees: reports with the same identities
-from an older run are not yet distinguished by a wire-bound run identifier. Use
-separate report directories for each attempt and never mix runs. None of this
+report authentication or wire freshness guarantees. None of this
 proves production mainline execution, blockchain finality or real LAN acceptance.
+
+## Isolate each diagnostic attempt
+
+Run `-Action commands` once to generate commands sharing a fresh random `-RunId`.
+Distribute those commands to the intended machines; do not generate independent
+IDs on each machine. `run-node`, `send` and `aggregate` now require an explicit
+ID (1..80 ASCII letters, digits, underscores or hyphens). Default reports go to
+`artifacts/network-overlay-gate/<RunId>`; the old static config `run_id` is no
+longer used as the attempt directory. Each new attempt needs a new ID.
+
+Node reports record `diagnostic_run_id` and `diagnostic_case` directly in the
+binary output. Aggregation rejects missing labels, another attempt or another
+case. Old binaries used with `-SkipBuild` will therefore not pass aggregation.
+Launch refuses an existing per-node report before build/start, rather than
+overwriting previous evidence. Copy remote reports into the matching run/case
+directory before aggregation. Existing services and old reports are not removed.
+
+These fields are operator-supplied diagnostic labels, not signed or wire-bound
+proofs. Reusing an ID, editing a report or delayed packets from an old run is not
+prevented cryptographically. This change prevents accidental report mixing only.
+Local real-binary queue smoke verified that the labels survive report generation
+and aggregation: four queued frames, zero sent frames/bytes, no delivery claimed.

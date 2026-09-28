@@ -4,6 +4,7 @@ param(
     [string]$ConfigPath = "configs/network-overlay/adaptive-cross-machine-4node.example.json",
     [string]$Case = "adaptive-direct",
     [string]$NodeId = "",
+    [string]$RunId = "",
     [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [string]$ReportRoot = "",
     [switch]$SkipBuild
@@ -12,6 +13,21 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot 'lib/overlay-gate-build.ps1')
+if ([string]::IsNullOrWhiteSpace($RunId) -and $Action -eq 'commands') {
+    $RunId = [guid]::NewGuid().ToString('N')
+}
+if ($RunId -cnotmatch '^[A-Za-z0-9_-]{1,80}$') {
+    throw '-RunId must be a fresh shared identifier (1..80 letters, digits, underscores or hyphens); use -Action commands to generate commands for one attempt'
+}
+
+function Test-ReportAttempt {
+    param($Report, [string]$CaseName)
+    if ($null -eq $Report) { return $false }
+    $run = $Report.PSObject.Properties['diagnostic_run_id']
+    $caseProperty = $Report.PSObject.Properties['diagnostic_case']
+    return $null -ne $run -and $null -ne $caseProperty -and
+        $run.Value -ceq $RunId -and $caseProperty.Value -ceq $CaseName
+}
 
 function Join-RepoPath {
     param([string]$Path)
@@ -79,6 +95,8 @@ function New-AdaptiveEnv {
     )
     $envMap = @{
         NOVOVM_OVERLAY_GATE_MODE = "adaptive-node"
+        NOVOVM_OVERLAY_DIAGNOSTIC_RUN_ID = $RunId
+        NOVOVM_OVERLAY_DIAGNOSTIC_CASE = [string]$CaseConfig.name
         NOVOVM_OVERLAY_GATE_REPORT_PATH = $ReportPath
         NOVOVM_OVERLAY_GATE_MAX_FRAMES = [string]$Config.max_frames
         NOVOVM_OVERLAY_GATE_TIMEOUT_MS = [string]$Config.timeout_ms
@@ -118,10 +136,10 @@ function Print-Commands {
         Write-Output ""
         Write-Output "## $($caseConfig.name)"
         foreach ($listenerId in @($caseConfig.listener_node_ids)) {
-            Write-Output ("powershell -ExecutionPolicy Bypass -File scripts\novovm-adaptive-overlay-cross-machine-smoke.ps1 -Action run-node -ConfigPath {0} -Case {1} -NodeId {2}" -f $ConfigPath, $caseConfig.name, $listenerId)
+            Write-Output ("powershell -ExecutionPolicy Bypass -File scripts\novovm-adaptive-overlay-cross-machine-smoke.ps1 -Action run-node -ConfigPath {0} -Case {1} -NodeId {2} -RunId {3}" -f $ConfigPath, $caseConfig.name, $listenerId, $RunId)
         }
-        Write-Output ("powershell -ExecutionPolicy Bypass -File scripts\novovm-adaptive-overlay-cross-machine-smoke.ps1 -Action send -ConfigPath {0} -Case {1} -NodeId {2}" -f $ConfigPath, $caseConfig.name, $caseConfig.sender_node_id)
-        Write-Output ("powershell -ExecutionPolicy Bypass -File scripts\novovm-adaptive-overlay-cross-machine-smoke.ps1 -Action aggregate -ConfigPath {0} -Case {1}" -f $ConfigPath, $caseConfig.name)
+        Write-Output ("powershell -ExecutionPolicy Bypass -File scripts\novovm-adaptive-overlay-cross-machine-smoke.ps1 -Action send -ConfigPath {0} -Case {1} -NodeId {2} -RunId {3}" -f $ConfigPath, $caseConfig.name, $caseConfig.sender_node_id, $RunId)
+        Write-Output ("powershell -ExecutionPolicy Bypass -File scripts\novovm-adaptive-overlay-cross-machine-smoke.ps1 -Action aggregate -ConfigPath {0} -Case {1} -RunId {2}" -f $ConfigPath, $caseConfig.name, $RunId)
     }
 }
 
@@ -145,6 +163,7 @@ function Run-Aggregate {
     }
 
     $accepted = $null -ne $senderReport -and
+        (Test-ReportAttempt $senderReport $CaseConfig.name) -and
         $senderReport.accepted -is [bool] -and $senderReport.accepted -and
         $senderReport.scope -ceq 'adaptive_overlay_node_process_gate_v0' -and
         $senderReport.node_id -ceq $CaseConfig.sender_node_id -and
@@ -174,7 +193,8 @@ function Run-Aggregate {
                 $accepted = $false
                 continue
             }
-            $accepted = $accepted -and $entry.report.accepted -is [bool] -and $entry.report.accepted -and
+            $accepted = $accepted -and (Test-ReportAttempt $entry.report $CaseConfig.name) -and
+                $entry.report.accepted -is [bool] -and $entry.report.accepted -and
                 $entry.report.scope -ceq 'adaptive_overlay_node_process_gate_v0' -and
                 $entry.report.node_id -ceq $entry.node_id
             $isTarget = $entry.node_id -ceq $Config.target_peer_id
@@ -199,6 +219,7 @@ function Run-Aggregate {
     $report = [ordered]@{
         accepted = [bool]$accepted
         scope = "adaptive_overlay_cross_machine_smoke_v0"
+        diagnostic_run_id = $RunId
         case = $CaseConfig.name
         expected_path = $CaseConfig.expected_path
         boundary = [ordered]@{
@@ -228,7 +249,7 @@ function Run-Aggregate {
 Set-Location $RepoRoot
 $Config = Load-Json $ConfigPath
 if ([string]::IsNullOrWhiteSpace($ReportRoot)) {
-    $ReportRoot = "artifacts/network-overlay-gate/$($Config.run_id)"
+    $ReportRoot = "artifacts/network-overlay-gate/$RunId"
 }
 $ReportRootAbs = Join-RepoPath $ReportRoot
 New-Item -ItemType Directory -Force -Path $ReportRootAbs | Out-Null
@@ -250,8 +271,11 @@ if ([string]::IsNullOrWhiteSpace($NodeId)) {
 }
 
 $Node = Get-ConfigNode $Config $NodeId
-$GateBinary = Ensure-GateBinary
 $reportPath = Get-ReportPath $Case $NodeId
+if (Test-Path -LiteralPath $reportPath) {
+    throw "refuse to overwrite an existing attempt report: $reportPath; generate a new -RunId"
+}
+$GateBinary = Ensure-GateBinary
 New-Item -ItemType Directory -Force -Path (Split-Path $reportPath -Parent) | Out-Null
 $isSender = $Action -eq "send"
 $envMap = New-AdaptiveEnv $Config $CaseConfig $Node $reportPath $isSender
