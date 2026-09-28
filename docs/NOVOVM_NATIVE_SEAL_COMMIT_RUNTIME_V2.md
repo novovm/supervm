@@ -53,3 +53,7 @@ prepared；本刀没有声称解决 prepared 跨轮分裂。安全处理是保�
 
 下一步仍需解决跨轮 commit 活性、最终祖先/fork choice 与 AOEM/ledger
 跨库可恢复晋升，不能依据 `commit_confirmed` 直接修改最终性字段。
+
+后续已补[跨轮完整确认凭证追赶](NOVOVM_NATIVE_SEAL_COMMIT_CATCHUP_V2.md)：
+观察并归档其他轮次已有的完整凭证，不改变自己的轮次或签名锁。新增
+`commit_round` 和 `commit_observed` 区分凭证轮次/来源；零散票跨轮活性仍未解决。

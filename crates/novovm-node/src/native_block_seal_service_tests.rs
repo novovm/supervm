@@ -4,6 +4,86 @@
 use crate::native_block_seal::service::NovNativeSealServiceV1;
 use crate::native_block_seal::service_config::NovNativeSealServiceConfigV1;
 
+#[test]
+fn native_commit_catchup_real_wss_future_certificate_without_round_adoption() {
+    let mut cluster = NetworkCluster::new(9_782_230);
+    let initial = cluster.started;
+    let delayed = cluster.initial_leader();
+    let active = (0..4).filter(|i| *i != delayed).collect::<Vec<_>>();
+    for index in 0..4 {
+        cluster.start_peer_with_commit(index, initial, true);
+    }
+    let started = Instant::now();
+    let (now, proof) = loop {
+        let now = initial + ROUND_INTERVAL + started.elapsed();
+        cluster.step(&active, now);
+        let mut proof = None;
+        // Simulate a delayed receiver that obtains the complete certificate
+        // before any timeout/new-view/prepare messages from the newer round.
+        for event in cluster.peers[delayed]
+            .runtime
+            .as_ref()
+            .unwrap()
+            .drain_events(128)
+        {
+            if let ProductMainlineOverlayEventV1::Inbound(inbound) = event {
+                if inbound.frame.payload.get(10) == Some(&8) {
+                    proof = Some(inbound);
+                }
+            }
+        }
+        if let Some(proof) = proof {
+            break (now, proof);
+        }
+        assert!(
+            started.elapsed() < NETWORK_DEADLINE,
+            "cross-round certificate WSS deadline"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    let peer = &mut cluster.peers[delayed];
+    let runtime = peer.runtime.as_ref().unwrap();
+    let adapter = peer.adapter.as_mut().unwrap();
+    let before = durable_seal_facts(peer.node.store());
+    assert_eq!(adapter.status().round, 0);
+    assert!(adapter
+        .ingest(peer.node.ledger(), peer.node.store(), runtime, &proof)
+        .unwrap());
+    assert_eq!(durable_seal_facts(peer.node.store()), before);
+    assert!(!adapter.status().commit_confirmed);
+    adapter
+        .poll(
+            peer.node.ledger(),
+            peer.node.store(),
+            &peer.key,
+            runtime,
+            now,
+        )
+        .unwrap();
+    let status = adapter.status();
+    assert!(status.commit_confirmed && !status.prepared && !status.finalized);
+    assert_eq!(status.round, 0);
+    assert_eq!(status.commit_round, Some(1));
+    assert!(!adapter
+        .ingest(peer.node.ledger(), peer.node.store(), runtime, &proof)
+        .unwrap());
+    assert!(peer
+        .node
+        .store()
+        .load_qcs_by_height(cluster.authority.chain_id, 1, 1)
+        .unwrap()
+        .is_empty());
+    peer.adapter.take();
+    peer.runtime.take().unwrap().shutdown();
+    peer.node.reopen_store();
+    cluster.start_peer_with_commit(delayed, now, true);
+    assert_eq!(
+        cluster.peers[delayed].adapter.as_ref().unwrap().status(),
+        status
+    );
+    cluster.assert_unfinalized();
+}
+
 fn write_service_config(cluster: &NetworkCluster, index: usize) -> PathBuf {
     write_service_config_with_commit(cluster, index, false)
 }

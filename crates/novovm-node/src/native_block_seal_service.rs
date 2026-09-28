@@ -266,6 +266,8 @@ impl NovNativeSealServiceV1 {
             "prepared": !self.halted && status.prepared,
             "commit_v2_enabled": self.config.commit_v2_enabled,
             "commit_confirmed": !self.halted && status.commit_confirmed,
+            "commit_round": if self.halted { None } else { status.commit_round },
+            "commit_observed": !self.halted && status.commit_observed,
             "commit_certificate_hash": if self.halted { None } else { status.commit_certificate_hash.map(|hash| super::hex_v1(&hash)) },
             "qc_hash": if self.halted { None } else { status.qc_hash },
             "finalized": false, "safe": false, "proof_sealed": false, "chain_canonical": false,

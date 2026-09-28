@@ -77,6 +77,12 @@ impl NovNativeSealRoundDriverV1 {
         store: &NovNativeBlockSealStoreV1,
         message: &Message,
     ) -> Result<bool> {
+        if self.binding.commit_v2
+            && matches!(message, Message::CommitCertificateV2 { .. })
+            && (message.round() != self.state.current.round || self.observed_commit.is_some())
+        {
+            return self.ingest_commit_catchup(ledger, store, message);
+        }
         if !self.binding.commit_v2 || message.round() != self.state.current.round {
             return Ok(false);
         }

@@ -14,6 +14,9 @@ use std::time::{Duration, Instant};
 #[path = "native_block_seal_commit_runtime.rs"]
 mod commit_runtime;
 
+#[path = "native_block_seal_commit_catchup.rs"]
+mod commit_catchup;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NovNativeSealRoundDriverPhaseV1 {
     WaitingProposal,
@@ -29,6 +32,8 @@ pub enum NovNativeSealRoundDriverPhaseV1 {
 pub struct NovNativeSealRoundDriverStatusV1 {
     pub commit_confirmed: bool,
     pub commit_certificate_hash: Option<[u8; 32]>,
+    pub commit_round: Option<u64>,
+    pub commit_observed: bool,
     pub height: u64,
     pub round: u64,
     pub leader_id: [u8; 32],
@@ -58,6 +63,8 @@ pub struct NovNativeSealRoundDriverV1 {
     commit_votes: BTreeMap<[u8; 32], commit_v2::NovNativeSealCommitVoteV2>,
     pending_commit: Option<commit_v2::NovNativeSealCommitCertificateV2>,
     committed: Option<commit_v2::NovNativeSealCommitCertificateV2>,
+    observed_commit: Option<Message>,
+    pending_observed_commit: Option<Message>,
     binding: DriverBinding,
     store_path: PathBuf,
     ledger_path: PathBuf,
@@ -184,6 +191,8 @@ impl NovNativeSealRoundDriverV1 {
             commit_votes: BTreeMap::new(),
             pending_commit: None,
             committed: None,
+            observed_commit: None,
+            pending_observed_commit: None,
             binding,
             store_path: fs::canonicalize(store.path())?,
             ledger_path: fs::canonicalize(ledger.path())?,
@@ -205,6 +214,7 @@ impl NovNativeSealRoundDriverV1 {
         driver.check_owner(ledger, store)?;
         driver.recover_local(ledger, store)?;
         driver.recover_commit(store)?;
+        driver.recover_observed_commit(ledger, store)?;
         Ok(driver)
     }
 
@@ -449,6 +459,9 @@ impl NovNativeSealRoundDriverV1 {
         if message.is_commit_v2() {
             return self.ingest_commit(ledger, store, &message);
         }
+        if self.observed_commit.is_some() {
+            return Ok(false);
+        }
         if message.round() != self.state.current.round || self.prepared.is_some() {
             return Ok(false);
         }
@@ -541,6 +554,9 @@ impl NovNativeSealRoundDriverV1 {
         }
         self.last_poll = now;
         self.recover_local(ledger, store)?;
+        if let Some(output) = self.poll_commit_catchup(ledger, store)? {
+            return self.validate_output(output);
+        }
         if self.prepared.is_some() {
             return self.poll_commit(ledger, store, key);
         }
@@ -781,7 +797,7 @@ impl NovNativeSealRoundDriverV1 {
         use NovNativeSealRoundDriverPhaseV1 as Phase;
         let phase = if self.halted {
             Phase::Halted
-        } else if self.committed.is_some() {
+        } else if self.committed.is_some() || self.observed_commit.is_some() {
             Phase::CommitConfirmed
         } else if self.prepared.is_some() {
             Phase::Prepared
@@ -795,11 +811,29 @@ impl NovNativeSealRoundDriverV1 {
             Phase::WaitingProposal
         };
         NovNativeSealRoundDriverStatusV1 {
-            commit_confirmed: !self.halted && self.committed.is_some(),
+            commit_confirmed: !self.halted
+                && (self.committed.is_some() || self.observed_commit.is_some()),
+            commit_observed: !self.halted && self.observed_commit.is_some(),
+            commit_round: if self.halted {
+                None
+            } else {
+                self.observed_commit
+                    .as_ref()
+                    .map(Message::round)
+                    .or_else(|| self.committed.as_ref().map(|c| c.prepare.subject.round))
+            },
             commit_certificate_hash: if self.halted {
                 None
             } else {
-                self.committed.as_ref().map(|c| c.certificate_hash)
+                self.observed_commit
+                    .as_ref()
+                    .and_then(|m| match m {
+                        Message::CommitCertificateV2 { commit, .. } => {
+                            Some(commit.certificate_hash)
+                        }
+                        _ => None,
+                    })
+                    .or_else(|| self.committed.as_ref().map(|c| c.certificate_hash))
             },
             height: self.binding.height,
             round: self.state.current.round,
