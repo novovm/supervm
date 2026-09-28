@@ -2,6 +2,13 @@
 
 ## Current acceptance checkpoint (2026-09-29)
 
+Operator clarification after this checkpoint: the blockchain has not entered
+real use. Continue pre-launch development and isolated multi-machine validation;
+do not treat user-asset migration as a prerequisite or assume real balances exist.
+The rollout alternatives below are future deployment boundaries, not a request
+to choose an existing-chain migration now. Preserve current chat/test services
+and data; any reset still requires a separately stated scope.
+
 Code revision `0e015ce2087560899932f5ad14f2f7b9cca18a0e` passed complete
 [Linux CI run 36406027860](https://github.com/novovm/supervm/actions/runs/36406027860),
 including the mainline gate and funded real-process regressions. Earlier pending

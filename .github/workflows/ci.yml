@@ -14,6 +14,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lan_script_launch:
+    name: LAN diagnostic launcher checks
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject stale builds and resolve local target paths
+        shell: pwsh
+        run: ./scripts/tests/overlay-gate-build.tests.ps1
+
   governance_pr_gate_observability:
     name: Governance PR Gate observability
     if: github.event_name == 'pull_request'

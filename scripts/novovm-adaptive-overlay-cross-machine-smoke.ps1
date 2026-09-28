@@ -11,6 +11,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'lib/overlay-gate-build.ps1')
 
 function Join-RepoPath {
     param([string]$Path)
@@ -103,14 +104,7 @@ function Set-ProcessEnv {
 }
 
 function Ensure-GateBinary {
-    if (-not $SkipBuild) {
-        cargo build -q -p novovm-node --bin supervm-network-overlay-gate
-    }
-    $binary = Join-Path $RepoRoot "target\debug\supervm-network-overlay-gate.exe"
-    if (-not (Test-Path $binary)) {
-        throw "missing gate binary: $binary"
-    }
-    $binary
+    Resolve-OverlayGateBinary -RepoRoot $RepoRoot -SkipBuild:$SkipBuild
 }
 
 function Get-ReportPath {
@@ -235,3 +229,6 @@ $isSender = $Action -eq "send"
 $envMap = New-AdaptiveEnv $Config $CaseConfig $Node $reportPath $isSender
 Set-ProcessEnv $envMap
 & $GateBinary
+if ($LASTEXITCODE -ne 0) {
+    throw "adaptive overlay gate failed with exit code $LASTEXITCODE"
+}

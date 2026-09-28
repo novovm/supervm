@@ -12,6 +12,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'lib/overlay-gate-build.ps1')
 
 function Join-RepoPath {
     param([string]$Path)
@@ -68,6 +69,9 @@ function Start-GateJob {
             [Environment]::SetEnvironmentVariable($key, [string]$Environment[$key], "Process")
         }
         & $GateBinary | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "gate process failed with exit code $LASTEXITCODE"
+        }
     }
 }
 
@@ -272,14 +276,7 @@ $Config = Read-OverlayConfig $ConfigPath
 $ReportRootAbs = Join-RepoPath $ReportRoot
 New-Item -ItemType Directory -Force -Path $ReportRootAbs | Out-Null
 
-if (-not $SkipBuild) {
-    cargo build -q -p novovm-node --bin supervm-network-overlay-gate
-}
-
-$GateBinary = Join-Path $RepoRoot "target\debug\supervm-network-overlay-gate.exe"
-if (-not (Test-Path $GateBinary)) {
-    throw "missing gate binary: $GateBinary"
-}
+$GateBinary = Resolve-OverlayGateBinary -RepoRoot $RepoRoot -SkipBuild:$SkipBuild
 
 if ($Role -ne "all-local") {
     Invoke-SingleRole
