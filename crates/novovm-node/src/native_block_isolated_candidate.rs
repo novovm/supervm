@@ -69,6 +69,7 @@ impl NovNativeBlockLedgerV1 {
             write_lock: Arc::clone(&self.write_lock),
             read_only: true,
             isolated_seal_scope: Some(record),
+            fresh_successor_parent_target: None,
             fresh_genesis_seal_scope: None,
         };
         action(&view)

@@ -915,6 +915,20 @@ impl NovNativeBlockSealStoreV1 {
             if compiled.validator_set() != validator_set {
                 bail!("first seal validator set differs from approved genesis");
             }
+            if let Some(target) = ledger.fresh_successor_parent_target_v1()? {
+                if justify_qc_hash.is_some_and(|given| given != target) || record.height != 2 {
+                    bail!("successor justification differs from verified parent decision");
+                }
+                return subject_from_block_profile_v1(
+                    &block,
+                    validator_set,
+                    round,
+                    target,
+                    compiled.identity().anchor(),
+                    config.protocol_config_commitment,
+                    NOV_NATIVE_BLOCK_SEAL_FRESH_SUCCESSOR_PROOF_V1,
+                );
+            }
             let justify = justify_qc_hash.unwrap_or([0; 32]);
             self.validate_justify_qc_v1(&record, validator_set, justify)?;
             return subject_from_block_profile_v1(

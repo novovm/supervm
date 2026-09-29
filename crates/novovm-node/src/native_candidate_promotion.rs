@@ -221,6 +221,51 @@ pub fn register_finalized_successor_v1(
     registered.context("successor registration did not complete")
 }
 
+/// Live signing scope, not a stored capability. The callback must not re-enter
+/// workspace/authority APIs or mutate this ledger through another handle.
+pub fn with_verified_finalized_successor_v1<T>(
+    chain: u64,
+    parent_id: [u8; 32],
+    candidate_id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+    action: impl FnOnce(&NovNativeBlockLedgerV1) -> Result<T>,
+) -> Result<T> {
+    let mut workspace = WorkspaceStore::open(chain, params)?;
+    let candidate = block_artifact::load_block_artifact_inner_v1(&workspace, candidate_id, params)?
+        .context("successor signing requires complete AOEM output")?;
+    let native_path = resolve_native_execution_store_path_from_params_v1(params)
+        .context("successor signing requires explicit native path")?;
+    let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "successor namespace")?;
+    let mut action = Some(action);
+    let mut result = None;
+    run_locked(
+        &mut workspace,
+        parent_id,
+        genesis,
+        params,
+        false,
+        PublicationScope::Capture(&mut |parent| {
+            parent.successor_seal_subject(&candidate, 0)?;
+            result = Some(NovNativeBlockLedgerV1::with_fresh_successor_seal_scope_v1(
+                &nov_native_block_ledger_rocksdb_path_v1(&native_path),
+                genesis,
+                namespace,
+                candidate.block(),
+                &crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
+                    workspace_id: candidate_id,
+                    plan_commitment: candidate.plan_commitment,
+                    output_digest: candidate.output_digest,
+                },
+                action.take().context("successor action already consumed")?,
+            )?);
+            Ok(())
+        }),
+        |_| Ok(()),
+    )?;
+    result.context("successor signing scope did not run")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GenesisPromotionPublicationV1 {
     pub chain_id: u64,

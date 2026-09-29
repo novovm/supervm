@@ -79,6 +79,56 @@ pub(super) fn validated_keys(ledger: &NovNativeBlockLedgerV1) -> Result<Vec<Vec<
 }
 
 impl NovNativeBlockLedgerV1 {
+    pub(crate) fn fresh_successor_parent_target_v1(&self) -> Result<Option<[u8; 32]>> {
+        self.ensure_schema_v1()?;
+        Ok(self.fresh_successor_parent_target)
+    }
+
+    /// Coordinator holds live workspace/authority locks throughout this callback.
+    pub(crate) fn with_fresh_successor_seal_scope_v1<T>(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        block: &NovNativeDurableBlockV1,
+        binding: &NovNativeIsolatedExecutionBindingV1,
+        action: impl FnOnce(&Self) -> Result<T>,
+    ) -> Result<T> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("successor signing ledger missing")?;
+        let _guard = ledger
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("successor signing lock poisoned"))?;
+        let config = load_verified(&ledger, genesis, namespace)?;
+        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() != Some(FINALIZED_SCHEMA.as_bytes()) {
+            bail!("successor signing requires finalized first block");
+        }
+        let parent = parent(&ledger)?;
+        validate_child(&parent, block)?;
+        let target = finality::read(&ledger)?.validated_decision_target(&config, &parent)?;
+        let record = ledger
+            .load_candidate_record_inner_v1(config.chain_id, block.header.block_hash)?
+            .context("successor signing candidate is not registered")?;
+        if record.isolated_execution_binding.as_ref() != Some(binding)
+            || ledger
+                .load_candidate_block_for_record_inner_v1(&record)?
+                .as_ref()
+                != Some(block)
+        {
+            bail!("successor signing scope differs from verified AOEM output");
+        }
+        let view = Self {
+            path: ledger.path.clone(),
+            db: Arc::clone(&ledger.db),
+            write_lock: Arc::clone(&ledger.write_lock),
+            read_only: true,
+            isolated_seal_scope: Some(record),
+            fresh_genesis_seal_scope: Some((config, namespace)),
+            fresh_successor_parent_target: Some(target),
+        };
+        action(&view)
+    }
+
     /// Only the workspace coordinator may call this while holding live-parent
     /// workspace and authority locks. This does not authorize any signature.
     pub(crate) fn register_fresh_successor_v1(

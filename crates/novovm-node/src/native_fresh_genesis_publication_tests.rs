@@ -968,6 +968,15 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             params
         )
         .is_err());
+        assert!(workspace::with_verified_finalized_successor_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            params,
+            |_| -> Result<()> { panic!("unregistered successor reached signer") }
+        )
+        .is_err());
         let second_record = workspace::register_finalized_successor_v1(
             chain,
             input.workspace_id,
@@ -999,18 +1008,27 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             .unwrap()
         );
         let db = rocksdb::DB::open_default(&ledger).unwrap();
-        let (second_key, second_value) =
-            db.iterator(rocksdb::IteratorMode::Start)
-                .map(|entry| entry.unwrap())
-                .find(|(_, value)| {
-                    serde_json::from_slice::<
+        let (second_key, second_value) = db
+            .iterator(rocksdb::IteratorMode::Start)
+            .map(|entry| entry.unwrap())
+            .find(|(_, value)| {
+                serde_json::from_slice::<
                         crate::native_block_ledger::NovNativeBlockCandidateRecordV1,
                     >(value)
                     .is_ok_and(|record| record.block_hash == second_record.block_hash)
-                })
-                .expect("second candidate durable record");
+            })
+            .expect("second candidate durable record");
         db.delete(&second_key).unwrap();
         drop(db);
+        assert!(workspace::with_verified_finalized_successor_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            params,
+            |_| -> Result<()> { panic!("missing successor record reached signer") }
+        )
+        .is_err());
         assert!(workspace::register_finalized_successor_v1(
             chain,
             input.workspace_id,
@@ -1067,6 +1085,14 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             )
             .unwrap()
         );
+        exercise_fresh_successor_signing(
+            path,
+            params,
+            &compiled,
+            input.workspace_id,
+            next_input.workspace_id,
+            competing_next.workspace_id,
+        );
         assert!(NovNativeBlockLedgerV1::open(&ledger).is_err());
         assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), promoted_head);
         assert_eq!(
@@ -1122,6 +1148,15 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             input.workspace_id,
             pin,
             params
+        )
+        .is_err());
+        assert!(workspace::with_verified_finalized_successor_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            params,
+            |_| -> Result<()> { panic!("missing parent finality reached signer") }
         )
         .is_err());
         assert!(workspace::register_finalized_successor_v1(
@@ -1189,4 +1224,5 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
 }
 
 include!("native_fresh_genesis_signing_tests.rs");
+include!("native_fresh_successor_signing_tests.rs");
 include!("native_fresh_genesis_service_tests.rs");

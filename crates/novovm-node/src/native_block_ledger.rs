@@ -362,6 +362,7 @@ pub struct NovNativeBlockLedgerV1 {
     write_lock: Arc<Mutex<()>>,
     read_only: bool,
     isolated_seal_scope: Option<NovNativeBlockCandidateRecordV1>,
+    fresh_successor_parent_target: Option<[u8; 32]>,
     fresh_genesis_seal_scope: Option<(
         crate::tx_ingress::fresh_genesis::FreshGenesisConfigV1,
         [u8; 32],
@@ -453,6 +454,7 @@ impl NovNativeBlockLedgerV1 {
             db,
             read_only: false,
             isolated_seal_scope: None,
+            fresh_successor_parent_target: None,
             fresh_genesis_seal_scope: None,
         };
         if !allow_genesis_reservation {
@@ -502,6 +504,7 @@ impl NovNativeBlockLedgerV1 {
             db,
             read_only: true,
             isolated_seal_scope: None,
+            fresh_successor_parent_target: None,
             fresh_genesis_seal_scope: None,
         };
         if allow_genesis_reservation {

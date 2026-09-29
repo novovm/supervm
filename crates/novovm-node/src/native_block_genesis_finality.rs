@@ -104,7 +104,7 @@ impl NovNativeFreshFinalityProofV1 {
     }
 }
 
-fn read(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeFreshFinalityProofV1> {
+pub(super) fn read(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeFreshFinalityProofV1> {
     let proof: NovNativeFreshFinalityProofV1 =
         read_json_v1(&ledger.db, KEY_PROOF, "fresh finality proof")?
             .context("fresh finality proof missing")?;
