@@ -235,6 +235,42 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         assert_eq!(block.block().header.pre_state_root, compiled.state_root());
         assert!(block.block().header.aoem_parent.is_none());
         assert!(!block.block().header.finalized);
+        assert_eq!(block.fresh_genesis_identity(), Some(&compiled.identity()));
+        assert_ne!(
+            compiled.identity().anchor(),
+            block.block().header.block_hash
+        );
+        // Competing first proposals must share one chain identity. Never derive
+        // it from either proposal's block hash or candidate-local state output.
+        let mut competing_context = plan.context;
+        competing_context.slot += 1;
+        let competing_plan = make_plan(
+            competing_context,
+            compiled.state_root(),
+            None,
+            plan.raw_txs.clone(),
+        );
+        let competing = workspace::create_from_genesis_v1(&competing_plan, pin, params).unwrap();
+        let competing_result =
+            workspace::execute_v1(chain, competing.workspace_id, params).unwrap();
+        assert_candidate_workspace_execution_complete(&competing_result);
+        assert!(competing_result.batch_result.per_tx_receipts[0].status_ok);
+        let competing_block =
+            workspace::load_block_artifact_v1(chain, competing.workspace_id, params)
+                .unwrap()
+                .unwrap();
+        assert_ne!(
+            competing_block.block().header.block_hash,
+            block.block().header.block_hash
+        );
+        assert_eq!(
+            competing_block.fresh_genesis_identity(),
+            block.fresh_genesis_identity()
+        );
+        assert!(!competing_block.block().header.finalized);
+        assert!(
+            workspace::register_block_candidate_v1(chain, competing.workspace_id, params).is_err()
+        );
         assert!(workspace::register_block_candidate_v1(chain, input.workspace_id, params).is_err());
         assert_eq!(
             workspace::create_from_genesis_v1(&plan, pin, params)
@@ -246,6 +282,13 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         assert!(workspace::create_v1(&plan, params).is_err());
         let restored = workspace::execute_v1(chain, input.workspace_id, params).unwrap();
         assert_eq!(restored.output_digest, result.output_digest);
+        assert_eq!(
+            workspace::load_block_artifact_v1(chain, input.workspace_id, params)
+                .unwrap()
+                .unwrap()
+                .fresh_genesis_identity(),
+            Some(&compiled.identity())
+        );
         assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), head);
         assert!(!native_host_projection_has_state_v1(
             &load_nov_native_execution_store_v1(path).unwrap()

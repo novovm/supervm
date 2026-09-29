@@ -15,10 +15,19 @@ pub struct IsolatedBlockArtifactV1 {
     pub workspace_id: [u8; 32],
     pub plan_commitment: [u8; 32],
     pub output_digest: [u8; 32],
+    fresh_genesis_identity: Option<crate::tx_ingress::fresh_genesis::FreshGenesisIdentityV1>,
     block: NovNativeDurableBlockV1,
 }
 
 impl IsolatedBlockArtifactV1 {
+    /// Verified historical input identity, not current-state signing permission.
+    /// None denotes the existing transaction-parent path, not an inferred genesis.
+    pub fn fresh_genesis_identity(
+        &self,
+    ) -> Option<&crate::tx_ingress::fresh_genesis::FreshGenesisIdentityV1> {
+        self.fresh_genesis_identity.as_ref()
+    }
+
     pub fn block(&self) -> &NovNativeDurableBlockV1 {
         &self.block
     }
@@ -100,10 +109,19 @@ fn load_block_artifact_inner_v1(
         },
     )?;
     plan.validate_against_block(&block)?;
+    let fresh_genesis_identity = payload
+        .genesis
+        .as_ref()
+        .map(|genesis| -> Result<_> {
+            genesis.validate()?;
+            Ok(genesis.config.compile()?.identity())
+        })
+        .transpose()?;
     Ok(Some(IsolatedBlockArtifactV1 {
         workspace_id: id,
         plan_commitment: input.plan,
         output_digest: descriptor.digest,
+        fresh_genesis_identity,
         block,
     }))
 }

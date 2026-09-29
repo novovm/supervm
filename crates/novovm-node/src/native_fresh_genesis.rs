@@ -47,6 +47,28 @@ pub struct CompiledFreshGenesisV1 {
     protocol: [u8; 32],
 }
 
+/// Chain-wide identity derived only from validated genesis inputs. Neither a
+/// transaction block hash nor evidence that this genesis is active locally.
+/// Private fields prevent callers from constructing an unchecked identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FreshGenesisIdentityV1 {
+    chain_id: u64,
+    config_commitment: [u8; 32],
+    anchor: [u8; 32],
+}
+
+impl FreshGenesisIdentityV1 {
+    pub fn chain_id(&self) -> u64 {
+        self.chain_id
+    }
+    pub fn config_commitment(&self) -> [u8; 32] {
+        self.config_commitment
+    }
+    pub fn anchor(&self) -> [u8; 32] {
+        self.anchor
+    }
+}
+
 fn amount(value: &str) -> Result<u128> {
     if value.is_empty()
         || value.len() > 39
@@ -140,6 +162,22 @@ impl FreshGenesisConfigV1 {
 }
 
 impl CompiledFreshGenesisV1 {
+    /// Excludes local namespace, storage paths, first-block contents and round.
+    /// The configuration commitment already binds time, initial state, protocol
+    /// and the complete validator set. This distinct domain must not be passed
+    /// off as the legacy seal profile's height-one transaction block hash.
+    pub fn identity(&self) -> FreshGenesisIdentityV1 {
+        FreshGenesisIdentityV1 {
+            chain_id: self.validator_set.chain_id,
+            config_commitment: self.config_commitment,
+            anchor: sha256_bytes_v1(&[
+                b"novovm-fresh-genesis-chain-identity-v1\0",
+                &self.validator_set.chain_id.to_be_bytes(),
+                &self.config_commitment,
+            ]),
+        }
+    }
+
     pub fn config_commitment(&self) -> [u8; 32] {
         self.config_commitment
     }
@@ -213,6 +251,14 @@ mod tests {
         config.validators.reverse();
         let other = config.compile().unwrap();
         assert_eq!(first.config_commitment(), other.config_commitment());
+        assert_eq!(first.identity(), other.identity());
+        assert_eq!(first.identity().chain_id(), config.chain_id);
+        assert_eq!(
+            first.identity().config_commitment(),
+            first.config_commitment()
+        );
+        assert_ne!(first.identity().anchor(), first.config_commitment());
+        assert_ne!(first.identity().anchor(), [0; 32]);
         assert_eq!(first.initial_store(), other.initial_store());
         assert_eq!(first.validator_set().quorum_weight, 3);
         let mut expected = NovNativeExecutionStoreV1::default();
@@ -271,6 +317,7 @@ mod tests {
     #[test]
     fn fresh_genesis_commitment_binds_chain_time_protocol_allocations_and_authority() {
         let baseline = config().compile().unwrap().config_commitment();
+        let identity = config().compile().unwrap().identity();
         for field in 0..5 {
             let mut value = config();
             match field {
@@ -281,6 +328,11 @@ mod tests {
                 _ => value.validators[0].weight += 1,
             }
             assert_ne!(value.compile().unwrap().config_commitment(), baseline);
+            assert_ne!(value.compile().unwrap().identity(), identity);
+            assert_ne!(
+                value.compile().unwrap().identity().anchor(),
+                identity.anchor()
+            );
         }
     }
 

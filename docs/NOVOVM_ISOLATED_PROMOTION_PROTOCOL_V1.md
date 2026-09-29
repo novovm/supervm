@@ -198,6 +198,31 @@ initialization, changed configuration, occupied test storage/namespace and
 preservation of test data. Relative/config-resolved paths remain supported; no
 particular drive letter or workspace directory name is required.
 
+## Fresh-genesis identity foundation (implemented, not signing activation)
+
+`CompiledFreshGenesisV1::identity()` derives a typed chain identity with the
+domain `novovm-fresh-genesis-chain-identity-v1\0`, big-endian chain ID and the
+canonical configuration commitment. That commitment binds genesis time, initial
+state, protocol and validator set. Local paths/namespaces and first transaction
+candidate hashes are not identity inputs. Private fields prevent unchecked
+construction; compilation itself still does not prove operator approval or live
+AOEM ownership.
+
+Verified isolated first-block artifacts expose this identity, reconstructed from
+their validated archived genesis input rather than caller-provided metadata.
+Legacy transaction-parent artifacts expose `None`; no chain identity is guessed
+from missing genesis input. This describes historical input only and does not
+authorize signing, registration, state publication or finality.
+
+Real AOEM regression executes two competing first-block candidates, verifies
+different block hashes with identical genesis identity, reopens the artifact and
+confirms the authoritative genesis head remains unchanged. Reserved-ledger
+registration still rejects both. Existing seal subjects, authority codecs and
+height-one signature checks remain unchanged: the new anchor MUST NOT be inserted
+into the legacy `genesis_block_hash` field as if it were a transaction block hash.
+An explicitly discriminated fresh-genesis signing domain and live ledger scope
+are the next integration requirement; this foundation is not that integration.
+
 ## Recovery matrix to implement and test
 
 | Durable intent | AOEM state | Ledger pointer | Required action |
