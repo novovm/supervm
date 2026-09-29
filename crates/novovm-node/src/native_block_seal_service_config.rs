@@ -260,16 +260,14 @@ impl NovNativeSealServiceConfigV1 {
             || (fresh_authority
                 && (self.isolated_workspace_id.is_none()
                     || !self.decision_v3_enabled
-                    || !matches!(
-                        (self.height, self.finalized_parent_workspace_id),
-                        (1, None) | (2, Some(_))
-                    )
+                    || !((self.height == 1 && self.finalized_parent_workspace_id.is_none())
+                        || (self.height > 1 && self.finalized_parent_workspace_id.is_some()))
                     || self.justify_qc_hash.is_some()))
             || self.finalized_parent_workspace_id.is_some_and(|id| {
                 !fresh_authority || id == [0; 32] || Some(id) == self.isolated_workspace_id
             })
         {
-            bail!("fresh service requires pinned V3 candidate, explicit finalized parent for height two, and no parent QC override");
+            bail!("fresh service requires pinned V3 candidate, explicit finalized parent for successor heights, and no parent QC override");
         }
         if self.isolated_workspace_id.is_some()
             && (!self.decision_v3_enabled || self.isolated_workspace_id == Some([0; 32]))
@@ -676,12 +674,14 @@ mod tests {
         fixture.write();
         assert!(fixture.load().unwrap().is_fresh_successor());
         let successor = fixture.config.clone();
+        fixture.config["height"] = json!(3);
+        fixture.write();
+        assert!(fixture.load().unwrap().is_fresh_successor());
         for (field, value) in [
             ("finalized_parent_workspace_id", Value::Null),
             ("finalized_parent_workspace_id", json!("00".repeat(32))),
             ("finalized_parent_workspace_id", json!("31".repeat(32))),
             ("height", json!(1)),
-            ("height", json!(3)),
             ("justify_qc_hash", json!("22".repeat(32))),
         ] {
             fixture.config = successor.clone();

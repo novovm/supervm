@@ -1,14 +1,73 @@
-//! Unselected height-two candidates under a finalized fresh first block.
+//! Unselected next-height candidates under the current finalized fresh block.
 use super::*;
 
-pub(super) fn parent(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeDurableBlockV1> {
-    let intent = promotion::read(ledger)?;
+pub(super) struct FinalizedRecord {
+    pub(super) block: NovNativeDurableBlockV1,
+    pub(super) proof: NovNativeFreshFinalityProofV1,
+    pub(super) execution: NovNativeIsolatedExecutionBindingV1,
+    pub(super) commitment: [u8; 32],
+}
+
+pub(super) fn record_at(ledger: &NovNativeBlockLedgerV1, height: u64) -> Result<FinalizedRecord> {
+    let (hash, execution, commitment, proof) = if height == 1 {
+        let intent = promotion::read(ledger)?;
+        (
+            intent.block_hash,
+            intent.execution.clone(),
+            intent.commitment()?,
+            finality::read(ledger)?,
+        )
+    } else {
+        let intent = successor_finality::read_archive(ledger, height)?
+            .context("finalized predecessor archive missing")?;
+        let crate::native_block_seal::round_message::NovNativeSealRoundMessageV1::DecisionCertificateV3 { decision, .. } = &intent.proof.witness else {
+            bail!("finalized predecessor witness missing");
+        };
+        (
+            decision.prepare.subject.block_hash,
+            intent.execution.clone(),
+            intent.commitment()?,
+            intent.proof,
+        )
+    };
+    let chain = proof.authority.chain_id;
     let record = ledger
-        .load_candidate_record_inner_v1(intent.chain_id, intent.block_hash)?
+        .load_candidate_record_inner_v1(chain, hash)?
         .context("finalized parent record missing")?;
-    ledger
+    let block = ledger
         .load_candidate_block_for_record_inner_v1(&record)?
-        .context("finalized parent body missing")
+        .context("finalized parent body missing")?;
+    if block.header.height != height
+        || record.isolated_execution_binding.as_ref() != Some(&execution)
+    {
+        bail!("finalized parent record differs from archive");
+    }
+    Ok(FinalizedRecord {
+        block,
+        proof,
+        execution,
+        commitment,
+    })
+}
+
+pub(super) fn tip_height(ledger: &NovNativeBlockLedgerV1) -> Result<u64> {
+    let schema = ledger
+        .db
+        .get(KEY_SCHEMA_V1)?
+        .context("ledger schema missing")?;
+    if !has_successor_intent_schema(&schema) {
+        return Ok(1);
+    }
+    let height = successor_promotion::read(ledger)?.height()?;
+    if schema == SUCCESSOR_FINALIZED_SCHEMA.as_bytes() {
+        Ok(height)
+    } else {
+        height.checked_sub(1).context("successor height underflow")
+    }
+}
+
+pub(super) fn parent(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeDurableBlockV1> {
+    Ok(record_at(ledger, tip_height(ledger)?)?.block)
 }
 
 pub(super) fn validate_child(
@@ -27,8 +86,7 @@ pub(super) fn validate_child(
         receipt_root_codec: p.cumulative_receipt_root_codec.clone(),
         state_version: p.state_version,
     };
-    if p.height != 1
-        || h.height != 2
+    if p.height.checked_add(1) != Some(h.height)
         || h.chain_id != p.chain_id
         || h.parent_block_hash != p.block_hash
         || h.pre_state_root != p.post_state_root
@@ -43,9 +101,28 @@ pub(super) fn validate_child(
 }
 
 pub(super) fn validated_keys(ledger: &NovNativeBlockLedgerV1) -> Result<Vec<Vec<u8>>> {
-    let parent = parent(ledger)?;
+    let mut parents = vec![record_at(ledger, 1)?.block];
+    for (height, _) in successor_finality::archives(ledger)? {
+        parents.push(record_at(ledger, height)?.block);
+    }
+    let mut keys = Vec::new();
+    for parent in parents {
+        keys.extend(candidate_keys(ledger, &parent)?);
+    }
+    Ok(keys)
+}
+
+fn candidate_keys(
+    ledger: &NovNativeBlockLedgerV1,
+    parent: &NovNativeDurableBlockV1,
+) -> Result<Vec<Vec<u8>>> {
     let chain = parent.header.chain_id;
-    let height = ledger.load_candidate_height_index_inner_v1(chain, 2)?;
+    let next = parent
+        .header
+        .height
+        .checked_add(1)
+        .context("candidate height overflow")?;
+    let height = ledger.load_candidate_height_index_inner_v1(chain, next)?;
     let children =
         ledger.load_candidate_children_index_inner_v1(chain, parent.header.block_hash)?;
     let (height, children) = match (height, children) {
@@ -57,7 +134,7 @@ pub(super) fn validated_keys(ledger: &NovNativeBlockLedgerV1) -> Result<Vec<Vec<
         bail!("fresh successor indexes disagree");
     }
     let mut keys = vec![
-        candidate_height_index_key_v1(chain, 2).into_bytes(),
+        candidate_height_index_key_v1(chain, next).into_bytes(),
         candidate_children_index_key_v1(chain, &parent.header.block_hash).into_bytes(),
     ];
     for hash in height.block_hashes {
@@ -73,7 +150,7 @@ pub(super) fn validated_keys(ledger: &NovNativeBlockLedgerV1) -> Result<Vec<Vec<
         let block = ledger
             .load_candidate_block_for_record_inner_v1(&record)?
             .context("fresh successor artifact missing")?;
-        validate_child(&parent, &block)?;
+        validate_child(parent, &block)?;
         keys.push(candidate_record_key_v1(chain, &hash).into_bytes());
         keys.push(candidate_artifact_key_v1(chain, &hash).into_bytes());
         keys.push(isolated_candidate::pin_key(chain, &hash).into_bytes());
@@ -82,17 +159,48 @@ pub(super) fn validated_keys(ledger: &NovNativeBlockLedgerV1) -> Result<Vec<Vec<
 }
 
 impl NovNativeBlockLedgerV1 {
+    pub(crate) fn load_fresh_finalized_execution_v1(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        height: u64,
+    ) -> Result<(
+        NovNativeIsolatedExecutionBindingV1,
+        [u8; 32],
+        NovNativeDurableBlockV1,
+    )> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("finalized execution ledger missing")?;
+        load_verified(&ledger, genesis, namespace)?;
+        let record = record_at(&ledger, height)?;
+        Ok((record.execution, record.commitment, record.block))
+    }
+
     pub(crate) fn fresh_successor_parent_workspace_v1(&self) -> Result<Option<[u8; 32]>> {
         self.ensure_schema_v1()?;
         if self.fresh_successor_parent_target.is_none() {
             return Ok(None);
         }
-        Ok(Some(promotion::read(self)?.execution.workspace_id))
+        Ok(Some(
+            record_at(self, tip_height(self)?)?.execution.workspace_id,
+        ))
     }
 
     pub(crate) fn fresh_successor_parent_target_v1(&self) -> Result<Option<[u8; 32]>> {
         self.ensure_schema_v1()?;
         Ok(self.fresh_successor_parent_target)
+    }
+
+    pub(crate) fn fresh_successor_height_v1(&self) -> Result<Option<u64>> {
+        self.ensure_schema_v1()?;
+        if self.fresh_successor_parent_target.is_none() {
+            return Ok(None);
+        }
+        let record = self
+            .isolated_seal_scope
+            .as_ref()
+            .context("successor candidate scope missing")?;
+        Ok(Some(record.height))
     }
 
     /// Coordinator holds live workspace/authority locks throughout this callback.
@@ -111,12 +219,16 @@ impl NovNativeBlockLedgerV1 {
             .lock()
             .map_err(|_| anyhow::anyhow!("successor signing lock poisoned"))?;
         let config = load_verified(&ledger, genesis, namespace)?;
-        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() != Some(FINALIZED_SCHEMA.as_bytes()) {
-            bail!("successor signing requires finalized first block");
+        if !ledger.db.get(KEY_SCHEMA_V1)?.is_some_and(|s| {
+            s == FINALIZED_SCHEMA.as_bytes() || s == SUCCESSOR_FINALIZED_SCHEMA.as_bytes()
+        }) {
+            bail!("successor signing requires finalized current block");
         }
         let parent = parent(&ledger)?;
         validate_child(&parent, block)?;
-        let target = finality::read(&ledger)?.validated_decision_target(&config, &parent)?;
+        let target = record_at(&ledger, parent.header.height)?
+            .proof
+            .validated_decision_target(&config, &parent)?;
         let record = ledger
             .load_candidate_record_inner_v1(config.chain_id, block.header.block_hash)?
             .context("successor signing candidate is not registered")?;
@@ -159,8 +271,10 @@ impl NovNativeBlockLedgerV1 {
             .lock()
             .map_err(|_| anyhow::anyhow!("successor ledger lock poisoned"))?;
         load_verified(&ledger, genesis, namespace)?;
-        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() != Some(FINALIZED_SCHEMA.as_bytes()) {
-            bail!("fresh successor requires finalized first-block ledger");
+        if !ledger.db.get(KEY_SCHEMA_V1)?.is_some_and(|s| {
+            s == FINALIZED_SCHEMA.as_bytes() || s == SUCCESSOR_FINALIZED_SCHEMA.as_bytes()
+        }) {
+            bail!("fresh successor requires finalized current ledger");
         }
         validate_child(&parent(&ledger)?, &block)?;
         let chain = block.header.chain_id;

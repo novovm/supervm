@@ -2,7 +2,7 @@
 use super::*;
 use std::collections::BTreeMap;
 
-const KEY_COMPLETED: &[u8] = b"native_block_ledger/v1/successor/published-intent";
+pub(super) const KEY_COMPLETED: &[u8] = b"native_block_ledger/v1/successor/published-intent";
 
 fn block(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeDurableBlockV1> {
     let intent = successor_promotion::read(ledger)?;
@@ -20,11 +20,13 @@ fn block(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeDurableBlockV1> {
 
 fn entries(ledger: &NovNativeBlockLedgerV1) -> Result<BTreeMap<Vec<u8>, Vec<u8>>> {
     let block = block(ledger)?;
-    let parent_entries = completion::entries(ledger)?;
-    let parent: NovNativeBlockLedgerHeadV1 = serde_json::from_slice(
-        parent_entries
-            .get(head_key_v1(block.header.chain_id).as_bytes())
-            .context("parent head projection missing")?,
+    let parent = successor_finality::head_at(
+        ledger,
+        block
+            .header
+            .height
+            .checked_sub(1)
+            .context("parent height underflow")?,
     )?;
     let mut entries = completion::block_entries(&block, Some(&parent))?;
     entries.insert(

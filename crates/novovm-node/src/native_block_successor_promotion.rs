@@ -17,6 +17,13 @@ pub(super) struct Intent {
 }
 
 impl Intent {
+    pub(super) fn height(&self) -> Result<u64> {
+        let Message::DecisionCertificateV3 { decision, .. } = &self.proof.witness else {
+            bail!("successor archive requires a full decision witness");
+        };
+        Ok(decision.prepare.subject.height)
+    }
+
     pub(super) fn commitment(&self) -> Result<[u8; 32]> {
         let mut hash = Sha256::new();
         hash.update(b"novovm-fresh-successor-promotion-intent-v1\0");
@@ -24,17 +31,14 @@ impl Intent {
         Ok(hash.finalize().into())
     }
 
-    fn validate(
+    pub(super) fn validate(
         &self,
         ledger: &NovNativeBlockLedgerV1,
         config: &FreshGenesisConfigV1,
         namespace: [u8; 32],
     ) -> Result<()> {
         let compiled = config.compile()?;
-        if self.genesis != compiled.config_commitment()
-            || self.namespace != namespace
-            || self.parent_workspace != promotion::read(ledger)?.execution.workspace_id
-        {
+        if self.genesis != compiled.config_commitment() || self.namespace != namespace {
             bail!("successor promotion domain or parent mismatch");
         }
         self.execution.validate()?;
@@ -51,9 +55,20 @@ impl Intent {
         let block = ledger
             .load_candidate_block_for_record_inner_v1(&record)?
             .context("successor promotion body missing")?;
-        let parent = successors::parent(ledger)?;
-        successors::validate_child(&parent, &block)?;
-        let target = finality::read(ledger)?.validated_decision_target(config, &parent)?;
+        let parent = successors::record_at(
+            ledger,
+            subject
+                .height
+                .checked_sub(1)
+                .context("successor height underflow")?,
+        )?;
+        if self.parent_workspace != parent.execution.workspace_id {
+            bail!("successor promotion parent workspace mismatch");
+        }
+        successors::validate_child(&parent.block, &block)?;
+        let target = parent
+            .proof
+            .validated_decision_target(config, &parent.block)?;
         let expected = crate::native_block_seal::subject_from_block_profile_v1(
             &block,
             compiled.validator_set(),
@@ -78,9 +93,11 @@ impl Intent {
             .transport_bindings
             .first()
             .context("successor authority empty")?;
-        self.proof
-            .witness
-            .validate_authenticated(&authority, 2, &source.transport_peer_id)?;
+        self.proof.witness.validate_authenticated(
+            &authority,
+            subject.height,
+            &source.transport_peer_id,
+        )?;
         Ok(())
     }
 }
@@ -142,6 +159,18 @@ impl NovNativeBlockLedgerV1 {
             return Ok(false);
         }
         let intent = read(&ledger)?;
+        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() == Some(SUCCESSOR_FINALIZED_SCHEMA.as_bytes())
+            && intent.execution.workspace_id == parent
+            && intent.height()?.checked_add(1)
+                == Some(match &proof.witness {
+                    Message::DecisionCertificateV3 { decision, .. } => {
+                        decision.prepare.subject.height
+                    }
+                    _ => bail!("successor recovery requires full decision"),
+                })
+        {
+            return Ok(false);
+        }
         if intent.parent_workspace != parent
             || intent.execution.workspace_id != candidate
             || intent.proof != *proof
@@ -207,18 +236,25 @@ impl NovNativeBlockLedgerV1 {
             .get(KEY_SCHEMA_V1)?
             .context("successor schema missing")?;
         if has_successor_intent_schema(&schema) {
-            if read(&ledger)? != intent {
+            let previous = read(&ledger)?;
+            if previous == intent {
+                return intent.commitment();
+            }
+            if schema != SUCCESSOR_FINALIZED_SCHEMA.as_bytes()
+                || previous.height()?.checked_add(1) != Some(intent.height()?)
+                || previous.execution.workspace_id != parent_workspace
+            {
                 bail!("another successor promotion target is already durable");
             }
-            return intent.commitment();
-        }
-        if schema != FINALIZED_SCHEMA.as_bytes() {
+        } else if schema != FINALIZED_SCHEMA.as_bytes() {
             bail!("successor promotion requires finalized parent");
         }
         let commitment = intent.commitment()?;
         let mut batch = RocksDbWriteBatch::default();
         put_json_v1(&mut batch, KEY, &intent, "successor promotion")?;
         batch.put(PIN, commitment);
+        batch.delete(successor_completion::KEY_COMPLETED);
+        batch.delete(successor_finality::KEY_FINALIZED);
         batch.put(KEY_SCHEMA_V1, SUCCESSOR_INTENT_SCHEMA.as_bytes());
         write_sync_v1(&ledger.db, batch)?;
         load_verified(&ledger, genesis, namespace)?;

@@ -1,22 +1,22 @@
 # Isolated candidate promotion protocol v1 — implementation contract
 
-Status: first/second-height publication and finality integrated; continuous-height activation incomplete.
+Status: height-indexed successor publication/finality integrated; automatic continuous block creation incomplete.
 
-The main-node lifecycle now resumes the configured second-height publication
+The main-node lifecycle resumes the configured successor-height publication
 from its local V3 archive, or publishes after the confirmation service obtains
 that archive. It validates the explicit ledger path and exact existing intent,
 then completes AOEM publication, ledger indexes and finality without reexecuting
 transactions. The completed service becomes a non-signing certificate relay;
 each poll revalidates live publication and halts on missing or changed evidence.
-This is still a configured candidate at height one or two, not automatic
+This is still an explicitly configured candidate, not automatic
 continuous block creation, independent multi-machine or hard-crash acceptance.
 
-Finalized-parent capture now also reads the published second block under the
+Finalized-parent capture reads the current published, finalized block under the
 same workspace/authority locks as live publication verification. It requires
 the complete finalized ledger (including first-block ancestry) and exact AOEM
 head/output, then yields an immutable historical snapshot. Successor planning,
 snapshot validation and subject construction use checked parent-height + 1,
-allowing isolated third-block execution without changing the published head.
+allowing isolated next-block execution without changing the published head.
 The legacy `load_finalized_genesis_parent_v1` / `create_from_finalized_genesis_v1`
 names remain callable; they no longer imply a first-height-only parent.
 
@@ -24,11 +24,21 @@ Historical certificate verification distinguishes first and successor proof
 domains and verifies the complete V3 quorum against the genesis-pinned set.
 It is not standalone ancestry or live authority verification; the ledger
 coordinator still checks both before exposing a parent. First-block-only proof
-validation retains its strict height-one check. Registration, confirmation and
-publication above height two remain unavailable until their ledger records and
-recovery are generalized; constructing a third candidate does not finalize it.
+validation retains its strict height-one check. Registration, signing, round
+tracking and publication derive the next height from the verified parent.
+Constructing or executing a candidate alone never finalizes it.
 
-`prepare_successor_promotion_v1` now pins a unique height-two publication intent
+Finality now atomically appends the full immutable promotion/decision at
+`successor/finalized/{height:016x}`. A new promotion may replace the active intent
+only after its predecessor is finalized and archived; historical records and
+block/transaction/receipt indexes cannot be overwritten. Recovery validates
+contiguous archive heights, every proof and parent link, historical indexes and
+the current head. Missing history is an error, not an implicit repair. The
+finalized-by-height capability marker rejects older readers; existing pre-change
+test ledgers are not migrated or erased. Production still starts fresh.
+`load_fresh_finality_by_height_v1` queries historical proofs, including height one.
+
+`prepare_successor_promotion_v1` pins a unique next-height publication intent
 under workspace -> authority -> ledger locks. It revalidates the live finalized
 parent, actual AOEM child output, exact execution binding and complete V3 envelope
 (including scheduled proposal, validator set, roots and stable parent target).
@@ -37,13 +47,14 @@ Exact retries revalidate and return the same commitment; missing committed
 evidence is an error, never repaired. The marker fences successor signing,
 registration and abort, while first-height published state remains readable.
 Older binaries reject this marker. The service recovery coordinator invokes this
-API only when no intent exists. A staged intent is NOT finality.
+API when no matching active intent exists and the previous height is finalized.
+A staged intent is NOT finality.
 
 `publish_successor_authority_v1` now publishes the exact pinned child AOEM output
 using a distinct NVP2 authority pointer. Under workspace -> authority locks it
-verifies both immutable outputs, the complete ledger/decision intent, the first
-block's published body and its original publication evidence. Only the exact
-NVP1 parent or the exact completed NVP2 target is accepted. The generic AOEM graph
+verifies both immutable outputs, the complete ledger/decision intent and the
+parent's historical body and original publication evidence. Only the exact
+NVP1/NVP2 parent or exact completed NVP2 target is accepted. The generic AOEM graph
 stores the child evidence and head; no business execution is repeated. A lost
 success response can be retried. Completed heads with missing evidence are never
 repaired, and uncertain graph completion retains locks until process exit.
@@ -124,7 +135,7 @@ must match the exact live executed candidate before collection/signing. Current
 successor wire tests supply authenticated-source identities as fixtures, not
 through real sockets; they do not establish network readiness.
 
-`register_finalized_successor_v1` now registers height-two artifacts atomically,
+`register_finalized_successor_v1` registers next-height artifacts atomically,
 under workspace -> authority -> ledger locks after a fresh live-parent check.
 The finalized manifest validates the exact candidate, execution pin, height and
 parent/children indexes; it never accepts arbitrary new key prefixes. Exact
@@ -134,8 +145,8 @@ published first-block indexes and finality records are unchanged. Older readers
 reject the newly populated keys via their exact manifest allowlist. Candidate
 cleanup remains unimplemented; second-height promotion is described above.
 
-The configured service now requires `finalized_parent_workspace_id` at height
-two (forbidden at height one or on legacy authority). Startup and every poll
+The configured service requires `finalized_parent_workspace_id` above height
+one (forbidden at height one or on legacy authority). Startup and every poll
 reacquire `with_verified_finalized_successor_v1`; borrowed-view entry points
 also compare the pinned parent workspace. No parent QC override is accepted.
 After a successor decision the main lifecycle invokes successor publication,

@@ -381,11 +381,7 @@ fn local_context(
     context.validate(set)?;
     let head_height =
         if let Some((config, _)) = ledger.fresh_genesis_seal_config_v1(set.chain_id)? {
-            let expected_height = if ledger.fresh_successor_parent_target_v1()?.is_some() {
-                2
-            } else {
-                1
-            };
+            let expected_height = ledger.fresh_successor_height_v1()?.unwrap_or(1);
             if height != expected_height || config.compile()?.validator_set() != set {
                 bail!("fresh round requires live candidate height and pinned validator set");
             }

@@ -166,6 +166,7 @@ pub(super) fn validated_keys(ledger: &NovNativeBlockLedgerV1) -> Result<Vec<Vec<
         .db
         .get(KEY_SCHEMA_V1)?
         .is_some_and(|schema| is_successor_published_schema(&schema))
+        || !successor_finality::archives(ledger)?.is_empty()
     {
         // The child projection owns the current head; all historical first-block
         // indexes remain mandatory and are compared byte for byte here.

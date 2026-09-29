@@ -1684,6 +1684,14 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             successor_head
         );
         assert_eq!(verify_successor().unwrap(), finalized_successor);
+        exercise_fresh_sequence(
+            path,
+            params,
+            &compiled,
+            next_input.workspace_id,
+            third.workspace_id,
+        );
+        let successor_head = open_graph().get(&head_key).unwrap().unwrap();
         workspace::corrupt_execution_output_for_test_v1(chain, input.workspace_id, params).unwrap();
         assert!(workspace::load_finalized_genesis_parent_v1(
             chain,
@@ -1713,3 +1721,4 @@ include!("native_fresh_genesis_signing_tests.rs");
 include!("native_fresh_successor_signing_tests.rs");
 include!("native_fresh_genesis_service_tests.rs");
 include!("native_fresh_successor_relay_tests.rs");
+include!("native_fresh_sequence_tests.rs");

@@ -23,6 +23,7 @@ fn exercise_fresh_successor_relay(
     let Message::DecisionCertificateV3 { decision, .. } = &proof.witness else {
         panic!("full witness required");
     };
+    let height = decision.prepare.subject.height;
     with_service_test_transports(chain, |peers| {
         let validator = &proof.authority.validator_set.validators[0];
         let (sender, (runtime, key)) = peers
@@ -43,7 +44,7 @@ fn exercise_fresh_successor_relay(
         let config = serde_json::json!({
             "schema":"novovm-native-seal-service/v1", "enabled":true, "decision_v3_enabled":true,
             "fresh_genesis_config_commitment":to_hex(&pin), "finalized_parent_workspace_id":to_hex(&parent),
-            "isolated_workspace_id":to_hex(&id), "chain_id":chain, "height":2,
+            "isolated_workspace_id":to_hex(&id), "chain_id":chain, "height":height,
             "block_hash":to_hex(&decision.prepare.subject.block_hash),
             "authority_path":"authority.json", "signer_key_path":"signer.hex", "seal_store_path":seal_path,
             "round_timeout_ms":300000, "poll_interval_ms":100, "ingress_per_source_per_second":16, "ingress_per_poll":32,
@@ -58,7 +59,7 @@ fn exercise_fresh_successor_relay(
         let mut relay = Driver::open(&load(), &ledger, params, runtime, Instant::now())
             .unwrap()
             .unwrap();
-        assert_eq!(relay.status_json()["height"], 2);
+        assert_eq!(relay.status_json()["height"], height);
         assert_eq!(relay.status_json()["finalized"], true);
         assert_eq!(relay.status_json()["signing_enabled"], false);
         let started = Instant::now();
@@ -77,7 +78,7 @@ fn exercise_fresh_successor_relay(
                         let message = decode(
                             &inbound.frame.payload,
                             &proof.authority,
-                            2,
+                            height,
                             &inbound.source_peer_id,
                         )
                         .unwrap();

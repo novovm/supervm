@@ -207,6 +207,21 @@ pub(super) fn capture_finalized_parent(
     genesis: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<FinalizedGenesisParentV1> {
+    let mut captured = None;
+    with_finalized_parent(workspace, id, genesis, params, &mut |parent| {
+        captured = Some(parent);
+        Ok(())
+    })?;
+    captured.context("finalized successor parent was not captured")
+}
+
+pub(super) fn with_finalized_parent(
+    workspace: &mut WorkspaceStore,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+    action: &mut dyn FnMut(FinalizedGenesisParentV1) -> Result<()>,
+) -> Result<()> {
     let path = resolve_native_execution_store_path_from_params_v1(params)
         .context("finalized parent requires explicit native path")?;
     let parent = NovNativeBlockLedgerV1::fresh_successor_archived_parent_v1(
@@ -215,7 +230,6 @@ pub(super) fn capture_finalized_parent(
         parse_fixed_hex_32_v1(&workspace.namespace, "successor namespace")?,
         id,
     )?;
-    let mut captured = None;
     run_locked(
         workspace,
         parent,
@@ -224,9 +238,9 @@ pub(super) fn capture_finalized_parent(
         params,
         Scope::Verify,
         |_| Ok(()),
-        Some(&mut captured),
+        Some(action),
     )?;
-    captured.context("finalized successor parent was not captured")
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -238,7 +252,7 @@ fn run_locked(
     params: &serde_json::Value,
     scope: Scope,
     checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
-    capture: Option<&mut Option<FinalizedGenesisParentV1>>,
+    capture: Option<&mut dyn FnMut(FinalizedGenesisParentV1) -> Result<()>>,
 ) -> Result<FreshSuccessorPublicationV1> {
     let chain = workspace.chain_id;
     let native_path = resolve_native_execution_store_path_from_params_v1(params)
@@ -261,26 +275,29 @@ fn run_locked(
     )?;
     let parent_artifact = block_artifact::load_block_artifact_inner_v1(workspace, parent, params)?
         .context("successor parent AOEM output missing")?;
-    let parent_intent =
-        NovNativeBlockLedgerV1::load_fresh_genesis_promotion_v1(&ledger_path, genesis, namespace)?;
-    if parent_intent.execution.workspace_id != parent
-        || parent_intent.execution.plan_commitment != parent_artifact.plan_commitment
-        || parent_intent.execution.output_digest != parent_artifact.output_digest
-        || NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(
+    let (parent_execution, parent_commitment, parent_block) =
+        NovNativeBlockLedgerV1::load_fresh_finalized_execution_v1(
             &ledger_path,
             genesis,
             namespace,
-        )?
-        .as_ref()
-            != Some(parent_artifact.block())
+            parent_artifact.block().header.height,
+        )?;
+    if parent_execution.workspace_id != parent
+        || parent_execution.plan_commitment != parent_artifact.plan_commitment
+        || parent_execution.output_digest != parent_artifact.output_digest
+        || &parent_block != parent_artifact.block()
     {
         bail!("successor parent output differs from published ledger");
     }
     let parent_target = publication_target(
-        b"NVP1",
+        if parent_block.header.height == 1 {
+            b"NVP1"
+        } else {
+            b"NVP2"
+        },
         namespace,
         genesis,
-        parent_intent.commitment()?,
+        parent_commitment,
         parent,
         &parent_artifact,
     );
@@ -417,7 +434,7 @@ fn run_locked(
             .config
             .clone();
         proof.validate_archived_certificate(&config, artifact.block())?;
-        *capture = Some(FinalizedGenesisParentV1 {
+        capture(FinalizedGenesisParentV1 {
             block: artifact.block().clone(),
             store: output.store,
             batch_result: output.batch_result,
@@ -425,7 +442,7 @@ fn run_locked(
             workspace_id: id,
             output_digest: artifact.output_digest,
             proof,
-        });
+        })?;
     }
     let h = &artifact.block().header;
     Ok(FreshSuccessorPublicationV1 {

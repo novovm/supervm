@@ -36,7 +36,7 @@ pub(super) fn is_successor_published_schema(raw: &[u8]) -> bool {
     raw == SUCCESSOR_PUBLISHED_SCHEMA.as_bytes() || raw == SUCCESSOR_FINALIZED_SCHEMA.as_bytes()
 }
 pub(super) const SUCCESSOR_FINALIZED_SCHEMA: &str =
-    "novovm-native-block-ledger/v1+fresh-successor-finalized-v1";
+    "novovm-native-block-ledger/v1+fresh-successor-finalized-by-height-v1";
 pub(super) fn has_successor_intent_schema(raw: &[u8]) -> bool {
     raw == SUCCESSOR_INTENT_SCHEMA.as_bytes() || is_successor_published_schema(raw)
 }
@@ -127,8 +127,10 @@ fn load_verified(
         if is_successor_published_schema(&schema) {
             allowed_keys.extend(successor_completion::validated_keys(ledger)?);
         }
-        if schema == SUCCESSOR_FINALIZED_SCHEMA.as_bytes() {
-            allowed_keys.extend(successor_finality::validated_keys(ledger)?);
+        if has_successor_intent_schema(&schema) {
+            allowed_keys.extend(successor_finality::validated_keys(
+                ledger, &config, namespace,
+            )?);
         }
     }
     for entry in ledger.db.iterator(rocksdb::IteratorMode::Start) {

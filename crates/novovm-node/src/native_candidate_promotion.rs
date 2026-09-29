@@ -65,30 +65,22 @@ pub fn prepare_successor_promotion_v1(
         .context("successor promotion requires explicit native path")?;
     let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "successor promotion namespace")?;
     let mut commitment = None;
-    run_locked(
-        &mut workspace,
-        parent_id,
-        genesis,
-        params,
-        false,
-        PublicationScope::Capture(&mut |parent| {
-            parent.successor_seal_subject(&candidate, 0)?;
-            commitment = Some(NovNativeBlockLedgerV1::stage_fresh_successor_promotion_v1(
-                &nov_native_block_ledger_rocksdb_path_v1(&native_path),
-                genesis,
-                namespace,
-                parent_id,
-                crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
-                    workspace_id: candidate_id,
-                    plan_commitment: candidate.plan_commitment,
-                    output_digest: candidate.output_digest,
-                },
-                proof.clone(),
-            )?);
-            Ok(())
-        }),
-        |_| Ok(()),
-    )?;
+    with_finalized_parent_locked(&mut workspace, parent_id, genesis, params, &mut |parent| {
+        parent.successor_seal_subject(&candidate, 0)?;
+        commitment = Some(NovNativeBlockLedgerV1::stage_fresh_successor_promotion_v1(
+            &nov_native_block_ledger_rocksdb_path_v1(&native_path),
+            genesis,
+            namespace,
+            parent_id,
+            crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
+                workspace_id: candidate_id,
+                plan_commitment: candidate.plan_commitment,
+                output_digest: candidate.output_digest,
+            },
+            proof.clone(),
+        )?);
+        Ok(())
+    })?;
     commitment.context("successor promotion was not staged")
 }
 
@@ -266,7 +258,32 @@ pub(in super::super) fn capture_finalized_parent_locked(
     captured.context("verified finalized parent was not captured")
 }
 
-/// Persist a second-height candidate only while its parent remains live and
+fn with_finalized_parent_locked(
+    workspace: &mut WorkspaceStore,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+    action: &mut dyn FnMut(FinalizedGenesisParentV1) -> Result<()>,
+) -> Result<()> {
+    let artifact = block_artifact::load_block_artifact_inner_v1(workspace, id, params)?
+        .context("finalized parent output missing")?;
+    if artifact.block().header.height > 1 {
+        successor::with_finalized_parent(workspace, id, genesis, params, action)
+    } else {
+        run_locked(
+            workspace,
+            id,
+            genesis,
+            params,
+            false,
+            PublicationScope::Capture(action),
+            |_| Ok(()),
+        )?;
+        Ok(())
+    }
+}
+
+/// Persist a next-height candidate only while its parent remains live and
 /// finalized. No signing, authority mutation or candidate selection.
 pub fn register_finalized_successor_v1(
     chain: u64,
@@ -282,29 +299,21 @@ pub fn register_finalized_successor_v1(
         .context("successor registration requires explicit native path")?;
     let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "successor namespace")?;
     let mut registered = None;
-    run_locked(
-        &mut workspace,
-        parent_id,
-        genesis,
-        params,
-        false,
-        PublicationScope::Capture(&mut |parent| {
-            parent.successor_seal_subject(&candidate, 0)?;
-            registered = Some(NovNativeBlockLedgerV1::register_fresh_successor_v1(
-                &nov_native_block_ledger_rocksdb_path_v1(&native_path),
-                genesis,
-                namespace,
-                candidate.block().clone(),
-                crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
-                    workspace_id: candidate_id,
-                    plan_commitment: candidate.plan_commitment,
-                    output_digest: candidate.output_digest,
-                },
-            )?);
-            Ok(())
-        }),
-        |_| Ok(()),
-    )?;
+    with_finalized_parent_locked(&mut workspace, parent_id, genesis, params, &mut |parent| {
+        parent.successor_seal_subject(&candidate, 0)?;
+        registered = Some(NovNativeBlockLedgerV1::register_fresh_successor_v1(
+            &nov_native_block_ledger_rocksdb_path_v1(&native_path),
+            genesis,
+            namespace,
+            candidate.block().clone(),
+            crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
+                workspace_id: candidate_id,
+                plan_commitment: candidate.plan_commitment,
+                output_digest: candidate.output_digest,
+            },
+        )?);
+        Ok(())
+    })?;
     registered.context("successor registration did not complete")
 }
 
@@ -326,30 +335,22 @@ pub fn with_verified_finalized_successor_v1<T>(
     let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "successor namespace")?;
     let mut action = Some(action);
     let mut result = None;
-    run_locked(
-        &mut workspace,
-        parent_id,
-        genesis,
-        params,
-        false,
-        PublicationScope::Capture(&mut |parent| {
-            parent.successor_seal_subject(&candidate, 0)?;
-            result = Some(NovNativeBlockLedgerV1::with_fresh_successor_seal_scope_v1(
-                &nov_native_block_ledger_rocksdb_path_v1(&native_path),
-                genesis,
-                namespace,
-                candidate.block(),
-                &crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
-                    workspace_id: candidate_id,
-                    plan_commitment: candidate.plan_commitment,
-                    output_digest: candidate.output_digest,
-                },
-                action.take().context("successor action already consumed")?,
-            )?);
-            Ok(())
-        }),
-        |_| Ok(()),
-    )?;
+    with_finalized_parent_locked(&mut workspace, parent_id, genesis, params, &mut |parent| {
+        parent.successor_seal_subject(&candidate, 0)?;
+        result = Some(NovNativeBlockLedgerV1::with_fresh_successor_seal_scope_v1(
+            &nov_native_block_ledger_rocksdb_path_v1(&native_path),
+            genesis,
+            namespace,
+            candidate.block(),
+            &crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
+                workspace_id: candidate_id,
+                plan_commitment: candidate.plan_commitment,
+                output_digest: candidate.output_digest,
+            },
+            action.take().context("successor action already consumed")?,
+        )?);
+        Ok(())
+    })?;
     result.context("successor signing scope did not run")
 }
 
