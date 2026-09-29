@@ -591,14 +591,31 @@ fn exercise_body_network(
             let start = Instant::now();
             let mut inbox = Inbox::new(authority.clone(), 4, start).unwrap();
             let mut manifest = None;
+            let mut discarded = 0;
+            let mut retrying = false;
             let received = loop {
-                sender.poll(runtime).unwrap();
+                let offset = if retrying {
+                    Duration::from_secs(6)
+                } else {
+                    Duration::ZERO
+                };
+                sender.poll_at(runtime, Instant::now() + offset).unwrap();
                 runtime.drain_events(128);
                 let mut complete = None;
                 for event in target.drain_events(128) {
                     if let Event::Inbound(inbound) = event {
                         if is_nov_native_seal_round_wire_v1(&inbound.frame.payload) {
                             manifest = Some(inbound.clone());
+                        }
+                        if !retrying {
+                            // The original receiver loses its volatile body state.
+                            // Drop the first complete transport attempt, no ACK.
+                            discarded += 1;
+                            if discarded == 2 {
+                                retrying = true;
+                                inbox = Inbox::new(authority.clone(), 4, Instant::now()).unwrap();
+                            }
+                            continue;
                         }
                         if let Some(body) = inbox.accept(&inbound, Instant::now()).unwrap() {
                             complete = Some(body);
@@ -615,6 +632,8 @@ fn exercise_body_network(
                 std::thread::sleep(Duration::from_millis(20));
             };
             assert_eq!(received.raw_txs, raws);
+            assert_eq!(discarded, 2);
+            assert!(sender.poll_at(runtime, start).is_err());
             let manifest = manifest.unwrap();
             let now = Instant::now();
             let mut bounded = Inbox::new(authority.clone(), 4, now).unwrap();

@@ -17,6 +17,8 @@ use std::{
 const MAX_ACTIVE: usize = 4;
 const LIFETIME: Duration = Duration::from_secs(30);
 const PER_SECOND: usize = 64;
+const RETRY_INTERVAL: Duration = Duration::from_secs(5);
+const SEND_INTERVAL: Duration = Duration::from_millis(20);
 
 fn object_hash(bytes: &[u8]) -> [u8; 32] {
     if is_nov_native_seal_round_wire_v1(bytes) {
@@ -28,14 +30,18 @@ fn object_hash(bytes: &[u8]) -> [u8; 32] {
     hash.finalize().into()
 }
 
-/// One bounded transfer attempt. A caller retains the durable candidate for
-/// retries/catch-up; `poll` returning true only means all frames were queued.
+/// Repeated bounded transfer attempts while the caller awaits confirmation.
+/// Keep polling until the lifecycle retires this sender; true only reports a
+/// locally queued attempt, NOT recipient acceptance. No new signatures or IDs.
 pub struct CandidateBodySenderV1 {
     chain: u64,
     source: String,
     target: String,
     frames: Vec<Vec<u8>>,
     next: usize,
+    last_seen: Option<Instant>,
+    next_send: Option<Instant>,
+    retry_at: Option<Instant>,
 }
 
 impl CandidateBodySenderV1 {
@@ -59,14 +65,36 @@ impl CandidateBodySenderV1 {
             target: target.into(),
             frames,
             next: 0,
+            last_seen: None,
+            next_send: None,
+            retry_at: None,
         })
     }
 
     /// At most one frame per call; backpressure leaves its position unchanged.
     pub fn poll(&mut self, runtime: &Runtime) -> Result<bool> {
+        self.poll_at(runtime, Instant::now())
+    }
+
+    pub fn poll_at(&mut self, runtime: &Runtime, now: Instant) -> Result<bool> {
         if runtime.chain_id() != self.chain || runtime.startup().local_peer_id != self.source {
             bail!("body sender runtime identity changed");
         }
+        if self.last_seen.is_some_and(|previous| now < previous) {
+            bail!("body sender monotonic clock moved backwards");
+        }
+        self.last_seen = Some(now);
+        if self.next == self.frames.len() {
+            if self.retry_at.is_some_and(|retry| now < retry) {
+                return Ok(true);
+            }
+            self.next = 0;
+            self.retry_at = None;
+        }
+        if self.next_send.is_some_and(|next| now < next) {
+            return Ok(false);
+        }
+        self.next_send = Some(now + SEND_INTERVAL);
         if let Some(frame) = self.frames.get(self.next) {
             if runtime.try_submit_to_peer(
                 &self.target,
@@ -75,6 +103,9 @@ impl CandidateBodySenderV1 {
                 frame.clone(),
             )? {
                 self.next += 1;
+                if self.next == self.frames.len() {
+                    self.retry_at = Some(now + RETRY_INTERVAL);
+                }
             }
         }
         Ok(self.next == self.frames.len())
