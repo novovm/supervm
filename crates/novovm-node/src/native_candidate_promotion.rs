@@ -107,9 +107,19 @@ pub fn load_finalized_genesis_parent_v1(
     genesis: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<FinalizedGenesisParentV1> {
+    let mut workspace = WorkspaceStore::open(chain, params)?;
+    capture_finalized_parent_locked(&mut workspace, id, genesis, params)
+}
+
+fn capture_finalized_parent_locked(
+    workspace: &mut WorkspaceStore,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<FinalizedGenesisParentV1> {
     let mut captured = None;
-    run(
-        chain,
+    run_locked(
+        workspace,
         id,
         genesis,
         params,
@@ -313,7 +323,30 @@ fn run(
     checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
 ) -> Result<GenesisPromotionPublicationV1> {
     let mut workspace = WorkspaceStore::open(chain, params)?;
-    let artifact = block_artifact::load_block_artifact_inner_v1(&workspace, id, params)?
+    run_locked(
+        &mut workspace,
+        id,
+        genesis,
+        params,
+        allow_write,
+        scope,
+        checkpoint,
+    )
+}
+
+// The caller owns the workspace OS lock. Keep the authority lock acquisition
+// inside this function so all paths preserve workspace -> authority ordering.
+fn run_locked(
+    workspace: &mut WorkspaceStore,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+    allow_write: bool,
+    scope: PublicationScope<'_>,
+    checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
+) -> Result<GenesisPromotionPublicationV1> {
+    let chain = workspace.chain_id;
+    let artifact = block_artifact::load_block_artifact_inner_v1(workspace, id, params)?
         .context("promotion requires complete durable execution output")?;
     let identity = artifact
         .fresh_genesis_identity()
@@ -321,7 +354,7 @@ fn run(
     if identity.config_commitment() != genesis || identity.chain_id() != chain {
         bail!("promotion genesis identity mismatch");
     }
-    let input = ready_input(&workspace, id)?;
+    let input = ready_input(workspace, id)?;
     let payload = workspace.read_payload(&input)?;
     let native_path = resolve_native_execution_store_path_from_params_v1(params)
         .context("promotion requires an explicit native store path")?;
@@ -421,7 +454,7 @@ fn run(
         {
             bail!("AOEM promotion publication readback mismatch");
         }
-        let recovered = block_artifact::load_block_artifact_inner_v1(&workspace, id, params)?
+        let recovered = block_artifact::load_block_artifact_inner_v1(workspace, id, params)?
             .context("published promotion output missing")?;
         if recovered != artifact {
             bail!("published promotion output changed");
@@ -464,14 +497,14 @@ fn run(
         if !ledger_publication_completed {
             bail!("next-height parent ledger is incomplete");
         }
-        let descriptor = catalog(&workspace)?
+        let descriptor = catalog(workspace)?
             .into_iter()
             .find_map(|(known, descriptor)| (known == id).then_some(descriptor))
             .context("finalized parent output descriptor missing")?;
         if descriptor.digest != artifact.output_digest {
             bail!("finalized parent output changed during capture");
         }
-        let output = read_output(&workspace, &input, &descriptor, &payload, params)?
+        let output = read_output(workspace, &input, &descriptor, &payload, params)?
             .context("finalized parent output missing")?;
         let config = payload
             .genesis
