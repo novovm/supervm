@@ -1,6 +1,15 @@
 # Isolated candidate promotion protocol v1 — implementation contract
 
-Status: first-height publication/finality implemented; continuous-height activation incomplete.
+Status: first/second-height publication and finality integrated; continuous-height activation incomplete.
+
+The main-node lifecycle now resumes the configured second-height publication
+from its local V3 archive, or publishes after the confirmation service obtains
+that archive. It validates the explicit ledger path and exact existing intent,
+then completes AOEM publication, ledger indexes and finality without reexecuting
+transactions. The completed service becomes a non-signing certificate relay;
+each poll revalidates live publication and halts on missing or changed evidence.
+This is still a configured candidate at height one or two, not automatic
+continuous block creation, independent multi-machine or hard-crash acceptance.
 
 `prepare_successor_promotion_v1` now pins a unique height-two publication intent
 under workspace -> authority -> ledger locks. It revalidates the live finalized
@@ -10,9 +19,8 @@ The intent, checksum and a distinct ledger capability marker commit atomically.
 Exact retries revalidate and return the same commitment; missing committed
 evidence is an error, never repaired. The marker fences successor signing,
 registration and abort, while first-height published state remains readable.
-Older binaries reject this marker. This API is not yet called automatically by
-the service: second-height ledger publication and recovery across both stores
-remain incomplete (AOEM pointer implementation below). A staged intent is NOT finality.
+Older binaries reject this marker. The service recovery coordinator invokes this
+API only when no intent exists. A staged intent is NOT finality.
 
 `publish_successor_authority_v1` now publishes the exact pinned child AOEM output
 using a distinct NVP2 authority pointer. Under workspace -> authority locks it
@@ -24,8 +32,7 @@ success response can be retried. Completed heads with missing evidence are never
 repaired, and uncertain graph completion retains locks until process exit.
 `verify_successor_authority_v1` is readback only. First-height live-parent APIs
 reject after the head advances rather than treating the old state as current.
-The service still does not invoke this transition automatically. Authority-only
-publication does not write indexes; `finalized` remains false. Checkpoint tests
+Authority-only publication does not write indexes; `finalized` remains false. Checkpoint tests
 are controlled failures, not OS/process-power-loss acceptance.
 
 `complete_successor_ledger_v1` now extends the same locked coordinator with an
@@ -49,7 +56,7 @@ before accepting this pin. Missing/changed finality evidence after commit is an
 error, never repaired on retry. `load_fresh_successor_finality_v1` returns the
 fully verified historical proof; live coordinator readback reports `finalized`
 only with current AOEM verification. This is BFT finality under the pinned set,
-not ZK proof. Main-service automatic publication/relay still needs wiring.
+not ZK proof. Main-service automatic publication/relay is integrated above.
 Original audit baseline: `b049f25`. This is not production acceptance or permission
 to mark any block finalized without the full first-height verification below.
 
@@ -79,7 +86,7 @@ binds the full first-block decision, state and receipt roots; it never fabricate
 a legacy production envelope. `execute_v1` persists the isolated result and
 reopens it idempotently without changing first-height authority. Legacy signing
 and registration reject fresh-chain artifacts. Explicit second-height service
-confirmation is wired below; automatic admission and promotion remain pending.
+confirmation and promotion are wired below; automatic admission remains pending.
 
 Second-height unsigned subjects use the distinct
 `novovm-native-proof-seal/fresh-successor-decision-v1` profile. In this profile,
@@ -90,7 +97,7 @@ This preserves the same child dependency across valid parent signer subsets.
 `successor_seal_subject` also checks genesis identity, exact parent batch/roots,
 height, slot, timestamp and transaction-count state-version advancement. It is
 historical construction only: legacy transport authorities reject this profile,
-and state publication still requires new wiring.
+and state publication requires the live recovery coordinator above.
 
 The fresh epoch authority now admits first-height or successor proof profiles
 according to height, without replacing the epoch identity or its commitment.
@@ -108,15 +115,15 @@ replay preserves the record; missing committed evidence fails closed rather than
 being rebuilt. Competing candidates remain unselected and unsealed. Authority,
 published first-block indexes and finality records are unchanged. Older readers
 reject the newly populated keys via their exact manifest allowlist. Candidate
-cleanup and second-height promotion remain unimplemented.
+cleanup remains unimplemented; second-height promotion is described above.
 
 The configured service now requires `finalized_parent_workspace_id` at height
 two (forbidden at height one or on legacy authority). Startup and every poll
 reacquire `with_verified_finalized_successor_v1`; borrowed-view entry points
 also compare the pinned parent workspace. No parent QC override is accepted.
-The main lifecycle retains the confirmation service after a successor decision,
-without invoking first-height promotion or claiming finalized state. This is
-explicit single-candidate confirmation, not automatic continuous block creation.
+After a successor decision the main lifecycle invokes successor publication,
+then drops the signing service and retains the verified certificate relay. This
+is explicit single-candidate confirmation, not automatic continuous block creation.
 The controlled WSS fixture exercises four configured successor services with
 separate seal stores but shared real AOEM execution. Two polled signers cannot
 confirm; three confirm the same V3 certificate. Reopening all services recovers

@@ -43550,7 +43550,7 @@ mod native_execution_pipeline_tests {
 }
 
 // The first candidate has no legacy host projection or selected ledger head.
-// Publish confirmed first-height execution, then relay immutable certificates.
+// Publish the configured confirmed fresh-chain candidate, then relay certificates.
 // Do not admit ordinary transactions or fabricate chain-level finality.
 fn run_fresh_genesis_confirmation_v1(
     config: NovNativeSealServiceConfigV1,
@@ -43577,7 +43577,6 @@ fn run_fresh_genesis_confirmation_v1(
             &runtime,
             Instant::now(),
         )?;
-    let successor_confirmation_only = config.is_fresh_successor();
     let mut service = if publication.is_none() {
         Some(NovNativeSealServiceV1::open_configured(
             config,
@@ -43617,7 +43616,7 @@ fn run_fresh_genesis_confirmation_v1(
             driver.poll(&runtime, Instant::now())?;
         } else if let Some(active) = service.as_mut() {
             active.poll(&runtime, Instant::now())?;
-            if active.status_json()["decision_confirmed"] == true && !successor_confirmation_only {
+            if active.status_json()["decision_confirmed"] == true {
                 publication = active.complete_fresh_publication(&runtime, Instant::now())?;
                 if publication.is_none() {
                     bail!("confirmed fresh decision has no durable archive");

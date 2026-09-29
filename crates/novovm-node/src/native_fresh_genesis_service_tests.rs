@@ -244,16 +244,14 @@ fn exercise_fresh_candidate_service(
                 );
                 std::thread::sleep(Duration::from_millis(20));
             }
-            for (index, service, path) in reopened {
+            for (_index, service, path) in reopened {
                 assert_eq!(
                     service.status_json()["decision_certificate_hash"],
                     confirmed
                 );
                 assert_eq!(service.status_json()["finalized"], false);
-                assert!(service
-                    .complete_fresh_publication(peers[index].0, Instant::now())
-                    .unwrap()
-                    .is_none());
+                // This fixture shares execution state: keep confirmation separate
+                // from the publication/recovery fixture below.
                 let seal = Seal::open(&path.parent().unwrap().join("seal")).unwrap();
                 let certificate = seal
                     .load_decision_certificate_by_height_v3(chain, 1, height)

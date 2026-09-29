@@ -1,4 +1,4 @@
-//! Completed first-height publication remains a read-only certificate relay.
+//! Completed fresh-chain publication remains a read-only certificate relay.
 //! It holds no signing key and admits no new transactions or votes.
 use super::*;
 use crate::native_block_seal::commit_v3::lifecycle::certificate_envelope;
@@ -7,10 +7,29 @@ use crate::native_block_seal::round_wire::{
     encode_nov_native_seal_round_wire_v1, round_wire_object_hash_v1,
 };
 use crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1;
-use crate::tx_ingress::candidate_workspace::{self as workspace, GenesisPromotionPublicationV1};
+use crate::tx_ingress::candidate_workspace::{
+    self as workspace, FreshSuccessorPublicationV1, GenesisPromotionPublicationV1,
+};
+
+#[derive(PartialEq, Eq, serde::Serialize)]
+#[serde(untagged)]
+enum PublicationReport {
+    Genesis(GenesisPromotionPublicationV1),
+    Successor(FreshSuccessorPublicationV1),
+}
+impl PublicationReport {
+    fn finalized(&self) -> bool {
+        match self {
+            Self::Genesis(report) => report.finalized,
+            Self::Successor(report) => report.finalized,
+        }
+    }
+}
 
 pub struct FreshGenesisPublicationDriverV1 {
     chain: u64,
+    height: u64,
+    parent: Option<[u8; 32]>,
     id: [u8; 32],
     pin: [u8; 32],
     params: serde_json::Value,
@@ -19,7 +38,7 @@ pub struct FreshGenesisPublicationDriverV1 {
     peers: BTreeSet<String>,
     frames: Vec<([u8; 32], Vec<u8>)>,
     certificate_hash: [u8; 32],
-    report: GenesisPromotionPublicationV1,
+    report: PublicationReport,
     attempted: BTreeMap<([u8; 32], String), Instant>,
     next_send: usize,
     last_seen: Instant,
@@ -40,10 +59,6 @@ impl FreshGenesisPublicationDriverV1 {
         config.validate(runtime.chain_id())?;
         validate_service_paths_v1(config, ledger_path, &[], &[])?;
         check_runtime(config, runtime)?;
-        // Successor confirmation is not first-block state publication.
-        if config.is_fresh_successor() {
-            return Ok(None);
-        }
         let pin = config
             .fresh_genesis_config_commitment
             .context("publication requires fresh genesis")?;
@@ -55,8 +70,11 @@ impl FreshGenesisPublicationDriverV1 {
         else {
             return Ok(None);
         };
-        let Some(certificate) =
-            store.load_decision_certificate_by_height_v3(config.chain_id, 1, 1)?
+        let Some(certificate) = store.load_decision_certificate_by_height_v3(
+            config.chain_id,
+            config.authority.epoch,
+            config.height,
+        )?
         else {
             return Ok(None);
         };
@@ -93,7 +111,7 @@ impl FreshGenesisPublicationDriverV1 {
                 let wire = encode_nov_native_seal_round_wire_v1(
                     message,
                     &config.authority,
-                    1,
+                    config.height,
                     &local_peer,
                 )?;
                 Ok((round_wire_object_hash_v1(&wire), wire))
@@ -109,18 +127,37 @@ impl FreshGenesisPublicationDriverV1 {
         {
             bail!("publication output differs from configured identity");
         }
-        workspace::resume_genesis_promotion_v1(
-            config.chain_id,
-            id,
-            pin,
-            &config.seal_store_path,
-            ledger_path,
-            params,
-        )?;
-        let report =
-            workspace::finalize_genesis_promotion_v1(config.chain_id, id, pin, &proof, params)?;
+        let report = if let Some(parent) = config.finalized_parent_workspace_id {
+            PublicationReport::Successor(workspace::resume_successor_promotion_v1(
+                config.chain_id,
+                parent,
+                id,
+                pin,
+                &proof,
+                ledger_path,
+                params,
+            )?)
+        } else {
+            workspace::resume_genesis_promotion_v1(
+                config.chain_id,
+                id,
+                pin,
+                &config.seal_store_path,
+                ledger_path,
+                params,
+            )?;
+            PublicationReport::Genesis(workspace::finalize_genesis_promotion_v1(
+                config.chain_id,
+                id,
+                pin,
+                &proof,
+                params,
+            )?)
+        };
         Ok(Some(Self {
             chain: config.chain_id,
+            height: config.height,
+            parent: config.finalized_parent_workspace_id,
             id,
             pin,
             params: params.clone(),
@@ -168,8 +205,21 @@ impl FreshGenesisPublicationDriverV1 {
             bail!("published relay runtime or monotonic clock changed");
         }
         self.authority.validate()?;
-        let verified =
-            workspace::verify_genesis_promotion_v1(self.chain, self.id, self.pin, &self.params)?;
+        let verified = match self.parent {
+            Some(parent) => PublicationReport::Successor(workspace::verify_successor_authority_v1(
+                self.chain,
+                parent,
+                self.id,
+                self.pin,
+                &self.params,
+            )?),
+            None => PublicationReport::Genesis(workspace::verify_genesis_promotion_v1(
+                self.chain,
+                self.id,
+                self.pin,
+                &self.params,
+            )?),
+        };
         if verified != self.report {
             bail!("published relay authority changed");
         }
@@ -198,12 +248,12 @@ impl FreshGenesisPublicationDriverV1 {
             "enabled":true, "ok":!self.halted, "halted":self.halted, "prepared":!self.halted,
             "decision_v3_enabled":true, "decision_confirmed":!self.halted,
             "decision_certificate_hash":crate::native_block_seal::hex_v1(&self.certificate_hash),
-            "phase":"PublishedCertificateRelay", "height":1,
+            "phase":"PublishedCertificateRelay", "height":self.height,
             "publication":self.report, "queued_egress":self.sent,
-            "signing_enabled":false, "finalized":!self.halted && self.report.finalized,
-            "safe":!self.halted && self.report.finalized,
-            "proof_sealed":!self.halted && self.report.finalized,
-            "chain_canonical":!self.halted && self.report.finalized,
+            "signing_enabled":false, "finalized":!self.halted && self.report.finalized(),
+            "safe":!self.halted && self.report.finalized(),
+            "proof_sealed":!self.halted && self.report.finalized(),
+            "chain_canonical":!self.halted && self.report.finalized(),
             "proof_kind":"bft_decision_v3_with_local_aoem_readback",
             "zero_knowledge_execution_proof":false,
         })

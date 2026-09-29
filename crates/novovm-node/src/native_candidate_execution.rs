@@ -20,9 +20,9 @@ pub use promotion::{
     complete_genesis_promotion_v1, complete_successor_ledger_v1, finalize_genesis_promotion_v1,
     finalize_successor_v1, load_finalized_genesis_parent_v1, prepare_successor_promotion_v1,
     publish_genesis_promotion_v1, publish_successor_authority_v1, register_finalized_successor_v1,
-    resume_genesis_promotion_v1, verify_genesis_promotion_v1, verify_successor_authority_v1,
-    with_verified_finalized_successor_v1, FinalizedGenesisParentV1, FreshSuccessorPublicationV1,
-    GenesisPromotionPublicationV1,
+    resume_genesis_promotion_v1, resume_successor_promotion_v1, verify_genesis_promotion_v1,
+    verify_successor_authority_v1, with_verified_finalized_successor_v1, FinalizedGenesisParentV1,
+    FreshSuccessorPublicationV1, GenesisPromotionPublicationV1,
 };
 #[cfg(test)]
 pub(crate) use promotion::{

@@ -1570,6 +1570,15 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         db.put(finality_key, original).unwrap(); // Explicit fixture restoration.
         drop(db);
         assert_eq!(verify_successor().unwrap(), finalized_successor);
+        exercise_fresh_successor_relay(
+            path,
+            params,
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            &archived,
+        );
         workspace::corrupt_execution_output_for_test_v1(chain, input.workspace_id, params).unwrap();
         assert!(finalize_successor().is_err());
         assert!(verify_successor().is_err());
@@ -1591,3 +1600,4 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
 include!("native_fresh_genesis_signing_tests.rs");
 include!("native_fresh_successor_signing_tests.rs");
 include!("native_fresh_genesis_service_tests.rs");
+include!("native_fresh_successor_relay_tests.rs");

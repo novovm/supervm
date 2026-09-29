@@ -6,7 +6,7 @@ use crate::native_block_ledger::NovNativeFreshFinalityProofV1;
 mod successor;
 pub use successor::{
     complete_successor_ledger_v1, finalize_successor_v1, publish_successor_authority_v1,
-    verify_successor_authority_v1, FreshSuccessorPublicationV1,
+    resume_successor_promotion_v1, verify_successor_authority_v1, FreshSuccessorPublicationV1,
 };
 #[cfg(test)]
 pub(crate) use successor::{

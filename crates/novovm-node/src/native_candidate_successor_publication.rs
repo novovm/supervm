@@ -9,6 +9,41 @@ enum Scope {
     Finality,
 }
 
+/// Resume only the same local archive and explicitly configured ledger.
+pub fn resume_successor_promotion_v1(
+    chain: u64,
+    parent: [u8; 32],
+    id: [u8; 32],
+    genesis: [u8; 32],
+    proof: &NovNativeFreshFinalityProofV1,
+    ledger_path: &Path,
+    params: &serde_json::Value,
+) -> Result<FreshSuccessorPublicationV1> {
+    let existing = {
+        let workspace = WorkspaceStore::open(chain, params)?;
+        let path = resolve_native_execution_store_path_from_params_v1(params)
+            .context("successor recovery requires explicit native path")?;
+        if fs::canonicalize(nov_native_block_ledger_rocksdb_path_v1(&path))?
+            != fs::canonicalize(ledger_path)?
+        {
+            bail!("successor recovery resolves to a different service ledger");
+        }
+        NovNativeBlockLedgerV1::verify_optional_successor_archive_v1(
+            ledger_path,
+            genesis,
+            parse_fixed_hex_32_v1(&workspace.namespace, "successor namespace")?,
+            parent,
+            id,
+            proof,
+        )?
+    };
+    if !existing {
+        prepare_successor_promotion_v1(chain, parent, id, genesis, proof, params)?;
+    }
+    complete_successor_ledger_v1(chain, parent, id, genesis, params)?;
+    finalize_successor_v1(chain, parent, id, genesis, params)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FreshSuccessorPublicationV1 {
     pub chain_id: u64,

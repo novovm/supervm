@@ -104,6 +104,34 @@ pub(super) fn validated_keys(
 }
 
 impl NovNativeBlockLedgerV1 {
+    pub(crate) fn verify_optional_successor_archive_v1(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        parent: [u8; 32],
+        candidate: [u8; 32],
+        proof: &NovNativeFreshFinalityProofV1,
+    ) -> Result<bool> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("successor archive ledger missing")?;
+        load_verified(&ledger, genesis, namespace)?;
+        if !ledger
+            .db
+            .get(KEY_SCHEMA_V1)?
+            .is_some_and(|schema| has_successor_intent_schema(&schema))
+        {
+            return Ok(false);
+        }
+        let intent = read(&ledger)?;
+        if intent.parent_workspace != parent
+            || intent.execution.workspace_id != candidate
+            || intent.proof != *proof
+        {
+            bail!("successor recovery archive differs from pinned intent");
+        }
+        Ok(true)
+    }
+
     pub(crate) fn verify_fresh_successor_promotion_target_v1(
         path: &Path,
         genesis: [u8; 32],
