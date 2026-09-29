@@ -40,6 +40,19 @@ pub(super) fn selected(mode: &str, query_selected: bool) -> Result<bool> {
 }
 
 pub(super) fn run(params: &serde_json::Value) -> Result<()> {
+    // Preparation traverses the same bounded AOEM execution/verification chain
+    // as fresh confirmation. Do not depend on the smaller Windows main stack.
+    let params = params.clone();
+    std::thread::Builder::new()
+        .name("native-candidate-preparation".into())
+        .stack_size(novovm_node::native_block_seal::service::FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1)
+        .spawn(move || run_inner(&params))
+        .context("start native candidate preparation")?
+        .join()
+        .map_err(|_| anyhow::anyhow!("native candidate preparation panicked"))?
+}
+
+fn run_inner(params: &serde_json::Value) -> Result<()> {
     let path = PathBuf::from(std::env::var_os(PLAN_PATH).context("candidate plan path missing")?);
     let pin = std::env::var(PLAN_PIN).context("candidate plan commitment must be UTF-8")?;
     if pin.len() != 64
