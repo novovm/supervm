@@ -114,6 +114,7 @@ impl CandidateBodySenderV1 {
 
 struct Entry {
     body: Option<CandidateBodyAssemblerV1>,
+    manifest: Inbound,
     expires: Instant,
     source: String,
 }
@@ -168,6 +169,18 @@ impl CandidateBodyInboxV1 {
         inbound: &Inbound,
         now: Instant,
     ) -> Result<Option<VerifiedCandidateBodyV1>> {
+        Ok(self
+            .accept_with_manifest(inbound, now)?
+            .map(|(body, _)| body))
+    }
+
+    /// Preserve the actual authenticated proposal event for the signing service;
+    /// never reinterpret a fragment's transport metadata as a proposal event.
+    pub(crate) fn accept_with_manifest(
+        &mut self,
+        inbound: &Inbound,
+        now: Instant,
+    ) -> Result<Option<(VerifiedCandidateBodyV1, Inbound)>> {
         self.expire(now)?;
         if inbound.payload_class != Class::NativeSeal
             || inbound.frame.stream_id != self.authority.chain_id
@@ -214,6 +227,7 @@ impl CandidateBodyInboxV1 {
                 hash,
                 Entry {
                     body: Some(body),
+                    manifest: inbound.clone(),
                     expires: now + LIFETIME,
                     source: inbound.source_peer_id.clone(),
                 },
@@ -238,6 +252,6 @@ impl CandidateBodyInboxV1 {
         if result.is_err() || matches!(result, Ok(Some(_))) {
             entry.body = None;
         }
-        result
+        result.map(|body| body.map(|body| (body, entry.manifest.clone())))
     }
 }

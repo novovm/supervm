@@ -1,5 +1,17 @@
 #[test]
 fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry() {
+    // Match the existing production entry point's explicit lifecycle thread,
+    // including its debug-build AOEM execution stack budget. No global test override.
+    std::thread::Builder::new()
+        .name("fresh-chain-integration".into())
+        .stack_size(crate::native_block_seal::service::FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1)
+        .spawn(exercise_fresh_genesis_publication_and_retry)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+fn exercise_fresh_genesis_publication_and_retry() {
     use crate::tx_ingress::fresh_genesis::{
         publication::{publish_v1, verify_persisted_v1},
         FreshGenesisConfigV1, GenesisAllocationV1, GenesisValidatorV1, GENESIS_SCHEMA_V1,
@@ -1693,8 +1705,13 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             &plan,
         );
         let successor_head = open_graph().get(&head_key).unwrap().unwrap();
-        assert!(workspace::load_v1(chain, input.workspace_id, params).unwrap().is_none());
-        assert!(workspace::corrupt_execution_output_for_test_v1(chain, input.workspace_id, params).is_err());
+        assert!(workspace::load_v1(chain, input.workspace_id, params)
+            .unwrap()
+            .is_none());
+        assert!(
+            workspace::corrupt_execution_output_for_test_v1(chain, input.workspace_id, params)
+                .is_err()
+        );
         assert!(workspace::load_finalized_genesis_parent_v1(
             chain,
             next_input.workspace_id,

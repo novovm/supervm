@@ -20,7 +20,9 @@ const MAX_AUTHORITY_BYTES: usize = 256 * 1024;
 
 /// Intentionally neither Debug nor Serialize: this contains the operator's key.
 /// Callers cannot bypass validation by constructing a public configuration.
+#[derive(Clone)]
 pub struct NovNativeSealServiceConfigV1 {
+    pub(crate) receive_successors: bool,
     pub(crate) follow_finalized_tip: bool,
     pub(crate) fresh_genesis_config_commitment: Option<[u8; 32]>,
     pub(crate) finalized_parent_workspace_id: Option<[u8; 32]>,
@@ -45,6 +47,8 @@ pub struct NovNativeSealServiceConfigV1 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ServiceFile {
+    #[serde(default)]
+    receive_successors: bool,
     #[serde(default)]
     follow_finalized_tip: bool,
     #[serde(default)]
@@ -392,6 +396,7 @@ impl NovNativeSealServiceConfigV1 {
             .map(|validator| validator.validator_id)
             .context("native seal signer key is not a pinned validator")?;
         let config = Self {
+            receive_successors: raw.receive_successors,
             follow_finalized_tip: raw.follow_finalized_tip,
             finalized_parent_workspace_id: raw
                 .finalized_parent_workspace_id
@@ -430,6 +435,9 @@ impl NovNativeSealServiceConfigV1 {
 
     /// Recheck the configuration at the service boundary, before database opens.
     pub(crate) fn validate(&self, expected_chain_id: u64) -> Result<()> {
+        if self.receive_successors && (!self.is_fresh_genesis() || !self.follow_finalized_tip) {
+            bail!("successor reception requires fresh V3 and explicit finalized startup follow");
+        }
         if self.follow_finalized_tip && !self.is_fresh_genesis() {
             bail!("startup follow requires pinned fresh V3 authority");
         }
@@ -859,9 +867,14 @@ mod tests {
         );
         assert!(fixture.load().unwrap().is_fresh_genesis());
         assert!(!fixture.load().unwrap().follow_finalized_tip);
+        assert!(!fixture.load().unwrap().receive_successors);
+        fixture.config["receive_successors"] = json!(true);
+        fixture.write();
+        assert!(fixture.load().is_err());
         fixture.config["follow_finalized_tip"] = json!(true);
         fixture.write();
         assert!(fixture.load().unwrap().follow_finalized_tip);
+        assert!(fixture.load().unwrap().receive_successors);
         assert!(!fixture.load().unwrap().seal_store_path.exists());
         let good = fixture.config.clone();
         fixture.config["height"] = json!(2);

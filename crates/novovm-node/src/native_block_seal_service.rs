@@ -12,6 +12,8 @@ use super::NovNativeBlockSealStoreV1;
 
 #[path = "native_block_seal_service_v3.rs"]
 mod decision_v3;
+#[path = "native_fresh_chain_lifecycle.rs"]
+mod fresh_chain;
 #[path = "native_block_seal_publication_driver.rs"]
 mod publication;
 use crate::native_block_ledger::NovNativeBlockLedgerV1;
@@ -20,6 +22,7 @@ use crate::product_mainline_overlay::{
     ProductMainlineOverlayRoleV1, ProductMainlineOverlayRuntimeV1,
 };
 use anyhow::{bail, Context, Result};
+pub use fresh_chain::{FreshChainLifecycleV1, FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1};
 pub use publication::FreshGenesisPublicationDriverV1;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},

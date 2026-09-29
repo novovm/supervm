@@ -533,7 +533,8 @@ fn exercise_received_successor_body(
             .isolated_workspace_id,
         Some(expected_id)
     );
-    let received = exercise_body_network(authority, wire.clone(), raws, source, signer);
+    let received =
+        exercise_body_network(path, params, authority, wire.clone(), raws, source, signer);
     assert_eq!(
         load()
             .prepare_received_successor(received, params)
@@ -597,6 +598,8 @@ fn exercise_received_successor_body(
 }
 
 fn exercise_body_network(
+    path: &Path,
+    params: &serde_json::Value,
     authority: &crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1,
     wire: Vec<u8>,
     raws: &[Vec<u8>],
@@ -619,10 +622,40 @@ fn exercise_body_network(
                 .iter()
                 .find(|(r, _)| r.startup().local_peer_id == source)
                 .unwrap();
-            let (target, _) = peers
+            let (target, target_key) = peers
                 .iter()
                 .find(|(r, _)| r.startup().local_peer_id != source)
                 .unwrap();
+            use crate::native_block_seal::service::FreshChainLifecycleV1 as Lifecycle;
+            use crate::native_block_seal::service_config::NovNativeSealServiceConfigV1 as Config;
+            let mut config = Config::load(
+                &path.with_extension("fresh-service-3").join("service.json"),
+                authority.chain_id,
+            )
+            .unwrap();
+            config.signer = (*target_key).clone();
+            config.local_validator_id = authority
+                .validator_set
+                .validators
+                .iter()
+                .find(|v| v.public_key == target_key.verifying_key().to_bytes())
+                .unwrap()
+                .validator_id;
+            // Fixture store 0 has the complete height-3 decision archive. The
+            // receiver's key is independently pinned to its actual WSS identity.
+            config.seal_store_path = path.with_extension("genesis-seal-0");
+            config.follow_finalized_tip = true;
+            let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
+            let mut disabled =
+                Lifecycle::open(config.clone(), &ledger, params, target, Instant::now()).unwrap();
+            assert_eq!(disabled.status_json()["awaiting_successor_body"], false);
+            assert_eq!(disabled.status_json()["successor_signer_retained"], false);
+            config.receive_successors = true;
+            let mut lifecycle =
+                Lifecycle::open(config, &ledger, params, target, Instant::now()).unwrap();
+            assert_eq!(lifecycle.status_json()["height"], 3);
+            assert_eq!(lifecycle.status_json()["awaiting_successor_body"], true);
+            assert_eq!(lifecycle.status_json()["successor_signer_retained"], true);
             let mut sender = Sender::new(
                 wire.clone(),
                 raws,
@@ -653,6 +686,15 @@ fn exercise_body_network(
                             manifest = Some(inbound.clone());
                         }
                         if !retrying {
+                            if discarded == 0 {
+                                let mut damaged = inbound.clone();
+                                damaged.object_hash[0] ^= 1;
+                                assert!(lifecycle.enqueue(damaged));
+                                lifecycle.poll(target, Instant::now()).unwrap();
+                                assert_eq!(lifecycle.status_json()["height"], 3);
+                                assert_eq!(lifecycle.status_json()["successor_rejected"], 1);
+                                assert_eq!(lifecycle.status_json()["lifecycle_halted"], false);
+                            }
                             // The original receiver loses its volatile body state.
                             // Drop the first complete transport attempt, no ACK.
                             discarded += 1;
@@ -662,12 +704,27 @@ fn exercise_body_network(
                             }
                             continue;
                         }
+                        assert!(!disabled.enqueue(inbound.clone()));
+                        assert!(lifecycle.enqueue(inbound.clone()));
+                        // Transport enqueue alone cannot execute, sign or advance height.
+                        assert_eq!(lifecycle.status_json()["height"], 3);
                         if let Some(body) = inbox.accept(&inbound, Instant::now()).unwrap() {
                             complete = Some(body);
                         }
                     }
                 }
+                lifecycle.poll(target, Instant::now()).unwrap();
                 if let Some(body) = complete {
+                    assert_eq!(lifecycle.status_json()["height"], 4);
+                    assert_eq!(lifecycle.status_json()["received_successors"], 1);
+                    assert_eq!(lifecycle.status_json()["decision_confirmed"], false);
+                    assert_eq!(lifecycle.status_json()["queued_ingress"], 1);
+                    assert_eq!(lifecycle.status_json()["processed_ingress"], 0);
+                    assert_eq!(disabled.status_json()["height"], 3);
+                    // The subsequent scheduler tick, not reception, admits the
+                    // retained authenticated proposal to the normal V3 driver.
+                    lifecycle.poll(target, Instant::now()).unwrap();
+                    assert_eq!(lifecycle.status_json()["processed_ingress"], 1);
                     break body;
                 }
                 assert!(
@@ -678,6 +735,10 @@ fn exercise_body_network(
             };
             assert_eq!(received.raw_txs, raws);
             assert_eq!(discarded, 2);
+            disabled.poll(target, Instant::now()).unwrap();
+            assert!(disabled.poll(target, start).is_err());
+            assert_eq!(disabled.status_json()["lifecycle_halted"], true);
+            assert_eq!(disabled.status_json()["finalized"], false);
             assert!(sender.poll_at(runtime, start).is_err());
             let manifest = manifest.unwrap();
             let now = Instant::now();

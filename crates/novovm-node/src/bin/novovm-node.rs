@@ -43550,8 +43550,9 @@ mod native_execution_pipeline_tests {
 }
 
 // The first candidate has no legacy host projection or selected ledger head.
-// Publish the configured confirmed fresh-chain candidate, then relay certificates.
-// Do not admit ordinary transactions or fabricate chain-level finality.
+// Publish the configured fresh-chain candidate, then relay certificates. Explicit
+// successor reception may execute a signed body and re-enter V3 confirmation.
+// Ordinary pending-pool scheduling is not enabled here.
 fn run_fresh_genesis_confirmation_v1(
     config: NovNativeSealServiceConfigV1,
     execution_params: &serde_json::Value,
@@ -43562,7 +43563,6 @@ fn run_fresh_genesis_confirmation_v1(
     if !config.is_fresh_genesis() {
         bail!("fresh genesis startup requires an explicit genesis configuration");
     }
-    let config = config.resolve_finalized_startup(execution_params)?;
     let overlay_path = string_env_nonempty("NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG")
         .context("fresh genesis confirmation requires Product Overlay configuration")?;
     let overlay = load_product_mainline_overlay_config_v1(&overlay_path)?;
@@ -43570,73 +43570,30 @@ fn run_fresh_genesis_confirmation_v1(
     let ledger_path = novovm_node::tx_ingress::nov_native_block_ledger_rocksdb_path_v1(
         &nov_native_execution_store_path_v1(),
     );
-    let mut publication =
-        novovm_node::native_block_seal::service::FreshGenesisPublicationDriverV1::open(
-            &config,
-            &ledger_path,
-            execution_params,
-            &runtime,
-            Instant::now(),
-        )?;
-    let mut service = if publication.is_none() {
-        Some(NovNativeSealServiceV1::open_configured(
-            config,
-            &ledger_path,
-            execution_params,
-            &runtime,
-            Instant::now(),
-        )?)
-    } else {
-        None
-    };
-    let status = || {
-        publication
-            .as_ref()
-            .map(|driver| driver.status_json())
-            .unwrap_or_else(|| {
-                service
-                    .as_ref()
-                    .expect("fresh service or publication")
-                    .status_json()
-            })
-    };
-    println!("native_seal_service_startup: {}", status());
+    let mut lifecycle = novovm_node::native_block_seal::service::FreshChainLifecycleV1::open(
+        config,
+        &ledger_path,
+        execution_params,
+        &runtime,
+        Instant::now(),
+    )?;
+    println!("native_seal_service_startup: {}", lifecycle.status_json());
     let mut ticks = 0u64;
-    let mut confirmation_reported = false;
+    let mut confirmation_reported = None;
     loop {
         for event in runtime.drain_events(128) {
             if let ProductMainlineOverlayEventV1::Inbound(inbound) = event {
                 if inbound.payload_class == ProductMainlineOverlayPayloadClassV1::NativeSeal {
-                    if let Some(service) = service.as_mut() {
-                        service.enqueue(inbound);
-                    }
+                    lifecycle.enqueue(inbound);
                 }
             }
         }
-        if let Some(driver) = publication.as_mut() {
-            driver.poll(&runtime, Instant::now())?;
-        } else if let Some(active) = service.as_mut() {
-            active.poll(&runtime, Instant::now())?;
-            if active.status_json()["decision_confirmed"] == true {
-                publication = active.complete_fresh_publication(&runtime, Instant::now())?;
-                if publication.is_none() {
-                    bail!("confirmed fresh decision has no durable archive");
-                }
-                service = None;
-            }
-        }
-        let status = publication
-            .as_ref()
-            .map(|driver| driver.status_json())
-            .unwrap_or_else(|| {
-                service
-                    .as_ref()
-                    .expect("fresh service or publication")
-                    .status_json()
-            });
-        if !confirmation_reported && status["decision_confirmed"] == true {
+        lifecycle.poll(&runtime, Instant::now())?;
+        let status = lifecycle.status_json();
+        let height = status["height"].as_u64();
+        if confirmation_reported != height && status["decision_confirmed"] == true {
             println!("native_fresh_genesis_decision_confirmed: {status}");
-            confirmation_reported = true;
+            confirmation_reported = height;
         }
         ticks = ticks.saturating_add(1);
         if max_ticks > 0 && ticks >= max_ticks {
@@ -43649,8 +43606,7 @@ fn run_fresh_genesis_confirmation_v1(
         serde_json::json!({
             "ticks": ticks,
             "ordinary_execution_enabled": false,
-            "native_seal_service": publication.as_ref().map(|driver| driver.status_json())
-                .unwrap_or_else(|| service.as_ref().expect("fresh service or publication").status_json()),
+            "native_seal_service": lifecycle.status_json(),
         })
     );
     Ok(())
@@ -43732,7 +43688,9 @@ fn run_native_execution_tick_node_mode_v1(
         // supplies an explicit stack; this is not a transaction worker pool.
         return std::thread::Builder::new()
             .name("fresh-genesis-confirmation".into())
-            .stack_size(8 * 1024 * 1024)
+            .stack_size(
+                novovm_node::native_block_seal::service::FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1,
+            )
             .spawn(move || {
                 run_fresh_genesis_confirmation_v1(
                     config,
