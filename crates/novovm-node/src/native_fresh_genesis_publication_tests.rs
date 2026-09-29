@@ -1212,7 +1212,136 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
                 value: promoted_head.clone(),
             },
         );
+        // The successor intent is durable, but authority is still the first block.
+        let publish_successor = || {
+            workspace::publish_successor_authority_v1(
+                chain,
+                input.workspace_id,
+                next_input.workspace_id,
+                pin,
+                params,
+            )
+        };
+        let verify_successor = || {
+            workspace::verify_successor_authority_v1(
+                chain,
+                input.workspace_id,
+                next_input.workspace_id,
+                pin,
+                params,
+            )
+        };
+        assert!(verify_successor().is_err());
+        assert!(workspace::publish_successor_authority_v1(
+            chain,
+            input.workspace_id,
+            competing_next.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
+        assert!(workspace::publish_successor_with_checkpoint_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            params,
+            |point| {
+                if point == Point::BeforePublication {
+                    anyhow::bail!("before successor publication");
+                }
+                Ok(())
+            }
+        )
+        .is_err());
+        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), promoted_head);
+        assert!(workspace::publish_successor_with_checkpoint_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            params,
+            |point| {
+                if point == Point::AfterPublication {
+                    anyhow::bail!("lost successor success response");
+                }
+                Ok(())
+            }
+        )
+        .is_err());
+        let successor_head = open_graph().get(&head_key).unwrap().unwrap();
+        assert_eq!(&successor_head[..4], b"NVP2");
+        assert_ne!(successor_head, promoted_head);
+        let published_successor = publish_successor().unwrap();
+        assert_eq!(published_successor, verify_successor().unwrap());
+        assert_eq!(published_successor, publish_successor().unwrap());
+        assert!(
+            published_successor.aoem_authority_published
+                && published_successor.aoem_readback_verified
+        );
+        assert!(
+            !published_successor.ledger_publication_completed && !published_successor.finalized
+        );
+        assert_eq!(published_successor.state_version, 3);
+        assert_eq!(
+            published_successor.state_root,
+            next_block.block().header.post_state_root
+        );
+        assert!(
+            workspace::publish_genesis_promotion_v1(chain, input.workspace_id, pin, params)
+                .is_err()
+        );
+        assert_eq!(
+            open_graph().get(&head_key).unwrap().unwrap(),
+            successor_head
+        );
+        assert!(workspace::load_finalized_genesis_parent_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
+        assert_eq!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(&ledger, pin, namespace)
+                .unwrap()
+                .as_ref(),
+            Some(block.block())
+        );
+        let evidence_key =
+            workspace::publication_evidence_key_for_test_v1(chain, next_input.workspace_id, params)
+                .unwrap();
+        change(
+            940,
+            Write::Delete {
+                key: evidence_key.clone(),
+            },
+            Write::Delete {
+                key: evidence_key.clone(),
+            },
+        );
+        assert!(publish_successor().is_err());
+        assert!(verify_successor().is_err());
+        assert!(open_graph().get(&evidence_key).unwrap().is_none());
+        assert_eq!(
+            open_graph().get(&head_key).unwrap().unwrap(),
+            successor_head
+        );
+        change(
+            941,
+            Write::Put {
+                key: evidence_key.clone(),
+                value: successor_head.clone(),
+            },
+            Write::Put {
+                key: evidence_key.clone(),
+                value: successor_head.clone(),
+            },
+        ); // Explicit fixture restoration.
+        assert_eq!(verify_successor().unwrap(), published_successor);
         workspace::corrupt_execution_output_for_test_v1(chain, input.workspace_id, params).unwrap();
+        assert!(verify_successor().is_err());
+        assert!(publish_successor().is_err());
         assert!(
             workspace::verify_genesis_promotion_v1(chain, input.workspace_id, pin, params).is_err()
         );
@@ -1220,7 +1349,10 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             workspace::publish_genesis_promotion_v1(chain, input.workspace_id, pin, params)
                 .is_err()
         );
-        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), promoted_head);
+        assert_eq!(
+            open_graph().get(&head_key).unwrap().unwrap(),
+            successor_head
+        );
     });
 }
 

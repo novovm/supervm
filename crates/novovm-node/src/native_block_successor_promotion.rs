@@ -104,6 +104,26 @@ pub(super) fn validated_keys(
 }
 
 impl NovNativeBlockLedgerV1 {
+    pub(crate) fn verify_fresh_successor_promotion_target_v1(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        parent_workspace: [u8; 32],
+        execution: &NovNativeIsolatedExecutionBindingV1,
+    ) -> Result<[u8; 32]> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("successor promotion ledger missing")?;
+        load_verified(&ledger, genesis, namespace)?;
+        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() != Some(SUCCESSOR_INTENT_SCHEMA.as_bytes()) {
+            bail!("successor publication requires a durable intent");
+        }
+        let intent = read(&ledger)?;
+        if intent.parent_workspace != parent_workspace || intent.execution != *execution {
+            bail!("successor publication differs from pinned target");
+        }
+        intent.commitment()
+    }
+
     /// The coordinator retains workspace and authority locks and has verified
     /// live parent publication and the complete candidate AOEM artifact.
     pub(crate) fn stage_fresh_successor_promotion_v1(

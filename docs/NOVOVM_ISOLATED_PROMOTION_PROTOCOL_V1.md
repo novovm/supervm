@@ -11,8 +11,23 @@ Exact retries revalidate and return the same commitment; missing committed
 evidence is an error, never repaired. The marker fences successor signing,
 registration and abort, while first-height published state remains readable.
 Older binaries reject this marker. This API is not yet called automatically by
-the service: second-height AOEM pointer/index publication and crash recovery
-across those stores still need implementation. A staged intent is NOT finality.
+the service: second-height ledger publication and recovery across both stores
+remain incomplete (AOEM pointer implementation below). A staged intent is NOT finality.
+
+`publish_successor_authority_v1` now publishes the exact pinned child AOEM output
+using a distinct NVP2 authority pointer. Under workspace -> authority locks it
+verifies both immutable outputs, the complete ledger/decision intent, the first
+block's published body and its original publication evidence. Only the exact
+NVP1 parent or the exact completed NVP2 target is accepted. The generic AOEM graph
+stores the child evidence and head; no business execution is repeated. A lost
+success response can be retried. Completed heads with missing evidence are never
+repaired, and uncertain graph completion retains locks until process exit.
+`verify_successor_authority_v1` is readback only. First-height live-parent APIs
+reject after the head advances rather than treating the old state as current.
+The service still does not invoke this transition automatically. The height-two
+ledger indexes/head and finalized marker are NOT published by this API; both
+`ledger_publication_completed` and `finalized` remain false. Checkpoint tests are
+controlled failures, not OS/process-power-loss acceptance.
 Original audit baseline: `b049f25`. This is not production acceptance or permission
 to mark any block finalized without the full first-height verification below.
 

@@ -2,6 +2,40 @@
 //! AOEM and no re-execution. Ledger indexes may be completed under the same locks.
 use super::*;
 use crate::native_block_ledger::NovNativeFreshFinalityProofV1;
+#[path = "native_candidate_successor_publication.rs"]
+mod successor;
+#[cfg(test)]
+pub(crate) use successor::publish_successor_with_checkpoint_v1;
+pub use successor::{
+    publish_successor_authority_v1, verify_successor_authority_v1, FreshSuccessorPublicationV1,
+};
+
+fn publication_target(
+    magic: &[u8; 4],
+    namespace: [u8; 32],
+    genesis: [u8; 32],
+    commitment: [u8; 32],
+    id: [u8; 32],
+    artifact: &IsolatedBlockArtifactV1,
+) -> Vec<u8> {
+    let header = &artifact.block().header;
+    let mut target = magic.to_vec();
+    target.extend_from_slice(&header.chain_id.to_be_bytes());
+    for part in [
+        namespace,
+        genesis,
+        commitment,
+        id,
+        artifact.output_digest,
+        header.block_hash,
+        header.post_state_root,
+        header.cumulative_receipt_root,
+    ] {
+        target.extend_from_slice(&part);
+    }
+    target.extend_from_slice(&header.state_version.to_be_bytes());
+    target
+}
 
 enum PublicationScope<'a> {
     Authority,
@@ -558,21 +592,7 @@ fn run_locked(
     // Points to existing immutable AOEM candidate chunks. Their input/output
     // markers, signatures, receipt/state roots and complete bytes were verified
     // above. The intent fences abort, so the new authority cannot lose its source.
-    let mut target = b"NVP1".to_vec();
-    target.extend_from_slice(&chain.to_be_bytes());
-    for part in [
-        namespace,
-        genesis,
-        commitment,
-        id,
-        artifact.output_digest,
-        header.block_hash,
-        header.post_state_root,
-        header.cumulative_receipt_root,
-    ] {
-        target.extend_from_slice(&part);
-    }
-    target.extend_from_slice(&header.state_version.to_be_bytes());
+    let target = publication_target(b"NVP1", namespace, genesis, commitment, id, &artifact);
     let head_key = native_aoem_owned_state_head_key_v1(chain, &workspace.namespace);
     let evidence_key = workspace.key(b'h', &id);
     let current = workspace
