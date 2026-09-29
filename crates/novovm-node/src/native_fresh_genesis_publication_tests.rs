@@ -188,13 +188,10 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             },
             compiled.state_root(),
             None,
-            vec![candidate_workspace_execution_raw(
-                chain,
-                0,
-                [0xc3; 32],
-                10,
-                "deposit_reserve",
-            )],
+            vec![
+                candidate_workspace_execution_raw(chain, 0, [0xc3; 32], 10, "deposit_reserve"),
+                candidate_workspace_execution_raw(chain, 1, [0xc3; 32], 10, "deposit_reserve"),
+            ],
         );
         assert!(workspace::create_from_genesis_v1(&plan, [9; 32], params).is_err());
         let mut bad_head = head.clone();
@@ -232,9 +229,13 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         assert_eq!(input.parent_block_hash, [0; 32]);
         let result = workspace::execute_v1(chain, input.workspace_id, params).unwrap();
         assert_candidate_workspace_execution_complete(&result);
-        assert_eq!(result.batch_result.per_tx_receipts.len(), 1);
-        assert!(result.batch_result.per_tx_receipts[0].status_ok);
-        assert_eq!(result.batch_result.snapshot_metadata.state_version, 1);
+        assert_eq!(result.batch_result.per_tx_receipts.len(), 2);
+        assert!(result
+            .batch_result
+            .per_tx_receipts
+            .iter()
+            .all(|receipt| receipt.status_ok));
+        assert_eq!(result.batch_result.snapshot_metadata.state_version, 2);
         let block = workspace::load_block_artifact_v1(chain, input.workspace_id, params)
             .unwrap()
             .unwrap();
@@ -769,7 +770,7 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             timestamp_unix_ms: config.timestamp_unix_ms + 1,
         };
         let next_raw =
-            candidate_workspace_execution_raw(chain, 1, [0xc3; 32], 10, "deposit_reserve");
+            candidate_workspace_execution_raw(chain, 2, [0xc3; 32], 10, "deposit_reserve");
         let next_plan = parent
             .successor_plan(next_context, vec![next_raw.clone()], params)
             .unwrap();
@@ -777,7 +778,7 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             next_plan.pre_state_root,
             block.block().header.post_state_root
         );
-        assert_eq!(next_plan.aoem_parent.as_ref().unwrap().state_version, 1);
+        assert_eq!(next_plan.aoem_parent.as_ref().unwrap().state_version, 2);
         assert_eq!(
             next_plan.aoem_parent.as_ref().unwrap().batch_result_id,
             result.batch_result.batch_result_id
@@ -796,7 +797,7 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
                 next_context,
                 vec![candidate_workspace_execution_raw(
                     chain,
-                    2,
+                    3,
                     [0xc3; 32],
                     10,
                     "deposit_reserve"
@@ -846,7 +847,7 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
                 && next_result.candidate_state_persisted
         );
         assert!(!next_result.authority_state_published && !next_result.finalized);
-        assert_eq!(next_result.batch_result.snapshot_metadata.state_version, 2);
+        assert_eq!(next_result.batch_result.snapshot_metadata.state_version, 3);
         assert!(next_result.batch_result.per_tx_receipts[0].status_ok);
         assert_eq!(
             Some(next_result.clone()),
@@ -872,7 +873,7 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
                 .values()
                 .copied()
                 .sum::<u128>(),
-            20 + next_state
+            30 + next_state
                 .receipts
                 .values()
                 .map(|r| r.settled_fee_nov)
@@ -886,7 +887,7 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
                 .values()
                 .copied()
                 .sum::<u128>(),
-            10 + parent
+            20 + parent
                 .state()
                 .receipts
                 .values()

@@ -323,7 +323,7 @@ impl NovNativeSealSubjectV1 {
             && (self.height != 1
                 || self.epoch != 1
                 || validator_set.activation_height != 1
-                || self.state_version != 1
+                || self.state_version != u64::from(self.tx_count)
                 || self.pre_state_root == [0; 32])
         {
             bail!("fresh genesis proof profile only supports the first execution block");
@@ -3314,6 +3314,10 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert_ne!(subject.genesis_block_hash, subject.block_hash);
+        let mut wrong_sequence = subject.clone();
+        wrong_sequence.state_version += 1;
+        wrong_sequence.subject_hash = subject_hash_v1(&wrong_sequence);
+        assert!(wrong_sequence.validate(&set).is_err());
         let mut downgraded = subject.clone();
         downgraded.proof_version = NOV_NATIVE_BLOCK_SEAL_PROOF_VERSION_V1.into();
         downgraded.subject_hash = subject_hash_v1(&downgraded);

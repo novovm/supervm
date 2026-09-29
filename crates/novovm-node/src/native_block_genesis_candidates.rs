@@ -13,7 +13,9 @@ fn validate_first(
         || block.header.aoem_parent.is_some()
         || block.header.pre_state_root != initial_root
         || block.header.timestamp_unix_ms < config.timestamp_unix_ms
-        || block.header.state_version != 1
+        // Genesis starts at sequence zero; execution advances once per tx,
+        // not once per block. Bind the exact count rather than accepting any version.
+        || block.header.state_version != u64::from(block.header.tx_count)
     {
         bail!("isolated first candidate does not extend the pinned fresh genesis");
     }
