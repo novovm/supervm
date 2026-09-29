@@ -1231,6 +1231,21 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
                 params,
             )
         };
+        let finalize_successor = || {
+            workspace::finalize_successor_v1(
+                chain,
+                input.workspace_id,
+                next_input.workspace_id,
+                pin,
+                params,
+            )
+        };
+        assert!(finalize_successor().is_err());
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_successor_finality_v1(&ledger, pin, namespace)
+                .unwrap()
+                .is_none()
+        );
         assert!(verify_successor().is_err());
         assert!(workspace::publish_successor_authority_v1(
             chain,
@@ -1348,6 +1363,7 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
                 params,
             )
         };
+        assert!(finalize_successor().is_err()); // AOEM alone is not a complete ledger.
         assert!(workspace::complete_successor_with_checkpoint_v1(
             chain,
             input.workspace_id,
@@ -1465,7 +1481,97 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             },
         );
         assert_eq!(verify_successor().unwrap(), completed_successor);
+        assert!(workspace::finalize_successor_v1(
+            chain,
+            input.workspace_id,
+            competing_next.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
+        assert!(workspace::finalize_successor_with_checkpoint_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            params,
+            |point| {
+                if point == Point::BeforeFinalityCommit {
+                    anyhow::bail!("before finality commit");
+                }
+                Ok(())
+            }
+        )
+        .is_err());
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_successor_finality_v1(&ledger, pin, namespace)
+                .unwrap()
+                .is_none()
+        );
+        assert!(workspace::finalize_successor_with_checkpoint_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            params,
+            |point| {
+                if point == Point::AfterFinalityCommit {
+                    anyhow::bail!("lost finality success response");
+                }
+                Ok(())
+            }
+        )
+        .is_err());
+        let finalized_successor = finalize_successor().unwrap();
+        assert!(finalized_successor.finalized && finalized_successor.ledger_publication_completed);
+        assert_eq!(finalize_successor().unwrap(), finalized_successor);
+        assert_eq!(verify_successor().unwrap(), finalized_successor);
+        assert_eq!(complete_successor().unwrap(), finalized_successor);
+        let archived =
+            NovNativeBlockLedgerV1::load_fresh_successor_finality_v1(&ledger, pin, namespace)
+                .unwrap()
+                .unwrap();
+        let Message::DecisionCertificateV3 { decision, .. } = &archived.witness else {
+            panic!("full decision required");
+        };
+        decision.verify(compiled.validator_set()).unwrap();
+        assert_eq!(
+            decision.prepare.subject.block_hash,
+            next_block.block().header.block_hash
+        );
+        assert!(
+            !NovNativeBlockLedgerV1::load_fresh_successor_published_block_v1(
+                &ledger, pin, namespace
+            )
+            .unwrap()
+            .unwrap()
+            .header
+            .finalized
+        );
+        let finality_key = b"native_block_ledger/v1/successor/finalized-intent";
+        let db = rocksdb::DB::open_default(&ledger).unwrap();
+        let original = db.get(finality_key).unwrap().unwrap();
+        db.delete(finality_key).unwrap();
+        drop(db);
+        assert!(finalize_successor().is_err());
+        assert!(verify_successor().is_err());
+        assert!(complete_successor().is_err());
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_successor_finality_v1(&ledger, pin, namespace)
+                .is_err()
+        );
+        let db = rocksdb::DB::open_default(&ledger).unwrap();
+        assert!(db.get(finality_key).unwrap().is_none());
+        db.put(finality_key, [0; 32]).unwrap();
+        drop(db);
+        assert!(finalize_successor().is_err());
+        let db = rocksdb::DB::open_default(&ledger).unwrap();
+        assert_eq!(db.get(finality_key).unwrap().unwrap(), [0; 32]);
+        db.put(finality_key, original).unwrap(); // Explicit fixture restoration.
+        drop(db);
+        assert_eq!(verify_successor().unwrap(), finalized_successor);
         workspace::corrupt_execution_output_for_test_v1(chain, input.workspace_id, params).unwrap();
+        assert!(finalize_successor().is_err());
         assert!(verify_successor().is_err());
         assert!(publish_successor().is_err());
         assert!(

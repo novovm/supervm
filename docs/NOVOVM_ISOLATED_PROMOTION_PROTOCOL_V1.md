@@ -38,6 +38,18 @@ manifest covers both projections after commit; missing committed indexes fail
 closed on retry. A published ledger paired with a rolled-back AOEM head is an
 error, not permission to republish. `ledger_publication_completed` now reflects
 full durable readback; `finalized` is still false pending finality publication.
+
+`finalize_successor_v1` now adds the finality transition after live NVP2/output
+readback and complete ledger verification. It never publishes missing authority
+or silently completes missing indexes. The existing intent already archives the
+entire V3 decision envelope, so finality binds its exact commitment with a synced
+pin and distinct capability marker rather than duplicating or editing signed
+headers. Every query verifies parent and child proofs and all published indexes
+before accepting this pin. Missing/changed finality evidence after commit is an
+error, never repaired on retry. `load_fresh_successor_finality_v1` returns the
+fully verified historical proof; live coordinator readback reports `finalized`
+only with current AOEM verification. This is BFT finality under the pinned set,
+not ZK proof. Main-service automatic publication/relay still needs wiring.
 Original audit baseline: `b049f25`. This is not production acceptance or permission
 to mark any block finalized without the full first-height verification below.
 

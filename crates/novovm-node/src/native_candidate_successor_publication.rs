@@ -6,6 +6,7 @@ enum Scope {
     Verify,
     Authority,
     Ledger,
+    Finality,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -68,6 +69,38 @@ pub fn complete_successor_ledger_v1(
         params,
         Scope::Ledger,
         |_| Ok(()),
+    )
+}
+
+pub fn finalize_successor_v1(
+    chain: u64,
+    parent: [u8; 32],
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<FreshSuccessorPublicationV1> {
+    run(chain, parent, id, genesis, params, Scope::Finality, |_| {
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn finalize_successor_with_checkpoint_v1(
+    chain: u64,
+    parent: [u8; 32],
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+    checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
+) -> Result<FreshSuccessorPublicationV1> {
+    run(
+        chain,
+        parent,
+        id,
+        genesis,
+        params,
+        Scope::Finality,
+        checkpoint,
     )
 }
 
@@ -191,7 +224,7 @@ fn run(
             bail!("published successor evidence missing; refusing repair");
         }
     } else {
-        if scope == Scope::Verify || current != parent_target {
+        if matches!(scope, Scope::Verify | Scope::Finality) || current != parent_target {
             bail!("successor publication requires the exact live parent or completed target");
         }
         if evidence.as_ref().is_some_and(|value| value != &target) {
@@ -261,6 +294,19 @@ fn run(
             namespace,
         )?
         .is_some();
+    if scope == Scope::Finality {
+        checkpoint(PromotionCheckpointV1::BeforeFinalityCommit)?;
+        NovNativeBlockLedgerV1::finalize_fresh_successor_v1(
+            &ledger_path,
+            genesis,
+            namespace,
+            commitment,
+        )?;
+        checkpoint(PromotionCheckpointV1::AfterFinalityCommit)?;
+    }
+    let finalized =
+        NovNativeBlockLedgerV1::load_fresh_successor_finality_v1(&ledger_path, genesis, namespace)?
+            .is_some();
     let h = &artifact.block().header;
     Ok(FreshSuccessorPublicationV1 {
         chain_id: chain,
@@ -273,6 +319,6 @@ fn run(
         aoem_authority_published: true,
         aoem_readback_verified: true,
         ledger_publication_completed,
-        finalized: false,
+        finalized,
     })
 }
