@@ -25542,7 +25542,7 @@ mod tests {
                             let raw =
                                 encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
                             let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
-                                &serde_json::json!({}),
+                                &serde_json::json!({"native_execution_store_path": path}),
                                 raw.as_slice(),
                             )
                             .expect("native pending ingress should store payload");
@@ -25660,7 +25660,7 @@ mod tests {
                             let raw =
                                 encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
                             let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
-                                &serde_json::json!({}),
+                                &serde_json::json!({"native_execution_store_path": path}),
                                 raw.as_slice(),
                             )
                             .expect("native pending ingress should store payload");
@@ -25766,9 +25766,11 @@ mod tests {
                         signature: vec![0xacu8; 32],
                     };
                     let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
-                    let (_, _, tx_hash) =
-                        ingest_local_nov_raw_tx_payload_v1(&serde_json::json!({}), raw.as_slice())
-                            .expect("native pending ingress should store payload");
+                    let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
+                        &serde_json::json!({"native_execution_store_path": path}),
+                        raw.as_slice(),
+                    )
+                    .expect("native pending ingress should store payload");
                     novovm_network::observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
                         chain_id, 14_168, tx_hash,
                     );
@@ -25859,9 +25861,11 @@ mod tests {
                         signature: vec![0xabu8; 32],
                     };
                     let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
-                    let (_, _, tx_hash) =
-                        ingest_local_nov_raw_tx_payload_v1(&serde_json::json!({}), raw.as_slice())
-                            .expect("native pending ingress should store payload");
+                    let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
+                        &serde_json::json!({"native_execution_store_path": path}),
+                        raw.as_slice(),
+                    )
+                    .expect("native pending ingress should store payload");
                     novovm_network::observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
                         chain_id, 13_680, tx_hash,
                     );

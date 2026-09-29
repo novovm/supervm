@@ -34,6 +34,11 @@
 广义 `timeout` 过滤回归 16 passed / 1 failed：
 `ledger_final_missing_enqueued_overlap_cannot_timeout_without_admission` 在入池 fixture
 报 nonce identity scheme 为空；本次未修改该入口，尚未基线复跑确认，不能声称全测通过。
+该失败后续已定位并修复：四处补齐/入池 fixture 创建临时账本却传入空参数，
+导致入口读取默认账本。现在显式传入各自的 `native_execution_store_path`，
+不放宽任何生产 nonce 校验。`ledger_final_missing` 3 passed，`timeout` 17 passed
+（55.69 秒）；主程序实际构建与 lib/tests 严格 Clippy 通过。新创世主进程端到端
+验证仍未执行，不能由这些回归替代。
 CI `36571622688` 四服务测试仍失败：40 秒确认期限内一个节点已确认、两个节点
 仍 Prepared，未得到全部确认；具体活性/耗时原因待修复，不计为通过。
 后续只推进新创世启动、多节点确认、可恢复落账这一最短可用链路。
