@@ -1,8 +1,8 @@
 #[test]
 fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry() {
     use crate::tx_ingress::fresh_genesis::{
-        publication::publish_v1, FreshGenesisConfigV1, GenesisAllocationV1, GenesisValidatorV1,
-        GENESIS_SCHEMA_V1,
+        publication::{publish_v1, verify_persisted_v1},
+        FreshGenesisConfigV1, GenesisAllocationV1, GenesisValidatorV1, GENESIS_SCHEMA_V1,
     };
     let _guard = PLAN_RUNTIME_TEST_LOCK
         .lock()
@@ -44,6 +44,8 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
         NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(&ledger, &config, pin, namespace)
             .unwrap();
+        assert!(verify_persisted_v1(chain, pin, params).is_err());
+        assert!(!db_path.exists());
         fs::create_dir(&db_path).unwrap();
         fs::write(db_path.join("occupied-test-data"), b"preserve").unwrap();
         assert!(publish_v1(chain, pin, params).is_err());
@@ -58,6 +60,9 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         assert_eq!(first.state_root, compiled.state_root());
         assert!(!first.finalized && !first.chain_canonical);
         let second = publish_v1(chain, pin, params).unwrap();
+        let verified = verify_persisted_v1(chain, pin, params).unwrap();
+        assert_eq!(verified.state_root, compiled.state_root());
+        assert!(verified.aoem_readback_verified && !verified.finalized);
         assert_eq!(
             serde_json::to_value(first).unwrap(),
             serde_json::to_value(second).unwrap()
@@ -141,6 +146,12 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
                 key: head_key.clone(),
             },
         );
+        assert!(verify_persisted_v1(chain, pin, params)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("completion head is absent"));
+        assert!(open_graph().get(&head_key).unwrap().is_none());
         assert!(
             publish_v1(chain, pin, params)
                 .unwrap()

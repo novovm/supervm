@@ -46,6 +46,26 @@ pub fn publish_v1(
     expected_config: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<GenesisPublicationV1> {
+    run_v1(chain_id, expected_config, params, true)
+}
+
+/// Verify already published genesis without graph submission or claim creation.
+/// Acquires the authority lock and updates its diagnostics; not a filesystem-
+/// read-only RPC. Success is not a transferable activation permission.
+pub fn verify_persisted_v1(
+    chain_id: u64,
+    expected_config: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<GenesisPublicationV1> {
+    run_v1(chain_id, expected_config, params, false)
+}
+
+fn run_v1(
+    chain_id: u64,
+    expected_config: [u8; 32],
+    params: &serde_json::Value,
+    allow_publication: bool,
+) -> Result<GenesisPublicationV1> {
     validate_native_persistence_path_isolation_v1(params)?;
     let gates = tx_ingress_aoem_ownership_gates_from_params_v1(params);
     if !gates.explicit || !(gates.production_candidate || gates.semantic_graph_v3_required) {
@@ -123,6 +143,12 @@ pub fn publish_v1(
     let mut claim_path = path.as_os_str().to_os_string();
     claim_path.push(".fresh-genesis-claim-v1");
     let claim_path = PathBuf::from(claim_path);
+    // The current AOEM RocksDB provider opens create-if-missing. Verify mode
+    // requires its existing manifest pointer before opening, then validates all
+    // content below. No initial directory/claim is materialized in this mode.
+    if !allow_publication && (!claim_path.is_file() || !path.join("CURRENT").is_file()) {
+        bail!("persisted genesis storage or ownership claim is absent; verification cannot initialize it");
+    }
     let claim = serde_json::to_vec(&serde_json::json!({
         "schema": SCHEMA, "config": expected_config, "namespace": namespace,
         "authority_lock": fs::canonicalize(nov_native_execution_store_lock_path_v1(&native_path))?,
@@ -133,6 +159,9 @@ pub fn publish_v1(
             bail!("fresh genesis DB ownership claim mismatch");
         }
     } else {
+        if !allow_publication {
+            bail!("genesis ownership claim disappeared during verification");
+        }
         if path.exists() {
             bail!("fresh genesis refuses an existing AOEM DB without its ownership claim");
         }
@@ -187,6 +216,9 @@ pub fn publish_v1(
     if previous.is_some() {
         verify()?; // missing chunks behind a completed head are corruption, not a retry
     } else {
+        if !allow_publication {
+            bail!("persisted genesis completion head is absent; explicit publication recovery required");
+        }
         let steps = chunks
             .chunks(4)
             .map(|group| AoemAtomicGraphStepV1 {

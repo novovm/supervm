@@ -65,6 +65,31 @@ transaction startup blocked until genesis trust-anchor activation is implemented
 Local graph fault-state tests are not independent-process crash or power-loss
 proof; claim-file crash durability, startup integration and finality remain open.
 
+`verify_persisted_v1` is a separate verification-only entrypoint: it requires
+existing RocksDB storage and claim, never submits a graph, never creates the
+claim, and refuses a missing completion head instead of replaying publication.
+It acquires the normal authority lock (including diagnostic file updates) and
+opens the generic provider; it is not a filesystem-read-only RPC. Its returned
+status must not be reused later as permission to activate a ledger without live
+revalidation under the authority lock.
+
+### First-block integration constraints found in the current code
+
+- `NovBlockExecutionContextV1` requires height 1 to have a zero parent hash.
+- Candidate plans and durable transaction blocks require nonempty transactions.
+- `prepare_local_subject` and seal-store binding fetch height 1 as the genesis
+  block; a height-1 seal subject requires `genesis_block_hash == block_hash`.
+- Isolated candidate parent capture currently requires a transaction-state
+  envelope and a durable parent block, not the distinct genesis image.
+
+Consequently the new initial state cannot be relabeled as an existing-format
+transaction block. The next integration must explicitly represent the genesis
+trust anchor and bind first-candidate admission, signing domain and verified
+initial state to it. It must preserve legacy rejection rules/version fencing,
+not synthesize transactions, batch results, QCs or historical finalized flags.
+Ordinary startup remains blocked until these interfaces and recoverable ledger
+activation are implemented together.
+
 ## Observed implementation boundaries
 
 - `native_candidate_execution.rs::Output` already contains the complete verified
