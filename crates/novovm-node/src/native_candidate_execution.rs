@@ -32,6 +32,7 @@ pub(crate) use promotion::{
     publish_with_checkpoint_v1, retire_with_checkpoint_v1, PromotionCheckpointV1,
     RetirementCheckpointV1,
 };
+pub(crate) use promotion::{load_startup_artifact_v1, load_startup_successor_v1};
 
 const OUTPUT_SCHEMA: &str = "novovm-native-candidate-execution/v1";
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;

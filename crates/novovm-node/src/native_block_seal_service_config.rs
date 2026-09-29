@@ -13,6 +13,8 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
+#[path = "native_block_seal_service_recovery.rs"]
+mod recovery;
 
 pub const NOV_NATIVE_SEAL_SERVICE_SCHEMA_V1: &str = "novovm-native-seal-service/v1";
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
@@ -182,19 +184,7 @@ impl NovNativeSealServiceConfigV1 {
         let id = self
             .isolated_workspace_id
             .context("startup follow anchor missing")?;
-        let paths = crate::tx_ingress::native_persistence_write_paths_v1(params);
-        let ledger = paths
-            .iter()
-            .find(|(label, _)| *label == "native block ledger")
-            .context("startup ledger path missing")?
-            .1
-            .clone();
-        let writes = paths
-            .into_iter()
-            .filter(|(label, _)| *label != "native block ledger")
-            .map(|(_, path)| path)
-            .collect::<Vec<_>>();
-        super::service_paths::validate_service_paths_v1(&self, &ledger, &writes, &[])?;
+        self.check_startup_paths(params)?;
         if let Some((image, previous)) =
             crate::tx_ingress::candidate_workspace::load_latest_finalized_parent_v1(
                 self.chain_id,

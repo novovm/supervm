@@ -45,7 +45,7 @@ impl FreshChainLifecycleV1 {
         config.validate(runtime.chain_id())?;
         check_runtime(&config, runtime)?;
         validate_service_paths_v1(&config, ledger_path, &[], &[])?;
-        let config = config.resolve_finalized_startup(params)?;
+        let config = config.resolve_lifecycle_startup(params)?;
         let publication =
             FreshGenesisPublicationDriverV1::open(&config, ledger_path, params, runtime, now)?
                 .map(Box::new);

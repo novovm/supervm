@@ -30,6 +30,7 @@ pub(super) use execution::{
     publish_successor_with_checkpoint_v1, publish_with_checkpoint_v1, retire_with_checkpoint_v1,
     ExecutionCheckpointV1, PromotionCheckpointV1, RetirementCheckpointV1,
 };
+pub(crate) use execution::{load_startup_artifact_v1, load_startup_successor_v1};
 pub use finalized_parent::create_from_finalized_genesis_v1;
 use finalized_parent::FinalizedParentSnapshot;
 

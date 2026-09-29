@@ -1,7 +1,10 @@
 //! Publish only the verified, pinned candidate output. No NOV business tasks in
 //! AOEM and no re-execution. Ledger indexes may be completed under the same locks.
 use super::*;
+#[path = "native_candidate_startup.rs"]
+mod startup;
 use crate::native_block_ledger::NovNativeFreshFinalityProofV1;
+pub(crate) use startup::{load_startup_artifact_v1, load_startup_successor_v1};
 #[path = "native_candidate_retirement.rs"]
 mod retirement;
 #[path = "native_candidate_successor_publication.rs"]

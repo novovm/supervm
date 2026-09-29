@@ -294,7 +294,27 @@ fn exercise_fresh_sequence(
                 )
                 .unwrap();
             configured.follow_finalized_tip = true;
-            assert!(configured.resolve_finalized_startup(params).is_err());
+            assert!(configured
+                .clone()
+                .resolve_finalized_startup(params)
+                .is_err());
+            configured.receive_successors = true;
+            crate::native_block_seal::tests::native_seal_round_network::with_service_test_transports(chain, |peers| {
+                use crate::native_block_seal::service::FreshChainLifecycleV1 as Lifecycle;
+                use std::time::Instant;
+                let local = peers.iter().find(|(_, key)| key.verifying_key() == configured.signer.verifying_key()).unwrap().0;
+                // A local candidate binding without its complete decision archive
+                // cannot recover an already-published authority or resume signing.
+                assert!(Lifecycle::open(configured.clone(), &ledger, params, local, Instant::now()).is_err());
+                configured.signer = keys[leader_index].clone();
+                configured.local_validator_id = set.validators[leader_index].validator_id;
+                configured.seal_store_path = path.with_extension("genesis-seal-0");
+                let local = peers.iter().find(|(_, key)| key.verifying_key() == configured.signer.verifying_key()).unwrap().0;
+                let resumed = Lifecycle::open(configured, &ledger, params, local, Instant::now()).unwrap();
+                assert_eq!(resumed.status_json()["height"], 4);
+                assert_eq!(resumed.status_json()["finalized"], true);
+                assert_eq!(resumed.status_json()["signing_enabled"], false);
+            });
         }
         let report = workspace::resume_successor_promotion_v1(
             chain, parent, candidate, pin, &proof, &ledger, params,
@@ -817,6 +837,7 @@ fn exercise_automatic_proposal(
     config.receive_successors = true;
     config.propose_successors = true;
     config.ingress_per_source_per_second = 2;
+    let restart_config = config.clone();
     let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
     let mut lifecycle = Lifecycle::open(config, &ledger, params, leader, Instant::now()).unwrap();
     assert_eq!(lifecycle.status_json()["height"], 3);
@@ -901,6 +922,54 @@ fn exercise_automatic_proposal(
     assert_eq!(lifecycle.status_json()["successor_rejected"], 3);
     assert_eq!(lifecycle.status_json()["decision_confirmed"], false);
     assert_eq!(lifecycle.status_json()["body_delivery_targets"], 0);
+    let before = workspace::list_v1(authority.chain_id, params).unwrap();
+    drop(lifecycle);
+    let resolved = restart_config
+        .clone()
+        .resolve_lifecycle_startup(params)
+        .unwrap();
+    assert_eq!(resolved.height, 4);
+    assert_eq!(resolved.block_hash, subject.block_hash);
+    let candidate = resolved.isolated_workspace_id.unwrap();
+    workspace::corrupt_execution_output_for_test_v1(authority.chain_id, candidate, params).unwrap();
+    assert!(Lifecycle::open(
+        restart_config.clone(),
+        &ledger,
+        params,
+        leader,
+        at + Duration::from_secs(2)
+    )
+    .is_err());
+    workspace::corrupt_execution_output_for_test_v1(authority.chain_id, candidate, params).unwrap(); // Explicit fixture restoration.
+    let seal =
+        crate::native_block_seal::NovNativeBlockSealStoreV1::open(&restart_config.seal_store_path)
+            .unwrap();
+    let outbox = seal
+        .load_pending_outbox(authority.chain_id, restart_config.local_validator_id, 128)
+        .unwrap();
+    let mut lifecycle = Lifecycle::open(
+        restart_config.clone(),
+        &ledger,
+        params,
+        leader,
+        at + Duration::from_secs(2),
+    )
+    .unwrap();
+    assert_eq!(lifecycle.status_json()["height"], 4);
+    assert_eq!(
+        lifecycle.status_json()["block_hash"],
+        to_hex(&subject.block_hash)
+    );
+    assert_eq!(lifecycle.status_json()["finalized"], false);
+    assert_eq!(
+        workspace::list_v1(authority.chain_id, params).unwrap(),
+        before
+    );
+    assert_eq!(
+        seal.load_pending_outbox(authority.chain_id, restart_config.local_validator_id, 128)
+            .unwrap(),
+        outbox
+    );
     lifecycle
         .poll_with_wall_time(
             leader,
@@ -911,4 +980,32 @@ fn exercise_automatic_proposal(
     assert_eq!(lifecycle.status_json()["body_delivery_targets"], 3);
     assert_eq!(lifecycle.status_json()["finalized"], false);
     assert!(!lifecycle.enqueue(valid_event)); // No transaction admission while confirming.
+    let outbox = seal
+        .load_pending_outbox(authority.chain_id, restart_config.local_validator_id, 128)
+        .unwrap();
+    drop(lifecycle);
+    let mut lifecycle = Lifecycle::open(
+        restart_config.clone(),
+        &ledger,
+        params,
+        leader,
+        at + Duration::from_secs(4),
+    )
+    .unwrap();
+    lifecycle
+        .poll_with_wall_time(
+            leader,
+            at + Duration::from_secs(5),
+            subject.timestamp_unix_ms + 1000,
+        )
+        .unwrap();
+    assert_eq!(
+        lifecycle.status_json()["block_hash"],
+        to_hex(&subject.block_hash)
+    );
+    assert_eq!(
+        seal.load_pending_outbox(authority.chain_id, restart_config.local_validator_id, 128)
+            .unwrap(),
+        outbox
+    );
 }

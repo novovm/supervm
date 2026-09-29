@@ -13,6 +13,14 @@ pub(crate) struct FinalizedWorkspaceTipV1 {
     pub(crate) previous: Option<[u8; 32]>,
 }
 
+pub(crate) struct FreshStartupTipV1 {
+    pub(crate) block: NovNativeDurableBlockV1,
+    pub(crate) execution: NovNativeIsolatedExecutionBindingV1,
+    pub(crate) previous: Option<[u8; 32]>,
+    pub(crate) authority: crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1,
+    pub(crate) pending_promotion: bool,
+}
+
 pub(super) fn record_at(ledger: &NovNativeBlockLedgerV1, height: u64) -> Result<FinalizedRecord> {
     let (hash, execution, commitment, proof) = if height == 1 {
         let intent = promotion::read(ledger)?;
@@ -173,6 +181,36 @@ impl NovNativeBlockLedgerV1 {
         anchor_id: [u8; 32],
         anchor_previous: Option<[u8; 32]>,
     ) -> Result<Option<FinalizedWorkspaceTipV1>> {
+        let Some(tip) = Self::fresh_startup_tip_v1(
+            path,
+            genesis,
+            namespace,
+            anchor_height,
+            anchor_hash,
+            anchor_id,
+            anchor_previous,
+        )?
+        else {
+            return Ok(None);
+        };
+        if tip.pending_promotion {
+            bail!("startup follow requires pending promotion recovery first");
+        }
+        Ok(Some(FinalizedWorkspaceTipV1 {
+            current: tip.execution.workspace_id,
+            previous: tip.previous,
+        }))
+    }
+
+    pub(crate) fn fresh_startup_tip_v1(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        anchor_height: u64,
+        anchor_hash: [u8; 32],
+        anchor_id: [u8; 32],
+        anchor_previous: Option<[u8; 32]>,
+    ) -> Result<Option<FreshStartupTipV1>> {
         let ledger =
             Self::open_existing_read_only_inner_v1(path, true)?.context("fresh ledger missing")?;
         load_verified(&ledger, genesis, namespace)?;
@@ -205,17 +243,56 @@ impl NovNativeBlockLedgerV1 {
         if previous_anchor != anchor_previous {
             bail!("configured startup predecessor differs from finalized ancestry");
         }
-        if schema != FINALIZED_SCHEMA.as_bytes() && schema != SUCCESSOR_FINALIZED_SCHEMA.as_bytes()
-        {
-            bail!("startup follow requires pending promotion recovery first");
-        }
-        let current = record_at(&ledger, height)?.execution.workspace_id;
+        let pending_promotion = schema != FINALIZED_SCHEMA.as_bytes()
+            && schema != SUCCESSOR_FINALIZED_SCHEMA.as_bytes();
+        let current = record_at(&ledger, height)?;
         let previous = if height > 1 {
             Some(record_at(&ledger, height - 1)?.execution.workspace_id)
         } else {
             None
         };
-        Ok(Some(FinalizedWorkspaceTipV1 { current, previous }))
+        Ok(Some(FreshStartupTipV1 {
+            block: current.block,
+            execution: current.execution,
+            authority: current.proof.authority,
+            previous,
+            pending_promotion,
+        }))
+    }
+
+    pub(crate) fn fresh_startup_successor_v1(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        parent_height: u64,
+        parent_hash: [u8; 32],
+        hash: [u8; 32],
+    ) -> Result<(NovNativeDurableBlockV1, NovNativeIsolatedExecutionBindingV1)> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("startup ledger missing")?;
+        load_verified(&ledger, genesis, namespace)?;
+        if tip_height(&ledger)? != parent_height {
+            bail!("startup finalized frontier changed");
+        }
+        let parent = record_at(&ledger, parent_height)?.block;
+        if parent.header.block_hash != parent_hash {
+            bail!("startup parent binding changed");
+        }
+        let record = ledger
+            .load_candidate_record_inner_v1(parent.header.chain_id, hash)?
+            .context("startup pinned candidate is not registered")?;
+        if record.lifecycle_status != CANDIDATE_STATUS_ACTIVE_V1 {
+            bail!("startup pinned candidate is closed");
+        }
+        let execution = record
+            .isolated_execution_binding
+            .clone()
+            .context("startup execution binding missing")?;
+        let block = ledger
+            .load_candidate_block_for_record_inner_v1(&record)?
+            .context("startup candidate body missing")?;
+        validate_child(&parent, &block)?;
+        Ok((block, execution))
     }
 
     pub(crate) fn verify_retirable_fresh_candidate_v1(
