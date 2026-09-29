@@ -9,6 +9,8 @@ use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1 as Mess
 use crate::native_block_seal::round_wire::decode_nov_native_seal_round_wire_v1;
 use crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1;
 use anyhow::{bail, Context, Result};
+#[path = "native_candidate_body_network.rs"]
+pub mod network;
 
 const MAGIC: &[u8; 8] = b"NOVBODY1";
 const HEADER: usize = 8 + 32 + 4;

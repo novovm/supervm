@@ -488,6 +488,14 @@ fn exercise_received_successor_body(
             .isolated_workspace_id,
         Some(expected_id)
     );
+    let received = exercise_body_network(authority, wire.clone(), raws, source, signer);
+    assert_eq!(
+        load()
+            .prepare_received_successor(received, params)
+            .unwrap()
+            .isolated_workspace_id,
+        Some(expected_id)
+    );
     // Even a correctly signed false output claim cannot grant local authority.
     let mut false_subject = proposal.subject.clone();
     false_subject.post_state_root[0] ^= 1;
@@ -541,4 +549,111 @@ fn exercise_received_successor_body(
         completed = receiver.push(source, packet).unwrap().or(completed);
     }
     assert_eq!(completed.unwrap().raw_txs, many);
+}
+
+fn exercise_body_network(
+    authority: &crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1,
+    wire: Vec<u8>,
+    raws: &[Vec<u8>],
+    source: &str,
+    signer: &ed25519_dalek::SigningKey,
+) -> crate::native_candidate_body::VerifiedCandidateBodyV1 {
+    use crate::native_block_seal::round_wire::{
+        decode_nov_native_seal_round_wire_v1, encode_nov_native_seal_round_wire_v1,
+        is_nov_native_seal_round_wire_v1, round_wire_object_hash_v1,
+    };
+    use crate::native_candidate_body::network::{
+        CandidateBodyInboxV1 as Inbox, CandidateBodySenderV1 as Sender,
+    };
+    use crate::product_mainline_overlay::ProductMainlineOverlayEventV1 as Event;
+    use std::time::{Duration, Instant};
+    crate::native_block_seal::tests::native_seal_round_network::with_service_test_transports(
+        authority.chain_id,
+        |peers| {
+            let (runtime, _) = peers
+                .iter()
+                .find(|(r, _)| r.startup().local_peer_id == source)
+                .unwrap();
+            let (target, _) = peers
+                .iter()
+                .find(|(r, _)| r.startup().local_peer_id != source)
+                .unwrap();
+            let mut sender = Sender::new(
+                wire.clone(),
+                raws,
+                authority,
+                4,
+                source,
+                &target.startup().local_peer_id,
+            )
+            .unwrap();
+            assert!(sender.poll(target).is_err());
+            let start = Instant::now();
+            let mut inbox = Inbox::new(authority.clone(), 4, start).unwrap();
+            let mut manifest = None;
+            let received = loop {
+                sender.poll(runtime).unwrap();
+                runtime.drain_events(128);
+                let mut complete = None;
+                for event in target.drain_events(128) {
+                    if let Event::Inbound(inbound) = event {
+                        if is_nov_native_seal_round_wire_v1(&inbound.frame.payload) {
+                            manifest = Some(inbound.clone());
+                        }
+                        if let Some(body) = inbox.accept(&inbound, Instant::now()).unwrap() {
+                            complete = Some(body);
+                        }
+                    }
+                }
+                if let Some(body) = complete {
+                    break body;
+                }
+                assert!(
+                    start.elapsed() < Duration::from_secs(30),
+                    "body transfer WSS deadline"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            assert_eq!(received.raw_txs, raws);
+            let manifest = manifest.unwrap();
+            let now = Instant::now();
+            let mut bounded = Inbox::new(authority.clone(), 4, now).unwrap();
+            bounded.accept(&manifest, now).unwrap();
+            bounded
+                .accept(&manifest, now + Duration::from_secs(29))
+                .unwrap();
+            assert_eq!(bounded.expire(now + Duration::from_secs(30)).unwrap(), 1);
+            assert!(bounded.expire(now).is_err());
+            let mut limited = Inbox::new(authority.clone(), 4, now).unwrap();
+            for _ in 0..64 {
+                limited.accept(&manifest, now).unwrap();
+            }
+            assert!(limited.accept(&manifest, now).is_err());
+            limited
+                .accept(&manifest, now + Duration::from_secs(1))
+                .unwrap();
+            let message =
+                decode_nov_native_seal_round_wire_v1(&wire, authority, 4, source).unwrap();
+            let mut limited = Inbox::new(authority.clone(), 4, now).unwrap();
+            for index in 0..5 {
+                let mut subject = message.proposal().unwrap().subject.clone();
+                subject.post_state_root[0] ^= index + 1;
+                let proposal = crate::native_block_seal::sign_modified_subject_for_body_test_v1(
+                    subject,
+                    &authority.validator_set,
+                    signer,
+                )
+                .unwrap();
+                let message = crate::native_block_seal::round_message::NovNativeSealRoundMessageV1::Proposal { proposal: Box::new(proposal), certificate: None };
+                let mut event = manifest.clone();
+                event.frame.payload =
+                    encode_nov_native_seal_round_wire_v1(&message, authority, 4, source).unwrap();
+                event.object_hash = round_wire_object_hash_v1(&event.frame.payload);
+                let result = limited.accept(&event, now);
+                assert_eq!(result.is_ok(), index < 4);
+            }
+            assert_eq!(limited.expire(now + Duration::from_secs(30)).unwrap(), 4);
+            received
+        },
+    )
 }
