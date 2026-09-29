@@ -56,10 +56,41 @@ recovery path, network signing, or transaction execution can run.
 
 A child QC alone cannot finalize an arbitrary historical parent. Normal promotion
 requires the selected parent to be the recorded finalized ancestor, with matching
-state/receipt roots and epoch authority. First-chain activation needs a separate,
-explicitly authorized genesis/checkpoint initialization contract: the current
-operator-pinned genesis hash must not silently promote an existing unsealed tail.
-No implicit migration of an old selected chain is authorized by this document.
+state/receipt roots and epoch authority.
+
+The user confirmed on 2026-09-29 that production starts from a fresh genesis,
+without inheriting a test ledger. First-chain activation therefore needs a
+separate, explicit fresh-genesis initialization contract, not a checkpoint import
+or conversion of the current selected chain. The operator-pinned genesis hash
+must not silently promote an existing unsealed tail.
+
+Required fresh-genesis boundaries (implementation and acceptance still pending):
+
+- Use explicitly selected production storage and AOEM state namespace, separate
+  from test ledgers, candidate workspaces, seal stores and signing journals.
+  Preserve all existing test data; never clear a nonempty target automatically.
+- Refuse pre-existing chain state at initialization. A restart is allowed only
+  through verified recovery of the exact pinned initialization record; an empty
+  directory alone is not proof that the AOEM namespace is unused.
+- All production nodes must verify the same canonical genesis configuration and
+  hash, including chain domain, protocol versions, initial state commitment and
+  validator authority. Independently generated node keys do not authorize each
+  node to invent a different genesis.
+- Do not import test balances, nonces, receipts, block indexes, candidate/QC
+  evidence or signing history. Initial allocations, if any, come only from the
+  explicitly approved production genesis configuration, never test fixtures.
+- Keep genesis authorization separate from a normal block QC. Do not synthesize
+  validator signatures or relabel historical test blocks as finalized.
+- Persist initialization intent and immutable configuration before publishing
+  the AOEM initial state. Verify readback before completing the ledger trust
+  anchor. Recovery must reject different configuration, namespace or state.
+- No default production activation, deployment, key generation or economic
+  parameter selection is authorized by the fresh-genesis decision alone.
+
+Acceptance must cover clean initialization, exact-config restart, interrupted
+initialization, changed configuration, occupied test storage/namespace and
+preservation of test data. Relative/config-resolved paths remain supported; no
+particular drive letter or workspace directory name is required.
 
 ## Recovery matrix to implement and test
 
