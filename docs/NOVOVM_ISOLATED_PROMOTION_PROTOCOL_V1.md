@@ -1,6 +1,18 @@
 # Isolated candidate promotion protocol v1 — implementation contract
 
 Status: first-height publication/finality implemented; continuous-height activation incomplete.
+
+`prepare_successor_promotion_v1` now pins a unique height-two publication intent
+under workspace -> authority -> ledger locks. It revalidates the live finalized
+parent, actual AOEM child output, exact execution binding and complete V3 envelope
+(including scheduled proposal, validator set, roots and stable parent target).
+The intent, checksum and a distinct ledger capability marker commit atomically.
+Exact retries revalidate and return the same commitment; missing committed
+evidence is an error, never repaired. The marker fences successor signing,
+registration and abort, while first-height published state remains readable.
+Older binaries reject this marker. This API is not yet called automatically by
+the service: second-height AOEM pointer/index publication and crash recovery
+across those stores still need implementation. A staged intent is NOT finality.
 Original audit baseline: `b049f25`. This is not production acceptance or permission
 to mark any block finalized without the full first-height verification below.
 

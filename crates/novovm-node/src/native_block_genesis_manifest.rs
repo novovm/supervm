@@ -10,6 +10,8 @@ mod finality;
 pub use finality::NovNativeFreshFinalityProofV1;
 #[path = "native_block_genesis_promotion.rs"]
 mod promotion;
+#[path = "native_block_successor_promotion.rs"]
+mod successor_promotion;
 #[path = "native_block_genesis_successors.rs"]
 mod successors;
 pub use promotion::NovNativeFreshPromotionIntentV1;
@@ -22,8 +24,13 @@ pub(super) const PROMOTION_SCHEMA: &str =
     "novovm-native-block-ledger/v1+genesis-promotion-intent-v1";
 pub(super) const PUBLISHED_SCHEMA: &str = "novovm-native-block-ledger/v1+genesis-published-v1";
 pub(super) const FINALIZED_SCHEMA: &str = "novovm-native-block-ledger/v1+genesis-finalized-v1";
+pub(super) const SUCCESSOR_INTENT_SCHEMA: &str =
+    "novovm-native-block-ledger/v1+fresh-successor-intent-v1";
+pub(super) fn is_finalized_schema(raw: &[u8]) -> bool {
+    raw == FINALIZED_SCHEMA.as_bytes() || raw == SUCCESSOR_INTENT_SCHEMA.as_bytes()
+}
 pub(super) fn is_published_schema(raw: &[u8]) -> bool {
-    raw == PUBLISHED_SCHEMA.as_bytes() || raw == FINALIZED_SCHEMA.as_bytes()
+    raw == PUBLISHED_SCHEMA.as_bytes() || is_finalized_schema(raw)
 }
 const KEY_MANIFEST: &[u8] = b"native_block_ledger/v1/genesis/manifest";
 const KEY_MANIFEST_PIN: &[u8] = b"native_block_ledger/v1/genesis/manifest-pin";
@@ -95,9 +102,14 @@ fn load_verified(
     if is_published_schema(&schema) {
         allowed_keys.extend(completion::validated_keys(ledger)?);
     }
-    if schema == FINALIZED_SCHEMA.as_bytes() {
+    if is_finalized_schema(&schema) {
         allowed_keys.extend(finality::validated_keys(ledger, &config)?);
         allowed_keys.extend(successors::validated_keys(ledger)?);
+        if schema == SUCCESSOR_INTENT_SCHEMA.as_bytes() {
+            allowed_keys.extend(successor_promotion::validated_keys(
+                ledger, &config, namespace,
+            )?);
+        }
     }
     for entry in ledger.db.iterator(rocksdb::IteratorMode::Start) {
         let (key, _) = entry?;

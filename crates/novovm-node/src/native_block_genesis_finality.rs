@@ -144,7 +144,7 @@ impl NovNativeBlockLedgerV1 {
             .db
             .get(KEY_SCHEMA_V1)?
             .context("finality schema missing")?;
-        if schema == FINALIZED_SCHEMA.as_bytes() {
+        if is_finalized_schema(&schema) {
             if read(&ledger)? != *proof {
                 bail!("finality evidence cannot be replaced");
             }
@@ -176,7 +176,11 @@ impl NovNativeBlockLedgerV1 {
             .lock()
             .map_err(|_| anyhow::anyhow!("finality read lock poisoned"))?;
         load_verified(&ledger, genesis, namespace)?;
-        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() == Some(FINALIZED_SCHEMA.as_bytes()) {
+        if ledger
+            .db
+            .get(KEY_SCHEMA_V1)?
+            .is_some_and(|schema| is_finalized_schema(&schema))
+        {
             return read(&ledger).map(Some);
         }
         Ok(None)

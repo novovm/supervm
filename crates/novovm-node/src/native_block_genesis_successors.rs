@@ -1,7 +1,7 @@
 //! Unselected height-two candidates under a finalized fresh first block.
 use super::*;
 
-fn parent(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeDurableBlockV1> {
+pub(super) fn parent(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeDurableBlockV1> {
     let intent = promotion::read(ledger)?;
     let record = ledger
         .load_candidate_record_inner_v1(intent.chain_id, intent.block_hash)?
@@ -11,7 +11,10 @@ fn parent(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeDurableBlockV1> {
         .context("finalized parent body missing")
 }
 
-fn validate_child(parent: &NovNativeDurableBlockV1, child: &NovNativeDurableBlockV1) -> Result<()> {
+pub(super) fn validate_child(
+    parent: &NovNativeDurableBlockV1,
+    child: &NovNativeDurableBlockV1,
+) -> Result<()> {
     validate_durable_block_v1(child)?;
     let p = &parent.header;
     let h = &child.header;

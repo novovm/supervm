@@ -12,12 +12,12 @@ mod finalized_parent;
 pub use execution::{
     complete_genesis_promotion_v1, execute_v1, finalize_genesis_promotion_v1,
     load_block_artifact_v1, load_execution_v1, load_finalized_genesis_parent_v1,
-    prepare_genesis_promotion_v1, publish_genesis_promotion_v1, register_block_candidate_v1,
-    register_finalized_successor_v1, register_genesis_block_candidate_v1,
-    resume_genesis_promotion_v1, verify_genesis_promotion_v1, with_verified_block_candidate_v1,
-    with_verified_finalized_successor_v1, with_verified_genesis_block_candidate_v1,
-    ExecutionInfoV1, FinalizedGenesisParentV1, GenesisPromotionPublicationV1,
-    IsolatedBlockArtifactV1,
+    prepare_genesis_promotion_v1, prepare_successor_promotion_v1, publish_genesis_promotion_v1,
+    register_block_candidate_v1, register_finalized_successor_v1,
+    register_genesis_block_candidate_v1, resume_genesis_promotion_v1, verify_genesis_promotion_v1,
+    with_verified_block_candidate_v1, with_verified_finalized_successor_v1,
+    with_verified_genesis_block_candidate_v1, ExecutionInfoV1, FinalizedGenesisParentV1,
+    GenesisPromotionPublicationV1, IsolatedBlockArtifactV1,
 };
 #[cfg(test)]
 pub(super) use execution::{
@@ -859,6 +859,15 @@ pub fn abort_v1(
         .context("candidate workspace to abort was not found")?;
     if workspace.status(slot, &descriptor)? == WorkspaceStatusV1::Ready {
         let payload = workspace.read_payload(&descriptor)?;
+        if let Some(parent) = &payload.finalized_parent {
+            let native_path = resolve_native_execution_store_path_from_params_v1(params)
+                .context("successor abort requires explicit native path")?;
+            NovNativeBlockLedgerV1::refuse_pending_successor_promotion_v1(
+                &nov_native_block_ledger_rocksdb_path_v1(&native_path),
+                parent.config.compile()?.config_commitment(),
+                parse_fixed_hex_32_v1(&workspace.namespace, "successor abort namespace")?,
+            )?;
+        }
         if let Some(genesis) = payload.genesis {
             let native_path = resolve_native_execution_store_path_from_params_v1(params)
                 .context("fresh candidate abort requires explicit native store path")?;

@@ -186,6 +186,17 @@ fn exercise_fresh_successor_signing(
             .header
             .finalized
     );
+    let parent_image =
+        workspace::load_finalized_genesis_parent_v1(chain, parent, pin, params).unwrap();
+    let proof = crate::native_block_ledger::NovNativeFreshFinalityProofV1 {
+        authority: parent_image.finality_proof().authority.clone(),
+        witness: crate::native_block_seal::round_message::NovNativeSealRoundMessageV1::DecisionCertificateV3 {
+            proposal: Box::new(proposal), decision: Box::new(certificate), certificate: None,
+        },
+    };
+    drop(reopened);
+    exercise_successor_promotion_intent(path, params, chain, parent, id, competing, pin, &proof);
 }
 
 include!("native_fresh_successor_overlay_tests.rs");
+include!("native_fresh_successor_promotion_tests.rs");
