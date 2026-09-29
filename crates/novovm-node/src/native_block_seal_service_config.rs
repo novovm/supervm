@@ -21,6 +21,7 @@ const MAX_AUTHORITY_BYTES: usize = 256 * 1024;
 /// Intentionally neither Debug nor Serialize: this contains the operator's key.
 /// Callers cannot bypass validation by constructing a public configuration.
 pub struct NovNativeSealServiceConfigV1 {
+    pub(crate) fresh_genesis_config_commitment: Option<[u8; 32]>,
     pub(crate) isolated_workspace_id: Option<[u8; 32]>,
     pub(crate) decision_v3_enabled: bool,
     pub(crate) commit_v2_enabled: bool,
@@ -42,6 +43,8 @@ pub struct NovNativeSealServiceConfigV1 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ServiceFile {
+    #[serde(default)]
+    fresh_genesis_config_commitment: Option<String>,
     #[serde(default)]
     isolated_workspace_id: Option<String>,
     #[serde(default)]
@@ -199,6 +202,10 @@ impl NovNativeSealServiceConfigV1 {
             .map(|validator| validator.validator_id)
             .context("native seal signer key is not a pinned validator")?;
         let config = Self {
+            fresh_genesis_config_commitment: raw
+                .fresh_genesis_config_commitment
+                .map(|pin| decode_hex_32(pin.as_bytes(), "fresh genesis config commitment"))
+                .transpose()?,
             isolated_workspace_id: raw
                 .isolated_workspace_id
                 .map(|id| decode_hex_32(id.as_bytes(), "isolated workspace ID"))
@@ -228,6 +235,20 @@ impl NovNativeSealServiceConfigV1 {
 
     /// Recheck the configuration at the service boundary, before database opens.
     pub(crate) fn validate(&self, expected_chain_id: u64) -> Result<()> {
+        let fresh_authority = self.authority.authority_kind
+            == crate::native_block_seal_overlay::NOV_NATIVE_SEAL_OVERLAY_FRESH_GENESIS_AUTHORITY_V1;
+        if fresh_authority != self.fresh_genesis_config_commitment.is_some()
+            || self
+                .fresh_genesis_config_commitment
+                .is_some_and(|pin| pin == [0; 32])
+            || (fresh_authority
+                && (self.isolated_workspace_id.is_none()
+                    || !self.decision_v3_enabled
+                    || self.height != 1
+                    || self.justify_qc_hash.is_some()))
+        {
+            bail!("fresh genesis service requires an explicit pin, V3 isolated first candidate and no parent QC");
+        }
         if self.isolated_workspace_id.is_some()
             && (!self.decision_v3_enabled || self.isolated_workspace_id == Some([0; 32]))
         {
@@ -574,6 +595,73 @@ mod tests {
         }
         fixture.config["isolated_workspace_id"] = json!("31".repeat(32));
         fixture.config["commit_v2_enabled"] = json!(true);
+        fixture.write();
+        assert!(fixture.load().is_err());
+    }
+
+    #[test]
+    fn native_seal_service_config_fresh_genesis_requires_explicit_matching_mode() {
+        use crate::tx_ingress::fresh_genesis::{
+            FreshGenesisConfigV1, GenesisValidatorV1, GENESIS_SCHEMA_V1,
+        };
+        let mut fixture = Fixture::new();
+        let old = fixture_authority();
+        let genesis = FreshGenesisConfigV1 {
+            schema: GENESIS_SCHEMA_V1.into(),
+            chain_id: 22922,
+            timestamp_unix_ms: 1,
+            protocol_config_commitment: [3; 32],
+            allocations: vec![],
+            total_initial_nov: "0".into(),
+            validators: old
+                .validator_set
+                .validators
+                .iter()
+                .map(|v| GenesisValidatorV1 {
+                    public_key: v.public_key,
+                    weight: v.weight,
+                })
+                .collect(),
+        };
+        let pin = genesis.compile().unwrap().config_commitment();
+        fixture.authority = serde_json::to_value(
+            NovNativeSealEpochAuthorityV1::derive_operator_pinned_fresh_genesis_epoch(
+                &genesis,
+                pin,
+                old.transport_bindings,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        fixture.config["height"] = json!(1);
+        fixture.config["decision_v3_enabled"] = json!(true);
+        fixture.config["isolated_workspace_id"] = json!("31".repeat(32));
+        fixture.write();
+        assert!(fixture.load().is_err());
+        fixture.config["fresh_genesis_config_commitment"] =
+            json!(pin.iter().map(|b| format!("{b:02x}")).collect::<String>());
+        fixture.write();
+        assert_eq!(
+            fixture.load().unwrap().fresh_genesis_config_commitment,
+            Some(pin)
+        );
+        assert!(!fixture.load().unwrap().seal_store_path.exists());
+        let good = fixture.config.clone();
+        for (field, value) in [
+            ("fresh_genesis_config_commitment", json!("00".repeat(32))),
+            ("fresh_genesis_config_commitment", json!("bad")),
+            ("isolated_workspace_id", Value::Null),
+            ("decision_v3_enabled", json!(false)),
+            ("height", json!(2)),
+            ("justify_qc_hash", json!("22".repeat(32))),
+        ] {
+            fixture.config = good.clone();
+            fixture.config[field] = value;
+            fixture.write();
+            assert!(fixture.load().is_err(), "{field}");
+        }
+        fixture.config = good;
+        fixture.authority = serde_json::to_value(fixture_authority()).unwrap();
         fixture.write();
         assert!(fixture.load().is_err());
     }

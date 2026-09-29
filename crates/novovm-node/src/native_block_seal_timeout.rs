@@ -379,10 +379,19 @@ fn local_context(
         round: 0,
     };
     context.validate(set)?;
-    let head = ledger
-        .load_head(set.chain_id)?
-        .context("round state requires local head")?;
-    if height > head.height.saturating_add(1) {
+    let head_height =
+        if let Some((config, _)) = ledger.fresh_genesis_seal_config_v1(set.chain_id)? {
+            if height != 1 || config.compile()?.validator_set() != set {
+                bail!("fresh genesis round requires first height and pinned validator set");
+            }
+            0
+        } else {
+            ledger
+                .load_head(set.chain_id)?
+                .context("round state requires local head")?
+                .height
+        };
+    if height > head_height.saturating_add(1) {
         bail!("round height too far ahead");
     }
     Ok(context)

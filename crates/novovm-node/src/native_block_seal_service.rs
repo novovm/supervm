@@ -64,7 +64,8 @@ pub struct NovNativeSealServiceV1 {
     isolated_params: Option<serde_json::Value>,
     decision: Option<NovNativeSealDecisionLoopV3>,
     config: NovNativeSealServiceConfigV1,
-    ledger: Arc<NovNativeBlockLedgerV1>,
+    ledger: Option<Arc<NovNativeBlockLedgerV1>>,
+    ledger_path: PathBuf,
     store: NovNativeBlockSealStoreV1,
     bridge: NovNativeSealRoundOverlayV1,
     inbox: BTreeMap<String, PeerInbox>,
@@ -96,17 +97,31 @@ impl NovNativeSealServiceV1 {
         config.validate(runtime.chain_id())?;
         validate_service_paths_v1(&config, ledger_path, &[], &[])?;
         check_runtime(&config, runtime)?;
-        let mut service = crate::tx_ingress::candidate_workspace::with_verified_block_candidate_v1(
-            config.chain_id,
-            id,
-            execution_params,
-            |view| {
-                if std::fs::canonicalize(view.path())? != std::fs::canonicalize(ledger_path)? {
-                    bail!("isolated workspace resolves to a different service ledger");
-                }
-                Self::open_with_candidate_view(config, view, runtime, now)
-            },
-        )?;
+        let chain = config.chain_id;
+        let genesis_pin = config.fresh_genesis_config_commitment;
+        let open = |view: &NovNativeBlockLedgerV1| {
+            if std::fs::canonicalize(view.path())? != std::fs::canonicalize(ledger_path)? {
+                bail!("isolated workspace resolves to a different service ledger");
+            }
+            Self::open_with_candidate_view(config, view, runtime, now)
+        };
+        let mut service = match genesis_pin {
+            Some(pin) => {
+                crate::tx_ingress::candidate_workspace::with_verified_genesis_block_candidate_v1(
+                    chain,
+                    id,
+                    pin,
+                    execution_params,
+                    open,
+                )
+            }
+            None => crate::tx_ingress::candidate_workspace::with_verified_block_candidate_v1(
+                chain,
+                id,
+                execution_params,
+                open,
+            ),
+        }?;
         service.isolated_params = Some(execution_params.clone());
         Ok(service)
     }
@@ -139,7 +154,7 @@ impl NovNativeSealServiceV1 {
     }
 
     /// Open within a live candidate verification scope. The service retains
-    /// only an ordinary ledger handle, never the view's signing capability.
+    /// only an ordinary ledger handle or fresh-ledger path, never the view's signing capability.
     /// Isolated candidates must supply a freshly verified view on every poll.
     pub fn open_with_candidate_view(
         config: NovNativeSealServiceConfigV1,
@@ -152,6 +167,14 @@ impl NovNativeSealServiceV1 {
         validate_service_paths_v1(&config, ledger_path, &[], &[])?;
         check_runtime(&config, runtime)?;
         config.authority.validate_against_ledger(candidate_view)?;
+        match (
+            config.fresh_genesis_config_commitment,
+            candidate_view.fresh_genesis_seal_config_v1(config.chain_id)?,
+        ) {
+            (Some(pin), Some((genesis, _))) if genesis.compile()?.config_commitment() == pin => {}
+            (None, None) => {}
+            _ => bail!("native seal startup genesis configuration mismatch"),
+        }
         let (record, block) = candidate_view
             .load_seal_eligible_local_candidate_v1(config.chain_id, config.block_hash)?;
         if config.isolated_workspace_id.is_some_and(|id| {
@@ -169,7 +192,13 @@ impl NovNativeSealServiceV1 {
         // Join the process-shared live ledger handle, never retain a detached
         // read-only snapshot while the main execution owner updates its ledger.
         // The service invokes no ledger mutation methods.
-        let ledger = Arc::new(NovNativeBlockLedgerV1::open(ledger_path)?);
+        // Fresh ledgers cannot be opened ordinarily yet. Keep only their path;
+        // each configured poll must reacquire the complete live signing scope.
+        let ledger = if config.fresh_genesis_config_commitment.is_some() {
+            None
+        } else {
+            Some(Arc::new(NovNativeBlockLedgerV1::open(ledger_path)?))
+        };
         let store = NovNativeBlockSealStoreV1::open(&config.seal_store_path)?;
         let driver = NovNativeSealRoundDriverV1::open_with_decision_mode(
             candidate_view,
@@ -202,6 +231,7 @@ impl NovNativeSealServiceV1 {
             decision: None,
             config,
             ledger,
+            ledger_path: ledger_path.to_owned(),
             store,
             bridge,
             inbox,
@@ -244,14 +274,20 @@ impl NovNativeSealServiceV1 {
                 bail!("native seal service is halted; inspect and restart explicitly");
             }
             let result = match self.isolated_params.clone() {
-                Some(params) => {
+                Some(params) => match self.config.fresh_genesis_config_commitment {
+                    Some(pin) => crate::tx_ingress::candidate_workspace::with_verified_genesis_block_candidate_v1(
+                        self.config.chain_id, id, pin, &params,
+                        |view| self.poll_with_candidate_view(view, runtime, now),
+                    ),
+                    None => {
                     crate::tx_ingress::candidate_workspace::with_verified_block_candidate_v1(
                         self.config.chain_id,
                         id,
                         &params,
                         |view| self.poll_with_candidate_view(view, runtime, now),
                     )
-                }
+                    }
+                },
                 None => Err(anyhow::anyhow!(
                     "isolated service has no pinned execution parameters"
                 )),
@@ -261,7 +297,11 @@ impl NovNativeSealServiceV1 {
             }
             return result;
         }
-        let ledger = Arc::clone(&self.ledger);
+        let ledger = Arc::clone(
+            self.ledger
+                .as_ref()
+                .context("native seal service has no ordinary ledger")?,
+        );
         self.poll_with_candidate_view(&ledger, runtime, now)
     }
 
@@ -293,9 +333,20 @@ impl NovNativeSealServiceV1 {
         // Before rate limiting or processing peer messages, reject a detached
         // ledger or lost live capability. Errors halt and suppress confirmation.
         if std::fs::canonicalize(candidate_view.path())?
-            != std::fs::canonicalize(self.ledger.path())?
+            != std::fs::canonicalize(&self.ledger_path)?
         {
             bail!("native seal poll candidate ledger changed");
+        }
+        self.config
+            .authority
+            .validate_against_ledger(candidate_view)?;
+        match (
+            self.config.fresh_genesis_config_commitment,
+            candidate_view.fresh_genesis_seal_config_v1(self.config.chain_id)?,
+        ) {
+            (Some(pin), Some((config, _))) if config.compile()?.config_commitment() == pin => {}
+            (None, None) => {}
+            _ => bail!("native seal poll genesis configuration changed"),
         }
         candidate_view
             .load_seal_eligible_local_candidate_v1(self.config.chain_id, self.config.block_hash)?;

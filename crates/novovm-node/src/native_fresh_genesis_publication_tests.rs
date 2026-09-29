@@ -368,6 +368,7 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             input.workspace_id,
             competing.workspace_id,
         );
+        exercise_fresh_genesis_service(path, params, &compiled, competing.workspace_id);
         workspace::abort_v1(chain, competing.workspace_id, params).unwrap();
         assert!(workspace::with_verified_genesis_block_candidate_v1(
             chain,
@@ -394,3 +395,4 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
 }
 
 include!("native_fresh_genesis_signing_tests.rs");
+include!("native_fresh_genesis_service_tests.rs");
