@@ -22,6 +22,7 @@ const MAX_AUTHORITY_BYTES: usize = 256 * 1024;
 /// Callers cannot bypass validation by constructing a public configuration.
 #[derive(Clone)]
 pub struct NovNativeSealServiceConfigV1 {
+    pub(crate) propose_successors: bool,
     pub(crate) receive_successors: bool,
     pub(crate) follow_finalized_tip: bool,
     pub(crate) fresh_genesis_config_commitment: Option<[u8; 32]>,
@@ -47,6 +48,8 @@ pub struct NovNativeSealServiceConfigV1 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ServiceFile {
+    #[serde(default)]
+    propose_successors: bool,
     #[serde(default)]
     receive_successors: bool,
     #[serde(default)]
@@ -396,6 +399,7 @@ impl NovNativeSealServiceConfigV1 {
             .map(|validator| validator.validator_id)
             .context("native seal signer key is not a pinned validator")?;
         let config = Self {
+            propose_successors: raw.propose_successors,
             receive_successors: raw.receive_successors,
             follow_finalized_tip: raw.follow_finalized_tip,
             finalized_parent_workspace_id: raw
@@ -435,6 +439,9 @@ impl NovNativeSealServiceConfigV1 {
 
     /// Recheck the configuration at the service boundary, before database opens.
     pub(crate) fn validate(&self, expected_chain_id: u64) -> Result<()> {
+        if self.propose_successors && !self.receive_successors {
+            bail!("automatic proposal requires explicit successor reception");
+        }
         if self.receive_successors && (!self.is_fresh_genesis() || !self.follow_finalized_tip) {
             bail!("successor reception requires fresh V3 and explicit finalized startup follow");
         }
@@ -868,6 +875,10 @@ mod tests {
         assert!(fixture.load().unwrap().is_fresh_genesis());
         assert!(!fixture.load().unwrap().follow_finalized_tip);
         assert!(!fixture.load().unwrap().receive_successors);
+        assert!(!fixture.load().unwrap().propose_successors);
+        fixture.config["propose_successors"] = json!(true);
+        fixture.write();
+        assert!(fixture.load().is_err());
         fixture.config["receive_successors"] = json!(true);
         fixture.write();
         assert!(fixture.load().is_err());
@@ -875,6 +886,7 @@ mod tests {
         fixture.write();
         assert!(fixture.load().unwrap().follow_finalized_tip);
         assert!(fixture.load().unwrap().receive_successors);
+        assert!(fixture.load().unwrap().propose_successors);
         assert!(!fixture.load().unwrap().seal_store_path.exists());
         let good = fixture.config.clone();
         fixture.config["height"] = json!(2);

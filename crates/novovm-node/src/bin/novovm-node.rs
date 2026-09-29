@@ -43583,9 +43583,7 @@ fn run_fresh_genesis_confirmation_v1(
     loop {
         for event in runtime.drain_events(128) {
             if let ProductMainlineOverlayEventV1::Inbound(inbound) = event {
-                if inbound.payload_class == ProductMainlineOverlayPayloadClassV1::NativeSeal {
-                    lifecycle.enqueue(inbound);
-                }
+                lifecycle.enqueue(inbound);
             }
         }
         lifecycle.poll(&runtime, Instant::now())?;

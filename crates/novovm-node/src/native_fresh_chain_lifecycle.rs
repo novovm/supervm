@@ -3,6 +3,8 @@
 //! assembles an authenticated body, executes locally, then opens the V3 service.
 use super::*;
 use crate::native_candidate_body::network::CandidateBodyInboxV1;
+#[path = "native_fresh_chain_proposer.rs"]
+mod proposer;
 
 /// The existing main-node execution thread budget. Debug AOEM verification and
 /// execution use a deep bounded call chain; exercise the same budget in integration tests.
@@ -19,11 +21,13 @@ pub struct FreshChainLifecycleV1 {
     publication: Option<Box<FreshGenesisPublicationDriverV1>>,
     bodies: Option<CandidateBodyInboxV1>,
     pending: BTreeMap<String, VecDeque<ProductMainlineOverlayInboundV1>>,
+    transaction_budgets: BTreeMap<String, (Instant, usize)>,
     next_peer: usize,
     last_seen: Instant,
     halted: bool,
     received_successors: u64,
     rejected: u64,
+    proposed_successors: u64,
 }
 
 impl FreshChainLifecycleV1 {
@@ -56,12 +60,16 @@ impl FreshChainLifecycleV1 {
         } else {
             None
         };
-        let pending = config
+        let pending: BTreeMap<_, _> = config
             .authority
             .transport_bindings
             .iter()
             .filter(|b| b.validator_id != config.local_validator_id)
             .map(|b| (b.transport_peer_id.clone(), VecDeque::new()))
+            .collect();
+        let transaction_budgets = pending
+            .keys()
+            .map(|peer| (peer.clone(), (now, 0)))
             .collect();
         let mut this = Self {
             chain: config.chain_id,
@@ -73,11 +81,13 @@ impl FreshChainLifecycleV1 {
             publication,
             bodies: None,
             pending,
+            transaction_budgets,
             next_peer: 0,
             last_seen: now,
             halted: false,
             received_successors: 0,
             rejected: 0,
+            proposed_successors: 0,
         };
         this.arm_body_reception(now)?;
         Ok(this)
@@ -110,8 +120,12 @@ impl FreshChainLifecycleV1 {
         if let Some(service) = self.service.as_mut() {
             return service.enqueue(inbound);
         }
+        let permitted_class = inbound.payload_class
+            == ProductMainlineOverlayPayloadClassV1::NativeSeal
+            || (inbound.payload_class == ProductMainlineOverlayPayloadClassV1::NativeTransaction
+                && self.config.as_ref().is_some_and(|c| c.propose_successors));
         let admissible = self.bodies.is_some()
-            && inbound.payload_class == ProductMainlineOverlayPayloadClassV1::NativeSeal
+            && permitted_class
             && inbound.frame.stream_id == self.chain
             && inbound.frame.payload.len() <= crate::product_mainline_overlay::PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1;
         if admissible {
@@ -127,10 +141,20 @@ impl FreshChainLifecycleV1 {
     }
 
     pub fn poll(&mut self, runtime: &ProductMainlineOverlayRuntimeV1, now: Instant) -> Result<()> {
+        let wall_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
+        self.poll_with_wall_time(runtime, now, u64::try_from(wall_ms.as_millis())?)
+    }
+
+    pub(crate) fn poll_with_wall_time(
+        &mut self,
+        runtime: &ProductMainlineOverlayRuntimeV1,
+        now: Instant,
+        wall_ms: u64,
+    ) -> Result<()> {
         if self.halted {
             bail!("fresh lifecycle halted; inspect and restart");
         }
-        let result = self.poll_inner(runtime, now);
+        let result = self.poll_inner(runtime, now, wall_ms);
         if result.is_err() {
             self.halted = true;
         }
@@ -141,6 +165,7 @@ impl FreshChainLifecycleV1 {
         &mut self,
         runtime: &ProductMainlineOverlayRuntimeV1,
         now: Instant,
+        wall_ms: u64,
     ) -> Result<()> {
         if now < self.last_seen {
             bail!("fresh lifecycle monotonic clock moved backwards");
@@ -187,7 +212,24 @@ impl FreshChainLifecycleV1 {
                 events.push(event);
             }
         }
+        let mut transactions = Vec::new();
         for event in events {
+            if event.payload_class == ProductMainlineOverlayPayloadClassV1::NativeTransaction {
+                let budget = self
+                    .transaction_budgets
+                    .get_mut(&event.source_peer_id)
+                    .context("transaction source is not pinned")?;
+                if now.duration_since(budget.0) >= Duration::from_secs(1) {
+                    *budget = (now, 0);
+                }
+                if budget.1 >= config.ingress_per_source_per_second {
+                    self.rejected = self.rejected.saturating_add(1);
+                    continue;
+                }
+                budget.1 += 1;
+                transactions.push(event);
+                continue;
+            }
             let completed = match inbox.accept_with_manifest(&event, now) {
                 Ok(body) => body,
                 Err(_) => {
@@ -230,7 +272,7 @@ impl FreshChainLifecycleV1 {
             self.received_successors = self.received_successors.saturating_add(1);
             return Ok(());
         }
-        Ok(())
+        self.propose_from_transactions(transactions, runtime, now, wall_ms)
     }
 
     pub fn status_json(&self) -> serde_json::Value {
@@ -241,6 +283,12 @@ impl FreshChainLifecycleV1 {
             .or_else(|| self.publication.as_ref().map(|p| p.status_json()))
             .unwrap_or_else(|| serde_json::json!({}));
         value["successor_reception_enabled"] = self.receive_successors.into();
+        value["automatic_proposal_enabled"] = self
+            .config
+            .as_ref()
+            .is_some_and(|c| c.propose_successors)
+            .into();
+        value["proposed_successors"] = self.proposed_successors.into();
         value["successor_signer_retained"] =
             (self.receive_successors && self.config.is_some()).into();
         value["awaiting_successor_body"] = self.bodies.is_some().into();

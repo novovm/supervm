@@ -778,7 +778,137 @@ fn exercise_body_network(
                 assert_eq!(result.is_ok(), index < 4);
             }
             assert_eq!(limited.expire(now + Duration::from_secs(30)).unwrap(), 4);
+            exercise_automatic_proposal(
+                path, params, authority, runtime, target, signer, &message, raws,
+            );
             received
         },
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn exercise_automatic_proposal(
+    path: &Path,
+    params: &serde_json::Value,
+    authority: &crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1,
+    leader: &crate::product_mainline_overlay::ProductMainlineOverlayRuntimeV1,
+    sender: &crate::product_mainline_overlay::ProductMainlineOverlayRuntimeV1,
+    key: &ed25519_dalek::SigningKey,
+    expected: &crate::native_block_seal::round_message::NovNativeSealRoundMessageV1,
+    raws: &[Vec<u8>],
+) {
+    use crate::native_block_seal::{
+        service::FreshChainLifecycleV1 as Lifecycle,
+        service_config::NovNativeSealServiceConfigV1 as Config,
+    };
+    use crate::product_mainline_overlay::{
+        ProductMainlineOverlayEventV1 as Event, ProductMainlineOverlayPayloadClassV1 as Class,
+    };
+    use std::time::{Duration, Instant};
+    let mut config = Config::load(
+        &path.with_extension("fresh-service-3").join("service.json"),
+        authority.chain_id,
+    )
+    .unwrap();
+    config.signer = key.clone();
+    config.local_validator_id = authority.expected_leader(4, 0).unwrap();
+    config.seal_store_path = path.with_extension("genesis-seal-0");
+    config.follow_finalized_tip = true;
+    config.receive_successors = true;
+    config.propose_successors = true;
+    config.ingress_per_source_per_second = 2;
+    let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
+    let mut lifecycle = Lifecycle::open(config, &ledger, params, leader, Instant::now()).unwrap();
+    assert_eq!(lifecycle.status_json()["height"], 3);
+    // Real authenticated transport, but invalid signed chain/nonce must never
+    // become a candidate. A later valid input in the same bounded poll survives.
+    let invalid = [
+        candidate_workspace_execution_raw(
+            authority.chain_id + 1,
+            4,
+            [0xc3; 32],
+            10,
+            "deposit_reserve",
+        ),
+        candidate_workspace_execution_raw(
+            authority.chain_id,
+            42,
+            [0xc3; 32],
+            10,
+            "deposit_reserve",
+        ),
+    ];
+    assert_eq!(raws.len(), 1);
+    for raw in invalid.iter().chain(raws.iter()) {
+        let hash = canonical_nov_native_tx_hash_from_payload_v1(raw).unwrap();
+        assert!(sender
+            .try_submit_to_peer(
+                &leader.startup().local_peer_id,
+                Class::NativeTransaction,
+                hash,
+                raw.clone()
+            )
+            .unwrap());
+    }
+    let began = Instant::now();
+    let mut staged = 0;
+    let valid_hash = canonical_nov_native_tx_hash_from_payload_v1(&raws[0]).unwrap();
+    let mut valid_event = None;
+    while staged < 3 {
+        for event in leader.drain_events(128) {
+            if let Event::Inbound(inbound) = event {
+                if inbound.payload_class == Class::NativeTransaction {
+                    if inbound.object_hash == valid_hash {
+                        valid_event = Some(inbound.clone());
+                    }
+                    assert!(lifecycle.enqueue(inbound));
+                    staged += 1;
+                }
+            }
+        }
+        assert!(
+            began.elapsed() < Duration::from_secs(30),
+            "automatic proposal ingress deadline"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(lifecycle.status_json()["height"], 3); // Enqueue does not execute.
+    let subject = &expected.proposal().unwrap().subject;
+    let at = Instant::now();
+    lifecycle
+        .poll_with_wall_time(leader, at, subject.timestamp_unix_ms)
+        .unwrap();
+    assert_eq!(lifecycle.status_json()["height"], 3);
+    assert_eq!(lifecycle.status_json()["proposed_successors"], 0);
+    assert_eq!(lifecycle.status_json()["successor_rejected"], 3);
+    // Replay the already-authenticated event after the local admission window;
+    // this is an application retry, not a new transport or signature fixture.
+    let valid_event = valid_event.unwrap();
+    assert!(lifecycle.enqueue(valid_event.clone()));
+    lifecycle
+        .poll_with_wall_time(
+            leader,
+            at + Duration::from_secs(2),
+            subject.timestamp_unix_ms,
+        )
+        .unwrap();
+    assert_eq!(lifecycle.status_json()["height"], 4);
+    assert_eq!(
+        lifecycle.status_json()["block_hash"],
+        to_hex(&subject.block_hash)
+    );
+    assert_eq!(lifecycle.status_json()["proposed_successors"], 1);
+    assert_eq!(lifecycle.status_json()["successor_rejected"], 3);
+    assert_eq!(lifecycle.status_json()["decision_confirmed"], false);
+    assert_eq!(lifecycle.status_json()["body_delivery_targets"], 0);
+    lifecycle
+        .poll_with_wall_time(
+            leader,
+            at + Duration::from_secs(3),
+            subject.timestamp_unix_ms,
+        )
+        .unwrap();
+    assert_eq!(lifecycle.status_json()["body_delivery_targets"], 3);
+    assert_eq!(lifecycle.status_json()["finalized"], false);
+    assert!(!lifecycle.enqueue(valid_event)); // No transaction admission while confirming.
 }
