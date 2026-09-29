@@ -31,8 +31,20 @@ The compiler does not approve economic policy or validator membership. An
 out-of-band expected commitment must match before producing reservation inputs.
 The local AOEM namespace is bound by the reservation, never the shared genesis
 commitment. The future coordinator must still verify the runtime protocol pin,
-storage/namespace freshness, persist the full approved manifest for recovery,
+storage/namespace freshness,
 publish via AOEM and verify readback before activating the ledger trust anchor.
+
+Full manifest reservation is now available through the explicit library API
+`reserve_fresh_genesis_config_v1`. One synchronized RocksDB batch stores the
+manifest, exact-byte archive digest, recomputed reservation, reservation pin and
+a distinct capability marker. `load_fresh_genesis_config_v1` opens read-only,
+requires the externally pinned configuration commitment and local namespace,
+recompiles the stored manifest and compares every reservation field. Missing,
+corrupt or conflicting evidence fails closed; retry never repairs it. Existing
+hash-only reservations are not upgraded. Ordinary startup/writers remain fenced.
+This is durable input recovery only, not AOEM publication recovery, a finalized
+genesis or proof that the AOEM namespace is unused. Hard-crash tests and actual
+production activation remain unexecuted.
 
 ## Observed implementation boundaries
 

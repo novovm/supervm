@@ -1,12 +1,20 @@
 //! Ledger-only reservation. NOT genesis activation or AOEM namespace validation.
 use super::*;
+#[path = "native_block_genesis_manifest.rs"]
+mod manifest;
 
 pub(super) const RESERVED_SCHEMA: &str = "novovm-native-block-ledger/v1+genesis-reserved-v1";
 const KEY_INTENT: &[u8] = b"native_block_ledger/v1/genesis/reservation";
 const KEY_PIN: &[u8] = b"native_block_ledger/v1/genesis/reservation-pin";
 
+pub(super) fn is_reserved_schema(raw: &[u8]) -> bool {
+    raw == RESERVED_SCHEMA.as_bytes() || raw == manifest::MANIFEST_SCHEMA.as_bytes()
+}
+
 pub(super) fn has_reservation_evidence(db: &DB) -> Result<bool> {
-    Ok(db.get(KEY_INTENT)?.is_some() || db.get(KEY_PIN)?.is_some())
+    Ok(db.get(KEY_INTENT)?.is_some()
+        || db.get(KEY_PIN)?.is_some()
+        || manifest::has_manifest_evidence(db)?)
 }
 
 /// Explicit commitments supplied by the future genesis coordinator. These bind

@@ -429,7 +429,7 @@ impl NovNativeBlockLedgerV1 {
             Some(raw)
                 if !(supported_ledger_schema_v1(raw.as_slice())
                     || allow_genesis_reservation
-                        && raw.as_slice() == genesis_reservation::RESERVED_SCHEMA.as_bytes()) =>
+                        && genesis_reservation::is_reserved_schema(raw.as_slice())) =>
             {
                 bail!(
                     "unsupported NOV native block ledger schema: {}",
@@ -458,6 +458,13 @@ impl NovNativeBlockLedgerV1 {
     /// RocksDB database, or its schema. Query/RPC surfaces use this boundary so
     /// an unauthenticated read cannot materialize local persistence.
     pub fn open_existing_read_only(path: &Path) -> Result<Option<Self>> {
+        Self::open_existing_read_only_inner_v1(path, false)
+    }
+
+    fn open_existing_read_only_inner_v1(
+        path: &Path,
+        allow_genesis_reservation: bool,
+    ) -> Result<Option<Self>> {
         if !path.exists() {
             return Ok(None);
         }
@@ -489,7 +496,17 @@ impl NovNativeBlockLedgerV1 {
             read_only: true,
             isolated_seal_scope: None,
         };
-        ledger.ensure_schema_v1()?;
+        if allow_genesis_reservation {
+            let schema = ledger
+                .db
+                .get(KEY_SCHEMA_V1)?
+                .context("missing genesis reservation schema")?;
+            if !genesis_reservation::is_reserved_schema(&schema) {
+                bail!("expected reserved genesis ledger");
+            }
+        } else {
+            ledger.ensure_schema_v1()?;
+        }
         Ok(Some(ledger))
     }
 
