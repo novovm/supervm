@@ -14,6 +14,48 @@ pub struct NovNativeFreshFinalityProofV1 {
 }
 
 impl NovNativeFreshFinalityProofV1 {
+    /// Verify archived first-block evidence without treating it as live authority.
+    pub(crate) fn validate_archived_block(
+        &self,
+        config: &FreshGenesisConfigV1,
+        block: &NovNativeDurableBlockV1,
+    ) -> Result<()> {
+        let compiled = config.compile()?;
+        let rebuilt = NovNativeSealEpochAuthorityV1::derive_operator_pinned_fresh_genesis_epoch(
+            config,
+            compiled.config_commitment(),
+            self.authority.transport_bindings.clone(),
+        )?;
+        if rebuilt != self.authority {
+            bail!("archived finality authority differs from genesis");
+        }
+        let NovNativeSealRoundMessageV1::DecisionCertificateV3 { decision, .. } = &self.witness
+        else {
+            bail!("archived finality requires a V3 decision witness");
+        };
+        let subject = &decision.prepare.subject;
+        let expected = crate::native_block_seal::subject_from_block_profile_v1(
+            block,
+            compiled.validator_set(),
+            subject.round,
+            [0; 32],
+            compiled.identity().anchor(),
+            config.protocol_config_commitment,
+            crate::native_block_seal::NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1,
+        )?;
+        if expected != *subject {
+            bail!("archived finality does not bind parent block");
+        }
+        let source = self
+            .authority
+            .transport_bindings
+            .first()
+            .context("archived finality has no members")?;
+        self.witness
+            .validate_authenticated(&self.authority, 1, &source.transport_peer_id)?;
+        Ok(())
+    }
+
     fn pin(&self) -> Result<[u8; 32]> {
         let mut hash = Sha256::new();
         hash.update(b"novovm-fresh-bft-finality-proof-v1\0");
@@ -27,14 +69,6 @@ impl NovNativeFreshFinalityProofV1 {
         config: &FreshGenesisConfigV1,
     ) -> Result<()> {
         let intent = promotion::read(ledger)?;
-        let rebuilt = NovNativeSealEpochAuthorityV1::derive_operator_pinned_fresh_genesis_epoch(
-            config,
-            intent.genesis_commitment,
-            self.authority.transport_bindings.clone(),
-        )?;
-        if rebuilt != self.authority {
-            bail!("finality authority differs from pinned genesis");
-        }
         let NovNativeSealRoundMessageV1::DecisionCertificateV3 { decision, .. } = &self.witness
         else {
             bail!("finality requires a complete V3 decision witness, not a prepare QC");
@@ -42,17 +76,13 @@ impl NovNativeFreshFinalityProofV1 {
         if **decision != intent.decision {
             bail!("finality witness differs from selected promotion");
         }
-        // Aggregate evidence may be forwarded by any configured validator.
-        // This validates scheduled leader, proposal, quorum, round/new-view
-        // dependency and domain, not merely the signatures counted in a QC.
-        let source = self
-            .authority
-            .transport_bindings
-            .first()
-            .context("finality authority has no members")?;
-        self.witness
-            .validate_authenticated(&self.authority, 1, &source.transport_peer_id)?;
-        Ok(())
+        let record = ledger
+            .load_candidate_record_inner_v1(intent.chain_id, intent.block_hash)?
+            .context("finality candidate missing")?;
+        let block = ledger
+            .load_candidate_block_for_record_inner_v1(&record)?
+            .context("finality candidate body missing")?;
+        self.validate_archived_block(config, &block)
     }
 }
 

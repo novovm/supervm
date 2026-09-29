@@ -731,6 +731,19 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         )
         .unwrap();
         assert!(finalized.finalized && finalized.ledger_publication_completed);
+        proof
+            .validate_archived_block(&config, block.block())
+            .unwrap();
+        let mut changed_parent = block.block().clone();
+        changed_parent.header.post_state_root = [0xa5; 32];
+        assert!(proof
+            .validate_archived_block(&config, &changed_parent)
+            .is_err());
+        let mut changed_genesis = config.clone();
+        changed_genesis.timestamp_unix_ms += 1;
+        assert!(proof
+            .validate_archived_block(&changed_genesis, block.block())
+            .is_err());
         let parent =
             workspace::load_finalized_genesis_parent_v1(chain, input.workspace_id, pin, params)
                 .unwrap();
