@@ -70,7 +70,8 @@ pub const NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1: &str =
     "novovm-native-proof-seal/fresh-genesis-v1";
 /// Under this profile `justify_qc_hash` binds the parent's stable V3 decision
 /// target, NOT a prepare-QC hash or a signer-subset-dependent certificate hash.
-/// Legacy and first-height transport authorities do not admit this profile.
+/// Legacy authorities do not admit this profile; a fresh epoch admits it only
+/// above height one. Network admission alone is not live signing permission.
 pub const NOV_NATIVE_BLOCK_SEAL_FRESH_SUCCESSOR_PROOF_V1: &str =
     "novovm-native-proof-seal/fresh-successor-decision-v1";
 pub const NOV_NATIVE_BLOCK_SEAL_VERIFICATION_PROFILE_V1: &str = "local-aoem-readback-and-body/v1";

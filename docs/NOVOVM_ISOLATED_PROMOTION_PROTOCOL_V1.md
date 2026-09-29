@@ -40,8 +40,16 @@ must verify before deriving that target; a prepare QC alone is insufficient.
 This preserves the same child dependency across valid parent signer subsets.
 `successor_seal_subject` also checks genesis identity, exact parent batch/roots,
 height, slot, timestamp and transaction-count state-version advancement. It is
-historical construction only: old transport authorities reject this profile,
-and network activation/publication still require new wiring.
+historical construction only: legacy transport authorities reject this profile,
+and network service activation/publication still require new wiring.
+
+The fresh epoch authority now admits first-height or successor proof profiles
+according to height, without replacing the epoch identity or its commitment.
+This preserves the existing quarantine authority pin across heights. Bounded
+wire admission remains separate from local reconciliation: the received subject
+must match the exact live executed candidate before collection/signing. Current
+successor wire tests supply authenticated-source identities as fixtures, not
+through real sockets; they do not establish network readiness.
 
 `register_finalized_successor_v1` now registers height-two artifacts atomically,
 under workspace -> authority -> ledger locks after a fresh live-parent check.

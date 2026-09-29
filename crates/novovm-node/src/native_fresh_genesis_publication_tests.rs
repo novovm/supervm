@@ -930,11 +930,12 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         let next_round = parent.successor_seal_subject(&next_block, 1).unwrap();
         assert_eq!(next_round.justify_qc_hash, next_subject.justify_qc_hash);
         assert!(parent.successor_seal_subject(&block, 0).is_err());
-        // Historical construction must not silently activate the old authority.
-        assert!(proof
+        // Same epoch identity, distinct height-dependent proof domain. This
+        // metadata check is not a live execution/signing capability.
+        proof
             .authority
             .validate_subject_domain_v1(&next_subject)
-            .is_err());
+            .unwrap();
         let mut incomplete_parent = proof.clone();
         if let Message::DecisionCertificateV3 { decision, .. } = &mut incomplete_parent.witness {
             decision.votes.truncate(2);

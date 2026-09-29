@@ -112,6 +112,7 @@ fn exercise_fresh_successor_signing(
         .collect::<Vec<_>>();
     assert!(Certificate::from_votes(qc.clone(), set, decisions[..2].to_vec()).is_err());
     let certificate = Certificate::from_votes(qc.clone(), set, decisions.clone()).unwrap();
+    exercise_fresh_successor_overlay(path, params, compiled, parent, id, &proposal, &certificate);
     let other_request = Request {
         block_hash: other,
         ..request.clone()
@@ -183,3 +184,5 @@ fn exercise_fresh_successor_signing(
             .finalized
     );
 }
+
+include!("native_fresh_successor_overlay_tests.rs");

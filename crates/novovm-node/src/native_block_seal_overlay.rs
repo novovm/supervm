@@ -238,7 +238,11 @@ impl NovNativeSealEpochAuthorityV1 {
         self.validate()?;
         subject.validate(&self.validator_set)?;
         let proof = if self.authority_kind == NOV_NATIVE_SEAL_OVERLAY_FRESH_GENESIS_AUTHORITY_V1 {
-            crate::native_block_seal::NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1
+            if subject.height == 1 {
+                crate::native_block_seal::NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1
+            } else {
+                crate::native_block_seal::NOV_NATIVE_BLOCK_SEAL_FRESH_SUCCESSOR_PROOF_V1
+            }
         } else {
             crate::native_block_seal::NOV_NATIVE_BLOCK_SEAL_PROOF_VERSION_V1
         };
