@@ -1,4 +1,5 @@
-// One configured live signer over a real WSS mesh; not four executing nodes.
+// First height: one signer. Successor: four services with separate seal stores
+// over real WSS, sharing verified AOEM execution; not four executing nodes.
 fn exercise_fresh_genesis_service(
     path: &Path,
     params: &serde_json::Value,
@@ -136,6 +137,134 @@ fn exercise_fresh_candidate_service(
                 .unwrap()
                 .is_none());
             assert_eq!(service.status_json()["finalized"], false);
+            use crate::product_mainline_overlay::ProductMainlineOverlayEventV1;
+            use std::time::{Duration, Instant};
+            let leader_index = peers
+                .iter()
+                .position(|(_, candidate)| candidate.verifying_key() == key.verifying_key())
+                .unwrap();
+            let mut services = vec![(leader_index, service, config_path.clone())];
+            for (index, (_, signer)) in peers.iter().enumerate() {
+                if index == leader_index {
+                    continue;
+                }
+                let directory = root.join(format!("validator-{index}"));
+                fs::create_dir_all(&directory).unwrap();
+                fs::write(
+                    directory.join("authority.json"),
+                    serde_json::to_vec(&authority).unwrap(),
+                )
+                .unwrap();
+                fs::write(directory.join("signer.hex"), to_hex(&signer.to_bytes())).unwrap();
+                let path = directory.join("service.json");
+                fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+                let service = Service::open_configured(
+                    Config::load(&path, chain).unwrap(),
+                    &ledger_path,
+                    params,
+                    peers[index].0,
+                    Instant::now(),
+                )
+                .unwrap();
+                services.push((index, service, path));
+            }
+            let step = |services: &mut Vec<(usize, Service, std::path::PathBuf)>, count: usize| {
+                for (index, service, _) in services.iter_mut().take(count) {
+                    for event in peers[*index].0.drain_events(128) {
+                        if let ProductMainlineOverlayEventV1::Inbound(inbound) = event {
+                            service.enqueue(inbound);
+                        }
+                    }
+                    service.poll(peers[*index].0, Instant::now()).unwrap();
+                }
+            };
+            let began = Instant::now();
+            while began.elapsed() < Duration::from_secs(2) {
+                step(&mut services, 2);
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(services
+                .iter()
+                .all(|(_, s, _)| s.status_json()["decision_confirmed"] == false));
+            let began = Instant::now();
+            loop {
+                step(&mut services, 3);
+                if services[..3]
+                    .iter()
+                    .all(|(_, s, _)| s.status_json()["decision_confirmed"] == true)
+                {
+                    break;
+                }
+                assert!(
+                    began.elapsed() < Duration::from_secs(120),
+                    "successor WSS quorum deadline: {:?}",
+                    services
+                        .iter()
+                        .map(|(_, s, _)| s.status_json())
+                        .collect::<Vec<_>>()
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let confirmed = services[0].1.status_json()["decision_certificate_hash"].clone();
+            assert!(!confirmed.is_null());
+            for (_, service, _) in &services[..3] {
+                assert_eq!(
+                    service.status_json()["decision_certificate_hash"],
+                    confirmed
+                );
+                assert_eq!(service.status_json()["finalized"], false);
+            }
+            // Reopen all four: the previously unpolled fourth must catch up from
+            // the durable full envelopes retransmitted by the other services.
+            let mut reopened = Vec::new();
+            for (index, service, path) in services {
+                drop(service);
+                let service = Service::open_configured(
+                    Config::load(&path, chain).unwrap(),
+                    &ledger_path,
+                    params,
+                    peers[index].0,
+                    Instant::now(),
+                )
+                .unwrap();
+                reopened.push((index, service, path));
+            }
+            let began = Instant::now();
+            loop {
+                step(&mut reopened, 4);
+                if reopened
+                    .iter()
+                    .all(|(_, s, _)| s.status_json()["decision_confirmed"] == true)
+                {
+                    break;
+                }
+                assert!(
+                    began.elapsed() < Duration::from_secs(120),
+                    "successor WSS recovery deadline"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            for (index, service, path) in reopened {
+                assert_eq!(
+                    service.status_json()["decision_certificate_hash"],
+                    confirmed
+                );
+                assert_eq!(service.status_json()["finalized"], false);
+                assert!(service
+                    .complete_fresh_publication(peers[index].0, Instant::now())
+                    .unwrap()
+                    .is_none());
+                let seal = Seal::open(&path.parent().unwrap().join("seal")).unwrap();
+                let certificate = seal
+                    .load_decision_certificate_by_height_v3(chain, 1, height)
+                    .unwrap()
+                    .unwrap();
+                certificate.verify(compiled.validator_set()).unwrap();
+                assert_eq!(
+                    certificate.prepare.subject.block_hash,
+                    artifact.block().header.block_hash
+                );
+            }
             return;
         }
         workspace::abort_v1(chain, id, params).unwrap();

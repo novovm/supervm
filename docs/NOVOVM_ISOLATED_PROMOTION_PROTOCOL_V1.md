@@ -68,8 +68,12 @@ also compare the pinned parent workspace. No parent QC override is accepted.
 The main lifecycle retains the confirmation service after a successor decision,
 without invoking first-height promotion or claiming finalized state. This is
 explicit single-candidate confirmation, not automatic continuous block creation.
-The controlled WSS fixture exercises one configured successor signer, durable
-proposal/restart replay and wrong-parent rejection, not independent-node quorum.
+The controlled WSS fixture exercises four configured successor services with
+separate seal stores but shared real AOEM execution. Two polled signers cannot
+confirm; three confirm the same V3 certificate. Reopening all services recovers
+that certificate, including the previously unpolled fourth signer. Each store's
+certificate is read back and verified; first-height authority remains unchanged.
+This is not independent-node execution, process-crash or physical-network proof.
 
 `with_verified_finalized_successor_v1` supplies a non-escaping, read-only live
 signing view under workspace -> authority -> ledger locks. It rechecks published
