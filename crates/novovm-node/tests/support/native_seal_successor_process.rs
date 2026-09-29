@@ -72,6 +72,7 @@ pub(super) fn exercise(
             true,
             2,
             Some(&inject),
+            true,
         );
     }
     let certificate = |index: usize| {
@@ -103,6 +104,7 @@ pub(super) fn exercise(
         true,
         2,
         None,
+        false,
     );
     for index in 0..4 {
         assert_eq!(certificate(index), expected);
@@ -145,7 +147,9 @@ pub(super) fn exercise(
             "transaction_sender_only_index":sender_index,
             "restart_and_fourth_node_catchup":true,
         "independent_full_block_and_finality_readback_equal":true,
-            "physical_lan_executed":false, "hard_crash_executed":false
+            "forced_process_termination_after_finalization":true,
+            "physical_lan_executed":false, "power_loss_executed":false,
+            "interrupted_promotion_commit_executed":false
         }))
         .unwrap(),
     )

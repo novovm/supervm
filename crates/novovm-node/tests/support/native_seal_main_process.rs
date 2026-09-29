@@ -62,6 +62,7 @@ fn run_cluster(
         fresh,
         1,
         None,
+        false,
     );
 }
 
@@ -76,6 +77,7 @@ fn run_cluster_at_height(
     fresh: bool,
     height: u64,
     inject: Option<&dyn Fn()>,
+    kill_after_finalized: bool,
 ) {
     let mut children = Vec::new();
     for &index in active {
@@ -106,6 +108,49 @@ fn run_cluster_at_height(
     if let Some(inject) = inject {
         inject();
     }
+    let mut before_kill = std::collections::BTreeMap::new();
+    if kill_after_finalized {
+        assert!(fresh && decision_v3 && expect_prepared);
+        loop {
+            for (index, child) in &mut children {
+                assert!(
+                    child.0.try_wait().unwrap().is_none(),
+                    "node exited before forced termination"
+                );
+                let text = fs::read_to_string(nodes[*index].0.join(format!("{label}.stdout.log")))
+                    .unwrap();
+                for line in text.lines() {
+                    let Some(json) = line.strip_prefix("native_fresh_genesis_decision_confirmed: ")
+                    else {
+                        continue;
+                    };
+                    let Ok(value) = serde_json::from_str::<Value>(json) else {
+                        continue;
+                    };
+                    if value["height"] == height
+                        && value["finalized"] == true
+                        && value["publication"]["ledger_publication_completed"] == true
+                    {
+                        before_kill.insert(*index, value);
+                    }
+                }
+            }
+            if before_kill.len() == children.len() {
+                break;
+            }
+            assert!(
+                deadline.elapsed() < Duration::from_secs(180),
+                "finalized-before-kill deadline"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        // Only handles spawned above, never a process-name-wide kill. Wait for
+        // every voter to publish before removing all three simultaneously.
+        for (_, child) in &mut children {
+            assert!(child.0.try_wait().unwrap().is_none());
+            child.0.kill().unwrap();
+        }
+    }
     for (index, mut child) in children {
         let status = loop {
             if let Some(status) = child.0.try_wait().unwrap() {
@@ -121,14 +166,20 @@ fn run_cluster_at_height(
         let error = fs::read_to_string(nodes[index].0.join(format!("{label}.stderr.log"))).unwrap();
         assert_eq!(
             status.success(),
-            expect_prepared || fresh,
+            !kill_after_finalized && (expect_prepared || fresh),
             "node {index}: {error}\n{text}"
         );
         if !expect_prepared && !fresh {
             assert!(error.contains("without a prepare QC"), "{error}");
         }
         // Startup prints one status line; final summary is the remaining JSON.
-        let summary: Value = if fresh {
+        let summary: Value = if kill_after_finalized {
+            assert!(
+                !text.contains("native_fresh_genesis_confirmation_summary: "),
+                "forced termination must precede clean exit"
+            );
+            before_kill.remove(&index).unwrap()
+        } else if fresh {
             serde_json::from_str(
                 text.lines()
                     .find_map(|line| {
@@ -141,7 +192,9 @@ fn run_cluster_at_height(
             let start = text.find("\n{").expect("final main-node JSON summary") + 1;
             serde_json::from_str(&text[start..]).unwrap()
         };
-        let seal = if fresh {
+        let seal = if kill_after_finalized {
+            &summary
+        } else if fresh {
             assert_eq!(summary["ordinary_execution_enabled"], false);
             &summary["native_seal_service"]
         } else {
