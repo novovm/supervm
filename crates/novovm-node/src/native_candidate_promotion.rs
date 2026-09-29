@@ -236,6 +236,39 @@ pub fn load_finalized_genesis_parent_v1(
     capture_finalized_parent_locked(&mut workspace, id, genesis, params)
 }
 
+/// Resolve only a fully finalized descendant of the operator's exact anchor.
+/// Historical snapshots may be retired; immutable ledger bindings remain required.
+pub fn load_latest_finalized_parent_v1(
+    chain: u64,
+    genesis: [u8; 32],
+    anchor_height: u64,
+    anchor_hash: [u8; 32],
+    anchor_id: [u8; 32],
+    anchor_previous: Option<[u8; 32]>,
+    params: &serde_json::Value,
+) -> Result<Option<(FinalizedGenesisParentV1, Option<[u8; 32]>)>> {
+    let mut workspace = WorkspaceStore::open(chain, params)?;
+    let path = resolve_native_execution_store_path_from_params_v1(params)
+        .context("startup follow requires explicit native path")?;
+    let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "startup namespace")?;
+    let Some(tip) = NovNativeBlockLedgerV1::finalized_service_tip_v1(
+        &nov_native_block_ledger_rocksdb_path_v1(&path),
+        genesis,
+        namespace,
+        anchor_height,
+        anchor_hash,
+        anchor_id,
+        anchor_previous,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((
+        capture_finalized_parent_locked(&mut workspace, tip.current, genesis, params)?,
+        tip.previous,
+    )))
+}
+
 pub(in super::super) fn capture_finalized_parent_locked(
     workspace: &mut WorkspaceStore,
     id: [u8; 32],

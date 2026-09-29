@@ -237,6 +237,32 @@ fn candidate_workspace_execution_fresh_genesis_independent_storage_parity() {
                 ids.push(id);
                 parent = Some(id);
             }
+            let current = *ids.last().unwrap();
+            workspace::retire_old_workspaces_v1(chain, current, pin, params).unwrap();
+            assert!(workspace::load_v1(chain, ids[0], params).unwrap().is_none());
+            let (tip, previous) = workspace::load_latest_finalized_parent_v1(
+                chain,
+                pin,
+                1,
+                blocks[0].header.block_hash,
+                ids[0],
+                None,
+                params,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(tip.workspace_id(), current);
+            assert_eq!(previous, Some(ids[1]));
+            assert!(workspace::load_latest_finalized_parent_v1(
+                chain,
+                pin,
+                2,
+                blocks[1].header.block_hash,
+                ids[1],
+                Some([9; 32]),
+                params
+            )
+            .is_err());
             (db_path, namespace, ids, blocks, proofs)
         }));
     }

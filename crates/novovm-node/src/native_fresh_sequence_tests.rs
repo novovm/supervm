@@ -286,6 +286,16 @@ fn exercise_fresh_sequence(
                 .unwrap()
                 .is_none()
         );
+        if height == 4 {
+            let mut configured =
+                crate::native_block_seal::service_config::NovNativeSealServiceConfigV1::load(
+                    &path.with_extension("fresh-service-3").join("service.json"),
+                    chain,
+                )
+                .unwrap();
+            configured.follow_finalized_tip = true;
+            assert!(configured.resolve_finalized_startup(params).is_err());
+        }
         let report = workspace::resume_successor_promotion_v1(
             chain, parent, candidate, pin, &proof, &ledger, params,
         )
@@ -360,6 +370,40 @@ fn exercise_fresh_sequence(
                     chain,
                 )
                 .unwrap();
+            let original_path = path.with_extension("fresh-service-3").join("service.json");
+            let follow_path = original_path.with_extension("follow.json");
+            let mut json: serde_json::Value =
+                serde_json::from_slice(&fs::read(&original_path).unwrap()).unwrap();
+            json["follow_finalized_tip"] = serde_json::json!(true);
+            fs::write(&follow_path, serde_json::to_vec(&json).unwrap()).unwrap();
+            let follow = || {
+                crate::native_block_seal::service_config::NovNativeSealServiceConfigV1::load(
+                    &follow_path,
+                    chain,
+                )
+                .unwrap()
+            };
+            let fixed =
+                crate::native_block_seal::service_config::NovNativeSealServiceConfigV1::load(
+                    &original_path,
+                    chain,
+                )
+                .unwrap()
+                .resolve_finalized_startup(params)
+                .unwrap();
+            assert_eq!(fixed.height, 3);
+            let mut wrong_anchor = follow();
+            wrong_anchor.block_hash[0] ^= 1;
+            assert!(wrong_anchor.resolve_finalized_startup(params).is_err());
+            let resolved = follow().resolve_finalized_startup(params).unwrap();
+            assert_eq!(resolved.height, 4);
+            assert_eq!(resolved.isolated_workspace_id, Some(candidate));
+            assert_eq!(resolved.finalized_parent_workspace_id, Some(parent));
+            assert_eq!(resolved.local_validator_id, follow().local_validator_id);
+            assert_eq!(
+                resolved.resolve_finalized_startup(params).unwrap().height,
+                4
+            );
             let before = workspace::list_v1(chain, params).unwrap();
             assert!(old_config
                 .prepare_fresh_successor(
@@ -378,6 +422,7 @@ fn exercise_fresh_sequence(
             assert_eq!(workspace::list_v1(chain, params).unwrap(), before);
             exercise_fresh_successor_relay(path, params, chain, parent, candidate, pin, &proof);
             workspace::corrupt_execution_output_for_test_v1(chain, parent, params).unwrap();
+            assert!(follow().resolve_finalized_startup(params).is_err());
             let before = workspace::list_v1(chain, params).unwrap();
             assert!(workspace::retire_old_workspaces_v1(chain, candidate, pin, params).is_err());
             assert_eq!(workspace::list_v1(chain, params).unwrap(), before);

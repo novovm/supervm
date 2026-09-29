@@ -43562,6 +43562,7 @@ fn run_fresh_genesis_confirmation_v1(
     if !config.is_fresh_genesis() {
         bail!("fresh genesis startup requires an explicit genesis configuration");
     }
+    let config = config.resolve_finalized_startup(execution_params)?;
     let overlay_path = string_env_nonempty("NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG")
         .context("fresh genesis confirmation requires Product Overlay configuration")?;
     let overlay = load_product_mainline_overlay_config_v1(&overlay_path)?;

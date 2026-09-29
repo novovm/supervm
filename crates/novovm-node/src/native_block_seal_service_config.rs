@@ -21,6 +21,7 @@ const MAX_AUTHORITY_BYTES: usize = 256 * 1024;
 /// Intentionally neither Debug nor Serialize: this contains the operator's key.
 /// Callers cannot bypass validation by constructing a public configuration.
 pub struct NovNativeSealServiceConfigV1 {
+    pub(crate) follow_finalized_tip: bool,
     pub(crate) fresh_genesis_config_commitment: Option<[u8; 32]>,
     pub(crate) finalized_parent_workspace_id: Option<[u8; 32]>,
     pub(crate) isolated_workspace_id: Option<[u8; 32]>,
@@ -44,6 +45,8 @@ pub struct NovNativeSealServiceConfigV1 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ServiceFile {
+    #[serde(default)]
+    follow_finalized_tip: bool,
     #[serde(default)]
     finalized_parent_workspace_id: Option<String>,
     #[serde(default)]
@@ -159,6 +162,55 @@ impl From<AuthorityFile> for NovNativeSealEpochAuthorityV1 {
 }
 
 impl NovNativeSealServiceConfigV1 {
+    /// Explicit opt-in: retain the pinned ancestor/authority while following its
+    /// fully finalized descendants. Never selects a candidate or repairs a pin.
+    pub fn resolve_finalized_startup(mut self, params: &serde_json::Value) -> Result<Self> {
+        self.validate(self.chain_id)?;
+        if !self.follow_finalized_tip {
+            return Ok(self);
+        }
+        let pin = self
+            .fresh_genesis_config_commitment
+            .context("startup follow requires fresh genesis")?;
+        let id = self
+            .isolated_workspace_id
+            .context("startup follow anchor missing")?;
+        let paths = crate::tx_ingress::native_persistence_write_paths_v1(params);
+        let ledger = paths
+            .iter()
+            .find(|(label, _)| *label == "native block ledger")
+            .context("startup ledger path missing")?
+            .1
+            .clone();
+        let writes = paths
+            .into_iter()
+            .filter(|(label, _)| *label != "native block ledger")
+            .map(|(_, path)| path)
+            .collect::<Vec<_>>();
+        super::service_paths::validate_service_paths_v1(&self, &ledger, &writes, &[])?;
+        if let Some((image, previous)) =
+            crate::tx_ingress::candidate_workspace::load_latest_finalized_parent_v1(
+                self.chain_id,
+                pin,
+                self.height,
+                self.block_hash,
+                id,
+                self.finalized_parent_workspace_id,
+                params,
+            )?
+        {
+            if image.finality_proof().authority != self.authority {
+                bail!("startup finalized authority differs from operator pin");
+            }
+            self.height = image.block().header.height;
+            self.block_hash = image.block().header.block_hash;
+            self.isolated_workspace_id = Some(image.workspace_id());
+            self.finalized_parent_workspace_id = previous;
+        }
+        self.validate(self.chain_id)?;
+        Ok(self)
+    }
+
     /// Prepare the next local candidate from this service's finalized block.
     /// Reuses the operator's key, paths and authority; does not sign or publish.
     /// The caller owns transaction selection/transport and must retain the exact
@@ -340,6 +392,7 @@ impl NovNativeSealServiceConfigV1 {
             .map(|validator| validator.validator_id)
             .context("native seal signer key is not a pinned validator")?;
         let config = Self {
+            follow_finalized_tip: raw.follow_finalized_tip,
             finalized_parent_workspace_id: raw
                 .finalized_parent_workspace_id
                 .map(|id| decode_hex_32(id.as_bytes(), "finalized parent workspace ID"))
@@ -377,6 +430,9 @@ impl NovNativeSealServiceConfigV1 {
 
     /// Recheck the configuration at the service boundary, before database opens.
     pub(crate) fn validate(&self, expected_chain_id: u64) -> Result<()> {
+        if self.follow_finalized_tip && !self.is_fresh_genesis() {
+            bail!("startup follow requires pinned fresh V3 authority");
+        }
         let fresh_authority = self.authority.authority_kind
             == crate::native_block_seal_overlay::NOV_NATIVE_SEAL_OVERLAY_FRESH_GENESIS_AUTHORITY_V1;
         if fresh_authority != self.fresh_genesis_config_commitment.is_some()
@@ -752,6 +808,15 @@ mod tests {
         };
         let mut fixture = Fixture::new();
         assert!(!fixture.load().unwrap().is_fresh_genesis());
+        fixture.config["follow_finalized_tip"] = json!(true);
+        fixture.write();
+        assert!(fixture.load().is_err());
+        fixture
+            .config
+            .as_object_mut()
+            .unwrap()
+            .remove("follow_finalized_tip");
+        fixture.write();
         let old = fixture_authority();
         let genesis = FreshGenesisConfigV1 {
             schema: GENESIS_SCHEMA_V1.into(),
@@ -793,6 +858,10 @@ mod tests {
             Some(pin)
         );
         assert!(fixture.load().unwrap().is_fresh_genesis());
+        assert!(!fixture.load().unwrap().follow_finalized_tip);
+        fixture.config["follow_finalized_tip"] = json!(true);
+        fixture.write();
+        assert!(fixture.load().unwrap().follow_finalized_tip);
         assert!(!fixture.load().unwrap().seal_store_path.exists());
         let good = fixture.config.clone();
         fixture.config["height"] = json!(2);

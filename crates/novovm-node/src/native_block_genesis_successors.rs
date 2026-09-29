@@ -8,6 +8,11 @@ pub(super) struct FinalizedRecord {
     pub(super) commitment: [u8; 32],
 }
 
+pub(crate) struct FinalizedWorkspaceTipV1 {
+    pub(crate) current: [u8; 32],
+    pub(crate) previous: Option<[u8; 32]>,
+}
+
 pub(super) fn record_at(ledger: &NovNativeBlockLedgerV1, height: u64) -> Result<FinalizedRecord> {
     let (hash, execution, commitment, proof) = if height == 1 {
         let intent = promotion::read(ledger)?;
@@ -159,6 +164,60 @@ fn candidate_keys(
 }
 
 impl NovNativeBlockLedgerV1 {
+    pub(crate) fn finalized_service_tip_v1(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        anchor_height: u64,
+        anchor_hash: [u8; 32],
+        anchor_id: [u8; 32],
+        anchor_previous: Option<[u8; 32]>,
+    ) -> Result<Option<FinalizedWorkspaceTipV1>> {
+        let ledger =
+            Self::open_existing_read_only_inner_v1(path, true)?.context("fresh ledger missing")?;
+        load_verified(&ledger, genesis, namespace)?;
+        let schema = ledger
+            .db
+            .get(KEY_SCHEMA_V1)?
+            .context("fresh schema missing")?;
+        if !is_finalized_schema(&schema) {
+            return Ok(None);
+        }
+        let height = tip_height(&ledger)?;
+        if height < anchor_height {
+            return Ok(None);
+        }
+        let anchor = record_at(&ledger, anchor_height)?;
+        if anchor.block.header.block_hash != anchor_hash
+            || anchor.execution.workspace_id != anchor_id
+        {
+            bail!("configured startup anchor is not in the finalized chain");
+        }
+        let previous_anchor = if anchor_height > 1 {
+            Some(
+                record_at(&ledger, anchor_height - 1)?
+                    .execution
+                    .workspace_id,
+            )
+        } else {
+            None
+        };
+        if previous_anchor != anchor_previous {
+            bail!("configured startup predecessor differs from finalized ancestry");
+        }
+        if schema != FINALIZED_SCHEMA.as_bytes() && schema != SUCCESSOR_FINALIZED_SCHEMA.as_bytes()
+        {
+            bail!("startup follow requires pending promotion recovery first");
+        }
+        let current = record_at(&ledger, height)?.execution.workspace_id;
+        let previous = if height > 1 {
+            Some(record_at(&ledger, height - 1)?.execution.workspace_id)
+        } else {
+            None
+        };
+        Ok(Some(FinalizedWorkspaceTipV1 { current, previous }))
+    }
+
     pub(crate) fn verify_retirable_fresh_candidate_v1(
         path: &Path,
         genesis: [u8; 32],
