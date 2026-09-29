@@ -10,6 +10,8 @@ use super::service_config::NovNativeSealServiceConfigV1;
 use super::service_paths::validate_service_paths_v1;
 use super::NovNativeBlockSealStoreV1;
 
+#[path = "native_block_seal_service_body.rs"]
+mod body_delivery;
 #[path = "native_block_seal_service_v3.rs"]
 mod decision_v3;
 #[path = "native_fresh_chain_lifecycle.rs"]
@@ -67,6 +69,7 @@ struct PeerInbox {
 }
 
 pub struct NovNativeSealServiceV1 {
+    body_delivery: Option<body_delivery::BodyDeliveryV1>,
     isolated_params: Option<serde_json::Value>,
     decision: Option<NovNativeSealDecisionLoopV3>,
     config: NovNativeSealServiceConfigV1,
@@ -268,6 +271,7 @@ impl NovNativeSealServiceV1 {
             })
             .collect();
         Ok(Self {
+            body_delivery: None,
             isolated_params: None,
             decision: None,
             config,
@@ -485,6 +489,7 @@ impl NovNativeSealServiceV1 {
         )?;
         self.sent = self.sent.saturating_add(sent as u64);
         self.poll_decision_v3(candidate_view, runtime, now)?;
+        self.poll_body_delivery(candidate_view, runtime, now)?;
         Ok(())
     }
 
@@ -533,6 +538,7 @@ impl NovNativeSealServiceV1 {
             "dropped_ingress": self.dropped, "processed_ingress": self.processed,
             "queued_egress": self.sent, "last_error": self.last_error,
             "recipient_durable_ack_emitted": false,
+            "body_delivery_targets": self.body_delivery.as_ref().map_or(0, |body| body.len()),
         })
     }
 }

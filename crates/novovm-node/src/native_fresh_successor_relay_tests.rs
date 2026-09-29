@@ -20,12 +20,19 @@ fn exercise_fresh_successor_relay(
     };
     use std::time::{Duration, Instant};
     let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
-    let Message::DecisionCertificateV3 { decision, .. } = &proof.witness else {
+    let Message::DecisionCertificateV3 {
+        decision, proposal, ..
+    } = &proof.witness
+    else {
         panic!("full witness required");
     };
     let height = decision.prepare.subject.height;
     with_service_test_transports(chain, |peers| {
-        let validator = &proof.authority.validator_set.validators[0];
+        let validator = proof
+            .authority
+            .validator_set
+            .validator(proposal.proposer_id)
+            .unwrap();
         let (sender, (runtime, key)) = peers
             .iter()
             .enumerate()
@@ -42,6 +49,7 @@ fn exercise_fresh_successor_relay(
         let seal_path = path.with_extension("genesis-seal-0");
         let config_path = root.join("service.json");
         let config = serde_json::json!({
+            "receive_successors":true, "follow_finalized_tip":true,
             "schema":"novovm-native-seal-service/v1", "enabled":true, "decision_v3_enabled":true,
             "fresh_genesis_config_commitment":to_hex(&pin), "finalized_parent_workspace_id":to_hex(&parent),
             "isolated_workspace_id":to_hex(&id), "chain_id":chain, "height":height,
@@ -62,6 +70,17 @@ fn exercise_fresh_successor_relay(
         assert_eq!(relay.status_json()["height"], height);
         assert_eq!(relay.status_json()["finalized"], true);
         assert_eq!(relay.status_json()["signing_enabled"], false);
+        let artifact = workspace::load_block_artifact_v1(chain, id, params)
+            .unwrap()
+            .unwrap();
+        exercise_automatic_body_delivery(
+            &peers,
+            &proof.authority,
+            height,
+            &artifact.block().body.raw_txs,
+            &runtime.startup().local_peer_id,
+            |now| relay.poll(runtime, now),
+        );
         let started = Instant::now();
         let mut received = std::collections::BTreeSet::new();
         while received.len() < 6 {
@@ -75,6 +94,11 @@ fn exercise_fresh_successor_relay(
                         if inbound.payload_class != Class::NativeSeal {
                             continue;
                         }
+                        if !crate::native_block_seal::round_wire::is_nov_native_seal_round_wire_v1(
+                            &inbound.frame.payload,
+                        ) {
+                            continue; // Already verified the body stream above.
+                        }
                         let message = decode(
                             &inbound.frame.payload,
                             &proof.authority,
@@ -83,6 +107,7 @@ fn exercise_fresh_successor_relay(
                         )
                         .unwrap();
                         match message {
+                            Message::Proposal { proposal: got, .. } => assert_eq!(*got, **proposal),
                             Message::DecisionCertificateV3 { decision: got, .. } => {
                                 assert_eq!(*got, **decision);
                                 received.insert((index, "decision"));

@@ -89,7 +89,12 @@ fn exercise_fresh_candidate_service(
             "ingress_per_source_per_second":16, "ingress_per_poll":32,
         });
         fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
-        let load = || Config::load(&config_path, chain).unwrap();
+        let load = || {
+            let mut config = Config::load(&config_path, chain).unwrap();
+            config.receive_successors = parent.is_some();
+            config.follow_finalized_tip = parent.is_some();
+            config
+        };
         let ledger_path = nov_native_block_ledger_rocksdb_path_v1(path);
         let now = std::time::Instant::now();
         assert!(Service::open(load(), &ledger_path, runtime, now).is_err());
@@ -136,6 +141,15 @@ fn exercise_fresh_candidate_service(
                 .complete_fresh_publication(runtime, now)
                 .unwrap()
                 .is_none());
+            assert_eq!(service.status_json()["body_delivery_targets"], 3);
+            exercise_automatic_body_delivery(
+                &peers,
+                &authority,
+                height,
+                &artifact.block().body.raw_txs,
+                &runtime.startup().local_peer_id,
+                |now| service.poll(runtime, now),
+            );
             assert_eq!(service.status_json()["finalized"], false);
             use crate::product_mainline_overlay::ProductMainlineOverlayEventV1;
             use std::time::{Duration, Instant};
@@ -275,4 +289,50 @@ fn exercise_fresh_candidate_service(
         assert_eq!(service.status_json()["decision_confirmed"], false);
         assert!(Service::open_configured(load(), &ledger_path, params, runtime, now).is_err());
     });
+}
+
+fn exercise_automatic_body_delivery(
+    peers: &[(
+        &crate::product_mainline_overlay::ProductMainlineOverlayRuntimeV1,
+        &ed25519_dalek::SigningKey,
+    )],
+    authority: &crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1,
+    height: u64,
+    raws: &[Vec<u8>],
+    source: &str,
+    mut poll: impl FnMut(std::time::Instant) -> anyhow::Result<()>,
+) {
+    use crate::native_candidate_body::network::CandidateBodyInboxV1;
+    use crate::product_mainline_overlay::ProductMainlineOverlayEventV1 as Event;
+    use std::time::{Duration, Instant};
+    let started = Instant::now();
+    let mut receivers = peers
+        .iter()
+        .filter(|(r, _)| r.startup().local_peer_id != source)
+        .map(|(runtime, _)| {
+            (
+                *runtime,
+                CandidateBodyInboxV1::new(authority.clone(), height, started).unwrap(),
+                false,
+            )
+        })
+        .collect::<Vec<_>>();
+    while receivers.iter().any(|(_, _, complete)| !complete) {
+        poll(Instant::now()).unwrap();
+        for (runtime, inbox, complete) in &mut receivers {
+            for event in runtime.drain_events(128) {
+                if let Event::Inbound(inbound) = event {
+                    if let Ok(Some(body)) = inbox.accept(&inbound, Instant::now()) {
+                        assert_eq!(body.raw_txs, raws);
+                        *complete = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "automatic body delivery deadline"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }

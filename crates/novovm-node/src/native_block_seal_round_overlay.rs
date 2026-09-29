@@ -245,6 +245,16 @@ impl NovNativeSealRoundOverlayV1 {
         )
     }
 
+    pub(crate) fn local_body_proposal(
+        &self,
+    ) -> Option<super::round_message::NovNativeSealRoundMessageV1> {
+        if self.halted {
+            None
+        } else {
+            self.driver.local_body_proposal()
+        }
+    }
+
     pub fn status(&self) -> NovNativeSealRoundDriverStatusV1 {
         let mut status = self.driver.status();
         if self.halted {

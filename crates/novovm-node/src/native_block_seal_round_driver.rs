@@ -838,6 +838,20 @@ impl NovNativeSealRoundDriverV1 {
         }
     }
 
+    pub(crate) fn local_body_proposal(&self) -> Option<Message> {
+        let proposal = self.proposal.as_ref()?;
+        if self.halted
+            || proposal.proposer_id != self.binding.local_validator_id
+            || proposal.subject.round != self.state.current.round
+        {
+            return None;
+        }
+        Some(Message::Proposal {
+            proposal: Box::new(proposal.clone()),
+            certificate: self.certificate.clone().map(Box::new),
+        })
+    }
+
     pub fn status(&self) -> NovNativeSealRoundDriverStatusV1 {
         use NovNativeSealRoundDriverPhaseV1 as Phase;
         let phase = if self.halted {

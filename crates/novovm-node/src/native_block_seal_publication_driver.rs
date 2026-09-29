@@ -27,6 +27,7 @@ impl PublicationReport {
 }
 
 pub struct FreshGenesisPublicationDriverV1 {
+    body_delivery: Option<body_delivery::BodyDeliveryV1>,
     chain: u64,
     height: u64,
     parent: Option<[u8; 32]>,
@@ -102,6 +103,10 @@ impl FreshGenesisPublicationDriverV1 {
             qc: Box::new(decision.prepare.clone()),
             certificate: certificate.clone(),
         };
+        let body_proposal = Message::Proposal {
+            proposal: proposal.clone(),
+            certificate: certificate.clone(),
+        };
         let local_peer = runtime.startup().local_peer_id.clone();
         // Both messages are validated before any state publication. Repeating
         // prepare as well as decision allows a slow/restarted peer to catch up.
@@ -127,6 +132,11 @@ impl FreshGenesisPublicationDriverV1 {
         {
             bail!("publication output differs from configured identity");
         }
+        let body_delivery = body_delivery::BodyDeliveryV1::build(
+            config,
+            &body_proposal,
+            &artifact.block().body.raw_txs,
+        )?;
         let report = if let Some(parent) = config.finalized_parent_workspace_id {
             PublicationReport::Successor(workspace::resume_successor_promotion_v1(
                 config.chain_id,
@@ -155,6 +165,7 @@ impl FreshGenesisPublicationDriverV1 {
             )?)
         };
         Ok(Some(Self {
+            body_delivery,
             chain: config.chain_id,
             height: config.height,
             parent: config.finalized_parent_workspace_id,
@@ -240,6 +251,9 @@ impl FreshGenesisPublicationDriverV1 {
             },
         )?;
         self.sent = self.sent.saturating_add(sent);
+        if let Some(body) = &mut self.body_delivery {
+            body.poll(runtime, now)?;
+        }
         Ok(())
     }
 
