@@ -23,8 +23,14 @@ full AOEM/output/ledger/finality verification. Its `successor_plan` derives the
 parent batch/state/receipt bindings and authenticates transactions against the
 captured nonce state, without pending admission, nonce writes or execution.
 It is historical data, not a transferable live signing/publication capability;
-child staging/publication must recheck current-parent ownership. Wiring the
-second-height execution and promotion is still pending.
+child staging/publication must recheck current-parent ownership.
+`create_from_finalized_genesis_v1` now stages height two after a live-parent
+recheck, including exact ready replays. Its separate archived parent variant
+binds the full first-block decision, state and receipt roots; it never fabricates
+a legacy production envelope. `execute_v1` persists the isolated result and
+reopens it idempotently without changing first-height authority. Legacy signing
+and registration reject fresh-chain artifacts. Main-node second-height admission,
+confirmation and promotion are still pending; this is not continuous finality.
 
 Ledger-only prerequisite now implemented: `reserve_fresh_genesis_v1` atomically
 reserves an unused ledger with configuration commitments, an independent digest

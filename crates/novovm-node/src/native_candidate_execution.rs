@@ -15,6 +15,7 @@ pub use block_artifact::{
     register_genesis_block_candidate_v1, with_verified_block_candidate_v1,
     with_verified_genesis_block_candidate_v1, IsolatedBlockArtifactV1,
 };
+pub(super) use promotion::capture_finalized_parent_locked;
 pub use promotion::{
     complete_genesis_promotion_v1, finalize_genesis_promotion_v1, load_finalized_genesis_parent_v1,
     publish_genesis_promotion_v1, resume_genesis_promotion_v1, verify_genesis_promotion_v1,

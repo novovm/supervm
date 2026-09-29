@@ -7,6 +7,8 @@
 mod auth;
 #[path = "native_candidate_execution.rs"]
 mod execution;
+#[path = "native_candidate_finalized_parent.rs"]
+mod finalized_parent;
 pub use execution::{
     complete_genesis_promotion_v1, execute_v1, finalize_genesis_promotion_v1,
     load_block_artifact_v1, load_execution_v1, load_finalized_genesis_parent_v1,
@@ -21,6 +23,8 @@ pub(super) use execution::{
     load_execution_snapshot_for_test_v1, publish_with_checkpoint_v1, ExecutionCheckpointV1,
     PromotionCheckpointV1,
 };
+pub use finalized_parent::create_from_finalized_genesis_v1;
+use finalized_parent::FinalizedParentSnapshot;
 
 use super::*;
 use crate::native_candidate_plan::NovNativeCandidateExecutionPlanV1;
@@ -157,10 +161,21 @@ struct Payload {
     parent_snapshot: Option<NovAoemOwnedNativeStateEnvelopeV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     genesis: Option<fresh_genesis::publication::GenesisSnapshotV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    finalized_parent: Option<FinalizedParentSnapshot>,
 }
 
 impl Payload {
     fn parent_store(&self) -> Result<&NovNativeExecutionStoreV1> {
+        if let Some(parent) = &self.finalized_parent {
+            if self.parent_block.is_some()
+                || self.parent_snapshot.is_some()
+                || self.genesis.is_some()
+            {
+                bail!("finalized parent cannot coexist with another parent variant");
+            }
+            return Ok(&parent.store);
+        }
         match (&self.parent_block, &self.parent_snapshot, &self.genesis) {
             (Some(_), Some(snapshot), None) => Ok(&snapshot.store),
             (None, None, Some(snapshot)) => Ok(&snapshot.store),
@@ -462,7 +477,9 @@ fn describe(payload: &Payload, bytes: &[u8], scope: &[u8; 32]) -> Result<Descrip
         parent_state: payload.plan.pre_state_root,
         parent_snapshot: sha256_bytes_v1(&[
             b"novovm-candidate-workspace-parent-v1\0",
-            &if let Some(genesis) = &payload.genesis {
+            &if let Some(parent) = &payload.finalized_parent {
+                serde_json::to_vec(parent)?
+            } else if let Some(genesis) = &payload.genesis {
                 serde_json::to_vec(genesis)?
             } else {
                 serde_json::to_vec(&payload.parent_snapshot)?
@@ -486,6 +503,9 @@ fn validate_payload(payload: &Payload, workspace: &WorkspaceStore) -> Result<()>
         if canonical_nov_native_tx_hash_from_payload_v1(raw)? != *expected {
             bail!("candidate workspace body does not match canonical transaction hashes");
         }
+    }
+    if let Some(parent) = &payload.finalized_parent {
+        return parent.validate(plan, workspace);
     }
     if let Some(genesis) = &payload.genesis {
         genesis.validate()?;
@@ -627,6 +647,7 @@ fn capture_parent_locked(
         parent_block: Some(parent_block),
         parent_snapshot: Some(parent_snapshot),
         genesis: None,
+        finalized_parent: None,
     };
     validate_payload(&payload, workspace)?;
     Ok(payload)
@@ -687,6 +708,7 @@ fn create_inner_v1(
             WorkspaceStatusV1::Ready => {
                 let payload = workspace.read_payload(descriptor)?;
                 if payload.plan != *plan
+                    || payload.finalized_parent.is_some()
                     || payload.genesis.as_ref().map(|g| g.commitment()) != expected_genesis
                 {
                     bail!("candidate workspace replay differs from stored input");
@@ -721,18 +743,37 @@ fn create_inner_v1(
             parent_block: None,
             parent_snapshot: None,
             genesis: Some(genesis),
+            finalized_parent: None,
         };
         validate_payload(&payload, &workspace)?;
         payload
     } else {
         capture_parent(plan, params, &workspace)?
     };
-    let bytes = serde_json::to_vec(&payload)?;
-    let descriptor = describe(&payload, &bytes, &workspace.scope)?;
-    let slot = if let Some((slot, previous)) = existing {
+    stage_payload(&mut workspace, &payload, checkpoint)
+}
+
+fn stage_payload(
+    workspace: &mut WorkspaceStore,
+    payload: &Payload,
+    checkpoint: impl Fn(CheckpointV1) -> Result<()>,
+) -> Result<WorkspaceInfoV1> {
+    let bytes = serde_json::to_vec(payload)?;
+    let descriptor = describe(payload, &bytes, &workspace.scope)?;
+    let id = descriptor.id;
+    let catalog = workspace.catalog()?;
+    let existing = catalog.iter().find(|(_, previous)| previous.id == id);
+    if let Some((slot, previous)) = existing {
         if previous != &descriptor {
-            bail!("candidate workspace incomplete replay changed its captured parent");
+            bail!("candidate workspace replay changed its captured parent");
         }
+        match workspace.status(*slot, previous)? {
+            WorkspaceStatusV1::Aborted => bail!("aborted candidate workspace cannot be revived"),
+            WorkspaceStatusV1::Ready => return workspace.info(*slot, previous),
+            WorkspaceStatusV1::Staging => {}
+        }
+    }
+    let slot = if let Some((slot, _)) = existing {
         *slot
     } else {
         let slot = allocate_slot(&catalog, bytes.len())?;

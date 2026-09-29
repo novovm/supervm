@@ -109,14 +109,18 @@ pub(super) fn load_block_artifact_inner_v1(
         },
     )?;
     plan.validate_against_block(&block)?;
-    let fresh_genesis_identity = payload
-        .genesis
-        .as_ref()
-        .map(|genesis| -> Result<_> {
-            genesis.validate()?;
-            Ok(genesis.config.compile()?.identity())
-        })
-        .transpose()?;
+    let fresh_genesis_identity = if let Some(parent) = &payload.finalized_parent {
+        Some(parent.config.compile()?.identity())
+    } else {
+        payload
+            .genesis
+            .as_ref()
+            .map(|genesis| -> Result<_> {
+                genesis.validate()?;
+                Ok(genesis.config.compile()?.identity())
+            })
+            .transpose()?
+    };
     Ok(Some(IsolatedBlockArtifactV1 {
         workspace_id: id,
         plan_commitment: input.plan,
@@ -272,6 +276,9 @@ pub fn register_block_candidate_v1(
     let workspace = WorkspaceStore::open(chain_id, params)?;
     let artifact = load_block_artifact_inner_v1(&workspace, id, params)?
         .context("isolated candidate has no complete verified output")?;
+    if artifact.fresh_genesis_identity().is_some() {
+        bail!("fresh-chain candidate cannot use legacy registration");
+    }
     let store_path = resolve_native_execution_store_path_from_params_v1(params)
         .unwrap_or_else(nov_native_execution_store_path_v1);
     let _authority_lock = acquire_nov_native_execution_store_write_lock_v1(&store_path)?;
@@ -306,6 +313,9 @@ pub fn with_verified_block_candidate_v1<T>(
     let workspace = WorkspaceStore::open(chain_id, params)?;
     let artifact = load_block_artifact_inner_v1(&workspace, id, params)?
         .context("isolated signing requires complete live execution output")?;
+    if artifact.fresh_genesis_identity().is_some() {
+        bail!("fresh-chain candidate cannot use legacy signing");
+    }
     let input = ready_input(&workspace, id)?;
     let payload = workspace.read_payload(&input)?;
     let store_path = resolve_native_execution_store_path_from_params_v1(params)

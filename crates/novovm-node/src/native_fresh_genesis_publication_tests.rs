@@ -814,6 +814,104 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         assert!(parent
             .successor_plan(wrong_context, vec![next_raw], params)
             .is_err());
+        assert!(workspace::create_from_finalized_genesis_v1(
+            &next_plan,
+            input.workspace_id,
+            [9; 32],
+            params
+        )
+        .is_err());
+        let next_input = workspace::create_from_finalized_genesis_v1(
+            &next_plan,
+            input.workspace_id,
+            pin,
+            params,
+        )
+        .unwrap();
+        assert_eq!(
+            next_input,
+            workspace::create_from_finalized_genesis_v1(
+                &next_plan,
+                input.workspace_id,
+                pin,
+                params
+            )
+            .unwrap()
+        );
+        assert!(workspace::create_v1(&next_plan, params).is_err());
+        let next_result = workspace::execute_v1(chain, next_input.workspace_id, params).unwrap();
+        assert!(
+            next_result.aoem_called
+                && next_result.execution_completed
+                && next_result.candidate_state_persisted
+        );
+        assert!(!next_result.authority_state_published && !next_result.finalized);
+        assert_eq!(next_result.batch_result.snapshot_metadata.state_version, 2);
+        assert!(next_result.batch_result.per_tx_receipts[0].status_ok);
+        assert_eq!(
+            Some(next_result.clone()),
+            workspace::load_execution_v1(chain, next_input.workspace_id, params).unwrap()
+        );
+        assert_eq!(
+            next_result,
+            workspace::execute_v1(chain, next_input.workspace_id, params).unwrap()
+        );
+        let next_state: NovNativeExecutionStoreV1 = serde_json::from_value(
+            workspace::load_execution_snapshot_for_test_v1(chain, next_input.workspace_id, params)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(next_state.receipts.len(), parent.state().receipts.len() + 1);
+        for (hash, receipt) in &parent.state().receipts {
+            assert_eq!(next_state.receipts.get(hash), Some(receipt));
+        }
+        assert_eq!(
+            next_state
+                .module_state
+                .treasury_reserves
+                .values()
+                .copied()
+                .sum::<u128>(),
+            20 + next_state
+                .receipts
+                .values()
+                .map(|r| r.settled_fee_nov)
+                .sum::<u128>()
+        );
+        assert_eq!(
+            parent
+                .state()
+                .module_state
+                .treasury_reserves
+                .values()
+                .copied()
+                .sum::<u128>(),
+            10 + parent
+                .state()
+                .receipts
+                .values()
+                .map(|r| r.settled_fee_nov)
+                .sum::<u128>()
+        );
+        let next_block = workspace::load_block_artifact_v1(chain, next_input.workspace_id, params)
+            .unwrap()
+            .unwrap();
+        assert_eq!(next_block.block().header.height, 2);
+        assert_eq!(
+            next_block.block().header.parent_block_hash,
+            block.block().header.block_hash
+        );
+        assert!(next_block.fresh_genesis_identity().is_some());
+        assert!(
+            workspace::register_block_candidate_v1(chain, next_input.workspace_id, params).is_err()
+        );
+        assert!(workspace::register_genesis_block_candidate_v1(
+            chain,
+            next_input.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
         assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), promoted_head);
         assert_eq!(
             serde_json::to_value(parent.state()).unwrap(),
@@ -870,6 +968,17 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             params
         )
         .is_err());
+        assert!(workspace::create_from_finalized_genesis_v1(
+            &next_plan,
+            input.workspace_id,
+            pin,
+            params
+        )
+        .is_err()); // ready replay still requires live finality
+        assert_eq!(
+            Some(next_result.clone()),
+            workspace::load_execution_v1(chain, next_input.workspace_id, params).unwrap()
+        ); // archived isolated result is not live signing authority
         let db = rocksdb::DB::open_default(&ledger).unwrap();
         assert!(db.get(finality_pin_key).unwrap().is_none());
         db.put(finality_pin_key, original_pin).unwrap();

@@ -111,7 +111,7 @@ pub fn load_finalized_genesis_parent_v1(
     capture_finalized_parent_locked(&mut workspace, id, genesis, params)
 }
 
-fn capture_finalized_parent_locked(
+pub(in super::super) fn capture_finalized_parent_locked(
     workspace: &mut WorkspaceStore,
     id: [u8; 32],
     genesis: [u8; 32],
