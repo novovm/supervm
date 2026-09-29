@@ -127,7 +127,7 @@ fn run_cluster(
             assert_eq!(seal["signing_enabled"], false);
         }
         for field in ["finalized", "safe", "proof_sealed", "chain_canonical"] {
-            assert_eq!(seal[field], false);
+            assert_eq!(seal[field], fresh && expect_prepared);
         }
     }
 }
@@ -521,7 +521,8 @@ fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool) {
         "restart_preserved_qcs_and_unsealed_ledger":true,
         "fresh_authority_and_ledger_published":fresh,
         "late_fourth_node_caught_up_from_read_only_relays":fresh,
-        "proof_sealed":false,"chain_canonical":false,"safe":false,"finalized":false,
+        "proof_sealed":fresh,"chain_canonical":fresh,"safe":fresh,"finalized":fresh,
+        "finality_scope":"first_height_bft_decision_v3", "zero_knowledge_execution_proof":false,
         "physical_lan_executed":false,"public_network_executed":false
     })).unwrap()).unwrap();
 }

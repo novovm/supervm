@@ -102,7 +102,7 @@ impl NovNativeBlockLedgerV1 {
             .db
             .get(KEY_SCHEMA_V1)?
             .context("promotion schema missing")?;
-        if schema == PROMOTION_SCHEMA.as_bytes() || schema == PUBLISHED_SCHEMA.as_bytes() {
+        if schema == PROMOTION_SCHEMA.as_bytes() || is_published_schema(&schema) {
             return read(&ledger).map(Some);
         }
         Ok(None)
@@ -120,7 +120,7 @@ impl NovNativeBlockLedgerV1 {
             .db
             .get(KEY_SCHEMA_V1)?
             .context("promotion schema missing")?;
-        if schema != PROMOTION_SCHEMA.as_bytes() && schema != PUBLISHED_SCHEMA.as_bytes() {
+        if schema != PROMOTION_SCHEMA.as_bytes() && !is_published_schema(&schema) {
             bail!("fresh promotion requires a durable intent before authority publication");
         }
         read(&ledger)
@@ -156,7 +156,7 @@ impl NovNativeBlockLedgerV1 {
         };
         intent.validate(&ledger, &config, expected, namespace)?;
         if ledger.db.get(KEY_SCHEMA_V1)?.is_some_and(|schema| {
-            schema == PROMOTION_SCHEMA.as_bytes() || schema == PUBLISHED_SCHEMA.as_bytes()
+            schema == PROMOTION_SCHEMA.as_bytes() || is_published_schema(&schema)
         }) {
             if read(&ledger)? != intent {
                 bail!("another fresh promotion target is already durable");
@@ -188,7 +188,7 @@ impl NovNativeBlockLedgerV1 {
             Self::open_existing_read_only_inner_v1(path, true)?.context("fresh ledger missing")?;
         load_verified(&ledger, expected, namespace)?;
         if ledger.db.get(KEY_SCHEMA_V1)?.is_some_and(|schema| {
-            schema == PROMOTION_SCHEMA.as_bytes() || schema == PUBLISHED_SCHEMA.as_bytes()
+            schema == PROMOTION_SCHEMA.as_bytes() || is_published_schema(&schema)
         }) {
             bail!(
                 "pending fresh promotion requires recovery before signing, registration or abort"

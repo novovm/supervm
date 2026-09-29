@@ -152,7 +152,11 @@ impl NovNativeBlockLedgerV1 {
             .lock()
             .map_err(|_| anyhow::anyhow!("publication read lock poisoned"))?;
         load_verified(&ledger, genesis, namespace)?;
-        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() != Some(PUBLISHED_SCHEMA.as_bytes()) {
+        if !ledger
+            .db
+            .get(KEY_SCHEMA_V1)?
+            .is_some_and(|raw| is_published_schema(&raw))
+        {
             return Ok(None);
         }
         let intent = promotion::read(&ledger)?;
@@ -183,7 +187,7 @@ impl NovNativeBlockLedgerV1 {
             .db
             .get(KEY_SCHEMA_V1)?
             .context("completion schema missing")?;
-        if schema == PUBLISHED_SCHEMA.as_bytes() {
+        if is_published_schema(&schema) {
             return Ok(());
         }
         if schema != PROMOTION_SCHEMA.as_bytes() {
@@ -210,6 +214,9 @@ impl NovNativeBlockLedgerV1 {
         let ledger =
             Self::open_existing_read_only_inner_v1(path, true)?.context("fresh ledger missing")?;
         load_verified(&ledger, genesis, namespace)?;
-        Ok(ledger.db.get(KEY_SCHEMA_V1)?.as_deref() == Some(PUBLISHED_SCHEMA.as_bytes()))
+        Ok(ledger
+            .db
+            .get(KEY_SCHEMA_V1)?
+            .is_some_and(|raw| is_published_schema(&raw)))
     }
 }

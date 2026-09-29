@@ -2,6 +2,7 @@
 use super::*;
 #[path = "native_block_genesis_manifest.rs"]
 mod manifest;
+pub use manifest::NovNativeFreshFinalityProofV1;
 pub use manifest::NovNativeFreshPromotionIntentV1;
 
 pub(super) const RESERVED_SCHEMA: &str = "novovm-native-block-ledger/v1+genesis-reserved-v1";
@@ -17,7 +18,7 @@ pub(super) fn is_reserved_schema(raw: &[u8]) -> bool {
 pub(super) fn is_candidate_schema(raw: &[u8]) -> bool {
     raw == manifest::CANDIDATES_SCHEMA.as_bytes()
         || raw == manifest::PROMOTION_SCHEMA.as_bytes()
-        || raw == manifest::PUBLISHED_SCHEMA.as_bytes()
+        || manifest::is_published_schema(raw)
 }
 
 pub(super) fn has_reservation_evidence(db: &DB) -> Result<bool> {

@@ -1,7 +1,21 @@
 # Isolated candidate promotion protocol v1 — implementation contract
 
-Status: PARTIALLY IMPLEMENTED; authority promotion remains incomplete. Original audit baseline: `b049f25`.
-This is not production acceptance or permission to mark a block finalized.
+Status: first-height publication/finality implemented; continuous-height activation incomplete.
+Original audit baseline: `b049f25`. This is not production acceptance or permission
+to mark any block finalized without the full first-height verification below.
+
+Latest first-height implementation: a separate pinned finality record now stores
+the full V3 decision envelope and genesis-derived epoch authority. Validation
+checks the scheduled proposal, signatures/quorum, round/new-view dependencies,
+and exact decision equality with the selected promotion. Only after live AOEM
+readback and complete ledger publication can the coordinator persist the record.
+A distinct finalized capability marker fences older readers/writers. Replay and
+read-only evidence queries verify the manifest, candidate graph, selected intent,
+all block indexes and the complete finality proof; no signed header flag is edited.
+The main-node relay reports first-height BFT finality only after that verification.
+This is quorum-certified execution under the pinned validator set and its BFT
+fault assumptions, NOT a zero-knowledge execution proof. Subsequent heights,
+competing-workspace cleanup and hard-crash acceptance remain incomplete.
 
 Ledger-only prerequisite now implemented: `reserve_fresh_genesis_v1` atomically
 reserves an unused ledger with configuration commitments, an independent digest

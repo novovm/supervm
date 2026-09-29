@@ -63,6 +63,10 @@ impl FreshGenesisPublicationDriverV1 {
         }
         let certificate_hash = certificate.certificate_hash;
         let envelope = certificate_envelope(&store, certificate)?;
+        let proof = crate::native_block_ledger::NovNativeFreshFinalityProofV1 {
+            authority: config.authority.clone(),
+            witness: envelope.clone(),
+        };
         let Message::DecisionCertificateV3 {
             proposal,
             decision,
@@ -101,7 +105,7 @@ impl FreshGenesisPublicationDriverV1 {
         {
             bail!("publication output differs from configured identity");
         }
-        let report = workspace::resume_genesis_promotion_v1(
+        workspace::resume_genesis_promotion_v1(
             config.chain_id,
             id,
             pin,
@@ -109,6 +113,8 @@ impl FreshGenesisPublicationDriverV1 {
             ledger_path,
             params,
         )?;
+        let report =
+            workspace::finalize_genesis_promotion_v1(config.chain_id, id, pin, &proof, params)?;
         Ok(Some(Self {
             chain: config.chain_id,
             id,
@@ -190,8 +196,12 @@ impl FreshGenesisPublicationDriverV1 {
             "decision_certificate_hash":crate::native_block_seal::hex_v1(&self.certificate_hash),
             "phase":"PublishedCertificateRelay", "height":1,
             "publication":self.report, "queued_egress":self.sent,
-            "signing_enabled":false, "finalized":false, "safe":false,
-            "proof_sealed":false, "chain_canonical":false,
+            "signing_enabled":false, "finalized":!self.halted && self.report.finalized,
+            "safe":!self.halted && self.report.finalized,
+            "proof_sealed":!self.halted && self.report.finalized,
+            "chain_canonical":!self.halted && self.report.finalized,
+            "proof_kind":"bft_decision_v3_with_local_aoem_readback",
+            "zero_knowledge_execution_proof":false,
         })
     }
 }

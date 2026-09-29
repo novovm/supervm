@@ -1,6 +1,13 @@
 //! Publish only the verified, pinned candidate output. No NOV business tasks in
 //! AOEM and no re-execution. Ledger indexes may be completed under the same locks.
 use super::*;
+use crate::native_block_ledger::NovNativeFreshFinalityProofV1;
+
+enum PublicationScope<'a> {
+    Authority,
+    Ledger,
+    Finality(&'a NovNativeFreshFinalityProofV1),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GenesisPromotionPublicationV1 {
@@ -80,7 +87,15 @@ pub fn publish_genesis_promotion_v1(
     genesis: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<GenesisPromotionPublicationV1> {
-    run(chain, id, genesis, params, true, false, |_| Ok(()))
+    run(
+        chain,
+        id,
+        genesis,
+        params,
+        true,
+        PublicationScope::Authority,
+        |_| Ok(()),
+    )
 }
 
 /// Publish AOEM authority and atomically complete the durable block query indexes.
@@ -91,7 +106,34 @@ pub fn complete_genesis_promotion_v1(
     genesis: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<GenesisPromotionPublicationV1> {
-    run(chain, id, genesis, params, true, true, |_| Ok(()))
+    run(
+        chain,
+        id,
+        genesis,
+        params,
+        true,
+        PublicationScope::Ledger,
+        |_| Ok(()),
+    )
+}
+
+/// Verify the live published output and durably attach the complete BFT witness.
+pub fn finalize_genesis_promotion_v1(
+    chain: u64,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    proof: &NovNativeFreshFinalityProofV1,
+    params: &serde_json::Value,
+) -> Result<GenesisPromotionPublicationV1> {
+    run(
+        chain,
+        id,
+        genesis,
+        params,
+        false,
+        PublicationScope::Finality(proof),
+        |_| Ok(()),
+    )
 }
 
 /// Full readback without AOEM writes or repairs, under both persistence locks.
@@ -101,7 +143,15 @@ pub fn verify_genesis_promotion_v1(
     genesis: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<GenesisPromotionPublicationV1> {
-    run(chain, id, genesis, params, false, false, |_| Ok(()))
+    run(
+        chain,
+        id,
+        genesis,
+        params,
+        false,
+        PublicationScope::Authority,
+        |_| Ok(()),
+    )
 }
 
 #[cfg(test)]
@@ -112,7 +162,15 @@ pub(crate) fn publish_with_checkpoint_v1(
     params: &serde_json::Value,
     checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
 ) -> Result<GenesisPromotionPublicationV1> {
-    run(chain, id, genesis, params, true, false, checkpoint)
+    run(
+        chain,
+        id,
+        genesis,
+        params,
+        true,
+        PublicationScope::Authority,
+        checkpoint,
+    )
 }
 
 #[cfg(test)]
@@ -123,7 +181,15 @@ pub(crate) fn complete_with_checkpoint_v1(
     params: &serde_json::Value,
     checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
 ) -> Result<GenesisPromotionPublicationV1> {
-    run(chain, id, genesis, params, true, true, checkpoint)
+    run(
+        chain,
+        id,
+        genesis,
+        params,
+        true,
+        PublicationScope::Ledger,
+        checkpoint,
+    )
 }
 
 fn run(
@@ -132,7 +198,7 @@ fn run(
     genesis: [u8; 32],
     params: &serde_json::Value,
     allow_write: bool,
-    complete_ledger: bool,
+    scope: PublicationScope<'_>,
     checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
 ) -> Result<GenesisPromotionPublicationV1> {
     let mut workspace = WorkspaceStore::open(chain, params)?;
@@ -261,7 +327,7 @@ fn run(
         return Err(error).context("promotion readback failed; inspect before further publication");
     }
     let ledger_path = nov_native_block_ledger_rocksdb_path_v1(&native_path);
-    if complete_ledger {
+    if matches!(scope, PublicationScope::Ledger) {
         checkpoint(PromotionCheckpointV1::BeforeLedgerCommit)?;
         NovNativeBlockLedgerV1::complete_fresh_genesis_ledger_v1(
             &ledger_path,
@@ -270,6 +336,9 @@ fn run(
             &intent,
         )?;
         checkpoint(PromotionCheckpointV1::AfterLedgerCommit)?;
+    }
+    if let PublicationScope::Finality(proof) = scope {
+        NovNativeBlockLedgerV1::finalize_fresh_genesis_v1(&ledger_path, genesis, namespace, proof)?;
     }
     let ledger_publication_completed = NovNativeBlockLedgerV1::fresh_genesis_ledger_published_v1(
         &ledger_path,
@@ -287,6 +356,11 @@ fn run(
         aoem_authority_published: true,
         aoem_readback_verified: true,
         ledger_publication_completed,
-        finalized: false,
+        finalized: NovNativeBlockLedgerV1::load_fresh_genesis_finality_v1(
+            &ledger_path,
+            genesis,
+            namespace,
+        )?
+        .is_some(),
     })
 }

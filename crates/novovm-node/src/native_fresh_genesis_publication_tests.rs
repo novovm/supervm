@@ -644,6 +644,133 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             params
         )
         .is_err());
+        use crate::native_block_ledger::NovNativeFreshFinalityProofV1;
+        use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1 as Message;
+        use crate::native_block_seal_overlay::{
+            NovNativeSealEpochAuthorityV1, NovNativeSealValidatorTransportBindingV1,
+        };
+        let authority = NovNativeSealEpochAuthorityV1::derive_operator_pinned_fresh_genesis_epoch(
+            &config,
+            pin,
+            compiled
+                .validator_set()
+                .validators
+                .iter()
+                .map(|v| NovNativeSealValidatorTransportBindingV1 {
+                    validator_id: v.validator_id,
+                    transport_peer_id: novovm_network::peer_id_from_ed25519_public_key_v1(
+                        &v.public_key,
+                    ),
+                })
+                .collect(),
+        )
+        .unwrap();
+        let store = crate::native_block_seal::NovNativeBlockSealStoreV1::open_existing_read_only(
+            &seal_path,
+        )
+        .unwrap()
+        .unwrap();
+        let proposal = store
+            .load_proposal(intent.decision.prepare.proposal_hash)
+            .unwrap()
+            .unwrap();
+        let proof = NovNativeFreshFinalityProofV1 {
+            authority,
+            witness: Message::DecisionCertificateV3 {
+                proposal: Box::new(proposal),
+                decision: Box::new(intent.decision.clone()),
+                certificate: None,
+            },
+        };
+        drop(store);
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_finality_v1(&ledger, pin, namespace)
+                .unwrap()
+                .is_none()
+        );
+        let mut invalid = proof.clone();
+        if let Message::DecisionCertificateV3 { decision, .. } = &mut invalid.witness {
+            decision.votes.truncate(2);
+        }
+        assert!(workspace::finalize_genesis_promotion_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            &invalid,
+            params
+        )
+        .is_err());
+        let mut invalid = proof.clone();
+        invalid.authority.genesis_block_hash[0] ^= 1;
+        assert!(workspace::finalize_genesis_promotion_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            &invalid,
+            params
+        )
+        .is_err());
+        assert!(
+            !workspace::verify_genesis_promotion_v1(chain, input.workspace_id, pin, params)
+                .unwrap()
+                .finalized
+        );
+        let finalized = workspace::finalize_genesis_promotion_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            &proof,
+            params,
+        )
+        .unwrap();
+        assert!(finalized.finalized && finalized.ledger_publication_completed);
+        assert_eq!(
+            finalized,
+            workspace::verify_genesis_promotion_v1(chain, input.workspace_id, pin, params).unwrap()
+        );
+        assert_eq!(
+            finalized,
+            workspace::finalize_genesis_promotion_v1(
+                chain,
+                input.workspace_id,
+                pin,
+                &proof,
+                params
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_finality_v1(&ledger, pin, namespace)
+                .unwrap(),
+            Some(proof.clone())
+        );
+        assert_eq!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(&ledger, pin, namespace)
+                .unwrap()
+                .as_ref(),
+            Some(block.block())
+        );
+        assert!(!block.block().header.finalized); // Original signed artifact is immutable.
+        let db = rocksdb::DB::open_default(&ledger).unwrap();
+        let finality_pin_key = b"native_block_ledger/v1/genesis/finality-pin";
+        let original_pin = db.get(finality_pin_key).unwrap().unwrap();
+        db.delete(finality_pin_key).unwrap();
+        drop(db);
+        assert!(
+            workspace::verify_genesis_promotion_v1(chain, input.workspace_id, pin, params).is_err()
+        );
+        assert!(workspace::finalize_genesis_promotion_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            &proof,
+            params
+        )
+        .is_err());
+        let db = rocksdb::DB::open_default(&ledger).unwrap();
+        assert!(db.get(finality_pin_key).unwrap().is_none());
+        db.put(finality_pin_key, original_pin).unwrap();
+        drop(db);
         let mut corrupt = promoted_head.clone();
         corrupt[0] ^= 1;
         change(

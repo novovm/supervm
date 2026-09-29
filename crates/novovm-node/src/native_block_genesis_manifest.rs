@@ -5,6 +5,9 @@ use crate::tx_ingress::fresh_genesis::FreshGenesisConfigV1;
 mod candidates;
 #[path = "native_block_genesis_completion.rs"]
 mod completion;
+#[path = "native_block_genesis_finality.rs"]
+mod finality;
+pub use finality::NovNativeFreshFinalityProofV1;
 #[path = "native_block_genesis_promotion.rs"]
 mod promotion;
 pub use promotion::NovNativeFreshPromotionIntentV1;
@@ -16,6 +19,10 @@ pub(super) const CANDIDATES_SCHEMA: &str =
 pub(super) const PROMOTION_SCHEMA: &str =
     "novovm-native-block-ledger/v1+genesis-promotion-intent-v1";
 pub(super) const PUBLISHED_SCHEMA: &str = "novovm-native-block-ledger/v1+genesis-published-v1";
+pub(super) const FINALIZED_SCHEMA: &str = "novovm-native-block-ledger/v1+genesis-finalized-v1";
+pub(super) fn is_published_schema(raw: &[u8]) -> bool {
+    raw == PUBLISHED_SCHEMA.as_bytes() || raw == FINALIZED_SCHEMA.as_bytes()
+}
 const KEY_MANIFEST: &[u8] = b"native_block_ledger/v1/genesis/manifest";
 const KEY_MANIFEST_PIN: &[u8] = b"native_block_ledger/v1/genesis/manifest-pin";
 
@@ -42,7 +49,7 @@ fn load_verified(
     if schema != MANIFEST_SCHEMA.as_bytes()
         && schema != CANDIDATES_SCHEMA.as_bytes()
         && schema != PROMOTION_SCHEMA.as_bytes()
-        && schema != PUBLISHED_SCHEMA.as_bytes()
+        && !is_published_schema(&schema)
     {
         bail!("complete genesis manifest reservation is required; no implicit upgrade");
     }
@@ -78,13 +85,16 @@ fn load_verified(
     if schema != MANIFEST_SCHEMA.as_bytes() {
         allowed_keys.extend(candidates::validated_keys(ledger, &config)?);
     }
-    if schema == PROMOTION_SCHEMA.as_bytes() || schema == PUBLISHED_SCHEMA.as_bytes() {
+    if schema == PROMOTION_SCHEMA.as_bytes() || is_published_schema(&schema) {
         allowed_keys.extend(promotion::validated_keys(
             ledger, &config, expected, namespace,
         )?);
     }
-    if schema == PUBLISHED_SCHEMA.as_bytes() {
+    if is_published_schema(&schema) {
         allowed_keys.extend(completion::validated_keys(ledger)?);
+    }
+    if schema == FINALIZED_SCHEMA.as_bytes() {
+        allowed_keys.extend(finality::validated_keys(ledger, &config)?);
     }
     for entry in ledger.db.iterator(rocksdb::IteratorMode::Start) {
         let (key, _) = entry?;
