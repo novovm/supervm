@@ -4,6 +4,9 @@ use novovm_node::native_candidate_plan::NovNativeCandidateExecutionPlanV1;
 use std::{io::Read, path::PathBuf};
 
 const MODE: &str = "native_candidate_execute";
+const FRESH_MODE: &str = "native_fresh_genesis_prepare";
+const GENESIS_PATH: &str = "NOVOVM_NATIVE_FRESH_GENESIS_CONFIG_PATH";
+const GENESIS_PIN: &str = "NOVOVM_NATIVE_FRESH_GENESIS_CONFIG_COMMITMENT";
 const PLAN_PATH: &str = "NOVOVM_NATIVE_CANDIDATE_PLAN_PATH";
 const PLAN_PIN: &str = "NOVOVM_NATIVE_CANDIDATE_PLAN_COMMITMENT";
 // JSON byte arrays expand the 2 MiB binary body; never read an unbounded file.
@@ -12,7 +15,16 @@ const MAX_PLAN_BYTES: u64 = 16 * 1024 * 1024;
 pub(super) fn selected(mode: &str, query_selected: bool) -> Result<bool> {
     let path = std::env::var_os(PLAN_PATH);
     let pin = std::env::var_os(PLAN_PIN);
-    if !mode.eq_ignore_ascii_case(MODE) {
+    let fresh = mode.eq_ignore_ascii_case(FRESH_MODE);
+    let genesis_path = std::env::var_os(GENESIS_PATH);
+    let genesis_pin = std::env::var_os(GENESIS_PIN);
+    if !fresh && (genesis_path.is_some() || genesis_pin.is_some()) {
+        bail!("fresh genesis configuration requires native_fresh_genesis_prepare mode");
+    }
+    if fresh && (genesis_path.is_none() || genesis_pin.is_none()) {
+        bail!("fresh genesis preparation requires explicit config path and commitment");
+    }
+    if !mode.eq_ignore_ascii_case(MODE) && !fresh {
         if path.is_some() || pin.is_some() {
             bail!("candidate plan configuration requires native_candidate_execute mode");
         }
@@ -76,10 +88,70 @@ pub(super) fn run(params: &serde_json::Value) -> Result<()> {
         params,
     )?;
     let _session = novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
+    if std::env::var("NOVOVM_NODE_MODE").is_ok_and(|mode| mode.eq_ignore_ascii_case(FRESH_MODE)) {
+        return prepare_fresh_genesis(&plan, params);
+    }
     novovm_node::tx_ingress::recover_nov_native_host_projection_from_aoem_v1(params)?;
     novovm_node::tx_ingress::recover_nov_native_block_ledger_from_aoem_v1(params)?;
     let output =
         novovm_node::tx_ingress::run_nov_native_candidate_execution_plan_v1(&plan, params)?;
     println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+fn prepare_fresh_genesis(
+    plan: &NovNativeCandidateExecutionPlanV1,
+    params: &serde_json::Value,
+) -> Result<()> {
+    use novovm_node::tx_ingress::{candidate_workspace as workspace, fresh_genesis};
+    let path = PathBuf::from(std::env::var_os(GENESIS_PATH).context("genesis path missing")?);
+    let file = std::fs::File::open(path)?;
+    if !file.metadata()?.is_file() {
+        bail!("fresh genesis configuration must be a regular file");
+    }
+    let mut bytes = Vec::new();
+    file.take(1024 * 1024 + 1).read_to_end(&mut bytes)?;
+    let config = fresh_genesis::FreshGenesisConfigV1::from_json(&bytes)?;
+    let compiled = config.compile()?;
+    let pin = compiled.config_commitment();
+    let expected = std::env::var(GENESIS_PIN).context("genesis commitment missing")?;
+    let actual = pin.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    if expected != actual {
+        bail!("fresh genesis configuration does not match operator pin");
+    }
+    if config.chain_id != plan.context.chain_id
+        || config.protocol_config_commitment != plan.protocol_config_commitment
+        || plan.context.block_height != 1
+        || plan.context.parent_block_hash != [0; 32]
+        || plan.context.timestamp_unix_ms < config.timestamp_unix_ms
+        || plan.aoem_parent.is_some()
+        || plan.pre_state_root != compiled.state_root()
+    {
+        bail!("first candidate plan does not match fresh genesis");
+    }
+    let genesis = fresh_genesis::publication::initialize_v1(&config, pin, params)?;
+    let input = workspace::create_from_genesis_v1(plan, pin, params)?;
+    let execution = workspace::execute_v1(config.chain_id, input.workspace_id, params)?;
+    let candidate = workspace::register_genesis_block_candidate_v1(
+        config.chain_id,
+        input.workspace_id,
+        pin,
+        params,
+    )?;
+    let artifact = workspace::load_block_artifact_v1(config.chain_id, input.workspace_id, params)?
+        .context("registered fresh candidate artifact missing")?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "mode": FRESH_MODE,
+            "genesis": genesis,
+            "workspace_id": input.workspace_id,
+            "execution": execution,
+            "candidate": candidate,
+            "durable_block_candidate": artifact.block(),
+            "finalized": false,
+            "chain_canonical": false,
+        }))?
+    );
     Ok(())
 }

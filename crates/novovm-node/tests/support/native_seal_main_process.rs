@@ -47,6 +47,7 @@ fn run_cluster(
     ticks: u64,
     expect_prepared: bool,
     decision_v3: bool,
+    fresh: bool,
 ) {
     let mut children = Vec::new();
     for &index in active {
@@ -89,16 +90,32 @@ fn run_cluster(
         let error = fs::read_to_string(nodes[index].0.join(format!("{label}.stderr.log"))).unwrap();
         assert_eq!(
             status.success(),
-            expect_prepared,
+            expect_prepared || fresh,
             "node {index}: {error}\n{text}"
         );
-        if !expect_prepared {
+        if !expect_prepared && !fresh {
             assert!(error.contains("without a prepare QC"), "{error}");
         }
         // Startup prints one status line; final summary is the remaining JSON.
-        let start = text.find("\n{").expect("final main-node JSON summary") + 1;
-        let summary: Value = serde_json::from_str(&text[start..]).unwrap();
-        let seal = &summary["product_mainline_overlay"]["native_seal"];
+        let summary: Value = if fresh {
+            serde_json::from_str(
+                text.lines()
+                    .find_map(|line| {
+                        line.strip_prefix("native_fresh_genesis_confirmation_summary: ")
+                    })
+                    .expect("fresh main-process summary"),
+            )
+            .unwrap()
+        } else {
+            let start = text.find("\n{").expect("final main-node JSON summary") + 1;
+            serde_json::from_str(&text[start..]).unwrap()
+        };
+        let seal = if fresh {
+            assert_eq!(summary["ordinary_execution_enabled"], false);
+            &summary["native_seal_service"]
+        } else {
+            &summary["product_mainline_overlay"]["native_seal"]
+        };
         assert_eq!(seal["prepared"], expect_prepared);
         assert_eq!(seal["decision_v3_enabled"], decision_v3);
         assert_eq!(seal["decision_confirmed"], decision_v3 && expect_prepared);
@@ -112,31 +129,61 @@ fn run_cluster(
 #[test]
 #[ignore = "requires exclusive loopback 127.0.0.2:443; run explicitly on a prepared host"]
 fn real_aoem_main_nodes_prepare_three_of_four_and_recover() {
-    run_real_aoem_main_nodes(false);
+    run_real_aoem_main_nodes(false, false);
 }
 
 #[test]
 #[ignore = "requires exclusive loopback 127.0.0.2:443; run explicitly on a prepared host"]
 fn real_aoem_main_nodes_decision_v3_three_of_four_and_recover() {
-    run_real_aoem_main_nodes(true);
+    run_real_aoem_main_nodes(true, false);
 }
 
-fn run_real_aoem_main_nodes(decision_v3: bool) {
+#[test]
+#[ignore = "requires exclusive loopback 127.0.0.2:443; run explicitly on a prepared host"]
+fn fresh_genesis_main_nodes_confirm_three_of_four_and_recover() {
+    run_real_aoem_main_nodes(true, true);
+}
+
+fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool) {
     let reserve = std::net::TcpListener::bind("127.0.0.2:443")
         .expect("exclusive loopback 443 required; do not stop other services");
-    let (source, block, plan) = source_candidate();
-    let mut nodes = vec![source];
-    for index in 1..4 {
-        let node = Node::funded(&format!("seal-validator-{index}"));
-        let out = node.execute(&plan, "candidate");
-        let actual: NovNativeDurableBlockV1 =
-            serde_json::from_value(out["durable_block_candidate_committed"].clone()).unwrap();
-        assert_eq!(actual, block);
-        nodes.push(node);
-    }
+    let (genesis, fresh_plan) = super::native_fresh_genesis_cli::inputs();
+    let mut fresh_outputs = Vec::new();
+    let (nodes, block) = if fresh {
+        let mut nodes = Vec::new();
+        for index in 0..4 {
+            let node = Node::new(&format!("fresh-validator-{index}"));
+            let result = node.run(
+                &mut super::native_fresh_genesis_cli::prepare_command(&node, &genesis, &fresh_plan),
+                "prepare",
+            );
+            assert!(result.0, "{}", result.2);
+            let output: Value = serde_json::from_str(&result.1).unwrap();
+            fresh_outputs.push(output);
+            nodes.push(node);
+        }
+        let block: NovNativeDurableBlockV1 =
+            serde_json::from_value(fresh_outputs[0]["durable_block_candidate"].clone()).unwrap();
+        assert!(fresh_outputs.iter().all(
+            |out| out["durable_block_candidate"] == fresh_outputs[0]["durable_block_candidate"]
+        ));
+        (nodes, block)
+    } else {
+        let (source, block, plan) = source_candidate();
+        let mut nodes = vec![source];
+        for index in 1..4 {
+            let node = Node::funded(&format!("seal-validator-{index}"));
+            let out = node.execute(&plan, "candidate");
+            let actual: NovNativeDurableBlockV1 =
+                serde_json::from_value(out["durable_block_candidate_committed"].clone()).unwrap();
+            assert_eq!(actual, block);
+            nodes.push(node);
+        }
+        (nodes, block)
+    };
     // Test-only disposable identities; signing and transport use different keys.
     let keys: Vec<_> = (0..4)
-        .map(|i| SigningKey::from_bytes(&[151 + i; 32]))
+        .map(|i| SigningKey::from_bytes(&[if fresh { 1 + i } else { 151 + i }; 32]))
         .collect();
     let transport: Vec<_> = (0..4)
         .map(|i| SigningKey::from_bytes(&[161 + i; 32]))
@@ -150,25 +197,41 @@ fn run_real_aoem_main_nodes(decision_v3: bool) {
         .map(|k| peer_id_from_ed25519_public_key_v1(k.verifying_key().as_bytes()))
         .collect();
     let set = NovNativeSealValidatorSetV1::new(CHAIN, 1, 1, validators.clone()).unwrap();
-    let authority = NovNativeSealEpochAuthorityV1::derive_operator_pinned_genesis_epoch(
-        &nodes[0].ledger(),
-        set,
-        validators
-            .iter()
-            .enumerate()
-            .map(|(i, v)| NovNativeSealValidatorTransportBindingV1 {
-                validator_id: v.validator_id,
-                transport_peer_id: peer_ids[i].clone(),
-            })
-            .collect(),
-    )
+    let bindings = validators
+        .iter()
+        .enumerate()
+        .map(|(i, v)| NovNativeSealValidatorTransportBindingV1 {
+            validator_id: v.validator_id,
+            transport_peer_id: peer_ids[i].clone(),
+        })
+        .collect();
+    let authority = if fresh {
+        NovNativeSealEpochAuthorityV1::derive_operator_pinned_fresh_genesis_epoch(
+            &genesis,
+            genesis.compile().unwrap().config_commitment(),
+            bindings,
+        )
+    } else {
+        NovNativeSealEpochAuthorityV1::derive_operator_pinned_genesis_epoch(
+            &nodes[0].ledger(),
+            set,
+            bindings,
+        )
+    }
     .unwrap();
     let leader = authority.expected_leader(1, 0).unwrap();
     let leader_index = validators
         .iter()
         .position(|v| v.validator_id == leader)
         .unwrap();
-    let active: Vec<_> = (0..4).filter(|i| *i != leader_index).collect();
+    let active: Vec<_> = if fresh {
+        std::iter::once(leader_index)
+            .chain((0..4).filter(|i| *i != leader_index))
+            .take(3)
+            .collect()
+    } else {
+        (0..4).filter(|i| *i != leader_index).collect()
+    };
 
     let root = Node::new("seal-relay").0;
     let certificate = rcgen::generate_simple_self_signed(vec!["127.0.0.2".into()]).unwrap();
@@ -265,9 +328,28 @@ fn run_real_aoem_main_nodes(decision_v3: bool) {
             "block_hash":hex(&block.header.block_hash),"authority_path":"authority.json", "signer_key_path":"signer.hex",
             "seal_store_path":"seal-db","round_timeout_ms":15000,"poll_interval_ms":100,
             "ingress_per_source_per_second":8,"ingress_per_poll":16})).unwrap()).unwrap();
+        if fresh {
+            let path = node.0.join("seal.json");
+            let mut config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            config["fresh_genesis_config_commitment"] =
+                serde_json::json!(hex(&genesis.compile().unwrap().config_commitment()));
+            let id: [u8; 32] =
+                serde_json::from_value(fresh_outputs[i]["workspace_id"].clone()).unwrap();
+            config["isolated_workspace_id"] = serde_json::json!(hex(&id));
+            config["round_timeout_ms"] = serde_json::json!(300000);
+            fs::write(path, serde_json::to_vec(&config).unwrap()).unwrap();
+        }
     }
     // Same fixed four-member authority throughout. No fake clock or test-driver votes.
-    run_cluster(&nodes, &active[..2], "two-of-four", 70, false, decision_v3);
+    run_cluster(
+        &nodes,
+        &active[..2],
+        "two-of-four",
+        if fresh { 4 } else { 70 },
+        false,
+        decision_v3,
+        fresh,
+    );
     for &index in &active[..2] {
         let store =
             NovNativeBlockSealStoreV1::open_existing_read_only(&nodes[index].0.join("seal-db"))
@@ -279,7 +361,15 @@ fn run_real_aoem_main_nodes(decision_v3: bool) {
             .unwrap()
             .is_none());
     }
-    run_cluster(&nodes, &active, "three-of-four", 100, true, decision_v3);
+    run_cluster(
+        &nodes,
+        &active,
+        "three-of-four",
+        if fresh { 32 } else { 100 },
+        true,
+        decision_v3,
+        fresh,
+    );
     let mut previous_qcs = Vec::new();
     let mut previous_decisions = Vec::new();
     for &index in &active {
@@ -311,16 +401,34 @@ fn run_real_aoem_main_nodes(decision_v3: bool) {
             assert_eq!(certificate.votes.len(), 3);
         }
         previous_decisions.push(decision);
-        assert_eq!(
-            nodes[index]
-                .ledger()
-                .load_by_height(CHAIN, 1)
-                .unwrap()
-                .unwrap(),
-            block
-        );
+        if !fresh {
+            assert_eq!(
+                nodes[index]
+                    .ledger()
+                    .load_by_height(CHAIN, 1)
+                    .unwrap()
+                    .unwrap(),
+                block
+            );
+        }
     }
-    run_cluster(&nodes, &active, "restart", 12, true, decision_v3);
+    if fresh {
+        let expected = previous_decisions[0].as_ref().unwrap().certificate_hash;
+        assert!(previous_decisions.iter().all(|decision| decision
+            .as_ref()
+            .unwrap()
+            .certificate_hash
+            == expected));
+    }
+    run_cluster(
+        &nodes,
+        &active,
+        "restart",
+        if fresh { 3 } else { 12 },
+        true,
+        decision_v3,
+        fresh,
+    );
     for (offset, &index) in active.iter().enumerate() {
         let store =
             NovNativeBlockSealStoreV1::open_existing_read_only(&nodes[index].0.join("seal-db"))
@@ -336,20 +444,37 @@ fn run_real_aoem_main_nodes(decision_v3: bool) {
                 .unwrap(),
             previous_decisions[offset]
         );
-        assert_eq!(
-            nodes[index]
-                .ledger()
-                .load_by_height(CHAIN, 1)
-                .unwrap()
-                .unwrap(),
-            block
-        );
+        if !fresh {
+            assert_eq!(
+                nodes[index]
+                    .ledger()
+                    .load_by_height(CHAIN, 1)
+                    .unwrap()
+                    .unwrap(),
+                block
+            );
+        } else {
+            assert!(!nodes[index].0.join("native.json").exists());
+            let result = nodes[index].run(
+                &mut super::native_fresh_genesis_cli::prepare_command(
+                    &nodes[index],
+                    &genesis,
+                    &fresh_plan,
+                ),
+                "verify-authority",
+            );
+            assert!(result.0, "{}", result.2);
+            assert_eq!(
+                serde_json::from_str::<Value>(&result.1).unwrap(),
+                fresh_outputs[index]
+            );
+        }
     }
     fs::write(root.join("acceptance.json"), serde_json::to_vec_pretty(&serde_json::json!({
-        "scope":if decision_v3 { "local_real_aoem_main_process_decision_v3" } else { "local_real_aoem_main_process_prepare_qc" },
+        "scope":if fresh { "local_fresh_genesis_main_process_decision_v3" } else if decision_v3 { "local_real_aoem_main_process_decision_v3" } else { "local_real_aoem_main_process_prepare_qc" },
         "chain_id":CHAIN, "height":1, "block_hash":hex(&block.header.block_hash),
-        "validator_count":4, "offline_initial_leader_index":leader_index, "active_validator_indices":active,
-        "round_timeout_ms":15000, "tick_interval_ms":250,
+        "validator_count":4, "offline_initial_leader_index":if fresh { None } else { Some(leader_index) }, "active_validator_indices":active,
+        "round_timeout_ms":if fresh { 300000 } else { 15000 }, "tick_interval_ms":250,
         "node_evidence_paths":nodes.iter().map(|node| &node.0).collect::<Vec<_>>(),
         "two_of_four_persisted_qc_count":0, "three_of_four_qcs":previous_qcs,
         "decision_v3_enabled":decision_v3, "three_of_four_decisions":previous_decisions,

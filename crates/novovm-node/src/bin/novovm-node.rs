@@ -43558,6 +43558,7 @@ fn run_fresh_genesis_confirmation_v1(
     max_ticks: u64,
     interval_ms: u64,
 ) -> Result<()> {
+    let _session_scope = novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
     if !config.is_fresh_genesis() {
         bail!("fresh genesis startup requires an explicit genesis configuration");
     }
@@ -43679,12 +43680,24 @@ fn run_native_execution_tick_node_mode_v1(
         .as_ref()
         .is_some_and(|config| config.is_fresh_genesis())
     {
-        return run_fresh_genesis_confirmation_v1(
-            seal_config.context("fresh genesis seal configuration missing")?,
-            &startup_recovery_params,
-            max_ticks,
-            interval_ms,
-        );
+        let config = seal_config.context("fresh genesis seal configuration missing")?;
+        // Windows' main stack is smaller than the bounded genesis/candidate
+        // verification call chain in debug builds. One joined lifecycle thread
+        // supplies an explicit stack; this is not a transaction worker pool.
+        return std::thread::Builder::new()
+            .name("fresh-genesis-confirmation".into())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || {
+                run_fresh_genesis_confirmation_v1(
+                    config,
+                    &startup_recovery_params,
+                    max_ticks,
+                    interval_ms,
+                )
+            })
+            .context("start fresh genesis confirmation lifecycle")?
+            .join()
+            .map_err(|_| anyhow::anyhow!("fresh genesis confirmation lifecycle panicked"))?;
     }
     apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
     verify_native_business_protocol_config_pin_for_aoem_production_v1(&startup_recovery_params)

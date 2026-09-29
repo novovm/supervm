@@ -114,11 +114,47 @@ fn retained_authority_locks() -> &'static Mutex<Vec<NovNativeExecutionStoreWrite
     LOCKS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-/// Library-only, explicit opt-in. Requires a complete durable manifest already
-/// reserved at the normal ledger path. Uses a new, exclusively claimed AOEM DB;
-/// never imports Host state or overwrites an existing transaction authority.
-/// Until activation/recovery integration exists, ordinary startup must reject
-/// both the reserved ledger and this distinct authority-head codec.
+/// Explicit operator initialization. The reservation and AOEM publication are
+/// independently replayable; this never imports an existing Host snapshot.
+pub fn initialize_v1(
+    config: &FreshGenesisConfigV1,
+    expected_config: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<GenesisPublicationV1> {
+    validate_native_persistence_path_isolation_v1(params)?;
+    let compiled = config.compile()?;
+    if compiled.config_commitment() != expected_config {
+        bail!("fresh genesis configuration does not match operator pin");
+    }
+    let gates = tx_ingress_aoem_ownership_gates_from_params_v1(params);
+    if !gates.explicit || !(gates.production_candidate || gates.semantic_graph_v3_required) {
+        bail!("fresh genesis initialization requires explicit AOEM ownership");
+    }
+    let protocol = parse_fixed_hex_32_v1(
+        &verify_required_native_business_protocol_config_pin_v1()?,
+        "genesis protocol",
+    )?;
+    if config.protocol_config_commitment != protocol {
+        bail!("fresh genesis protocol does not match local runtime");
+    }
+    let native_path = resolve_native_execution_store_path_from_params_v1(params)
+        .context("fresh genesis requires an explicit native execution store path")?;
+    let namespace = parse_fixed_hex_32_v1(
+        &native_aoem_owned_state_namespace_digest_v1(params, config.chain_id),
+        "genesis namespace",
+    )?;
+    NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(
+        &nov_native_block_ledger_rocksdb_path_v1(&native_path),
+        config,
+        expected_config,
+        namespace,
+    )?;
+    publish_v1(config.chain_id, expected_config, params)
+}
+
+/// Publish an already reserved complete manifest to an exclusively claimed AOEM
+/// DB. Never import Host state or overwrite an existing transaction authority.
+/// Ordinary startup remains fenced; the explicit first-candidate service is separate.
 pub fn publish_v1(
     chain_id: u64,
     expected_config: [u8; 32],

@@ -17,12 +17,26 @@
 
 ## 当前结论
 
+新增显式操作入口 `NOVOVM_NODE_MODE=native_fresh_genesis_prepare`：需要
+`NOVOVM_NATIVE_FRESH_GENESIS_CONFIG_PATH`、`NOVOVM_NATIVE_FRESH_GENESIS_CONFIG_COMMITMENT`
+以及现有 `NOVOVM_NATIVE_CANDIDATE_PLAN_PATH` / `NOVOVM_NATIVE_CANDIDATE_PLAN_COMMITMENT`。
+沿用 AOEM 生产所有权、协议承诺和独立存储配置，校验配置/计划后预约创世、发布
+AOEM 创世状态、执行并登记首块；不导入旧 Host 账本、不替用户生成生产经济参数或密钥。
+返回 workspace ID 与完整候选，可用于现有 fresh-genesis seal 服务配置。
+真实子进程验证空目录准备、退出后重放结果一致、错误 pin 无账本写入、已有 Host
+账本保留且拒绝导入。普通 CLI 回归 5 passed / 3 ignored（44.50 秒）。
+实际四节点测试另行显式执行：四个独立 AOEM 库、四成员验证集，2/4 无 QC，
+3/4 形成相同哈希的 V3 凭证，重启保存凭证与未晋升创世状态（最终复跑 95.52 秒）。测试发现并修复
+Windows 主线程栈溢出；仅确认循环使用 8 MiB 栈的单个 joined 生命周期线程，
+没有引入 Host 交易并发调度。该证据为本机 WSS/真实主进程，不是实体四机或公网。
+**尚未完成：候选状态晋升、正式 ledger head/索引发布、连续出块和崩溃恢复闭环。**
+
 主程序新创世接线：`native_execution_pipeline` 在显式 fresh-genesis seal 配置下，
 完成原有路径隔离检查后直接进入首块确认循环，不再先调用旧 Host/ledger 恢复。
 仍由 `open_configured` 与每次 poll 核验实时 AOEM/候选；只接收 NativeSeal，
 不执行普通交易、不发交易交付 ACK、不写虚构的 selected head。沿用 tick 次数/间隔，
-输出启动、首次确认和结束状态。此分支只服务已经执行登记的首块，未实现自动初始化、
-状态晋升或连续出块；新主进程分支端到端测试尚未执行。
+输出启动、首次确认和结束状态。此分支只服务已经执行登记的首块，不隐式初始化、
+晋升状态或连续出块；显式准备命令与主进程测试见上方最新记录。
 新创世库测试 16 passed（49.95 秒），主程序编译、lib/bin/tests 严格 Clippy 通过。
 
 最新服务接线：显式配置创世承诺后，服务可为已执行的创世首块启动并签名；
@@ -33,12 +47,12 @@
 此处不是完整主进程创世启动或最终性晋升完成。
 广义 `timeout` 过滤回归 16 passed / 1 failed：
 `ledger_final_missing_enqueued_overlap_cannot_timeout_without_admission` 在入池 fixture
-报 nonce identity scheme 为空；本次未修改该入口，尚未基线复跑确认，不能声称全测通过。
+报 nonce identity scheme 为空；这是历史失败记录，后续修复及复跑如下。
 该失败后续已定位并修复：四处补齐/入池 fixture 创建临时账本却传入空参数，
 导致入口读取默认账本。现在显式传入各自的 `native_execution_store_path`，
 不放宽任何生产 nonce 校验。`ledger_final_missing` 3 passed，`timeout` 17 passed
-（55.69 秒）；主程序实际构建与 lib/tests 严格 Clippy 通过。新创世主进程端到端
-验证仍未执行，不能由这些回归替代。
+（55.69 秒）；主程序实际构建与 lib/tests 严格 Clippy 通过。这些回归与上方
+另行执行的新创世主进程验证分开计证。
 CI `36571622688` 四服务测试仍失败：40 秒确认期限内一个节点已确认、两个节点
 仍 Prepared，未得到全部确认；具体活性/耗时原因待修复，不计为通过。
 后续只推进新创世启动、多节点确认、可恢复落账这一最短可用链路。

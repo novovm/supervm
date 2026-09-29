@@ -536,6 +536,9 @@ fn candidate_node_cli_real_aoem_common_plan_and_restart_match_across_processes()
 #[path = "support/native_seal_main_process.rs"]
 mod native_seal_main_process;
 
+#[path = "support/native_fresh_genesis_cli.rs"]
+mod native_fresh_genesis_cli;
+
 #[test]
 fn candidate_node_cli_rejects_malformed_and_oversized_files_before_persistence() {
     for (label, body, expected) in [
