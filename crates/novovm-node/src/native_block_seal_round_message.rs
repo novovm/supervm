@@ -204,6 +204,7 @@ impl NovNativeSealRoundMessageV1 {
                     .context("native round proposal is missing")?;
                 proposal.verify(set)?;
                 let subject = &proposal.subject;
+                authority.validate_subject_domain_v1(subject)?;
                 if subject.chain_id != expected.chain_id
                     || subject.genesis_block_hash != expected.genesis_block_hash
                     || subject.protocol_config_commitment != expected.protocol_config_commitment

@@ -36,6 +36,8 @@ pub const NOV_NATIVE_SEAL_OVERLAY_EQUIVOCATION_SCHEMA_V1: &str =
 pub const NOV_NATIVE_SEAL_OVERLAY_IDENTITY_GUARD_SCHEMA_V1: &str =
     "novovm-native-seal-overlay-identity-guard/v1";
 pub const NOV_NATIVE_SEAL_OVERLAY_AUTHORITY_KIND_V1: &str = "operator-pinned-genesis-epoch/v1";
+pub const NOV_NATIVE_SEAL_OVERLAY_FRESH_GENESIS_AUTHORITY_V1: &str =
+    "operator-pinned-fresh-genesis-epoch/v1";
 pub const NOV_NATIVE_SEAL_OVERLAY_LEADER_SCHEDULE_V1: &str = "round-robin-validator-id/v1";
 pub const NOV_NATIVE_SEAL_OVERLAY_MAX_WIRE_BYTES_V1: usize = 192 * 1024;
 pub const NOV_NATIVE_SEAL_OVERLAY_MAX_DIRECT_VALIDATORS_V1: usize = 64;
@@ -80,6 +82,36 @@ pub struct NovNativeSealEpochAuthorityV1 {
 }
 
 impl NovNativeSealEpochAuthorityV1 {
+    /// Pure configuration construction, not live execution/signing permission.
+    /// Every signer must additionally validate this against its scoped ledger.
+    pub fn derive_operator_pinned_fresh_genesis_epoch(
+        config: &crate::tx_ingress::fresh_genesis::FreshGenesisConfigV1,
+        expected_config: [u8; 32],
+        mut transport_bindings: Vec<NovNativeSealValidatorTransportBindingV1>,
+    ) -> Result<Self> {
+        let compiled = config.compile()?;
+        if compiled.config_commitment() != expected_config {
+            bail!("fresh genesis overlay authority approval pin mismatch");
+        }
+        transport_bindings.sort_by_key(|binding| binding.validator_id);
+        let mut authority = Self {
+            schema: NOV_NATIVE_SEAL_EPOCH_AUTHORITY_SCHEMA_V1.to_owned(),
+            authority_kind: NOV_NATIVE_SEAL_OVERLAY_FRESH_GENESIS_AUTHORITY_V1.to_owned(),
+            chain_id: config.chain_id,
+            genesis_block_hash: compiled.identity().anchor(),
+            protocol_config_commitment: config.protocol_config_commitment,
+            epoch: 1,
+            activation_height: 1,
+            validator_set: compiled.validator_set().clone(),
+            transport_bindings,
+            leader_schedule: NOV_NATIVE_SEAL_OVERLAY_LEADER_SCHEDULE_V1.to_owned(),
+            authority_commitment: [0; 32],
+        };
+        authority.authority_commitment = authority_commitment_v1(&authority);
+        authority.validate()?;
+        Ok(authority)
+    }
+
     pub fn derive_operator_pinned_genesis_epoch(
         ledger: &NovNativeBlockLedgerV1,
         validator_set: NovNativeSealValidatorSetV1,
@@ -126,7 +158,11 @@ impl NovNativeSealEpochAuthorityV1 {
     pub fn validate(&self) -> Result<()> {
         self.validator_set.validate()?;
         if self.schema != NOV_NATIVE_SEAL_EPOCH_AUTHORITY_SCHEMA_V1
-            || self.authority_kind != NOV_NATIVE_SEAL_OVERLAY_AUTHORITY_KIND_V1
+            || !matches!(
+                self.authority_kind.as_str(),
+                NOV_NATIVE_SEAL_OVERLAY_AUTHORITY_KIND_V1
+                    | NOV_NATIVE_SEAL_OVERLAY_FRESH_GENESIS_AUTHORITY_V1
+            )
             || self.chain_id == 0
             || self.genesis_block_hash == [0u8; 32]
             || self.protocol_config_commitment == [0u8; 32]
@@ -162,6 +198,20 @@ impl NovNativeSealEpochAuthorityV1 {
 
     pub fn validate_against_ledger(&self, ledger: &NovNativeBlockLedgerV1) -> Result<()> {
         self.validate()?;
+        if let Some((config, _)) = ledger.fresh_genesis_seal_config_v1(self.chain_id)? {
+            let compiled = config.compile()?;
+            if self.authority_kind != NOV_NATIVE_SEAL_OVERLAY_FRESH_GENESIS_AUTHORITY_V1
+                || self.genesis_block_hash != compiled.identity().anchor()
+                || self.protocol_config_commitment != config.protocol_config_commitment
+                || &self.validator_set != compiled.validator_set()
+            {
+                bail!("fresh genesis overlay authority differs from live approved genesis");
+            }
+            return Ok(());
+        }
+        if self.authority_kind != NOV_NATIVE_SEAL_OVERLAY_AUTHORITY_KIND_V1 {
+            bail!("fresh genesis overlay authority requires a live fresh-candidate scope");
+        }
         let ownership = ledger
             .load_aoem_ownership()?
             .context("NOV native seal authority ledger is missing AOEM ownership")?;
@@ -177,6 +227,30 @@ impl NovNativeSealEpochAuthorityV1 {
             || protocol_config_commitment != self.protocol_config_commitment
         {
             bail!("NOV native seal authority does not bind the local ledger identity");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_subject_domain_v1(
+        &self,
+        subject: &NovNativeSealSubjectV1,
+    ) -> Result<()> {
+        self.validate()?;
+        subject.validate(&self.validator_set)?;
+        let proof = if self.authority_kind == NOV_NATIVE_SEAL_OVERLAY_FRESH_GENESIS_AUTHORITY_V1 {
+            crate::native_block_seal::NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1
+        } else {
+            crate::native_block_seal::NOV_NATIVE_BLOCK_SEAL_PROOF_VERSION_V1
+        };
+        if subject.proof_version != proof
+            || subject.chain_id != self.chain_id
+            || subject.epoch != self.epoch
+            || subject.height < self.activation_height
+            || subject.validator_set_hash != self.validator_set.validator_set_hash
+            || subject.genesis_block_hash != self.genesis_block_hash
+            || subject.protocol_config_commitment != self.protocol_config_commitment
+        {
+            bail!("NOV native seal subject is outside the pinned epoch authority");
         }
         Ok(())
     }
@@ -1501,16 +1575,7 @@ fn validate_subject_authority_v1(
     subject: &NovNativeSealSubjectV1,
     authority: &NovNativeSealEpochAuthorityV1,
 ) -> Result<()> {
-    if subject.chain_id != authority.chain_id
-        || subject.epoch != authority.epoch
-        || subject.height < authority.activation_height
-        || subject.validator_set_hash != authority.validator_set.validator_set_hash
-        || subject.genesis_block_hash != authority.genesis_block_hash
-        || subject.protocol_config_commitment != authority.protocol_config_commitment
-    {
-        bail!("NOV native seal subject is outside the pinned epoch authority");
-    }
-    Ok(())
+    authority.validate_subject_domain_v1(subject)
 }
 
 fn compact_qc_v1(qc: &NovNativeSealQuorumCertificateV1) -> NovNativeSealCompactQcWireV1 {
@@ -1590,7 +1655,11 @@ fn validate_ingress_context_v1(
     context: &NovNativeSealOverlayIngressContextV1,
     authority: &NovNativeSealEpochAuthorityV1,
 ) -> Result<()> {
-    if context.local_execution_height < authority.activation_height
+    let fresh_before_first = authority.authority_kind
+        == NOV_NATIVE_SEAL_OVERLAY_FRESH_GENESIS_AUTHORITY_V1
+        && context.local_execution_height == 0
+        && authority.activation_height == 1;
+    if (context.local_execution_height < authority.activation_height && !fresh_before_first)
         || context.received_at_unix_ms == 0
         || context
             .local_validator_id
@@ -2897,5 +2966,41 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn fresh_genesis_authority_kind_cannot_reinterpret_legacy_proof() {
+        let (node, block, keys, set, authority) = genesis_fixture_v1("fresh-kind", 81977);
+        let proposal = sign_proposal_v1(&node, &block, &keys, &set, &authority, None, 0);
+        let mut relabelled = authority.clone();
+        relabelled.authority_kind = NOV_NATIVE_SEAL_OVERLAY_FRESH_GENESIS_AUTHORITY_V1.into();
+        relabelled.authority_commitment = authority_commitment_v1(&relabelled);
+        relabelled.validate().unwrap(); // valid envelope, wrong semantic domain
+        let before_first = NovNativeSealOverlayIngressContextV1 {
+            local_execution_height: 0,
+            local_validator_id: None,
+            received_at_unix_ms: 1,
+        };
+        assert!(validate_ingress_context_v1(&before_first, &authority).is_err());
+        validate_ingress_context_v1(&before_first, &relabelled).unwrap();
+        assert!(relabelled.validate_against_ledger(node.ledger()).is_err());
+        assert!(relabelled
+            .validate_subject_domain_v1(&proposal.subject)
+            .is_err());
+        assert!(
+            NovNativeSealOverlayArtifactV1::Proposal(Box::new(proposal.clone()))
+                .validate(&relabelled)
+                .is_err()
+        );
+        let message =
+            crate::native_block_seal::round_message::NovNativeSealRoundMessageV1::Proposal {
+                proposal: Box::new(proposal.clone()),
+                certificate: None,
+            };
+        let peer = authority.transport_peer_id(proposal.proposer_id).unwrap();
+        assert!(message
+            .validate_authenticated(&relabelled, 1, peer)
+            .is_err());
+        message.validate_authenticated(&authority, 1, peer).unwrap();
     }
 }

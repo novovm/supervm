@@ -30,6 +30,7 @@ impl NovNativeSealDecisionCollectorV3 {
         let set = &authority.validator_set;
         let target = decision_target_v3(prepare, set)?;
         let subject = &prepare.subject;
+        authority.validate_subject_domain_v1(subject)?;
         if subject.genesis_block_hash != authority.genesis_block_hash
             || subject.protocol_config_commitment != authority.protocol_config_commitment
         {

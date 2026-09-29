@@ -282,8 +282,43 @@ form a QC and V3 certificate. Conflicting candidate signing rejects, decision vo
 replay survives reopen, and certificate persistence/reopen is idempotent without
 changing the AOEM genesis head or finalized flags. This is not four independent
 executing nodes, network delivery, process-kill recovery or mainnet finality.
-Overlay epoch authority/config, node service dispatch and independent-node
-fresh-genesis acceptance remain the next integration work.
+The explicit Overlay authority/wire integration below is separate from node
+service dispatch and independent-node fresh-genesis acceptance, which remain
+incomplete.
+
+## Fresh-genesis Overlay identity and bounded admission (implemented)
+
+`derive_operator_pinned_fresh_genesis_epoch` constructs a deterministic authority
+manifest from the complete approved genesis configuration and explicit transport
+bindings. It verifies the expected configuration commitment, uses the compiled
+validator set and shared genesis anchor, canonicalizes bindings and retains
+existing peer/validator bounds. Its distinct authority kind is included in the
+authority commitment. Pure construction is not signing permission: validation
+against a ledger requires the live fresh-candidate scope and exact genesis,
+protocol and validator-set match. Legacy ledger authority checks are unchanged.
+
+Proposal/prepare artifacts, round messages, highest-QC new-view evidence and the
+V3 collector now share an authority-to-subject domain check that explicitly pairs
+the fresh authority kind with the fresh proof version. A valid signature under a
+different semantic profile cannot enter merely because its chain fields match.
+
+Pre-first-block admission allows local execution height zero only for the fresh
+authority kind activated at height one. Existing legacy ingress still rejects
+zero height. The first-block proof profile and existing bounded height/round/wire
+checks remain in force; receiving a proposal does not select or finalize a block.
+
+The real AOEM fixture verifies canonical authority ordering, wrong approval and
+different genesis rejection, proposal wire roundtrip, authenticated-source checks,
+quarantine authority persistence/reopen and proposal reconciliation against live
+local execution. It also transports V3 votes/certificates through the bounded
+round codec and collector: two votes stay incomplete, three complete. Sources are
+fixture-supplied authenticated identities, NOT actual socket connections. The
+fixture initially exposed the old height-zero rejection; this was fixed in the
+fresh authority path instead of fabricating an executed height-one ledger head.
+
+Main service configuration/dispatch still needs an explicit approved-genesis pin
+and fresh scope on every poll. No production startup, automatic registration,
+continuous-height processing or finality promotion is enabled by this slice.
 
 ## Recovery matrix to implement and test
 

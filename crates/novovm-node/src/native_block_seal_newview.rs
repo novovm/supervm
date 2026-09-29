@@ -61,6 +61,7 @@ impl NovNativeSealNewViewQcV1 {
         self.proposal.verify(set)?;
         self.qc.verify(set)?;
         let subject = &self.qc.subject;
+        authority.validate_subject_domain_v1(subject)?;
         if self.proposal.subject != *subject
             || self.proposal.proposal_hash != self.qc.proposal_hash
             || subject.chain_id != expected.chain_id

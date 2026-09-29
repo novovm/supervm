@@ -16,9 +16,14 @@ fn exercise_fresh_genesis_signing(
     let set = compiled.validator_set();
     let chain = set.chain_id;
     let pin = compiled.config_commitment();
-    let keys = (1..=4)
+    let mut keys = (1..=4)
         .map(|seed| ed25519_dalek::SigningKey::from_bytes(&[seed; 32]))
         .collect::<Vec<_>>();
+    keys.sort_by_key(|key| {
+        crate::native_block_seal::NovNativeSealValidatorV1::new(key.verifying_key().to_bytes(), 1)
+            .unwrap()
+            .validator_id
+    });
     let seal_paths = (0..4)
         .map(|index| path.with_extension(format!("genesis-seal-{index}")))
         .collect::<Vec<_>>();
@@ -113,6 +118,7 @@ fn exercise_fresh_genesis_signing(
         .collect::<Vec<_>>();
     assert!(Certificate::from_votes(qc.clone(), set, decisions[..2].to_vec()).is_err());
     let certificate = Certificate::from_votes(qc.clone(), set, decisions.clone()).unwrap();
+    exercise_fresh_genesis_overlay(path, params, compiled, id, &proposal, &certificate);
     let other_request = Request {
         block_hash: other_hash,
         ..request.clone()
@@ -182,3 +188,5 @@ fn exercise_fresh_genesis_signing(
             .finalized
     );
 }
+
+include!("native_fresh_genesis_overlay_tests.rs");
