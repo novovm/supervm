@@ -399,10 +399,29 @@ impl NovNativeBlockLedgerV1 {
             entry
         };
         drop(registry);
-        let schema_guard = db
-            .write_lock
-            .lock()
-            .map_err(|_| anyhow::anyhow!("NOV native block ledger write lock is poisoned"))?;
+        // Existing handles may be opened inside a verified candidate callback
+        // that already holds write_lock. Only schema initialization mutates;
+        // do not reacquire that non-reentrant lock for an ordinary open.
+        if db.get(KEY_SCHEMA_V1)?.is_none() {
+            let _guard = db
+                .write_lock
+                .lock()
+                .map_err(|_| anyhow::anyhow!("NOV native block ledger write lock is poisoned"))?;
+            // Another opener may have initialized/reserved it while we waited.
+            if db.get(KEY_SCHEMA_V1)?.is_none() {
+                if db
+                    .iterator(rocksdb::IteratorMode::Start)
+                    .next()
+                    .transpose()?
+                    .is_some()
+                {
+                    bail!("NOV native block ledger schema missing in nonempty database");
+                }
+                let mut batch = RocksDbWriteBatch::default();
+                batch.put(KEY_SCHEMA_V1, NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1.as_bytes());
+                write_sync_v1(&db, batch).context("initialize NOV native block ledger schema")?;
+            }
+        }
         match db
             .get(KEY_SCHEMA_V1)
             .context("read NOV native block ledger schema failed")?
@@ -419,20 +438,9 @@ impl NovNativeBlockLedgerV1 {
             }
             Some(_) => {}
             None => {
-                if db
-                    .iterator(rocksdb::IteratorMode::Start)
-                    .next()
-                    .transpose()?
-                    .is_some()
-                {
-                    bail!("NOV native block ledger schema missing in nonempty database");
-                }
-                let mut batch = RocksDbWriteBatch::default();
-                batch.put(KEY_SCHEMA_V1, NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1.as_bytes());
-                write_sync_v1(&db, batch).context("initialize NOV native block ledger schema")?;
+                bail!("NOV native block ledger schema disappeared during open");
             }
         }
-        drop(schema_guard);
         let ledger = Self {
             path: path.to_path_buf(),
             write_lock: Arc::clone(&db.write_lock),

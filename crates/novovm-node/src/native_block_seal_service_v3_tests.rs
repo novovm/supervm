@@ -54,6 +54,8 @@ fn run_v3_service_scenario(failover: bool) {
     };
     let mut returning = !failover;
     let mut stage_started = Instant::now();
+    let mut steps = 0u64;
+    let mut max_step = Duration::ZERO;
     let completed = loop {
         let now = base + began.elapsed();
         let active = if !returning {
@@ -61,7 +63,10 @@ fn run_v3_service_scenario(failover: bool) {
         } else {
             &[0, 1, 2, 3]
         };
+        let step_started = Instant::now();
         step_test_services(&cluster, &mut services, active, now);
+        steps += 1;
+        max_step = max_step.max(step_started.elapsed());
         if !returning
             && survivors
                 .iter()
@@ -78,7 +83,8 @@ fn run_v3_service_scenario(failover: bool) {
         }
         assert!(
             stage_started.elapsed() < NETWORK_DEADLINE,
-            "V3 service deadline: {:?}",
+            "V3 service deadline: returning={returning} elapsed={:?} steps={steps} max_step={max_step:?} peers={:?}",
+            stage_started.elapsed(),
             services
                 .iter()
                 .map(|s| s.as_ref().unwrap().status_json())

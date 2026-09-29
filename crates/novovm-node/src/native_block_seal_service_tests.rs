@@ -39,9 +39,14 @@ fn native_commit_catchup_real_wss_future_certificate_without_round_adoption() {
         cluster.start_peer_with_commit(index, initial, true);
     }
     let started = Instant::now();
+    let mut steps = 0u64;
+    let mut max_step = Duration::ZERO;
     let (now, proof) = loop {
         let now = initial + ROUND_INTERVAL + started.elapsed();
+        let step_started = Instant::now();
         cluster.step(&active, now);
+        steps += 1;
+        max_step = max_step.max(step_started.elapsed());
         let mut proof = None;
         // Simulate a delayed receiver that obtains the complete certificate
         // before any timeout/new-view/prepare messages from the newer round.
@@ -51,10 +56,16 @@ fn native_commit_catchup_real_wss_future_certificate_without_round_adoption() {
             .unwrap()
             .drain_events(128)
         {
-            if let ProductMainlineOverlayEventV1::Inbound(inbound) = event {
-                if inbound.frame.payload.get(10) == Some(&8) {
-                    proof = Some(inbound);
+            match event {
+                ProductMainlineOverlayEventV1::Inbound(inbound) => {
+                    if inbound.frame.payload.get(10) == Some(&8) {
+                        proof = Some(inbound);
+                    }
                 }
+                ProductMainlineOverlayEventV1::WorkerFailed(error) => {
+                    panic!("delayed certificate WSS worker failed: {error}");
+                }
+                _ => (),
             }
         }
         if let Some(proof) = proof {
@@ -62,7 +73,12 @@ fn native_commit_catchup_real_wss_future_certificate_without_round_adoption() {
         }
         assert!(
             started.elapsed() < NETWORK_DEADLINE,
-            "cross-round certificate WSS deadline"
+            "cross-round certificate WSS deadline: elapsed={:?} steps={steps} max_step={max_step:?} peers={:?}",
+            started.elapsed(),
+            cluster.peers.iter().map(|peer| (
+                peer.adapter.as_ref().unwrap().status(), peer.received,
+                peer.authenticated_sources.len(),
+            )).collect::<Vec<_>>()
         );
         thread::sleep(Duration::from_millis(10));
     };

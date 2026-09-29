@@ -133,6 +133,23 @@ mod tests {
     }
 
     #[test]
+    fn existing_ledger_open_does_not_reenter_candidate_write_lock() {
+        let fixture = TestLedgerV1::new("genesis-open-lock");
+        let guard = fixture.ledger().lock_writes_v1().unwrap();
+        let path = fixture.path.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let opened = NovNativeBlockLedgerV1::open(&path);
+            send.send(opened.is_ok()).unwrap();
+        });
+        let before_unlock = receive.recv_timeout(std::time::Duration::from_secs(5));
+        // Always release/join, so a regression fails rather than hanging CI.
+        drop(guard);
+        worker.join().unwrap();
+        assert_eq!(before_unlock, Ok(true));
+    }
+
+    #[test]
     fn fresh_genesis_reservation_restarts_and_fences_existing_handles() {
         let mut fixture = TestLedgerV1::new("genesis-reserve");
         let req = request();
