@@ -2927,7 +2927,7 @@ fn validate_hex_commitment_v1(label: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-fn body_digest_v1(tx_hashes: &[[u8; 32]], raw_txs: &[Vec<u8>]) -> [u8; 32] {
+pub(crate) fn body_digest_v1(tx_hashes: &[[u8; 32]], raw_txs: &[Vec<u8>]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(BODY_DIGEST_DOMAIN_V1);
     hasher.update((tx_hashes.len() as u64).to_be_bytes());

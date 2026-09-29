@@ -164,11 +164,49 @@ impl NovNativeSealServiceConfigV1 {
     /// The caller owns transaction selection/transport and must retain the exact
     /// slot, timestamp and ordered batch for retry. No wall clock is inferred.
     pub fn prepare_fresh_successor(
+        self,
+        slot: u64,
+        timestamp_unix_ms: u64,
+        raw_txs: Vec<Vec<u8>>,
+        params: &serde_json::Value,
+    ) -> Result<Self> {
+        self.prepare_fresh_successor_inner(slot, timestamp_unix_ms, raw_txs, params, None)
+    }
+
+    /// A received body is only an input claim. Re-execute/read back locally and
+    /// compare the complete signed output subject before registering or voting.
+    pub fn prepare_received_successor(
+        self,
+        body: crate::native_candidate_body::VerifiedCandidateBodyV1,
+        params: &serde_json::Value,
+    ) -> Result<Self> {
+        let proposal = body
+            .message
+            .proposal()
+            .context("received body proposal missing")?;
+        let subject = &proposal.subject;
+        if body.authority_commitment != self.authority.authority_commitment
+            || subject.parent_block_hash != self.block_hash
+            || self.height.checked_add(1) != Some(subject.height)
+        {
+            bail!("received body does not extend configured authority and parent");
+        }
+        self.prepare_fresh_successor_inner(
+            subject.slot,
+            subject.timestamp_unix_ms,
+            body.raw_txs,
+            params,
+            Some(subject),
+        )
+    }
+
+    fn prepare_fresh_successor_inner(
         mut self,
         slot: u64,
         timestamp_unix_ms: u64,
         raw_txs: Vec<Vec<u8>>,
         params: &serde_json::Value,
+        expected: Option<&crate::native_block_seal::NovNativeSealSubjectV1>,
     ) -> Result<Self> {
         use crate::tx_ingress::candidate_workspace as workspace;
         self.validate(self.chain_id)?;
@@ -225,6 +263,13 @@ impl NovNativeSealServiceConfigV1 {
         // Each existing boundary rechecks live parent authority under its locks.
         let candidate = workspace::create_from_finalized_genesis_v1(&plan, parent_id, pin, params)?;
         workspace::execute_v1(self.chain_id, candidate.workspace_id, params)?;
+        let artifact =
+            workspace::load_block_artifact_v1(self.chain_id, candidate.workspace_id, params)?
+                .context("prepared successor output missing")?;
+        let actual = parent.successor_seal_subject(&artifact, expected.map_or(0, |s| s.round))?;
+        if expected.is_some_and(|expected| expected != &actual) {
+            bail!("received successor output differs from local verified execution");
+        }
         workspace::register_finalized_successor_v1(
             self.chain_id,
             parent_id,
@@ -232,10 +277,6 @@ impl NovNativeSealServiceConfigV1 {
             pin,
             params,
         )?;
-        let artifact =
-            workspace::load_block_artifact_v1(self.chain_id, candidate.workspace_id, params)?
-                .context("prepared successor output missing")?;
-        parent.successor_seal_subject(&artifact, 0)?;
         self.height = height;
         self.block_hash = artifact.block().header.block_hash;
         self.isolated_workspace_id = Some(candidate.workspace_id);

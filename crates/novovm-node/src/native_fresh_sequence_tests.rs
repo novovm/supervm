@@ -197,6 +197,17 @@ fn exercise_fresh_sequence(
             },
         )
         .unwrap();
+        if height == 4 {
+            exercise_received_successor_body(
+                path,
+                params,
+                &authority,
+                &proposal,
+                &artifact.block().body.raw_txs,
+                &keys[leader_index],
+                candidate,
+            );
+        }
         let votes = (0..3)
             .map(|i| {
                 workspace::with_verified_finalized_successor_v1(
@@ -302,6 +313,10 @@ fn exercise_fresh_sequence(
         assert_eq!(current.block().header.state_version, height + 1);
         assert_eq!(current.state().receipts.len(), height as usize + 1);
         if height == 3 {
+            workspace::corrupt_first_chunk_for_test_v1(chain, candidate, params).unwrap();
+            assert!(workspace::abort_v1(chain, candidate, params).is_err());
+            workspace::corrupt_first_chunk_for_test_v1(chain, candidate, params).unwrap();
+            workspace::load_finalized_genesis_parent_v1(chain, candidate, pin, params).unwrap();
             let before = workspace::list_v1(chain, params).unwrap();
             assert!(workspace::retire_old_workspaces_v1(chain, parent, pin, params).is_err());
             assert_eq!(workspace::list_v1(chain, params).unwrap(), before);
@@ -417,4 +432,113 @@ fn exercise_fresh_sequence(
             .as_ref(),
         Some(&history[1])
     );
+}
+
+fn exercise_received_successor_body(
+    path: &Path,
+    params: &serde_json::Value,
+    authority: &crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1,
+    proposal: &crate::native_block_seal::NovNativeSealProposalV1,
+    raws: &[Vec<u8>],
+    signer: &ed25519_dalek::SigningKey,
+    expected_id: [u8; 32],
+) {
+    use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1 as Message;
+    use crate::native_block_seal::round_wire::encode_nov_native_seal_round_wire_v1 as encode;
+    use crate::native_candidate_body::CandidateBodyAssemblerV1 as Body;
+    let source = authority.transport_peer_id(proposal.proposer_id).unwrap();
+    let encode_proposal = |p: crate::native_block_seal::NovNativeSealProposalV1| {
+        encode(
+            &Message::Proposal {
+                proposal: Box::new(p),
+                certificate: None,
+            },
+            authority,
+            4,
+            source,
+        )
+        .unwrap()
+    };
+    let wire = encode_proposal(proposal.clone());
+    let fresh = || Body::new(&wire, authority, 4, source).unwrap();
+    assert!(Body::new(&wire, authority, 5, source).is_err());
+    assert!(Body::new(&wire, authority, 4, "unbound-source").is_err());
+    let packets = fresh().encode_chunks(raws).unwrap();
+    let mut receiver = fresh();
+    assert!(receiver.push("unbound-source", &packets[0]).is_err());
+    let mut damaged = packets[0].clone();
+    damaged[8] ^= 1;
+    assert!(receiver.push(source, &damaged).is_err());
+    damaged = packets[0].clone();
+    *damaged.last_mut().unwrap() ^= 1;
+    assert!(fresh().push(source, &damaged).is_err());
+    let received = receiver.push(source, &packets[0]).unwrap().unwrap();
+    assert!(receiver.push(source, &packets[0]).is_err());
+    let load = || {
+        crate::native_block_seal::service_config::NovNativeSealServiceConfigV1::load(
+            &path.with_extension("fresh-service-3").join("service.json"),
+            authority.chain_id,
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        load()
+            .prepare_received_successor(received, params)
+            .unwrap()
+            .isolated_workspace_id,
+        Some(expected_id)
+    );
+    // Even a correctly signed false output claim cannot grant local authority.
+    let mut false_subject = proposal.subject.clone();
+    false_subject.post_state_root[0] ^= 1;
+    let false_proposal = crate::native_block_seal::sign_modified_subject_for_body_test_v1(
+        false_subject,
+        &authority.validator_set,
+        signer,
+    )
+    .unwrap();
+    let wire = encode_proposal(false_proposal);
+    let mut receiver = Body::new(&wire, authority, 4, source).unwrap();
+    let packet = receiver.encode_chunks(raws).unwrap().remove(0);
+    let received = receiver.push(source, &packet).unwrap().unwrap();
+    assert!(load().prepare_received_successor(received, params).is_err());
+    // Large signed input claim tests the transport only: repeated transactions
+    // are deliberately not admitted to execution by this fixture.
+    let many = vec![raws[0].clone(); 1024];
+    let hashes = many
+        .iter()
+        .map(|raw| canonical_nov_native_tx_hash_from_payload_v1(raw).unwrap())
+        .collect::<Vec<_>>();
+    let mut subject = proposal.subject.clone();
+    subject.tx_count = 1024;
+    subject.receipt_count = 1024;
+    subject.body_bytes = many.iter().map(|raw| raw.len() as u64).sum();
+    subject.body_digest = crate::native_block_ledger::body_digest_v1(&hashes, &many);
+    subject.ordered_tx_root =
+        crate::native_block_ledger::nov_native_ordered_tx_root_v1(&hashes).unwrap();
+    let wire = encode_proposal(
+        crate::native_block_seal::sign_modified_subject_for_body_test_v1(
+            subject,
+            &authority.validator_set,
+            signer,
+        )
+        .unwrap(),
+    );
+    let mut receiver = Body::new(&wire, authority, 4, source).unwrap();
+    let packets = receiver.encode_chunks(&many).unwrap();
+    assert!(packets.len() > 1);
+    let last = packets.last().unwrap();
+    assert!(receiver.push(source, last).unwrap().is_none());
+    assert!(receiver.push(source, last).unwrap().is_none());
+    let mut conflicting = last.clone();
+    *conflicting.last_mut().unwrap() ^= 1;
+    let mut conflict = Body::new(&wire, authority, 4, source).unwrap();
+    conflict.push(source, last).unwrap();
+    assert!(conflict.push(source, &conflicting).is_err());
+    assert!(conflict.push(source, &packets[0]).is_err());
+    let mut completed = None;
+    for packet in packets[..packets.len() - 1].iter().rev() {
+        completed = receiver.push(source, packet).unwrap().or(completed);
+    }
+    assert_eq!(completed.unwrap().raw_txs, many);
 }

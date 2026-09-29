@@ -880,8 +880,26 @@ pub fn abort_v1(
         bail!("retiring workspace requires retirement recovery, not abort");
     }
     if workspace.status(slot, &descriptor)? == WorkspaceStatusV1::Ready {
-        let payload = workspace.read_payload(&descriptor)?;
-        if let Some(parent) = &payload.finalized_parent {
+        let payload = match workspace.read_payload(&descriptor) {
+            Ok(payload) => Some(payload),
+            Err(error) => {
+                // Legacy isolated inputs can be discarded even when damaged.
+                // Never infer legacy from unreadable bytes: the existing ledger
+                // must explicitly pass the non-genesis schema/evidence fence.
+                let native_path = resolve_native_execution_store_path_from_params_v1(params)
+                    .context("damaged candidate abort requires explicit native path")?;
+                NovNativeBlockLedgerV1::open_existing_read_only(
+                    &nov_native_block_ledger_rocksdb_path_v1(&native_path),
+                )
+                .with_context(|| format!("cannot establish legacy abort scope: {error}"))?
+                .context("damaged candidate abort requires an existing legacy ledger")?;
+                None
+            }
+        };
+        if let Some(parent) = payload
+            .as_ref()
+            .and_then(|payload| payload.finalized_parent.as_ref())
+        {
             let native_path = resolve_native_execution_store_path_from_params_v1(params)
                 .context("successor abort requires explicit native path")?;
             NovNativeBlockLedgerV1::refuse_pending_successor_promotion_v1(
@@ -890,7 +908,7 @@ pub fn abort_v1(
                 parse_fixed_hex_32_v1(&workspace.namespace, "successor abort namespace")?,
             )?;
         }
-        if let Some(genesis) = payload.genesis {
+        if let Some(genesis) = payload.and_then(|payload| payload.genesis) {
             let native_path = resolve_native_execution_store_path_from_params_v1(params)
                 .context("fresh candidate abort requires explicit native store path")?;
             NovNativeBlockLedgerV1::refuse_pending_fresh_promotion_v1(

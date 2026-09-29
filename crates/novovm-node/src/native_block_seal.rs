@@ -2229,6 +2229,25 @@ pub(crate) fn subject_from_block_profile_v1(
     Ok(subject)
 }
 
+#[cfg(test)]
+pub(crate) fn sign_modified_subject_for_body_test_v1(
+    mut subject: NovNativeSealSubjectV1,
+    set: &NovNativeSealValidatorSetV1,
+    key: &SigningKey,
+) -> Result<NovNativeSealProposalV1> {
+    subject.inline_body_commitment = inline_body_commitment_v1(
+        subject.chain_id,
+        subject.height,
+        &subject.block_hash,
+        &subject.ordered_tx_root,
+        &subject.body_digest,
+        subject.body_bytes,
+        subject.tx_count,
+    );
+    subject.subject_hash = subject_hash_v1(&subject);
+    sign_proposal_v1(subject, set, key)
+}
+
 fn sign_proposal_v1(
     subject: NovNativeSealSubjectV1,
     validator_set: &NovNativeSealValidatorSetV1,

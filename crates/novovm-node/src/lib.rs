@@ -15,6 +15,7 @@ pub mod mainline_soak;
 pub mod native_block_ledger;
 pub mod native_block_seal;
 pub mod native_block_seal_overlay;
+pub mod native_candidate_body;
 pub mod native_candidate_plan;
 pub mod product_delivery_journal;
 pub mod product_evidence;
