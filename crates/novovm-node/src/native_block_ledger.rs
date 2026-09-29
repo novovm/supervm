@@ -14,6 +14,9 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 #[path = "native_block_isolated_candidate.rs"]
 mod isolated_candidate;
 pub use isolated_candidate::NovNativeIsolatedExecutionBindingV1;
+#[path = "native_block_genesis_reservation.rs"]
+mod genesis_reservation;
+pub use genesis_reservation::NovNativeFreshGenesisReservationV1;
 
 pub const NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1: &str = "novovm-native-block-ledger/v1";
 const ISOLATED_LEDGER_SCHEMA_V1: &str = "novovm-native-block-ledger/v1+isolated-candidates-v1";
@@ -361,6 +364,10 @@ pub struct NovNativeBlockLedgerV1 {
 
 impl NovNativeBlockLedgerV1 {
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_inner_v1(path, false)
+    }
+
+    fn open_inner_v1(path: &Path, allow_genesis_reservation: bool) -> Result<Self> {
         let process_key = native_block_ledger_process_key_v1(path)?;
         let mut registry = native_block_ledger_process_registry_v1()
             .lock()
@@ -392,11 +399,19 @@ impl NovNativeBlockLedgerV1 {
             entry
         };
         drop(registry);
+        let schema_guard = db
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("NOV native block ledger write lock is poisoned"))?;
         match db
             .get(KEY_SCHEMA_V1)
             .context("read NOV native block ledger schema failed")?
         {
-            Some(raw) if !supported_ledger_schema_v1(raw.as_slice()) => {
+            Some(raw)
+                if !(supported_ledger_schema_v1(raw.as_slice())
+                    || allow_genesis_reservation
+                        && raw.as_slice() == genesis_reservation::RESERVED_SCHEMA.as_bytes()) =>
+            {
                 bail!(
                     "unsupported NOV native block ledger schema: {}",
                     String::from_utf8_lossy(raw.as_slice())
@@ -404,18 +419,31 @@ impl NovNativeBlockLedgerV1 {
             }
             Some(_) => {}
             None => {
+                if db
+                    .iterator(rocksdb::IteratorMode::Start)
+                    .next()
+                    .transpose()?
+                    .is_some()
+                {
+                    bail!("NOV native block ledger schema missing in nonempty database");
+                }
                 let mut batch = RocksDbWriteBatch::default();
                 batch.put(KEY_SCHEMA_V1, NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1.as_bytes());
                 write_sync_v1(&db, batch).context("initialize NOV native block ledger schema")?;
             }
         }
-        Ok(Self {
+        drop(schema_guard);
+        let ledger = Self {
             path: path.to_path_buf(),
             write_lock: Arc::clone(&db.write_lock),
             db,
             read_only: false,
             isolated_seal_scope: None,
-        })
+        };
+        if !allow_genesis_reservation {
+            ledger.ensure_schema_v1()?;
+        }
+        Ok(ledger)
     }
 
     /// Open an already initialized ledger without creating directories, a
@@ -1324,12 +1352,18 @@ impl NovNativeBlockLedgerV1 {
         if self.read_only {
             bail!("NOV native block ledger was opened read-only");
         }
-        self.write_lock
+        let guard = self
+            .write_lock
             .lock()
-            .map_err(|_| anyhow::anyhow!("NOV native block ledger write lock is poisoned"))
+            .map_err(|_| anyhow::anyhow!("NOV native block ledger write lock is poisoned"))?;
+        self.ensure_schema_v1()?;
+        Ok(guard)
     }
 
     fn ensure_schema_v1(&self) -> Result<()> {
+        if genesis_reservation::has_reservation_evidence(&self.db)? {
+            bail!("NOV native fresh genesis reservation requires explicit recovery; ordinary access is fenced");
+        }
         let raw = self
             .db
             .get(KEY_SCHEMA_V1)
@@ -3066,13 +3100,13 @@ mod tests {
 
     static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
 
-    struct TestLedgerV1 {
-        path: PathBuf,
-        ledger: Option<NovNativeBlockLedgerV1>,
+    pub(super) struct TestLedgerV1 {
+        pub(super) path: PathBuf,
+        pub(super) ledger: Option<NovNativeBlockLedgerV1>,
     }
 
     impl TestLedgerV1 {
-        fn new(label: &str) -> Self {
+        pub(super) fn new(label: &str) -> Self {
             let serial = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
             let nanos = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -3089,7 +3123,7 @@ mod tests {
             }
         }
 
-        fn ledger(&self) -> &NovNativeBlockLedgerV1 {
+        pub(super) fn ledger(&self) -> &NovNativeBlockLedgerV1 {
             self.ledger.as_ref().expect("test ledger is open")
         }
 

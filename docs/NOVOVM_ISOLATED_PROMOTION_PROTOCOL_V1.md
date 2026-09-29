@@ -3,6 +3,19 @@
 Status: DESIGN / NOT IMPLEMENTED. Code audit baseline: `b049f25`.
 This is not production acceptance or permission to mark a block finalized.
 
+Ledger-only prerequisite now implemented: `reserve_fresh_genesis_v1` atomically
+reserves an unused ledger with configuration commitments, an independent digest
+pin and a capability marker. Exact retries verify the existing reservation;
+ordinary access (including already-open writer handles) is fenced. Missing
+schema in a nonempty DB is rejected rather than repaired. The production
+initialization and promotion sequences below remain NOT IMPLEMENTED.
+
+This library API has no CLI/RPC/startup activation. It does not validate the
+full genesis manifest or operator authorization, inspect AOEM namespace usage,
+publish initial state, generate keys, or mark genesis finalized. Its current
+purpose is to hold the ledger closed until an explicit recovery coordinator is
+implemented; do not invoke it against a running node's data directory.
+
 ## Observed implementation boundaries
 
 - `native_candidate_execution.rs::Output` already contains the complete verified
