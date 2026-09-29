@@ -147,7 +147,7 @@ fn candidate_workspace_execution_configured_services_real_aoem_quorum_and_restar
                     "isolated_workspace_id":to_hex(id), "chain_id":chain, "height":record.height,
                     "block_hash":to_hex(&record.block_hash), "justify_qc_hash":to_hex(&parent_qc.qc_hash),
                     "authority_path":"authority.json", "signer_key_path":"signer.hex", "seal_store_path":"seal",
-                    "round_timeout_ms":60000, "poll_interval_ms":100, "ingress_per_source_per_second":16, "ingress_per_poll":32,
+                    "round_timeout_ms":300000, "poll_interval_ms":100, "ingress_per_source_per_second":16, "ingress_per_poll":32,
                 })).unwrap()).unwrap();
                 let config = NovNativeSealServiceConfigV1::load(&config_path, chain).unwrap();
                 services.push(
@@ -182,8 +182,20 @@ fn candidate_workspace_execution_configured_services_real_aoem_quorum_and_restar
                 .iter()
                 .all(|service| service.status_json()["decision_confirmed"] == false));
             let began = Instant::now();
+            let mut ticks = 0;
             loop {
+                let tick_started = Instant::now();
                 step(&mut services, &active[..3]);
+                ticks += 1;
+                eprintln!(
+                    "isolated quorum tick={ticks} tick_ms={} elapsed_ms={} confirmed={}/3",
+                    tick_started.elapsed().as_millis(),
+                    began.elapsed().as_millis(),
+                    active[..3]
+                        .iter()
+                        .filter(|&&i| services[i].status_json()["decision_confirmed"] == true)
+                        .count()
+                );
                 if active[..3]
                     .iter()
                     .all(|&i| services[i].status_json()["decision_confirmed"] == true)
@@ -191,7 +203,10 @@ fn candidate_workspace_execution_configured_services_real_aoem_quorum_and_restar
                     break;
                 }
                 assert!(
-                    began.elapsed() < Duration::from_secs(40),
+                    // Debug AOEM readback is part of every tick. This is a
+                    // correctness/recovery gate, not a production latency SLA.
+                    // Match the existing WSS gate budget, below the round timer.
+                    began.elapsed() < Duration::from_secs(120),
                     "isolated quorum deadline: {:?}",
                     services.iter().map(|s| s.status_json()).collect::<Vec<_>>()
                 );
