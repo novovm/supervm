@@ -34,6 +34,8 @@ impl Drop for Relay {
     }
 }
 struct Child(std::process::Child);
+#[path = "native_seal_successor_process.rs"]
+mod successor;
 impl Drop for Child {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -49,6 +51,31 @@ fn run_cluster(
     expect_prepared: bool,
     decision_v3: bool,
     fresh: bool,
+) {
+    run_cluster_at_height(
+        nodes,
+        active,
+        label,
+        ticks,
+        expect_prepared,
+        decision_v3,
+        fresh,
+        1,
+        None,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_cluster_at_height(
+    nodes: &[Node],
+    active: &[usize],
+    label: &str,
+    ticks: u64,
+    expect_prepared: bool,
+    decision_v3: bool,
+    fresh: bool,
+    height: u64,
+    inject: Option<&dyn Fn()>,
 ) {
     let mut children = Vec::new();
     for &index in active {
@@ -76,6 +103,9 @@ fn run_cluster(
         children.push((index, Child(cmd.spawn().unwrap())));
     }
     let deadline = Instant::now();
+    if let Some(inject) = inject {
+        inject();
+    }
     for (index, mut child) in children {
         let status = loop {
             if let Some(status) = child.0.try_wait().unwrap() {
@@ -121,6 +151,7 @@ fn run_cluster(
         assert_eq!(seal["decision_v3_enabled"], decision_v3);
         assert_eq!(seal["decision_confirmed"], decision_v3 && expect_prepared);
         assert_eq!(seal["halted"], false);
+        assert_eq!(seal["height"], height);
         if fresh && expect_prepared {
             assert_eq!(seal["publication"]["aoem_authority_published"], true);
             assert_eq!(seal["publication"]["ledger_publication_completed"], true);
@@ -525,4 +556,14 @@ fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool) {
         "finality_scope":"first_height_bft_decision_v3", "zero_knowledge_execution_proof":false,
         "physical_lan_executed":false,"public_network_executed":false
     })).unwrap()).unwrap();
+    if fresh {
+        successor::exercise(
+            &nodes,
+            &authority,
+            &validators,
+            &peer_ids,
+            &fresh_plan,
+            &root,
+        );
+    }
 }
