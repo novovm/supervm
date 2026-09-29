@@ -30,8 +30,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-const ROUND_INTERVAL: Duration = Duration::from_secs(60);
-const NETWORK_DEADLINE: Duration = Duration::from_secs(30);
+// Debug Linux CI run 36563137201 spent up to 18.87s in one multi-node
+// verification/storage tick and exhausted 30s after only six ticks. These
+// correctness fixtures are not production latency gates. Keep both convergence
+// stages bounded and below the next logical round timeout (2 * 120 < 300),
+// so a slow runner does not accidentally test another timeout/decision round.
+const ROUND_INTERVAL: Duration = Duration::from_secs(300);
+const NETWORK_DEADLINE: Duration = Duration::from_secs(120);
 
 include!("native_block_seal_commit_v3_loop_tests.rs");
 
