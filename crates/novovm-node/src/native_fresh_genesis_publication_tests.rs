@@ -568,6 +568,29 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         assert!(completed.ledger_publication_completed);
         assert!(!completed.finalized);
         assert_eq!(
+            completed,
+            workspace::resume_genesis_promotion_v1(
+                chain,
+                input.workspace_id,
+                pin,
+                &seal_path,
+                &ledger,
+                params
+            )
+            .unwrap()
+        );
+        let wrong_ledger = path.with_extension("unrelated-ledger");
+        assert!(workspace::resume_genesis_promotion_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            &seal_path,
+            &wrong_ledger,
+            params
+        )
+        .is_err());
+        assert!(!wrong_ledger.exists());
+        assert_eq!(
             NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(&ledger, pin, namespace)
                 .unwrap()
                 .as_ref(),

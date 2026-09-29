@@ -16,8 +16,8 @@ pub use block_artifact::{
     with_verified_genesis_block_candidate_v1, IsolatedBlockArtifactV1,
 };
 pub use promotion::{
-    complete_genesis_promotion_v1, publish_genesis_promotion_v1, verify_genesis_promotion_v1,
-    GenesisPromotionPublicationV1,
+    complete_genesis_promotion_v1, publish_genesis_promotion_v1, resume_genesis_promotion_v1,
+    verify_genesis_promotion_v1, GenesisPromotionPublicationV1,
 };
 #[cfg(test)]
 pub(crate) use promotion::{

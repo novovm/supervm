@@ -10,7 +10,7 @@ ordinary access (including already-open writer handles) is fenced. Missing
 schema in a nonempty DB is rejected rather than repaired. The production
 initialization now has an explicit preparation CLI; the complete promotion sequence remains incomplete.
 
-The first-block promotion journal is implemented but not enabled in the node loop:
+The first-block promotion journal is implemented and used by the explicit fresh node loop:
 `prepare_genesis_promotion_v1` revalidates live genesis/output and a locally archived V3
 decision, then atomically stores its exact candidate/output binding, certificate, digest
 pin and capability marker. Exact replay is allowed; another target, damaged evidence,
@@ -25,8 +25,9 @@ pointer to the existing immutable AOEM output. No transaction is re-executed.
 The evidence sidecar precedes the authority completion write. Exact retries and
 `verify_genesis_promotion_v1` fully read back the same target without repairs.
 Unknown commit outcomes retain the authority lock until process exit. Old authority
-readers reject this new codec. Ledger publication and finalized remain false;
-this API is not wired into the node loop or regular state queries. Real-AOEM tests
+readers reject this new codec. Ledger publication is a separate completion step,
+and finalized remains false. The fresh node loop now invokes the coordinator below;
+ordinary state queries are not yet activated. Real-AOEM tests
 inject errors before/after publication and reject damaged pointers/output; these
 are not independent-process kill/recovery evidence.
 
@@ -40,6 +41,15 @@ damaged or missing committed indexes are not rebuilt. The explicit
 it does not attest live AOEM or chain finality. Finalized remains false until
 finality/query and node lifecycle integration are completed. The existing
 candidate graph remains immutable historical evidence, not a finalized view.
+
+The fresh first-height main loop now invokes publication after a locally durable
+V3 decision. Startup resumes the same intent/output/archive through
+`resume_genesis_promotion_v1`; mismatched service ledger paths or archived decisions
+are errors. Once published, a keyless driver relays the archived prepare QC and
+decision certificate using the existing bounded/fair resend machinery. It verifies
+the live published AOEM/ledger state before sending and never re-enters signing.
+Both certificates are necessary for a previously offline peer to catch up. This
+does not enable new transaction admission, subsequent heights or chain finality.
 
 This library API has no CLI/RPC/startup activation. It does not validate the
 full genesis manifest or operator authorization, inspect AOEM namespace usage,

@@ -12,12 +12,15 @@ use super::NovNativeBlockSealStoreV1;
 
 #[path = "native_block_seal_service_v3.rs"]
 mod decision_v3;
+#[path = "native_block_seal_publication_driver.rs"]
+mod publication;
 use crate::native_block_ledger::NovNativeBlockLedgerV1;
 use crate::product_mainline_overlay::{
     ProductMainlineOverlayInboundV1, ProductMainlineOverlayPayloadClassV1,
     ProductMainlineOverlayRoleV1, ProductMainlineOverlayRuntimeV1,
 };
 use anyhow::{bail, Context, Result};
+pub use publication::FreshGenesisPublicationDriverV1;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     path::{Path, PathBuf},
@@ -82,6 +85,25 @@ pub struct NovNativeSealServiceV1 {
 }
 
 impl NovNativeSealServiceV1 {
+    pub fn complete_fresh_publication(
+        &self,
+        runtime: &ProductMainlineOverlayRuntimeV1,
+        now: Instant,
+    ) -> Result<Option<FreshGenesisPublicationDriverV1>> {
+        if self.halted {
+            bail!("halted service cannot publish");
+        }
+        FreshGenesisPublicationDriverV1::open(
+            &self.config,
+            &self.ledger_path,
+            self.isolated_params
+                .as_ref()
+                .context("fresh publication params missing")?,
+            runtime,
+            now,
+        )
+    }
+
     /// Main-node entry: opt-in workspace uses the same pinned execution params
     /// as startup recovery. Never creates, executes or registers a workspace.
     pub fn open_configured(

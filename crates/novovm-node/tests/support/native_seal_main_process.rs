@@ -15,6 +15,7 @@ use novovm_node::{
     product_node_overlay::ProductBootstrapSourceV1,
     product_relay_daemon::{run_product_relay_daemon_with_shutdown_v1, ProductRelayDaemonConfigV1},
 };
+use sha2::{Digest, Sha256};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -120,6 +121,11 @@ fn run_cluster(
         assert_eq!(seal["decision_v3_enabled"], decision_v3);
         assert_eq!(seal["decision_confirmed"], decision_v3 && expect_prepared);
         assert_eq!(seal["halted"], false);
+        if fresh && expect_prepared {
+            assert_eq!(seal["publication"]["aoem_authority_published"], true);
+            assert_eq!(seal["publication"]["ledger_publication_completed"], true);
+            assert_eq!(seal["signing_enabled"], false);
+        }
         for field in ["finalized", "safe", "proof_sealed", "chain_canonical"] {
             assert_eq!(seal[field], false);
         }
@@ -455,6 +461,22 @@ fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool) {
             );
         } else {
             assert!(!nodes[index].0.join("native.json").exists());
+            let mut hash = Sha256::new();
+            hash.update(b"novovm-native-aoem-state-namespace-v1");
+            hash.update(nodes[index].0.to_str().unwrap().as_bytes());
+            let namespace: [u8; 32] = hash.finalize().into();
+            let published = || {
+                NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(
+                    &novovm_node::tx_ingress::nov_native_block_ledger_rocksdb_path_v1(
+                        &nodes[index].0.join("native.json"),
+                    ),
+                    genesis.compile().unwrap().config_commitment(),
+                    namespace,
+                )
+                .unwrap()
+                .unwrap()
+            };
+            assert_eq!(published(), block);
             let result = nodes[index].run(
                 &mut super::native_fresh_genesis_cli::prepare_command(
                     &nodes[index],
@@ -463,10 +485,28 @@ fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool) {
                 ),
                 "verify-authority",
             );
-            assert!(result.0, "{}", result.2);
+            assert!(
+                !result.0,
+                "genesis preparation must not reset published authority"
+            );
+            assert_eq!(published(), block);
+        }
+    }
+    if fresh {
+        // Three nodes now relay immutable archives only; the fourth was offline
+        // during voting and must still catch up without those peers re-signing.
+        run_cluster(&nodes, &[0, 1, 2, 3], "late-fourth", 32, true, true, true);
+        for node in &nodes {
+            let store = NovNativeBlockSealStoreV1::open_existing_read_only(&node.0.join("seal-db"))
+                .unwrap()
+                .unwrap();
             assert_eq!(
-                serde_json::from_str::<Value>(&result.1).unwrap(),
-                fresh_outputs[index]
+                store
+                    .load_decision_certificate_by_height_v3(CHAIN, 1, 1)
+                    .unwrap()
+                    .unwrap()
+                    .certificate_hash,
+                previous_decisions[0].as_ref().unwrap().certificate_hash
             );
         }
     }
@@ -479,6 +519,8 @@ fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool) {
         "two_of_four_persisted_qc_count":0, "three_of_four_qcs":previous_qcs,
         "decision_v3_enabled":decision_v3, "three_of_four_decisions":previous_decisions,
         "restart_preserved_qcs_and_unsealed_ledger":true,
+        "fresh_authority_and_ledger_published":fresh,
+        "late_fourth_node_caught_up_from_read_only_relays":fresh,
         "proof_sealed":false,"chain_canonical":false,"safe":false,"finalized":false,
         "physical_lan_executed":false,"public_network_executed":false
     })).unwrap()).unwrap();

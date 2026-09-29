@@ -30,6 +30,48 @@ fn uncertain_authority_locks() -> &'static Mutex<Vec<NovNativeExecutionStoreWrit
     LOCKS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+/// Recover the exact archived decision across intent, AOEM and ledger boundaries.
+/// A different archive or target never replaces a previously pinned intent.
+pub fn resume_genesis_promotion_v1(
+    chain: u64,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    seal_path: &Path,
+    ledger_path: &Path,
+    params: &serde_json::Value,
+) -> Result<GenesisPromotionPublicationV1> {
+    let existing = {
+        let workspace = WorkspaceStore::open(chain, params)?;
+        let path = resolve_native_execution_store_path_from_params_v1(params)
+            .context("promotion requires explicit storage")?;
+        if fs::canonicalize(nov_native_block_ledger_rocksdb_path_v1(&path))?
+            != fs::canonicalize(ledger_path)?
+        {
+            bail!("promotion params resolve to a different service ledger");
+        }
+        NovNativeBlockLedgerV1::optional_fresh_genesis_promotion_v1(
+            &nov_native_block_ledger_rocksdb_path_v1(&path),
+            genesis,
+            parse_fixed_hex_32_v1(&workspace.namespace, "promotion namespace")?,
+        )?
+    };
+    if let Some(intent) = existing {
+        let store = crate::native_block_seal::NovNativeBlockSealStoreV1::open_existing_read_only(
+            seal_path,
+        )?
+        .context("promotion decision archive missing")?;
+        let decision = store
+            .load_decision_certificate_by_height_v3(chain, 1, 1)?
+            .context("promotion decision missing")?;
+        if decision != intent.decision || intent.execution.workspace_id != id {
+            bail!("promotion recovery differs from pinned decision/workspace");
+        }
+    } else {
+        block_artifact::prepare_genesis_promotion_v1(chain, id, genesis, seal_path, params)?;
+    }
+    complete_genesis_promotion_v1(chain, id, genesis, params)
+}
+
 /// Explicit operator/coordinator action only. A separate durable ledger intent
 /// must already exist; caller booleans or an unarchived remote QC are insufficient.
 pub fn publish_genesis_promotion_v1(

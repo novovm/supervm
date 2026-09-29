@@ -43550,8 +43550,8 @@ mod native_execution_pipeline_tests {
 }
 
 // The first candidate has no legacy host projection or selected ledger head.
-// Until promotion is implemented, drive only its explicitly configured seal
-// service. Do not admit transactions, emit delivery ACKs, or fabricate a head.
+// Publish confirmed first-height execution, then relay immutable certificates.
+// Do not admit ordinary transactions or fabricate chain-level finality.
 fn run_fresh_genesis_confirmation_v1(
     config: NovNativeSealServiceConfigV1,
     execution_params: &serde_json::Value,
@@ -43569,26 +43569,70 @@ fn run_fresh_genesis_confirmation_v1(
     let ledger_path = novovm_node::tx_ingress::nov_native_block_ledger_rocksdb_path_v1(
         &nov_native_execution_store_path_v1(),
     );
-    let mut service = NovNativeSealServiceV1::open_configured(
-        config,
-        &ledger_path,
-        execution_params,
-        &runtime,
-        Instant::now(),
-    )?;
-    println!("native_seal_service_startup: {}", service.status_json());
+    let mut publication =
+        novovm_node::native_block_seal::service::FreshGenesisPublicationDriverV1::open(
+            &config,
+            &ledger_path,
+            execution_params,
+            &runtime,
+            Instant::now(),
+        )?;
+    let mut service = if publication.is_none() {
+        Some(NovNativeSealServiceV1::open_configured(
+            config,
+            &ledger_path,
+            execution_params,
+            &runtime,
+            Instant::now(),
+        )?)
+    } else {
+        None
+    };
+    let status = || {
+        publication
+            .as_ref()
+            .map(|driver| driver.status_json())
+            .unwrap_or_else(|| {
+                service
+                    .as_ref()
+                    .expect("fresh service or publication")
+                    .status_json()
+            })
+    };
+    println!("native_seal_service_startup: {}", status());
     let mut ticks = 0u64;
     let mut confirmation_reported = false;
     loop {
         for event in runtime.drain_events(128) {
             if let ProductMainlineOverlayEventV1::Inbound(inbound) = event {
                 if inbound.payload_class == ProductMainlineOverlayPayloadClassV1::NativeSeal {
-                    service.enqueue(inbound);
+                    if let Some(service) = service.as_mut() {
+                        service.enqueue(inbound);
+                    }
                 }
             }
         }
-        service.poll(&runtime, Instant::now())?;
-        let status = service.status_json();
+        if let Some(driver) = publication.as_mut() {
+            driver.poll(&runtime, Instant::now())?;
+        } else if let Some(active) = service.as_mut() {
+            active.poll(&runtime, Instant::now())?;
+            if active.status_json()["decision_confirmed"] == true {
+                publication = active.complete_fresh_publication(&runtime, Instant::now())?;
+                if publication.is_none() {
+                    bail!("confirmed fresh decision has no durable archive");
+                }
+                service = None;
+            }
+        }
+        let status = publication
+            .as_ref()
+            .map(|driver| driver.status_json())
+            .unwrap_or_else(|| {
+                service
+                    .as_ref()
+                    .expect("fresh service or publication")
+                    .status_json()
+            });
         if !confirmation_reported && status["decision_confirmed"] == true {
             println!("native_fresh_genesis_decision_confirmed: {status}");
             confirmation_reported = true;
@@ -43604,7 +43648,8 @@ fn run_fresh_genesis_confirmation_v1(
         serde_json::json!({
             "ticks": ticks,
             "ordinary_execution_enabled": false,
-            "native_seal_service": service.status_json(),
+            "native_seal_service": publication.as_ref().map(|driver| driver.status_json())
+                .unwrap_or_else(|| service.as_ref().expect("fresh service or publication").status_json()),
         })
     );
     Ok(())

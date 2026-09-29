@@ -90,6 +90,24 @@ pub(super) fn validated_keys(
 }
 
 impl NovNativeBlockLedgerV1 {
+    pub(crate) fn optional_fresh_genesis_promotion_v1(
+        path: &Path,
+        expected: [u8; 32],
+        namespace: [u8; 32],
+    ) -> Result<Option<NovNativeFreshPromotionIntentV1>> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("fresh promotion ledger missing")?;
+        load_verified(&ledger, expected, namespace)?;
+        let schema = ledger
+            .db
+            .get(KEY_SCHEMA_V1)?
+            .context("promotion schema missing")?;
+        if schema == PROMOTION_SCHEMA.as_bytes() || schema == PUBLISHED_SCHEMA.as_bytes() {
+            return read(&ledger).map(Some);
+        }
+        Ok(None)
+    }
+
     pub(crate) fn load_fresh_genesis_promotion_v1(
         path: &Path,
         expected: [u8; 32],
