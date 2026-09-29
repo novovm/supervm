@@ -71,9 +71,81 @@ fn exercise_fresh_sequence(
                     params,
                 )
                 .unwrap();
-            candidate = workspace::create_from_finalized_genesis_v1(&plan, parent, pin, params)
-                .unwrap()
-                .workspace_id;
+            use crate::native_block_seal::service_config::NovNativeSealServiceConfigV1 as Config;
+            let config_path = path.with_extension("fresh-service-3").join("service.json");
+            let load = || Config::load(&config_path, chain).unwrap();
+            let before = workspace::list_v1(chain, params).unwrap();
+            let mut wrong_parent = load();
+            wrong_parent.block_hash[0] ^= 1;
+            assert!(wrong_parent
+                .prepare_fresh_successor(
+                    context.slot,
+                    context.timestamp_unix_ms,
+                    plan.raw_txs.clone(),
+                    params
+                )
+                .is_err());
+            let mut wrong_ancestor = load();
+            wrong_ancestor.finalized_parent_workspace_id = Some([9; 32]);
+            assert!(wrong_ancestor
+                .prepare_fresh_successor(
+                    context.slot,
+                    context.timestamp_unix_ms,
+                    plan.raw_txs.clone(),
+                    params
+                )
+                .is_err());
+            assert!(load()
+                .prepare_fresh_successor(
+                    context.slot,
+                    context.timestamp_unix_ms,
+                    vec![vec![0; 32]],
+                    params
+                )
+                .is_err());
+            assert_eq!(workspace::list_v1(chain, params).unwrap(), before);
+            let next = load()
+                .prepare_fresh_successor(
+                    context.slot,
+                    context.timestamp_unix_ms,
+                    plan.raw_txs.clone(),
+                    params,
+                )
+                .unwrap();
+            candidate = next.isolated_workspace_id.unwrap();
+            assert_eq!(next.height, height);
+            assert_eq!(next.finalized_parent_workspace_id, Some(parent));
+            assert_eq!(next.seal_store_path, load().seal_store_path);
+            assert_eq!(next.local_validator_id, load().local_validator_id);
+            assert_eq!(next.authority, load().authority);
+            let retry = load()
+                .prepare_fresh_successor(
+                    context.slot,
+                    context.timestamp_unix_ms,
+                    plan.raw_txs.clone(),
+                    params,
+                )
+                .unwrap();
+            assert_eq!(retry.isolated_workspace_id, Some(candidate));
+            assert_eq!(retry.block_hash, next.block_hash);
+            crate::native_block_seal::tests::native_seal_round_network::with_service_test_transports(chain, |peers| {
+                let (runtime, _) = peers.iter().find(|(_, key)|
+                    key.verifying_key() == next.signer.verifying_key()).unwrap();
+                let mut service = crate::native_block_seal::service::NovNativeSealServiceV1::open_configured(
+                    next, &ledger, params, runtime, std::time::Instant::now()).unwrap();
+                service.poll(runtime, std::time::Instant::now()).unwrap();
+                assert_eq!(service.status_json()["height"], height);
+                assert_eq!(service.status_json()["finalized"], false);
+                assert!(!service.halted());
+            });
+            assert!(retry
+                .prepare_fresh_successor(
+                    context.slot + 1,
+                    context.timestamp_unix_ms + 1,
+                    plan.raw_txs.clone(),
+                    params
+                )
+                .is_err()); // Unconfirmed child cannot parent another block.
             assert_eq!(
                 workspace::load_v1(chain, candidate, params)
                     .unwrap()
@@ -267,6 +339,28 @@ fn exercise_fresh_sequence(
                 .contains("retired"));
         }
         if height == 4 {
+            let old_config =
+                crate::native_block_seal::service_config::NovNativeSealServiceConfigV1::load(
+                    &path.with_extension("fresh-service-3").join("service.json"),
+                    chain,
+                )
+                .unwrap();
+            let before = workspace::list_v1(chain, params).unwrap();
+            assert!(old_config
+                .prepare_fresh_successor(
+                    current.block().header.slot + 1,
+                    current.block().header.timestamp_unix_ms + 1,
+                    vec![candidate_workspace_execution_raw(
+                        chain,
+                        5,
+                        [0xc3; 32],
+                        10,
+                        "deposit_reserve"
+                    )],
+                    params
+                )
+                .is_err());
+            assert_eq!(workspace::list_v1(chain, params).unwrap(), before);
             exercise_fresh_successor_relay(path, params, chain, parent, candidate, pin, &proof);
             workspace::corrupt_execution_output_for_test_v1(chain, parent, params).unwrap();
             let before = workspace::list_v1(chain, params).unwrap();

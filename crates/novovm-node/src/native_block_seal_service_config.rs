@@ -159,6 +159,91 @@ impl From<AuthorityFile> for NovNativeSealEpochAuthorityV1 {
 }
 
 impl NovNativeSealServiceConfigV1 {
+    /// Prepare the next local candidate from this service's finalized block.
+    /// Reuses the operator's key, paths and authority; does not sign or publish.
+    /// The caller owns transaction selection/transport and must retain the exact
+    /// slot, timestamp and ordered batch for retry. No wall clock is inferred.
+    pub fn prepare_fresh_successor(
+        mut self,
+        slot: u64,
+        timestamp_unix_ms: u64,
+        raw_txs: Vec<Vec<u8>>,
+        params: &serde_json::Value,
+    ) -> Result<Self> {
+        use crate::tx_ingress::candidate_workspace as workspace;
+        self.validate(self.chain_id)?;
+        let pin = self
+            .fresh_genesis_config_commitment
+            .context("successor requires fresh genesis")?;
+        let parent_id = self
+            .isolated_workspace_id
+            .context("successor parent workspace missing")?;
+        let paths = crate::tx_ingress::native_persistence_write_paths_v1(params);
+        let ledger = paths
+            .iter()
+            .find(|(label, _)| *label == "native block ledger")
+            .context("successor ledger path missing")?
+            .1
+            .clone();
+        let writes = paths
+            .into_iter()
+            .filter(|(label, _)| *label != "native block ledger")
+            .map(|(_, path)| path)
+            .collect::<Vec<_>>();
+        super::service_paths::validate_service_paths_v1(&self, &ledger, &writes, &[])?;
+        let parent =
+            workspace::load_finalized_genesis_parent_v1(self.chain_id, parent_id, pin, params)?;
+        if parent.block().header.height != self.height
+            || parent.block().header.block_hash != self.block_hash
+            || parent.finality_proof().authority != self.authority
+        {
+            bail!("successor service differs from the live finalized parent or authority");
+        }
+        if let Some(predecessor) = self.finalized_parent_workspace_id {
+            let artifact = workspace::load_block_artifact_v1(self.chain_id, predecessor, params)?
+                .context("configured finalized predecessor output missing")?;
+            if artifact.block().header.block_hash != parent.block().header.parent_block_hash {
+                bail!("successor service predecessor differs from finalized ancestry");
+            }
+        }
+        let height = self
+            .height
+            .checked_add(1)
+            .context("successor height overflow")?;
+        let plan = parent.successor_plan(
+            novovm_protocol::NovBlockExecutionContextV1 {
+                chain_id: self.chain_id,
+                block_height: height,
+                parent_block_hash: self.block_hash,
+                slot,
+                timestamp_unix_ms,
+            },
+            raw_txs,
+            params,
+        )?;
+        // Full-batch authentication above precedes staging, GC and execution.
+        // Each existing boundary rechecks live parent authority under its locks.
+        let candidate = workspace::create_from_finalized_genesis_v1(&plan, parent_id, pin, params)?;
+        workspace::execute_v1(self.chain_id, candidate.workspace_id, params)?;
+        workspace::register_finalized_successor_v1(
+            self.chain_id,
+            parent_id,
+            candidate.workspace_id,
+            pin,
+            params,
+        )?;
+        let artifact =
+            workspace::load_block_artifact_v1(self.chain_id, candidate.workspace_id, params)?
+                .context("prepared successor output missing")?;
+        parent.successor_seal_subject(&artifact, 0)?;
+        self.height = height;
+        self.block_hash = artifact.block().header.block_hash;
+        self.isolated_workspace_id = Some(candidate.workspace_id);
+        self.finalized_parent_workspace_id = Some(parent_id);
+        self.validate(self.chain_id)?;
+        Ok(self)
+    }
+
     pub fn is_fresh_successor(&self) -> bool {
         self.finalized_parent_workspace_id.is_some()
     }
