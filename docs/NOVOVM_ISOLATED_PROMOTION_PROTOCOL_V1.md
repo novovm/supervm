@@ -46,6 +46,25 @@ This is durable input recovery only, not AOEM publication recovery, a finalized
 genesis or proof that the AOEM namespace is unused. Hard-crash tests and actual
 production activation remain unexecuted.
 
+`fresh_genesis::publication::publish_v1` now provides explicit AOEM initial-state
+publication, still without CLI/startup activation. It requires the complete
+reserved manifest, matching runtime protocol pin, explicit AOEM ownership and
+no existing Host projection in any supported backend. First publication refuses
+an existing AOEM DB; a synchronized local ownership claim binds retry to the
+physical authority lock, namespace, configuration and exact image digest. Lost
+or incomplete claims stop recovery; they are not automatically reconstructed.
+
+The generic AOEM graph writes 512-byte chunks, then a distinct 152-byte `NVG1`
+authority head as its completion write. No transaction batch result, receipt or
+QC is fabricated. Readback compares the complete exact image derived from the
+archived configuration. No head plus matching partial chunks permits replay;
+an existing head with missing/changed chunks fails closed instead of repair.
+An uncertain commit/readback retains the authority OS lock until process exit.
+The reserved ledger and incompatible genesis head deliberately keep ordinary
+transaction startup blocked until genesis trust-anchor activation is implemented.
+Local graph fault-state tests are not independent-process crash or power-loss
+proof; claim-file crash durability, startup integration and finality remain open.
+
 ## Observed implementation boundaries
 
 - `native_candidate_execution.rs::Output` already contains the complete verified

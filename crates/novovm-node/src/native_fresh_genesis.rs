@@ -4,6 +4,9 @@ use crate::native_block_ledger::NovNativeFreshGenesisReservationV1;
 use crate::native_block_seal::{NovNativeSealValidatorSetV1, NovNativeSealValidatorV1};
 use serde::{Deserialize, Serialize};
 
+#[path = "native_fresh_genesis_publication.rs"]
+pub mod publication;
+
 pub const GENESIS_SCHEMA_V1: &str = "novovm-fresh-genesis-config/v1";
 const MAX_CONFIG_BYTES: usize = 1024 * 1024;
 const MAX_ALLOCATIONS: usize = 4096;

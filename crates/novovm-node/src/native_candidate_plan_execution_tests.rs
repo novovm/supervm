@@ -544,4 +544,5 @@ mod candidate_workspace_tests {
     include!("native_candidate_registration_tests.rs");
     include!("native_candidate_service_tests.rs");
     include!("native_candidate_service_quorum_tests.rs");
+    include!("native_fresh_genesis_publication_tests.rs");
 }
