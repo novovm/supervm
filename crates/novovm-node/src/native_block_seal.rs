@@ -66,6 +66,8 @@ pub const NOV_NATIVE_BLOCK_SEAL_VOTE_SCHEMA_V1: &str = "novovm-native-block-seal
 pub const NOV_NATIVE_BLOCK_SEAL_QC_SCHEMA_V1: &str = "novovm-native-block-seal-qc/v1";
 pub const NOV_NATIVE_BLOCK_SEAL_PROTOCOL_VERSION_V1: &str = "novovm-proof-seal-bft/v1";
 pub const NOV_NATIVE_BLOCK_SEAL_PROOF_VERSION_V1: &str = "novovm-native-proof-seal/v1";
+pub const NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1: &str =
+    "novovm-native-proof-seal/fresh-genesis-v1";
 pub const NOV_NATIVE_BLOCK_SEAL_VERIFICATION_PROFILE_V1: &str = "local-aoem-readback-and-body/v1";
 pub const NOV_NATIVE_BLOCK_SEAL_PHASE_V1: &str = "prepare";
 pub const NOV_NATIVE_BLOCK_SEAL_SIGNATURE_SCHEME_V1: &str = "ed25519";
@@ -76,6 +78,8 @@ pub const NOV_NATIVE_BLOCK_SEAL_MAX_OUTBOX_SCAN_V1: usize = 4_096;
 const KEY_PREFIX_V1: &str = "native_block_seal/v1/";
 const KEY_SCHEMA_V1: &[u8] = b"native_block_seal/v1/schema";
 const STORE_BINDING_SCHEMA_V1: &str = "novovm-native-block-seal-store-binding/v1";
+const FRESH_STORE_BINDING_SCHEMA_V1: &str =
+    "novovm-native-block-seal-store-binding/fresh-genesis-v1";
 const ROUND_LOCK_SCHEMA_V1: &str = "novovm-native-block-seal-round-lock/v1";
 const HEIGHT_LOCK_SCHEMA_V1: &str = "novovm-native-block-seal-height-lock/v1";
 const PROPOSAL_LOCK_SCHEMA_V1: &str = "novovm-native-block-seal-proposal-lock/v1";
@@ -96,6 +100,8 @@ const VOTE_SIGNING_DOMAIN_V1: &[u8] = b"novovm-native-seal-vote-signing-v1\0";
 const VOTE_HASH_DOMAIN_V1: &[u8] = b"novovm-native-seal-vote-hash-v1\0";
 const QC_HASH_DOMAIN_V1: &[u8] = b"novovm-native-seal-qc-hash-v1\0";
 const LEDGER_IDENTITY_COMMITMENT_DOMAIN_V1: &[u8] = b"novovm-native-seal-ledger-identity-v1\0";
+const FRESH_LEDGER_IDENTITY_DOMAIN_V1: &[u8] =
+    b"novovm-native-seal-ledger-identity-fresh-genesis-v1\0";
 const COMPETING_QC_EVIDENCE_DOMAIN_V1: &[u8] = b"novovm-native-seal-competing-qc-evidence-v1\0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,7 +302,11 @@ impl NovNativeSealSubjectV1 {
         validator_set.validate()?;
         if self.schema != NOV_NATIVE_BLOCK_SEAL_SUBJECT_SCHEMA_V1
             || self.protocol_version != NOV_NATIVE_BLOCK_SEAL_PROTOCOL_VERSION_V1
-            || self.proof_version != NOV_NATIVE_BLOCK_SEAL_PROOF_VERSION_V1
+            || !matches!(
+                self.proof_version.as_str(),
+                NOV_NATIVE_BLOCK_SEAL_PROOF_VERSION_V1
+                    | NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1
+            )
             || self.verification_profile != NOV_NATIVE_BLOCK_SEAL_VERIFICATION_PROFILE_V1
             || self.phase != NOV_NATIVE_BLOCK_SEAL_PHASE_V1
             || self.chain_id == 0
@@ -309,15 +319,26 @@ impl NovNativeSealSubjectV1 {
         {
             bail!("NOV native seal subject protocol or validator-set binding is invalid");
         }
+        if self.proof_version == NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1
+            && (self.height != 1
+                || self.epoch != 1
+                || validator_set.activation_height != 1
+                || self.state_version != 1
+                || self.pre_state_root == [0; 32])
+        {
+            bail!("fresh genesis proof profile only supports the first execution block");
+        }
         if self.height == 1 {
             if self.parent_block_hash != [0u8; 32]
                 || self.justify_qc_hash != [0u8; 32]
                 || self.aoem_parent_commitment != [0u8; 32]
-                || self.genesis_block_hash != self.block_hash
+                || (self.proof_version == NOV_NATIVE_BLOCK_SEAL_PROOF_VERSION_V1
+                    && self.genesis_block_hash != self.block_hash)
             {
                 bail!("NOV native genesis seal subject has an invalid parent or justify QC");
             }
         } else if self.parent_block_hash == [0u8; 32]
+            || self.proof_version == NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1
             || self.justify_qc_hash == [0u8; 32]
             || self.aoem_parent_commitment == [0u8; 32]
         {
@@ -878,6 +899,23 @@ impl NovNativeBlockSealStoreV1 {
         self.ensure_schema_v1()?;
         validator_set.validate()?;
         let (record, block) = ledger.load_seal_eligible_local_candidate_v1(chain_id, block_hash)?;
+        if let Some((config, _)) = ledger.fresh_genesis_seal_config_v1(chain_id)? {
+            let compiled = config.compile()?;
+            if compiled.validator_set() != validator_set {
+                bail!("first seal validator set differs from approved genesis");
+            }
+            let justify = justify_qc_hash.unwrap_or([0; 32]);
+            self.validate_justify_qc_v1(&record, validator_set, justify)?;
+            return subject_from_block_profile_v1(
+                &block,
+                validator_set,
+                round,
+                justify,
+                compiled.identity().anchor(),
+                config.protocol_config_commitment,
+                NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1,
+            );
+        }
         let ownership = ledger
             .load_aoem_ownership()?
             .context("NOV native seal requires a durable AOEM ownership binding")?;
@@ -2073,6 +2111,26 @@ pub(crate) fn subject_from_block_v1(
     genesis_block_hash: [u8; 32],
     protocol_config_commitment: [u8; 32],
 ) -> Result<NovNativeSealSubjectV1> {
+    subject_from_block_profile_v1(
+        block,
+        validator_set,
+        round,
+        justify_qc_hash,
+        genesis_block_hash,
+        protocol_config_commitment,
+        NOV_NATIVE_BLOCK_SEAL_PROOF_VERSION_V1,
+    )
+}
+
+fn subject_from_block_profile_v1(
+    block: &NovNativeDurableBlockV1,
+    validator_set: &NovNativeSealValidatorSetV1,
+    round: u64,
+    justify_qc_hash: [u8; 32],
+    genesis_block_hash: [u8; 32],
+    protocol_config_commitment: [u8; 32],
+    proof_version: &str,
+) -> Result<NovNativeSealSubjectV1> {
     crate::native_block_ledger::validate_durable_block_v1(block)?;
     let record = &block.header;
     validator_set.validate()?;
@@ -2098,7 +2156,7 @@ pub(crate) fn subject_from_block_v1(
     let mut subject = NovNativeSealSubjectV1 {
         schema: NOV_NATIVE_BLOCK_SEAL_SUBJECT_SCHEMA_V1.to_string(),
         protocol_version: NOV_NATIVE_BLOCK_SEAL_PROTOCOL_VERSION_V1.to_string(),
-        proof_version: NOV_NATIVE_BLOCK_SEAL_PROOF_VERSION_V1.to_string(),
+        proof_version: proof_version.to_string(),
         verification_profile: NOV_NATIVE_BLOCK_SEAL_VERIFICATION_PROFILE_V1.to_string(),
         phase: NOV_NATIVE_BLOCK_SEAL_PHASE_V1.to_string(),
         chain_id: record.chain_id,
@@ -2459,6 +2517,28 @@ fn store_binding_v1(
     ledger: &NovNativeBlockLedgerV1,
     chain_id: u64,
 ) -> Result<NovNativeSealStoreBindingV1> {
+    if let Some((config, namespace_digest)) = ledger.fresh_genesis_seal_config_v1(chain_id)? {
+        let genesis_block_hash = config.compile()?.identity().anchor();
+        let protocol_config_commitment = config.protocol_config_commitment;
+        let binding = NovNativeSealStoreBindingV1 {
+            schema: FRESH_STORE_BINDING_SCHEMA_V1.to_owned(),
+            chain_id,
+            genesis_block_hash,
+            namespace_digest,
+            protocol_config_commitment,
+            ledger_identity_commitment: hash_parts_v1(
+                FRESH_LEDGER_IDENTITY_DOMAIN_V1,
+                &[
+                    &chain_id.to_be_bytes(),
+                    &genesis_block_hash,
+                    &namespace_digest,
+                    &protocol_config_commitment,
+                ],
+            ),
+        };
+        validate_store_binding_v1(&binding)?;
+        return Ok(binding);
+    }
     let ownership = ledger
         .load_aoem_ownership()?
         .context("NOV native seal store binding requires AOEM ownership metadata")?;
@@ -2498,8 +2578,10 @@ fn store_binding_v1(
 }
 
 fn validate_store_binding_v1(binding: &NovNativeSealStoreBindingV1) -> Result<()> {
-    if binding.schema != STORE_BINDING_SCHEMA_V1
-        || binding.chain_id == 0
+    if !matches!(
+        binding.schema.as_str(),
+        STORE_BINDING_SCHEMA_V1 | FRESH_STORE_BINDING_SCHEMA_V1
+    ) || binding.chain_id == 0
         || binding.genesis_block_hash == [0u8; 32]
         || binding.namespace_digest == [0u8; 32]
         || binding.protocol_config_commitment == [0u8; 32]
@@ -2507,7 +2589,11 @@ fn validate_store_binding_v1(binding: &NovNativeSealStoreBindingV1) -> Result<()
         bail!("NOV native seal store binding is invalid");
     }
     let expected = hash_parts_v1(
-        LEDGER_IDENTITY_COMMITMENT_DOMAIN_V1,
+        if binding.schema == FRESH_STORE_BINDING_SCHEMA_V1 {
+            FRESH_LEDGER_IDENTITY_DOMAIN_V1
+        } else {
+            LEDGER_IDENTITY_COMMITMENT_DOMAIN_V1
+        },
         &[
             binding.chain_id.to_be_bytes().as_slice(),
             binding.genesis_block_hash.as_slice(),
@@ -3208,6 +3294,46 @@ pub(crate) mod tests {
                 .expect("overflow validator"),
         ];
         assert!(NovNativeSealValidatorSetV1::new(chain_id, 2, 2, overflow).is_err());
+    }
+
+    #[test]
+    fn fresh_genesis_subject_profile_is_distinct_and_first_height_only() {
+        let chain = 81_077;
+        let node = TestNodeV1::new("fresh-profile");
+        bind_ownership_v1(node.ledger(), chain);
+        let first = commit_block_v1(node.ledger(), chain, 1, None, 0x21);
+        let (_, set) = validator_fixture_v1(chain);
+        let subject = subject_from_block_profile_v1(
+            &first,
+            &set,
+            0,
+            [0; 32],
+            [9; 32],
+            [8; 32],
+            NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1,
+        )
+        .unwrap();
+        assert_ne!(subject.genesis_block_hash, subject.block_hash);
+        let mut downgraded = subject.clone();
+        downgraded.proof_version = NOV_NATIVE_BLOCK_SEAL_PROOF_VERSION_V1.into();
+        downgraded.subject_hash = subject_hash_v1(&downgraded);
+        assert!(downgraded.validate(&set).is_err());
+        let second = commit_block_v1(node.ledger(), chain, 2, Some(&first), 0x22);
+        assert!(subject_from_block_profile_v1(
+            &second,
+            &set,
+            0,
+            [7; 32],
+            [9; 32],
+            [8; 32],
+            NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1,
+        )
+        .is_err());
+        let legacy =
+            subject_from_block_v1(&first, &set, 0, [0; 32], first.header.block_hash, [8; 32])
+                .unwrap();
+        assert!(legacy.validate(&set).is_ok());
+        assert_ne!(legacy.subject_hash, subject.subject_hash);
     }
 
     #[test]

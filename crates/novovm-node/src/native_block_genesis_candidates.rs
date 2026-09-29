@@ -65,6 +65,57 @@ pub(super) fn validated_keys(
 }
 
 impl NovNativeBlockLedgerV1 {
+    pub(crate) fn fresh_genesis_seal_config_v1(
+        &self,
+        chain: u64,
+    ) -> Result<Option<(&FreshGenesisConfigV1, [u8; 32])>> {
+        self.ensure_schema_v1()?;
+        match &self.fresh_genesis_seal_scope {
+            Some((config, namespace)) if config.chain_id == chain => Ok(Some((config, *namespace))),
+            Some(_) => bail!("fresh genesis signing chain mismatch"),
+            None => Ok(None),
+        }
+    }
+
+    /// Coordinator holds workspace and authority locks; this method holds the
+    /// ledger lock through the callback. The read-only view cannot escape it.
+    pub(crate) fn with_fresh_genesis_seal_scope_v1<T>(
+        path: &Path,
+        expected: [u8; 32],
+        namespace: [u8; 32],
+        block: &NovNativeDurableBlockV1,
+        binding: &NovNativeIsolatedExecutionBindingV1,
+        action: impl FnOnce(&Self) -> Result<T>,
+    ) -> Result<T> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("first signing candidate requires existing ledger")?;
+        let _guard = ledger
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("genesis signing ledger lock poisoned"))?;
+        let config = load_verified(&ledger, expected, namespace)?;
+        let record = ledger
+            .load_candidate_record_inner_v1(config.chain_id, block.header.block_hash)?
+            .context("first signing candidate is not registered")?;
+        if record.isolated_execution_binding.as_ref() != Some(binding)
+            || ledger
+                .load_candidate_block_for_record_inner_v1(&record)?
+                .as_ref()
+                != Some(block)
+        {
+            bail!("first signing candidate does not match verified live execution");
+        }
+        let view = Self {
+            path: ledger.path.clone(),
+            db: Arc::clone(&ledger.db),
+            write_lock: Arc::clone(&ledger.write_lock),
+            read_only: true,
+            isolated_seal_scope: Some(record),
+            fresh_genesis_seal_scope: Some((config, namespace)),
+        };
+        action(&view)
+    }
+
     /// Workspace coordinator only, under workspace then authority OS locks,
     /// after verifying live genesis and complete AOEM candidate output. Records
     /// historical execution; it never grants signing or selects an execution.

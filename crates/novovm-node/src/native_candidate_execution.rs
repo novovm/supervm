@@ -10,7 +10,8 @@ use super::*;
 mod block_artifact;
 pub use block_artifact::{
     load_block_artifact_v1, register_block_candidate_v1, register_genesis_block_candidate_v1,
-    with_verified_block_candidate_v1, IsolatedBlockArtifactV1,
+    with_verified_block_candidate_v1, with_verified_genesis_block_candidate_v1,
+    IsolatedBlockArtifactV1,
 };
 
 const OUTPUT_SCHEMA: &str = "novovm-native-candidate-execution/v1";

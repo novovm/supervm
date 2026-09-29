@@ -134,6 +134,66 @@ pub fn register_genesis_block_candidate_v1(
     expected_genesis: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<NovNativeBlockCandidateRecordV1> {
+    with_live_genesis_candidate(
+        chain_id,
+        id,
+        expected_genesis,
+        params,
+        |path, workspace, artifact| {
+            NovNativeBlockLedgerV1::register_fresh_genesis_candidate_v1(
+                &nov_native_block_ledger_rocksdb_path_v1(path),
+                expected_genesis,
+                parse_fixed_hex_32_v1(&workspace.namespace, "first candidate namespace")?,
+                artifact.block,
+                NovNativeIsolatedExecutionBindingV1 {
+                    workspace_id: id,
+                    plan_commitment: artifact.plan_commitment,
+                    output_digest: artifact.output_digest,
+                },
+            )
+        },
+    )
+}
+
+/// Fresh first-block signing view. Revalidates live AOEM genesis and output on
+/// every call, including replays; holds workspace, authority then ledger locks.
+/// No nested workspace/authority calls or ledger writes are allowed in action.
+pub fn with_verified_genesis_block_candidate_v1<T>(
+    chain_id: u64,
+    id: [u8; 32],
+    expected_genesis: [u8; 32],
+    params: &serde_json::Value,
+    action: impl FnOnce(&NovNativeBlockLedgerV1) -> Result<T>,
+) -> Result<T> {
+    with_live_genesis_candidate(
+        chain_id,
+        id,
+        expected_genesis,
+        params,
+        |path, workspace, artifact| {
+            NovNativeBlockLedgerV1::with_fresh_genesis_seal_scope_v1(
+                &nov_native_block_ledger_rocksdb_path_v1(path),
+                expected_genesis,
+                parse_fixed_hex_32_v1(&workspace.namespace, "first candidate namespace")?,
+                &artifact.block,
+                &NovNativeIsolatedExecutionBindingV1 {
+                    workspace_id: id,
+                    plan_commitment: artifact.plan_commitment,
+                    output_digest: artifact.output_digest,
+                },
+                action,
+            )
+        },
+    )
+}
+
+fn with_live_genesis_candidate<T>(
+    chain_id: u64,
+    id: [u8; 32],
+    expected_genesis: [u8; 32],
+    params: &serde_json::Value,
+    action: impl FnOnce(&Path, &WorkspaceStore, IsolatedBlockArtifactV1) -> Result<T>,
+) -> Result<T> {
     let workspace = WorkspaceStore::open(chain_id, params)?;
     let artifact = load_block_artifact_inner_v1(&workspace, id, params)?
         .context("first candidate requires complete verified isolated output")?;
@@ -161,17 +221,7 @@ pub fn register_genesis_block_candidate_v1(
     if serde_json::to_value(&current)? != serde_json::to_value(stored_genesis)? {
         bail!("first candidate current genesis differs from captured input");
     }
-    NovNativeBlockLedgerV1::register_fresh_genesis_candidate_v1(
-        &nov_native_block_ledger_rocksdb_path_v1(&store_path),
-        expected_genesis,
-        parse_fixed_hex_32_v1(&workspace.namespace, "first candidate namespace")?,
-        artifact.block,
-        NovNativeIsolatedExecutionBindingV1 {
-            workspace_id: id,
-            plan_commitment: artifact.plan_commitment,
-            output_digest: artifact.output_digest,
-        },
-    )
+    action(&store_path, &workspace, artifact)
 }
 
 /// Legacy transaction-parent registration; no implicit fresh-genesis activation.

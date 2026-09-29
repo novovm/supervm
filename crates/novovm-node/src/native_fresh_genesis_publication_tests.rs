@@ -30,12 +30,14 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
                 nov: "1000".into(),
             }],
             total_initial_nov: "1000".into(),
-            validators: vec![GenesisValidatorV1 {
-                public_key: ed25519_dalek::SigningKey::from_bytes(&[1; 32])
-                    .verifying_key()
-                    .to_bytes(),
-                weight: 1,
-            }],
+            validators: (1..=4)
+                .map(|seed| GenesisValidatorV1 {
+                    public_key: ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+                        .verifying_key()
+                        .to_bytes(),
+                    weight: 1,
+                })
+                .collect(),
         };
         let compiled = config.compile().unwrap();
         let pin = compiled.config_commitment();
@@ -359,7 +361,22 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         assert!(!native_host_projection_has_state_v1(
             &load_nov_native_execution_store_v1(path).unwrap()
         ));
+        exercise_fresh_genesis_signing(
+            path,
+            params,
+            &compiled,
+            input.workspace_id,
+            competing.workspace_id,
+        );
         workspace::abort_v1(chain, competing.workspace_id, params).unwrap();
+        assert!(workspace::with_verified_genesis_block_candidate_v1(
+            chain,
+            competing.workspace_id,
+            pin,
+            params,
+            |_| Ok(())
+        )
+        .is_err());
         assert!(workspace::register_genesis_block_candidate_v1(
             chain,
             competing.workspace_id,
@@ -375,3 +392,5 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), head);
     });
 }
+
+include!("native_fresh_genesis_signing_tests.rs");

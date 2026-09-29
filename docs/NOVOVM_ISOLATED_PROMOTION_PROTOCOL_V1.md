@@ -77,11 +77,12 @@ revalidation under the authority lock.
 
 - `NovBlockExecutionContextV1` requires height 1 to have a zero parent hash.
 - Candidate plans and durable transaction blocks require nonempty transactions.
-- `prepare_local_subject` and seal-store binding fetch height 1 as the genesis
-  block; a height-1 seal subject requires `genesis_block_hash == block_hash`.
+- Legacy `prepare_local_subject` and seal-store binding fetch height 1 as the
+  genesis block; the legacy profile requires `genesis_block_hash == block_hash`.
+  The explicit fresh-genesis signing scope below now uses a separate profile.
 - Legacy isolated parent capture requires a transaction-state envelope and a
   durable parent block. The explicit `create_from_genesis_v1` path now supports
-  the distinct genesis image as described below; signing still rejects it.
+  the distinct genesis image as described below; legacy signing still rejects it.
 
 Consequently the new initial state cannot be relabeled as an existing-format
 transaction block. The next integration must explicitly represent the genesis
@@ -106,8 +107,9 @@ genesis parent. Old transaction-parent JSON remains readable; older readers
 reject the genesis variant. The existing authentication, isolated AOEM execution,
 output verification and block-artifact code are reused. Ready replay is historical
 input reuse, not evidence that genesis is still current; the expected genesis pin
-must still match the saved input. Existing registration/signing remains fenced
-because genesis trust-anchor and finality-domain activation is not yet integrated.
+must still match the saved input. Legacy registration/signing remains fenced;
+the explicit fresh-genesis coordinators below perform live validation separately.
+Ordinary startup and finality activation remain incomplete.
 
 ## Observed implementation boundaries
 
@@ -220,10 +222,10 @@ confirms the authoritative genesis head remains unchanged. Reserved-ledger
 legacy registration still rejects both. Existing seal subjects, authority codecs and
 height-one signature checks remain unchanged: the new anchor MUST NOT be inserted
 into the legacy `genesis_block_hash` field as if it were a transaction block hash.
-An explicitly discriminated fresh-genesis signing domain and live ledger scope
-are the next integration requirement; this foundation is not that integration.
+The independently versioned signing domain and live ledger scope described below
+are separate from this historical identity accessor.
 
-## Fresh first-candidate registration (implemented, signing still fenced)
+## Fresh first-candidate registration (implemented, no implicit signing)
 
 The explicit `register_genesis_block_candidate_v1` coordinator now holds the
 workspace lock, verifies completed AOEM output and the approved configuration pin,
@@ -246,9 +248,42 @@ non-initial state version reject before the candidate batch. These checks are
 historical ledger evidence, not live AOEM capabilities. Workspace abort prevents
 reuse but does not rewrite the historical registration record.
 
-This registration entrypoint does not yet admit network proposals or sign votes.
-The explicitly versioned fresh-genesis seal domain and lock-scoped ledger view
-remain required before first-block voting and V3 confirmation can run.
+This registration entrypoint does not admit network proposals or sign votes.
+
+## Explicit fresh-genesis signing and V3 certificates (local API implemented)
+
+`with_verified_genesis_block_candidate_v1` shares the live workspace/output and
+AOEM genesis verification used by registration. It then validates the complete
+manifest/graph under the ledger lock, verifies the exact registered artifact and
+execution binding and provides only a callback-scoped read-only ledger view.
+Ordinary opens remain fenced. Neither selected height-one nor an AOEM transaction
+ownership record is synthesized. The view cannot authorize another candidate or
+perform ledger writes, and workspace abort rejects subsequent use.
+
+The proof profile `novovm-native-proof-seal/fresh-genesis-v1` interprets the
+existing signed `genesis_block_hash` slot as the domain-separated genesis anchor,
+not a transaction block hash. This explicit discriminator is covered by subject,
+proposal, prepare-vote and V3 decision signatures. Legacy profile validation and
+wire field layout remain unchanged; older verifiers reject the new proof version.
+Only height one / epoch one / activation one / state version one is admitted by
+this initial profile. Continuation heights remain fenced until promotion and
+ancestry verification are integrated. The supplied validator set must equal the
+compiled approved genesis set, not merely be a self-consistent alternate set.
+
+Seal-store binding uses a distinct fresh-genesis schema and hash domain, with the
+shared genesis anchor plus local namespace and protocol pin. Competing first
+candidates share that binding and the existing per-height safety locks; this is
+not a new signing journal per candidate. V3 preparation/decision thresholds and
+persist-before-emit rules are reused without relaxing old-version lock exclusion.
+
+Real AOEM regression uses four signers with separate seal databases and one
+candidate authority. Two signatures fail both prepare and decision quorum; three
+form a QC and V3 certificate. Conflicting candidate signing rejects, decision vote
+replay survives reopen, and certificate persistence/reopen is idempotent without
+changing the AOEM genesis head or finalized flags. This is not four independent
+executing nodes, network delivery, process-kill recovery or mainnet finality.
+Overlay epoch authority/config, node service dispatch and independent-node
+fresh-genesis acceptance remain the next integration work.
 
 ## Recovery matrix to implement and test
 

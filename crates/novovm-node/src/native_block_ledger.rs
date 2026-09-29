@@ -360,6 +360,10 @@ pub struct NovNativeBlockLedgerV1 {
     write_lock: Arc<Mutex<()>>,
     read_only: bool,
     isolated_seal_scope: Option<NovNativeBlockCandidateRecordV1>,
+    fresh_genesis_seal_scope: Option<(
+        crate::tx_ingress::fresh_genesis::FreshGenesisConfigV1,
+        [u8; 32],
+    )>,
 }
 
 impl NovNativeBlockLedgerV1 {
@@ -447,6 +451,7 @@ impl NovNativeBlockLedgerV1 {
             db,
             read_only: false,
             isolated_seal_scope: None,
+            fresh_genesis_seal_scope: None,
         };
         if !allow_genesis_reservation {
             ledger.ensure_schema_v1()?;
@@ -495,6 +500,7 @@ impl NovNativeBlockLedgerV1 {
             db,
             read_only: true,
             isolated_seal_scope: None,
+            fresh_genesis_seal_scope: None,
         };
         if allow_genesis_reservation {
             let schema = ledger
@@ -1386,6 +1392,18 @@ impl NovNativeBlockLedgerV1 {
     }
 
     fn ensure_schema_v1(&self) -> Result<()> {
+        if self.fresh_genesis_seal_scope.is_some() {
+            if !self.read_only
+                || self.isolated_seal_scope.is_none()
+                || !self
+                    .db
+                    .get(KEY_SCHEMA_V1)?
+                    .is_some_and(|raw| genesis_reservation::is_candidate_schema(&raw))
+            {
+                bail!("fresh genesis seal view is not a live read-only candidate scope");
+            }
+            return Ok(()); // Full manifest/graph verified while acquiring held ledger lock.
+        }
         if genesis_reservation::has_reservation_evidence(&self.db)? {
             bail!("NOV native fresh genesis reservation requires explicit recovery; ordinary access is fenced");
         }
