@@ -24,6 +24,52 @@ pub struct FinalizedGenesisParentV1 {
 }
 
 impl FinalizedGenesisParentV1 {
+    /// Build the historical second-height signing subject. Does not sign,
+    /// register, transmit or grant live publication permission.
+    pub fn successor_seal_subject(
+        &self,
+        candidate: &IsolatedBlockArtifactV1,
+        round: u64,
+    ) -> Result<crate::native_block_seal::NovNativeSealSubjectV1> {
+        let block = candidate.block();
+        let h = &block.header;
+        let p = &self.block.header;
+        let compiled = self.genesis.compile()?;
+        let expected_parent = NovNativePreparedAoemParentV1 {
+            batch_id: p.aoem_batch_id.clone(),
+            batch_result_id: p.aoem_batch_result_id.clone(),
+            state_root: p.post_state_root,
+            state_root_codec: p.post_state_root_codec.clone(),
+            cumulative_receipt_root: p.cumulative_receipt_root,
+            receipt_root_codec: p.cumulative_receipt_root_codec.clone(),
+            state_version: p.state_version,
+        };
+        if candidate.fresh_genesis_identity() != Some(&compiled.identity())
+            || h.chain_id != p.chain_id
+            || h.height != 2
+            || h.parent_block_hash != p.block_hash
+            || h.pre_state_root != p.post_state_root
+            || h.aoem_parent.as_ref() != Some(&expected_parent)
+            || p.state_version.checked_add(u64::from(h.tx_count)) != Some(h.state_version)
+            || h.slot <= p.slot
+            || h.timestamp_unix_ms < p.timestamp_unix_ms
+        {
+            bail!("successor seal subject does not extend verified finalized execution");
+        }
+        let target = self
+            .proof
+            .validated_decision_target(&self.genesis, &self.block)?;
+        crate::native_block_seal::subject_from_block_profile_v1(
+            block,
+            compiled.validator_set(),
+            round,
+            target,
+            compiled.identity().anchor(),
+            self.genesis.protocol_config_commitment,
+            crate::native_block_seal::NOV_NATIVE_BLOCK_SEAL_FRESH_SUCCESSOR_PROOF_V1,
+        )
+    }
+
     /// Build and authenticate the next-height input against this exact image.
     /// No pending admission, nonce reservation, execution or authority writes.
     pub fn successor_plan(

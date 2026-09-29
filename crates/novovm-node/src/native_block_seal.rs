@@ -68,6 +68,11 @@ pub const NOV_NATIVE_BLOCK_SEAL_PROTOCOL_VERSION_V1: &str = "novovm-proof-seal-b
 pub const NOV_NATIVE_BLOCK_SEAL_PROOF_VERSION_V1: &str = "novovm-native-proof-seal/v1";
 pub const NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1: &str =
     "novovm-native-proof-seal/fresh-genesis-v1";
+/// Under this profile `justify_qc_hash` binds the parent's stable V3 decision
+/// target, NOT a prepare-QC hash or a signer-subset-dependent certificate hash.
+/// Legacy and first-height transport authorities do not admit this profile.
+pub const NOV_NATIVE_BLOCK_SEAL_FRESH_SUCCESSOR_PROOF_V1: &str =
+    "novovm-native-proof-seal/fresh-successor-decision-v1";
 pub const NOV_NATIVE_BLOCK_SEAL_VERIFICATION_PROFILE_V1: &str = "local-aoem-readback-and-body/v1";
 pub const NOV_NATIVE_BLOCK_SEAL_PHASE_V1: &str = "prepare";
 pub const NOV_NATIVE_BLOCK_SEAL_SIGNATURE_SCHEME_V1: &str = "ed25519";
@@ -306,6 +311,7 @@ impl NovNativeSealSubjectV1 {
                 self.proof_version.as_str(),
                 NOV_NATIVE_BLOCK_SEAL_PROOF_VERSION_V1
                     | NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1
+                    | NOV_NATIVE_BLOCK_SEAL_FRESH_SUCCESSOR_PROOF_V1
             )
             || self.verification_profile != NOV_NATIVE_BLOCK_SEAL_VERIFICATION_PROFILE_V1
             || self.phase != NOV_NATIVE_BLOCK_SEAL_PHASE_V1
@@ -327,6 +333,11 @@ impl NovNativeSealSubjectV1 {
                 || self.pre_state_root == [0; 32])
         {
             bail!("fresh genesis proof profile only supports the first execution block");
+        }
+        if self.proof_version == NOV_NATIVE_BLOCK_SEAL_FRESH_SUCCESSOR_PROOF_V1
+            && (self.height < 2 || self.epoch != 1 || validator_set.activation_height != 1)
+        {
+            bail!("fresh successor proof requires a non-genesis block in the pinned epoch");
         }
         if self.height == 1 {
             if self.parent_block_hash != [0u8; 32]
@@ -3323,6 +3334,30 @@ pub(crate) mod tests {
         downgraded.subject_hash = subject_hash_v1(&downgraded);
         assert!(downgraded.validate(&set).is_err());
         let second = commit_block_v1(node.ledger(), chain, 2, Some(&first), 0x22);
+        assert!(subject_from_block_profile_v1(
+            &first,
+            &set,
+            0,
+            [0; 32],
+            [9; 32],
+            [8; 32],
+            NOV_NATIVE_BLOCK_SEAL_FRESH_SUCCESSOR_PROOF_V1,
+        )
+        .is_err());
+        let successor = subject_from_block_profile_v1(
+            &second,
+            &set,
+            0,
+            [7; 32],
+            [9; 32],
+            [8; 32],
+            NOV_NATIVE_BLOCK_SEAL_FRESH_SUCCESSOR_PROOF_V1,
+        )
+        .unwrap();
+        let mut missing_decision = successor;
+        missing_decision.justify_qc_hash = [0; 32];
+        missing_decision.subject_hash = subject_hash_v1(&missing_decision);
+        assert!(missing_decision.validate(&set).is_err());
         assert!(subject_from_block_profile_v1(
             &second,
             &set,

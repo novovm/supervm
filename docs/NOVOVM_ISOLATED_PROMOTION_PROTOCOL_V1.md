@@ -32,6 +32,17 @@ reopens it idempotently without changing first-height authority. Legacy signing
 and registration reject fresh-chain artifacts. Main-node second-height admission,
 confirmation and promotion are still pending; this is not continuous finality.
 
+Second-height unsigned subjects use the distinct
+`novovm-native-proof-seal/fresh-successor-decision-v1` profile. In this profile,
+the serialized `justify_qc_hash` field means the stable parent V3 decision target,
+not a prepare-QC hash or certificate hash. The complete parent decision envelope
+must verify before deriving that target; a prepare QC alone is insufficient.
+This preserves the same child dependency across valid parent signer subsets.
+`successor_seal_subject` also checks genesis identity, exact parent batch/roots,
+height, slot, timestamp and transaction-count state-version advancement. It is
+historical construction only: old transport authorities reject this profile,
+and live candidate registration/signing/publication still require new wiring.
+
 Ledger-only prerequisite now implemented: `reserve_fresh_genesis_v1` atomically
 reserves an unused ledger with configuration commitments, an independent digest
 pin and a capability marker. Exact retries verify the existing reservation;

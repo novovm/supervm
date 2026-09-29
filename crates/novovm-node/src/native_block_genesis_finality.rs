@@ -14,6 +14,24 @@ pub struct NovNativeFreshFinalityProofV1 {
 }
 
 impl NovNativeFreshFinalityProofV1 {
+    /// Stable across valid signer subsets and confirmation rounds. The complete
+    /// witness is still required: a prepare QC alone is not finality.
+    pub(crate) fn validated_decision_target(
+        &self,
+        config: &FreshGenesisConfigV1,
+        block: &NovNativeDurableBlockV1,
+    ) -> Result<[u8; 32]> {
+        self.validate_archived_block(config, block)?;
+        let NovNativeSealRoundMessageV1::DecisionCertificateV3 { decision, .. } = &self.witness
+        else {
+            bail!("parent requires a complete decision witness");
+        };
+        crate::native_block_seal::commit_v3::decision_target_v3(
+            &decision.prepare,
+            config.compile()?.validator_set(),
+        )
+    }
+
     /// Verify archived first-block evidence without treating it as live authority.
     pub(crate) fn validate_archived_block(
         &self,

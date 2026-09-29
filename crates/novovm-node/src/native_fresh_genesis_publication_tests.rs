@@ -903,6 +903,45 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             block.block().header.block_hash
         );
         assert!(next_block.fresh_genesis_identity().is_some());
+        let next_subject = parent.successor_seal_subject(&next_block, 0).unwrap();
+        next_subject.validate(compiled.validator_set()).unwrap();
+        assert_eq!(
+            next_subject.proof_version,
+            crate::native_block_seal::NOV_NATIVE_BLOCK_SEAL_FRESH_SUCCESSOR_PROOF_V1
+        );
+        assert_eq!(
+            next_subject.justify_qc_hash,
+            proof
+                .validated_decision_target(&config, block.block())
+                .unwrap()
+        );
+        assert_ne!(
+            next_subject.justify_qc_hash,
+            intent.decision.certificate_hash
+        );
+        assert_ne!(
+            next_subject.justify_qc_hash,
+            intent.decision.prepare.qc_hash
+        );
+        assert_eq!(
+            next_subject,
+            parent.successor_seal_subject(&next_block, 0).unwrap()
+        );
+        let next_round = parent.successor_seal_subject(&next_block, 1).unwrap();
+        assert_eq!(next_round.justify_qc_hash, next_subject.justify_qc_hash);
+        assert!(parent.successor_seal_subject(&block, 0).is_err());
+        // Historical construction must not silently activate the old authority.
+        assert!(proof
+            .authority
+            .validate_subject_domain_v1(&next_subject)
+            .is_err());
+        let mut incomplete_parent = proof.clone();
+        if let Message::DecisionCertificateV3 { decision, .. } = &mut incomplete_parent.witness {
+            decision.votes.truncate(2);
+        }
+        assert!(incomplete_parent
+            .validated_decision_target(&config, block.block())
+            .is_err());
         assert!(
             workspace::register_block_candidate_v1(chain, next_input.workspace_id, params).is_err()
         );
