@@ -17,6 +17,9 @@ try {
   }
 
   $installedTargets = @(rustup target list --installed)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Unable to determine installed Rust targets. A Linux package was not generated."
+  }
   if ($installedTargets -notcontains $Target) {
     throw "Rust target '$Target' is not installed. Install it with: rustup target add $Target. A Linux package was not generated."
   }
@@ -40,6 +43,9 @@ try {
   )
   foreach ($bin in $bins) {
     cargo build -q -p novovm-node --release --target $Target --bin $bin
+    if ($LASTEXITCODE -ne 0) {
+      throw "Linux build failed for '$bin'; refusing to package possibly stale binaries."
+    }
   }
 
   New-Item -ItemType Directory -Force -Path (Join-Path $packagePath "bin") | Out-Null
@@ -387,6 +393,9 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
     } | Sort-Object path
   $entries | ForEach-Object { "$($_.sha256)  $($_.path)" } | Set-Content -Encoding ascii (Join-Path $packagePath "CHECKSUMS.sha256")
   $commit = (git rev-parse HEAD).Trim()
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) {
+    throw "Unable to identify the package source commit."
+  }
   $ackWireVersion = "novovm-product-mainline-recipient-ack/v1"
   $journalSchema = "novovm-product-delivery-journal/v1"
   $overlaySource = Get-Content -Raw -LiteralPath (Join-Path $repo "crates\novovm-node\src\product_mainline_overlay.rs")
