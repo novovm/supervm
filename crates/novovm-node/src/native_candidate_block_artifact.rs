@@ -161,6 +161,7 @@ pub fn with_verified_block_candidate_v1<T>(
     if current.parent_block != payload.parent_block
         || serde_json::to_value(&current.parent_snapshot)?
             != serde_json::to_value(&payload.parent_snapshot)?
+        || serde_json::to_value(&current.genesis)? != serde_json::to_value(&payload.genesis)?
     {
         bail!("isolated signing authoritative parent no longer matches captured state");
     }

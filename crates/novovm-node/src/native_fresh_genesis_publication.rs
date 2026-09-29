@@ -9,16 +9,94 @@ const SCHEMA: &str = "novovm-aoem-owned-fresh-genesis/v1";
 const CHUNK: usize = NOVOVM_AOEM_OWNED_NATIVE_STATE_CHUNK_BYTES_V1;
 const MAX_IMAGE: usize = 8 * 1024 * 1024;
 
-#[derive(Serialize)]
-struct Image<'a> {
-    schema: &'static str,
-    chain_id: u64,
-    namespace_digest: &'a str,
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GenesisSnapshotV1 {
+    schema: String,
+    pub(crate) chain_id: u64,
+    pub(crate) namespace_digest: String,
     config_commitment: [u8; 32],
     state_root: [u8; 32],
-    state_root_codec: &'static str,
-    config: &'a FreshGenesisConfigV1,
-    store: &'a NovNativeExecutionStoreV1,
+    state_root_codec: String,
+    pub(crate) config: FreshGenesisConfigV1,
+    pub(crate) store: NovNativeExecutionStoreV1,
+}
+
+impl GenesisSnapshotV1 {
+    pub(crate) fn commitment(&self) -> [u8; 32] {
+        self.config_commitment
+    }
+    pub(crate) fn validate(&self) -> Result<()> {
+        let compiled = self.config.compile()?;
+        let mut expected = compiled.initial_store().clone();
+        expected.authority_chain_id = Some(self.chain_id);
+        expected.authority_namespace_digest = self.namespace_digest.clone();
+        let namespace =
+            parse_fixed_hex_32_v1(&self.namespace_digest, "genesis snapshot namespace")?;
+        if self.schema != SCHEMA
+            || self.chain_id != self.config.chain_id
+            || namespace == [0; 32]
+            || to_hex(&namespace) != self.namespace_digest
+            || self.config_commitment != compiled.config_commitment()
+            || self.state_root != compiled.state_root()
+            || self.state_root_codec != NOVOVM_NATIVE_STATE_ROOT_CODEC_V3
+            || self.store != expected
+        {
+            bail!("genesis snapshot does not match its complete fresh configuration");
+        }
+        Ok(())
+    }
+}
+
+/// Caller holds the authority OS lock and already owns this AOEM graph handle.
+/// Reading a genesis parent must not reopen the provider or invent a tx result.
+pub(crate) fn read_snapshot_v1(
+    graph: &AoemSemanticGraphStoreV1,
+    chain: u64,
+    namespace: &str,
+    expected: [u8; 32],
+) -> Result<GenesisSnapshotV1> {
+    let head = graph
+        .get(&native_aoem_owned_state_head_key_v1(chain, namespace))?
+        .context("genesis parent authority head missing")?;
+    if head.len() != 152 || &head[..4] != b"NVG1" {
+        bail!("genesis parent authority codec mismatch");
+    }
+    let len = usize::try_from(u64::from_be_bytes(head[140..148].try_into()?))?;
+    let count = u32::from_be_bytes(head[148..152].try_into()?) as usize;
+    if len == 0
+        || len > MAX_IMAGE
+        || count != len.div_ceil(CHUNK)
+        || head[4..12] != chain.to_be_bytes()
+        || head[12..44] != parse_fixed_hex_32_v1(namespace, "genesis namespace")?
+        || head[44..76] != expected
+    {
+        bail!("genesis parent head domain or bounds mismatch");
+    }
+    let mut bytes = Vec::with_capacity(len);
+    for index in 0..count {
+        let mut key = b"NVM1GENESIS".to_vec();
+        key.extend_from_slice(&head[108..140]);
+        key.extend_from_slice(&(index as u32).to_be_bytes());
+        let chunk = graph.get(&key)?.context("genesis parent chunk missing")?;
+        if chunk.len() != CHUNK.min(len - bytes.len()) {
+            bail!("genesis parent chunk length mismatch");
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    if sha256_bytes_v1(&[b"novovm-aoem-genesis-image-v1\0", &bytes])[..] != head[108..140] {
+        bail!("genesis parent image digest mismatch");
+    }
+    let snapshot: GenesisSnapshotV1 = serde_json::from_slice(&bytes)?;
+    snapshot.validate()?;
+    if snapshot.chain_id != chain
+        || snapshot.namespace_digest != namespace
+        || snapshot.config_commitment != expected
+        || snapshot.state_root[..] != head[76..108]
+    {
+        bail!("genesis parent snapshot binding mismatch");
+    }
+    Ok(snapshot)
 }
 
 #[derive(Serialize)]
@@ -107,15 +185,15 @@ fn run_v1(
     let mut store = compiled.initial_store().clone();
     store.authority_chain_id = Some(chain_id);
     store.authority_namespace_digest = namespace.clone();
-    let image = serde_json::to_vec(&Image {
-        schema: SCHEMA,
+    let image = serde_json::to_vec(&GenesisSnapshotV1 {
+        schema: SCHEMA.into(),
         chain_id,
-        namespace_digest: &namespace,
+        namespace_digest: namespace.clone(),
         config_commitment: expected_config,
         state_root: compiled.state_root(),
-        state_root_codec: NOVOVM_NATIVE_STATE_ROOT_CODEC_V3,
-        config: &config,
-        store: &store,
+        state_root_codec: NOVOVM_NATIVE_STATE_ROOT_CODEC_V3.into(),
+        config,
+        store,
     })?;
     if image.len() > MAX_IMAGE {
         bail!("fresh genesis AOEM image exceeds bound");

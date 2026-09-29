@@ -210,7 +210,7 @@ fn build_batch(
     let context_commitment = payload.plan.context.commitment()?;
     let batch_id = deterministic_native_aoem_batch_id_v1(
         payload.plan.context.chain_id,
-        &payload.parent_snapshot.store,
+        payload.parent_store()?,
         &batch_items,
         Some(&context_commitment),
     );
@@ -279,7 +279,7 @@ fn compute(
 ) -> Result<Output> {
     // Authenticate the ENTIRE ordered batch before any AOEM submission. Never
     // call ingress: even its no-admission variant observes rejected pending.
-    let items = authenticate_plan(&payload.plan, &payload.parent_snapshot.store, params)?;
+    let items = authenticate_plan(&payload.plan, payload.parent_store()?, params)?;
     let batch = build_batch(payload, &items)?;
     if !probe_semantic_graph_v3_capability_v1()?.ready {
         bail!("candidate execution requires AOEM semantic graph V3");
@@ -297,7 +297,7 @@ fn compute(
     {
         bail!("candidate AOEM precommit did not complete the full authenticated batch");
     }
-    let mut store = payload.parent_snapshot.store.clone();
+    let mut store = payload.parent_store()?.clone();
     let mut mirror_records = Vec::new();
     for (index, item) in items.iter().enumerate() {
         dispatch_nov_execution_request_into_loaded_store_v1(
@@ -369,7 +369,7 @@ fn validate_output(
     {
         bail!("candidate output requires a persistent backend");
     }
-    let items = authenticate_plan(&payload.plan, &payload.parent_snapshot.store, params)?;
+    let items = authenticate_plan(&payload.plan, payload.parent_store()?, params)?;
     let batch = build_batch(payload, &items)?;
     if output.expected_output_commitment != batch.expected_output_commitment
         || output.batch_result
@@ -432,14 +432,12 @@ fn validate_output(
     )?;
     verify_native_business_protocol_config_v1(&output.store)?;
     let mut expected_nonces = payload
-        .parent_snapshot
-        .store
+        .parent_store()?
         .module_state
         .native_auth_next_nonces
         .clone();
     let mut expected_reservations = payload
-        .parent_snapshot
-        .store
+        .parent_store()?
         .module_state
         .native_auth_nonce_reservations
         .clone();
@@ -459,11 +457,10 @@ fn validate_output(
     }
     if output.store.module_state.native_auth_next_nonces != expected_nonces
         || output.store.module_state.native_auth_nonce_reservations != expected_reservations
-        || output.store.receipts.len() != payload.parent_snapshot.store.receipts.len() + items.len()
+        || output.store.receipts.len() != payload.parent_store()?.receipts.len() + items.len()
         || output.store.module_state.aoem_semantic_ledger_sequence
             != payload
-                .parent_snapshot
-                .store
+                .parent_store()?
                 .module_state
                 .aoem_semantic_ledger_sequence
                 .checked_add(items.len() as u64)
@@ -471,7 +468,7 @@ fn validate_output(
     {
         bail!("candidate output nonce/receipt/version continuity mismatch");
     }
-    for (hash, receipt) in &payload.parent_snapshot.store.receipts {
+    for (hash, receipt) in &payload.parent_store()?.receipts {
         if output.store.receipts.get(hash) != Some(receipt) {
             bail!("candidate output changed an ancestor receipt");
         }

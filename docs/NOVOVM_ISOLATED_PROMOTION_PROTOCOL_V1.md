@@ -79,8 +79,9 @@ revalidation under the authority lock.
 - Candidate plans and durable transaction blocks require nonempty transactions.
 - `prepare_local_subject` and seal-store binding fetch height 1 as the genesis
   block; a height-1 seal subject requires `genesis_block_hash == block_hash`.
-- Isolated candidate parent capture currently requires a transaction-state
-  envelope and a durable parent block, not the distinct genesis image.
+- Legacy isolated parent capture requires a transaction-state envelope and a
+  durable parent block. The explicit `create_from_genesis_v1` path now supports
+  the distinct genesis image as described below; signing still rejects it.
 
 Consequently the new initial state cannot be relabeled as an existing-format
 transaction block. The next integration must explicitly represent the genesis
@@ -89,6 +90,24 @@ initial state to it. It must preserve legacy rejection rules/version fencing,
 not synthesize transactions, batch results, QCs or historical finalized flags.
 Ordinary startup remains blocked until these interfaces and recoverable ledger
 activation are implemented together.
+
+### First isolated candidate from fresh genesis
+
+`candidate_workspace::create_from_genesis_v1` takes an explicit expected genesis
+commitment, obtains workspace then authority locks and checks the complete
+reserved manifest against the live AOEM genesis head/chunks. The bounded reader
+validates length, digest, chain, namespace, state root, full configuration and
+the exact fresh state. No parent transaction result or parent QC is synthesized.
+Only height 1, zero parent sentinel, absent transaction-parent metadata and a
+timestamp no earlier than genesis are accepted. The pre-state root must match.
+
+Stored candidate inputs represent exactly one of an executed parent or a fresh
+genesis parent. Old transaction-parent JSON remains readable; older readers
+reject the genesis variant. The existing authentication, isolated AOEM execution,
+output verification and block-artifact code are reused. Ready replay is historical
+input reuse, not evidence that genesis is still current; the expected genesis pin
+must still match the saved input. Existing registration/signing remains fenced
+because genesis trust-anchor and finality-domain activation is not yet integrated.
 
 ## Observed implementation boundaries
 

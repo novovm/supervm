@@ -24,10 +24,12 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             )
             .unwrap(),
             allocations: vec![GenesisAllocationV1 {
-                account: [7; 20],
-                nov: "123".into(),
+                account: novovm_adapter_novovm::address_from_seed_v1([0xc3; 32])
+                    .try_into()
+                    .unwrap(),
+                nov: "1000".into(),
             }],
-            total_initial_nov: "123".into(),
+            total_initial_nov: "1000".into(),
             validators: vec![GenesisValidatorV1 {
                 public_key: ed25519_dalek::SigningKey::from_bytes(&[1; 32])
                     .verifying_key()
@@ -166,5 +168,87 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         assert!(publish_v1(chain, pin, params).is_err());
         fs::write(&claim_path, claim).unwrap();
         assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), head);
+
+        // First signed transaction executes from real genesis, never a fake
+        // transaction-parent envelope. Authority stays at the genesis image.
+        let plan = make_plan(
+            NovBlockExecutionContextV1 {
+                chain_id: chain,
+                block_height: 1,
+                parent_block_hash: [0; 32],
+                slot: 1,
+                timestamp_unix_ms: config.timestamp_unix_ms,
+            },
+            compiled.state_root(),
+            None,
+            vec![candidate_workspace_execution_raw(
+                chain,
+                0,
+                [0xc3; 32],
+                10,
+                "deposit_reserve",
+            )],
+        );
+        assert!(workspace::create_from_genesis_v1(&plan, [9; 32], params).is_err());
+        let mut bad_head = head.clone();
+        bad_head[140..148].copy_from_slice(&u64::MAX.to_be_bytes());
+        change(
+            914,
+            Write::Put {
+                key: head_key.clone(),
+                value: bad_head.clone(),
+            },
+            Write::Put {
+                key: head_key.clone(),
+                value: bad_head,
+            },
+        );
+        assert!(workspace::create_from_genesis_v1(&plan, pin, params).is_err());
+        change(
+            915,
+            Write::Put {
+                key: head_key.clone(),
+                value: head.clone(),
+            },
+            Write::Put {
+                key: head_key.clone(),
+                value: head.clone(),
+            },
+        );
+        let wrong_root = make_plan(plan.context, [9; 32], None, plan.raw_txs.clone());
+        assert!(workspace::create_from_genesis_v1(&wrong_root, pin, params).is_err());
+        let mut too_early = plan.context;
+        too_early.timestamp_unix_ms -= 1;
+        let too_early = make_plan(too_early, compiled.state_root(), None, plan.raw_txs.clone());
+        assert!(workspace::create_from_genesis_v1(&too_early, pin, params).is_err());
+        let input = workspace::create_from_genesis_v1(&plan, pin, params).unwrap();
+        assert_eq!(input.parent_block_hash, [0; 32]);
+        let result = workspace::execute_v1(chain, input.workspace_id, params).unwrap();
+        assert_candidate_workspace_execution_complete(&result);
+        assert_eq!(result.batch_result.per_tx_receipts.len(), 1);
+        assert!(result.batch_result.per_tx_receipts[0].status_ok);
+        assert_eq!(result.batch_result.snapshot_metadata.state_version, 1);
+        let block = workspace::load_block_artifact_v1(chain, input.workspace_id, params)
+            .unwrap()
+            .unwrap();
+        assert_eq!(block.block().header.height, 1);
+        assert_eq!(block.block().header.pre_state_root, compiled.state_root());
+        assert!(block.block().header.aoem_parent.is_none());
+        assert!(!block.block().header.finalized);
+        assert!(workspace::register_block_candidate_v1(chain, input.workspace_id, params).is_err());
+        assert_eq!(
+            workspace::create_from_genesis_v1(&plan, pin, params)
+                .unwrap()
+                .workspace_id,
+            input.workspace_id
+        );
+        assert!(workspace::create_from_genesis_v1(&plan, [9; 32], params).is_err());
+        assert!(workspace::create_v1(&plan, params).is_err());
+        let restored = workspace::execute_v1(chain, input.workspace_id, params).unwrap();
+        assert_eq!(restored.output_digest, result.output_digest);
+        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), head);
+        assert!(!native_host_projection_has_state_v1(
+            &load_nov_native_execution_store_v1(path).unwrap()
+        ));
     });
 }

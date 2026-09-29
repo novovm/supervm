@@ -148,8 +148,20 @@ impl Descriptor {
 struct Payload {
     schema: String,
     plan: NovNativeCandidateExecutionPlanV1,
-    parent_block: NovNativeDurableBlockV1,
-    parent_snapshot: NovAoemOwnedNativeStateEnvelopeV1,
+    parent_block: Option<NovNativeDurableBlockV1>,
+    parent_snapshot: Option<NovAoemOwnedNativeStateEnvelopeV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    genesis: Option<fresh_genesis::publication::GenesisSnapshotV1>,
+}
+
+impl Payload {
+    fn parent_store(&self) -> Result<&NovNativeExecutionStoreV1> {
+        match (&self.parent_block, &self.parent_snapshot, &self.genesis) {
+            (Some(_), Some(snapshot), None) => Ok(&snapshot.store),
+            (None, None, Some(snapshot)) => Ok(&snapshot.store),
+            _ => bail!("candidate parent must be exactly one executed or fresh genesis state"),
+        }
+    }
 }
 
 // An unknown graph completion can still publish writes after commit() returns
@@ -440,11 +452,15 @@ fn describe(payload: &Payload, bytes: &[u8], scope: &[u8; 32]) -> Result<Descrip
         id: workspace_id(scope, &payload.plan.plan_commitment),
         plan: payload.plan.plan_commitment,
         payload: payload_digest(bytes),
-        parent_block: payload.parent_block.header.block_hash,
+        parent_block: payload.plan.context.parent_block_hash,
         parent_state: payload.plan.pre_state_root,
         parent_snapshot: sha256_bytes_v1(&[
             b"novovm-candidate-workspace-parent-v1\0",
-            &serde_json::to_vec(&payload.parent_snapshot)?,
+            &if let Some(genesis) = &payload.genesis {
+                serde_json::to_vec(genesis)?
+            } else {
+                serde_json::to_vec(&payload.parent_snapshot)?
+            },
         ]),
         len: bytes.len(),
     })
@@ -453,20 +469,48 @@ fn describe(payload: &Payload, bytes: &[u8], scope: &[u8; 32]) -> Result<Descrip
 fn validate_payload(payload: &Payload, workspace: &WorkspaceStore) -> Result<()> {
     let plan = &payload.plan;
     plan.validate()?;
-    crate::native_block_ledger::validate_durable_block_v1(&payload.parent_block)?;
+    payload.parent_store()?; // exclusive parent variants, never synthesized metadata
     if payload.schema != SCHEMA
         || plan.context.chain_id != workspace.chain_id
         || plan.protocol_config_commitment != workspace.protocol
     {
         bail!("candidate workspace input chain or protocol mismatch");
     }
-    let snapshot = &payload.parent_snapshot;
+    for (raw, expected) in plan.raw_txs.iter().zip(&plan.tx_hashes) {
+        if canonical_nov_native_tx_hash_from_payload_v1(raw)? != *expected {
+            bail!("candidate workspace body does not match canonical transaction hashes");
+        }
+    }
+    if let Some(genesis) = &payload.genesis {
+        genesis.validate()?;
+        if genesis.chain_id != workspace.chain_id
+            || genesis.namespace_digest != workspace.namespace
+            || genesis.config.protocol_config_commitment != workspace.protocol
+            || genesis.config.compile()?.state_root() != plan.pre_state_root
+            || plan.context.block_height != 1
+            || plan.context.parent_block_hash != [0; 32]
+            || plan.aoem_parent.is_some()
+            || plan.context.timestamp_unix_ms < genesis.config.timestamp_unix_ms
+        {
+            bail!("candidate first-block plan disagrees with fresh genesis");
+        }
+        return Ok(());
+    }
+    let block = payload
+        .parent_block
+        .as_ref()
+        .context("candidate parent block missing")?;
+    crate::native_block_ledger::validate_durable_block_v1(block)?;
+    let snapshot = payload
+        .parent_snapshot
+        .as_ref()
+        .context("candidate parent snapshot missing")?;
     validate_production_native_state_envelope_v1(
         snapshot,
         workspace.chain_id,
         &workspace.namespace,
     )?;
-    let header = &payload.parent_block.header;
+    let header = &block.header;
     let parent = plan
         .aoem_parent
         .as_ref()
@@ -505,11 +549,6 @@ fn validate_payload(payload: &Payload, workspace: &WorkspaceStore) -> Result<()>
             )?
     {
         bail!("candidate workspace plan, local ledger and AOEM parent do not agree");
-    }
-    for (raw, expected) in plan.raw_txs.iter().zip(&plan.tx_hashes) {
-        if canonical_nov_native_tx_hash_from_payload_v1(raw)? != *expected {
-            bail!("candidate workspace body does not match canonical transaction hashes");
-        }
     }
     Ok(())
 }
@@ -579,8 +618,9 @@ fn capture_parent_locked(
     let payload = Payload {
         schema: SCHEMA.to_string(),
         plan: plan.clone(),
-        parent_block,
-        parent_snapshot,
+        parent_block: Some(parent_block),
+        parent_snapshot: Some(parent_snapshot),
+        genesis: None,
     };
     validate_payload(&payload, workspace)?;
     Ok(payload)
@@ -603,9 +643,28 @@ pub fn create_v1(
     create_with_checkpoint_v1(plan, params, |_| Ok(()))
 }
 
+/// Stage the first candidate from a pinned, live AOEM genesis image. This does
+/// not register it for signing, activate a ledger or publish execution output.
+pub fn create_from_genesis_v1(
+    plan: &NovNativeCandidateExecutionPlanV1,
+    expected_genesis: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<WorkspaceInfoV1> {
+    create_inner_v1(plan, params, Some(expected_genesis), |_| Ok(()))
+}
+
 pub(super) fn create_with_checkpoint_v1(
     plan: &NovNativeCandidateExecutionPlanV1,
     params: &serde_json::Value,
+    checkpoint: impl Fn(CheckpointV1) -> Result<()>,
+) -> Result<WorkspaceInfoV1> {
+    create_inner_v1(plan, params, None, checkpoint)
+}
+
+fn create_inner_v1(
+    plan: &NovNativeCandidateExecutionPlanV1,
+    params: &serde_json::Value,
+    expected_genesis: Option<[u8; 32]>,
     checkpoint: impl Fn(CheckpointV1) -> Result<()>,
 ) -> Result<WorkspaceInfoV1> {
     plan.validate()?;
@@ -620,7 +679,10 @@ pub(super) fn create_with_checkpoint_v1(
         match workspace.status(*slot, descriptor)? {
             WorkspaceStatusV1::Aborted => bail!("aborted candidate workspace cannot be revived"),
             WorkspaceStatusV1::Ready => {
-                if workspace.read_payload(descriptor)?.plan != *plan {
+                let payload = workspace.read_payload(descriptor)?;
+                if payload.plan != *plan
+                    || payload.genesis.as_ref().map(|g| g.commitment()) != expected_genesis
+                {
                     bail!("candidate workspace replay differs from stored input");
                 }
                 return workspace.info(*slot, descriptor);
@@ -628,7 +690,37 @@ pub(super) fn create_with_checkpoint_v1(
             WorkspaceStatusV1::Staging => {}
         }
     }
-    let payload = capture_parent(plan, params, &workspace)?;
+    let payload = if let Some(pin) = expected_genesis {
+        let store_path = resolve_native_execution_store_path_from_params_v1(params)
+            .context("genesis candidate requires explicit native store path")?;
+        let _authority_lock = acquire_nov_native_execution_store_write_lock_v1(&store_path)?;
+        let manifest = NovNativeBlockLedgerV1::load_fresh_genesis_config_v1(
+            &nov_native_block_ledger_rocksdb_path_v1(&store_path),
+            pin,
+            parse_fixed_hex_32_v1(&workspace.namespace, "genesis candidate namespace")?,
+        )?
+        .context("genesis candidate requires a complete reserved manifest")?;
+        if manifest.compile()?.config_commitment() != pin {
+            bail!("genesis candidate manifest pin mismatch");
+        }
+        let genesis = fresh_genesis::publication::read_snapshot_v1(
+            &workspace.graph,
+            workspace.chain_id,
+            &workspace.namespace,
+            pin,
+        )?;
+        let payload = Payload {
+            schema: SCHEMA.to_owned(),
+            plan: plan.clone(),
+            parent_block: None,
+            parent_snapshot: None,
+            genesis: Some(genesis),
+        };
+        validate_payload(&payload, &workspace)?;
+        payload
+    } else {
+        capture_parent(plan, params, &workspace)?
+    };
     let bytes = serde_json::to_vec(&payload)?;
     let descriptor = describe(&payload, &bytes, &workspace.scope)?;
     let slot = if let Some((slot, previous)) = existing {
