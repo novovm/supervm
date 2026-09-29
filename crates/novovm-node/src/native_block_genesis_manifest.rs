@@ -10,6 +10,8 @@ mod finality;
 pub use finality::NovNativeFreshFinalityProofV1;
 #[path = "native_block_genesis_promotion.rs"]
 mod promotion;
+#[path = "native_block_genesis_successors.rs"]
+mod successors;
 pub use promotion::NovNativeFreshPromotionIntentV1;
 
 pub(super) const MANIFEST_SCHEMA: &str =
@@ -95,6 +97,7 @@ fn load_verified(
     }
     if schema == FINALIZED_SCHEMA.as_bytes() {
         allowed_keys.extend(finality::validated_keys(ledger, &config)?);
+        allowed_keys.extend(successors::validated_keys(ledger)?);
     }
     for entry in ledger.db.iterator(rocksdb::IteratorMode::Start) {
         let (key, _) = entry?;

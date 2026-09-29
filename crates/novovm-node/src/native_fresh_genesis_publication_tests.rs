@@ -952,6 +952,122 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             params
         )
         .is_err());
+        assert!(workspace::register_finalized_successor_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            [9; 32],
+            params
+        )
+        .is_err());
+        assert!(workspace::register_finalized_successor_v1(
+            chain,
+            input.workspace_id,
+            input.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
+        let second_record = workspace::register_finalized_successor_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            params,
+        )
+        .unwrap();
+        assert_eq!(
+            second_record.block_hash,
+            next_block.block().header.block_hash
+        );
+        assert!(second_record.local_aoem_readback_verified);
+        assert!(
+            !second_record.execution_selected_local
+                && !second_record.chain_canonical
+                && !second_record.proof_sealed
+                && !second_record.finalized
+        );
+        assert_eq!(
+            second_record,
+            workspace::register_finalized_successor_v1(
+                chain,
+                input.workspace_id,
+                next_input.workspace_id,
+                pin,
+                params
+            )
+            .unwrap()
+        );
+        let db = rocksdb::DB::open_default(&ledger).unwrap();
+        let (second_key, second_value) =
+            db.iterator(rocksdb::IteratorMode::Start)
+                .map(|entry| entry.unwrap())
+                .find(|(_, value)| {
+                    serde_json::from_slice::<
+                        crate::native_block_ledger::NovNativeBlockCandidateRecordV1,
+                    >(value)
+                    .is_ok_and(|record| record.block_hash == second_record.block_hash)
+                })
+                .expect("second candidate durable record");
+        db.delete(&second_key).unwrap();
+        drop(db);
+        assert!(workspace::register_finalized_successor_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
+        let db = rocksdb::DB::open_default(&ledger).unwrap();
+        assert!(db.get(&second_key).unwrap().is_none());
+        db.put(&second_key, &second_value).unwrap(); // Explicit fixture restoration only.
+        drop(db);
+        let competing_next_plan = parent
+            .successor_plan(
+                next_context,
+                vec![candidate_workspace_execution_raw(
+                    chain,
+                    2,
+                    [0xc3; 32],
+                    11,
+                    "deposit_reserve",
+                )],
+                params,
+            )
+            .unwrap();
+        let competing_next = workspace::create_from_finalized_genesis_v1(
+            &competing_next_plan,
+            input.workspace_id,
+            pin,
+            params,
+        )
+        .unwrap();
+        workspace::execute_v1(chain, competing_next.workspace_id, params).unwrap();
+        let competing_next_record = workspace::register_finalized_successor_v1(
+            chain,
+            input.workspace_id,
+            competing_next.workspace_id,
+            pin,
+            params,
+        )
+        .unwrap();
+        assert_ne!(competing_next_record.block_hash, second_record.block_hash);
+        assert!(
+            !competing_next_record.execution_selected_local && !competing_next_record.finalized
+        );
+        assert_eq!(
+            second_record,
+            workspace::register_finalized_successor_v1(
+                chain,
+                input.workspace_id,
+                next_input.workspace_id,
+                pin,
+                params
+            )
+            .unwrap()
+        );
+        assert!(NovNativeBlockLedgerV1::open(&ledger).is_err());
         assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), promoted_head);
         assert_eq!(
             serde_json::to_value(parent.state()).unwrap(),
@@ -1004,6 +1120,14 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         assert!(workspace::load_finalized_genesis_parent_v1(
             chain,
             input.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
+        assert!(workspace::register_finalized_successor_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
             pin,
             params
         )

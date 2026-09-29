@@ -41,7 +41,17 @@ This preserves the same child dependency across valid parent signer subsets.
 `successor_seal_subject` also checks genesis identity, exact parent batch/roots,
 height, slot, timestamp and transaction-count state-version advancement. It is
 historical construction only: old transport authorities reject this profile,
-and live candidate registration/signing/publication still require new wiring.
+and live signing/publication still require new wiring.
+
+`register_finalized_successor_v1` now registers height-two artifacts atomically,
+under workspace -> authority -> ledger locks after a fresh live-parent check.
+The finalized manifest validates the exact candidate, execution pin, height and
+parent/children indexes; it never accepts arbitrary new key prefixes. Exact
+replay preserves the record; missing committed evidence fails closed rather than
+being rebuilt. Competing candidates remain unselected and unsealed. Authority,
+published first-block indexes and finality records are unchanged. Older readers
+reject the newly populated keys via their exact manifest allowlist. Candidate
+cleanup and actual second-height signing/promotion remain unimplemented.
 
 Ledger-only prerequisite now implemented: `reserve_fresh_genesis_v1` atomically
 reserves an unused ledger with configuration commitments, an independent digest
