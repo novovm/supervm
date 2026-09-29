@@ -15,7 +15,9 @@ pub(super) fn is_reserved_schema(raw: &[u8]) -> bool {
 }
 
 pub(super) fn is_candidate_schema(raw: &[u8]) -> bool {
-    raw == manifest::CANDIDATES_SCHEMA.as_bytes() || raw == manifest::PROMOTION_SCHEMA.as_bytes()
+    raw == manifest::CANDIDATES_SCHEMA.as_bytes()
+        || raw == manifest::PROMOTION_SCHEMA.as_bytes()
+        || raw == manifest::PUBLISHED_SCHEMA.as_bytes()
 }
 
 pub(super) fn has_reservation_evidence(db: &DB) -> Result<bool> {

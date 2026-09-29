@@ -69,7 +69,7 @@ impl NovNativeFreshPromotionIntentV1 {
     }
 }
 
-fn read(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeFreshPromotionIntentV1> {
+pub(super) fn read(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeFreshPromotionIntentV1> {
     let intent: NovNativeFreshPromotionIntentV1 =
         read_json_v1(&ledger.db, KEY_PROMOTION, "fresh promotion")?
             .context("fresh promotion intent missing")?;
@@ -98,7 +98,11 @@ impl NovNativeBlockLedgerV1 {
         let ledger = Self::open_existing_read_only_inner_v1(path, true)?
             .context("fresh promotion ledger missing")?;
         load_verified(&ledger, expected, namespace)?;
-        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() != Some(PROMOTION_SCHEMA.as_bytes()) {
+        let schema = ledger
+            .db
+            .get(KEY_SCHEMA_V1)?
+            .context("promotion schema missing")?;
+        if schema != PROMOTION_SCHEMA.as_bytes() && schema != PUBLISHED_SCHEMA.as_bytes() {
             bail!("fresh promotion requires a durable intent before authority publication");
         }
         read(&ledger)
@@ -133,7 +137,9 @@ impl NovNativeBlockLedgerV1 {
             decision,
         };
         intent.validate(&ledger, &config, expected, namespace)?;
-        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() == Some(PROMOTION_SCHEMA.as_bytes()) {
+        if ledger.db.get(KEY_SCHEMA_V1)?.is_some_and(|schema| {
+            schema == PROMOTION_SCHEMA.as_bytes() || schema == PUBLISHED_SCHEMA.as_bytes()
+        }) {
             if read(&ledger)? != intent {
                 bail!("another fresh promotion target is already durable");
             }
@@ -163,7 +169,9 @@ impl NovNativeBlockLedgerV1 {
         let ledger =
             Self::open_existing_read_only_inner_v1(path, true)?.context("fresh ledger missing")?;
         load_verified(&ledger, expected, namespace)?;
-        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() == Some(PROMOTION_SCHEMA.as_bytes()) {
+        if ledger.db.get(KEY_SCHEMA_V1)?.is_some_and(|schema| {
+            schema == PROMOTION_SCHEMA.as_bytes() || schema == PUBLISHED_SCHEMA.as_bytes()
+        }) {
             bail!(
                 "pending fresh promotion requires recovery before signing, registration or abort"
             );

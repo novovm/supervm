@@ -49,6 +49,11 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(&ledger, &config, pin, namespace)
             .unwrap();
         assert!(verify_persisted_v1(chain, pin, params).is_err());
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(&ledger, pin, namespace)
+                .unwrap()
+                .is_none()
+        );
         assert!(!db_path.exists());
         fs::create_dir(&db_path).unwrap();
         fs::write(db_path.join("occupied-test-data"), b"preserve").unwrap();
@@ -526,6 +531,96 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         assert!(workspace::abort_v1(chain, input.workspace_id, params).is_err());
         assert!(load_validated_native_state_envelope_from_aoem_owner_v1(params, chain).is_err());
         assert!(verify_persisted_v1(chain, pin, params).is_err());
+        assert!(workspace::complete_with_checkpoint_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            params,
+            |point| {
+                if point == Point::BeforeLedgerCommit {
+                    anyhow::bail!("before ledger publication");
+                }
+                Ok(())
+            }
+        )
+        .is_err());
+        assert!(
+            !workspace::verify_genesis_promotion_v1(chain, input.workspace_id, pin, params)
+                .unwrap()
+                .ledger_publication_completed
+        );
+        assert!(workspace::complete_with_checkpoint_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            params,
+            |point| {
+                if point == Point::AfterLedgerCommit {
+                    anyhow::bail!("lost ledger success response");
+                }
+                Ok(())
+            }
+        )
+        .is_err());
+        let completed =
+            workspace::complete_genesis_promotion_v1(chain, input.workspace_id, pin, params)
+                .unwrap();
+        assert!(completed.ledger_publication_completed);
+        assert!(!completed.finalized);
+        assert_eq!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(&ledger, pin, namespace)
+                .unwrap()
+                .as_ref(),
+            Some(block.block())
+        );
+        assert_eq!(
+            completed,
+            workspace::verify_genesis_promotion_v1(chain, input.workspace_id, pin, params).unwrap()
+        );
+        assert_eq!(
+            completed,
+            workspace::complete_genesis_promotion_v1(chain, input.workspace_id, pin, params)
+                .unwrap()
+        );
+        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), promoted_head);
+        assert!(workspace::abort_v1(chain, input.workspace_id, params).is_err());
+        assert!(NovNativeBlockLedgerV1::open(&ledger).is_err());
+        // Committed indexes are authoritative: retries must not rebuild a lost one.
+        let db = rocksdb::DB::open_default(&ledger).unwrap();
+        let (index_key, index_value) = db
+            .iterator(rocksdb::IteratorMode::Start)
+            .map(|entry| entry.unwrap())
+            .find(|(key, _)| String::from_utf8_lossy(key).contains("/tx/"))
+            .expect("published transaction index");
+        db.delete(&index_key).unwrap();
+        drop(db);
+        assert!(
+            workspace::complete_genesis_promotion_v1(chain, input.workspace_id, pin, params)
+                .is_err()
+        );
+        assert!(
+            workspace::verify_genesis_promotion_v1(chain, input.workspace_id, pin, params).is_err()
+        );
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(&ledger, pin, namespace)
+                .is_err()
+        );
+        let db = rocksdb::DB::open_default(&ledger).unwrap();
+        assert!(db.get(&index_key).unwrap().is_none());
+        db.put(&index_key, &index_value).unwrap(); // Explicit fixture restoration only.
+        drop(db);
+        assert_eq!(
+            completed,
+            workspace::complete_genesis_promotion_v1(chain, input.workspace_id, pin, params)
+                .unwrap()
+        );
+        assert!(workspace::register_genesis_block_candidate_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
         let mut corrupt = promoted_head.clone();
         corrupt[0] ^= 1;
         change(

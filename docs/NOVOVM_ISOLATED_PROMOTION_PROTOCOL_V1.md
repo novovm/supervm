@@ -30,6 +30,17 @@ this API is not wired into the node loop or regular state queries. Real-AOEM tes
 inject errors before/after publication and reject damaged pointers/output; these
 are not independent-process kill/recovery evidence.
 
+`complete_genesis_promotion_v1` now extends verified AOEM publication with a single
+synchronous ledger batch: unchanged signed header/body/evidence, head/height,
+transaction/receipt and external AOEM ID indexes, and an intent-bound completion
+marker. A distinct capability schema retains old reader/writer fences. Full
+manifest/graph/intent and every exact projection entry are checked on replay;
+damaged or missing committed indexes are not rebuilt. The explicit
+`load_fresh_genesis_published_block_v1` reads this complete ledger projection;
+it does not attest live AOEM or chain finality. Finalized remains false until
+finality/query and node lifecycle integration are completed. The existing
+candidate graph remains immutable historical evidence, not a finalized view.
+
 This library API has no CLI/RPC/startup activation. It does not validate the
 full genesis manifest or operator authorization, inspect AOEM namespace usage,
 publish initial state, generate keys, or mark genesis finalized. Its current

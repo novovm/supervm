@@ -3,6 +3,8 @@ use super::*;
 use crate::tx_ingress::fresh_genesis::FreshGenesisConfigV1;
 #[path = "native_block_genesis_candidates.rs"]
 mod candidates;
+#[path = "native_block_genesis_completion.rs"]
+mod completion;
 #[path = "native_block_genesis_promotion.rs"]
 mod promotion;
 pub use promotion::NovNativeFreshPromotionIntentV1;
@@ -13,6 +15,7 @@ pub(super) const CANDIDATES_SCHEMA: &str =
     "novovm-native-block-ledger/v1+genesis-isolated-candidates-v1";
 pub(super) const PROMOTION_SCHEMA: &str =
     "novovm-native-block-ledger/v1+genesis-promotion-intent-v1";
+pub(super) const PUBLISHED_SCHEMA: &str = "novovm-native-block-ledger/v1+genesis-published-v1";
 const KEY_MANIFEST: &[u8] = b"native_block_ledger/v1/genesis/manifest";
 const KEY_MANIFEST_PIN: &[u8] = b"native_block_ledger/v1/genesis/manifest-pin";
 
@@ -39,6 +42,7 @@ fn load_verified(
     if schema != MANIFEST_SCHEMA.as_bytes()
         && schema != CANDIDATES_SCHEMA.as_bytes()
         && schema != PROMOTION_SCHEMA.as_bytes()
+        && schema != PUBLISHED_SCHEMA.as_bytes()
     {
         bail!("complete genesis manifest reservation is required; no implicit upgrade");
     }
@@ -71,13 +75,16 @@ fn load_verified(
     .into_iter()
     .map(<[u8]>::to_vec)
     .collect();
-    if schema == CANDIDATES_SCHEMA.as_bytes() || schema == PROMOTION_SCHEMA.as_bytes() {
+    if schema != MANIFEST_SCHEMA.as_bytes() {
         allowed_keys.extend(candidates::validated_keys(ledger, &config)?);
     }
-    if schema == PROMOTION_SCHEMA.as_bytes() {
+    if schema == PROMOTION_SCHEMA.as_bytes() || schema == PUBLISHED_SCHEMA.as_bytes() {
         allowed_keys.extend(promotion::validated_keys(
             ledger, &config, expected, namespace,
         )?);
+    }
+    if schema == PUBLISHED_SCHEMA.as_bytes() {
+        allowed_keys.extend(completion::validated_keys(ledger)?);
     }
     for entry in ledger.db.iterator(rocksdb::IteratorMode::Start) {
         let (key, _) = entry?;

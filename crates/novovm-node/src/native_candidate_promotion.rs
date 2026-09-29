@@ -1,5 +1,5 @@
 //! Publish only the verified, pinned candidate output. No NOV business tasks in
-//! AOEM and no re-execution. Ledger finality/index publication remains separate.
+//! AOEM and no re-execution. Ledger indexes may be completed under the same locks.
 use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -21,6 +21,8 @@ pub struct GenesisPromotionPublicationV1 {
 pub(crate) enum PromotionCheckpointV1 {
     BeforePublication,
     AfterPublication,
+    BeforeLedgerCommit,
+    AfterLedgerCommit,
 }
 
 fn uncertain_authority_locks() -> &'static Mutex<Vec<NovNativeExecutionStoreWriteLockV1>> {
@@ -36,7 +38,18 @@ pub fn publish_genesis_promotion_v1(
     genesis: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<GenesisPromotionPublicationV1> {
-    run(chain, id, genesis, params, true, |_| Ok(()))
+    run(chain, id, genesis, params, true, false, |_| Ok(()))
+}
+
+/// Publish AOEM authority and atomically complete the durable block query indexes.
+/// This is not activation of continuous consensus or a finality attestation.
+pub fn complete_genesis_promotion_v1(
+    chain: u64,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<GenesisPromotionPublicationV1> {
+    run(chain, id, genesis, params, true, true, |_| Ok(()))
 }
 
 /// Full readback without AOEM writes or repairs, under both persistence locks.
@@ -46,7 +59,7 @@ pub fn verify_genesis_promotion_v1(
     genesis: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<GenesisPromotionPublicationV1> {
-    run(chain, id, genesis, params, false, |_| Ok(()))
+    run(chain, id, genesis, params, false, false, |_| Ok(()))
 }
 
 #[cfg(test)]
@@ -57,7 +70,18 @@ pub(crate) fn publish_with_checkpoint_v1(
     params: &serde_json::Value,
     checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
 ) -> Result<GenesisPromotionPublicationV1> {
-    run(chain, id, genesis, params, true, checkpoint)
+    run(chain, id, genesis, params, true, false, checkpoint)
+}
+
+#[cfg(test)]
+pub(crate) fn complete_with_checkpoint_v1(
+    chain: u64,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+    checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
+) -> Result<GenesisPromotionPublicationV1> {
+    run(chain, id, genesis, params, true, true, checkpoint)
 }
 
 fn run(
@@ -66,6 +90,7 @@ fn run(
     genesis: [u8; 32],
     params: &serde_json::Value,
     allow_write: bool,
+    complete_ledger: bool,
     checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
 ) -> Result<GenesisPromotionPublicationV1> {
     let mut workspace = WorkspaceStore::open(chain, params)?;
@@ -193,6 +218,22 @@ fn run(
         }
         return Err(error).context("promotion readback failed; inspect before further publication");
     }
+    let ledger_path = nov_native_block_ledger_rocksdb_path_v1(&native_path);
+    if complete_ledger {
+        checkpoint(PromotionCheckpointV1::BeforeLedgerCommit)?;
+        NovNativeBlockLedgerV1::complete_fresh_genesis_ledger_v1(
+            &ledger_path,
+            genesis,
+            namespace,
+            &intent,
+        )?;
+        checkpoint(PromotionCheckpointV1::AfterLedgerCommit)?;
+    }
+    let ledger_publication_completed = NovNativeBlockLedgerV1::fresh_genesis_ledger_published_v1(
+        &ledger_path,
+        genesis,
+        namespace,
+    )?;
     Ok(GenesisPromotionPublicationV1 {
         chain_id: chain,
         block_hash: header.block_hash,
@@ -203,7 +244,7 @@ fn run(
         state_version: header.state_version,
         aoem_authority_published: true,
         aoem_readback_verified: true,
-        ledger_publication_completed: false,
+        ledger_publication_completed,
         finalized: false,
     })
 }
