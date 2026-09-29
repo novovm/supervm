@@ -16,7 +16,19 @@ decision, then atomically stores its exact candidate/output binding, certificate
 pin and capability marker. Exact replay is allowed; another target, damaged evidence,
 signing/registration after intent, and abort of the source workspace are rejected.
 No AOEM authority pointer or selected ledger index is changed by this operation.
-Publication, completion/recovery and continuous-height activation still need implementation.
+AOEM publication is now available separately; ledger completion/recovery and
+continuous-height activation still need implementation.
+
+`publish_genesis_promotion_v1` verifies the pinned intent, complete candidate output
+and live captured genesis under workspace/authority locks, then publishes an NVP1
+pointer to the existing immutable AOEM output. No transaction is re-executed.
+The evidence sidecar precedes the authority completion write. Exact retries and
+`verify_genesis_promotion_v1` fully read back the same target without repairs.
+Unknown commit outcomes retain the authority lock until process exit. Old authority
+readers reject this new codec. Ledger publication and finalized remain false;
+this API is not wired into the node loop or regular state queries. Real-AOEM tests
+inject errors before/after publication and reject damaged pointers/output; these
+are not independent-process kill/recovery evidence.
 
 This library API has no CLI/RPC/startup activation. It does not validate the
 full genesis manifest or operator authorization, inspect AOEM namespace usage,

@@ -8,11 +8,18 @@ use super::*;
 
 #[path = "native_candidate_block_artifact.rs"]
 mod block_artifact;
+#[path = "native_candidate_promotion.rs"]
+mod promotion;
 pub use block_artifact::{
     load_block_artifact_v1, prepare_genesis_promotion_v1, register_block_candidate_v1,
     register_genesis_block_candidate_v1, with_verified_block_candidate_v1,
     with_verified_genesis_block_candidate_v1, IsolatedBlockArtifactV1,
 };
+pub use promotion::{
+    publish_genesis_promotion_v1, verify_genesis_promotion_v1, GenesisPromotionPublicationV1,
+};
+#[cfg(test)]
+pub(crate) use promotion::{publish_with_checkpoint_v1, PromotionCheckpointV1};
 
 const OUTPUT_SCHEMA: &str = "novovm-native-candidate-execution/v1";
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;

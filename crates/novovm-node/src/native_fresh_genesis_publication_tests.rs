@@ -392,6 +392,11 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         );
         assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), head);
         let seal_path = path.with_extension("genesis-seal-0");
+        assert!(
+            workspace::publish_genesis_promotion_v1(chain, input.workspace_id, pin, params)
+                .is_err()
+        );
+        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), head);
         let intent = workspace::prepare_genesis_promotion_v1(
             chain,
             input.workspace_id,
@@ -462,6 +467,103 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             .unwrap(),
             intent
         );
+        use workspace::PromotionCheckpointV1 as Point;
+        assert!(
+            workspace::verify_genesis_promotion_v1(chain, input.workspace_id, pin, params).is_err()
+        );
+        assert!(workspace::publish_with_checkpoint_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            params,
+            |point| {
+                if point == Point::BeforePublication {
+                    anyhow::bail!("injected before publication");
+                }
+                Ok(())
+            }
+        )
+        .is_err());
+        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), head);
+        assert!(workspace::publish_with_checkpoint_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            params,
+            |point| {
+                if point == Point::AfterPublication {
+                    anyhow::bail!("injected lost success response");
+                }
+                Ok(())
+            }
+        )
+        .is_err());
+        let promoted_head = open_graph().get(&head_key).unwrap().unwrap();
+        assert_eq!(&promoted_head[..4], b"NVP1");
+        let published =
+            workspace::publish_genesis_promotion_v1(chain, input.workspace_id, pin, params)
+                .unwrap();
+        assert!(published.aoem_authority_published && published.aoem_readback_verified);
+        assert!(!published.ledger_publication_completed && !published.finalized);
+        assert_eq!(published.state_root, block.block().header.post_state_root);
+        assert_eq!(published.intent_commitment, intent.commitment().unwrap());
+        assert_eq!(
+            workspace::verify_genesis_promotion_v1(chain, input.workspace_id, pin, params).unwrap(),
+            published
+        );
+        assert_eq!(
+            workspace::publish_genesis_promotion_v1(chain, input.workspace_id, pin, params)
+                .unwrap(),
+            published
+        );
+        assert_eq!(
+            workspace::load_execution_v1(chain, input.workspace_id, params)
+                .unwrap()
+                .unwrap()
+                .output_digest,
+            result.output_digest
+        );
+        assert!(workspace::abort_v1(chain, input.workspace_id, params).is_err());
+        assert!(load_validated_native_state_envelope_from_aoem_owner_v1(params, chain).is_err());
+        assert!(verify_persisted_v1(chain, pin, params).is_err());
+        let mut corrupt = promoted_head.clone();
+        corrupt[0] ^= 1;
+        change(
+            930,
+            Write::Put {
+                key: head_key.clone(),
+                value: corrupt.clone(),
+            },
+            Write::Put {
+                key: head_key.clone(),
+                value: corrupt.clone(),
+            },
+        );
+        assert!(
+            workspace::publish_genesis_promotion_v1(chain, input.workspace_id, pin, params)
+                .is_err()
+        );
+        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), corrupt);
+        change(
+            931,
+            Write::Put {
+                key: head_key.clone(),
+                value: promoted_head.clone(),
+            },
+            Write::Put {
+                key: head_key.clone(),
+                value: promoted_head.clone(),
+            },
+        );
+        workspace::corrupt_execution_output_for_test_v1(chain, input.workspace_id, params).unwrap();
+        assert!(
+            workspace::verify_genesis_promotion_v1(chain, input.workspace_id, pin, params).is_err()
+        );
+        assert!(
+            workspace::publish_genesis_promotion_v1(chain, input.workspace_id, pin, params)
+                .is_err()
+        );
+        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), promoted_head);
     });
 }
 

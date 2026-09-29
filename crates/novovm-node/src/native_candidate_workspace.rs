@@ -10,12 +10,14 @@ mod execution;
 #[cfg(test)]
 pub(super) use execution::{
     corrupt_execution_output_for_test_v1, execute_with_checkpoint_v1,
-    load_execution_snapshot_for_test_v1, ExecutionCheckpointV1,
+    load_execution_snapshot_for_test_v1, publish_with_checkpoint_v1, ExecutionCheckpointV1,
+    PromotionCheckpointV1,
 };
 pub use execution::{
     execute_v1, load_block_artifact_v1, load_execution_v1, prepare_genesis_promotion_v1,
-    register_block_candidate_v1, register_genesis_block_candidate_v1,
-    with_verified_block_candidate_v1, with_verified_genesis_block_candidate_v1, ExecutionInfoV1,
+    publish_genesis_promotion_v1, register_block_candidate_v1, register_genesis_block_candidate_v1,
+    verify_genesis_promotion_v1, with_verified_block_candidate_v1,
+    with_verified_genesis_block_candidate_v1, ExecutionInfoV1, GenesisPromotionPublicationV1,
     IsolatedBlockArtifactV1,
 };
 
@@ -168,7 +170,8 @@ impl Payload {
 
 // An unknown graph completion can still publish writes after commit() returns
 // an error. Keep the *workspace* OS lock until process exit in that case. Never
-// retain the authority lock. An in-memory flag alone would not fence other hosts.
+// retain the authority lock for isolated execution. Authority publication has
+// its own additional authority-lock retention boundary.
 struct WorkspaceLock(fs::File);
 
 impl Drop for WorkspaceLock {

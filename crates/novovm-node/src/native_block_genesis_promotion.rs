@@ -90,6 +90,20 @@ pub(super) fn validated_keys(
 }
 
 impl NovNativeBlockLedgerV1 {
+    pub(crate) fn load_fresh_genesis_promotion_v1(
+        path: &Path,
+        expected: [u8; 32],
+        namespace: [u8; 32],
+    ) -> Result<NovNativeFreshPromotionIntentV1> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("fresh promotion ledger missing")?;
+        load_verified(&ledger, expected, namespace)?;
+        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() != Some(PROMOTION_SCHEMA.as_bytes()) {
+            bail!("fresh promotion requires a durable intent before authority publication");
+        }
+        read(&ledger)
+    }
+
     /// Called under workspace and authority locks after live AOEM verification.
     /// The new capability marker fences old readers/signers before any publication.
     pub(crate) fn stage_fresh_genesis_promotion_v1(

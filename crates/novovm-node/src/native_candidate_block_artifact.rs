@@ -45,7 +45,7 @@ pub fn load_block_artifact_v1(
     load_block_artifact_inner_v1(&workspace, id, params)
 }
 
-fn load_block_artifact_inner_v1(
+pub(super) fn load_block_artifact_inner_v1(
     workspace: &WorkspaceStore,
     id: [u8; 32],
     params: &serde_json::Value,
