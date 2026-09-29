@@ -1724,3 +1724,4 @@ include!("native_fresh_successor_signing_tests.rs");
 include!("native_fresh_genesis_service_tests.rs");
 include!("native_fresh_successor_relay_tests.rs");
 include!("native_fresh_sequence_tests.rs");
+include!("native_fresh_independent_tests.rs");
