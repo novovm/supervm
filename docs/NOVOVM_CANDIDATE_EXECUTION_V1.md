@@ -328,6 +328,10 @@ No workspace paths or business rules are added to AOEM.
 
 A real AOEM library-level service test checks actual durable proposal emission,
 same-signature reopening, workspace-abort halt and unchanged authority state.
-It uses local WSS transport fixtures, not four independently executing candidate
-services or main-process deployment. Full isolated-candidate multi-process
+It uses local WSS transport fixtures, not main-process deployment. A separate
+four-service test independently executes each candidate using separate host
+ledgers and AOEM-owned graph databases/namespaces, verifies 2/4 cannot confirm,
+3/4 produce the same verified V3 certificate, and reopens services without
+advancing authority state. Those services share one test process/AOEM execution
+runtime and a pre-established parent QC. Full isolated-candidate multi-process
 confirmation, final-state promotion and production acceptance remain pending.
