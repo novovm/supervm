@@ -20,15 +20,17 @@ pub use promotion::{
     complete_genesis_promotion_v1, complete_successor_ledger_v1, finalize_genesis_promotion_v1,
     finalize_successor_v1, load_finalized_genesis_parent_v1, prepare_successor_promotion_v1,
     publish_genesis_promotion_v1, publish_successor_authority_v1, register_finalized_successor_v1,
-    resume_genesis_promotion_v1, resume_successor_promotion_v1, verify_genesis_promotion_v1,
-    verify_successor_authority_v1, with_verified_finalized_successor_v1, FinalizedGenesisParentV1,
-    FreshSuccessorPublicationV1, GenesisPromotionPublicationV1,
+    resume_genesis_promotion_v1, resume_successor_promotion_v1, retire_old_workspaces_v1,
+    verify_genesis_promotion_v1, verify_successor_authority_v1,
+    with_verified_finalized_successor_v1, FinalizedGenesisParentV1, FreshSuccessorPublicationV1,
+    GenesisPromotionPublicationV1, WorkspaceRetirementV1,
 };
 #[cfg(test)]
 pub(crate) use promotion::{
     complete_successor_with_checkpoint_v1, complete_with_checkpoint_v1,
     finalize_successor_with_checkpoint_v1, publish_successor_with_checkpoint_v1,
-    publish_with_checkpoint_v1, PromotionCheckpointV1,
+    publish_with_checkpoint_v1, retire_with_checkpoint_v1, PromotionCheckpointV1,
+    RetirementCheckpointV1,
 };
 
 const OUTPUT_SCHEMA: &str = "novovm-native-candidate-execution/v1";
@@ -145,7 +147,10 @@ fn completion(
 fn catalog(workspace: &WorkspaceStore) -> Result<Vec<([u8; 32], OutputDescriptor)>> {
     let mut outputs = Vec::new();
     let mut total = 0usize;
-    for (_, input) in workspace.catalog()? {
+    for (slot, input) in workspace.catalog()? {
+        if workspace.status(slot, &input)? == WorkspaceStatusV1::Retiring {
+            continue;
+        }
         if let Some(raw) = workspace.graph.get(&workspace.key(b'v', &input.id))? {
             let descriptor = OutputDescriptor::decode(&raw, &input)?;
             total = total

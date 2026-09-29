@@ -85,6 +85,30 @@ pub fn create_from_finalized_genesis_v1(
     if parent.successor_plan(plan.context, plan.raw_txs.clone(), params)? != *plan {
         bail!("successor input differs from live finalized parent");
     }
+    {
+        // Authentication precedes maintenance. Recheck the live parent after
+        // reacquiring the workspace; cleanup never grants a stale plan authority.
+        drop(workspace);
+        retire_old_workspaces_v1(
+            plan.context.chain_id,
+            parent_workspace_id,
+            genesis_commitment,
+            params,
+        )?;
+        workspace = WorkspaceStore::open(plan.context.chain_id, params)?;
+        let current = execution::capture_finalized_parent_locked(
+            &mut workspace,
+            parent_workspace_id,
+            genesis_commitment,
+            params,
+        )?;
+        if current.output_digest() != parent.output_digest()
+            || current.block() != parent.block()
+            || current.successor_plan(plan.context, plan.raw_txs.clone(), params)? != *plan
+        {
+            bail!("successor parent changed during workspace retirement");
+        }
+    }
     let payload = Payload {
         schema: SCHEMA.to_owned(),
         plan: plan.clone(),

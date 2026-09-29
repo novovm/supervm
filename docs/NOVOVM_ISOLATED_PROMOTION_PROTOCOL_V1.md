@@ -527,6 +527,25 @@ Main service configuration/dispatch still needs an explicit approved-genesis pin
 and fresh scope on every poll. No production startup, automatic registration,
 continuous-height processing or finality promotion is enabled by this slice.
 
+## Superseded workspace retention
+
+Fresh successor staging authenticates its input before reclaiming superseded
+execution snapshots. Maintenance holds the workspace and authority locks, checks
+the live finalized target and immutable ledger history, and protects both the
+current canonical workspace and its immediate canonical parent. Only complete,
+ledger-bound candidates at already finalized heights are eligible; unregistered
+or incomplete workspaces are retained. This is not a block/history pruning API.
+
+An immutable `NCR1` retirement record binds the slot, input/output descriptors,
+genesis, candidate and canonical finality commitment. It is persisted before
+deletion; the catalog slot is released last. Interrupted deletion resumes from
+that record without requiring already deleted chunks. A permanent workspace-ID
+tombstone prevents recreation; a reused slot cannot be targeted by an old retry.
+Block bodies, transaction/receipt indexes, finality proofs and the authority head
+are never deleted. Reported bytes are logical snapshot bytes, not measured disk
+space released by RocksDB compaction. Per-snapshot limits and retained incomplete
+workspaces remain separate capacity constraints.
+
 ## Recovery matrix to implement and test
 
 | Durable intent | AOEM state | Ledger pointer | Required action |

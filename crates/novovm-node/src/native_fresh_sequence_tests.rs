@@ -5,6 +5,7 @@ fn exercise_fresh_sequence(
     compiled: &crate::tx_ingress::fresh_genesis::CompiledFreshGenesisV1,
     mut parent: [u8; 32],
     mut candidate: [u8; 32],
+    first_plan: &crate::native_candidate_plan::NovNativeCandidateExecutionPlanV1,
 ) {
     use crate::native_block_ledger::NovNativeBlockLedgerV1 as Ledger;
     use crate::native_block_seal::commit_v3::NovNativeSealDecisionCertificateV3 as Certificate;
@@ -22,6 +23,14 @@ fn exercise_fresh_sequence(
     )
     .unwrap();
     let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
+    let first = Ledger::load_fresh_finalized_execution_v1(&ledger, pin, namespace, 1)
+        .unwrap()
+        .0
+        .workspace_id;
+    let first_slot = workspace::load_v1(chain, first, params)
+        .unwrap()
+        .unwrap()
+        .slot;
     let mut history = (1..=2)
         .map(|height| {
             Ledger::load_fresh_finality_by_height_v1(&ledger, pin, namespace, height)
@@ -65,6 +74,17 @@ fn exercise_fresh_sequence(
             candidate = workspace::create_from_finalized_genesis_v1(&plan, parent, pin, params)
                 .unwrap()
                 .workspace_id;
+            assert_eq!(
+                workspace::load_v1(chain, candidate, params)
+                    .unwrap()
+                    .unwrap()
+                    .slot,
+                first_slot
+            );
+            workspace::retire_old_workspaces_v1(chain, parent, pin, params).unwrap();
+            assert!(workspace::load_v1(chain, candidate, params)
+                .unwrap()
+                .is_some());
             assert!(
                 workspace::execute_v1(chain, candidate, params)
                     .unwrap()
@@ -209,8 +229,79 @@ fn exercise_fresh_sequence(
         assert_eq!(current.block().header.height, height);
         assert_eq!(current.block().header.state_version, height + 1);
         assert_eq!(current.state().receipts.len(), height as usize + 1);
+        if height == 3 {
+            let before = workspace::list_v1(chain, params).unwrap();
+            assert!(workspace::retire_old_workspaces_v1(chain, parent, pin, params).is_err());
+            assert_eq!(workspace::list_v1(chain, params).unwrap(), before);
+            for stop in [
+                workspace::RetirementCheckpointV1::IntentPersisted,
+                workspace::RetirementCheckpointV1::PartialReclaim,
+            ] {
+                let error =
+                    workspace::retire_with_checkpoint_v1(chain, candidate, pin, params, |point| {
+                        if point == stop {
+                            anyhow::bail!("retirement interruption");
+                        }
+                        Ok(())
+                    })
+                    .unwrap_err();
+                assert!(error.to_string().contains("retirement interruption"));
+                assert_eq!(
+                    workspace::load_v1(chain, first, params)
+                        .unwrap()
+                        .unwrap()
+                        .status,
+                    workspace::WorkspaceStatusV1::Retiring
+                );
+                assert!(workspace::execute_v1(chain, first, params).is_err());
+                workspace::load_finalized_genesis_parent_v1(chain, candidate, pin, params).unwrap();
+            }
+            let reclaimed =
+                workspace::retire_old_workspaces_v1(chain, candidate, pin, params).unwrap();
+            assert!(reclaimed.retired_workspaces.contains(&first));
+            assert!(reclaimed.snapshot_bytes_unreferenced > 0);
+            assert!(workspace::load_v1(chain, first, params).unwrap().is_none());
+            assert!(workspace::create_from_genesis_v1(first_plan, pin, params)
+                .unwrap_err()
+                .to_string()
+                .contains("retired"));
+        }
         if height == 4 {
             exercise_fresh_successor_relay(path, params, chain, parent, candidate, pin, &proof);
+            workspace::corrupt_execution_output_for_test_v1(chain, parent, params).unwrap();
+            let before = workspace::list_v1(chain, params).unwrap();
+            assert!(workspace::retire_old_workspaces_v1(chain, candidate, pin, params).is_err());
+            assert_eq!(workspace::list_v1(chain, params).unwrap(), before);
+            workspace::corrupt_execution_output_for_test_v1(chain, parent, params).unwrap();
+            let error =
+                workspace::retire_with_checkpoint_v1(chain, candidate, pin, params, |point| {
+                    if point == workspace::RetirementCheckpointV1::SlotReleased {
+                        anyhow::bail!("slot released response loss");
+                    }
+                    Ok(())
+                })
+                .unwrap_err();
+            assert!(error.to_string().contains("slot released response loss"));
+            workspace::retire_old_workspaces_v1(chain, candidate, pin, params).unwrap();
+            for protected in [parent, candidate] {
+                assert!(workspace::load_block_artifact_v1(chain, protected, params)
+                    .unwrap()
+                    .is_some());
+            }
+            workspace::load_finalized_genesis_parent_v1(chain, candidate, pin, params).unwrap();
+            for (index, expected) in history.iter().enumerate() {
+                assert_eq!(
+                    Ledger::load_fresh_finality_by_height_v1(
+                        &ledger,
+                        pin,
+                        namespace,
+                        index as u64 + 1
+                    )
+                    .unwrap()
+                    .as_ref(),
+                    Some(expected)
+                );
+            }
         }
         parent = candidate;
     }
@@ -221,6 +312,7 @@ fn exercise_fresh_sequence(
     drop(db);
     assert!(Ledger::load_fresh_finality_by_height_v1(&ledger, pin, namespace, 4).is_err());
     assert!(workspace::load_finalized_genesis_parent_v1(chain, candidate, pin, params).is_err());
+    assert!(workspace::retire_old_workspaces_v1(chain, candidate, pin, params).is_err());
     let db = rocksdb::DB::open_default(&ledger).unwrap();
     assert!(db.get(key).unwrap().is_none());
     db.put(key, original).unwrap(); // Explicit test fixture restoration, never recovery repair.

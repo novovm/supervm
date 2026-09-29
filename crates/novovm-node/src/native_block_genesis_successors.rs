@@ -159,6 +159,32 @@ fn candidate_keys(
 }
 
 impl NovNativeBlockLedgerV1 {
+    pub(crate) fn verify_retirable_fresh_candidate_v1(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        height: u64,
+        binding: &NovNativeIsolatedExecutionBindingV1,
+    ) -> Result<Option<([u8; 32], [u8; 32])>> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("retirement ledger missing")?;
+        load_verified(&ledger, genesis, namespace)?;
+        let canonical = record_at(&ledger, height)?;
+        let chain = canonical.block.header.chain_id;
+        let index = ledger
+            .load_candidate_height_index_inner_v1(chain, height)?
+            .context("retirement height index missing")?;
+        for hash in index.block_hashes {
+            let record = ledger
+                .load_candidate_record_inner_v1(chain, hash)?
+                .context("retirement record missing")?;
+            if record.isolated_execution_binding.as_ref() == Some(binding) {
+                return Ok(Some((hash, canonical.commitment)));
+            }
+        }
+        Ok(None)
+    }
+
     pub(crate) fn load_fresh_finalized_execution_v1(
         path: &Path,
         genesis: [u8; 32],

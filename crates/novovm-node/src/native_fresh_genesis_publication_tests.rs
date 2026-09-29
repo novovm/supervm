@@ -1690,9 +1690,11 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             &compiled,
             next_input.workspace_id,
             third.workspace_id,
+            &plan,
         );
         let successor_head = open_graph().get(&head_key).unwrap().unwrap();
-        workspace::corrupt_execution_output_for_test_v1(chain, input.workspace_id, params).unwrap();
+        assert!(workspace::load_v1(chain, input.workspace_id, params).unwrap().is_none());
+        assert!(workspace::corrupt_execution_output_for_test_v1(chain, input.workspace_id, params).is_err());
         assert!(workspace::load_finalized_genesis_parent_v1(
             chain,
             next_input.workspace_id,

@@ -16,18 +16,19 @@ pub use execution::{
     prepare_successor_promotion_v1, publish_genesis_promotion_v1, publish_successor_authority_v1,
     register_block_candidate_v1, register_finalized_successor_v1,
     register_genesis_block_candidate_v1, resume_genesis_promotion_v1,
-    resume_successor_promotion_v1, verify_genesis_promotion_v1, verify_successor_authority_v1,
-    with_verified_block_candidate_v1, with_verified_finalized_successor_v1,
-    with_verified_genesis_block_candidate_v1, ExecutionInfoV1, FinalizedGenesisParentV1,
-    FreshSuccessorPublicationV1, GenesisPromotionPublicationV1, IsolatedBlockArtifactV1,
+    resume_successor_promotion_v1, retire_old_workspaces_v1, verify_genesis_promotion_v1,
+    verify_successor_authority_v1, with_verified_block_candidate_v1,
+    with_verified_finalized_successor_v1, with_verified_genesis_block_candidate_v1,
+    ExecutionInfoV1, FinalizedGenesisParentV1, FreshSuccessorPublicationV1,
+    GenesisPromotionPublicationV1, IsolatedBlockArtifactV1, WorkspaceRetirementV1,
 };
 #[cfg(test)]
 pub(super) use execution::{
     complete_successor_with_checkpoint_v1, complete_with_checkpoint_v1,
     corrupt_execution_output_for_test_v1, execute_with_checkpoint_v1,
     finalize_successor_with_checkpoint_v1, load_execution_snapshot_for_test_v1,
-    publish_successor_with_checkpoint_v1, publish_with_checkpoint_v1, ExecutionCheckpointV1,
-    PromotionCheckpointV1,
+    publish_successor_with_checkpoint_v1, publish_with_checkpoint_v1, retire_with_checkpoint_v1,
+    ExecutionCheckpointV1, PromotionCheckpointV1, RetirementCheckpointV1,
 };
 pub use finalized_parent::create_from_finalized_genesis_v1;
 use finalized_parent::FinalizedParentSnapshot;
@@ -54,6 +55,7 @@ pub enum WorkspaceStatusV1 {
     Staging,
     Ready,
     Aborted,
+    Retiring,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -377,6 +379,9 @@ impl WorkspaceStore {
     }
 
     fn status(&self, slot: usize, descriptor: &Descriptor) -> Result<WorkspaceStatusV1> {
+        if self.graph.get(&self.key(b'g', &descriptor.id))?.is_some() {
+            return Ok(WorkspaceStatusV1::Retiring);
+        }
         // Independent, immutable tombstone wins even over a late completion.
         if self.has_marker(b'a', slot, descriptor)? {
             return Ok(WorkspaceStatusV1::Aborted);
@@ -706,11 +711,16 @@ fn create_inner_v1(
         bail!("candidate workspace protocol mismatch");
     }
     let id = workspace_id(&workspace.scope, &plan.plan_commitment);
+    if workspace.graph.get(&workspace.key(b'g', &id))?.is_some() {
+        bail!("retired candidate workspace cannot be revived");
+    }
     let catalog = workspace.catalog()?;
     let existing = catalog.iter().find(|(_, descriptor)| descriptor.id == id);
     if let Some((slot, descriptor)) = existing {
         match workspace.status(*slot, descriptor)? {
-            WorkspaceStatusV1::Aborted => bail!("aborted candidate workspace cannot be revived"),
+            WorkspaceStatusV1::Aborted | WorkspaceStatusV1::Retiring => {
+                bail!("closed candidate workspace cannot be revived")
+            }
             WorkspaceStatusV1::Ready => {
                 let payload = workspace.read_payload(descriptor)?;
                 if payload.plan != *plan
@@ -767,6 +777,9 @@ fn stage_payload(
     let bytes = serde_json::to_vec(payload)?;
     let descriptor = describe(payload, &bytes, &workspace.scope)?;
     let id = descriptor.id;
+    if workspace.graph.get(&workspace.key(b'g', &id))?.is_some() {
+        bail!("retired candidate workspace cannot be revived");
+    }
     let catalog = workspace.catalog()?;
     let existing = catalog.iter().find(|(_, previous)| previous.id == id);
     if let Some((slot, previous)) = existing {
@@ -774,7 +787,9 @@ fn stage_payload(
             bail!("candidate workspace replay changed its captured parent");
         }
         match workspace.status(*slot, previous)? {
-            WorkspaceStatusV1::Aborted => bail!("aborted candidate workspace cannot be revived"),
+            WorkspaceStatusV1::Aborted | WorkspaceStatusV1::Retiring => {
+                bail!("closed candidate workspace cannot be revived")
+            }
             WorkspaceStatusV1::Ready => return workspace.info(*slot, previous),
             WorkspaceStatusV1::Staging => {}
         }
@@ -861,6 +876,9 @@ pub fn abort_v1(
         .into_iter()
         .find(|(_, descriptor)| descriptor.id == id)
         .context("candidate workspace to abort was not found")?;
+    if workspace.status(slot, &descriptor)? == WorkspaceStatusV1::Retiring {
+        bail!("retiring workspace requires retirement recovery, not abort");
+    }
     if workspace.status(slot, &descriptor)? == WorkspaceStatusV1::Ready {
         let payload = workspace.read_payload(&descriptor)?;
         if let Some(parent) = &payload.finalized_parent {

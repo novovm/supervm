@@ -2,8 +2,13 @@
 //! AOEM and no re-execution. Ledger indexes may be completed under the same locks.
 use super::*;
 use crate::native_block_ledger::NovNativeFreshFinalityProofV1;
+#[path = "native_candidate_retirement.rs"]
+mod retirement;
 #[path = "native_candidate_successor_publication.rs"]
 mod successor;
+pub use retirement::{retire_old_workspaces_v1, WorkspaceRetirementV1};
+#[cfg(test)]
+pub(crate) use retirement::{retire_with_checkpoint_v1, RetirementCheckpointV1};
 pub use successor::{
     complete_successor_ledger_v1, finalize_successor_v1, publish_successor_authority_v1,
     resume_successor_promotion_v1, verify_successor_authority_v1, FreshSuccessorPublicationV1,
