@@ -7,6 +7,117 @@ enum PublicationScope<'a> {
     Authority,
     Ledger,
     Finality(&'a NovNativeFreshFinalityProofV1),
+    Capture(&'a mut Option<FinalizedGenesisParentV1>),
+}
+
+/// An immutable, verified point-in-time parent image, not permission to sign or
+/// publish a child. A child publisher must recheck that its parent is still live.
+/// No Deserialize/public constructor: caller-provided state is not a verified parent.
+pub struct FinalizedGenesisParentV1 {
+    block: NovNativeDurableBlockV1,
+    store: NovNativeExecutionStoreV1,
+    batch_result: novovm_exec::NovovmAoemNativeTxBatchResultV1,
+    genesis: fresh_genesis::FreshGenesisConfigV1,
+    workspace_id: [u8; 32],
+    output_digest: [u8; 32],
+    proof: NovNativeFreshFinalityProofV1,
+}
+
+impl FinalizedGenesisParentV1 {
+    /// Build and authenticate the next-height input against this exact image.
+    /// No pending admission, nonce reservation, execution or authority writes.
+    pub fn successor_plan(
+        &self,
+        context: novovm_protocol::NovBlockExecutionContextV1,
+        raw_txs: Vec<Vec<u8>>,
+        params: &serde_json::Value,
+    ) -> Result<NovNativeCandidateExecutionPlanV1> {
+        if raw_txs.is_empty()
+            || raw_txs.len() > crate::native_block_ledger::NOV_NATIVE_BLOCK_LEDGER_MAX_TXS_V1
+            || raw_txs
+                .iter()
+                .try_fold(0usize, |total, raw| total.checked_add(raw.len()))
+                .is_none_or(|total| {
+                    total > crate::native_block_ledger::NOV_NATIVE_BLOCK_LEDGER_MAX_BODY_BYTES_V1
+                })
+        {
+            bail!("successor transaction batch exceeds block bounds");
+        }
+        let h = &self.block.header;
+        if context.chain_id != h.chain_id
+            || h.height.checked_add(1) != Some(context.block_height)
+            || context.parent_block_hash != h.block_hash
+            || context.slot <= h.slot
+            || context.timestamp_unix_ms < h.timestamp_unix_ms
+        {
+            bail!("successor context does not extend the verified finalized parent");
+        }
+        let hashes = raw_txs
+            .iter()
+            .map(|raw| canonical_nov_native_tx_hash_from_payload_v1(raw))
+            .collect::<Result<Vec<_>>>()?;
+        let plan = NovNativeCandidateExecutionPlanV1::new(
+            context,
+            self.genesis.protocol_config_commitment,
+            h.post_state_root,
+            Some(NovNativePreparedAoemParentV1 {
+                batch_id: h.aoem_batch_id.clone(),
+                batch_result_id: h.aoem_batch_result_id.clone(),
+                state_root: h.post_state_root,
+                state_root_codec: h.post_state_root_codec.clone(),
+                cumulative_receipt_root: h.cumulative_receipt_root,
+                receipt_root_codec: h.cumulative_receipt_root_codec.clone(),
+                state_version: h.state_version,
+            }),
+            hashes,
+            raw_txs,
+        )?;
+        authenticate_plan(&plan, &self.store, params)?;
+        Ok(plan)
+    }
+
+    pub fn block(&self) -> &NovNativeDurableBlockV1 {
+        &self.block
+    }
+    pub fn batch_result(&self) -> &novovm_exec::NovovmAoemNativeTxBatchResultV1 {
+        &self.batch_result
+    }
+    pub fn genesis_config(&self) -> &fresh_genesis::FreshGenesisConfigV1 {
+        &self.genesis
+    }
+    pub fn workspace_id(&self) -> [u8; 32] {
+        self.workspace_id
+    }
+    pub fn output_digest(&self) -> [u8; 32] {
+        self.output_digest
+    }
+    pub fn finality_proof(&self) -> &NovNativeFreshFinalityProofV1 {
+        &self.proof
+    }
+    /// Complete historical state, including authenticated nonce reservations and
+    /// cumulative receipts. This accessor never turns the image into live authority.
+    pub fn state(&self) -> &NovNativeExecutionStoreV1 {
+        &self.store
+    }
+}
+
+pub fn load_finalized_genesis_parent_v1(
+    chain: u64,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<FinalizedGenesisParentV1> {
+    let mut captured = None;
+    run(
+        chain,
+        id,
+        genesis,
+        params,
+        false,
+        PublicationScope::Capture(&mut captured),
+        |_| Ok(()),
+    )?;
+    captured.context("verified finalized parent was not captured")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -337,7 +448,7 @@ fn run(
         )?;
         checkpoint(PromotionCheckpointV1::AfterLedgerCommit)?;
     }
-    if let PublicationScope::Finality(proof) = scope {
+    if let PublicationScope::Finality(proof) = &scope {
         NovNativeBlockLedgerV1::finalize_fresh_genesis_v1(&ledger_path, genesis, namespace, proof)?;
     }
     let ledger_publication_completed = NovNativeBlockLedgerV1::fresh_genesis_ledger_published_v1(
@@ -345,6 +456,39 @@ fn run(
         genesis,
         namespace,
     )?;
+    let finality =
+        NovNativeBlockLedgerV1::load_fresh_genesis_finality_v1(&ledger_path, genesis, namespace)?;
+    let finalized = finality.is_some();
+    if let PublicationScope::Capture(destination) = scope {
+        let proof = finality.context("next-height parent requires durable BFT finality")?;
+        if !ledger_publication_completed {
+            bail!("next-height parent ledger is incomplete");
+        }
+        let descriptor = catalog(&workspace)?
+            .into_iter()
+            .find_map(|(known, descriptor)| (known == id).then_some(descriptor))
+            .context("finalized parent output descriptor missing")?;
+        if descriptor.digest != artifact.output_digest {
+            bail!("finalized parent output changed during capture");
+        }
+        let output = read_output(&workspace, &input, &descriptor, &payload, params)?
+            .context("finalized parent output missing")?;
+        let config = payload
+            .genesis
+            .as_ref()
+            .context("finalized first parent genesis missing")?
+            .config
+            .clone();
+        *destination = Some(FinalizedGenesisParentV1 {
+            block: artifact.block().clone(),
+            store: output.store,
+            batch_result: output.batch_result,
+            genesis: config,
+            workspace_id: id,
+            output_digest: artifact.output_digest,
+            proof,
+        });
+    }
     Ok(GenesisPromotionPublicationV1 {
         chain_id: chain,
         block_hash: header.block_hash,
@@ -356,11 +500,6 @@ fn run(
         aoem_authority_published: true,
         aoem_readback_verified: true,
         ledger_publication_completed,
-        finalized: NovNativeBlockLedgerV1::load_fresh_genesis_finality_v1(
-            &ledger_path,
-            genesis,
-            namespace,
-        )?
-        .is_some(),
+        finalized,
     })
 }

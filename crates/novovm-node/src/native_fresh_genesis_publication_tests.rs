@@ -567,6 +567,13 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
                 .unwrap();
         assert!(completed.ledger_publication_completed);
         assert!(!completed.finalized);
+        assert!(workspace::load_finalized_genesis_parent_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
         assert_eq!(
             completed,
             workspace::resume_genesis_promotion_v1(
@@ -724,6 +731,82 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         )
         .unwrap();
         assert!(finalized.finalized && finalized.ledger_publication_completed);
+        let parent =
+            workspace::load_finalized_genesis_parent_v1(chain, input.workspace_id, pin, params)
+                .unwrap();
+        assert_eq!(parent.block(), block.block());
+        assert_eq!(parent.workspace_id(), input.workspace_id);
+        assert_eq!(parent.output_digest(), result.output_digest);
+        assert_eq!(parent.batch_result(), &result.batch_result);
+        assert_eq!(parent.finality_proof(), &proof);
+        assert_eq!(
+            serde_json::to_value(parent.genesis_config()).unwrap(),
+            serde_json::to_value(&config).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(parent.state()).unwrap(),
+            workspace::load_execution_snapshot_for_test_v1(chain, input.workspace_id, params)
+                .unwrap()
+        );
+        let next_context = NovBlockExecutionContextV1 {
+            chain_id: chain,
+            block_height: 2,
+            parent_block_hash: block.block().header.block_hash,
+            slot: 2,
+            timestamp_unix_ms: config.timestamp_unix_ms + 1,
+        };
+        let next_raw =
+            candidate_workspace_execution_raw(chain, 1, [0xc3; 32], 10, "deposit_reserve");
+        let next_plan = parent
+            .successor_plan(next_context, vec![next_raw.clone()], params)
+            .unwrap();
+        assert_eq!(
+            next_plan.pre_state_root,
+            block.block().header.post_state_root
+        );
+        assert_eq!(next_plan.aoem_parent.as_ref().unwrap().state_version, 1);
+        assert_eq!(
+            next_plan.aoem_parent.as_ref().unwrap().batch_result_id,
+            result.batch_result.batch_result_id
+        );
+        assert_eq!(
+            next_plan,
+            parent
+                .successor_plan(next_context, vec![next_raw.clone()], params)
+                .unwrap()
+        );
+        assert!(parent
+            .successor_plan(next_context, plan.raw_txs.clone(), params)
+            .is_err()); // nonce 0 already used
+        assert!(parent
+            .successor_plan(
+                next_context,
+                vec![candidate_workspace_execution_raw(
+                    chain,
+                    2,
+                    [0xc3; 32],
+                    10,
+                    "deposit_reserve"
+                )],
+                params
+            )
+            .is_err());
+        let mut wrong_context = next_context;
+        wrong_context.parent_block_hash = [9; 32];
+        assert!(parent
+            .successor_plan(wrong_context, vec![next_raw.clone()], params)
+            .is_err());
+        wrong_context = next_context;
+        wrong_context.block_height = 3;
+        assert!(parent
+            .successor_plan(wrong_context, vec![next_raw], params)
+            .is_err());
+        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), promoted_head);
+        assert_eq!(
+            serde_json::to_value(parent.state()).unwrap(),
+            workspace::load_execution_snapshot_for_test_v1(chain, input.workspace_id, params)
+                .unwrap()
+        );
         assert_eq!(
             finalized,
             workspace::verify_genesis_promotion_v1(chain, input.workspace_id, pin, params).unwrap()
@@ -764,6 +847,13 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             input.workspace_id,
             pin,
             &proof,
+            params
+        )
+        .is_err());
+        assert!(workspace::load_finalized_genesis_parent_v1(
+            chain,
+            input.workspace_id,
+            pin,
             params
         )
         .is_err());

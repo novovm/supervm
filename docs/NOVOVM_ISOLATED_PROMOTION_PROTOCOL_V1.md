@@ -17,6 +17,15 @@ This is quorum-certified execution under the pinned validator set and its BFT
 fault assumptions, NOT a zero-knowledge execution proof. Subsequent heights,
 competing-workspace cleanup and hard-crash acceptance remain incomplete.
 
+The next-height input boundary now exposes an opaque, immutable
+`FinalizedGenesisParentV1` captured under workspace/authority locks only after
+full AOEM/output/ledger/finality verification. Its `successor_plan` derives the
+parent batch/state/receipt bindings and authenticates transactions against the
+captured nonce state, without pending admission, nonce writes or execution.
+It is historical data, not a transferable live signing/publication capability;
+child staging/publication must recheck current-parent ownership. Wiring the
+second-height execution and promotion is still pending.
+
 Ledger-only prerequisite now implemented: `reserve_fresh_genesis_v1` atomically
 reserves an unused ledger with configuration commitments, an independent digest
 pin and a capability marker. Exact retries verify the existing reservation;
