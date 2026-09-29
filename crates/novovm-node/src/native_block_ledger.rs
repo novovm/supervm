@@ -3120,6 +3120,7 @@ fn hex_v1(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     include!("native_block_isolated_candidate_tests.rs");
+    include!("native_block_genesis_candidate_tests.rs");
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 

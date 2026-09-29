@@ -8,7 +8,13 @@ const KEY_INTENT: &[u8] = b"native_block_ledger/v1/genesis/reservation";
 const KEY_PIN: &[u8] = b"native_block_ledger/v1/genesis/reservation-pin";
 
 pub(super) fn is_reserved_schema(raw: &[u8]) -> bool {
-    raw == RESERVED_SCHEMA.as_bytes() || raw == manifest::MANIFEST_SCHEMA.as_bytes()
+    raw == RESERVED_SCHEMA.as_bytes()
+        || raw == manifest::MANIFEST_SCHEMA.as_bytes()
+        || is_candidate_schema(raw)
+}
+
+pub(super) fn is_candidate_schema(raw: &[u8]) -> bool {
+    raw == manifest::CANDIDATES_SCHEMA.as_bytes()
 }
 
 pub(super) fn has_reservation_evidence(db: &DB) -> Result<bool> {

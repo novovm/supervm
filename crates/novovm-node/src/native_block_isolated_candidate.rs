@@ -22,7 +22,7 @@ impl NovNativeIsolatedExecutionBindingV1 {
     }
 }
 
-fn pin_key(chain: u64, hash: &[u8; 32]) -> String {
+pub(super) fn pin_key(chain: u64, hash: &[u8; 32]) -> String {
     format!(
         "{}/isolated-execution-binding",
         candidate_record_key_v1(chain, hash)
@@ -83,10 +83,16 @@ impl NovNativeBlockLedgerV1 {
         &self,
         record: &NovNativeBlockCandidateRecordV1,
     ) -> Result<()> {
-        if record.isolated_execution_binding.is_some()
-            && self.db.get(KEY_SCHEMA_V1)?.as_deref() != Some(ISOLATED_LEDGER_SCHEMA_V1.as_bytes())
-        {
-            bail!("isolated candidate database capability marker was downgraded");
+        if record.isolated_execution_binding.is_some() {
+            let schema = self
+                .db
+                .get(KEY_SCHEMA_V1)?
+                .context("isolated ledger schema missing")?;
+            if schema != ISOLATED_LEDGER_SCHEMA_V1.as_bytes()
+                && !genesis_reservation::is_candidate_schema(&schema)
+            {
+                bail!("isolated candidate database capability marker was downgraded");
+            }
         }
         let pin = read_json_v1::<NovNativeIsolatedExecutionBindingV1>(
             &self.db,

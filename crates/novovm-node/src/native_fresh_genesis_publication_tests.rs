@@ -272,6 +272,72 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             workspace::register_block_candidate_v1(chain, competing.workspace_id, params).is_err()
         );
         assert!(workspace::register_block_candidate_v1(chain, input.workspace_id, params).is_err());
+        change(
+            919,
+            Write::Delete {
+                key: head_key.clone(),
+            },
+            Write::Delete {
+                key: head_key.clone(),
+            },
+        );
+        assert!(workspace::register_genesis_block_candidate_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
+        assert!(open_graph().get(&head_key).unwrap().is_none());
+        change(
+            920,
+            Write::Put {
+                key: head_key.clone(),
+                value: head.clone(),
+            },
+            Write::Put {
+                key: head_key.clone(),
+                value: head.clone(),
+            },
+        );
+        assert!(workspace::register_genesis_block_candidate_v1(
+            chain,
+            input.workspace_id,
+            [9; 32],
+            params
+        )
+        .is_err());
+        let registered =
+            workspace::register_genesis_block_candidate_v1(chain, input.workspace_id, pin, params)
+                .unwrap();
+        let other_registered = workspace::register_genesis_block_candidate_v1(
+            chain,
+            competing.workspace_id,
+            pin,
+            params,
+        )
+        .unwrap();
+        for record in [&registered, &other_registered] {
+            assert_eq!(record.candidate_source, "local_aoem_isolated_execution");
+            assert!(!record.execution_selected_local);
+            assert!(!record.chain_canonical && !record.finalized && !record.proof_sealed);
+        }
+        assert_eq!(
+            workspace::register_genesis_block_candidate_v1(chain, input.workspace_id, pin, params)
+                .unwrap(),
+            registered
+        );
+        assert!(NovNativeBlockLedgerV1::open(&ledger).is_err());
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_config_v1(&ledger, pin, namespace)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            verify_persisted_v1(chain, pin, params)
+                .unwrap()
+                .aoem_readback_verified
+        );
         assert_eq!(
             workspace::create_from_genesis_v1(&plan, pin, params)
                 .unwrap()
@@ -293,5 +359,19 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
         assert!(!native_host_projection_has_state_v1(
             &load_nov_native_execution_store_v1(path).unwrap()
         ));
+        workspace::abort_v1(chain, competing.workspace_id, params).unwrap();
+        assert!(workspace::register_genesis_block_candidate_v1(
+            chain,
+            competing.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
+        assert_eq!(
+            workspace::register_genesis_block_candidate_v1(chain, input.workspace_id, pin, params)
+                .unwrap(),
+            registered
+        );
+        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), head);
     });
 }

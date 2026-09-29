@@ -217,11 +217,38 @@ authorize signing, registration, state publication or finality.
 Real AOEM regression executes two competing first-block candidates, verifies
 different block hashes with identical genesis identity, reopens the artifact and
 confirms the authoritative genesis head remains unchanged. Reserved-ledger
-registration still rejects both. Existing seal subjects, authority codecs and
+legacy registration still rejects both. Existing seal subjects, authority codecs and
 height-one signature checks remain unchanged: the new anchor MUST NOT be inserted
 into the legacy `genesis_block_hash` field as if it were a transaction block hash.
 An explicitly discriminated fresh-genesis signing domain and live ledger scope
 are the next integration requirement; this foundation is not that integration.
+
+## Fresh first-candidate registration (implemented, signing still fenced)
+
+The explicit `register_genesis_block_candidate_v1` coordinator now holds the
+workspace lock, verifies completed AOEM output and the approved configuration pin,
+then holds the authority OS lock while rereading the live genesis image. A missing
+or changed authority head or aborted workspace rejects even an exact replay.
+
+Under the ledger writer lock it validates the complete reserved manifest and all
+existing first-candidate evidence. One synchronous batch writes a new capability
+marker (`v1+genesis-isolated-candidates-v1`), immutable block artifact, isolated
+execution binding pin, graph record and height/children indexes. Competing height
+one candidates are allowed only here, under the same approved genesis. There is
+no selected head, AOEM transaction ownership record, transaction/receipt index or
+state publication. Ordinary ledger APIs and previous binaries remain fenced.
+
+Manifest recovery validates the full first-candidate graph and an exact key
+allowlist: missing records, pins, artifacts or indexes, mismatched indexes,
+orphaned keys, changed bindings and capability downgrade cannot be repaired by
+registration retry. Wrong chain, namespace, initial root, pre-genesis timestamp or
+non-initial state version reject before the candidate batch. These checks are
+historical ledger evidence, not live AOEM capabilities. Workspace abort prevents
+reuse but does not rewrite the historical registration record.
+
+This registration entrypoint does not yet admit network proposals or sign votes.
+The explicitly versioned fresh-genesis seal domain and lock-scoped ledger view
+remain required before first-block voting and V3 confirmation can run.
 
 ## Recovery matrix to implement and test
 

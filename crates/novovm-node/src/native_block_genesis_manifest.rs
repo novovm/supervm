@@ -1,9 +1,13 @@
 //! Durable approved inputs only. No AOEM write or genesis activation.
 use super::*;
 use crate::tx_ingress::fresh_genesis::FreshGenesisConfigV1;
+#[path = "native_block_genesis_candidates.rs"]
+mod candidates;
 
 pub(super) const MANIFEST_SCHEMA: &str =
     "novovm-native-block-ledger/v1+genesis-manifest-reserved-v1";
+pub(super) const CANDIDATES_SCHEMA: &str =
+    "novovm-native-block-ledger/v1+genesis-isolated-candidates-v1";
 const KEY_MANIFEST: &[u8] = b"native_block_ledger/v1/genesis/manifest";
 const KEY_MANIFEST_PIN: &[u8] = b"native_block_ledger/v1/genesis/manifest-pin";
 
@@ -23,7 +27,11 @@ fn load_verified(
     expected: [u8; 32],
     namespace: [u8; 32],
 ) -> Result<FreshGenesisConfigV1> {
-    if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() != Some(MANIFEST_SCHEMA.as_bytes()) {
+    let schema = ledger
+        .db
+        .get(KEY_SCHEMA_V1)?
+        .context("genesis schema missing")?;
+    if schema != MANIFEST_SCHEMA.as_bytes() && schema != CANDIDATES_SCHEMA.as_bytes() {
         bail!("complete genesis manifest reservation is required; no implicit upgrade");
     }
     let bytes = ledger
@@ -45,17 +53,22 @@ fn load_verified(
     if stored != rebuilt || ledger.db.get(KEY_PIN)?.as_deref() != Some(&stored.pin()[..]) {
         bail!("genesis manifest does not reconstruct the pinned reservation");
     }
+    let mut allowed_keys: HashSet<Vec<u8>> = [
+        KEY_SCHEMA_V1,
+        KEY_INTENT,
+        KEY_PIN,
+        KEY_MANIFEST,
+        KEY_MANIFEST_PIN,
+    ]
+    .into_iter()
+    .map(<[u8]>::to_vec)
+    .collect();
+    if schema == CANDIDATES_SCHEMA.as_bytes() {
+        allowed_keys.extend(candidates::validated_keys(ledger, &config)?);
+    }
     for entry in ledger.db.iterator(rocksdb::IteratorMode::Start) {
         let (key, _) = entry?;
-        if ![
-            KEY_SCHEMA_V1,
-            KEY_INTENT,
-            KEY_PIN,
-            KEY_MANIFEST,
-            KEY_MANIFEST_PIN,
-        ]
-        .contains(&key.as_ref())
-        {
+        if !allowed_keys.contains(key.as_ref()) {
             bail!("genesis manifest reservation contains unexpected ledger state");
         }
     }
@@ -84,7 +97,9 @@ impl NovNativeBlockLedgerV1 {
             .db
             .get(KEY_SCHEMA_V1)?
             .context("genesis ledger schema missing")?;
-        if schema.as_slice() == MANIFEST_SCHEMA.as_bytes() {
+        if schema.as_slice() == MANIFEST_SCHEMA.as_bytes()
+            || schema.as_slice() == CANDIDATES_SCHEMA.as_bytes()
+        {
             load_verified(&ledger, expected, namespace)?;
             return Ok(()); // preserve the original archived representation
         }

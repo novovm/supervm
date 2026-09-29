@@ -14,7 +14,8 @@ pub(super) use execution::{
 };
 pub use execution::{
     execute_v1, load_block_artifact_v1, load_execution_v1, register_block_candidate_v1,
-    with_verified_block_candidate_v1, ExecutionInfoV1, IsolatedBlockArtifactV1,
+    register_genesis_block_candidate_v1, with_verified_block_candidate_v1, ExecutionInfoV1,
+    IsolatedBlockArtifactV1,
 };
 
 use super::*;

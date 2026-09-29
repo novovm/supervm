@@ -128,6 +128,53 @@ fn load_block_artifact_inner_v1(
 
 /// Explicit local registration, not a network admission or signing API. Holds
 /// the workspace lock through ledger readback so abort cannot race the read.
+pub fn register_genesis_block_candidate_v1(
+    chain_id: u64,
+    id: [u8; 32],
+    expected_genesis: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<NovNativeBlockCandidateRecordV1> {
+    let workspace = WorkspaceStore::open(chain_id, params)?;
+    let artifact = load_block_artifact_inner_v1(&workspace, id, params)?
+        .context("first candidate requires complete verified isolated output")?;
+    let identity = artifact
+        .fresh_genesis_identity()
+        .context("first candidate requires archived fresh genesis input")?;
+    if identity.chain_id() != chain_id || identity.config_commitment() != expected_genesis {
+        bail!("first candidate genesis approval pin mismatch");
+    }
+    let input = ready_input(&workspace, id)?;
+    let payload = workspace.read_payload(&input)?;
+    let stored_genesis = payload
+        .genesis
+        .as_ref()
+        .context("first candidate genesis missing")?;
+    let store_path = resolve_native_execution_store_path_from_params_v1(params)
+        .context("first candidate registration requires explicit native store path")?;
+    let _authority_lock = acquire_nov_native_execution_store_write_lock_v1(&store_path)?;
+    let current = fresh_genesis::publication::read_snapshot_v1(
+        &workspace.graph,
+        chain_id,
+        &workspace.namespace,
+        expected_genesis,
+    )?;
+    if serde_json::to_value(&current)? != serde_json::to_value(stored_genesis)? {
+        bail!("first candidate current genesis differs from captured input");
+    }
+    NovNativeBlockLedgerV1::register_fresh_genesis_candidate_v1(
+        &nov_native_block_ledger_rocksdb_path_v1(&store_path),
+        expected_genesis,
+        parse_fixed_hex_32_v1(&workspace.namespace, "first candidate namespace")?,
+        artifact.block,
+        NovNativeIsolatedExecutionBindingV1 {
+            workspace_id: id,
+            plan_commitment: artifact.plan_commitment,
+            output_digest: artifact.output_digest,
+        },
+    )
+}
+
+/// Legacy transaction-parent registration; no implicit fresh-genesis activation.
 pub fn register_block_candidate_v1(
     chain_id: u64,
     id: [u8; 32],
