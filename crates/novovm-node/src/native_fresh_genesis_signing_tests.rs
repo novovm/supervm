@@ -187,6 +187,13 @@ fn exercise_fresh_genesis_signing(
             .header
             .finalized
     );
+    assert!(
+        workspace::prepare_genesis_promotion_v1(chain, competing, pin, &seal_paths[0], params)
+            .is_err()
+    );
+    assert!(
+        workspace::prepare_genesis_promotion_v1(chain, id, pin, &seal_paths[1], params).is_err()
+    );
 }
 
 include!("native_fresh_genesis_overlay_tests.rs");

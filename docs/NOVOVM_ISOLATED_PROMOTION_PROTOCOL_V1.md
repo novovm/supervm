@@ -1,6 +1,6 @@
 # Isolated candidate promotion protocol v1 — implementation contract
 
-Status: DESIGN / NOT IMPLEMENTED. Code audit baseline: `b049f25`.
+Status: PARTIALLY IMPLEMENTED; authority promotion remains incomplete. Original audit baseline: `b049f25`.
 This is not production acceptance or permission to mark a block finalized.
 
 Ledger-only prerequisite now implemented: `reserve_fresh_genesis_v1` atomically
@@ -8,7 +8,15 @@ reserves an unused ledger with configuration commitments, an independent digest
 pin and a capability marker. Exact retries verify the existing reservation;
 ordinary access (including already-open writer handles) is fenced. Missing
 schema in a nonempty DB is rejected rather than repaired. The production
-initialization and promotion sequences below remain NOT IMPLEMENTED.
+initialization now has an explicit preparation CLI; the complete promotion sequence remains incomplete.
+
+The first-block promotion journal is implemented but not enabled in the node loop:
+`prepare_genesis_promotion_v1` revalidates live genesis/output and a locally archived V3
+decision, then atomically stores its exact candidate/output binding, certificate, digest
+pin and capability marker. Exact replay is allowed; another target, damaged evidence,
+signing/registration after intent, and abort of the source workspace are rejected.
+No AOEM authority pointer or selected ledger index is changed by this operation.
+Publication, completion/recovery and continuous-height activation still need implementation.
 
 This library API has no CLI/RPC/startup activation. It does not validate the
 full genesis manifest or operator authorization, inspect AOEM namespace usage,

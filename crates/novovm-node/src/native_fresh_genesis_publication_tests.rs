@@ -391,6 +391,77 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             registered
         );
         assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), head);
+        let seal_path = path.with_extension("genesis-seal-0");
+        let intent = workspace::prepare_genesis_promotion_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            &seal_path,
+            params,
+        )
+        .unwrap();
+        let replay = workspace::prepare_genesis_promotion_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            &seal_path,
+            params,
+        )
+        .unwrap();
+        assert_eq!(intent, replay);
+        assert_eq!(intent.commitment().unwrap(), replay.commitment().unwrap());
+        assert!(workspace::abort_v1(chain, input.workspace_id, params).is_err());
+        assert!(workspace::with_verified_genesis_block_candidate_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            params,
+            |_| Ok(())
+        )
+        .is_err());
+        assert!(workspace::register_genesis_block_candidate_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
+        assert!(NovNativeBlockLedgerV1::open(&ledger).is_err());
+        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), head);
+        assert!(
+            verify_persisted_v1(chain, pin, params)
+                .unwrap()
+                .aoem_readback_verified
+        );
+        // A missing/corrupt independent journal pin must never be repaired.
+        let pin_key = b"native_block_ledger/v1/genesis/promotion-pin";
+        let db = rocksdb::DB::open_default(&ledger).unwrap();
+        let saved = db.get(pin_key).unwrap().unwrap();
+        db.put(pin_key, [0u8; 32]).unwrap();
+        drop(db);
+        assert!(workspace::prepare_genesis_promotion_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            &seal_path,
+            params
+        )
+        .is_err());
+        let db = rocksdb::DB::open_default(&ledger).unwrap();
+        assert_eq!(db.get(pin_key).unwrap().unwrap(), vec![0u8; 32]);
+        db.put(pin_key, saved).unwrap();
+        drop(db);
+        assert_eq!(
+            workspace::prepare_genesis_promotion_v1(
+                chain,
+                input.workspace_id,
+                pin,
+                &seal_path,
+                params
+            )
+            .unwrap(),
+            intent
+        );
     });
 }
 

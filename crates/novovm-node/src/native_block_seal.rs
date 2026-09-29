@@ -2122,7 +2122,7 @@ pub(crate) fn subject_from_block_v1(
     )
 }
 
-fn subject_from_block_profile_v1(
+pub(crate) fn subject_from_block_profile_v1(
     block: &NovNativeDurableBlockV1,
     validator_set: &NovNativeSealValidatorSetV1,
     round: u64,

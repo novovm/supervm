@@ -17,6 +17,7 @@ pub use isolated_candidate::NovNativeIsolatedExecutionBindingV1;
 #[path = "native_block_genesis_reservation.rs"]
 mod genesis_reservation;
 pub use genesis_reservation::NovNativeFreshGenesisReservationV1;
+pub use genesis_reservation::NovNativeFreshPromotionIntentV1;
 
 pub const NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1: &str = "novovm-native-block-ledger/v1";
 const ISOLATED_LEDGER_SCHEMA_V1: &str = "novovm-native-block-ledger/v1+isolated-candidates-v1";

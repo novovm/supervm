@@ -94,6 +94,9 @@ impl NovNativeBlockLedgerV1 {
             .lock()
             .map_err(|_| anyhow::anyhow!("genesis signing ledger lock poisoned"))?;
         let config = load_verified(&ledger, expected, namespace)?;
+        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() == Some(PROMOTION_SCHEMA.as_bytes()) {
+            bail!("pending fresh promotion requires recovery before signing");
+        }
         let record = ledger
             .load_candidate_record_inner_v1(config.chain_id, block.header.block_hash)?
             .context("first signing candidate is not registered")?;
@@ -139,6 +142,9 @@ impl NovNativeBlockLedgerV1 {
             .map_err(|_| anyhow::anyhow!("genesis candidate ledger lock poisoned"))?;
         let config = load_verified(&ledger, expected, namespace)?;
         validate_first(&block, &config, config.compile()?.state_root())?;
+        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() == Some(PROMOTION_SCHEMA.as_bytes()) {
+            bail!("pending fresh promotion requires recovery before registration");
+        }
         let chain = config.chain_id;
         let hash = block.header.block_hash;
         if let Some(record) = ledger.load_candidate_record_inner_v1(chain, hash)? {

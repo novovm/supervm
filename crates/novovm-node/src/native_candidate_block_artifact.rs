@@ -224,6 +224,45 @@ fn with_live_genesis_candidate<T>(
     action(&store_path, &workspace, artifact)
 }
 
+/// Persist the publication target before any authority write. This recovery
+/// fence is not publication/finality and is never called by remote ingress.
+pub fn prepare_genesis_promotion_v1(
+    chain_id: u64,
+    id: [u8; 32],
+    expected_genesis: [u8; 32],
+    seal_path: &Path,
+    params: &serde_json::Value,
+) -> Result<crate::native_block_ledger::NovNativeFreshPromotionIntentV1> {
+    with_live_genesis_candidate(
+        chain_id,
+        id,
+        expected_genesis,
+        params,
+        |path, workspace, artifact| {
+            let seal =
+                crate::native_block_seal::NovNativeBlockSealStoreV1::open_existing_read_only(
+                    seal_path,
+                )?
+                .context("fresh promotion requires an existing local decision archive")?;
+            let decision = seal
+                .load_decision_certificate_by_height_v3(chain_id, 1, 1)?
+                .context("fresh promotion requires a durable V3 quorum decision")?;
+            NovNativeBlockLedgerV1::stage_fresh_genesis_promotion_v1(
+                &nov_native_block_ledger_rocksdb_path_v1(path),
+                expected_genesis,
+                parse_fixed_hex_32_v1(&workspace.namespace, "promotion namespace")?,
+                artifact.block.header.block_hash,
+                NovNativeIsolatedExecutionBindingV1 {
+                    workspace_id: id,
+                    plan_commitment: artifact.plan_commitment,
+                    output_digest: artifact.output_digest,
+                },
+                decision,
+            )
+        },
+    )
+}
+
 /// Legacy transaction-parent registration; no implicit fresh-genesis activation.
 pub fn register_block_candidate_v1(
     chain_id: u64,

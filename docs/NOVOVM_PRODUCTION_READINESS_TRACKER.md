@@ -17,6 +17,14 @@
 
 ## 当前结论
 
+正式落账事务的第一步已实现（未接入自动节点循环）：重新核验 AOEM 实时创世与
+完整候选输出、本地持久 V3 凭证后，原子保存唯一提交目标及独立 pin；重放保持一致。
+新 capability marker 在提交未结束前阻止签名/登记和源工作区中止，坏 pin 不自动修复。
+真实 AOEM 新创世专项 16 passed（56.55 秒），包含缺凭证、错候选、重开重放、
+损坏拒绝、禁止 abort/继续签名及权威头不变。**这还不是状态发布或最终性完成。**
+CI `36575803187` 的 `Four-service real AOEM quorum diagnostics` 已实际通过，
+全工作流仍在执行后续步骤；该 CI 基线为 `58e5acd`，不覆盖后续提交。
+
 新增显式操作入口 `NOVOVM_NODE_MODE=native_fresh_genesis_prepare`：需要
 `NOVOVM_NATIVE_FRESH_GENESIS_CONFIG_PATH`、`NOVOVM_NATIVE_FRESH_GENESIS_CONFIG_COMMITMENT`
 以及现有 `NOVOVM_NATIVE_CANDIDATE_PLAN_PATH` / `NOVOVM_NATIVE_CANDIDATE_PLAN_COMMITMENT`。
