@@ -156,6 +156,11 @@ impl From<AuthorityFile> for NovNativeSealEpochAuthorityV1 {
 }
 
 impl NovNativeSealServiceConfigV1 {
+    /// Explicit startup routing only; live authority still requires open_configured.
+    pub fn is_fresh_genesis(&self) -> bool {
+        self.fresh_genesis_config_commitment.is_some()
+    }
+
     /// All relative paths are relative to this canonical configuration file,
     /// never to the current working directory or an assumed workspace name.
     pub fn load(path: &Path, expected_chain_id: u64) -> Result<Self> {
@@ -605,6 +610,7 @@ mod tests {
             FreshGenesisConfigV1, GenesisValidatorV1, GENESIS_SCHEMA_V1,
         };
         let mut fixture = Fixture::new();
+        assert!(!fixture.load().unwrap().is_fresh_genesis());
         let old = fixture_authority();
         let genesis = FreshGenesisConfigV1 {
             schema: GENESIS_SCHEMA_V1.into(),
@@ -645,6 +651,7 @@ mod tests {
             fixture.load().unwrap().fresh_genesis_config_commitment,
             Some(pin)
         );
+        assert!(fixture.load().unwrap().is_fresh_genesis());
         assert!(!fixture.load().unwrap().seal_store_path.exists());
         let good = fixture.config.clone();
         for (field, value) in [

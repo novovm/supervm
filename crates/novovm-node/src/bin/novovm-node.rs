@@ -43549,6 +43549,66 @@ mod native_execution_pipeline_tests {
     }
 }
 
+// The first candidate has no legacy host projection or selected ledger head.
+// Until promotion is implemented, drive only its explicitly configured seal
+// service. Do not admit transactions, emit delivery ACKs, or fabricate a head.
+fn run_fresh_genesis_confirmation_v1(
+    config: NovNativeSealServiceConfigV1,
+    execution_params: &serde_json::Value,
+    max_ticks: u64,
+    interval_ms: u64,
+) -> Result<()> {
+    if !config.is_fresh_genesis() {
+        bail!("fresh genesis startup requires an explicit genesis configuration");
+    }
+    let overlay_path = string_env_nonempty("NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG")
+        .context("fresh genesis confirmation requires Product Overlay configuration")?;
+    let overlay = load_product_mainline_overlay_config_v1(&overlay_path)?;
+    let runtime = ProductMainlineOverlayRuntimeV1::start(overlay, now_unix_ms())?;
+    let ledger_path = novovm_node::tx_ingress::nov_native_block_ledger_rocksdb_path_v1(
+        &nov_native_execution_store_path_v1(),
+    );
+    let mut service = NovNativeSealServiceV1::open_configured(
+        config,
+        &ledger_path,
+        execution_params,
+        &runtime,
+        Instant::now(),
+    )?;
+    println!("native_seal_service_startup: {}", service.status_json());
+    let mut ticks = 0u64;
+    let mut confirmation_reported = false;
+    loop {
+        for event in runtime.drain_events(128) {
+            if let ProductMainlineOverlayEventV1::Inbound(inbound) = event {
+                if inbound.payload_class == ProductMainlineOverlayPayloadClassV1::NativeSeal {
+                    service.enqueue(inbound);
+                }
+            }
+        }
+        service.poll(&runtime, Instant::now())?;
+        let status = service.status_json();
+        if !confirmation_reported && status["decision_confirmed"] == true {
+            println!("native_fresh_genesis_decision_confirmed: {status}");
+            confirmation_reported = true;
+        }
+        ticks = ticks.saturating_add(1);
+        if max_ticks > 0 && ticks >= max_ticks {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(interval_ms));
+    }
+    println!(
+        "native_fresh_genesis_confirmation_summary: {}",
+        serde_json::json!({
+            "ticks": ticks,
+            "ordinary_execution_enabled": false,
+            "native_seal_service": service.status_json(),
+        })
+    );
+    Ok(())
+}
+
 fn run_native_execution_tick_node_mode_v1(
     verbose: bool,
     seal_config_path: Option<PathBuf>,
@@ -43614,6 +43674,17 @@ fn run_native_execution_tick_node_mode_v1(
         }
         // Before startup AOEM recovery, cache updates, journal creation or report writes.
         validate_service_paths_v1(config, &ledger_path, &writes, &reads)?;
+    }
+    if seal_config
+        .as_ref()
+        .is_some_and(|config| config.is_fresh_genesis())
+    {
+        return run_fresh_genesis_confirmation_v1(
+            seal_config.context("fresh genesis seal configuration missing")?,
+            &startup_recovery_params,
+            max_ticks,
+            interval_ms,
+        );
     }
     apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
     verify_native_business_protocol_config_pin_for_aoem_production_v1(&startup_recovery_params)
