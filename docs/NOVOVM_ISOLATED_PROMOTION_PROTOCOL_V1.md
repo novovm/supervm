@@ -29,8 +29,8 @@ recheck, including exact ready replays. Its separate archived parent variant
 binds the full first-block decision, state and receipt roots; it never fabricates
 a legacy production envelope. `execute_v1` persists the isolated result and
 reopens it idempotently without changing first-height authority. Legacy signing
-and registration reject fresh-chain artifacts. Main-node second-height admission,
-confirmation and promotion are still pending; this is not continuous finality.
+and registration reject fresh-chain artifacts. Explicit second-height service
+confirmation is wired below; automatic admission and promotion remain pending.
 
 Second-height unsigned subjects use the distinct
 `novovm-native-proof-seal/fresh-successor-decision-v1` profile. In this profile,
@@ -41,7 +41,7 @@ This preserves the same child dependency across valid parent signer subsets.
 `successor_seal_subject` also checks genesis identity, exact parent batch/roots,
 height, slot, timestamp and transaction-count state-version advancement. It is
 historical construction only: legacy transport authorities reject this profile,
-and network service activation/publication still require new wiring.
+and state publication still requires new wiring.
 
 The fresh epoch authority now admits first-height or successor proof profiles
 according to height, without replacing the epoch identity or its commitment.
@@ -59,7 +59,17 @@ replay preserves the record; missing committed evidence fails closed rather than
 being rebuilt. Competing candidates remain unselected and unsealed. Authority,
 published first-block indexes and finality records are unchanged. Older readers
 reject the newly populated keys via their exact manifest allowlist. Candidate
-cleanup and second-height network activation/promotion remain unimplemented.
+cleanup and second-height promotion remain unimplemented.
+
+The configured service now requires `finalized_parent_workspace_id` at height
+two (forbidden at height one or on legacy authority). Startup and every poll
+reacquire `with_verified_finalized_successor_v1`; borrowed-view entry points
+also compare the pinned parent workspace. No parent QC override is accepted.
+The main lifecycle retains the confirmation service after a successor decision,
+without invoking first-height promotion or claiming finalized state. This is
+explicit single-candidate confirmation, not automatic continuous block creation.
+The controlled WSS fixture exercises one configured successor signer, durable
+proposal/restart replay and wrong-parent rejection, not independent-node quorum.
 
 `with_verified_finalized_successor_v1` supplies a non-escaping, read-only live
 signing view under workspace -> authority -> ledger locks. It rechecks published

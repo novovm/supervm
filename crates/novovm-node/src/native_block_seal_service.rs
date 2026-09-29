@@ -121,6 +121,7 @@ impl NovNativeSealServiceV1 {
         check_runtime(&config, runtime)?;
         let chain = config.chain_id;
         let genesis_pin = config.fresh_genesis_config_commitment;
+        let parent = config.finalized_parent_workspace_id;
         let open = |view: &NovNativeBlockLedgerV1| {
             if std::fs::canonicalize(view.path())? != std::fs::canonicalize(ledger_path)? {
                 bail!("isolated workspace resolves to a different service ledger");
@@ -128,6 +129,16 @@ impl NovNativeSealServiceV1 {
             Self::open_with_candidate_view(config, view, runtime, now)
         };
         let mut service = match genesis_pin {
+            Some(pin) if parent.is_some() => {
+                crate::tx_ingress::candidate_workspace::with_verified_finalized_successor_v1(
+                    chain,
+                    parent.context("successor parent missing")?,
+                    id,
+                    pin,
+                    execution_params,
+                    open,
+                )
+            }
             Some(pin) => {
                 crate::tx_ingress::candidate_workspace::with_verified_genesis_block_candidate_v1(
                     chain,
@@ -189,6 +200,11 @@ impl NovNativeSealServiceV1 {
         validate_service_paths_v1(&config, ledger_path, &[], &[])?;
         check_runtime(&config, runtime)?;
         config.authority.validate_against_ledger(candidate_view)?;
+        if candidate_view.fresh_successor_parent_workspace_v1()?
+            != config.finalized_parent_workspace_id
+        {
+            bail!("native seal startup finalized parent mismatch");
+        }
         match (
             config.fresh_genesis_config_commitment,
             candidate_view.fresh_genesis_seal_config_v1(config.chain_id)?,
@@ -297,6 +313,13 @@ impl NovNativeSealServiceV1 {
             }
             let result = match self.isolated_params.clone() {
                 Some(params) => match self.config.fresh_genesis_config_commitment {
+                    Some(pin) if self.config.finalized_parent_workspace_id.is_some() =>
+                        crate::tx_ingress::candidate_workspace::with_verified_finalized_successor_v1(
+                            self.config.chain_id,
+                            self.config.finalized_parent_workspace_id.context("successor parent missing")?,
+                            id, pin, &params,
+                            |view| self.poll_with_candidate_view(view, runtime, now),
+                        ),
                     Some(pin) => crate::tx_ingress::candidate_workspace::with_verified_genesis_block_candidate_v1(
                         self.config.chain_id, id, pin, &params,
                         |view| self.poll_with_candidate_view(view, runtime, now),
@@ -352,6 +375,11 @@ impl NovNativeSealServiceV1 {
         now: Instant,
     ) -> Result<()> {
         check_runtime(&self.config, runtime)?;
+        if candidate_view.fresh_successor_parent_workspace_v1()?
+            != self.config.finalized_parent_workspace_id
+        {
+            bail!("native seal poll finalized parent changed");
+        }
         // Before rate limiting or processing peer messages, reject a detached
         // ledger or lost live capability. Errors halt and suppress confirmation.
         if std::fs::canonicalize(candidate_view.path())?

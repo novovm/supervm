@@ -5,6 +5,16 @@ fn exercise_fresh_genesis_service(
     compiled: &crate::tx_ingress::fresh_genesis::CompiledFreshGenesisV1,
     id: [u8; 32],
 ) {
+    exercise_fresh_candidate_service(path, params, compiled, id, None);
+}
+
+fn exercise_fresh_candidate_service(
+    path: &Path,
+    params: &serde_json::Value,
+    compiled: &crate::tx_ingress::fresh_genesis::CompiledFreshGenesisV1,
+    id: [u8; 32],
+    parent: Option<[u8; 32]>,
+) {
     use crate::native_block_seal::tests::native_seal_round_network::with_service_test_transports;
     use crate::native_block_seal::{
         service::NovNativeSealServiceV1 as Service,
@@ -33,13 +43,21 @@ fn exercise_fresh_genesis_service(
                 transport_peer_id: runtime.startup().local_peer_id.clone(),
             })
             .collect();
-        let authority =
-            workspace::with_verified_genesis_block_candidate_v1(chain, id, pin, params, |view| {
-                let (config, _) = view.fresh_genesis_seal_config_v1(chain)?.unwrap();
-                Authority::derive_operator_pinned_fresh_genesis_epoch(config, pin, bindings)
-            })
-            .unwrap();
-        let leader = authority.expected_leader(1, 0).unwrap();
+        let derive = |view: &crate::native_block_ledger::NovNativeBlockLedgerV1| {
+            let (config, _) = view.fresh_genesis_seal_config_v1(chain)?.unwrap();
+            Authority::derive_operator_pinned_fresh_genesis_epoch(config, pin, bindings)
+        };
+        let authority = match parent {
+            Some(parent) => workspace::with_verified_finalized_successor_v1(
+                chain, parent, id, pin, params, derive,
+            ),
+            None => {
+                workspace::with_verified_genesis_block_candidate_v1(chain, id, pin, params, derive)
+            }
+        }
+        .unwrap();
+        let height = artifact.block().header.height;
+        let leader = authority.expected_leader(height, 0).unwrap();
         let (runtime, key) = peers
             .iter()
             .find(|(_, key)| {
@@ -51,7 +69,7 @@ fn exercise_fresh_genesis_service(
                     == key.verifying_key().to_bytes()
             })
             .unwrap();
-        let root = path.with_extension("fresh-service");
+        let root = path.with_extension(format!("fresh-service-{height}"));
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("authority.json"),
@@ -63,7 +81,8 @@ fn exercise_fresh_genesis_service(
         let config = serde_json::json!({
             "schema":"novovm-native-seal-service/v1", "enabled":true, "decision_v3_enabled":true,
             "fresh_genesis_config_commitment":to_hex(&pin), "isolated_workspace_id":to_hex(&id),
-            "chain_id":chain, "height":1, "block_hash":to_hex(&artifact.block().header.block_hash),
+            "finalized_parent_workspace_id":parent.map(|id| to_hex(&id)),
+            "chain_id":chain, "height":height, "block_hash":to_hex(&artifact.block().header.block_hash),
             "authority_path":"authority.json", "signer_key_path":"signer.hex", "seal_store_path":"seal",
             "round_timeout_ms":300000, "poll_interval_ms":100,
             "ingress_per_source_per_second":16, "ingress_per_poll":32,
@@ -78,6 +97,13 @@ fn exercise_fresh_genesis_service(
         fs::write(&config_path, serde_json::to_vec(&bad).unwrap()).unwrap();
         assert!(Service::open_configured(load(), &ledger_path, params, runtime, now).is_err());
         assert!(!root.join("seal").exists());
+        if parent.is_some() {
+            let mut bad = config.clone();
+            bad["finalized_parent_workspace_id"] = serde_json::json!("99".repeat(32));
+            fs::write(&config_path, serde_json::to_vec(&bad).unwrap()).unwrap();
+            assert!(Service::open_configured(load(), &ledger_path, params, runtime, now).is_err());
+            assert!(!root.join("seal").exists());
+        }
         fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
         let mut service =
             Service::open_configured(load(), &ledger_path, params, runtime, now).unwrap();
@@ -86,7 +112,7 @@ fn exercise_fresh_genesis_service(
         let emitted = seal.load_pending_outbox(chain, leader, 128).unwrap();
         let proposal = emitted
             .iter()
-            .find(|entry| entry.height == 1 && entry.object_kind == "proposal")
+            .find(|entry| entry.height == height && entry.object_kind == "proposal")
             .unwrap();
         let subject = seal
             .load_proposal(proposal.object_hash)
@@ -104,6 +130,14 @@ fn exercise_fresh_genesis_service(
             seal.load_pending_outbox(chain, leader, 128).unwrap(),
             emitted
         );
+        if parent.is_some() {
+            assert!(service
+                .complete_fresh_publication(runtime, now)
+                .unwrap()
+                .is_none());
+            assert_eq!(service.status_json()["finalized"], false);
+            return;
+        }
         workspace::abort_v1(chain, id, params).unwrap();
         assert!(service.poll(runtime, now).is_err());
         assert!(service.halted());

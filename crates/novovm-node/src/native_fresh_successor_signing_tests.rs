@@ -7,6 +7,7 @@ fn exercise_fresh_successor_signing(
     id: [u8; 32],
     competing: [u8; 32],
 ) {
+    exercise_fresh_candidate_service(path, params, compiled, id, Some(parent));
     use crate::native_block_seal::commit_v3::NovNativeSealDecisionCertificateV3 as Certificate;
     use crate::native_block_seal::{
         NovNativeBlockSealStoreV1 as Seal, NovNativeSealLocalProposalRequestV1 as Request,
@@ -51,6 +52,8 @@ fn exercise_fresh_successor_signing(
     };
     let proposal =
         workspace::with_verified_finalized_successor_v1(chain, parent, id, pin, params, |view| {
+            assert!(stores[1].start_round_tracking(view, set, 1).is_err());
+            assert!(stores[1].start_round_tracking(view, set, 3).is_err());
             assert!(view
                 .load_seal_eligible_local_candidate_v1(chain, other)
                 .is_err());

@@ -22,6 +22,7 @@ const MAX_AUTHORITY_BYTES: usize = 256 * 1024;
 /// Callers cannot bypass validation by constructing a public configuration.
 pub struct NovNativeSealServiceConfigV1 {
     pub(crate) fresh_genesis_config_commitment: Option<[u8; 32]>,
+    pub(crate) finalized_parent_workspace_id: Option<[u8; 32]>,
     pub(crate) isolated_workspace_id: Option<[u8; 32]>,
     pub(crate) decision_v3_enabled: bool,
     pub(crate) commit_v2_enabled: bool,
@@ -43,6 +44,8 @@ pub struct NovNativeSealServiceConfigV1 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ServiceFile {
+    #[serde(default)]
+    finalized_parent_workspace_id: Option<String>,
     #[serde(default)]
     fresh_genesis_config_commitment: Option<String>,
     #[serde(default)]
@@ -156,6 +159,10 @@ impl From<AuthorityFile> for NovNativeSealEpochAuthorityV1 {
 }
 
 impl NovNativeSealServiceConfigV1 {
+    pub fn is_fresh_successor(&self) -> bool {
+        self.finalized_parent_workspace_id.is_some()
+    }
+
     /// Explicit startup routing only; live authority still requires open_configured.
     pub fn is_fresh_genesis(&self) -> bool {
         self.fresh_genesis_config_commitment.is_some()
@@ -207,6 +214,10 @@ impl NovNativeSealServiceConfigV1 {
             .map(|validator| validator.validator_id)
             .context("native seal signer key is not a pinned validator")?;
         let config = Self {
+            finalized_parent_workspace_id: raw
+                .finalized_parent_workspace_id
+                .map(|id| decode_hex_32(id.as_bytes(), "finalized parent workspace ID"))
+                .transpose()?,
             fresh_genesis_config_commitment: raw
                 .fresh_genesis_config_commitment
                 .map(|pin| decode_hex_32(pin.as_bytes(), "fresh genesis config commitment"))
@@ -249,10 +260,16 @@ impl NovNativeSealServiceConfigV1 {
             || (fresh_authority
                 && (self.isolated_workspace_id.is_none()
                     || !self.decision_v3_enabled
-                    || self.height != 1
+                    || !matches!(
+                        (self.height, self.finalized_parent_workspace_id),
+                        (1, None) | (2, Some(_))
+                    )
                     || self.justify_qc_hash.is_some()))
+            || self.finalized_parent_workspace_id.is_some_and(|id| {
+                !fresh_authority || id == [0; 32] || Some(id) == self.isolated_workspace_id
+            })
         {
-            bail!("fresh genesis service requires an explicit pin, V3 isolated first candidate and no parent QC");
+            bail!("fresh service requires pinned V3 candidate, explicit finalized parent for height two, and no parent QC override");
         }
         if self.isolated_workspace_id.is_some()
             && (!self.decision_v3_enabled || self.isolated_workspace_id == Some([0; 32]))
@@ -654,6 +671,24 @@ mod tests {
         assert!(fixture.load().unwrap().is_fresh_genesis());
         assert!(!fixture.load().unwrap().seal_store_path.exists());
         let good = fixture.config.clone();
+        fixture.config["height"] = json!(2);
+        fixture.config["finalized_parent_workspace_id"] = json!("32".repeat(32));
+        fixture.write();
+        assert!(fixture.load().unwrap().is_fresh_successor());
+        let successor = fixture.config.clone();
+        for (field, value) in [
+            ("finalized_parent_workspace_id", Value::Null),
+            ("finalized_parent_workspace_id", json!("00".repeat(32))),
+            ("finalized_parent_workspace_id", json!("31".repeat(32))),
+            ("height", json!(1)),
+            ("height", json!(3)),
+            ("justify_qc_hash", json!("22".repeat(32))),
+        ] {
+            fixture.config = successor.clone();
+            fixture.config[field] = value;
+            fixture.write();
+            assert!(fixture.load().is_err(), "successor {field}");
+        }
         for (field, value) in [
             ("fresh_genesis_config_commitment", json!("00".repeat(32))),
             ("fresh_genesis_config_commitment", json!("bad")),

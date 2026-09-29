@@ -43577,6 +43577,7 @@ fn run_fresh_genesis_confirmation_v1(
             &runtime,
             Instant::now(),
         )?;
+    let successor_confirmation_only = config.is_fresh_successor();
     let mut service = if publication.is_none() {
         Some(NovNativeSealServiceV1::open_configured(
             config,
@@ -43616,7 +43617,7 @@ fn run_fresh_genesis_confirmation_v1(
             driver.poll(&runtime, Instant::now())?;
         } else if let Some(active) = service.as_mut() {
             active.poll(&runtime, Instant::now())?;
-            if active.status_json()["decision_confirmed"] == true {
+            if active.status_json()["decision_confirmed"] == true && !successor_confirmation_only {
                 publication = active.complete_fresh_publication(&runtime, Instant::now())?;
                 if publication.is_none() {
                     bail!("confirmed fresh decision has no durable archive");

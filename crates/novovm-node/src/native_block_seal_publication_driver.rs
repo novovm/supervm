@@ -40,6 +40,10 @@ impl FreshGenesisPublicationDriverV1 {
         config.validate(runtime.chain_id())?;
         validate_service_paths_v1(config, ledger_path, &[], &[])?;
         check_runtime(config, runtime)?;
+        // Successor confirmation is not first-block state publication.
+        if config.is_fresh_successor() {
+            return Ok(None);
+        }
         let pin = config
             .fresh_genesis_config_commitment
             .context("publication requires fresh genesis")?;

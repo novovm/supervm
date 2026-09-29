@@ -79,6 +79,14 @@ pub(super) fn validated_keys(ledger: &NovNativeBlockLedgerV1) -> Result<Vec<Vec<
 }
 
 impl NovNativeBlockLedgerV1 {
+    pub(crate) fn fresh_successor_parent_workspace_v1(&self) -> Result<Option<[u8; 32]>> {
+        self.ensure_schema_v1()?;
+        if self.fresh_successor_parent_target.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(promotion::read(self)?.execution.workspace_id))
+    }
+
     pub(crate) fn fresh_successor_parent_target_v1(&self) -> Result<Option<[u8; 32]>> {
         self.ensure_schema_v1()?;
         Ok(self.fresh_successor_parent_target)
