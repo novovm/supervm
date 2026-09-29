@@ -262,6 +262,9 @@ jobs:
       - name: Durable ledger and isolated candidate evidence regressions
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib native_block_ledger --locked -- --test-threads=2
 
+      - name: Fresh genesis configuration and no-history boundary
+        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib tx_ingress::fresh_genesis::tests --locked -- --test-threads=2
+
       - name: Balance-backed treasury deposit and attestation boundaries
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib treasury_deposit_transition --locked -- --test-threads=1
 

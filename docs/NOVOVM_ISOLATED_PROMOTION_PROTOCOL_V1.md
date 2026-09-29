@@ -16,6 +16,24 @@ publish initial state, generate keys, or mark genesis finalized. Its current
 purpose is to hold the ledger closed until an explicit recovery coordinator is
 implemented; do not invoke it against a running node's data directory.
 
+`tx_ingress::fresh_genesis` now compiles an explicit, bounded v1 configuration
+into a fresh unowned input store and a shared configuration commitment. Only
+canonical NOV base-unit allocations and validated weighted public keys are
+accepted; test snapshots, nonce history and receipts are not input fields.
+Allocation ordering and validator ordering do not affect the result. The
+commitment binds chain, timestamp, protocol commitment, existing consensus state
+root, validator-set hash and declared allocation total. v1 uses epoch 1 and
+activation height 1. Every other module field starts at its fresh default; these
+defaults are bound by the state root, not populated from the environment.
+
+The compiled commitment is NOT a block hash, execution proof or certificate.
+The compiler does not approve economic policy or validator membership. An
+out-of-band expected commitment must match before producing reservation inputs.
+The local AOEM namespace is bound by the reservation, never the shared genesis
+commitment. The future coordinator must still verify the runtime protocol pin,
+storage/namespace freshness, persist the full approved manifest for recovery,
+publish via AOEM and verify readback before activating the ledger trust anchor.
+
 ## Observed implementation boundaries
 
 - `native_candidate_execution.rs::Output` already contains the complete verified

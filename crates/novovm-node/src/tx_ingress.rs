@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+#[path = "native_fresh_genesis.rs"]
+pub mod fresh_genesis;
+
 #[path = "native_candidate_workspace.rs"]
 pub mod candidate_workspace;
 
