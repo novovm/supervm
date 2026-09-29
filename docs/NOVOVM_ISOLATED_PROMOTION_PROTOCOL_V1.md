@@ -24,10 +24,20 @@ success response can be retried. Completed heads with missing evidence are never
 repaired, and uncertain graph completion retains locks until process exit.
 `verify_successor_authority_v1` is readback only. First-height live-parent APIs
 reject after the head advances rather than treating the old state as current.
-The service still does not invoke this transition automatically. The height-two
-ledger indexes/head and finalized marker are NOT published by this API; both
-`ledger_publication_completed` and `finalized` remain false. Checkpoint tests are
-controlled failures, not OS/process-power-loss acceptance.
+The service still does not invoke this transition automatically. Authority-only
+publication does not write indexes; `finalized` remains false. Checkpoint tests
+are controlled failures, not OS/process-power-loss acceptance.
+
+`complete_successor_ledger_v1` now extends the same locked coordinator with an
+atomic second-block query projection: header/body/evidence, height, transaction,
+receipt and external execution indexes, cumulative head and completion marker.
+The first-block historical entries remain byte-exact; only its current-head key
+is superseded. Shared entry construction checks parent continuity and cumulative
+counter overflow. Preexisting non-head indexes cannot be overwritten. The exact
+manifest covers both projections after commit; missing committed indexes fail
+closed on retry. A published ledger paired with a rolled-back AOEM head is an
+error, not permission to republish. `ledger_publication_completed` now reflects
+full durable readback; `finalized` is still false pending finality publication.
 Original audit baseline: `b049f25`. This is not production acceptance or permission
 to mark any block finalized without the full first-height verification below.
 

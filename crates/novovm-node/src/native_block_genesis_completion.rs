@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 const KEY_COMPLETED: &[u8] = b"native_block_ledger/v1/genesis/published-intent";
 
-fn entries(ledger: &NovNativeBlockLedgerV1) -> Result<BTreeMap<Vec<u8>, Vec<u8>>> {
+pub(super) fn entries(ledger: &NovNativeBlockLedgerV1) -> Result<BTreeMap<Vec<u8>, Vec<u8>>> {
     let intent = promotion::read(ledger)?;
     let record = ledger
         .load_candidate_record_inner_v1(intent.chain_id, intent.block_hash)?
@@ -17,10 +17,47 @@ fn entries(ledger: &NovNativeBlockLedgerV1) -> Result<BTreeMap<Vec<u8>, Vec<u8>>
     if h.height != 1 || h.parent_block_hash != [0; 32] {
         bail!("fresh publication supports only the first block");
     }
-    let mut result = BTreeMap::new();
+    let mut result = block_entries(&block, None)?;
     result.insert(KEY_COMPLETED.to_vec(), intent.commitment()?.to_vec());
+    Ok(result)
+}
+
+pub(super) fn block_entries(
+    block: &NovNativeDurableBlockV1,
+    parent: Option<&NovNativeBlockLedgerHeadV1>,
+) -> Result<BTreeMap<Vec<u8>, Vec<u8>>> {
+    validate_durable_block_v1(block)?;
+    let h = &block.header;
+    let (block_count, tx_count, body_bytes) = if let Some(parent) = parent {
+        if parent.height.checked_add(1) != Some(h.height)
+            || parent.chain_id != h.chain_id
+            || parent.block_hash != h.parent_block_hash
+        {
+            bail!("publication does not extend parent head");
+        }
+        (
+            parent
+                .block_count
+                .checked_add(1)
+                .context("block count overflow")?,
+            parent
+                .cumulative_tx_count
+                .checked_add(u64::from(h.tx_count))
+                .context("tx count overflow")?,
+            parent
+                .cumulative_body_bytes
+                .checked_add(h.body_bytes)
+                .context("body bytes overflow")?,
+        )
+    } else {
+        if h.height != 1 || h.parent_block_hash != [0; 32] {
+            bail!("publication parent missing");
+        }
+        (1, u64::from(h.tx_count), h.body_bytes)
+    };
+    let mut result = BTreeMap::new();
     result.insert(
-        height_key_v1(h.chain_id, 1).into_bytes(),
+        height_key_v1(h.chain_id, h.height).into_bytes(),
         h.block_hash.to_vec(),
     );
     fn json<T: Serialize>(
@@ -57,9 +94,9 @@ fn entries(ledger: &NovNativeBlockLedgerV1) -> Result<BTreeMap<Vec<u8>, Vec<u8>>
         state_version: h.state_version,
         slot: h.slot,
         timestamp_unix_ms: h.timestamp_unix_ms,
-        block_count: 1,
-        cumulative_tx_count: u64::from(h.tx_count),
-        cumulative_body_bytes: h.body_bytes,
+        block_count,
+        cumulative_tx_count: tx_count,
+        cumulative_body_bytes: body_bytes,
         canonical_local: true,
         safe: false,
         finalized: false,
@@ -81,7 +118,7 @@ fn entries(ledger: &NovNativeBlockLedgerV1) -> Result<BTreeMap<Vec<u8>, Vec<u8>>
                 schema: TX_LOCATION_SCHEMA_V1.into(),
                 chain_id: h.chain_id,
                 tx_hash: *tx,
-                height: 1,
+                height: h.height,
                 block_hash: h.block_hash,
                 tx_index,
                 canonical_local: true,
@@ -94,7 +131,7 @@ fn entries(ledger: &NovNativeBlockLedgerV1) -> Result<BTreeMap<Vec<u8>, Vec<u8>>
                 schema: RECEIPT_LOCATION_SCHEMA_V1.into(),
                 chain_id: h.chain_id,
                 tx_hash: *tx,
-                height: 1,
+                height: h.height,
                 block_hash: h.block_hash,
                 tx_index,
                 receipt_commitment: *receipt,
@@ -115,7 +152,7 @@ fn entries(ledger: &NovNativeBlockLedgerV1) -> Result<BTreeMap<Vec<u8>, Vec<u8>>
                 id_kind: kind.into(),
                 exact_id: id.into(),
                 chain_id: h.chain_id,
-                height: 1,
+                height: h.height,
                 block_hash: h.block_hash,
             },
         )?;
@@ -124,7 +161,16 @@ fn entries(ledger: &NovNativeBlockLedgerV1) -> Result<BTreeMap<Vec<u8>, Vec<u8>>
 }
 
 pub(super) fn validated_keys(ledger: &NovNativeBlockLedgerV1) -> Result<Vec<Vec<u8>>> {
-    let expected = entries(ledger)?;
+    let mut expected = entries(ledger)?;
+    if ledger
+        .db
+        .get(KEY_SCHEMA_V1)?
+        .is_some_and(|schema| is_successor_published_schema(&schema))
+    {
+        // The child projection owns the current head; all historical first-block
+        // indexes remain mandatory and are compared byte for byte here.
+        expected.remove(head_key_v1(promotion::read(ledger)?.chain_id).as_bytes());
+    }
     for (key, bytes) in &expected {
         if ledger.db.get(key)?.as_deref() != Some(bytes.as_slice()) {
             bail!("fresh published ledger projection missing or changed; refusing repair");

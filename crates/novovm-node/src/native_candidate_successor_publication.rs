@@ -1,6 +1,13 @@
 //! Publish existing immutable AOEM output, never rerun NOV business execution.
 use super::*;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Verify,
+    Authority,
+    Ledger,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FreshSuccessorPublicationV1 {
     pub chain_id: u64,
@@ -23,7 +30,9 @@ pub fn publish_successor_authority_v1(
     genesis: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<FreshSuccessorPublicationV1> {
-    run(chain, parent, id, genesis, params, true, |_| Ok(()))
+    run(chain, parent, id, genesis, params, Scope::Authority, |_| {
+        Ok(())
+    })
 }
 
 pub fn verify_successor_authority_v1(
@@ -33,7 +42,53 @@ pub fn verify_successor_authority_v1(
     genesis: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<FreshSuccessorPublicationV1> {
-    run(chain, parent, id, genesis, params, false, |_| Ok(()))
+    run(
+        chain,
+        parent,
+        id,
+        genesis,
+        params,
+        Scope::Verify,
+        |_| Ok(()),
+    )
+}
+
+pub fn complete_successor_ledger_v1(
+    chain: u64,
+    parent: [u8; 32],
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<FreshSuccessorPublicationV1> {
+    run(
+        chain,
+        parent,
+        id,
+        genesis,
+        params,
+        Scope::Ledger,
+        |_| Ok(()),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn complete_successor_with_checkpoint_v1(
+    chain: u64,
+    parent: [u8; 32],
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+    checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
+) -> Result<FreshSuccessorPublicationV1> {
+    run(
+        chain,
+        parent,
+        id,
+        genesis,
+        params,
+        Scope::Ledger,
+        checkpoint,
+    )
 }
 
 #[cfg(test)]
@@ -45,7 +100,15 @@ pub(crate) fn publish_successor_with_checkpoint_v1(
     params: &serde_json::Value,
     checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
 ) -> Result<FreshSuccessorPublicationV1> {
-    run(chain, parent, id, genesis, params, true, checkpoint)
+    run(
+        chain,
+        parent,
+        id,
+        genesis,
+        params,
+        Scope::Authority,
+        checkpoint,
+    )
 }
 
 fn run(
@@ -54,7 +117,7 @@ fn run(
     id: [u8; 32],
     genesis: [u8; 32],
     params: &serde_json::Value,
-    allow_write: bool,
+    scope: Scope,
     checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
 ) -> Result<FreshSuccessorPublicationV1> {
     let mut workspace = WorkspaceStore::open(chain, params)?;
@@ -113,12 +176,22 @@ fn run(
         .get(&head_key)?
         .context("successor authority missing")?;
     let evidence = workspace.graph.get(&evidence_key)?;
+    let published_block = NovNativeBlockLedgerV1::load_fresh_successor_published_block_v1(
+        &ledger_path,
+        genesis,
+        namespace,
+    )?;
+    if published_block.is_some()
+        && (published_block.as_ref() != Some(artifact.block()) || current != target)
+    {
+        bail!("published successor ledger differs from current AOEM authority");
+    }
     if current == target {
         if evidence.as_deref() != Some(target.as_slice()) {
             bail!("published successor evidence missing; refusing repair");
         }
     } else {
-        if !allow_write || current != parent_target {
+        if scope == Scope::Verify || current != parent_target {
             bail!("successor publication requires the exact live parent or completed target");
         }
         if evidence.as_ref().is_some_and(|value| value != &target) {
@@ -171,6 +244,23 @@ fn run(
         }
         return Err(error);
     }
+    if scope == Scope::Ledger {
+        checkpoint(PromotionCheckpointV1::BeforeLedgerCommit)?;
+        NovNativeBlockLedgerV1::complete_fresh_successor_ledger_v1(
+            &ledger_path,
+            genesis,
+            namespace,
+            commitment,
+        )?;
+        checkpoint(PromotionCheckpointV1::AfterLedgerCommit)?;
+    }
+    let ledger_publication_completed =
+        NovNativeBlockLedgerV1::load_fresh_successor_published_block_v1(
+            &ledger_path,
+            genesis,
+            namespace,
+        )?
+        .is_some();
     let h = &artifact.block().header;
     Ok(FreshSuccessorPublicationV1 {
         chain_id: chain,
@@ -182,7 +272,7 @@ fn run(
         state_version: h.state_version,
         aoem_authority_published: true,
         aoem_readback_verified: true,
-        ledger_publication_completed: false,
+        ledger_publication_completed,
         finalized: false,
     })
 }

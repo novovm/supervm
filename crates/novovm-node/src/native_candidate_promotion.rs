@@ -4,10 +4,13 @@ use super::*;
 use crate::native_block_ledger::NovNativeFreshFinalityProofV1;
 #[path = "native_candidate_successor_publication.rs"]
 mod successor;
-#[cfg(test)]
-pub(crate) use successor::publish_successor_with_checkpoint_v1;
 pub use successor::{
-    publish_successor_authority_v1, verify_successor_authority_v1, FreshSuccessorPublicationV1,
+    complete_successor_ledger_v1, publish_successor_authority_v1, verify_successor_authority_v1,
+    FreshSuccessorPublicationV1,
+};
+#[cfg(test)]
+pub(crate) use successor::{
+    complete_successor_with_checkpoint_v1, publish_successor_with_checkpoint_v1,
 };
 
 fn publication_target(

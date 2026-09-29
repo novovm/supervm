@@ -8,16 +8,16 @@ const PIN: &[u8] = b"native_block_ledger/v1/successor/promotion-pin";
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Intent {
+pub(super) struct Intent {
     genesis: [u8; 32],
     namespace: [u8; 32],
     parent_workspace: [u8; 32],
-    execution: NovNativeIsolatedExecutionBindingV1,
-    proof: NovNativeFreshFinalityProofV1,
+    pub(super) execution: NovNativeIsolatedExecutionBindingV1,
+    pub(super) proof: NovNativeFreshFinalityProofV1,
 }
 
 impl Intent {
-    fn commitment(&self) -> Result<[u8; 32]> {
+    pub(super) fn commitment(&self) -> Result<[u8; 32]> {
         let mut hash = Sha256::new();
         hash.update(b"novovm-fresh-successor-promotion-intent-v1\0");
         hash.update(serde_json::to_vec(self)?);
@@ -85,7 +85,7 @@ impl Intent {
     }
 }
 
-fn read(ledger: &NovNativeBlockLedgerV1) -> Result<Intent> {
+pub(super) fn read(ledger: &NovNativeBlockLedgerV1) -> Result<Intent> {
     let intent: Intent = read_json_v1(&ledger.db, KEY, "successor promotion")?
         .context("successor promotion intent missing")?;
     if ledger.db.get(PIN)?.as_deref() != Some(&intent.commitment()?[..]) {
@@ -114,7 +114,11 @@ impl NovNativeBlockLedgerV1 {
         let ledger = Self::open_existing_read_only_inner_v1(path, true)?
             .context("successor promotion ledger missing")?;
         load_verified(&ledger, genesis, namespace)?;
-        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() != Some(SUCCESSOR_INTENT_SCHEMA.as_bytes()) {
+        if !ledger
+            .db
+            .get(KEY_SCHEMA_V1)?
+            .is_some_and(|schema| has_successor_intent_schema(&schema))
+        {
             bail!("successor publication requires a durable intent");
         }
         let intent = read(&ledger)?;
@@ -155,7 +159,7 @@ impl NovNativeBlockLedgerV1 {
             .db
             .get(KEY_SCHEMA_V1)?
             .context("successor schema missing")?;
-        if schema == SUCCESSOR_INTENT_SCHEMA.as_bytes() {
+        if has_successor_intent_schema(&schema) {
             if read(&ledger)? != intent {
                 bail!("another successor promotion target is already durable");
             }
@@ -185,7 +189,11 @@ impl NovNativeBlockLedgerV1 {
         let ledger = Self::open_existing_read_only_inner_v1(path, true)?
             .context("successor ledger missing")?;
         load_verified(&ledger, genesis, namespace)?;
-        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() == Some(SUCCESSOR_INTENT_SCHEMA.as_bytes()) {
+        if ledger
+            .db
+            .get(KEY_SCHEMA_V1)?
+            .is_some_and(|schema| has_successor_intent_schema(&schema))
+        {
             bail!("successor promotion requires recovery before abort");
         }
         Ok(())

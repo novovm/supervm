@@ -1339,6 +1339,132 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             },
         ); // Explicit fixture restoration.
         assert_eq!(verify_successor().unwrap(), published_successor);
+        let complete_successor = || {
+            workspace::complete_successor_ledger_v1(
+                chain,
+                input.workspace_id,
+                next_input.workspace_id,
+                pin,
+                params,
+            )
+        };
+        assert!(workspace::complete_successor_with_checkpoint_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            params,
+            |point| {
+                if point == Point::BeforeLedgerCommit {
+                    anyhow::bail!("before successor ledger commit");
+                }
+                Ok(())
+            }
+        )
+        .is_err());
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_successor_published_block_v1(
+                &ledger, pin, namespace
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(workspace::complete_successor_with_checkpoint_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            params,
+            |point| {
+                if point == Point::AfterLedgerCommit {
+                    anyhow::bail!("lost ledger success response");
+                }
+                Ok(())
+            }
+        )
+        .is_err());
+        let completed_successor = complete_successor().unwrap();
+        assert!(completed_successor.ledger_publication_completed && !completed_successor.finalized);
+        assert_eq!(complete_successor().unwrap(), completed_successor);
+        assert_eq!(verify_successor().unwrap(), completed_successor);
+        assert_eq!(
+            NovNativeBlockLedgerV1::load_fresh_successor_published_block_v1(
+                &ledger, pin, namespace
+            )
+            .unwrap()
+            .as_ref(),
+            Some(next_block.block())
+        );
+        assert_eq!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(&ledger, pin, namespace)
+                .unwrap()
+                .as_ref(),
+            Some(block.block())
+        );
+        let db = rocksdb::DB::open_default(&ledger).unwrap();
+        let indexes = db
+            .iterator(rocksdb::IteratorMode::Start)
+            .map(|entry| entry.unwrap())
+            .filter(|(key, _)| String::from_utf8_lossy(key).contains("/tx/"))
+            .collect::<Vec<_>>();
+        assert_eq!(indexes.len(), 3);
+        let head_bytes = db
+            .iterator(rocksdb::IteratorMode::Start)
+            .map(|entry| entry.unwrap())
+            .find(|(key, _)| key.ends_with(b"execution_head"))
+            .unwrap()
+            .1;
+        let head: serde_json::Value = serde_json::from_slice(&head_bytes).unwrap();
+        assert_eq!(head["height"], 2);
+        assert_eq!(head["block_count"], 2);
+        assert_eq!(head["cumulative_tx_count"], 3);
+        assert_eq!(head["state_version"], 3);
+        assert_eq!(head["finalized"], false);
+        let receipts = db
+            .iterator(rocksdb::IteratorMode::Start)
+            .map(|entry| entry.unwrap())
+            .filter(|(key, _)| String::from_utf8_lossy(key).contains("/receipt/"))
+            .collect::<Vec<_>>();
+        assert_eq!(receipts.len(), 3);
+        drop(db);
+        // Both ancestor and successor query indexes are required after commit.
+        for (key, value) in indexes.into_iter().chain(receipts) {
+            let db = rocksdb::DB::open_default(&ledger).unwrap();
+            db.delete(&key).unwrap();
+            drop(db);
+            assert!(complete_successor().is_err());
+            assert!(verify_successor().is_err());
+            let db = rocksdb::DB::open_default(&ledger).unwrap();
+            assert!(db.get(&key).unwrap().is_none());
+            db.put(&key, &value).unwrap(); // Explicit fixture restoration only.
+        }
+        assert_eq!(complete_successor().unwrap(), completed_successor);
+        change(
+            942,
+            Write::Put {
+                key: head_key.clone(),
+                value: promoted_head.clone(),
+            },
+            Write::Put {
+                key: head_key.clone(),
+                value: promoted_head.clone(),
+            },
+        );
+        assert!(complete_successor().is_err());
+        assert!(publish_successor().is_err());
+        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), promoted_head);
+        change(
+            943,
+            Write::Put {
+                key: head_key.clone(),
+                value: successor_head.clone(),
+            },
+            Write::Put {
+                key: head_key.clone(),
+                value: successor_head.clone(),
+            },
+        );
+        assert_eq!(verify_successor().unwrap(), completed_successor);
         workspace::corrupt_execution_output_for_test_v1(chain, input.workspace_id, params).unwrap();
         assert!(verify_successor().is_err());
         assert!(publish_successor().is_err());
