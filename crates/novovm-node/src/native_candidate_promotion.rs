@@ -106,7 +106,7 @@ pub struct FinalizedGenesisParentV1 {
 }
 
 impl FinalizedGenesisParentV1 {
-    /// Build the historical second-height signing subject. Does not sign,
+    /// Build the historical next-height signing subject. Does not sign,
     /// register, transmit or grant live publication permission.
     pub fn successor_seal_subject(
         &self,
@@ -128,7 +128,7 @@ impl FinalizedGenesisParentV1 {
         };
         if candidate.fresh_genesis_identity() != Some(&compiled.identity())
             || h.chain_id != p.chain_id
-            || h.height != 2
+            || p.height.checked_add(1) != Some(h.height)
             || h.parent_block_hash != p.block_hash
             || h.pre_state_root != p.post_state_root
             || h.aoem_parent.as_ref() != Some(&expected_parent)
@@ -245,6 +245,11 @@ pub(in super::super) fn capture_finalized_parent_locked(
     genesis: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<FinalizedGenesisParentV1> {
+    let artifact = block_artifact::load_block_artifact_inner_v1(workspace, id, params)?
+        .context("finalized parent output missing")?;
+    if artifact.block().header.height > 1 {
+        return successor::capture_finalized_parent(workspace, id, genesis, params);
+    }
     let mut captured = None;
     run_locked(
         workspace,

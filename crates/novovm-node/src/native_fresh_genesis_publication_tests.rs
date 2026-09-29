@@ -1481,6 +1481,13 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             },
         );
         assert_eq!(verify_successor().unwrap(), completed_successor);
+        assert!(workspace::load_finalized_genesis_parent_v1(
+            chain,
+            next_input.workspace_id,
+            pin,
+            params,
+        )
+        .is_err()); // Published indexes alone must not authorize a next parent.
         assert!(workspace::finalize_successor_v1(
             chain,
             input.workspace_id,
@@ -1579,7 +1586,112 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
             pin,
             &archived,
         );
+        let latest_parent = workspace::load_finalized_genesis_parent_v1(
+            chain,
+            next_input.workspace_id,
+            pin,
+            params,
+        )
+        .unwrap();
+        assert_eq!(latest_parent.block(), next_block.block());
+        assert_eq!(latest_parent.workspace_id(), next_input.workspace_id);
+        assert_eq!(latest_parent.finality_proof(), &archived);
+        assert_eq!(
+            serde_json::to_value(latest_parent.state()).unwrap(),
+            serde_json::to_value(&next_state).unwrap()
+        );
+        assert!(archived
+            .validate_archived_block(&config, next_block.block())
+            .is_err());
+        archived
+            .validate_archived_certificate(&config, next_block.block())
+            .unwrap();
+        let third_context = NovBlockExecutionContextV1 {
+            chain_id: chain,
+            block_height: 3,
+            parent_block_hash: next_block.block().header.block_hash,
+            slot: 3,
+            timestamp_unix_ms: config.timestamp_unix_ms + 2,
+        };
+        assert!(latest_parent
+            .successor_plan(third_context, next_plan.raw_txs.clone(), params)
+            .is_err());
+        let third_plan = latest_parent
+            .successor_plan(
+                third_context,
+                vec![candidate_workspace_execution_raw(
+                    chain,
+                    3,
+                    [0xc3; 32],
+                    10,
+                    "deposit_reserve",
+                )],
+                params,
+            )
+            .unwrap();
+        assert!(workspace::create_from_finalized_genesis_v1(
+            &third_plan,
+            input.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
+        let third = workspace::create_from_finalized_genesis_v1(
+            &third_plan,
+            next_input.workspace_id,
+            pin,
+            params,
+        )
+        .unwrap();
+        assert_eq!(
+            third,
+            workspace::create_from_finalized_genesis_v1(
+                &third_plan,
+                next_input.workspace_id,
+                pin,
+                params
+            )
+            .unwrap()
+        );
+        let third_result = workspace::execute_v1(chain, third.workspace_id, params).unwrap();
+        assert!(
+            third_result.aoem_called
+                && third_result.execution_completed
+                && third_result.candidate_state_persisted
+        );
+        assert!(!third_result.authority_state_published && !third_result.finalized);
+        assert_eq!(third_result.batch_result.snapshot_metadata.state_version, 4);
+        assert!(third_result.batch_result.per_tx_receipts[0].status_ok);
+        assert_eq!(
+            third_result,
+            workspace::execute_v1(chain, third.workspace_id, params).unwrap()
+        );
+        let third_block = workspace::load_block_artifact_v1(chain, third.workspace_id, params)
+            .unwrap()
+            .unwrap();
+        assert_eq!(third_block.block().header.height, 3);
+        let third_subject = latest_parent
+            .successor_seal_subject(&third_block, 0)
+            .unwrap();
+        assert_eq!(
+            third_subject.justify_qc_hash,
+            archived
+                .validated_decision_target(&config, next_block.block())
+                .unwrap()
+        );
+        assert_eq!(
+            open_graph().get(&head_key).unwrap().unwrap(),
+            successor_head
+        );
+        assert_eq!(verify_successor().unwrap(), finalized_successor);
         workspace::corrupt_execution_output_for_test_v1(chain, input.workspace_id, params).unwrap();
+        assert!(workspace::load_finalized_genesis_parent_v1(
+            chain,
+            next_input.workspace_id,
+            pin,
+            params
+        )
+        .is_err());
         assert!(finalize_successor().is_err());
         assert!(verify_successor().is_err());
         assert!(publish_successor().is_err());

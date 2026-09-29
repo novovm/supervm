@@ -21,7 +21,7 @@ impl NovNativeFreshFinalityProofV1 {
         config: &FreshGenesisConfigV1,
         block: &NovNativeDurableBlockV1,
     ) -> Result<[u8; 32]> {
-        self.validate_archived_block(config, block)?;
+        self.validate_archived_certificate(config, block)?;
         let NovNativeSealRoundMessageV1::DecisionCertificateV3 { decision, .. } = &self.witness
         else {
             bail!("parent requires a complete decision witness");
@@ -34,6 +34,20 @@ impl NovNativeFreshFinalityProofV1 {
 
     /// Verify archived first-block evidence without treating it as live authority.
     pub(crate) fn validate_archived_block(
+        &self,
+        config: &FreshGenesisConfigV1,
+        block: &NovNativeDurableBlockV1,
+    ) -> Result<()> {
+        if block.header.height != 1 {
+            bail!("first-block finality requires height one");
+        }
+        self.validate_archived_certificate(config, block)
+    }
+
+    /// Verify the pinned quorum's certificate for this exact historical block.
+    /// This alone does not verify ancestry or current state ownership. Live
+    /// capture must also verify the complete ledger and AOEM publication.
+    pub(crate) fn validate_archived_certificate(
         &self,
         config: &FreshGenesisConfigV1,
         block: &NovNativeDurableBlockV1,
@@ -52,14 +66,27 @@ impl NovNativeFreshFinalityProofV1 {
             bail!("archived finality requires a V3 decision witness");
         };
         let subject = &decision.prepare.subject;
+        let (parent_target, profile) = if block.header.height == 1 {
+            (
+                [0; 32],
+                crate::native_block_seal::NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1,
+            )
+        } else if block.header.height > 1 && subject.justify_qc_hash != [0; 32] {
+            (
+                subject.justify_qc_hash,
+                crate::native_block_seal::NOV_NATIVE_BLOCK_SEAL_FRESH_SUCCESSOR_PROOF_V1,
+            )
+        } else {
+            bail!("archived successor certificate requires a parent decision target");
+        };
         let expected = crate::native_block_seal::subject_from_block_profile_v1(
             block,
             compiled.validator_set(),
             subject.round,
-            [0; 32],
+            parent_target,
             compiled.identity().anchor(),
             config.protocol_config_commitment,
-            crate::native_block_seal::NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1,
+            profile,
         )?;
         if expected != *subject {
             bail!("archived finality does not bind parent block");
@@ -69,8 +96,11 @@ impl NovNativeFreshFinalityProofV1 {
             .transport_bindings
             .first()
             .context("archived finality has no members")?;
-        self.witness
-            .validate_authenticated(&self.authority, 1, &source.transport_peer_id)?;
+        self.witness.validate_authenticated(
+            &self.authority,
+            block.header.height,
+            &source.transport_peer_id,
+        )?;
         Ok(())
     }
 

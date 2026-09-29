@@ -104,6 +104,25 @@ pub(super) fn validated_keys(
 }
 
 impl NovNativeBlockLedgerV1 {
+    pub(crate) fn fresh_successor_archived_parent_v1(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        candidate: [u8; 32],
+    ) -> Result<[u8; 32]> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("successor archive ledger missing")?;
+        load_verified(&ledger, genesis, namespace)?;
+        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() != Some(SUCCESSOR_FINALIZED_SCHEMA.as_bytes()) {
+            bail!("next parent requires finalized successor ledger");
+        }
+        let intent = read(&ledger)?;
+        if intent.execution.workspace_id != candidate {
+            bail!("next parent differs from finalized successor");
+        }
+        Ok(intent.parent_workspace)
+    }
+
     pub(crate) fn verify_optional_successor_archive_v1(
         path: &Path,
         genesis: [u8; 32],

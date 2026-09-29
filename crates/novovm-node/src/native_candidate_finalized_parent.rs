@@ -26,7 +26,7 @@ impl FinalizedParentSnapshot {
         workspace: &WorkspaceStore,
     ) -> Result<()> {
         self.proof
-            .validate_archived_block(&self.config, &self.block)?;
+            .validate_archived_certificate(&self.config, &self.block)?;
         verify_native_nonce_identity_scheme_v2(&self.store)?;
         verify_production_native_execution_store_authority_domain_v2(
             &self.store,
@@ -46,7 +46,6 @@ impl FinalizedParentSnapshot {
         };
         if self.config.chain_id != workspace.chain_id
             || self.config.protocol_config_commitment != workspace.protocol
-            || h.height != 1
             || h.post_state_root_codec != NOVOVM_NATIVE_STATE_ROOT_CODEC_V3
             || h.cumulative_receipt_root_codec != NOVOVM_NATIVE_RECEIPT_ROOT_CODEC_V2
             || native_semantic_ledger_state_digest_v1(&self.store.module_state)
@@ -55,7 +54,7 @@ impl FinalizedParentSnapshot {
             || self.store.module_state.aoem_semantic_ledger_sequence != h.state_version
             || plan.aoem_parent.as_ref() != Some(&expected)
             || plan.pre_state_root != h.post_state_root
-            || plan.context.block_height != 2
+            || h.height.checked_add(1) != Some(plan.context.block_height)
             || plan.context.parent_block_hash != h.block_hash
             || plan.context.slot <= h.slot
             || plan.context.timestamp_unix_ms < h.timestamp_unix_ms
@@ -66,7 +65,8 @@ impl FinalizedParentSnapshot {
     }
 }
 
-/// Stage height two from the currently published, finalized first block.
+/// Stage the next height from the currently published, finalized block.
+/// The original API name is retained for callers; no height is inferred from it.
 /// Revalidates live authority even on replay; execution remains isolated.
 pub fn create_from_finalized_genesis_v1(
     plan: &NovNativeCandidateExecutionPlanV1,

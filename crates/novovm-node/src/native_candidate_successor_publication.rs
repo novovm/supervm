@@ -189,12 +189,64 @@ fn run(
     checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
 ) -> Result<FreshSuccessorPublicationV1> {
     let mut workspace = WorkspaceStore::open(chain, params)?;
+    run_locked(
+        &mut workspace,
+        parent,
+        id,
+        genesis,
+        params,
+        scope,
+        checkpoint,
+        None,
+    )
+}
+
+pub(super) fn capture_finalized_parent(
+    workspace: &mut WorkspaceStore,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<FinalizedGenesisParentV1> {
+    let path = resolve_native_execution_store_path_from_params_v1(params)
+        .context("finalized parent requires explicit native path")?;
+    let parent = NovNativeBlockLedgerV1::fresh_successor_archived_parent_v1(
+        &nov_native_block_ledger_rocksdb_path_v1(&path),
+        genesis,
+        parse_fixed_hex_32_v1(&workspace.namespace, "successor namespace")?,
+        id,
+    )?;
+    let mut captured = None;
+    run_locked(
+        workspace,
+        parent,
+        id,
+        genesis,
+        params,
+        Scope::Verify,
+        |_| Ok(()),
+        Some(&mut captured),
+    )?;
+    captured.context("finalized successor parent was not captured")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_locked(
+    workspace: &mut WorkspaceStore,
+    parent: [u8; 32],
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+    scope: Scope,
+    checkpoint: impl Fn(PromotionCheckpointV1) -> Result<()>,
+    capture: Option<&mut Option<FinalizedGenesisParentV1>>,
+) -> Result<FreshSuccessorPublicationV1> {
+    let chain = workspace.chain_id;
     let native_path = resolve_native_execution_store_path_from_params_v1(params)
         .context("successor publication requires explicit native path")?;
     let authority_lock = acquire_nov_native_execution_store_write_lock_v1(&native_path)?;
     let ledger_path = nov_native_block_ledger_rocksdb_path_v1(&native_path);
     let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "successor namespace")?;
-    let artifact = block_artifact::load_block_artifact_inner_v1(&workspace, id, params)?
+    let artifact = block_artifact::load_block_artifact_inner_v1(workspace, id, params)?
         .context("successor publication output missing")?;
     let commitment = NovNativeBlockLedgerV1::verify_fresh_successor_promotion_target_v1(
         &ledger_path,
@@ -207,7 +259,7 @@ fn run(
             output_digest: artifact.output_digest,
         },
     )?;
-    let parent_artifact = block_artifact::load_block_artifact_inner_v1(&workspace, parent, params)?
+    let parent_artifact = block_artifact::load_block_artifact_inner_v1(workspace, parent, params)?
         .context("successor parent AOEM output missing")?;
     let parent_intent =
         NovNativeBlockLedgerV1::load_fresh_genesis_promotion_v1(&ledger_path, genesis, namespace)?;
@@ -265,7 +317,7 @@ fn run(
         if evidence.as_ref().is_some_and(|value| value != &target) {
             bail!("successor publication has conflicting evidence");
         }
-        let input = ready_input(&workspace, id)?;
+        let input = ready_input(workspace, id)?;
         checkpoint(PromotionCheckpointV1::BeforePublication)?;
         if let Err(error) = workspace.commit(
             b'J',
@@ -296,7 +348,7 @@ fn run(
         {
             bail!("successor publication readback mismatch");
         }
-        if block_artifact::load_block_artifact_inner_v1(&workspace, id, params)?.as_ref()
+        if block_artifact::load_block_artifact_inner_v1(workspace, id, params)?.as_ref()
             != Some(&artifact)
         {
             bail!("published successor AOEM output changed");
@@ -339,9 +391,42 @@ fn run(
         )?;
         checkpoint(PromotionCheckpointV1::AfterFinalityCommit)?;
     }
-    let finalized =
-        NovNativeBlockLedgerV1::load_fresh_successor_finality_v1(&ledger_path, genesis, namespace)?
-            .is_some();
+    let finality =
+        NovNativeBlockLedgerV1::load_fresh_successor_finality_v1(&ledger_path, genesis, namespace)?;
+    let finalized = finality.is_some();
+    if let Some(capture) = capture {
+        let proof = finality.context("next parent requires complete successor finality")?;
+        if !ledger_publication_completed {
+            bail!("next parent ledger is incomplete");
+        }
+        let input = ready_input(workspace, id)?;
+        let payload = workspace.read_payload(&input)?;
+        let descriptor = catalog(workspace)?
+            .into_iter()
+            .find_map(|(known, descriptor)| (known == id).then_some(descriptor))
+            .context("finalized successor output descriptor missing")?;
+        if descriptor.digest != artifact.output_digest {
+            bail!("finalized successor output changed during capture");
+        }
+        let output = read_output(workspace, &input, &descriptor, &payload, params)?
+            .context("finalized successor output missing")?;
+        let config = payload
+            .finalized_parent
+            .as_ref()
+            .context("successor parent genesis missing")?
+            .config
+            .clone();
+        proof.validate_archived_certificate(&config, artifact.block())?;
+        *capture = Some(FinalizedGenesisParentV1 {
+            block: artifact.block().clone(),
+            store: output.store,
+            batch_result: output.batch_result,
+            genesis: config,
+            workspace_id: id,
+            output_digest: artifact.output_digest,
+            proof,
+        });
+    }
     let h = &artifact.block().header;
     Ok(FreshSuccessorPublicationV1 {
         chain_id: chain,

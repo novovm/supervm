@@ -11,6 +11,23 @@ each poll revalidates live publication and halts on missing or changed evidence.
 This is still a configured candidate at height one or two, not automatic
 continuous block creation, independent multi-machine or hard-crash acceptance.
 
+Finalized-parent capture now also reads the published second block under the
+same workspace/authority locks as live publication verification. It requires
+the complete finalized ledger (including first-block ancestry) and exact AOEM
+head/output, then yields an immutable historical snapshot. Successor planning,
+snapshot validation and subject construction use checked parent-height + 1,
+allowing isolated third-block execution without changing the published head.
+The legacy `load_finalized_genesis_parent_v1` / `create_from_finalized_genesis_v1`
+names remain callable; they no longer imply a first-height-only parent.
+
+Historical certificate verification distinguishes first and successor proof
+domains and verifies the complete V3 quorum against the genesis-pinned set.
+It is not standalone ancestry or live authority verification; the ledger
+coordinator still checks both before exposing a parent. First-block-only proof
+validation retains its strict height-one check. Registration, confirmation and
+publication above height two remain unavailable until their ledger records and
+recovery are generalized; constructing a third candidate does not finalize it.
+
 `prepare_successor_promotion_v1` now pins a unique height-two publication intent
 under workspace -> authority -> ledger locks. It revalidates the live finalized
 parent, actual AOEM child output, exact execution binding and complete V3 envelope
