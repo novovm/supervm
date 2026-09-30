@@ -14,7 +14,29 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
-## 设备 B：PQ 独立验签与标准兼容性门禁（2026-09-30 UTC，最新）
+## 设备 A：Windows 复现 B 的 PQ 兼容性阻断（2026-10-01，最新）
+
+已在 main 保留双方历史合入设备 B 的 `9ad30fe`，合并提交 `e41c198`；没有新建
+分支。A 进行中的执行/状态/计费改动仍在工作区，本节不将其记作交付或全库通过。
+复跑采用 B 原样提交的 prover 测试和官方公开向量，Windows 随包 DLL 未替换：
+`aoem/windows/core/bin/aoem_ffi.dll`，SHA256
+`e84ee50a2b308559a52d9599a2200d16dac3a1de0e2c217c8a44675886e2c788`。
+
+`cargo test --locked -p novovm-prover`：11 passed / 0 failed，2 runtime ignored。
+另显式执行 `cargo test --locked -p novovm-prover --test pq_signature_runtime --
+--ignored --nocapture --test-threads=1`：2 passed / 0 failed。实际矩阵与 Linux 一致：
+
+- ML-DSA-44：自签自验、tg1/tc11 官方正例通过。
+- ML-DSA-65：自签自验通过、tg3/tc43 官方正例拒绝，组件阻断使用。
+- ML-DSA-87：自签自验通过、tg5/tc70 官方正例拒绝，组件阻断使用。
+
+因此已经跨 Windows/Linux 复现，不是仅 B 机器的本地设置报告；具体算法根因
+仍须源码核对。这两项绿色 runtime 测试证明保护门禁有效，不证明 65/87 兼容。
+未选择或降级主网参数集，未修改 AOEM 仓库或替换任何正在运行的服务。
+A 承接定位与修复协调；若需改兄弟 AOEM，先取得明确范围授权。原执行主线继续
+独立回归，节点完整全库尚未签收；高并发主链、隐私资产和 PQ 主链接入均未完成。
+
+## 设备 B：PQ 独立验签与标准兼容性门禁（2026-09-30 UTC，前轮）
 
 状态：`LOCAL PQ COMPONENT GATE PASS / ML-DSA-65/87 INTEROP BLOCKED`。
 本机基线 `10774c9`，认领提交 `fba6bfd`；本节结果对应随本记录提交的 prover
