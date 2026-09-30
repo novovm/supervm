@@ -14,7 +14,27 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
-## 设备 B：修库交接的严格 ML-DSA sigVer 矩阵（2026-09-30 UTC，最新）
+## 设备 A：密码库修复的性能约束与隐私取舍（2026-10-01，进行中）
+
+用户确认：隐私必须有；若抗量子隐私明显拖慢真实收付，可采用经典隐私，否则
+优先抗量子。此选择已写入双机交付主线；尚未固定隐私协议或完成性能比较。
+当前 RingCT 缺少真实钱包花费见证，独立验证仍阻断；不能直接删 cache 门禁。
+
+AOEM 首个串行 ML-DSA 修复候选（RustCrypto `ml-dsa 0.1.1`）在 Windows 和
+Linux/WSL 的 C ABI 均通过 90 个适用 NIST sigVer 用例（18 正例、72 负例）及
+9 组独立实现双向互操作，覆盖 expanded key 导入。但同机 Linux 微检查出现
+验签约慢 3 倍、签名约慢 10 倍，故拒绝晋升并撤回实现和临时二进制；没有
+同步进 SDK，不保留可选 fallback。该比较仅用于发现严重退步，不是主链 TPS。
+下一候选须兼顾最终标准兼容与已有 AVX2 加速，尚未签收。原始随包库和 B 的
+78/90 失败证据不变；保留独立标准回归输入，不把历史候选通过改写成当前通过。
+
+PQ 隐私另有前置风险：AOEM 当前 RISC0 guest 使用 `1.2.6`，落在官方
+[GHSA-jqq4-c7wq-36h7](https://github.com/risc0/risc0/security/advisories/GHSA-jqq4-c7wq-36h7)
+描述的 guest `sys_read` 证明健全性漏洞影响范围内；不能直接作为钱包证明的
+可信基线。需要升级并重建可信 guest/image ID 后再评估，不是已经完成修复。
+ML-DSA 修复不等于 RISC0、隐私协议、主链 PQ 或 FULLMAX 全部签收。
+
+## 设备 B：修库交接的严格 ML-DSA sigVer 矩阵（2026-09-30 UTC，前轮）
 
 状态：`STRICT NIST SIGVER SUBSET FAIL / 78 OF 90`。基线 `eb84fa3`，认领
 `15344d2`；仅增加独立诊断和单元测试，不改生产 verifier、runtime、共享 FFI
