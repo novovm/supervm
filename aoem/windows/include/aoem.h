@@ -379,6 +379,27 @@ AOEM_API int32_t aoem_zkvm_prove_verify_v1(
   size_t witness_len,
   uint32_t* out_verified
 );
+// Portable RISC0 receipt v1 (AORCP001), not a trace or a business-specific proof.
+// image_id points to 8 host-endian u32 RISC0 image-ID words, pinned by the host.
+// All input regions must remain readable and not overlap writable output slots.
+// ELF: 1..64 MiB; serialized stdin, receipt, expected journal: at most 16 MiB.
+// Null byte pointers are allowed only for zero lengths. Empty journal is exact,
+// never a wildcard. Receipt does not supply trusted program/output pins.
+// Prove is trusted local work; caller must isolate/budget arbitrary guest execution.
+// Output slots are reset on failure; success allocates a receipt freed by aoem_free.
+// Built-in supported Linux risc0 or a compatible configured zkVM sidecar; no trace fallback.
+// Returns 0 on success, -2 invalid arguments/bounds, -4 proof/verification error,
+// -5 unavailable. Fake development receipts are rejected.
+AOEM_API int32_t aoem_risc0_prove_v1(
+  const uint8_t* elf, size_t elf_len,
+  const uint8_t* input, size_t input_len,
+  const uint32_t* image_id, uint8_t** out_receipt, size_t* out_receipt_len
+);
+AOEM_API int32_t aoem_risc0_verify_v1(
+  const uint8_t* receipt, size_t receipt_len, const uint32_t* image_id,
+  const uint8_t* expected_journal, size_t expected_journal_len
+);
+
 // Internal/diagnostic ABI: minimal host-side zkVM prove+verify roundtrip probe (Trace/Fibonacci).
 // return code:
 //  1 = prove+verify succeeded
@@ -394,6 +415,14 @@ AOEM_API int32_t aoem_zkvm_trace_fib_prove_verify(
 // Feature ABI: ML-DSA optional capability.
 // level values: 44 (ML-DSA-44), 65 (ML-DSA-65), 87 (ML-DSA-87).
 // legacy aliases 2/3/5 are also accepted by the Rust implementation.
+// Message contract for sign/verify/auto/batch: FIPS 204 internal M' bytes.
+// AOEM does not add a context prefix or prehash the supplied message.
+// For external pure ML-DSA the caller supplies 0x00 || context_length:u8 ||
+// context || message, exactly once (context length <= 255).
+// Expanded secret-key lengths are 2560/4032/4896 bytes. Qualify the loaded
+// runtime against final FIPS 204 vectors before use: older shipped builds
+// contain pre-standard Dilithium behavior at levels 65/87. Never silently
+// downgrade or treat draft-era material as final-standard credentials.
 AOEM_API uint32_t aoem_mldsa_supported(void);
 AOEM_API uint32_t aoem_mldsa_pubkey_size(uint32_t level);
 AOEM_API uint32_t aoem_mldsa_signature_size(uint32_t level);
@@ -841,6 +870,8 @@ AOEM_API int32_t aoem_bulletproof_verify_batch_v1(
   uint32_t* out_valid_count
 );
 // Feature ABI: RingCT transaction prove/generate.
+// v1 generates synthetic inputs/keys; it does not spend a wallet's existing
+// output. The generated payload is admitted only by the same process cache.
 // Input:
 // - message_ptr/message_len: transaction message (bound to ring signature)
 // - amount_lo/amount_hi: amount (u128 little-endian split; amount_hi must be 0 in v1)
@@ -875,6 +906,10 @@ AOEM_API int32_t aoem_ringct_prove_batch_v1(
   size_t* out_batch_json_len
 );
 // Production privacy ABI when built with privacy-verify: unified privacy-native execution.
+// Current RingCt v1 admits exact, locally generated cached payloads only.
+// A cold process rejects remote payloads. accepted/state_materialized do not
+// establish ledger input ownership or authorize a confidential asset transfer.
+// Do not bypass admission using legacy verify or host-supplied trust flags.
 // Request JSON v1:
 // {
 //   "version": 1,
@@ -1078,6 +1113,91 @@ AOEM_API int32_t aoem_execute_ops_wire_v1(
   size_t input_len,
   aoem_exec_v2_result* out_result
 );
+
+// AOAI v2 resident causal-sequence protocol carried only as the value of
+// compute.ai.sgm_infer_v1 in aoem_execute_ops_wire_v1. Training and inference
+// execute through AOEM Vulkan/SPIR-V; no AOEM implementation type crosses this
+// boundary. Existing TrainStep remains update + post-commit evaluation.
+// SetTrainingWorkspace explicitly seals the resident token-row capacity before
+// any training or inference. The default is 1024 and the public maximum is
+// 8192; AOEM never changes it through hardware detection or hidden fallback.
+// TrainUpdate performs BPTT + AdamW without a second metrics forward pass.
+// EvaluateBatch performs metrics-only forward execution without changing the
+// parameter version or optimizer step. Both batch commands use the same body as
+// TrainStep. These are research/training controls and must be recorded in model
+// provenance; they do not create a second released-model inference mode.
+// SetBaseTrainingLearningRateScale seals a finite scale in [1e-6, 1] before any
+// training or inference starts. It applies only to base causal-language AdamW
+// updates; typed, semantic, and cognition-language updates retain their sealed
+// optimizer rate.
+// APFLSEQ14 output-adapter language training freezes the causal core and both
+// distinct vocabulary Banks, updates only the package's existing output-adapter
+// tensor, and exports by replacing only that tensor. Train/evaluate carry
+// expected_parameter_version:u64, expected_optimizer_step:u64, three u32 counts,
+// reserved:u32, input tokens, target tokens, and a byte supervision mask. Export
+// carries both expected versions followed by path_len:u32, reserved:u32, and the
+// UTF-8 destination path. These commands do not add an inference mode.
+#define AOEM_AI_CAUSAL_SEQUENCE_WIRE_VERSION_V2 2u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_OPEN_V2 1u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_TRAIN_STEP_V2 2u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_PREFILL_V2 3u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_DECODE_V2 4u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_RESET_V2 5u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_EXPORT_V2 6u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_CLOSE_V2 7u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_QUERY_INFO_V2 8u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_SET_TRAINING_SCOPE_V2 9u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_POINTER_TRAIN_STEP_V2 10u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_INSPECT_OPERATOR_BANK_V2 11u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_SET_TRAINING_WORKSPACE_V2 12u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_TRAIN_UPDATE_V2 13u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_EVALUATE_BATCH_V2 14u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_EXECUTE_TYPED_PROGRAM_V2 15u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_TRAIN_TYPED_PROGRAM_V2 16u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_EXECUTE_SEMANTIC_PROGRAM_V2 17u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_TRAIN_SEMANTIC_PROGRAM_V2 18u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_TRAIN_COGNITION_LANGUAGE_V2 19u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_EVALUATE_COGNITION_LANGUAGE_V2 20u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_SET_BASE_TRAINING_LEARNING_RATE_SCALE_V2 21u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_CAPTURE_MATRIX_TRAJECTORY_V2 22u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_TRAIN_OUTPUT_ADAPTER_LANGUAGE_V2 23u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_EVALUATE_OUTPUT_ADAPTER_LANGUAGE_V2 24u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_EXPORT_OUTPUT_ADAPTER_LANGUAGE_V2 25u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_TRAIN_LANGUAGE_RESIDUAL_V2 26u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_EVALUATE_LANGUAGE_RESIDUAL_V2 27u
+#define AOEM_AI_CAUSAL_SEQUENCE_COMMAND_EXPORT_LANGUAGE_RESIDUAL_V2 28u
+#define AOEM_AI_CAUSAL_SEQUENCE_DEFAULT_TRAINING_TOKEN_ROWS_V2 1024u
+#define AOEM_AI_CAUSAL_SEQUENCE_MAX_TRAINING_TOKEN_ROWS_V2 8192u
+
+// Typed-relation resident training session protocol carried only as the value
+// of compute.ai.sgm_infer_v1 in aoem_execute_ops_wire_v1. All integers and FP32
+// bit patterns are little-endian. Request header (32 bytes):
+//   "AOTR\0", version:u16, command:u8, reserved:u8, header_len:u8,
+//   reserved[2], body_len:u32, session_id:u64, request_id:u64.
+// Result header (40 bytes) replaces the magic with "AOTS\0" and appends
+// status:i32,reserved:u32. Reserved fields must be zero. Create seals one arm,
+// dimensions, optimizer, global norm clip, and initialization seed. Train and
+// evaluate carry typed entity/relation ID arrays. TrainCycle repeats the same
+// Train update over an encoded fixed-batch cycle while state remains resident;
+// its numerical and optimizer ordering is identical to repeated Train commands.
+// TrainCycle body: expected_parameter_version:u64, update_count:u32,
+// batch_count:u32, then repeated batch_body_len:u32, reserved:u32,
+// batch_body[batch_body_len]. Its result body is parameter_version:u64,
+// optimizer_step:u64, updates_applied:u32, batch_count:u32, mean_ce:f32,
+// pointer_exact:f32, pre_clip_gradient_norm:f32, applied_scale:f32.
+// Export returns an APFLTRM v1 digest-bound parameter material. No Vulkan handle
+// or AOEM Rust layout crosses this protocol boundary.
+#define AOEM_AI_TYPED_RELATION_WIRE_VERSION_V1 1u
+#define AOEM_AI_TYPED_RELATION_COMMAND_CREATE_V1 1u
+#define AOEM_AI_TYPED_RELATION_COMMAND_TRAIN_V1 2u
+#define AOEM_AI_TYPED_RELATION_COMMAND_EVALUATE_V1 3u
+#define AOEM_AI_TYPED_RELATION_COMMAND_EXPORT_V1 4u
+#define AOEM_AI_TYPED_RELATION_COMMAND_CLOSE_V1 5u
+#define AOEM_AI_TYPED_RELATION_COMMAND_QUERY_INFO_V1 6u
+#define AOEM_AI_TYPED_RELATION_COMMAND_TRAIN_CYCLE_V1 7u
+#define AOEM_AI_TYPED_RELATION_ARM_EQUIVARIANT_CANDIDATE_V1 1u
+#define AOEM_AI_TYPED_RELATION_ARM_CAUSAL_TUPLE_ATTENTION_V1 2u
+#define AOEM_AI_TYPED_RELATION_ARM_INVARIANT_SET_POOL_V1 3u
 // Production ABI: host-neutral binary RocksDB provider.
 //
 // Request:  AOSQ | version:u16 | opcode:u16 | payload_len:u32 | payload.
@@ -1150,18 +1270,53 @@ AOEM_API int32_t aoem_state_snapshot_v1(
 #define AOEM_APFL_CAUSAL_SEQUENCE_PROGRAM_VERSION_V2 2u
 #define AOEM_APFL_CAUSAL_SEQUENCE_PROGRAM_VERSION_V3 3u
 #define AOEM_APFL_CAUSAL_SEQUENCE_PROGRAM_VERSION_V4 4u
+#define AOEM_APFL_CAUSAL_SEQUENCE_PROGRAM_VERSION_V5 5u
+#define AOEM_APFL_CAUSAL_SEQUENCE_PROGRAM_VERSION_V6 6u
+#define AOEM_APFL_CAUSAL_SEQUENCE_PROGRAM_VERSION_V7 7u
+#define AOEM_APFL_CAUSAL_SEQUENCE_PROGRAM_VERSION_V8 8u
 #define AOEM_APFL_CAUSAL_SEQUENCE_REQUIRED_FLAGS_V1 0x1fu
 #define AOEM_APFL_CAUSAL_SEQUENCE_REQUIRED_FLAGS_V2 0x3fu
 #define AOEM_APFL_CAUSAL_SEQUENCE_REQUIRED_FLAGS_V3 0x3fu
 #define AOEM_APFL_CAUSAL_SEQUENCE_REQUIRED_FLAGS_V4 0x7fu
+#define AOEM_APFL_CAUSAL_SEQUENCE_REQUIRED_FLAGS_V5 0xffu
+#define AOEM_APFL_CAUSAL_SEQUENCE_REQUIRED_FLAGS_V6 0x1ffu
+#define AOEM_APFL_CAUSAL_SEQUENCE_REQUIRED_FLAGS_V7 0x3ffu
+#define AOEM_APFL_CAUSAL_SEQUENCE_REQUIRED_FLAGS_V8 0x7ffu
 #define AOEM_APFL_CAUSAL_SEQUENCE_VOCABULARY_MEMORY_NONE 0u
 #define AOEM_APFL_CAUSAL_SEQUENCE_VOCABULARY_MEMORY_CAUSAL_UNIQUE_TOKEN_GATE_V1 1u
 #define AOEM_APFL_CAUSAL_SEQUENCE_VOCABULARY_MEMORY_CONTENT_ADDRESSED_TOKEN_POINTER_V1 2u
 #define AOEM_APFL_CAUSAL_SEQUENCE_MEMORY_CONTINUOUS_RELATIONAL_MEMORY_V1 3u
+#define AOEM_APFL_CAUSAL_SEQUENCE_MEMORY_CONTENT_INDUCED_RECURRENT_OPERATOR_BANK_V1 4u
+#define AOEM_APFL_CAUSAL_SEQUENCE_MEMORY_ROLE_SLOT_RECURRENT_OPERATOR_BANK_V1 5u
+#define AOEM_APFL_CAUSAL_SEQUENCE_MEMORY_CONTENT_UNIT_ROLE_OPERATOR_BANK_V1 6u
+#define AOEM_APFL_CAUSAL_SEQUENCE_MEMORY_EXCHANGEABLE_CONTENT_SET_OPERATOR_BANK_V1 7u
 #define AOEM_APFL_CAUSAL_SEQUENCE_CONTINUOUS_RELATIONAL_MEMORY_ADDRESS_WIDTH_V1 64u
 #define AOEM_APFL_CAUSAL_SEQUENCE_CONTINUOUS_RELATIONAL_MEMORY_VALUE_WIDTH_V1 128u
 #define AOEM_APFL_CAUSAL_SEQUENCE_CONTINUOUS_RELATIONAL_MEMORY_COMPOSITION_STEPS_V1 2u
 #define AOEM_APFL_CAUSAL_SEQUENCE_CONTINUOUS_RELATIONAL_MEMORY_TENSOR_BASE_ID_V1 13u
+#define AOEM_APFL_CAUSAL_SEQUENCE_OPERATOR_BANK_ADDRESS_WIDTH_V1 64u
+#define AOEM_APFL_CAUSAL_SEQUENCE_OPERATOR_BANK_COMPOSITION_STEPS_V1 4u
+#define AOEM_APFL_CAUSAL_SEQUENCE_OPERATOR_BANK_EQUATION_V1 1u
+#define AOEM_APFL_CAUSAL_SEQUENCE_OPERATOR_BANK_TENSOR_BASE_ID_V1 13u
+#define AOEM_APFL_CAUSAL_SEQUENCE_ROLE_SLOT_OPERATOR_BANK_SLOT_COUNT_V1 8u
+#define AOEM_APFL_CAUSAL_SEQUENCE_ROLE_SLOT_OPERATOR_BANK_EQUATION_V1 1u
+#define AOEM_APFL_CAUSAL_SEQUENCE_ROLE_SLOT_OPERATOR_BANK_SLOT_WEIGHT_TENSOR_ID_V1 26u
+#define AOEM_APFL_CAUSAL_SEQUENCE_ROLE_SLOT_OPERATOR_BANK_SLOT_BIAS_TENSOR_ID_V1 27u
+#define AOEM_APFL_CAUSAL_SEQUENCE_CONTENT_UNIT_ROLE_OPERATOR_BANK_CONTENT_WIDTH_V1 192u
+#define AOEM_APFL_CAUSAL_SEQUENCE_CONTENT_UNIT_ROLE_OPERATOR_BANK_SLOT_COUNT_V1 8u
+#define AOEM_APFL_CAUSAL_SEQUENCE_CONTENT_UNIT_ROLE_OPERATOR_BANK_EQUATION_V1 1u
+#define AOEM_APFL_CAUSAL_SEQUENCE_CONTENT_UNIT_ROLE_OPERATOR_BANK_RETAIN_STATE_TENSOR_ID_V1 26u
+#define AOEM_APFL_CAUSAL_SEQUENCE_CONTENT_UNIT_ROLE_OPERATOR_BANK_RETAIN_UNIT_TENSOR_ID_V1 27u
+#define AOEM_APFL_CAUSAL_SEQUENCE_CONTENT_UNIT_ROLE_OPERATOR_BANK_RETAIN_BIAS_TENSOR_ID_V1 28u
+#define AOEM_APFL_CAUSAL_SEQUENCE_CONTENT_UNIT_ROLE_OPERATOR_BANK_WRITE_UNIT_TENSOR_ID_V1 29u
+#define AOEM_APFL_CAUSAL_SEQUENCE_CONTENT_UNIT_ROLE_OPERATOR_BANK_ROLE_WEIGHT_TENSOR_ID_V1 30u
+#define AOEM_APFL_CAUSAL_SEQUENCE_CONTENT_UNIT_ROLE_OPERATOR_BANK_ROLE_BIAS_TENSOR_ID_V1 31u
+#define AOEM_APFL_CAUSAL_SEQUENCE_EXCHANGEABLE_CONTENT_SET_CONTENT_WIDTH_V1 192u
+#define AOEM_APFL_CAUSAL_SEQUENCE_EXCHANGEABLE_CONTENT_SET_CONTENT_SLOT_COUNT_V1 8u
+#define AOEM_APFL_CAUSAL_SEQUENCE_EXCHANGEABLE_CONTENT_SET_ROLE_SLOT_COUNT_V1 8u
+#define AOEM_APFL_CAUSAL_SEQUENCE_EXCHANGEABLE_CONTENT_SET_EQUATION_V1 1u
+#define AOEM_APFL_CAUSAL_SEQUENCE_EXCHANGEABLE_CONTENT_SET_ASSIGNMENT_WEIGHT_TENSOR_ID_V1 32u
+#define AOEM_APFL_CAUSAL_SEQUENCE_EXCHANGEABLE_CONTENT_SET_ASSIGNMENT_BIAS_TENSOR_ID_V1 33u
 #define AOEM_APFL_CAUSAL_SEQUENCE_PARAMETER_LAYOUT_VERSION_V1 1u
 #define AOEM_APFL_CAUSAL_SEQUENCE_LAYER_TENSOR_STRIDE_V1 16u
 #define AOEM_AI_CAUSAL_SEQUENCE_PROGRAM_INFO_VERSION_V1 1u
@@ -1172,6 +1327,14 @@ AOEM_API int32_t aoem_state_snapshot_v1(
 #define AOEM_AI_CAUSAL_SEQUENCE_PACKAGE_INFO_VERSION_V3 3u
 #define AOEM_AI_CAUSAL_SEQUENCE_PROGRAM_INFO_VERSION_V4 4u
 #define AOEM_AI_CAUSAL_SEQUENCE_PACKAGE_INFO_VERSION_V4 4u
+#define AOEM_AI_CAUSAL_SEQUENCE_PROGRAM_INFO_VERSION_V5 5u
+#define AOEM_AI_CAUSAL_SEQUENCE_PACKAGE_INFO_VERSION_V5 5u
+#define AOEM_AI_CAUSAL_SEQUENCE_PROGRAM_INFO_VERSION_V6 6u
+#define AOEM_AI_CAUSAL_SEQUENCE_PACKAGE_INFO_VERSION_V6 6u
+#define AOEM_AI_CAUSAL_SEQUENCE_PROGRAM_INFO_VERSION_V7 7u
+#define AOEM_AI_CAUSAL_SEQUENCE_PACKAGE_INFO_VERSION_V7 7u
+#define AOEM_AI_CAUSAL_SEQUENCE_PROGRAM_INFO_VERSION_V8 8u
+#define AOEM_AI_CAUSAL_SEQUENCE_PACKAGE_INFO_VERSION_V8 8u
 
 // Validate the canonical APFLSEQ1 program tensor before opening a future
 // resident sequence-training or inference session. V1 has one model semantic:
@@ -1443,6 +1606,367 @@ AOEM_API int32_t aoem_ai_causal_sequence_package_validate_v4(
   const uint8_t* package_path_utf8_ptr,
   size_t package_path_utf8_len,
   aoem_ai_causal_sequence_package_info_v4* out_info
+);
+
+// V5 seals a strict-causal content-induced recurrent OperatorBank. Earlier
+// states write learned Key/Value outer products into a resident 64x64 Bank;
+// the current Query applies the same learned update exactly four times before
+// a gated residual returns to the canonical vocabulary surface. V4 and older
+// validators reject this contract rather than substituting an older Memory
+// equation.
+typedef struct aoem_ai_causal_sequence_program_info_v5 {
+  uint32_t struct_size;
+  uint32_t version;
+  uint64_t flags;
+  uint32_t layer_count;
+  uint32_t model_width;
+  uint32_t attention_heads;
+  uint32_t key_value_heads;
+  uint32_t head_dim;
+  uint32_t ffn_width;
+  uint32_t vocabulary_width;
+  uint32_t max_sequence_length;
+  float rms_norm_epsilon;
+  float rope_theta;
+  float attention_scale;
+  float final_logit_softcap;
+  uint64_t parameter_count;
+  uint64_t initialization_seed;
+  uint32_t vocabulary_bank_tensor_id;
+  uint32_t input_adapter_tensor_id;
+  uint32_t final_norm_tensor_id;
+  uint32_t output_adapter_tensor_id;
+  uint32_t layer_tensor_id_base;
+  uint32_t layer_tensor_id_stride;
+  uint32_t parameter_tensor_count;
+  uint32_t reserved0;
+  uint8_t tokenizer_digest[32];
+  uint8_t vocabulary_bank_digest[32];
+  uint8_t contract_digest[32];
+  uint32_t program_contract_version;
+  uint32_t operator_bank_kind;
+  uint32_t operator_bank_tensor_id_base;
+  uint32_t operator_bank_query_weight_tensor_id;
+  uint32_t operator_bank_key_weight_tensor_id;
+  uint32_t operator_bank_value_weight_tensor_id;
+  uint32_t operator_bank_output_weight_tensor_id;
+  uint32_t operator_bank_write_gate_state_weight_tensor_id;
+  uint32_t operator_bank_write_gate_bias_tensor_id;
+  uint32_t operator_bank_compose_query_weight_tensor_id;
+  uint32_t operator_bank_compose_value_weight_tensor_id;
+  uint32_t operator_bank_compose_state_weight_tensor_id;
+  uint32_t operator_bank_compose_bias_tensor_id;
+  uint32_t operator_bank_output_gate_state_weight_tensor_id;
+  uint32_t operator_bank_output_gate_value_weight_tensor_id;
+  uint32_t operator_bank_output_gate_bias_tensor_id;
+  uint32_t operator_bank_address_width;
+  uint32_t operator_bank_composition_steps;
+  uint32_t operator_bank_equation;
+  uint32_t reserved1;
+} aoem_ai_causal_sequence_program_info_v5;
+
+typedef struct aoem_ai_causal_sequence_package_info_v5 {
+  uint32_t struct_size;
+  uint32_t version;
+  aoem_ai_causal_sequence_program_info_v5 program;
+  uint32_t package_version;
+  uint32_t architecture;
+  uint32_t parameter_storage_dtype;
+  uint32_t package_tensor_count;
+  uint32_t vocabulary_size;
+  uint32_t reserved0;
+  uint8_t model_root[32];
+} aoem_ai_causal_sequence_package_info_v5;
+
+AOEM_API int32_t aoem_ai_causal_sequence_program_validate_v5(
+  const uint8_t* program_ptr,
+  size_t program_len,
+  aoem_ai_causal_sequence_program_info_v5* out_info
+);
+AOEM_API int32_t aoem_ai_causal_sequence_package_validate_v5(
+  const uint8_t* package_path_utf8_ptr,
+  size_t package_path_utf8_len,
+  aoem_ai_causal_sequence_package_info_v5* out_info
+);
+
+// V6 preserves the V5 recurrent OperatorBank and splits its strict-causal
+// prefix Bank into eight anonymous competitive role slots. Slot assignment is
+// learned from content; no slot has a handwritten language or task identity.
+// V5 and older validators reject this contract rather than collapsing the
+// learned role dimension into a single Bank.
+typedef struct aoem_ai_causal_sequence_program_info_v6 {
+  uint32_t struct_size;
+  uint32_t version;
+  uint64_t flags;
+  uint32_t layer_count;
+  uint32_t model_width;
+  uint32_t attention_heads;
+  uint32_t key_value_heads;
+  uint32_t head_dim;
+  uint32_t ffn_width;
+  uint32_t vocabulary_width;
+  uint32_t max_sequence_length;
+  float rms_norm_epsilon;
+  float rope_theta;
+  float attention_scale;
+  float final_logit_softcap;
+  uint64_t parameter_count;
+  uint64_t initialization_seed;
+  uint32_t vocabulary_bank_tensor_id;
+  uint32_t input_adapter_tensor_id;
+  uint32_t final_norm_tensor_id;
+  uint32_t output_adapter_tensor_id;
+  uint32_t layer_tensor_id_base;
+  uint32_t layer_tensor_id_stride;
+  uint32_t parameter_tensor_count;
+  uint32_t reserved0;
+  uint8_t tokenizer_digest[32];
+  uint8_t vocabulary_bank_digest[32];
+  uint8_t contract_digest[32];
+  uint32_t program_contract_version;
+  uint32_t operator_bank_kind;
+  uint32_t operator_bank_tensor_id_base;
+  uint32_t operator_bank_query_weight_tensor_id;
+  uint32_t operator_bank_key_weight_tensor_id;
+  uint32_t operator_bank_value_weight_tensor_id;
+  uint32_t operator_bank_output_weight_tensor_id;
+  uint32_t operator_bank_write_gate_state_weight_tensor_id;
+  uint32_t operator_bank_write_gate_bias_tensor_id;
+  uint32_t operator_bank_compose_query_weight_tensor_id;
+  uint32_t operator_bank_compose_value_weight_tensor_id;
+  uint32_t operator_bank_compose_state_weight_tensor_id;
+  uint32_t operator_bank_compose_bias_tensor_id;
+  uint32_t operator_bank_output_gate_state_weight_tensor_id;
+  uint32_t operator_bank_output_gate_value_weight_tensor_id;
+  uint32_t operator_bank_output_gate_bias_tensor_id;
+  uint32_t operator_bank_slot_weight_tensor_id;
+  uint32_t operator_bank_slot_bias_tensor_id;
+  uint32_t operator_bank_address_width;
+  uint32_t operator_bank_slot_count;
+  uint32_t operator_bank_composition_steps;
+  uint32_t operator_bank_equation;
+  uint32_t reserved1;
+} aoem_ai_causal_sequence_program_info_v6;
+
+typedef struct aoem_ai_causal_sequence_package_info_v6 {
+  uint32_t struct_size;
+  uint32_t version;
+  aoem_ai_causal_sequence_program_info_v6 program;
+  uint32_t package_version;
+  uint32_t architecture;
+  uint32_t parameter_storage_dtype;
+  uint32_t package_tensor_count;
+  uint32_t vocabulary_size;
+  uint32_t reserved0;
+  uint8_t model_root[32];
+} aoem_ai_causal_sequence_package_info_v6;
+
+AOEM_API int32_t aoem_ai_causal_sequence_program_validate_v6(
+  const uint8_t* program_ptr,
+  size_t program_len,
+  aoem_ai_causal_sequence_program_info_v6* out_info
+);
+AOEM_API int32_t aoem_ai_causal_sequence_package_validate_v6(
+  const uint8_t* package_path_utf8_ptr,
+  size_t package_path_utf8_len,
+  aoem_ai_causal_sequence_package_info_v6* out_info
+);
+
+// V7 replaces V6's per-token direct role selection with three persistent,
+// strictly causal content units (query/key/value). A learned retain gate carries
+// each content unit across tokens; normalized content jointly controls Bank
+// writes and eight anonymous role slots. No role has a host-authored identity.
+// V6 and older validators reject this contract.
+typedef struct aoem_ai_causal_sequence_program_info_v7 {
+  uint32_t struct_size;
+  uint32_t version;
+  uint64_t flags;
+  uint32_t layer_count;
+  uint32_t model_width;
+  uint32_t attention_heads;
+  uint32_t key_value_heads;
+  uint32_t head_dim;
+  uint32_t ffn_width;
+  uint32_t vocabulary_width;
+  uint32_t max_sequence_length;
+  float rms_norm_epsilon;
+  float rope_theta;
+  float attention_scale;
+  float final_logit_softcap;
+  uint64_t parameter_count;
+  uint64_t initialization_seed;
+  uint32_t vocabulary_bank_tensor_id;
+  uint32_t input_adapter_tensor_id;
+  uint32_t final_norm_tensor_id;
+  uint32_t output_adapter_tensor_id;
+  uint32_t layer_tensor_id_base;
+  uint32_t layer_tensor_id_stride;
+  uint32_t parameter_tensor_count;
+  uint32_t reserved0;
+  uint8_t tokenizer_digest[32];
+  uint8_t vocabulary_bank_digest[32];
+  uint8_t contract_digest[32];
+  uint32_t program_contract_version;
+  uint32_t operator_bank_kind;
+  uint32_t operator_bank_tensor_id_base;
+  uint32_t operator_bank_query_weight_tensor_id;
+  uint32_t operator_bank_key_weight_tensor_id;
+  uint32_t operator_bank_value_weight_tensor_id;
+  uint32_t operator_bank_output_weight_tensor_id;
+  uint32_t operator_bank_write_gate_state_weight_tensor_id;
+  uint32_t operator_bank_write_gate_bias_tensor_id;
+  uint32_t operator_bank_compose_query_weight_tensor_id;
+  uint32_t operator_bank_compose_value_weight_tensor_id;
+  uint32_t operator_bank_compose_state_weight_tensor_id;
+  uint32_t operator_bank_compose_bias_tensor_id;
+  uint32_t operator_bank_output_gate_state_weight_tensor_id;
+  uint32_t operator_bank_output_gate_value_weight_tensor_id;
+  uint32_t operator_bank_output_gate_bias_tensor_id;
+  uint32_t operator_bank_content_retain_state_weight_tensor_id;
+  uint32_t operator_bank_content_retain_unit_weight_tensor_id;
+  uint32_t operator_bank_content_retain_bias_tensor_id;
+  uint32_t operator_bank_content_write_unit_weight_tensor_id;
+  uint32_t operator_bank_content_role_weight_tensor_id;
+  uint32_t operator_bank_content_role_bias_tensor_id;
+  uint32_t operator_bank_address_width;
+  uint32_t operator_bank_content_width;
+  uint32_t operator_bank_slot_count;
+  uint32_t operator_bank_composition_steps;
+  uint32_t operator_bank_equation;
+  uint32_t reserved1;
+} aoem_ai_causal_sequence_program_info_v7;
+
+typedef struct aoem_ai_causal_sequence_package_info_v7 {
+  uint32_t struct_size;
+  uint32_t version;
+  aoem_ai_causal_sequence_program_info_v7 program;
+  uint32_t package_version;
+  uint32_t architecture;
+  uint32_t parameter_storage_dtype;
+  uint32_t package_tensor_count;
+  uint32_t vocabulary_size;
+  uint32_t reserved0;
+  uint8_t model_root[32];
+} aoem_ai_causal_sequence_package_info_v7;
+
+AOEM_API int32_t aoem_ai_causal_sequence_program_validate_v7(
+  const uint8_t* program_ptr,
+  size_t program_len,
+  aoem_ai_causal_sequence_program_info_v7* out_info
+);
+AOEM_API int32_t aoem_ai_causal_sequence_package_validate_v7(
+  const uint8_t* package_path_utf8_ptr,
+  size_t package_path_utf8_len,
+  aoem_ai_causal_sequence_package_info_v7* out_info
+);
+
+// V8 replaces V7's single recurrent content unit with eight anonymous,
+// exchangeable content slots. Learned assignment and strict-causal content
+// addressing select which persistent slot is updated and read. V7 and older
+// validators reject this contract rather than collapsing the set to one unit.
+typedef struct aoem_ai_causal_sequence_program_info_v8 {
+  uint32_t struct_size;
+  uint32_t version;
+  uint64_t flags;
+  uint32_t layer_count;
+  uint32_t model_width;
+  uint32_t attention_heads;
+  uint32_t key_value_heads;
+  uint32_t head_dim;
+  uint32_t ffn_width;
+  uint32_t vocabulary_width;
+  uint32_t max_sequence_length;
+  float rms_norm_epsilon;
+  float rope_theta;
+  float attention_scale;
+  float final_logit_softcap;
+  uint64_t parameter_count;
+  uint64_t initialization_seed;
+  uint32_t vocabulary_bank_tensor_id;
+  uint32_t input_adapter_tensor_id;
+  uint32_t final_norm_tensor_id;
+  uint32_t output_adapter_tensor_id;
+  uint32_t layer_tensor_id_base;
+  uint32_t layer_tensor_id_stride;
+  uint32_t parameter_tensor_count;
+  uint32_t reserved0;
+  uint8_t tokenizer_digest[32];
+  uint8_t vocabulary_bank_digest[32];
+  uint8_t contract_digest[32];
+  uint32_t program_contract_version;
+  uint32_t operator_bank_kind;
+  uint32_t operator_bank_tensor_id_base;
+  uint32_t operator_bank_query_weight_tensor_id;
+  uint32_t operator_bank_key_weight_tensor_id;
+  uint32_t operator_bank_value_weight_tensor_id;
+  uint32_t operator_bank_output_weight_tensor_id;
+  uint32_t operator_bank_write_gate_state_weight_tensor_id;
+  uint32_t operator_bank_write_gate_bias_tensor_id;
+  uint32_t operator_bank_compose_query_weight_tensor_id;
+  uint32_t operator_bank_compose_value_weight_tensor_id;
+  uint32_t operator_bank_compose_state_weight_tensor_id;
+  uint32_t operator_bank_compose_bias_tensor_id;
+  uint32_t operator_bank_output_gate_state_weight_tensor_id;
+  uint32_t operator_bank_output_gate_value_weight_tensor_id;
+  uint32_t operator_bank_output_gate_bias_tensor_id;
+  uint32_t operator_bank_content_retain_state_weight_tensor_id;
+  uint32_t operator_bank_content_retain_unit_weight_tensor_id;
+  uint32_t operator_bank_content_retain_bias_tensor_id;
+  uint32_t operator_bank_content_write_unit_weight_tensor_id;
+  uint32_t operator_bank_content_role_weight_tensor_id;
+  uint32_t operator_bank_content_role_bias_tensor_id;
+  uint32_t operator_bank_content_assignment_weight_tensor_id;
+  uint32_t operator_bank_content_assignment_bias_tensor_id;
+  uint32_t operator_bank_address_width;
+  uint32_t operator_bank_content_width;
+  uint32_t operator_bank_content_slot_count;
+  uint32_t operator_bank_slot_count;
+  uint32_t operator_bank_composition_steps;
+  uint32_t operator_bank_equation;
+  uint32_t reserved1;
+} aoem_ai_causal_sequence_program_info_v8;
+
+typedef struct aoem_ai_causal_sequence_package_info_v8 {
+  uint32_t struct_size;
+  uint32_t version;
+  aoem_ai_causal_sequence_program_info_v8 program;
+  uint32_t package_version;
+  uint32_t architecture;
+  uint32_t parameter_storage_dtype;
+  uint32_t package_tensor_count;
+  uint32_t vocabulary_size;
+  uint32_t reserved0;
+  uint8_t model_root[32];
+} aoem_ai_causal_sequence_package_info_v8;
+
+AOEM_API int32_t aoem_ai_causal_sequence_program_validate_v8(
+  const uint8_t* program_ptr,
+  size_t program_len,
+  aoem_ai_causal_sequence_program_info_v8* out_info
+);
+AOEM_API int32_t aoem_ai_causal_sequence_package_validate_v8(
+  const uint8_t* package_path_utf8_ptr,
+  size_t package_path_utf8_len,
+  aoem_ai_causal_sequence_package_info_v8* out_info
+);
+
+// V9 preserves V8's parameter and slot contracts while replacing per-slot
+// post-write RMS normalization with amplitude-preserving convex content
+// updates. The sealed program equation distinguishes V8 and V9 semantics.
+typedef aoem_ai_causal_sequence_program_info_v8
+  aoem_ai_causal_sequence_program_info_v9;
+typedef aoem_ai_causal_sequence_package_info_v8
+  aoem_ai_causal_sequence_package_info_v9;
+
+AOEM_API int32_t aoem_ai_causal_sequence_program_validate_v9(
+  const uint8_t* program_ptr,
+  size_t program_len,
+  aoem_ai_causal_sequence_program_info_v9* out_info
+);
+AOEM_API int32_t aoem_ai_causal_sequence_package_validate_v9(
+  const uint8_t* package_path_utf8_ptr,
+  size_t package_path_utf8_len,
+  aoem_ai_causal_sequence_package_info_v9* out_info
 );
 
 #define AOEM_AI_SGM_HIERARCHICAL_TRAINING_RUNTIME_IDENTITY_VERSION_V1 1u
@@ -2244,6 +2768,177 @@ AOEM_API int32_t aoem_execute_primitive_v1(
 // Any AOEM-owned output buffer returned by this header must be released with aoem_free.
 AOEM_API void aoem_free(uint8_t* ptr, size_t len);
 AOEM_API const char* aoem_last_error(void* handle);
+
+// Checked integer SSA execution through compute.ai.sgm_infer_v1 (no new C entry).
+// Payload: 8 bytes "AOIP0\0\0\0", LE u32 version=1, rows (1..4096),
+// program_bytes (<=1024), reserved=0; APFLINT1/2/3 program; row-major LE i64 inputs.
+// APFLINT1: magic[8], u32 numeric=1,input_count,step_count,output_count.
+// APFLINT2/3: same header plus u32 constant_count. Then input permutation[u32],
+// constants[i64] (v2/v3), steps[opcode,left_register,right_register,failure],
+// output_registers[u32]. Counts: inputs<=16, constants<=32, steps<=32, outputs1..16.
+// Registers are inputs, constants, then prior SSA results. Opcodes: add0, subtract1,
+// multiply2, exact_divide3, positive_modulus_remainder4, gcd5, inverse_mod6,
+// floor_divide7 (v2+), equal8, less9, less_equal10, require_equal11 (v3).
+// Comparisons return 0 or 1; require_equal returns left iff equal, else status7.
+// Failure 0=abort, 1=no-solution only on nonexact/not-invertible.
+// V2 without constants or floor_divide is noncanonical and rejected.
+// V3 without opcodes8..11 is noncanonical and rejected; older versions reject them.
+// Result key: <prefix>/ai/sgm_infer/integer_program/result. JSON rows contain
+// status (0=ok,1=no-solution,2=overflow,3=zero divisor,4=nonexact division,
+// 5=invalid modulus,6=not invertible,7=condition not met), failed_instruction (null on success),
+// values (i64 array; empty on every failed row). No CPU numeric fallback.
+// AOIP0 version=2 seals checked_i128_v1: APFLINT4 only, program_bytes<=2048,
+// inputs are row-major little-endian signed 128-bit integers (16 bytes each).
+// APFLINT4 uses the V3 layout, numeric=2, but constants occupy 16 bytes each.
+// Counts, opcodes and SSA rules are unchanged. It is not accepted by
+// version=1 or the i64 search ABI. Result version=2, numeric_contract=checked_i128_v1;
+// values are canonical decimal strings, preserving all 128 bits through JSON.
+// APFLINT4 additionally allows failure=2: claim-no-unique-solution on nonexact/
+// not-invertible, returned as status8 with no values. This differs from no-solution
+// (status1): a singular system may have infinitely many solutions. Both are
+// program-selected claims requiring goal verification, not kernel proof claims.
+// AOIP0 version=3 executes a bounded ordered call graph (APFLCG01), not search.
+// program_bytes<=65536; the request rows and i128 input encoding stay unchanged.
+// Graph: magic[8], LE u32 numeric=2,input_count,bank_count,call_count,output_count;
+// then each Bank as u32 byte_length + APFLINT4 bytes; then each call as
+// u32 bank_index,arity,argument_slots[arity]; then final output_slots[u32].
+// Limits: inputs<=16, Banks1..16, calls1..16, final outputs1..16, at most64
+// published call results and512 cumulative primitive instructions. Bank limits
+// retain APFLINT4 semantics. Slot order is external inputs, then each call's
+// result tuple. Arguments reference only inputs or prior results; no recursion.
+// Every call executes, even if its result is unused. First failure aborts the
+// row, clears all outputs and reports the cumulative primitive instruction index.
+// Result version=3; checked_i128_v1 decimal values/statuses otherwise unchanged.
+// Intermediate values and ordered calls execute in one resident GPU dispatch.
+// AOIP0 version=4 executes APFLOU01 typed result programs; program_bytes<=4MiB.
+// Request row bounds, reserved field and row-major signed i128 encoding are unchanged.
+// Asset: magic[8]="APFLOU01", LE u32 version=1,input_count,output_count,
+// domain_count,refutation_count,postcondition_count; then length-prefixed APFLCG01
+// graphs in that order: domain graphs, refutation graphs, one computation graph,
+// postcondition graphs. All graph lengths are LE u32. No trailing bytes permitted.
+// Limits: inputs+outputs<=16, outputs>=1, domains/refutations0..16, postconditions1..16.
+// Domains/refutations take original inputs and return one Boolean. Computation
+// takes original inputs and returns output_count values. Postconditions take
+// original inputs followed by computed values, and return one Boolean.
+// Result version=4, numeric_contract=checked_i128_v1,
+// outcome_contract=goal_bound_result_v1. Rows contain outcome, fault, component,
+// failed_instruction and values (canonical i128 decimal strings, empty unless value).
+// outcome: 0=value, 1=outside-domain, 2=refuted, 3=execution/check failure.
+// Domain checks precede refutations. A successful refutation equal to1 stops
+// before computation; false or faulted refutations are unestablished, not vetoes.
+// Computation and all original postconditions must succeed before returning value.
+// Local Bank failure claims1/2 are not promoted: primitive faults2..7 stay faults.
+// AOIP0 version=5 executes only APFLOU01 version=2, with one extra LE u32
+// numeric_bits=1024 after postcondition_count. Embedded graph constants remain
+// signed i128 and are sign-extended; all registers, operations and results use
+// checked signed i1024. Inputs are 32 LE u32 two's-complement limbs per value.
+// JSON result version=5, numeric_contract=checked_i1024_le_limbs_v1; each value
+// is exactly 32 u32 limbs, least significant first. All other outcome fields,
+// checks and fault semantics match version4. Precision is sealed by the asset,
+// not selected by a runtime flag. Capacity overflow is failure, never UNSAT.
+// component is a zero-based graph index, null only on value; failed_instruction
+// is the cumulative instruction index within that graph on a primitive fault,
+// otherwise null. fault=0 for value/domain rejection/refutation/false postcondition.
+// This kernel executes sealed predicates, not their logical derivations. Trusted
+// model compilation must bind refutations to the original goal; arbitrary supplied
+// predicates are not independently certified mathematical proofs by this ABI.
+
+// Bounded integer-program search through the same compute.ai.sgm_infer_v1 entry.
+// Payload: "AOIS0\0\0\0", LE u32 version=1, queries1..64, asset_bytes<=65536,
+// reserved=0; APFLSR01/02/03/04 asset; query/row/parameter-major LE i64 inputs.
+// Asset: "APFLSR01" through "APFLSR04", LE u32 numeric=1, parameters1..8, observations1..16,
+// capacity16..2048, evaluations1..262144, odd max_cost1..31, opcode_count1..8,
+// constant_count0..16, seed_count0..32, checker_bytes<=1024.
+// V3 adds LE u32 function_count1..8 after checker_bytes; V1/V2 have no such field.
+// Then unique ordered opcodes[u32,0..7], unique constants[i64], seeds each as
+// u32 byte_length + APFLINT1/2/3 bytes, V3 functions in the same length+bytes
+// form, followed by the checker bytes. Each function is <=1024 bytes, 1..2
+// inputs, one output, at least one arithmetic instruction, and abort-only.
+// Seeds have parameters inputs, one output, arithmetic opcodes0..7 and abort
+// failures only. Checker has parameters+1 inputs (last is proposed result),
+// one output, abort failures only and at least one require_equal instruction.
+// Search orders cost, opcode, left, right; deduplicates exact observation vectors.
+// Seeds initialize the same arena and may subsequently be composed, not routed.
+// Result key: <prefix>/ai/sgm_infer/integer_search/result, version1,
+// numeric_contract=checked_i64_v1, backend=vulkan_spirv, universal_proof=false.
+// Rows: status0=found_on_observations,1=cost_exhausted,2=evaluation_budget,
+// 3=node_capacity; selected(nullable index),node_count,evaluations,nodes,values.
+// A node is [kind,left/index,right,cost]; kinds0=parameter,1=constant,2=seed,
+// 16+opcode=binary composition of prior nodes. APFLSR01 expanded cost: leaves1,
+// binary1+left+right; seed costs saturate at max_cost+1. Seed admission is not
+// cost-filtered. Failed searches return no nodes, values or selected index.
+// APFLSR02 uses reusable-value planning cost: parameter/constant/seed=1,
+// binary=1+left+right; independently rejects every seed/composition whose fully
+// expanded expression exceeds 31 nodes. The numeric contract is unchanged.
+// APFLSR03 also composes sealed functions on prior values. Node kind32+i names
+// function i; left/right are its actual argument nodes (right=0 for unary).
+// Function planning cost is 1+argument costs; expansion counts every repeated
+// argument occurrence, constant and operator. Each function proposal charges
+// its full instruction count against evaluations, even if invalid or oversized.
+// Cost levels include even values; ordered primitives precede ordered functions
+// at each level. Invalid calls are discarded without exposing partial values.
+// APFLSR04 retains V3 composition (function_count may be zero), then adds
+// LE u32 observation_capacity=observations..16, verification_count1..4096,
+// verification_budget1..65536 directly after function_count. Remaining asset
+// layout is identical. Each query supplies observations+verification_count rows,
+// initial observations first. Values still cover only the initial observations.
+// After finding a witness, the same dispatch checks its selected DAG and original
+// condition on verification rows in order. The first failure, including arithmetic
+// faults, is added to resident observations; search restarts with cumulative work.
+// V4 rows add refinement:{restarts,verification_checks,observations_used}; status4
+// means observation capacity, status5 verification budget. Each check charges one
+// input evaluation of the bounded DAG/checker; it is not a primitive instruction
+// counter. Status0 requires every verification input to pass on the final witness.
+// Initial and verification inputs must belong to the intended goal domain. An
+// invalid input cannot produce a success; no input is silently skipped or repaired.
+// Cost semantics are sealed by asset magic, never an environment/runtime switch.
+// Success is a finite witness only. Exhaustion is NOT mathematical unsat.
+// No host search scheduler, target output array or CPU arithmetic fallback.
+
+// Conditional ordered-call search: the same AOIS magic and unified entry,
+// version=3, queries1..4, asset_bytes<=8388608, reserved=0, APFLCP01 asset,
+// followed by query/row/parameter-major LE signed i128 inputs. Initial
+// observations precede verification rows. No target answer array is supplied.
+// APFLCP01 asset version 3 seals a deferred-sibling frontier; version 2 is rejected.
+// It seals sparse F32 policy coefficients/feature indices, APFLINT4 Banks
+// and APFLCG01 original-goal checkers. Policy scores, conditional normalization,
+// bounded priority search, ordered call execution and refinement are resident.
+// See docs/AOEM-CONDITIONAL-CALL-SEARCH-V1.md for the exact asset layout.
+// Result version=3, numeric_contract=checked_i128_v1,
+// policy_contract=sparse_conditional_f32_v1, universal_proof=false.
+// Row fields: status,expanded,component_executions,peak_queue,
+// verification_checks,refinements,calls:[{program,arguments}],outputs.
+// References address all original inputs and every prior call output.
+// Status0=finite witness,1=exhausted,2=expansion budget,3=queue capacity,
+// 4=observation capacity,5=verification budget,6=node arena capacity.
+//
+// Verified search AOIS version=6 accepts only APFLVA01 version=3: the v2
+// header plus u32 numeric_bits=1024 before its embedded policy. Instructions
+// and signed-i128 constants are unchanged, but all operands/intermediates are
+// checked signed 1024-bit values, 32 little-endian u32 limbs per input.
+// GPU admission stably compacts in-domain rows not refuted by sealed proofs.
+// It requires more admitted rows than initial observations; no rejected row
+// is replaced or duplicated. Search uses the actual remaining row count.
+// Result numeric_contract=checked_i1024_le_limbs_v1,
+// admission_contract=stable_compacted_multilimb_inputs_v3; admission includes
+// admitted_rows and generator_rejections. Status7 means insufficient admitted
+// rows, status8 admission arithmetic fault. Neither means mathematical unsat.
+// AOIS version5 and APFLVA01 versions1/2 retain their signed-i128 semantics.
+// Nonzero status exposes no program. Finite success is not a universal proof;
+// exhaustion is not unsatisfiability. This entry imports policy weights; it
+// neither trains them nor admits natural-language requests automatically.
+
+// Sparse conditional policy training: same AOIS magic and unified entry,
+// version=4, queries=1, asset_bytes<=16777216, reserved=0, APFLST01 asset only.
+// The asset seals initial F32 weights, sparse candidate features, categorical
+// targets, explicit update order, learning rate and per-example L2 norm bound.
+// Cross-entropy, gradient clipping and sequential SGD execute resident on Vulkan.
+// Result at the existing integer_search/result state key has version=4 and kind
+// compute.ai.sgm_infer_v1.sparse_policy_train.result; returns finite F32 weights,
+// optimizer_updates, before/after_cross_entropy and before/after_top1.
+// Zero updates is read-only scoring. Nonfinite/out-of-bound updates fail the
+// whole request without exporting weights. No inference contract is changed.
+// See docs/AOEM-SPARSE-CATEGORICAL-TRAIN-V1.md for exact layout and numeric rules.
 
 #ifdef __cplusplus
 }

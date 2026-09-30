@@ -4,6 +4,24 @@
 这是开发分工，不是先前网络测试的 A/B 身份。共同约定见
 [产品交付主线](NOVOVM_DELIVERY_ALIGNMENT.md)。
 
+## A 返回的 ML-DSA FULLMAX 包（2026-10-01）
+
+`aoem/` 现在固定标准修复源 `56e9da15010490ab54435ba6ab1c226f3d739176`，
+不是后续隐私 JSON v2 版本。实际 core SHA256：
+
+- Windows：`4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463`
+- Linux：`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`
+
+A 本机两平台各通过原严格 90/90 sigVer 子集、9 组独立互操作，以及 Host
+runtime 2/2。后者现要求三参数集全部通过官方正例及完整负例，不接受旧版
+“65/87 正确阻断也算 PASS”的含义。B 拉取后先 `git lfs pull`、核对 manifest
+哈希，再运行本文件原命令独立复验；不要只更新文本而仍加载旧 SO。
+
+当前 verifier 初始化门禁保持失败关闭，无白名单放行或弱参数 fallback。
+这次只解除库级标准兼容阻断；交易/封印协议、钱包和主链 PQ 仍未完成。
+共享 wire/鉴权/封印文件继续由 A 协调，主网 profile 待用户选择后再交接唯一
+编辑权；下文源码尚未随包的措辞保留为先前交付时点，不是最新状态。
+
 ## A 返回的经典隐私接口（2026-10-01）
 
 AOEM `main@38f602ec` 已推送，现有 `aoem_privacy_execute_v1` 的 JSON v2

@@ -1,7 +1,7 @@
 {
-  "stamp": "20260731-060252",
-  "release_version": "1.0.0+a951273c",
-  "source_commit": "a951273c",
+  "stamp": "20261001-065932",
+  "release_version": "1.0.0+56e9da15",
+  "source_commit": "56e9da15010490ab54435ba6ab1c226f3d739176",
   "platform": "windows",
   "profile": "fullmax",
   "bundle_dir": ".",
@@ -23,7 +23,7 @@
     "aoem_hsm_plugin.dll",
     "aoem_kms_plugin.dll"
   ],
-  "features": "apfl-gpu-production-default,rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+  "features": "apfl-model-session,rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
   "storage_provider": {
     "entry": "aoem_storage_provider_wire_v1",
     "wire": "binary",
@@ -44,33 +44,20 @@
     "atomic_step_commit": true,
     "durable_completion_boundary": true
   },
-  "apfl_gpu_resident_pipeline": {
-    "fullmax_apfl_gpu_production_default_included": true,
-    "compute_request_name": "compute.apfl.gpu_resident_pipeline_v1",
-    "entry": "aoem_execute_ops_wire_v1",
-    "result": "aoem_state_read_v1",
-    "target_device": "auto",
-    "target_device_vendor_id": "any",
-    "gpu_capability_gated_production_ready": true,
-    "rtx_5090_first_validated_local_device": true,
-    "rtx_5090_product_boundary": false,
-    "release_artifact_required": true,
-    "rc_bundle_install_smoke_required": true,
-    "cpu_oracle_compare_required": true,
-    "cpu_fallback_required": true
-  },
   "ai_sgm_infer": {
     "fullmax_ai_sgm_infer_included": true,
     "compute_request_name": "compute.ai.sgm_infer_v1",
     "entry": "aoem_execute_ops_wire_v1",
     "result": "aoem_state_read_v1",
-    "uses_internal_tensor_graph": true,
-    "uses_internal_tensor_build": true,
-    "uses_internal_graph_runtime": true,
-    "uses_apfl_generator_runtime": true,
-    "uses_structural_memory_runtime": true,
+    "payload_contract": "versioned_model_session_binary",
+    "model_asset_required": true,
+    "legacy_aoai_v0_supported": false,
+    "teacher_runtime_used": false,
+    "source_runtime_used": false,
+    "execution_backend": "AOEM Vulkan/SPIR-V",
     "public_aoem_graph_lifecycle_abi": false,
-    "public_aoem_tensor_build_abi": false
+    "public_aoem_tensor_build_abi": false,
+    "capability_manifest": "ai-sgm-infer-wire-v1-capability.json"
   },
   "boundaries": {
     "new_standalone_apfl_ffi": false,
@@ -82,7 +69,24 @@
     "cross_device_pass": false,
     "global_production_ready": false,
     "production_performance_claim": false,
-    "public_unrestricted_gpu_path": false
+    "public_unrestricted_gpu_path": false,
+    "runtime_canon_changed": true
   },
-  "notes": "Canonical AOEM FULLMAX core plus optional sidecars; host product policy remains outside AOEM."
+  "checksums": "CHECKSUMS.sha256",
+  "notes": "Canonical FULLMAX features from committed ML-DSA source; generic Host policies remain external. APFL AI requires sealed model-session assets; not a new validation of AI/GPU performance. Privacy JSON v2 from later source is not included.",
+  "semantic_batch": {
+    "entry": "aoem_execute_semantic_batch_v1",
+    "nonblocking_entry": "aoem_submit_semantic_batch_v1",
+    "continuation_graph_entry": "aoem_submit_semantic_graph_v1",
+    "input": "opaque_binary",
+    "output": "opaque_binary",
+    "synchronous_join": true,
+    "nonblocking_owned_input_submit": true,
+    "nonblocking_continuation_submit": true,
+    "completion_callback_once": true,
+    "stable_result_order": true,
+    "per_task_status": true,
+    "host_neutral": true,
+    "business_semantics": false
+  }
 }

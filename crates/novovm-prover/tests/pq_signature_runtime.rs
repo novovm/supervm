@@ -35,7 +35,7 @@ fn framed(message: &[u8], context: &[u8]) -> Vec<u8> {
 
 #[test]
 #[ignore = "requires the trusted packaged AOEM runtime; run explicitly, no silent skip"]
-fn runtime_compatibility_matrix_rejects_noninteroperable_parameters() {
+fn packaged_runtime_requires_all_standard_mldsa_parameters() {
     let runtime = packaged_runtime();
     for (parameters, json) in [
         (
@@ -69,33 +69,40 @@ fn runtime_compatibility_matrix_rejects_noninteroperable_parameters() {
         let compatible = runtime
             .mldsa_verify_v1(level, &public_key, &framed(&message, &context), &signature)
             .unwrap();
-        match MldsaVerifier::new(&runtime, parameters) {
-            Ok(verifier) => {
-                assert!(compatible);
-                verifier
-                    .verify(&public_key, &message, &context, &signature)
-                    .unwrap();
-                let mut changed_signature = signature.clone();
-                changed_signature[0] ^= 1;
-                assert_eq!(
-                    verifier.verify(&public_key, &message, &context, &changed_signature),
-                    Err(PqVerificationError::InvalidSignature)
-                );
-            }
-            Err(PqVerificationError::RuntimeIncompatible) => assert!(!compatible),
-            Err(error) => panic!("unexpected runtime qualification error: {error}"),
-        }
+        assert!(
+            compatible,
+            "packaged ML-DSA-{level} must accept the official positive"
+        );
+        let verifier = MldsaVerifier::new(&runtime, parameters)
+            .expect("all packaged parameter sets must pass standard qualification");
+        verifier
+            .verify(&public_key, &message, &context, &signature)
+            .unwrap();
+        let mut changed_signature = signature.clone();
+        changed_signature[0] ^= 1;
+        assert_eq!(
+            verifier.verify(&public_key, &message, &context, &changed_signature),
+            Err(PqVerificationError::InvalidSignature)
+        );
         println!("level={level}: self_roundtrip=true official_positive={compatible} usable_for_standard_profile={compatible}; not main-chain or FIPS certification");
     }
 }
 
 #[test]
 #[ignore = "requires the trusted packaged AOEM runtime; run explicitly, no silent skip"]
-fn compatible_mldsa44_rejects_tampering_wrong_context_and_legacy_raw_signatures() {
+fn standard_parameters_reject_tampering_wrong_context_and_legacy_raw_signatures() {
     let runtime = packaged_runtime();
-    let parameters = AoemMldsaParameterSet::MlDsa44;
-    let verifier =
-        MldsaVerifier::new(&runtime, parameters).expect("ML-DSA-44 known-answer qualification");
+    for parameters in [
+        AoemMldsaParameterSet::MlDsa44,
+        AoemMldsaParameterSet::MlDsa65,
+        AoemMldsaParameterSet::MlDsa87,
+    ] {
+        verify_parameter_rejections(&runtime, parameters);
+    }
+}
+
+fn verify_parameter_rejections(runtime: &AoemDyn, parameters: AoemMldsaParameterSet) {
+    let verifier = MldsaVerifier::new(runtime, parameters).expect("known-answer qualification");
     let level = parameters.level();
     let (public_key, mut secret_key) = runtime.mldsa_keygen_v1(level).unwrap();
     let (other_key, mut other_secret_key) = runtime.mldsa_keygen_v1(level).unwrap();

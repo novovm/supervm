@@ -46,10 +46,10 @@ current v1.2 FULLMAX output.
 
 ```text
 Runtime baseline:
-  AOEM FULLMAX Runtime Baseline 2026-07-31
-  source commit: a951273c
-  Windows included and verified
-  Linux included and verified
+  AOEM FULLMAX Runtime Baseline 2026-10-01
+  source commit: 56e9da15010490ab54435ba6ab1c226f3d739176
+  Windows locally qualified: see RUNTIME-BASELINE.md
+  Linux/WSL locally qualified: see RUNTIME-BASELINE.md
   macOS pending, not bundled, not advertised as available
 
 Windows:
@@ -140,6 +140,21 @@ This profile is separate from the Proof Engine worker profiles. RingCT remains
 the FULLMAX confidential-transfer path; `compute.zk.resident_proof_v1` remains
 the proof engine path for membership/state proof profiles.
 
+This legacy profile requires same-process prove-cache admission. It does not
+authorize independently held assets, wallet respend, or historical double-spend
+protection. The later classical JSON v2 implementation is not included in this
+`56e9da15` SDK. ML-DSA support does not make the privacy proofs post-quantum.
+
+## ML-DSA Qualification
+
+ML-DSA-44/65/87 now use the standard-correct pinned `mldsa-native 2.0.0` source.
+Windows and Linux core libraries each pass the 90-case applicable NIST sigVer
+subset and independent bidirectional interoperability. This is not FIPS
+certification or main-chain transaction/seal integration. Raw/internal ABI
+framing is unchanged; the Host adds external-pure context framing exactly once.
+See `RUNTIME-BASELINE.md` for hashes, exclusions and other compatibility limits;
+upstream notices are in `licenses/mldsa-native/`.
+
 ## Proof Engine Capability
 
 The current Windows and Linux FULLMAX core dynamic libraries include the AOEM
@@ -173,7 +188,7 @@ can embed AOEM directly and do not need to deploy the worker.
 
 ```text
 additive public FFI ABI update for Semantic Graph V3
-Runtime Canon unchanged
+APFL AI contract now requires versioned sealed model-session assets
 not a standalone AOEM platform service
 not a generic arbitrary-circuit proof system
 not a performance-ready claim

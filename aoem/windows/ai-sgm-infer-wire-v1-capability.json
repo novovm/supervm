@@ -1,0 +1,18 @@
+{
+  "source_commit": "56e9da15",
+  "capability": "compute.ai.sgm_infer_v1",
+  "status": "production_model_session_capability",
+  "entry": "aoem_execute_ops_wire_v1",
+  "result": "aoem_state_read_v1",
+  "payload_contract": "versioned_model_session_binary",
+  "model_asset_required": true,
+  "legacy_aoai_v0_supported": false,
+  "teacher_runtime_used": false,
+  "source_runtime_used": false,
+  "execution_backend": "AOEM Vulkan/SPIR-V",
+  "public_aoem_graph_lifecycle_abi": false,
+  "public_aoem_tensor_build_abi": false,
+  "new_standalone_ai_ffi": false,
+  "public_ffi_abi_changed": false,
+  "runtime_canon_changed": false
+}

@@ -2,8 +2,8 @@
   "package": "aoem-fullmax-supervm-host",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX Runtime Baseline 2026-07-31",
-    "stage": "windows_linux_fullmax_trusted_release",
+    "id": "AOEM FULLMAX Runtime Baseline 2026-10-01",
+    "stage": "windows_linux_fullmax_local_qualified",
     "windows_included_and_verified": true,
     "linux_included_and_verified": true,
     "macos_pending_not_bundled": true,
@@ -11,10 +11,10 @@
   },
   "entry": "aoem_execute_ops_wire_v1",
   "output": "aoem_state_read_v1",
-  "runtime_canon_changed": false,
+  "runtime_canon_changed": true,
   "public_ffi_abi_changed": true,
   "source_artifacts": {
-    "source_commit": "a951273c",
+    "source_commit": "56e9da15010490ab54435ba6ab1c226f3d739176",
     "windows_fullmax_bundle": "windows/manifest.json",
     "linux_fullmax_bundle": "linux/manifest.json",
     "proof_engine_host_integration": "host-integration/",
@@ -26,7 +26,7 @@
       "name": "core",
       "platform": "linux-x86_64",
       "dll": "linux/core/bin/libaoem_ffi.so",
-      "sha256": "bd6f36f63f4194fe000b29ca2ee709c78bf384e83352757307aa9a3f7fe106ea",
+      "sha256": "88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675",
       "abi_expected": 1,
       "capabilities_required": {
         "execute_ops_v2": true,
@@ -38,7 +38,7 @@
       "name": "core",
       "platform": "windows-x86_64",
       "dll": "windows/core/bin/aoem_ffi.dll",
-      "sha256": "e84ee50a2b308559a52d9599a2200d16dac3a1de0e2c217c8a44675886e2c788",
+      "sha256": "4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463",
       "abi_expected": 1,
       "capabilities_required": {
         "execute_ops_v2": true,
@@ -145,7 +145,10 @@
     "documentation": "docs/confidential-transfer-v1.md",
     "runtime_canon_changed": false,
     "public_ffi_abi_changed": false,
-    "proof_worker_default_changed": false
+    "proof_worker_default_changed": false,
+    "independently_spendable_assets": false,
+    "admission": "legacy same-process prove cache; not independent wallet authorization",
+    "classical_json_v2_included": false
   },
   "fullmax_capability_domains": [
     "semantic_graph_v3",
@@ -174,6 +177,30 @@
     "performance_ready": false,
     "graph_os_path": false,
     "dedicated_lr_path": false,
-    "standalone_platform_service": false
+    "standalone_platform_service": false,
+    "runtime_canon_changed": true
+  },
+  "mldsa_qualification": {
+    "implementation": "mldsa-native 2.0.0",
+    "parameters": [
+      44,
+      65,
+      87
+    ],
+    "interface": "unchanged raw/internal M'; Host external-pure framing exactly once",
+    "per_platform_core_acvp_passed": 90,
+    "per_platform_core_independent_interop_cases": 9,
+    "prehash_external_mu_excluded": 90,
+    "main_chain_integrated": false,
+    "fips_certified": false,
+    "license": "licenses/mldsa-native/LICENSE",
+    "upstream": "licenses/mldsa-native/UPSTREAM.txt"
+  },
+  "compatibility": {
+    "host_binding_symbols_retained": true,
+    "removed_legacy_unbound_symbol": "aoem_apfl_native_transfer_execute_v1",
+    "opcode_114_distinct_from_removed_symbol": true,
+    "ai_sgm_infer_payload": "versioned model-session; legacy AOAI v0 not supported",
+    "whole_product_requalified": false
   }
 }

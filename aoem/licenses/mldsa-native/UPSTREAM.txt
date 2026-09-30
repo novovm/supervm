@@ -1,0 +1,10 @@
+Upstream: https://github.com/pq-code-package/mldsa-native
+Release: v2.0.0
+Commit: 834a90d5e846ffa1e1611bd24e160bb2e9b86d35
+Source archive: https://codeload.github.com/pq-code-package/mldsa-native/tar.gz/834a90d5e846ffa1e1611bd24e160bb2e9b86d35
+Archive SHA256: 7a9ab4d55912c2ab8f5d5de3b2123b5155b45ba1c848788c4aff90b62eaf0e4c
+
+Imported unmodified: upstream mldsa/ source tree and root LICENSE.
+Local build configuration and the thin AOEM bridge live outside this directory.
+Source code license: Apache-2.0 OR ISC OR MIT; see LICENSE and per-file notices.
+Documentation such as mldsa/README.md retains its own CC-BY-4.0 notice.

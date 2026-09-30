@@ -1,7 +1,7 @@
 {
-  "stamp": "20260731-060252",
-  "release_version": "1.0.0+a951273c",
-  "source_commit": "a951273c",
+  "stamp": "20261001-065932",
+  "release_version": "1.0.0+56e9da15",
+  "source_commit": "56e9da15010490ab54435ba6ab1c226f3d739176",
   "platform": "linux",
   "profile": "fullmax",
   "bundle_dir": ".",
@@ -23,7 +23,7 @@
     "libaoem_hsm_plugin.so",
     "libaoem_kms_plugin.so"
   ],
-  "features": "rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+  "features": "apfl-model-session,rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
   "storage_provider": {
     "entry": "aoem_storage_provider_wire_v1",
     "wire": "binary",
@@ -47,7 +47,40 @@
   "boundaries": {
     "public_ffi_abi_changed": true,
     "business_semantics": false,
-    "novovm_specific_logic": false
+    "novovm_specific_logic": false,
+    "runtime_canon_changed": true,
+    "global_production_ready": false
   },
-  "notes": "Canonical AOEM FULLMAX core plus optional sidecars; RISC0 guest methods are embedded and host product policy remains outside AOEM."
+  "checksums": "CHECKSUMS.sha256",
+  "notes": "Canonical FULLMAX features from committed ML-DSA source; generic Host policies remain external. APFL AI requires sealed model-session assets; not a new validation of AI/GPU performance. Privacy JSON v2 from later source is not included.",
+  "semantic_batch": {
+    "entry": "aoem_execute_semantic_batch_v1",
+    "nonblocking_entry": "aoem_submit_semantic_batch_v1",
+    "continuation_graph_entry": "aoem_submit_semantic_graph_v1",
+    "input": "opaque_binary",
+    "output": "opaque_binary",
+    "synchronous_join": true,
+    "nonblocking_owned_input_submit": true,
+    "nonblocking_continuation_submit": true,
+    "completion_callback_once": true,
+    "stable_result_order": true,
+    "per_task_status": true,
+    "host_neutral": true,
+    "business_semantics": false
+  },
+  "ai_sgm_infer": {
+    "fullmax_ai_sgm_infer_included": true,
+    "compute_request_name": "compute.ai.sgm_infer_v1",
+    "entry": "aoem_execute_ops_wire_v1",
+    "result": "aoem_state_read_v1",
+    "payload_contract": "versioned_model_session_binary",
+    "model_asset_required": true,
+    "legacy_aoai_v0_supported": false,
+    "teacher_runtime_used": false,
+    "source_runtime_used": false,
+    "execution_backend": "AOEM Vulkan/SPIR-V",
+    "public_aoem_graph_lifecycle_abi": false,
+    "public_aoem_tensor_build_abi": false,
+    "capability_manifest": "ai-sgm-infer-wire-v1-capability.json"
+  }
 }
