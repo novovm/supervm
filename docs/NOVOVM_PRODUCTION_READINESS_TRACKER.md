@@ -30,8 +30,17 @@
 - ML-DSA-65：自签自验通过、tg3/tc43 官方正例拒绝，组件阻断使用。
 - ML-DSA-87：自签自验通过、tg5/tc70 官方正例拒绝，组件阻断使用。
 
-因此已经跨 Windows/Linux 复现，不是仅 B 机器的本地设置报告；具体算法根因
-仍须源码核对。这两项绿色 runtime 测试证明保护门禁有效，不证明 65/87 兼容。
+因此已经跨 Windows/Linux 复现，不是仅 B 机器的本地设置报告。
+只读核对 AOEM 包来源 `a951273c` 的 `Cargo.lock`：`pqcrypto-dilithium=0.5.0`。
+AOEM `crates/adapter/aoem-adapter-crypto/src/quantum_resistant.rs` 使用该实现；
+依赖中 dilithium3/5 的挑战值分别长 48/64 字节，但 clean 和 AVX2 的
+`poly_challenge` 仅把前 `SEEDBYTES=32` 字节传给 SHAKE，签名与验签同用此规则。
+这符合旧草案，而不是最终标准要求的完整挑战输入，解释了 44 通过而 65/87
+自签自验通过、外部正例失败的差异；[NIST 变更说明](https://groups.google.com/a/list.nist.gov/g/pqc-forum/c/y8ul-ZcVWI4)
+明确列出这项草案到最终版的修改。修复应在 AOEM 通用密码实现，不通过修改
+Host framing、放宽验签或默认降到 44 规避；具体修复仍须完整官方向量回归，
+不能据定位就宣布新实现符合全部 FIPS 要求。此次仅只读核对，未构建/修改 AOEM。
+这两项绿色 runtime 测试证明保护门禁有效，不证明 65/87 兼容。
 未选择或降级主网参数集，未修改 AOEM 仓库或替换任何正在运行的服务。
 A 承接定位与修复协调；若需改兄弟 AOEM，先取得明确范围授权。原执行主线继续
 独立回归，节点完整全库尚未签收；高并发主链、隐私资产和 PQ 主链接入均未完成。
