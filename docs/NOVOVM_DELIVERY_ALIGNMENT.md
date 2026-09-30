@@ -93,7 +93,7 @@ Host 负责 NOV 业务定义、鉴权、链域与 nonce 规则、访问集及执
 | --- | --- | --- | --- |
 | 普通 NOV 转账的增量状态与 AOEM 调度计算 | 设备 A 当前会话 | 起点 `6574dbf`；`novovm-exec` 通用任务适配、`native_transfer*`、`native_candidate*`、fresh 主链入口与对应测试 | 已认领，目标模式开发中 |
 | 密码学隐匿资产闭环 | 设备 B（Linux 开发设备） | 已同步 `10774c9`，无遗留改动；先只读核对 SDK confidential-transfer/RingCT 的跨进程验证与钱包见证边界，记录在 `docs/NOVOVM_CRYPTO_B_HANDOFF.md` | 已确认分工；独立资产模块待 ABI 核对，不改 A 的主链接口 |
-| 交易与封印抗量子闭环 | 设备 B（Linux 开发设备） | 起点 `10774c9`；首轮限定 `crates/novovm-prover/src/pq_signature*`、该 crate 的模块注册/依赖与 `tests/pq_signature*`；根 `Cargo.lock` 仅该 crate 依赖条目，B 交接文档及台账新增记录 | 已认领；先复用现有 ML-DSA ABI 做严格验签组件，不改变交易 wire/封印算法 |
+| 交易与封印抗量子闭环 | 设备 B（Linux 开发设备） | 起点 `10774c9`，认领提交 `fba6bfd`；首轮 `novovm-prover/src/pq_signature*`、模块注册/依赖及 `tests/pq_signature*`，根锁文件仅 prover 条目 | 首轮本机组件门禁通过，释放该轮文件锁；随包 65/87 官方正例失败，由用户指定设备 A 协调 AOEM 修复；主链待接口交接 |
 
 ### 本轮分工和共享文件交接
 

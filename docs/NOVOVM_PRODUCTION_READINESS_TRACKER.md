@@ -14,7 +14,44 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
-## 离线 leader 换轮证据验收（2026-09-30 UTC，最新）
+## 设备 B：PQ 独立验签与标准兼容性门禁（2026-09-30 UTC，最新）
+
+状态：`LOCAL PQ COMPONENT GATE PASS / ML-DSA-65/87 INTEROP BLOCKED`。
+本机基线 `10774c9`，认领提交 `fba6bfd`；本节结果对应随本记录提交的 prover
+独立组件改动，不修改主链交易/封印 wire、通用 FFI、AOEM、网络或经济参数。
+不能将本节组件通过视为主链抗量子、隐匿资产闭环或生产就绪。
+
+新增 `novovm-prover::pq_signature::MldsaVerifier`，显式参数集、可信公钥及
+context；构造时验证 NIST 官方正例和篡改负例，不仅做同库自签自验。
+验证遵循 external pure 的标准 context framing；错误长度、缺失能力、ABI
+尺寸不匹配、运行时错误及无效签名均拒绝，不猜算法、不自动降级。
+
+随包 Linux AOEM source `a951273c`，库 SHA256：
+`bd6f36f63f4194fe000b29ca2ee709c78bf384e83352757307aa9a3f7fe106ea`。
+44/65/87 自签自验均成功，但官方正例只有 44 通过；65/87 各自官方正例被拒，
+新组件对它们返回 `RuntimeIncompatible`。因此测试变绿代表**阻断正确**，不是
+65/87 标准兼容，也不是选择 44 作为默认主网算法。未确定内核根因、不改内核。
+用户已确认由设备 A 协调 AOEM 修复；新 runtime 必须重跑同一互操作矩阵。
+
+本机 `cargo test --locked -p novovm-prover`：11 passed / 0 failed，runtime 专项
+2 ignored；另行显式 `--test pq_signature_runtime -- --ignored --nocapture
+--test-threads=1`：2 passed / 0 failed。覆盖官方正例门禁、生成签名、篡改
+消息/context/密钥/签名、截断/追加、旧 raw 签名拒绝及参数/能力错误。
+`cargo clippy --locked -p novovm-prover --all-targets -- -D warnings`、workspace
+fmt check、diff check 通过。未重跑 node 全库、实体多机或远端 CI。
+
+原始日志：`artifacts/crypto-b-round1-10774c9/` 的 `unit-final.log`、
+`runtime-final.log`、`package-final.log`、`clippy-final.log`（本机，不进 Git）。
+可移植证据与复跑命令见 [设备 B 接口交接](NOVOVM_CRYPTO_B_HANDOFF.md) 及
+其中链接的官方公开向量。样本不是完整 FIPS/CAVP 认证；未来主链还须完成
+批准的消息域/账户绑定、交易与封印集成、恢复、降级拒绝和性能验收。
+
+隐私侧只读核对发现：SDK 推荐的 `aoem_privacy_execute_v1` 尚未暴露到现有
+Rust bindings，prove 示例缺少钱包已有输入的花费见证接口；不能把同进程
+证明样例当作可重复收付隐匿资产。共享 FFI 仍交 A 协调，不引入旧 verify
+旁路，不修改兄弟仓库。`production_ready=false`，不部署、不发行。
+
+## 离线 leader 换轮证据验收（2026-09-30 UTC，前轮）
 
 状态：`LOCAL VERIFIED OFFLINE-LEADER FAILOVER SMOKE PASS`；完整本机 runner 已通过。
 本轮只改进程测试和报告，不改生产 pacemaker、quorum、签名、超时或 AOEM。

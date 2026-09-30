@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod pq_signature;
+
 use novovm_exec::AoemCapabilityContract;
 use serde::{Deserialize, Serialize};
 

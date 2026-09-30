@@ -1708,6 +1708,7 @@ name = "novovm-prover"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aoem-bindings",
  "novovm-exec",
  "serde",
  "serde_json",
