@@ -6,6 +6,8 @@ Execution engine: `AOEM Engine` (Powered by AOEM Engine)
 
 Note: `SuperVM` is retained as an internal historical codename only.
 
+Development entry point: read the shared [product delivery and multi-device alignment contract](docs/NOVOVM_DELIVERY_ALIGNMENT.md) before continuing work. High-performance finalized transactions, cryptographic private assets, and post-quantum security are core delivery objectives; the milestones below do not imply that all three are complete on the current main-chain path.
+
 NOVOVM is a **decentralized infrastructure operator** for the Web3 era. It provides composable, metered, and verifiable execution and settlement capabilities. It is not “another public blockchain,” but a general-purpose execution infrastructure for a multi-chain, heterogeneous ecosystem.
 
 ## Verified NativeTransfer milestone

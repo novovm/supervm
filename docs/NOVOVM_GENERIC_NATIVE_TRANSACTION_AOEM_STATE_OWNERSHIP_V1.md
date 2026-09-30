@@ -6,6 +6,13 @@ transition. Domain-neutral AOEM Semantic Graph V3 executes the resulting opaque
 atomic-write graph and owns authoritative state and receipt persistence. This
 ownership gate is not a consensus proof or a proof-sealed block-finality claim.
 
+Delivery scope: this document describes the current ownership contract, not
+completion of parallel business computation, private assets, or post-quantum
+main-chain security. The shared [product delivery contract](NOVOVM_DELIVERY_ALIGNMENT.md)
+keeps those objectives explicit. Preserving Host business-policy ownership and
+AOEM's domain-neutral ABI does not require retaining full-state cloning or
+serial Host precomputation as the final high-performance execution design.
+
 ## Ownership boundary
 
 NOVOVM/SUPERVM owns:
