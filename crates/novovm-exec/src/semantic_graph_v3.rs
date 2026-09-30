@@ -3,16 +3,19 @@ use anyhow::{bail, Context, Result};
 use aoem_bindings::{
     AoemAtomicWriteRecordV1, AoemAtomicWriteSetV1, AoemGraphCallbacksV3, AoemGraphCompletionV2,
     AoemGraphSubmitOptionsV3, AoemStateEventV2, AoemTaskDescriptorV2, AoemTaskStepOutputV3,
-    AOEM_ATOMIC_WRITE_DELETE_V1, AOEM_ATOMIC_WRITE_PUT_V1, AOEM_ERROR_INVALID_ARGUMENT,
-    AOEM_ERROR_STATE_WRITE_FAILED, AOEM_SEMANTIC_GRAPH_ABI_V2, AOEM_STATUS_OK,
-    AOEM_STEP_HAS_ATOMIC_WRITE_SET, AOEM_STEP_HAS_EVENT,
+    AOEM_ATOMIC_WRITE_DELETE_V1, AOEM_ATOMIC_WRITE_PUT_V1, AOEM_ERROR_CALLBACK_PANICKED,
+    AOEM_ERROR_INVALID_ARGUMENT, AOEM_ERROR_STATE_WRITE_FAILED, AOEM_SEMANTIC_GRAPH_ABI_V2,
+    AOEM_STATUS_OK, AOEM_STEP_HAS_ATOMIC_WRITE_SET, AOEM_STEP_HAS_EVENT,
 };
+use std::cell::Cell;
 use std::ffi::c_void;
 use std::fs;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const STORAGE_REQUEST_MAGIC_V1: &[u8; 4] = b"AOSQ";
 const STORAGE_RESPONSE_MAGIC_V1: &[u8; 4] = b"AOSR";
@@ -93,9 +96,10 @@ pub struct AoemAtomicGraphCommitReportV1 {
 }
 
 pub struct AoemSemanticGraphStoreV1 {
-    session: AoemExecSession,
+    session: Rc<AoemExecSession>,
     database_id: u64,
     path: PathBuf,
+    poisoned: Cell<bool>,
 }
 
 impl AoemSemanticGraphStoreV1 {
@@ -154,9 +158,10 @@ impl AoemSemanticGraphStoreV1 {
             )
             .context("bind AOEM semantic graph atomic writer failed")?;
         Ok(Self {
-            session,
+            session: Rc::new(session),
             database_id,
             path: path.to_path_buf(),
+            poisoned: Cell::new(false),
         })
     }
 
@@ -165,6 +170,7 @@ impl AoemSemanticGraphStoreV1 {
     }
 
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.ensure_usable()?;
         if key.is_empty() {
             bail!("AOEM storage provider key must not be empty");
         }
@@ -181,6 +187,7 @@ impl AoemSemanticGraphStoreV1 {
         &self,
         request: AoemAtomicGraphRequestV1,
     ) -> Result<AoemAtomicGraphCommitReportV1> {
+        self.ensure_usable()?;
         let prepared = PreparedGraphV1::new(request)?;
         let seeds = prepared.seeds.clone();
         let options = AoemGraphSubmitOptionsV3 {
@@ -200,6 +207,7 @@ impl AoemSemanticGraphStoreV1 {
             step_events: prepared.step_events,
             completion_write_set: prepared.completion_write_set,
             durable_event_count: AtomicU64::new(0),
+            completion_seen: AtomicBool::new(false),
             completion_tx: Mutex::new(Some(completion_tx)),
         });
         let user_data = Arc::as_ptr(&context).cast_mut().cast::<c_void>();
@@ -212,38 +220,45 @@ impl AoemSemanticGraphStoreV1 {
             completion: Some(complete_graph_v1),
             user_data,
         };
-        let submit_status = unsafe {
-            self.session
-                .submit_semantic_graph_v3(seeds.as_slice(), &options, &callbacks)
-        }
-        .context("submit AOEM semantic graph V3 failed")?;
-        if submit_status != AOEM_STATUS_OK {
-            bail!("AOEM semantic graph V3 admission returned status {submit_status}");
-        }
-
-        let completion = match completion_rx.recv_timeout(DEFAULT_COMPLETION_TIMEOUT) {
-            Ok(completion) => completion,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                let _ = self.session.cancel_semantic_graph_v2(prepared.graph_id);
-                match completion_rx.recv_timeout(CANCEL_COMPLETION_TIMEOUT) {
-                    Ok(completion) => completion,
-                    Err(error) => {
-                        let graph_id = prepared.graph_id;
-                        let _leaked_context = Arc::into_raw(context);
-                        bail!(
-                            "AOEM semantic graph V3 did not complete after cancellation: graph_id={graph_id}, error={error}"
-                        );
-                    }
-                }
-            }
-            Err(error) => {
-                bail!(
-                    "AOEM semantic graph V3 completion channel closed: graph_id={}, error={error}",
-                    prepared.graph_id
-                );
-            }
+        let mut flight = RetainUntilDrainedV1::new(GraphSubmissionOwnerV1 {
+            // Do not let dropping the public store destroy a still-active session.
+            session: self.session.clone(),
+            context,
+            seeds,
+            options,
+            callbacks,
+        });
+        // Once admitted, failure may have persisted a prefix or raced the final
+        // marker. Neither reads nor another commit may treat this session as a
+        // known-good state. Recovery must establish quiescence (process restart
+        // if the owner was retained), then re-open and verify durable evidence.
+        self.poisoned.set(true);
+        let submit = unsafe {
+            let owner = flight.owner();
+            owner
+                .session
+                .submit_semantic_graph_v3(&owner.seeds, &owner.options, &owner.callbacks)
         };
-        let durable_event_count = context.durable_event_count.load(Ordering::Acquire);
+        if !matches!(submit, Ok(AOEM_STATUS_OK)) {
+            let _ = self.session.cancel_semantic_graph_v2(prepared.graph_id);
+            let _ = drain_submission_v1(&mut flight, CANCEL_COMPLETION_TIMEOUT);
+            bail!("AOEM semantic graph V3 admission failed: {submit:?}");
+        }
+        let completion =
+            wait_graph_completion_v1(&completion_rx, DEFAULT_COMPLETION_TIMEOUT, || {
+                let _ = self.session.cancel_semantic_graph_v2(prepared.graph_id);
+            });
+        if !drain_submission_v1(&mut flight, CANCEL_COMPLETION_TIMEOUT) {
+            let _ = self.session.cancel_semantic_graph_v2(prepared.graph_id);
+            bail!(
+                "AOEM semantic graph V3 did not drain; complete owner retained; restart required"
+            );
+        }
+        // Cancellation can race a durable successful completion, but a missed
+        // caller deadline must never be reported as a successful commit.
+        let completion = completion?;
+        let owner = flight.owner();
+        let durable_event_count = owner.context.durable_event_count.load(Ordering::Acquire);
         if completion.status != AOEM_STATUS_OK {
             bail!(
                 "AOEM semantic graph V3 completion failed: graph_id={}, status={}, processed={}, succeeded={}, failed={}",
@@ -254,9 +269,10 @@ impl AoemSemanticGraphStoreV1 {
                 completion.failed
             );
         }
-        if completion.graph_id != prepared.graph_id
-            || completion.processed != seeds.len() as u64
-            || completion.succeeded != seeds.len() as u64
+        if completion.abi_version != AOEM_SEMANTIC_GRAPH_ABI_V2
+            || completion.graph_id != prepared.graph_id
+            || completion.processed != owner.seeds.len() as u64
+            || completion.succeeded != owner.seeds.len() as u64
             || completion.failed != 0
         {
             bail!(
@@ -264,7 +280,7 @@ impl AoemSemanticGraphStoreV1 {
                 completion.graph_id,
                 prepared.graph_id,
                 completion.processed,
-                seeds.len(),
+                owner.seeds.len(),
                 completion.succeeded,
                 completion.failed
             );
@@ -275,6 +291,7 @@ impl AoemSemanticGraphStoreV1 {
                 prepared.event_count
             );
         }
+        self.poisoned.set(false);
         Ok(AoemAtomicGraphCommitReportV1 {
             graph_id: completion.graph_id,
             processed: completion.processed,
@@ -284,6 +301,89 @@ impl AoemSemanticGraphStoreV1 {
             peak_queued_tasks: completion.peak_queued_tasks,
             durable_event_count,
         })
+    }
+
+    fn ensure_usable(&self) -> Result<()> {
+        if self.poisoned.get() {
+            bail!("AOEM semantic graph store requires restart and durable evidence verification after failed commit");
+        }
+        Ok(())
+    }
+}
+
+struct GraphSubmissionOwnerV1 {
+    // Destruction order is intentional: any session teardown runs while every
+    // callback, descriptor and context is still alive. Rc stays host-thread-local.
+    session: Rc<AoemExecSession>,
+    context: Arc<GraphCallbackContextV1>,
+    seeds: Vec<AoemTaskDescriptorV2>,
+    options: AoemGraphSubmitOptionsV3,
+    callbacks: AoemGraphCallbacksV3,
+}
+
+/// Unwinding or an early error cannot release asynchronous callback ownership.
+struct RetainUntilDrainedV1<T> {
+    owner: Option<Box<T>>,
+    drained: bool,
+}
+
+impl<T> RetainUntilDrainedV1<T> {
+    fn new(owner: T) -> Self {
+        Self {
+            owner: Some(Box::new(owner)),
+            drained: false,
+        }
+    }
+
+    fn owner(&self) -> &T {
+        self.owner.as_deref().expect("submission owner is live")
+    }
+}
+
+impl<T> Drop for RetainUntilDrainedV1<T> {
+    fn drop(&mut self) {
+        if !self.drained {
+            if let Some(owner) = self.owner.take() {
+                // The complete owner includes the session/DLL, not just user_data.
+                let _retained = Box::into_raw(owner);
+            }
+        }
+    }
+}
+
+fn wait_graph_completion_v1(
+    receiver: &mpsc::Receiver<AoemGraphCompletionV2>,
+    deadline: Duration,
+    cancel: impl FnOnce(),
+) -> Result<AoemGraphCompletionV2> {
+    match receiver.recv_timeout(deadline) {
+        Ok(completion) => Ok(completion),
+        Err(error) => {
+            cancel();
+            bail!("AOEM semantic graph V3 deadline/channel failure: {error}; restart required")
+        }
+    }
+}
+
+fn drain_submission_v1(
+    flight: &mut RetainUntilDrainedV1<GraphSubmissionOwnerV1>,
+    deadline: Duration,
+) -> bool {
+    let started = Instant::now();
+    loop {
+        let owner = flight.owner();
+        // active_count alone does not establish that completion has even started.
+        if owner.context.completion_seen.load(Ordering::Acquire)
+            && matches!(owner.session.semantic_graph_v2_active_count(), Ok(0))
+            && Arc::strong_count(&owner.context) == 1
+        {
+            flight.drained = true;
+            return true;
+        }
+        if started.elapsed() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -384,10 +484,11 @@ struct GraphCallbackContextV1 {
     step_events: Vec<Option<AoemStateEventV2>>,
     completion_write_set: AoemAtomicWriteSetV1,
     durable_event_count: AtomicU64,
+    completion_seen: AtomicBool,
     completion_tx: Mutex<Option<mpsc::Sender<AoemGraphCompletionV2>>>,
 }
 
-unsafe extern "C-unwind" fn execute_graph_step_v1(
+unsafe fn execute_graph_step_inner_v1(
     descriptor: *const AoemTaskDescriptorV2,
     output: *mut AoemTaskStepOutputV3,
     user_data: *mut c_void,
@@ -421,21 +522,15 @@ unsafe extern "C-unwind" fn execute_graph_step_v1(
     AOEM_STATUS_OK
 }
 
-unsafe extern "C-unwind" fn retain_graph_context_v1(
-    context_handle: u64,
-    user_data: *mut c_void,
-) -> i32 {
+unsafe fn retain_graph_context_inner_v1(context_handle: u64, user_data: *mut c_void) -> i32 {
     validate_context_handle(context_handle, user_data)
 }
 
-unsafe extern "C-unwind" fn release_graph_context_v1(
-    context_handle: u64,
-    user_data: *mut c_void,
-) -> i32 {
+unsafe fn release_graph_context_inner_v1(context_handle: u64, user_data: *mut c_void) -> i32 {
     validate_context_handle(context_handle, user_data)
 }
 
-unsafe extern "C-unwind" fn deliver_graph_event_v1(
+unsafe fn deliver_graph_event_inner_v1(
     event: *const AoemStateEventV2,
     user_data: *mut c_void,
 ) -> i32 {
@@ -452,7 +547,7 @@ unsafe extern "C-unwind" fn deliver_graph_event_v1(
     AOEM_STATUS_OK
 }
 
-unsafe extern "C-unwind" fn materialize_graph_completion_write_v1(
+unsafe fn materialize_graph_completion_write_inner_v1(
     completion: *const AoemGraphCompletionV2,
     output: *mut AoemAtomicWriteSetV1,
     user_data: *mut c_void,
@@ -473,16 +568,13 @@ unsafe extern "C-unwind" fn materialize_graph_completion_write_v1(
     AOEM_STATUS_OK
 }
 
-unsafe extern "C-unwind" fn complete_graph_v1(
+unsafe fn complete_graph_inner_v1(
     completion: *const AoemGraphCompletionV2,
     user_data: *mut c_void,
 ) {
-    let raw_context = user_data.cast::<GraphCallbackContextV1>();
-    if raw_context.is_null() {
+    let Some(context) = callback_context(user_data) else {
         return;
-    }
-    Arc::increment_strong_count(raw_context);
-    let context = Arc::from_raw(raw_context);
+    };
     let Some(completion) = completion.as_ref() else {
         return;
     };
@@ -493,6 +585,76 @@ unsafe extern "C-unwind" fn complete_graph_v1(
     if let Some(sender) = sender.take() {
         let _ = sender.send(*completion);
     }
+    context.completion_seen.store(true, Ordering::Release);
+}
+
+unsafe fn with_callback_owner_v1(user_data: *mut c_void, action: impl FnOnce() -> i32) -> i32 {
+    match catch_unwind(AssertUnwindSafe(|| {
+        let raw = user_data.cast::<GraphCallbackContextV1>();
+        if raw.is_null() {
+            return AOEM_ERROR_INVALID_ARGUMENT;
+        }
+        // The submitted owner pins this allocation. Each callback also owns a
+        // temporary strong reference, including completion after it wakes Host.
+        Arc::increment_strong_count(raw);
+        let _held_until_return = Arc::from_raw(raw);
+        action()
+    })) {
+        Ok(status) => status,
+        Err(payload) => {
+            std::mem::forget(payload);
+            AOEM_ERROR_CALLBACK_PANICKED
+        }
+    }
+}
+
+unsafe extern "C-unwind" fn execute_graph_step_v1(
+    descriptor: *const AoemTaskDescriptorV2,
+    output: *mut AoemTaskStepOutputV3,
+    user_data: *mut c_void,
+) -> i32 {
+    with_callback_owner_v1(user_data, || {
+        execute_graph_step_inner_v1(descriptor, output, user_data)
+    })
+}
+
+unsafe extern "C-unwind" fn retain_graph_context_v1(handle: u64, user_data: *mut c_void) -> i32 {
+    with_callback_owner_v1(user_data, || {
+        retain_graph_context_inner_v1(handle, user_data)
+    })
+}
+
+unsafe extern "C-unwind" fn release_graph_context_v1(handle: u64, user_data: *mut c_void) -> i32 {
+    with_callback_owner_v1(user_data, || {
+        release_graph_context_inner_v1(handle, user_data)
+    })
+}
+
+unsafe extern "C-unwind" fn deliver_graph_event_v1(
+    event: *const AoemStateEventV2,
+    user_data: *mut c_void,
+) -> i32 {
+    with_callback_owner_v1(user_data, || deliver_graph_event_inner_v1(event, user_data))
+}
+
+unsafe extern "C-unwind" fn materialize_graph_completion_write_v1(
+    completion: *const AoemGraphCompletionV2,
+    output: *mut AoemAtomicWriteSetV1,
+    user_data: *mut c_void,
+) -> i32 {
+    with_callback_owner_v1(user_data, || {
+        materialize_graph_completion_write_inner_v1(completion, output, user_data)
+    })
+}
+
+unsafe extern "C-unwind" fn complete_graph_v1(
+    completion: *const AoemGraphCompletionV2,
+    user_data: *mut c_void,
+) {
+    let _ = with_callback_owner_v1(user_data, || {
+        complete_graph_inner_v1(completion, user_data);
+        AOEM_STATUS_OK
+    });
 }
 
 unsafe fn callback_context<'a>(user_data: *mut c_void) -> Option<&'a GraphCallbackContextV1> {
@@ -770,5 +932,152 @@ mod tests {
             },
         });
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn graph_lifetime_retains_complete_owner_on_unwind_and_releases_only_when_drained() {
+        let session = Rc::new("session-and-dll".to_owned());
+        let context = Arc::new("callback-context".to_owned());
+        let session_weak = Rc::downgrade(&session);
+        let context_weak = Arc::downgrade(&context);
+        let guard = RetainUntilDrainedV1::new((session, context));
+        let retained =
+            guard.owner() as *const (Rc<String>, Arc<String>) as *mut (Rc<String>, Arc<String>);
+        let result = catch_unwind(AssertUnwindSafe(move || {
+            let _guard = guard;
+            panic!("early host exit after admission");
+        }));
+        assert!(result.is_err());
+        assert!(session_weak.upgrade().is_some());
+        assert!(context_weak.upgrade().is_some());
+        // This test owns no asynchronous callbacks; reclaim its deliberately
+        // retained fixture after proving both owners survived unwinding.
+        unsafe {
+            drop(Box::from_raw(retained));
+        }
+        assert!(session_weak.upgrade().is_none());
+        assert!(context_weak.upgrade().is_none());
+
+        let session = Rc::new(());
+        let weak = Rc::downgrade(&session);
+        let mut guard = RetainUntilDrainedV1::new(session);
+        guard.drained = true;
+        drop(guard);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn graph_lifetime_timeout_cannot_turn_cancel_race_into_success() {
+        let (sender, receiver) = mpsc::channel();
+        let result = wait_graph_completion_v1(&receiver, Duration::ZERO, || {
+            sender
+                .send(AoemGraphCompletionV2 {
+                    abi_version: AOEM_SEMANTIC_GRAPH_ABI_V2,
+                    graph_id: 1,
+                    status: AOEM_STATUS_OK,
+                    ..Default::default()
+                })
+                .unwrap();
+        });
+        assert!(result.is_err());
+        assert_eq!(receiver.try_recv().unwrap().status, AOEM_STATUS_OK);
+    }
+
+    #[test]
+    fn graph_lifetime_all_callbacks_pin_context_and_contain_panics() {
+        let (sender, receiver) = mpsc::channel();
+        let context = Arc::new(GraphCallbackContextV1 {
+            graph_id: 9,
+            step_write_sets: vec![AoemAtomicWriteSetV1::default()],
+            step_events: vec![None],
+            completion_write_set: AoemAtomicWriteSetV1::default(),
+            durable_event_count: AtomicU64::new(0),
+            completion_seen: AtomicBool::new(false),
+            completion_tx: Mutex::new(Some(sender)),
+        });
+        let raw = Arc::as_ptr(&context).cast_mut().cast();
+        unsafe {
+            assert_eq!(retain_graph_context_v1(1, raw), AOEM_STATUS_OK);
+            assert_eq!(release_graph_context_v1(1, raw), AOEM_STATUS_OK);
+            assert_eq!(retain_graph_context_v1(2, raw), AOEM_ERROR_INVALID_ARGUMENT);
+            assert_eq!(
+                with_callback_owner_v1(raw, || {
+                    assert_eq!(Arc::strong_count(&context), 2);
+                    panic!("contained V3 callback panic");
+                }),
+                AOEM_ERROR_CALLBACK_PANICKED
+            );
+            complete_graph_v1(
+                &AoemGraphCompletionV2 {
+                    graph_id: 9,
+                    ..Default::default()
+                },
+                raw,
+            );
+        }
+        assert_eq!(receiver.try_recv().unwrap().graph_id, 9);
+        assert_eq!(Arc::strong_count(&context), 1);
+    }
+
+    #[test]
+    #[ignore = "requires the bundled AOEM V3 writer and an isolated local RocksDB"]
+    fn graph_lifetime_real_aoem_preserves_durable_marker_and_store_boundaries() {
+        let runtime = AoemRuntimeConfig::from_env().unwrap();
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../artifacts/audit/semantic-graph-lifetime")
+            .join(format!(
+                "{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ))
+            .join("provider.rocksdb");
+        let config = AoemStorageProviderConfigV1::default();
+        let request = |graph_id, value: &[u8]| AoemAtomicGraphRequestV1 {
+            graph_id,
+            steps: vec![AoemAtomicGraphStepV1 {
+                task_kind: 1,
+                task_payload: vec![],
+                writes: vec![AoemAtomicGraphWriteV1::Put {
+                    key: b"value".to_vec(),
+                    value: value.to_vec(),
+                }],
+                event: Some(AoemAtomicGraphEventV1 {
+                    kind: 1,
+                    payload: value.to_vec(),
+                }),
+            }],
+            completion_write: AoemAtomicGraphWriteV1::Put {
+                key: b"head".to_vec(),
+                value: value.to_vec(),
+            },
+        };
+        let store = AoemSemanticGraphStoreV1::open(&runtime, &path, &config).unwrap();
+        let report = store.commit(request(901, b"first")).unwrap();
+        assert_eq!(
+            (
+                report.processed,
+                report.succeeded,
+                report.failed,
+                report.durable_event_count
+            ),
+            (1, 1, 0, 1)
+        );
+        assert_eq!(Rc::strong_count(&store.session), 1);
+        assert_eq!(store.get(b"value").unwrap(), Some(b"first".to_vec()));
+        assert_eq!(store.get(b"head").unwrap(), Some(b"first".to_vec()));
+        store.commit(request(902, b"second")).unwrap();
+        assert_eq!(Rc::strong_count(&store.session), 1);
+        // Failed/uncertain sessions cannot serve apparently authoritative reads
+        // or another commit. Opening a new store is the recovery boundary.
+        store.poisoned.set(true);
+        assert!(store.get(b"head").is_err());
+        assert!(store.commit(request(903, b"must-not-write")).is_err());
+        drop(store);
+        let recovered = AoemSemanticGraphStoreV1::open(&runtime, &path, &config).unwrap();
+        assert_eq!(recovered.get(b"head").unwrap(), Some(b"second".to_vec()));
+        assert_eq!(recovered.get(b"value").unwrap(), Some(b"second".to_vec()));
     }
 }

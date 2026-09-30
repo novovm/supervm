@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod ingress_codec;
+mod semantic_compute;
 mod semantic_graph_v3;
 
 pub const AOEM_FAILURE_CLASSIFICATION_CONTRACT_V1: &str = "novovm-exec/v1";
@@ -2905,6 +2906,7 @@ pub use ingress_codec::OpsWireV1Builder;
 pub use ingress_codec::RawIngressCodecRegistry;
 pub use ingress_codec::AOEM_OPS_WIRE_V1_MAGIC;
 pub use ingress_codec::AOEM_OPS_WIRE_V1_VERSION;
+pub use semantic_compute::{execute_aoem_compute_tasks_v1, AoemComputeReportV1, AoemComputeTaskV1};
 pub use semantic_graph_v3::{
     AoemAtomicGraphCommitReportV1, AoemAtomicGraphEventV1, AoemAtomicGraphRequestV1,
     AoemAtomicGraphStepV1, AoemAtomicGraphWriteV1, AoemSemanticGraphStoreV1,

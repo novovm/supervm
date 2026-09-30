@@ -331,6 +331,38 @@ impl Default for AoemAtomicWriteSetV1 {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct AoemTaskStepOutputV2 {
+    pub flags: u32,
+    pub reserved: u32,
+    pub continuation: AoemTaskDescriptorV2,
+    pub emitted_task: AoemTaskDescriptorV2,
+    pub event: AoemStateEventV2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AoemGraphSubmitOptionsV2 {
+    pub abi_version: u16,
+    pub flags: u16,
+    pub max_queued_tasks: u32,
+    pub event_capacity: u32,
+    pub initial_event_sequence: u64,
+}
+
+impl Default for AoemGraphSubmitOptionsV2 {
+    fn default() -> Self {
+        Self {
+            abi_version: AOEM_SEMANTIC_GRAPH_ABI_V2,
+            flags: 0,
+            max_queued_tasks: 0,
+            event_capacity: 0,
+            initial_event_sequence: 0,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct AoemTaskStepOutputV3 {
     pub flags: u32,
     pub reserved: u32,
@@ -378,6 +410,11 @@ pub struct AoemGraphCompletionV2 {
     pub peak_queued_tasks: u64,
 }
 
+pub type AoemTaskExecuteCallbackV2 = unsafe extern "C-unwind" fn(
+    *const AoemTaskDescriptorV2,
+    *mut AoemTaskStepOutputV2,
+    *mut c_void,
+) -> i32;
 pub type AoemTaskExecuteCallbackV3 = unsafe extern "C-unwind" fn(
     *const AoemTaskDescriptorV2,
     *mut AoemTaskStepOutputV3,
@@ -397,6 +434,17 @@ pub type AoemGraphCompletionCallbackV2 =
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct AoemGraphCallbacksV2 {
+    pub execute: Option<AoemTaskExecuteCallbackV2>,
+    pub retain_context: Option<AoemContextRetainCallbackV2>,
+    pub release_context: Option<AoemContextReleaseCallbackV2>,
+    pub state_event: Option<AoemStateEventCallbackV2>,
+    pub completion: Option<AoemGraphCompletionCallbackV2>,
+    pub user_data: *mut c_void,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct AoemGraphCallbacksV3 {
     pub execute: Option<AoemTaskExecuteCallbackV3>,
     pub retain_context: Option<AoemContextRetainCallbackV2>,
@@ -408,6 +456,13 @@ pub struct AoemGraphCallbacksV3 {
 }
 
 pub type AoemBindSemanticAtomicWriterV1 = unsafe extern "C" fn(*mut c_void, u64, u32, u32) -> i32;
+pub type AoemSubmitSemanticGraphV2 = unsafe extern "C" fn(
+    *mut c_void,
+    *const AoemTaskDescriptorV2,
+    u32,
+    *const AoemGraphSubmitOptionsV2,
+    *const AoemGraphCallbacksV2,
+) -> i32;
 pub type AoemSubmitSemanticGraphV3 = unsafe extern "C" fn(
     *mut c_void,
     *const AoemTaskDescriptorV2,
@@ -516,6 +571,7 @@ pub struct AoemDyn {
     execute_ops_v2: Option<AoemExecuteOpsV2>,
     execute_ops_wire_v1: Option<AoemExecuteOpsWireV1>,
     bind_semantic_atomic_writer_v1: Option<AoemBindSemanticAtomicWriterV1>,
+    submit_semantic_graph_v2: Option<AoemSubmitSemanticGraphV2>,
     submit_semantic_graph_v3: Option<AoemSubmitSemanticGraphV3>,
     cancel_semantic_graph_v2: Option<AoemCancelSemanticGraphV2>,
     semantic_graph_v2_active_count: Option<AoemSemanticGraphV2ActiveCount>,
@@ -818,6 +874,10 @@ impl AoemDyn {
             .get::<AoemBindSemanticAtomicWriterV1>(b"aoem_bind_semantic_atomic_writer_v1")
             .ok()
             .map(|f| *f);
+        let submit_semantic_graph_v2: Option<AoemSubmitSemanticGraphV2> = lib
+            .get::<AoemSubmitSemanticGraphV2>(b"aoem_submit_semantic_graph_v2")
+            .ok()
+            .map(|f| *f);
         let submit_semantic_graph_v3: Option<AoemSubmitSemanticGraphV3> = lib
             .get::<AoemSubmitSemanticGraphV3>(b"aoem_submit_semantic_graph_v3")
             .ok()
@@ -907,6 +967,7 @@ impl AoemDyn {
             execute_ops_v2,
             execute_ops_wire_v1,
             bind_semantic_atomic_writer_v1,
+            submit_semantic_graph_v2,
             submit_semantic_graph_v3,
             cancel_semantic_graph_v2,
             semantic_graph_v2_active_count,
@@ -1123,6 +1184,12 @@ impl AoemDyn {
 
     pub fn supports_execute_ops_wire_v1(&self) -> bool {
         self.execute_ops_wire_v1.is_some()
+    }
+
+    pub fn supports_semantic_graph_v2(&self) -> bool {
+        self.submit_semantic_graph_v2.is_some()
+            && self.cancel_semantic_graph_v2.is_some()
+            && self.semantic_graph_v2_active_count.is_some()
     }
 
     pub fn supports_semantic_graph_v3(&self) -> bool {
@@ -3474,6 +3541,47 @@ impl AoemSharedHandle {
         self.dynlib.supports_semantic_graph_v3()
     }
 
+    pub fn supports_semantic_graph_v2(&self) -> bool {
+        self.dynlib.supports_semantic_graph_v2()
+    }
+
+    /// Submit a domain-neutral V2 computation graph without binding a writer.
+    ///
+    /// # Safety
+    /// All callbacks must contain panics, be thread-safe, and retain their
+    /// user data and DLL owner until completion and graph draining have finished.
+    pub unsafe fn submit_semantic_graph_v2(
+        &self,
+        seeds: &[AoemTaskDescriptorV2],
+        options: &AoemGraphSubmitOptionsV2,
+        callbacks: &AoemGraphCallbacksV2,
+    ) -> Result<i32> {
+        let Some(submit) = self.dynlib.submit_semantic_graph_v2 else {
+            bail!("aoem_submit_semantic_graph_v2 not found in loaded DLL");
+        };
+        if seeds.is_empty() || seeds.len() > u32::MAX as usize {
+            bail!("semantic graph v2 seed count is invalid");
+        }
+        if options.abi_version != AOEM_SEMANTIC_GRAPH_ABI_V2 {
+            bail!("semantic graph v2 options ABI mismatch");
+        }
+        let rc = unsafe {
+            submit(
+                self.raw,
+                seeds.as_ptr(),
+                seeds.len() as u32,
+                options,
+                callbacks,
+            )
+        };
+        if rc < 0 {
+            let err = unsafe { cstr_to_string((self.dynlib.last_error)(self.raw)) }
+                .unwrap_or_else(|| "no last_error".into());
+            bail!("aoem_submit_semantic_graph_v2 failed: rc={rc}, err={err}");
+        }
+        Ok(rc)
+    }
+
     pub fn storage_provider_wire_v1(&self, request: &[u8]) -> Result<Vec<u8>> {
         let Some(call) = self.dynlib.storage_provider_wire_v1 else {
             bail!("aoem_storage_provider_wire_v1 not found in loaded DLL");
@@ -3625,6 +3733,9 @@ mod tests {
 
     #[test]
     fn semantic_graph_v3_ffi_layout_matches_aoem_header() {
+        assert_eq!(std::mem::size_of::<AoemTaskStepOutputV2>(), 520);
+        assert_eq!(std::mem::size_of::<AoemGraphSubmitOptionsV2>(), 24);
+        assert_eq!(std::mem::size_of::<AoemGraphCallbacksV2>(), 48);
         assert_eq!(std::mem::size_of::<AoemTaskDescriptorV2>(), 128);
         assert_eq!(std::mem::align_of::<AoemTaskDescriptorV2>(), 8);
         assert_eq!(std::mem::size_of::<AoemStateEventV2>(), 256);

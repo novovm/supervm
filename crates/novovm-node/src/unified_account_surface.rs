@@ -6317,7 +6317,8 @@ mod tests {
     use crate::mainline_query::run_mainline_query_from_path;
     use crate::tx_ingress::{
         load_nov_native_execution_store_v1, save_nov_native_execution_store_v1,
-        NovCreditVaultStateV1, NovTreasurySettlementJournalEntryV1,
+        NativeAoemSemanticSessionScopeV1, NovCreditVaultStateV1,
+        NovTreasurySettlementJournalEntryV1,
     };
     use aoem_bindings::{default_host_dll_path, mldsa_keygen_v1_auto, mldsa_sign_v1_auto};
     use ed25519_dalek::{Signer as Ed25519Signer, SigningKey as Ed25519SigningKey};
@@ -6873,6 +6874,7 @@ mod tests {
 
     #[test]
     fn unified_account_identity_writes_emit_aoem_semantic_commit_chain() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _guard = ENV_TEST_LOCK.lock().expect("env test lock");
         // This is a deterministic Host commit-chain unit test. Real AOEM DLL
         // lifecycle coverage belongs to the integration gates; opening the
@@ -7027,6 +7029,7 @@ mod tests {
 
     #[test]
     fn unified_account_surface_executes_via_real_mainline_entry() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("entry");
         let out = run_query(
             &base,
@@ -7048,6 +7051,7 @@ mod tests {
 
     #[test]
     fn unified_account_surface_cut_a_ed25519_key_binding_persists_metadata() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("cut-a-ed25519");
         let mut params = match ed25519_key_binding_params("acct-key-ed25519", "create") {
             Value::Object(map) => map,
@@ -7100,6 +7104,7 @@ mod tests {
 
     #[test]
     fn unified_account_surface_cut_a_secp256k1_key_binding_persists_metadata() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("cut-a-secp256k1");
         let mut params = match secp256k1_key_binding_params("acct-key-secp256k1", "create") {
             Value::Object(map) => map,
@@ -7178,6 +7183,7 @@ mod tests {
 
     #[test]
     fn unified_account_surface_cut_a_mldsa87_key_rotation_persists_metadata() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("cut-a-mldsa87-rotate");
         ua_create(&base, &store, &audit, "acct-key-mldsa87", 20);
         let mut params = match mldsa87_key_binding_params("acct-key-mldsa87", "rotate") {
@@ -7217,6 +7223,7 @@ mod tests {
 
     #[test]
     fn unified_account_surface_account_asset_views_execute_via_real_mainline_entry() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("asset-view");
         let root = base
             .parent()
@@ -7496,6 +7503,7 @@ mod tests {
 
     #[test]
     fn unified_account_mapped_asset_mvp_lifecycle_is_internal_and_closed_loop() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("mapped-lifecycle");
         let root = base
             .parent()
@@ -7663,6 +7671,7 @@ mod tests {
 
     #[test]
     fn unified_account_mapped_asset_shadow_mode_rejects_live_register_path() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let (base, store, audit) = temp_paths("mapped-shadow-enforce");
         let root = base
@@ -7701,6 +7710,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_lock_creates_neth_m2_credit_without_nov_mint() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-credit");
@@ -7983,6 +7993,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_lock_fails_closed_when_aoem_required_unavailable() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-aoem-required");
@@ -8050,6 +8061,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_lock_requires_structured_eth_event_evidence() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-proof-required");
@@ -8087,6 +8099,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_lock_rejects_unfinalized_or_wrong_contract_evidence() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-proof-invalid");
@@ -8150,6 +8163,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_lock_rejects_invalid_receipt_proof() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-receipt-proof-invalid");
@@ -8221,6 +8235,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_lock_requires_trusted_finalized_header_anchor() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-header-anchor");
@@ -8284,6 +8299,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_lock_enforces_governed_header_source_policy() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-header-source-policy");
@@ -8488,6 +8504,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_lock_enforces_governed_header_attestation_policy() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-header-attestation-policy");
@@ -8655,6 +8672,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_lock_uses_governed_min_confirmations() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-min-confirmations-policy");
@@ -8727,6 +8745,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_lock_bridge_pause_blocks_register_without_state() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-bridge-register-paused");
@@ -8796,6 +8815,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_asset_bridge_pause_blocks_burn_and_release() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-bridge-burn-release-paused");
@@ -8958,6 +8978,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_asset_reorg_blocks_burn_without_state_advance() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-reorg-blocked");
@@ -9052,6 +9073,7 @@ mod tests {
 
     #[test]
     fn unified_account_auto_heal_freezes_unsafe_live_mapped_asset() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-auto-heal");
@@ -9393,6 +9415,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_asset_freeze_removes_liquid_neth_without_reserve_release() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-freeze");
@@ -9512,6 +9535,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_asset_unfreeze_requires_safe_anchor_and_restores_neth() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-unfreeze");
@@ -9651,6 +9675,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_asset_rollback_requires_unsafe_anchor_and_clears_reserve() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-rollback");
@@ -9820,6 +9845,7 @@ mod tests {
 
     #[test]
     fn unified_account_live_mapped_asset_reorg_blocks_release_without_state_advance() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = ENV_TEST_LOCK.lock().expect("env test lock poisoned");
         let _shadow_guard = EnvVarGuard::set(NOVOVM_UA_PHASE4_SHADOW_MODE_ENFORCE_ENV, "false");
         let (base, store, audit) = temp_paths("mapped-live-reorg-release-blocked");
@@ -9914,6 +9940,7 @@ mod tests {
 
     #[test]
     fn unified_account_mapped_asset_mvp_rejects_duplicate_and_invalid_proof() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("mapped-errors");
         let root = base
             .parent()
@@ -9972,6 +9999,7 @@ mod tests {
 
     #[test]
     fn unified_account_mapped_asset_mvp_release_requires_burn() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("mapped-release-guard");
         let root = base
             .parent()
@@ -10020,6 +10048,7 @@ mod tests {
 
     #[test]
     fn unified_account_mapped_asset_mvp_audit_trace_is_complete() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("mapped-audit");
         let root = base
             .parent()
@@ -10120,6 +10149,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g01_mapping_bind_success() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g01");
         let evm_addr = ua_hex(0x11, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10144,6 +10174,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g02_mapping_conflict_rejected() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g02");
         let evm_addr = ua_hex(0x12, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10172,6 +10203,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g03_mapping_cooldown_rejects_rebind() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g03");
         let evm_addr = ua_hex(0x13, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10216,6 +10248,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g04_signature_domain_mismatch_rejected() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g04");
         let evm_addr = ua_hex(0x14, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10246,6 +10279,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g05_signature_domain_eip712_wrong_chain_rejected() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g05");
         let evm_addr = ua_hex(0x15, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10276,6 +10310,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g06_nonce_replay_rejected() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g06");
         let evm_addr = ua_hex(0x16, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10325,6 +10360,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g06b_check_route_is_read_only() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g06b");
         let evm_addr = ua_hex(0x66, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10409,6 +10445,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g07_nonce_reverse_order_rejected() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g07");
         let evm_addr = ua_hex(0x17, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10439,6 +10476,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g08_permission_delegate_cannot_update_policy() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g08");
         ua_create(&base, &store, &audit, "uca-a", 10);
         let err = run_query_err(
@@ -10460,6 +10498,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g09_permission_expired_session_key_rejected() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g09");
         let evm_addr = ua_hex(0x19, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10491,6 +10530,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g10_boundary_eth_cross_chain_atomic_rejected() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g10");
         let evm_addr = ua_hex(0x1a, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10522,6 +10562,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g11_boundary_web30_single_chain_passes_without_eth_pollution() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g11");
         let web30_addr = ua_hex(0x1b, 20);
         let evm_addr = ua_hex(0x2b, 20);
@@ -10584,6 +10625,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g12_type4_supported_mode_passes() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g12");
         let evm_addr = ua_hex(0x1c, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10630,6 +10672,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g13_type4_reject_mode_returns_fixed_error() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g13");
         let evm_addr = ua_hex(0x1d, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10661,6 +10704,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g14_type4_with_session_key_rejected_by_policy() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g14");
         let evm_addr = ua_hex(0x1e, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10708,6 +10752,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g15_uniqueness_conflict_signal_blocks_second_owner() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g15");
         let evm_addr = ua_hex(0x1f, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);
@@ -10750,6 +10795,7 @@ mod tests {
 
     #[test]
     fn unified_account_gate_ua_g16_recovery_rotate_then_revoke_emits_events() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = temp_paths("g16");
         let evm_addr = ua_hex(0x2a, 20);
         ua_create(&base, &store, &audit, "uca-a", 10);

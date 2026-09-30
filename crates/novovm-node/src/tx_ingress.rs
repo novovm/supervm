@@ -8904,6 +8904,72 @@ fn clearing_fail_with_settlement_journal_v1<T>(
     bail!(reason);
 }
 
+// The direct NOV route must prove every monetary write can complete before it
+// debits a payer. The common settlement tail below retains the same allocation
+// policy; its saturating operations cannot saturate after this preflight.
+fn check_direct_nov_fee_capacity_v1(
+    store: &NovNativeExecutionStoreV1,
+    amount: u128,
+    policy: &NovTreasurySettlementPolicyV1,
+) -> Result<()> {
+    let overflow = || {
+        anyhow::anyhow!(fee_settlement_reason_v1(
+            "amount_overflow",
+            "direct NOV fee settlement monetary capacity exceeded",
+        ))
+    };
+    let denominator = u128::from(NOV_TREASURY_SHARE_BPS_DENOMINATOR_V1);
+    let reserve_delta = amount
+        .checked_mul(u128::from(policy.reserve_share_bps))
+        .ok_or_else(overflow)?
+        / denominator;
+    let fee_delta = amount
+        .checked_mul(u128::from(policy.fee_share_bps))
+        .ok_or_else(overflow)?
+        / denominator;
+    let risk_delta = amount
+        .checked_sub(reserve_delta)
+        .and_then(|rest| rest.checked_sub(fee_delta))
+        .ok_or_else(overflow)?;
+    let state = &store.module_state;
+    for current in [
+        state.treasury_reserves.get("NOV").copied().unwrap_or(0),
+        state.treasury_settled_nov_total,
+        state
+            .treasury_settled_by_asset
+            .get("NOV")
+            .copied()
+            .unwrap_or(0),
+    ] {
+        current.checked_add(amount).ok_or_else(overflow)?;
+    }
+    let reserve_after = state
+        .treasury_reserve_bucket_nov
+        .checked_add(reserve_delta)
+        .ok_or_else(overflow)?;
+    let fee_after = state
+        .treasury_fee_bucket_nov
+        .checked_add(fee_delta)
+        .ok_or_else(overflow)?;
+    let risk_after = state
+        .treasury_risk_buffer_nov
+        .checked_add(risk_delta)
+        .ok_or_else(overflow)?;
+    reserve_after
+        .checked_add(fee_after)
+        .and_then(|subtotal| subtotal.checked_add(risk_after))
+        .ok_or_else(overflow)?;
+    state
+        .treasury_settlements
+        .checked_add(1)
+        .ok_or_else(overflow)?;
+    state
+        .treasury_settlement_journal_next_seq
+        .checked_add(1)
+        .ok_or_else(overflow)?;
+    Ok(())
+}
+
 fn settle_fee_quote_into_treasury_v1(
     store: &mut NovNativeExecutionStoreV1,
     quote: &NovFeeQuoteV1,
@@ -9032,6 +9098,36 @@ fn settle_fee_quote_into_treasury_v1(
         route_selection_reason,
         route_candidate_count,
     ) = if quote.pay_asset == "NOV" {
+        let payer = normalize_account_ref_v1(subject_meta.fee_owner_account_id.as_str())
+            .context("direct NOV fee requires a valid payer account")?;
+        let balance = native_account_asset_balance_v1(store, &payer, "NOV");
+        let Some(balance_after) = balance.checked_sub(quote.nov_amount) else {
+            return clearing_fail_v1(
+                store,
+                "NOV",
+                NovClearingFailureCodeV1::InsufficientUserBalance,
+                format!(
+                    "nov_fee_asset_debit_failed: account={} requested={} available={}",
+                    payer, quote.nov_amount, balance
+                ),
+                now_ms,
+            );
+        };
+        if let Err(error) =
+            check_direct_nov_fee_capacity_v1(store, quote.nov_amount, &settlement_policy)
+        {
+            increment_settlement_failure_v1(store, "amount_overflow");
+            return Err(error);
+        }
+        // No fallible monetary operation remains in this direct route. Payer
+        // debit and all existing settlement credits are published atomically by
+        // the caller's candidate/AOEM state commit, never by this helper.
+        store
+            .module_state
+            .account_asset_balances
+            .entry(payer)
+            .or_default()
+            .insert("NOV".to_string(), balance_after);
         store.module_state.last_clearing_candidates.clear();
         (
             quote.nov_amount,
@@ -11642,6 +11738,9 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
             return Ok(receipt);
         }
     }
+    // Include fee debit and settlement in the same receipt's before/after
+    // evidence, including when business execution subsequently fails.
+    let module_state_before_execution = store.module_state.clone();
     let effective_subject_meta = context
         .subject_meta
         .cloned()
@@ -11681,7 +11780,6 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
                 "enforce".to_string(),
                 rejection.reason.to_string(),
             );
-            let module_state_before_execution = store.module_state.clone();
             return finalize_native_execution_receipt_v1(
                 store,
                 request,
@@ -11720,7 +11818,6 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
                 fee_method.to_string(),
                 reason,
             );
-            let module_state_before_execution = store.module_state.clone();
             return finalize_native_execution_receipt_v1(
                 store,
                 request,
@@ -11746,20 +11843,18 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
         ) {
             Ok(meta) => Some(meta),
             Err(err) => {
-                let unresolved_fee = unresolved_settled_fee_v1(request);
                 let failed = build_failed_native_receipt_v1(
                     request,
-                    &unresolved_fee,
+                    &settled_fee,
                     &effective_subject_meta,
                     "aoem".to_string(),
                     "semantic_ingress".to_string(),
                     format!("aoem.semantic_ingress.required_failed: {err}"),
                 );
-                let module_state_before_execution = store.module_state.clone();
                 return finalize_native_execution_receipt_v1(
                     store,
                     request,
-                    &unresolved_fee,
+                    &settled_fee,
                     &effective_subject_meta,
                     context.durable_auth_reservation,
                     None,
@@ -11772,7 +11867,6 @@ fn dispatch_nov_execution_request_into_loaded_store_v1(
             }
         }
     };
-    let module_state_before_execution = store.module_state.clone();
     let receipt = dispatch_native_module_execute_v1(
         request,
         &settled_fee,
@@ -13804,6 +13898,8 @@ pub fn native_business_protocol_config_commitment_v1() -> Result<String> {
         "environment": env,
         "compiled_defaults": {
             "treasury_deposit_contract": "balance_backed_v2",
+            "direct_nov_fee_contract": "payer_debit_checked_settlement_v1",
+            "execution_receipt_fee_contract": "pre_fee_state_and_settled_failure_v1",
             "native_auth_nonce_identity_scheme": NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2,
             "fee_rate_ppm": {
                 "NOV": NOV_FEE_RATE_PPM_NOV_V1,
@@ -21192,6 +21288,320 @@ pub fn load_ops_wire_v1_from_tx_wire_file(path: &Path) -> Result<OpsWirePayload>
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod native_nov_fee_conservation {
+        use super::*;
+
+        fn request() -> NovExecutionRequestV1 {
+            NovExecutionRequestV1 {
+                tx_hash: [0x91; 32],
+                chain_id: 91_700,
+                caller: vec![0x31; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("treasury".to_string()),
+                method: "unsupported_fee_test_method".to_string(),
+                args: b"{}".to_vec(),
+                fee_pay_asset: "NOV".to_string(),
+                fee_max_pay_amount: 0,
+                fee_slippage_bps: 0,
+                gas_like_limit: None,
+                nonce: 0,
+            }
+        }
+
+        fn store_with_balance(balance: u128) -> NovNativeExecutionStoreV1 {
+            let mut store = NovNativeExecutionStoreV1::default();
+            // Pin the existing split in fixture state, not process environment.
+            store.module_state.treasury_reserve_share_bps =
+                NOV_TREASURY_RESERVE_SHARE_BPS_DEFAULT_V1;
+            store.module_state.treasury_fee_share_bps = NOV_TREASURY_FEE_SHARE_BPS_DEFAULT_V1;
+            store.module_state.treasury_risk_buffer_share_bps =
+                NOV_TREASURY_RISK_BUFFER_SHARE_BPS_DEFAULT_V1;
+            credit_native_account_asset_balance_v1(
+                &mut store,
+                &caller_account_ref_v1(&request()),
+                "NOV",
+                balance,
+            );
+            store
+        }
+
+        fn quote(amount: u128) -> NovFeeQuoteV1 {
+            NovFeeQuoteV1 {
+                quote_id: "unit-direct-nov".to_string(),
+                pay_asset: "NOV".to_string(),
+                nov_amount: amount,
+                quoted_pay_amount: amount,
+                quoted_pay_amount_with_slippage: amount,
+                max_pay_amount: amount,
+                slippage_bps: 0,
+                quoted_at_unix_ms: 1,
+                expires_at_unix_ms: 2,
+                rate_ppm: NOV_FEE_RATE_PPM_NOV_V1,
+                oracle_updated_at_unix_ms: 1,
+                route: "direct_nov".to_string(),
+                quote_contract: NOV_EXECUTION_FEE_QUOTE_CONTRACT_V1.to_string(),
+                price_source: "direct_nov".to_string(),
+            }
+        }
+
+        fn assert_money_unchanged(
+            before: &NovNativeExecutionModuleStateV1,
+            after: &NovNativeExecutionModuleStateV1,
+        ) {
+            assert_eq!(before.account_asset_balances, after.account_asset_balances);
+            assert_eq!(before.treasury_reserves, after.treasury_reserves);
+            assert_eq!(
+                before.treasury_settled_nov_total,
+                after.treasury_settled_nov_total
+            );
+            assert_eq!(
+                before.treasury_settled_by_asset,
+                after.treasury_settled_by_asset
+            );
+            assert_eq!(
+                before.treasury_reserve_bucket_nov,
+                after.treasury_reserve_bucket_nov
+            );
+            assert_eq!(
+                before.treasury_fee_bucket_nov,
+                after.treasury_fee_bucket_nov
+            );
+            assert_eq!(
+                before.treasury_risk_buffer_nov,
+                after.treasury_risk_buffer_nov
+            );
+            assert_eq!(before.treasury_settlements, after.treasury_settlements);
+            assert_eq!(
+                before.treasury_settlement_journal,
+                after.treasury_settlement_journal
+            );
+            assert_eq!(
+                before.treasury_settlement_journal_next_seq,
+                after.treasury_settlement_journal_next_seq
+            );
+        }
+
+        #[test]
+        fn direct_nov_debits_the_fee_owner_and_preserves_existing_split() {
+            let mut store = store_with_balance(17);
+            let mut subject = fallback_execution_subject_meta_v1(&request());
+            subject.fee_owner_account_id = to_hex_prefixed_v1(&[0x32; 20]);
+            credit_native_account_asset_balance_v1(
+                &mut store,
+                &subject.fee_owner_account_id,
+                "NOV",
+                100,
+            );
+            let result =
+                settle_fee_quote_into_treasury_v1(&mut store, &quote(100), "unit", &subject, 1)
+                    .unwrap();
+            assert_eq!(result.nov_amount, 100);
+            assert_eq!(result.source_amount, 100);
+            assert_eq!(
+                native_account_asset_balance_v1(&store, &subject.account_id, "NOV"),
+                17
+            );
+            assert_eq!(
+                native_account_asset_balance_v1(&store, &subject.fee_owner_account_id, "NOV"),
+                0
+            );
+            assert_eq!(store.module_state.treasury_reserves["NOV"], 100);
+            assert_eq!(store.module_state.treasury_settled_nov_total, 100);
+            assert_eq!(store.module_state.treasury_settled_by_asset["NOV"], 100);
+            assert_eq!(store.module_state.treasury_reserve_bucket_nov, 70);
+            assert_eq!(store.module_state.treasury_fee_bucket_nov, 20);
+            assert_eq!(store.module_state.treasury_risk_buffer_nov, 10);
+            assert_eq!(store.module_state.treasury_settlements, 1);
+        }
+
+        #[test]
+        fn insufficient_nov_never_credits_treasury_or_debits_partially() {
+            let mut store = store_with_balance(99);
+            let before = store.module_state.clone();
+            let subject = fallback_execution_subject_meta_v1(&request());
+            let error =
+                settle_fee_quote_into_treasury_v1(&mut store, &quote(100), "unit", &subject, 1)
+                    .unwrap_err();
+            assert!(error.to_string().contains("insufficient_user_balance"));
+            assert_money_unchanged(&before, &store.module_state);
+        }
+
+        #[test]
+        fn all_direct_nov_capacity_failures_precede_any_monetary_write() {
+            for case in 0..10 {
+                let mut store = store_with_balance(u128::MAX);
+                let mut fee_quote = quote(100);
+                match case {
+                    0 => {
+                        store
+                            .module_state
+                            .treasury_reserves
+                            .insert("NOV".to_string(), u128::MAX);
+                    }
+                    1 => store.module_state.treasury_settled_nov_total = u128::MAX,
+                    2 => {
+                        store
+                            .module_state
+                            .treasury_settled_by_asset
+                            .insert("NOV".to_string(), u128::MAX);
+                    }
+                    3 => store.module_state.treasury_reserve_bucket_nov = u128::MAX,
+                    4 => store.module_state.treasury_fee_bucket_nov = u128::MAX,
+                    5 => store.module_state.treasury_risk_buffer_nov = u128::MAX,
+                    6 => store.module_state.treasury_settlements = u64::MAX,
+                    7 => store.module_state.treasury_settlement_journal_next_seq = u64::MAX,
+                    8 => {
+                        store.module_state.treasury_reserve_bucket_nov = u128::MAX / 2;
+                        store.module_state.treasury_fee_bucket_nov = u128::MAX / 2;
+                    }
+                    9 => fee_quote = quote(u128::MAX),
+                    _ => unreachable!(),
+                }
+                let before = store.module_state.clone();
+                let subject = fallback_execution_subject_meta_v1(&request());
+                let error =
+                    settle_fee_quote_into_treasury_v1(&mut store, &fee_quote, "unit", &subject, 1)
+                        .unwrap_err();
+                assert!(
+                    error.to_string().contains("amount_overflow"),
+                    "case {case}: {error}"
+                );
+                assert_money_unchanged(&before, &store.module_state);
+            }
+        }
+
+        #[test]
+        fn zero_cap_keeps_existing_automatic_quote_and_explicit_cap_rejects() {
+            let mut store = store_with_balance(1_000);
+            let mut request = request();
+            request.fee_slippage_bps = 100;
+            let expected_fee = estimate_execution_fee_nov_v1(&request);
+            let quoted =
+                quote_fee_policy_from_execution_request_v1(&request, &mut store, 1).unwrap();
+            assert_eq!(quoted.nov_amount, expected_fee);
+            assert_eq!(
+                quoted.max_pay_amount,
+                quoted.quoted_pay_amount_with_slippage
+            );
+            assert!(quoted.max_pay_amount >= expected_fee);
+            let subject = fallback_execution_subject_meta_v1(&request);
+            let settled =
+                settle_fee_quote_into_treasury_v1(&mut store, &quoted, "unit", &subject, 1)
+                    .unwrap();
+            assert_eq!(settled.source_amount, expected_fee);
+            assert_eq!(
+                native_account_asset_balance_v1(&store, &subject.fee_owner_account_id, "NOV"),
+                1_000 - expected_fee
+            );
+            let before = store.module_state.clone();
+            request.fee_max_pay_amount = expected_fee - 1;
+            assert!(
+                quote_fee_policy_from_execution_request_v1(&request, &mut store, 1)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("max_pay_exceeded")
+            );
+            assert_money_unchanged(&before, &store.module_state);
+        }
+
+        fn dispatch_without_runtime(
+            store: &mut NovNativeExecutionStoreV1,
+        ) -> NovNativeExecutionReceiptV1 {
+            let request = request();
+            let reservation = NovNativeDurableAuthReservationV1 {
+                runtime_key: (request.chain_id, b"unit-fee-signer".to_vec(), 0),
+                ledger_key: "unit-fee-nonce-0".to_string(),
+                identity_key: "unit-fee-signer".to_string(),
+                nonce: 0,
+                reservation_id: "unit-fee-reservation".to_string(),
+                tx_hash: to_hex(&request.tx_hash),
+            };
+            let mut mirror_records = Vec::new();
+            dispatch_nov_execution_request_into_loaded_store_v1(
+                store,
+                &request,
+                NovExecutionRequestDispatchContextV1 {
+                    mirror_base_path: Path::new(""),
+                    subject_meta: None,
+                    requested_behavior: None,
+                    authenticated_key_algo: Some(UcaKeyAlgo::Ed25519),
+                    unified_account_store_path: None,
+                    emit_policy_observability: false,
+                    durable_auth_reservation: Some(&reservation),
+                    // Unit-test precommit metadata only: no AOEM runtime claim.
+                    aoem_semantic_ingress_override: Some(NovAoemSemanticIngressMetaV1::default()),
+                    mirror_records: Some(&mut mirror_records),
+                    now_ms: 1,
+                },
+            )
+            .unwrap()
+        }
+
+        #[test]
+        fn business_failure_keeps_settled_fee_consumes_nonce_and_binds_fee_prestate() {
+            let mut store = store_with_balance(1_000);
+            let before_root = native_semantic_ledger_state_digest_v1(&store.module_state);
+            let expected_fee = estimate_execution_fee_nov_v1(&request());
+            let receipt = dispatch_without_runtime(&mut store);
+            assert!(!receipt.status);
+            assert_ne!(receipt.module, "fee");
+            assert_eq!(receipt.settled_fee_nov, expected_fee);
+            assert_eq!(receipt.paid_amount, expected_fee);
+            assert_eq!(
+                native_account_asset_balance_v1(&store, &receipt.fee_owner_account_id, "NOV"),
+                1_000 - expected_fee
+            );
+            assert_eq!(store.module_state.treasury_reserves["NOV"], expected_fee);
+            assert_eq!(
+                store.module_state.native_auth_next_nonces["unit-fee-signer"],
+                1
+            );
+            assert_eq!(
+                receipt
+                    .aoem_semantic_ingress
+                    .as_ref()
+                    .unwrap()
+                    .semantic_state_before_digest,
+                before_root
+            );
+            let deltas = receipt
+                .logs
+                .iter()
+                .find(|log| log.event == "aoem.native_asset.semantic_deltas")
+                .unwrap()
+                .data["deltas"]
+                .as_array()
+                .unwrap();
+            assert!(deltas
+                .iter()
+                .any(|delta| delta["kind"] == "account_asset_balance"
+                    && delta["before"] == 1_000
+                    && delta["after"] == serde_json::json!(1_000 - expected_fee)));
+            let money_after = store.module_state.clone();
+            assert_eq!(dispatch_without_runtime(&mut store), receipt);
+            assert_money_unchanged(&money_after, &store.module_state);
+        }
+
+        #[test]
+        fn fee_failure_has_zero_paid_amount_but_still_consumes_valid_nonce() {
+            let mut store = store_with_balance(0);
+            let before = store.module_state.clone();
+            let receipt = dispatch_without_runtime(&mut store);
+            assert!(!receipt.status);
+            assert_eq!(receipt.module, "fee");
+            assert_eq!(receipt.paid_amount, 0);
+            assert_eq!(receipt.settled_fee_nov, 0);
+            assert!(receipt
+                .failure_reason
+                .as_deref()
+                .unwrap()
+                .contains("insufficient_user_balance"));
+            assert_eq!(
+                store.module_state.native_auth_next_nonces["unit-fee-signer"],
+                1
+            );
+            assert_money_unchanged(&before, &store.module_state);
+        }
+    }
     include!("native_candidate_plan_execution_tests.rs");
     include!("native_nonce_identity_tests.rs");
     include!("native_parent_nonce_tests.rs");
@@ -21315,6 +21725,22 @@ mod tests {
         out
     }
 
+    fn fund_test_execution_fee_v1(path: &Path, request: &NovExecutionRequestV1) {
+        if normalize_asset_symbol_v1(&request.fee_pay_asset) != "NOV" {
+            return;
+        }
+        let subject = fallback_execution_subject_meta_v1(request);
+        let fee = estimate_execution_fee_nov_v1(request);
+        let mut store = load_nov_native_execution_store_v1(path).expect("load fee fixture store");
+        credit_native_account_asset_balance_v1(
+            &mut store,
+            &subject.fee_owner_account_id,
+            "NOV",
+            fee,
+        );
+        save_nov_native_execution_store_v1(path, &store).expect("save explicit test fee funding");
+    }
+
     fn fund_test_deposit_v1(path: &Path, request: &NovExecutionRequestV1) {
         assert_eq!(request.method, "deposit_reserve");
         assert_eq!(
@@ -21332,6 +21758,7 @@ mod tests {
             amount
         );
         save_nov_native_execution_store_v1(path, &store).expect("save funded fixture");
+        fund_test_execution_fee_v1(path, request);
     }
 
     fn fund_test_signed_deposit_v1(path: &Path, raw: &[u8]) {
@@ -21380,10 +21807,33 @@ mod tests {
             .map(|delta| delta["kind"].as_str().expect("delta kind"))
             .collect::<Vec<_>>();
         kinds.sort_unstable();
+        kinds.dedup();
         assert_eq!(
             kinds,
-            ["native_committed_module_state_v3", "native_policy_state"]
+            [
+                "account_asset_balance",
+                "native_committed_module_state_v3",
+                "native_policy_state",
+                "treasury_bucket",
+                "treasury_reserve",
+            ]
         );
+        let deltas = log.data["deltas"].as_array().expect("semantic deltas");
+        assert_eq!(
+            receipt
+                .aoem_semantic_commit
+                .as_ref()
+                .expect("semantic commit")
+                .semantic_delta_count,
+            deltas.len(),
+        );
+        assert!(deltas.iter().any(|delta| {
+            delta["kind"] == "account_asset_balance"
+                && delta["owner"] == receipt.fee_owner_account_id
+                && delta["asset"] == "NOV"
+                && delta["before"].as_u64().unwrap() - delta["after"].as_u64().unwrap()
+                    == u64::try_from(receipt.paid_amount).unwrap()
+        }));
     }
 
     fn with_env_override_v1<F, T>(key: &str, value: &str, test_fn: F) -> T
@@ -21615,53 +22065,74 @@ mod tests {
 
     #[test]
     fn signed_deposit_without_funds_is_committed_as_failure_not_reserve_credit() {
-        with_test_native_execution_store_path_v1(|path| {
-            let raw_hex =
-                build_test_native_execute_raw_hex_with_chain_v1(991_804, 1, "unfunded-signer", 25);
-            let raw = decode_eth_send_raw_hex_payload_v1(&raw_hex, "raw_tx").expect("fixture hex");
-            let mut tx = decode_nov_native_tx_wire_v1(&raw).expect("fixture tx");
-            let NovTxKindV1::Execute(execute) = &mut tx.kind else {
-                panic!("execute fixture")
-            };
-            execute.fee_policy.pay_asset = "NOV".to_string();
-            execute.fee_policy.max_pay_amount = 10_000;
-            execute.caller.clear();
-            sign_nov_native_tx_with_seed_v1(&mut tx, [0xd8; 32]).expect("sign unfunded deposit");
-            let raw = novovm_protocol::encode_nov_native_tx_wire_v1(&tx).expect("signed wire");
-            let out = run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
-                "raw_tx": to_hex_prefixed_v1(&raw),
-                "native_execution_store_path": path,
-            }))
-            .expect("authenticated but unfunded deposit yields a failed receipt");
-            assert_eq!(out["accepted"], true);
-            assert_eq!(out["native_receipt"]["status"], false);
-            let reason = out["native_receipt"]["failure_reason"]
-                .as_str()
-                .expect("failure reason");
-            assert!(reason.starts_with("fee.settlement.reserve_deposit_insufficient_balance"));
-            assert!(reason.contains("requested=25 available=0"));
-            let store = load_nov_native_execution_store_v1(&path).expect("committed failure");
-            assert_eq!(store.receipts.len(), 1);
-            let receipt = store.receipts.values().next().expect("failed receipt");
-            assert!(!receipt.status);
-            assert_eq!(
-                native_account_asset_balance_v1(&store, &receipt.account_id, "USDT"),
-                0
-            );
-            assert_eq!(
-                store
-                    .module_state
-                    .treasury_reserves
-                    .get("USDT")
-                    .copied()
-                    .unwrap_or(0),
-                0
-            );
-            assert!(!receipt
-                .logs
-                .iter()
-                .any(|log| log.event == "treasury.reserve_deposited"));
-        });
+        for fund_fee_only in [false, true] {
+            with_test_native_execution_store_path_v1(|path| {
+                let raw_hex = build_test_native_execute_raw_hex_with_chain_v1(
+                    991_804 + u64::from(fund_fee_only),
+                    1,
+                    "unfunded-signer",
+                    25,
+                );
+                let raw =
+                    decode_eth_send_raw_hex_payload_v1(&raw_hex, "raw_tx").expect("fixture hex");
+                let mut tx = decode_nov_native_tx_wire_v1(&raw).expect("fixture tx");
+                let NovTxKindV1::Execute(execute) = &mut tx.kind else {
+                    panic!("execute fixture")
+                };
+                execute.fee_policy.pay_asset = "NOV".to_string();
+                execute.fee_policy.max_pay_amount = 10_000;
+                execute.caller.clear();
+                sign_nov_native_tx_with_seed_v1(&mut tx, [0xd8; 32])
+                    .expect("sign unfunded deposit");
+                let raw = novovm_protocol::encode_nov_native_tx_wire_v1(&tx).expect("signed wire");
+                if fund_fee_only {
+                    let request = nov_native_tx_to_execution_request_v1(&tx).unwrap().unwrap();
+                    fund_test_execution_fee_v1(&path, &request);
+                }
+                let out = run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
+                    "raw_tx": to_hex_prefixed_v1(&raw),
+                    "native_execution_store_path": path,
+                }))
+                .expect("authenticated but unfunded deposit yields a failed receipt");
+                assert_eq!(out["accepted"], true);
+                assert_eq!(out["native_receipt"]["status"], false);
+                let reason = out["native_receipt"]["failure_reason"]
+                    .as_str()
+                    .expect("failure reason");
+                if fund_fee_only {
+                    assert!(
+                        reason.starts_with("fee.settlement.reserve_deposit_insufficient_balance")
+                    );
+                    assert!(reason.contains("requested=25 available=0"));
+                    assert!(out["native_receipt"]["paid_amount"].as_u64().unwrap() > 0);
+                } else {
+                    assert!(reason.starts_with("fee.clearing.insufficient_user_balance"));
+                    assert!(reason.contains("available=0"));
+                    assert_eq!(out["native_receipt"]["paid_amount"], 0);
+                }
+                let store = load_nov_native_execution_store_v1(&path).expect("committed failure");
+                assert_eq!(store.receipts.len(), 1);
+                let receipt = store.receipts.values().next().expect("failed receipt");
+                assert!(!receipt.status);
+                assert_eq!(
+                    native_account_asset_balance_v1(&store, &receipt.account_id, "USDT"),
+                    0
+                );
+                assert_eq!(
+                    store
+                        .module_state
+                        .treasury_reserves
+                        .get("USDT")
+                        .copied()
+                        .unwrap_or(0),
+                    0
+                );
+                assert!(!receipt
+                    .logs
+                    .iter()
+                    .any(|log| log.event == "treasury.reserve_deposited"));
+            });
+        }
     }
 
     fn build_test_network_fixture_raw_hex_v1(
@@ -28796,12 +29267,14 @@ mod tests {
                                 gas_like_limit: Some(90_000),
                                 nonce: 176,
                             };
+                            fund_test_deposit_v1(path.as_path(), &first);
                             let first_receipt =
                                 dispatch_and_persist_nov_execution_request_with_store_path_v1(
                                     path.as_path(),
                                     &first,
                                 )
                                 .expect("first dispatch should succeed");
+                            assert!(first_receipt.status, "{:?}", first_receipt.failure_reason);
                             let first_meta = first_receipt
                                 .aoem_semantic_ingress
                                 .as_ref()
@@ -28830,12 +29303,14 @@ mod tests {
                                 gas_like_limit: Some(90_000),
                                 nonce: 177,
                             };
+                            fund_test_deposit_v1(path.as_path(), &second);
                             let second_receipt =
                                 dispatch_and_persist_nov_execution_request_with_store_path_v1(
                                     path.as_path(),
                                     &second,
                                 )
                                 .expect("second dispatch should succeed");
+                            assert!(second_receipt.status, "{:?}", second_receipt.failure_reason);
                             let second_meta = second_receipt
                                 .aoem_semantic_ingress
                                 .as_ref()
@@ -30005,6 +30480,9 @@ mod tests {
                             save_nov_native_execution_store_v1(path.as_path(), &seed).unwrap();
                             sign_nov_native_tx_with_seed_v1(&mut tx, [0x37; 32]).unwrap();
                             let raw = encode_native_auth_test_tx_v1(&tx);
+                            let fee_request =
+                                nov_native_tx_to_execution_request_v1(&tx).unwrap().unwrap();
+                            fund_test_execution_fee_v1(path.as_path(), &fee_request);
                             let params = serde_json::json!({
                                 "chain_id": chain_id,
                                 "raw_tx": to_hex_prefixed_v1(raw.as_slice()),
@@ -31389,6 +31867,7 @@ mod tests {
                 gas_like_limit: Some(80_000),
                 nonce: 14,
             };
+            fund_test_execution_fee_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
@@ -31436,6 +31915,7 @@ mod tests {
                 gas_like_limit: Some(80_000),
                 nonce: 15,
             };
+            fund_test_execution_fee_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
@@ -31971,6 +32451,7 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 16,
             };
+            fund_test_execution_fee_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
@@ -32008,6 +32489,7 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 18,
             };
+            fund_test_execution_fee_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
@@ -32038,7 +32520,6 @@ mod tests {
                 aoem_commit.commit_seal,
                 aoem_meta.semantic_ledger_commit_seal
             );
-            assert_eq!(aoem_commit.semantic_delta_count, 2);
             assert_governance_delta_kinds_v1(&receipt);
 
             let stored = load_nov_native_execution_store_v1(path.as_path())
@@ -32089,6 +32570,7 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 17,
             };
+            fund_test_execution_fee_v1(path.as_path(), &request);
             let governance_allowlist = to_hex(&request.caller);
             let receipt = with_env_override_v1(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "true", || {
                 with_env_override_v1(
@@ -32123,7 +32605,6 @@ mod tests {
                 aoem_commit.commit_seal,
                 aoem_meta.semantic_ledger_commit_seal
             );
-            assert_eq!(aoem_commit.semantic_delta_count, 2);
             assert_governance_delta_kinds_v1(&receipt);
             let receipt_policy_meta = receipt
                 .policy_meta
@@ -32434,6 +32915,7 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 21,
             };
+            fund_test_execution_fee_v1(path.as_path(), &request);
             let governance_allowlist = to_hex(&request.caller);
             let receipt = with_env_override_v1(NOV_NATIVE_GOVERNANCE_ENABLED_ENV, "true", || {
                 with_env_override_v1(
@@ -32468,9 +32950,9 @@ mod tests {
                 aoem_commit.commit_seal,
                 aoem_meta.semantic_ledger_commit_seal
             );
-            // Manual proof changes both the policy projection and the full
-            // committed module-state v3 projection, not a reserve balance.
-            assert_eq!(aoem_commit.semantic_delta_count, 2);
+            // The manual proof does not mint assets; the semantic commitment
+            // also includes the payer debit and existing fee settlement.
+            assert_governance_delta_kinds_v1(&receipt);
             assert_eq!(
                 receipt.logs[0].data["claims"]["nov_mint_authorized"].as_bool(),
                 Some(false)
@@ -34189,6 +34671,7 @@ mod tests {
                 gas_like_limit: Some(80_000),
                 nonce: 41,
             };
+            fund_test_execution_fee_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
@@ -34287,7 +34770,9 @@ mod tests {
                 "USDT",
             )
             .expect("load USDT balance");
-            assert_eq!(nov_after, 400);
+            assert_eq!(receipt.paid_asset, "NOV");
+            assert!(receipt.paid_amount > 0);
+            assert_eq!(nov_after, 500 - 100 - receipt.paid_amount);
             assert_eq!(usdt_after, 99);
 
             let journal = run_nov_native_call_from_params_with_store_path_v1(
@@ -34316,7 +34801,7 @@ mod tests {
     }
 
     #[test]
-    fn treasury_redeem_m2_asset_rejects_legacy_asset_amount_without_nov_debit() {
+    fn treasury_redeem_m2_asset_rejects_legacy_asset_amount_charging_fee_only() {
         with_test_native_execution_store_path_v1(|path| {
             let caller = format!("0x{}", "4a".repeat(20));
             let mut pre = NovNativeExecutionStoreV1::default();
@@ -34374,7 +34859,11 @@ mod tests {
             .expect("load USDT balance");
             let state = load_nov_native_execution_store_v1(path.as_path())
                 .expect("load native execution store");
-            assert_eq!(nov_after, 500);
+            // Business rejection prevents redemption debit, not the already
+            // completed execution-fee settlement.
+            assert_eq!(receipt.paid_asset, "NOV");
+            assert!(receipt.paid_amount > 0);
+            assert_eq!(nov_after, 500 - receipt.paid_amount);
             assert_eq!(usdt_after, 0);
             assert_eq!(
                 state.module_state.treasury_reserves.get("USDT").copied(),
@@ -34384,7 +34873,7 @@ mod tests {
     }
 
     #[test]
-    fn reserve_proof_revoked_blocks_non_nov_treasury_redeem_without_nov_debit() {
+    fn reserve_proof_revoked_blocks_non_nov_treasury_redeem_charging_fee_only() {
         with_test_native_execution_store_path_v1(|path| {
             let caller = format!("0x{}", "92".repeat(20));
             let mut pre = NovNativeExecutionStoreV1::default();
@@ -34455,7 +34944,10 @@ mod tests {
                 "USDT",
             )
             .expect("load USDT balance");
-            assert_eq!(nov_after, 500);
+            // No principal redemption occurs; the previously settled fee remains.
+            assert_eq!(receipt.paid_asset, "NOV");
+            assert!(receipt.paid_amount > 0);
+            assert_eq!(nov_after, 500 - receipt.paid_amount);
             assert_eq!(usdt_after, 0);
             let state = load_nov_native_execution_store_v1(path.as_path())
                 .expect("load native execution store");
@@ -34467,7 +34959,7 @@ mod tests {
     }
 
     #[test]
-    fn neth_missing_reserve_proof_blocks_treasury_redeem_without_nov_debit() {
+    fn neth_missing_reserve_proof_blocks_treasury_redeem_charging_fee_only() {
         with_test_native_execution_store_path_v1(|path| {
             let caller = format!("0x{}", "96".repeat(20));
             let mut pre = NovNativeExecutionStoreV1::default();
@@ -34521,7 +35013,10 @@ mod tests {
                 "NETH",
             )
             .expect("load NETH balance");
-            assert_eq!(nov_after, 500);
+            // Missing proof blocks the asset purchase, not execution-fee payment.
+            assert_eq!(receipt.paid_asset, "NOV");
+            assert!(receipt.paid_amount > 0);
+            assert_eq!(nov_after, 500 - receipt.paid_amount);
             assert_eq!(neth_after, 0);
             let state = load_nov_native_execution_store_v1(path.as_path())
                 .expect("load native execution store");
@@ -34958,7 +35453,11 @@ mod tests {
                 "USDT",
             )
             .expect("load USDT balance");
-            assert_eq!(nov_after, 500);
+            // Capacity rejection leaves principal and reserve untouched; only
+            // the completed execution fee is debited.
+            assert_eq!(receipt.paid_asset, "NOV");
+            assert!(receipt.paid_amount > 0);
+            assert_eq!(nov_after, 500 - receipt.paid_amount);
             assert_eq!(usdt_after, 0);
             let state = load_nov_native_execution_store_v1(path.as_path())
                 .expect("load native execution store");
@@ -35143,6 +35642,7 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 42,
             };
+            fund_test_execution_fee_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
@@ -35232,6 +35732,7 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 43,
             };
+            fund_test_execution_fee_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
@@ -35276,6 +35777,7 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 44,
             };
+            fund_test_execution_fee_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,

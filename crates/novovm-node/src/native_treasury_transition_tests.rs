@@ -380,6 +380,7 @@ mod native_treasury_transition_tests {
             let mut seed = NovNativeExecutionStoreV1::default();
             credit_native_account_asset_balance_v1(&mut seed, &account, "USDT", 10);
             save_nov_native_execution_store_v1(path.as_path(), &seed).unwrap();
+            fund_test_execution_fee_v1(path.as_path(), &req);
             let receipt =
                 dispatch_and_persist_nov_execution_request_with_store_path_v1(path.as_path(), &req)
                     .unwrap();

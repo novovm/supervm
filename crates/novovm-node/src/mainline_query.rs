@@ -5065,8 +5065,8 @@ mod tests {
     use crate::tx_ingress::{
         get_nov_native_account_asset_balance_with_store_path_v1,
         load_nov_native_execution_store_v1, save_nov_native_execution_store_v1,
-        NovNativeExecutionStoreV1, NovTreasuryReserveProofV1, NOV_NATIVE_GOVERNANCE_ALLOWLIST_ENV,
-        NOV_NATIVE_GOVERNANCE_ENABLED_ENV,
+        NativeAoemSemanticSessionScopeV1, NovNativeExecutionStoreV1, NovTreasuryReserveProofV1,
+        NOV_NATIVE_GOVERNANCE_ALLOWLIST_ENV, NOV_NATIVE_GOVERNANCE_ENABLED_ENV,
     };
     use crate::unified_account_surface::{
         is_mainline_unified_account_query_method, seed_unified_account_key_algo_for_tests_v1,
@@ -12091,6 +12091,7 @@ mod tests {
 
     #[test]
     fn mainline_query_neth_to_nov_swap_executes_via_real_product_entry() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("native-neth-nov-swap");
@@ -12176,6 +12177,7 @@ mod tests {
 
     #[test]
     fn mainline_query_nov_swap_normalizes_subject_to_explicit_direct_signer_account_id() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("native-swap-account-subject");
@@ -12303,6 +12305,7 @@ mod tests {
 
     #[test]
     fn mainline_query_cut_c_standard_ed25519_allows_execution() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("cut-c-standard-ed25519");
@@ -12367,6 +12370,7 @@ mod tests {
 
     #[test]
     fn mainline_query_cut_c_pq_required_mldsa87_fails_closed_until_pq_wire() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("cut-c-pq-mldsa87");
@@ -12401,6 +12405,7 @@ mod tests {
 
     #[test]
     fn mainline_query_cut_c_pq_required_non_pq_key_rejected() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("cut-c-pq-reject");
@@ -12443,6 +12448,7 @@ mod tests {
 
     #[test]
     fn mainline_query_cut_c_privacy_required_with_confidential_path_succeeds() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("cut-c-privacy-success");
@@ -12498,6 +12504,7 @@ mod tests {
 
     #[test]
     fn mainline_query_cut_c_privacy_required_without_privacy_path_rejected() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("cut-c-privacy-reject");
@@ -12572,6 +12579,7 @@ mod tests {
 
     #[test]
     fn mainline_query_m2_fee_asset_auto_requires_privacy_path() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("cut-c-m2-fee-privacy-reject");
@@ -12625,6 +12633,7 @@ mod tests {
 
     #[test]
     fn mainline_query_m2_fee_asset_confidential_path_executes() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("cut-c-m2-fee-privacy-success");
@@ -12679,6 +12688,7 @@ mod tests {
 
     #[test]
     fn mainline_query_redeem_open_vault_and_asset_balance_flow_through_real_entry() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("native-user-flow");
@@ -12692,7 +12702,10 @@ mod tests {
         pre.module_state.treasury_settled_nov_total = 500;
         pre.module_state.account_asset_balances.insert(
             caller.clone(),
-            std::collections::BTreeMap::from([("ETH".to_string(), 500u128)]),
+            std::collections::BTreeMap::from([
+                ("ETH".to_string(), 500u128),
+                ("NOV".to_string(), 1_000u128),
+            ]),
         );
         save_nov_native_execution_store_v1(native_store.as_path(), &pre)
             .expect("seed native execution store");
@@ -12771,6 +12784,18 @@ mod tests {
         assert_eq!(vault_out["method"].as_str(), Some("nov_openVault"));
         assert_eq!(vault_out["module"].as_str(), Some("credit_engine"));
         assert_eq!(vault_out["native_receipt"]["status"].as_bool(), Some(true));
+        assert_eq!(redeem_out["native_receipt"]["paid_asset"], "NOV");
+        assert_eq!(vault_out["native_receipt"]["paid_asset"], "ETH");
+        let nov_fee = u128::from(
+            redeem_out["native_receipt"]["paid_amount"]
+                .as_u64()
+                .unwrap(),
+        );
+        assert_eq!(
+            get_nov_native_account_asset_balance_with_store_path_v1(&native_store, &caller, "NOV")
+                .unwrap(),
+            1_000 + 50 - nov_fee,
+        );
 
         let eth_after = run_mainline_query_from_path(
             bogus_canonical_store,
@@ -12880,6 +12905,7 @@ mod tests {
 
     #[test]
     fn mainline_query_treasury_reserve_proof_product_smoke_enforces_cap() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("treasury-proof-smoke");
@@ -12988,7 +13014,15 @@ mod tests {
             "USDT",
         )
         .expect("load USDT after successful redeem");
-        assert_eq!(nov_after_success, 400);
+        assert_eq!(
+            redeem_ok["native_receipt"]["paid_asset"].as_str(),
+            Some("NOV")
+        );
+        let success_fee = redeem_ok["native_receipt"]["paid_amount"]
+            .as_u64()
+            .expect("successful purchase records its NOV execution fee");
+        assert!(success_fee > 0);
+        assert_eq!(nov_after_success, 500 - 100 - u128::from(success_fee));
         assert_eq!(usdt_after_success, 99);
 
         let mut capped = load_nov_native_execution_store_v1(native_store.as_path())
@@ -13053,7 +13087,15 @@ mod tests {
             "USDT",
         )
         .expect("load USDT after blocked redeem");
-        assert_eq!(nov_after_block, nov_after_success);
+        assert_eq!(
+            redeem_blocked["native_receipt"]["paid_asset"].as_str(),
+            Some("NOV")
+        );
+        let blocked_fee = redeem_blocked["native_receipt"]["paid_amount"]
+            .as_u64()
+            .expect("business rejection retains its settled execution fee");
+        assert!(blocked_fee > 0);
+        assert_eq!(nov_after_block, nov_after_success - u128::from(blocked_fee));
         assert_eq!(usdt_after_block, usdt_after_success);
 
         let _ = fs::remove_file(native_store);
@@ -13061,6 +13103,7 @@ mod tests {
 
     #[test]
     fn mainline_query_treasury_deposit_buy_asset_product_smoke() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("treasury-deposit-buy-asset-smoke");
@@ -13245,6 +13288,7 @@ mod tests {
 
     #[test]
     fn mainline_query_protocol_clearing_price_and_asset_purchase_product_smoke() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("protocol-clearing-mainline-smoke");
@@ -13469,7 +13513,15 @@ mod tests {
             "USDT",
         )
         .expect("load USDT after protocol redeem");
-        assert_eq!(nov_after, 896);
+        assert_eq!(
+            purchase["native_receipt"]["paid_asset"].as_str(),
+            Some("NOV")
+        );
+        let execution_fee = purchase["native_receipt"]["paid_amount"]
+            .as_u64()
+            .expect("purchase records its NOV execution fee");
+        assert!(execution_fee > 0);
+        assert_eq!(nov_after, 1_000 - 104 - u128::from(execution_fee));
         assert!(usdt_after > 0);
 
         let _ = fs::remove_file(native_store);
@@ -13477,6 +13529,7 @@ mod tests {
 
     #[test]
     fn mainline_query_treasury_governance_write_product_smoke() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _lock = geth_parity_test_lock_v1();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
@@ -13649,6 +13702,7 @@ mod tests {
 
     #[test]
     fn mainline_query_m2_bridge_risk_status_product_smoke() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("m2-bridge-risk-status-smoke");
@@ -13792,6 +13846,7 @@ mod tests {
 
     #[test]
     fn mainline_query_m2_bridge_risk_status_blocks_unsafe_m2() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("m2-bridge-risk-status-blocked");
@@ -13951,7 +14006,7 @@ mod tests {
             .any(|item| item.as_str() == Some("finality_gap=header_source_policy_not_required")));
 
         let uncovered_store = unique_native_execution_store_path("m2-bridge-risk-status-uncovered");
-        let uncovered_caller = format!("0x{}", "95".repeat(20));
+        let uncovered_caller = structured_native_test_signer_account_v1();
         let mut uncovered = NovNativeExecutionStoreV1::default();
         uncovered
             .module_state
@@ -14113,6 +14168,7 @@ mod tests {
 
     #[test]
     fn mainline_query_mapped_asset_shadow_lifecycle_product_smoke() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let (base, store, audit) = unique_unified_account_test_paths("mapped-shadow-smoke");
         let root = base
             .parent()
@@ -14298,6 +14354,7 @@ mod tests {
 
     #[test]
     fn mainline_query_live_mapped_asset_m2_credit_product_smoke() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = geth_parity_test_lock_v1()
             .lock()
             .expect("mainline env test lock poisoned");
@@ -14523,6 +14580,7 @@ mod tests {
 
     #[test]
     fn mainline_query_mapped_lock_contract_policy_product_smoke() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = geth_parity_test_lock_v1()
             .lock()
             .expect("mainline env test lock poisoned");
@@ -14661,6 +14719,7 @@ mod tests {
 
     #[test]
     fn mainline_query_mapped_finality_source_policy_product_smoke() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = geth_parity_test_lock_v1()
             .lock()
             .expect("mainline env test lock poisoned");
@@ -14843,6 +14902,7 @@ mod tests {
 
     #[test]
     fn mainline_query_mapped_finality_attestation_policy_product_smoke() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = geth_parity_test_lock_v1()
             .lock()
             .expect("mainline env test lock poisoned");
@@ -15110,6 +15170,7 @@ mod tests {
 
     #[test]
     fn mainline_query_mapped_min_confirmations_policy_product_smoke() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = geth_parity_test_lock_v1()
             .lock()
             .expect("mainline env test lock poisoned");
@@ -15239,6 +15300,7 @@ mod tests {
 
     #[test]
     fn mainline_query_live_mapped_asset_auto_heal_product_smoke() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let _env_lock = geth_parity_test_lock_v1()
             .lock()
             .expect("mainline env test lock poisoned");
@@ -15524,6 +15586,7 @@ mod tests {
 
     #[test]
     fn mainline_query_nov_swap_reports_risk_rejection_on_real_product_entry() {
+        let _session_scope = NativeAoemSemanticSessionScopeV1::default();
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let native_store = unique_native_execution_store_path("native-risk-blocked");
