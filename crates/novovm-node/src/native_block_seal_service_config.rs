@@ -171,6 +171,11 @@ impl From<AuthorityFile> for NovNativeSealEpochAuthorityV1 {
 }
 
 impl NovNativeSealServiceConfigV1 {
+    pub fn transaction_pool_path(&self) -> Option<PathBuf> {
+        self.propose_successors
+            .then(|| self.seal_store_path.with_extension("txpool"))
+    }
+
     /// Explicit opt-in: retain the pinned ancestor/authority while following its
     /// fully finalized descendants. Never selects a candidate or repairs a pin.
     pub fn resolve_finalized_startup(mut self, params: &serde_json::Value) -> Result<Self> {
@@ -539,7 +544,7 @@ fn read_bounded(path: &Path, limit: usize, label: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn decode_hex_32(bytes: &[u8], label: &str) -> Result<[u8; 32]> {
+pub(crate) fn decode_hex_32(bytes: &[u8], label: &str) -> Result<[u8; 32]> {
     if bytes.len() != 64 || !bytes.iter().all(u8::is_ascii_hexdigit) {
         bail!("{label} must contain exactly 64 hexadecimal bytes, without prefix or whitespace");
     }

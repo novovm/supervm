@@ -5,6 +5,8 @@ pub mod fresh_genesis;
 
 #[path = "native_candidate_workspace.rs"]
 pub mod candidate_workspace;
+#[path = "native_fresh_pool.rs"]
+pub mod fresh_pool;
 
 #[path = "native_nonce_migration.rs"]
 pub mod native_nonce_migration;
@@ -13744,7 +13746,7 @@ fn native_aoem_batch_shape_hash_hex_v1(parts: &[&[u8]]) -> String {
     to_hex(&hasher.finalize())
 }
 
-fn native_aoem_owned_state_namespace_digest_v1(
+pub(crate) fn native_aoem_owned_state_namespace_digest_v1(
     params: &serde_json::Value,
     chain_id: u64,
 ) -> String {
@@ -21193,6 +21195,7 @@ mod tests {
     include!("native_nonce_identity_tests.rs");
     include!("native_parent_nonce_tests.rs");
     include!("native_treasury_transition_tests.rs");
+    include!("native_fresh_pool_tests.rs");
     use novovm_protocol::{
         NovExecutionModeV1, NovFeePolicyV1, NovNativeTxWireV1, NovPrivacyModeV1, NovTxKindV1,
         NovVerificationModeV1,

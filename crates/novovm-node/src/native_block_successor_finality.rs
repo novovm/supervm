@@ -121,6 +121,31 @@ pub(super) fn validated_keys(
 }
 
 impl NovNativeBlockLedgerV1 {
+    pub fn load_fresh_finalized_block_by_height_v1(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        height: u64,
+    ) -> Result<Option<(NovNativeDurableBlockV1, NovNativeFreshFinalityProofV1)>> {
+        let Some(proof) = Self::load_fresh_finality_by_height_v1(path, genesis, namespace, height)?
+        else {
+            return Ok(None);
+        };
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("finality ledger missing")?;
+        let block = ledger
+            .load_by_height_inner_v1(proof.authority.chain_id, height)?
+            .context("finalized block body missing")?;
+        let proposal = proof
+            .witness
+            .proposal()
+            .context("finality proposal missing")?;
+        if block.header.block_hash != proposal.subject.block_hash {
+            bail!("finalized block differs from decision");
+        }
+        Ok(Some((block, proof)))
+    }
+
     /// Historical finality lookup by height, never a live execution capability.
     /// Verifies the complete ledger before returning the immutable decision.
     pub fn load_fresh_finality_by_height_v1(

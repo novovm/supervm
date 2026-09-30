@@ -671,6 +671,15 @@ fn exercise_body_network(
             assert_eq!(disabled.status_json()["awaiting_successor_body"], false);
             assert_eq!(disabled.status_json()["successor_signer_retained"], false);
             config.receive_successors = true;
+            let timestamp = decode_nov_native_seal_round_wire_v1(&wire, authority, 4, source)
+                .unwrap()
+                .proposal()
+                .unwrap()
+                .subject
+                .timestamp_unix_ms;
+            let mut future =
+                Lifecycle::open(config.clone(), &ledger, params, target, Instant::now()).unwrap();
+            let workspaces_before = workspace::list_v1(authority.chain_id, params).unwrap();
             let mut lifecycle =
                 Lifecycle::open(config, &ledger, params, target, Instant::now()).unwrap();
             assert_eq!(lifecycle.status_json()["height"], 3);
@@ -726,6 +735,7 @@ fn exercise_body_network(
                         }
                         assert!(!disabled.enqueue(inbound.clone()));
                         assert!(lifecycle.enqueue(inbound.clone()));
+                        assert!(future.enqueue(inbound.clone()));
                         // Transport enqueue alone cannot execute, sign or advance height.
                         assert_eq!(lifecycle.status_json()["height"], 3);
                         if let Some(body) = inbox.accept(&inbound, Instant::now()).unwrap() {
@@ -733,8 +743,21 @@ fn exercise_body_network(
                         }
                     }
                 }
-                lifecycle.poll(target, Instant::now()).unwrap();
+                future
+                    .poll_with_wall_time(target, Instant::now(), timestamp - 30_001)
+                    .unwrap();
+                assert_eq!(
+                    workspace::list_v1(authority.chain_id, params).unwrap(),
+                    workspaces_before
+                );
+                lifecycle
+                    .poll_with_wall_time(target, Instant::now(), timestamp)
+                    .unwrap();
                 if let Some(body) = complete {
+                    assert_eq!(future.status_json()["future_timestamp_rejected"], 1);
+                    assert_eq!(future.status_json()["height"], 3);
+                    assert_eq!(future.status_json()["received_successors"], 0);
+                    assert_eq!(future.status_json()["lifecycle_halted"], false);
                     assert_eq!(lifecycle.status_json()["height"], 4);
                     assert_eq!(lifecycle.status_json()["received_successors"], 1);
                     assert_eq!(lifecycle.status_json()["decision_confirmed"], false);
@@ -743,7 +766,9 @@ fn exercise_body_network(
                     assert_eq!(disabled.status_json()["height"], 3);
                     // The subsequent scheduler tick, not reception, admits the
                     // retained authenticated proposal to the normal V3 driver.
-                    lifecycle.poll(target, Instant::now()).unwrap();
+                    lifecycle
+                        .poll_with_wall_time(target, Instant::now(), timestamp)
+                        .unwrap();
                     assert_eq!(lifecycle.status_json()["processed_ingress"], 1);
                     break body;
                 }
@@ -901,7 +926,17 @@ fn exercise_automatic_proposal(
         .unwrap();
     assert_eq!(lifecycle.status_json()["height"], 3);
     assert_eq!(lifecycle.status_json()["proposed_successors"], 0);
-    assert_eq!(lifecycle.status_json()["successor_rejected"], 3);
+    assert_eq!(lifecycle.status_json()["successor_rejected"], 2);
+    assert_eq!(lifecycle.status_json()["durable_pending_transactions"], 1);
+    lifecycle
+        .poll_with_wall_time(
+            leader,
+            at + Duration::from_secs(1),
+            subject.timestamp_unix_ms - 60_000,
+        )
+        .unwrap();
+    assert_eq!(lifecycle.status_json()["clock_waiting"], true);
+    assert_eq!(lifecycle.status_json()["proposed_successors"], 0);
     // Replay the already-authenticated event after the local admission window;
     // this is an application retry, not a new transport or signature fixture.
     let valid_event = valid_event.unwrap();
@@ -919,7 +954,8 @@ fn exercise_automatic_proposal(
         to_hex(&subject.block_hash)
     );
     assert_eq!(lifecycle.status_json()["proposed_successors"], 1);
-    assert_eq!(lifecycle.status_json()["successor_rejected"], 3);
+    assert_eq!(lifecycle.status_json()["successor_rejected"], 2);
+    assert_eq!(lifecycle.status_json()["durable_pending_transactions"], 2);
     assert_eq!(lifecycle.status_json()["decision_confirmed"], false);
     assert_eq!(lifecycle.status_json()["body_delivery_targets"], 0);
     let before = workspace::list_v1(authority.chain_id, params).unwrap();
@@ -973,13 +1009,50 @@ fn exercise_automatic_proposal(
     lifecycle
         .poll_with_wall_time(
             leader,
+            at + Duration::from_millis(2500),
+            subject.timestamp_unix_ms - 30_001,
+        )
+        .unwrap();
+    assert_eq!(lifecycle.status_json()["clock_waiting"], true);
+    assert_eq!(lifecycle.status_json()["processed_ingress"], 0);
+    assert_eq!(lifecycle.status_json()["body_delivery_targets"], 0);
+    assert_eq!(
+        seal.load_pending_outbox(authority.chain_id, restart_config.local_validator_id, 128)
+            .unwrap(),
+        outbox
+    );
+    lifecycle
+        .poll_with_wall_time(
+            leader,
             at + Duration::from_secs(3),
             subject.timestamp_unix_ms,
         )
         .unwrap();
+    assert_eq!(lifecycle.status_json()["clock_waiting"], false);
     assert_eq!(lifecycle.status_json()["body_delivery_targets"], 3);
     assert_eq!(lifecycle.status_json()["finalized"], false);
-    assert!(!lifecycle.enqueue(valid_event)); // No transaction admission while confirming.
+    assert!(lifecycle.enqueue(valid_event));
+    lifecycle
+        .poll_with_wall_time(
+            leader,
+            at + Duration::from_millis(3100),
+            subject.timestamp_unix_ms,
+        )
+        .unwrap();
+    assert_eq!(lifecycle.status_json()["height"], 4);
+    assert_eq!(
+        lifecycle.status_json()["block_hash"],
+        to_hex(&subject.block_hash)
+    );
+    assert_eq!(lifecycle.status_json()["durable_pending_transactions"], 2);
+    assert_eq!(
+        lifecycle.transaction_status(valid_hash).unwrap()["status"],
+        "queued"
+    );
+    assert_eq!(
+        workspace::list_v1(authority.chain_id, params).unwrap(),
+        before
+    );
     let outbox = seal
         .load_pending_outbox(authority.chain_id, restart_config.local_validator_id, 128)
         .unwrap();

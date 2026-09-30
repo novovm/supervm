@@ -1,0 +1,116 @@
+新创世链：签名交易准入、历史追赶与进程恢复
+
+范围
+本切片接入现有 FreshChainLifecycleV1、AOEM 独立执行与 V3 最终性路径。
+不是旧 pending executor，不修改 NOVORUDP frame，不授予 RPC 签名/发币权限。
+本机验证通过也不等于公网、Windows 多机、物理断电或生产发币获准。
+
+启用方式
+保留已经批准的原 seal 配置、创世与身份；本切片不生成这些材料。
+seal 配置需要显式开启 follow_finalized_tip、receive_successors、propose_successors。
+主节点原 native_execution_tick 启动参数保持不变，额外设置：
+NOVOVM_NATIVE_FRESH_RPC_BIND=127.0.0.1:18545
+不设置此变量就不监听 RPC。拒绝 0.0.0.0 或公网地址的直接绑定。
+远程用户接入需另外部署受控 HTTPS 网关、身份/速率控制与监控；不能把
+当前回环 HTTP 当作已完成的公网 API 服务。不要将验证者私钥交给网关。
+
+接口
+HTTP POST /，Content-Type: application/json，带 Content-Length。
+仅支持单个 JSON-RPC 2.0 请求；不支持批处理、chunked 或 HTTP pipelining。
+
+提交已签名的 NOV native execute wire（十六进制，0x 前缀可选）：
+{"jsonrpc":"2.0","id":1,"method":"nov_sendRawTransaction","params":["<signed-wire-hex>"]}
+
+按规范化交易哈希查询：
+{"jsonrpc":"2.0","id":2,"method":"nov_getTransactionStatus","params":["<tx-hash-hex>"]}
+
+节点状态：
+{"jsonrpc":"2.0","id":3,"method":"nov_chainStatus","params":[]}
+
+普通用户只需自己的账户签名，不需要验证者密钥或绑定验证者 transport 身份。
+转账等业务应使用已有受支持的 execute 请求；本切片不新增业务执行类型。
+返回 status=queued 表示通过链域/签名/账户权属认证，并已同步写入本机 RocksDB
+WAL；不代表已执行、远端已接收或达到共识。Future nonce 可排队，选块时必须
+按已验证父状态重新检查精确 nonce 顺序。不同交易占同一账户 nonce 会被拒绝。
+相同交易重试不重复入队；已最终化交易的重试返回 finalized，而非再次执行。
+status=finalized 只来自经过最终性验证的父状态和累计回执，receipt.status 仍需
+检查：已最终化不等于业务执行成功。finalized_tip_height 是当前已确认链尖高度，
+不是该笔交易所在高度。unknown 不表示执行成功，也不保证交易从未提交过。
+
+持久队列
+队列目录由 seal_store_path.with_extension("txpool") 派生，启用
+propose_successors 时打开。该目录纳入输入/输出路径隔离检查；不得与密钥、
+账本、执行库或其他写入目录重叠。RocksDB 排他锁阻止同时开两个写入者。
+队列绑定 chain_id 和创世承诺；恢复时重新验证记录哈希、签名、nonce 唯一性和容量。
+无身份记录、错创世或损坏数据都报错，不静默清空、不伪造成功。
+限制：单交易 64 KiB、总计 1024 条/16 MiB、每个签名账户 64 条。
+满队列或 nonce 冲突必须由客户端处理错误；未最终化交易不因重启被删除。
+已最终化或 nonce 已被其他最终化交易消耗的条目通过同步批写移除。
+任何失败写入不得返回 queued；不确定持久化错误使本生命周期停止接收新工作。
+已入队交易按有界速率在验证者之间传播；非 leader 也能接收用户提交。
+
+多高度追赶
+receive_successors 启用时，在经过身份绑定的 NativeSeal 控制通道发送 NOVHIST1
+请求。请求绑定 authority commitment、创世承诺和明确的下一高度。
+每个绑定 peer 只保留一个请求/响应，限速重试，不接受未绑定来源的任意历史扫描。
+任何持有该高度已验证归档的验证者都能响应，不依赖原 proposer 在线。
+响应包含原 prepare QC、完整 DecisionCertificateV3 及有界块体分片。
+证书中的原签名者不因转发者身份改变。接收方只执行当前父块的直接后继，逐高度
+验证 ancestry、签名、块体承诺及本机 AOEM 输出，再经原发布/最终性路径晋升。
+不直接复制远端状态或把 send_to/transport ACK 当作最终化；不跳过中间高度。
+重复请求不重置大块分片发送进度；接收者请求更高高度时才推进响应。
+该协议要求各参与节点使用本切片版本；旧二进制不会自动获得历史服务能力。
+
+测试
+本机 Linux 全量可重复门禁（严格 Clippy、库测试、网络测试、CLI 与连续进程专项）：
+python3 scripts/novovm-local-readiness.py
+要求 unshare 用户/网络 namespace 可用、ip 命令和已配置的 Rust 工具链。
+脚本不会为了测试关闭宿主服务，也不会回退到宿主网络；无隔离能力即失败。
+使用 Cargo 本次构建输出定位测试 binary，避免复用猜测的文件名或旧 binary。
+报告记录源码内容摘要、测试程序 SHA256、各阶段命令/退出码/测试计数，明确记录
+ignored；零测试不能通过。全量失败不会自动缩小测试集合或签生产就绪。
+默认产物在 artifacts/local-readiness-<UTC>/；可用 --output-dir 指定新的 artifacts 子目录。
+当前开发工作区允许单机测试，但官方 release 打包仍要求 clean HEAD，不绕过。
+
+快速库级：
+cargo test -p novovm-node --lib fresh_pool_tests -- --test-threads=1
+cargo test -p novovm-node --lib native_fresh_rpc -- --test-threads=1
+
+AOEM 创世发布与晋升恢复（包含三个持久化检查点强杀）：
+cargo test -p novovm-node --lib candidate_workspace_execution_fresh_genesis_ -- --test-threads=1
+
+进程级（预留独立 loopback 127.0.0.2:443；不要停止现有服务来腾端口）：
+cargo test -p novovm-node --test native_candidate_node_cli fresh_genesis_main_nodes_continue_three_heights_without_restart -- --ignored --test-threads=1
+
+Linux 可在独立网络 namespace 内运行已编译测试，避免端口冲突。
+CI 已新增显式 ignored 用例执行步骤；未运行的远程 CI 不计为通过。
+专项用测试身份和独立数据库验证：
+- 非 leader 通过 HTTP 收到签名交易，返回 queued 后被强制终止。
+- 重启后不重提该交易，仍传播并最终确认；重复提交、坏签名有明确结果。
+- 确认中的候选不阻止持久排队；重提不重复入队、不改候选、不重做执行。
+- 已最终化交易重提返回原最终回执；future nonce 保留排队，不反复记为拒绝。
+- 三个独立进程连续完成三个后继高度，各自查询到最终回执。
+- 一个节点落后三个高度，原历史 proposer 离线，从其他验证者取证明/块体追上。
+- 追上后强制终止、重启，完整历史和最终块保持一致。
+三个晋升检查点（authority/ledger/finality）进程终止回归继续独立执行。
+
+时间与消息丢失防护
+FreshChainLifecycleV1 对本机时钟最多允许 30 秒未来偏差。
+收到的后继块体在创建/执行工作区之前检查时间；未来块被拒绝并等待重传。
+已有执行候选或最终父状态超出本机时钟上限时，主节点停留 clock_waiting，
+不会继续签名或自动构建后继；校时恢复后继续，不修改原候选、nonce 或待执行队列。
+状态新增 clock_waiting、future_timestamp_rejected、max_future_block_time_ms。
+这不是跨机器校时服务；部署仍需时钟同步。历史块只有过旧不会被拒绝，过于未来的
+最终性归档同样暂不导入；测试中的虚拟时钟只用于 crate 内测试入口。
+
+V3 同一轮次收到 DecisionVoteV3 / DecisionCertificateV3 而本地 prepare 消息丢失时，
+先验证完整 transport 绑定、来源及 V3 签名，再将携带的 QC 交给原 prepare 门禁。
+实际持久化和签名仍在本地 poll；不跳轮、不放宽 NewView、timeout 或安全锁。
+补入的真实回环 WSS 测试只给落后节点投递 V3 消息，丢弃其 prepare 流量，检查
+恢复、坏签名拒绝及重启证据不变。它不等于已解决跨轮次 prepare 分票活性。
+
+尚未包含的生产能力
+本切片不实现无候选时 round-0 leader 离线的自动换 leader，也不宣称解决
+prepare 后分票活性、epoch/验证集合动态变更、无限历史快速同步、磁盘物理损坏
+或备份恢复。长跑、所有故障排列、公网网关安全和实体多机必须另行验收。
+所有以上未验项目继续阻断“全面生产就绪”签字。

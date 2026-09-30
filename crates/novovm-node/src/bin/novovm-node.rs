@@ -43560,6 +43560,17 @@ fn run_fresh_genesis_confirmation_v1(
     interval_ms: u64,
 ) -> Result<()> {
     let _session_scope = novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
+    let mut rpc = string_env_nonempty("NOVOVM_NATIVE_FRESH_RPC_BIND")
+        .map(|address| -> Result<_> {
+            if config.transaction_pool_path().is_none() {
+                bail!("fresh RPC requires durable successor ingress");
+            }
+            novovm_node::native_fresh_rpc::FreshRpcServer::bind(address.parse()?)
+        })
+        .transpose()?;
+    if let Some(rpc) = &rpc {
+        println!("native_fresh_rpc_listening: {}", rpc.local_addr()?);
+    }
     if !config.is_fresh_genesis() {
         bail!("fresh genesis startup requires an explicit genesis configuration");
     }
@@ -43581,6 +43592,9 @@ fn run_fresh_genesis_confirmation_v1(
     let mut ticks = 0u64;
     let mut confirmation_reported = None;
     loop {
+        if let Some(rpc) = &mut rpc {
+            rpc.poll(&mut lifecycle)?;
+        }
         for event in runtime.drain_events(128) {
             if let ProductMainlineOverlayEventV1::Inbound(inbound) = event {
                 lifecycle.enqueue(inbound);

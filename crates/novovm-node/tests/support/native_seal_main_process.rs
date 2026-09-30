@@ -34,6 +34,8 @@ impl Drop for Relay {
     }
 }
 struct Child(std::process::Child);
+#[path = "native_seal_continuous_process.rs"]
+mod continuous;
 #[path = "native_seal_successor_process.rs"]
 mod successor;
 impl Drop for Child {
@@ -83,6 +85,9 @@ fn run_cluster_at_height(
     for &index in active {
         let node = &nodes[index];
         let mut cmd = node.command();
+        if label.starts_with("continuous") {
+            cmd.env("NOVOVM_NATIVE_FRESH_RPC_BIND", "127.0.0.1:0");
+        }
         cmd.env("NOVOVM_NODE_MODE", "native_execution_tick")
             .env("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", ticks.to_string())
             .env("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", "250")
@@ -102,7 +107,14 @@ fn run_cluster_at_height(
             .env("NOVOVM_NATIVE_SEAL_CONFIG", "seal.json")
             .stdout(fs::File::create(node.0.join(format!("{label}.stdout.log"))).unwrap())
             .stderr(fs::File::create(node.0.join(format!("{label}.stderr.log"))).unwrap());
-        children.push((index, Child(cmd.spawn().unwrap())));
+        let child = Child(cmd.spawn().unwrap());
+        fs::write(
+            node.0.join(format!("{label}.process.json")),
+            serde_json::to_vec(&serde_json::json!({"node_index":index,"pid":child.0.id()}))
+                .unwrap(),
+        )
+        .unwrap();
+        children.push((index, child));
     }
     let deadline = Instant::now();
     if let Some(inject) = inject {
@@ -219,22 +231,28 @@ fn run_cluster_at_height(
 #[test]
 #[ignore = "requires exclusive loopback 127.0.0.2:443; run explicitly on a prepared host"]
 fn real_aoem_main_nodes_prepare_three_of_four_and_recover() {
-    run_real_aoem_main_nodes(false, false);
+    run_real_aoem_main_nodes(false, false, false);
 }
 
 #[test]
 #[ignore = "requires exclusive loopback 127.0.0.2:443; run explicitly on a prepared host"]
 fn real_aoem_main_nodes_decision_v3_three_of_four_and_recover() {
-    run_real_aoem_main_nodes(true, false);
+    run_real_aoem_main_nodes(true, false, false);
 }
 
 #[test]
 #[ignore = "requires exclusive loopback 127.0.0.2:443; run explicitly on a prepared host"]
 fn fresh_genesis_main_nodes_confirm_three_of_four_and_recover() {
-    run_real_aoem_main_nodes(true, true);
+    run_real_aoem_main_nodes(true, true, false);
 }
 
-fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool) {
+#[test]
+#[ignore = "requires exclusive loopback 127.0.0.2:443; run explicitly on a prepared host"]
+fn fresh_genesis_main_nodes_continue_three_heights_without_restart() {
+    run_real_aoem_main_nodes(true, true, true);
+}
+
+fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool, continuous: bool) {
     let reserve = std::net::TcpListener::bind("127.0.0.2:443")
         .expect("exclusive loopback 443 required; do not stop other services");
     let (genesis, fresh_plan) = super::native_fresh_genesis_cli::inputs();
@@ -618,5 +636,15 @@ fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool) {
             &fresh_plan,
             &root,
         );
+        if continuous {
+            continuous::exercise(
+                &nodes,
+                &authority,
+                &validators,
+                &peer_ids,
+                &fresh_plan,
+                &root,
+            );
+        }
     }
 }

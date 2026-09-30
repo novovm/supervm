@@ -36,8 +36,8 @@ pub struct CandidateBodyAssemblerV1 {
 }
 
 impl CandidateBodyAssemblerV1 {
-    /// Existing signed proposal wire is the manifest. Reject non-proposals,
-    /// wrong leader/source/domain and excessive bounds before body allocation.
+    /// A signed proposal or verified final decision supplies the manifest.
+    /// Reject invalid signer/source/domain and excessive bounds before allocation.
     pub fn new(
         proposal_wire: &[u8],
         authority: &NovNativeSealEpochAuthorityV1,
@@ -50,8 +50,10 @@ impl CandidateBodyAssemblerV1 {
             height,
             authenticated_source,
         )?;
-        let Message::Proposal { proposal, .. } = &message else {
-            bail!("body transfer requires a signed proposal");
+        let proposal = match &message {
+            Message::Proposal { proposal, .. }
+            | Message::DecisionCertificateV3 { proposal, .. } => proposal,
+            _ => bail!("body transfer requires a signed proposal or final decision"),
         };
         let subject = &proposal.subject;
         let count = subject.tx_count as usize;

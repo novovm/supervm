@@ -2,19 +2,20 @@
 //! pending executor. No ACK or pool admission is granted before authentication.
 use super::*;
 use crate::tx_ingress::candidate_workspace as workspace;
-use sha2::{Digest, Sha256};
 
 const MAX_SELECTED: usize = 16;
 
 impl FreshChainLifecycleV1 {
-    pub(super) fn propose_from_transactions(
+    pub(super) fn propose_from_pool(
         &mut self,
-        events: Vec<ProductMainlineOverlayInboundV1>,
         runtime: &ProductMainlineOverlayRuntimeV1,
         now: Instant,
         wall_ms: u64,
     ) -> Result<()> {
-        if events.is_empty() {
+        let Some(pool) = &self.pool else {
+            return Ok(());
+        };
+        if pool.is_empty() {
             return Ok(());
         }
         let config = self
@@ -28,7 +29,6 @@ impl FreshChainLifecycleV1 {
         if !config.propose_successors
             || config.authority.expected_leader(height, 0)? != config.local_validator_id
         {
-            self.rejected = self.rejected.saturating_add(events.len() as u64);
             return Ok(());
         }
         let parent = workspace::load_finalized_genesis_parent_v1(
@@ -47,6 +47,10 @@ impl FreshChainLifecycleV1 {
         {
             bail!("automatic proposal parent differs from configured finalized authority");
         }
+        if !clock::timestamp_allowed(parent.block().header.timestamp_unix_ms, wall_ms) {
+            self.clock_waiting = true;
+            return Ok(());
+        }
         let context = novovm_protocol::NovBlockExecutionContextV1 {
             chain_id: config.chain_id,
             block_height: height,
@@ -60,18 +64,11 @@ impl FreshChainLifecycleV1 {
             timestamp_unix_ms: wall_ms.max(parent.block().header.timestamp_unix_ms),
         };
         let mut selected = Vec::new();
-        for event in events {
+        for entry in pool.ordered() {
             if selected.len() == MAX_SELECTED {
                 break;
             }
-            let raw = event.frame.payload;
-            let hash = crate::tx_ingress::canonical_nov_native_tx_hash_from_payload_v1(&raw);
-            let digest: [u8; 32] = Sha256::digest(&raw).into();
-            if hash.ok() != Some(event.object_hash) || digest != event.payload_sha256 {
-                self.rejected = self.rejected.saturating_add(1);
-                continue;
-            }
-            selected.push(raw);
+            selected.push(entry.raw);
             // Authenticate the entire proposed prefix against the same verified
             // parent: signatures, identity, chain, exact nonce ordering and size.
             // This call has no pending/reservation/authority mutation.
@@ -80,7 +77,6 @@ impl FreshChainLifecycleV1 {
                 .is_err()
             {
                 selected.pop();
-                self.rejected = self.rejected.saturating_add(1);
             }
         }
         if selected.is_empty() {

@@ -69,6 +69,7 @@ struct PeerInbox {
 }
 
 pub struct NovNativeSealServiceV1 {
+    candidate_timestamp_unix_ms: u64,
     body_delivery: Option<body_delivery::BodyDeliveryV1>,
     isolated_params: Option<serde_json::Value>,
     decision: Option<NovNativeSealDecisionLoopV3>,
@@ -271,6 +272,7 @@ impl NovNativeSealServiceV1 {
             })
             .collect();
         Ok(Self {
+            candidate_timestamp_unix_ms: block.header.timestamp_unix_ms,
             body_delivery: None,
             isolated_params: None,
             decision: None,
@@ -420,6 +422,7 @@ impl NovNativeSealServiceV1 {
         self.last_poll = Some(now);
         let peers = self.inbox.keys().cloned().collect::<Vec<_>>();
         let mut budget = self.config.ingress_per_poll;
+        let mut deferred_decisions = Vec::new();
         // Round robin across pinned sources; one faulty source cannot occupy the
         // entire verifier budget. A sliding one-second window counts rejects too.
         for _ in 0..PER_PEER_QUEUE {
@@ -452,15 +455,24 @@ impl NovNativeSealServiceV1 {
                         .get(10)
                         .is_some_and(|kind| matches!(kind, 9 | 10))
                 {
-                    if self
-                        .decision
-                        .as_mut()
-                        .is_some_and(|decision| decision.enqueue(inbound))
-                    {
-                        self.accepted = self.accepted.saturating_add(1);
+                    if let Some(decision) = self.decision.as_mut() {
+                        if decision.enqueue(inbound) {
+                            self.accepted = self.accepted.saturating_add(1);
+                        } else {
+                            self.dropped = self.dropped.saturating_add(1);
+                        }
                     } else {
-                        // Before local prepare, peers retry; ingress never signs.
-                        self.dropped = self.dropped.saturating_add(1);
+                        match self
+                            .bridge
+                            .ingest(candidate_view, &self.store, runtime, &inbound)
+                        {
+                            Ok(true) => {
+                                deferred_decisions.push(inbound);
+                                self.accepted = self.accepted.saturating_add(1);
+                            }
+                            Ok(false) => self.dropped = self.dropped.saturating_add(1),
+                            Err(_) => self.rejected = self.rejected.saturating_add(1),
+                        }
                     }
                     continue;
                 }
@@ -489,6 +501,15 @@ impl NovNativeSealServiceV1 {
         )?;
         self.sent = self.sent.saturating_add(sent as u64);
         self.poll_decision_v3(candidate_view, runtime, now)?;
+        for inbound in deferred_decisions {
+            if !self
+                .decision
+                .as_mut()
+                .is_some_and(|decision| decision.enqueue(inbound))
+            {
+                self.dropped = self.dropped.saturating_add(1);
+            }
+        }
         self.poll_body_delivery(candidate_view, runtime, now)?;
         Ok(())
     }

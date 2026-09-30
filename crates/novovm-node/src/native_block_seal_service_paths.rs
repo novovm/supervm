@@ -20,6 +20,23 @@ pub fn validate_service_paths_v1(
     other_write_paths: &[PathBuf],
     other_read_paths: &[PathBuf],
 ) -> Result<()> {
+    if let Some(pool) = config.transaction_pool_path() {
+        let pool = comparable_path(&pool)?;
+        for other in config
+            .protected_paths
+            .iter()
+            .chain(other_read_paths)
+            .chain(other_write_paths)
+            .chain([&config.seal_store_path, &ledger_path.to_path_buf()])
+        {
+            ensure_disjoint(
+                &pool,
+                &comparable_path(other)?,
+                "transaction pool",
+                "node input/output",
+            )?;
+        }
+    }
     validate_path_sets(
         &config.seal_store_path,
         ledger_path,

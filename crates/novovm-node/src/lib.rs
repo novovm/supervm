@@ -17,6 +17,7 @@ pub mod native_block_seal;
 pub mod native_block_seal_overlay;
 pub mod native_candidate_body;
 pub mod native_candidate_plan;
+pub mod native_fresh_rpc;
 pub mod product_delivery_journal;
 pub mod product_evidence;
 pub mod product_mainline_overlay;

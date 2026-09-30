@@ -2,8 +2,66 @@
 
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 起点：开发分支 `feature/treasury-balance-backed-v2`，已推送基线 `8025fd7`。
-用户已要求持续推进到可部署生产；目标范围（对外测试网或真实资产主网）等待确认。
+用户已要求持续推进到真实资产主网上线发币；正式创世、分配、验证者及上线窗口尚未批准。
 不自动部署、合并 main、生成正式创世经济参数或替换运行中服务。
+
+运营者入门与待确认参数见 `NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt`。
+用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
+身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
+
+## 单机加固与扩大回归（2026-09-29，尚未通过全量门禁）
+
+状态：`LOCAL HARDENING VERIFIED / FULL LOCAL GATE BLOCKED`。
+本开发检查点基于 `09d1bfe`，包含用户准入、历史追赶与单机恢复加固。
+提交到 `main` 仅保存开发进度，不代表全量门禁或生产验收通过；未多机部署或正式发币。
+
+本轮补齐两处防护：
+- V3 同轮决议消息携带的完整 QC 可以补回丢失的 prepare 流量，仍走完整签名、
+  本地执行、NewView、timeout 与安全锁验证；只在 poll 持久化/签名。
+  真实回环 WSS 分别仅投递 DecisionVoteV3 / DecisionCertificateV3，验证恢复、
+  坏签名拒绝及重启不重签。没有声称解决跨轮次分票。
+- FreshChainLifecycleV1 限制块时间最多领先本机 30 秒；后继块体在执行前拒绝
+  过远未来时间。已有候选/父块在时钟回退时等待校时，不继续签名/提案。
+  检查边界值、整数极值、未来块不创建工作区，以及恢复后原候选继续。
+
+核心专项 212 个不同 Rust 测试通过：共识/账本/准入等 200、AOEM 创世/晋升恢复 3、
+CLI 常规 5、连续高度进程 1、其余此前 ignored 的主进程场景 3。
+后四项进程测试均显式执行，不能将常规 CLI 的 `4 ignored` 另算通过。
+连续进程专项 304.83 秒，晋升检查点组 299.76 秒；包含持久 RPC 入队后强杀、
+高度 3–5 连续最终化、原 proposer 离线时逐高度追赶及重启，未绕过 AOEM 执行。
+新验收 runner 自测 6 项、打包构建失败保护、严格 Clippy、格式检查通过。
+release 主节点已重建，协议承诺查询成功；旧便携安装包未替换。
+
+扩大回归不通过，不能用以上专项遮盖：
+
+| 门禁 | 实测结果 |
+| --- | --- |
+| novovm-node 全部库测试 | 700 passed / 54 failed / 7 ignored（603.14 秒） |
+| novovm-network 全部库测试 | 465 passed / 13 failed / 1 ignored |
+| 节点失败用例逐项独立复跑 | 23 转为通过，31 仍失败 |
+| 网络失败用例逐项独立复跑 | 13 仍失败 |
+
+节点失败涉及旧查询入口 nonce、费用/执行回执、mapped asset 与账户测试；
+其中顺序污染可见 expected nonce=0 而提交 2/3/4，以及 panic 后测试锁 poisoned。
+但 31 项独立失败不能归因于顺序污染。网络失败集中在 ETH RLPx peer worker，
+独立复跑仍出现握手后 EOF / 缺少预期同步请求，尚未归因，不修改无关协议来刷绿。
+
+新脚本 `scripts/novovm-local-readiness.py` 可重跑 Linux 本机门禁：隔离网络空间、
+从 Cargo 构建消息定位二进制、记录源码及 binary SHA256、拒绝零测试和非零退出。
+实际完整调用在 node 库失败时以退出码 1 停止；不会将后续未执行阶段记为通过。
+测试前后源码摘要相同，`accepted=false`、`production_ready=false`。
+网络及 CLI 的上述独立结果在另一个汇总中保留，不伪造成该失败 runner 已执行。
+
+证据入口：
+- `artifacts/local-hardening-09d1bfe/acceptance.json`
+- `artifacts/local-hardening-runner-09d1bfe/acceptance.json`
+- `artifacts/audit/candidate-node-processes/seal-relay-3128940-1790724792838959118/continuous-acceptance.json`
+- `artifacts/audit/promotion-process-kill/3082274-1790724764930153446/`
+
+下一阶段仍留在单机：上述失败定位修复、无候选时 leader 离线的 pacemaker/NewView、
+跨轮 prepare 分票活性、长时间 soak、磁盘故障/备份恢复、公网网关均未完成。
+正式 clean release 仍需独立验收；禁止绕过 clean-worktree 打包检查。
+这些项目未闭环前，不切实体多机验收，也不签生产上线。
 
 ## 已确认的生产创世边界（2026-09-29）
 
@@ -12,10 +70,82 @@
 历史块、回执或确认凭证；现有测试数据保留，不授权删除或覆盖。
 各生产节点必须核验同一份明确批准的创世配置及哈希，而不是各自生成不同创世。
 此决定排除测试链升级/检查点迁移，不替代正式分配、验证集合及密钥配置的确认。
-账本级初始化预约与占用目标拒绝已实现；完整初始化与跨库崩溃恢复仍待实现和测试，不能据此标记生产就绪。
+初始化、首块/后继晋升及部分跨库恢复已有实现和本机证据，详见当前结论；
+故障覆盖、实体多机及正式配置仍未完成，不能据此标记生产就绪。
 实现约束见 `NOVOVM_ISOLATED_PROMOTION_PROTOCOL_V1.md` 的 ancestry/trust-root 部分。
 
 ## 当前结论
+
+### 本轮：用户准入、历史追赶与进程恢复
+
+本开发检查点包含基于 `09d1bfe` 的以下变更；既有安装包不包含这些新接口。
+实现及操作边界见 `NOVOVM_FRESH_CHAIN_INGRESS_RECOVERY_V1.txt`。
+
+- 新增默认不监听的回环 JSON-RPC：`nov_sendRawTransaction`、
+  `nov_getTransactionStatus`、`nov_chainStatus`。用户签名不要求验证者身份。
+- 显式 successor 模式下使用创世绑定 RocksDB 交易队列；WAL 同步后才返回 queued，
+  去重、nonce 冲突和容量上限可核验。由已验证最终父状态清理已确认条目。
+- 非 leader 的入队交易向验证者有界传播；选块时重新验证父状态及 nonce。
+- 历史请求绑定 authority/创世/高度；任一持有归档的验证者可发送原 prepare QC、
+  DecisionCertificateV3 和块体。接收者逐高度独立执行，不放宽签名或执行验证。
+
+首轮进程测试揭示只补最终证书无法满足原 prepare 门槛；保留验证规则补齐 QC 后，
+专项先通过（306.81 秒），最终代码复验 1 passed（308.89 秒）。最新证据：
+`artifacts/audit/candidate-node-processes/seal-relay-2590344-1790723312222864970/continuous-acceptance.json`。
+包含非 leader RPC 入队后被杀、重启后不重提仍确认、连续高度 3–5、原历史
+proposer 离线时落后三高度追赶，以及追上后的强杀恢复。最终进程 PID 为
+2882417、2882418、2882419，入队后被终止的进程 PID 为 2878403。
+
+最终本机验收共 205 个不同测试通过，重复运行不另计：
+- 共识/账本/创世/守恒/准入等 196 passed（87.88 秒），含 HTTP 慢连接、
+  pool 身份丢失、错签名、容量、重启与去重检查。
+- AOEM 新创世与恢复组 3 passed（282.09 秒），含 authority/ledger/finality
+  三检查点进程强杀。证据目录：
+  `artifacts/audit/promotion-process-kill/2547631-1790723282013556601/`。
+- 普通主节点 CLI 5 passed / 4 ignored（12.16 秒）；其中连续进程专项已另外
+  显式运行 1 passed（308.89 秒），其余 ignored 不计为通过。
+- 严格 Clippy、格式、diff 及 CI YAML 语法检查通过；远程 CI 不在本机计数中。
+
+验收摘要与日志：`artifacts/fresh-ingress-history-09d1bfe/acceptance.json`。
+中途失败日志保留：历史响应补齐原 prepare QC；旧测试中“future nonce 丢弃”
+和“确认期间拒收”断言改为持久排队，同时检查候选、工作区和持久 outbox 不变。
+没有通过删除签名、nonce 顺序、执行或最终性验证来放宽验收。
+
+该轮当时仍有代码级上线阻断：无候选时仅 round-0 leader 自动提案，prepare 后分票
+活性及块时间未来偏差约束尚需闭环；时间防护的后续进展见本文件顶部。
+该轮不承诺 epoch 变更、无限历史快速同步、
+物理坏盘恢复或安全公网 API。远程接入必须另配受控 HTTPS 网关并验收。
+新增 CI 显式执行进程专项；本机 GitHub CLI 未登录，远程 CI 尚未核验。
+
+### 先前基线证据（本轮实现之前）
+
+本轮 Linux 验收以 `09d1bfe` 为源码基线：官方脚本构建七个 release 程序，
+Linux FULLMAX AOEM 核心 SHA-256 与 SDK 清单匹配，安装包 58 个文件校验通过。
+安装目录 `artifacts/local-install-09d1bfe/runtime/` 的主节点配置承诺模式与 AOEM
+FFI 实际加载通过；未注册常驻服务。前轮 32 项 Rust 测试及打包失败保护测试通过，
+本轮新增共识/账本/创世/余额守恒/nonce/协议 pin 门禁 190 passed（80.35 秒）。
+记录在 `artifacts/production-acceptance-09d1bfe/core-gates.log`。
+传输持久化、recipient ACK、relay 边界和证据校验另有 42 passed（6.49 秒），
+记录在同目录 `transport-durability-gates.log`；这两组加连续高度专项共 233 项，
+重复运行不另计为新增覆盖。
+
+新增显式 ignored 的连续高度主进程测试，复用已有第一、第二高度真实执行准备。
+三个独立验证进程在同一生命周期内从高度 2 连续确认 3、4、5，由剩余一个测试
+transport 身份按当前 leader 提交签名交易，该身份的验证进程保持关闭。
+逐高度等待三个节点各自 AOEM/账本发布及同一决议，末高度后强制终止并从原配置
+重启；核对完整历史最终性证明、末块交易体一致且前两高度证明未改变。
+首次专项 1 passed（218.77 秒），证据：
+`artifacts/audit/candidate-node-processes/seal-relay-487791-1790719473860146443/continuous-acceptance.json`。
+补充进程 PID 证据后，最终版本复验 1 passed（218.28 秒），证据：
+`artifacts/audit/candidate-node-processes/seal-relay-755907-1790719706059628974/continuous-acceptance.json`。
+三个连续运行 PID 为 943609、943610、943611；重启后完整历史保持一致。
+专项严格 Clippy、格式和 diff 检查通过。
+这证明有界的本机连续三次后继推进，不代表长跑、所有 leader 故障场景、
+落后三个高度的第四节点追赶、普通钱包 RPC 准入或真实多机验收。
+为避免遗漏，该用例必须显式 `--ignored` 执行；普通 CLI 测试不会自动包含它。
+
+上述先前基线尚无普通用户持久准入和多高度追赶；本轮实现和证据见本节顶部，
+不得以旧安装包或旧 CI 结果代替本轮发布验证。
 
 晋升检查点新增真正的进程终止验收：AOEM authority 提交后、ledger 提交后、
 finality 提交后，各在测试专用回调内保持协调器及锁，由父测试 kill 活子进程，
@@ -491,6 +621,24 @@ V3 编解码与 2/4 不成证、3/4 成证；15 passed / 0 failed（43.59 秒）
 现在显式启用的固定候选主节点服务可接管 V3；这不等于默认启用、连续出块或候选已成为最终块。
 
 ## 验收路径
+
+以下表格为当前门禁；后面的旧 CI 段落保留为历史问题记录。
+
+| 项目 | 当前状态 | 上线仍需完成 |
+| --- | --- | --- |
+| Linux 安装及 AOEM runtime | 本机 PASS，见 `artifacts/local-install-09d1bfe/INSTALLATION.txt` | Windows 同版本包与实际部署配置核对 |
+| 共识、账本、创世、守恒、防重放门禁 | 本轮 196 项定向回归 PASS，恢复组另 3 项 PASS | 发布版本完整 CI、独立安全审查 |
+| 传输持久化、ACK 与 relay 证据 | 当前基线 42 项本机 PASS | 公网中断恢复、故障域及容量验收 |
+| 三个连续后继高度 | RPC 用户交易专项本机 PASS，最终复验 308.89 秒 | 长跑、全部 leader 轮换/故障、持久化容量 |
+| 强制进程终止恢复 | 交易入队被杀、追赶后强杀及晋升检查点恢复 | 写入中断、磁盘故障、物理断电覆盖 |
+| 交易提交与查询 | 签名用户回环 RPC、持久队列、非 leader 传播与最终回执已实现 | 公网 HTTPS 网关、钱包集成、安全与容量验收 |
+| 数据可用性及追赶 | 原历史 proposer 离线时三高度追赶专项 PASS | 实体多机、长历史/epoch 变更及故障组合 |
+| 共识异常活性 | 安全拒绝和部分换轮已有回归 | prepare 后分票、无候选 leader 离线、网络分区恢复 |
+| 正式创世与密钥 | 待运营者理解并批准 | 资产单位、初始分配、验证集合、独立密钥与备份 |
+| 实体多机及公网 | 有设备，当前连接信息待采集 | 四台 Windows 与阿里云的同版本实跑证据 |
+| 运维与发布 | 未完成 | 监控、备份恢复、升级回退、容量、发布窗口 |
+
+### 历史 CI 与门禁记录
 
 最新已结束远程运行 `36565639881`（基线 `3b1629a`）仍为 FAILURE：此前失败的
 WSS 回归已通过，但 `candidate_workspace_execution_configured_services_real_aoem_quorum_and_restart`

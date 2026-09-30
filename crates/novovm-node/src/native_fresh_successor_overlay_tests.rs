@@ -147,6 +147,39 @@ fn exercise_fresh_successor_overlay(
     };
     let bytes = encode_round(&decision, &authority, 2, peer).unwrap();
     assert_eq!(decode_round(&bytes, &authority, 2, peer).unwrap(), decision);
+    let relay = authority
+        .transport_bindings
+        .iter()
+        .find(|binding| binding.transport_peer_id != peer)
+        .unwrap()
+        .transport_peer_id
+        .clone();
+    let raw_txs = workspace::load_block_artifact_v1(chain, id, params)
+        .unwrap()
+        .unwrap()
+        .block()
+        .body
+        .raw_txs
+        .clone();
+    let relay_wire = encode_round(&decision, &authority, 2, &relay).unwrap();
+    let mut assembler = crate::native_candidate_body::CandidateBodyAssemblerV1::new(
+        &relay_wire, &authority, 2, &relay,
+    )
+    .unwrap();
+    let chunks = assembler.encode_chunks(&raw_txs).unwrap();
+    let mut completed = None;
+    for chunk in chunks {
+        completed = assembler.push(&relay, &chunk).unwrap();
+    }
+    assert_eq!(completed.unwrap().raw_txs, raw_txs);
+    assert!(crate::native_candidate_body::CandidateBodyAssemblerV1::new(
+        &relay_wire, &authority, 3, &relay,
+    )
+    .is_err());
+    assert!(crate::native_candidate_body::CandidateBodyAssemblerV1::new(
+        &relay_wire, &authority, 2, "unbound",
+    )
+    .is_err());
     drop(quarantine);
     let reopened = Quarantine::open(&path.with_extension("fresh-quarantine")).unwrap();
     assert_eq!(

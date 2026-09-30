@@ -536,9 +536,35 @@ impl NovNativeSealRoundDriverV1 {
             self.binding.height,
             source_peer_id,
         )?;
-        if message.is_decision_v3() {
-            bail!("decision v3 online driver is not enabled");
-        }
+        let message = if message.is_decision_v3() {
+            if !self.binding.decision_v3 {
+                bail!("decision v3 online driver is not enabled");
+            }
+            match message {
+                Message::DecisionVoteV3 {
+                    proposal,
+                    qc,
+                    certificate,
+                    ..
+                } => Message::QuorumCertificate {
+                    proposal,
+                    qc,
+                    certificate,
+                },
+                Message::DecisionCertificateV3 {
+                    proposal,
+                    decision,
+                    certificate,
+                } => Message::QuorumCertificate {
+                    proposal,
+                    qc: Box::new(decision.prepare),
+                    certificate,
+                },
+                _ => unreachable!(),
+            }
+        } else {
+            message
+        };
         if message.is_commit_v2() {
             return self.ingest_commit(ledger, store, &message);
         }

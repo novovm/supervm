@@ -12,7 +12,7 @@ pub(super) fn inputs() -> (FreshGenesisConfigV1, NovNativeCandidateExecutionPlan
     let config = FreshGenesisConfigV1 {
         schema: GENESIS_SCHEMA_V1.into(),
         chain_id: CHAIN,
-        timestamp_unix_ms: 1_900_000_000_000,
+        timestamp_unix_ms: 1_700_000_000_000,
         protocol_config_commitment: protocol,
         allocations: vec![GenesisAllocationV1 {
             account: novovm_adapter_novovm::address_from_seed_v1(seed)

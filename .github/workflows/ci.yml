@@ -300,6 +300,30 @@ jobs:
         timeout-minutes: 15
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --test native_candidate_node_cli --locked -- --test-threads=1
 
+      - name: Durable user ingress and multi-height process recovery
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib fresh_pool_tests --locked -- --test-threads=1
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib native_fresh_rpc --locked -- --test-threads=1
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --test native_candidate_node_cli --locked --no-run --message-format=json > "$RUNNER_TEMP/fresh-process-build.jsonl"
+          binary=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "native_candidate_node_cli" and .profile.test) | .executable // empty' "$RUNNER_TEMP/fresh-process-build.jsonl")
+          test -x "$binary"
+          sudo unshare --net sh -c 'ip link set lo up; exec "$1" fresh_genesis_main_nodes_continue_three_heights_without_restart --ignored --test-threads=1' fresh-process-gate "$binary"
+
+      - name: Upload user ingress and recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-ingress-history-recovery
+          path: |
+            artifacts/audit/candidate-node-processes/**/continuous-acceptance.json
+            artifacts/audit/candidate-node-processes/**/*.process.json
+            artifacts/audit/candidate-node-processes/**/*.stdout.log
+            artifacts/audit/candidate-node-processes/**/*.stderr.log
+          if-no-files-found: warn
+
       - name: Mainline soak freshness coverage and progress tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib mainline_soak::tests
 
