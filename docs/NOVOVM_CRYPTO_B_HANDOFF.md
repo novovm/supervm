@@ -4,6 +4,18 @@
 这是开发分工，不是先前网络测试的 A/B 身份。共同约定见
 [产品交付主线](NOVOVM_DELIVERY_ALIGNMENT.md)。
 
+## A 返回的源码修复进度（2026-10-01）
+
+AOEM `main@56e9da15` 已推送，固定 `mldsa-native 2.0.0` 替换旧草案实现。
+本地 Windows/Linux C ABI 各已达到原适用子集 90/90，并通过双向互操作。
+用户批准保留标准正确实现，接受 Linux 验签暂慢约 14%–21%，后续再优化。
+尺寸及 raw/internal framing 不变，Host 仍只添加一次 external pure 前缀。
+
+当前 **SUPERVM 的随包库还未同步，B 不解除旧库门禁**。等待 A 交付验证过的
+FULLMAX 包、库 SHA256 与来源提交，然后按本文件相同命令重新验收；不得将
+源码修复、保护门禁通过或本机微基准宣称为主链抗量子/隐私交付完成。
+详细证据与边界见 [最新验收台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。
+
 ## 首轮：独立 PQ 验签组件
 
 已在 `novovm-prover` 中复用既有 `aoem_mldsa_verify`，新增
