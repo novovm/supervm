@@ -92,14 +92,16 @@ Host 负责 NOV 业务定义、鉴权、链域与 nonce 规则、访问集及执
 | 工作项 | 认领设备或负责人 | 基线与文件范围 | 状态 |
 | --- | --- | --- | --- |
 | 普通 NOV 转账的增量状态与 AOEM 调度计算 | 设备 A 当前会话 | 起点 `6574dbf`；`novovm-exec` 通用任务适配、`native_transfer*`、`native_candidate*`、fresh 主链入口与对应测试 | 已认领，目标模式开发中 |
-| 密码学隐匿资产闭环 | 设备 B | 同步本次分工后登记实际 HEAD；独立隐私证明、资产状态与钱包接口模块及测试 | 已分配，待设备 B 同步并确认现有工作 |
-| 交易与封印抗量子闭环 | 设备 B | 同步后登记实际 HEAD；独立 PQ 鉴权模块及测试，先核对与隐私证明的组合边界 | 已分配，待设备 B 同步并确认现有工作 |
+| 密码学隐匿资产闭环 | 设备 B（Linux 开发设备） | 已同步 `10774c9`，无遗留改动；先只读核对 SDK confidential-transfer/RingCT 的跨进程验证与钱包见证边界，记录在 `docs/NOVOVM_CRYPTO_B_HANDOFF.md` | 已确认分工；独立资产模块待 ABI 核对，不改 A 的主链接口 |
+| 交易与封印抗量子闭环 | 设备 B（Linux 开发设备） | 起点 `10774c9`；首轮限定 `crates/novovm-prover/src/pq_signature*`、该 crate 的模块注册/依赖与 `tests/pq_signature*`；根 `Cargo.lock` 仅该 crate 依赖条目，B 交接文档及台账新增记录 | 已认领；先复用现有 ML-DSA ABI 做严格验签组件，不改变交易 wire/封印算法 |
 
 ### 本轮分工和共享文件交接
 
 设备 A 的目标是同一条真实路径上的签名转账、余额与 nonce/费用验证、状态增量、AOEM 调度的实际计算、冲突确定性、候选隔离、最终确认及重启恢复。先建立串行参考，再证明无冲突任务真实重叠执行；未完成主链接入前不签收为高并发主链。本轮不预设百万 TPS 承诺，以可重复的同路径性能和正确性证据报告阶段结果。
 
 设备 B 先保护并登记已有未提交或未推送工作，再实现隐私与 PQ 的独立模块。已有 RingCT/Bulletproof、ML-DSA 能力应优先复用，不能另建链或孤立演示作为完成。隐私保护范围、签名/证明算法及版本选择必须明确，重大协议选择需要用户确认。设备 B 不等待设备 A 全部完成才开始独立模块，但真实主链接入须通过下面的共享接口交接。
+
+设备 B 首轮交接见 [密码学独立模块与接口待办](NOVOVM_CRYPTO_B_HANDOFF.md)。本轮不编辑通用 FFI 绑定、`novovm-exec` 或 node/protocol 的模块注册；`novovm-prover` 的独立验签 API 由设备 A 在后续明确交接时接入。若 A 也需调整 prover crate/锁文件同一条目或上述共同文档，先协调该处唯一编辑权。
 
 本轮共享文件暂由设备 A 集成：`crates/novovm-protocol/src/tx_wire.rs`、`crates/novovm-node/src/tx_ingress.rs`、候选执行/晋升/fresh 生命周期文件、`crates/novovm-exec/src/semantic_graph_v3.rs` 及通用 FFI 绑定。设备 B 如需修改这些文件，先在本表对应项记录所需接口与文件，由双方确认并交接唯一编辑权；不能各自生成不兼容 wire 或绕过已有鉴权。crate 模块注册、Cargo 配置、CI 和共同文档如有重叠，也先协调；此约定不等于无限期独占整个目录。
 
