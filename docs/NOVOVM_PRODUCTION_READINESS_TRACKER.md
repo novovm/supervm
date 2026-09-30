@@ -48,6 +48,37 @@ canonical `aoem_privacy_execute_v1` 实测来自另一个进程的同一份证�
 接口，尚未交付；B 不越权修改。不得用 Host 自称已验证或 cache 注入
 旁路替代。钱包收付、守恒/防双花、费用与主链最终性仍未完成。
 
+## 设备 A：Windows 复现 B 的 PQ 兼容性阻断（2026-10-01，同轮并行记录）
+
+已在 main 保留双方历史合入设备 B 的 `9ad30fe`，合并提交 `e41c198`；没有新建
+分支。A 进行中的执行/状态/计费改动仍在工作区，本节不将其记作交付或全库通过。
+复跑采用 B 原样提交的 prover 测试和官方公开向量，Windows 随包 DLL 未替换：
+`aoem/windows/core/bin/aoem_ffi.dll`，SHA256
+`e84ee50a2b308559a52d9599a2200d16dac3a1de0e2c217c8a44675886e2c788`。
+
+`cargo test --locked -p novovm-prover`：11 passed / 0 failed，2 runtime ignored。
+另显式执行 `cargo test --locked -p novovm-prover --test pq_signature_runtime --
+--ignored --nocapture --test-threads=1`：2 passed / 0 failed。实际矩阵与 Linux 一致：
+
+- ML-DSA-44：自签自验、tg1/tc11 官方正例通过。
+- ML-DSA-65：自签自验通过、tg3/tc43 官方正例拒绝，组件阻断使用。
+- ML-DSA-87：自签自验通过、tg5/tc70 官方正例拒绝，组件阻断使用。
+
+因此已经跨 Windows/Linux 复现，不是仅 B 机器的本地设置报告。
+只读核对 AOEM 包来源 `a951273c` 的 `Cargo.lock`：`pqcrypto-dilithium=0.5.0`。
+AOEM `crates/adapter/aoem-adapter-crypto/src/quantum_resistant.rs` 使用该实现；
+依赖中 dilithium3/5 的挑战值分别长 48/64 字节，但 clean 和 AVX2 的
+`poly_challenge` 仅把前 `SEEDBYTES=32` 字节传给 SHAKE，签名与验签同用此规则。
+这符合旧草案，而不是最终标准要求的完整挑战输入，解释了 44 通过而 65/87
+自签自验通过、外部正例失败的差异；[NIST 变更说明](https://groups.google.com/a/list.nist.gov/g/pqc-forum/c/y8ul-ZcVWI4)
+明确列出这项草案到最终版的修改。修复应在 AOEM 通用密码实现，不通过修改
+Host framing、放宽验签或默认降到 44 规避；具体修复仍须完整官方向量回归，
+不能据定位就宣布新实现符合全部 FIPS 要求。此次仅只读核对，未构建/修改 AOEM。
+这两项绿色 runtime 测试证明保护门禁有效，不证明 65/87 兼容。
+未选择或降级主网参数集，未修改 AOEM 仓库或替换任何正在运行的服务。
+A 承接定位与修复协调；若需改兄弟 AOEM，先取得明确范围授权。原执行主线继续
+独立回归，节点完整全库尚未签收；高并发主链、隐私资产和 PQ 主链接入均未完成。
+
 ## 设备 B：PQ 独立验签与标准兼容性门禁（2026-09-30 UTC，前轮）
 
 状态：`LOCAL PQ COMPONENT GATE PASS / ML-DSA-65/87 INTEROP BLOCKED`。
