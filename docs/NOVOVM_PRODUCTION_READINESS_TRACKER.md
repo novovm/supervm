@@ -14,7 +14,41 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
-## 设备 B：PQ 独立验签与标准兼容性门禁（2026-09-30 UTC，最新）
+## 设备 B：RingCT 跨进程准入阻断复现（2026-09-30 UTC，最新）
+
+状态：`CANONICAL RINGCT PORTABILITY FAIL / INTERFACE HANDOFF REQUIRED`。
+基线 `9ad30fe`、认领 `914b19a`；本轮只增加诊断脚本和测试，不修改 AOEM、
+生产 FFI、隐私协议、主链 wire 或共享候选执行路径。没有改验收期望来签 PASS。
+
+原有 SDK confidential-transfer 完整 C 样例本机通过（`failures=0`），但它只能
+证明同进程样例可用。新增 `scripts/aoem/privacy_portability_probe.py` 通过
+canonical `aoem_privacy_execute_v1` 实测来自另一个进程的同一份证明字节；
+不调用 legacy verify、不重新 prove、不注入准入 cache、不继承生成进程内存。
+
+同一 Linux 库 SHA256：
+`bd6f36f63f4194fe000b29ca2ee709c78bf384e83352757307aa9a3f7fe106ea`。
+`Auto` 和 `Cpu` 两组均为：同进程生成/准入 accepted=true；producer 退出后，
+两个独立冷启动 verifier 的正例均 accepted=false，原因是
+`ringct_transaction_not_admitted_by_canonical_prove_path`，在进入 engine 前拒绝。
+每组 PID 不同、输入 payload 摘要相同、verifier prove_calls=0。正例没有完成
+跨进程密码学验证，不能作为跨节点隐私交易路径交付。
+
+每进程五个篡改/缺失证明负例同样在 admission 拒绝，不能据此宣称密码学
+负例验证已覆盖。runner 保留 `accepted=false`、返回 1，`production_ready=false`。
+本机证据：`artifacts/crypto-b-privacy-9ad30fe/final-Auto/acceptance.json`、
+`final-Cpu/acceptance.json`；包含完整响应与库/脚本/输入摘要，未提交这些 artifacts。
+可移植复跑命令、边界和最小需求见 [设备 B 交接](NOVOVM_CRYPTO_B_HANDOFF.md)。
+
+新增判定器单元测试 11 项通过，脚本目录全部 Python 单测 18 passed；只证明
+失败不会被判成成功，不代表 portability PASS。workspace fmt/diff check 通过。
+没有复跑完整主链或多机，没有替换已安装 runtime，没有生成正式钱包/资产。
+
+下一接口依赖：AOEM 对外部公开证明的独立 canonical 验证/准入、已有输出花费
+见证契约，以及 A 所有的安全 Rust 绑定。用户已确认由设备 A 统一协调这些
+接口，尚未交付；B 不越权修改。不得用 Host 自称已验证或 cache 注入
+旁路替代。钱包收付、守恒/防双花、费用与主链最终性仍未完成。
+
+## 设备 B：PQ 独立验签与标准兼容性门禁（2026-09-30 UTC，前轮）
 
 状态：`LOCAL PQ COMPONENT GATE PASS / ML-DSA-65/87 INTEROP BLOCKED`。
 本机基线 `10774c9`，认领提交 `fba6bfd`；本节结果对应随本记录提交的 prover

@@ -92,7 +92,7 @@ Host 负责 NOV 业务定义、鉴权、链域与 nonce 规则、访问集及执
 | 工作项 | 认领设备或负责人 | 基线与文件范围 | 状态 |
 | --- | --- | --- | --- |
 | 普通 NOV 转账的增量状态与 AOEM 调度计算 | 设备 A 当前会话 | 起点 `6574dbf`；`novovm-exec` 通用任务适配、`native_transfer*`、`native_candidate*`、fresh 主链入口与对应测试 | 已认领，目标模式开发中 |
-| 密码学隐匿资产闭环 | 设备 B（Linux 开发设备） | 第二轮基线 `9ad30fe`；仅 `scripts/aoem/privacy_portability_probe.py`、`scripts/tests/test_privacy_portability_probe.py`、B 交接文档及台账新增记录 | 已认领；实测 canonical privacy execute 的跨进程证明准入与篡改拒绝，明确主链接入依赖；不改共享 FFI 或 AOEM |
+| 密码学隐匿资产闭环 | 设备 B（Linux 开发设备） | 第二轮基线 `9ad30fe`，认领 `914b19a`；独立 privacy portability 诊断脚本/测试及 B 交接文档 | 本轮完成并释放文件锁；Auto/Cpu 同进程成功、两个新进程正例均被 prove-cache admission 拒绝，验收保持 FAIL；用户已交设备 A 统一协调外部验证/钱包见证接口 |
 | 交易与封印抗量子闭环 | 设备 B（Linux 开发设备） | 起点 `10774c9`，认领提交 `fba6bfd`；首轮 `novovm-prover/src/pq_signature*`、模块注册/依赖及 `tests/pq_signature*`，根锁文件仅 prover 条目 | 首轮本机组件门禁通过，释放该轮文件锁；随包 65/87 官方正例失败，由用户指定设备 A 协调 AOEM 修复；主链待接口交接 |
 
 ### 本轮分工和共享文件交接

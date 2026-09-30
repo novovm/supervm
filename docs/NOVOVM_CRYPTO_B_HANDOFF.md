@@ -85,10 +85,86 @@ cargo clippy --locked -p novovm-prover --all-targets -- -D warnings
   花费见证；证明示例不能直接变成有资金来源、可重复收付的资产账本。
 - 当前 Rust bindings 尚未暴露 SDK 推荐的 `aoem_privacy_execute_v1`。
   共享绑定由 A 集成，B 不擅自补 ABI 或修改兄弟 AOEM 仓库。
-- 需要进一步核对随包 runtime 的跨进程/重启验证，不能以同一进程 prove 后
-  verify 成功推断其他验证者可独立验证，也不能用新的 verifier 旁路规避准入。
+- 跨进程限制现已由本轮随包 runtime 实测确认，详见下一节。不能以同一进程
+  prove 后准入成功推断其他验证者可独立验证，也不能用新的 verifier 旁路规避准入。
 - `vendor/web30-core/src/privacy.rs` 的 stealth-address helper 明示为简化实现，
   不作为已完成钱包隐身收付的证据。隐私保护范围和协议选择待用户确认。
+
+## 第二轮：canonical RingCT 跨进程准入实测
+
+基线 `9ad30fe`，范围认领提交 `914b19a`；Linux 同机、同一随包库 SHA256
+`bd6f36f63f4194fe000b29ca2ee709c78bf384e83352757307aa9a3f7fe106ea`。
+新增诊断 [privacy_portability_probe.py](../scripts/aoem/privacy_portability_probe.py)，
+仅测试 SDK 已有 `aoem_ringct_prove_v1 -> aoem_privacy_execute_v1`；不注册新生产
+绑定、不调用旧 `aoem_ringct_verify_v1`，不修改或放宽 AOEM admission。
+脚本直接加载**可信 native 库**，不是可供服务接收任意库路径的接口。
+
+先编译并执行仓库原有 `embedded_confidential_transfer_host.c --run-prove`，
+其完整样例返回 `failures=0`。这个已有样例还会调用 legacy verify；本轮新增
+诊断不依赖这一步，只将它作为 SDK 同进程结果对照。
+
+每次诊断均生成一份 test-only 公共交易 payload：producer 进程 prove 并准入
+后退出；validator-1 与 validator-2 分别在新工作目录、新进程中只读同一份
+字节，**不调用 prove、不重建证明、不继承 producer 的内存**，再走 canonical
+privacy execute。记录 PID、prove 调用次数、payload/runtime/脚本 SHA256。
+移除 child 的 `AOEM_*`/`NOVOVM_*` 覆盖环境；拒绝复用旧输出目录及报告。
+
+`Auto` 和显式 `Cpu` 两组结果一致：
+
+| 用例 | canonical 返回 | 证据 |
+| --- | --- | --- |
+| producer 同进程正例 | accepted=true | `ringct_prove_cache_admitted_v1` / `prove_admitted_cache` |
+| validator-1 收到相同公共字节 | accepted=false | `ringct_transaction_not_admitted_by_canonical_prove_path` |
+| validator-2 再次冷启动读相同字节 | accepted=false | 同上；两个进程的 prove_calls 均为 0 |
+| 各进程篡改 message/fee/range proof/ring signature 或移除 proof | accepted=false | 同一 admission 拒绝原因，不是已执行密码学验证的证据 |
+
+producer 的 `full_tx_verify_coverage=not_executed_prove_admitted`；两个 verifier
+的值为 `not_executed_rejected_before_engine`。每组 payload SHA256 在三个进程
+中完全相同。FFI rc=0 只说明返回了有效响应，不能把响应 accepted=false 忽略。
+
+**真实跨进程验收保持 FAIL / BLOCKED，runner 返回 1，acceptance.json 中
+accepted=false。** 没有把“拒绝所有外部输入”改成正例期望来制造 PASS。
+两个干净验证进程不是节点数据库恢复测试；不宣称状态持久化、防双花、钱包
+可花费、实体多机或隐私交易最终性已经验证。当前材料只能证明样例具备同进程
+准入能力，不能用于声称其他节点能独立接收此证明。
+
+可复跑命令（输出目录必须不存在；当前库预期暴露阻断并非零退出）：
+
+```bash
+python3 scripts/aoem/privacy_portability_probe.py --out artifacts/privacy-portability-auto
+python3 scripts/aoem/privacy_portability_probe.py --backend Cpu --out artifacts/privacy-portability-cpu
+python3 -m unittest discover -s scripts/tests -p test_privacy_portability_probe.py -v
+```
+
+本机记录：`artifacts/crypto-b-privacy-9ad30fe/final-Auto/acceptance.json` 和
+`final-Cpu/acceptance.json`；每份包含完整 canonical 响应及 15 个负例结果。
+原始 SDK 对照为该目录的 `sdk-host.log`。Artifacts 不进 Git，脚本和单元测试
+随代码提交。新增 11 项 runner 单元测试通过，脚本目录全部 Python 单测
+18 passed；它们校验判定器，不代表真实跨进程验收通过。fmt/diff check 通过。
+
+### 待与设备 A 协调的最小接口需求
+
+用户已确认由设备 A 统一协调以下 AOEM/共享接口需求；B 继续保留复现证据，
+不直接编辑兄弟 AOEM 或共享 FFI。此确认不等于下列接口已经实现或交付。
+
+1. **外部公共证明验证与准入**：由 AOEM 明确支持不依赖同进程 prove cache 的
+   canonical 入口。给定公开交易/证明及必要公共输入，独立验证节点可以验证
+   并得到可信准入结果；错误证明仍拒绝。不能只把外部摘要加入 cache 或允许
+   Host 自称“已验证”，也不能把新手写 verifier 当成第二条生产路径。
+2. **钱包花费见证**：现有 prove ABI 只接收 message、amount、ring size。
+   若要花费已有输出，需要通用、明确的已有输入见证/环成员/承诺开口/收款信息
+   契约；必须绑定公开交易且不输出秘密。字段和证明协议由 AOEM/Host 明确
+   交接，不向 AOEM 加入 NOV 专属余额/费用/发行规则，不由 B 擅定算法。
+3. **Host 共享绑定**：A 持有 `aoem-bindings` 编辑权；明确安全 Rust wrapper
+   的输入上限、响应版本/状态/每笔结果、证据绑定、错误与内存释放。只判断
+   FFI rc=0 或 symbols 存在不足以授权转移。B 不自行复制生产绑定。
+4. **主链消费条件**：公共输出/花费标识须绑定批准的链域、资产和规范消息；
+   费用、守恒、防双花、候选隔离、原子晋升和恢复仍由对应共享路径集成。
+   canonical 的 `state_materialized=true` 不直接等同 NOV 钱包余额已结算。
+
+以上是从当前可复现失败推导的通用需求，不是新 ABI/主链协议批准。隐私保护
+范围、信任模型及密码学假设（包括与后量子目标的组合）仍需明确；B 在接口
+交接前不把测试 payload 改成正式资产对象，不通过缓存注入绕过现有边界。
 
 ## 交给设备 A 的边界
 
@@ -103,5 +179,6 @@ external pure 接口区分，不能静默改变已有账户或封印语义。
 
 首轮独立验签/兼容性保护组件：`LOCAL COMPONENT GATE PASS`；65/87 标准互操作
 仍阻断，由 A 协调 AOEM 修复。主链交易/封印、隐私资产闭环未完成。
+第二轮诊断脚本与失败证据完成；隐私外部证明准入仍阻断，用户已交 A 统一协调。
 本轮编辑完成后释放具体文件锁，后续修改重新认领。`production_ready=false`。
 Git 提交/同步不授权部署、生成正式密钥、创世分配或发行资产。
