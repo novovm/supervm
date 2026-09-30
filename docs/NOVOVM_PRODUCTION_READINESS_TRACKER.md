@@ -14,7 +14,31 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
-## 设备 B：RingCT 跨进程准入阻断复现（2026-09-30 UTC，最新）
+## 设备 A：承接密码库及隐私接口修复（2026-10-01，进行中）
+
+用户已明确授权 A 修改、构建和测试 AOEM 密码库，并将 B 发现的隐私接口阻断
+统一交 A 处理。范围与双方编辑权见交付主线；不部署、不发行、不替换运行中服务。
+SUPERVM 已同步 `eb84fa3`；此前执行/状态/计费改动保留，未混入本次文档提交。
+
+A 原样运行 B 的 `privacy_portability_probe.py --backend Cpu`，Windows 随包
+DLL SHA256 `e84ee50a2b308559a52d9599a2200d16dac3a1de0e2c217c8a44675886e2c788`：
+同进程正例通过，两个独立新进程正例拒绝；`accepted=false`，退出 1。
+证据在 `artifacts/privacy-portability-a-windows-original-20261001/acceptance.json`。
+这确认阻断不是 Linux 单机设置；原始失败保留，不改判 PASS。
+
+只读核对 AOEM `eb688235`：canonical 入口要求整笔交易的本进程 prove-cache
+命中；底层 RingCT verifier 的环签名仅验证 `tx.extra`，未绑定完整输出、费用
+与输入承诺，也未核对外层/签名内的两份 key image 一致。既有 prove ABI 生成
+临时密钥、合成环和同值输入/输出，不接收钱包已有输出的花费见证。
+范围证明和承诺求和原语存在，不等于已证明花费者拥有相应账本资产。
+因此不能通过删除 cache 检查来声称跨节点隐私安全完成；外部证明准入仍关闭。
+后续必须明确通用完整交易绑定与既有输入见证契约，复用一个 canonical 入口，
+不得临时拼接新密码协议或将 Host 自报“已验证”当作证明。
+
+ML-DSA 通用最终标准实现修复及官方向量/独立实现互操作回归进行中；尚未交付
+新 SDK，不把源代码修改或同库自签自验记为标准互操作签收。
+
+## 设备 B：RingCT 跨进程准入阻断复现（2026-09-30 UTC，前轮）
 
 状态：`CANONICAL RINGCT PORTABILITY FAIL / INTERFACE HANDOFF REQUIRED`。
 基线 `9ad30fe`、认领 `914b19a`；本轮只增加诊断脚本和测试，不修改 AOEM、
