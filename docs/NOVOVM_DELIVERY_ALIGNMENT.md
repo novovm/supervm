@@ -93,7 +93,7 @@ Host 负责 NOV 业务定义、鉴权、链域与 nonce 规则、访问集及执
 | --- | --- | --- | --- |
 | 普通 NOV 转账的增量状态与 AOEM 调度计算 | 设备 A 当前会话 | 起点 `6574dbf`；`novovm-exec` 通用任务适配、`native_transfer*`、`native_candidate*`、fresh 主链入口与对应测试 | 已认领，目标模式开发中 |
 | 密码学隐匿资产闭环 | 设备 B（Linux 开发设备） | 第二轮基线 `9ad30fe`，认领 `914b19a`；独立 privacy portability 诊断脚本/测试及 B 交接文档 | 本轮完成并释放文件锁；Auto/Cpu 同进程成功、两个新进程正例均被 prove-cache admission 拒绝，验收保持 FAIL；用户已交设备 A 统一协调外部验证/钱包见证接口 |
-| 交易与封印抗量子闭环 | 设备 B（Linux 开发设备） | 第三轮基线 `eb84fa3`；仅 `scripts/aoem/mldsa_acvp_probe.py`、`scripts/tests/test_mldsa_acvp_probe.py`、B 交接文档及台账新增记录 | 已认领；为 A 的修库交接新增独立、严格失败的 NIST external-pure/internal 非 externalMu 向量验收，不改 runtime/生产模块/共享 FFI；主鏈待接口交接 |
+| 交易与封印抗量子闭环 | 设备 B（Linux 开发设备） | 第三轮基线 `eb84fa3`，认领 `15344d2`；独立 mldsa_acvp_probe 脚本/测试及 B 交接文档 | 本轮完成并释放文件锁；固定 90 个 NIST sigVer 子集严格验收为 78/90、FAIL，不把正确阻断当成算法修复；用户指定 A 协调修库，主链待接口交接 |
 
 ### 本轮分工和共享文件交接
 

@@ -175,10 +175,67 @@ python3 -m unittest discover -s scripts/tests -p test_privacy_portability_probe.
 external pure 接口区分，不能静默改变已有账户或封印语义。
 共享文件继续由 A 唯一编辑，B 不自行发明另一套交易协议。
 
+## 第三轮：修库后必须真正通过的 ML-DSA 官方向量验收
+
+基线 `eb84fa3`，认领 `15344d2`。新增诊断
+[mldsa_acvp_probe.py](../scripts/aoem/mldsa_acvp_probe.py)，直接测量既有
+`aoem_mldsa_verify` ABI，而不把“构造器正确拒绝不兼容参数集”的组件测试当作
+密码库已修复。所有六个组必须通过，否则 `accepted=false` 且退出码为 1；
+没有只选择 44 或跳过失败正例的参数。
+
+固定公开输入来源为 NIST ACVP-Server 提交
+`975de31eb83d87039ec88934fdc47d8c312b892d`；两份文件与首轮保留的输入逐字节一致，
+脚本强制校验各自 SHA256，不接受悄悄更新的 corpus/expected results：
+
+- prompt：`e2cba4589389756fa0bea1a7e6837138bf0a81f9d14234c9ee8f6d33caa1654e`
+- expectedResults：`e1d84ef1b2f35196278ab0b0ed6a46ec62cc03d2dfa92c564199e1999bfb8ea6`
+
+范围为 44/65/87 的 external pure（tg1/3/5）及 internal、externalMu=false
+（tg8/10/12），每组 15 个用例：3 正例、12 负例。总共 90 例，18 正/72 负。
+external pure 按标准添加 context framing，internal 原样传 message；不混用。
+expected 为 false 也必须获得 rc=0 和明确 out_valid=0，缺失能力/ABI 错误不能
+冒充成功拒绝。重复/缺失 case、少测 profile、布尔结果错误、输入摘要变化均拒绝。
+
+这是**与当前 message ABI 对应的固定 sigVer 子集**，不是整个 ACVP/FIPS 认证。
+未覆盖 external preHash、externalMu=true、keyGen、sigGen、安全审计或主链。
+未选择或降级主网参数集；未更改已有 Host 签名语义、runtime 或 FFI。
+
+Linux 当前库（与前两轮相同 SHA256）的严格结果：
+
+| 参数集 | external pure | internal/raw | 结论 |
+| --- | --- | --- | --- |
+| 44 | 15/15 | 15/15 | 本子集通过 |
+| 65 | 12/15 | 12/15 | 两组全部正例拒绝，FAIL |
+| 87 | 12/15 | 12/15 | 两组全部正例拒绝，FAIL |
+
+合计 78/90、12 个失败、0 ABI 错误；此样本中未观察到负例误收。
+失败 tcId：33/43/44、63/67/70、143/146/150、168/178/180。
+同库自签自验通过不能替代这些互操作正例。修库后应完整复跑，90/90 才能签
+**本子集**通过，并仍须保留原 verifier 的失败关闭/上下文与篡改负例。
+
+复跑（仅加载可信 AOEM 库；新报告路径，不覆盖旧结果）：
+
+```bash
+mkdir -p artifacts/mldsa-acvp-input
+BASE=https://raw.githubusercontent.com/usnistgov/ACVP-Server/975de31eb83d87039ec88934fdc47d8c312b892d/gen-val/json-files/ML-DSA-sigVer-FIPS204
+curl -fL "$BASE/prompt.json" -o artifacts/mldsa-acvp-input/prompt.json
+curl -fL "$BASE/expectedResults.json" -o artifacts/mldsa-acvp-input/expectedResults.json
+python3 scripts/aoem/mldsa_acvp_probe.py --prompt artifacts/mldsa-acvp-input/prompt.json --expected artifacts/mldsa-acvp-input/expectedResults.json --report artifacts/mldsa-acvp-current.json
+```
+
+Windows 可将最后一行 `python3` 改为已安装的 `python`；默认库自动选择随包
+Windows DLL，文件可由 A 按上述固定 URL 获取。不需要私钥或生成账户。
+脚本报告原始 case 预期/实际结果、group、库与脚本摘要；输入数据/报告不进 Git。
+
+本机结果在 `artifacts/crypto-b-acvp-eb84fa3/final-acceptance.json`，保持 FAIL。
+新增 9 个判定器单测通过，脚本目录全部 Python 单测 27 passed；fmt/diff check
+通过。单元测试是合成输入/假 backend，不记作额外标准兼容结果或主链测试。
+
 ## 状态
 
 首轮独立验签/兼容性保护组件：`LOCAL COMPONENT GATE PASS`；65/87 标准互操作
 仍阻断，由 A 协调 AOEM 修复。主链交易/封印、隐私资产闭环未完成。
 第二轮诊断脚本与失败证据完成；隐私外部证明准入仍阻断，用户已交 A 统一协调。
+第三轮严格 NIST sigVer 子集验收已交付，当前库仍 78/90、FAIL；等待 A 修库。
 本轮编辑完成后释放具体文件锁，后续修改重新认领。`production_ready=false`。
 Git 提交/同步不授权部署、生成正式密钥、创世分配或发行资产。

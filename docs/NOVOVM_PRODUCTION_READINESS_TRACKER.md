@@ -14,7 +14,36 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
-## 设备 B：RingCT 跨进程准入阻断复现（2026-09-30 UTC，最新）
+## 设备 B：修库交接的严格 ML-DSA sigVer 矩阵（2026-09-30 UTC，最新）
+
+状态：`STRICT NIST SIGVER SUBSET FAIL / 78 OF 90`。基线 `eb84fa3`，认领
+`15344d2`；仅增加独立诊断和单元测试，不改生产 verifier、runtime、共享 FFI
+或主链。目的为 A 的修库交接提供必须全部通过的互操作验收，而不是再把
+“65/87 被正确阻断”的绿色保护测试当成已修复密码库。
+
+固定 NIST ACVP-Server 源提交 `975de31eb83d87039ec88934fdc47d8c312b892d`，
+prompt/expected 文件各自 SHA256 强制校验。覆盖六组：44/65/87 的 external
+pure 和 internal raw（externalMu=false），共 18 正例、72 负例。每个负例也
+必须有 rc=0 和明确 false，能力缺失/ABI 错误不算密码学拒绝。少测组、缺失或
+重复用例、篡改 expected/source 均不能接受；没有只跑通过参数集的捷径。
+
+Linux 库 SHA256 仍为
+`bd6f36f63f4194fe000b29ca2ee709c78bf384e83352757307aa9a3f7fe106ea`。
+44 两组均 15/15；65、87 各两组均 12/15，所有正例被拒，共 12 个失败，
+0 ABI 错误，此子集中未观察到负例误收。runner `accepted=false`、退出码 1；
+没有修改期望把兼容性问题掩盖。原始结果：
+`artifacts/crypto-b-acvp-eb84fa3/final-acceptance.json`（本机，不进 Git）。
+可移植脚本、固定输入获取与复跑命令见 [B 交接](NOVOVM_CRYPTO_B_HANDOFF.md)。
+
+新增判定器单测 9 passed，Python 全部脚本单测 27 passed，fmt/diff check 通过；
+这些是工具逻辑测试，不是实际密码库/主链通过。没有覆盖 preHash、externalMu、
+keyGen/sigGen、完整 FIPS 认证、主链或实体多机。修库后须先达到本子集 90/90，
+并继续复跑 Host 门禁与既有负例；目前仍由 A 协调 AOEM 修复。
+
+隐私外部证明准入和钱包见证接口也仍由 A 协调，主链协议交接未完成。
+本轮不部署、不生成正式密钥、不发行资产，`production_ready=false`。
+
+## 设备 B：RingCT 跨进程准入阻断复现（2026-09-30 UTC，前轮）
 
 状态：`CANONICAL RINGCT PORTABILITY FAIL / INTERFACE HANDOFF REQUIRED`。
 基线 `9ad30fe`、认领 `914b19a`；本轮只增加诊断脚本和测试，不修改 AOEM、
