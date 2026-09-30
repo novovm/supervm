@@ -5,6 +5,7 @@ use crate::native_block_seal::service::NovNativeSealServiceV1;
 use crate::native_block_seal::service_config::NovNativeSealServiceConfigV1;
 
 include!("native_block_seal_service_v3_tests.rs");
+include!("native_block_seal_service_split_tests.rs");
 
 #[test]
 fn native_seal_service_candidate_view_cannot_switch_ledger_even_inside_poll_interval() {

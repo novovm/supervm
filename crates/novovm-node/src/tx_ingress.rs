@@ -1269,7 +1269,7 @@ struct NovNativeDurableAuthReservationV1 {
     tx_hash: String,
 }
 #[cfg(test)]
-type NativeHostNonceAllocatorKeyV1 = (u64, Vec<u8>);
+type NativeHostNonceAllocatorKeyV1 = (String, u64, Vec<u8>);
 #[cfg(test)]
 type NativeHostNonceAllocatorV1 = Mutex<HashMap<NativeHostNonceAllocatorKeyV1, u64>>;
 static NOV_NATIVE_AUTH_NONCE_RESERVATIONS_V1: OnceLock<NativeAuthNonceReservationRegistryV1> =
@@ -3830,6 +3830,7 @@ fn next_host_native_nonce_v1(
     let identity_key = native_auth_nonce_identity_key_v1(chain_id, identity.as_slice());
     let store_path = resolve_native_execution_store_path_from_params_v1(params)
         .unwrap_or_else(nov_native_execution_store_path_v1);
+    let allocator_store_key = comparable_persistence_path_v1(&store_path)?;
     let store = load_nov_native_execution_store_v1(store_path.as_path())?;
     verify_native_nonce_identity_scheme_v2(&store)?;
     let durable_floor = store
@@ -3864,7 +3865,7 @@ fn next_host_native_nonce_v1(
         .unwrap_or(durable_floor)
         .max(durable_floor);
     let next = next_guard
-        .entry((chain_id, identity))
+        .entry((allocator_store_key, chain_id, identity))
         .or_insert(reservation_floor);
     if *next < reservation_floor {
         *next = reservation_floor;
@@ -21314,6 +21315,77 @@ mod tests {
         out
     }
 
+    fn fund_test_deposit_v1(path: &Path, request: &NovExecutionRequestV1) {
+        assert_eq!(request.method, "deposit_reserve");
+        assert_eq!(
+            request.target,
+            NovExecutionRequestTargetV1::NativeModule("treasury".to_string())
+        );
+        let args: serde_json::Value = serde_json::from_slice(&request.args).expect("deposit args");
+        let asset = args["asset"].as_str().expect("deposit asset");
+        let amount = parse_u128_from_json_value_v1(&args["amount"]).expect("deposit amount");
+        let account = fallback_execution_subject_meta_v1(request).account_id;
+        let mut store = load_nov_native_execution_store_v1(path).expect("load fixture store");
+        assert_eq!(native_account_asset_balance_v1(&store, &account, asset), 0);
+        assert_eq!(
+            credit_native_account_asset_balance_v1(&mut store, &account, asset, amount),
+            amount
+        );
+        save_nov_native_execution_store_v1(path, &store).expect("save funded fixture");
+    }
+
+    fn fund_test_signed_deposit_v1(path: &Path, raw: &[u8]) {
+        let tx = decode_nov_native_tx_wire_v1(raw).expect("decode signed deposit fixture");
+        let request = nov_native_tx_to_execution_request_v1(&tx)
+            .expect("validate signed deposit fixture")
+            .expect("execute fixture");
+        fund_test_deposit_v1(path, &request);
+    }
+
+    fn assert_test_deposit_debited_v1(path: &Path, receipt: &NovNativeExecutionReceiptV1) {
+        assert!(
+            receipt.status,
+            "deposit failed: {:?}",
+            receipt.failure_reason
+        );
+        let deposit = receipt
+            .logs
+            .iter()
+            .find(|log| log.event == "treasury.reserve_deposited")
+            .expect("successful deposit event");
+        assert_eq!(deposit.data["funding_source"], "native_account_balance");
+        assert_eq!(deposit.data["source_account"], receipt.account_id);
+        assert_eq!(deposit.data["source_balance_after"], 0);
+        let store = load_nov_native_execution_store_v1(path).expect("load deposit result");
+        assert_eq!(
+            native_account_asset_balance_v1(
+                &store,
+                &receipt.account_id,
+                deposit.data["asset"].as_str().expect("deposit asset")
+            ),
+            0
+        );
+    }
+
+    fn assert_governance_delta_kinds_v1(receipt: &NovNativeExecutionReceiptV1) {
+        let log = receipt
+            .logs
+            .iter()
+            .find(|log| log.event == "aoem.native_asset.semantic_deltas")
+            .expect("governance semantic delta log");
+        let mut kinds = log.data["deltas"]
+            .as_array()
+            .expect("semantic deltas")
+            .iter()
+            .map(|delta| delta["kind"].as_str().expect("delta kind"))
+            .collect::<Vec<_>>();
+        kinds.sort_unstable();
+        assert_eq!(
+            kinds,
+            ["native_committed_module_state_v3", "native_policy_state"]
+        );
+    }
+
     fn with_env_override_v1<F, T>(key: &str, value: &str, test_fn: F) -> T
     where
         F: FnOnce() -> T,
@@ -21541,6 +21613,57 @@ mod tests {
         assert!(canonical_nov_native_tx_hash_from_payload_v1(b"not-a-native-tx").is_err());
     }
 
+    #[test]
+    fn signed_deposit_without_funds_is_committed_as_failure_not_reserve_credit() {
+        with_test_native_execution_store_path_v1(|path| {
+            let raw_hex =
+                build_test_native_execute_raw_hex_with_chain_v1(991_804, 1, "unfunded-signer", 25);
+            let raw = decode_eth_send_raw_hex_payload_v1(&raw_hex, "raw_tx").expect("fixture hex");
+            let mut tx = decode_nov_native_tx_wire_v1(&raw).expect("fixture tx");
+            let NovTxKindV1::Execute(execute) = &mut tx.kind else {
+                panic!("execute fixture")
+            };
+            execute.fee_policy.pay_asset = "NOV".to_string();
+            execute.fee_policy.max_pay_amount = 10_000;
+            execute.caller.clear();
+            sign_nov_native_tx_with_seed_v1(&mut tx, [0xd8; 32]).expect("sign unfunded deposit");
+            let raw = novovm_protocol::encode_nov_native_tx_wire_v1(&tx).expect("signed wire");
+            let out = run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
+                "raw_tx": to_hex_prefixed_v1(&raw),
+                "native_execution_store_path": path,
+            }))
+            .expect("authenticated but unfunded deposit yields a failed receipt");
+            assert_eq!(out["accepted"], true);
+            assert_eq!(out["native_receipt"]["status"], false);
+            let reason = out["native_receipt"]["failure_reason"]
+                .as_str()
+                .expect("failure reason");
+            assert!(reason.starts_with("fee.settlement.reserve_deposit_insufficient_balance"));
+            assert!(reason.contains("requested=25 available=0"));
+            let store = load_nov_native_execution_store_v1(&path).expect("committed failure");
+            assert_eq!(store.receipts.len(), 1);
+            let receipt = store.receipts.values().next().expect("failed receipt");
+            assert!(!receipt.status);
+            assert_eq!(
+                native_account_asset_balance_v1(&store, &receipt.account_id, "USDT"),
+                0
+            );
+            assert_eq!(
+                store
+                    .module_state
+                    .treasury_reserves
+                    .get("USDT")
+                    .copied()
+                    .unwrap_or(0),
+                0
+            );
+            assert!(!receipt
+                .logs
+                .iter()
+                .any(|log| log.event == "treasury.reserve_deposited"));
+        });
+    }
+
     fn build_test_network_fixture_raw_hex_v1(
         chain_id: u64,
         fixture_identity: u64,
@@ -21588,6 +21711,13 @@ mod tests {
     fn run_test_native_tx_batch_shadow_with_raws_result_v1(
         raw_txs: Vec<String>,
     ) -> Result<serde_json::Value> {
+        run_test_native_tx_batch_shadow_fixture_v1(raw_txs, false)
+    }
+
+    fn run_test_native_tx_batch_shadow_fixture_v1(
+        raw_txs: Vec<String>,
+        prefund: bool,
+    ) -> Result<serde_json::Value> {
         with_env_override_v1(
             NOV_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED_ENV,
             "false",
@@ -21601,6 +21731,15 @@ mod tests {
                             "1",
                             || {
                                 with_test_native_execution_store_path_v1(|path| {
+                                    if prefund {
+                                        for raw_tx in &raw_txs {
+                                            let raw = decode_eth_send_raw_hex_payload_v1(
+                                                raw_tx, "raw_tx",
+                                            )
+                                            .expect("decode fixture hex");
+                                            fund_test_signed_deposit_v1(&path, &raw);
+                                        }
+                                    }
                                     run_nov_send_raw_transaction_batch_from_params_v1(
                                         &serde_json::json!({
                                             "raw_txs": raw_txs,
@@ -21616,16 +21755,15 @@ mod tests {
         )
     }
 
-    fn run_test_native_tx_batch_shadow_with_raws_v1(raw_txs: Vec<String>) -> serde_json::Value {
-        run_test_native_tx_batch_shadow_with_raws_result_v1(raw_txs)
-            .expect("shadow batch should preserve legacy host path")
-    }
-
     fn run_test_native_tx_batch_shadow_v1() -> serde_json::Value {
-        run_test_native_tx_batch_shadow_with_raws_v1(vec![
-            build_test_native_execute_raw_hex_v1(1, "acct-shadow-1", 25),
-            build_test_native_execute_raw_hex_v1(2, "acct-shadow-2", 35),
-        ])
+        run_test_native_tx_batch_shadow_fixture_v1(
+            vec![
+                build_test_native_execute_raw_hex_v1(1, "acct-shadow-1", 25),
+                build_test_native_execute_raw_hex_v1(2, "acct-shadow-2", 35),
+            ],
+            true,
+        )
+        .expect("funded shadow batch should preserve legacy host path")
     }
 
     fn run_test_native_tx_batch_production_candidate_with_raws_result_v1(
@@ -23685,11 +23823,13 @@ mod tests {
                         gas_like_limit: Some(90_000),
                         nonce: 92,
                     };
+                    fund_test_deposit_v1(path.as_path(), &request);
                     let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                         path.as_path(),
                         &request,
                     )
                     .expect("dispatch should succeed under write lock guard");
+                    assert_test_deposit_debited_v1(path.as_path(), &receipt);
                     assert!(receipt.status);
                     assert!(
                         lock_path.exists(),
@@ -24239,12 +24379,14 @@ mod tests {
                                 gas_like_limit: Some(90_000),
                                 nonce: 901,
                             };
+                            fund_test_deposit_v1(path.as_path(), &request);
                             let receipt =
                                 dispatch_and_persist_nov_execution_request_with_store_path_v1(
                                     path.as_path(),
                                     &request,
                                 )
                                 .expect("dispatch should persist through rocksdb backend");
+                            assert_test_deposit_debited_v1(path.as_path(), &receipt);
                             assert!(receipt.status);
                             assert!(
                                 !path.exists(),
@@ -24678,12 +24820,14 @@ mod tests {
                                 gas_like_limit: Some(90_000),
                                 nonce: 160,
                             };
+                            fund_test_deposit_v1(path.as_path(), &request);
                             let receipt =
                                 dispatch_and_persist_nov_execution_request_with_store_path_v1(
                                     path.as_path(),
                                     &request,
                                 )
                                 .expect("dispatch should succeed with AOEM semantic metadata");
+                            assert_test_deposit_debited_v1(path.as_path(), &receipt);
                             assert!(receipt.status);
                             let meta = receipt
                                 .aoem_semantic_ingress
@@ -24890,6 +25034,7 @@ mod tests {
                                 };
                                 let raw = encode_nov_native_tx_wire_v1(&native_tx)
                                     .expect("encode nov tx");
+                                fund_test_signed_deposit_v1(path.as_path(), &raw);
                                 to_hex_prefixed_v1(raw.as_slice())
                             };
                             let out = run_nov_send_raw_transaction_batch_from_params_v1(
@@ -24996,6 +25141,9 @@ mod tests {
                             let store = load_nov_native_execution_store_v1(path.as_path())
                                 .expect("batch store should load");
                             assert_eq!(store.receipts.len(), 2);
+                            for receipt in store.receipts.values() {
+                                assert_test_deposit_debited_v1(path.as_path(), receipt);
+                            }
                             assert!(
                                 store
                                     .module_state
@@ -25073,6 +25221,7 @@ mod tests {
                             };
                             let raw =
                                 encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                            fund_test_signed_deposit_v1(path.as_path(), &raw);
                             to_hex_prefixed_v1(raw.as_slice())
                         };
                         let out =
@@ -25148,6 +25297,9 @@ mod tests {
                         let store = load_nov_native_execution_store_v1(path.as_path())
                             .expect("batch store should load");
                         assert_eq!(store.receipts.len(), 3);
+                        for receipt in store.receipts.values() {
+                            assert_test_deposit_debited_v1(path.as_path(), receipt);
+                        }
                         assert!(
                             store
                                 .module_state
@@ -25954,9 +26106,12 @@ mod tests {
                         signature: vec![0x24u8; 32],
                     };
                     let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
-                    let (_, _, tx_hash) =
-                        ingest_local_nov_raw_tx_payload_v1(&serde_json::json!({}), raw.as_slice())
-                            .expect("native pending ingress should store payload");
+                    fund_test_signed_deposit_v1(path.as_path(), &raw);
+                    let (_, _, tx_hash) = ingest_local_nov_raw_tx_payload_v1(
+                        &serde_json::json!({"native_execution_store_path": path}),
+                        raw.as_slice(),
+                    )
+                    .expect("native pending ingress should store payload");
                     novovm_network::observe_runtime_novorudp_sequence_tx_hash_mapping_v1(
                         chain_id, 14_112, tx_hash,
                     );
@@ -25987,12 +26142,17 @@ mod tests {
                     let store = load_nov_native_execution_store_v1(path.as_path())
                         .expect("execution store should load");
                     assert_eq!(store.receipts.len(), 1);
+                    for receipt in store.receipts.values() {
+                        assert_test_deposit_debited_v1(path.as_path(), receipt);
+                    }
                     let pending =
                         novovm_network::get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
-                            .expect("pending state must remain visible as canonical");
+                            .expect(
+                                "execution must remain visible without claiming consensus finality",
+                            );
                     assert_eq!(
                         pending.lifecycle_stage,
-                        novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+                        novovm_network::NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedNonCanonical
                     );
                     let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
                     assert_eq!(summary.ledger_final_missing_actual_batch_count, 1);
@@ -28509,13 +28669,17 @@ mod tests {
                                     slippage_bps: 100,
                                 },
                                 gas_like_limit: Some(90_000),
-                                nonce,
+                                nonce: 0,
                             }),
                             signature: vec![0xeeu8; 32],
                         };
                         let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
-                        ingest_local_nov_raw_tx_payload_v1(&serde_json::json!({}), raw.as_slice())
-                            .expect("native pending ingress should store payload");
+                        fund_test_signed_deposit_v1(path.as_path(), &raw);
+                        ingest_local_nov_raw_tx_payload_v1(
+                            &serde_json::json!({"native_execution_store_path": path}),
+                            raw.as_slice(),
+                        )
+                        .expect("native pending ingress should store payload");
                     };
                     build_and_ingest_pending(31, "acct-tick-1", 25);
                     build_and_ingest_pending(32, "acct-tick-2", 35);
@@ -28581,6 +28745,9 @@ mod tests {
                     let store = load_nov_native_execution_store_v1(path.as_path())
                         .expect("tick store should load");
                     assert_eq!(store.receipts.len(), 2);
+                    for receipt in store.receipts.values() {
+                        assert_test_deposit_debited_v1(path.as_path(), receipt);
+                    }
                     assert!(
                         store
                             .module_state
@@ -28864,6 +29031,71 @@ mod tests {
             .lock()
             .expect("native auth reservation registry")
             .retain(|(stored_chain_id, _, _), _| *stored_chain_id != chain_id);
+    }
+
+    #[test]
+    fn test_host_nonce_allocator_isolates_stores_and_keeps_durable_floor() {
+        with_test_native_execution_store_path_v1(|first_path| {
+            with_test_native_execution_store_path_v1(|second_path| {
+                let chain_id = 90_104_103;
+                let tx = build_signed_native_auth_test_tx_v1(
+                    chain_id,
+                    0,
+                    [0x91; 32],
+                    "nonce-fixture",
+                    1,
+                );
+                let first_params = serde_json::json!({"native_execution_store_path": first_path});
+                let second_params = serde_json::json!({"native_execution_store_path": second_path});
+                let next = |params: &serde_json::Value| {
+                    next_host_native_nonce_v1(params, chain_id, &tx.signature).unwrap()
+                };
+                assert_eq!(next(&first_params), 0);
+                assert_eq!(next(&first_params), 1);
+                assert_eq!(
+                    next(&second_params),
+                    0,
+                    "fresh store must start independently"
+                );
+                assert_eq!(next(&second_params), 1);
+                assert_eq!(next(&first_params), 2);
+
+                let identity = novovm_protocol::native_nonce::signer_nonce_identity_v2(
+                    tx.signature[..32].try_into().unwrap(),
+                );
+                let identity_key = native_auth_nonce_identity_key_v1(chain_id, &identity);
+                let mut store = load_nov_native_execution_store_v1(&second_path).unwrap();
+                store
+                    .module_state
+                    .native_auth_next_nonces
+                    .insert(identity_key, 7);
+                save_nov_native_execution_store_v1(&second_path, &store).unwrap();
+                assert_eq!(next(&second_params), 7, "durable floor takes precedence");
+                assert_eq!(next(&first_params), 3, "another store must not advance");
+
+                let alias = first_path
+                    .parent()
+                    .unwrap()
+                    .join(".")
+                    .join(first_path.file_name().unwrap());
+                assert_eq!(
+                    next(&serde_json::json!({"native_execution_store_path": alias})),
+                    4
+                );
+                let other_signer = build_signed_native_auth_test_tx_v1(
+                    chain_id,
+                    0,
+                    [0x92; 32],
+                    "other-fixture",
+                    1,
+                );
+                assert_eq!(
+                    next_host_native_nonce_v1(&first_params, chain_id, &other_signer.signature)
+                        .unwrap(),
+                    0
+                );
+            });
+        });
     }
 
     #[test]
@@ -29305,7 +29537,9 @@ mod tests {
                 "chain_id": chain_id,
                 "native_execution_store_path": path,
             });
-            for invalid_nonce in [1, u64::MAX] {
+            for (invalid_nonce, expected_rejection) in
+                [(1, "expected=0"), (u64::MAX, "nonce sequence exhausted")]
+            {
                 let invalid = build_signed_native_auth_test_tx_v1(
                     chain_id,
                     invalid_nonce,
@@ -29318,7 +29552,7 @@ mod tests {
                     encode_native_auth_test_tx_v1(&invalid).as_slice(),
                 )
                 .expect_err("a new identity must not choose its initial nonce floor");
-                assert!(err.to_string().contains("expected=0"));
+                assert!(err.to_string().contains(expected_rejection), "{err:#}");
             }
 
             let first =
@@ -29593,6 +29827,7 @@ mod tests {
                 novovm_adapter_novovm::address_from_seed_v1([0xabu8; 32]).as_slice(),
             );
             let raw = encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+            fund_test_signed_deposit_v1(path.as_path(), &raw);
             let out = run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
                 "raw_tx": to_hex_prefixed_v1(raw.as_slice()),
                 "native_execution_store_path": path,
@@ -29983,6 +30218,7 @@ mod tests {
                             );
                             let raw =
                                 encode_nov_native_tx_wire_v1(&native_tx).expect("encode nov tx");
+                            fund_test_signed_deposit_v1(path.as_path(), &raw);
                             let out =
                                 run_nov_send_raw_transaction_from_params_v1(&serde_json::json!({
                                     "raw_tx": to_hex_prefixed_v1(raw.as_slice()),
@@ -30082,11 +30318,13 @@ mod tests {
                 gas_like_limit: Some(80_000),
                 nonce: 1,
             };
-            let _ = dispatch_and_persist_nov_execution_request_with_store_path_v1(
+            fund_test_deposit_v1(path.as_path(), &request);
+            let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
             )
             .expect("dispatch native request");
+            assert_test_deposit_debited_v1(path.as_path(), &receipt);
             let out = run_nov_native_call_from_params_with_store_path_v1(
                 &serde_json::json!({
                     "target": {"kind": "native_module", "id": "treasury"},
@@ -30150,11 +30388,13 @@ mod tests {
                 gas_like_limit: Some(80_000),
                 nonce: 12,
             };
+            fund_test_deposit_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
             )
             .expect("dispatch should succeed");
+            assert_test_deposit_debited_v1(path.as_path(), &receipt);
             assert!(
                 receipt.status,
                 "failure_reason={:?}",
@@ -30228,11 +30468,13 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 21,
             };
+            fund_test_deposit_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
             )
             .expect("dispatch should succeed");
+            assert_test_deposit_debited_v1(path.as_path(), &receipt);
             assert!(
                 receipt.status,
                 "failure_reason={:?}",
@@ -30272,11 +30514,13 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 31,
             };
+            fund_test_deposit_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
             )
             .expect("dispatch should succeed");
+            assert_test_deposit_debited_v1(path.as_path(), &receipt);
             assert!(receipt.status);
 
             let journal = run_nov_native_call_from_params_with_store_path_v1(
@@ -30924,11 +31168,13 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 13,
             };
+            fund_test_deposit_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
             )
             .expect("dispatch should succeed");
+            assert_test_deposit_debited_v1(path.as_path(), &receipt);
             assert!(
                 receipt.status,
                 "failure_reason={:?}",
@@ -31009,11 +31255,13 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 14,
             };
+            fund_test_deposit_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
             )
             .expect("dispatch should succeed");
+            assert_test_deposit_debited_v1(path.as_path(), &receipt);
             assert!(receipt.status);
             let route_meta = receipt
                 .route_meta
@@ -31388,11 +31636,13 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 9,
             };
+            fund_test_deposit_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
             )
             .expect("dispatch should succeed");
+            assert_test_deposit_debited_v1(path.as_path(), &receipt);
             assert!(receipt.status);
             assert!(receipt
                 .fee_price_source
@@ -31788,7 +32038,8 @@ mod tests {
                 aoem_commit.commit_seal,
                 aoem_meta.semantic_ledger_commit_seal
             );
-            assert_eq!(aoem_commit.semantic_delta_count, 1);
+            assert_eq!(aoem_commit.semantic_delta_count, 2);
+            assert_governance_delta_kinds_v1(&receipt);
 
             let stored = load_nov_native_execution_store_v1(path.as_path())
                 .expect("store should be readable after proposal");
@@ -31872,7 +32123,8 @@ mod tests {
                 aoem_commit.commit_seal,
                 aoem_meta.semantic_ledger_commit_seal
             );
-            assert_eq!(aoem_commit.semantic_delta_count, 1);
+            assert_eq!(aoem_commit.semantic_delta_count, 2);
+            assert_governance_delta_kinds_v1(&receipt);
             let receipt_policy_meta = receipt
                 .policy_meta
                 .as_ref()
@@ -32032,12 +32284,14 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 19,
             };
+            fund_test_deposit_v1(path.as_path(), &followup);
             let followup_receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &followup,
             )
             .expect("followup settlement should succeed");
             assert!(followup_receipt.status);
+            assert_test_deposit_debited_v1(path.as_path(), &followup_receipt);
             let followup_policy_meta = followup_receipt
                 .policy_meta
                 .as_ref()
@@ -32983,11 +33237,13 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 20,
             };
+            fund_test_deposit_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
             )
             .expect("dispatch should succeed in healthy threshold state");
+            assert_test_deposit_debited_v1(path.as_path(), &receipt);
             assert!(receipt.status);
             assert_eq!(receipt.module, "treasury");
             assert_eq!(receipt.method, "deposit_reserve");
@@ -33046,11 +33302,13 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 21,
             };
+            fund_test_deposit_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
             )
             .expect("dispatch should succeed for config-path policy");
+            assert_test_deposit_debited_v1(path.as_path(), &receipt);
             assert!(receipt.status);
             let receipt_policy_meta = receipt
                 .policy_meta
@@ -33382,11 +33640,13 @@ mod tests {
                 gas_like_limit: Some(90_000),
                 nonce: 25,
             };
+            fund_test_deposit_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
             )
             .expect("dispatch should succeed with treasury-direct constrained strategy");
+            assert_test_deposit_debited_v1(path.as_path(), &receipt);
             assert!(receipt.status);
             let route_meta = receipt.route_meta.expect("route meta should exist");
             assert_eq!(route_meta.route_source, "treasury_direct");
@@ -33821,11 +34081,13 @@ mod tests {
                 gas_like_limit: Some(95_000),
                 nonce: 31,
             };
+            fund_test_deposit_v1(path.as_path(), &request);
             let receipt = dispatch_and_persist_nov_execution_request_with_store_path_v1(
                 path.as_path(),
                 &request,
             )
             .expect("dispatch should succeed");
+            assert_test_deposit_debited_v1(path.as_path(), &receipt);
             assert!(receipt.status);
 
             let last_trace = run_nov_native_call_from_params_with_store_path_v1(

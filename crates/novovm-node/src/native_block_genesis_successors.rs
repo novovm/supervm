@@ -365,6 +365,57 @@ impl NovNativeBlockLedgerV1 {
         Ok(Some(record.height))
     }
 
+    pub(crate) fn fresh_round_height_v1(&self) -> Result<Option<u64>> {
+        self.ensure_schema_v1()?;
+        match self.fresh_parent_round_height {
+            Some(height) => Ok(Some(height)),
+            None => self.fresh_successor_height_v1(),
+        }
+    }
+
+    pub(crate) fn with_fresh_parent_round_scope_v1<T>(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        block: &NovNativeDurableBlockV1,
+        binding: &NovNativeIsolatedExecutionBindingV1,
+        action: impl FnOnce(&Self) -> Result<T>,
+    ) -> Result<T> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("parent round ledger missing")?;
+        let _guard = ledger
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("parent round ledger lock poisoned"))?;
+        let config = load_verified(&ledger, genesis, namespace)?;
+        if !ledger.db.get(KEY_SCHEMA_V1)?.is_some_and(|schema| {
+            schema == FINALIZED_SCHEMA.as_bytes() || schema == SUCCESSOR_FINALIZED_SCHEMA.as_bytes()
+        }) {
+            bail!("parent round requires a fully finalized frontier");
+        }
+        let parent = record_at(&ledger, tip_height(&ledger)?)?;
+        if &parent.block != block || &parent.execution != binding {
+            bail!("parent round differs from the live finalized execution");
+        }
+        parent.proof.validated_decision_target(&config, block)?;
+        let height = block
+            .header
+            .height
+            .checked_add(1)
+            .context("parent round height overflow")?;
+        let view = Self {
+            path: ledger.path.clone(),
+            db: Arc::clone(&ledger.db),
+            write_lock: Arc::clone(&ledger.write_lock),
+            read_only: true,
+            isolated_seal_scope: None,
+            fresh_successor_parent_target: None,
+            fresh_parent_round_height: Some(height),
+            fresh_genesis_seal_scope: Some((config, namespace)),
+        };
+        action(&view)
+    }
+
     /// Coordinator holds live workspace/authority locks throughout this callback.
     pub(crate) fn with_fresh_successor_seal_scope_v1<T>(
         path: &Path,
@@ -410,6 +461,7 @@ impl NovNativeBlockLedgerV1 {
             isolated_seal_scope: Some(record),
             fresh_genesis_seal_scope: Some((config, namespace)),
             fresh_successor_parent_target: Some(target),
+            fresh_parent_round_height: None,
         };
         action(&view)
     }

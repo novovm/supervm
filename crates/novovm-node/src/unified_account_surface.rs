@@ -7758,7 +7758,7 @@ mod tests {
         );
         assert_eq!(
             register["native_settlement"]["aoem_semantic_commit"]["semantic_delta_count"].as_u64(),
-            Some(2)
+            Some(3)
         );
         let register_commit_seal = register["native_settlement"]["aoem_semantic_commit"]
             ["commit_seal"]

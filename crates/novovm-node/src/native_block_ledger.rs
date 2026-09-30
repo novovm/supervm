@@ -363,6 +363,7 @@ pub struct NovNativeBlockLedgerV1 {
     read_only: bool,
     isolated_seal_scope: Option<NovNativeBlockCandidateRecordV1>,
     fresh_successor_parent_target: Option<[u8; 32]>,
+    fresh_parent_round_height: Option<u64>,
     fresh_genesis_seal_scope: Option<(
         crate::tx_ingress::fresh_genesis::FreshGenesisConfigV1,
         [u8; 32],
@@ -455,6 +456,7 @@ impl NovNativeBlockLedgerV1 {
             read_only: false,
             isolated_seal_scope: None,
             fresh_successor_parent_target: None,
+            fresh_parent_round_height: None,
             fresh_genesis_seal_scope: None,
         };
         if !allow_genesis_reservation {
@@ -505,6 +507,7 @@ impl NovNativeBlockLedgerV1 {
             read_only: true,
             isolated_seal_scope: None,
             fresh_successor_parent_target: None,
+            fresh_parent_round_height: None,
             fresh_genesis_seal_scope: None,
         };
         if allow_genesis_reservation {
@@ -1240,6 +1243,9 @@ impl NovNativeBlockLedgerV1 {
         block_hash: [u8; 32],
     ) -> Result<(NovNativeBlockCandidateRecordV1, NovNativeDurableBlockV1)> {
         self.ensure_schema_v1()?;
+        if self.fresh_parent_round_height.is_some() {
+            bail!("finalized parent round scope cannot authorize candidate signatures");
+        }
         let record = self
             .load_candidate_record_inner_v1(chain_id, block_hash)?
             .context("NOV native seal candidate is missing from the durable candidate graph")?;
@@ -1398,14 +1404,21 @@ impl NovNativeBlockLedgerV1 {
 
     fn ensure_schema_v1(&self) -> Result<()> {
         if self.fresh_genesis_seal_scope.is_some() {
+            let candidate_scope =
+                self.isolated_seal_scope.is_some() && self.fresh_parent_round_height.is_none();
+            let parent_round_scope = self.isolated_seal_scope.is_none()
+                && self.fresh_successor_parent_target.is_none()
+                && self
+                    .fresh_parent_round_height
+                    .is_some_and(|height| height > 1);
             if !self.read_only
-                || self.isolated_seal_scope.is_none()
+                || !(candidate_scope || parent_round_scope)
                 || !self
                     .db
                     .get(KEY_SCHEMA_V1)?
                     .is_some_and(|raw| genesis_reservation::is_candidate_schema(&raw))
             {
-                bail!("fresh genesis seal view is not a live read-only candidate scope");
+                bail!("fresh genesis seal view is not a live read-only consensus scope");
             }
             return Ok(()); // Full manifest/graph verified while acquiring held ledger lock.
         }

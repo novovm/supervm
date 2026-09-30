@@ -222,22 +222,9 @@ impl NovNativeBlockSealStoreV1 {
     ) -> Result<NovNativeSealTimeoutVoteV1> {
         set.validate()?;
         let binding = store_binding_v1(ledger, set.chain_id)?;
-        let context = NovNativeSealTimeoutContextV1 {
-            chain_id: set.chain_id,
-            genesis_block_hash: binding.genesis_block_hash,
-            protocol_config_commitment: binding.protocol_config_commitment,
-            epoch: set.epoch,
-            validator_set_hash: set.validator_set_hash,
-            height,
-            round,
-        };
+        let mut context = local_context(ledger, set, height)?;
+        context.round = round;
         context.validate(set)?;
-        let head = ledger
-            .load_head(set.chain_id)?
-            .context("timeout requires a local head")?;
-        if height > head.height.saturating_add(1) {
-            bail!("timeout height too far ahead");
-        }
         let signer = validator_id_v1(key.verifying_key().as_bytes());
         if set.validator(signer).is_none() {
             bail!("timeout signer is not a validator");
@@ -381,9 +368,9 @@ fn local_context(
     context.validate(set)?;
     let head_height =
         if let Some((config, _)) = ledger.fresh_genesis_seal_config_v1(set.chain_id)? {
-            let expected_height = ledger.fresh_successor_height_v1()?.unwrap_or(1);
+            let expected_height = ledger.fresh_round_height_v1()?.unwrap_or(1);
             if height != expected_height || config.compile()?.validator_set() != set {
-                bail!("fresh round requires live candidate height and pinned validator set");
+                bail!("fresh round requires the live authorized height and pinned validator set");
             }
             expected_height - 1
         } else {

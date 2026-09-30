@@ -58,6 +58,17 @@ class LocalReadinessTests(unittest.TestCase):
             log.write_text("test result: ok. 5 passed; 0 failed; 4 ignored; 0 measured;")
             self.assertEqual(GATE.rust_test_result(log), {"passed": 5, "failed": 0, "ignored": 4})
 
+    def test_storage_faults_require_private_mount_and_network_namespaces(self):
+        command = GATE.isolated_storage(["binary", "a space", "; false"], "mnt:[12345]")
+        self.assertEqual(command[:8], [
+            "unshare", "--user", "--map-root-user", "--net", "--mount", "--propagation", "private", "--",
+        ])
+        self.assertIn("NOVOVM_TEST_STORAGE_PARENT_MOUNT_NS=mnt:[12345]", command)
+        self.assertEqual(command[-3:], ["binary", "a space", "; false"])
+        for value in ["", "mnt:[]", "net:[12345]", "mnt:[12345]; false"]:
+            with self.assertRaises(RuntimeError):
+                GATE.isolated_storage(["binary"], value)
+
     def test_timeout_terminates_only_its_own_process_group(self):
         with tempfile.TemporaryDirectory() as directory:
             report = {"steps": []}

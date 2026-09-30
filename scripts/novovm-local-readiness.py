@@ -64,6 +64,16 @@ def isolated(command):
     ]
 
 
+def isolated_storage(command, parent_mount_namespace):
+    if not re.fullmatch(r"mnt:\[\d+\]", parent_mount_namespace):
+        raise RuntimeError("Expected parent mount namespace identity")
+    return [
+        "unshare", "--user", "--map-root-user", "--net", "--mount", "--propagation", "private", "--",
+        "sh", "-c", 'ip link set lo up && exec "$@"', "local-storage-readiness",
+        "env", f"NOVOVM_TEST_STORAGE_PARENT_MOUNT_NS={parent_mount_namespace}", *command,
+    ]
+
+
 def rust_test_result(log):
     text = log.read_text(errors="replace")
     results = re.findall(r"test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored;", text)
@@ -123,8 +133,9 @@ def main():
         "accepted": False, "production_ready": False, "multi_machine_tested": False,
         "physical_power_loss_tested": False, "steps": [],
         "remaining_gates": [
-            "candidate-less leader failover", "cross-round prepare/decision split liveness",
-            "long-duration soak and disk fault injection", "public RPC gateway",
+            "extended candidate-less failover and partition churn beyond bounded local cases",
+            "long-duration soak, AOEM/seal in-flight writes, later ledger checkpoint faults and physical power loss",
+            "public RPC gateway",
             "clean release package", "real multi-machine regression", "approved genesis and operations",
         ],
     }
@@ -133,12 +144,29 @@ def main():
             raise RuntimeError("This runner requires Linux network namespaces; do not run on host ports")
         report["source_before"] = source_identity(root)
         run_step(root, output, "namespace", isolated(["true"]), report, 15)
+        parent_mount = os.readlink("/proc/self/ns/mnt")
+        run_step(root, output, "storage-namespace", isolated_storage(["true"], parent_mount), report, 15)
         run_step(root, output, "runner-tests", [sys.executable, "scripts/tests/test_local_readiness.py"], report)
         run_step(root, output, "fmt", ["cargo", "fmt", "--all", "--check"], report)
         run_step(root, output, "clippy", [
             "cargo", "clippy", "-q", "-p", "novovm-node", "--lib", "--bin", "novovm-node",
             "--test", "native_candidate_node_cli", "--", "-D", "warnings",
         ], report)
+        worker_log = run_step(root, output, "build-main-partition-worker", [
+            "cargo", "test", "-p", "novovm-node", "--bin", "novovm-node",
+            "--no-run", "--message-format=json",
+        ], report)
+        worker = test_executable(worker_log, "novovm-node")
+        report["main_partition_test_worker"] = {
+            "path": worker, "sha256": hashlib.sha256(Path(worker).read_bytes()).hexdigest(),
+            "instrumentation": "cfg_test_main_entry_authenticated_ingress_drop_only",
+            "production_binary": False,
+        }
+        run_step(root, output, "partition-controller", isolated([
+            worker, "--exact",
+            "partition_test::controller_rejects_invalid_control_and_filters_only_allowlisted_frames",
+            "--test-threads=1",
+        ]), report, rust_tests=True)
         for package, selection, target in [
             ("novovm-node", ["--lib"], "novovm_node"),
             ("novovm-network", ["--lib"], "novovm_network"),
@@ -158,6 +186,23 @@ def main():
                     executable, "fresh_genesis_main_nodes_continue_three_heights_without_restart",
                     "--ignored", "--test-threads=1",
                 ]), report, 1800, rust_tests=True)
+                run_step(root, output, "candidate-less-failover", isolated([
+                    executable, "fresh_genesis_main_nodes_replace_candidate_less_offline_leader",
+                    "--ignored", "--nocapture", "--test-threads=1",
+                ]), report, 1800, rust_tests=True)
+                run_step(root, output, "prepared-timeout-partition", isolated([
+                    "env", f"NOVOVM_TEST_MAIN_PARTITION_BINARY={worker}", executable,
+                    "fresh_genesis_main_nodes_heal_prepared_timeout_partition",
+                    "--ignored", "--nocapture", "--test-threads=1",
+                ]), report, 1800, rust_tests=True)
+                run_step(root, output, "transaction-pool-storage-faults", isolated_storage([
+                    executable, "fresh_genesis_main_nodes_recover_transaction_pool_storage_faults",
+                    "--ignored", "--nocapture", "--test-threads=1",
+                ], parent_mount), report, 1800, rust_tests=True)
+                run_step(root, output, "database-storage-startup-faults", isolated_storage([
+                    executable, "fresh_genesis_main_nodes_recover_storage_startup_faults",
+                    "--ignored", "--nocapture", "--test-threads=1",
+                ], parent_mount), report, 1800, rust_tests=True)
         report["source_after"] = source_identity(root)
         if report["source_before"] != report["source_after"]:
             raise RuntimeError("Source changed during acceptance; rerun against a stable worktree")

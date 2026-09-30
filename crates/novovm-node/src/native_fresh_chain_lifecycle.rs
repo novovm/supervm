@@ -7,6 +7,10 @@ use crate::native_candidate_body::network::CandidateBodyInboxV1;
 mod clock;
 #[path = "native_fresh_chain_history.rs"]
 mod history;
+#[path = "native_fresh_chain_pacemaker.rs"]
+mod pacemaker;
+#[cfg(test)]
+pub(crate) use pacemaker::exercise_parent_pacemaker;
 #[path = "native_fresh_chain_proposer.rs"]
 mod proposer;
 #[path = "native_fresh_chain_transactions.rs"]
@@ -36,7 +40,9 @@ pub struct FreshChainLifecycleV1 {
     service: Option<Box<NovNativeSealServiceV1>>,
     publication: Option<Box<FreshGenesisPublicationDriverV1>>,
     bodies: Option<CandidateBodyInboxV1>,
+    pacemaker: Option<pacemaker::ParentPacemaker>,
     pending: BTreeMap<String, VecDeque<ProductMainlineOverlayInboundV1>>,
+    round_pending: BTreeMap<String, VecDeque<ProductMainlineOverlayInboundV1>>,
     transaction_budgets: BTreeMap<String, (Instant, usize)>,
     next_peer: usize,
     last_seen: Instant,
@@ -123,6 +129,11 @@ impl FreshChainLifecycleV1 {
             service,
             publication,
             bodies: None,
+            pacemaker: None,
+            round_pending: pending
+                .keys()
+                .map(|peer| (peer.clone(), VecDeque::new()))
+                .collect(),
             pending,
             transaction_budgets,
             next_peer: 0,
@@ -164,21 +175,21 @@ impl FreshChainLifecycleV1 {
     fn arm_body_reception(&mut self, now: Instant) -> Result<()> {
         if self.receive_successors && self.publication.is_some() {
             let config = self.config.as_ref().context("successor identity missing")?;
+            let parent = crate::tx_ingress::candidate_workspace::load_finalized_genesis_parent_v1(
+                config.chain_id,
+                config
+                    .isolated_workspace_id
+                    .context("parent workspace missing")?,
+                config
+                    .fresh_genesis_config_commitment
+                    .context("parent genesis missing")?,
+                &self.params,
+            )?;
             if let Some(pool) = &mut self.pool {
-                let parent =
-                    crate::tx_ingress::candidate_workspace::load_finalized_genesis_parent_v1(
-                        config.chain_id,
-                        config
-                            .isolated_workspace_id
-                            .context("parent workspace missing")?,
-                        config
-                            .fresh_genesis_config_commitment
-                            .context("parent genesis missing")?,
-                        &self.params,
-                    )?;
                 pool.reconcile(&parent)?;
-                self.finalized_parent = Some(parent);
             }
+            self.finalized_parent = Some(parent);
+            self.pacemaker = Some(pacemaker::ParentPacemaker::open(config, &self.params, now)?);
             self.bodies = Some(CandidateBodyInboxV1::new(
                 config.authority.clone(),
                 config
@@ -231,7 +242,18 @@ impl FreshChainLifecycleV1 {
             && inbound.frame.stream_id == self.chain
             && inbound.frame.payload.len() <= crate::product_mainline_overlay::PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1;
         if admissible {
-            if let Some(queue) = self.pending.get_mut(&inbound.source_peer_id) {
+            let queues = if is_nov_native_seal_round_wire_v1(&inbound.frame.payload)
+                && inbound
+                    .frame
+                    .payload
+                    .get(10)
+                    .is_some_and(|kind| matches!(kind, 1..=3))
+            {
+                &mut self.round_pending
+            } else {
+                &mut self.pending
+            };
+            if let Some(queue) = queues.get_mut(&inbound.source_peer_id) {
                 if queue.len() < PER_PEER_QUEUE {
                     queue.push_back(inbound);
                     return true;
@@ -315,21 +337,43 @@ impl FreshChainLifecycleV1 {
         };
         inbox.expire(now)?;
         let config = self.config.as_ref().context("successor identity missing")?;
-        // Round-robin bounded by four queued frames per peer; process at most
-        // the configured ingress budget. No unbounded remote execution queue.
+        if self.finalized_parent.as_ref().is_some_and(|parent| {
+            !clock::timestamp_allowed(parent.block().header.timestamp_unix_ms, wall_ms)
+        }) {
+            self.clock_waiting = true;
+            return Ok(());
+        }
         let mut events = Vec::new();
         let peers = self.pending.keys().cloned().collect::<Vec<_>>();
-        for _ in 0..PER_PEER_QUEUE * peers.len() {
+        for _ in 0..2 * PER_PEER_QUEUE * peers.len() {
             if events.len() == config.ingress_per_poll {
                 break;
             }
-            let peer = &peers[self.next_peer % peers.len()];
-            self.next_peer = (self.next_peer + 1) % peers.len();
-            if let Some(event) = self.pending.get_mut(peer).and_then(VecDeque::pop_front) {
+            let cursor = self.next_peer % (2 * peers.len());
+            let peer = &peers[cursor / 2];
+            self.next_peer = (cursor + 1) % (2 * peers.len());
+            let queues = if cursor.is_multiple_of(2) {
+                &mut self.pending
+            } else {
+                &mut self.round_pending
+            };
+            if let Some(event) = queues.get_mut(peer).and_then(VecDeque::pop_front) {
                 events.push(event);
             }
         }
         for event in events {
+            if is_nov_native_seal_round_wire_v1(&event.frame.payload) {
+                if let Some(pacemaker) = &mut self.pacemaker {
+                    match pacemaker.ingest(config, &event, now) {
+                        Ok(true) => continue,
+                        Ok(false) => (),
+                        Err(_) => {
+                            self.rejected = self.rejected.saturating_add(1);
+                            continue;
+                        }
+                    }
+                }
+            }
             let completed = match inbox.accept_with_manifest(&event, now) {
                 Ok(body) => body,
                 Err(_) => {
@@ -340,6 +384,15 @@ impl FreshChainLifecycleV1 {
             let Some((body, manifest)) = completed else {
                 continue;
             };
+            if !self
+                .pacemaker
+                .as_mut()
+                .context("successor pacemaker missing")?
+                .admit_body_round(config, &self.params, &body.message, now)?
+            {
+                self.rejected = self.rejected.saturating_add(1);
+                continue;
+            }
             if !clock::timestamp_allowed(
                 body.message
                     .proposal()
@@ -352,6 +405,7 @@ impl FreshChainLifecycleV1 {
                 self.rejected = self.rejected.saturating_add(1);
                 continue;
             }
+            let certificate = body.message.certificate().cloned();
             let next = match config
                 .clone()
                 .prepare_received_successor(body, &self.params)
@@ -369,6 +423,9 @@ impl FreshChainLifecycleV1 {
                 runtime,
                 now,
             )?;
+            if let Some(certificate) = &certificate {
+                service.admit_successor_new_view(certificate)?;
+            }
             if !service.enqueue(manifest) {
                 bail!("verified successor proposal was not admitted");
             }
@@ -378,12 +435,20 @@ impl FreshChainLifecycleV1 {
             self.service = Some(Box::new(service));
             self.publication = None;
             self.bodies = None;
+            self.pacemaker = None;
             for queue in self.pending.values_mut() {
+                queue.clear();
+            }
+            for queue in self.round_pending.values_mut() {
                 queue.clear();
             }
             self.received_successors = self.received_successors.saturating_add(1);
             return Ok(());
         }
+        self.pacemaker
+            .as_mut()
+            .context("successor pacemaker missing")?
+            .poll(config, &self.params, runtime, now)?;
         self.propose_from_pool(runtime, now, wall_ms)
     }
 
@@ -417,6 +482,12 @@ impl FreshChainLifecycleV1 {
         value["successor_signer_retained"] =
             (self.receive_successors && self.config.is_some()).into();
         value["awaiting_successor_body"] = self.bodies.is_some().into();
+        value["parent_pacemaker"] = self
+            .pacemaker
+            .as_ref()
+            .map(pacemaker::ParentPacemaker::status_json)
+            .unwrap_or(serde_json::Value::Null);
+        value["parent_round_signing_enabled"] = (self.pacemaker.is_some() && !self.halted).into();
         value["received_successors"] = self.received_successors.into();
         value["successor_rejected"] = self.rejected.into();
         value["lifecycle_halted"] = self.halted.into();

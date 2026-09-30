@@ -1470,7 +1470,7 @@ fn hex_dynamic_v1(bytes: &[u8]) -> String {
 fn eth_fullnode_rlpx_error_is_timeout_v1(raw: &str) -> bool {
     raw.contains("timed out")
         || raw.contains("would block")
-        || raw.contains("partial_read_timeout")
+        || raw.contains("read_timeout")
         || raw.contains("os error 10060")
         || raw.contains("os error 10035")
         || raw.contains("没有正确答复")
@@ -3108,14 +3108,22 @@ fn drive_eth_fullnode_native_rlpx_peer_session_once_v1(
                     }
                 }
                 Err(err) => {
-                    if err.contains("timed out")
-                        || err.contains("would block")
-                        || err.contains("partial_read_timeout")
-                        || err.contains("os error 10060")
-                        || err.contains("os error 10035")
-                        || err.contains("没有正确答复")
-                        || err.contains("没有反应")
-                    {
+                    if crate::eth_rlpx::eth_rlpx_is_idle_frame_timeout_v1(&err) {
+                        break;
+                    }
+                    if eth_fullnode_rlpx_error_is_timeout_v1(&err) {
+                        observe_network_runtime_eth_peer_timeout_v1(
+                            chain_id,
+                            peer.0,
+                            "incomplete_frame_timeout",
+                        );
+                        mark_eth_fullnode_native_rlpx_session_disconnected_v1(
+                            chain_id,
+                            peer.0,
+                            &mut disconnected,
+                            &mut disconnect_error,
+                            NetworkError::Decode(err),
+                        );
                         break;
                     }
                     if eth_fullnode_rlpx_error_is_remote_closed_v1(err.as_str())
@@ -12483,6 +12491,8 @@ mod tests {
         session
     }
 
+    include!("transport_rlpx_read_tests.rs");
+
     #[test]
     fn rlpx_material_pending_uses_wider_session_read_timeout_v1() {
         let chain_id = 9_926_203_u64;
@@ -19768,11 +19778,11 @@ mod tests {
             block_access_list_hash: None,
             raw_rlp: None,
         };
-        let header_b = crate::EthRlpxBlockHeaderRecordV1 {
-            number: 121,
+        let fork_header = crate::EthRlpxBlockHeaderRecordV1 {
+            number: 120,
             hash: [0u8; 32],
             parent_hash: ancestor_hash,
-            state_root: [0x21; 32],
+            state_root: [0xa9; 32],
             transactions_root: empty_root,
             receipts_root: empty_root,
             ommers_hash: empty_ommers_hash,
@@ -19797,8 +19807,16 @@ mod tests {
                 .hash
         };
         let header_a_hash = derive_header_hash(&header_a);
+        let fork_header_hash = derive_header_hash(&fork_header);
+        let header_b = crate::EthRlpxBlockHeaderRecordV1 {
+            number: 121,
+            parent_hash: fork_header_hash,
+            timestamp: Some(1_234_569),
+            ..fork_header.clone()
+        };
         let header_b_hash = derive_header_hash(&header_b);
         let server_raw_tx = raw_tx.clone();
+        let (proceed_sender, proceed_receiver) = std::sync::mpsc::channel::<()>();
 
         let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
@@ -19891,115 +19909,82 @@ mod tests {
                 crate::ETH_NATIVE_MAX_SUPPORTED_ETH_PROTOCOL_VERSION as u32
             );
 
-            let mut header_response_count = 0usize;
-            let mut body_response_count = 0usize;
-            let mut receipt_response_count = 0usize;
+            let body_a = crate::EthRlpxBlockBodyPayloadV1 {
+                tx_rlp_items: vec![server_raw_tx],
+                ommer_header_rlp_items: Vec::new(),
+                withdrawal_rlp_items: Some(Vec::new()),
+            };
+            let block_a = crate::eth_rlpx_build_new_block_payload_v1(&header_a, &body_a, 1_000);
+            crate::eth_rlpx_write_wire_frame_v1(
+                &mut accepted,
+                &mut responder.session,
+                crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_NEW_BLOCK_MSG,
+                &block_a,
+            )
+            .expect("announce first branch");
             loop {
                 let (code, payload) =
                     crate::eth_rlpx_read_wire_frame_v1(&mut accepted, &mut responder.session)
                         .expect("read worker frame");
-                if code
-                    == crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
-                        + crate::ETH_RLPX_ETH_GET_BLOCK_HEADERS_MSG
-                {
-                    let request =
-                        crate::eth_rlpx_parse_get_block_headers_payload_v1(payload.as_slice())
-                            .expect("parse get block headers");
-                    let selected_header = if header_response_count == 0 {
-                        &header_a
-                    } else {
-                        &header_b
-                    };
-                    header_response_count = header_response_count.saturating_add(1);
-                    let headers_payload = crate::eth_rlpx_build_block_headers_payload_v1(
-                        request.request_id,
-                        std::slice::from_ref(selected_header),
-                    );
+                if code == crate::ETH_RLPX_P2P_PING_MSG {
                     crate::eth_rlpx_write_wire_frame_v1(
                         &mut accepted,
                         &mut responder.session,
-                        crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
-                            + crate::ETH_RLPX_ETH_BLOCK_HEADERS_MSG,
-                        headers_payload.as_slice(),
+                        crate::ETH_RLPX_P2P_PONG_MSG,
+                        &[],
                     )
-                    .expect("write block headers");
+                    .expect("write pong");
                     continue;
                 }
-                if code
-                    == crate::ETH_RLPX_BASE_PROTOCOL_OFFSET
-                        + crate::ETH_RLPX_ETH_GET_BLOCK_BODIES_MSG
-                {
-                    let request =
-                        crate::eth_rlpx_parse_get_block_bodies_payload_v1(payload.as_slice())
-                            .expect("parse get block bodies");
-                    let body = if request.hashes == vec![header_a_hash] {
-                        crate::EthRlpxBlockBodyPayloadV1 {
-                            tx_rlp_items: vec![server_raw_tx.clone()],
-                            ommer_header_rlp_items: Vec::new(),
-                            withdrawal_rlp_items: Some(Vec::new()),
-                        }
-                    } else {
-                        assert_eq!(request.hashes, vec![header_b_hash]);
-                        crate::EthRlpxBlockBodyPayloadV1 {
-                            tx_rlp_items: Vec::new(),
-                            ommer_header_rlp_items: Vec::new(),
-                            withdrawal_rlp_items: Some(Vec::new()),
-                        }
-                    };
-                    let bodies_payload =
-                        crate::eth_rlpx_build_block_bodies_payload_v1(request.request_id, &[body]);
-                    crate::eth_rlpx_write_wire_frame_v1(
-                        &mut accepted,
-                        &mut responder.session,
-                        crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_BLOCK_BODIES_MSG,
-                        bodies_payload.as_slice(),
-                    )
-                    .expect("write block bodies");
-                    body_response_count = body_response_count.saturating_add(1);
-                    if body_response_count >= 2 && receipt_response_count >= 1 {
-                        thread::sleep(Duration::from_millis(250));
-                        break;
-                    }
-                    continue;
-                }
-                if code
-                    == crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_GET_RECEIPTS_MSG
-                {
-                    let request = crate::eth_rlpx_parse_get_receipts_payload_v1(payload.as_slice())
-                        .expect("parse get receipts");
-                    let receipt_blocks = if request.hashes == vec![header_a_hash] {
-                        vec![vec![0xc0]]
-                    } else {
-                        assert_eq!(request.hashes, vec![header_b_hash]);
-                        Vec::new()
-                    };
-                    let receipts_payload = crate::eth_rlpx_build_receipts_payload_v1(
-                        request.request_id,
-                        false,
-                        &[receipt_blocks],
-                        70,
-                    );
-                    crate::eth_rlpx_write_wire_frame_v1(
-                        &mut accepted,
-                        &mut responder.session,
-                        crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_RECEIPTS_MSG,
-                        receipts_payload.as_slice(),
-                    )
-                    .expect("write receipts");
-                    receipt_response_count = receipt_response_count.saturating_add(1);
-                    if body_response_count >= 2 && receipt_response_count >= 1 {
-                        thread::sleep(Duration::from_millis(250));
-                        break;
-                    }
-                    continue;
-                }
+                assert_eq!(
+                    code,
+                    crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_GET_RECEIPTS_MSG
+                );
+                let request = crate::eth_rlpx_parse_get_receipts_payload_v1(&payload)
+                    .expect("parse get receipts");
+                assert_eq!(request.hashes, vec![header_a_hash]);
+                let receipts_payload = crate::eth_rlpx_build_receipts_payload_v1(
+                    request.request_id,
+                    false,
+                    &[header_a_receipts],
+                    70,
+                );
+                crate::eth_rlpx_write_wire_frame_v1(
+                    &mut accepted,
+                    &mut responder.session,
+                    crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_RECEIPTS_MSG,
+                    &receipts_payload,
+                )
+                .expect("write receipts");
+                break;
             }
+            proceed_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .expect("wait for explicit local selection of first branch");
+            let empty_body = crate::EthRlpxBlockBodyPayloadV1 {
+                tx_rlp_items: Vec::new(),
+                ommer_header_rlp_items: Vec::new(),
+                withdrawal_rlp_items: Some(Vec::new()),
+            };
+            for header in [&fork_header, &header_b] {
+                let block = crate::eth_rlpx_build_new_block_payload_v1(header, &empty_body, 2_000);
+                crate::eth_rlpx_write_wire_frame_v1(
+                    &mut accepted,
+                    &mut responder.session,
+                    crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_NEW_BLOCK_MSG,
+                    &block,
+                )
+                .expect("announce continuous competing branch");
+            }
+            proceed_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .expect("wait for local reorg assertions");
         });
 
         let mut budget = default_eth_fullnode_budget_hooks_v1();
         budget.active_native_peer_soft_limit = 1;
         budget.active_native_peer_hard_limit = 1;
-        budget.sync_request_interval_ms = 1;
+        budget.sync_request_interval_ms = u64::MAX;
         budget.tx_broadcast_interval_ms = u64::MAX;
         let worker = EthFullnodeNativePeerWorkerV1::new(EthFullnodeNativePeerWorkerConfigV1 {
             chain_id,
@@ -20013,27 +19998,80 @@ mod tests {
 
         let report0 = worker.drive_real_network_once().expect("connect tick");
         assert_eq!(report0.connected_peers, 1);
-        let started = std::time::Instant::now();
-        while started.elapsed() < Duration::from_secs(2) {
-            let _ = worker.drive_real_network_once().expect("network tick");
-            let reorg_ready = snapshot_network_runtime_native_canonical_chain_v1(chain_id)
-                .is_some_and(|chain| {
-                    chain.reorg_count == 1
-                        && chain.last_reorg_depth == Some(1)
-                        && chain.block_lifecycle_summary.reorged_out_count == 1
-                });
-            let body_ready = get_network_runtime_native_body_snapshot_v1(chain_id)
-                .is_some_and(|body| body.block_hash == header_b_hash);
-            let tx_ready =
-                get_network_runtime_native_pending_tx_v1(chain_id, tx_hash).is_some_and(|tx| {
-                    tx.lifecycle_stage
-                        == NetworkRuntimeNativePendingTxLifecycleStageV1::ReorgedBackToPending
-                });
-            if reorg_ready && body_ready && tx_ready {
-                break;
+        let wait_for_material = |expected_hash| {
+            let started = std::time::Instant::now();
+            loop {
+                worker.drive_real_network_once().expect("network tick");
+                let head = get_network_runtime_native_head_snapshot_v1(chain_id);
+                let body = get_network_runtime_native_body_snapshot_v1(chain_id);
+                let receipts =
+                    get_network_runtime_native_receipt_snapshot_v1(chain_id, expected_hash);
+                if head
+                    .as_ref()
+                    .is_some_and(|head| head.block_hash == expected_hash)
+                    && body
+                        .as_ref()
+                        .is_some_and(|body| body.block_hash == expected_hash && body.body_available)
+                    && receipts
+                        .as_ref()
+                        .is_some_and(|receipts| receipts.receipts_available)
+                {
+                    return head.unwrap();
+                }
+                assert!(
+                    started.elapsed() < Duration::from_secs(3),
+                    "missing branch material: expected={expected_hash:?} head={head:?} body={body:?} receipts={receipts:?}"
+                );
+                thread::sleep(Duration::from_millis(5));
             }
-            thread::sleep(Duration::from_millis(5));
-        }
+        };
+        let mut local_choice_a = wait_for_material(header_a_hash);
+        assert!(!local_choice_a.canonical && !local_choice_a.safe && !local_choice_a.finalized);
+        let before_choice = snapshot_network_runtime_native_canonical_chain_v1(chain_id).unwrap();
+        assert_eq!(before_choice.head.unwrap().hash, ancestor_hash);
+        assert_eq!(before_choice.reorg_count, 0);
+        assert_ne!(
+            get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+                .unwrap()
+                .lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+        );
+        local_choice_a.canonical = true;
+        local_choice_a.source_peer_id = Some(local.0);
+        local_choice_a.observed_unix_ms = now_unix_millis_u128();
+        set_network_runtime_native_head_snapshot_v1(chain_id, local_choice_a);
+        assert_eq!(
+            get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+                .unwrap()
+                .lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+        );
+        proceed_sender.send(()).expect("allow competing branch");
+
+        let mut local_choice_b = wait_for_material(header_b_hash);
+        assert!(!local_choice_b.canonical && !local_choice_b.safe && !local_choice_b.finalized);
+        assert_eq!(local_choice_b.parent_block_hash, fork_header_hash);
+        let before_reorg = snapshot_network_runtime_native_canonical_chain_v1(chain_id).unwrap();
+        assert_eq!(before_reorg.head.unwrap().hash, header_a_hash);
+        assert_eq!(before_reorg.reorg_count, 0);
+        assert_eq!(
+            get_network_runtime_native_pending_tx_v1(chain_id, tx_hash)
+                .unwrap()
+                .lifecycle_stage,
+            NetworkRuntimeNativePendingTxLifecycleStageV1::IncludedCanonical
+        );
+        let fork = snapshot_network_runtime_native_canonical_blocks_v1(chain_id, 8)
+            .into_iter()
+            .find(|block| block.hash == fork_header_hash)
+            .unwrap();
+        assert_eq!(fork.number, 120);
+        assert_eq!(fork.parent_hash, ancestor_hash);
+        assert!(fork.header_observed && fork.body_available && fork.receipts_available);
+        assert!(!fork.canonical && !fork.safe && !fork.finalized);
+        local_choice_b.canonical = true;
+        local_choice_b.source_peer_id = Some(local.0);
+        local_choice_b.observed_unix_ms = now_unix_millis_u128();
+        set_network_runtime_native_head_snapshot_v1(chain_id, local_choice_b);
 
         let chain =
             snapshot_network_runtime_native_canonical_chain_v1(chain_id).expect("canonical chain");
@@ -20075,6 +20113,7 @@ mod tests {
         );
         assert_eq!(candidate.tx_payload, raw_tx);
 
+        proceed_sender.send(()).expect("finish reorg fixture");
         server.join().expect("server join");
     }
 

@@ -26,8 +26,15 @@ impl FreshChainLifecycleV1 {
             .height
             .checked_add(1)
             .context("proposal height overflow")?;
+        let Some(round) = self
+            .pacemaker
+            .as_ref()
+            .and_then(pacemaker::ParentPacemaker::proposal_round)
+        else {
+            return Ok(());
+        };
         if !config.propose_successors
-            || config.authority.expected_leader(height, 0)? != config.local_validator_id
+            || config.authority.scheduled_leader_v1(height, round)? != config.local_validator_id
         {
             return Ok(());
         }
@@ -95,13 +102,24 @@ impl FreshChainLifecycleV1 {
             runtime,
             now,
         )?;
+        if let Some(certificate) = self
+            .pacemaker
+            .as_ref()
+            .and_then(pacemaker::ParentPacemaker::certificate)
+        {
+            service.admit_successor_new_view(certificate)?;
+        }
         // Preparation/registration is not a vote. The next lifecycle tick uses
         // the existing durable anti-equivocation and V3 confirmation scheduler.
         self.config = Some(next);
         self.service = Some(Box::new(service));
         self.publication = None;
         self.bodies = None;
+        self.pacemaker = None;
         for queue in self.pending.values_mut() {
+            queue.clear();
+        }
+        for queue in self.round_pending.values_mut() {
             queue.clear();
         }
         self.proposed_successors = self.proposed_successors.saturating_add(1);

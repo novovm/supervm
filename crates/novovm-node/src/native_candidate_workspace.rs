@@ -18,9 +18,10 @@ pub use execution::{
     register_genesis_block_candidate_v1, resume_genesis_promotion_v1,
     resume_successor_promotion_v1, retire_old_workspaces_v1, verify_genesis_promotion_v1,
     verify_successor_authority_v1, with_verified_block_candidate_v1,
-    with_verified_finalized_successor_v1, with_verified_genesis_block_candidate_v1,
-    ExecutionInfoV1, FinalizedGenesisParentV1, FreshSuccessorPublicationV1,
-    GenesisPromotionPublicationV1, IsolatedBlockArtifactV1, WorkspaceRetirementV1,
+    with_verified_finalized_parent_round_v1, with_verified_finalized_successor_v1,
+    with_verified_genesis_block_candidate_v1, ExecutionInfoV1, FinalizedGenesisParentV1,
+    FreshSuccessorPublicationV1, GenesisPromotionPublicationV1, IsolatedBlockArtifactV1,
+    WorkspaceRetirementV1,
 };
 #[cfg(test)]
 pub(super) use execution::{

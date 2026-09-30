@@ -5,6 +5,10 @@
 #![forbid(unsafe_code)]
 #![recursion_limit = "512"]
 
+#[cfg(test)]
+#[path = "novovm_node_partition_test.rs"]
+mod partition_test;
+
 use anyhow::{bail, Context, Result};
 use base64::Engine;
 use k256::elliptic_curve::sec1::ToEncodedPoint;
@@ -43591,17 +43595,33 @@ fn run_fresh_genesis_confirmation_v1(
     println!("native_seal_service_startup: {}", lifecycle.status_json());
     let mut ticks = 0u64;
     let mut confirmation_reported = None;
+    #[cfg(test)]
+    let mut faults = partition_test::Controller::open()?;
     loop {
+        #[cfg(test)]
+        if let Some(faults) = &mut faults {
+            faults.refresh()?;
+        }
         if let Some(rpc) = &mut rpc {
             rpc.poll(&mut lifecycle)?;
         }
         for event in runtime.drain_events(128) {
             if let ProductMainlineOverlayEventV1::Inbound(inbound) = event {
+                #[cfg(test)]
+                if let Some(faults) = &mut faults {
+                    if !faults.allow(&inbound.source_peer_id, &inbound.frame.payload) {
+                        continue;
+                    }
+                }
                 lifecycle.enqueue(inbound);
             }
         }
         lifecycle.poll(&runtime, Instant::now())?;
         let status = lifecycle.status_json();
+        #[cfg(test)]
+        if let Some(faults) = &faults {
+            faults.record(&status)?;
+        }
         let height = status["height"].as_u64();
         if confirmation_reported != height && status["decision_confirmed"] == true {
             println!("native_fresh_genesis_decision_confirmed: {status}");

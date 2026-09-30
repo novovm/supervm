@@ -36,6 +36,14 @@ impl Drop for Relay {
 struct Child(std::process::Child);
 #[path = "native_seal_continuous_process.rs"]
 mod continuous;
+#[path = "native_seal_failover_process.rs"]
+mod failover;
+#[path = "native_seal_partition_process.rs"]
+mod partition;
+#[path = "native_seal_storage_process.rs"]
+mod storage;
+#[path = "native_seal_storage_startup_process.rs"]
+mod storage_startup;
 #[path = "native_seal_successor_process.rs"]
 mod successor;
 impl Drop for Child {
@@ -253,6 +261,64 @@ fn fresh_genesis_main_nodes_continue_three_heights_without_restart() {
 }
 
 fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool, continuous: bool) {
+    run_real_aoem_main_nodes_with_failover(decision_v3, fresh, continuous, false);
+}
+
+#[test]
+#[ignore = "requires isolated loopback WSS and real AOEM; run the local readiness runner"]
+fn fresh_genesis_main_nodes_replace_candidate_less_offline_leader() {
+    run_real_aoem_main_nodes_with_failover(true, true, false, true);
+}
+
+fn run_real_aoem_main_nodes_with_failover(
+    decision_v3: bool,
+    fresh: bool,
+    continuous: bool,
+    failover: bool,
+) {
+    run_real_aoem_main_nodes_with_faults(
+        decision_v3,
+        fresh,
+        continuous,
+        failover,
+        LocalFault::None,
+    );
+}
+
+#[test]
+#[ignore = "requires isolated WSS, real AOEM and cfg(test) main worker; use readiness runner"]
+fn fresh_genesis_main_nodes_heal_prepared_timeout_partition() {
+    run_real_aoem_main_nodes_with_faults(true, true, false, false, LocalFault::Partition);
+}
+
+#[test]
+#[ignore = "requires private mount/network namespaces, bounded tmpfs and real AOEM"]
+fn fresh_genesis_main_nodes_recover_transaction_pool_storage_faults() {
+    storage::require_private_mount();
+    run_real_aoem_main_nodes_with_faults(true, true, false, false, LocalFault::Storage);
+}
+
+enum LocalFault {
+    None,
+    Partition,
+    Storage,
+    StorageStartup,
+}
+
+#[test]
+#[ignore = "requires private mount/network namespaces, bounded storage and real AOEM"]
+fn fresh_genesis_main_nodes_recover_storage_startup_faults() {
+    storage::require_private_mount();
+    run_real_aoem_main_nodes_with_faults(true, true, false, false, LocalFault::StorageStartup);
+}
+
+fn run_real_aoem_main_nodes_with_faults(
+    decision_v3: bool,
+    fresh: bool,
+    continuous: bool,
+    failover: bool,
+    fault: LocalFault,
+) {
     let reserve = std::net::TcpListener::bind("127.0.0.2:443")
         .expect("exclusive loopback 443 required; do not stop other services");
     let (genesis, fresh_plan) = super::native_fresh_genesis_cli::inputs();
@@ -448,6 +514,10 @@ fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool, continuous: bool) {
             fs::write(path, serde_json::to_vec(&config).unwrap()).unwrap();
         }
     }
+    if matches!(fault, LocalFault::Partition) {
+        partition::exercise(&nodes, &authority, &validators, &peer_ids, &block, &root);
+        return;
+    }
     // Same fixed four-member authority throughout. No fake clock or test-driver votes.
     run_cluster(
         &nodes,
@@ -468,6 +538,16 @@ fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool, continuous: bool) {
             .load_decision_certificate_by_height_v3(CHAIN, 1, 1)
             .unwrap()
             .is_none());
+    }
+    if matches!(fault, LocalFault::StorageStartup) {
+        storage_startup::exercise(
+            &nodes,
+            &active,
+            &genesis,
+            &fresh_plan,
+            &fresh_outputs[active[0]],
+            &root,
+        );
     }
     run_cluster(
         &nodes,
@@ -628,6 +708,14 @@ fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool, continuous: bool) {
         "physical_lan_executed":false,"public_network_executed":false
     })).unwrap()).unwrap();
     if fresh {
+        if matches!(fault, LocalFault::StorageStartup) {
+            storage_startup::finish(&nodes, &root);
+            return;
+        }
+        if matches!(fault, LocalFault::Storage) {
+            storage::exercise(&nodes, &authority, &validators, &fresh_plan, &root);
+            return;
+        }
         successor::exercise(
             &nodes,
             &authority,
@@ -636,6 +724,9 @@ fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool, continuous: bool) {
             &fresh_plan,
             &root,
         );
+        if failover {
+            failover::exercise(&nodes, &authority, &validators, &fresh_plan, &root);
+        }
         if continuous {
             continuous::exercise(
                 &nodes,

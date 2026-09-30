@@ -119,6 +119,7 @@ impl NovNativeBlockLedgerV1 {
             read_only: true,
             isolated_seal_scope: Some(record),
             fresh_successor_parent_target: None,
+            fresh_parent_round_height: None,
             fresh_genesis_seal_scope: Some((config, namespace)),
         };
         action(&view)

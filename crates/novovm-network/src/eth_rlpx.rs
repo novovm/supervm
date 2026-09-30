@@ -4805,15 +4805,8 @@ fn eth_rlpx_split_list_raw_items_v1(payload: &[u8]) -> Result<Vec<&[u8]>, String
     Ok(items)
 }
 
-fn eth_rlpx_is_timeout_like_v1(err: &str) -> bool {
-    let normalized = err.to_ascii_lowercase();
-    normalized.contains("timed out")
-        || normalized.contains("would block")
-        || normalized.contains("timeout")
-        || normalized.contains("os error 10060")
-        || normalized.contains("os error 10035")
-        || err.contains("没有正确答复")
-        || err.contains("没有反应")
+pub(crate) fn eth_rlpx_is_idle_frame_timeout_v1(error: &str) -> bool {
+    error.starts_with("rlpx_frame_header_read_failed:read_timeout read=0/16 ")
 }
 
 fn eth_rlpx_partial_read_timeout_v1() -> Duration {
@@ -4857,12 +4850,24 @@ fn eth_rlpx_read_exact_with_partial_deadline_v1<R: std::io::Read>(
                 read_total += read_now;
             }
             Err(err) => {
-                let err_text = err.to_string();
-                if read_total > 0 && eth_rlpx_is_timeout_like_v1(err_text.as_str()) {
+                if err.kind() == std::io::ErrorKind::Interrupted {
                     continue;
                 }
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) {
+                    if read_total > 0 {
+                        continue;
+                    }
+                    return Err(format!(
+                        "{error_prefix}:read_timeout read=0/{} kind={:?} detail={err}",
+                        buf.len(),
+                        err.kind()
+                    ));
+                }
                 return Err(format!(
-                    "{error_prefix}:{err_text} read={read_total}/{}",
+                    "{error_prefix}:{err} read={read_total}/{}",
                     buf.len()
                 ));
             }
@@ -5222,6 +5227,8 @@ mod tests {
     use k256::elliptic_curve::sec1::ToEncodedPoint;
     use std::net::{TcpListener, TcpStream};
     use std::thread;
+
+    include!("eth_rlpx_read_tests.rs");
 
     struct PartialWouldBlockReaderV1 {
         emitted: bool,

@@ -33,6 +33,82 @@ fn native_seal_service_v3_recovers_prepare_from_final_certificate_only() {
     recover_v3_with_lost_prepare(10);
 }
 
+#[test]
+fn native_seal_service_v3_retains_distinct_decision_votes_in_first_poll() {
+    let mut cluster = NetworkCluster::new(9_782_341);
+    let initial = cluster.started;
+    let delayed = (cluster.initial_leader() + 1) % 4;
+    let active = (0..4).filter(|index| *index != delayed).collect::<Vec<_>>();
+    let mut services = (0..4)
+        .map(|index| Some(start_v3_service(&mut cluster, index, initial)))
+        .collect::<Vec<_>>();
+    let before = durable_seal_facts(cluster.peers[delayed].node.store());
+    let started = Instant::now();
+    let mut votes = std::collections::BTreeMap::new();
+    while votes.len() < 2 {
+        step_test_services(
+            &cluster,
+            &mut services,
+            &active,
+            initial + started.elapsed(),
+        );
+        for event in cluster.peers[delayed]
+            .runtime
+            .as_ref()
+            .unwrap()
+            .drain_events(128)
+        {
+            match event {
+                ProductMainlineOverlayEventV1::Inbound(inbound)
+                    if inbound.frame.payload.get(10) == Some(&9) =>
+                {
+                    votes
+                        .entry(inbound.source_peer_id.clone())
+                        .or_insert(inbound);
+                }
+                ProductMainlineOverlayEventV1::WorkerFailed(error) => panic!("{error}"),
+                _ => (),
+            }
+        }
+        assert!(
+            started.elapsed() < NETWORK_DEADLINE,
+            "two distinct decision votes required"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let peer = &cluster.peers[delayed];
+    let runtime = peer.runtime.as_ref().unwrap();
+    let service = services[delayed].as_mut().unwrap();
+    assert_eq!(service.status_json()["prepared"], false);
+    for inbound in votes.into_values().take(2) {
+        assert!(service.enqueue(inbound));
+    }
+    assert_eq!(durable_seal_facts(peer.node.store()), before);
+    let now = initial + started.elapsed();
+    service.poll(runtime, now).unwrap();
+    assert_eq!(service.status_json()["prepared"], true);
+    assert_eq!(service.status_json()["accepted_ingress"], 2);
+    assert_eq!(service.status_json()["dropped_ingress"], 0);
+    assert_eq!(service.status_json()["decision_confirmed"], false);
+    service.poll(runtime, now + Duration::from_secs(1)).unwrap();
+    assert_eq!(service.status_json()["decision_confirmed"], true);
+    let certificate = peer
+        .node
+        .store()
+        .load_decision_certificate_by_height_v3(
+            cluster.authority.chain_id,
+            cluster.authority.epoch,
+            1,
+        )
+        .unwrap()
+        .unwrap();
+    certificate
+        .verify(&cluster.authority.validator_set)
+        .unwrap();
+    assert_eq!(certificate.votes.len(), 3);
+    cluster.assert_unfinalized();
+}
+
 fn recover_v3_with_lost_prepare(kind: u8) {
     let mut cluster = NetworkCluster::new(9_782_320 + u64::from(kind));
     let initial = cluster.started;

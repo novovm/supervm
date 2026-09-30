@@ -24,6 +24,63 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{Duration, Instant};
 
+pub(super) fn validate_round_inbound(
+    authority: &crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1,
+    height: u64,
+    local_peer_id: &str,
+    inbound: &ProductMainlineOverlayInboundV1,
+) -> Result<super::round_message::NovNativeSealRoundMessageV1> {
+    validate_round_transport(authority, local_peer_id, inbound)?;
+    decode_nov_native_seal_round_wire_v1(
+        &inbound.frame.payload,
+        authority,
+        height,
+        &inbound.source_peer_id,
+    )
+}
+
+fn validate_round_transport(
+    authority: &crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1,
+    local_peer_id: &str,
+    inbound: &ProductMainlineOverlayInboundV1,
+) -> Result<()> {
+    if inbound.payload_class != ProductMainlineOverlayPayloadClassV1::NativeSeal
+        || inbound.frame.stream_id != authority.chain_id
+        || inbound.frame.kind != NovoRudpTransportFrameKindV0::Data
+        || inbound.frame.session_id != PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1
+        || inbound.frame.sequence != inbound.original_frame_sequence
+        || inbound.frame.ack_epoch != 0
+        || inbound.frame.object_id != u64::from_le_bytes(inbound.object_hash[..8].try_into()?)
+        || inbound.source_peer_id == local_peer_id
+        || !authority
+            .transport_bindings
+            .iter()
+            .any(|binding| binding.transport_peer_id == inbound.source_peer_id)
+    {
+        bail!("native seal round ingress is outside the pinned transport domain");
+    }
+    let wire = &inbound.frame.payload;
+    if wire.len() > super::round_wire::NOV_NATIVE_SEAL_ROUND_MAX_WIRE_BYTES_V1 {
+        bail!("native seal round ingress exceeds its transport bound");
+    }
+    let payload_sha256: [u8; 32] = Sha256::digest(wire).into();
+    if inbound.payload_sha256 != payload_sha256
+        || inbound.object_hash != round_wire_object_hash_v1(wire)
+        || inbound.delivery_id
+            != product_delivery_id_v1(
+                authority.chain_id,
+                "native_seal",
+                inbound.object_hash,
+                payload_sha256,
+                &inbound.source_peer_id,
+                local_peer_id,
+            )
+    {
+        bail!("native seal round ingress payload/delivery binding mismatch");
+    }
+    Ok(())
+}
+
 /// Re-emission is intentional: driver ingress is volatile and an interrupted
 /// recipient must recollect evidence. This is NOT a durable-delivery ACK.
 pub const NOV_NATIVE_SEAL_ROUND_RETRY_INTERVAL_V1: Duration = Duration::from_millis(250);
@@ -109,35 +166,7 @@ impl NovNativeSealRoundOverlayV1 {
         if inbound.payload_class != ProductMainlineOverlayPayloadClassV1::NativeSeal {
             return Ok(false);
         }
-        if inbound.frame.stream_id != self.driver.authority().chain_id
-            || inbound.frame.kind != NovoRudpTransportFrameKindV0::Data
-            || inbound.frame.session_id != PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1
-            || inbound.frame.sequence != inbound.original_frame_sequence
-            || inbound.frame.ack_epoch != 0
-            || inbound.frame.object_id != u64::from_le_bytes(inbound.object_hash[..8].try_into()?)
-            || !self.peers.contains(&inbound.source_peer_id)
-        {
-            bail!("native seal round ingress is outside the pinned transport domain");
-        }
-        let wire = &inbound.frame.payload;
-        if wire.len() > super::round_wire::NOV_NATIVE_SEAL_ROUND_MAX_WIRE_BYTES_V1 {
-            bail!("native seal round ingress exceeds its transport bound");
-        }
-        let payload_sha256: [u8; 32] = Sha256::digest(wire).into();
-        if inbound.payload_sha256 != payload_sha256
-            || inbound.object_hash != round_wire_object_hash_v1(wire)
-            || inbound.delivery_id
-                != product_delivery_id_v1(
-                    runtime.chain_id(),
-                    "native_seal",
-                    inbound.object_hash,
-                    payload_sha256,
-                    &inbound.source_peer_id,
-                    &self.local_peer_id,
-                )
-        {
-            bail!("native seal round ingress payload/delivery binding mismatch");
-        }
+        validate_round_transport(self.driver.authority(), &self.local_peer_id, inbound)?;
         let round = self.driver.status().round;
         if self.received_round != round {
             self.received.clear();
@@ -151,7 +180,7 @@ impl NovNativeSealRoundOverlayV1 {
             return Ok(false);
         }
         let message = decode_nov_native_seal_round_wire_v1(
-            wire,
+            &inbound.frame.payload,
             self.driver.authority(),
             self.driver.status().height,
             &inbound.source_peer_id,

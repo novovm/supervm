@@ -383,21 +383,11 @@ impl NovNativeSealRoundDriverV1 {
             "round driver prepared QC",
         )?;
         if let Some(qc) = &self.prepared {
-            if pinned != Some(qc.qc_hash)
-                || store.load_qc(qc.qc_hash)?.as_ref() != Some(qc)
-                || store.load_proposal(qc.proposal_hash)?.as_ref() != self.proposal.as_ref()
-            {
+            if pinned != Some(qc.qc_hash) || store.load_qc(qc.qc_hash)?.as_ref() != Some(qc) {
                 bail!("round driver prepared evidence disappeared or changed on disk");
             }
             store.ensure_qc_indexes_contain_v1(qc)?;
-            store.ensure_new_view_admission_v1(
-                &qc.subject,
-                self.proposal
-                    .as_ref()
-                    .context("round driver prepared proposal is missing")?
-                    .proposer_id,
-                self.set(),
-            )?;
+            self.qc_message(store, qc)?;
         }
         if let Some(hash) = pinned {
             let qc = store
@@ -405,9 +395,29 @@ impl NovNativeSealRoundDriverV1 {
                 .context("round driver prepared QC pin points to missing evidence")?;
             store.ensure_qc_indexes_contain_v1(&qc)?;
             self.match_subject(ledger, store, &qc.subject)?;
-            if qc.subject.round != self.state.current.round {
+            if qc.subject.round > self.state.current.round
+                || (!self.binding.decision_v3 && qc.subject.round != self.state.current.round)
+            {
                 bail!("round driver prepared QC pin differs from its durable round");
             }
+            self.qc_message(store, &qc)?;
+            if qc.subject.round < self.state.current.round
+                && store
+                    .load_decision_certificate_by_height_v3(
+                        self.set().chain_id,
+                        self.set().epoch,
+                        self.binding.height,
+                    )?
+                    .is_none()
+                && !store.has_local_decision_vote_v3(
+                    &qc,
+                    self.set(),
+                    self.binding.local_validator_id,
+                )?
+            {
+                bail!("advanced prepared pacemaker lacks its original decision signature");
+            }
+            self.prepared = Some(qc);
         }
         if let Some(vote) = store.load_local_timeout(
             ledger,
@@ -458,15 +468,15 @@ impl NovNativeSealRoundDriverV1 {
                     .transport_peer_id(self.binding.local_validator_id)?,
             )?;
             store.ensure_new_view_admission_v1(&qc.subject, proposal.proposer_id, self.set())?;
-            if pinned.is_some_and(|hash| hash != qc.qc_hash) {
-                continue;
-            }
-            if self
-                .prepared
-                .as_ref()
-                .is_none_or(|old| qc.qc_hash < old.qc_hash)
+            self.proposal = Some(proposal);
+            if pinned.is_none()
+                && !(self.binding.decision_v3
+                    && self.timeouts.contains_key(&self.binding.local_validator_id))
+                && self
+                    .prepared
+                    .as_ref()
+                    .is_none_or(|old| qc.qc_hash < old.qc_hash)
             {
-                self.proposal = Some(proposal);
                 self.prepared = Some(qc);
             }
         }
@@ -482,16 +492,14 @@ impl NovNativeSealRoundDriverV1 {
     fn pin_prepared(&self, store: &NovNativeBlockSealStoreV1) -> Result<()> {
         // Validate the complete retransmission bundle before publishing a
         // recoverable completion marker. QC persistence may precede this write.
-        self.completed_output()?;
+        self.completed_output(store)?;
         let qc = self
             .prepared
             .as_ref()
             .context("round driver has no QC to pin")?;
         let key = format!("{}/prepared", Self::binding_key(&self.binding));
         let _guard = store.lock_writes_v1()?;
-        if store.load_qc(qc.qc_hash)?.as_ref() != Some(qc)
-            || store.load_proposal(qc.proposal_hash)?.as_ref() != self.proposal.as_ref()
-        {
+        if store.load_qc(qc.qc_hash)?.as_ref() != Some(qc) {
             bail!("round driver cannot pin missing prepared evidence");
         }
         store.ensure_qc_indexes_contain_v1(qc)?;
@@ -571,7 +579,9 @@ impl NovNativeSealRoundDriverV1 {
         if self.observed_commit.is_some() {
             return Ok(false);
         }
-        if message.round() != self.state.current.round || self.prepared.is_some() {
+        if message.round() != self.state.current.round
+            || (self.prepared.is_some() && !self.binding.decision_v3)
+        {
             return Ok(false);
         }
         if let Some(proposal) = message.proposal() {
@@ -669,22 +679,46 @@ impl NovNativeSealRoundDriverV1 {
         if let Some(output) = self.poll_commit_catchup(ledger, store)? {
             return self.validate_output(output);
         }
-        if self.prepared.is_some() {
-            return self.poll_commit(ledger, store, key);
+        let mut output = Vec::new();
+        if let Some(qc) = &self.prepared {
+            if !self.binding.decision_v3
+                || store
+                    .load_decision_certificate_by_height_v3(
+                        self.set().chain_id,
+                        self.set().epoch,
+                        self.binding.height,
+                    )?
+                    .is_some()
+                || !store.has_local_decision_vote_v3(
+                    qc,
+                    self.set(),
+                    self.binding.local_validator_id,
+                )?
+            {
+                return self.poll_commit(ledger, store, key);
+            }
+            output.extend(self.completed_output(store)?);
+        }
+        if self.binding.decision_v3 && self.timeouts.contains_key(&self.binding.local_validator_id)
+        {
+            self.pending_qc = None;
         }
         if let Some(qc) = self.pending_qc.clone() {
-            self.admit(ledger, store)?;
-            let proposal = self
-                .proposal
-                .as_ref()
-                .context("round driver QC lacks proposal")?;
-            store.persist_locally_matched_remote_proposal(ledger, proposal, self.set())?;
-            store.persist_local_verified_qc(ledger, &qc, self.set())?;
-            self.prepared = Some(qc);
-            self.pin_prepared(store)?;
-            return self.poll_commit(ledger, store, key);
+            if self.prepared.is_none() || store.load_qc(qc.qc_hash)?.is_none() {
+                self.admit(ledger, store)?;
+                let proposal = self
+                    .proposal
+                    .as_ref()
+                    .context("round driver QC lacks proposal")?;
+                store.persist_locally_matched_remote_proposal(ledger, proposal, self.set())?;
+                store.persist_local_verified_qc(ledger, &qc, self.set())?;
+                if self.prepared.is_none() {
+                    self.prepared = Some(qc);
+                    self.pin_prepared(store)?;
+                    return self.poll_commit(ledger, store, key);
+                }
+            }
         }
-        let mut output = Vec::new();
         if !self.timeouts.contains_key(&self.binding.local_validator_id) {
             if let Some(vote) = self.timer.poll(now, store, ledger, self.set(), key)? {
                 self.timeouts.insert(vote.validator_id, vote);
@@ -717,6 +751,16 @@ impl NovNativeSealRoundDriverV1 {
         }
         if let Some(tc) = &self.state.previous_timeout {
             output.push(Message::TimeoutCertificate(Box::new(tc.clone())));
+        }
+        if self.binding.decision_v3 {
+            if let Some(qc) = store
+                .load_qcs_by_height(self.set().chain_id, self.set().epoch, self.binding.height)?
+                .into_iter()
+                .find(|qc| qc.subject.round == self.state.current.round)
+            {
+                output.push(self.qc_message(store, &qc)?);
+                return self.validate_output(output);
+            }
         }
         // A durable local timeout fences all new proposal/vote signatures in this round.
         if self.timeouts.contains_key(&self.binding.local_validator_id) {
@@ -790,9 +834,11 @@ impl NovNativeSealRoundDriverV1 {
                 self.votes.values().cloned().collect(),
             )?;
             store.persist_local_verified_qc(ledger, &qc, self.set())?;
-            self.prepared = Some(qc);
-            self.pin_prepared(store)?;
-            output.extend(self.completed_output()?);
+            if self.prepared.is_none() {
+                self.prepared = Some(qc.clone());
+                self.pin_prepared(store)?;
+            }
+            output.push(self.qc_message(store, &qc)?);
         }
         self.validate_output(output)
     }
@@ -830,6 +876,24 @@ impl NovNativeSealRoundDriverV1 {
             vec![0u8; super::round_message::NOV_NATIVE_SEAL_ROUND_MAX_NVC_BYTES_V1];
         postcard::to_slice(certificate, &mut certificate_budget)
             .context("round driver new-view certificate exceeds its admission budget")?;
+        if self.binding.decision_v3 {
+            certificate.verify(&self.state.current, &self.binding.authority)?;
+            for observation in &certificate.observations {
+                if let Some(evidence) = &observation.highest_qc {
+                    self.match_subject(ledger, store, &evidence.qc.subject)?;
+                }
+            }
+            for observation in &certificate.observations {
+                if let Some(evidence) = &observation.highest_qc {
+                    store.persist_locally_matched_remote_proposal(
+                        ledger,
+                        &evidence.proposal,
+                        self.set(),
+                    )?;
+                    store.persist_local_verified_qc(ledger, &evidence.qc, self.set())?;
+                }
+            }
+        }
         store.admit_local_new_view_candidate(
             ledger,
             &self.binding.authority,
@@ -866,19 +930,27 @@ impl NovNativeSealRoundDriverV1 {
         Ok(weight >= self.set().quorum_weight)
     }
 
-    fn completed_output(&self) -> Result<Vec<Message>> {
-        let qc = self
-            .prepared
-            .as_ref()
-            .context("round driver has no prepared QC")?;
+    fn qc_message(
+        &self,
+        store: &NovNativeBlockSealStoreV1,
+        qc: &NovNativeSealQuorumCertificateV1,
+    ) -> Result<Message> {
+        let proposal = store
+            .load_proposal(qc.proposal_hash)?
+            .context("round driver prepared proposal is missing")?;
+        store.ensure_new_view_admission_v1(&qc.subject, proposal.proposer_id, self.set())?;
+        let certificate = store
+            .load_local_new_view_admission(
+                self.set().chain_id,
+                self.set().epoch,
+                self.binding.height,
+                qc.subject.round,
+            )?
+            .map(|admission| Box::new(admission.certificate));
         let message = Message::QuorumCertificate {
-            proposal: Box::new(
-                self.proposal
-                    .clone()
-                    .context("round driver prepared proposal is missing")?,
-            ),
+            proposal: Box::new(proposal),
             qc: Box::new(qc.clone()),
-            certificate: self.certificate.clone().map(Box::new),
+            certificate,
         };
         message.validate_authenticated(
             &self.binding.authority,
@@ -887,8 +959,15 @@ impl NovNativeSealRoundDriverV1 {
                 .authority
                 .transport_peer_id(self.binding.local_validator_id)?,
         )?;
-        // A peer one round behind must still be able to obtain the preceding
-        // TC after this node has stopped its timer on a prepared candidate.
+        Ok(message)
+    }
+
+    fn completed_output(&self, store: &NovNativeBlockSealStoreV1) -> Result<Vec<Message>> {
+        let qc = self
+            .prepared
+            .as_ref()
+            .context("round driver has no prepared QC")?;
+        let message = self.qc_message(store, qc)?;
         let mut output = Vec::new();
         if let Some(tc) = &self.state.previous_timeout {
             output.push(Message::TimeoutCertificate(Box::new(tc.clone())));

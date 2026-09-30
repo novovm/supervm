@@ -22,8 +22,9 @@ pub use promotion::{
     prepare_successor_promotion_v1, publish_genesis_promotion_v1, publish_successor_authority_v1,
     register_finalized_successor_v1, resume_genesis_promotion_v1, resume_successor_promotion_v1,
     retire_old_workspaces_v1, verify_genesis_promotion_v1, verify_successor_authority_v1,
-    with_verified_finalized_successor_v1, FinalizedGenesisParentV1, FreshSuccessorPublicationV1,
-    GenesisPromotionPublicationV1, WorkspaceRetirementV1,
+    with_verified_finalized_parent_round_v1, with_verified_finalized_successor_v1,
+    FinalizedGenesisParentV1, FreshSuccessorPublicationV1, GenesisPromotionPublicationV1,
+    WorkspaceRetirementV1,
 };
 #[cfg(test)]
 pub(crate) use promotion::{

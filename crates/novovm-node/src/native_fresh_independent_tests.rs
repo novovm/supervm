@@ -13,6 +13,16 @@ fn independent_fresh_storage_run(
     params: &serde_json::Value,
     interruption: Option<&str>,
 ) -> IndependentFreshRun {
+    independent_fresh_storage_run_through(path, params, interruption, 3)
+}
+
+fn independent_fresh_storage_run_through(
+    path: &Path,
+    params: &serde_json::Value,
+    interruption: Option<&str>,
+    last_height: u64,
+) -> IndependentFreshRun {
+    assert!((1..=3).contains(&last_height));
     use crate::native_block_ledger::{
         NovNativeBlockLedgerV1 as Ledger, NovNativeFreshFinalityProofV1 as Proof,
     };
@@ -93,7 +103,7 @@ fn independent_fresh_storage_run(
     let mut blocks = Vec::new();
     let mut proofs = Vec::new();
     let mut ids = Vec::new();
-    for height in 1..=3 {
+    for height in 1..=last_height {
         let raw =
             candidate_workspace_execution_raw(chain, height - 1, [0xc3; 32], 10, "deposit_reserve");
         let context = NovBlockExecutionContextV1 {
@@ -231,6 +241,9 @@ fn independent_fresh_storage_run(
         proofs.push(proof);
         ids.push(id);
         parent = Some(id);
+    }
+    if last_height < 3 {
+        return (db_path, namespace, ids, blocks, proofs);
     }
     let current = *ids.last().unwrap();
     workspace::retire_old_workspaces_v1(chain, current, pin, params).unwrap();

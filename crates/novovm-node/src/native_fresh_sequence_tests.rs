@@ -719,7 +719,15 @@ fn exercise_body_network(
                                 let mut damaged = inbound.clone();
                                 damaged.object_hash[0] ^= 1;
                                 assert!(lifecycle.enqueue(damaged));
-                                lifecycle.poll(target, Instant::now()).unwrap();
+                                lifecycle
+                                    .poll_with_wall_time(target, Instant::now(), timestamp - 60_000)
+                                    .unwrap();
+                                assert_eq!(lifecycle.status_json()["clock_waiting"], true);
+                                assert_eq!(lifecycle.status_json()["successor_rejected"], 0);
+                                lifecycle
+                                    .poll_with_wall_time(target, Instant::now(), timestamp)
+                                    .unwrap();
+                                assert_eq!(lifecycle.status_json()["clock_waiting"], false);
                                 assert_eq!(lifecycle.status_json()["height"], 3);
                                 assert_eq!(lifecycle.status_json()["successor_rejected"], 1);
                                 assert_eq!(lifecycle.status_json()["lifecycle_halted"], false);

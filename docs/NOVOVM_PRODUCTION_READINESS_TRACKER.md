@@ -1,6 +1,7 @@
 # NOVOVM 生产部署目标与验收台账
 
 本文件记录可核验的交付边界，不是发布授权或完成比例。
+当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 起点：开发分支 `feature/treasury-balance-backed-v2`，已推送基线 `8025fd7`。
 用户已要求持续推进到真实资产主网上线发币；正式创世、分配、验证者及上线窗口尚未批准。
 不自动部署、合并 main、生成正式创世经济参数或替换运行中服务。
@@ -8,6 +9,518 @@
 运营者入门与待确认参数见 `NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt`。
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
+
+## 离线 leader 换轮证据验收（2026-09-30 UTC，最新）
+
+状态：`LOCAL VERIFIED OFFLINE-LEADER FAILOVER SMOKE PASS`；完整本机 runner 已通过。
+本轮只改进程测试和报告，不改生产 pacemaker、quorum、签名、超时或 AOEM。
+仍为 `b8aad0a` 加未提交工作区，未提交推送、部署或替换旧安装 runtime。
+
+前轮失败记录仍保留且仍为 `accepted=false`，不修改成成功。
+只读检查其三个 seal 数据库：轮次 0/1/2 均有本地 timeout；节点 0/2 在轮次 1
+保存提案与 prepare 票，节点 3 没有轮次 1 的提案/票。全体最终形成轮次 3 QC。
+通过原存储读取 API 重验决策、提案签名及 NewView admission，三份均有效，
+包含 3 份 prepare 票、3 份决策票、轮次 2 的 3 份 timeout 和 3 份 NewView。
+没有离线节点签名，最终块与决策哈希一致。证据：
+`artifacts/failover-round-b8aad0a/old-evidence-verified.json`。
+这是旧数据只读取证，不算一次新的进程恢复通过；原失败后的重启步骤仍未执行。
+
+旧用例把“期望首个替补轮次完成”写成 `round == 1`，但真实定时器、投票与
+消息到达不保证固定完成轮次。证据能说明发生了额外 quorum timeout，不能还原
+每条消息的延迟原因，也不表示已解决延迟或任意故障活性问题。
+
+新验收不只是将断言改为 `round > 0`：
+- 保留原 180 秒最终化期限、3/4 quorum、同一交易/完整历史和离线节点不参与要求。
+- 通过原 API 加载持久决策、签名提案和非零轮 NewView admission；绑定已最终化块、
+  高度及原 authority，验签并检查该轮 proposer 确为原排班 leader。
+- prepare、decision、preceding timeout、NewView 的所有签名者都不能是离线节点。
+- 内存负例删减 timeout/NewView/decision quorum、破坏签名、错高度或块绑定必须拒绝。
+- 重启后逐节点重验并比较完整 witness，不仅比较最终块；报告记录实际轮次、
+  首个替补与实际 prepare proposer，避免把后续轮次误记为轮次 1。
+
+新普通主进程专项 `artifacts/failover-round-b8aad0a/run1.log`：1 passed / 0 failed，
+295.25 秒；本次实际轮次 1，离线阶段 60.221 秒。三节点最终化同一块，
+内存负例均拒绝，重启后完整 witness 和历史不变。严格 Clippy、fmt、diff 通过。
+旧数据轮次 3 的只读验签与本次新运行轮次 1 分开记，不混作两次新进程运行。
+
+完整证据：`artifacts/local-readiness-failover-witness-b8aad0a/acceptance.json`，
+`accepted=true`，`production_ready=false`；运行前后源码摘要均为
+`4a52f77ffbc9040bdf9af60df53d0d8e54246ba32d87160ee9a131b6ab6bf7f0`。
+节点全库 766 passed / 0 failed / 7 ignored；网络全库 487 / 0 / 1；
+CLI 默认组 5 / 0 / 8；runner 自测 7 项、控制器自测 1 项、fmt 和严格 Clippy 通过。
+连续恢复 1 passed（433.467 秒），离线换轮 1 passed（295.426 秒），
+分区恢复 1 passed（81.922 秒），交易池故障 1 passed（248.205 秒），
+数据库启动/账本发布打开故障 1 passed（49.306 秒）。其他 ignored 不计通过。
+此次完整 runner 中离线阶段 58.974 秒、实际轮次 1，重启后完整 witness 保留。
+完整 runner 结束后只更新文档和安装提示，未修改程序或测试、未替换旧 runtime。
+下一步继续本机 AOEM/seal 运行中写入故障、后续 ledger 检查点和长稳；
+之后仍须 clean release、公网准入、实体多机和批准的创世/运维验收。
+
+不宣称网络性能、首次替补轮次时延、任意分区/拜占庭恢复或生产就绪。
+
+## 数据库启动与账本发布存储故障（2026-09-30 UTC，前轮）
+
+状态：`LOCAL DATABASE STARTUP / LEDGER PUBLICATION STORAGE FAULT SMOKE PASS`。
+专项已通过并复测；完整本机 runner 因旧离线 leader 用例失败，不能签完整 PASS。
+仍为 `b8aad0a` 加未提交工作区；本轮只增加验收，不修改生产执行、AOEM、
+共识签名、quorum 或网络协议，不替换已安装 runtime。
+
+专项 `artifacts/storage-startup-b8aad0a/run5.log`：**1 passed / 0 failed，49.38 秒**。
+使用普通 `novovm-node`、真实 AOEM、四个独立状态目录和认证回环 WSS。
+每个故障卷仅挂载在本轮夹具自己的数据库路径，私有 mount/network namespace、
+64 MiB tmpfs；实测内核 `EROFS`（30）和 `ENOSPC`（28），不填宿主盘。
+
+- AOEM authoritative provider `owner.rocksdb` 与共识 `seal-db`：只读或磁盘满时
+  冷启动非零退出，不能完成服务启动或发布最终确认；恢复读写/容量后，AOEM
+  候选重放结果、seal 签名记录和 ledger 逻辑记录均不变。
+- 通用 `persist` 仅作对照：当前 fresh 状态不由它承载，故障时启动仍可成功，
+  但不能越过 quorum 确认。它会被打开、可能改写 LOG/MANIFEST 等元数据，
+  不声称完全未访问，也不将该对照算作权威存储 fail-closed 验收。
+- ledger 在未形成决策前只读打开，不能把只读状态下启动成功判为缺陷。
+  测试在只读 ledger 上让普通三节点实际形成并归档 3/4 决策，随后发布路径
+  打开可写账本因 EROFS 失败退出。再次填满该卷并重启，恢复发布因 ENOSPC
+  失败；两次都在写入 promotion intent / authority 之前。原决策验签通过且
+  记录不变，账本未产生新逻辑记录，没有虚假最终确认；不是已打开 DB 的
+  数据批写或 WAL fsync 中途故障验收。
+- 恢复的是故障后的同一数据库文件，不从故障前备份回滚、不跨节点复制状态。
+  继续普通 3/4 最终化，确认后重启，再让第四节点追赶；四份完整高度一历史一致。
+
+夹具早期失败暴露了上述 persist/ledger 打开语义和 AOEM Snappy 编译差异，
+不是生产缺陷。AOEM 用自身 prepare/readback 及后续最终化验证，加 SST/非空 WAL
+摘要保存证据；不使用缺少 Snappy 的宿主 RocksDB 代替 AOEM 读取执行数据。
+seal/ledger 则用只读逻辑记录摘要验证，避免把无关日志元数据变化误判为丢数据。
+
+完整 runner 新增显式 `database-storage-startup-faults` 门禁；默认 ignored 不计通过。
+完整结果：`artifacts/local-readiness-storage-startup-b8aad0a/acceptance.json`，
+`accepted=false`。节点库 766 / 0 / 7 ignored、网络库 487 / 0 / 1、CLI 默认
+5 / 0 / 8；runner 自测 7 项、控制器 1 项、fmt 和严格 Clippy 通过。
+连续恢复通过（458.836 秒）；离线 leader 门禁失败（368.651 秒）：
+`native_seal_failover_process.rs:90` 要求 prepare round=1，实际为 3。
+三个普通主进程日志均记录高度 3 已最终化、相同区块及决策证书哈希；但本次
+未执行该用例后面的重启断言，不能据此改判 PASS。为何未在轮次 1 完成仍待定位；
+没有修改原断言、重跑到绿或把失败删除。
+
+同一源码另行显式执行 runner 被中断而未运行的三个门禁：分区恢复 1 passed
+（81.321 秒）、交易池故障 1 passed（251.245 秒）、本轮数据库故障 1 passed
+（48.654 秒）。补跑证据：`artifacts/storage-startup-b8aad0a/followup-gates/acceptance.json`；
+只表示这三个专项通过，明确 `full_runner_accepted=false`，不替代失败的完整结果。
+完整与补跑期间源码摘要前后均一致：
+`6c24ef878eefce1596a92a49e6699dfb08d97c4f89ec0e9229fb8dcdf26d57ea`。
+结束后仅更新文档和安装提示。下一步先定位离线 leader 轮次断言，再重跑完整验收。
+
+不覆盖 AOEM/seal 运行中写入故障、后续 ledger 提交检查点、物理掉电、任意 I/O
+损坏、备份恢复、长期 soak 或实体多机。上述项目及公网准入、clean release、
+正式创世/运维验收仍待完成；不提前上线发币。
+
+## 交易池真实存储故障与恢复（2026-09-30 UTC，前轮）
+
+状态：`LOCAL TRANSACTION-POOL STORAGE FAULT SMOKE PASS`；完整本机 runner 已通过。
+仍为 `b8aad0a` 加未提交工作区；本轮只增加测试与 runner，不修改生产执行语义。
+使用普通 `novovm-node`、真实 AOEM、四份独立状态和认证回环 WSS；没有 runtime
+故障开关。用户/网络/mount namespace 独立，挂载私有 8 MiB tmpfs，只填测试卷，
+不填满宿主磁盘；没有隔离或挂载能力即失败，不回退到宿主文件系统。
+
+专项 `artifacts/storage-fault-b8aad0a/run4.log`：**1 passed / 0 failed，258.07 秒**。
+本次实测：
+- 非 leader 先接收签名交易，随后测试卷实际返回内核 `ENOSPC`（errno 28）。
+  第 11 次提交返回 `transaction persistence failed; restart required`，不返回 queued，
+  主进程停止新工作并非零退出；之前已返回 queued 的 10 笔交易全部可恢复。
+- 释放测试填充文件后重启；最后未 ACK 的交易本次为 unknown。允许其在其他运行中
+  已写入但未 ACK，因此只按恢复状态安全重试；不把 RPC 超时当作确定未落盘。
+- 将交易池文件系统 remount 为只读，普通节点拒绝启动；池文件摘要及已确认历史
+  不变。恢复读写后重新开启四节点，通过原传播/执行/共识路径最终化全部 11 笔。
+  本次分布于高度 2/3（4+7 笔）；不强迫待处理交易在同一高度或同一批完成。
+- 四节点完整区块/哈希顺序一致；重启后重复提交返回 finalized，池为空，历史不变。
+  只读状态查询允许有限忙碌重试；故障写入请求是单次，不由测试暗中重试或伪造 ACK。
+
+初期失败定位为测试夹具：私有 namespace remount 要显式传入 tmpfs source/type，
+正常 gossip 不保证全部交易同块，执行中的查询可能超过单次 5 秒。已修正夹具，
+未放宽最终性、持久化错误或数据一致性断言，未修改生产 runtime。
+本轮只覆盖交易池 ENOSPC 与只读启动拒绝；不涵盖 AOEM/seal/ledger 的磁盘故障、
+物理掉电、任意 I/O 损坏、备份恢复或长期 soak。`production_ready=false`。
+
+完整证据：`artifacts/local-readiness-storage-fault-b8aad0a/acceptance.json`，
+`accepted=true`，运行前后源码摘要均为
+`4af03388a89429380a2921d626346bd33a26dc502bd81466700f77139bf94fc0`。
+节点全库 766 passed / 0 failed / 7 ignored，网络全库 487 / 0 / 1，
+CLI 默认组 5 / 0 / 7；runner 自测 7 项、控制器自测 1 项、fmt 和严格 Clippy 均通过。
+显式连续恢复 1 passed（433.691 秒）、无候选 leader 故障切换 1 passed
+（296.378 秒）、分区恢复 1 passed（80.376 秒）、交易池存储故障 1 passed
+（255.516 秒）。本次复测同样恢复 10 笔已 ACK 交易，重试后全部 11 笔在高度 2/3
+最终化；其余未执行 ignored 不计通过。结束后只更新文档和旧安装目录提示。
+未提交、推送或替换已安装 runtime；下一步补 AOEM/seal/ledger 存储故障及长稳，
+之后仍须 clean release、公网入口、实体多机和正式创世/运维验收，不提前发币。
+
+## 真实 AOEM 主入口分区恢复（2026-09-30 UTC，前轮）
+
+状态：`LOCAL REAL-AOEM MAIN-ENTRY PARTITION SMOKE PASS`；完整本机 runner 已通过。
+仍为 `b8aad0a` 加未提交工作区，没有提交、推送、替换 runtime 或上线授权。
+
+本轮只补验收，不修改上一轮 V3 pacemaker、quorum、签名、wire 或 AOEM 语义。
+四个独立 OS 子进程通过实际 main 入口、真实 AOEM 和认证回环 WSS 运行。
+中继不能查看加密共识载荷，因此故障过滤器仅编译在 `cfg(test)` main 测试程序中，
+按已认证来源及消息类型丢弃 ingress；不生成票、不改消息、不注入虚拟时钟。
+必须区分：故障阶段使用测试插桩 main 入口，并非未经插桩的发布 ELF。
+候选独立执行、确认后重启和第四节点追赶则使用普通 `novovm-node` 二进制。
+普通构建没有 fault env 开关或控制文件路径；未停止宿主服务，端口处于隔离 namespace。
+
+专项 `artifacts/main-partition-b8aad0a/run2.log`：**1 passed / 0 failed，82.19 秒**。
+验证链：
+- 两个节点持有 round 0 Prepared QC/决策锁，另外两个尚未 Prepared。
+- 2+2 只交换各组消息，实际 45 秒超时后仍无 quorum、无决策确认。
+- 强杀并重开四进程，原 timeout/决策签名可验证，仍不越过分区确认。
+- 恢复 Timeout/TC/NewView/prepare，暂扣决策消息；全体进入 round 1，
+  原 Prepared 节点保留 round 0 决策锁，其余节点形成新轮决策锁。
+- 再次重开并离线一个新轮节点；其余 3/4 合并同目标决策，真实 AOEM
+  authority 发布、读回验证及 ledger 最终化完成；原签名字节不变。
+- 普通二进制重启保持完整历史；离线第四节点随后追赶，同一块/交易/执行根一致。
+  允许不同合法见证轮次的证书哈希不同，但每份证书均验签并绑定同一 execution target。
+
+完整 runner 已新增主入口测试二进制指纹、故障控制器自测和显式分区门禁。
+最终证据：`artifacts/local-readiness-main-partition-b8aad0a/acceptance.json`，
+`accepted=true`，运行前后源码摘要均为
+`d6ab4005eefa3728c7b6972df193d38d119a7e31fbf813424122d1e2874c9207`。
+节点全库 766 passed / 0 failed / 7 ignored，网络全库 487 / 0 / 1；
+CLI 默认组 5 / 0 / 6；控制器自测 1 / 0，runner 自测、fmt、严格 Clippy 均通过。
+显式连续恢复 1 passed（443.631 秒）、无候选 leader 故障切换 1 passed
+（295.886 秒）、本轮分区门禁 1 passed（79.870 秒）；默认 ignored 不计作通过。
+完整 runner 结束后只更新本节、使用说明和安装提示，未再修改程序/测试源码。
+仍不覆盖任意分区/拜占庭组合、长期 churn、断电/磁盘故障、实体多机或公网准入；
+`production_ready=false`。下一阶段优先补单机磁盘故障与长稳，再做实体多机。
+
+## Prepared 节点换轮与 2+2 僵持恢复（2026-09-30 UTC，前轮）
+
+状态：`LOCAL PREPARED PACEMAKER / 2+2 SERVICE REGRESSION PASS`。
+基线仍为 `b8aad0a` 加未提交工作区；未提交、推送、部署或替换旧 runtime。
+完整 runner `accepted=true`、`production_ready=false`，不作为主网上线许可。
+
+红灯先复现：两个节点 Prepared 后停止计时，只能重传两份决策票；另外两个
+节点已签 timeout，既不能回签旧轮决策，也凑不齐三份 timeout 来进入新轮。
+证据：`artifacts/prepared-pacemaker-b8aad0a/red.log`。
+
+本轮修复边界：
+- 仅 V3、已有可验证持久本地决策票、尚未归档完整决策时，Prepared 节点继续
+  参与本地计时、Timeout/TC/NewView 及同一不可变候选的新轮 prepare。
+- 仍须达到原加权 quorum 才推进持久 active round，不更换候选或释放高度锁。
+  初次 Prepared 尚未持久签决策时，不先超时越过原签名入口。
+- 原 Prepared QC pin 与原决策签名不随 active round 改写；重传使用原 QC 对应
+  的持久 proposal/admission，而非混用新轮 proposal。重启重验完整历史见证。
+- NewView quorum 携带的最高 QC，先全量验签、匹配本地已执行候选，再经既有
+  持久导入 API 保存证据；不绕过非零轮历史 admission。迟到 QC 超时门禁保留。
+- 不改 NOVORUDP/共识 wire、quorum、V1/V2 签名语义、APFL、AOEM 或 ledger。
+
+新增两项真实回环 WSS、四份独立 seal 数据库的服务级回归，合成已执行候选：
+选择性丢包构造两份旧轮决策票与两份 timeout 的 2+2 分割；两侧不足 quorum
+均不能推进或确认。恢复消息交换后，Prepared 节点参与超时，TC/NewView 将
+active round 推到 1，原决策仍使用 round 0 见证；其余节点取得 round 1 QC。
+分别覆盖迟到 QC 和重启后迟到 DecisionVoteV3，不重新签旧轮决策。
+在 timeout、TC 换轮及 prepare 恢复点重开服务/数据库；删除原决策锁、marker、
+QC 或 proposal（含同时删除锁与 marker）必须拒绝恢复且不产生新的持久记录。
+再离线一个新轮节点，剩余 3/4 合并同目标决策并归档；原签名锁字节不变，
+确认后重启不改归档。专项明确断言没有由合成夹具触发链最终化。
+
+V3 服务专项 **10 passed / 0 failed**，证据为
+`artifacts/prepared-pacemaker-b8aad0a/service-final.log`。
+
+| 门禁 | 最终实测 |
+| --- | --- |
+| novovm-node 全库 | 766 passed / 0 failed / 7 ignored（761.135 秒） |
+| novovm-network 全库 | 487 passed / 0 failed / 1 ignored（16.544 秒） |
+| native_candidate_node_cli 默认组 | 5 passed / 0 failed / 5 ignored |
+| 显式连续运行、追赶与恢复 | 1 passed / 0 failed（423.090 秒） |
+| 显式无候选 leader 离线换轮 | 1 passed / 0 failed（286.660 秒） |
+| runner 自测、格式、严格 Clippy 与 diff | PASS |
+
+完整证据：`artifacts/local-readiness-prepared-pacemaker-b8aad0a/acceptance.json`。
+运行期间源码摘要前后一致：
+`869426955cc6efd500007bb7e10b273f6faaa04547f2b8d34e51809c1b51ef75`。
+结束后仅更新文档，未再改代码；未执行的 ignored 项不计通过。
+
+当前只签具体同候选 round-0/round-1 的 2+2 服务级恢复，不签任意分区或轮次活性。
+真实 AOEM 主进程中的分票故障注入、不同候选/更高轮缺失历史 admission 的恢复、
+持续故障与长稳、磁盘/备份、公网 RPC、clean release、实体多机及正式创世/运维
+仍待完成。下一步先在本机补真实 AOEM 主进程分票/分区故障验收，不提前发币。
+
+## 迟到 QC 与跨轮决策分票恢复（2026-09-30 UTC，前轮）
+
+状态：`LOCAL LATE-QC / MIXED-ROUND SERVICE REGRESSION PASS`。
+基线仍为 `b8aad0a` 加未提交工作区；未提交、推送、部署或替换旧 runtime。
+这不是所有跨轮分割场景的活性签收，也不是主网上线许可。
+
+新增回归先复现真实调度缺陷：节点已持久签下本轮 timeout，却在收到迟到的
+prepare QC 后被置为 Prepared，随后 V3 决策签名被既有超时门禁拒绝，服务停机。
+红灯日志为 `artifacts/cross-round-split-b8aad0a/red.log`，错误为
+`native seal signer has already timed out this height/round`。
+
+修复只在 V3 round driver 的 poll 中增加调度保护：恢复持久超时记录后，尚未
+Prepared 的节点不把迟到 QC 作为旧轮的新决策签名入口，继续原 Timeout/NewView
+流程。已经 Prepared 的节点保留原见证和决策票。没有放宽 timeout、quorum、
+NewView admission、候选/高度锁或持久 watermark，也不改变 V1/V2 行为或 wire。
+本地安全记录损坏仍报错，不用吞掉签名错误的方式伪装恢复。
+
+新增两项真实回环 WSS、四份独立 seal 数据库的服务级回归：
+- 一个节点先在 round 0 Prepared，其他三个丢失 QC 后超时；迟到 prepare QC
+  不导致停机、不落盘 Prepared pin，也不改写原 timeout。
+- 另一用例重开超时节点的服务，再交付携带旧 QC 的 DecisionVoteV3，同样不重签。
+- 三节点经 TC/NewView 在 round 1 为同一不可变候选形成新 QC，旧节点保持 round 0。
+- 只交付两个来源的决策票不能确认；再让一个新轮节点离线，剩余 3/4 合并不同
+  round 见证下的同一 V3 decision target。各节点保留自己的 QC，原决策锁字节不变。
+- 重开服务与 seal store 后归档及锁保持一致；仍明确断言链未被测试夹具最终化。
+
+该专项使用合成的已执行候选，不是 AOEM 重执行或主节点进程故障注入。
+它证明具体的 round-0/round-1 服务调度与持久确认路径，不证明任意网络分区活性。
+专项 V3 服务组 **8 passed / 0 failed**（包含新增 2 项）。
+
+| 门禁 | 最终实测 |
+| --- | --- |
+| novovm-node 全库 | 764 passed / 0 failed / 7 ignored（720.73 秒） |
+| novovm-network 全库 | 487 passed / 0 failed / 1 ignored（16.60 秒） |
+| native_candidate_node_cli 默认组 | 5 passed / 0 failed / 5 ignored |
+| 显式连续运行、追赶与恢复 | 1 passed / 0 failed（428.18 秒） |
+| 显式无候选 leader 离线换轮 | 1 passed / 0 failed（285.29 秒） |
+| runner 自测、格式、严格 Clippy 与 diff | PASS |
+
+完整证据：`artifacts/local-readiness-split-round-b8aad0a/acceptance.json`。
+运行期间源码摘要前后一致：
+`cc54175d6ba05a4f7b3a6e745b553fafd9f9cd9b1fc009b4b6a46514402feb87`。
+结束后仅更新文档；未执行的 ignored 项不计通过，`production_ready=false`。
+下一步仍先做本机门禁：2+2 prepared/timeout 僵持、其他候选/轮次分割，及带真实
+AOEM 的主进程分票故障注入。长稳、磁盘/备份、公网 RPC、clean release、实体
+多机和批准的创世/运维仍阻断上线。本轮通过不取消这些剩余项。
+
+## 主节点无候选 leader 自动换轮（2026-09-30 UTC，前轮）
+
+状态：`LOCAL AUTOMATIC CANDIDATE-LESS LEADER FAILOVER PASS`。
+仍为 `b8aad0a` 加未提交工作区；未部署、替换旧安装包、提交或推送。
+
+候选前 pacemaker 已接入显式启用连续运行的 FreshChainLifecycleV1。
+重验当前最终父块后，在原持久 round store 中处理 Timeout / NewView；
+quorum 超时证书逐轮推进，NewView quorum 授权替代 leader 从持久交易池
+构建并实际执行下一候选，再交给原 V3 服务。保留候选 owner、watermark、
+链/高度/创世、签名和 quorum 校验；不改变 wire，不清除已锁候选。
+若 NewView 指向已有 prepare QC，不把它当成无候选重新提案许可。
+
+专项首次运行发现换轮控制消息挤满每 peer 的共享队列，导致块体不能交接。
+现将控制消息与块体/交易队列分开，每个绑定 peer 每组仍最多 4 项，统一 poll
+预算公平处理；enqueue 不执行或签名。候选服务打开后重验并持久接入 NewView
+证书，避免已验证的换轮证据在交接处丢失。坏传输绑定、未知来源、时钟倒退、
+损坏父状态、2/4 不足 quorum、重启后不能提前签新 timeout 等负例继续通过。
+
+新增真实主进程用例：四个独立数据库先具备高度 2，之后不启动高度 3 的
+round-0 leader；把真实签名交易经回环 RPC 交给另一节点，不人工创建候选。
+剩余 3/4 自动换到 round 1，完成本地 AOEM 执行、prepare/decision 和最终化；
+三份完整区块/最终性一致，离线节点仍停在高度 2。强制终止三进程并重启后
+最终历史保持一致。这是本机隔离网络上的进程故障，不是实体机器断电。
+
+| 门禁 | 最终实测 |
+| --- | --- |
+| novovm-node 全库 | 762 passed / 0 failed / 7 ignored（738.34 秒） |
+| novovm-network 全库 | 487 passed / 0 failed / 1 ignored（16.52 秒） |
+| native_candidate_node_cli 默认组 | 5 passed / 0 failed / 5 ignored |
+| 显式三高度连续运行、追赶与恢复 | 1 passed / 0 failed（456.13 秒） |
+| 显式无候选初始 leader 离线换轮 | 1 passed / 0 failed（286.39 秒） |
+| runner 自测、严格 Clippy、格式及 diff | PASS |
+
+默认忽略的 CLI 项只显式运行上列两项；其余未执行项不计通过。
+完整 runner 期间源码摘要前后一致：
+`5d909b456305151a2826f30980adcc2c02e061d779eb50a6c848247a78a6928b`。
+结束后仅更新验收文档，未再改代码。
+最终证据：`artifacts/local-readiness-pacemaker-final-b8aad0a/acceptance.json`。
+专项通过证据：`artifacts/pacemaker-handoff-b8aad0a/acceptance.json`。
+队列问题的失败证据保留在 `artifacts/pacemaker-focused-b8aad0a/`。
+首轮全库失败保留在 `artifacts/local-readiness-pacemaker-b8aad0a/`：旧测试把
+未来时间父块与真实系统时钟混用，被新时间保护暂停。已改用显式测试时钟，
+同时断言未校时不处理、校时后仍拒绝损坏消息；生产时间保护没有放宽。
+
+本轮只签“最终父块之后、尚无候选时，初始 leader 缺席”的自动恢复。
+跨轮 prepare/decision 分票或已有候选停滞、频繁 churn/长稳、磁盘故障与备份
+恢复、公网 RPC、clean release、实体多机和批准的创世/运维仍待完成。
+`accepted=true` 仅指本机矩阵，`production_ready=false`；下一步先补跨轮分票活性。
+
+## 无候选换轮作用域与候选交接（2026-09-30 UTC，前轮）
+
+状态：`LOCAL PARENT-ROUND / VERIFIED HANDOFF PASS / AUTOMATIC FAILOVER PENDING`。
+基线仍为 `b8aad0a` 加未提交工作区；未部署、替换旧安装包、提交或推送。
+
+定位到两层限制：自动提案只允许 next-height round-0 leader；原 fresh round API
+还要求已有本地执行候选。本轮先完成第二层的安全基础，不直接绕过候选验证：
+`with_verified_finalized_parent_round_v1` 在 workspace、AOEM authority、ledger 锁内
+重验最终父块、创世/namespace、AOEM 输出和最终性证明，只允许下一高度的
+Timeout/NewView。父块换轮能力与已执行候选能力分离，区块 subject/签名入口
+显式拒绝前者。复用现有 wire、quorum、持久化和 watermark，不清除候选锁。
+
+新增 4 项真实 AOEM/独立临时数据库回归：
+- 第一块及第三块最终化后，尚无下一高度候选也能建立精确高度的 round tracking。
+- 缺初始 leader 的 3/4 timeout 可以换轮；2/4、重复票、坏签名不能推进。
+- 关闭并重开 seal store 保留原 timeout/NewView 和轮次；重建计时器不提前超时。
+- 错 chain/创世/高度、旧父块、损坏 AOEM 输出被拒绝；watermark 缺失、损坏
+  vote/round state 不得重签或改写损坏后的 DB；父块作用域不得签 proposal/vote。
+
+交接正例先证明换轮不改变候选列表、父块和状态，再显式创建/执行新候选。
+切换回原 live candidate scope 后，没有 NewView admission 仍不能签 round-1 提案；
+取得 admission 后由替代 leader 提案，3/4 prepare/decision 完成新高度最终化。
+此为测试显式调度的库级闭环，**不是主进程自动故障切换**，也不是物理磁盘故障验收。
+
+完整本机 runner 实测：node **761 passed / 0 failed / 7 ignored**（676.63 秒），
+network **487 / 0 / 1**，CLI 默认 **5 / 0 / 4**，显式三高度连续运行与恢复
+**1 / 0**（303.61 秒）；runner 自测、格式和严格 Clippy 均通过。
+NewView 35 项、round-driver 16 项专项也通过；完整 runner 期间源码摘要前后一致。
+测试均使用隔离网络 namespace；未执行的 ignored 不计入通过项。
+
+最终证据：`artifacts/local-readiness-parent-round-b8aad0a/acceptance.json`；
+专项与交接日志：`artifacts/candidate-less-round-b8aad0a/`。
+`accepted=true` 仅指该本机回归矩阵；`production_ready=false`。
+
+下一步接入 FreshChainLifecycleV1 的候选前 pacemaker：有界 Timeout/NewView 收发、
+quorum 驱动的新 leader 提案、与候选服务的持久轮次交接，再用独立进程验证原
+leader 离线后无人工参与继续出块。该自动化门禁、跨轮分票活性、长稳/磁盘故障、
+公网 RPC、clean release、实体多机及批准的创世/运维仍阻断生产上线。
+
+## 资金夹具与 V3 决策票交接回归（2026-09-30 UTC，前轮）
+
+状态：`LOCAL READINESS REGRESSION PASS / PRODUCTION GATES PENDING`。
+基线仍为 `b8aad0a` 加未提交工作区。下列完整 runner 结果替代历史失败状态；
+不是所有生产门禁完成，也不是实体四机、正式 release 或发币签收。
+
+存款正例现在只在测试独立账本中显式注资，签名 raw transaction 按解码后的真实
+签名者注资，不再给旧别名或凭空增加 reserve。补验成功存款的账户扣款、
+deposit/buy-asset 流程的账户加储备守恒、proof cap 拒绝后余额不变。
+新增真实签名入口负例：无余额的合法交易可被准入，但业务 receipt 必须失败，
+USDT 账户与储备保持零，不能产生成功存款事件。生产余额、认证和 nonce 校验未放宽。
+
+旧夹具的其他断言同步到实际边界：直接 Ed25519 签名不能因 UCA metadata 写了
+ML-DSA87 就报告为 PQ 签名；保留 PQ_REQUIRED 和隐私路径负例。semantic delta
+计数包含既有 `native_committed_module_state_v3`，治理用例还核对具体 delta kinds。
+执行 receipt 不等于最终性，补发交易执行后保持 `IncludedNonCanonical`。
+这些夹具包含明确标记的 `legacy_host_transitional` 路径，不替代生产资金审计。
+
+首轮全库已从 41 项失败降为 755 passed / 1 failed / 7 ignored，但发现真实恢复
+缺陷：首张 DecisionVoteV3 暂存 prepare QC 后，同轮询的另一签名者决策票会因
+prepare bridge 返回“QC 已见过”被丢掉。该返回值不是“决策票无效”，而且 QC
+只在随后 poll 才落盘；丢票会让延迟节点停在 Prepared。
+现将通过 bridge 验证的 V3 消息有界暂存，待 decision loop 建立后逐一交接，
+成功入队才计 accepted。保留每源配额、签名、链/高度/目标、去重和 quorum 验证，
+不修改 wire，不以单票宣布确认，也不把 decision confirmation 当成最终性。
+
+新增真实回环 WSS 用例一次交付两个不同来源的决策票：旧实现稳定复现只接受
+1 张，修复后接受 2 张，再加本地票形成验证通过的 3 票证书；仍断言未最终化。
+不改原丢失 prepare 的测试过滤规则或超时。V3 服务 6 项回归独立连续三轮通过。
+
+| 门禁 | 最终实测 |
+| --- | --- |
+| novovm-node 全库 | 757 passed / 0 failed / 7 ignored（614.07 秒） |
+| novovm-network 全库 | 487 passed / 0 failed / 1 ignored（16.56 秒） |
+| native_candidate_node_cli 默认组 | 5 passed / 0 failed / 4 ignored |
+| 显式三高度连续运行与恢复 | 1 passed / 0 failed（301.60 秒） |
+| runner 自测、严格 Clippy、格式及 diff | PASS |
+
+最终运行期间源码摘要前后一致。所有 socket/多进程测试均在隔离网络 namespace；
+CLI 的四个默认忽略项只显式执行了三高度用例，另外三项不计本轮覆盖。
+网络公网 smoke 仍忽略。未连接实体设备、替换旧安装目录或创建正式资产/密钥。
+
+最终证据：`artifacts/local-readiness-deferred-b8aad0a/acceptance.json`
+（`accepted=true`，但 `production_ready=false`、`multi_machine_tested=false`）。
+定位/负例/失败历史见 `artifacts/funded-fixture-regression-b8aad0a/acceptance.json`；
+首轮完整失败报告保留在 `artifacts/local-readiness-funded-b8aad0a/acceptance.json`。
+
+下一步仍先补本机门禁：无候选 leader 故障切换、跨轮 prepare/decision 分票活性、
+长时间 soak 与磁盘故障/备份恢复；随后验证公网 RPC 网关、clean release 包、
+实体多机以及经批准的创世参数和运维流程。本节通过不取消这些阻断项。
+
+## 重组门禁与 nonce 测试隔离（2026-09-30 UTC，后续回归）
+
+状态：`NETWORK LOCAL REGRESSION PASS / FULL NODE GATE BLOCKED`。
+仍基于 `b8aad0a` 加未提交工作区；保留前轮的 RLPx 修复，没有放宽任何生产验证。
+本节结果替代下方历史章节作为当前本机门禁状态，历史失败日志保留。
+
+网络剩余重组用例的夹具原先让高度 121 直接引用高度 119，并期待收到远端材料
+就自动选成 canonical。现改为连续的竞争分支 119 → 120 → 121，空块 state root
+保持连续，通过真实回环 RLPx NewBlock/receipts 交换材料；分阶段断言收包后
+主链不变、候选非 canonical/safe/finalized。随后由测试显式注入本地 fork-choice
+快照，再检查重组深度/次数、原交易退回待处理、重广播原始 payload。
+不删除重组断言，不把入站 header 的 canonical 标记改为 true。
+这验证网络材料与本地选链状态机的分界，**不是新增生产外部链共识证明验证器**。
+
+另修复 `cfg(test)` 的宿主 nonce 分配器：计数按规范化账本路径、chain_id 和
+签名身份隔离，不再让上一个独立测试库的计数串入新库。新增测试先复现
+“新库期望 0、实际 2”，修复后覆盖两库交错分配、持久 floor、路径别名与不同签名者。
+初始 nonce 负例保留：nonce=1 拒绝顺序错误，u64::MAX 拒绝序列耗尽；
+只纠正错误原因断言，生产端仍要求用户自行提供签名和 nonce。
+
+| 门禁 | 本次实测 |
+| --- | --- |
+| novovm-network 全库 | 487 passed / 0 failed / 1 ignored（16.49 秒） |
+| 重组及 RLPx 读取专项 | 每次 11 passed，独立进程连续三次通过 |
+| nonce 分配隔离与初始 nonce 负例 | 2 passed / 0 failed |
+| novovm-node 全库 | 714 passed / 41 failed / 7 ignored（607.30 秒） |
+| 上述 41 项失败逐项独立复跑 | 11 passed / 30 failed |
+| network/node lib/tests 严格 Clippy、格式及 diff | PASS |
+
+网络忽略项是显式 live mainnet peer smoke，不伪称已经测试公网对等节点。
+节点测试总数因新增用例增加 1；失败从前轮 54 降到 41，不能据此宣布全库通过。
+完整节点运行前后源码摘要相同；所有 socket 测试仍在隔离网络 namespace，
+不修改宿主服务或其他仓库。
+
+剩余节点失败包括：旧夹具无余额存款却期待成功、Ed25519 直接签名与旧 UCA
+算法断言不一致、AOEM semantic delta 数量预期、未最终化材料的 canonical 预期、
+旧非零初始 nonce，以及前序 panic 导致的测试锁 poisoned。
+独立复跑仍失败的 30 项必须继续逐项核验，不能统称为环境污染；不允许通过
+放宽余额守恒、认证、nonce 顺序或最终性来消除失败。
+
+证据：`artifacts/canonical-regression-b8aad0a/acceptance.json`，同目录包含
+`network-all.log`、`network-focus-*.log`、`nonce-red.log`、`nonce-green.log`、
+`node-all.log`、`node-all-run.json`、`node-isolated-results.json` 与源码/binary SHA256。
+旧 `artifacts/local-install-09d1bfe/runtime/` 未替换。本机全量、实体多机、正式 clean
+release 和主网上线仍未签收；下一步先处理余额资金夹具与签名/执行元数据回归。
+
+## Linux RLPx 读循环恢复加固（2026-09-30 UTC）
+
+状态：`RLPX READ RECOVERY VERIFIED / FULL LOCAL GATE BLOCKED`。
+开发基线为已提交并推送到 `main` 的 `b8aad0a`；本节是其后的本机回归，
+未替换旧安装包、部署多机或批准主网上线。
+
+定位到此前网络库 13 项失败中的共同读循环问题：Linux socket 的空闲读取返回
+`WouldBlock`（EAGAIN），错误文本是 `Resource temporarily unavailable`。
+原实现依赖英文/Windows 超时文本，误将空闲连接按解码失败关闭，导致对端 EOF，
+以及缺少后续 headers/bodies/receipts/snap/交易同步请求。
+
+本次只改 RLPx 读错误分类及会话恢复边界：
+- 按 `std::io::ErrorKind` 识别 `WouldBlock`、`TimedOut`、`Interrupted`，
+  不再用错误文案决定是否重试读取；已有部分读取仍受原 deadline 约束。
+- 只有尚未消费新帧 header 的空闲超时可保留会话，并继续请求调度；
+  已消费帧片段后的超时必须清理连接及密码流状态，不能将下一字节当新帧。
+- EOF、MAC/解码失败及既有 pending request deadline 不放宽；不改 NOVORUDP
+  wire、APFL、AOEM、交易准入、余额、nonce、签名或 canonical 信任边界。
+
+新增 9 项回归：脚本化读取器覆盖 Linux EAGAIN、非英文文案、Interrupted、
+致命错误文案与错误类型不一致；真实回环 TCP 覆盖空闲后继续解码 ping/pong、
+header/MAC/body 间超时断连和请求超时仍有效。连同原 partial deadline 测试共
+10 项通过，另连续复跑三次通过，重复次数不增加覆盖计数。
+修改生产代码前，新读取器测试 6 项均失败，保留 red 日志，未删除既有断言。
+
+| 门禁 | 本次实测 |
+| --- | --- |
+| RLPx 读取专项 | 10 passed / 0 failed（其中新增 9 项） |
+| novovm-network 全部库测试 | 486 passed / 1 failed / 1 ignored（18.31 秒） |
+| 原 13 项网络失败独立复跑 | 12 passed / 1 failed |
+| 节点共识/账本/准入/恢复核心组 | 200 passed / 0 failed（86.05 秒） |
+| network lib/tests 严格 Clippy、格式及 diff 检查 | PASS |
+
+测试使用隔离网络 namespace 的 loopback，不依赖实体 B/R1/R2，不修改宿主服务。
+节点全库本次未重跑，不能把 200 项专项替代前轮 54 项失败的全库结果。
+
+网络唯一剩余失败为
+`evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3`：
+`reorg_count` 期望 1、实测 0。该旧用例期待收到网络 header/body 后自动更新
+canonical；当前入站材料保持 `canonical=false / safe=false / finalized=false`。
+需要单独补齐经过验证的 fork-choice 驱动和匹配夹具，不得通过信任任意远端 header
+或删除 reorg 断言来刷绿。此失败早于本次修复，见
+`NOVOVM_NATIVE_SEAL_SERVICE_V1.md` 的 2026-09-26 基线记录。
+
+证据：`artifacts/rlpx-read-hardening-b8aad0a/acceptance.json`，同目录保留
+`red.log`、`read-regression.log`、`repeat-*.log`、`network-all.log`、
+`network-isolated-results.json`、`node-core.log` 及构建/Clippy 日志。
+全量本机验收仍不通过，继续单机修复；不签多机、正式 clean release 或生产 PASS。
 
 ## 单机加固与扩大回归（2026-09-29，尚未通过全量门禁）
 

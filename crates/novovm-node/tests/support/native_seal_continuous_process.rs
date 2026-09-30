@@ -5,7 +5,7 @@ const FIRST: u64 = 3;
 const LAST: u64 = 5;
 const LABEL: &str = "continuous-three-heights";
 
-fn rpc(node: &Node, label: &str, method: &str, params: Value) -> Value {
+pub(super) fn rpc(node: &Node, label: &str, method: &str, params: Value) -> Value {
     let deadline = Instant::now();
     loop {
         if let Ok(text) = fs::read_to_string(node.0.join(format!("{label}.stdout.log"))) {
@@ -93,7 +93,7 @@ fn confirmed(node: &Node, height: u64) -> Option<Value> {
     })
 }
 
-fn history(node: &Node, height: u64) -> Value {
+pub(super) fn history(node: &Node, height: u64) -> Value {
     let genesis: novovm_node::tx_ingress::fresh_genesis::FreshGenesisConfigV1 =
         serde_json::from_slice(&fs::read(node.0.join("genesis.json")).unwrap()).unwrap();
     let pin = genesis.compile().unwrap().config_commitment();
@@ -111,10 +111,13 @@ fn history(node: &Node, height: u64) -> Value {
             .unwrap()
         })
         .collect();
-    let block =
+    let block = if height == 1 {
+        NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(&ledger, pin, namespace)
+    } else {
         NovNativeBlockLedgerV1::load_fresh_successor_published_block_v1(&ledger, pin, namespace)
-            .unwrap()
-            .unwrap();
+    }
+    .unwrap()
+    .unwrap();
     assert_eq!(block.header.height, height);
     serde_json::json!({"proofs":proofs,"tip":block})
 }

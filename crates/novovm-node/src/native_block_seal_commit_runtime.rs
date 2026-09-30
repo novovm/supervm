@@ -131,7 +131,7 @@ impl NovNativeSealRoundDriverV1 {
         store: &NovNativeBlockSealStoreV1,
         key: &SigningKey,
     ) -> Result<Vec<Message>> {
-        let mut output = self.completed_output()?;
+        let mut output = self.completed_output(store)?;
         if !self.binding.commit_v2 {
             return Ok(output);
         }

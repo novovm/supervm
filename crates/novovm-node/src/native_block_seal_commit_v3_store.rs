@@ -10,6 +10,35 @@ struct DecisionLock {
 }
 
 impl NovNativeBlockSealStoreV1 {
+    pub(in crate::native_block_seal) fn has_local_decision_vote_v3(
+        &self,
+        prepare: &NovNativeSealQuorumCertificateV1,
+        set: &NovNativeSealValidatorSetV1,
+        validator_id: [u8; 32],
+    ) -> Result<bool> {
+        let slot = commit::lock_key(&prepare.subject, validator_id);
+        let Some(lock) = read_json_v1::<DecisionLock>(
+            &self.db,
+            slot.as_bytes(),
+            "prepared pacemaker decision lock",
+        )?
+        else {
+            if self
+                .db
+                .get(format!("{slot}/decision-v3-vote-hash").as_bytes())?
+                .is_some()
+            {
+                bail!("prepared pacemaker decision lock disappeared");
+            }
+            return Ok(false);
+        };
+        if lock.vote.validator_id != validator_id || lock.prepare_qc_hash != prepare.qc_hash {
+            bail!("prepared pacemaker decision signer or original witness mismatch");
+        }
+        self.verify_decision_outbound_vote_v3(prepare, &lock.vote, set)?;
+        Ok(true)
+    }
+
     /// Read-only check before transmitting an already durable local signature.
     /// Never signs, repairs evidence or grants permission in another round.
     pub(super) fn verify_decision_outbound_vote_v3(

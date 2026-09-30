@@ -395,6 +395,44 @@ pub fn with_verified_finalized_successor_v1<T>(
     result.context("successor signing scope did not run")
 }
 
+pub fn with_verified_finalized_parent_round_v1<T>(
+    chain: u64,
+    parent_id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+    action: impl FnOnce(&NovNativeBlockLedgerV1) -> Result<T>,
+) -> Result<T> {
+    let mut workspace = WorkspaceStore::open(chain, params)?;
+    let artifact = block_artifact::load_block_artifact_inner_v1(&workspace, parent_id, params)?
+        .context("parent round requires complete AOEM output")?;
+    let native_path = resolve_native_execution_store_path_from_params_v1(params)
+        .context("parent round requires explicit native path")?;
+    let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "parent round namespace")?;
+    let mut action = Some(action);
+    let mut result = None;
+    with_finalized_parent_locked(&mut workspace, parent_id, genesis, params, &mut |parent| {
+        if parent.block() != artifact.block() || parent.output_digest != artifact.output_digest {
+            bail!("parent round output differs from finalized live execution");
+        }
+        result = Some(NovNativeBlockLedgerV1::with_fresh_parent_round_scope_v1(
+            &nov_native_block_ledger_rocksdb_path_v1(&native_path),
+            genesis,
+            namespace,
+            parent.block(),
+            &crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
+                workspace_id: parent_id,
+                plan_commitment: artifact.plan_commitment,
+                output_digest: artifact.output_digest,
+            },
+            action
+                .take()
+                .context("parent round action already consumed")?,
+        )?);
+        Ok(())
+    })?;
+    result.context("parent round scope did not run")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GenesisPromotionPublicationV1 {
     pub chain_id: u64,

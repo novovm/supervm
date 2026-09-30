@@ -24,6 +24,8 @@ use crate::product_mainline_overlay::{
     ProductMainlineOverlayRoleV1, ProductMainlineOverlayRuntimeV1,
 };
 use anyhow::{bail, Context, Result};
+#[cfg(test)]
+pub(crate) use fresh_chain::exercise_parent_pacemaker;
 pub use fresh_chain::{FreshChainLifecycleV1, FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1};
 pub use publication::FreshGenesisPublicationDriverV1;
 use std::{
@@ -92,6 +94,45 @@ pub struct NovNativeSealServiceV1 {
 }
 
 impl NovNativeSealServiceV1 {
+    pub(super) fn admit_successor_new_view(
+        &self,
+        certificate: &super::newview::NovNativeSealNewViewCertificateV1,
+    ) -> Result<()> {
+        if self.halted {
+            bail!("halted service cannot admit a new view");
+        }
+        let config = &self.config;
+        crate::tx_ingress::candidate_workspace::with_verified_finalized_successor_v1(
+            config.chain_id,
+            config
+                .finalized_parent_workspace_id
+                .context("new view parent missing")?,
+            config
+                .isolated_workspace_id
+                .context("new view candidate missing")?,
+            config
+                .fresh_genesis_config_commitment
+                .context("new view genesis missing")?,
+            self.isolated_params
+                .as_ref()
+                .context("new view execution params missing")?,
+            |view| {
+                self.store.admit_local_new_view_candidate(
+                    view,
+                    &config.authority,
+                    certificate,
+                    &super::NovNativeSealLocalProposalRequestV1 {
+                        chain_id: config.chain_id,
+                        block_hash: config.block_hash,
+                        round: certificate.context.round,
+                        justify_qc_hash: config.justify_qc_hash,
+                    },
+                )?;
+                Ok(())
+            },
+        )
+    }
+
     pub fn complete_fresh_publication(
         &self,
         runtime: &ProductMainlineOverlayRuntimeV1,
@@ -466,11 +507,7 @@ impl NovNativeSealServiceV1 {
                             .bridge
                             .ingest(candidate_view, &self.store, runtime, &inbound)
                         {
-                            Ok(true) => {
-                                deferred_decisions.push(inbound);
-                                self.accepted = self.accepted.saturating_add(1);
-                            }
-                            Ok(false) => self.dropped = self.dropped.saturating_add(1),
+                            Ok(_) => deferred_decisions.push(inbound),
                             Err(_) => self.rejected = self.rejected.saturating_add(1),
                         }
                     }
@@ -502,11 +539,13 @@ impl NovNativeSealServiceV1 {
         self.sent = self.sent.saturating_add(sent as u64);
         self.poll_decision_v3(candidate_view, runtime, now)?;
         for inbound in deferred_decisions {
-            if !self
+            if self
                 .decision
                 .as_mut()
                 .is_some_and(|decision| decision.enqueue(inbound))
             {
+                self.accepted = self.accepted.saturating_add(1);
+            } else {
                 self.dropped = self.dropped.saturating_add(1);
             }
         }

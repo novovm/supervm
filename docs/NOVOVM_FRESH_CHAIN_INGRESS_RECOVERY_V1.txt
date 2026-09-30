@@ -62,9 +62,9 @@ receive_successors 启用时，在经过身份绑定的 NativeSeal 控制通道�
 该协议要求各参与节点使用本切片版本；旧二进制不会自动获得历史服务能力。
 
 测试
-本机 Linux 全量可重复门禁（严格 Clippy、库测试、网络测试、CLI 与连续进程专项）：
+本机 Linux 全量可重复门禁（严格 Clippy、库/网络测试、CLI、连续恢复及自动换轮）：
 python3 scripts/novovm-local-readiness.py
-要求 unshare 用户/网络 namespace 可用、ip 命令和已配置的 Rust 工具链。
+要求 Linux unshare 用户/网络/mount namespace、ip、mount/umount 和已配置的 Rust 工具链。
 脚本不会为了测试关闭宿主服务，也不会回退到宿主网络；无隔离能力即失败。
 使用 Cargo 本次构建输出定位测试 binary，避免复用猜测的文件名或旧 binary。
 报告记录源码内容摘要、测试程序 SHA256、各阶段命令/退出码/测试计数，明确记录
@@ -72,9 +72,69 @@ ignored；零测试不能通过。全量失败不会自动缩小测试集合或�
 默认产物在 artifacts/local-readiness-<UTC>/；可用 --output-dir 指定新的 artifacts 子目录。
 当前开发工作区允许单机测试，但官方 release 打包仍要求 clean HEAD，不绕过。
 
+交易池内核存储故障专项
+完整 runner 显式执行 fresh_genesis_main_nodes_recover_transaction_pool_storage_faults。
+该 ignored 测试必须经 runner 的私有 mount/network namespace 启动；没有隔离
+证明即拒绝运行，不要直接在宿主执行。仅在新夹具交易池目录挂载 8 MiB tmpfs，
+填充到真实 ENOSPC，不填宿主盘、不修改全局挂载或现有节点数据。
+普通主二进制收到交易池持久化错误后不返回 queued，停止生命周期并退出；
+释放容量后重开，验证所有曾 ACK 的交易仍可查询。最后未 ACK 的写入可能已落盘，
+须先恢复/查询，再用同一原始签名交易重试，不能假定网络断开意味着写入未发生。
+只读 remount 验证启动拒绝且文件/确认历史不变；恢复读写后四节点通过正常
+传播、真实 AOEM、共识和发布最终化全部待处理交易，允许跨多个高度。
+逐块比较交易/哈希顺序，再重启重提并确认 finalized、不重复执行、历史不变。
+专项证据：artifacts/storage-fault-b8aad0a/run4.log，1 passed，258.07 秒。
+完整验收：artifacts/local-readiness-storage-fault-b8aad0a/acceptance.json，
+accepted=true，production_ready=false，运行期间源码摘要前后一致。
+存储故障再次通过（255.516 秒）；节点 766、网络 487、CLI 默认 5 项通过，
+连续恢复、离线换轮、分区恢复亦均显式通过。结束后只更新文档，未改程序/测试。
+只验证有界交易池文件系统故障，不等同于物理磁盘坏块、掉电、AOEM/seal/ledger
+存储故障或持续压力；这些门禁、备份恢复及长稳仍待完成。
+
+数据库冷启动与账本发布故障专项
+完整 runner 显式执行 fresh_genesis_main_nodes_recover_storage_startup_faults。
+同样必须使用隔离 mount/network namespace；每次只在自身新测试数据库路径
+挂载 64 MiB tmpfs，制造真实只读和磁盘满。普通主二进制不含故障开关。
+owner.rocksdb 与 seal-db 冷启动拒绝；解除故障后原候选、持久签名和账本不变。
+persist 是 fresh 路径的非权威对照，不要求其故障阻止启动，不等于它完全未访问。
+ledger 在没有决策时只读打开：测试通过真实三节点获得决策，再因只读而无法打开
+可写账本，并验证归档决策重启后的磁盘满拒绝；均早于 promotion intent / authority
+写入，不是 WAL fsync 或数据批写中途故障。不能把只读启动成功算作数据安全缺陷。
+恢复同一故障数据库，不回滚故障前快照；3/4 继续最终化、重启、第四节点追赶后
+逐块历史一致。AOEM 用自身候选重放/最终化读回及数据文件摘要作证；seal/ledger
+比较只读逻辑记录，避免 RocksDB 编译压缩差异与日志元数据变化影响判断。
+专项证据：artifacts/storage-startup-b8aad0a/run5.log，1 passed，49.38 秒。
+完整本机 runner 本次未通过：
+artifacts/local-readiness-storage-startup-b8aad0a/acceptance.json，accepted=false。
+节点库 766、网络库 487、CLI 默认 5、连续恢复均通过；旧离线 leader 用例要求
+prepare round=1，实际为 3，失败位置 native_seal_failover_process.rs:90。
+虽然三进程日志均已最终化同一块，仍不跳过断言或签完整 PASS，轮次原因待定位。
+同一源码单独补跑分区、交易池和本轮数据库存储故障均通过；证据：
+artifacts/storage-startup-b8aad0a/followup-gates/acceptance.json，full_runner_accepted=false。
+新门禁复测 48.654 秒；完整与补跑源码摘要均前后一致，结束后仅更新文档。
+仅此有界故障通过，不覆盖 AOEM/seal 运行中写入失败、
+其他 ledger 提交检查点、物理掉电、备份恢复、长稳或实体多机。
+
 快速库级：
 cargo test -p novovm-node --lib fresh_pool_tests -- --test-threads=1
 cargo test -p novovm-node --lib native_fresh_rpc -- --test-threads=1
+
+离线 leader 的实际轮次验收
+真实进程门禁不保证首个替补轮次就完成，仍须在原 180 秒期限内形成最终确认。
+使用实际持久决策/QC、提案和 NewView admission 验证非零轮次、原 authority、
+已确认块和高度、排班 proposer、3/4 权重及离线节点未签名；不是只检查 round > 0。
+重启后完整 witness 与历史必须保持。内存中删减 quorum、破坏签名、错块或高度
+均须拒绝；不修改数据库或放宽生产签名规则。runner 记录专项证据路径。
+前轮 round=3 的旧数据重验有效，但前轮失败报告仍保留，不算新进程恢复成功。
+本轮新专项 artifacts/failover-round-b8aad0a/run1.log 已通过（295.25 秒），
+实际轮次 1，离线阶段 60.221 秒；重启后完整 witness 不变。不对首次替补轮次
+时延作承诺。完整回归已通过：
+artifacts/local-readiness-failover-witness-b8aad0a/acceptance.json，accepted=true、
+production_ready=false。节点 766、网络 487、CLI 默认 5 项通过；连续恢复、
+离线换轮、分区、交易池存储与数据库启动/账本发布打开故障共五个门禁均显式通过。
+离线换轮复测 295.426 秒、实际轮次 1、离线阶段 58.974 秒，完整 witness 保留。
+运行前后源码摘要一致，结束后仅更新文档。物理掉电、长稳、运行中写入故障、
+公网准入、clean release、实体多机及正式创世/运维审批仍未完成。
 
 AOEM 创世发布与晋升恢复（包含三个持久化检查点强杀）：
 cargo test -p novovm-node --lib candidate_workspace_execution_fresh_genesis_ -- --test-threads=1
@@ -109,8 +169,132 @@ V3 同一轮次收到 DecisionVoteV3 / DecisionCertificateV3 而本地 prepare �
 补入的真实回环 WSS 测试只给落后节点投递 V3 消息，丢弃其 prepare 流量，检查
 恢复、坏签名拒绝及重启证据不变。它不等于已解决跨轮次 prepare 分票活性。
 
-尚未包含的生产能力
-本切片不实现无候选时 round-0 leader 离线的自动换 leader，也不宣称解决
-prepare 后分票活性、epoch/验证集合动态变更、无限历史快速同步、磁盘物理损坏
+已超时节点的迟到 QC
+V3 服务恢复持久 timeout 后，若本轮尚未 Prepared，不会再将迟到 QC 提升为
+旧轮决策签名入口。否则签名阶段虽会正确拒绝，却使正常延迟流量导致服务停机。
+现在保留原 timeout/安全锁，继续既有 TC/NewView 换轮；不回退轮次、不抹除锁。
+已 Prepared 的节点继续原决策票重传，不因该保护丢弃已落盘的 QC。
+V3 的相同 execution target 决策票可沿用原协议在不同 round 见证之间合并；
+每个节点使用自己的已验证 QC 归档，不替换原始签名。不同执行目标仍不可混合。
+
+服务级专项（同样在隔离网络 namespace 中运行，或使用完整 runner）：
+cargo test -p novovm-node --lib native_seal_service_v3_split_prepare_rounds -- --test-threads=1
+两项用例覆盖迟到 QC、超时后重开服务再收到 DecisionVoteV3、单节点 round 0 与
+三节点 round 1 的 prepare 分割、2/4 不确认、掉线一节点后的混合轮 3/4 决策，
+以及决策锁字节、重开后的归档不变。测试使用合成候选和真实回环 WSS，明确
+不触发最终化，不作为真实 AOEM 主进程分票故障验收。
+此轮历史证据：artifacts/local-readiness-split-round-b8aad0a/acceptance.json。
+
+真实 AOEM 主入口分区专项
+fresh_genesis_main_nodes_heal_prepared_timeout_partition 是显式 ignored 门禁，
+由 scripts/novovm-local-readiness.py 在独立网络 namespace 内编译并运行。
+不要在宿主端口启动这个测试，不要停用已有 relay 或服务。
+四个主入口子进程使用真实 AOEM、独立磁盘状态和认证回环 WSS；仅测试构建的
+cfg(test) ingress 过滤器能按来源/共识消息种类丢包，普通二进制不含故障控制器。
+测试运行 main() 本身，而不是直接调用服务模拟主节点；但仍需明确它是插桩构建。
+不改变签名、候选、quorum、wire、虚拟时间或 AOEM，不手工写入共识记录。
+
+先构造两个 round 0 Prepared 节点与两个未 Prepared 节点，再施加 2+2 分区。
+45 秒实际 timeout 后双方都不能确认；强杀四进程、重开仍保留原始签名证据。
+恢复 prepare 控制流、暂扣决策，形成混合轮次 QC；再次重开、离线一个新轮节点，
+其余 3/4 完成同目标 V3 决策和真实 authority/ledger 发布。检查原 timeout、
+决策锁字节不变，三份决策不包含离线节点的票，四个独立 AOEM 候选相同。
+最后用普通主二进制重启已确认节点，再让第四节点追赶并验证持久历史。
+不同见证轮次可以产生不同证书哈希；必须验签并比较 execution target，不能
+为让测试过而要求/写入同一证书或放宽最终性验证。
+初次专项的历史读回夹具误用后继高度接口读取高度一，已改用创世发布读取接口；
+这是测试夹具修正，不是生产运行时或协议改动。
+证据：artifacts/main-partition-b8aad0a/run2.log（1 passed，82.19 秒）。
+完整验收：artifacts/local-readiness-main-partition-b8aad0a/acceptance.json，
+accepted=true，production_ready=false，运行期间源码摘要前后一致。
+该 runner 再次运行分区门禁并通过（79.870 秒），结束后仅更新文档。
+该专项不替代长期故障组合、磁盘/断电、真实多机、clean release 和上线审批。
+
+Prepared V3 pacemaker 与 2+2 恢复
+Prepared 不再等同于停止 V3 计时。只有原本地决策票及其锁、marker、原 QC、
+proposal/admission 均可验证，并且还没有完整决策归档，才继续参与 timeout 和
+同一不可变候选的新轮 prepare。初次决策票尚未持久化时仍先完成原签名入口。
+active round 只能由原加权 quorum TC 推进；原 Prepared pin 和 V3 决策签名
+不改写。QC 重传按该 QC 的历史轮次读取持久见证，不混用 active round 的提案。
+因此 active round=1、prepared QC round=0 可以同时成立，不代表降低签名门禁。
+
+NewView quorum 的全部最高 QC 先验证签名及本地候选匹配，再经既有持久导入路径
+落盘；不放宽非零轮历史 admission，不释放候选/高度锁，不修改协议 wire。
+完整决策归档后停止该 Prepared pacemaker；归档和重启仍走原 V3 验证链。
+
+新增两项本机隔离 WSS 服务测试：
+cargo test -p novovm-node --lib native_seal_service_v3_two_prepared_two_timeout -- --test-threads=1
+先让两份决策票/两份 timeout 分别不足 quorum，恢复消息交换后允许 Prepared
+节点贡献 timeout，进入 round 1，为同一候选形成新 QC，合并原始 V3 决策票。
+覆盖迟到 QC/DecisionVote、timeout 与 TC 后重启、原锁/marker/QC/proposal
+丢失时拒绝恢复、3/4 决策和确认后重启。原决策锁字节不变，不执行合成候选最终化。
+V3 服务专项 10 passed；完整 node 766、network 487、CLI 默认 5 及两项显式
+主进程恢复用例通过；ignored 未执行项不计通过，production_ready=false。
+证据：artifacts/local-readiness-prepared-pacemaker-b8aad0a/acceptance.json。
+该 2+2 专项仍是合成已执行候选，不是实际 AOEM 主进程分票故障注入。
+不同候选、更高轮缺少历史 admission、持续分区及真实多机故障仍待验收。
+
+无候选换轮的本地基础能力
+with_verified_finalized_parent_round_v1 在 workspace、AOEM authority 和 ledger 锁
+共同保护下，重新验证当前最终父块、创世/namespace、完整 AOEM 输出和最终性证明。
+回调只得到只读父块换轮作用域，授权高度严格为 parent.height + 1；它没有已执行
+候选能力，不能用于 prepare subject、proposal、vote 或 decision 签名。
+回调不能再次进入 workspace/authority API 或通过其他句柄变更同一账本。
+
+该作用域复用现有 Timeout / NewView 协议、同步持久化和签名者 watermark，
+不新增 wire，不减少 quorum，不清除候选锁。只有本地单调计时器到期才产生新的
+timeout；超时证书推进轮次不代表产生候选或最终化。重启可以取回原始签名证据，
+新计时器重新等待完整间隔；缺失/损坏安全记录拒绝重新签名，而非自动修复。
+NewView 的 highest_qc=None 不表示没有候选锁，也不授权替换任何已锁候选。
+
+候选前自动 pacemaker
+FreshChainLifecycleV1 现在于显式 receive_successors 模式中保留父块换轮能力；
+自动构建候选仍要求 propose_successors。未开启接续的 publication relay 仍不签名。
+控制 Timeout/NewView 与块体/交易分别有界排队，每个绑定 peer 每组最多 4 项，
+统一 ingress_per_poll 预算按 peer/队列轮询；未知来源、错链或超大 payload 拒绝。
+enqueue 只排队，poll 中重验传输 hash/delivery/source、权威和签名后才处理证据。
+父状态尚超出允许未来时间时 clock_waiting，不处理候选或产生新 timeout 签名。
+
+轮次从同步落盘状态恢复；本地计时到期才新增 timeout，3/4 加权 quorum（等权
+四验证者配置）形成超时证书后逐轮推进。非零轮提案必须具备有效 NewView quorum；
+新 leader 按当前高度/轮次自动选择，从持久交易池构建并实际执行候选。
+接收者同样重执行块体。创建候选服务时持久绑定候选 owner，并重新验证/接入
+NewView admission，后续 poll 继续原 V3 proposal/vote/decision 调度。
+已超时旧轮块体不得回退轮次；带下一轮证书的块体只能经验证的超时证书推进。
+已有 highest QC 的 NewView 不授权任意新候选，也不清理原候选安全锁。
+
+状态新增 parent_pacemaker（height、round、local_timed_out、new_view_ready、
+timeout_count、observation_count）及 parent_round_signing_enabled。
+publication 的 signing_enabled=false 仍只表示它不签区块；父块 Timeout/NewView
+签名能力应看新字段，不能把 publication 字段误读为整个节点完全不持有 signer。
+候选交接后 parent_pacemaker 清空，由原 candidate service 接管。
+
+快速专项：
+cargo test -p novovm-node --lib candidate_less_round_ -- --test-threads=1
+包含第一高度最终化后的候选空档、三个后继高度后的空档、3/4 换轮与 2/4 拒绝、
+坏签名/重复票、关闭重开 signer store、错误高度/创世/chain/旧父块、坏 AOEM 输出、
+损坏安全记录不重签，以及父块换轮作用域不能授权区块签名。
+交接正例在确认父状态与候选列表未改变后，显式执行新候选，切入原 live candidate
+作用域，再凭 NewView quorum admission 由替代 leader 提案、3/4 prepare/decision
+并完成下一高度发布；没有 admission 时即使已有执行候选也不能签非零轮提案。
+上述 candidate_less_round_ 正例是显式调度的库级交接，不替代下面的主进程门禁。
+这些是一次进程中的独立数据库回归，不是实体多机或物理磁盘故障测试。
+
+自动 pacemaker 库级专项：
+cargo test -p novovm-node --lib candidate_less_pacemaker_quorum_transport_restart_and_no_execution -- --test-threads=1
+覆盖真实回环 WSS quorum 换轮、两类队列独立容量、重启与时间倒退、损坏父状态，
+同时断言未创建候选、未改变已最终化父状态。
+
+显式主进程专项（同样要求独立网络 namespace，建议用完整 runner）：
+cargo test -p novovm-node --test native_candidate_node_cli fresh_genesis_main_nodes_replace_candidate_less_offline_leader -- --ignored --test-threads=1
+用测试身份及四个独立数据库先完成高度 2，保持下一高度 round-0 leader 离线；
+非替代 leader 收到真实签名 RPC 交易后，3/4 自动换轮并最终化高度 3，无人工候选。
+强制终止在线节点并重启，完整区块和最终性不变。此用例不模拟 prepare 后分票，
+也不代表任意离线组合、持续丢包或重启时点均已覆盖。
+完整本机证据：artifacts/local-readiness-pacemaker-final-b8aad0a/acceptance.json。
+
+尚未包含的生产能力（继续阻断上线）
+本切片不宣称解决已有候选停滞、跨轮 prepare/decision 分票活性、频繁 leader churn、
+epoch/验证集合动态变更、无限历史快速同步、磁盘物理损坏
 或备份恢复。长跑、所有故障排列、公网网关安全和实体多机必须另行验收。
 所有以上未验项目继续阻断“全面生产就绪”签字。

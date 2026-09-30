@@ -12522,7 +12522,7 @@ mod tests {
         );
         assert_eq!(out["accepted"].as_bool(), Some(true));
         assert_eq!(out["account_id"].as_str(), Some(account_id.as_str()));
-        assert_eq!(out["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(out["key_algo"].as_str(), Some("ed25519"));
         assert_eq!(out["execution_policy"].as_str(), Some("privacy_required"));
         assert_eq!(out["policy_enforced"].as_bool(), Some(false));
         assert_eq!(
@@ -12551,7 +12551,7 @@ mod tests {
             trace["trace"]["account_id"].as_str(),
             Some(account_id.as_str())
         );
-        assert_eq!(trace["trace"]["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(trace["trace"]["key_algo"].as_str(), Some("ed25519"));
         assert_eq!(trace["trace"]["policy_enforced"].as_bool(), Some(false));
         assert_eq!(
             trace["trace"]["policy_rejection_reason"].as_str(),
@@ -12598,7 +12598,7 @@ mod tests {
         );
         assert_eq!(out["accepted"].as_bool(), Some(true));
         assert_eq!(out["account_id"].as_str(), Some(account_id.as_str()));
-        assert_eq!(out["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(out["key_algo"].as_str(), Some("ed25519"));
         assert_eq!(out["execution_policy"].as_str(), Some("privacy_required"));
         assert_eq!(out["policy_enforced"].as_bool(), Some(false));
         assert_eq!(
@@ -12651,7 +12651,7 @@ mod tests {
         );
         assert_eq!(out["accepted"].as_bool(), Some(true));
         assert_eq!(out["account_id"].as_str(), Some(account_id.as_str()));
-        assert_eq!(out["key_algo"].as_str(), Some("mldsa87"));
+        assert_eq!(out["key_algo"].as_str(), Some("ed25519"));
         assert_eq!(out["execution_policy"].as_str(), Some("privacy_required"));
         assert_eq!(out["policy_enforced"].as_bool(), Some(true));
         assert_eq!(out["policy_rejection_reason"], Value::Null);
@@ -13093,7 +13093,10 @@ mod tests {
         );
         pre.module_state.account_asset_balances.insert(
             caller.clone(),
-            std::collections::BTreeMap::from([("NOV".to_string(), 500u128)]),
+            std::collections::BTreeMap::from([
+                ("NOV".to_string(), 500u128),
+                ("USDT".to_string(), 400u128),
+            ]),
         );
         save_nov_native_execution_store_v1(native_store.as_path(), &pre)
             .expect("seed treasury deposit/buy-asset smoke store");
@@ -13125,6 +13128,11 @@ mod tests {
         assert_eq!(
             snapshot_after_deposit["reserve_snapshot"]["reserves"]["USDT"].as_u64(),
             Some(300)
+        );
+        assert_eq!(
+            get_nov_native_account_asset_balance_with_store_path_v1(&native_store, &caller, "USDT")
+                .expect("balance after funded deposit"),
+            100
         );
 
         let redeem = run_mainline_query_from_path(
@@ -13161,6 +13169,7 @@ mod tests {
             .as_u64()
             .unwrap_or_default();
         assert!(reserve_after_redeem < 300);
+        assert_eq!(u128::from(reserve_after_redeem) + usdt_after_redeem, 400);
 
         let mut capped = load_nov_native_execution_store_v1(native_store.as_path())
             .expect("load smoke store before lowering proof cap");
@@ -13208,6 +13217,11 @@ mod tests {
         assert_eq!(
             final_snapshot["reserve_snapshot"]["reserves"]["USDT"].as_u64(),
             Some(reserve_after_redeem)
+        );
+        assert_eq!(
+            get_nov_native_account_asset_balance_with_store_path_v1(&native_store, &caller, "USDT")
+                .expect("balance after blocked deposit"),
+            usdt_after_redeem
         );
 
         let journal = run_mainline_query_from_path(
@@ -14741,7 +14755,7 @@ mod tests {
         );
         assert_eq!(
             policy["result"]["aoem_semantic_commit"]["semantic_delta_count"].as_u64(),
-            Some(1)
+            Some(2)
         );
         let source_policy_commit = policy["result"]["aoem_semantic_commit"]["commit_seal"]
             .as_str()
@@ -14965,7 +14979,7 @@ mod tests {
         );
         assert_eq!(
             policy["result"]["aoem_semantic_commit"]["semantic_delta_count"].as_u64(),
-            Some(1)
+            Some(2)
         );
         let attestation_policy_commit = policy["result"]["aoem_semantic_commit"]["commit_seal"]
             .as_str()
