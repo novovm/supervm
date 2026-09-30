@@ -4,6 +4,24 @@
 这是开发分工，不是先前网络测试的 A/B 身份。共同约定见
 [产品交付主线](NOVOVM_DELIVERY_ALIGNMENT.md)。
 
+## A 返回的经典隐私接口（2026-10-01）
+
+AOEM `main@38f602ec` 已推送，现有 `aoem_privacy_execute_v1` 的 JSON v2
+支持 profile `clsag_bpplus_edwards_u64_v1`。接口、上下文、限额和负例见 AOEM
+`include/aoem.h` 对应声明及 `docs/ffi/AOEM-FFI-PRODUCTION-SURFACE-2026-06-05.md`。
+已有真实钱包见证、收款扫描及再次花费；Windows debug FFI 独立新进程正例
+通过，不需要消费者先 prove。钱包/engine/FFI 分别 8/5/6 项通过。
+
+这是经典 CLSAG + Bulletproofs+，不是 PQ 隐私，不是主链资产落账。Host 仍须
+独立认证环成员/索引、域和精确费用，并对历史 key image 与输出原子提交。
+不能相信交易提交者自报的上下文；不能把 proof_verified 当 finalized。
+CPU/Auto 当前可用，FullGpu 明确拒绝，不能借用旧 RingCT GPU 性能数字。
+
+**当前 SUPERVM 尚未包含此扩展；正在构建的 ML-DSA FULLMAX 固定源为
+`56e9da15`，不含 `38f602ec`。** B 不向旧库发送 v2 后声称完成集成，也不删除
+v1 门禁。后续由 A 协调共享绑定和 SDK；Linux v2、链上收付/防双花与最终性仍
+待接入。完整验收边界见台账，不覆盖历史失败证据。
+
 ## A 返回的源码修复进度（2026-10-01）
 
 AOEM `main@56e9da15` 已推送，固定 `mldsa-native 2.0.0` 替换旧草案实现。

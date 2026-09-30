@@ -1,7 +1,8 @@
 #![forbid(unsafe_code)]
 
-//! Host business computation against a copied parent, AOEM generic precommit
-//! and durable result storage. No authority publication or remote scheduling.
+//! Isolated computation against a copied parent: AOEM schedules NOV transfers;
+//! the Host orders fee settlement and serial Execute barriers. AOEM also owns
+//! generic precommit and durable output. This module does not publish authority.
 
 use super::auth::{authenticate_plan, AuthenticatedItem};
 use super::*;
@@ -324,7 +325,48 @@ fn compute(
     }
     let mut store = payload.parent_store()?.clone();
     let mut mirror_records = Vec::new();
-    for (index, item) in items.iter().enumerate() {
+    let mut index = 0;
+    while index < items.len() {
+        let item = &items[index];
+        if matches!(item.native_tx.kind, NovTxKindV1::Transfer(_)) {
+            // Execute is a barrier: it may change any balance, policy or fee
+            // state. Only contiguous Transfer runs are submitted together.
+            let end = items[index..]
+                .iter()
+                .position(|item| !matches!(item.native_tx.kind, NovTxKindV1::Transfer(_)))
+                .map_or(items.len(), |offset| index + offset);
+            let transfer_items: Vec<_> = items[index..end]
+                .iter()
+                .enumerate()
+                .map(|(offset, item)| {
+                    let position = index + offset;
+                    native_transfer_dispatch::Item {
+                        transaction: &item.native_tx,
+                        request: &item.execution_request,
+                        subject: &item.execution_subject,
+                        reservation: &item.durable_auth_reservation,
+                        ingress: native_aoem_batch_item_ingress_meta_v1(
+                            &chunks[position / chunk_size],
+                            position,
+                            items.len(),
+                        ),
+                    }
+                })
+                .collect();
+            let _peak = native_transfer_dispatch::execute_v1(
+                &mut store,
+                &transfer_items,
+                u128::from(payload.plan.context.timestamp_unix_ms),
+                &mut mirror_records,
+            )?;
+            #[cfg(test)]
+            eprintln!(
+                "fresh candidate AOEM transfer tasks={} peak_inflight={_peak}",
+                end - index
+            );
+            index = end;
+            continue;
+        }
         dispatch_nov_execution_request_into_loaded_store_v1(
             &mut store,
             &item.execution_request,
@@ -346,6 +388,7 @@ fn compute(
                 now_ms: u128::from(payload.plan.context.timestamp_unix_ms),
             },
         )?;
+        index += 1;
     }
     verify_native_business_protocol_config_v1(&store)?;
     if verify_required_native_business_protocol_config_pin_v1()? != to_hex(&workspace.protocol) {
@@ -546,6 +589,22 @@ fn info(
     descriptor: &OutputDescriptor,
     output: Output,
 ) -> Result<ExecutionInfoV1> {
+    let business_owner = if output.batch_result.per_tx_receipts.iter().any(|item| {
+        output
+            .store
+            .receipts
+            .get(item.tx_hash.trim_start_matches("0x"))
+            .is_some_and(|receipt| {
+                receipt
+                    .logs
+                    .iter()
+                    .any(|log| log.event == "aoem.native_transfer.computed")
+            })
+    }) {
+        "AOEM_transfer_compute_and_SUPERVM_host_ordered_settlement_or_execute"
+    } else {
+        "SUPERVM_host"
+    };
     Ok(ExecutionInfoV1 {
         schema: OUTPUT_SCHEMA,
         workspace_id: input.id,
@@ -561,7 +620,7 @@ fn info(
         aoem_called: true,
         execution_completed: true,
         candidate_state_persisted: true,
-        business_transition_computation_owner: "SUPERVM_host",
+        business_transition_computation_owner: business_owner,
         persistence_owner: "aoem_runtime",
         authority_state_published: false,
         chain_canonical: false,

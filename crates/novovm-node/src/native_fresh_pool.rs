@@ -21,9 +21,10 @@ impl PendingTransaction {
             bail!("transaction size limit");
         }
         let transaction = decode_nov_native_tx_wire_v1(&raw)?;
-        if transaction.chain_id != chain || !matches!(transaction.kind, NovTxKindV1::Execute(_)) {
+        if transaction.chain_id != chain {
             bail!("transaction chain or execution kind mismatch");
         }
+        native_transfer_dispatch::require_execution_capability_v1(&transaction, true)?;
         let ir = nov_native_tx_to_adapter_tx_ir_v1(&transaction)?;
         let hash = tx_hash_array_from_ir_v1(&ir);
         verify_nov_native_auth_v1(params, &transaction, &ir, hash)?;

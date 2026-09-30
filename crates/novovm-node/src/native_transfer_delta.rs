@@ -4,21 +4,110 @@
 //!
 //! This is not an ingress, fee schedule, authorization check, or a new ledger.
 //! The caller authenticates the intent and supplies its already approved fee and
-//! effective fee cap. A zero cap means zero here; any wire-level sentinel must
-//! be resolved by the caller. Failed execution charging and nonce consumption
-//! are deliberately left to the consensus execution policy: an error produces
-//! no delta. All amounts are integer base units, not gas units.
+//! effective fee cap. A zero cap means zero here; any wire-level sentinel and
+//! slippage requirement must be resolved by the caller. Authenticated fee and
+//! business failures consume their valid nonce; malformed state/nonce inputs
+//! remain errors. All amounts are integer base units, not gas units.
 //!
 //! The only per-task state is two account balances and one signer nonce. Shared
 //! fee funding contributions are reduced with checked arithmetic in original
 //! transaction order after execution; they are not a false dependency between
-//! otherwise independent tasks. A failed fee reduction must prevent
-//! publication of the whole proposed batch.
+//! otherwise independent tasks. A rejected global settlement replaces that
+//! transaction with a nonce-only outcome before the next segment is captured.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
-pub type Account = [u8; 20];
+/// Preserve the exact supported balance identity. A public-key account is not
+/// truncated or silently aliased to its derived 20-byte address.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(transparent)]
+pub struct Account(Vec<u8>);
+
+impl Account {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn to_hex_prefixed(&self) -> String {
+        use std::fmt::Write;
+        let mut encoded = String::with_capacity(2 + self.0.len() * 2);
+        encoded.push_str("0x");
+        for byte in &self.0 {
+            write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+        }
+        encoded
+    }
+}
+
+impl TryFrom<Vec<u8>> for Account {
+    type Error = &'static str;
+
+    fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+        if !matches!(bytes.len(), 20 | 32) {
+            return Err("native transfer account must contain exactly 20 or 32 bytes");
+        }
+        Ok(Self(bytes))
+    }
+}
+
+impl TryFrom<&[u8]> for Account {
+    type Error = &'static str;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if !matches!(bytes.len(), 20 | 32) {
+            return Err("native transfer account must contain exactly 20 or 32 bytes");
+        }
+        Ok(Self(bytes.to_vec()))
+    }
+}
+
+impl From<[u8; 20]> for Account {
+    fn from(bytes: [u8; 20]) -> Self {
+        Self(bytes.to_vec())
+    }
+}
+
+impl From<[u8; 32]> for Account {
+    fn from(bytes: [u8; 32]) -> Self {
+        Self(bytes.to_vec())
+    }
+}
+
+impl<'de> Deserialize<'de> for Account {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct AccountVisitor;
+        impl<'de> serde::de::Visitor<'de> for AccountVisitor {
+            type Value = Account;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("exactly 20 or 32 account bytes")
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Account, A::Error> {
+                if seq.size_hint().is_some_and(|len| len > 32) {
+                    return Err(serde::de::Error::custom(
+                        "native transfer account exceeds 32 bytes",
+                    ));
+                }
+                let mut bytes = Vec::with_capacity(32);
+                while let Some(byte) = seq.next_element::<u8>()? {
+                    if bytes.len() == 32 {
+                        return Err(serde::de::Error::custom(
+                            "native transfer account exceeds 32 bytes",
+                        ));
+                    }
+                    bytes.push(byte);
+                }
+                Account::try_from(bytes).map_err(serde::de::Error::custom)
+            }
+        }
+        deserializer.deserialize_seq(AccountVisitor)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransferIntent {
@@ -41,7 +130,7 @@ pub struct TransferSnapshot {
     pub next_nonce: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BalanceDelta {
     pub account: Account,
     pub before: u128,
@@ -116,6 +205,135 @@ impl std::fmt::Display for TransferError {
 
 impl std::error::Error for TransferError {}
 
+/// Quotation/policy errors retain the caller's established receipt error code.
+/// Business errors occur only after a locally affordable fee was accepted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum TransferExecutionFailureV1 {
+    Fee(String),
+    Business(TransferError),
+}
+
+/// Only validated execution creates an outcome. The fields are private so a
+/// caller cannot construct an apparent nonce transition without validation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TransferExecutionOutcomeV1 {
+    delta: TransferDelta,
+    failure: Option<TransferExecutionFailureV1>,
+}
+
+impl TransferExecutionOutcomeV1 {
+    pub(crate) fn delta(&self) -> &TransferDelta {
+        &self.delta
+    }
+
+    pub(crate) fn failure(&self) -> Option<&TransferExecutionFailureV1> {
+        self.failure.as_ref()
+    }
+
+    pub(crate) fn is_success(&self) -> bool {
+        self.failure.is_none()
+    }
+
+    /// Global settlement is reduced in original order. A rejected fee erases
+    /// the speculative business and fee writes, not the authenticated nonce.
+    /// Every replacement uses the original pre-fee balances, even if the
+    /// speculative result was already a fee-paid business failure.
+    pub(crate) fn reject_fee(mut self, reason: String) -> Self {
+        self.delta.payer.after = self.delta.payer.before;
+        self.delta.recipient.after = self.delta.recipient.before;
+        self.delta.fee_funding_delta = 0;
+        self.failure = Some(TransferExecutionFailureV1::Fee(reason));
+        self
+    }
+}
+
+fn validate_snapshot(
+    intent: &TransferIntent,
+    snapshot: &TransferSnapshot,
+) -> Result<u64, TransferError> {
+    if intent.nonce_identity.is_empty() {
+        return Err(TransferError::MissingNonceIdentity);
+    }
+    if intent.nonce != snapshot.next_nonce {
+        return Err(TransferError::NonceMismatch {
+            expected: snapshot.next_nonce,
+            provided: intent.nonce,
+        });
+    }
+    let next = intent
+        .nonce
+        .checked_add(1)
+        .ok_or(TransferError::NonceExhausted)?;
+    if intent.from == intent.to && snapshot.payer_balance != snapshot.recipient_balance {
+        return Err(TransferError::InconsistentSelfBalance);
+    }
+    Ok(next)
+}
+
+/// Execute from a pre-fee snapshot. The caller authenticates first and supplies
+/// quotation failures (including slippage-inclusive cap failure) separately;
+/// `fee_cap` is a final defense, not a replacement for the unified quote.
+pub(crate) fn compute_outcome_v1(
+    intent: &TransferIntent,
+    snapshot: &TransferSnapshot,
+    fee_rejection: Option<&str>,
+) -> Result<TransferExecutionOutcomeV1, TransferError> {
+    let nonce_after = validate_snapshot(intent, snapshot)?;
+    let unchanged = TransferDelta {
+        tx_hash: intent.tx_hash,
+        payer: BalanceDelta {
+            account: intent.from.clone(),
+            before: snapshot.payer_balance,
+            after: snapshot.payer_balance,
+        },
+        recipient: BalanceDelta {
+            account: intent.to.clone(),
+            before: snapshot.recipient_balance,
+            after: snapshot.recipient_balance,
+        },
+        nonce_identity: intent.nonce_identity.clone(),
+        nonce_before: snapshot.next_nonce,
+        nonce_after,
+        fee_funding_delta: 0,
+    };
+    let mut outcome = TransferExecutionOutcomeV1 {
+        delta: unchanged,
+        failure: None,
+    };
+    if let Some(reason) = fee_rejection {
+        return Ok(outcome.reject_fee(reason.to_string()));
+    }
+    if intent.approved_fee > intent.fee_cap {
+        return Ok(outcome.reject_fee(format!(
+            "fee.quote.max_pay_exceeded: approved_fee={} max_pay_amount={} pay_asset=NOV",
+            intent.approved_fee, intent.fee_cap
+        )));
+    }
+    let Some(after_fee) = snapshot.payer_balance.checked_sub(intent.approved_fee) else {
+        return Ok(outcome.reject_fee(format!(
+            "fee.clearing.insufficient_user_balance: nov_fee_asset_debit_failed: account={} requested={} available={}",
+            intent.from.to_hex_prefixed(), intent.approved_fee, snapshot.payer_balance
+        )));
+    };
+    match compute_delta(intent, snapshot) {
+        Ok(delta) => outcome.delta = delta,
+        Err(
+            error @ (TransferError::DebitOverflow
+            | TransferError::InsufficientFunds { .. }
+            | TransferError::RecipientOverflow),
+        ) => {
+            outcome.delta.payer.after = after_fee;
+            if intent.from == intent.to {
+                outcome.delta.recipient.after = after_fee;
+            }
+            outcome.delta.fee_funding_delta = intent.approved_fee;
+            outcome.failure = Some(TransferExecutionFailureV1::Business(error));
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(outcome)
+}
+
 /// Compute one complete transition without mutating the snapshot.
 ///
 /// Affordability covers the entire amount plus fee, including self-transfers;
@@ -178,12 +396,12 @@ pub fn compute_delta(
     Ok(TransferDelta {
         tx_hash: intent.tx_hash,
         payer: BalanceDelta {
-            account: intent.from,
+            account: intent.from.clone(),
             before: snapshot.payer_balance,
             after: payer_after,
         },
         recipient: BalanceDelta {
-            account: intent.to,
+            account: intent.to.clone(),
             before: snapshot.recipient_balance,
             after: recipient_after,
         },
@@ -220,40 +438,34 @@ pub enum AccessKey {
 /// randomized hashing. It is limited to the two NOV balances and signer nonce.
 pub fn access_set(intent: &TransferIntent) -> Vec<AccessKey> {
     BTreeSet::from([
-        AccessKey::NovBalance(intent.from),
-        AccessKey::NovBalance(intent.to),
+        AccessKey::NovBalance(intent.from.clone()),
+        AccessKey::NovBalance(intent.to.clone()),
         AccessKey::SignerNonce(intent.nonce_identity.clone()),
     ])
     .into_iter()
     .collect()
 }
 
-/// Earliest safe waves retaining every pair's original conflict order.
-///
-/// All tasks in a wave have disjoint read/write sets. A task is placed strictly
-/// after the latest earlier task touching any of its keys. This also retains
-/// transitive dependencies; a greedy "first non-conflicting wave" algorithm
-/// could incorrectly move a later task before one of its earlier dependencies.
-/// These are planning results, not evidence that a runtime executed in parallel.
-pub fn conflict_waves(intents: &[TransferIntent]) -> Vec<Vec<usize>> {
-    let mut latest_wave = BTreeMap::<AccessKey, usize>::new();
-    let mut waves = Vec::<Vec<usize>>::new();
+/// Contiguous maximal independent segments in original transaction order.
+/// Reduce all outcomes, including rejected global fees, before reading the
+/// next segment's snapshots. Moving a later independent transaction ahead of
+/// an earlier conflicting segment would break global settlement ordering.
+pub fn conflict_segments(intents: &[TransferIntent]) -> Vec<Vec<usize>> {
+    let mut used = BTreeSet::<AccessKey>::new();
+    let mut segments = Vec::<Vec<usize>>::new();
     for (index, intent) in intents.iter().enumerate() {
         let keys = access_set(intent);
-        let wave = keys
-            .iter()
-            .filter_map(|key| latest_wave.get(key).map(|previous| previous + 1))
-            .max()
-            .unwrap_or(0);
-        if waves.len() <= wave {
-            waves.resize_with(wave + 1, Vec::new);
+        if segments.is_empty() || keys.iter().any(|key| used.contains(key)) {
+            segments.push(Vec::new());
+            used.clear();
         }
-        waves[wave].push(index);
-        for key in keys {
-            latest_wave.insert(key, wave);
-        }
+        segments
+            .last_mut()
+            .expect("nonempty segment list")
+            .push(index);
+        used.extend(keys);
     }
-    waves
+    segments
 }
 
 #[cfg(test)]
@@ -263,8 +475,8 @@ mod tests {
     fn intent(from: u8, to: u8, nonce: u64) -> TransferIntent {
         TransferIntent {
             tx_hash: [from; 32],
-            from: [from; 20],
-            to: [to; 20],
+            from: [from; 20].into(),
+            to: [to; 20].into(),
             nonce_identity: format!("authenticated-signer-{from}"),
             nonce,
             amount: 30,
@@ -279,6 +491,202 @@ mod tests {
             recipient_balance: 20,
             next_nonce: 0,
         }
+    }
+
+    #[test]
+    fn account_identity_is_bounded_and_preserves_twenty_and_thirty_two_byte_keys() {
+        for len in [0, 1, 19, 21, 31, 33, 128] {
+            assert!(Account::try_from(vec![7; len]).is_err());
+            let encoded = serde_json::to_vec(&vec![7u8; len]).unwrap();
+            assert!(serde_json::from_slice::<Account>(&encoded).is_err());
+        }
+        let short = Account::from([7; 20]);
+        let long = Account::from([7; 32]);
+        assert_ne!(short, long);
+        for account in [short, long] {
+            assert_eq!(
+                account.to_hex_prefixed(),
+                format!("0x{}", "07".repeat(account.as_bytes().len()))
+            );
+            assert_eq!(Account::try_from(account.as_bytes()).unwrap(), account);
+            let encoded = serde_json::to_vec(&account).unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Account>(&encoded).unwrap(),
+                account
+            );
+        }
+        let mut input = intent(1, 2, 0);
+        input.from = [1; 32].into();
+        input.to = [2; 32].into();
+        let outcome = compute_outcome_v1(&input, &snapshot(), None).unwrap();
+        assert_eq!(outcome.delta().payer.account.as_bytes(), &[1; 32]);
+        assert_eq!(outcome.delta().recipient.account.as_bytes(), &[2; 32]);
+    }
+
+    #[test]
+    fn quoted_cap_and_insufficient_fee_failures_consume_nonce_without_payment() {
+        let mut input = intent(1, 2, 0);
+        let state = snapshot();
+        let quote_reason = "fee.quote.max_pay_exceeded: required_with_slippage=8 max_pay_amount=7";
+        // Base fee fits, but the unified quote's slippage-inclusive cap does not.
+        let rejected = compute_outcome_v1(&input, &state, Some(quote_reason)).unwrap();
+        assert_eq!(
+            rejected.failure(),
+            Some(&TransferExecutionFailureV1::Fee(quote_reason.into()))
+        );
+        input.fee_cap = 6;
+        let cap_rejected = compute_outcome_v1(&input, &state, None).unwrap();
+        input.fee_cap = 7;
+        let fee_short = TransferSnapshot {
+            payer_balance: 6,
+            ..state
+        };
+        let unpaid = compute_outcome_v1(&input, &fee_short, None).unwrap();
+        for outcome in [rejected, cap_rejected, unpaid] {
+            assert!(matches!(
+                outcome.failure(),
+                Some(TransferExecutionFailureV1::Fee(_))
+            ));
+            let delta = outcome.delta();
+            assert_eq!(delta.payer.before, delta.payer.after);
+            assert_eq!(delta.recipient.before, delta.recipient.after);
+            assert_eq!(delta.fee_funding_delta, 0);
+            assert_eq!((delta.nonce_before, delta.nonce_after), (0, 1));
+        }
+    }
+
+    #[test]
+    fn business_failures_keep_only_the_fee_and_valid_nonce() {
+        let input = intent(1, 2, 0);
+        for state in [
+            TransferSnapshot {
+                payer_balance: 7,
+                ..snapshot()
+            },
+            TransferSnapshot {
+                payer_balance: 36,
+                ..snapshot()
+            },
+            TransferSnapshot {
+                recipient_balance: u128::MAX,
+                ..snapshot()
+            },
+        ] {
+            let outcome = compute_outcome_v1(&input, &state, None).unwrap();
+            assert!(matches!(
+                outcome.failure(),
+                Some(TransferExecutionFailureV1::Business(_))
+            ));
+            assert_eq!(outcome.delta().payer.after, state.payer_balance - 7);
+            assert_eq!(outcome.delta().recipient.after, state.recipient_balance);
+            assert_eq!(outcome.delta().fee_funding_delta, 7);
+            assert_eq!(outcome.delta().nonce_after, 1);
+            // Global settlement rejection must use the original, not post-fee, state.
+            let rejected = outcome.reject_fee("fee.settlement.amount_overflow".into());
+            assert_eq!(rejected.delta().payer.after, state.payer_balance);
+            assert_eq!(rejected.delta().recipient.after, state.recipient_balance);
+            assert_eq!(rejected.delta().fee_funding_delta, 0);
+            assert_eq!(rejected.delta().nonce_after, 1);
+        }
+        let mut overflowing = input;
+        overflowing.amount = u128::MAX;
+        let state = TransferSnapshot {
+            payer_balance: u128::MAX,
+            recipient_balance: 0,
+            next_nonce: 0,
+        };
+        let overflow = compute_outcome_v1(&overflowing, &state, None).unwrap();
+        assert_eq!(
+            overflow.failure(),
+            Some(&TransferExecutionFailureV1::Business(
+                TransferError::DebitOverflow
+            ))
+        );
+        assert_eq!(overflow.delta().payer.after, u128::MAX - 7);
+    }
+
+    #[test]
+    fn self_transfer_failure_and_settlement_rejection_keep_one_balance() {
+        let input = intent(1, 1, 0);
+        for balance in [6, 7, 36, 37, 100] {
+            let state = TransferSnapshot {
+                payer_balance: balance,
+                recipient_balance: balance,
+                next_nonce: 0,
+            };
+            let outcome = compute_outcome_v1(&input, &state, None).unwrap();
+            assert_eq!(outcome.delta().payer, outcome.delta().recipient);
+            assert_eq!(
+                outcome.delta().payer.after + outcome.delta().fee_funding_delta,
+                balance
+            );
+            let rejected = outcome.reject_fee("fee.settlement.settlement_paused".into());
+            assert_eq!(rejected.delta().payer, rejected.delta().recipient);
+            assert_eq!(rejected.delta().payer.after, balance);
+            assert_eq!(rejected.delta().nonce_after, 1);
+        }
+    }
+
+    #[test]
+    fn quote_failure_cannot_turn_invalid_nonce_or_state_into_an_executed_failure() {
+        let state = snapshot();
+        let mut input = intent(1, 2, 1);
+        assert!(matches!(
+            compute_outcome_v1(&input, &state, Some("quote rejected")),
+            Err(TransferError::NonceMismatch { .. })
+        ));
+        input.nonce = u64::MAX;
+        assert_eq!(
+            compute_outcome_v1(
+                &input,
+                &TransferSnapshot {
+                    next_nonce: u64::MAX,
+                    ..state
+                },
+                Some("quote rejected")
+            ),
+            Err(TransferError::NonceExhausted)
+        );
+        input.nonce = 0;
+        input.nonce_identity.clear();
+        assert_eq!(
+            compute_outcome_v1(&input, &state, None),
+            Err(TransferError::MissingNonceIdentity)
+        );
+        let self_input = intent(1, 1, 0);
+        assert_eq!(
+            compute_outcome_v1(&self_input, &state, Some("quote rejected")),
+            Err(TransferError::InconsistentSelfBalance)
+        );
+    }
+
+    #[test]
+    fn next_segment_uses_reduced_state_after_a_global_fee_rejection() {
+        let first = intent(1, 2, 0);
+        let mut dependent = intent(2, 3, 0);
+        dependent.amount = 30;
+        let independent = intent(4, 5, 0);
+        assert_eq!(
+            conflict_segments(&[first.clone(), dependent.clone(), independent]),
+            vec![vec![0], vec![1, 2]]
+        );
+        let speculative = compute_outcome_v1(&first, &snapshot(), None).unwrap();
+        assert_eq!(speculative.delta().recipient.after, 50);
+        let settled = speculative.reject_fee("fee.settlement.amount_overflow".into());
+        let fresh_snapshot = TransferSnapshot {
+            payer_balance: settled.delta().recipient.after,
+            recipient_balance: 0,
+            next_nonce: 0,
+        };
+        let next = compute_outcome_v1(&dependent, &fresh_snapshot, None).unwrap();
+        assert!(matches!(
+            next.failure(),
+            Some(TransferExecutionFailureV1::Business(
+                TransferError::InsufficientFunds { .. }
+            ))
+        ));
+        assert_eq!(next.delta().payer.after, 13);
+        assert_eq!(next.delta().recipient.after, 0);
     }
 
     #[test]
@@ -478,41 +886,44 @@ mod tests {
     }
 
     #[test]
-    fn independent_transactions_share_a_wave_despite_shared_fee_funding() {
+    fn independent_transactions_share_a_segment_despite_shared_fee_funding() {
         let intents = vec![intent(1, 2, 0), intent(3, 4, 0), intent(5, 6, 0)];
-        assert_eq!(conflict_waves(&intents), vec![vec![0, 1, 2]]);
-        assert_eq!(conflict_waves(&[]), Vec::<Vec<usize>>::new());
+        assert_eq!(conflict_segments(&intents), vec![vec![0, 1, 2]]);
+        assert_eq!(conflict_segments(&[]), Vec::<Vec<usize>>::new());
     }
 
     #[test]
     fn shared_payer_recipient_and_nonce_identity_are_conflicts() {
         assert_eq!(
-            conflict_waves(&[intent(1, 2, 0), intent(1, 3, 1)]),
+            conflict_segments(&[intent(1, 2, 0), intent(1, 3, 1)]),
             vec![vec![0], vec![1]]
         );
         assert_eq!(
-            conflict_waves(&[intent(1, 3, 0), intent(2, 3, 0)]),
+            conflict_segments(&[intent(1, 3, 0), intent(2, 3, 0)]),
             vec![vec![0], vec![1]]
         );
         assert_eq!(
-            conflict_waves(&[intent(1, 2, 0), intent(2, 3, 0)]),
+            conflict_segments(&[intent(1, 2, 0), intent(2, 3, 0)]),
             vec![vec![0], vec![1]]
         );
         let first = intent(1, 2, 0);
         let mut second = intent(3, 4, 1);
         second.nonce_identity = first.nonce_identity.clone();
-        assert_eq!(conflict_waves(&[first, second]), vec![vec![0], vec![1]]);
+        assert_eq!(conflict_segments(&[first, second]), vec![vec![0], vec![1]]);
     }
 
     #[test]
-    fn transitive_dependencies_cannot_be_greedily_moved_to_an_earlier_wave() {
+    fn later_independent_work_does_not_jump_earlier_global_fee_reduction() {
         let intents = vec![
             intent(1, 2, 0),
             intent(2, 3, 0),
             intent(3, 4, 0),
             intent(5, 6, 0),
         ];
-        assert_eq!(conflict_waves(&intents), vec![vec![0, 3], vec![1], vec![2]]);
+        assert_eq!(
+            conflict_segments(&intents),
+            vec![vec![0], vec![1], vec![2, 3]]
+        );
     }
 
     #[test]
@@ -520,8 +931,9 @@ mod tests {
         let intents: Vec<_> = (0..128u8)
             .map(|index| intent(index % 17, index.wrapping_mul(7) % 19, u64::from(index)))
             .collect();
-        let waves = conflict_waves(&intents);
-        assert_eq!(waves, conflict_waves(&intents));
+        let waves = conflict_segments(&intents);
+        assert_eq!(waves, conflict_segments(&intents));
+        assert_eq!(waves.concat(), (0..intents.len()).collect::<Vec<_>>());
         let mut assigned = vec![None; intents.len()];
         for (wave, tasks) in waves.iter().enumerate() {
             let mut used = BTreeSet::new();

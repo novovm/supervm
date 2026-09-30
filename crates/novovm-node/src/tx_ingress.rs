@@ -7,6 +7,8 @@ pub mod fresh_genesis;
 pub mod candidate_workspace;
 #[path = "native_fresh_pool.rs"]
 pub mod fresh_pool;
+#[path = "native_transfer_dispatch.rs"]
+mod native_transfer_dispatch;
 
 #[path = "native_nonce_migration.rs"]
 pub mod native_nonce_migration;
@@ -4258,7 +4260,7 @@ fn ingest_local_nov_raw_tx_payload_internal_v1(
                 return Err(err);
             }
         };
-    if !matches!(&native_tx.kind, NovTxKindV1::Execute(_)) {
+    if native_transfer_dispatch::require_execution_capability_v1(&native_tx, false).is_err() {
         observe_network_runtime_native_pending_tx_rejected_v1(native_tx.chain_id, tx_hash, None);
         bail!(
             "nov native authenticated ingress rejected: {} is not executable by the AOEM-owned durable finalize path; only execute is enabled until transfer/governance ownership is implemented",
@@ -8717,7 +8719,6 @@ fn quote_fee_policy_from_execution_request_v1(
     now_ms: u128,
 ) -> Result<NovFeeQuoteV1> {
     let pay_asset = normalize_asset_symbol_v1(request.fee_pay_asset.as_str());
-    let nov_amount = estimate_execution_fee_nov_v1(request);
     let (rate_ppm, price_source, oracle_updated_at_unix_ms) =
         match resolve_fee_quote_rate_ppm_with_source_v1(store, pay_asset.as_str(), now_ms) {
             Ok(value) => value,
@@ -8739,6 +8740,45 @@ fn quote_fee_policy_from_execution_request_v1(
                 );
             }
         };
+    let quote = match build_execution_fee_quote_v1(
+        request,
+        rate_ppm,
+        price_source,
+        oracle_updated_at_unix_ms,
+        now_ms,
+    ) {
+        Ok(quote) => quote,
+        Err(error) => {
+            let reason = error.to_string();
+            let code = fee_reason_code_v1(&reason, NOV_FEE_FAILURE_QUOTE_PREFIX_V1)
+                .unwrap_or("rate_unavailable");
+            increment_quote_failure_v1(store, &pay_asset, code);
+            store.module_state.last_fee_quote_failure = Some(reason);
+            return Err(error);
+        }
+    };
+    store.module_state.last_fee_quote = Some(quote.clone());
+    store.module_state.last_fee_quote_failure = None;
+    Ok(quote)
+}
+
+/// Pure quotation shared by serial Execute and concurrent Transfer planning.
+/// The existing wrapper retains non-NOV price-anchor writes and observability.
+fn build_execution_fee_quote_v1(
+    request: &NovExecutionRequestV1,
+    rate_ppm: u128,
+    price_source: String,
+    oracle_updated_at_unix_ms: u128,
+    now_ms: u128,
+) -> Result<NovFeeQuoteV1> {
+    if rate_ppm == 0 {
+        bail!(fee_quote_reason_v1(
+            "rate_unavailable",
+            "quote rate is zero"
+        ));
+    }
+    let pay_asset = normalize_asset_symbol_v1(&request.fee_pay_asset);
+    let nov_amount = estimate_execution_fee_nov_v1(request);
     let quoted_pay_amount = ceil_div_u128_v1(
         nov_amount.saturating_mul(NOV_FEE_RATE_PPM_DENOMINATOR_V1),
         rate_ppm,
@@ -8756,15 +8796,13 @@ fn quote_fee_policy_from_execution_request_v1(
         request.fee_max_pay_amount
     };
     if quoted_with_slippage > max_pay_amount {
-        return quote_fail_v1(
-            store,
-            pay_asset.as_str(),
+        bail!(fee_quote_reason_v1(
             "max_pay_exceeded",
-            format!(
+            &format!(
                 "required_with_slippage={} max_pay_amount={} pay_asset={}",
                 quoted_with_slippage, max_pay_amount, pay_asset
             ),
-        );
+        ));
     }
     let ttl_ms = execution_fee_quote_ttl_ms_v1().max(1);
     let quote = NovFeeQuoteV1 {
@@ -8787,8 +8825,6 @@ fn quote_fee_policy_from_execution_request_v1(
         quote_contract: NOV_EXECUTION_FEE_QUOTE_CONTRACT_V1.to_string(),
         price_source,
     };
-    store.module_state.last_fee_quote = Some(quote.clone());
-    store.module_state.last_fee_quote_failure = None;
     Ok(quote)
 }
 
@@ -13555,6 +13591,9 @@ fn native_tx_parameter_payload_v1(
             "nonce": transfer.nonce,
             "fee_asset": transfer.fee_policy.pay_asset,
             "max_fee": transfer.fee_policy.max_pay_amount.to_string(),
+            "fee_slippage_bps": transfer.fee_policy.slippage_bps,
+            "execution_request": execution_request,
+            "execution_subject": execution_subject,
             "raw_payload_digest": to_hex(&sha256_bytes_v1(&[raw_payload])),
             "tx_ir_type": format!("{:?}", ir.tx_type),
         }),
@@ -13900,6 +13939,8 @@ pub fn native_business_protocol_config_commitment_v1() -> Result<String> {
             "treasury_deposit_contract": "balance_backed_v2",
             "direct_nov_fee_contract": "payer_debit_checked_settlement_v1",
             "execution_receipt_fee_contract": "pre_fee_state_and_settled_failure_v1",
+            "native_transfer_execution_contract": "aoem_parallel_ordered_fee_receipt_v1",
+            "native_transfer_fee_projection": native_transfer_dispatch::FEE_PROJECTION_V1,
             "native_auth_nonce_identity_scheme": NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2,
             "fee_rate_ppm": {
                 "NOV": NOV_FEE_RATE_PPM_NOV_V1,

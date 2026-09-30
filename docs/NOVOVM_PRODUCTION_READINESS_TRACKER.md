@@ -14,6 +14,48 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
+## 设备 A：真实候选 NOV Transfer 计算接通（2026-10-01）
+
+在 `fc36514` 上接入 fresh 签名 Transfer（NOV 资产、NOV 费用），不开放尚无
+执行器的 legacy ingress。整个候选先完成签名、链域和 nonce 鉴权；连续的
+无冲突转账由 AOEM 通用 workers 实算，冲突段和 Execute 之间保留原序屏障。
+Host 使用原统一计费与分配，先实扣一次费用，再归并 AOEM 绝对 after 值；
+拒费不改变金额，业务失败保留已结费用并消费有效 nonce。20/32 字节账户完整
+保留，同一公钥的 nonce 身份不分叉。AOEM 没有新增 NOV 专属接口或业务代码。
+
+本机 Windows：最终 5 项真实签名候选测试在原随包 DLL 与新 FULLMAX
+`56e9da15` core（SHA256 `4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463`）
+均为 5/5；覆盖混合 Execute/Transfer、余额和手续费失败、结算计数溢出后
+后继花费、完整长账户。候选实际 callback peak=2，没有用 sleep 制造并发。
+组件/调度 25 项、既有收费守恒 6 项通过；新库显式并发组件 1/1，peak=8。
+既有 candidate_workspace 整套 24 passed / 3 子进程 worker ignored，包括
+创世、继承、进程恢复、传播和 quorum（含前三项新测试，427.76 秒）。最终源码
+Node lib/tests 严格 Clippy 与 diff check 通过；没有重跑全库并冒称新全绿。
+
+Transfer 费用投影已进入协议指纹：须使用一致的新鲜创世配置，不混用旧协议
+pin，不迁移旧测试资产。**状态增量编码尚未晋升到主路径，候选仍有全量克隆、
+8 MiB 累积快照与自动 16 笔选择上限；持续最终确认吞吐尚未签收。** 下一步是
+将已验证的增量根接入同一候选/最终性恢复链路，不以组件并发替代最终确认。
+
+## 设备 A：经典隐私跨进程接口源码已交付（2026-10-01）
+
+AOEM `main@38f602ec` 已使用 XujueKing SSH 推送。固定 monero-oxide
+`9e11f5c0` 的 CLSAG + Bulletproofs+ 数学实现，增加通用真实钱包见证、收款
+扫描/再次花费以及 Host 精确费用适配；不引入 NOV 余额、发行或共识规则。
+现有 `aoem_privacy_execute_v1` 增加严格 JSON v2，profile 为
+`clsag_bpplus_edwards_u64_v1`，没有新 C 导出或第二条内核执行入口。
+
+钱包 8/8、engine 5/5、FFI 6/6 通过。Windows debug DLL 的独立新进程不调用
+prove，也能验证正例；错误域/费用/环/证明、截断、伪造 verified、GPU 路由和
+批内重复 key image 均拒绝。旧 v1 仍保留已发布 ABI 的本进程 cache 门禁，
+不将其改成资产授权。完整全仓 Clippy 尚未通过，存在既有 GPU uninit_vec 阻断。
+
+**这不是已同步的 FULLMAX/主链隐私资产。** v2 始终声明未落账、非抗量子、
+未验证环成员的链上资格、未检查历史双花。Host 必须从可信账本解析环、域与
+费用，原子保存 key image/输出并进入最终性。Linux v2、钱包持久安全、主链
+收付/重启及独立安全审计仍待完成。当前 ML-DSA FULLMAX 构建源为较早
+`56e9da15`，不包含这次隐私扩展，不能混用两个交付状态。
+
 ## 设备 A：AOEM ML-DSA 标准修复源码已推送（2026-10-01）
 
 AOEM `main@56e9da15`（XujueKing SSH）已提交并核对远端一致。新唯一实现为

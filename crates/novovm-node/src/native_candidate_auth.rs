@@ -60,19 +60,32 @@ pub(super) fn authenticate_plan(
         // pending-rejection observations on failure and is not isolated.
         verify_nov_native_auth_v1(params, &native_tx, &ir, tx_hash)
             .with_context(|| format!("authenticate candidate transaction {index}"))?;
-        let NovTxKindV1::Execute(execute) = &native_tx.kind else {
-            bail!("candidate authentication supports only execute transactions");
-        };
-        let execution_subject = subject_meta_from_execute_tx_v1(execute);
-        let requested_execution_behavior = requested_execution_behavior_v1(
-            effective_execution_policy_for_fee_asset_v1(
-                execute.execution_policy,
-                execute.fee_policy.pay_asset.as_str(),
+        native_transfer_dispatch::require_execution_capability_v1(&native_tx, true)?;
+        let (execution_subject, requested_execution_behavior, execution_request) = match &native_tx
+            .kind
+        {
+            NovTxKindV1::Execute(execute) => (
+                subject_meta_from_execute_tx_v1(execute),
+                requested_execution_behavior_v1(
+                    effective_execution_policy_for_fee_asset_v1(
+                        execute.execution_policy,
+                        &execute.fee_policy.pay_asset,
+                    ),
+                    execute.privacy_mode,
+                ),
+                nov_native_tx_to_execution_request_v1(&native_tx)?
+                    .context("candidate authentication requires an executable native request")?,
             ),
-            execute.privacy_mode,
-        );
-        let execution_request = nov_native_tx_to_execution_request_v1(&native_tx)?
-            .context("candidate authentication requires an executable native request")?;
+            NovTxKindV1::Transfer(_) => {
+                let request = native_transfer_dispatch::fee_request_v1(&native_tx, tx_hash)?;
+                (
+                    fallback_execution_subject_meta_v1(&request),
+                    default_execution_behavior_v1(),
+                    request,
+                )
+            }
+            _ => bail!("candidate transaction capability mismatch"),
+        };
 
         // Candidates and authority execution share the pinned V2 signer domain.
         let reservation = nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash)?;
