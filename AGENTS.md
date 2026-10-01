@@ -27,6 +27,14 @@ Hard rules:
 
 Shared product and multi-device development contract:
 
+- User directive 2026-10-02: the previous implementation is physically isolated
+  in `legacy/supervm-20261002/`. Active replacement code belongs in `runtime/`.
+  Do not resume feature work in legacy or recreate the old root `crates/` tree.
+  Do not depend on/include legacy crates in the new build. Reuse only reviewed
+  local primitives migrated into the new source area with explicit tests.
+  The root Cargo workspace and CI cover the new implementation only, not a
+  completed blockchain. See `legacy/README.md` for preservation boundaries.
+
 - Before starting or resuming NOVOVM work, read
   `docs/NOVOVM_UNIFIED_EXECUTION_REBUILD_PLAN.md` (including its latest short
   handoff), `docs/NOVOVM_DELIVERY_ALIGNMENT.md`, and the latest section of

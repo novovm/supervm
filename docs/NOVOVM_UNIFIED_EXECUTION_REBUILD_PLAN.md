@@ -6,10 +6,29 @@
 
 ## 最新短交接
 
+- **最新用户指令：先物理隔离旧实现，再写新宿主（2026-10-02）。**
+  已将旧 `crates/vendor/proofs/scripts/config/configs`、Cargo 工作区/锁文件、
+  README 和 workflows 原样移入 `legacy/supervm-20261002/`。新源码唯一入口
+  为 `runtime/`；根 Cargo、默认构建与 CI 不再编译旧实现。不得在旧目录继续
+  功能开发、通过 path dependency/include 偷带旧节点，或重建根 `crates/`。
+  本条覆盖下文所有仍指向旧文件的“下一刀/认领”，不覆盖历史结果的原始范围。
+  保全明细见 [隔离说明](../legacy/README.md)。工作区原有 38 项试验继续留在
+  隔离目录、未签收也不随搬移提交。AOEM SDK 与原始设计文档不搬不删。
+- 首次迁移仅取纯内容寻址树算法；新的 owned 输入/访问声明/资源边界在
+  `runtime/novovm-host/src/state/` 实现。**新工作区尚无节点、AOEM 接合、
+  最终性或新的 TPS 结果**，不能以模块测试通过替代纵切片验收。
+  本机新工作区 25 项默认单测、1 项编译拒绝文档测试通过；单独执行的
+  32,768 键容量测试也通过；Release 全部 26 单测 + 1 文档测试再次通过，
+  无忽略。fmt、严格 Clippy、Cargo 依赖隔离检查通过。
+  下一处唯一编辑权仍为 A 的 `runtime/`：定义绑定链域/原始有序交易/父根/
+  语义版本的批计划，再迁入必要的 AOEM 通用计算边界；不能直接包装旧 exec。
+- A 独占新 `runtime/`、根 Cargo/CI 及本次迁移。B 拉取前先保护未提交代码；
+  拉取后重新读 AGENTS 和本节，协商新目录内的隐私/PQ 独立组件认领。
+  不在旧路径继续写入，也不把本机子代理当作 B 已确认。
 - **最新路线决定（用户再次要求评估重建，2026-10-02）：重建 fresh 主链
   宿主运行时和候选数据平面，保留成熟内核/算法按需迁移。** 不推倒 AOEM、
   密码库或网络，不为保留旧封装继续叠加适配。依据和迁移边界见下一节。
-  当前远端仍为 `0b69fc4`，尚无新的高性能运行代码或 TPS 签收。
+  路线决定已推送为 `ee80271`，尚无新的高性能运行代码或 TPS 签收。
 - 计划入口为 `fcfff87`；S1 首片运行代码 `d6aa770`，最新运行代码为 S2
   typed record effects 切片 `14b32a3`。任何续作仍须重新查看实际分支、HEAD、工作区、
   远端增量；本节不是自动锁，也不是对另一台正在运行会话的自动通知。
@@ -82,8 +101,8 @@ validity statement 必须覆盖全局费用结算后的真实效应，不能只�
 
 按需迁移：AOEM 通用 compute/graph ABI 与生命周期保护、密码算法及真实
 鉴权、NovoRUDP/Overlay 传输、费用/nonce/失败规则、状态树算法、QC 验证及
-持久防双签。迁移的是规则和原语，不是旧串联控制流。旧代码继续留在 Git
-和现工作区作差分参考；不批量搬目录、不清空未提交成果、不创建分支。
+持久防双签。迁移的是规则和原语，不是旧串联控制流。旧代码按用户后续要求
+物理隔离在 `legacy/supervm-20261002/` 并保留在 Git 作差分参考；不清空未提交成果、不创建分支。
 
 首先实现可裁决的**同一主链替代纵切片**：真实签名接入→语义计划与 AOEM
 并行计算→批状态持久化→原最终性协议→重启查询。先定义批效应和证明输出
@@ -108,7 +127,7 @@ validity statement 必须覆盖全局费用结算后的真实效应，不能只�
 | --- | --- | --- |
 | 2025 年早期至 11 月 | WASM/执行内核、CPU/GPU 分工、四层网络和按硬件能力分配职责，不要求所有设备重复相同任务 | [四层原文](<../docs_CN/Old Design/Q&A/A-四层网络硬件部署与算力调度.md>)署名 2025-11-06；[双内核讨论](<../docs_CN/Old Design/Q&A/双内核异构计算架构.md>)是历史演进，不用后期术语覆盖早期设计 |
 | 2025 年 12 月 | OCCC 代数语义、条件可交换/聚合与退化路径，目标不只是把互斥任务分成串行组 | 旧 SVM2026 原件已审；历史 OCC/MVCC 设计与后续架构版本分开。既有原型有占位，不能整体回退 |
-| 2026 年 1 月 | CPU/GPU 语义同构；执行、证明、最终性分离，证明可惰性/批量/按价值触发；AOEM 是可复用内核 | [白皮书](<../docs_CN/SuperVM白皮书(中文速览版).pdf>)与 [README](../README.md#verifiable-execution-path)；旧 AOEM 权威设计署名 2026-01-10、Git 首次收录 2026-01-11，创作日期与收录日期不混称 |
+| 2026 年 1 月 | CPU/GPU 语义同构；执行、证明、最终性分离，证明可惰性/批量/按价值触发；AOEM 是可复用内核 | [白皮书](<../docs_CN/SuperVM白皮书(中文速览版).pdf>)与 [README](../legacy/supervm-20261002/README.md#verifiable-execution-path)；旧 AOEM 权威设计署名 2026-01-10、Git 首次收录 2026-01-11，创作日期与收录日期不混称 |
 | 后续 AOEM/APFL/NovoRUDP 成果 | 可复用通用执行、密码、网络和专用金融计划成果 | APFL 原用于 AI 并应用于 NovoRUDP，不倒推为最初主链基础；[APFL 索引](NOVOVM_APFL_ARCHITECTURE_INDEX.md)及[路线图](NOVOVM_APFL_FULL_CHAIN_ROADMAP.md)的专用成绩不等于 fresh 签名交易最终确认 TPS |
 | 当前 fresh 主链 | 已有真实鉴权、增量候选、AOEM 回调计算、持久根/回执、BFT 和恢复 | 局部安全与组件签收成立，但低吞吐、重复执行及 QC 不足以代表原产品完成；隐私/PQ 也须接进同一产品 |
 
@@ -134,10 +153,10 @@ OCCC 当成所有硬件唯一实现。Host 定义业务规则和计划，AOEM �
    加 BFT decision QC，`zero_knowledge_execution_proof=false`；native-auth
    guest 只覆盖签名/nonce 关系，不证明余额、费用及完整状态转换。
 
-依据入口：[Transfer 调度](../crates/novovm-node/src/native_transfer_dispatch.rs)、
-[候选执行](../crates/novovm-node/src/native_candidate_execution.rs)、
-[发布状态](../crates/novovm-node/src/native_block_seal_publication_driver.rs)、
-[鉴权证明](../proofs/native-auth/core/src/lib.rs)。旧 `Tx(fail)=Nop` 与
+依据入口：[Transfer 调度](../legacy/supervm-20261002/crates/novovm-node/src/native_transfer_dispatch.rs)、
+[候选执行](../legacy/supervm-20261002/crates/novovm-node/src/native_candidate_execution.rs)、
+[发布状态](../legacy/supervm-20261002/crates/novovm-node/src/native_block_seal_publication_driver.rs)、
+[鉴权证明](../legacy/supervm-20261002/proofs/native-auth/core/src/lib.rs)。旧 `Tx(fail)=Nop` 与
 reads→writes normal form 是规格/简化模型；当前失败可能收费并消耗 nonce，
 必须显式建模，不能声称旧规格自动证明所有 NOV 业务。
 

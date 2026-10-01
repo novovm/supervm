@@ -1,0 +1,749 @@
+# NOVOVM v2026
+
+External brand: `NOVOVM`  
+Technical short name: `NVM`  
+Execution engine: `AOEM Engine` (Powered by AOEM Engine)
+
+Note: `SuperVM` is retained as an internal historical codename only.
+
+Development entry point: read the shared [product delivery and multi-device alignment contract](docs/NOVOVM_DELIVERY_ALIGNMENT.md) before continuing work. High-performance finalized transactions, cryptographic private assets, and post-quantum security are core delivery objectives; the milestones below do not imply that all three are complete on the current main-chain path.
+
+NOVOVM is a **decentralized infrastructure operator** for the Web3 era. It provides composable, metered, and verifiable execution and settlement capabilities. It is not “another public blockchain,” but a general-purpose execution infrastructure for a multi-chain, heterogeneous ecosystem.
+
+## Verified NativeTransfer milestone
+
+NOVOVM's first signed high-throughput production path is **native financial transfer**. It is designed for native asset movement, stablecoin-style settlement, exchange clearing, high-frequency small payments, and account balance flow. It is not a claim that arbitrary EVM contract calls run at the same rate.
+
+What has been verified:
+
+- `APFL NativeTransferBatchV0` compresses native transfer payloads to about **32 bytes / transaction**, compared with about **238-242 bytes / transaction** for the expanded legacy shape.
+- SUPERVM does **not** execute APFL transfer semantics locally. It hands compact APFL bytes to AOEM through `aoem_execute_ops_wire_v1`.
+- AOEM opcode `114` (`compute.apfl_native_transfer_v1`) owns the structural native transfer execution path.
+- Cross-machine correctness has been signed at `4800 x 128 = 614,400` native transfers with:
+  - `ledger_transactions_completed_count = 614400`
+  - `canonical_tx_hash_mismatch_count = 0`
+  - `signature_verify_error_count = 0`
+  - `final_missing = 0`
+
+How the path became fast:
+
+- APFL moves native transfer data as compact structured payloads instead of heavy per-transaction materialized objects.
+- AOEM structural bulk execution changed the route shape from `4800` AOEM route calls and `24000` state reads to **38 AOEM routes** and **190 state reads**.
+- Canonical transaction materialization was removed from the hot execution path: `canonical_materialization_count = 0`.
+- AOEM hot plans execute the structural path directly, and compact commit reduced hot-plan writes from **2,457,600** to **614,438** writes, about a **75% reduction**.
+
+Signed path:
+
+```text
+NOVORUDP
+  -> APFL compact native transfer bytes
+  -> SUPERVM bulk handoff
+  -> aoem_execute_ops_wire_v1
+  -> opcode 114 / compute.apfl_native_transfer_v1
+  -> AOEM structural hot plans
+  -> compact commit
+  -> AOEM state surfaces and OCCC evidence
+```
+
+Cross-machine tests on the available A/B network reached roughly **120k-150k native transfers per second**. Raw UDP and `iperf3` then showed that this test network itself was the limiting factor:
+
+| Measurement | Result |
+| --- | ---: |
+| Raw UDP, `4800 x 4280B` | about `5.18 MB/s`, zero loss |
+| Raw UDP, `17120 x 1200B` | about `3.63 MB/s`, zero loss |
+| `iperf3` TCP | about `28 Mbit/s` |
+| `iperf3` UDP, 1200B / 4280B | about `35 Mbit/s`, zero loss |
+
+Conclusion: on that test link, NOVORUDP/APFL/AOEM were already close to the network ceiling. The current cross-machine throughput wall was the A/B OS, NIC, Wi-Fi, routing, or UDP network path, not APFL compression, AOEM execution, compact commit, or receiver CPU.
+
+Theoretical payload budget at 32 bytes / native transfer:
+
+| Effective link budget | NativeTransfer payload budget |
+| ---: | ---: |
+| `35 Mbit/s` | about `136k tx/s` |
+| `100 Mbit/s` | about `390k tx/s` |
+| `1 Gbit/s` | about `3.9M tx/s` |
+| `2.5 Gbit/s` | about `9.7M tx/s` |
+| `10 Gbit/s` | about `39M tx/s` |
+
+These are payload-budget estimates, not full mainnet guarantees. Full financial-grade mainnet operation still requires long-duration multi-node validation, recovery and replay drills, malicious traffic tests, monitoring, operational runbooks, external security review, and governance/upgrade controls.
+
+Detailed signoffs:
+
+- [APFL NativeTransfer opcode 114 cross-machine signoff](docs/APFL_NATIVE_TRANSFER_OPCODE114_CROSS_MACHINE_SIGNOFF.md)
+- [APFL NativeTransfer structural bulk opcode 114 cross-machine signoff](docs/APFL_NATIVE_TRANSFER_STRUCTURAL_BULK_OPCODE114_CROSS_MACHINE_SIGNOFF.md)
+- [APFL NativeTransfer structural bulk compact commit cross-machine signoff](docs/APFL_NATIVE_TRANSFER_STRUCTURAL_BULK_COMPACT_COMMIT_CROSS_MACHINE_SIGNOFF.md)
+
+## What it is / What it isn’t
+
+**NOVOVM is:**
+- A Web3 infrastructure layer that offers execution, verification, settlement, and resource pricing
+- Built around `AOEM`, a high-concurrency execution kernel with stable P99 latency
+- Trust-minimized through `zkVM`-based verifiable execution and proof aggregation
+
+**NOVOVM is not:**
+- A monolithic high‑TPS public blockchain
+- A single‑purpose cross‑chain bridge
+- A network sustained primarily by inflation
+
+## Architecture overview
+
+- **Native transaction authentication**
+	- Native wire version 3 requires `ed25519 public key (32) || signature (64)` before pending admission
+	- The signed domain binds chain ID, nonce, signer identity, account ownership fields, execution target, policy, data, gas, value, and transaction hash
+	- Legacy 32-byte native authentication values remain decode-only and are rejected by ingress
+	- High-level public operations require the user's explicit signed intent and nonce; the host does not substitute its own signer. See [the active native authentication contract](docs/NOVOVM_NATIVE_TRANSACTION_AUTHENTICATION_V1.md)
+
+- **Unified execution kernel (`AOEM`)**
+	- Semantic concurrency with `OCCC` as the primary execution path
+	- `OCC` remains only a validation baseline for compatibility checks
+	- Legacy `MVCC` references belong to archived/vendor reference material, not the current AOEM product architecture
+	- Product execution ingress must converge on the AOEM unified semantic execution kernel and its algebraic semantic entry, not on storage-level concurrency mechanisms
+	- Native asset execution emits AOEM semantic ingress metadata and semantic ledger commit seals (`prev_seal -> commit_seal`) as the current migration proof toward the AOEM-backed ledger
+	- Native raw transaction batches can enter through `nov_sendRawTransactionBatch` / `nov_executeBatch`: the batch is first submitted as one AOEM ops-wire algebraic semantic batch with adaptive parallelism metadata, then committed to the current native store in deterministic order
+	- Native execution store now supports `NOVOVM_NATIVE_EXECUTION_STORE_BACKEND=rocksdb|dual|json`; `rocksdb` uses a sharded atomic RocksDB write batch for `account/{account}/asset/{asset}`, `receipt/{tx_hash}`, `receipt_by_height/{height}`, `module_state/core`, `semantic_head/current`, `semantic_head/by_height/{height}`, and `snapshot_meta/{height}`, while `dual` keeps a JSON compatibility snapshot for migration comparison
+	- Native asset execution also writes an append-only AOEM semantic ledger mirror for commit proof continuity; this mirror is not a balance store or a second account truth source
+	- Mainline Unified Account live M2 lifecycle writes (`NETH` credit/burn/freeze/unfreeze/rollback/release) now attach AOEM semantic mutation commits and fail closed when AOEM semantic ingress is required but unavailable
+	- Mainline Unified Account identity writes (`ua_createUca`, key rotation, policy update, persona bind/revoke, `ua_route`) also attach AOEM semantic mutation commits as hashed semantic events; this is proof-chain metadata, not a duplicate UCA truth source
+	- Mainline mapped-header governance policy writes also attach AOEM semantic mutation commits so policy changes and later M2 credits share one semantic ledger chain
+	- Protocol clearing prices, AMM TWAP/NAV anchors, AMM pool state, clearing policy, and permissioned oracle policy are included in the AOEM `native_policy_state` projection so economic settlement rules are covered by semantic state digests
+	- Native governance receipts expose top-level AOEM semantic commit summaries for proposal submission, treasury policy updates, and reserve proof attestations
+- **Three‑channel routing layer**
+	- Standard Path / Consensus Path / Privacy Path
+	- Transparent to developers; acts as a QoS routing mechanism
+- **Four‑layer network (L1–L4)**
+	- L1: Finality & arbitration
+	- L2: Execution & proof workers
+	- L3: Edge & routing nodes
+	- L4: Clients & devices
+- **L0 security kernel**
+	- Zero‑knowledge verification (Groth16, Bulletproofs, RingCT / MLSAG)
+	- Post‑quantum readiness (multi‑level ML‑DSA signatures)
+
+## Core design goals
+
+1. Execution‑first: execution is a first‑class capability, not a byproduct of consensus
+2. Verification over trust: correctness is proven, not assumed
+3. Meterable & settleable resources: compute, storage, and bandwidth are economic resources
+4. Stable P99 latency under high throughput
+
+## Verifiable execution path
+
+NOVOVM separates execution, proof, and consensus:
+- **Execution** is handled by AOEM
+- **Correctness** is proven via `zkVM`
+- **Consensus** is limited to finality and arbitration
+
+Proof generation is decoupled from execution:
+- Proofs can be **lazy**, **batched**, and **recursively aggregated**
+- `RISC0 zkVM` proves correctness, `Halo2` aggregates proofs
+
+Verification is **value‑aware**:
+- Standard execution (no immediate proof)
+- Auditable execution (on‑demand proofs)
+- High‑value execution (mandatory zk proofs)
+
+Current block-ledger boundary: [NOVOVM Verifiable Block Candidate Durable Ledger V1](docs/NOVOVM_VERIFIABLE_BLOCK_CANDIDATE_DURABLE_LEDGER_V1.md) defines the active Host-side durability contract. Its output is only a local unsealed execution candidate; in this milestone `chain_canonical=false`, `proof_sealed=false`, `safe=false`, and `finalized=false`. QC, proof sealing, consensus finality, block period, and production retention/capacity policy are not implemented by this contract; V1 only enforces a 1,024-transaction/2 MiB safety ceiling, and it adds no NOV-specific business logic to AOEM.
+
+Four-machine native production activation is configuration-pinned, not path-pinned. Run `NOVOVM_NODE_MODE=native_protocol_config_commitment novovm-node`, set its reported `NOVOVM_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT` on every node, and require all four values to match. That commitment covers the native business-protocol environment and compiled defaults; it does not hash the executable, Overlay config, relay wire/report version, or package contents. Binary/wire homogeneity is enforced separately by building from a clean worktree and deploying the identical package checksum/release manifest to all four machines. Local database paths and AOEM namespaces may differ; public RPC cannot override them.
+
+## Governance & evolution
+
+NOVOVM is built for long‑term infrastructure evolution:
+- Upgradable protocols
+- Post‑quantum readiness
+- Layered governance
+
+## Economics: execution‑driven, not inflation‑driven
+
+NOVOVM’s economic model is anchored in **real, verifiable execution demand**:
+- Execution is economic activity
+- Compute, storage, and bandwidth are **settleable labor**
+- Value capture is service‑driven, not speculative
+
+**Native token boundaries (explicitly limited):**
+- Unit of account for execution and service settlement
+- Governance participation and risk‑bearing
+- **Not** equity, **not** income‑sharing, **not** a stablecoin
+
+**External value is required:**
+- External assets (stablecoins, fiat‑pegged assets, other chains) provide pricing references
+- Token circulation requires verifiable external value inflows
+- No issuance driven purely by time or internal loops
+
+**Dual‑track pricing:**
+- Rigid redemption / clearing track
+- Market trading / liquidity track
+
+## Performance (whitepaper‑reported)
+
+AOEM’s triple breakthrough toward a distributed execution plane:
+- Compute Plane (L0): **8M+ TPS**
+- Coordination Plane (L1): **4M+ TPS**
+- Network Plane (L4): **1M+ msgs/s**
+
+## Developer interface & SDK
+
+NOVOVM exposes a **unified Execution API** rather than exposing concrete execution engines.
+Developers declare:
+- Execution target (function, transaction, or task)
+- Required consistency and security guarantees
+- Required privacy / verification properties
+
+The system automatically handles:
+- Three‑channel routing selection
+- Execution and proof generation
+- Settlement and verifiable commitment of results
+
+NOVOVM is **WASM‑first** and multi‑language:
+- Rust, C/C++, Zig, AssemblyScript, and more
+- Portable, verifiable execution
+- Reuse of existing high‑performance system code
+
+## Privacy & security
+
+Privacy and security are treated as **infrastructure primitives**, not optional features:
+- Verifiable execution via `zkVM`
+- Privacy proofs (e.g., Bulletproofs, Groth16, RingCT / MLSAG)
+- Execution‑proof decoupling with on‑demand / batched / aggregated proofs
+- Security boundaries backed by post‑quantum readiness
+
+## AOEM FFI transparency
+
+For capability evaluation (to avoid “black box” misreads), use:
+
+- `docs_CN/AOEM-FFI/README.md`
+- `docs_CN/AOEM-FFI/SUPERVM-AOEM-CAPABILITY-AUDIT-V1-2026-05-23.md`
+- `docs_CN/AOEM-FFI/SUPERVM-AOEM-PROOF-ENGINE-HOST-INTEGRATION-V1-2026-05-23.md`
+
+Current AOEM integration is a single-layer FULLMAX host package, not a Proof-only bundle and not a standalone AOEM platform service. The Proof Engine path is one capability inside that package:
+
+```text
+SUPERVM host -> aoem_execute_ops_wire_v1 -> compute.zk.resident_proof_v1 -> aoem_state_read_v1
+```
+
+The same AOEM package also carries the FULLMAX capability surface used by SUPERVM, including primitive operators, GPU-adaptive paths, RocksDB persistence sidecar, WASM/Wasmtime sidecar, zkVM executor sidecar, ML-DSA, KMS/HSM, RingCT, Bulletproof, Groth16, classic hashes, and classic signature verification. See the capability audit before making product or security claims.
+
+Current runtime baseline: `AOEM FULLMAX Runtime Baseline 2026-05-23`. Windows and Linux have been refreshed from newly generated AOEM `SUPERVM v1.2 FULLMAX` bundles and are the included/verified runtimes. macOS runtime artifacts are currently not bundled; old macOS platform binaries were removed to avoid stale FULLMAX claims. See the AOEM capability audit for the exact status.
+
+## Ecosystem positioning
+
+NOVOVM is a **collaborative infrastructure layer**:
+- It does not replace existing chains
+- It augments them with execution, verification, and settlement services
+- Value capture is service‑driven, not sovereignty‑driven
+
+## Compatibility & chain relationships
+
+NOVOVM complements heterogeneous systems rather than competing for their state:
+- **L1 public chains**: execution outsourcing / clearing collaboration
+- **L2 / rollups**: shared execution and proof infrastructure
+- **Specialized chains**: plugin chains / protocol recomposition
+- **Private chains**: verifiable execution with privacy‑preserving settlement
+
+## One‑sentence summary
+
+NOVOVM is not about building a faster blockchain—it is about building sustainable, verifiable infrastructure for Web3.
+
+## Mainline nightly soak gate
+
+EVM plugin maintenance mode (running on NOVOVM host) includes a dedicated nightly soak gate (separate from the main CI gate):
+
+- Workflow: `.github/workflows/mainline-nightly-soak.yml`
+- Runner target: `self-hosted`
+- Default soak profiles: `6h,24h`
+- Gate binary: `cargo run -p novovm-node --bin supervm-mainline-nightly-gate`
+
+Key artifacts:
+
+- `artifacts/mainline/mainline-nightly-soak-gate-report.json`
+- `artifacts/mainline/mainline-soak-6h.json`
+- `artifacts/mainline/mainline-soak-24h.json`
+- `artifacts/mainline/mainline-duty-report-nightly.md` (generated in nightly workflow)
+
+Operations SOP (CN):
+
+- `docs_CN/NOVOVM-NETWORK/NOVOVM-EVM-NIGHTLY-SOAK-SOP-2026-04-17.md`
+- `docs_CN/CURRENT-AUTHORITATIVE-ENTRYPOINT-2026-04-17.md`
+
+## Native execution pipeline lifecycle gate
+
+NOVOVM native execution has a direct node-mode lifecycle gate for high-frequency pipeline validation. The host drives lifecycle only; AOEM remains the execution/concurrency owner.
+
+Minimal fixture-driven gate:
+
+```powershell
+$env:NOVOVM_NODE_MODE="native_execution_pipeline"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID="9998890"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS="3"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_HARD_BUDGET="1"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_TARGET_BUDGET="1"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET="1"
+$env:NOVOVM_NATIVE_EXECUTION_STORE=(Join-Path $env:TEMP ("novovm-native-pipeline-" + [guid]::NewGuid().ToString("N") + ".json"))
+$env:NOVOVM_NATIVE_EXECUTION_STORE_BACKEND="dual"
+$env:NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_MAX_PER_TICK="1"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_FULL_LIFECYCLE="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PRODUCT_INGRESS="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_ROCKSDB_STORE="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_PRODUCT_INGRESS_SUBMITTED_PER_TICK="1"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_QUEUE_ADMITTED_PER_TICK="1"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK="1"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_PROOF_ITEMS_PER_TICK="1"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_COMMIT_ITEMS_PER_TICK="1"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_BROADCAST_TX_PER_TICK="1"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_PROOF_TICKS="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_COMMIT_TICKS="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_PROOF_TICKS="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_COMMIT_TICKS="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_TX="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_DISPATCH="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INCLUDED_CANONICAL_TOTAL="3"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MAX_QUEUE_PENDING_LAST="0"
+cargo run -p novovm-node --bin novovm-node
+```
+
+Expected summary evidence: `execution_kernel=AOEM`, `aoem_concurrency_owner=AOEM_runtime`, `host_concurrency_policy=host_drives_lifecycle_only_no_rust_execution_scheduler`, non-zero `product_ingress_submitted_total`/ingress/AOEM/proof/commit/broadcast/canonical counts, `max_product_ingress_submitted_per_tick`, `max_queue_admitted_per_tick`, `max_aoem_batch_executed_per_tick`, `max_proof_items_per_tick`, `max_commit_items_per_tick`, and `max_broadcast_tx_per_tick` at or above the configured gates, `nonempty_aoem_batch_ticks`/`nonempty_proof_ticks`/`nonempty_commit_ticks` at or above the configured gates, `native_store_rocksdb_enabled=true`, `native_store_transactional_commit=true`, `native_store_commit_model` containing `dirty_sharded_atomic_batch`, and final `queue_pending_last=0`.
+
+The fixture source only builds valid NOV native raw transactions. Submission still goes through `ingest_local_nov_raw_tx_payload_v1`, which is the product raw transaction ingress used by `nov_sendRawTransaction`, before the pending runtime is drained by the AOEM tick. Production raw transaction entry must run with `NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY=true` or equivalent `pipeline_only/pending_only` request metadata: it accepts and indexes the tx, but receipt/state projection is produced only by the AOEM tick lifecycle. The legacy immediate dispatch path is compatibility/debug behavior, not the product high-frequency pipeline.
+
+The Product Overlay can be owned by this same node lifecycle with
+`NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED=true` and
+`NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG=<config.json>`. Inbound E2E NovoRUDP
+payloads re-enter `ingest_local_nov_raw_tx_payload_v1`; relay transport never
+bypasses native authentication or becomes an AOEM policy owner. See
+`docs/NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md`.
+The product-mainline `duplex` role propagates in both directions over one
+authenticated E2E session per configured peer, multiplexed over one relay
+connection for the local node identity. Relay disconnects use bounded
+reconnect backoff and rotate only to another verified signed candidate; bounded
+outbound obligations remain node-owned per peer until the relay returns a
+correlated accepted `ForwardOutcome`. This is relay admission, not a durable
+recipient ACK. An individual peer restart can replace only that peer's E2E channel
+without requiring the other nodes to reconnect their relay sessions.
+Before distributing configs to multiple machines, run
+`novovm-product-topology <topology-plan.json>` to verify chain consistency,
+unique peer metrics, and a symmetric full mesh. This is an offline config gate
+and always reports external/public topology as not executed. It does not compare
+release fingerprints or resource-limit profiles: deploy the identical clean-worktree
+package checksum on all machines; mixed relay wire versions are not a supported rolling
+upgrade. See
+`docs/novovm-product-topology-preflight-v1.md`.
+
+For UDP node-to-node pipeline probes, enable the UDP drive on each node:
+
+```powershell
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_LISTEN_ADDR="127.0.0.1:19001"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_LOCAL_NODE="9900001"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_PEERS="9900002=127.0.0.1:19002"
+```
+
+The UDP drive receives native pipeline messages into the pending runtime before each AOEM tick and broadcasts eligible pending transactions to configured peers. It does not own execution concurrency; AOEM remains the execution kernel and concurrency owner.
+
+Local dual-process UDP gate:
+
+```powershell
+cargo build -p novovm-node --bins
+cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
+```
+
+The gate starts two real `novovm-node` child processes: a sender with fixture ingress and authenticated NovoRUDP broadcast, and a receiver with UDP receive plus AOEM-owned production execution. Every sender process round receives a distinct authenticated outbound `run_id`, so a restarted sequence beginning at zero cannot collide with an earlier round. The active block milestone is deliberately unsealed, so the gate requires receipt-backed transport-sequence closure, then opens every receiver's native block ledger read-only and verifies the AOEM ownership/protocol pin, durable head and blocks, transaction and receipt reverse indexes, and empty prepared slot. Every candidate must remain `proof_sealed=false`, `safe=false`, and `finalized=false`; network `included_canonical_total` and canonical-proof close must remain zero. It must not relabel local execution as chain canonical before proof sealing.
+
+Useful soak knobs:
+
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STORE_BACKEND`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_MAX_PRODUCT_INGRESS_PER_TICK`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_NETWORK_RECEIVED_PER_TICK`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_QUEUE_ADMITTED_PER_TICK`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_PROOF_ITEMS_PER_TICK`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_COMMIT_ITEMS_PER_TICK`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_MAX_BROADCAST_TX_PER_TICK`
+- `NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS`
+- `NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_PROOF_TICKS`
+- `NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_COMMIT_TICKS`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_INTERVAL_MS`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STARTUP_WAIT_MS`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_INTERVAL_MS`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_PROCESS_BUDGET_MS` (receiver lifetime allowance per sender process round; defaults to 180 seconds for multi-round runs and exits early once all evidence closes)
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_TICKS`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_TICKS`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_INGRESS_MAX_PER_TICK`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_RECV_BUDGET`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PER_TICK`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_BROADCAST_TPS_X1000`
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_UNSEALED_CANDIDATE_TPS_X1000` (the obsolete `...MIN_RECEIVER_CANONICAL_TPS_X1000` is rejected because this gate does not prove chain-canonical throughput)
+- `NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH` (default: `artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json`)
+
+Local sustained execution-pipeline gate:
+
+```powershell
+$env:NOVOVM_NODE_MODE="native_execution_pipeline"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID="9998897"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS="16"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_HARD_BUDGET="32"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_TARGET_BUDGET="32"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_EFFECTIVE_BUDGET="32"
+$env:NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS="5"
+$env:NOVOVM_NATIVE_EXECUTION_STORE=(Join-Path $env:TEMP ("novovm-native-pipeline-sustained-" + [guid]::NewGuid().ToString("N") + ".json"))
+$env:NOVOVM_NATIVE_EXECUTION_STORE_BACKEND="dual"
+$env:NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_FIXTURE_TX_COUNT="256"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_MAX_PER_TICK="32"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PROGRESS="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_FULL_LIFECYCLE="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_PRODUCT_INGRESS="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_REQUIRE_ROCKSDB_STORE="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_TICKS="16"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INGRESS_SUBMITTED="256"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_PRODUCT_INGRESS_SUBMITTED_PER_TICK="32"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_QUEUE_ADMITTED_PER_TICK="32"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_AOEM_EXECUTED="256"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_AOEM_BATCH_EXECUTED_PER_TICK="32"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_PROOF_ITEMS_PER_TICK="32"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_COMMIT_ITEMS_PER_TICK="32"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_MAX_BROADCAST_TX_PER_TICK="32"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_AOEM_BATCH_TICKS="8"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_PROOF_TICKS="8"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_NONEMPTY_COMMIT_TICKS="8"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_PROOF_TICKS="16"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_COMMIT_TICKS="16"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_INCLUDED_CANONICAL_TOTAL="256"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_TX="256"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MIN_BROADCAST_DISPATCH="8"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_MAX_QUEUE_PENDING_LAST="0"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_QUIET_TICKS="true"
+$env:NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH="artifacts/native-pipeline/native-pipeline-sustained-report.json"
+cargo run -p novovm-node --bin novovm-node
+```
+
+The dual-node gate locks the UDP network re-entry closed loop. The local sustained gate validates product raw tx ingress, higher-volume queue, AOEM batch, proof, dirty sharded commit, canonical projection, and broadcast egress in one node process. `dirty sharded commit` is the final deterministic atomic ledger boundary after AOEM execution/proof; it does not mean the full lifecycle is serial. Both keep the same concurrency boundary: Rust host code drives lifecycle only and does not become a competing execution scheduler.
+
+Production soak wrapper:
+
+```powershell
+cargo build -p novovm-node --bins
+$env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_PROFILE="30min"
+$env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_DURATION_SECONDS="1800"
+$env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_TX_COUNT="256"
+$env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_BATCH_BUDGET="32"
+$env:NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_REPORT_PATH="artifacts/native-pipeline/native-pipeline-production-soak-30min.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-production-soak
+```
+
+The wrapper does not change pipeline structure. It runs `novovm-node` in `native_execution_pipeline` mode with pending-only product entry, forces AOEM-owned Semantic Graph V3 persistence with legacy fallback/double write disabled, and validates AOEM owner evidence, host policy, host RocksDB query/lifecycle projection, queue drain, and dropped-rejected budgets. It writes `novovm-native-pipeline-production-soak-report/v1`. `30min`, `2h`, and `overnight` are supported profile names; local and CI smoke runs may override `NOVOVM_NATIVE_PIPELINE_PRODUCTION_SOAK_DURATION_SECONDS` to a short value while preserving the same report schema.
+
+RocksDB recovery gate:
+
+```powershell
+cargo build -p novovm-node --bins
+$env:NOVOVM_NATIVE_PIPELINE_ROCKSDB_RECOVERY_TX_COUNT="64"
+$env:NOVOVM_NATIVE_PIPELINE_ROCKSDB_RECOVERY_BATCH_BUDGET="16"
+$env:NOVOVM_NATIVE_PIPELINE_ROCKSDB_RECOVERY_REPORT_PATH="artifacts/native-pipeline/native-pipeline-rocksdb-recovery-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-rocksdb-recovery-gate
+```
+
+The recovery gate is schema `novovm-native-pipeline-rocksdb-recovery-report/v2`. It forces the AOEM production owner with legacy fallback disabled, writes native txs, exits the child node, and independently reopens both ownership layers. The AOEM-owned Semantic Graph V3 store verifies its persisted state root, receipt root, cumulative receipt count, capability boundary, and domain-neutral contract. The host RocksDB store verifies `semantic_head/current`, `semantic_head/by_height`, `receipt/{tx_hash}`, `receipt_by_height/{height}/{index}/{tx_hash}`, snapshot metadata, and the materialized query/lifecycle projection. A final restart must remain idle without duplicate execution/canonical inclusion. Canonical body/head persistence is reported separately as pending because the current canonical projection still lives in the network runtime, not in the native execution RocksDB store.
+
+Network fault injection gate:
+
+```powershell
+cargo build -p novovm-node --bins
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_PACKET_LOSS_BPS="500"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_DUPLICATE_BPS="10000"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_REORDER_BPS="10000"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_DELAY_MS="1"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_REPORT_PATH="artifacts/native-pipeline/native-pipeline-network-fault-injection-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-network-fault-gate
+```
+
+The fault gate starts a receiver `novovm-node` in `native_execution_pipeline` mode over the NovoRUDP underlay, injects packet loss, duplicate packets, delay, and reorder from the gate process, and verifies AOEM-owned canonical convergence. It requires the AOEM production path, no legacy fallback/double write, `duplicate_canonical_included = 0`, semantic head recovery, receipt index consistency, and a drained pending queue under the configured unique-loss budget.
+
+Pending crash recovery gate:
+
+```powershell
+cargo build -p novovm-node --bins
+$env:NOVOVM_NATIVE_PIPELINE_PENDING_CRASH_REPORT_PATH="artifacts/native-pipeline/native-pipeline-pending-crash-recovery-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-pending-crash-recovery-gate
+```
+
+The pending crash gate signs the current pending queue policy honestly. `pending_policy = volatile`: transactions that crash before the AOEM Semantic Graph V3 commit are not recovered from RocksDB. Already committed transactions are recovered through AOEM-owned state plus the host query/lifecycle projection and must not execute again after restart. The gate requires the AOEM production path with no legacy fallback/double write, verifies partial-commit restart protection, duplicate receipt protection, semantic head recovery, receipt index consistency, and keeps canonical body/head recovery out of scope.
+
+Remote reentry dedup gate:
+
+```powershell
+cargo build -p novovm-node --bins
+$env:NOVOVM_NATIVE_PIPELINE_REMOTE_REENTRY_REPORT_PATH="artifacts/native-pipeline/native-pipeline-remote-reentry-dedup-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-remote-reentry-dedup-gate
+```
+
+The remote reentry gate sends the same native tx batch repeatedly over the NovoRUDP underlay, verifies the AOEM production owner includes each unique tx once with no legacy fallback/double write, restarts the receiver against the same stores, then injects the same tx batch again. Already receipted txs are dropped from volatile pending before AOEM selection, so duplicate remote reentry cannot create duplicate canonical inclusion, duplicate receipt, extra semantic head advance, or duplicate atomic commit. Canonical body/head recovery remains out of scope for this gate.
+
+Cross-machine UDP soak:
+
+Machine B receiver:
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="receiver"
+$env:NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR="0.0.0.0:39001"
+$env:NOVOVM_NATIVE_PIPELINE_MAX_TICKS="3600"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/receiver-cross-machine-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-udp-soak
+```
+
+Machine A sender:
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="sender"
+$env:NOVOVM_NATIVE_PIPELINE_RECEIVER_ADDR="<machine-b-lan-ip>:39001"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/sender-cross-machine-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-udp-soak
+```
+
+The first cross-machine profile is clean network only: no loss, no duplicate, no artificial delay, and no reorder. The receiver validates `received_unique == tx_count`, `canonical_unique_included == tx_count`, `duplicate_canonical_included == 0`, drained pending queue, semantic head recovery, receipt index consistency, and AOEM runtime ownership.
+
+Cross-machine fault UDP soak:
+
+Machine B receiver:
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="receiver"
+$env:NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR="0.0.0.0:39001"
+$env:NOVOVM_NATIVE_PIPELINE_MAX_TICKS="3600"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/receiver-cross-machine-fault-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-fault-udp-soak
+```
+
+Machine A sender:
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="sender"
+$env:NOVOVM_NATIVE_PIPELINE_RECEIVER_ADDR="<machine-b-lan-ip>:39001"
+$env:NOVOVM_NATIVE_PIPELINE_TX_COUNT="32"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_PACKET_LOSS_BPS="200"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_DUPLICATE_BPS="3000"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_DELAY_MS="20"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_REORDER_BPS="1000"
+$env:NOVOVM_NATIVE_PIPELINE_FAULT_SEED="123"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/sender-cross-machine-fault-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-fault-udp-soak
+```
+
+The cross-machine fault profile only injects packet loss, duplicate packets, delay, and reorder before sender UDP transmit. It does not modify the frozen receiver lifecycle, does not bypass AOEM tick execution, and does not claim canonical body/head recovery. The first profile expects all 32 unique native txs to arrive and be canonically included exactly once under light packet-level disruption.
+
+Cross-machine sustained soak:
+
+Machine B receiver:
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="receiver"
+$env:NOVOVM_NATIVE_PIPELINE_LISTEN_ADDR="0.0.0.0:39001"
+$env:NOVOVM_NATIVE_PIPELINE_TX_COUNT="14400"
+$env:NOVOVM_NATIVE_PIPELINE_MAX_TICKS="24000"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_DURATION_SECONDS="1800"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_TX_PER_ROUND="8"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_ROUND_INTERVAL_MS="1000"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/receiver-cross-machine-sustained-30m-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-sustained-soak
+```
+
+Machine A sender:
+
+```powershell
+$env:NOVOVM_NATIVE_PIPELINE_ROLE="sender"
+$env:NOVOVM_NATIVE_PIPELINE_RECEIVER_ADDR="<machine-b-lan-ip>:39001"
+$env:NOVOVM_NATIVE_PIPELINE_TX_COUNT="14400"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_DURATION_SECONDS="1800"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_TX_PER_ROUND="8"
+$env:NOVOVM_NATIVE_PIPELINE_SUSTAINED_ROUND_INTERVAL_MS="1000"
+$env:NOVOVM_NATIVE_PIPELINE_REPORT_PATH="artifacts/native-pipeline/sender-cross-machine-sustained-30m-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-cross-machine-sustained-soak
+```
+
+The first sustained profile is clean cross-machine UDP. It validates long-running stability only: no hostile network, no canonical body/head recovery claim, and no lifecycle structure change. The sender submits unique native txs in repeated rounds; the receiver still owns the normal `UDP receive -> pending -> AOEM batch -> proof -> dirty commit -> canonical included` lifecycle.
+
+Paced fanout network ingress gate:
+
+```powershell
+cargo build -p novovm-node --bins
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TX_COUNT="16"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_RECEIVER_COUNT="2"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUNDS="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_STORE_BACKEND="dual"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_BUDGET="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_MAX_PRODUCT_INGRESS_PER_TICK="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_NETWORK_RECEIVED_PER_TICK="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_QUEUE_ADMITTED_PER_TICK="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_AOEM_BATCH_PER_TICK="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_PROOF_ITEMS_PER_TICK="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_RECEIVER_MAX_COMMIT_ITEMS_PER_TICK="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_MIN_SENDER_MAX_BROADCAST_TX_PER_TICK="8"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_INGRESS_MAX_PER_TICK="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_UDP_BROADCAST_MAX_PER_TICK="4"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_TICK_INTERVAL_MS="25"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_SENDER_ROUND_INTERVAL_MS="100"
+$env:NOVOVM_NATIVE_PIPELINE_DUAL_GATE_REPORT_PATH="artifacts/native-pipeline/native-pipeline-dual-node-fanout-report.json"
+cargo run -p novovm-node --bin supervm-native-pipeline-dual-node-gate
+```
+
+This paced fanout gate starts one long-lived receiver set and runs the sender in multiple fixture-identity-separated rounds. Each fixture signer starts at account nonce `0`; independently authenticated NovoRUDP frame sequences carry delivery and repair ordering. The gate disables the local broadcast drive inside the fixture so the only cross-node output path is UDP, then requires the sender to reach `max_product_ingress_submitted_per_tick` and `max_broadcast_tx_per_tick`, and every receiver to reach `max_network_received_per_tick`, `max_queue_admitted_per_tick`, `aoem_executed_total`, `max_aoem_batch_executed_per_tick`, `max_proof_items_per_tick`, `max_commit_items_per_tick`, receipt-backed ledger completion, `queue_included_non_canonical_last`, `queue_pending_last=0`, `queue_dropped_last=0`, and `queue_rejected_last=0`; canonical-proof close must remain zero until a later proof-seal stage exists.
+
+EVM protocol-observable equivalence scope (CN):
+
+- `docs_CN/Adapters/EVM/NOVOVM-EVM-PROTOCOL-OBSERVABLE-EQUIVALENCE-V1-2026-06-07.md`
+- v2 RPC projection gate: `cargo test -p novovm-node evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2 -- --nocapture`
+- v2b real geth block diff gate: `cargo test -p novovm-node evm_protocol_observable_equivalence_geth_real_block_diff_gate_v2b -- --nocapture` (raw tx RLP present => `transactionsRoot` matches geth fixture)
+- v3 RLPx tx ingress gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_ingress_gate_v3 -- --nocapture` (real RLPx `Transactions` frame => remote pending tx with raw RLP broadcast candidate)
+- v3 RLPx tx outbound gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_tx_outbound_broadcast_gate_v3 -- --nocapture` (local pending raw tx => real RLPx `NewPooledTransactionHashes` announce after write success => peer `GetPooledTransactions` => raw `PooledTransactions` response)
+- v3 RLPx pooled tx gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_pooled_tx_gate_v3 -- --nocapture` (real `NewPooledTransactionHashes` => `GetPooledTransactions` => raw `PooledTransactions` materialized)
+- v3 RLPx pooled tx response gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_pooled_tx_response_gate_v3 -- --nocapture` (real `GetPooledTransactions` => local raw tx `PooledTransactions` response)
+- v3 RLPx response request-match gate: `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1` (`PooledTransactions`/`BlockBodies`/`Receipts`/`BlockAccessLists` and snap/1 `AccountRange`/`StorageRanges`/`ByteCodes`/`TrieNodes` responses require a matching pending request before materialization; pooled tx responses follow geth tracker semantics by requiring the response item count to fit the request and rejecting duplicate tx hashes, without requiring returned hashes to be the requested ordered subset)
+- v3 RLPx block range update gate: `cargo test -p novovm-network block_range_update -- --nocapture` (geth eth/69+ `BlockRangeUpdate` code `0x11` roundtrips as `[earliestBlock,latestBlock,latestBlockHash]`, rejects `earliest > latest` and zero latest hash, and real RLPx inbound update refreshes runtime peer head/highest without requiring a new `Status`)
+- v3 RLPx block body import gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_block_body_import_gate_v3 -- --nocapture` (real `BlockHeaders`/`BlockBodies` => body transaction trie root validated + native body snapshot; short `BlockBodies` soft responses are accepted by matching index first, then unique `transactionsRoot`, and immediately trigger a remaining-body retry instead of decode-failing public peers)
+- v3 RLPx header request-match gate: `cargo test -p novovm-network rlpx_block_headers_ -- --nocapture` (real `BlockHeaders` responses require a pending `GetBlockHeaders` request, matching request_id/origin/step, and adjacent `parentHash` continuity before native header materialization; unsolicited, gap, or spliced batches are rejected as peer decode failures)
+- v3 RLPx header/body service gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_header_body_service_gate_v3 -- --nocapture` (real inbound `GetBlockHeaders` by hash and `GetBlockBodies` => canonical native header raw RLP and materialized body tx RLP returned with matching request_id; missing/non-canonical/unmaterialized data returns short/empty instead of fabricated data)
+- v3 RLPx receipts gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_receipts_gate_v3 -- --nocapture` (real `BlockHeaders`/`BlockBodies` => follow-up eth/70 `GetReceipts` => complete `Receipts` parsed + receipt count/root validated + native receipt snapshot + local `GetReceipts` replay + empty no-withdrawal stateRoot continuity validation when parent is retained)
+- v3 RLPx empty-body receipt gate: `cargo test -p novovm-network rlpx_empty_body_materializes_empty_receipts_without_remote_receipts -- --nocapture` (materialized empty body with empty `receiptsRoot` creates an empty native receipt snapshot locally, avoiding a long sync stall while waiting for a remote `Receipts` response)
+- v3 RLPx missing-receipts recovery gate: `cargo test -p novovm-network real_rlpx_worker_recovers_missing_receipts_before_new_header_pull -- --nocapture` (after a peer disconnect leaves latest header/body available but receipt missing, the next ready RLPx worker rebuilds pending receipt state and sends `GetReceipts` before a new header pull)
+- v3 RLPx same-tick sync dispatch gate: `cargo test -p novovm-network real_rlpx_peer_worker_ingests_runtime_native_snapshots -- --nocapture` (after Status succeeds, the real RLPx worker dispatches the first `GetBlockHeaders`/sync request in the same tick instead of waiting for the next scheduler tick)
+- v3 RLPx reorg gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_reorg_gate_v3 -- --nocapture` (real RLPx branch switch => canonical reorg + pending tx back to broadcast candidate)
+- v3 RLPx BAL plugin response gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_response_gate_v3 -- --nocapture` (no-snap plugin path `GetBlockAccessLists` => protocol-valid `BlockAccessLists` response; canonical/materialized local BAL RLP returned, unavailable hashes use missing sentinel)
+- v3 RLPx BAL request materialize gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_request_materializes_gate_v3 -- --nocapture` (eth/71 header RLP preserves geth optional `BlockAccessListHash`; after body/receipt completion SUPERVM sends `GetBlockAccessLists`, matches response request_id/hash order, and stores real BAL RLP by block hash)
+- v3 RLPx BAL commitment gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_commitment_rejects_mismatch_gate_v1 -- --nocapture` (inbound `BlockAccessLists` raw RLP must pass geth-style BAL structure checks, including non-empty `slotChanges`, and its raw-RLP Keccak must match the header `BlockAccessListHash` before runtime materialization)
+- v3 RLPx BAL context gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_bal_context_rejects_index_excess_gate_v1 -- --nocapture` (inbound BAL payload is validated with header `gasLimit` and body `tx_count` like geth `BlockAccessList.Validate`: item count must fit `gasLimit / 2000`, and block access indexes must not exceed the block tx-count context)
+- gateway RLPx eth/71 capability gate: `cargo test -p novovm-evm-gateway rlpx_gateway_capability_guard_advertises_eth71_and_prefers_latest -- --nocapture` (gateway hello profiles advertise/select `eth/71`, fall back to `eth/70`)
+- gateway RLPx eth/71 BAL code gate: `cargo test -p novovm-evm-gateway rlpx_gateway_classifies_eth71_bal_messages_as_supported_sync -- --nocapture` (`0x22/0x23` treated as BAL only after negotiated `eth/71`, avoiding eth/70 snap offset collision)
+- native RLPx current-geth capability floor gate: `cargo test -p novovm-network negotiate_eth_native_caps_rejects_pre_geth_current_versions -- --nocapture` (default public RLPx profile advertises current geth-compatible `eth/69,70,71` only; legacy `eth/66-68` peers no longer negotiate into incompatible Status semantics, and pristine Status/capability mismatches enter immediate decode-failure lifecycle rejection)
+- native RLPx public Hello profile: default profile is geth-compatible for Ethereum mainnet peer acceptance; set `NOVOVM_NETWORK_ETH_RLPX_HELLO_PROFILE=supervm` only when intentionally exposing SuperVM identity on a controlled network
+- v3 RLPx snap AccountRange gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_snap_account_range_gate_v3 -- --nocapture` (eth/70+snap/1 uses global code `0x22/0x23` as `GetAccountRange/AccountRange`, sends State-phase state-root request with default snap byte budget and records matched response)
+- v3 RLPx snap AccountRange cursor gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_snap_account_range_continuation_gate_v3 -- --nocapture` (State phase starts `GetAccountRange` at account-hash origin `0x00..00`; non-empty `AccountRange` advances the next request origin to `last_account_hash + 1` only when the range proof proves right-side account continuation, after storage/code/root-trie follow-ups finish; terminal non-empty proof completes cursor progress without extra continuation)
+- v3 RLPx snap account/storage/code/root-trie gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_snap_account_to_storage_code_gate_v3 -- --nocapture` (non-empty `AccountRange` slim account => follow-up `GetStorageRanges` + `GetByteCodes` + state/storage-root `GetTrieNodes`; matched responses populate native snap account/storage/code/trie-node cache, partial `StorageRanges` responses complete only returned/proven slotsets and re-request unreturned account storage like geth stateTasks, final-slotset proof continuation re-requests the same account with `origin=last_slot+1` before deferred accounts and merges returned storage slots, bytecode responses must be a non-empty geth-style ordered subset of requested code hashes and partial `ByteCodes` responses re-request missing code hashes like geth codeTasks, and non-empty `TrieNodes` responses are matched by geth-style ordered node hash so partial responses cache proven nodes and bounded-retry missing pathsets before continuation; empty `ByteCodes`/`TrieNodes` responses are peer state rejections, not sidecar completion)
+- v3 RLPx snap proof/root subset gate: `cargo test -p novovm-network rlpx_snap_range_proof_semantics_match_geth_complete_storage_v1 -- --nocapture` (non-empty `AccountRange` without proof is rejected, and empty `AccountRange`/`StorageRanges` without proof is treated as peer state rejection instead of range completion; `AccountRange`/`StorageRanges` responses enforce geth-style strict key monotonicity, no deletion values, account origin/limit bounds, and slim account decode before cache; proof nodes must be valid trie RLP and include the requested stateRoot/storageRoot root node hash; when the proof resolves returned account/slot leaf values, those values must match the snap response before native cache write; if proof resolves an account at the requested origin, the response must not skip it; if proof proves an omitted entry before the first returned key or between adjacent returned keys, the response is rejected; empty `AccountRange`/`StorageRanges` proof must prove there are no right-side trie entries before completing the range; non-empty `AccountRange` terminal proof also completes cursor progress instead of blindly requesting `last_account_hash + 1`; `StorageRanges` without proof must rebuild the exact account storage root, while `StorageRanges` with proof applies that proof to the final slotset like geth and requires earlier slotsets to rebuild their full roots; this is still not full multi-branch snap heal)
+- v3 RLPx snap service sidecars gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_snap_service_sidecars_gate_v3 -- --nocapture` (eth/70+snap/1 inbound `GetAccountRange`/`GetStorageRanges`/`GetByteCodes`/`GetTrieNodes` => cache-backed `AccountRange`/`StorageRanges`/`ByteCodes`/`TrieNodes` responses when validated native snap data and range proof are available, with protocol-valid empty fallback for unknown sidecars)
+- node native Ethereum RLPx sync entry: `NOVOVM_NODE_MODE=eth_rlpx_sync cargo run -p novovm-node --bin novovm-node` (direct Rust node entry; uses `NOVOVM_ETH_RLPX_ENODES`, `NOVOVM_ETH_RLPX_CHAIN_ID`, `NOVOVM_ETH_RLPX_TICKS`, `NOVOVM_ETH_RLPX_RECV_BUDGET`, `NOVOVM_ETH_RLPX_CANDIDATE_PEERS`, `NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT`; default candidate order is explicit ENODEs first when set, otherwise persisted peer cache first and DNS/discv4 refresh as supplement, with Ethereum mainnet geth bootnodes only as direct-connect fallback; default candidate pool is 256, active peers default to geth-style `NOVOVM_ETH_RLPX_MAX_PEERS=50`, per-tick sync/bootstrap fanout starts and stays at 8 by default for fast tick visibility, runtime diagnostics keep only the latest 8 canonical blocks plus 64 detailed peers by default via `NOVOVM_ETH_RLPX_RUNTIME_SNAPSHOT_BLOCKS`, and operators can explicitly raise `NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT` / `NOVOVM_ETH_RLPX_ADAPTIVE_BOOTSTRAP_FANOUT` for targeted admission probes)
+- node RLPx trusted head pivot gate: `cargo test -p novovm-node eth_rlpx_trusted_head_pivot_from_env -- --nocapture` (`NOVOVM_ETH_RLPX_TRUSTED_HEAD_NUMBER` accepts decimal or `0x` + `NOVOVM_ETH_RLPX_TRUSTED_HEAD_HASH` + `NOVOVM_ETH_RLPX_TRUSTED_HEAD_STATE_ROOT` install a trusted runtime head/pivot when it is not older than checkpoint/native stores; optional parent/tx root/receipt root/ommers/logsBloom/gas/timestamp/baseFee/withdrawals/blob/BAL/highest fields keep the direct product entry from being forced into genesis-only forward sync with an incomplete observable header)
+- node RLPx public sync batch gate: `cargo test -p novovm-node eth_rlpx_public_sync_batch_defaults_are_product_chase_ready_v1 -- --nocapture` (`novovm-node` public RLPx entry defaults to `NOVOVM_ETH_RLPX_HEADERS_BATCH=192` and validated live-head `NOVOVM_ETH_RLPX_BODIES_BATCH=16`, while still allowing operators to lower or raise the batch by env on specific peer sets)
+- node RLPx fanout-8 short launch validation: product entry `NOVOVM_NODE_MODE=eth_rlpx_sync` with `NOVOVM_ETH_RLPX_TICKS=4` entered tick output in 61s, attempted 8 bootstrap peers per tick, pruned stale incompatible peers, and refreshed candidates from 254 to 263; public failures were `too_many_peers` / legacy capability mismatch, not a new root or wire decode mismatch.
+- node RLPx public sync batch-32 historical live validation: product entry `NOVOVM_NODE_MODE=eth_rlpx_sync` previously continued from `current=1469/highest=25275734`; after peer refresh expanded candidates to 268, tick 7 imported `headers=32/bodies=32/receipts=32` and advanced to `current=1501`, then a second 32-header step reached `current=1533`; a temporary header-only head at `1533` recovered by tick 12 back to current body/receipt availability. Current live-head default is `192/16`, with adaptive body backoff/restore still enabled.
+- node RLPx peer endpoint cache gate: `cargo test -p novovm-node eth_rlpx_peer_endpoint_cache_roundtrips_v1 eth_peer_endpoint_cache_prunes_runtime_permanent_rejects_v1 -- --nocapture` (`NOVOVM_ETH_RLPX_PEER_CACHE_ENABLED=true` by default stores merged DNS/discv4/bootnode endpoints in `artifacts/mainline/eth_rlpx_peer_endpoints_cache_v1.json`, so a restart does not fall back to bootnodes only when a DNS/discv4 round returns a small sample; runtime `permanently_rejected` peers, including legacy capability-only peers, are pruned before cache rewrite)
+- node RLPx peer endpoint cache runtime-reputation gate: `cargo test -p novovm-node eth_peer_endpoint_cache_ -- --nocapture` (runtime-successful public peers are stably promoted to the front of the endpoint cache, while unproductive recent `too_many_peers` / timeout / pre-hello close peers are moved behind fresh candidates without changing the cache schema; the product entry now rewrites the cache and rebuilds the current worker when this order changes, so the same process does not keep burning the next tick on known saturated or stale endpoints)
+- node RLPx peer endpoint cache promotion live validation: product entry `NOVOVM_NODE_MODE=eth_rlpx_sync` with default 32 peers and historical batch-32 continued from `current=1533/highest=25275818`; `eth_rlpx_peer_endpoint_cache_promote` fired at ticks 1/5/10/12, while permanent rejects were pruned. The run recovered a temporary header-only `1565` head and then imported another `headers=32/bodies=32/receipts=32` window to `current=1597/highest=25275853`, current body/receipt available.
+- node RLPx runtime-reputation reorder live validation: product entry `NOVOVM_NODE_MODE=eth_rlpx_sync` with `NOVOVM_ETH_RLPX_TICKS=8` resumed from header-only `current=1853/highest=25277388`; every tick triggered `eth_rlpx_peer_endpoint_cache_reorder reason=runtime_reputation`, permanent legacy peers were pruned, and stalled refresh expanded candidates to 285. No ready peer was reached in this short run, so block `1853` body/receipt remains unrecovered; the remaining bottleneck is public peer admission/reputation depth, not a new protocol decode/root mismatch.
+- node RLPx adaptive fanout live validation: product entry `NOVOVM_NODE_MODE=eth_rlpx_sync` with `NOVOVM_ETH_RLPX_TICKS=8` raised fanout from 8 to 32 after stalled admission, then reached ready at tick 5 and recovered block `1853` body/receipts at tick 6; a follow-up 6 tick run confirmed `old=8 new=32` and 32-attempt ticks, but did not yet advance beyond `current=1853`, so the remaining work is sustained ready-peer admission/forward headers, not header-only recovery for `1853`.
+- node RLPx parallel bootstrap admission gate: `cargo test -p novovm-network real_rlpx_parallel_bootstrap_bounds_slow_connects_v1 -- --nocapture` (real worker builds the selected bootstrap fanout within `NOVOVM_ETH_RLPX_BOOTSTRAP_TICK_BUDGET_MS`, default `12000`, clamped `1000..60000`, then drives those peers concurrently instead of serially holding the RLPx session lock; `skipped_bootstrap_budget_peers`/`skippedBootstrapBudgetPeers` remain diagnostic fields. A bounded live product run with `NOVOVM_ETH_RLPX_MAX_PEERS=50` and `NOVOVM_ETH_RLPX_SYNC_TARGET_FANOUT=50` attempted 50 bootstrap peers on each of 4 ticks from `current=2109/highest=25278235`, expanded candidates from 434 to 462, and still reached no ready peer; this closes the per-tick admission bottleneck only, not public peer acceptance or full geth long sync.)
+- node RLPx bounded sync tick gate: `cargo test -p novovm-network real_rlpx_sync_peers_are_bounded_by_tick_budget_v1 -- --nocapture` (ready-session sync peers now share the tick budget and expose `skipped_sync_budget_peers` / `skippedSyncBudgetPeers`, so stalled public sync peers do not serially consume a whole product loop. On 2026-06-10, default fanout-8 live validation advanced from complete `25280030` to header-only `25280158` with `scheduledBootstrap=8/attemptedBootstrap=8`; explicit fanout-16 recovery still failed to obtain body-serving peers under `too_many_peers`/timeout/MAC churn, confirming the remaining gap is public material-serving peer admission, not EVM root/receipt/BAL semantics.)
+- node RLPx runtime snapshot payload gate: `cargo test -p novovm-network native_runtime_snapshot_bounds_peer_detail_payload_v1 -- --nocapture` and `cargo test -p novovm-node eth_rlpx_public_sync_runtime_defaults -- --nocapture` (product RLPx runtime diagnostics no longer rewrite every retained full block and every candidate peer detail on each tick; the live chain-1 snapshot dropped from 59.8MB to 2.16MB while retaining full candidate IDs, latest block detail, selected/failed peer detail, and peer-selection summaries. This reduces long-sync tick IO pressure; it does not claim public ready-peer admission is solved.)
+- node RLPx header-only recovery admission gate: `cargo test -p novovm-node eth_rlpx_peer_refresh_plan_ eth_rlpx_cache_warmed_candidate_limit_preserves_expanded_pool_v1 -- --nocapture` (when the persisted native head has `body_available=false`, the product entry treats missing-body recovery as an immediate candidate expand/refresh signal, reuses the expanded peer-endpoint cache as the next startup candidate limit unless `NOVOVM_ETH_RLPX_CANDIDATE_PEERS` is explicit, and defaults RLPx TCP connect timeout to 750ms with `NOVOVM_ETH_RLPX_CONNECT_TIMEOUT_MS` override; live 2-tick validation resumed from `current=2109/highest=25278235`, started with cache-warmed `candidates=292` instead of resetting to 256, and emitted `body_recovery_stalled_expand/refresh`; no ready peer was reached in that short run, so body `2109` remains unrecovered)
+- node RLPx material peer reuse gate: `cargo test -p novovm-network bootstrap_selection_ -- --nocapture` and `cargo test -p novovm-node eth_peer_endpoint_ -- --nocapture` (startup preserves peer cache order unless `NOVOVM_ETH_RLPX_ENODES` is explicit, explicit ENODEs override cache order, and body-recovery bootstrap selection keeps body-history peers first, then material source peers, then current header source, then candidate-prefix peers. A live targeted product run put `157.90.35.166:30303` first and recovered `25280158` body/receipt; forward header chase still hit public peer MAC mismatch/close, so this closes material-peer reuse, not full 24h mainnet sync.)
+- node RLPx material success cache gate: `cargo test -p novovm-node eth_rlpx_peer_endpoint_cache_ -- --nocapture` and `cargo test -p novovm-network bootstrap_selection_preserves_candidate_prefix_for_forward_sync_without_history -- --nocapture` (peer endpoint cache now persists/restores short-lived header/body-serving material successes, explicit ENODEs stay pinned at the candidate prefix, and forward bootstrap without stronger history respects that caller prefix. Live validation first selected `157.90.35.166:30303` and advanced `current=25280158 -> 25280286`; a restart without explicit ENODE restored `restored_material_successes=1`, reused the same peer, and advanced to complete `current=25280414/highest=25281736`. This improves restart continuity and productive peer reuse; 24h geth-like mainnet sync is still not claimed.)
+- node RLPx productive-close retry gate: `cargo test -p novovm-network productive_ -- --nocapture` and `cargo test -p novovm-network capacity_reject -- --nocapture` (a public peer that has already served headers/bodies now gets a short retry cooldown on ordinary close/EOF, while `too_many_peers` keeps the long capacity-reject backoff; candidate-prefix priority is also bounded so recent capacity rejects do not outrank fresh healthy candidates. Live validation continued from complete `25280798` to complete `25280830` with the material peer reused across ticks 1/3/4. This reduces productive-peer idle gaps only; public admission churn still prevents a 24h geth-like sync claim.)
+- node RLPx material-success endpoint prefix gate: `cargo test -p novovm-node eth_rlpx_peer_endpoint_cache_ -- --nocapture` (cache rewrite now promotes restored material-success endpoints to the persisted endpoint prefix unless they are under capacity/permanent reject, so a restart does not bury a recently body/header-serving peer behind hundreds of fresh public candidates. Live rewrite put `157.90.35.166:30303` at `endpoints[0]`; follow-up restart immediately requested headers from that peer, received body/receipt material, and advanced complete `current=25280846 -> 25280862` with `body_available=true` and `receipt_available=true`. This closes cache-order regression only; later ticks still hit public `too_many_peers`/timeout churn, so 24h geth-like mainnet sync is still open.)
+- network RLPx state-phase header window gate: `cargo test -p novovm-network native_state_ -- --nocapture` (when the native sync phase is `State` but the local head is still more than 128 blocks behind the known remote highest and the current head body is available, header chase now uses the full state-phase pull window instead of hard-capping to 16 headers; missing-body or near-head state/snap paths keep the small window. Live validation resumed from complete `current=25280990/highest=25281895`, emitted `GetBlockHeaders max=64`, and advanced through two complete 64-header windows to `current=25281118/highest=25281919` with body/receipt availability preserved. This improves catch-up throughput in the state-lag band only; public admission churn still prevents a 24h geth-like sync claim.)
+- node RLPx public sync request interval gate: `cargo test -p novovm-node eth_rlpx_public_sync_runtime_defaults -- --nocapture` (the direct `NOVOVM_NODE_MODE=eth_rlpx_sync` product entry now defaults `NOVOVM_ETH_RLPX_SYNC_REQUEST_INTERVAL_MS` to 250ms, keeping env override support and leaving the core library default unchanged. Live validation resumed from complete `current=25281182/highest=25281940`; after tick 2 materialized one 64-header window, tick 3 immediately sent the next `GetBlockHeaders max=64` instead of waiting a full second, and tick 4 advanced to complete `current=25281310/highest=25281980`. This reduces productive public peer idle gaps only; public admission churn still prevents a 24h geth-like sync claim.)
+- network/node RLPx stale-ready and effective state-lag adaptive gate: `cargo test -p novovm-network real_rlpx_worker_reconciles_stale_runtime_ready_without_live_session_v1 -- --nocapture` and `cargo test -p novovm-node eth_rlpx_state_lag_transport_failure_backs_off_effective_header_window_v1 -- --nocapture` (the real RLPx worker now reconciles runtime-ready peers against the live TCP/RLPx session map before planning, so a closed public session is not counted as a sync target or active session; product adaptive batch backoff also uses the actual state-lag 64-header effective window, including the discovery-after-peer-drop case, so a request transport failure backs off to 32 instead of the no-op `192 -> 96`. Live validation advanced complete `current=25281566 -> 25281630`, removed the prior `ready=1 connected=0 sync_requests=0` stale-ready pattern, and after public `rlpx_frame_header_read_failed` emitted `headers_old=192 headers_new=32` then `32 -> 16`. This closes a local long-sync idle/adaptive gap only; public `too_many_peers`/timeout churn still prevents a 24h geth-like sync claim.)
+- node RLPx complete-head batch restore gate: `cargo test -p novovm-node eth_rlpx_batch_restore_requires_complete_head_advance_v1 -- --nocapture` (public adaptive batch restore now requires the persisted current head to advance with header/body/receipt all available; partial header/body material no longer immediately re-expands a just-backed-off public request window. Live validation advanced complete `current=25281726 -> 25281790`, then after a public header-frame close backed off `headers_old=192 headers_new=32` and did not restore without another complete-head advance. This reduces oscillation after partial public responses only; public admission churn still prevents a 24h geth-like sync claim.)
+- node RLPx long-sync scope and refresh-clock gate: `cargo test -p novovm-node eth_rlpx_ -- --nocapture` (the direct `eth_rlpx_sync` product entry is now scoped back to Ethereum mainnet long-sync v1 only: no new fixture/gateway/BAL surface is added in this pass. Stalled forward refresh uses the last complete head advance tick, not partial body/receipt material, and product runtime snapshots cap detailed pending tx entries with `NOVOVM_ETH_RLPX_RUNTIME_PENDING_TXS` defaulting to `128` while preserving pending summary counts. Live validation advanced complete `current=25281950 -> 25282078`, triggered body-recovery refresh, and wrote `native_pending_txs=128` instead of `2048`; this reduces local tick IO pressure but still does not claim 24h geth-like mainnet sync.)
+- node RLPx near-head finalize budget gate: `cargo test -p novovm-network plan_sync_pull_window_ -- --nocapture`, `cargo test -p novovm-network rlpx_headers_request_batch_respects_runtime_budget_v1 -- --nocapture`, and `cargo test -p novovm-node eth_rlpx_ -- --nocapture` (runtime sync pull windows now use the active per-chain budget hooks, the direct `eth_rlpx_sync` entry defaults near-head `NOVOVM_ETH_RLPX_FINALIZE_HEADERS_BATCH=64`, and finalize/discovery transport failures back off the actual 64-header window to 32 instead of a no-op `192 -> 96`. Runtime snapshots now expose the effective plan budget. Live validation recovered receipts, sent `GetBlockHeaders max=64`, advanced `25282158 -> 25282222`, then a follow-up run advanced `25282222 -> 25282286`; after public close it emitted `headers_old=192 headers_new=32` and snapshot showed `runtime_finalize_batch=32`. This improves near-head chase cadence only; public peer churn still prevents a 24h geth-like sync claim.)
+- network/node RLPx product current-head body-first gate: `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1` and `cargo test -p novovm-node eth_rlpx_ -- --nocapture` (the direct public-sync product budget path now requests the latest/current head body first for any multi-header response that reaches the known highest block; while still chasing beyond a response, current-head-first remains active regardless of batch size. Core default small-batch semantics stay unchanged. Historical missing-body backfill remains possible, but its idle failures no longer shrink the next forward header window after the current head is complete. Live validation showed `GetBlockHeaders max=35` followed by `bodies_requested blocks=1`, advanced complete `25282431 -> 25282466`, and kept a later idle backfill failure from shrinking headers `192 -> 192`; 24h geth-like mainnet sync is still open.)
+- node RLPx idle-head probe and adaptive admission gate: `cargo test -p novovm-node eth_rlpx_ -- --nocapture` (after the product entry reaches complete `current==highest` but has no ready peer/status update for the stalled interval, it now treats the local highest as stale and refreshes candidates with `head_probe_stalled_*`; default adaptive bootstrap fanout still starts at 8 but can rise to bounded 32 on admission stall. Live validation advanced complete `25282522 -> 25282549`, then tick 6 emitted `eth_rlpx_adaptive_fanout old=8 new=32` plus `reason=head_probe_stalled_expand`; tick 7 reacquired status and refreshed `highest=25282553`, and later materialized a further complete head at `25282551`. This closes the local stale-highest idle gap only; public `too_many_peers`/timeout churn still leaves 24h geth-like mainnet sync open.)
+- node RLPx product header-floor gate: `cargo test -p novovm-node eth_rlpx_product_header_floor_keeps_forward_probe_above_single_block_v1 -- --nocapture` and `cargo test -p novovm-node eth_rlpx_ -- --nocapture` (the direct public-sync product entry now defaults `NOVOVM_ETH_RLPX_ADAPTIVE_HEADERS_MIN_BATCH=4` while keeping body/receipt recovery at `NOVOVM_ETH_RLPX_ADAPTIVE_BODIES_MIN_BATCH=1`, so repeated public request failures no longer collapse forward header probes to `GetBlockHeaders max=1` by default. Operators can still override the header floor to 1. Live validation advanced complete `25282583 -> 25282615`, emitted `head_probe_stalled_expand`, used `max=4` near head after failures, and recovered final receipts; 24h geth-like mainnet sync is still open.)
+- node RLPx long-sync follow-up diagnostic: no code change; direct product entry follow-ups continued from complete `25282615` to complete `25282698` across three live runs, including recovery of a header-only `25282664` after restart and receipt recovery for `25282681`/`25282698`. Header probes stayed at or above the product floor (`max=4` unless the actual gap was smaller), idle-head probe refreshed stale `current==highest`, and adaptive fanout reached 32. The remaining observed gap is public admission/cooldown churn: final runtime snapshot had `sync_target_fanout=32`, `active_native_peer_hard_limit=1024`, about 599 candidates, no ready peer, and repeated `too_many_peers`/timeout/pre-auth close. This is evidence for partial sustained sync, not 24h geth-like completion.
+- node RLPx reputation-ordered startup/refresh gate: `cargo test -p novovm-node eth_rlpx_ -- --nocapture` (peer endpoint cache ordering now demotes active capacity/permanent rejects behind productive/fresh endpoints, and both startup and refresh candidate lists are reordered by restored runtime reputation before the worker is rebuilt. This keeps a restart from repeatedly hitting a cached saturated prefix first. Live validation resumed from complete `25282698`, got 2 ready peers on tick 1/2, advanced to complete `25282752`, later advanced to `25282760`, and a 12 tick restart recovered `25282760` receipts plus `25282766` body/receipts. The run still ended behind `highest=25282771`, so public admission/cooldown churn and 24h geth-like sync remain open.)
+- node/network RLPx productive-capacity retry and cache-pool restore gate: `cargo test -p novovm-network capacity_reject -- --nocapture`, `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1`, and `cargo test -p novovm-node eth_rlpx_ -- --nocapture` (plain `too_many_peers` still uses long backoff, but peers with proven header/body/sync contribution now use shorter productive capacity-reject retry windows before backing off again; cache-warmed startup also preserves an expanded peer endpoint pool up to 1024 instead of shrinking it back to 512. Live validation advanced complete `25282766 -> 25282824`, then a restart advanced complete `25282824 -> 25282831`; after preserving the expanded cache pool, the next restart began at `candidates=546` instead of 512, got 4 ready peers on tick 1, advanced to complete `25282848`, and refreshed to 569 candidates. The run still ended behind `highest=25282852`, so 24h geth-like mainnet sync remains open.)
+- network RLPx idle missing-body backfill cap gate: `cargo test -p novovm-network missing_body -- --nocapture --test-threads=1`, `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1`, and `cargo test -p novovm-node eth_rlpx_ -- --nocapture` (idle historical missing-body recovery now caps each backfill request at 4 block bodies instead of 16, while still reserving a slot for the current/latest missing head. This keeps scarce public ready peers focused on the current head and forward chase rather than timing out on long historical body batches. Live validation first recovered missing receipts for `25282881`, then advanced complete to `25282920`; observed body requests were one-block current-head requests, not 16-block historical backfill bursts. This reduces idle backfill pressure only; 24h geth-like mainnet sync remains open.)
+- network RLPx recovery in-flight dedupe / empty-body release gate: `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1`, `cargo test -p novovm-node eth_rlpx_ -- --nocapture`, and `cargo check -p novovm-network -p novovm-node` (body/receipt request hashes are tracked in a short-lived in-flight registry so missing-body and missing-receipt recovery do not ask multiple public peers for the same pending material while another session is already serving it; successful responses, retries, and disconnects clear the registry. A valid but empty `BlockBodies` response for a pending hash now releases that peer instead of tight-looping partial retries on the same connection. Live validation advanced complete `25283028 -> 25283053`, kept current body/receipt available, used single-peer missing body/receipt recovery, and did not reproduce the prior repeated `blocks=0` partial-body retry loop. This reduces public ready-peer waste only; 24h geth-like mainnet sync remains open.)
+- network RLPx forward-header in-flight dedupe gate: `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1`, `cargo test -p novovm-node eth_rlpx_ -- --nocapture`, and `cargo check -p novovm-network -p novovm-node` (forward `GetBlockHeaders` requests now use a short-lived in-flight key by `start/skip/reverse`, so multiple ready peers do not duplicate the same near-head header range before the first response/failure resolves. Disconnects and matched header responses release the key. Live validation started with 2 ready peers but emitted only one `headers_requested start=25283088`, then advanced complete `25283087 -> 25283113`; remaining failures were public `too_many_peers`/timeout churn and one strict pooled-transaction response rejection, not duplicate forward-header dispatch. This reduces public ready-peer waste only; 24h geth-like mainnet sync remains open.)
+- network RLPx pooled-tx pending request guard gate: `cargo test -p novovm-network rlpx_pooled_transactions_request_does_not_overwrite_pending_request_v1 -- --nocapture`, `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1`, `cargo test -p novovm-node eth_rlpx_ -- --nocapture`, and `cargo check -p novovm-network -p novovm-node` (new pooled tx hash announcements no longer overwrite an already pending `GetPooledTransactions` request on the same live session; strict pending request-id matching stays intact. Local geth source review confirmed geth fulfills pooled transaction responses through its request tracker before tx fetcher enqueue, so this remains a local request-state guard rather than a looser unsolicited-response acceptance rule. Live validation advanced complete `25283142 -> 25283194` without reproducing `rlpx_pooled_transactions_unexpected_response` or `subprotocol_error`; the run ended with a short receipt gap at the current head, so public body/receipt-serving peer churn and 24h geth-like mainnet sync remain open.)
+- network RLPx pooled-tx geth tracker window gate: `cargo test -p novovm-network rlpx_pooled_transactions_response_uses_geth_tracker_window_v1 -- --nocapture`, `cargo test -p novovm-network rlpx_pooled_transactions_ingests_geth_accepted_unrequested_hash_v1 -- --nocapture`, and `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1` (matched `PooledTransactions` responses now follow geth request-tracker behavior: reject responses with more txs than requested and duplicate tx hashes, but do not disconnect a peer merely because the delivered tx hash was not among the announced/requested hashes. Those same-size extra txs are ingested as remote pending txs like geth's tx fetcher out-of-bound delivery path. Live validation before the fix reproduced `rlpx_pooled_transactions_unrequested_hash` while the same peer later served headers/bodies/receipts, so this removes a tx-gossip side-channel disconnect from the mainnet long-sync path; 24h geth-like sync remains open.)
+- network/node RLPx product current-head body-followup gate: `cargo test -p novovm-network rlpx_product_header_batch_requests_current_body_at_known_highest_v1 -- --nocapture`, `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1`, and `cargo test -p novovm-node eth_rlpx_public_sync_runtime_defaults_honor_entry_fanout_v1 -- --nocapture` (the direct `eth_rlpx_sync` product entry now marks its budget to prefer current-head body follow-up even after adaptive header windows fall back to the default 16-header finalize window. Core/default worker semantics still allow multi-body batches for local protocol gates and partial retry tests. Live validation advanced `25283275 -> 25283309`; the 31-header and 3-header near-head responses each emitted `bodies_requested blocks=1`, avoiding the prior 3-body request at known highest. The run still ended with a current receipt gap, so 24h geth-like mainnet sync remains open.)
+- network RLPx fresh-material follow-up gate: `cargo test -p novovm-network real_rlpx_worker_recovers_missing_receipts_before_new_header_pull -- --nocapture --test-threads=1` and `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1` (after a live session ingests fresh body/receipt material, the worker defers the next forward `GetBlockHeaders` to a later tick instead of appending it to the same public peer session. This closes the observed `bodies_received`/`receipts_received` -> immediate `headers_requested max=192` -> MAC/close failure pattern. Live short validation from complete `25280158` still did not advance because public ready peers returned `too_many_peers` during forward header ingest, so 24h geth-like long sync remains open.)
+- node RLPx capacity-reject cache gate: `cargo test -p novovm-node eth_rlpx_peer_endpoint_cache_ -- --nocapture` and `cargo test -p novovm-node eth_rlpx_ -- --nocapture` (peer endpoint cache remains schema `v1` and now optionally persists unexpired `too_many_peers` capacity rejects; loading the cache restores those rejects into runtime peer reputation before startup merge/write, so a restart does not treat just-overloaded public peers as pristine bootstrap candidates. Live validation wrote 19 then 28/34/59 capacity rejects across restarts and printed `restored_capacity_rejects=28`; the 6-tick follow-up still reached no ready forward-header peer, so this closes restart churn on overload peers only, not 24h mainnet sync.)
+- node RLPx capacity-reject backoff gate: `cargo test -p novovm-network capacity_reject -- --nocapture` and `cargo test -p novovm-node eth_rlpx_peer_endpoint_cache_ -- --nocapture` (`too_many_peers` disconnects now back off by repeated capacity-reject count, and the peer cache persists/restores `disconnect_too_many_peers_count` so restarts do not collapse a repeatedly saturated peer back to a first-reject 60s window. Live 4-tick validation wrote the new count field with `max_capacity_count=1` for newly observed rejects and stayed at complete `current=25280158/highest=25281565`; this reduces repeated capacity churn only, not sustained forward sync.)
+- node RLPx permanent-reject cache gate: `cargo test -p novovm-node eth_rlpx_peer_endpoint_cache_ -- --nocapture` and `cargo test -p novovm-network status_fork_id -- --nocapture` (the same peer endpoint cache now also persists short-lived permanent rejects for pristine peers with incompatible/malformed Ethereum Status, including legacy `eth/66-68` capability-only peers and malformed fork-id Status. Live validation restored `restored_permanent_rejects=3`, then pruned candidates from 508 to 506 and grew `permanent_rejects` to 5; `current` remained complete at `25280158/highest=25281414`, so this closes restart churn on unusable public peers only, not sustained forward sync.)
+- runtime RLPx highest monotonic gate: `cargo test -p novovm-network lagging_peer_observation_does_not_lower_known_highest -- --nocapture` (a checkpoint/restored known `highest` is not lowered by a lagging public peer status; live product-default follow-up kept `highest` monotonic and advanced from `current=941/highest=25274632` to `current=973/highest=25274667` with current body/receipts available)
+- runtime RLPx subprotocol-error peer reject gate: `cargo test -p novovm-network subprotocol_error_disconnect -- --nocapture` (a public peer that reports `subprotocol_error` before contributing headers/bodies/receipts is permanently rejected and pruned from the endpoint cache; prior sync contributors remain retryable)
+- node RLPx stalled peer refresh gate: `cargo test -p novovm-node eth_rlpx_ -- --nocapture` and `cargo test -p novovm-node eth_peer_endpoint_ -- --nocapture` (when public peers churn and no ready peer is available while `highest > current`, or startup has no ready peer and no remote highest yet, the product entry expands/refreshes candidates by `NOVOVM_ETH_RLPX_STALLED_REFRESH_INTERVAL_TICKS` default 4 ticks; refreshed endpoints are merged with the existing pool so refresh does not shrink candidates; initial candidates now accept up to 512 and adaptive candidates now default to at least 512 and can go up to 1024, while active peers remain capped by geth-style `NOVOVM_ETH_RLPX_MAX_PEERS` default 50; prior max-peers 16/32 live runs proved header/body recovery under churn, but the current product claim remains bounded protocol-observable equivalence, not complete geth long-haul mainnet acceptance)
+- geth update review gate: local `D:\WEB3_AI\go-ethereum` pulled to `1f87331fb` (`eth/protocols/eth: track announced tx hashes only after send`); the only network-observable change in the latest batch is geth marking `NewPooledTransactionHashes` known only after a successful send. SUPERVM now sends product outbound tx gossip as hash-only `NewPooledTransactionHashes` and records propagation only after `eth_rlpx_write_wire_frame_v1` succeeds; peers can then request the raw payload via `GetPooledTransactions`. RLPx live session write/ingest failures unregister the peer and remove the live session before returning, so a mid-frame public-peer close can be retried by the next ready peer.
+- geth re-pull review gate: on 2026-06-09, `D:\WEB3_AI\go-ethereum` `git pull --ff-only` returned `Already up to date`; local/remote `origin/master` remain `1f87331fb`. Re-reading the latest diff confirmed it only moves geth `sendPooledTransactionHashes` known-tx marking after successful `NewPooledTransactionHashes` send. SUPERVM's outbound pooled-tx announce path follows that same write-success-before-propagated rule, and write errors still record `IoWriteFailure`.
+- geth re-pull no-new-upstream gate: on 2026-06-09, `D:\WEB3_AI\go-ethereum` `git fetch --prune origin` showed `HEAD...origin/master = 0 0`, and `git pull --ff-only` again returned `Already up to date`; current geth remains `1f87331fb`. The tx gossip impact review is now closed in code: product outbound pending txs are announced with `NewPooledTransactionHashes`, marked propagated only after successful wire-frame write, and served back as raw `PooledTransactions` when the peer asks for them.
+- geth handler-surface review gate: on 2026-06-09, shell HTTPS fetch to GitHub intermittently failed, but GitHub master page still showed local `1f87331fb` as the current top commit. Re-reading geth `eth/protocols/eth/handler.go`/`handlers.go` identified a product-observable service gap: geth serves inbound `GetBlockHeaders` and `GetBlockBodies` for eth/69/70/71. SUPERVM now preserves raw header RLP on ingest and responds to real inbound `GetBlockHeaders`/`GetBlockBodies` from canonical native runtime material only; it does not fabricate unavailable history.
+- geth upstream recheck gate: on 2026-06-09, `D:\WEB3_AI\go-ethereum` was re-pulled with `git pull --ff-only` and returned `Already up to date`; `git ls-remote origin refs/heads/master` confirmed remote `origin/master = 1f87331fbc58702b812a7b14e65aa7a28776cc46`, matching local HEAD. The latest geth delta is still only `eth/protocols/eth: track announced tx hashes only after send (#35122)`, and SUPERVM's product RLPx tx gossip path already writes `NewPooledTransactionHashes` before recording successful propagation, so no code change is required for this upstream batch.
+- geth official upstream re-pull gate: on 2026-06-09, `D:\WEB3_AI\go-ethereum` was re-fetched from official `https://github.com/ethereum/go-ethereum.git`; `git pull --ff-only` returned `Already up to date`, and `git ls-remote origin refs/heads/master` still matched local `1f87331fbc58702b812a7b14e65aa7a28776cc46`. No newer upstream commit exists to port; the active SUPERVM delta remains the geth downloader-style public sync request window (`headers=192`, `bodies=128`) plus the already-closed tx gossip write-success rule.
+- geth latest local re-pull gate: on 2026-06-09, another `git fetch origin --prune` + `git pull --ff-only origin master` in `D:\WEB3_AI\go-ethereum` returned `Already up to date`; local HEAD and fetched `origin/master` remain `1f87331fbc58702b812a7b14e65aa7a28776cc46`. No new official geth commit was available to migrate into SUPERVM in this pass.
+- geth latest upstream audit gate: on 2026-06-09, `D:\WEB3_AI\go-ethereum` was checked again with `git fetch --prune origin master`, `git pull --ff-only`, and `git ls-remote origin refs/heads/master`; official `origin/master` still equals local `1f87331fbc58702b812a7b14e65aa7a28776cc46`. The latest geth batch has no new commit to port. SUPERVM already covers the product-observable deltas reviewed from that HEAD: `#35122` tx hash announce marks propagated only after a successful `NewPooledTransactionHashes` write, `#35110` BAL rejects empty `slotChanges`, and type3 blob tx validation rejects an empty `blob_versioned_hashes` list; geth's malformed sidecar `BlobHashes()` panic fix is internal to geth sidecar construction and does not map to an enabled SUPERVM type3 write-sidecar path.
+- geth Engine API error-message re-pull gate: on 2026-06-09, `D:\WEB3_AI\go-ethereum` fast-forwarded from `1f87331fb` to `10614fc42` (`beacon/engine: only print the bad hash on error (#35112)`). The diff only narrows the `ExecutableDataToBlockNoHash` invalid `versionedHash` error message from full slices to the offending pair; it does not alter block construction, tx/blob hash validation, RLPx, snap, state root, receipt root, or consensus data semantics. SUPERVM has Engine API payload/forkchoice controls disabled as probe-only, so no product code change is required for this upstream commit.
+- geth public request-timeout review gate: on 2026-06-09, re-reading `eth/downloader/*` and `p2p/msgrate/msgrate.go` confirmed geth uses dynamic `TargetTimeout()` for header/body/snap requests (`ttlScaling=3`, capped by `ttlLimit=1m`). SUPERVM's direct product node entry now defaults `NOVOVM_ETH_RLPX_REQUEST_TIMEOUT_MS=5000` for public RLPx sync, with `1000..120000` env clamp, aligned with the core library default. Live product entry validation without setting `NOVOVM_ETH_RLPX_REQUEST_TIMEOUT_MS` reported `runtime_request_timeout_ms=5000` and advanced from `current=25279184` to `25279312`; remaining failures were public-peer admission/disconnect/timeouts, not request-timeout configuration drift.
+- node RLPx adaptive batch gate: `cargo test -p novovm-node eth_rlpx_ -- --nocapture` now covers public sync batch backoff/restore. The product entry still starts with geth-like `headers=192`/`bodies=128`, but `NOVOVM_ETH_RLPX_ADAPTIVE_BATCH_ENABLED` defaults on and can halve headers down to default `NOVOVM_ETH_RLPX_ADAPTIVE_HEADERS_MIN_BATCH=4` and bodies down to `NOVOVM_ETH_RLPX_ADAPTIVE_BODIES_MIN_BATCH=1` when public peers close or timeout an active sync request; any real complete-head progress restores batches upward. Operators can explicitly lower the header floor to 1 for narrow probes. Live validation from `current=1853/highest=25277702` hit `rlpx_frame_body_read_failed read=52276/171088` at tick 10 and immediately emitted `eth_rlpx_adaptive_batch ... headers_old=192 headers_new=96 bodies_old=128 bodies_new=64`, so long-running product sync no longer retries the same oversized request window after a mid-frame public-peer reset.
+- node RLPx header-only body backoff gate: `cargo test -p novovm-node eth_rlpx_adaptive_public_sync_batch -- --nocapture` and `cargo test -p novovm-node eth_rlpx_ -- --nocapture` (header-only progress may restore header batch for forward chase, but body batch now requires body/receipt material at the current head; otherwise it backs off. Live product entry validation on 2026-06-09 resumed from header-only `2909`, recovered body/receipt at tick 8, later advanced to header-only `3005` at tick 12, and emitted `reason=header_only_body_backoff headers_old=96 headers_new=192 bodies_old=128 bodies_new=64`, followed by request-failure backoff to `bodies_new=32`. This directly supports `Ethereum 主网长期同步 v1` and does not change the claim that 24h geth-like long-haul sync is still open.)
+- node RLPx trusted-pivot missing-body admission gate: `cargo test -p novovm-node eth_rlpx_adaptive_bootstrap_fanout eth_rlpx_ -- --nocapture` (a trusted near-head pivot with `current == highest` but no local body/receipt is now treated as a real sync target for admission fanout and peer refresh, instead of staying at low fanout because `highest > current` is false. A temporary finalized-header pivot probe at block `0x181b8f5` first reproduced the old `native_phase=idle/body_available=false` behavior; after the fix, tick 1 raised fanout `8 -> 50`, emitted `body_recovery_stalled_expand`, reached ready peers, then recovered the pivot head with `bodies=1/receipts=1` and `body_available=true` by tick 6. Temporary checkpoint/head/history/cache JSON files were removed after the probe; logs remain under `artifacts/mainline/trusted-pivot-20260609-1651-fanout-fix*.out.log`.)
+- network RLPx Status-head pivot gate: `cargo test -p novovm-network real_rlpx_peer_worker_pivots_to_status_head_by_hash_v1 -- --nocapture` and `cargo test -p novovm-network rlpx_block_headers_validation_rejects_non_contiguous_batch_v1 -- --nocapture` (when local `current` is far behind a ready peer's Status head, the worker sends `GetBlockHeaders` by the advertised head hash instead of continuing a low `current+1` pull; materialization requires the returned header hash and announced number to match the pending Status-head request. Live mainnet validation emitted `status_head_pivot_headers_requested` from `current=3069` to remote head `25278959`, then imported `headers=1/bodies=1` and advanced the local checkpoint/head to `25278959`.)
+- node RLPx near-head receipt admission gate: `cargo test -p novovm-node eth_rlpx_ -- --nocapture` (a near-head block with `body_available=true` but `receipt_available=false` remains an admission target even when `current == highest`; tick output now prints both `body_available` and `receipt_available`. Live validation from `current=25278959` emitted `eth_rlpx_adaptive_fanout old=8 new=50`, refreshed peers for material recovery, then received receipts at tick 6 and flipped `receipt_available=true`; a later forward header pull advanced to `25278975`, leaving normal next-window body/receipt recovery as the remaining sync loop.)
+- node RLPx fresh-material body batch restore gate: `cargo test -p novovm-node eth_rlpx_ -- --nocapture` (body batch restore now requires fresh body/receipt updates in the current tick; an already materialized head no longer restores the body window during idle/public-admission ticks. Live validation recovered `25278991` body/receipts, then held body batch at `64` until the next header-only advance, backed off to `32`, and did not re-expand to `128` without new body material.)
+- network RLPx state-lag header priority gate: `cargo test -p novovm-network native_state_sync_request_ -- --nocapture --test-threads=1` and `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1` (State-phase sync now keeps chasing `GetBlockHeaders` while the local head is more than 128 blocks behind known `highest`, even if a snap AccountRange cursor exists; snap AccountRange resumes only at the State boundary/near caught-up window, preserving snap gates without letting early state work consume scarce public ready-peer slots. Live 8-tick validation from `current=25279023/highest=25279263` recovered body availability but still missed receipts under `too_many_peers` admission churn, so 24h geth-like long sync remains open.)
+- network RLPx current-head body-serving peer preference gate: `cargo test -p novovm-network sync_selection_prefers_body_history_peer_when_current_head_body_is_missing -- --nocapture` (when the current native head has a canonical header but no materialized body, sync target selection prefers ready peers with prior body-serving material history over higher-head peers with no body history; live 8-tick validation from header-only `25279055` sent `missing_bodies_requested blocks=1`, recovered `bodies=1`, then recovered receipts and flipped the current head to `body_available=true/receipt_available=true`, while forward headers still hit public `too_many_peers`/MAC-mismatch churn. This closes current-head material recovery selection only, not 24h geth-like long sync.)
+- network RLPx forward-header peer preference gate: `cargo test -p novovm-network sync_selection_prefers_header_history_peer_after_current_head_materialized -- --nocapture` (when the current head already has matching header/body/receipt material and `highest > current`, sync target selection prefers ready peers with prior header-serving history before falling back to higher-head peers with no header history. Live 10-tick validation from complete `25279055` dispatched forward `GetBlockHeaders start=25279056`, received `headers=16`, and advanced to header-only `25279071`; the follow-up `GetBlockBodies` still hit public-peer MAC mismatch/close, so this closes forward-header selection only and leaves body material recovery after a header batch as the next long-sync bottleneck.)
+- network RLPx header-batch body head-only gate: `cargo test -p novovm-network rlpx_header_batch_import_requests_current_body_only_while_chasing_v1 -- --nocapture` (while chasing `highest`, a multi-header RLPx `BlockHeaders` response is still fully imported into native canonical/history state, but the immediate follow-up `GetBlockBodies` asks only for the newest current head body instead of the whole header batch; non-chasing body batches keep the existing behavior. Live follow-up from header-only `25279071` confirmed `missing_bodies_requested blocks=1`, and public Ethereum RPC confirmed `25279071` hash/roots match local canonical header, but public peers did not return the body in that short run. This closes the request-window size issue only, not public body-serving peer availability.)
+- network RLPx canonical-body receipt recovery gate: `cargo test -p novovm-network rlpx_missing_receipts_recovery_ -- --nocapture --test-threads=1` and `cargo test -p novovm-network real_rlpx_worker_recovers_missing_receipts_before_new_header_pull -- --nocapture --test-threads=1` (missing-receipt recovery now uses the current header's canonical block body as a fallback when the latest body snapshot has moved to another block, keeping the recovery builder aligned with node tick `body_available` reporting. Live mainnet validation from `current=25279023/highest=25279289` emitted `missing_receipts_requested` at tick 5, received `Receipts` at tick 6 from a real peer, and flipped the head to `body_available=true/receipt_available=true`; remaining work is sustained forward header/body progress after material completion.)
+- network RLPx capacity-disconnect classification gate: `cargo test -p novovm-network rlpx_request_write_errors_use_runtime_failure_class_v1 -- --nocapture --test-threads=1` (formatted public RLPx disconnect errors such as `reason_code=4 reason=too_many_peers` now stay classified as `Disconnect` with the concrete reason code instead of falling through to handshake failure; normal forward `GetBlockHeaders` dispatch also emits `headers_requested`, which confirmed the receipt-complete head does request the next header window while the remaining blocker is public peer serving/admission.)
+- node RLPx header-only history window gate: `cargo test -p novovm-node eth_rlpx_native_history_store_merges_runtime_header_only_window_v1 -- --nocapture` and `cargo test -p novovm-network rlpx_missing_body_recovery_batches_current_header_only_suffix_while_chasing -- --nocapture --test-threads=1` (when a public peer returns a header batch but disconnects before bodies, the native history store now merges the recent runtime canonical header-only window from raw header RLP instead of persisting only the current head; on restart, missing-body recovery can rebuild the current contiguous header-only suffix, while old historical gaps still do not block forward chase. Live validation remained blocked by public `too_many_peers`/timeout before a body-serving response, so this is a restart/recovery correctness gate, not a 24h long-sync completion claim.)
+- network RLPx receipt-serving peer scoring gate: targeted gates `rlpx_receipt_updates_count_as_material_peer_success_v1`, `real_rlpx_worker_recovers_missing_receipts_before_new_header_pull`, and `rlpx_request_write_errors_use_runtime_failure_class_v1`, plus `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1`, `cargo test -p novovm-node eth_rlpx_ -- --nocapture`, and `cargo check --workspace` (receipt updates now count as material peer success together with body updates, so a peer that serves missing receipts is promoted in the same public-sync reputation path as a body-serving peer. The real `NewBlock` body ingest path also emits `receipts_requested` after writing follow-up `GetReceipts`. Live validation from `current=25279039` sent multiple `missing_receipts_requested` requests to ready peers while `body_available=true/receipt_available=false`, but public peers closed or saturated before returning receipts; this records the current bottleneck as receipt-serving peer availability, not a new EVM/BAL/gateway fixture gap.)
+- network RLPx current-head body recovery gate: `cargo test -p novovm-network rlpx_missing_body_recovery_ -- --nocapture --test-threads=1` (while chasing remote head, missing-body recovery now requests only the current header-only head; retained 16-block backfill remains for non-chasing recovery. Live validation from persisted header-only `25279055` confirmed `missing_bodies_requested ... blocks=1` to multiple ready peers. Public peers still did not return bodies under `too_many_peers`/ingest-close churn, but the request path no longer burns scarce ready peers on historical suffix material before the current head.)
+- geth latest upstream recheck gate: on 2026-06-09, `D:\WEB3_AI\go-ethereum` `git fetch --prune origin master`, `git pull --ff-only origin master`, and `git ls-remote origin refs/heads/master` still matched local `1f87331fbc58702b812a7b14e65aa7a28776cc46`. No new official geth commit was available to port in this pass; the actionable work stayed inside SUPERVM mainnet long-sync ingress/recovery.
+- geth debug txpool API recheck gate: on 2026-06-09, `D:\WEB3_AI\go-ethereum` is synced with `origin/master = 08aaa7c5ff9dcb99fb0c6dc9194d49ae9e518f69` (`eth: add debug_clearTxpool api (#33347)`). The diff only adds a debug RPC that clears geth's local transaction pool and a web3 extension entry; it does not change RLPx, snap, header/body/receipt sync, state roots, receipt roots, tx gossip semantics, or consensus execution. SUPERVM intentionally does not add a matching JSON-RPC surface for this pass; live product validation stayed scoped to `NOVOVM_NODE_MODE=eth_rlpx_sync`, advanced from complete `25279644` to complete `25279806`, and still leaves 24h geth-like long-haul sync open because forward header progress remains gated by public peer `too_many_peers`/timeout/close churn.
+- geth latest upstream recheck gate: on 2026-06-10, `D:\WEB3_AI\go-ethereum` `git pull --ff-only` returned `Already up to date`; local/remote `origin/master = 43b7b4e8d9f9c8bf74d27bc6b13cb6c90a6128f8` (`eth: fix borked test introduced in merging #33347 (#35130)`). The new top commit only fixes the `debug_clearTxpool` test expectation introduced by `#33347`; it does not change RLPx, snap, header/body/receipt sync, state roots, receipt roots, tx gossip, BAL semantics, or consensus execution. SUPERVM keeps the current scope closed: no new JSON-RPC/debug surface is added, and actionable work remains `Ethereum mainnet long-sync v1` only.
+- geth latest upstream transport recheck gate: on 2026-06-10 follow-up, local `D:\WEB3_AI\go-ethereum` remained at `43b7b4e8d9f9c8bf74d27bc6b13cb6c90a6128f8`, and GitHub API returned the same `master` SHA. `git pull --ff-only`/`git fetch --prune` failed in this shell with GitHub transport reset/443 timeout, so no repository state changed during this pass. Impact review stays unchanged: `#35130` is a debug test fix, `#33347` is debug txpool RPC only, `#35122` pooled-tx send-after-write semantics are already matched by SUPERVM outbound propagation, and `#35110` BAL empty `slotChanges` rejection is already enforced before RLPx BAL materialization. No new EVM fixture/gateway/BAL scope is opened; the only remaining product target is Ethereum mainnet long-sync v1.
+- geth snap/2 upstream recheck gate: on 2026-06-11, `D:\WEB3_AI\go-ethereum` fast-forwarded from `43b7b4e8d9f9c8bf74d27bc6b13cb6c90a6128f8` to `17aab1ac9a831dad885e6013b19ca469c0d514f2`. Only `#34626` materially touches the SUPERVM long-sync path by adding experimental `snap/2` BAL-based state sync behind geth `--snap.v2`; upstream marks that flag not safe for public networks, so SUPERVM keeps production default snap capability at `snap/1` only and adds negotiation/Hello guard coverage instead of advertising or implementing snap/2 by default. The other five upstream commits are log mutex, Engine nil `BlockValue` handling, RPC tracing option, typos, and WS status code fixes, with no required EVM/RLPx product-surface port.
+- node RLPx 6h soak gate: direct product entry ran on Ethereum mainnet from `2026-06-11 17:20:52` for over 6h with no panic/fatal, 1895 sync ticks, 1127 ready-peer ticks, 320 header-progress ticks, and repeated real header/body/receipt recovery under public `too_many_peers`/timeout churn. The manual stop landed on header-only `25294784`, then a same-store restart using the 6h checkpoint/head/history paths restored from complete `25294776`, advanced to complete `25294832`, and persisted checkpoint/head with `body_available=true` and `receipt_available=true`. This signs the 6h long-sync/restart-recovery gate; the remaining hard gate is the independent 24h soak.
+- node RLPx 24h soak gate: direct product entry ran on Ethereum mainnet from `2026-06-11 23:47:50` to manual stop after `2026-06-12 23:47:50`, with no panic/fatal, 5866 sync ticks, 4925 complete-head ticks, 4081 ready-peer ticks, 2012 header requests, 3342 body receives, 2453 receipt receives, 2080 missing-body recovery requests, and 65 missing-receipt recovery requests under normal public `too_many_peers`/timeout/close churn. The 24h stop point persisted complete `current=25302369/highest=25302388`; same-store restart recovery restored from that complete head, continued syncing through live headers/bodies/receipts, and the final one-tick material-safe rewrite persisted complete `current=25302446/highest=25302502` with matching header/body/receipt material. This signs the 24h long-sync/restart-recovery gate for Ethereum mainnet long-sync v1.
+- geth upstream freeze review gate: on 2026-06-13, `D:\WEB3_AI\go-ethereum` fast-forwarded from `e595aedcd067304d77480fdccf504f5f121352f6` to `9059157eba227b6a4d4cc2e147e65f9919294360`. The delta is `#33601` EIP-8037 Amsterdam state-creation gas prototype, `#34947` cgroup memory-limit probing, and `#33348` discv4 findnode lookup optimization. Only EIP-8037 is consensus/EVM-observable, but current geth mainnet config does not set `AmsterdamTime`; SUPERVM's mainnet fork-id schedule already matches the active geth mainnet time forks through Prague/Osaka/BPO1/BPO2. No Rust code is ported for this v1 freeze. EIP-8037 remains a future-fork watch item, while memlimit/discovery changes are internal runtime/peer-discovery optimizations and do not affect the signed 6h/24h long-sync gate.
+- EVM mainnet long-sync v1 freeze: after the signed 6h and 24h product-entry soak gates plus the 2026-06-13 geth upstream delta review, the EVM v1 scope is frozen at mainnet long-sync + basic execution/RPC/receipt/contract observable compatibility. Further EVM work is bugfix-only unless a later upstream fork becomes active on Ethereum mainnet or NovoVM host integration requires a product-facing change.
+- runtime RLPx monotonic native head gate: `cargo test -p novovm-network runtime_status::tests::native_header_and_head_snapshots_do_not_regress_to_lower_height -- --exact --nocapture`, `cargo test -p novovm-node mainline_evm_cli_tests::eth_rlpx_native_stores_current_tracks_material_header_v1 -- --exact --nocapture`, plus `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1`, `cargo test -p novovm-node eth_rlpx_ -- --nocapture`, and `cargo check --workspace` (parallel public `BlockHeaders` responses can no longer regress the runtime native header/head snapshot to a lower batch after a higher header-only current was imported; checkpoint/head/history stores now write `current_block` from the material header they persist instead of mixing a higher sync-status current with lower header/body/receipt material. Live validation recovered the malformed `current=25279934/header=25279870` persisted state, kept `current==header` through ticks, advanced to `25279950`, then recovered body/receipt so persisted head/checkpoint ended at `current=25279950 header=25279950 body=25279950 receipt=25279950`.)
+- network RLPx header batch budget gate: `cargo test -p novovm-network rlpx_headers_request_batch_respects_runtime_budget_v1 -- --nocapture` (the real RLPx worker now caps outgoing `GetBlockHeaders.max` by `budget_hooks.sync_pull_headers_batch`; prior product-entry `NOVOVM_ETH_RLPX_HEADERS_BATCH=1` still produced a `171088` byte frame because the runtime window max bypassed the budget. After the fix, a live `headers=1/bodies=1` probe no longer produced the 171KB header response; the remaining failure was public peer churn/write close, e.g. `rlpx_frame_mac_write_failed`, not ignored batch sizing.)
+- network RLPx request write-close lifecycle gate: `cargo test -p novovm-network rlpx_request_write_errors_use_runtime_failure_class_v1 -- --nocapture` and `cargo test -p novovm-network rlpx_ -- --nocapture --test-threads=1` (`56 passed`). Header/body/receipt/BAL/snap request writes and outbound pooled-tx hash announces now classify remote-close and MAC-desync write failures as transient `Disconnect`, classify write timeouts as `Timeout`, and reserve `HandshakeFailure` for unknown write failures. This keeps public-peer mid-sync write close from polluting handshake/protocol rejection state. A 6-tick product run from `current=1853/highest=25277978` kept the current body available but reached no ready peer under `too_many_peers`/pre-hello close churn, so the remaining live bottleneck is still sustained public peer admission, not this write-close lifecycle classification.
+- runtime RLPx highest hint expiry gate: `cargo test -p novovm-network unregister_peer_keeps_known_highest_after_remote_best_hint_expiry -- --nocapture` and `cargo test -p novovm-network lagging_peer_observation_does_not_lower_known_highest -- --nocapture` (known remote `highest_block` is now monotonic even after the freshness hint expires and all public peers are temporarily gone; the hint expiry only removes peer freshness, not the checkpoint/runtime highest floor. This closes a live 18-tick product-entry regression where `highest` briefly dropped from `25277793` to `1853` after repeated public-peer churn before later recovering to `25277831`.)
+- geth BAL validation recheck gate: on 2026-06-09, the same geth HEAD also includes `core/types/bal: improve the bal validation (#35110)`, which rejects BAL `storageChanges` entries with empty `slotChanges`. SUPERVM now applies that check to raw `BlockAccessLists` payloads received over RLPx before storing them, additionally rejects BAL payloads whose raw-RLP hash does not match the header `BlockAccessListHash`, and validates BAL item-count/index limits with the block `gasLimit` and body `tx_count` context.
+- node RLPx longer-window live validation: product entry `NOVOVM_NODE_MODE=eth_rlpx_sync` continued from `current=1317/highest=25275535` to `current=1429/highest=25275675` in the default 32-peer public mainnet window. The run recovered repeated temporary header-only gaps (`1381`, `1389`, `1397`, `1405`, `1413`, `1421`) back to current body/receipt availability, and candidate refresh expanded the pool from 229/255 to 282/313 under public peer churn. Remaining failures were public-peer saturation/close/timeout classes (`too_many_peers`, pre-auth close, mid-body close, TCP timeout), not a new protocol decode mismatch.
+- node RLPx native restore phase gate: `cargo test -p novovm-node eth_rlpx_native_ -- --nocapture` (latest head/history stores restore validated header/body/receipt snapshots and resume runtime head at `State` when receipts are available, instead of falling back to `Headers`; latest head/history store writes now prefer current-header canonical block material over the single latest body snapshot, preserving ommer/raw receipt material when recovery batches update multiple blocks; latest head store also persists/restores bounded snap account/storage/code/trie-node subsets and snap AccountRange cursor progress for the restored head `stateRoot`)
+- node RLPx snap cursor resume gate: `cargo test -p novovm-network native_state_sync_request_ -- --nocapture` (restored snap AccountRange progress feeds the next State-phase `GetAccountRange` origin, and completed progress continues forward header pull instead of blindly rescanning `0x00..00`)
+- network RLPx snap peer selection gate: `cargo test -p novovm-network sync_selection_prefers_snap_peer_for_state_account_range_request -- --nocapture` (when the current State-phase pull window actually emits `SnapGetAccountRange`, sync target selection prefers negotiated `snap/1` peers over higher-scored eth-only peers, avoiding no-op State ticks on mixed public mainnet peer sets)
+- node RLPx current-head material match gate: `cargo test -p novovm-node eth_rlpx_native_body_and_receipt_match_current_header_v1 -- --nocapture` (`eth_rlpx_sync` tick output and native stores only treat body/receipt as available when number/hash match the current header, avoiding stale previous-block body visibility while headers advance)
+- network RLPx forward-chase missing body gate: `cargo test -p novovm-network missing_body_recovery -- --nocapture` (while `highest > current`, missing-body recovery fixes only the current/latest head before header pulls; old retained body gaps no longer block forward mainnet catch-up)
+- node Ethereum DNS signed tree gate: `cargo test -p novovm-node eth_dns_discovery_root_signature_verifies_geth_vector_v1 -- --nocapture` and `cargo test -p novovm-node eth_dns_discovery_entry_hash_matches_geth_tree_vector_v1 -- --nocapture` (default mainnet DNS root is a signed `enrtree://` URL; root signatures and child TXT `Keccak256(record)` hash prefixes are verified before ENR candidates enter the RLPx pool)
+- node Ethereum DNS startup budget gate: `cargo test -p novovm-node eth_dns_discovery_default_max_queries_is_startup_bounded_v1 -- --nocapture` and `cargo test -p novovm-node eth_dns_query_txt_respects_expired_discovery_deadline_v1 -- --nocapture` (`NOVOVM_ETH_DNS_DISCOVERY_TOTAL_TIMEOUT_MS`, default 5s, bounds DNS tree walk startup time so the 20s peer discovery budget still leaves time for discv4; default `NOVOVM_ETH_DNS_DISCOVERY_MAX_QUERIES` scales with requested candidates instead of scanning 512 records, and each DoH TXT query uses the remaining global discovery deadline)
+- node Ethereum peer discovery total budget gate: `cargo test -p novovm-node eth_rlpx_peer_discovery_deadline_caps_phase_timeout_v1 -- --nocapture` (`NOVOVM_ETH_RLPX_PEER_DISCOVERY_TOTAL_TIMEOUT_MS`, default 20s, caps DNS+discv4 startup/refresh discovery before the product entry falls back to already discovered endpoints plus geth bootnodes and enters RLPx ticks; this favors fresh public peer candidates for long-sync v1 while preserving the env override for tighter startup probes)
+- node Ethereum discv4 multi-target lookup gate: `cargo test -p novovm-node eth_discv4_findnode_continues_when_lookup_adds_candidates_v1 -- --nocapture` (`NOVOVM_ETH_DISCV4_DISCOVERY_LOOKUPS_PER_BOOTNODE`, default 4, uses fresh random FindNode targets per bonded bootnode and continues while candidates are added)
+- v3 RLPx new block gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_new_block_gate_v3 -- --nocapture` (real non-empty `NewBlock` => transaction trie root validation + native header/body import + follow-up `GetReceipts` + receipts trie root validation + native receipt snapshot)
+- v3 RLPx raw body material gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_block_body_import_gate_v3 -- --nocapture` and `cargo test -p novovm-node eth_rlpx_native_history_store_roundtrips_and_restores_window_v1 -- --nocapture` (validated RLPx `BlockBodies` retain raw transaction RLPs in native body snapshots and native history/head stores, so later Engine payload body responses can be built from real wire material instead of reconstructed/fake transaction payloads)
+- v3 RLPx new block hashes gate: `cargo test -p novovm-network evm_protocol_observable_equivalence_network_rlpx_new_block_hashes_gate_v3 -- --nocapture` (real `NewBlockHashes` announcement => peer head update + follow-up `GetBlockHeaders`)
+- EVM gateway Engine API probe gate: `cargo test -p novovm-evm-gateway engine_exchange_capabilities_is_probe_only_and_does_not_enable_payload_control -- --nocapture` (`engine_exchangeCapabilities`, `engine_exchangeTransitionConfigurationV1` and `engine_getClientVersionV1` are exposed as probe-only Engine API entries; capabilities returns the callable probe methods, transition config returns Ethereum mainnet TTD with zero terminal block hash/number, while payload/forkchoice methods remain disabled until real execution/forkchoice semantics exist)
+
+Manual local run:
+
+```powershell
+cargo run -p novovm-node --bin supervm-mainline-nightly-gate
+```
+
+Duty report generator (from nightly artifacts):
+
+```powershell
+cargo run -p novovm-node --bin supervm-mainline-duty-report
+```
+
+Optional overrides:
+
+- `NOVOVM_MAINLINE_NIGHTLY_RUN_MAINLINE_GATE=true|false`
+- `NOVOVM_MAINLINE_NIGHTLY_SOAK_PROFILES=6h,24h`
+- `NOVOVM_MAINLINE_NIGHTLY_SOAK_CHAIN_ID=<chain_id>`
+- `NOVOVM_MAINLINE_NIGHTLY_SOAK_6H_DURATION_SECONDS=<seconds>`
+- `NOVOVM_MAINLINE_NIGHTLY_SOAK_24H_DURATION_SECONDS=<seconds>`
+- `NOVOVM_MAINLINE_NIGHTLY_SOAK_6H_INTERVAL_SECONDS=<seconds>`
+- `NOVOVM_MAINLINE_NIGHTLY_SOAK_24H_INTERVAL_SECONDS=<seconds>`

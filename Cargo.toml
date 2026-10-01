@@ -1,40 +1,21 @@
 [workspace]
-members = [
-    "crates/aoem-bindings",
-    "crates/novovm-adapter-api",
-    "crates/novovm-adapter-novovm",
-    "crates/gateways/evm-gateway",
-    "crates/novovm-adapter-sample-plugin",
-    "crates/plugins/evm/plugin",
-    "crates/novovm-bench",
-    "crates/novovm-consensus",
-    "crates/novovm-coordinator",
-    "crates/novovm-exec",
-    "crates/novovm-governance-observability",
-    "crates/novovm-network",
-    "crates/novovm-relay",
-    "crates/novovm-node",
-    "crates/novovm-rollout-policy",
-    "crates/novovm-udp-batch",
-    "crates/novovmctl",
-    "crates/novovm-protocol",
-    "crates/novovm-prover",
-    "vendor/web30-core",
-]
+members = ["runtime/novovm-host"]
+default-members = ["runtime/novovm-host"]
+exclude = ["legacy/supervm-20261002"]
 resolver = "2"
 
-# Quorum/recovery tests repeatedly verify real signatures and hashes. Optimize
-# those primitives without changing test coverage, debug assertions or overflow
-# checks, or rebuilding the entire workspace/native database in release mode.
+[workspace.package]
+edition = "2021"
+rust-version = "1.94"
+publish = false
+
+[workspace.dependencies]
+anyhow = "=1.0.103"
+sha2 = "=0.10.9"
+
+[profile.release]
+overflow-checks = true
+
 [profile.test]
 debug-assertions = true
 overflow-checks = true
-
-[profile.test.package.curve25519-dalek]
-opt-level = 3
-
-[profile.test.package.ed25519-dalek]
-opt-level = 3
-
-[profile.test.package.sha2]
-opt-level = 3

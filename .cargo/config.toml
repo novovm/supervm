@@ -3,4 +3,4 @@
 # Author: Xonovo Technology
 
 [build]
-target-dir = "target"
+target-dir = "target/runtime-rebuild"

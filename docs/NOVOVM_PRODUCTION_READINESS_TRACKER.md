@@ -14,6 +14,32 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
+## 设备 A：按用户要求隔离旧源码、独立新工作区（2026-10-02）
+
+迁移源为 `main@ee80271` 加本机未提交工作树。旧源码及关联 Cargo/vendor/
+proofs/scripts/config/workflows 移至 `legacy/supervm-20261002/`，迁移前后
+1,413 个实际本地文件 SHA256 全部一致。750 个已跟踪文件按原 Git blob
+归档；26 个 modified、12 个 untracked 试验仍保留为未提交状态，未夹带。
+未删除文件、旧构建输出或运行账本；AOEM SDK、历史文档留在根原位置。
+
+根 workspace 明确排除 legacy，只登记 `runtime/novovm-host`；构建输出
+改用 `target/runtime-rebuild`。旧 workflows 完整归档，不再默认触发。
+新 CI 只检查新模块和隔离边界，**不代表旧整链门禁通过、也不代表新链可用**。
+首个局部迁移为内容寻址树算法，新写 owned 状态输入/frontier 与访问权限边界；
+后续必须在新目录完成签名接入、AOEM 真执行、耐久状态、最终性和恢复纵切片。
+尚无新主链性能或多机验收，不部署、不发行、不生成正式创世。
+
+本机 Rust 1.94.0 验证：新 workspace `cargo check`、fmt、严格 Clippy 和
+依赖隔离检查通过（1 个 active member，无 legacy package dependency）。
+25 项默认单测及 1 项 compile-fail 文档测试通过；另显式执行 Release 容量
+用例通过：32,768 键、12,779,421 字节树内容，单键更新读取/新增各 18 节点。
+它不是持久存储、AOEM 或主链吞吐测试。新增 11 项 frontier 用例覆盖源释放
+后的真实线程计算、重复 put/delete、删除兄弟节点、未知/缺失数据区别、权限、
+资源边界及 128 组差分；评审发现的公开 reader 绕过已改为私有 adapter，
+并有编译拒绝测试防回归。新 Linux CI 尚待远端运行，旧整链门未重跑。
+随后 Release `--include-ignored` 全量复验为 26 单测 + 1 文档测试通过、
+0 失败、0 忽略；默认构建没有生成或启动旧节点。
+
 ## 设备 A：宿主重建路线评估，不签收旧异步原型（2026-10-02）
 
 用户再次质疑个位数 TPS，并明确允许重新实现、保留旧代码按需迁移。核对

@@ -1,6 +1,13 @@
 # NOVOVM 产品目标与双机交付主线
 
-更新日期：2026-10-02。最新运行代码：`main@14b32a3`；下方较早基线与结果保留其历史范围。
+更新日期：2026-10-02。隔离前旧节点运行基线：`main@14b32a3`；不是新 runtime 的能力声明。
+
+**用户最新指令已落实：旧代码物理隔离，新代码独立开发。** 原实现迁入
+`legacy/supervm-20261002/`，根 Cargo/默认 CI 仅对应 `runtime/`。上面的
+`14b32a3` 是隔离前的历史运行基线，不能当成新代码具备的功能。新工作区尚无
+可部署节点或 TPS 成绩。A 负责新宿主和按需局部迁移；B 拉取前保全本机改动，
+拉取后重新确认新目录认领，不继续向原根 `crates/` 或隔离区叠加功能。
+旧 38 项本机试验保留但不签收，详见 [隔离说明](../legacy/README.md)。
 
 最新路线：用户明确允许必要时重做并要求评估新旧成本。已选择**重建 fresh
 宿主运行时与候选数据平面，成熟原语按需迁移**，不推倒 AOEM/密码/网络。
@@ -126,11 +133,11 @@ NOVOVM 是以 AOEM 为通用执行内核、面向多链和异构生态的 Web3 �
 
 核对入口：
 
-- [候选执行](../crates/novovm-node/src/native_candidate_execution.rs)：`compute`、`MAX_OUTPUT_BYTES`。当前输出包含累积业务状态并受 8 MiB 限制，不是仅单块交易体大小限制。
-- [自动提案](../crates/novovm-node/src/native_fresh_chain_proposer.rs)：`MAX_SELECTED`、`proposal_round`、`scheduled_leader_v1`。
-- [交易与资产](../crates/novovm-node/src/tx_ingress.rs)：`account_asset_balances`、`verify_nov_native_execute_subject_authority_v1`、`PrivacyRequired` 策略分支。
-- [隐私能力声明](../crates/novovm-node/src/mainline_query.rs)：`not_encrypted_balance_ledger`、`not_complete_ringct_private_transaction`。
-- [封印算法](../crates/novovm-node/src/native_block_seal.rs)：`NOV_NATIVE_BLOCK_SEAL_SIGNATURE_SCHEME_V1`。
+- [候选执行](../legacy/supervm-20261002/crates/novovm-node/src/native_candidate_execution.rs)：`compute`、`MAX_OUTPUT_BYTES`。当前输出包含累积业务状态并受 8 MiB 限制，不是仅单块交易体大小限制。
+- [自动提案](../legacy/supervm-20261002/crates/novovm-node/src/native_fresh_chain_proposer.rs)：`MAX_SELECTED`、`proposal_round`、`scheduled_leader_v1`。
+- [交易与资产](../legacy/supervm-20261002/crates/novovm-node/src/tx_ingress.rs)：`account_asset_balances`、`verify_nov_native_execute_subject_authority_v1`、`PrivacyRequired` 策略分支。
+- [隐私能力声明](../legacy/supervm-20261002/crates/novovm-node/src/mainline_query.rs)：`not_encrypted_balance_ledger`、`not_complete_ringct_private_transaction`。
+- [封印算法](../legacy/supervm-20261002/crates/novovm-node/src/native_block_seal.rs)：`NOV_NATIVE_BLOCK_SEAL_SIGNATURE_SCHEME_V1`。
 
 APFL 专用路径的跨机性能成果应保留，但不得移作 fresh 主链最终确认 TPS；单进程内存网络模拟也不能代替实体网络成绩。16 笔选择上限不是 TPS 数字。BFT 决议和本地执行读回证据不等于零知识执行证明。
 
@@ -138,7 +145,7 @@ APFL 专用路径的跨机性能成果应保留，但不得移作 fresh 主链�
 
 Host 负责 NOV 业务定义、鉴权、链域与 nonce 规则、访问集及执行计划、共识验证和查询投影。AOEM 保持第三方通用内核，不加入 NOV 专属账户、余额、治理或资产逻辑，也不为此建立第二套权威执行内核或账本。
 
-当前 [通用原生交易所有权契约](NOVOVM_GENERIC_NATIVE_TRANSACTION_AOEM_STATE_OWNERSHIP_V1.md) 描述的是 Host 先计算业务结果、AOEM 执行不透明原子写入图并拥有权威持久化。它准确描述现状，但不能据此宣称通用业务计算已并行，或以此替代 [README 的统一语义执行目标](../README.md#architecture-overview)。早期 [所有权重构约束](../docs_CN/NOVOVM-NETWORK/NOVOVM-AOEM-RUNTIME-OWNERSHIP-REFACTOR-2026-06-21.md) 也已指出热路径全量物化和克隆的问题。
+当前 [通用原生交易所有权契约](NOVOVM_GENERIC_NATIVE_TRANSACTION_AOEM_STATE_OWNERSHIP_V1.md) 描述的是 Host 先计算业务结果、AOEM 执行不透明原子写入图并拥有权威持久化。它准确描述现状，但不能据此宣称通用业务计算已并行，或以此替代 [README 的统一语义执行目标](../legacy/supervm-20261002/README.md#architecture-overview)。早期 [所有权重构约束](../docs_CN/NOVOVM-NETWORK/NOVOVM-AOEM-RUNTIME-OWNERSHIP-REFACTOR-2026-06-21.md) 也已指出热路径全量物化和克隆的问题。
 
 业务定义属于 Host，并不要求全部业务必须先由 Host 全量串行算完。纠偏应将可独立计算的任务和依赖关系交给通用 AOEM 调度执行，保留确定性的冲突处理与提交边界。任务如何表达必须核对实际通用 ABI，不能只把最终 KV 写入并行化，就称交易计算并行化。
 
