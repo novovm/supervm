@@ -25,6 +25,51 @@ pub(super) struct Intent {
     pub(super) proof: NovNativeFreshFinalityProofV1,
 }
 
+/// Only constructed after full certificate verification in this traversal.
+/// Carries historical linkage, never a live signing/publication capability.
+pub(super) struct VerifiedHistoricalParentV1 {
+    genesis: [u8; 32],
+    namespace: [u8; 32],
+    workspace: [u8; 32],
+    block: NovNativeDurableBlockV1,
+    target: [u8; 32],
+}
+
+impl VerifiedHistoricalParentV1 {
+    pub(super) fn genesis(
+        ledger: &NovNativeBlockLedgerV1,
+        validation: &FreshGenesisValidationV1<'_>,
+        namespace: [u8; 32],
+    ) -> Result<Self> {
+        let parent = successors::record_at(ledger, 1)?;
+        #[cfg(test)]
+        HISTORY_PARENT_CHECKS.with(|counts| {
+            let (checked, reused) = counts.get();
+            counts.set((checked + 1, reused));
+        });
+        let target = parent
+            .proof
+            .validated_decision_target_with_validation(validation, &parent.block)?;
+        Ok(Self {
+            genesis: validation.compiled().config_commitment(),
+            namespace,
+            workspace: parent.execution.workspace_id,
+            block: parent.block,
+            target,
+        })
+    }
+
+    pub(super) fn block(&self) -> &NovNativeDurableBlockV1 {
+        &self.block
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static HISTORY_PARENT_CHECKS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    pub(super) static HISTORY_CURRENT_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl Intent {
     pub(super) fn height(&self) -> Result<u64> {
         let Message::DecisionCertificateV3 { decision, .. } = &self.proof.witness else {
@@ -55,6 +100,43 @@ impl Intent {
         validation: &FreshGenesisValidationV1<'_>,
         namespace: [u8; 32],
     ) -> Result<()> {
+        self.validate_with_parent(ledger, validation, namespace, None)
+            .map(|_| ())
+    }
+
+    pub(super) fn validate_next_in_history(
+        &self,
+        ledger: &NovNativeBlockLedgerV1,
+        validation: &FreshGenesisValidationV1<'_>,
+        namespace: [u8; 32],
+        parent: &VerifiedHistoricalParentV1,
+    ) -> Result<VerifiedHistoricalParentV1> {
+        let block = self.validate_with_parent(ledger, validation, namespace, Some(parent))?;
+        let Message::DecisionCertificateV3 { decision, .. } = &self.proof.witness else {
+            bail!("verified historical successor lost its decision witness");
+        };
+        // Keep the public target derivation's own prepare-QC check. We only
+        // avoid validating this complete witness again as the next parent.
+        let target = crate::native_block_seal::commit_v3::decision_target_v3(
+            &decision.prepare,
+            validation.compiled().validator_set(),
+        )?;
+        Ok(VerifiedHistoricalParentV1 {
+            genesis: validation.compiled().config_commitment(),
+            namespace,
+            workspace: self.execution.workspace_id,
+            block,
+            target,
+        })
+    }
+
+    fn validate_with_parent(
+        &self,
+        ledger: &NovNativeBlockLedgerV1,
+        validation: &FreshGenesisValidationV1<'_>,
+        namespace: [u8; 32],
+        verified_parent: Option<&VerifiedHistoricalParentV1>,
+    ) -> Result<NovNativeDurableBlockV1> {
         let config = validation.config();
         let compiled = validation.compiled();
         if self.genesis != compiled.config_commitment() || self.namespace != namespace {
@@ -74,20 +156,52 @@ impl Intent {
         let block = ledger
             .load_candidate_block_for_record_inner_v1(&record)?
             .context("successor promotion body missing")?;
-        let parent = successors::record_at(
-            ledger,
-            subject
-                .height
-                .checked_sub(1)
-                .context("successor height underflow")?,
-        )?;
-        if self.parent_workspace != parent.execution.workspace_id {
+        let loaded_parent = if verified_parent.is_none() {
+            Some(successors::record_at(
+                ledger,
+                subject
+                    .height
+                    .checked_sub(1)
+                    .context("successor height underflow")?,
+            )?)
+        } else {
+            None
+        };
+        let (parent_block, parent_workspace) = if let Some(parent) = verified_parent {
+            if parent.genesis != self.genesis || parent.namespace != namespace {
+                bail!("verified historical parent domain differs from successor");
+            }
+            #[cfg(test)]
+            HISTORY_PARENT_CHECKS.with(|counts| {
+                let (checked, reused) = counts.get();
+                counts.set((checked, reused + 1));
+            });
+            (&parent.block, parent.workspace)
+        } else {
+            let parent = loaded_parent
+                .as_ref()
+                .context("cold successor parent missing")?;
+            (&parent.block, parent.execution.workspace_id)
+        };
+        if self.parent_workspace != parent_workspace {
             bail!("successor promotion parent workspace mismatch");
         }
-        successors::validate_child(&parent.block, &block)?;
-        let target = parent
-            .proof
-            .validated_decision_target_with_validation(validation, &parent.block)?;
+        successors::validate_child(parent_block, &block)?;
+        let target = match verified_parent {
+            Some(parent) => parent.target,
+            None => {
+                #[cfg(test)]
+                HISTORY_PARENT_CHECKS.with(|counts| {
+                    let (checked, reused) = counts.get();
+                    counts.set((checked + 1, reused));
+                });
+                loaded_parent
+                    .as_ref()
+                    .context("cold successor parent missing")?
+                    .proof
+                    .validated_decision_target_with_validation(validation, parent_block)?
+            }
+        };
         let expected = crate::native_block_seal::subject_from_block_profile_v1(
             &block,
             compiled.validator_set(),
@@ -113,12 +227,14 @@ impl Intent {
             .transport_bindings
             .first()
             .context("successor authority empty")?;
+        #[cfg(test)]
+        HISTORY_CURRENT_CHECKS.with(|count| count.set(count.get() + 1));
         self.proof.witness.validate_authenticated(
             &authority,
             subject.height,
             &source.transport_peer_id,
         )?;
-        Ok(())
+        Ok(block)
     }
 }
 

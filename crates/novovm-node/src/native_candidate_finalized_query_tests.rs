@@ -299,6 +299,21 @@ pub(crate) fn exercise_finalized_record_queries_for_test_v1(
         bail!("query fixture refuses to reuse an existing pool path");
     }
     let open_pool = || FreshTransactionPool::open(&pool_path, chain, genesis, params);
+    let admission_path = native_path.with_extension("finalized-record-admission-pool");
+    if admission_path.exists() {
+        bail!("admission fixture refuses to reuse an existing pool path");
+    }
+    let open_admission = || FreshTransactionPool::open(&admission_path, chain, genesis, params);
+    let mut admission = open_admission()?;
+    let admission_sequence = admission.write_sequence_for_test();
+    // Live entries first ensure a later corrupted stale record cannot leave
+    // an admitted prefix. Include both successful and failed finalized raws.
+    let admission_entries: Vec<_> = pending
+        .iter()
+        .chain(original_entries.iter())
+        .chain(std::iter::once(&alternative))
+        .cloned()
+        .collect();
     let mut pool = open_pool()?;
     for entry in &entries {
         if !pool.insert(entry.clone())? {
@@ -360,15 +375,27 @@ pub(crate) fn exercise_finalized_record_queries_for_test_v1(
                 rejection(
                     pool.reconcile_rooted(&view, params),
                     "faulted pool reconciliation",
+                )?;
+                rejection(
+                    admission.insert_live_batch(admission_entries.clone(), Some(&view), params),
+                    "faulted batch admission",
                 )
             })?;
             if pool_image(&pool) != all {
                 bail!("failed record query partially deleted in-memory pool entries");
             }
+            if !admission.is_empty() || admission.write_sequence_for_test() != admission_sequence {
+                bail!("faulted batch admission wrote an earlier live prefix");
+            }
             Ok(())
         })?;
         drop(pool);
         pool = open_pool()?;
+        drop(admission);
+        admission = open_admission()?;
+        if !admission.is_empty() || admission.write_sequence_for_test() != admission_sequence {
+            bail!("faulted batch admission changed durable pool after restart");
+        }
         if pool_image(&pool) != all {
             bail!("failed record query partially deleted durable pool entries");
         }
@@ -405,6 +432,39 @@ pub(crate) fn exercise_finalized_record_queries_for_test_v1(
     })?;
     if pool_image(&reopened) != remaining {
         bail!("record-backed reconciliation is not idempotent after restart");
+    }
+    state_records::without_materialization_for_test(|| {
+        if admission.insert_live_batch(admission_entries.clone(), Some(&view), params)? != 0
+            || pool_image(&admission) != remaining
+            || admission.write_sequence_for_test() != admission_sequence + pending.len() as u64
+        {
+            bail!("admission did not write exactly the live transactions");
+        }
+        let sequence = admission.write_sequence_for_test();
+        for _ in 0..3 {
+            if admission.insert_live_batch(admission_entries.clone(), Some(&view), params)? != 0 {
+                bail!("exact pending replay was rejected");
+            }
+            admission.reconcile_rooted(&view, params)?;
+        }
+        // Already-authenticated entry is deliberately forged only in this test
+        // to exercise the second-layer same-hash/full-raw consistency check.
+        let mut mismatch = pending[0].clone();
+        mismatch.raw.push(0);
+        if admission.insert_live_batch(vec![mismatch], Some(&view), params)? != 1
+            || admission.write_sequence_for_test() != sequence
+            || pool_image(&admission) != remaining
+        {
+            bail!("replays wrote to the pool or bypassed raw-byte equality");
+        }
+        Ok(())
+    })?;
+    drop(admission);
+    let admission = open_admission()?;
+    if pool_image(&admission) != remaining
+        || admission.write_sequence_for_test() != admission_sequence + pending.len() as u64
+    {
+        bail!("filtered batch admission changed across restart");
     }
     let workspace = WorkspaceStore::open(chain, params)?;
     if workspace.graph.get(&native_aoem_owned_state_head_key_v1(

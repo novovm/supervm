@@ -79,6 +79,7 @@ impl FreshChainLifecycleV1 {
         }
         let (events, rate_rejected) = self.transaction_transport.drain(now);
         self.rejected = self.rejected.saturating_add(rate_rejected as u64);
+        let mut authenticated = Vec::with_capacity(events.len());
         for event in events {
             let digest: [u8; 32] = Sha256::digest(&event.frame.payload).into();
             let entry =
@@ -91,11 +92,14 @@ impl FreshChainLifecycleV1 {
                 self.rejected = self.rejected.saturating_add(1);
                 continue;
             }
-            if !self.pool.as_mut().expect("pool exists").insert(entry)? {
-                self.rejected = self.rejected.saturating_add(1);
-            }
+            authenticated.push(entry);
         }
         let pool = self.pool.as_mut().expect("pool exists");
+        self.rejected = self.rejected.saturating_add(pool.insert_live_batch(
+            authenticated,
+            self.finalized_parent.as_ref(),
+            &self.params,
+        )?);
         if let Some(parent) = &self.finalized_parent {
             pool.reconcile_rooted(parent, &self.params)?;
         }

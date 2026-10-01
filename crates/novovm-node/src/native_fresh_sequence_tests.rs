@@ -655,6 +655,10 @@ fn exercise_fresh_sequence(
         }
         parent = candidate;
     }
+    // Both root profiles reach this real, fully finalized four-block history.
+    // Exercise same-traversal parent reuse and independent-load corruption
+    // rejection before the existing explicit missing-archive recovery fixture.
+    Ledger::assert_fresh_history_reuse_for_test_v1(&ledger, pin, namespace);
     let read_counted_finality = |height| {
         crate::tx_ingress::fresh_genesis::count_genesis_compilations_for_test_v1(|| {
             Ledger::count_fresh_ledger_verifications_for_test_v1(|| {

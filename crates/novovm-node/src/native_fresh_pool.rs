@@ -133,6 +133,64 @@ impl FreshTransactionPool {
         Ok(true)
     }
 
+    /// Admit already authenticated and transport-bound entries. Finalized
+    /// replays are filtered before any synchronous pool write, not put/deleted
+    /// on every gossip round. The immutable parent only filters stale entries;
+    /// candidate execution still revalidates current authority and nonce.
+    pub(crate) fn insert_live_batch(
+        &mut self,
+        entries: Vec<PendingTransaction>,
+        parent: Option<&candidate_workspace::FinalizedParentViewV1>,
+        params: &serde_json::Value,
+    ) -> Result<u64> {
+        let mut rejected = 0u64;
+        let entries: Vec<_> = entries
+            .into_iter()
+            .filter(|entry| {
+                if let Some(previous) = self.entries.get(&entry.hash) {
+                    // Hash alone must never authorize a different raw payload.
+                    if previous.raw != entry.raw {
+                        rejected = rejected.saturating_add(1);
+                    }
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+        if entries.is_empty() {
+            return Ok(rejected);
+        }
+        let live = if let Some(parent) = parent {
+            // Finish ALL reads before insertion: damaged data must not be
+            // treated as missing/zero or leave a durably admitted prefix.
+            parent.with_records(params, |reader| {
+                let mut live = Vec::new();
+                for entry in entries {
+                    if !reader.contains_receipt(&entry.hash)?
+                        && reader.next_nonce(&entry.identity)? <= entry.nonce
+                    {
+                        live.push(entry);
+                    }
+                }
+                Ok(live)
+            })?
+        } else {
+            entries
+        };
+        for entry in live {
+            if !self.insert(entry)? {
+                rejected = rejected.saturating_add(1);
+            }
+        }
+        Ok(rejected)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn write_sequence_for_test(&self) -> u64 {
+        self.db.latest_sequence_number()
+    }
+
     pub fn reconcile(
         &mut self,
         parent: &candidate_workspace::FinalizedGenesisParentV1,

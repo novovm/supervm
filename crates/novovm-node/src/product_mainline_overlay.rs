@@ -2147,7 +2147,8 @@ fn drain_mesh_outbound_v1(
             Ok(outbound) => outbound,
             Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
         };
-        if outbound.item.expired_at(now_ms_v1()) {
+        let now_ms = now_ms_v1();
+        if outbound.item.expired_at(now_ms) {
             publish_submission_expired_v1(worker, &outbound)?;
             continue;
         }
@@ -2157,13 +2158,10 @@ fn drain_mesh_outbound_v1(
                 .reservations
                 .remove(&peer_id)
                 .context("mesh outbound lost its peer resource reservation")?;
-            pending_by_peer
+            let pending = pending_by_peer
                 .get_mut(&peer_id)
-                .context("mesh outbound target queue disappeared")?
-                .push_back(ProductMainlineOverlayPendingV1 {
-                    item: Arc::clone(&outbound.item),
-                    _reservation: reservation,
-                });
+                .context("mesh outbound target queue disappeared")?;
+            push_pending_outbound_v1(pending, Arc::clone(&outbound.item), reservation, now_ms);
         }
         if !outbound.reservations.is_empty() {
             bail!("mesh outbound retained unknown peer resource reservations");
@@ -2182,7 +2180,8 @@ fn drain_single_outbound_v1(
             Ok(outbound) => outbound,
             Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
         };
-        if outbound.item.expired_at(now_ms_v1()) {
+        let now_ms = now_ms_v1();
+        if outbound.item.expired_at(now_ms) {
             publish_submission_expired_v1(worker, &outbound)?;
             continue;
         }
@@ -2199,12 +2198,38 @@ fn drain_single_outbound_v1(
         if !outbound.reservations.is_empty() {
             bail!("single-peer outbound retained unknown resource reservations");
         }
-        pending.push_back(ProductMainlineOverlayPendingV1 {
-            item: outbound.item,
-            _reservation: reservation,
-        });
+        push_pending_outbound_v1(pending, outbound.item, reservation, now_ms);
     }
     Ok(())
+}
+
+/// Coalesce only identical native transactions still awaiting relay admission
+/// in this worker-owned peer queue. Keep the original FIFO position and TTL;
+/// this is not a recipient ACK or a history of already sent transactions.
+fn push_pending_outbound_v1(
+    pending: &mut VecDeque<ProductMainlineOverlayPendingV1>,
+    item: Arc<ProductMainlineOverlayOutboundItemV1>,
+    reservation: ProductMainlineOverlayPendingPermitV1,
+    now_ms: u64,
+) {
+    if item.payload_class == ProductMainlineOverlayPayloadClassV1::NativeTransaction
+        && pending.iter().any(|queued| {
+            !queued.item.expired_at(now_ms)
+                && queued._reservation.peer_id == reservation.peer_id
+                && queued.item.payload_class == item.payload_class
+                && queued.item.object_hash == item.object_hash
+                && queued.item.payload_sha256 == item.payload_sha256
+                && queued.item.payload.as_ref() == item.payload.as_ref()
+        })
+    {
+        // Dropping the duplicate releases its existing count/byte permit.
+        // Once the original is sent or expires, a later retry can queue again.
+        return;
+    }
+    pending.push_back(ProductMainlineOverlayPendingV1 {
+        item,
+        _reservation: reservation,
+    });
 }
 
 fn publish_submission_expired_v1(
@@ -3848,6 +3873,8 @@ mod tests {
         NovVerificationModeV1,
     };
     use std::{net::TcpListener, thread, time::Instant};
+
+    include!("product_mainline_overlay_pending_tests.rs");
 
     static NATIVE_INGRESS_FIXTURE_ENV_LOCK_V1: std::sync::Mutex<()> = std::sync::Mutex::new(());
 

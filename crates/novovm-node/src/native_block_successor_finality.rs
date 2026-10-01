@@ -86,9 +86,30 @@ pub(super) fn validated_keys(
     let chain = validation.config().chain_id;
     let head_key = head_key_v1(chain).into_bytes();
     let mut head = head_at(ledger, 1)?;
-    for (height, archived) in archives(ledger)? {
-        archived.validate_with_validation(ledger, validation, namespace)?;
+    let history = archives(ledger)?;
+    // Only this complete, ordered, read-only traversal retains the previous
+    // verified record. There is no callback, write or reuse across load calls.
+    // Every current witness/QC and each historical index remains validated.
+    let mut parent = if history.is_empty() {
+        None
+    } else {
+        Some(successor_promotion::VerifiedHistoricalParentV1::genesis(
+            ledger, validation, namespace,
+        )?)
+    };
+    for (height, archived) in history {
+        let verified = archived.validate_next_in_history(
+            ledger,
+            validation,
+            namespace,
+            parent
+                .as_ref()
+                .context("historical parent verification missing")?,
+        )?;
         let block = successors::record_at(ledger, height)?.block;
+        if &block != verified.block() {
+            bail!("historical finalized block changed within verification");
+        }
         let mut entries = completion::block_entries(&block, Some(&head))?;
         head = serde_json::from_slice(&entries.remove(&head_key).context("archive head missing")?)?;
         for (key, bytes) in entries {
@@ -98,6 +119,7 @@ pub(super) fn validated_keys(
             keys.push(key);
         }
         keys.push(archive_key(height));
+        parent = Some(verified);
     }
     let height = intent.height()?;
     if finalized {
@@ -119,6 +141,10 @@ pub(super) fn validated_keys(
     }
     Ok(keys)
 }
+
+#[cfg(test)]
+#[path = "native_block_successor_history_tests.rs"]
+mod history_reuse_tests;
 
 /// The caller holds the ledger mutex and has run the complete `load_verified`.
 pub(super) fn read_finality(
