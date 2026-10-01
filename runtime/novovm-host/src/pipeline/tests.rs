@@ -57,6 +57,8 @@ fn inert_pipeline(config: PipelineConfig) -> (CandidatePipeline, mpsc::Receiver<
             worker: Some(thread::spawn(|| Ok(()))),
             io: None,
             queries: None,
+            metadata: None,
+            identity: Arc::new(()),
             usage: Arc::new(Mutex::new(Usage::default())),
         },
         receiver,
@@ -185,17 +187,28 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
     let (sender, receiver) = mpsc::sync_channel(cfg.max_batches);
     let worker_config = cfg.clone();
     let worker_io = io.clone();
+    let identity = Arc::new(());
+    let worker_identity = identity.clone();
     let worker = thread::spawn(move || {
-        driver::run(&worker_config, &worker_io, &compute, receiver);
+        driver::run(
+            &worker_config,
+            &worker_io,
+            &compute,
+            receiver,
+            &worker_identity,
+        );
         compute.shutdown()
     });
     let queries = io.read_client()?;
+    let metadata = io.metadata_client()?;
     let pipeline = CandidatePipeline {
         config: cfg,
         sender: Some(sender),
         worker: Some(worker),
         io: Some(io),
         queries: Some(queries),
+        metadata: Some(metadata),
+        identity,
         usage: Arc::new(Mutex::new(Usage::default())),
     };
     let mut ticket = admitted(&pipeline, request(update.root()));

@@ -3,6 +3,7 @@
 //! The storage owner is separate from the computation owner and control loop.
 
 pub mod io;
+pub(crate) mod metadata;
 pub mod packet;
 mod store;
 

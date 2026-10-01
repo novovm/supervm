@@ -126,6 +126,9 @@ impl PreparedCandidate {
     pub fn record_bytes(&self) -> usize {
         self.resources.total_bytes
     }
+    pub fn transaction_count(&self) -> usize {
+        self.resources.transactions
+    }
     pub fn context(&self) -> &BatchContext {
         &self.summary.context
     }

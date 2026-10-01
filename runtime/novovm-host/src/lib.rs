@@ -5,6 +5,7 @@
 //! and verification boundary. No deployable node or finality claim yet.
 
 pub mod business;
+pub mod consensus;
 pub mod execution;
 pub mod ingress;
 pub mod persistence;

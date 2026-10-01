@@ -76,12 +76,12 @@ pub struct PersistedCandidate {
 }
 
 pub struct CandidateStore {
-    storage: RefCell<StorageSession>,
+    pub(super) storage: RefCell<StorageSession>,
     domain: StorageDomain,
     prefix: Vec<u8>,
     budget: PacketBudget,
     storage_config: StorageConfig,
-    write_frozen: Cell<bool>,
+    pub(super) write_frozen: Cell<bool>,
 }
 
 impl CandidateStore {
@@ -148,7 +148,7 @@ impl CandidateStore {
         self.write_frozen.get() || self.storage.borrow().is_poisoned()
     }
 
-    fn writable(&self) -> Result<()> {
+    pub(super) fn writable(&self) -> Result<()> {
         ensure!(
             !self.is_write_frozen(),
             "candidate store write outcome unknown/corrupt; explicit recovery required"

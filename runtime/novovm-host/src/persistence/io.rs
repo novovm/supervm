@@ -7,6 +7,7 @@
 //! hard latency guarantee. Packet preparation and startup recovery run outside
 //! the node control loop. This is not yet a node scheduler or measured TPS.
 
+use super::metadata::{MetaKey, MetaOutcome, MetaTransition, MetadataSnapshot};
 use super::store::{PersistProgress, BULK_KEYS};
 use super::{CandidateStore, OpenMode, PersistedCandidate, PreparedCandidate, StoreConfig};
 use crate::state::tree::{read_state_value, validate_state_node_bytes, NodeHash};
@@ -93,6 +94,14 @@ impl<T> IoTicket<T> {
 }
 
 enum Operation {
+    MetadataRead {
+        keys: Vec<MetaKey>,
+        reply: mpsc::Sender<Result<MetadataSnapshot>>,
+    },
+    MetadataApply {
+        transition: MetaTransition,
+        reply: mpsc::Sender<Result<MetaOutcome>>,
+    },
     Persist {
         packet: Arc<PreparedCandidate>,
         reply: mpsc::Sender<Result<PersistedCandidate>>,
@@ -134,6 +143,47 @@ pub(crate) struct IoReadClient {
     sender: mpsc::SyncSender<Command>,
     usage: Arc<Mutex<Usage>>,
     budget: IoBudget,
+}
+
+/// Separate bounded control-metadata admission, not another database/owner.
+/// Neither abandoned public-query replies nor held metadata replies reserve
+/// the internal candidate-capture/write quota. Only the pipeline creates this.
+pub(crate) struct IoMetadataClient {
+    sender: mpsc::SyncSender<Command>,
+    usage: Arc<Mutex<Usage>>,
+    budget: IoBudget,
+}
+
+impl IoMetadataClient {
+    pub(crate) fn try_read(
+        &self,
+        keys: Vec<MetaKey>,
+    ) -> Result<Option<IoTicket<MetadataSnapshot>>> {
+        ensure!(
+            (1..=8).contains(&keys.len()),
+            "invalid metadata read key count"
+        );
+        let bytes = keys.len() * (512 * 1024 + 128);
+        enqueue(
+            &self.sender,
+            reserve(&self.usage, self.budget, bytes)?,
+            |reply| Operation::MetadataRead { keys, reply },
+        )
+    }
+
+    pub(crate) fn try_apply(
+        &self,
+        transition: MetaTransition,
+    ) -> Result<Option<IoTicket<MetaOutcome>>> {
+        // Account for the owned expected/new values and bounded actual/readback
+        // contents. The native allocator and DB cache are not a heap hard cap.
+        let bytes = transition.retained_bytes() + 8 * 512 * 1024 + 1024;
+        enqueue(
+            &self.sender,
+            reserve(&self.usage, self.budget, bytes)?,
+            |reply| Operation::MetadataApply { transition, reply },
+        )
+    }
 }
 
 impl IoReadClient {
@@ -286,6 +336,23 @@ impl IoService {
         })
     }
 
+    pub(crate) fn metadata_client(&self) -> Result<IoMetadataClient> {
+        let notify = self
+            .usage
+            .lock()
+            .map_err(|_| anyhow::anyhow!("I/O accounting poisoned"))?
+            .notify
+            .clone();
+        Ok(IoMetadataClient {
+            sender: self.sender.clone(),
+            budget: self.budget,
+            usage: Arc::new(Mutex::new(Usage {
+                notify,
+                ..Usage::default()
+            })),
+        })
+    }
+
     /// None is backpressure, NOT acceptance. The caller retains its Arc and can
     /// submit later. Once accepted, a lost reply never authorizes blind retry.
     pub fn try_persist(
@@ -364,6 +431,14 @@ fn run_owner(
         };
         if let Some(command) = command {
             match command.operation {
+                Operation::MetadataRead { keys, reply } => {
+                    let _ = reply.send(store.read_metadata(&keys));
+                    completed = true;
+                }
+                Operation::MetadataApply { transition, reply } => {
+                    let _ = reply.send(store.apply_metadata(&transition));
+                    completed = true;
+                }
                 Operation::Persist { packet, reply } => {
                     pending.push_back((packet, reply, command.permit))
                 }

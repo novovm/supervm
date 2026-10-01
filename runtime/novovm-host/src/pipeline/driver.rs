@@ -12,6 +12,7 @@ pub(super) fn start(
     mode: OpenMode,
     receiver: mpsc::Receiver<Command>,
     ready: mpsc::SyncSender<Result<Arc<IoService>>>,
+    identity: Arc<()>,
 ) -> Result<()> {
     let startup = (|| {
         let notify = Some(thread::current());
@@ -46,7 +47,7 @@ pub(super) fn start(
     if ready.send(Ok(io.clone())).is_err() {
         return compute.shutdown();
     }
-    run(&config, &io, &compute, receiver);
+    run(&config, &io, &compute, receiver, &identity);
     // I/O shutdown belongs to CandidatePipeline after this coordinator releases
     // its Arc. All admitted jobs (including lost replies) have drained here.
     compute.shutdown()
@@ -117,6 +118,7 @@ fn advance(
     config: &PipelineConfig,
     io: &IoService,
     compute: &ComputeOwner,
+    identity: &Arc<()>,
 ) -> Result<Advancement> {
     use super::compute::Submission as ComputeSubmission;
     match stage {
@@ -224,6 +226,10 @@ fn advance(
                     "stored reply differs from executed packet"
                 );
                 Ok(Advancement::Complete(DurableBatch {
+                    candidate: DurableCandidate {
+                        owner: identity.clone(),
+                        packet: packet.clone(),
+                    },
                     packet,
                     persisted,
                     observation,
@@ -247,6 +253,7 @@ pub(super) fn run(
     io: &IoService,
     compute: &ComputeOwner,
     receiver: mpsc::Receiver<Command>,
+    identity: &Arc<()>,
 ) {
     let mut jobs = VecDeque::<Job>::new();
     let mut connected = true;
@@ -278,7 +285,7 @@ pub(super) fn run(
                 _permit,
             } = jobs.pop_front().expect("fixed round length");
             let label = stage.label();
-            match advance(stage, &mut candidate_id, config, io, compute) {
+            match advance(stage, &mut candidate_id, config, io, compute, identity) {
                 Ok(Advancement::Pending {
                     stage,
                     progressed: made_progress,

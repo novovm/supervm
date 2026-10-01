@@ -16,7 +16,8 @@ use crate::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::business::nov_transfer_batch::ExecutionObservation;
 use crate::execution::plan::{BatchContext, PlanBudget};
 use crate::ingress::batch::AuthenticationBudget;
-use crate::persistence::io::{IoBudget, IoReadClient, IoService, IoTicket};
+use crate::persistence::io::{IoBudget, IoMetadataClient, IoReadClient, IoService, IoTicket};
+use crate::persistence::metadata::{MetaKey, MetaOutcome, MetaTransition, MetadataSnapshot};
 use crate::persistence::{OpenMode, PersistedCandidate, PreparedCandidate, StoreConfig};
 use crate::state::frontier::CaptureBudget;
 use crate::state::tree::NodeHash;
@@ -38,7 +39,9 @@ pub struct PipelineConfig {
     pub compute_timeout: Duration,
     /// Internal capture/write quota. Public queries use a separate quota of
     /// `requests` tickets and at most `requests * 545` logical bytes, sharing the
-    /// same native owner and database. Neither is a total allocator memory cap.
+    /// same native owner and database. Consensus metadata has another `io`
+    /// quota so retained metadata replies cannot consume capture reservations.
+    /// These are logical-content budgets, not a total allocator memory cap.
     pub io: IoBudget,
     pub capture_edge_quantum: usize,
 }
@@ -174,6 +177,46 @@ pub struct DurableBatch {
     pub packet: Arc<PreparedCandidate>,
     pub persisted: PersistedCandidate,
     pub observation: ExecutionObservation,
+    candidate: DurableCandidate,
+}
+
+impl DurableBatch {
+    /// Immutable content completion, independent of the public diagnostic fields.
+    pub fn candidate(&self) -> &DurableCandidate {
+        &self.candidate
+    }
+}
+
+/// Local content verified by this resident pipeline after atomic persistence.
+/// Not a cached permission to sign or publish. Consensus still checks the live
+/// signing state, configured parent and round on EVERY action. A new pipeline
+/// (including restart) cannot reuse this completion. No public constructor.
+///
+/// ```compile_fail
+/// use novovm_host::{persistence::PreparedCandidate, pipeline::DurableCandidate};
+/// use std::sync::Arc;
+/// fn forge(packet: Arc<PreparedCandidate>) -> DurableCandidate {
+///     DurableCandidate { owner: Arc::new(()), packet }
+/// }
+/// ```
+#[derive(Clone)]
+pub struct DurableCandidate {
+    owner: Arc<()>,
+    packet: Arc<PreparedCandidate>,
+}
+
+impl DurableCandidate {
+    pub fn packet(&self) -> &PreparedCandidate {
+        &self.packet
+    }
+
+    pub(crate) fn bind_to(&self, owner: &Arc<()>) -> Result<&PreparedCandidate> {
+        ensure!(
+            Arc::ptr_eq(&self.owner, owner),
+            "durable candidate belongs to another pipeline; recover content explicitly"
+        );
+        Ok(&self.packet)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -263,6 +306,8 @@ pub struct CandidatePipeline {
     worker: Option<JoinHandle<Result<()>>>,
     io: Option<Arc<IoService>>,
     queries: Option<IoReadClient>,
+    metadata: Option<IoMetadataClient>,
+    identity: Arc<()>,
     usage: Arc<Mutex<Usage>>,
 }
 
@@ -274,20 +319,25 @@ impl CandidatePipeline {
         let (sender, receiver) = mpsc::sync_channel(config.max_batches);
         let (ready, ready_receiver) = mpsc::sync_channel(1);
         let worker_config = config.clone();
+        let identity = Arc::new(());
+        let worker_identity = identity.clone();
         let worker = thread::Builder::new()
             .name("novovm-candidate-pipeline".into())
-            .spawn(move || driver::start(worker_config, mode, receiver, ready))
+            .spawn(move || driver::start(worker_config, mode, receiver, ready, worker_identity))
             .context("start candidate pipeline")?;
         let io = ready_receiver
             .recv()
             .context("candidate pipeline failed during startup")??;
         let queries = io.read_client()?;
+        let metadata = io.metadata_client()?;
         Ok(Self {
             config,
             sender: Some(sender),
             worker: Some(worker),
             io: Some(io),
             queries: Some(queries),
+            metadata: Some(metadata),
+            identity,
             usage: Arc::new(Mutex::new(Usage::default())),
         })
     }
@@ -360,11 +410,40 @@ impl CandidatePipeline {
             .try_read_value(root, key)
     }
 
+    pub(crate) fn try_read_consensus_metadata(
+        &self,
+        keys: Vec<MetaKey>,
+    ) -> Result<Option<IoTicket<MetadataSnapshot>>> {
+        self.metadata
+            .as_ref()
+            .context("pipeline metadata closed")?
+            .try_read(keys)
+    }
+
+    pub(crate) fn storage_domain(&self) -> crate::persistence::StorageDomain {
+        self.config.store.domain
+    }
+
+    pub(crate) fn owner_identity(&self) -> Arc<()> {
+        self.identity.clone()
+    }
+
+    pub(crate) fn try_apply_consensus_metadata(
+        &self,
+        transition: MetaTransition,
+    ) -> Result<Option<IoTicket<MetaOutcome>>> {
+        self.metadata
+            .as_ref()
+            .context("pipeline metadata closed")?
+            .try_apply(transition)
+    }
+
     /// Administrative drain, not a network tick. A caller abandoning tickets
     /// does not abandon accepted work. Drop itself only disconnects/wakes.
     pub fn shutdown(mut self) -> Result<()> {
         self.sender.take();
         self.queries.take();
+        self.metadata.take();
         let worker = self.worker.take().context("pipeline already shut down")?;
         worker.thread().unpark();
         let result = worker
@@ -382,6 +461,7 @@ impl Drop for CandidatePipeline {
     fn drop(&mut self) {
         self.sender.take();
         self.queries.take();
+        self.metadata.take();
         if let Some(worker) = &self.worker {
             worker.thread().unpark();
         }

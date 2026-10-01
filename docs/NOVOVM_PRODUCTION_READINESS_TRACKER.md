@@ -8,6 +8,68 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：同一常驻流水线的耐久签票与单高度决定归档（2026-10-02）
+
+继续 `main@3563f823`，前置 Windows/Linux CI `36935015200` 已成功。本轮
+仅新 `runtime/` 与既有文档；旧38项隔离草稿、AOEM源码/SDK未改。新模块
+直接使用前一片真实签名→AOEM业务→原子候选写入的输出，没有第二套业务
+执行器。计算和存储会话继续常驻；共识metadata共享原有I/O owner及同一个
+AOEM RocksDB，另有有界metadata额度，不挤占候选捕获额度，不另初始化库。
+
+`BlockStatement` 不是输入plan ID改名：绑定完整执行上下文、验证者集/epoch、
+父决定、原文计划ID、输出状态、逐批回执、执行声明、文档摘要和交易数/版本。
+非零声明或QC都不证明业务执行有效性。`DurableCandidate` 只在真实pipeline
+完整持久化读回且id/root/statement/document相符后创建；只读私有构造、无
+反序列化入口，限同一owner。公开诊断字段不是授权。投票各阶段不重复扫描
+完整候选；新会话/重启旧凭据失效，冷恢复StoredCandidate也不自动取得凭据。
+同owner内容不可变是缓存前提，不是每次签票时全盘损坏巡检。
+
+`ValidatorJournal` 每次检查固定可信父绑定、精确域/轮次/阶段/锁；签名留在
+private pending，snapshot+精确outbox一次原子条件批写并读回后才释放。
+已存在完整同结果可幂等确认；陈旧snapshot/部分记录不能补修为成功，冲突
+和未知结果冻结会话。恢复校验父点、域、valid QC及最后outbox/签名；不把
+缺snapshot但仍有outbox当新签者，不承诺抵御整库回滚或扫描全部历史outbox。
+
+### 不迁移的旧锁规则与新开发格式边界
+
+审查旧 `native_block_seal.rs` 首提案/首票的高度锁，以及
+`native_block_seal_newview.rs` 不迁移锁规则，存在反例：四等权验证者中，
+恶意leader向三诚实节点发A/A/B后不投票，无法形成3/4QC；网络恢复后仍会
+被永久不同高度锁阻止收敛。因此不整体照搬旧控制流，也不能简单删除锁。
+新 `round-bft/v1` 的单高度安全内核参考
+[Tendermint Algorithm 1（2019修订，第22–67行）](https://arxiv.org/pdf/1807.04938)：
+首prevote不锁，当前轮prevoteQC才锁，nil/timeout不清锁；更高valid-round
+证据约束换值；迟到QC可更新valid但不二次precommit；只有同轮非nil
+precommitQC及本地有效执行提案才形成决定输入。权重阈值重新计算为严格
+大于2/3，仅四等权时等于3/4；保留拜占庭权重小于1/3的模型假设。
+
+wire是显式新开发格式：chain/genesis/protocol/epoch/set/height/parent/
+round/phase/value均签名绑定，严格Ed25519、规范固定端序、有界解码、
+唯一已排序签者；旧签名不可改标签，不能跨轮合票。**不是生产协议激活、
+ML-DSA迁移或业务有效性证明。** 本轮没有完整pacemaker的计时资格与高轮
+追赶、网络收票或连续链头。metadata按验证者存当前snapshot，仅支持固定
+单高度；ParentPoint由调用者可信配置，不能代替实时canonical head权限。
+
+### 实际测试与下一处接入
+
+Windows/Rust1.94真实随包DLL，Release `--include-ignored --test-threads=1`：
+**223 单元/集成 + 5 编译拒绝通过，0失败/0忽略**；fmt、strict Clippy、
+隔离检查通过。新增47项：wire15、轮次18、声明4、日志codec3、metadata5、
+真库共识2，另加私有内容凭据编译拒绝。覆盖签名/域/阈值/phase/损坏编码、
+A/A/B换轮、锁迁移、nil/迟到QC和旧轮决定，以及条件写部分记录拒绝。
+
+真库测试在**同一进程四独立数据库**各执行同一真实签名批，精确候选内容与
+声明一致，真实proposal/prevote/precommit编解码、3/4QC、决定归档和关库
+重开一致；陈旧会话CAS不出票，错误父点与跨owner候选拒绝。另一测试用
+共享真实提交函数确定性停在取ACK前，丢弃journal，再以同owner读屏障确认
+写入、关库重开，恢复原票字节、拒绝重复prevote、允许合法下一phase。
+这是**丢应用回复/关库恢复，不是断电或四机网络**，也未宣称动态链头晋升。
+
+下一处仅 A 的新runtime：同一流水线+签票日志接可信链头原子晋升/连续高度，
+随后接收票/换轮调度与真实网络，测同一路径的持续最终确认吞吐和尾延迟。
+不能继续累积孤立演示组件代替纵切片；未有新节点、完整最终性、主链TPS、
+执行有效性证明、Execute/其他资产/隐私/PQ或部署验收。
+
 ## 设备 A：有界常驻候选数据流水线（2026-10-02）
 
 继续 `main@9ccefb58`，前置 Windows/Linux 真库 CI `36932102660` 已全过。
