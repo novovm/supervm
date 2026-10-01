@@ -11,9 +11,11 @@ impl FreshChainLifecycleV1 {
         wall_ms: u64,
     ) -> Result<()> {
         let Some(pool) = &self.pool else {
+            self.proposal_window.clear();
             return Ok(());
         };
         if pool.is_empty() {
+            self.proposal_window.clear();
             return Ok(());
         }
         let config = self
@@ -29,11 +31,13 @@ impl FreshChainLifecycleV1 {
             .as_ref()
             .and_then(pacemaker::ParentPacemaker::proposal_round)
         else {
+            self.proposal_window.clear();
             return Ok(());
         };
         if !config.propose_successors
             || config.authority.scheduled_leader_v1(height, round)? != config.local_validator_id
         {
+            self.proposal_window.clear();
             return Ok(());
         }
         let parent = workspace::load_finalized_parent_view_v1(
@@ -54,6 +58,7 @@ impl FreshChainLifecycleV1 {
         }
         if !clock::timestamp_allowed(parent.block().header.timestamp_unix_ms, wall_ms) {
             self.clock_waiting = true;
+            self.proposal_window.clear();
             return Ok(());
         }
         let context = novovm_protocol::NovBlockExecutionContextV1 {
@@ -76,7 +81,24 @@ impl FreshChainLifecycleV1 {
             config.proposal_max_transactions,
             &self.params,
         )?;
-        if selected.is_empty() {
+        // A collection window is only a scheduling hint. Every poll still
+        // checks the live parent and selects/authenticates the current pool;
+        // neither raw transactions nor signing authority are cached in it.
+        if !self.proposal_window.ready(
+            proposal_window::ProposalContext {
+                parent_workspace_id: config
+                    .isolated_workspace_id
+                    .context("proposal parent missing")?,
+                parent_block_hash: config.block_hash,
+                authority_commitment: config.authority.authority_commitment,
+                height,
+                round,
+            },
+            selected.len(),
+            config.proposal_max_transactions,
+            now,
+            config.proposal_collect,
+        )? {
             return Ok(());
         }
         let next = config.clone().prepare_fresh_successor(
@@ -106,6 +128,7 @@ impl FreshChainLifecycleV1 {
         self.publication = None;
         self.bodies = None;
         self.pacemaker = None;
+        self.proposal_window.clear();
         for queue in self.pending.values_mut() {
             queue.clear();
         }

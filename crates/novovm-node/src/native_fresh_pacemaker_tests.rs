@@ -22,6 +22,7 @@ fn candidate_less_pacemaker_quorum_transport_restart_and_no_execution() {
                 Config {
                     propose_successors: true,
                     proposal_max_transactions: 16,
+                    proposal_collect: Duration::ZERO,
                     receive_successors: true,
                     follow_finalized_tip: true,
                     fresh_genesis_config_commitment: Some(pin),

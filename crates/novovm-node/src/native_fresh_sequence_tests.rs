@@ -1047,6 +1047,7 @@ fn exercise_automatic_proposal(
     config.follow_finalized_tip = true;
     config.receive_successors = true;
     config.propose_successors = true;
+    config.proposal_collect = Duration::from_millis(250);
     config.ingress_per_source_per_second = 2;
     let mut transport = config.transaction_transport_limits();
     transport.ingress_per_poll = 3;
@@ -1150,6 +1151,7 @@ fn exercise_automatic_proposal(
     assert_eq!(lifecycle.status_json()["proposed_successors"], 0);
     assert_eq!(lifecycle.status_json()["successor_rejected"], 2);
     assert_eq!(lifecycle.status_json()["durable_pending_transactions"], 1);
+    assert_eq!(lifecycle.status_json()["proposal_collection"]["waiting"], false);
     with_record_signing_guard(record_profile, || lifecycle
         .poll_with_wall_time(
             leader,
@@ -1162,6 +1164,35 @@ fn exercise_automatic_proposal(
     // Replay the already-authenticated event after the local admission window;
     // this is an application retry, not a new transport or signature fixture.
     let valid_event = valid_event.unwrap();
+    let before_collection = workspace::list_v1(authority.chain_id, params).unwrap();
+    assert!(lifecycle.enqueue(valid_event.clone()));
+    let gossip_before = lifecycle.status_json()["transaction_transport"]["gossip_attempts"]
+        .as_u64().unwrap();
+    with_record_signing_guard(record_profile, || lifecycle
+        .poll_with_wall_time(
+            leader,
+            at + Duration::from_secs(2),
+            subject.timestamp_unix_ms,
+        ))
+        .unwrap();
+    assert_eq!(lifecycle.status_json()["height"], 3);
+    assert_eq!(lifecycle.status_json()["proposed_successors"], 0);
+    assert_eq!(lifecycle.status_json()["proposal_collect_ms"], 250);
+    assert_eq!(lifecycle.status_json()["proposal_collection"]["waiting"], true);
+    assert!(lifecycle.status_json()["transaction_transport"]["gossip_attempts"]
+        .as_u64().unwrap() > gossip_before);
+    assert_eq!(lifecycle.status_json()["durable_pending_transactions"], 2);
+    assert_eq!(workspace::list_v1(authority.chain_id, params).unwrap(), before_collection);
+    with_record_signing_guard(record_profile, || lifecycle
+        .poll_with_wall_time(
+            leader,
+            at + Duration::from_millis(2249),
+            subject.timestamp_unix_ms,
+        ))
+        .unwrap();
+    assert_eq!(lifecycle.status_json()["height"], 3);
+    assert_eq!(lifecycle.status_json()["proposal_collection"]["waiting"], true);
+    assert_eq!(workspace::list_v1(authority.chain_id, params).unwrap(), before_collection);
     // Admit at most three of four queued messages. The fourth must remain in
     // the independent transaction lane when proposal preparation clears the
     // old parent's body/round staging. Repeats are intentionally idempotent.
@@ -1171,7 +1202,7 @@ fn exercise_automatic_proposal(
     with_record_signing_guard(record_profile, || lifecycle
         .poll_with_wall_time(
             leader,
-            at + Duration::from_secs(2),
+            at + Duration::from_millis(2250),
             subject.timestamp_unix_ms,
         ))
         .unwrap();
@@ -1181,7 +1212,9 @@ fn exercise_automatic_proposal(
         to_hex(&subject.block_hash)
     );
     assert_eq!(lifecycle.status_json()["proposed_successors"], 1);
-    assert_eq!(lifecycle.status_json()["successor_rejected"], 3);
+    assert_eq!(lifecycle.status_json()["successor_rejected"], 4);
+    assert_eq!(lifecycle.status_json()["proposal_collection"]["waiting"], false);
+    assert_eq!(lifecycle.status_json()["proposal_collection"]["deadline_decisions"], 1);
     assert_eq!(lifecycle.status_json()["transaction_transport"]["queued_entries"], 1);
     assert_eq!(lifecycle.status_json()["durable_pending_transactions"], 2);
     workspace::without_materialization_for_test(|| {
@@ -1211,7 +1244,7 @@ fn exercise_automatic_proposal(
         &ledger,
         params,
         leader,
-        at + Duration::from_secs(2)
+        at + Duration::from_millis(2250)
     )
     .is_err());
     workspace::corrupt_execution_output_for_test_v1(authority.chain_id, candidate, params).unwrap(); // Explicit fixture restoration.
@@ -1226,7 +1259,7 @@ fn exercise_automatic_proposal(
         &ledger,
         params,
         leader,
-        at + Duration::from_secs(2),
+        at + Duration::from_millis(2250),
     )
     .unwrap();
     assert_eq!(lifecycle.status_json()["height"], 4);

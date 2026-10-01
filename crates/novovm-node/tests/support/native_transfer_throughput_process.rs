@@ -21,6 +21,8 @@ const DEADLINE: Duration = Duration::from_secs(300);
 pub(super) enum TransportProfile {
     LegacyLimits,
     Bounded64,
+    LegacyLimitsCollect250,
+    Bounded64Collect250,
 }
 
 impl TransportProfile {
@@ -28,17 +30,26 @@ impl TransportProfile {
         match self {
             Self::LegacyLimits => "legacy_limits_independent_transaction_lane",
             Self::Bounded64 => "explicit_bounded_64_transaction_lane",
+            Self::LegacyLimitsCollect250 => "legacy_limits_collect_250ms",
+            Self::Bounded64Collect250 => "explicit_bounded_64_collect_250ms",
         }
     }
 
     fn configuration(self) -> Option<Value> {
         match self {
-            Self::LegacyLimits => None,
-            Self::Bounded64 => Some(serde_json::json!({
+            Self::LegacyLimits | Self::LegacyLimitsCollect250 => None,
+            Self::Bounded64 | Self::Bounded64Collect250 => Some(serde_json::json!({
                 "per_peer_queue":64,"ingress_per_source_per_second":64,
                 "ingress_per_poll":64,"gossip_per_peer_per_second":64,
                 "gossip_per_poll":192,"bytes_per_poll":1048576,
             })),
+        }
+    }
+
+    fn collect_ms(self) -> u64 {
+        match self {
+            Self::LegacyLimits | Self::Bounded64 => 0,
+            Self::LegacyLimitsCollect250 | Self::Bounded64Collect250 => 250,
         }
     }
 }
@@ -189,6 +200,7 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path, profile: Tran
         config["receive_successors"] = true.into();
         config["propose_successors"] = true.into();
         config["proposal_max_transactions"] = SIGNERS.into();
+        config["proposal_collect_ms"] = profile.collect_ms().into();
         if let Some(transport) = profile.configuration() {
             config["transaction_transport"] = transport;
         }
@@ -390,6 +402,7 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path, profile: Tran
             "implicit_rpc_retries":0,"batch_count":BATCHES,"signers":SIGNERS,
             "slow_call_diagnostics_enabled":diagnostics_enabled(),
             "transaction_transport_profile":profile.label(),
+            "proposal_collect_ms":profile.collect_ms(),
         }))
         .unwrap(),
     )
@@ -411,6 +424,7 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path, profile: Tran
         assert_eq!(status["height"], tip);
         assert_eq!(status["finalized"], true);
         assert_eq!(status["lifecycle_halted"], false);
+        assert_eq!(status["proposal_collect_ms"], profile.collect_ms());
         for (field, expected) in expected_transport.as_object().unwrap() {
             assert_eq!(
                 &status["transaction_transport"]["limits"][field], expected,
@@ -493,11 +507,13 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path, profile: Tran
         "seal_ingress_per_source_per_second":8,"seal_ingress_per_poll":16,
         "transaction_transport_profile":profile.label(),
         "transaction_transport_status_by_node":statuses.iter().map(|status|&status["transaction_transport"]).collect::<Vec<_>>(),
+        "proposal_collection_status_by_node":statuses.iter().map(|status|&status["proposal_collection"]).collect::<Vec<_>>(),
     });
     let workload = serde_json::json!({
         "batches":BATCHES,"transactions_per_batch":SIGNERS,"disjoint_account_pairs_per_batch":SIGNERS,
         "single_ingress_validator_index":0,"replicated_client_fanout":false,"client_concurrency":CLIENT_CONCURRENCY,
         "proposal_max_transactions":SIGNERS,"pre_signed_transactions":true,"signing_time_included":false,"bootstrap_time_included":false,
+        "proposal_collect_ms":profile.collect_ms(),
         "genesis_schema":GENESIS_SCHEMA_RECORD_V2,"first_measured_height":2,"last_finalized_height":tip,
     });
     let verification = serde_json::json!({

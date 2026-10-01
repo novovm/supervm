@@ -45,6 +45,7 @@ impl FreshChainLifecycleV1 {
             Ok(false) => bail!("transaction pool capacity or signer nonce conflict"),
             Err(error) => {
                 self.halted = true;
+                self.proposal_window.clear();
                 Err(error.context("transaction persistence failed; restart required"))
             }
         }

@@ -323,6 +323,32 @@ fn fresh_record_transfers_bounded_transport_measure_rpc_to_finality() {
     );
 }
 
+#[test]
+#[ignore = "real four-process proposal collection measurement; exclusive loopback 127.0.0.2:443"]
+fn fresh_record_transfers_collect_250_measure_rpc_to_finality() {
+    run_real_aoem_main_nodes_scenario(
+        true,
+        true,
+        false,
+        false,
+        LocalFault::None,
+        Some(transfer_throughput::TransportProfile::LegacyLimitsCollect250),
+    );
+}
+
+#[test]
+#[ignore = "real four-process bounded transport and collection measurement; exclusive loopback 127.0.0.2:443"]
+fn fresh_record_transfers_bounded_collect_250_measure_rpc_to_finality() {
+    run_real_aoem_main_nodes_scenario(
+        true,
+        true,
+        false,
+        false,
+        LocalFault::None,
+        Some(transfer_throughput::TransportProfile::Bounded64Collect250),
+    );
+}
+
 fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool, continuous: bool) {
     run_real_aoem_main_nodes_with_failover(decision_v3, fresh, continuous, false);
 }

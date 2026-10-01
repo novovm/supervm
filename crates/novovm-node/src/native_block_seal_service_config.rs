@@ -76,6 +76,7 @@ impl FreshTransactionTransportV1 {
 pub struct NovNativeSealServiceConfigV1 {
     pub(crate) propose_successors: bool,
     pub(crate) proposal_max_transactions: usize,
+    pub(crate) proposal_collect: Duration,
     pub(crate) receive_successors: bool,
     pub(crate) follow_finalized_tip: bool,
     pub(crate) fresh_genesis_config_commitment: Option<[u8; 32]>,
@@ -106,6 +107,8 @@ struct ServiceFile {
     propose_successors: bool,
     #[serde(default = "default_proposal_max_transactions")]
     proposal_max_transactions: usize,
+    #[serde(default)]
+    proposal_collect_ms: u64,
     #[serde(default)]
     receive_successors: bool,
     #[serde(default)]
@@ -471,6 +474,7 @@ impl NovNativeSealServiceConfigV1 {
         let config = Self {
             propose_successors: raw.propose_successors,
             proposal_max_transactions: raw.proposal_max_transactions,
+            proposal_collect: Duration::from_millis(raw.proposal_collect_ms),
             receive_successors: raw.receive_successors,
             follow_finalized_tip: raw.follow_finalized_tip,
             finalized_parent_workspace_id: raw
@@ -518,6 +522,11 @@ impl NovNativeSealServiceConfigV1 {
             .contains(&self.proposal_max_transactions)
         {
             bail!("proposal_max_transactions must be in 1..=1024");
+        }
+        if self.proposal_collect > Duration::from_millis(1_000)
+            || self.proposal_collect > self.round_timeout / 4
+        {
+            bail!("proposal_collect_ms must not exceed 1000 ms or one quarter of round_timeout_ms");
         }
         if self.propose_successors && !self.receive_successors {
             bail!("automatic proposal requires explicit successor reception");

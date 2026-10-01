@@ -12,6 +12,8 @@ mod history;
 mod pacemaker;
 #[cfg(test)]
 pub(crate) use pacemaker::exercise_parent_pacemaker;
+#[path = "native_fresh_proposal_window.rs"]
+mod proposal_window;
 #[path = "native_fresh_chain_proposer.rs"]
 mod proposer;
 #[path = "native_fresh_transaction_transport.rs"]
@@ -33,6 +35,7 @@ pub struct FreshChainLifecycleV1 {
     pool: Option<FreshTransactionPool>,
     finalized_parent: Option<FinalizedParentViewV1>,
     transaction_transport: transaction_transport::TransactionTransport,
+    proposal_window: proposal_window::ProposalWindow,
     history: Option<history::HistorySync>,
     config: Option<NovNativeSealServiceConfigV1>,
     chain: u64,
@@ -118,6 +121,7 @@ impl FreshChainLifecycleV1 {
                 .transpose()?,
             finalized_parent: None,
             transaction_transport,
+            proposal_window: proposal_window::ProposalWindow::default(),
             history: config
                 .receive_successors
                 .then(|| history::HistorySync::new(&config, params, now))
@@ -176,6 +180,7 @@ impl FreshChainLifecycleV1 {
     }
 
     fn arm_body_reception(&mut self, now: Instant) -> Result<()> {
+        self.proposal_window.clear();
         if self.receive_successors && self.publication.is_some() {
             let config = self.config.as_ref().context("successor identity missing")?;
             let parent = crate::tx_ingress::candidate_workspace::load_finalized_parent_view_v1(
@@ -286,6 +291,7 @@ impl FreshChainLifecycleV1 {
         });
         if result.is_err() {
             self.halted = true;
+            self.proposal_window.clear();
         }
         result
     }
@@ -321,6 +327,7 @@ impl FreshChainLifecycleV1 {
         if let Some(service) = self.service.as_mut() {
             if !clock::timestamp_allowed(service.candidate_timestamp_unix_ms, wall_ms) {
                 self.clock_waiting = true;
+                self.proposal_window.clear();
                 return Ok(());
             }
             measure("lifecycle.service_poll", || service.poll(runtime, now))?;
@@ -353,6 +360,7 @@ impl FreshChainLifecycleV1 {
             !clock::timestamp_allowed(parent.block().header.timestamp_unix_ms, wall_ms)
         }) {
             self.clock_waiting = true;
+            self.proposal_window.clear();
             return Ok(());
         }
         let mut events = Vec::new();
@@ -451,6 +459,7 @@ impl FreshChainLifecycleV1 {
             self.publication = None;
             self.bodies = None;
             self.pacemaker = None;
+            self.proposal_window.clear();
             for queue in self.pending.values_mut() {
                 queue.clear();
             }
@@ -503,6 +512,12 @@ impl FreshChainLifecycleV1 {
             .as_ref()
             .map(|c| serde_json::json!(c.proposal_max_transactions))
             .unwrap_or(serde_json::Value::Null);
+        value["proposal_collect_ms"] = self
+            .config
+            .as_ref()
+            .map(|c| serde_json::json!(c.proposal_collect.as_millis()))
+            .unwrap_or(serde_json::Value::Null);
+        value["proposal_collection"] = self.proposal_window.status_json();
         value["proposed_successors"] = self.proposed_successors.into();
         value["successor_signer_retained"] =
             (self.receive_successors && self.config.is_some()).into();
