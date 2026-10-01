@@ -498,6 +498,7 @@ impl FreshChainLifecycleV1 {
             .map_or(0, FreshTransactionPool::len)
             .into();
         value["transaction_transport"] = self.transaction_transport.status_json();
+        value["transaction_ingress_enabled"] = self.pool.is_some().into();
         value["history_responses_served"] = self
             .history
             .as_ref()

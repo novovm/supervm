@@ -46,8 +46,15 @@ mod storage;
 mod storage_startup;
 #[path = "native_seal_successor_process.rs"]
 mod successor;
+#[path = "native_transfer_mixed_process.rs"]
+mod transfer_mixed;
 #[path = "native_transfer_throughput_process.rs"]
 mod transfer_throughput;
+
+enum TransferScenario {
+    Throughput(transfer_throughput::TransportProfile),
+    MixedParity,
+}
 impl Drop for Child {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -306,7 +313,9 @@ fn fresh_record_transfers_measure_rpc_to_finality() {
         false,
         false,
         LocalFault::None,
-        Some(transfer_throughput::TransportProfile::LegacyLimits),
+        Some(TransferScenario::Throughput(
+            transfer_throughput::TransportProfile::LegacyLimits,
+        )),
     );
 }
 
@@ -319,7 +328,9 @@ fn fresh_record_transfers_bounded_transport_measure_rpc_to_finality() {
         false,
         false,
         LocalFault::None,
-        Some(transfer_throughput::TransportProfile::Bounded64),
+        Some(TransferScenario::Throughput(
+            transfer_throughput::TransportProfile::Bounded64,
+        )),
     );
 }
 
@@ -332,7 +343,9 @@ fn fresh_record_transfers_collect_250_measure_rpc_to_finality() {
         false,
         false,
         LocalFault::None,
-        Some(transfer_throughput::TransportProfile::LegacyLimitsCollect250),
+        Some(TransferScenario::Throughput(
+            transfer_throughput::TransportProfile::LegacyLimitsCollect250,
+        )),
     );
 }
 
@@ -345,7 +358,22 @@ fn fresh_record_transfers_bounded_collect_250_measure_rpc_to_finality() {
         false,
         false,
         LocalFault::None,
-        Some(transfer_throughput::TransportProfile::Bounded64Collect250),
+        Some(TransferScenario::Throughput(
+            transfer_throughput::TransportProfile::Bounded64Collect250,
+        )),
+    );
+}
+
+#[test]
+#[ignore = "real four-process mixed Transfer parity; exclusive loopback 127.0.0.2:443 and explicit libtest oracle"]
+fn fresh_record_transfers_conflict_failure_serial_parity() {
+    run_real_aoem_main_nodes_scenario(
+        true,
+        true,
+        false,
+        false,
+        LocalFault::None,
+        Some(TransferScenario::MixedParity),
     );
 }
 
@@ -417,14 +445,14 @@ fn run_real_aoem_main_nodes_scenario(
     continuous: bool,
     failover: bool,
     fault: LocalFault,
-    measure_transfers: Option<transfer_throughput::TransportProfile>,
+    transfer_scenario: Option<TransferScenario>,
 ) {
     let reserve = std::net::TcpListener::bind("127.0.0.2:443")
         .expect("exclusive loopback 443 required; do not stop other services");
-    let (genesis, fresh_plan) = if measure_transfers.is_some() {
-        transfer_throughput::inputs()
-    } else {
-        super::native_fresh_genesis_cli::inputs()
+    let (genesis, fresh_plan) = match &transfer_scenario {
+        Some(TransferScenario::Throughput(_)) => transfer_throughput::inputs(),
+        Some(TransferScenario::MixedParity) => transfer_mixed::inputs(),
+        None => super::native_fresh_genesis_cli::inputs(),
     };
     let mut fresh_outputs = Vec::new();
     let (nodes, block) = if fresh {
@@ -812,8 +840,13 @@ fn run_real_aoem_main_nodes_scenario(
         "physical_lan_executed":false,"public_network_executed":false
     })).unwrap()).unwrap();
     if fresh {
-        if let Some(profile) = measure_transfers {
-            transfer_throughput::exercise(&nodes, &root, profile);
+        if let Some(scenario) = transfer_scenario {
+            match scenario {
+                TransferScenario::Throughput(profile) => {
+                    transfer_throughput::exercise(&nodes, &root, profile)
+                }
+                TransferScenario::MixedParity => transfer_mixed::exercise(&nodes, &root),
+            }
             return;
         }
         if matches!(fault, LocalFault::StorageStartup) {

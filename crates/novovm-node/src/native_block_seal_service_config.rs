@@ -75,6 +75,7 @@ impl FreshTransactionTransportV1 {
 #[derive(Clone)]
 pub struct NovNativeSealServiceConfigV1 {
     pub(crate) propose_successors: bool,
+    pub(crate) transaction_ingress_enabled: bool,
     pub(crate) proposal_max_transactions: usize,
     pub(crate) proposal_collect: Duration,
     pub(crate) receive_successors: bool,
@@ -105,6 +106,10 @@ pub struct NovNativeSealServiceConfigV1 {
 struct ServiceFile {
     #[serde(default)]
     propose_successors: bool,
+    /// Explicit wallet/gossip admission while local automatic proposal is off.
+    /// Existing proposers keep their implicit admission; receivers do not gain it.
+    #[serde(default)]
+    transaction_ingress_enabled: bool,
     #[serde(default = "default_proposal_max_transactions")]
     proposal_max_transactions: usize,
     #[serde(default)]
@@ -243,7 +248,7 @@ impl NovNativeSealServiceConfigV1 {
     }
 
     pub fn transaction_pool_path(&self) -> Option<PathBuf> {
-        self.propose_successors
+        (self.propose_successors || self.transaction_ingress_enabled)
             .then(|| self.seal_store_path.with_extension("txpool"))
     }
 
@@ -481,6 +486,7 @@ impl NovNativeSealServiceConfigV1 {
             .context("native seal signer key is not a pinned validator")?;
         let config = Self {
             propose_successors: raw.propose_successors,
+            transaction_ingress_enabled: raw.transaction_ingress_enabled,
             proposal_max_transactions: raw.proposal_max_transactions,
             proposal_collect: Duration::from_millis(raw.proposal_collect_ms),
             receive_successors: raw.receive_successors,
@@ -538,6 +544,9 @@ impl NovNativeSealServiceConfigV1 {
         }
         if self.propose_successors && !self.receive_successors {
             bail!("automatic proposal requires explicit successor reception");
+        }
+        if self.transaction_ingress_enabled && !self.receive_successors {
+            bail!("transaction ingress requires explicit successor reception");
         }
         if self.receive_successors && (!self.is_fresh_genesis() || !self.follow_finalized_tip) {
             bail!("successor reception requires fresh V3 and explicit finalized startup follow");
@@ -973,6 +982,8 @@ mod tests {
         assert!(!fixture.load().unwrap().follow_finalized_tip);
         assert!(!fixture.load().unwrap().receive_successors);
         assert!(!fixture.load().unwrap().propose_successors);
+        assert!(!fixture.load().unwrap().transaction_ingress_enabled);
+        assert!(fixture.load().unwrap().transaction_pool_path().is_none());
         fixture.config["propose_successors"] = json!(true);
         fixture.write();
         assert!(fixture.load().is_err());
@@ -984,7 +995,38 @@ mod tests {
         assert!(fixture.load().unwrap().follow_finalized_tip);
         assert!(fixture.load().unwrap().receive_successors);
         assert!(fixture.load().unwrap().propose_successors);
+        assert!(!fixture.load().unwrap().transaction_ingress_enabled);
+        assert!(fixture.load().unwrap().transaction_pool_path().is_some());
         assert!(!fixture.load().unwrap().seal_store_path.exists());
+        fixture.config["propose_successors"] = json!(false);
+        fixture.write();
+        assert!(fixture.load().unwrap().transaction_pool_path().is_none());
+        fixture.config["transaction_ingress_enabled"] = json!(true);
+        fixture.write();
+        let ingress_only = fixture.load().unwrap();
+        assert!(!ingress_only.propose_successors);
+        assert!(ingress_only.transaction_ingress_enabled);
+        assert!(ingress_only.transaction_pool_path().is_some());
+        assert!(!ingress_only.transaction_pool_path().unwrap().exists());
+        assert!(
+            super::super::service_paths::validate_service_paths_v1(
+                &ingress_only,
+                &fixture.root.join("data/ledger"),
+                &[ingress_only.transaction_pool_path().unwrap()],
+                &[],
+            )
+            .is_err(),
+            "ingress-only pool must retain path collision protection"
+        );
+        for field in ["receive_successors", "follow_finalized_tip"] {
+            fixture.config[field] = json!(false);
+            fixture.write();
+            assert!(fixture.load().is_err(), "ingress must retain {field}");
+            fixture.config[field] = json!(true);
+        }
+        fixture.config["transaction_ingress_enabled"] = json!(false);
+        fixture.config["propose_successors"] = json!(true);
+        fixture.write();
         let good = fixture.config.clone();
         fixture.config["height"] = json!(2);
         fixture.config["finalized_parent_workspace_id"] = json!("32".repeat(32));
@@ -1023,6 +1065,23 @@ mod tests {
         fixture.authority = serde_json::to_value(fixture_authority()).unwrap();
         fixture.write();
         assert!(fixture.load().is_err());
+    }
+
+    #[test]
+    fn native_seal_service_config_transaction_ingress_rejects_legacy_and_wrong_types() {
+        let mut fixture = Fixture::new();
+        assert!(!fixture.load().unwrap().transaction_ingress_enabled);
+        assert!(fixture.load().unwrap().transaction_pool_path().is_none());
+        for value in [json!(true), json!("true"), json!(1), Value::Null] {
+            fixture.config["transaction_ingress_enabled"] = value;
+            fixture.write();
+            assert!(fixture.load().is_err());
+            assert!(!fixture.root.join("data/seal").exists());
+            assert!(!fixture.root.join("data/seal.txpool").exists());
+        }
+        fixture.config["transaction_ingress_enabled"] = json!(false);
+        fixture.write();
+        assert!(fixture.load().unwrap().transaction_pool_path().is_none());
     }
 
     #[test]

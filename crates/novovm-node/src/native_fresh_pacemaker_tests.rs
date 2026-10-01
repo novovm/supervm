@@ -21,6 +21,7 @@ fn candidate_less_pacemaker_quorum_transport_restart_and_no_execution() {
                 .validator_id;
                 Config {
                     propose_successors: true,
+                    transaction_ingress_enabled: false,
                     proposal_max_transactions: 16,
                     proposal_collect: Duration::ZERO,
                     receive_successors: true,

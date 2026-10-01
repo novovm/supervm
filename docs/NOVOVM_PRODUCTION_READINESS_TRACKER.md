@@ -14,6 +14,62 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
+## 设备 A：交易准入与自动提案分离、真实混合交易串行核对（2026-10-01）
+
+基线 `35f6b74`。补齐一个实际节点能力：fresh 验证节点可显式开启
+`transaction_ingress_enabled=true`，在 `propose_successors=false` 时仍通过
+原 loopback RPC 接收签名交易、同步落入有界交易池并经原受限 gossip 传播。
+新开关默认 false；原 proposer 仍隐式启用交易池，普通 receiver 默认不变。
+显式准入要求原 `receive_successors=true`、`follow_finalized_tip=true` 和
+完整 pinned fresh V3 配置。RPC 监听仍需原显式配置，不新增公网入口。
+入池不扣费、不推进 nonce、不改变 AOEM 权威状态；自动提案仍另行检查配置
+和当轮 leader。关闭自动提案不是禁止验证/签票：原 receiver 的权限不变。
+严格布尔解析、路径隔离、鉴权、容量、持久化及恢复校验均沿用原路径。
+
+新增同机四进程真实 gate：单入口提交 6 笔签名 Transfer，四节点全部入池
+且无新最终块后停止；重新启用提案，从持久池恢复，实际组成一个含 6 笔的
+后继块。覆盖同一付款方连续 nonce 冲突、独立付款方、余额不足失败、自转和
+失败后的继续花费。重复 nonce 的不同交易被明确 RPC 拒绝，已最终化原交易
+重发只返回原回执，不重复扣费。四节点完整块相同、各自 QC 验证通过；重启后
+同节点的完整回执、持久证据及空交易池保持一致，不要求合法 QC 子集跨节点
+字节相同。没有用手工投票或直接写池替代真实入口/传播/最终性。
+
+只在测试模块注册的 worker 从每个已停节点读取真实创世、全部块/QC 和
+AOEM 权威 Store，按实际块顺序/时间逐笔串行重放；逐块比较 pre/post state、
+累计回执和块回执根，最终 typed Store 及序列化字节完全一致。仅借用已按
+raw/plan/wire/index/count 核对的 ingress 观测，不复制业务结果。它复用同一
+业务实现，属于串行调度参考，不是独立协议解释器；另以固定算术检查费用、
+余额、独立派生的 nonce key 及全账户资产守恒，防止共同业务错误被一致性掩盖。
+含 bootstrap 共 7 笔，费用 316（普通六笔各 45，失败大额一笔 46），按逐笔
+舍入后的 reserve/fee/risk 为 218/63/35；A/C 的 next nonce 为 6/1。
+每节点重启前后各一次 worker，全检查成功且实际运行恰好 1 项才生成新报告。
+
+Windows/MSVC 严格 Clippy、Release 构建、15 项配置、4 项交易池和 6 项 RPC
+回归通过。混合 gate 首轮 39.68 秒，补强停机后无高度 2 finality 的检查后
+复跑 39.66 秒通过，均为测试总耗时，不是出块周期或交易延迟。
+最终证据：`artifacts/audit/candidate-node-processes/seal-relay-27612-1790849461758219300/mixed-transfer-acceptance.json`；
+同目录 `acceptance.json` 定位四个节点，各自 `mixed-oracle-before-restart` 和
+`mixed-oracle-after-restart` 输出保存完整核对结果。
+节点 SHA256：`6c050980d183b028758a564916b003c57e144dd56896c04b9fd1bd1658735463`；
+libtest worker SHA256：`22298b49c7d9032184f6b50ab066800fdf9abfe7024e70e92c6d97a3015e1a5e`。
+
+复跑先构建 `cargo test --locked --release -p novovm-node --lib --test native_candidate_node_cli --no-run`，
+将 `NOVOVM_TRANSFER_PARITY_WORKER` 指向本次明确输出的 libtest 可执行文件，
+再以集成测试可执行文件运行 `fresh_record_transfers_conflict_failure_serial_parity --ignored --nocapture --test-threads=1`。
+需独占测试 loopback `127.0.0.2:443`；端口占用时失败，不停止其他服务。
+缺 worker、错误筛选导致 0 项测试或缺输出均失败，不静默跳过。
+
+未设置新开关的原 proposer 配置也复跑 96 笔场景通过：四节点完整块、QC、
+重启读回和 96/96 成功回执成立。窗口 43.925 秒、2.186 TPS、观察 P95/P99
+18.392/19.084 秒，业务块 `2,30,1,31,2,30`；不宣称本轮提速。
+报告为同目录 `seal-relay-14632-1790849501804465000/transfer-finality-performance.json`。
+该次 relay 输出出现一条 `received fatal alert: BadRecordMac`；最终全部交易及
+恢复仍通过，但告警根因未定位，不能声称网络运行全程无错误。本轮未改 TLS。
+
+本轮是混合正确性闭环，不是并行重叠测量或新的 TPS 成绩。持续积压、长账本、
+实体 LAN、公网、Linux 主节点和长跑仍未签收。没有修改 AOEM、经济规则、
+正式创世或签名协议，没有部署或替换现有服务；高性能交付目标仍进行中。
+
 ## 设备 A：主节点保活账本连接与真实路径复测（2026-10-01）
 
 基线 `651ec4b`。fresh 主节点在完成原启动校验/恢复后，保留现有 Host

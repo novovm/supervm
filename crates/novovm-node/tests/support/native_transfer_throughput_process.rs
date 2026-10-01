@@ -105,7 +105,11 @@ pub(super) fn inputs() -> (FreshGenesisConfigV1, NovNativeCandidateExecutionPlan
 }
 
 fn address(node: &Node) -> Option<String> {
-    fs::read_to_string(node.0.join(format!("{LABEL}.stdout.log")))
+    address_for(node, LABEL)
+}
+
+pub(super) fn address_for(node: &Node, label: &str) -> Option<String> {
+    fs::read_to_string(node.0.join(format!("{label}.stdout.log")))
         .ok()?
         .lines()
         .find_map(|line| {
@@ -115,7 +119,7 @@ fn address(node: &Node) -> Option<String> {
 }
 
 // No retry: uncertain admission is an observed failure, never hidden by a helper.
-fn rpc_once(address: &str, method: &str, params: Value) -> Result<Value> {
+pub(super) fn rpc_once(address: &str, method: &str, params: Value) -> Result<Value> {
     let response = ureq::post(&format!("http://{address}/"))
         .timeout(Duration::from_secs(10))
         .set("Content-Type", "application/json")
@@ -153,7 +157,7 @@ fn storage(node: &Node) -> Value {
     })
 }
 
-fn finalized_blocks(node: &Node, last: u64) -> Vec<NovNativeDurableBlockV1> {
+pub(super) fn finalized_blocks(node: &Node, last: u64) -> Vec<NovNativeDurableBlockV1> {
     let genesis: FreshGenesisConfigV1 =
         serde_json::from_slice(&fs::read(node.0.join("genesis.json")).unwrap()).unwrap();
     let pin = genesis.compile().unwrap().config_commitment();

@@ -2,6 +2,7 @@
 // the real AOEM runtime. Record-profile tests also finalize an isolated test
 // chain; the legacy cases below leave their candidates unpublished.
 include!("native_record_candidate_tests.rs");
+include!("native_transfer_process_parity_tests.rs");
 fn transfer_candidate_raw(
     chain: u64,
     nonce: u64,
