@@ -2499,6 +2499,21 @@ fn send_one_mesh_recipient_ack_v1(
     Ok(false)
 }
 
+/// Waiting for a forward outcome can buffer already decoded inbound events.
+/// Do not start another active send until the ordinary inbound handler has
+/// consumed them. Callers re-read the client state before every send stage;
+/// this is local scheduling, not a peer-delivery acknowledgement.
+fn mesh_send_when_inbound_drained_v1<T>(
+    buffered_events: bool,
+    send: impl FnOnce() -> Result<T>,
+) -> Result<Option<T>> {
+    if buffered_events {
+        Ok(None)
+    } else {
+        send().map(Some)
+    }
+}
+
 fn run_duplex_mesh_session_v1(
     relay: &mut ProductRelayClientV1,
     worker: &ProductMainlineOverlayWorkerV1,
@@ -2540,115 +2555,120 @@ fn run_duplex_mesh_session_v1(
 
         start_due_mesh_peer_handshakes_v1(relay, worker, &mut peers)?;
 
-        send_one_mesh_recipient_ack_v1(relay, worker, &mut peers, pending_acks_by_peer)?;
+        mesh_send_when_inbound_drained_v1(relay.has_buffered_events(), || {
+            send_one_mesh_recipient_ack_v1(relay, worker, &mut peers, pending_acks_by_peer)
+        })?;
 
-        let peer_count = worker.remote_peers.len();
-        for offset in 0..peer_count {
-            let peer_index = (next_outbound_peer_index + offset) % peer_count;
-            let peer = &worker.remote_peers[peer_index];
-            let Some(outbound) = pending_by_peer
-                .get(&peer.peer_id)
-                .and_then(|queue| queue.front())
-                .map(|pending| Arc::clone(&pending.item))
-            else {
-                continue;
-            };
-            if outbound.expired_at(now_ms_v1()) {
-                let expired = pending_by_peer
-                    .get_mut(&peer.peer_id)
-                    .and_then(VecDeque::pop_front)
-                    .context("expired mesh pending item disappeared before send")?;
-                publish_pending_expired_v1(worker, &expired.item, &peer.peer_id)?;
-                next_outbound_peer_index = (peer_index + 1) % peer_count;
-                break;
-            }
-            let Some(state) = peers.get(&peer.peer_id) else {
-                continue;
-            };
-            let ProductMainlineMeshPeerPhaseV1::Active(_) = state.phase else {
-                continue;
-            };
-            let frame_sequence = state.frame_sequence;
-            let object_id =
-                u64::from_le_bytes(outbound.object_hash[..8].try_into().unwrap_or_default());
-            let encoded_payload = encode_classified_payload_v1(&outbound)?;
-            let frame = NovoRudpTransportFrameV0::new(
-                NovoRudpTransportFrameKindV0::Data,
-                PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1,
-                worker.chain_id,
-                object_id,
-                frame_sequence,
-                0,
-                encoded_payload,
-            );
-            let seal_result = {
-                let state = peers
-                    .get_mut(&peer.peer_id)
-                    .context("configured mesh peer state disappeared")?;
-                match &mut state.phase {
-                    ProductMainlineMeshPeerPhaseV1::Active(channel) => {
-                        channel.seal_novorudp_frame(&frame)
-                    }
-                    _ => continue,
+        mesh_send_when_inbound_drained_v1(relay.has_buffered_events(), || {
+            let peer_count = worker.remote_peers.len();
+            for offset in 0..peer_count {
+                let peer_index = (next_outbound_peer_index + offset) % peer_count;
+                let peer = &worker.remote_peers[peer_index];
+                let Some(outbound) = pending_by_peer
+                    .get(&peer.peer_id)
+                    .and_then(|queue| queue.front())
+                    .map(|pending| Arc::clone(&pending.item))
+                else {
+                    continue;
+                };
+                if outbound.expired_at(now_ms_v1()) {
+                    let expired = pending_by_peer
+                        .get_mut(&peer.peer_id)
+                        .and_then(VecDeque::pop_front)
+                        .context("expired mesh pending item disappeared before send")?;
+                    publish_pending_expired_v1(worker, &expired.item, &peer.peer_id)?;
+                    next_outbound_peer_index = (peer_index + 1) % peer_count;
+                    break;
                 }
-            };
-            let envelope = match seal_result {
-                Ok(envelope) => envelope,
-                Err(error) => {
+                let Some(state) = peers.get(&peer.peer_id) else {
+                    continue;
+                };
+                let ProductMainlineMeshPeerPhaseV1::Active(_) = state.phase else {
+                    continue;
+                };
+                let frame_sequence = state.frame_sequence;
+                let object_id =
+                    u64::from_le_bytes(outbound.object_hash[..8].try_into().unwrap_or_default());
+                let encoded_payload = encode_classified_payload_v1(&outbound)?;
+                let frame = NovoRudpTransportFrameV0::new(
+                    NovoRudpTransportFrameKindV0::Data,
+                    PRODUCT_MAINLINE_OVERLAY_SESSION_ID_V1,
+                    worker.chain_id,
+                    object_id,
+                    frame_sequence,
+                    0,
+                    encoded_payload,
+                );
+                let seal_result = {
+                    let state = peers
+                        .get_mut(&peer.peer_id)
+                        .context("configured mesh peer state disappeared")?;
+                    match &mut state.phase {
+                        ProductMainlineMeshPeerPhaseV1::Active(channel) => {
+                            channel.seal_novorudp_frame(&frame)
+                        }
+                        _ => continue,
+                    }
+                };
+                let envelope = match seal_result {
+                    Ok(envelope) => envelope,
+                    Err(error) => {
+                        isolate_mesh_peer_v1(
+                            &mut peers,
+                            &peer.peer_id,
+                            format!("seal outbound E2E payload: {error:#}"),
+                            worker,
+                        )?;
+                        next_outbound_peer_index = (peer_index + 1) % peer_count;
+                        break;
+                    }
+                };
+                let outcome = relay
+                    .send_envelope_with_outcome_v1(envelope)
+                    .context("send multi-peer product overlay payload; retained for reconnect")?;
+                if outcome.disposition == RelayForwardDispositionV1::RejectedQueuePeerLimit {
                     isolate_mesh_peer_v1(
                         &mut peers,
                         &peer.peer_id,
-                        format!("seal outbound E2E payload: {error:#}"),
+                        "relay rejected target-local offline queue admission",
                         worker,
                     )?;
                     next_outbound_peer_index = (peer_index + 1) % peer_count;
                     break;
                 }
-            };
-            let outcome = relay
-                .send_envelope_with_outcome_v1(envelope)
-                .context("send multi-peer product overlay payload; retained for reconnect")?;
-            if outcome.disposition == RelayForwardDispositionV1::RejectedQueuePeerLimit {
-                isolate_mesh_peer_v1(
-                    &mut peers,
-                    &peer.peer_id,
-                    "relay rejected target-local offline queue admission",
-                    worker,
-                )?;
+                ensure_shared_relay_forward_accepted_v1(&outcome)
+                    .context("shared relay rejected multi-peer payload admission")?;
+                peers
+                    .get_mut(&peer.peer_id)
+                    .context("configured mesh peer state disappeared after send")?
+                    .frame_sequence = frame_sequence.saturating_add(1);
+                pending_by_peer
+                    .get_mut(&peer.peer_id)
+                    .and_then(VecDeque::pop_front)
+                    .context("multi-peer pending queue lost delivered payload")?;
+                publish_product_mainline_overlay_event_v1(
+                    &worker.events,
+                    &worker.stop,
+                    ProductMainlineOverlayEventV1::RelayAdmission(
+                        ProductMainlineOverlayRelayAdmissionV1 {
+                            payload_class: outbound.payload_class,
+                            object_hash: outbound.object_hash,
+                            delivery_id: outbound_delivery_id_v1(worker, &outbound, &peer.peer_id),
+                            payload_sha256: outbound.payload_sha256,
+                            remote_peer_id: peer.peer_id.clone(),
+                            metric_peer_id: peer.metric_peer_id,
+                            admitted: true,
+                            disposition: Some(outcome.disposition),
+                            error: None,
+                        },
+                    ),
+                )
+                .context("publish multi-peer product overlay delivery")?;
                 next_outbound_peer_index = (peer_index + 1) % peer_count;
                 break;
             }
-            ensure_shared_relay_forward_accepted_v1(&outcome)
-                .context("shared relay rejected multi-peer payload admission")?;
-            peers
-                .get_mut(&peer.peer_id)
-                .context("configured mesh peer state disappeared after send")?
-                .frame_sequence = frame_sequence.saturating_add(1);
-            pending_by_peer
-                .get_mut(&peer.peer_id)
-                .and_then(VecDeque::pop_front)
-                .context("multi-peer pending queue lost delivered payload")?;
-            publish_product_mainline_overlay_event_v1(
-                &worker.events,
-                &worker.stop,
-                ProductMainlineOverlayEventV1::RelayAdmission(
-                    ProductMainlineOverlayRelayAdmissionV1 {
-                        payload_class: outbound.payload_class,
-                        object_hash: outbound.object_hash,
-                        delivery_id: outbound_delivery_id_v1(worker, &outbound, &peer.peer_id),
-                        payload_sha256: outbound.payload_sha256,
-                        remote_peer_id: peer.peer_id.clone(),
-                        metric_peer_id: peer.metric_peer_id,
-                        admitted: true,
-                        disposition: Some(outcome.disposition),
-                        error: None,
-                    },
-                ),
-            )
-            .context("publish multi-peer product overlay delivery")?;
-            next_outbound_peer_index = (peer_index + 1) % peer_count;
-            break;
-        }
+            Ok(())
+        })?;
 
         let buffered_ready_peer = peers.iter().find_map(|(peer_id, state)| {
             let ProductMainlineMeshPeerPhaseV1::Active(channel) = &state.phase else {
@@ -2918,16 +2938,25 @@ fn start_due_mesh_peer_handshakes_v1(
         if !handshake_due {
             continue;
         }
-        let initiator = NodeHandshakeInitiatorV1::start(
-            &worker.identity,
-            &peer_id,
-            now_ms,
-            PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1,
-        )?;
-        let outcome = relay.send_peer_handshake_with_outcome_v1(
-            peer_id.clone(),
-            RelayPeerHandshakeV1::Offer(initiator.offer().clone()),
-        )?;
+        let Some((initiator, outcome)) =
+            mesh_send_when_inbound_drained_v1(relay.has_buffered_events(), || {
+                let initiator = NodeHandshakeInitiatorV1::start(
+                    &worker.identity,
+                    &peer_id,
+                    now_ms,
+                    PRODUCT_MAINLINE_OVERLAY_PEER_HANDSHAKE_TTL_MS_V1,
+                )?;
+                let outcome = relay.send_peer_handshake_with_outcome_v1(
+                    peer_id.clone(),
+                    RelayPeerHandshakeV1::Offer(initiator.offer().clone()),
+                )?;
+                Ok((initiator, outcome))
+            })?
+        else {
+            // Still inspect the other peers' handshake-expiry state. Incoming
+            // offers are handled below by the unchanged response/verification path.
+            continue;
+        };
         if outcome.disposition == RelayForwardDispositionV1::RejectedQueuePeerLimit {
             isolate_mesh_peer_v1(
                 peers,
@@ -4019,6 +4048,88 @@ mod tests {
         // The live loop records actual send time, not the previous deadline.
         assert!(!product_overlay_heartbeat_due_v1(after_pause, after_pause));
         assert!(!product_overlay_heartbeat_due_v1(after_pause, start));
+    }
+
+    #[test]
+    fn mesh_buffered_events_gate_defers_sends_until_finite_backlog_is_consumed() {
+        // Drive the production send gate, not a copied scheduling predicate.
+        // The ordinary handler consumes one existing event per iteration;
+        // active sends must not replenish that finite backlog before it drains.
+        let capacity =
+            crate::product_relay_client::PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_EVENTS_V1;
+        let mut pending = (0..capacity).collect::<VecDeque<_>>();
+        let mut sent = Vec::new();
+        let mut maintenance_ticks = 0;
+        for tick in 0..=capacity {
+            maintenance_ticks += 1;
+            for stage in ["handshake", "ack", "payload"] {
+                let result = mesh_send_when_inbound_drained_v1(!pending.is_empty(), || {
+                    sent.push((tick, stage));
+                    Ok(())
+                })
+                .unwrap();
+                assert_eq!(result.is_some(), tick == capacity);
+            }
+            if tick < capacity {
+                assert_eq!(pending.pop_front(), Some(tick));
+            }
+        }
+        assert_eq!(maintenance_ticks, capacity + 1);
+        assert_eq!(
+            sent,
+            [
+                (capacity, "handshake"),
+                (capacity, "ack"),
+                (capacity, "payload")
+            ]
+        );
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn mesh_send_stages_recheck_events_produced_by_handshake_or_ack() {
+        for buffering_stage in [0, 1] {
+            let mut pending = VecDeque::new();
+            let mut sent = Vec::new();
+            for stage in 0..3 {
+                mesh_send_when_inbound_drained_v1(!pending.is_empty(), || {
+                    sent.push(stage);
+                    if stage == buffering_stage {
+                        pending.extend([10, 11]);
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            }
+            assert_eq!(sent, (0..=buffering_stage).collect::<Vec<_>>());
+            assert_eq!(pending.into_iter().collect::<Vec<_>>(), [10, 11]);
+        }
+    }
+
+    #[test]
+    fn mesh_buffered_events_gate_preserves_outbound_peer_turn_and_errors() {
+        let mut next_peer = 0usize;
+        let mut sent = Vec::new();
+        for buffered in [true, false, true, false, false, true, false] {
+            mesh_send_when_inbound_drained_v1(buffered, || {
+                sent.push(next_peer);
+                next_peer = (next_peer + 1) % 3;
+                Ok(())
+            })
+            .unwrap();
+        }
+        assert_eq!(sent, [0, 1, 2, 0]);
+        assert_eq!(next_peer, 1);
+        let deferred = mesh_send_when_inbound_drained_v1(true, || -> Result<()> {
+            panic!("a deferred send must not invoke the transport")
+        })
+        .unwrap();
+        assert_eq!(deferred, None);
+        let error = mesh_send_when_inbound_drained_v1(false, || -> Result<()> {
+            bail!("original transport error")
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "original transport error");
     }
 
     #[test]

@@ -147,6 +147,18 @@ struct ProductRelayDeadlineTcpStreamV1 {
     write_deadline: Option<Instant>,
     read_operation_deadline: Option<Instant>,
     retry_idle_reads: bool,
+    terminal_error: Option<String>,
+    #[cfg(test)]
+    test_write_fault: Option<ProductRelayClientWriteFaultV1>,
+    #[cfg(test)]
+    test_io_calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+enum ProductRelayClientWriteFaultV1 {
+    Timeout,
+    ExpireAfterProgress(usize),
 }
 
 #[derive(Debug)]
@@ -160,16 +172,30 @@ impl std::fmt::Display for ProductRelayAbsoluteDeadlineErrorV1 {
 
 impl std::error::Error for ProductRelayAbsoluteDeadlineErrorV1 {}
 
+#[derive(Debug)]
+struct ProductRelayTerminalErrorV1(String);
+
+impl std::fmt::Display for ProductRelayTerminalErrorV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "product relay session is terminal: {}", self.0)
+    }
+}
+
+impl std::error::Error for ProductRelayTerminalErrorV1 {}
+
 /// A polling timeout is idle; an exhausted absolute protocol/frame budget is terminal.
 pub fn product_relay_client_read_is_idle_timeout_v1(error: &anyhow::Error) -> bool {
-    let terminal = error.chain().any(|cause| {
-        cause.is::<ProductRelayAbsoluteDeadlineErrorV1>()
-            || cause.downcast_ref::<io::Error>().is_some_and(|error| {
-                error
-                    .get_ref()
-                    .is_some_and(|inner| inner.is::<ProductRelayAbsoluteDeadlineErrorV1>())
-            })
-    });
+    let terminal = error.is::<ProductRelayTerminalErrorV1>()
+        || error.chain().any(|cause| {
+            cause.is::<ProductRelayAbsoluteDeadlineErrorV1>()
+                || cause.is::<ProductRelayTerminalErrorV1>()
+                || cause.downcast_ref::<io::Error>().is_some_and(|error| {
+                    error.get_ref().is_some_and(|inner| {
+                        inner.is::<ProductRelayAbsoluteDeadlineErrorV1>()
+                            || inner.is::<ProductRelayTerminalErrorV1>()
+                    })
+                })
+        });
     !terminal
         && error.chain().any(|cause| {
             cause.downcast_ref::<io::Error>().is_some_and(|error| {
@@ -199,6 +225,11 @@ impl ProductRelayDeadlineTcpStreamV1 {
             write_deadline: None,
             read_operation_deadline: None,
             retry_idle_reads: false,
+            terminal_error: None,
+            #[cfg(test)]
+            test_write_fault: None,
+            #[cfg(test)]
+            test_io_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
     }
 
@@ -272,7 +303,27 @@ impl ProductRelayDeadlineTcpStreamV1 {
             })
     }
 
-    fn check_io_deadlines_v1(&self) -> io::Result<()> {
+    fn poison_v1(&mut self, error: &impl std::fmt::Display) {
+        if self.terminal_error.is_none() {
+            self.terminal_error = Some(error.to_string());
+        }
+    }
+
+    fn check_io_deadlines_v1(&mut self) -> io::Result<()> {
+        if let Some(reason) = &self.terminal_error {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                ProductRelayTerminalErrorV1(reason.clone()),
+            ));
+        }
+        let result = self.check_current_deadlines_v1();
+        if let Err(error) = &result {
+            self.poison_v1(error);
+        }
+        result
+    }
+
+    fn check_current_deadlines_v1(&self) -> io::Result<()> {
         if self
             .handshake_deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
@@ -308,7 +359,10 @@ impl ProductRelayDeadlineTcpStreamV1 {
         Ok(())
     }
 
-    fn bounded_io_timeout_v1(&self, configured: Option<Duration>) -> io::Result<Option<Duration>> {
+    fn bounded_io_timeout_v1(
+        &mut self,
+        configured: Option<Duration>,
+    ) -> io::Result<Option<Duration>> {
         self.check_io_deadlines_v1()?;
         let deadline = [
             self.handshake_deadline,
@@ -329,6 +383,23 @@ impl ProductRelayDeadlineTcpStreamV1 {
             None => configured,
         })
     }
+
+    /// rustls must account for every byte already consumed by the socket. Defer
+    /// a post-I/O failure until its next operation, without reviving the session.
+    fn finish_io_progress_v1(
+        &mut self,
+        result: io::Result<usize>,
+        maintenance: io::Result<()>,
+    ) -> io::Result<usize> {
+        if let Err(error) = maintenance {
+            self.poison_v1(&error);
+            return match result {
+                Ok(progress) if progress > 0 => Ok(progress),
+                _ => Err(error),
+            };
+        }
+        result
+    }
 }
 
 impl Read for ProductRelayDeadlineTcpStreamV1 {
@@ -338,14 +409,20 @@ impl Read for ProductRelayDeadlineTcpStreamV1 {
             if timeout != self.read_timeout {
                 self.inner.set_read_timeout(timeout)?;
             }
+            #[cfg(test)]
+            self.test_io_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let result = self.inner.read(output);
-            if timeout != self.read_timeout {
-                self.inner.set_read_timeout(self.read_timeout)?;
-            }
-            if result.as_ref().is_ok_and(|read| *read > 0) {
-                self.ensure_frame_deadline_v1()?;
-            }
-            self.check_io_deadlines_v1()?;
+            let maintenance = (|| {
+                if timeout != self.read_timeout {
+                    self.inner.set_read_timeout(self.read_timeout)?;
+                }
+                if result.as_ref().is_ok_and(|read| *read > 0) {
+                    self.ensure_frame_deadline_v1()?;
+                }
+                self.check_io_deadlines_v1()
+            })();
+            let result = self.finish_io_progress_v1(result, maintenance);
             if (self.handshake_deadline.is_some() || self.retry_idle_reads)
                 && result.as_ref().is_err_and(|error| {
                     matches!(
@@ -365,22 +442,59 @@ impl Read for ProductRelayDeadlineTcpStreamV1 {
 
 impl Write for ProductRelayDeadlineTcpStreamV1 {
     fn write(&mut self, input: &[u8]) -> io::Result<usize> {
-        let timeout = self.bounded_io_timeout_v1(self.write_timeout)?;
-        if timeout != self.write_timeout {
-            self.inner.set_write_timeout(timeout)?;
+        let result = (|| {
+            let timeout = self.bounded_io_timeout_v1(self.write_timeout)?;
+            if timeout != self.write_timeout {
+                self.inner.set_write_timeout(timeout)?;
+            }
+            #[cfg(test)]
+            self.test_io_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            #[cfg(test)]
+            let result = match self.test_write_fault.take() {
+                Some(ProductRelayClientWriteFaultV1::Timeout) => Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "injected authenticated socket write timeout",
+                )),
+                Some(ProductRelayClientWriteFaultV1::ExpireAfterProgress(limit)) => {
+                    let result = self.inner.write(&input[..input.len().min(limit)]);
+                    if result.as_ref().is_ok_and(|written| *written > 0) {
+                        self.write_deadline = Some(Instant::now() - Duration::from_millis(1));
+                    }
+                    result
+                }
+                None => self.inner.write(input),
+            };
+            #[cfg(not(test))]
+            let result = self.inner.write(input);
+            let maintenance = (|| {
+                if timeout != self.write_timeout {
+                    self.inner.set_write_timeout(self.write_timeout)?;
+                }
+                self.check_io_deadlines_v1()
+            })();
+            self.finish_io_progress_v1(result, maintenance)
+        })();
+        if let Err(error) = &result {
+            // Stream::write may temporarily swallow a transport error. Make
+            // its subsequent flush/read/write fail, even for ordinary timeout.
+            self.poison_v1(error);
         }
-        let result = self.inner.write(input);
-        if timeout != self.write_timeout {
-            self.inner.set_write_timeout(self.write_timeout)?;
-        }
-        self.check_io_deadlines_v1()?;
         result
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.check_io_deadlines_v1()?;
-        let result = self.inner.flush();
-        self.check_io_deadlines_v1()?;
+        let result = (|| {
+            self.check_io_deadlines_v1()?;
+            #[cfg(test)]
+            self.test_io_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.inner.flush()?;
+            self.check_io_deadlines_v1()
+        })();
+        if let Err(error) = &result {
+            self.poison_v1(error);
+        }
         result
     }
 }
@@ -566,7 +680,14 @@ impl ProductRelayClientV1 {
         self.heartbeat_health.smoothed_response_ms
     }
 
+    /// Already decoded inbound events buffered while waiting for a correlated
+    /// send outcome. Partial TLS/WebSocket bytes are not ready events.
+    pub(crate) fn has_buffered_events(&self) -> bool {
+        !self.pending_events.is_empty()
+    }
+
     pub fn recv_event(&mut self) -> Result<ProductRelayClientEventV1> {
+        self.stream.sock.check_io_deadlines_v1()?;
         self.heartbeat_health.check(Instant::now())?;
         if let Some(event) =
             pop_pending_relay_event_v1(&mut self.pending_events, &mut self.pending_event_bytes)
@@ -686,6 +807,25 @@ impl ProductRelayClientV1 {
             .replace(protocol_item_deadline);
         let result = self.read_protocol_item_until_inner_v1(protocol_item_deadline);
         self.stream.sock.read_operation_deadline = previous_deadline;
+        if self.stream.sock.terminal_error.is_some() {
+            // rustls may write buffered ciphertext while reading. Such a
+            // transport timeout is terminal even without an explicit Pong or
+            // application-write wrapper on this call's stack.
+            return result.map_err(|error| {
+                if product_relay_client_read_is_idle_timeout_v1(&error) {
+                    error.context(ProductRelayTerminalErrorV1(
+                        "transport failed during read".into(),
+                    ))
+                } else {
+                    error
+                }
+            });
+        }
+        if let Err(error) = &result {
+            if !product_relay_client_read_is_idle_timeout_v1(error) {
+                self.stream.sock.poison_v1(error);
+            }
+        }
         result
     }
 
@@ -755,21 +895,34 @@ impl ProductRelayClientV1 {
         &mut self,
         message: &ProductRelayWireMessageV1,
     ) -> Result<usize> {
-        self.stream.sock.begin_authenticated_write_v1()?;
-        let write_result = write_wire_v1(&mut self.stream, message);
-        let finish_result = self.stream.sock.finish_authenticated_write_v1();
-        let written = write_result?;
-        finish_result?;
-        Ok(written)
+        self.write_authenticated_v1(|stream| write_wire_v1(stream, message))
     }
 
     fn write_authenticated_frame_v1(&mut self, opcode: u8, payload: &[u8]) -> Result<()> {
-        self.stream.sock.begin_authenticated_write_v1()?;
-        let write_result = write_masked_frame_v1(&mut self.stream, opcode, payload);
-        let finish_result = self.stream.sock.finish_authenticated_write_v1();
-        write_result?;
-        finish_result?;
-        Ok(())
+        self.write_authenticated_v1(|stream| write_masked_frame_v1(stream, opcode, payload))
+    }
+
+    fn write_authenticated_v1<T>(
+        &mut self,
+        write: impl FnOnce(
+            &mut rustls::StreamOwned<rustls::ClientConnection, ProductRelayDeadlineTcpStreamV1>,
+        ) -> Result<T>,
+    ) -> Result<T> {
+        let result = (|| {
+            self.stream.sock.begin_authenticated_write_v1()?;
+            let written = write(&mut self.stream);
+            // Always restore the operation scope, but never clear terminal state.
+            let finished = self.stream.sock.finish_authenticated_write_v1();
+            let value = written?;
+            finished?;
+            Ok(value)
+        })();
+        result.map_err(|error: anyhow::Error| {
+            self.stream.sock.poison_v1(&error);
+            error.context(ProductRelayTerminalErrorV1(
+                "authenticated write failed".into(),
+            ))
+        })
     }
 }
 
@@ -1313,6 +1466,8 @@ mod tests {
     };
     use std::{fs, net::TcpListener, thread};
 
+    include!("product_relay_client_failure_tests.rs");
+
     #[test]
     fn heartbeat_health_measures_response_and_silence_is_terminal() {
         let start = Instant::now();
@@ -1428,8 +1583,17 @@ mod tests {
                 .unwrap();
         let mut bytes = [0u8; 8];
         let error = guarded.read_exact(&mut bytes).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        // If the last syscall returned bytes as its budget expired, those
+        // bytes are preserved and read_exact sees the sticky terminal error
+        // on its next read instead of losing already-consumed input.
+        if error.kind() != io::ErrorKind::TimedOut {
+            assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+            assert!(error
+                .get_ref()
+                .is_some_and(|inner| inner.is::<ProductRelayTerminalErrorV1>()));
+        }
         assert!(error.to_string().contains("absolute handshake deadline"));
+        assert!(!product_relay_client_read_is_idle_timeout_v1(&error.into()));
         drop(guarded);
         server.join().unwrap();
     }
@@ -1554,9 +1718,8 @@ mod tests {
             client.stream.sock.inner.read_timeout().unwrap(),
             original_read_timeout
         );
-        // Scope cleanup is independent of the caller's decision to close a timed-out
-        // in-flight operation; it must not turn later ordinary polls into long waits.
-        assert!(product_relay_client_read_is_idle_timeout_v1(
+        // Restoring the scoped deadline must not revive a terminal operation.
+        assert!(!product_relay_client_read_is_idle_timeout_v1(
             &client.recv_event().unwrap_err()
         ));
         drop(client);

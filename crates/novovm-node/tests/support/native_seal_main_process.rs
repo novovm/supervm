@@ -53,6 +53,7 @@ mod transfer_throughput;
 
 enum TransferScenario {
     Throughput(transfer_throughput::TransportProfile),
+    ContinuousBacklog,
     MixedParity,
 }
 impl Drop for Child {
@@ -335,6 +336,19 @@ fn fresh_record_transfers_bounded_transport_measure_rpc_to_finality() {
 }
 
 #[test]
+#[ignore = "real four-process 256-transfer bounded backlog; exclusive loopback 127.0.0.2:443"]
+fn fresh_record_transfers_continuous_backlog_measure_rpc_to_finality() {
+    run_real_aoem_main_nodes_scenario(
+        true,
+        true,
+        false,
+        false,
+        LocalFault::None,
+        Some(TransferScenario::ContinuousBacklog),
+    );
+}
+
+#[test]
 #[ignore = "real four-process proposal collection measurement; exclusive loopback 127.0.0.2:443"]
 fn fresh_record_transfers_collect_250_measure_rpc_to_finality() {
     run_real_aoem_main_nodes_scenario(
@@ -450,7 +464,9 @@ fn run_real_aoem_main_nodes_scenario(
     let reserve = std::net::TcpListener::bind("127.0.0.2:443")
         .expect("exclusive loopback 443 required; do not stop other services");
     let (genesis, fresh_plan) = match &transfer_scenario {
-        Some(TransferScenario::Throughput(_)) => transfer_throughput::inputs(),
+        Some(TransferScenario::Throughput(_) | TransferScenario::ContinuousBacklog) => {
+            transfer_throughput::inputs()
+        }
         Some(TransferScenario::MixedParity) => transfer_mixed::inputs(),
         None => super::native_fresh_genesis_cli::inputs(),
     };
@@ -844,6 +860,9 @@ fn run_real_aoem_main_nodes_scenario(
             match scenario {
                 TransferScenario::Throughput(profile) => {
                     transfer_throughput::exercise(&nodes, &root, profile)
+                }
+                TransferScenario::ContinuousBacklog => {
+                    transfer_throughput::exercise_continuous(&nodes, &root)
                 }
                 TransferScenario::MixedParity => transfer_mixed::exercise(&nodes, &root),
             }

@@ -43620,14 +43620,52 @@ fn run_fresh_genesis_confirmation_v1(
             })?;
         }
         for event in runtime.drain_events(128) {
-            if let ProductMainlineOverlayEventV1::Inbound(inbound) = event {
-                #[cfg(test)]
-                if let Some(faults) = &mut faults {
-                    if !faults.allow(&inbound.source_peer_id, &inbound.frame.payload) {
-                        continue;
+            match event {
+                ProductMainlineOverlayEventV1::Inbound(inbound) => {
+                    #[cfg(test)]
+                    if let Some(faults) = &mut faults {
+                        if !faults.allow(&inbound.source_peer_id, &inbound.frame.payload) {
+                            continue;
+                        }
                     }
+                    lifecycle.enqueue(inbound);
                 }
-                lifecycle.enqueue(inbound);
+                // Preserve the worker's bounded failure evidence on the actual
+                // fresh-node path. Never log transaction/envelope payloads.
+                ProductMainlineOverlayEventV1::RelayDisconnected {
+                    relay_peer_id,
+                    error,
+                    reconnect_in_ms,
+                } => eprintln!(
+                    "native_fresh_overlay_disconnected: {}",
+                    serde_json::json!({
+                        "relay_peer_id": relay_peer_id,
+                        "error": error,
+                        "reconnect_in_ms": reconnect_in_ms,
+                    })
+                ),
+                ProductMainlineOverlayEventV1::PeerIsolated {
+                    remote_peer_id,
+                    reason,
+                    session_failure_count,
+                    retry_in_ms,
+                } => eprintln!(
+                    "native_fresh_overlay_peer_isolated: {}",
+                    serde_json::json!({
+                        "remote_peer_id": remote_peer_id,
+                        "reason": reason,
+                        "session_failure_count": session_failure_count,
+                        "retry_in_ms": retry_in_ms,
+                    })
+                ),
+                ProductMainlineOverlayEventV1::WorkerFailed(error) => eprintln!(
+                    "native_fresh_overlay_worker_failed: {}",
+                    serde_json::json!({ "error": error })
+                ),
+                ProductMainlineOverlayEventV1::WorkerStopped => {
+                    eprintln!("native_fresh_overlay_worker_stopped");
+                }
+                _ => {}
             }
         }
         novovm_node::native_fresh_timing::measure("main.lifecycle_poll", || {
