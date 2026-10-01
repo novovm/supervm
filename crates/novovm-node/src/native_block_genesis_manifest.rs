@@ -72,6 +72,7 @@ fn load_verified(
     expected: [u8; 32],
     namespace: [u8; 32],
 ) -> Result<FreshGenesisConfigV1> {
+    let _timing = crate::native_fresh_timing::Span::start("ledger.load_verified");
     #[cfg(test)]
     VERIFIED_LOAD_COUNT.with(|count| count.set(count.get() + 1));
     let schema = ledger

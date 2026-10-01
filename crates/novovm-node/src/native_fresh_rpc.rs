@@ -100,9 +100,10 @@ pub fn handle_fresh_rpc(request: Value, lifecycle: &mut FreshChainLifecycleV1) -
                 if params.len() != 1 {
                     bail!("one raw transaction required");
                 }
-                lifecycle.submit_raw_transaction(decode_hex(
-                    params[0].as_str().context("raw hex required")?,
-                )?)
+                let raw = decode_hex(params[0].as_str().context("raw hex required")?)?;
+                crate::native_fresh_timing::measure("rpc.submit_raw_transaction", || {
+                    lifecycle.submit_raw_transaction(raw)
+                })
             }
             Some("nov_getTransactionStatus") => {
                 let params = request["params"]
@@ -114,7 +115,9 @@ pub fn handle_fresh_rpc(request: Value, lifecycle: &mut FreshChainLifecycleV1) -
                 let hash: [u8; 32] = decode_hex(params[0].as_str().context("hash hex required")?)?
                     .try_into()
                     .map_err(|_| anyhow::anyhow!("32-byte hash required"))?;
-                lifecycle.transaction_status(hash)
+                crate::native_fresh_timing::measure("rpc.transaction_status", || {
+                    lifecycle.transaction_status(hash)
+                })
             }
             Some("nov_chainStatus") => Ok(lifecycle.status_json()),
             _ => bail!("method not supported"),

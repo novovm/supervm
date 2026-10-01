@@ -3,6 +3,7 @@
 //! assembles an authenticated body, executes locally, then opens the V3 service.
 use super::*;
 use crate::native_candidate_body::network::CandidateBodyInboxV1;
+use crate::native_fresh_timing::{measure, Span};
 #[path = "native_fresh_chain_clock.rs"]
 mod clock;
 #[path = "native_fresh_chain_history.rs"]
@@ -301,24 +302,29 @@ impl FreshChainLifecycleV1 {
         if let Some(config) = &self.config {
             check_runtime(config, runtime)?;
             if let Some(history) = &mut self.history {
-                history.poll(
-                    config,
-                    &self.ledger_path,
-                    self.publication.is_some(),
-                    runtime,
-                    now,
-                )?;
+                measure("lifecycle.history_poll", || {
+                    history.poll(
+                        config,
+                        &self.ledger_path,
+                        self.publication.is_some(),
+                        runtime,
+                        now,
+                    )
+                })?;
             }
         }
-        self.poll_transactions(runtime, now)?;
+        measure("lifecycle.transactions_poll", || {
+            self.poll_transactions(runtime, now)
+        })?;
         self.clock_waiting = false;
         if let Some(service) = self.service.as_mut() {
             if !clock::timestamp_allowed(service.candidate_timestamp_unix_ms, wall_ms) {
                 self.clock_waiting = true;
                 return Ok(());
             }
-            service.poll(runtime, now)?;
+            measure("lifecycle.service_poll", || service.poll(runtime, now))?;
             if service.status_json()["decision_confirmed"] == true {
+                let _span = Span::start("lifecycle.complete_publication_and_arm");
                 self.publication = service
                     .complete_fresh_publication(runtime, now)?
                     .map(Box::new);
@@ -331,10 +337,12 @@ impl FreshChainLifecycleV1 {
             return Ok(());
         }
         // Reject corrupt/moved parent authority before processing remote work.
-        self.publication
-            .as_mut()
-            .context("fresh lifecycle phase missing")?
-            .poll(runtime, now)?;
+        measure("lifecycle.publication_poll", || {
+            self.publication
+                .as_mut()
+                .context("fresh lifecycle phase missing")?
+                .poll(runtime, now)
+        })?;
         let Some(inbox) = self.bodies.as_mut() else {
             return Ok(());
         };
@@ -409,23 +417,26 @@ impl FreshChainLifecycleV1 {
                 continue;
             }
             let certificate = body.message.certificate().cloned();
-            let next = match config
-                .clone()
-                .prepare_received_successor(body, &self.params)
-            {
+            let next = match measure("lifecycle.received_successor_prepare", || {
+                config
+                    .clone()
+                    .prepare_received_successor(body, &self.params)
+            }) {
                 Ok(next) => next,
                 Err(_) => {
                     self.rejected = self.rejected.saturating_add(1);
                     continue;
                 }
             };
-            let mut service = NovNativeSealServiceV1::open_configured(
-                next.clone(),
-                &self.ledger_path,
-                &self.params,
-                runtime,
-                now,
-            )?;
+            let mut service = measure("lifecycle.received_successor_open", || {
+                NovNativeSealServiceV1::open_configured(
+                    next.clone(),
+                    &self.ledger_path,
+                    &self.params,
+                    runtime,
+                    now,
+                )
+            })?;
             if let Some(certificate) = &certificate {
                 service.admit_successor_new_view(certificate)?;
             }
@@ -448,11 +459,15 @@ impl FreshChainLifecycleV1 {
             self.received_successors = self.received_successors.saturating_add(1);
             return Ok(());
         }
-        self.pacemaker
-            .as_mut()
-            .context("successor pacemaker missing")?
-            .poll(config, &self.params, runtime, now)?;
-        self.propose_from_pool(runtime, now, wall_ms)
+        measure("lifecycle.pacemaker_poll", || {
+            self.pacemaker
+                .as_mut()
+                .context("successor pacemaker missing")?
+                .poll(config, &self.params, runtime, now)
+        })?;
+        measure("lifecycle.propose_from_pool", || {
+            self.propose_from_pool(runtime, now, wall_ms)
+        })
     }
 
     pub fn status_json(&self) -> serde_json::Value {

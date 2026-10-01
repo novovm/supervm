@@ -43608,7 +43608,9 @@ fn run_fresh_genesis_confirmation_v1(
             faults.refresh()?;
         }
         if let Some(rpc) = &mut rpc {
-            rpc.poll(&mut lifecycle)?;
+            novovm_node::native_fresh_timing::measure("main.rpc_poll", || {
+                rpc.poll(&mut lifecycle)
+            })?;
         }
         for event in runtime.drain_events(128) {
             if let ProductMainlineOverlayEventV1::Inbound(inbound) = event {
@@ -43621,7 +43623,9 @@ fn run_fresh_genesis_confirmation_v1(
                 lifecycle.enqueue(inbound);
             }
         }
-        lifecycle.poll(&runtime, Instant::now())?;
+        novovm_node::native_fresh_timing::measure("main.lifecycle_poll", || {
+            lifecycle.poll(&runtime, Instant::now())
+        })?;
         let status = lifecycle.status_json();
         #[cfg(test)]
         if let Some(faults) = &faults {

@@ -10,12 +10,16 @@ use novovm_protocol::{
 };
 use std::collections::BTreeSet;
 
-const LABEL: &str = "continuous-record-transfer-measurement";
+pub(super) const LABEL: &str = "continuous-record-transfer-measurement";
 const SIGNERS: usize = 32;
 const BATCHES: usize = 3;
 const CLIENT_CONCURRENCY: usize = 4;
 const POLL_MS: u64 = 100;
 const DEADLINE: Duration = Duration::from_secs(300);
+
+pub(super) fn diagnostics_enabled() -> bool {
+    std::env::var("NOVOVM_NATIVE_FRESH_TIMING").as_deref() == Ok("1")
+}
 
 fn raw(signer: usize, nonce: u64, amount: u128) -> Vec<u8> {
     let mut tx = NovNativeTxWireV1 {
@@ -355,6 +359,7 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
             "admission_outcomes":admission_outcomes,
             "error":measurement.as_ref().err().map(|error| format!("{error:#}")),
             "implicit_rpc_retries":0,"batch_count":BATCHES,"signers":SIGNERS,
+            "slow_call_diagnostics_enabled":diagnostics_enabled(),
         }))
         .unwrap(),
     )
@@ -436,6 +441,7 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
     }
     let environment = serde_json::json!({
         "aoem_backend":"rocksdb","build_profile":if cfg!(debug_assertions){"debug"}else{"release"},
+        "slow_call_diagnostics_enabled":diagnostics_enabled(),
         "os":std::env::consts::OS,"arch":std::env::consts::ARCH,"logical_parallelism":std::thread::available_parallelism().unwrap().get(),
         "cpu_description":std::env::var("PROCESSOR_IDENTIFIER").ok(),
         "node_executable_sha256":hex(&Sha256::digest(fs::read(env!("CARGO_BIN_EXE_novovm-node")).unwrap())),

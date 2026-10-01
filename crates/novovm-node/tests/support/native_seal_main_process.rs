@@ -113,6 +113,11 @@ fn start_cluster(nodes: &[Node], active: &[usize], label: &str, ticks: u64) -> V
         if label.starts_with("continuous") {
             cmd.env("NOVOVM_NATIVE_FRESH_RPC_BIND", "127.0.0.1:0");
         }
+        // Preserve environment isolation; forward only this explicit diagnostic
+        // switch, and only to the measured workload (not genesis/recovery).
+        if label == transfer_throughput::LABEL && transfer_throughput::diagnostics_enabled() {
+            cmd.env("NOVOVM_NATIVE_FRESH_TIMING", "1");
+        }
         cmd.env("NOVOVM_NODE_MODE", "native_execution_tick")
             .env("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", ticks.to_string())
             .env("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", "250")
