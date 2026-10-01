@@ -33,10 +33,11 @@ fn validate_first(
 /// than accepting arbitrary keys merely because they have a candidate prefix.
 pub(super) fn validated_keys(
     ledger: &NovNativeBlockLedgerV1,
-    config: &FreshGenesisConfigV1,
+    validation: &FreshGenesisValidationV1<'_>,
 ) -> Result<Vec<Vec<u8>>> {
+    let config = validation.config();
     let chain = config.chain_id;
-    let initial_root = config.compile()?.state_root();
+    let initial_root = validation.compiled().state_root();
     let height = ledger
         .load_candidate_height_index_inner_v1(chain, 1)?
         .context("fresh genesis candidate height index missing")?;

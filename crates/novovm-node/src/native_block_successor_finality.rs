@@ -75,7 +75,7 @@ pub(super) fn head_at(
 
 pub(super) fn validated_keys(
     ledger: &NovNativeBlockLedgerV1,
-    config: &FreshGenesisConfigV1,
+    validation: &FreshGenesisValidationV1<'_>,
     namespace: [u8; 32],
 ) -> Result<Vec<Vec<u8>>> {
     let intent = successor_promotion::read(ledger)?;
@@ -83,11 +83,11 @@ pub(super) fn validated_keys(
     let schema = ledger.db.get(KEY_SCHEMA_V1)?.context("schema missing")?;
     let finalized = schema == SUCCESSOR_FINALIZED_SCHEMA.as_bytes();
     let mut keys = Vec::new();
-    let chain = config.chain_id;
+    let chain = validation.config().chain_id;
     let head_key = head_key_v1(chain).into_bytes();
     let mut head = head_at(ledger, 1)?;
     for (height, archived) in archives(ledger)? {
-        archived.validate(ledger, config, namespace)?;
+        archived.validate_with_validation(ledger, validation, namespace)?;
         let block = successors::record_at(ledger, height)?.block;
         let mut entries = completion::block_entries(&block, Some(&head))?;
         head = serde_json::from_slice(&entries.remove(&head_key).context("archive head missing")?)?;

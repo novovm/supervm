@@ -655,24 +655,41 @@ fn exercise_fresh_sequence(
         }
         parent = candidate;
     }
+    let read_counted_finality = |height| {
+        crate::tx_ingress::fresh_genesis::count_genesis_compilations_for_test_v1(|| {
+            Ledger::count_fresh_ledger_verifications_for_test_v1(|| {
+                Ledger::load_fresh_finality_by_height_v1(&ledger, pin, namespace, height)
+            })
+        })
+    };
+    // This is a nonempty four-block finalized history for both root profiles.
+    // Each independent read recompiles once; reuse is confined to that read,
+    // never a cache of configuration validation or ledger/QC authority.
+    for _ in 0..2 {
+        let ((loaded, verified_loads), compilations) = read_counted_finality(4);
+        assert_eq!(loaded.unwrap().as_ref(), history.last());
+        assert_eq!(verified_loads, 1);
+        assert_eq!(compilations, 1);
+    }
     let key = b"native_block_ledger/v1/successor/finalized/0000000000000002";
     let db = rocksdb::DB::open_default(&ledger).unwrap();
     let original = db.get(key).unwrap().unwrap();
     db.delete(key).unwrap();
     drop(db);
-    assert!(Ledger::load_fresh_finality_by_height_v1(&ledger, pin, namespace, 4).is_err());
+    let ((rejected, verified_loads), compilations) = read_counted_finality(4);
+    assert!(rejected.is_err());
+    assert_eq!(verified_loads, 1);
+    assert_eq!(compilations, 1);
     assert!(workspace::load_finalized_genesis_parent_v1(chain, candidate, pin, params).is_err());
     assert!(workspace::retire_old_workspaces_v1(chain, candidate, pin, params).is_err());
     let db = rocksdb::DB::open_default(&ledger).unwrap();
     assert!(db.get(key).unwrap().is_none());
     db.put(key, original).unwrap(); // Explicit test fixture restoration, never recovery repair.
     drop(db);
-    assert_eq!(
-        Ledger::load_fresh_finality_by_height_v1(&ledger, pin, namespace, 2)
-            .unwrap()
-            .as_ref(),
-        Some(&history[1])
-    );
+    let ((restored, verified_loads), compilations) = read_counted_finality(2);
+    assert_eq!(restored.unwrap().as_ref(), Some(&history[1]));
+    assert_eq!(verified_loads, 1);
+    assert_eq!(compilations, 1);
 }
 
 fn exercise_received_successor_body(

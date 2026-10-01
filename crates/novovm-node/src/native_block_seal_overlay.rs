@@ -87,9 +87,23 @@ impl NovNativeSealEpochAuthorityV1 {
     pub fn derive_operator_pinned_fresh_genesis_epoch(
         config: &crate::tx_ingress::fresh_genesis::FreshGenesisConfigV1,
         expected_config: [u8; 32],
+        transport_bindings: Vec<NovNativeSealValidatorTransportBindingV1>,
+    ) -> Result<Self> {
+        let validated = crate::tx_ingress::fresh_genesis::FreshGenesisValidationV1::new(config)?;
+        Self::derive_operator_pinned_validated_fresh_genesis_epoch(
+            &validated,
+            expected_config,
+            transport_bindings,
+        )
+    }
+
+    pub(crate) fn derive_operator_pinned_validated_fresh_genesis_epoch(
+        validated: &crate::tx_ingress::fresh_genesis::FreshGenesisValidationV1<'_>,
+        expected_config: [u8; 32],
         mut transport_bindings: Vec<NovNativeSealValidatorTransportBindingV1>,
     ) -> Result<Self> {
-        let compiled = config.compile()?;
+        let config = validated.config();
+        let compiled = validated.compiled();
         if compiled.config_commitment() != expected_config {
             bail!("fresh genesis overlay authority approval pin mismatch");
         }

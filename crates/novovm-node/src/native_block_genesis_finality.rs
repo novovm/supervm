@@ -21,14 +21,25 @@ impl NovNativeFreshFinalityProofV1 {
         config: &FreshGenesisConfigV1,
         block: &NovNativeDurableBlockV1,
     ) -> Result<[u8; 32]> {
-        self.validate_archived_certificate(config, block)?;
+        self.validated_decision_target_with_validation(
+            &FreshGenesisValidationV1::new(config)?,
+            block,
+        )
+    }
+
+    pub(super) fn validated_decision_target_with_validation(
+        &self,
+        validation: &FreshGenesisValidationV1<'_>,
+        block: &NovNativeDurableBlockV1,
+    ) -> Result<[u8; 32]> {
+        self.validate_archived_certificate_with_validation(validation, block)?;
         let NovNativeSealRoundMessageV1::DecisionCertificateV3 { decision, .. } = &self.witness
         else {
             bail!("parent requires a complete decision witness");
         };
         crate::native_block_seal::commit_v3::decision_target_v3(
             &decision.prepare,
-            config.compile()?.validator_set(),
+            validation.compiled().validator_set(),
         )
     }
 
@@ -52,18 +63,31 @@ impl NovNativeFreshFinalityProofV1 {
         config: &FreshGenesisConfigV1,
         block: &NovNativeDurableBlockV1,
     ) -> Result<()> {
-        let compiled = config.compile()?;
+        self.validate_archived_certificate_with_validation(
+            &FreshGenesisValidationV1::new(config)?,
+            block,
+        )
+    }
+
+    fn validate_archived_certificate_with_validation(
+        &self,
+        validation: &FreshGenesisValidationV1<'_>,
+        block: &NovNativeDurableBlockV1,
+    ) -> Result<()> {
+        let config = validation.config();
+        let compiled = validation.compiled();
         let root_profile = compiled.root_codec_profile();
         if block.header.post_state_root_codec != root_profile.state_root_codec()
             || block.header.cumulative_receipt_root_codec != root_profile.receipt_root_codec()
         {
             bail!("archived finality block root codecs differ from approved fresh genesis profile");
         }
-        let rebuilt = NovNativeSealEpochAuthorityV1::derive_operator_pinned_fresh_genesis_epoch(
-            config,
-            compiled.config_commitment(),
-            self.authority.transport_bindings.clone(),
-        )?;
+        let rebuilt =
+            NovNativeSealEpochAuthorityV1::derive_operator_pinned_validated_fresh_genesis_epoch(
+                validation,
+                compiled.config_commitment(),
+                self.authority.transport_bindings.clone(),
+            )?;
         if rebuilt != self.authority {
             bail!("archived finality authority differs from genesis");
         }
@@ -122,6 +146,26 @@ impl NovNativeFreshFinalityProofV1 {
         ledger: &NovNativeBlockLedgerV1,
         config: &FreshGenesisConfigV1,
     ) -> Result<()> {
+        let block = self.validate_selected_block(ledger)?;
+        self.validate_archived_block(config, &block)
+    }
+
+    fn validate_with_validation(
+        &self,
+        ledger: &NovNativeBlockLedgerV1,
+        validation: &FreshGenesisValidationV1<'_>,
+    ) -> Result<()> {
+        let block = self.validate_selected_block(ledger)?;
+        if block.header.height != 1 {
+            bail!("first-block finality requires height one");
+        }
+        self.validate_archived_certificate_with_validation(validation, &block)
+    }
+
+    fn validate_selected_block(
+        &self,
+        ledger: &NovNativeBlockLedgerV1,
+    ) -> Result<NovNativeDurableBlockV1> {
         let intent = promotion::read(ledger)?;
         let NovNativeSealRoundMessageV1::DecisionCertificateV3 { decision, .. } = &self.witness
         else {
@@ -136,7 +180,7 @@ impl NovNativeFreshFinalityProofV1 {
         let block = ledger
             .load_candidate_block_for_record_inner_v1(&record)?
             .context("finality candidate body missing")?;
-        self.validate_archived_block(config, &block)
+        Ok(block)
     }
 }
 
@@ -152,9 +196,9 @@ pub(super) fn read(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeFreshFina
 
 pub(super) fn validated_keys(
     ledger: &NovNativeBlockLedgerV1,
-    config: &FreshGenesisConfigV1,
+    validation: &FreshGenesisValidationV1<'_>,
 ) -> Result<Vec<Vec<u8>>> {
-    read(ledger)?.validate(ledger, config)?;
+    read(ledger)?.validate_with_validation(ledger, validation)?;
     Ok(vec![KEY_PROOF.to_vec(), KEY_PIN.to_vec()])
 }
 

@@ -46,7 +46,17 @@ impl Intent {
         config: &FreshGenesisConfigV1,
         namespace: [u8; 32],
     ) -> Result<()> {
-        let compiled = config.compile()?;
+        self.validate_with_validation(ledger, &FreshGenesisValidationV1::new(config)?, namespace)
+    }
+
+    pub(super) fn validate_with_validation(
+        &self,
+        ledger: &NovNativeBlockLedgerV1,
+        validation: &FreshGenesisValidationV1<'_>,
+        namespace: [u8; 32],
+    ) -> Result<()> {
+        let config = validation.config();
+        let compiled = validation.compiled();
         if self.genesis != compiled.config_commitment() || self.namespace != namespace {
             bail!("successor promotion domain or parent mismatch");
         }
@@ -77,7 +87,7 @@ impl Intent {
         successors::validate_child(&parent.block, &block)?;
         let target = parent
             .proof
-            .validated_decision_target(config, &parent.block)?;
+            .validated_decision_target_with_validation(validation, &parent.block)?;
         let expected = crate::native_block_seal::subject_from_block_profile_v1(
             &block,
             compiled.validator_set(),
@@ -90,11 +100,12 @@ impl Intent {
         if expected != *subject {
             bail!("successor promotion decision differs from executed block");
         }
-        let authority = NovNativeSealEpochAuthorityV1::derive_operator_pinned_fresh_genesis_epoch(
-            config,
-            self.genesis,
-            self.proof.authority.transport_bindings.clone(),
-        )?;
+        let authority =
+            NovNativeSealEpochAuthorityV1::derive_operator_pinned_validated_fresh_genesis_epoch(
+                validation,
+                self.genesis,
+                self.proof.authority.transport_bindings.clone(),
+            )?;
         if authority != self.proof.authority {
             bail!("successor promotion authority differs from genesis");
         }
@@ -122,10 +133,10 @@ pub(super) fn read(ledger: &NovNativeBlockLedgerV1) -> Result<Intent> {
 
 pub(super) fn validated_keys(
     ledger: &NovNativeBlockLedgerV1,
-    config: &FreshGenesisConfigV1,
+    validation: &FreshGenesisValidationV1<'_>,
     namespace: [u8; 32],
 ) -> Result<Vec<Vec<u8>>> {
-    read(ledger)?.validate(ledger, config, namespace)?;
+    read(ledger)?.validate_with_validation(ledger, validation, namespace)?;
     Ok(vec![KEY.to_vec(), PIN.to_vec()])
 }
 

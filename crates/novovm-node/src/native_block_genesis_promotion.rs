@@ -33,6 +33,22 @@ impl NovNativeFreshPromotionIntentV1 {
         expected: [u8; 32],
         namespace: [u8; 32],
     ) -> Result<()> {
+        self.validate_with_validation(
+            ledger,
+            &FreshGenesisValidationV1::new(config)?,
+            expected,
+            namespace,
+        )
+    }
+
+    fn validate_with_validation(
+        &self,
+        ledger: &NovNativeBlockLedgerV1,
+        validation: &FreshGenesisValidationV1<'_>,
+        expected: [u8; 32],
+        namespace: [u8; 32],
+    ) -> Result<()> {
+        let config = validation.config();
         if self.schema != INTENT_SCHEMA
             || self.chain_id != config.chain_id
             || self.genesis_commitment != expected
@@ -50,7 +66,7 @@ impl NovNativeFreshPromotionIntentV1 {
         let block = ledger
             .load_candidate_block_for_record_inner_v1(&record)?
             .context("fresh promotion block missing")?;
-        let compiled = config.compile()?;
+        let compiled = validation.compiled();
         self.decision.verify(compiled.validator_set())?;
         let subject = &self.decision.prepare.subject;
         let rebuilt = crate::native_block_seal::subject_from_block_profile_v1(
@@ -81,11 +97,11 @@ pub(super) fn read(ledger: &NovNativeBlockLedgerV1) -> Result<NovNativeFreshProm
 
 pub(super) fn validated_keys(
     ledger: &NovNativeBlockLedgerV1,
-    config: &FreshGenesisConfigV1,
+    validation: &FreshGenesisValidationV1<'_>,
     expected: [u8; 32],
     namespace: [u8; 32],
 ) -> Result<Vec<Vec<u8>>> {
-    read(ledger)?.validate(ledger, config, expected, namespace)?;
+    read(ledger)?.validate_with_validation(ledger, validation, expected, namespace)?;
     Ok(vec![KEY_PROMOTION.to_vec(), KEY_PROMOTION_PIN.to_vec()])
 }
 

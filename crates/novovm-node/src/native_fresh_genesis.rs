@@ -50,6 +50,44 @@ pub struct CompiledFreshGenesisV1 {
     root_codec_profile: NativeRootCodecProfileV1,
 }
 
+/// One immutable configuration and its checked compilation, scoped to a single
+/// validation call. This is not a ledger snapshot or permission to sign/publish.
+/// Private construction prevents pairing a config with another config's roots.
+pub(crate) struct FreshGenesisValidationV1<'config> {
+    config: &'config FreshGenesisConfigV1,
+    compiled: CompiledFreshGenesisV1,
+}
+
+impl<'config> FreshGenesisValidationV1<'config> {
+    pub(crate) fn new(config: &'config FreshGenesisConfigV1) -> Result<Self> {
+        Ok(Self {
+            config,
+            compiled: config.compile()?,
+        })
+    }
+
+    pub(crate) fn config(&self) -> &FreshGenesisConfigV1 {
+        self.config
+    }
+
+    pub(crate) fn compiled(&self) -> &CompiledFreshGenesisV1 {
+        &self.compiled
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static GENESIS_COMPILATION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn count_genesis_compilations_for_test_v1<T>(action: impl FnOnce() -> T) -> (T, usize) {
+    let before = GENESIS_COMPILATION_COUNT.with(|count| count.get());
+    let result = action();
+    let after = GENESIS_COMPILATION_COUNT.with(|count| count.get());
+    (result, after - before)
+}
+
 /// Chain-wide identity derived only from validated genesis inputs. Neither a
 /// transaction block hash nor evidence that this genesis is active locally.
 /// Private fields prevent callers from constructing an unchecked identity.
@@ -95,11 +133,18 @@ impl FreshGenesisConfigV1 {
     }
 
     pub fn from_json(bytes: &[u8]) -> Result<Self> {
+        Self::from_json_validated_with(bytes, |_| Ok(()))
+    }
+
+    pub(crate) fn from_json_validated_with(
+        bytes: &[u8],
+        action: impl FnOnce(&FreshGenesisValidationV1<'_>) -> Result<()>,
+    ) -> Result<Self> {
         if bytes.len() > MAX_CONFIG_BYTES {
             bail!("genesis configuration exceeds byte limit");
         }
         let config: Self = serde_json::from_slice(bytes).context("decode fresh genesis config")?;
-        config.compile()?;
+        action(&FreshGenesisValidationV1::new(&config)?)?;
         Ok(config)
     }
 
@@ -107,6 +152,8 @@ impl FreshGenesisConfigV1 {
     /// environment or choose economic parameters. Both profiles fix epoch and
     /// activation to 1, the current fresh nonce scheme, and all history to empty.
     pub fn compile(&self) -> Result<CompiledFreshGenesisV1> {
+        #[cfg(test)]
+        GENESIS_COMPILATION_COUNT.with(|count| count.set(count.get() + 1));
         let root_codec_profile = self.root_codec_profile()?;
         if self.chain_id == 0
             || self.timestamp_unix_ms == 0
@@ -286,6 +333,135 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn fresh_genesis_validation_reuses_only_one_call_without_changing_checked_values() {
+        for schema in [GENESIS_SCHEMA_V1, GENESIS_SCHEMA_RECORD_V2] {
+            let mut config = config();
+            config.schema = schema.into();
+            let expected = config.compile().unwrap();
+            let bytes = serde_json::to_vec(&config).unwrap();
+            for _ in 0..2 {
+                let (result, count) = count_genesis_compilations_for_test_v1(|| {
+                    FreshGenesisConfigV1::from_json_validated_with(&bytes, |checked| {
+                        assert_eq!(checked.config().chain_id, config.chain_id);
+                        for _ in 0..3 {
+                            let actual = checked.compiled();
+                            assert_eq!(actual.identity(), expected.identity());
+                            assert_eq!(actual.state_root(), expected.state_root());
+                            assert_eq!(actual.root_codec_profile(), expected.root_codec_profile());
+                            assert_eq!(actual.validator_set(), expected.validator_set());
+                            assert_eq!(actual.initial_store(), expected.initial_store());
+                            assert_eq!(
+                                actual.reservation(expected.config_commitment(), [2; 32])?,
+                                expected.reservation(expected.config_commitment(), [2; 32])?
+                            );
+                        }
+                        Ok(())
+                    })
+                });
+                assert_eq!(serde_json::to_vec(&result.unwrap()).unwrap(), bytes);
+                assert_eq!(count, 1, "each separate validation compiles exactly once");
+            }
+        }
+    }
+
+    #[test]
+    fn fresh_genesis_validation_authority_matches_cold_path_and_rechecks_pins() {
+        use crate::native_block_seal_overlay::{
+            NovNativeSealEpochAuthorityV1 as Authority,
+            NovNativeSealValidatorTransportBindingV1 as Binding,
+        };
+        for schema in [GENESIS_SCHEMA_V1, GENESIS_SCHEMA_RECORD_V2] {
+            let mut config = config();
+            config.schema = schema.into();
+            let compiled = config.compile().unwrap();
+            let bindings: Vec<_> = compiled
+                .validator_set()
+                .validators
+                .iter()
+                .rev()
+                .map(|v| Binding {
+                    validator_id: v.validator_id,
+                    transport_peer_id: novovm_network::peer_id_from_ed25519_public_key_v1(
+                        &v.public_key,
+                    ),
+                })
+                .collect();
+            let expected = Authority::derive_operator_pinned_fresh_genesis_epoch(
+                &config,
+                compiled.config_commitment(),
+                bindings.clone(),
+            )
+            .unwrap();
+            let ((), count) = count_genesis_compilations_for_test_v1(|| {
+                let validation = FreshGenesisValidationV1::new(&config).unwrap();
+                let actual = Authority::derive_operator_pinned_validated_fresh_genesis_epoch(
+                    &validation,
+                    compiled.config_commitment(),
+                    bindings.clone(),
+                )
+                .unwrap();
+                assert_eq!(actual, expected);
+                assert!(
+                    Authority::derive_operator_pinned_validated_fresh_genesis_epoch(
+                        &validation,
+                        [99; 32],
+                        bindings.clone(),
+                    )
+                    .is_err()
+                );
+                let mut bad = bindings.clone();
+                bad[0].transport_peer_id = bad[1].transport_peer_id.clone();
+                assert!(
+                    Authority::derive_operator_pinned_validated_fresh_genesis_epoch(
+                        &validation,
+                        compiled.config_commitment(),
+                        bad,
+                    )
+                    .is_err()
+                );
+            });
+            assert_eq!(count, 1);
+            config.protocol_config_commitment = [8; 32];
+            let changed = FreshGenesisValidationV1::new(&config).unwrap();
+            assert!(
+                Authority::derive_operator_pinned_validated_fresh_genesis_epoch(
+                    &changed,
+                    compiled.config_commitment(),
+                    bindings,
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn fresh_genesis_validation_rejects_invalid_input_before_callback_and_propagates_errors() {
+        let mut config = config();
+        config.total_initial_nov = "301".into();
+        let invalid = serde_json::to_vec(&config).unwrap();
+        let unknown = br#"{"unknown":true}"#.to_vec();
+        let too_large = vec![b' '; MAX_CONFIG_BYTES + 1];
+        for bytes in [&invalid, &unknown, &too_large] {
+            assert!(FreshGenesisConfigV1::from_json_validated_with(bytes, |_| {
+                panic!("invalid genesis reached callback")
+            })
+            .is_err());
+        }
+        config.total_initial_nov = "300".into();
+        let bytes = serde_json::to_vec(&config).unwrap();
+        let (result, count) = count_genesis_compilations_for_test_v1(|| {
+            FreshGenesisConfigV1::from_json_validated_with(&bytes, |_| {
+                bail!("test ledger evidence rejected")
+            })
+        });
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("test ledger evidence rejected"));
+        assert_eq!(count, 1);
     }
 
     #[test]

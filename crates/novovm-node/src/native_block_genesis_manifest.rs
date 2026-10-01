@@ -1,6 +1,6 @@
 //! Durable approved inputs only. No AOEM write or genesis activation.
 use super::*;
-use crate::tx_ingress::fresh_genesis::FreshGenesisConfigV1;
+use crate::tx_ingress::fresh_genesis::{FreshGenesisConfigV1, FreshGenesisValidationV1};
 #[path = "native_block_genesis_candidates.rs"]
 mod candidates;
 #[path = "native_block_genesis_completion.rs"]
@@ -93,63 +93,67 @@ fn load_verified(
     if ledger.db.get(KEY_MANIFEST_PIN)?.as_deref() != Some(&manifest_pin(&bytes)[..]) {
         bail!("genesis manifest archive pin mismatch");
     }
-    let config = FreshGenesisConfigV1::from_json(&bytes)?;
-    let rebuilt = config.compile()?.reservation(expected, namespace)?;
-    let stored = read_json_v1::<NovNativeFreshGenesisReservationV1>(
-        &ledger.db,
-        KEY_INTENT,
-        "genesis manifest reservation",
-    )?
-    .context("genesis manifest reservation missing")?;
-    stored.validate()?;
-    if stored != rebuilt || ledger.db.get(KEY_PIN)?.as_deref() != Some(&stored.pin()[..]) {
-        bail!("genesis manifest does not reconstruct the pinned reservation");
-    }
-    let mut allowed_keys: HashSet<Vec<u8>> = [
-        KEY_SCHEMA_V1,
-        KEY_INTENT,
-        KEY_PIN,
-        KEY_MANIFEST,
-        KEY_MANIFEST_PIN,
-    ]
-    .into_iter()
-    .map(<[u8]>::to_vec)
-    .collect();
-    if schema != MANIFEST_SCHEMA.as_bytes() {
-        allowed_keys.extend(candidates::validated_keys(ledger, &config)?);
-    }
-    if schema == PROMOTION_SCHEMA.as_bytes() || is_published_schema(&schema) {
-        allowed_keys.extend(promotion::validated_keys(
-            ledger, &config, expected, namespace,
-        )?);
-    }
-    if is_published_schema(&schema) {
-        allowed_keys.extend(completion::validated_keys(ledger)?);
-    }
-    if is_finalized_schema(&schema) {
-        allowed_keys.extend(finality::validated_keys(ledger, &config)?);
-        allowed_keys.extend(successors::validated_keys(ledger)?);
-        if has_successor_intent_schema(&schema) {
-            allowed_keys.extend(successor_promotion::validated_keys(
-                ledger, &config, namespace,
+    // This immutable configuration is compiled once for this verification only.
+    // Every ledger read, signature check and exact key comparison below remains
+    // live; the context is neither a ledger snapshot nor a signing capability.
+    FreshGenesisConfigV1::from_json_validated_with(&bytes, |validation| {
+        let rebuilt = validation.compiled().reservation(expected, namespace)?;
+        let stored = read_json_v1::<NovNativeFreshGenesisReservationV1>(
+            &ledger.db,
+            KEY_INTENT,
+            "genesis manifest reservation",
+        )?
+        .context("genesis manifest reservation missing")?;
+        stored.validate()?;
+        if stored != rebuilt || ledger.db.get(KEY_PIN)?.as_deref() != Some(&stored.pin()[..]) {
+            bail!("genesis manifest does not reconstruct the pinned reservation");
+        }
+        let mut allowed_keys: HashSet<Vec<u8>> = [
+            KEY_SCHEMA_V1,
+            KEY_INTENT,
+            KEY_PIN,
+            KEY_MANIFEST,
+            KEY_MANIFEST_PIN,
+        ]
+        .into_iter()
+        .map(<[u8]>::to_vec)
+        .collect();
+        if schema != MANIFEST_SCHEMA.as_bytes() {
+            allowed_keys.extend(candidates::validated_keys(ledger, validation)?);
+        }
+        if schema == PROMOTION_SCHEMA.as_bytes() || is_published_schema(&schema) {
+            allowed_keys.extend(promotion::validated_keys(
+                ledger, validation, expected, namespace,
             )?);
         }
-        if is_successor_published_schema(&schema) {
-            allowed_keys.extend(successor_completion::validated_keys(ledger)?);
+        if is_published_schema(&schema) {
+            allowed_keys.extend(completion::validated_keys(ledger)?);
         }
-        if has_successor_intent_schema(&schema) {
-            allowed_keys.extend(successor_finality::validated_keys(
-                ledger, &config, namespace,
-            )?);
+        if is_finalized_schema(&schema) {
+            allowed_keys.extend(finality::validated_keys(ledger, validation)?);
+            allowed_keys.extend(successors::validated_keys(ledger)?);
+            if has_successor_intent_schema(&schema) {
+                allowed_keys.extend(successor_promotion::validated_keys(
+                    ledger, validation, namespace,
+                )?);
+            }
+            if is_successor_published_schema(&schema) {
+                allowed_keys.extend(successor_completion::validated_keys(ledger)?);
+            }
+            if has_successor_intent_schema(&schema) {
+                allowed_keys.extend(successor_finality::validated_keys(
+                    ledger, validation, namespace,
+                )?);
+            }
         }
-    }
-    for entry in ledger.db.iterator(rocksdb::IteratorMode::Start) {
-        let (key, _) = entry?;
-        if !allowed_keys.contains(key.as_ref()) {
-            bail!("genesis manifest reservation contains unexpected ledger state");
+        for entry in ledger.db.iterator(rocksdb::IteratorMode::Start) {
+            let (key, _) = entry?;
+            if !allowed_keys.contains(key.as_ref()) {
+                bail!("genesis manifest reservation contains unexpected ledger state");
+            }
         }
-    }
-    Ok(config)
+        Ok(())
+    })
 }
 
 impl NovNativeBlockLedgerV1 {
