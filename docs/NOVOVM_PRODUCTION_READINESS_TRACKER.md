@@ -14,6 +14,58 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
+## 设备 A：S2 批内可达写集裁剪首片（2026-10-02）
+
+运行代码 `8f563ff`，验证 tree=`87d4410e0382139eeb98a656616c216b9bee559a`，
+由 `8659212` 加本刀 5 文件导出干净索引快照，原 27 个异步试验仍保留且
+未夹带。环境、AOEM DLL 与上一条相同；快照位于仓库内
+`artifacts/audit/semantic-compaction-index-20261002/`。
+
+`RecordOverlayV1::finish_compacted` 先检查所有 staged node/blob hash 与
+codec，再仅沿最终根可达新节点裁剪；新叶还检查 blob 长度及原始 key 绑定。
+遇继承子树即停止、无 reader I/O，不删除任何持久内容。Transfer 仅 physical
+和 receipts 显式启用，state 原 `finish` 保留每笔 before/after 根对应内容。
+prepared 文档不编码 staged 节点全集，三根、逻辑统计、变更见证、回执及
+原四阶段完成协议不变。它不是历史数据库 GC，不是任意父根的完整验证器。
+
+干净快照格式、严格 Clippy（node lib/tests）与 Release 构建通过；34 项状态
+测试通过（7 ignored，随后单独执行其中新真实测试），包含 13 项新纯测试、
+64 轮差分和全部 65 个历史根复查。新真实 AOEM 夹具 0.36 秒通过：24 次
+反复更新后 staged nodes `123→4`、blobs `49→2`、chunks `145→5`，实库
+确认 117 个新临时节点与 136 个临时分片未写入。这个夹具刻意反复覆盖，
+**不是生产 Transfer physical 树的实际减量比例**。
+
+独立进程重开后父/子可读、compact 幂等；故意删除该测试专属库的一个已完成
+记录分片后，读取与重放均拒绝，descriptor/completion 不变、再重开仍未修复。
+未删除用户账本。兼容边界：compact 已完成后若旧二进制要求 full 临时写集
+重放，同 identity 可能拒绝；不自动补写，也不宣称双向降级恢复兼容。
+
+3 项真实候选门通过：delta 四阶段恢复 5.13 秒、bundle 损坏拒绝 1.06 秒、
+fresh Transfer 恢复/最终确认 42.54 秒。60 项转账回归全过。四进程混合
+串行对照/失败 nonce/回执/重启通过（38.68 秒）；同上一条 256 笔耐久 ACK
+持续负载参数、诊断关闭，256/256 最终确认，窗口 68.296136 秒、
+**3.748382 TPS**，观察 P50/P95/P99=24.646/65.474/67.872 秒。含 bootstrap
+块笔数 `1,3,32,32,32,32,32,32,32,29`；四节点完整块/持久 QC/重启读回
+一致、state_version 增长 256，完整夹具总耗时 102.03 秒。与上一条 3.709297
+及更早 3.681/3.749 TPS 相当，不是显著提速的证据，也不是逐块同切分 A/B。
+
+本地 SHA256/原始证据（不随 Git 上传日志或二进制）：节点
+`ada9ccf88c5ec21e28fcd8bad9ab228922fa60519f520fcac27a983b104408d5`；
+harness `0140b9b133148cc6546901e112d47d15f5290beada542e781bcccb9c1c142d4a`；
+libtest `bbbab84f570b0af0b4383573593c7558833e91d9ff615da9427d4af79c581467`。
+快照的 `artifacts/audit/candidate-node-processes/` 下：
+`seal-relay-6096-1790881266824859500/transfer-finality-performance.json`
+SHA256=`09e980903a4aa34bbfcf780dc6fca442010038f5f016e60710205df0778ae59f`；
+混合对照在 `seal-relay-16672-1790881227946296600/mixed-transfer-acceptance.json`，
+SHA256=`c1161759680b527b06bdd724368e1de8edcbc658c5a8ce4a4dd2a2cd022a23ed`。
+真实存储故障库在快照的
+`artifacts/incremental-state-tests/record-compaction-13552-1790880999301217300`。
+
+结论：减少已确认的临时写入并保持主链语义/恢复，不签收 S2 整体、高吞吐、
+实体多机、公网或长跑。最大 journal 多版本仍在保留的 state 树；下一刀按
+[计划](NOVOVM_UNIFIED_EXECUTION_REBUILD_PLAN.md)做每笔 typed record effects，
+去掉逐笔三次整稀疏视图编码，保留批末独立净变化核验。活动目标继续进行。
+
 ## 设备 A：S1 checked-credit 条件交换首片（2026-10-02）
 
 运行代码 `d6aa770`，父提交为计划/分工 `fcfff87`。验证使用 Git 索引导出的
