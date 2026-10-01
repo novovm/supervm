@@ -30,6 +30,14 @@ const MAX_ATOMIC_WRITE_VALUE_BYTES_V1: usize = 512;
 const MAX_TASK_PAYLOAD_BYTES_V1: usize = 88;
 const MAX_EVENT_PAYLOAD_BYTES_V1: usize = 216;
 
+#[path = "semantic_graph_session_scope.rs"]
+mod session_scope;
+pub use session_scope::AoemSemanticGraphSessionScopeV1;
+
+#[cfg(test)]
+#[path = "semantic_graph_scope_tests.rs"]
+mod scope_tests;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AoemStorageProviderConfigV1 {
     pub max_open_files: u32,
@@ -96,9 +104,13 @@ pub struct AoemAtomicGraphCommitReportV1 {
 }
 
 pub struct AoemSemanticGraphStoreV1 {
+    inner: Rc<SemanticGraphStoreInnerV1>,
+    path: PathBuf,
+}
+
+struct SemanticGraphStoreInnerV1 {
     session: Rc<AoemExecSession>,
     database_id: u64,
-    path: PathBuf,
     poisoned: Cell<bool>,
 }
 
@@ -109,6 +121,18 @@ impl AoemSemanticGraphStoreV1 {
         config: &AoemStorageProviderConfigV1,
     ) -> Result<Self> {
         validate_storage_config(config)?;
+        let inner = session_scope::open(runtime, path, config)?;
+        Ok(Self {
+            inner,
+            path: path.to_path_buf(),
+        })
+    }
+
+    fn open_uncached(
+        runtime: &AoemRuntimeConfig,
+        path: &Path,
+        config: &AoemStorageProviderConfigV1,
+    ) -> Result<Rc<SemanticGraphStoreInnerV1>> {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent).with_context(|| {
@@ -157,12 +181,11 @@ impl AoemSemanticGraphStoreV1 {
                 config.writer_max_batch_sets,
             )
             .context("bind AOEM semantic graph atomic writer failed")?;
-        Ok(Self {
+        Ok(Rc::new(SemanticGraphStoreInnerV1 {
             session: Rc::new(session),
             database_id,
-            path: path.to_path_buf(),
             poisoned: Cell::new(false),
-        })
+        }))
     }
 
     pub fn path(&self) -> &Path {
@@ -174,8 +197,9 @@ impl AoemSemanticGraphStoreV1 {
         if key.is_empty() {
             bail!("AOEM storage provider key must not be empty");
         }
-        let request = encode_storage_get_request(self.database_id, key)?;
+        let request = encode_storage_get_request(self.inner.database_id, key)?;
         let response = self
+            .inner
             .session
             .storage_provider_wire_v1(request.as_slice())
             .context("read AOEM storage provider failed")?;
@@ -222,7 +246,7 @@ impl AoemSemanticGraphStoreV1 {
         };
         let mut flight = RetainUntilDrainedV1::new(GraphSubmissionOwnerV1 {
             // Do not let dropping the public store destroy a still-active session.
-            session: self.session.clone(),
+            session: self.inner.session.clone(),
             context,
             seeds,
             options,
@@ -232,7 +256,7 @@ impl AoemSemanticGraphStoreV1 {
         // marker. Neither reads nor another commit may treat this session as a
         // known-good state. Recovery must establish quiescence (process restart
         // if the owner was retained), then re-open and verify durable evidence.
-        self.poisoned.set(true);
+        self.inner.poisoned.set(true);
         let submit = unsafe {
             let owner = flight.owner();
             owner
@@ -240,16 +264,25 @@ impl AoemSemanticGraphStoreV1 {
                 .submit_semantic_graph_v3(&owner.seeds, &owner.options, &owner.callbacks)
         };
         if !matches!(submit, Ok(AOEM_STATUS_OK)) {
-            let _ = self.session.cancel_semantic_graph_v2(prepared.graph_id);
+            let _ = self
+                .inner
+                .session
+                .cancel_semantic_graph_v2(prepared.graph_id);
             let _ = drain_submission_v1(&mut flight, CANCEL_COMPLETION_TIMEOUT);
             bail!("AOEM semantic graph V3 admission failed: {submit:?}");
         }
         let completion =
             wait_graph_completion_v1(&completion_rx, DEFAULT_COMPLETION_TIMEOUT, || {
-                let _ = self.session.cancel_semantic_graph_v2(prepared.graph_id);
+                let _ = self
+                    .inner
+                    .session
+                    .cancel_semantic_graph_v2(prepared.graph_id);
             });
         if !drain_submission_v1(&mut flight, CANCEL_COMPLETION_TIMEOUT) {
-            let _ = self.session.cancel_semantic_graph_v2(prepared.graph_id);
+            let _ = self
+                .inner
+                .session
+                .cancel_semantic_graph_v2(prepared.graph_id);
             bail!(
                 "AOEM semantic graph V3 did not drain; complete owner retained; restart required"
             );
@@ -291,7 +324,7 @@ impl AoemSemanticGraphStoreV1 {
                 prepared.event_count
             );
         }
-        self.poisoned.set(false);
+        self.inner.poisoned.set(false);
         Ok(AoemAtomicGraphCommitReportV1 {
             graph_id: completion.graph_id,
             processed: completion.processed,
@@ -303,6 +336,12 @@ impl AoemSemanticGraphStoreV1 {
         })
     }
 
+    fn ensure_usable(&self) -> Result<()> {
+        self.inner.ensure_usable()
+    }
+}
+
+impl SemanticGraphStoreInnerV1 {
     fn ensure_usable(&self) -> Result<()> {
         if self.poisoned.get() {
             bail!("AOEM semantic graph store requires restart and durable evidence verification after failed commit");
@@ -1065,14 +1104,14 @@ mod tests {
             ),
             (1, 1, 0, 1)
         );
-        assert_eq!(Rc::strong_count(&store.session), 1);
+        assert_eq!(Rc::strong_count(&store.inner.session), 1);
         assert_eq!(store.get(b"value").unwrap(), Some(b"first".to_vec()));
         assert_eq!(store.get(b"head").unwrap(), Some(b"first".to_vec()));
         store.commit(request(902, b"second")).unwrap();
-        assert_eq!(Rc::strong_count(&store.session), 1);
+        assert_eq!(Rc::strong_count(&store.inner.session), 1);
         // Failed/uncertain sessions cannot serve apparently authoritative reads
         // or another commit. Opening a new store is the recovery boundary.
-        store.poisoned.set(true);
+        store.inner.poisoned.set(true);
         assert!(store.get(b"head").is_err());
         assert!(store.commit(request(903, b"must-not-write")).is_err());
         drop(store);

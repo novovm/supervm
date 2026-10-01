@@ -43564,6 +43564,11 @@ fn run_fresh_genesis_confirmation_v1(
     interval_ms: u64,
 ) -> Result<()> {
     let _session_scope = novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
+    // Keep the AOEM authority provider open for this dedicated node thread.
+    // This lazy, thread-bound scope caches only the physical provider/session;
+    // workspace locks and all live parent/QC/root checks still run per call.
+    // Drop it here, before thread/TLS teardown, including on startup errors.
+    let _graph_scope = novovm_exec::AoemSemanticGraphSessionScopeV1::enter()?;
     let mut rpc = string_env_nonempty("NOVOVM_NATIVE_FRESH_RPC_BIND")
         .map(|address| -> Result<_> {
             if config.transaction_pool_path().is_none() {

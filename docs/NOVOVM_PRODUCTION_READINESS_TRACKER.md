@@ -14,6 +14,53 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
+## 设备 A：主节点复用 AOEM 存储会话，性能测量仍未通过（2026-10-01）
+
+基线 `d05bfe4`。真实 fresh 主节点的拥有者线程现在显式持有通用 graph provider
+会话作用域，首次请求才开库，随后相同物理路径、完整运行/存储配置和有效环境
+复用同一 session/database ID。作用域只保留一个 provider，不是新的业务缓存、
+执行内核或账本；不同配置/路径及同线程嵌套拒绝。TLS 仅保存 Weak，正常退出
+和异常展开在普通线程执行阶段释放所有者，避免 Windows TLS 析构时等待 worker。
+
+所有引用共享原有 poison 状态，提交不确定后不能通过另取句柄或重新 open
+绕过失败关闭；未排空异步提交仍保留完整原 owner。无作用域的调用保持原
+开关库语义。每次 WorkspaceStore 的路径隔离、协议 pin、workspace/authority
+锁、实时 head、QC、根和数据校验不变；没有缓存签票权限。AOEM 源码和随包
+库、交易格式、费用、共识和生产参数均未改变。
+
+Windows 严格 Clippy、构建通过；执行适配库默认全库 41 通过、0 失败、8 忽略。
+另显式执行 14 项 graph/provider 生命周期测试，0 失败、0 忽略，其中 6 项
+运行真实随包 AOEM（其余与默认组有重叠，不重复相加）。新增覆盖相同 graph ID
+重试、路径别名、多个 handle 及 scope 内保活、正常退出/展开后真实重开、
+配置/环境漂移拒绝、共享 poison 和提交前校验拒绝不误 poison。
+另显式运行旧 Execute fresh 主节点四进程兼容回归，1 通过、0 失败（383.34 秒），
+覆盖连续出块、重启和离线历史追赶；原始日志保留于
+`artifacts/audit/candidate-node-processes/fresh-validator-0..3-6828-*` 与
+`seal-relay-6828-1790834580673721100/`。这是正确性回归，不是 TPS 测量。
+
+原四进程 record Transfer 测量在无其它构建/重型测试并行时重跑，仍 FAIL：
+64 笔尝试均取得入池响应，61 笔已观察到四节点成功回执，随后触发原 300 秒
+预算检查；第三批未提交，完整 96 笔、离线账本核对与最终重启验收未执行。
+测试总耗时 360.74 秒含首块启动/恢复与最后一轮 RPC 扫描；预算在轮询轮次
+边界检查，不能称为精确 300 秒中止。四节点最后日志均为 height=7、
+state_version=65，不能把日志推进代替剩余逐笔回执和归档验证。
+本轮四个 stderr 均为空，未重现 `CURRENT` rename 拒绝；这不是已经证明
+所有 Windows 存储故障消失，也仍未判明上轮拒绝访问的持有者。
+
+保留证据：`artifacts/audit/candidate-node-processes/` 下
+`seal-relay-28308-1790834144487219000/transfer-finality-observations.json` 及
+`fresh-validator-0..3-28308-*` 日志。整套运行的 owner LOG 文件数分别为
+10/10/9/7，包含准备和进程重启；旧失败节点的 108 份 LOG 作为历史证据保留。
+不以 LOG 数替代吞吐；没有生成性能成功报告，不填 TPS/P95/P99。
+
+只读检查发现下一处明确重复开销：successor publication 的 Verify 路径在
+同一 authority 锁内，通过多个 getter 重复调用 ledger `load_verified`，
+每次都完整核对历史/QC/keys。下一刀优先在同次验证中复用一个已核验的只读
+账本读取结果，保留全部 head/h、直接父、输出与 readback 约束，不跨 tick
+缓存授权，不减少校验内容。RPC 逐 hash 重建 record reader、每 poll 清理池
+也有重复工作，但尚无 profiler 占比证据，不把静态代码分析当精确耗时分解。
+本轮未执行 Linux、实体多机、公网或长期压力测试，不是生产性能签收。
+
 ## 设备 A：有界批量选单通过，真实最终确认测量暴露存储失败（2026-10-01）
 
 基线 `395bf19`。自动选单保留交易池既有 identity/nonce 排序，但不再每加入一笔
