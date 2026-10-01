@@ -992,11 +992,12 @@ fn exercise_record_profile_fresh_transfers() {
             profile.receipt_root_codec()
         );
         let final_head = read_head();
-        let next_input = workspace::create_from_finalized_genesis_v1(
+        let next_input = workspace::exercise_live_parent_admission_for_test_v1(
             &next_plan,
             input.workspace_id,
             pin,
             params,
+            &genesis_head,
         )
         .unwrap();
         let next_result = workspace::exercise_light_first_compute_for_test_v1(

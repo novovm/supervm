@@ -67,6 +67,17 @@ fn exercise_fresh_sequence(
                     params,
                 )
                 .unwrap();
+            if compiled.root_codec_profile()
+                == crate::native_root_codecs::NativeRootCodecProfileV1::RecordTreeV1
+            {
+                // The third block is a finalized NCW2 Transfer, unlike the
+                // second block's legacy Execute input. Earlier workspaces have
+                // already been retired; descriptor validation must stay rooted.
+                workspace::assert_live_parent_descriptor_binding_for_test_v1(
+                    &plan, parent, pin, params,
+                )
+                .unwrap();
+            }
             use crate::native_block_seal::service_config::NovNativeSealServiceConfigV1 as Config;
             let config_path = path.with_extension("fresh-service-3").join("service.json");
             let load = || Config::load(&config_path, chain).unwrap();
@@ -467,6 +478,21 @@ fn exercise_fresh_sequence(
             workspace::corrupt_execution_output_for_test_v1(chain, parent, params).unwrap();
             assert!(follow().resolve_finalized_startup(params).is_err());
             let before = workspace::list_v1(chain, params).unwrap();
+            if compiled.root_codec_profile()
+                == crate::native_root_codecs::NativeRootCodecProfileV1::RecordTreeV1
+            {
+                workspace::without_materialization_for_test(|| {
+                    let error = workspace::load_finalized_parent_view_v1(
+                        chain, candidate, pin, params,
+                    )
+                    .err()
+                    .context("live view accepted a corrupt retained predecessor")?;
+                    assert!(!format!("{error:#}")
+                        .contains("unexpected full candidate store materialization"));
+                    Ok(())
+                })
+                .unwrap();
+            }
             assert!(workspace::retire_old_workspaces_v1(chain, candidate, pin, params).is_err());
             assert_eq!(workspace::list_v1(chain, params).unwrap(), before);
             workspace::corrupt_execution_output_for_test_v1(chain, parent, params).unwrap();

@@ -17,6 +17,7 @@ mod isolated_candidate;
 pub use isolated_candidate::NovNativeIsolatedExecutionBindingV1;
 #[path = "native_block_genesis_reservation.rs"]
 mod genesis_reservation;
+pub(crate) use genesis_reservation::FinalizedRecordArchiveV1;
 pub use genesis_reservation::NovNativeFreshFinalityProofV1;
 pub use genesis_reservation::NovNativeFreshGenesisReservationV1;
 pub use genesis_reservation::NovNativeFreshPromotionIntentV1;

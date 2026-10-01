@@ -1238,6 +1238,13 @@ fn exercise_fresh_genesis_publication_and_retry(genesis_schema: &'static str) {
             },
         );
         // The successor intent is durable, but authority is still the first block.
+        // A valid historical parent and unchanged head cannot bypass an already
+        // pinned next-height promotion. This new planning view grants no repair.
+        assert!(
+            workspace::load_finalized_parent_view_v1(chain, input.workspace_id, pin, params,)
+                .is_err()
+        );
+        assert_eq!(open_graph().get(&head_key).unwrap().unwrap(), promoted_head);
         let publish_successor = || {
             workspace::publish_successor_authority_v1(
                 chain,
@@ -1654,6 +1661,26 @@ fn exercise_fresh_genesis_publication_and_retry(genesis_schema: &'static str) {
                 params,
             )
             .unwrap();
+        if compiled.root_codec_profile()
+            == crate::native_root_codecs::NativeRootCodecProfileV1::RecordTreeV1
+        {
+            workspace::without_materialization_for_test(|| {
+                let view = workspace::load_finalized_parent_view_v1(
+                    chain,
+                    next_input.workspace_id,
+                    pin,
+                    params,
+                )?;
+                assert_eq!(view.block(), latest_parent.block());
+                assert_eq!(view.finality_proof(), latest_parent.finality_proof());
+                assert_eq!(
+                    view.successor_plan(third_context, third_plan.raw_txs.clone(), params)?,
+                    third_plan,
+                );
+                Ok(())
+            })
+            .unwrap();
+        }
         assert!(workspace::create_from_finalized_genesis_v1(
             &third_plan,
             input.workspace_id,

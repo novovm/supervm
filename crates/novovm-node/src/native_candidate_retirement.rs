@@ -88,7 +88,12 @@ pub(crate) fn retire_with_checkpoint_v1(
     let mut workspace = WorkspaceStore::open(chain, params)?;
     // Capture verifies current execution and all predecessor proofs. Reacquire
     // the authority lock and compare the exact target before any deletion.
-    let image = capture_finalized_parent_locked(&mut workspace, current, genesis, params)?;
+    let image = live_parent::capture_finalized_parent_view_locked(
+        &mut workspace,
+        current,
+        genesis,
+        params,
+    )?;
     let height = image.block().header.height;
     let mut report = WorkspaceRetirementV1 {
         finalized_height: height,
@@ -103,13 +108,11 @@ pub(crate) fn retire_with_checkpoint_v1(
     let (binding, commitment, block) = NovNativeBlockLedgerV1::load_fresh_finalized_execution_v1(
         &ledger, genesis, namespace, height,
     )?;
-    let artifact = block_artifact::load_block_artifact_inner_v1(&workspace, current, params)?
-        .context("retirement current output missing")?;
+    let current_input = ready_input(&workspace, current)?;
     if binding.workspace_id != current
-        || binding.plan_commitment != artifact.plan_commitment
+        || binding.plan_commitment != current_input.plan
         || binding.output_digest != image.output_digest()
         || &block != image.block()
-        || artifact.block() != &block
     {
         bail!("retirement authority changed after verification");
     }
@@ -127,13 +130,14 @@ pub(crate) fn retire_with_checkpoint_v1(
     } else {
         None
     };
-    let target = publication_target(
+    let target = publication_target_fields(
         if height == 1 { b"NVP1" } else { b"NVP2" },
         namespace,
         genesis,
         commitment,
         current,
-        &artifact,
+        image.output_digest(),
+        image.block(),
     );
     let head_key = native_aoem_owned_state_head_key_v1(chain, &workspace.namespace);
     if workspace.graph.get(&head_key)?.as_deref() != Some(target.as_slice()) {
@@ -154,8 +158,8 @@ pub(crate) fn retire_with_checkpoint_v1(
             ) {
                 continue;
             }
-            let payload = workspace.read_payload(&input)?;
-            let candidate_height = payload.plan.context.block_height;
+            let payload = workspace.read_input(&input)?;
+            let candidate_height = payload.plan().context.block_height;
             if candidate_height == 0 || candidate_height > height {
                 continue;
             }
@@ -166,7 +170,7 @@ pub(crate) fn retire_with_checkpoint_v1(
             if !is_complete(&workspace, &input, &output)? {
                 continue;
             }
-            read_output(&workspace, &input, &output, &payload, params)?
+            read_output_view(&workspace, &input, &output, &payload, params)?
                 .context("retirement output missing")?;
             let execution = crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
                 workspace_id: input.id,

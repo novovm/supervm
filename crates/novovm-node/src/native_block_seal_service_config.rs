@@ -284,7 +284,7 @@ impl NovNativeSealServiceConfigV1 {
             .collect::<Vec<_>>();
         super::service_paths::validate_service_paths_v1(&self, &ledger, &writes, &[])?;
         let parent =
-            workspace::load_finalized_genesis_parent_v1(self.chain_id, parent_id, pin, params)?;
+            workspace::load_finalized_parent_view_v1(self.chain_id, parent_id, pin, params)?;
         if parent.block().header.height != self.height
             || parent.block().header.block_hash != self.block_hash
             || parent.finality_proof().authority != self.authority

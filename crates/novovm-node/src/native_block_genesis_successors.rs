@@ -370,6 +370,61 @@ impl NovNativeBlockLedgerV1 {
         })
     }
 
+    /// Capture the completed current tip, not an arbitrary historical ancestor.
+    /// Return its retained immediate predecessor as well, not older workspaces.
+    /// One read lock covers the full archive verification and tip selection;
+    /// prepared/published successor intents must be recovered before admission.
+    /// This deliberately remains O(history), and grants no publication authority.
+    pub(crate) fn load_fresh_finalized_tip_archive_v1(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        requested_workspace: [u8; 32],
+    ) -> Result<(FinalizedRecordArchiveV1, Option<FinalizedRecordArchiveV1>)> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("finalized tip ledger missing")?;
+        let _guard = ledger
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("finalized tip read lock poisoned"))?;
+        let config = load_verified(&ledger, genesis, namespace)?;
+        let schema = ledger
+            .db
+            .get(KEY_SCHEMA_V1)?
+            .context("finalized tip schema missing")?;
+        if schema != FINALIZED_SCHEMA.as_bytes() && schema != SUCCESSOR_FINALIZED_SCHEMA.as_bytes()
+        {
+            bail!("live parent requires completed finality with no pending promotion");
+        }
+        let height = tip_height(&ledger)?;
+        let record = record_at(&ledger, height)?;
+        if record.execution.workspace_id != requested_workspace {
+            bail!("requested workspace is not the current finalized tip");
+        }
+        let previous = if height > 1 {
+            let previous = record_at(&ledger, height - 1)?;
+            Some(FinalizedRecordArchiveV1 {
+                config: config.clone(),
+                block: previous.block,
+                proof: previous.proof,
+                execution: previous.execution,
+                commitment: previous.commitment,
+            })
+        } else {
+            None
+        };
+        Ok((
+            FinalizedRecordArchiveV1 {
+                config,
+                block: record.block,
+                proof: record.proof,
+                execution: record.execution,
+                commitment: record.commitment,
+            },
+            previous,
+        ))
+    }
+
     pub(crate) fn load_fresh_finalized_execution_v1(
         path: &Path,
         genesis: [u8; 32],

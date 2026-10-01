@@ -38,7 +38,7 @@ impl FreshChainLifecycleV1 {
         {
             return Ok(());
         }
-        let parent = workspace::load_finalized_genesis_parent_v1(
+        let parent = workspace::load_finalized_parent_view_v1(
             config.chain_id,
             config
                 .isolated_workspace_id

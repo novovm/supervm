@@ -31,7 +31,9 @@ std::thread_local! {
 }
 
 #[cfg(test)]
-pub(super) fn without_materialization_for_test<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
+pub(in super::super) fn without_materialization_for_test<T>(
+    f: impl FnOnce() -> Result<T>,
+) -> Result<T> {
     struct Restore(bool);
     impl Drop for Restore {
         fn drop(&mut self) {

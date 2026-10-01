@@ -2,6 +2,7 @@
 use super::*;
 #[path = "native_block_genesis_manifest.rs"]
 mod manifest;
+pub(crate) use manifest::FinalizedRecordArchiveV1;
 pub use manifest::NovNativeFreshFinalityProofV1;
 pub use manifest::NovNativeFreshPromotionIntentV1;
 

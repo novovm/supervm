@@ -9,6 +9,9 @@ mod auth;
 mod execution;
 #[path = "native_candidate_finalized_parent.rs"]
 mod finalized_parent;
+#[path = "native_candidate_live_parent.rs"]
+mod live_parent;
+pub(crate) use live_parent::load_finalized_parent_view_v1;
 #[path = "native_candidate_rooted_parent.rs"]
 mod rooted_parent;
 #[path = "native_candidate_state_records.rs"]
@@ -42,6 +45,15 @@ pub use finalized_parent::create_from_finalized_genesis_v1;
 use finalized_parent::FinalizedParentSnapshot;
 #[cfg(test)]
 pub(super) use state_records::assert_materialization_allowed_for_test;
+#[cfg(test)]
+pub(super) use state_records::without_materialization_for_test;
+#[cfg(test)]
+#[path = "native_candidate_live_parent_tests.rs"]
+mod live_parent_tests;
+#[cfg(test)]
+pub(super) use live_parent_tests::assert_live_parent_descriptor_binding_for_test_v1;
+#[cfg(test)]
+pub(super) use live_parent_tests::exercise_live_parent_admission_for_test_v1;
 #[cfg(test)]
 pub(crate) use state_records::exercise_record_document_storage_for_test;
 #[cfg(test)]

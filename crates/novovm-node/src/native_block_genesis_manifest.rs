@@ -19,6 +19,7 @@ mod successor_promotion;
 #[path = "native_block_genesis_successors.rs"]
 mod successors;
 pub use promotion::NovNativeFreshPromotionIntentV1;
+pub(crate) use successors::FinalizedRecordArchiveV1;
 
 pub(super) const MANIFEST_SCHEMA: &str =
     "novovm-native-block-ledger/v1+genesis-manifest-reserved-v1";

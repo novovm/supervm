@@ -9,7 +9,7 @@ use crate::native_block_ledger::{
 use crate::native_root_codecs::NativeRootCodecProfileV1;
 use serde_json::value::RawValue;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RootedParentSnapshot {
     pub(super) config: fresh_genesis::FreshGenesisConfigV1,
@@ -36,64 +36,6 @@ struct PublishedOutput<T> {
 }
 
 impl RootedParentSnapshot {
-    /// The caller has cold-verified and captured the current finalized parent
-    /// under the existing locks. This copies only its bounded output document,
-    /// not its historical Store. It does not initialize or publish any state.
-    pub(super) fn capture_from_verified_full(
-        parent: &FinalizedGenesisParentV1,
-        workspace: &WorkspaceStore,
-        params: &serde_json::Value,
-    ) -> Result<Self> {
-        let native_path = resolve_native_execution_store_path_from_params_v1(params)
-            .context("rooted parent capture requires an explicit native path")?;
-        let ledger_path = nov_native_block_ledger_rocksdb_path_v1(&native_path);
-        let reference = parent
-            .record_state
-            .as_ref()
-            .context("rooted parent capture requires an existing three-root output")?;
-        reference
-            .rooted_parts()?
-            .context("rooted parent capture cannot upgrade a physical-only output")?;
-        let config = parent.genesis_config().clone();
-        let genesis = config.compile()?.config_commitment();
-        let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "rooted parent namespace")?;
-        let (binding, promotion_commitment, block) =
-            NovNativeBlockLedgerV1::load_fresh_finalized_execution_v1(
-                &ledger_path,
-                genesis,
-                namespace,
-                parent.block().header.height,
-            )?;
-        if binding.workspace_id != parent.workspace_id()
-            || binding.output_digest != parent.output_digest()
-            || &block != parent.block()
-        {
-            bail!("rooted parent capture differs from the verified finalized execution");
-        }
-        let bytes = execution::read_completed_output_bytes(workspace, parent.workspace_id())?;
-        if execution::output_digest(&bytes) != binding.output_digest {
-            bail!("rooted parent capture output digest mismatch");
-        }
-        let source_output = RawValue::from_string(String::from_utf8(bytes.clone())?)?;
-        if source_output.get().as_bytes() != bytes {
-            bail!("rooted parent capture changed the original output bytes");
-        }
-        let snapshot = Self {
-            config,
-            block,
-            proof: parent.finality_proof().clone(),
-            binding,
-            promotion_commitment,
-            source_output,
-            store: (),
-        };
-        let source = snapshot.verify_source(workspace, params)?;
-        if source.rooted_parts()? != reference.rooted_parts()? {
-            bail!("rooted parent captured source differs from the verified full parent roots");
-        }
-        Ok(snapshot)
-    }
-
     /// Historical validation deliberately does not require this parent to remain
     /// the live head. Admission/signing/publication must separately recheck the
     /// exact current authority while holding the existing workspace/authority locks.
@@ -166,10 +108,31 @@ impl RootedParentSnapshot {
         })
     }
 
-    fn verify_source(
+    pub(super) fn verify_source(
         &self,
         workspace: &WorkspaceStore,
         params: &serde_json::Value,
+    ) -> Result<state_records::StoreRef> {
+        self.verify_source_inner(workspace, params, None)
+    }
+
+    /// Reuse an archive already fully verified by a ledger getter during this
+    /// locked capture. It does not skip config, QC, publication or root checks;
+    /// only the duplicate ledger-history read is avoided.
+    pub(super) fn verify_source_with_archive(
+        &self,
+        workspace: &WorkspaceStore,
+        params: &serde_json::Value,
+        archive: &crate::native_block_ledger::FinalizedRecordArchiveV1,
+    ) -> Result<state_records::StoreRef> {
+        self.verify_source_inner(workspace, params, Some(archive))
+    }
+
+    fn verify_source_inner(
+        &self,
+        workspace: &WorkspaceStore,
+        params: &serde_json::Value,
+        verified_archive: Option<&crate::native_block_ledger::FinalizedRecordArchiveV1>,
     ) -> Result<state_records::StoreRef> {
         let compiled = self.config.compile()?;
         let profile = compiled.root_codec_profile();
@@ -203,15 +166,20 @@ impl RootedParentSnapshot {
         {
             bail!("rooted parent lookup resolves to a different authority namespace");
         }
-        let native_path = resolve_native_execution_store_path_from_params_v1(params)
-            .context("rooted parent verification requires an explicit native path")?;
-        let ledger_path = nov_native_block_ledger_rocksdb_path_v1(&native_path);
-        let archive = NovNativeBlockLedgerV1::load_fresh_finalized_archive_v1(
-            &ledger_path,
-            genesis,
-            namespace,
-            self.block.header.height,
-        )?;
+        let loaded_archive;
+        let archive = if let Some(archive) = verified_archive {
+            archive
+        } else {
+            let native_path = resolve_native_execution_store_path_from_params_v1(params)
+                .context("rooted parent verification requires an explicit native path")?;
+            loaded_archive = NovNativeBlockLedgerV1::load_fresh_finalized_archive_v1(
+                &nov_native_block_ledger_rocksdb_path_v1(&native_path),
+                genesis,
+                namespace,
+                self.block.header.height,
+            )?;
+            &loaded_archive
+        };
         if serde_json::to_vec(&archive.config)? != serde_json::to_vec(&self.config)? {
             bail!("rooted parent configuration differs from its approved local archive");
         }
@@ -252,6 +220,96 @@ impl RootedParentSnapshot {
         )?;
         self.validate_output_metadata(&source.inline, &source.state)?;
         Ok(source.state)
+    }
+
+    /// The live capture also requires the retained current workspace's exact
+    /// input bytes and plan. This is bounded document verification, not a Store
+    /// decode, and does not recursively read predecessor workspace chunks.
+    pub(super) fn validate_live_input(&self, workspace: &WorkspaceStore) -> Result<()> {
+        let (slot, input) = workspace
+            .catalog()?
+            .into_iter()
+            .find(|(_, input)| input.id == self.binding.workspace_id)
+            .context("live parent input descriptor missing")?;
+        if workspace.status(slot, &input)? != WorkspaceStatusV1::Ready
+            || input.plan != self.binding.plan_commitment
+        {
+            bail!("live parent input is not ready or its plan differs from finality");
+        }
+        let mut bytes = Vec::with_capacity(input.len);
+        for index in 0..input.len.div_ceil(CHUNK_BYTES) {
+            let chunk = workspace
+                .graph
+                .get(&workspace.chunk_key(&input.id, index))?
+                .context("live parent input chunk missing")?;
+            if chunk.len() != CHUNK_BYTES.min(input.len - bytes.len()) {
+                bail!("live parent input chunk length mismatch");
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        if input.version.payload_digest(&bytes) != input.payload {
+            bail!("live parent input digest mismatch");
+        }
+        if input.version == DescriptorVersion::Ncw2 {
+            // Recompute every NCW2 descriptor field, including parent_snapshot,
+            // without validating/replaying ancestors or materializing a Store.
+            let document = state_records::decode_metadata::<LightPayload>(
+                workspace,
+                &bytes,
+                &["finalized_parent", "store"],
+            )?;
+            if input != describe_light(&document.inline, &bytes, &document.state, &workspace.scope)?
+            {
+                bail!("live parent NCW2 descriptor does not bind its complete input metadata");
+            }
+        }
+        // NCW1's parent_snapshot digest includes the complete typed parent
+        // Store and cannot be recomputed here without cold materialization.
+        // Its original input bytes remain bound by the finalized output digest;
+        // the new parent roots come from that output, not this legacy field.
+        // Read only the inline plan. The source document and input descriptor
+        // were pinned by the fully verified publication; never invent a Store.
+        #[derive(Deserialize)]
+        struct InlineDocument {
+            inline: Box<RawValue>,
+        }
+        #[derive(Deserialize)]
+        struct PlanMetadata {
+            schema: String,
+            plan: NovNativeCandidateExecutionPlanV1,
+        }
+        #[derive(Deserialize)]
+        struct Version {
+            schema: String,
+        }
+        let version: Version = serde_json::from_slice(&bytes)?;
+        let metadata: PlanMetadata = match version.schema.as_str() {
+            "novovm-candidate-record-document/v1" | "novovm-candidate-record-document/v2" => {
+                let document: InlineDocument = serde_json::from_slice(&bytes)?;
+                serde_json::from_str(document.inline.get())?
+            }
+            SCHEMA if input.version == DescriptorVersion::Ncw1 => serde_json::from_slice(&bytes)?,
+            _ => bail!("unsupported live parent input document schema"),
+        };
+        let expected_schema = match input.version {
+            DescriptorVersion::Ncw1 => SCHEMA,
+            DescriptorVersion::Ncw2 => LIGHT_SCHEMA,
+        };
+        metadata.plan.validate_against_block(&self.block)?;
+        if metadata.schema != expected_schema
+            || metadata.plan.protocol_config_commitment != workspace.protocol
+            || metadata.plan.plan_commitment != input.plan
+            || metadata.plan.pre_state_root != input.parent_state
+            || metadata.plan.context.parent_block_hash != input.parent_block
+        {
+            bail!("live parent input metadata differs from its descriptor or finalized block");
+        }
+        let output_document: InlineDocument = serde_json::from_str(self.source_output.get())?;
+        let output: PublishedOutput<()> = serde_json::from_str(output_document.inline.get())?;
+        if output.input_digest != input.payload {
+            bail!("live parent output does not bind its exact input digest");
+        }
+        Ok(())
     }
 
     fn validate_output_metadata(
