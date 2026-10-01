@@ -6,6 +6,24 @@
 
 ## 最新短交接
 
+- **最新运行切片：真实 V3 批验签与精确父输入绑定，仅在新 runtime。**
+  在 `c91f1fac` 上继续；该前置提交 Windows/Linux CI `36923936764` 已全过，
+  包括真 AOEM 组件测试。本轮局部迁移 Transfer V3 的原始字节、完整签名
+  消息与 canonical hash，不引入整个 adapter/TxIR 或旧入口。AOEM 实际批验
+  64 笔真签名，20/32 字节地址共用 signer nonce；源释放后的 nonce 规划与
+  批根绑定通过。Release 94 单元/集成 + 3 编译拒绝通过、0 失败/0 忽略。
+  无效签名是普通拒收结果，不 poison 通用计算 owner；同一会话拒绝坏签名、
+  错链、重复和超预算后仍能处理合法批次。只有底层故障仍按原规则 poison。
+  新 strict 准入拒绝尾字节/非规范编码/弱钥，属明确收紧，不假称旧输入完全
+  等价；没有改变现有 V3 签名字节或启用旧链协议升级。
+  **签名有效仍不等于业务准入/扣费/持久入池或主链最终确认。** V3 只绑定
+  chain_id、不绑定创世配置；本地 plan pin 不能让钱包旧签名多出跨创世保护。
+  Execute/Governance/PQ/隐私均未接入这个 Transfer-only 边界，不能静默降级。
+  下一处唯一编辑权：A 的 `runtime/novovm-host/src/business/` 完整 NOV 直付
+  费用效应及业务批编译，再接依赖/条件交换和批持久化。报价、费用分桶和
+  失败诊断须从显式绑定的政策快照计算，不在 worker 读取环境。保留现有
+  零 wire 上限自动解析、业务失败收费/nonce 和全局拒绝后修正依赖的规则；
+  不能直接把 wire max=0 传成算术算子的字面 fee_cap=0。详细经济审查见台账。
 - **最新用户指令：先物理隔离旧实现，再写新宿主（2026-10-02）。**
   已将旧 `crates/vendor/proofs/scripts/config/configs`、Cargo 工作区/锁文件、
   README 和 workflows 原样移入 `legacy/supervm-20261002/`。新源码唯一入口

@@ -32,8 +32,9 @@ $env:NOVOVM_AOEM_TEST_LIBRARY = (Resolve-Path $platformLibrary).Path
 cargo test --workspace --release --locked -- --include-ignored --test-threads=1
 ```
 
-当前新实现已接入 owned 批输入和 AOEM 通用计算组件；测试中的交易为未签名
-算子夹具，费用结果仍在全局结算前、状态更新尚未持久化，不是运行节点。
+当前新实现已接入 owned 批输入、AOEM 通用计算和真实 V3 批验签组件。
+签名/nonce 联调与转账算术测试尚未合成完整经济执行；费用结果仍在全局结算
+前、状态更新尚未持久化，不是运行节点。V3 仍为 Ed25519，不宣称抗量子。
 
 新代码只迁移必要且已审查的局部原语，不依赖旧节点、旧候选容器或旧执行入口。
 测试通过仅表示实际覆盖的模块通过，不等于链已恢复、高 TPS、隐私/PQ 已接通

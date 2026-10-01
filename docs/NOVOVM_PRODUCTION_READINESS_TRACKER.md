@@ -14,6 +14,56 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
+## 设备 A：新 V3 批验签与 nonce 输入边界（2026-10-02）
+
+继续 `main@c91f1fac`，该提交 Windows/Linux CI `36923936764` 全部成功，
+含实际随包 AOEM 计算/生命周期测试。本轮新增代码只在 `runtime/`，旧 38 项
+未提交草稿未改，AOEM 仓库/SDK 未变。不建立新链、分支或部署。
+
+`ingress/wire` 只局部迁移既有 NNX1 V3 Transfer 编码与完整 unsigned intent、
+canonical TxIR hash、adapter v2 signing message，不依赖旧协议 crate 或
+整个 TxIR。借用解析在分配字段前检查整包预算；只接受20/32字节账户和96字节
+Ed25519载荷，拒绝旧版本、其他业务、尾字节与非规范 postcard 编码。12 项
+测试包含独立冻结旧 schema/preimage、手写字节向量、真实旧 oracle 签名、
+全字段篡改、整数边界和畸形长度，不是只让新 encoder 验证新 decoder。
+
+`authentication/batch` 以显式 configured chain 检查完整签名和 payer，保留
+公钥统一 nonce identity；已验对象私有、无 Deserialize/可变 getter，认证
+原文/顺序/metadata 经消费绑定到批计划和捕获输入，不再带活数据库或权限。
+AOEM ComputeTask 实际调用固定 dalek2.2.0 `verify_strict`，没有旧 adapter
+环境选路。弱 identity key/R、S=0 负例先证明普通 verify 接受，再证明新准入
+拒绝；这是明确的新准入收紧，非“所有历史输入完全等价”，也不是旧链已升级。
+V3 仍只绑定 chain_id、不绑定 genesis hash，后续新签名协议必须明确处理域，
+本地 plan 的 genesis/protocol pin 不能补签钱包没签过的数据。PQ 参数/单签
+或混合规则没有擅自选择，Execute、Governance、隐私/PQ 不会被当作 Transfer。
+
+审查修正了坏签名误作为计算故障导致 owner 永久 poison 的问题：验证拒绝
+作为正常 typed result 返回，整批不准入但通用会话可继续使用；真正任务
+异常/超时仍失败关闭。nonce 规划使用原序与 signer 身份，缺父输入不能当0，
+失败不修改父 map、不返回成功前缀；仍须由业务编译器从精确父输入提供数值，
+不是任意 map 即取得授权，更不是耐久 nonce 预约。
+
+本机 Rust1.94 / Windows：fmt、strict Clippy、依赖隔离通过。默认85单测+
+3编译拒绝通过、9项显式ignored；随后 Release `--include-ignored --test-threads=1`
+为 **94 单元/集成 + 3 编译拒绝通过，0 失败/0 忽略**。新增2项真实AOEM集成：
+64笔真实V3签名、32个签名者的20/32别名共用nonce、精确body绑定、源销毁后
+在AOEM内读取父nonce并规划暂存根；同一会话连续拒绝坏签名/错链/重复/超预算
+后合法批次仍成功。验签两次自然回调峰值9/8，不是交易执行并行或最终确认TPS。
+nonce记录为测试布局，暂存更新未落盘，也没有完整扣费/回执/最终性声明。
+
+下一刀经济迁移已经只读核对：既有 Transfer 投影为 `native_asset/transfer`，
+NOV直付基本费额 `40 + min(ceil(args_bytes/16),64)`，args保留规范
+`{asset,to,amount}` JSON长度口径。wire max=0 自动解析滑点上限，实际扣基础费；
+不能与纯算术的字面 cap=0 混淆。金额/计数容量检查必须在扣款前；国库储备、
+累计及三桶是同一资金的不同会计视图，不能重复计供应量。每笔reserve/fee
+向下取整、risk接余数，保留已配置分配比例，不擅自硬码70/20/10。NOV直付
+不烧币、不立即向验证者派奖、不增加非NOV daily-used。报价失败不刷新日窗；
+报价成功后结算失败保留日窗与失败诊断但不动钱。业务失败若费用结算成功仍
+收费并消耗nonce；全局结算拒绝要修正后继预测。旧报价TTL/政策有环境读取，
+新函数必须接收显式解析并绑定的policy快照，禁止复制环境依赖进worker。
+依据：隔离区 `native_transfer_dispatch.rs:127`、`tx_ingress.rs:8715`、
+`:8793`、`:8971`、`:9042`、`:9158`、`:9563`，仅供迁移参考、不在旧代码继续改。
+
 ## 设备 A：新批输入与真实 AOEM 计算组件（2026-10-02）
 
 在隔离提交 `161f64d` 上继续，生产源码和测试只新增于 `runtime/`；旧目录
