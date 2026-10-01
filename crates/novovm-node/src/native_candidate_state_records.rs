@@ -11,10 +11,30 @@ use crate::native_state_records::{
 use crate::native_state_storage::{AoemStateNodesV1, AoemStateReaderV1};
 use crate::native_state_tree::{empty_root, validate_state_node_bytes, NodeHash, StateNodeReader};
 use serde_json::value::RawValue;
+#[path = "native_candidate_record_delta.rs"]
+mod delta;
+pub(super) use delta::VerifiedDeltaDocument;
 
 const DOCUMENT_SCHEMA: &str = "novovm-candidate-record-document/v1";
 const RECORD_DOCUMENT_SCHEMA: &str = "novovm-candidate-record-document/v2";
 const STORE_CODEC: &str = "novovm-native-store-record-layout/v1";
+
+#[cfg(test)]
+std::thread_local! {
+    static MATERIALIZATION_FORBIDDEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(super) fn without_materialization_for_test<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            MATERIALIZATION_FORBIDDEN.with(|flag| flag.set(self.0));
+        }
+    }
+    let _restore = Restore(MATERIALIZATION_FORBIDDEN.with(|flag| flag.replace(true)));
+    f()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -123,6 +143,8 @@ struct Document {
     store_path: Vec<String>,
     state: StoreRef,
     inline: Box<RawValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    witness: Option<delta::Witness>,
 }
 
 pub(super) struct PreparedDocument {
@@ -138,6 +160,7 @@ pub(super) struct RecordTreeUpdatesV1 {
     pub(super) receipts: StagedRecordUpdate,
     pub(super) records: usize,
     pub(super) blob_bytes: usize,
+    pub(super) changes: Option<Vec<native_store_records::RawPathChangeV1>>,
 }
 
 /// Replace exactly one complete store field; never traverse through a missing
@@ -228,6 +251,7 @@ pub(super) fn prepare<T: Serialize>(
         store_path: store_path.iter().map(|part| (*part).to_owned()).collect(),
         state: state.clone(),
         inline,
+        witness: None,
     })?;
     Ok(PreparedDocument {
         bytes,
@@ -305,6 +329,7 @@ pub(super) fn prepare_record_profile<T: Serialize>(
                 receipts,
                 records: physical.state.records,
                 blob_bytes: physical.state.blob_bytes,
+                changes: None,
             }
         }
     };
@@ -352,18 +377,71 @@ pub(super) fn prepare_record_profile<T: Serialize>(
     if actual != *store {
         bail!("candidate record document does not contain the supplied store");
     }
-    let bytes = serde_json::to_vec(&Document {
-        schema: RECORD_DOCUMENT_SCHEMA.into(),
+    let witness = if let Some(changes) = &updates.changes {
+        if delta::writer_budget_allows(changes)? {
+            let witness = delta::Witness::from_changes(changes)?;
+            let parent = base
+                .context("delta output requires a captured three-root parent")?
+                .0;
+            let cached_parent = native_transfer_record_execution::ExecutionReader::new(&reader);
+            let cached_post = native_transfer_record_execution::ExecutionReader::new(&staged);
+            let reconstructed =
+                delta::verify(&cached_parent, &cached_post, parent, &state, &witness)?;
+            if reconstructed != *changes {
+                bail!("delta supplied values differ from their authenticated output records");
+            }
+            Some(witness)
+        } else {
+            // No V3 reservation exists yet. Large legitimate updates retain the
+            // cold V2 representation, never a V3 reader downgrade on corruption.
+            None
+        }
+    } else {
+        None
+    };
+    let mut document = Document {
+        schema: if witness.is_some() {
+            delta::SCHEMA
+        } else {
+            RECORD_DOCUMENT_SCHEMA
+        }
+        .into(),
         store_path: store_path.iter().map(|part| (*part).to_owned()).collect(),
         state: state.clone(),
         inline,
-    })?;
+        witness,
+    };
+    let mut bytes = serde_json::to_vec(&document)?;
+    if document.witness.is_some() && bytes.len() > MAX_PAYLOAD_BYTES_V1 {
+        document.schema = RECORD_DOCUMENT_SCHEMA.into();
+        document.witness = None;
+        bytes = serde_json::to_vec(&document)?;
+    }
     Ok(PreparedDocument {
         bytes,
         state,
         update: updates.physical,
         consensus_updates: Some((updates.state, updates.receipts)),
     })
+}
+
+/// Reproduce an already-reserved V2 byte image before considering older
+/// physical-only/inline encodings. This never publishes or repairs a document.
+pub(super) fn without_delta(mut prepared: PreparedDocument) -> Result<PreparedDocument> {
+    let mut document: Document = serde_json::from_slice(&prepared.bytes)?;
+    if document.schema == delta::SCHEMA {
+        document
+            .witness
+            .as_ref()
+            .context("delta document witness missing")?
+            .validate()?;
+        document.schema = RECORD_DOCUMENT_SCHEMA.into();
+        document.witness = None;
+        prepared.bytes = serde_json::to_vec(&document)?;
+    } else if document.schema != DOCUMENT_SCHEMA && document.schema != RECORD_DOCUMENT_SCHEMA {
+        bail!("unsupported prepared document version");
+    }
+    Ok(prepared)
 }
 
 fn receipt_records(store: &NovNativeExecutionStoreV1) -> Result<BTreeMap<Vec<u8>, Vec<u8>>> {
@@ -441,6 +519,33 @@ fn prepared_role_id(commitment: NodeHash, role: &[u8]) -> NodeHash {
     sha256_bytes_v1(&[b"novovm-candidate-record-prepared-v2\0", role, &commitment])
 }
 
+#[derive(Deserialize)]
+struct DocumentVersion {
+    schema: String,
+}
+
+pub(super) fn is_delta_document(bytes: &[u8]) -> Result<bool> {
+    let version: DocumentVersion = serde_json::from_slice(bytes)?;
+    Ok(version.schema == delta::SCHEMA)
+}
+
+fn bound_document_commitment(bytes: &[u8]) -> Result<(NodeHash, bool)> {
+    let version: DocumentVersion = serde_json::from_slice(bytes)?;
+    match version.schema.as_str() {
+        RECORD_DOCUMENT_SCHEMA => Ok((record_document_commitment(bytes), false)),
+        delta::SCHEMA => Ok((delta::document_commitment(bytes), true)),
+        _ => bail!("unsupported root-bound document version"),
+    }
+}
+
+fn bound_prepared_id(commitment: NodeHash, role: &[u8], is_delta: bool) -> NodeHash {
+    if is_delta {
+        delta::prepared_id(commitment, role)
+    } else {
+        prepared_role_id(commitment, role)
+    }
+}
+
 fn validate_projection(reference: &StoreRef, store: &NovNativeExecutionStoreV1) -> Result<()> {
     let bundle = reference
         .bundle
@@ -465,12 +570,12 @@ fn validate_prepared_bundle(
         .as_ref()
         .context("candidate record root bundle missing")?;
     bundle.validate(reference.root)?;
-    let commitment = record_document_commitment(bytes);
+    let (commitment, is_delta) = bound_document_commitment(bytes)?;
     let execution = bundle.commitment()?;
     let reader = AoemStateReaderV1::new(&workspace.graph, workspace.scope);
     for (role, link) in bundle.links() {
         let prepared = reader
-            .load_record_prepared(prepared_role_id(commitment, role))?
+            .load_record_prepared(bound_prepared_id(commitment, role, is_delta))?
             .context("candidate record tree completion missing")?;
         if prepared.input_commitment() != commitment
             || prepared.execution_commitment() != execution
@@ -490,7 +595,7 @@ pub(super) fn persist(workspace: &WorkspaceStore, prepared: &PreparedDocument) -
             .consensus_updates
             .as_ref()
             .context("candidate record document lacks consensus updates")?;
-        let commitment = record_document_commitment(&prepared.bytes);
+        let (commitment, is_delta) = bound_document_commitment(&prepared.bytes)?;
         let execution = bundle.commitment()?;
         let mut storage = AoemStateNodesV1::new(&workspace.graph, workspace.scope)?;
         for ((role, link), update) in
@@ -503,7 +608,7 @@ pub(super) fn persist(workspace: &WorkspaceStore, prepared: &PreparedDocument) -
                 bail!("candidate staged root differs from its bound document");
             }
             storage.persist_record_candidate(
-                prepared_role_id(commitment, role),
+                bound_prepared_id(commitment, role, is_delta),
                 commitment,
                 execution,
                 update,
@@ -557,6 +662,10 @@ fn read_store_from(
     reader: &dyn StateRecordReader,
     reference: &StoreRef,
 ) -> Result<NovNativeExecutionStoreV1> {
+    #[cfg(test)]
+    if MATERIALIZATION_FORBIDDEN.with(std::cell::Cell::get) {
+        bail!("unexpected full candidate store materialization");
+    }
     let mut records = BTreeMap::new();
     let stats = visit_records(
         reader,
@@ -587,13 +696,22 @@ pub(super) fn decode<T: serde::de::DeserializeOwned>(
             .context("candidate document schema missing")?
             .get(),
     )?;
-    if schema != DOCUMENT_SCHEMA && schema != RECORD_DOCUMENT_SCHEMA {
+    if schema != DOCUMENT_SCHEMA && schema != RECORD_DOCUMENT_SCHEMA && schema != delta::SCHEMA {
         // Existing inline images remain readable; the enclosing Payload/Output
         // schema and exact existing validation still decide their admissibility.
         return Ok((serde_json::from_slice(bytes)?, None));
     }
     let document: Document = serde_json::from_slice(bytes)?;
-    if schema == RECORD_DOCUMENT_SCHEMA {
+    if schema == delta::SCHEMA {
+        document
+            .witness
+            .as_ref()
+            .context("delta document witness missing")?
+            .validate()?;
+    } else if document.witness.is_some() {
+        bail!("legacy document cannot contain a delta witness");
+    }
+    if schema == RECORD_DOCUMENT_SCHEMA || schema == delta::SCHEMA {
         validate_prepared_bundle(workspace, bytes, &document.state)?;
     } else if document.state.bundle.is_some() {
         bail!("legacy candidate document cannot contain a record-profile root bundle");
@@ -619,6 +737,54 @@ pub(super) fn decode<T: serde::de::DeserializeOwned>(
     Ok((serde_json::from_str(raw.get())?, Some(document.state)))
 }
 
+/// Verify a V3 output from an independently verified parent without scanning or
+/// materializing the historical store. Caller still validates exact authorized
+/// changes, signatures, receipt semantics, execution metadata and QC linkage.
+pub(super) fn decode_delta<T: serde::de::DeserializeOwned>(
+    workspace: &WorkspaceStore,
+    bytes: &[u8],
+    expected_path: &[&str],
+    verified_parent: &StoreRef,
+) -> Result<Option<VerifiedDeltaDocument<T>>> {
+    if bytes.len() > MAX_PAYLOAD_BYTES_V1 {
+        bail!("delta document exceeds existing 8 MiB budget");
+    }
+    if !is_delta_document(bytes)? {
+        return Ok(None);
+    }
+    let document: Document = serde_json::from_slice(bytes)?;
+    if document
+        .store_path
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        != expected_path
+    {
+        bail!("delta document store path mismatch");
+    }
+    let (_, placeholder) = replace(
+        &document.inline,
+        expected_path,
+        RawValue::from_string("null".into())?,
+    )?;
+    if placeholder.get() != "null" {
+        bail!("delta document contains an ambiguous inline store");
+    }
+    validate_prepared_bundle(workspace, bytes, &document.state)?;
+    let witness = document
+        .witness
+        .as_ref()
+        .context("delta document witness missing")?;
+    let reader = AoemStateReaderV1::new(&workspace.graph, workspace.scope);
+    let cached = native_transfer_record_execution::ExecutionReader::new(&reader);
+    let changes = delta::verify(&cached, &cached, verified_parent, &document.state, witness)?;
+    Ok(Some(VerifiedDeltaDocument {
+        inline: serde_json::from_str(document.inline.get())?,
+        state: document.state,
+        changes,
+    }))
+}
+
 /// Determine the sole parent variant without trusting a caller-supplied path.
 pub(super) fn payload_path(payload: &Payload) -> Result<[&'static str; 2]> {
     payload.parent_store()?;
@@ -633,6 +799,9 @@ pub(super) fn payload_path(payload: &Payload) -> Result<[&'static str; 2]> {
 }
 
 pub(super) fn decode_payload(workspace: &WorkspaceStore, bytes: &[u8]) -> Result<Payload> {
+    if is_delta_document(bytes)? {
+        bail!("delta documents are output-only and require a verified parent");
+    }
     let fields: BTreeMap<String, Box<RawValue>> = serde_json::from_slice(bytes)?;
     let schema: String = serde_json::from_str(
         fields
@@ -835,6 +1004,7 @@ pub(crate) fn exercise_record_profile_document_storage_for_test(
             receipts: RecordOverlayV1::new(&reader, receipt_root).finish(),
             records,
             blob_bytes,
+            changes: None,
         })
     };
     let mut next = TestDocument {
@@ -878,9 +1048,117 @@ pub(crate) fn exercise_record_profile_document_storage_for_test(
         prepared.bytes, cold.bytes,
         "incremental and cold document bytes agree"
     );
+    let changes = vec![native_store_records::RawPathChangeV1::Put {
+        path: [
+            "module_state",
+            "account_asset_balances",
+            "record-profile-account",
+            "NOV",
+        ]
+        .map(str::to_owned)
+        .to_vec(),
+        value: native_store_records::typed_raw_v1(&(u128::MAX - 7))?,
+    }];
+    let mut delta_updates = make_updates(false)?;
+    delta_updates.changes = Some(changes.clone());
+    let with_delta = prepare_record_profile(
+        &workspace,
+        &next,
+        &["store"],
+        &next.store,
+        Some((&reference, &document.store)),
+        Some(delta_updates),
+    )?;
+    assert!(is_delta_document(&with_delta.bytes)?);
+    assert!(!is_delta_document(&cold.bytes)?);
+    let delta_bytes = with_delta.bytes.clone();
+    persist(&workspace, &with_delta)?;
+    assert_eq!(
+        without_delta(with_delta)?.bytes,
+        cold.bytes,
+        "V3 fallback must exactly reproduce an already-reserved V2 image"
+    );
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LightDocument {
+        schema: String,
+        store: Option<NovNativeExecutionStoreV1>,
+    }
+    let verify_delta = |workspace: &WorkspaceStore| -> Result<()> {
+        without_materialization_for_test(|| {
+            let recovered =
+                decode_delta::<LightDocument>(workspace, &delta_bytes, &["store"], &reference)?
+                    .context("expected a delta document")?;
+            assert_eq!(recovered.inline.schema, next.schema);
+            assert!(recovered.inline.store.is_none());
+            assert_eq!(
+                recovered.state.rooted_parts()?,
+                prepared.state.rooted_parts()?
+            );
+            assert_eq!(recovered.changes, changes);
+            assert!(
+                decode_delta::<LightDocument>(workspace, &cold.bytes, &["store"], &reference,)?
+                    .is_none()
+            );
+            Ok(())
+        })
+    };
+    verify_delta(&workspace)?;
+    assert!(
+        decode_delta::<LightDocument>(&workspace, &delta_bytes, &["wrong_store"], &reference,)
+            .is_err()
+    );
+    let mut bad_parent = reference.clone();
+    bad_parent.bundle.as_mut().unwrap().state.root[0] ^= 1;
+    assert!(
+        decode_delta::<LightDocument>(&workspace, &delta_bytes, &["store"], &bad_parent,).is_err()
+    );
+    assert!(decode_payload(&workspace, &delta_bytes)
+        .err()
+        .context("delta input document unexpectedly accepted")?
+        .to_string()
+        .contains("output-only"));
+    let mut bad: Document = serde_json::from_slice(&delta_bytes)?;
+    bad.inline = RawValue::from_string("{\"schema\":\"tampered\",\"store\":null}".into())?;
+    assert!(decode_delta::<LightDocument>(
+        &workspace,
+        &serde_json::to_vec(&bad)?,
+        &["store"],
+        &reference,
+    )
+    .is_err());
+    // Crossing the optional witness document budget selects the original V2
+    // bytes before a reservation exists. V3 readers never silently downgrade.
+    let large = TestDocument {
+        schema: "x".repeat(MAX_PAYLOAD_BYTES_V1 - cold.bytes.len() + next.schema.len()),
+        store: next.store.clone(),
+    };
+    let large_cold = prepare_record_profile(
+        &workspace,
+        &large,
+        &["store"],
+        &large.store,
+        Some((&reference, &document.store)),
+        None,
+    )?;
+    assert_eq!(large_cold.bytes.len(), MAX_PAYLOAD_BYTES_V1);
+    let mut large_updates = make_updates(false)?;
+    large_updates.changes = Some(changes.clone());
+    let large_fallback = prepare_record_profile(
+        &workspace,
+        &large,
+        &["store"],
+        &large.store,
+        Some((&reference, &document.store)),
+        Some(large_updates),
+    )?;
+    assert!(!is_delta_document(&large_fallback.bytes)?);
+    assert_eq!(large_fallback.bytes, large_cold.bytes);
+    drop(large);
     assert_eq!(workspace.graph.get(&head_key)?, authority_before);
     drop(workspace);
     let reopened = WorkspaceStore::open(chain, params)?;
+    verify_delta(&reopened)?;
     let (recovered, _): (TestDocument, _) = decode(&reopened, &prepared.bytes, &["store"])?;
     assert_eq!(recovered.store, next.store);
     assert_eq!(
@@ -902,6 +1180,32 @@ pub(crate) fn exercise_record_profile_document_storage_for_test(
         }
         assert!(decode::<TestDocument>(&reopened, &serde_json::to_vec(&bad)?, &["store"]).is_err());
     }
+    // A matching V2 receipt marker is not a V3 marker, even for identical roots.
+    let delta_id = delta::prepared_id(delta::document_commitment(&delta_bytes), b"receipts");
+    let delta_marker = [b"NST1".as_slice(), &reopened.scope, b"c", &delta_id].concat();
+    let delete = AoemAtomicGraphWriteV1::Delete {
+        key: delta_marker.clone(),
+    };
+    reopened
+        .graph
+        .commit(novovm_exec::AoemAtomicGraphRequestV1 {
+            graph_id: u64::from_be_bytes(delta_id[..8].try_into()?)
+                .max(1)
+                .wrapping_add(1),
+            steps: vec![novovm_exec::AoemAtomicGraphStepV1 {
+                task_kind: 0,
+                task_payload: vec![],
+                writes: vec![delete.clone()],
+                event: None,
+            }],
+            completion_write: delete,
+        })?;
+    assert!(
+        decode_delta::<LightDocument>(&reopened, &delta_bytes, &["store"], &reference,).is_err()
+    );
+    assert!(decode::<TestDocument>(&reopened, &delta_bytes, &["store"]).is_err());
+    assert!(reopened.graph.get(&delta_marker)?.is_none());
+    assert!(decode::<TestDocument>(&reopened, &prepared.bytes, &["store"]).is_ok());
     // A completed document must not recreate a missing role completion marker.
     let id = prepared_role_id(record_document_commitment(&prepared.bytes), b"receipts");
     let marker = [b"NST1".as_slice(), &reopened.scope, b"c", &id].concat();

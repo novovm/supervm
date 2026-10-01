@@ -25,10 +25,20 @@ use std::cell::RefCell;
 /// Bounded, execution-local immutable content cache. No roots, verification
 /// permissions or negative lookups survive this call. Traversals still verify
 /// node/blob hashes; shared paths need not repeat AOEM database reads.
-struct ExecutionReader<'a> {
+pub(super) struct ExecutionReader<'a> {
     inner: &'a dyn StateRecordReader,
     nodes: RefCell<BTreeMap<NodeHash, Vec<u8>>>,
     chunks: RefCell<BTreeMap<(NodeHash, u32), Vec<u8>>>,
+}
+
+impl<'a> ExecutionReader<'a> {
+    pub(super) fn new(inner: &'a dyn StateRecordReader) -> Self {
+        Self {
+            inner,
+            nodes: RefCell::new(BTreeMap::new()),
+            chunks: RefCell::new(BTreeMap::new()),
+        }
+    }
 }
 
 impl StateNodeReader for ExecutionReader<'_> {
@@ -120,10 +130,10 @@ impl NativeRecordAccessV1 for EncodedAccess<'_> {
 /// A single authenticated physical view plus its independently committed state
 /// and receipt roots. Every requested consensus-bearing value is cross-checked;
 /// a hash-correct physical tree alone is not a business-state authority.
-struct RootedAccess<'a, 'r> {
-    physical: &'a RecordOverlayV1<'r>,
-    state: &'a RecordOverlayV1<'r>,
-    receipts: &'a RecordOverlayV1<'r>,
+pub(super) struct RootedAccess<'a, 'r> {
+    pub(super) physical: &'a RecordOverlayV1<'r>,
+    pub(super) state: &'a RecordOverlayV1<'r>,
+    pub(super) receipts: &'a RecordOverlayV1<'r>,
 }
 
 impl NativeRecordAccessV1 for RootedAccess<'_, '_> {
@@ -180,6 +190,7 @@ pub(super) struct RootedTransferUpdateV1 {
     pub receipts: StagedRecordUpdate,
     pub stats: RecordStatsDeltaV1,
     pub peak_inflight: usize,
+    pub changes: Vec<RawPathChangeV1>,
 }
 
 /// The caller has verified all three parent roots and authenticated the entire
@@ -193,11 +204,7 @@ pub(super) fn execute_rooted_segment_v1(
     items: &[Item<'_>],
     now_ms: u128,
 ) -> Result<RootedTransferUpdateV1> {
-    let reader = ExecutionReader {
-        inner: reader,
-        nodes: RefCell::new(BTreeMap::new()),
-        chunks: RefCell::new(BTreeMap::new()),
-    };
+    let reader = ExecutionReader::new(reader);
     let mut physical = RecordOverlayV1::new(&reader, physical_root);
     let mut state = RecordOverlayV1::new(&reader, state_root);
     let mut receipts = RecordOverlayV1::new(&reader, receipt_root);
@@ -259,6 +266,7 @@ pub(super) fn execute_rooted_segment_v1(
         receipts: receipts.finish(),
         stats,
         peak_inflight,
+        changes,
     })
 }
 

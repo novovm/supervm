@@ -462,6 +462,61 @@ impl SparseTransferStateV1 {
         self.before_records.keys().map(Vec::as_slice)
     }
 
+    /// Validate a final, sorted patch against the captured bounded parent view.
+    /// This proves the write footprint and exact typed encoding, not that its
+    /// amounts/nonce/receipts are the expected transaction result. The caller
+    /// must still bind those values and replay the patch from the verified roots.
+    pub(super) fn validate_changes_v1(&self, changes: &[RawPathChangeV1]) -> Result<()> {
+        let mut previous: Option<&[String]> = None;
+        let mut after = self.initial_sparse.clone();
+        for change in changes {
+            let (parts, raw) = match change {
+                RawPathChangeV1::Put { path, value } => (path, Some(value)),
+                RawPathChangeV1::Delete { path } => (path, None),
+            };
+            if previous.is_some_and(|previous| previous >= parts.as_slice()) {
+                bail!("sparse transfer patch paths must be strictly sorted and unique");
+            }
+            previous = Some(parts);
+            let permission = self.paths.get(parts).with_context(|| {
+                format!("sparse transfer wrote an unloaded record at {parts:?}")
+            })?;
+            let before = self
+                .before_records
+                .get(parts)
+                .context("sparse transfer declared path has no captured parent value")?;
+            if (raw.is_some() && !permission.put) || (raw.is_none() && !permission.delete) {
+                bail!("sparse transfer changed a read-only record at {parts:?}");
+            }
+            if permission.structure {
+                if before.is_some() || raw.is_none() {
+                    bail!("sparse transfer cannot replace/delete an account object");
+                }
+                if raw.map(Vec::as_slice) != Some(b"{}".as_slice()) {
+                    bail!("invalid sparse transfer object marker at {parts:?}");
+                }
+            }
+            if raw == before.as_ref() {
+                bail!("sparse transfer patch contains a non-changing record at {parts:?}");
+            }
+            if let Some(value) = raw {
+                after.insert(parts.clone(), value.clone());
+            } else {
+                after.remove(parts);
+            }
+        }
+        // Only this already-loaded footprint plus schema defaults is rebuilt.
+        // It is never exposed as a complete ledger, and no historical map is
+        // read. Round-trip equality rejects malformed/unknown typed fields,
+        // noncanonical number tokens, and children without their object marker.
+        let typed = typed_sparse_store(&after, &self.paths)?;
+        validate_windows(&typed)?;
+        if sparse_records(&typed)? != after {
+            bail!("sparse transfer patch does not reproduce its exact typed records");
+        }
+        Ok(())
+    }
+
     pub(super) fn changed_records(&self) -> Result<Vec<RawPathChangeV1>> {
         validate_windows(&self.store)?;
         let after = sparse_records(&self.store)?;
@@ -471,16 +526,7 @@ impl SparseTransferStateV1 {
             if self.initial_sparse.get(parts) == after.get(parts) {
                 continue;
             }
-            let permission = self.paths.get(parts).with_context(|| {
-                format!("sparse transfer wrote an unloaded record at {parts:?}")
-            })?;
             let raw = after.get(parts);
-            if (raw.is_some() && !permission.put) || (raw.is_none() && !permission.delete) {
-                bail!("sparse transfer changed a read-only record at {parts:?}");
-            }
-            if permission.structure && (self.before_records[parts].is_some() || raw.is_none()) {
-                bail!("sparse transfer cannot replace/delete an account object");
-            }
             if let Some(value) = raw {
                 changes.push(RawPathChangeV1::Put {
                     path: parts.clone(),
@@ -492,6 +538,7 @@ impl SparseTransferStateV1 {
                 });
             }
         }
+        self.validate_changes_v1(&changes)?;
         Ok(changes)
     }
 }
@@ -698,7 +745,14 @@ mod tests {
                 "{branch}"
             );
             assert_eq!(expected.is_ok(), branch == "success", "{branch}");
-            let merged = apply(&original, &sparse.changed_records().unwrap());
+            let changes = sparse.changed_records().unwrap();
+            fixture
+                .access()
+                .load(&Reader::new(&original))
+                .unwrap()
+                .validate_changes_v1(&changes)
+                .unwrap();
+            let merged = apply(&original, &changes);
             assert_eq!(
                 serde_json::to_vec(&merged).unwrap(),
                 serde_json::to_vec(&full).unwrap(),
@@ -746,6 +800,12 @@ mod tests {
                     .insert(fixture.reservation.tx_hash.clone(), receipt);
             }
             let changes = sparse.changed_records().unwrap();
+            fixture
+                .access()
+                .load(&Reader::new(&original))
+                .unwrap()
+                .validate_changes_v1(&changes)
+                .unwrap();
             assert_eq!(apply(&original, &changes), full);
             assert_eq!(changes.iter().filter(|change| matches!(change, RawPathChangeV1::Put { path, .. } if path == &super::path(&["module_state", "account_asset_balances", &recipient]))).count(), usize::from(!recipient_exists));
             assert!(
@@ -856,6 +916,12 @@ mod tests {
         persist_execution_trace_v1(&mut full, trace.clone());
         persist_execution_trace_v1(sparse.working_store_mut(), trace);
         let changes = sparse.changed_records().unwrap();
+        fixture
+            .access()
+            .load(&Reader::new(&original))
+            .unwrap()
+            .validate_changes_v1(&changes)
+            .unwrap();
         assert_eq!(apply(&original, &changes), full);
         assert_eq!(changes.iter().filter(|change| matches!(change, RawPathChangeV1::Delete { path: parts } if parts == &path(&["module_state", "execution_traces_by_tx", &oldest]))).count(), 1);
         assert!(changes.iter().all(|change| !matches!(change, RawPathChangeV1::Delete { path: parts } if parts.first().is_some_and(|part| part == "receipts"))));
@@ -864,6 +930,206 @@ mod tests {
             .records
             .remove(&path(&["module_state", "execution_traces_by_tx", &oldest]));
         assert!(fixture.access().load(&missing).is_err());
+    }
+
+    #[test]
+    fn sparse_transfer_patch_validator_rejects_undeclared_and_readonly_writes() {
+        let fixture = Fixture::new(0);
+        let original = fixture.store();
+        let sparse = fixture.access().load(&Reader::new(&original)).unwrap();
+        let changes = [
+            (
+                "unrelated balance",
+                RawPathChangeV1::Put {
+                    path: path(&[
+                        "module_state",
+                        "account_asset_balances",
+                        "unrelated-account",
+                        "NOV",
+                    ]),
+                    value: b"9".to_vec(),
+                },
+            ),
+            (
+                "unloaded asset of touched account",
+                RawPathChangeV1::Put {
+                    path: path(&[
+                        "module_state",
+                        "account_asset_balances",
+                        &fixture.subject.account_id,
+                        "USDT",
+                    ]),
+                    value: b"9".to_vec(),
+                },
+            ),
+            (
+                "read-only fee policy",
+                RawPathChangeV1::Put {
+                    path: path(&["module_state", "treasury_fee_share_bps"]),
+                    value: b"9".to_vec(),
+                },
+            ),
+            (
+                "protocol commitment",
+                RawPathChangeV1::Put {
+                    path: path(&["module_state", "protocol_config_commitment"]),
+                    value: br#""different""#.to_vec(),
+                },
+            ),
+            (
+                "existing account marker",
+                RawPathChangeV1::Put {
+                    path: path(&[
+                        "module_state",
+                        "account_asset_balances",
+                        &fixture.subject.account_id,
+                    ]),
+                    value: b"{}".to_vec(),
+                },
+            ),
+            (
+                "undeclared nonce",
+                RawPathChangeV1::Put {
+                    path: path(&[
+                        "module_state",
+                        "native_auth_next_nonces",
+                        "unrelated-identity",
+                    ]),
+                    value: b"92".to_vec(),
+                },
+            ),
+            (
+                "undeclared reservation",
+                RawPathChangeV1::Put {
+                    path: path(&[
+                        "module_state",
+                        "native_auth_nonce_reservations",
+                        "unrelated-reservation",
+                    ]),
+                    value: br#""replaced""#.to_vec(),
+                },
+            ),
+            (
+                "undeclared receipt",
+                RawPathChangeV1::Put {
+                    path: path(&["receipts", &"99".repeat(32)]),
+                    value: b"{}".to_vec(),
+                },
+            ),
+            (
+                "receipt deletion",
+                RawPathChangeV1::Delete {
+                    path: path(&["receipts", &fixture.reservation.tx_hash]),
+                },
+            ),
+        ];
+        for (label, change) in changes {
+            assert!(sparse.validate_changes_v1(&[change]).is_err(), "{label}");
+        }
+    }
+
+    #[test]
+    fn sparse_transfer_patch_validator_requires_unique_ordered_net_typed_changes() {
+        let fixture = Fixture::new(0);
+        let original = fixture.store();
+        let sparse = fixture.access().load(&Reader::new(&original)).unwrap();
+        let balance = path(&[
+            "module_state",
+            "account_asset_balances",
+            &fixture.subject.account_id,
+            "NOV",
+        ]);
+        let valid = vec![
+            RawPathChangeV1::Put {
+                path: path(&["last_updated_unix_ms"]),
+                value: b"123".to_vec(),
+            },
+            RawPathChangeV1::Put {
+                path: balance.clone(),
+                value: b"9000".to_vec(),
+            },
+        ];
+        sparse.validate_changes_v1(&valid).unwrap();
+        sparse.validate_changes_v1(&[]).unwrap();
+        let mut reversed = valid.clone();
+        reversed.reverse();
+        assert!(sparse.validate_changes_v1(&reversed).is_err());
+        assert!(sparse
+            .validate_changes_v1(&[valid[0].clone(), valid[0].clone()])
+            .is_err());
+        for value in [
+            b"10000".as_slice(), // An exact existing value is not a delta.
+            b"\"9\"",            // Wrong typed value.
+            b"-9",               // A balance is unsigned.
+            b"9.0",              // No floating-point normalization.
+            b" 9",               // Only the canonical typed token is accepted.
+            b"340282366920938463463374607431768211456", // u128 overflow.
+        ] {
+            assert!(
+                sparse
+                    .validate_changes_v1(&[RawPathChangeV1::Put {
+                        path: balance.clone(),
+                        value: value.to_vec(),
+                    }])
+                    .is_err(),
+                "{value:?}"
+            );
+        }
+        assert!(sparse
+            .validate_changes_v1(&[RawPathChangeV1::Delete {
+                path: path(&[
+                    "module_state",
+                    "execution_traces_by_tx",
+                    &fixture.reservation.tx_hash,
+                ]),
+            }])
+            .is_err()); // Absent-to-absent is not a net deletion.
+        assert_eq!(sparse.working_store().last_updated_unix_ms, 0);
+        assert_eq!(
+            sparse.working_store().module_state.account_asset_balances[&fixture.subject.account_id]
+                ["NOV"],
+            10000
+        ); // Validation never applies an untrusted patch to the captured view.
+    }
+
+    #[test]
+    fn sparse_transfer_patch_validator_requires_canonical_new_account_structure() {
+        let fixture = Fixture::new(0);
+        let mut original = fixture.store();
+        let recipient = to_hex_prefixed_v1(&[2; 32]);
+        original
+            .module_state
+            .account_asset_balances
+            .remove(&recipient);
+        let sparse = fixture.access().load(&Reader::new(&original)).unwrap();
+        let marker = path(&["module_state", "account_asset_balances", &recipient]);
+        let leaf = RawPathChangeV1::Put {
+            path: path(&["module_state", "account_asset_balances", &recipient, "NOV"]),
+            value: u128::MAX.to_string().into_bytes(),
+        };
+        assert!(sparse
+            .validate_changes_v1(std::slice::from_ref(&leaf))
+            .is_err());
+        for raw in [b"null".as_slice(), b"[]", b"{ }", b"{\"NOV\":1}"] {
+            assert!(sparse
+                .validate_changes_v1(&[
+                    RawPathChangeV1::Put {
+                        path: marker.clone(),
+                        value: raw.to_vec(),
+                    },
+                    leaf.clone(),
+                ])
+                .is_err());
+        }
+        sparse
+            .validate_changes_v1(&[
+                RawPathChangeV1::Put {
+                    path: marker,
+                    value: b"{}".to_vec(),
+                },
+                leaf,
+            ])
+            .unwrap();
     }
 
     #[test]

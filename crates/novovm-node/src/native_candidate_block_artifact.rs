@@ -35,8 +35,9 @@ impl IsolatedBlockArtifactV1 {
     }
 }
 
-/// Reads and revalidates the complete input/output, including transaction auth,
-/// state/receipt commitments and completion marker. Never executes or repairs.
+/// Revalidates input and output evidence, including transaction auth, exact
+/// state/receipt transitions and completion marker. V3 needs only current-block
+/// output records; input/legacy output retain cold validation. Never executes or repairs.
 /// Absence/incomplete output returns None; corrupt/aborted evidence is an error.
 pub fn load_block_artifact_v1(
     chain_id: u64,
@@ -64,7 +65,7 @@ pub(super) fn load_block_artifact_inner_v1(
         return Ok(None);
     }
     let payload = workspace.read_payload(&input)?;
-    let output = read_output(workspace, &input, descriptor, &payload, params)?
+    let output = read_output_view(workspace, &input, descriptor, &payload, params)?
         .context("completed isolated block output missing")?;
     let plan = &payload.plan;
     let mut prepared = build_prepared_block_v1(NovNativeBlockCandidateInputV1 {
@@ -81,7 +82,6 @@ pub(super) fn load_block_artifact_inner_v1(
         .iter()
         .map(|hash| {
             let receipt = output
-                .store
                 .receipts
                 .get(&to_hex(hash))
                 .context("isolated block receipt missing")?;

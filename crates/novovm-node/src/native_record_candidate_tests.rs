@@ -4,222 +4,330 @@
 #[test]
 fn candidate_workspace_record_profile_legacy_record_output_four_stage_recovery() {
     transfer_candidate_on_runtime_stack(|| {
-        use crate::tx_ingress::fresh_genesis::{
-            publication::{publish_v1, verify_persisted_v1},
-            FreshGenesisConfigV1, GenesisAllocationV1, GenesisValidatorV1,
-            GENESIS_SCHEMA_RECORD_V2,
+        exercise_record_output_four_stage_recovery(RecordOutputRecoveryFixture::LegacyV1);
+    });
+}
+
+#[test]
+fn candidate_workspace_record_profile_previous_record_output_four_stage_recovery() {
+    transfer_candidate_on_runtime_stack(|| {
+        exercise_record_output_four_stage_recovery(RecordOutputRecoveryFixture::PreviousV2);
+    });
+}
+
+#[test]
+fn candidate_workspace_record_profile_delta_output_four_stage_recovery() {
+    transfer_candidate_on_runtime_stack(|| {
+        exercise_record_output_four_stage_recovery(RecordOutputRecoveryFixture::DeltaV3);
+    });
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordOutputRecoveryFixture {
+    LegacyV1,
+    PreviousV2,
+    DeltaV3,
+}
+
+fn exercise_record_output_four_stage_recovery(format: RecordOutputRecoveryFixture) {
+    use crate::tx_ingress::fresh_genesis::{
+        publication::{publish_v1, verify_persisted_v1},
+        FreshGenesisConfigV1, GenesisAllocationV1, GenesisValidatorV1, GENESIS_SCHEMA_RECORD_V2,
+    };
+    use workspace::ExecutionCheckpointV1 as Stage;
+    let _guard = PLAN_RUNTIME_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    with_plan_runtime(|path, params| {
+        let chain = match format {
+            RecordOutputRecoveryFixture::LegacyV1 => 98_919_726,
+            RecordOutputRecoveryFixture::PreviousV2 => 98_919_727,
+            RecordOutputRecoveryFixture::DeltaV3 => 98_919_728,
         };
-        use workspace::ExecutionCheckpointV1 as Stage;
-        let _guard = PLAN_RUNTIME_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        with_plan_runtime(|path, params| {
-            let chain = 98_919_726;
-            let (payer, recipient) = ([0x79; 32], [0x7a; 32]);
-            let config = FreshGenesisConfigV1 {
-                schema: GENESIS_SCHEMA_RECORD_V2.into(),
-                chain_id: chain,
-                timestamp_unix_ms: 1_900_000_000_789,
-                protocol_config_commitment: parse_fixed_hex_32_v1(
-                    &native_business_protocol_config_commitment_v1().unwrap(),
-                    "protocol",
+        let (payer, recipient) = ([0x79; 32], [0x7a; 32]);
+        let config = FreshGenesisConfigV1 {
+            schema: GENESIS_SCHEMA_RECORD_V2.into(),
+            chain_id: chain,
+            timestamp_unix_ms: 1_900_000_000_789,
+            protocol_config_commitment: parse_fixed_hex_32_v1(
+                &native_business_protocol_config_commitment_v1().unwrap(),
+                "protocol",
+            )
+            .unwrap(),
+            allocations: vec![GenesisAllocationV1 {
+                account: novovm_adapter_novovm::address_from_seed_v1(payer)
+                    .try_into()
+                    .unwrap(),
+                nov: "1000".into(),
+            }],
+            total_initial_nov: "1000".into(),
+            validators: (1..=4)
+                .map(|seed| GenesisValidatorV1 {
+                    public_key: ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+                        .verifying_key()
+                        .to_bytes(),
+                    weight: 1,
+                })
+                .collect(),
+        };
+        let compiled = config.compile().unwrap();
+        let pin = compiled.config_commitment();
+        let namespace = parse_fixed_hex_32_v1(
+            &native_aoem_owned_state_namespace_digest_v1(params, chain),
+            "namespace",
+        )
+        .unwrap();
+        let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
+        NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(&ledger, &config, pin, namespace)
+            .unwrap();
+        publish_v1(chain, pin, params).unwrap();
+        let head_key = native_aoem_owned_state_head_key_v1(chain, &to_hex(&namespace));
+        let authority = candidate_workspace_graph(params).get(&head_key).unwrap();
+        let host_before = load_nov_native_execution_store_v1(path).unwrap();
+        let genesis_before =
+            serde_json::to_vec(&verify_persisted_v1(chain, pin, params).unwrap()).unwrap();
+        let assert_authority_unchanged = || {
+            assert_eq!(
+                candidate_workspace_graph(params).get(&head_key).unwrap(),
+                authority
+            );
+            assert_eq!(
+                load_nov_native_execution_store_v1(path).unwrap(),
+                host_before
+            );
+            assert_eq!(
+                serde_json::to_vec(&verify_persisted_v1(chain, pin, params).unwrap()).unwrap(),
+                genesis_before
+            );
+            assert!(
+                NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(
+                    &ledger, pin, namespace
                 )
-                .unwrap(),
-                allocations: vec![GenesisAllocationV1 {
-                    account: novovm_adapter_novovm::address_from_seed_v1(payer)
-                        .try_into()
-                        .unwrap(),
-                    nov: "1000".into(),
-                }],
-                total_initial_nov: "1000".into(),
-                validators: (1..=4)
-                    .map(|seed| GenesisValidatorV1 {
-                        public_key: ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
-                            .verifying_key()
-                            .to_bytes(),
-                        weight: 1,
-                    })
-                    .collect(),
-            };
-            let compiled = config.compile().unwrap();
-            let pin = compiled.config_commitment();
-            let namespace = parse_fixed_hex_32_v1(
-                &native_aoem_owned_state_namespace_digest_v1(params, chain),
-                "namespace",
+                .unwrap()
+                .is_none()
+            );
+        };
+        let plan_for = |amount| {
+            make_plan(
+                NovBlockExecutionContextV1 {
+                    chain_id: chain,
+                    block_height: 1,
+                    parent_block_hash: [0; 32],
+                    slot: 1,
+                    timestamp_unix_ms: config.timestamp_unix_ms,
+                },
+                compiled.state_root(),
+                None,
+                vec![transfer_candidate_raw(chain, 0, payer, recipient, amount)],
             )
-            .unwrap();
-            let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
-            NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(
-                &ledger, &config, pin, namespace,
-            )
-            .unwrap();
-            publish_v1(chain, pin, params).unwrap();
-            let head_key = native_aoem_owned_state_head_key_v1(chain, &to_hex(&namespace));
-            let authority = candidate_workspace_graph(params).get(&head_key).unwrap();
-            let host_before = load_nov_native_execution_store_v1(path).unwrap();
-            let genesis_before =
-                serde_json::to_vec(&verify_persisted_v1(chain, pin, params).unwrap()).unwrap();
-            let assert_authority_unchanged = || {
-                assert_eq!(
-                    candidate_workspace_graph(params).get(&head_key).unwrap(),
-                    authority
-                );
-                assert_eq!(
-                    load_nov_native_execution_store_v1(path).unwrap(),
-                    host_before
-                );
-                assert_eq!(
-                    serde_json::to_vec(&verify_persisted_v1(chain, pin, params).unwrap()).unwrap(),
-                    genesis_before
-                );
-                assert!(
-                    NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(
-                        &ledger, pin, namespace
+        };
+        for (index, stage) in [
+            Stage::OutputReserved,
+            Stage::PartialOutput,
+            Stage::OutputWritten,
+            Stage::Completed,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let amount = index as u128 + 1;
+            let plan = plan_for(amount);
+            let ready = workspace::create_from_genesis_v1(&plan, pin, params).unwrap();
+            let reserved_digest = match format {
+                RecordOutputRecoveryFixture::LegacyV1 => Some(
+                    workspace::seed_legacy_record_output_for_test_v1(
+                        chain,
+                        ready.workspace_id,
+                        params,
+                        stage,
+                        false,
                     )
+                    .unwrap(),
+                ),
+                RecordOutputRecoveryFixture::PreviousV2 => Some(
+                    workspace::seed_previous_record_output_for_test_v1(
+                        chain,
+                        ready.workspace_id,
+                        params,
+                        stage,
+                        false,
+                    )
+                    .unwrap(),
+                ),
+                RecordOutputRecoveryFixture::DeltaV3 => {
+                    let stopped = std::cell::Cell::new(false);
+                    let failure = workspace::execute_with_checkpoint_v1(
+                        chain,
+                        ready.workspace_id,
+                        params,
+                        |checkpoint| {
+                            if checkpoint == stage {
+                                stopped.set(true);
+                                anyhow::bail!("delta output fixture crash checkpoint");
+                            }
+                            Ok(())
+                        },
+                    )
+                    .unwrap_err();
+                    assert!(stopped.get(), "{format:?} {stage:?}");
+                    assert!(
+                        format!("{failure:#}").contains("delta output fixture crash checkpoint"),
+                        "{failure:#}"
+                    );
+                    None
+                }
+            };
+            assert_eq!(
+                workspace::load_execution_v1(chain, ready.workspace_id, params)
                     .unwrap()
-                    .is_none()
-                );
-            };
-            let plan_for = |amount| {
-                make_plan(
-                    NovBlockExecutionContextV1 {
-                        chain_id: chain,
-                        block_height: 1,
-                        parent_block_hash: [0; 32],
-                        slot: 1,
-                        timestamp_unix_ms: config.timestamp_unix_ms,
-                    },
-                    compiled.state_root(),
-                    None,
-                    vec![transfer_candidate_raw(chain, 0, payer, recipient, amount)],
-                )
-            };
-            for (index, stage) in [
-                Stage::OutputReserved,
-                Stage::PartialOutput,
-                Stage::OutputWritten,
-                Stage::Completed,
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let amount = index as u128 + 1;
-                let plan = plan_for(amount);
-                let ready = workspace::create_from_genesis_v1(&plan, pin, params).unwrap();
-                let digest = workspace::seed_legacy_record_output_for_test_v1(
-                    chain,
-                    ready.workspace_id,
-                    params,
-                    stage,
-                    false,
-                )
-                .unwrap();
-                assert_eq!(
-                    workspace::load_execution_v1(chain, ready.workspace_id, params)
-                        .unwrap()
-                        .is_some(),
-                    stage == Stage::Completed
-                );
-                // Every API opens a new workspace handle. Reset the execution
-                // session too: recovery must be based on durable old bytes.
-                reset_native_aoem_semantic_ingress_session_v1();
-                let checkpoints = std::cell::RefCell::new(Vec::new());
-                let recovered = workspace::execute_with_checkpoint_v1(
-                    chain,
-                    ready.workspace_id,
-                    params,
-                    |checkpoint| {
-                        if matches!(stage, Stage::OutputWritten | Stage::Completed) {
-                            assert_eq!(
-                                checkpoint,
-                                Stage::Completed,
-                                "fully written record/v1 output must not re-execute"
-                            );
-                        }
-                        checkpoints.borrow_mut().push(checkpoint);
-                        Ok(())
-                    },
-                )
-                .unwrap();
-                let expected = match stage {
-                    Stage::OutputWritten => vec![Stage::Completed],
-                    Stage::Completed => vec![],
-                    _ => vec![
-                        Stage::OutputReserved,
-                        Stage::PartialOutput,
-                        Stage::OutputWritten,
-                        Stage::Completed,
-                    ],
-                };
-                assert_eq!(*checkpoints.borrow(), expected);
-                assert_candidate_workspace_execution_complete(&recovered);
-                assert_eq!(
-                    recovered.output_digest, digest,
-                    "record/v1 reserved digest must not be upgraded to record/v2"
-                );
-                assert_eq!(
-                    workspace::execute_v1(chain, ready.workspace_id, params)
-                        .unwrap()
-                        .output_digest,
-                    digest
-                );
-                let store = workspace::load_typed_execution_snapshot_for_test_v1(
-                    chain,
-                    ready.workspace_id,
-                    params,
-                )
-                .unwrap();
-                let fee = transfer_candidate_fee(&plan.raw_txs[0]);
-                assert_eq!(
-                    native_account_asset_balance_v1(
-                        &store,
-                        &transfer_candidate_account(payer),
-                        "NOV"
-                    ),
-                    1000 - amount - fee
-                );
-                assert_eq!(
-                    native_account_asset_balance_v1(
-                        &store,
-                        &transfer_candidate_account(recipient),
-                        "NOV"
-                    ),
-                    amount
-                );
-                let reservation = transfer_candidate_reservation(&plan.raw_txs[0]);
-                assert_eq!(
-                    store.module_state.native_auth_next_nonces[&reservation.identity_key],
-                    1
-                );
-                assert_eq!(store.module_state.aoem_semantic_ledger_sequence, 1);
-                assert_eq!(store.receipts.len(), 1);
-                assert_eq!(store.receipts[&reservation.tx_hash].settled_fee_nov, fee);
-                assert_authority_unchanged();
-            }
-            let bad = plan_for(19);
-            let ready = workspace::create_from_genesis_v1(&bad, pin, params).unwrap();
-            workspace::seed_legacy_record_output_for_test_v1(
+                    .is_some(),
+                stage == Stage::Completed
+            );
+            assert_authority_unchanged();
+            // Every API opens a new workspace handle. Reset the execution
+            // session too: recovery must be based on durable old bytes.
+            reset_native_aoem_semantic_ingress_session_v1();
+            let checkpoints = std::cell::RefCell::new(Vec::new());
+            let recovered = workspace::execute_with_checkpoint_v1(
                 chain,
                 ready.workspace_id,
                 params,
-                Stage::OutputReserved,
-                true,
+                |checkpoint| {
+                    if matches!(stage, Stage::OutputWritten | Stage::Completed) {
+                        assert_eq!(
+                            checkpoint,
+                            Stage::Completed,
+                            "fully written {format:?} output must not re-execute"
+                        );
+                    }
+                    checkpoints.borrow_mut().push(checkpoint);
+                    Ok(())
+                },
             )
             .unwrap();
-            reset_native_aoem_semantic_ingress_session_v1();
-            let error =
-                workspace::execute_with_checkpoint_v1(chain, ready.workspace_id, params, |_| {
-                    panic!("corrupt record/v1 reservation cannot publish or replace output")
-                })
-                .unwrap_err();
-            assert!(error.to_string().contains("reserved bytes"), "{error:#}");
-            assert!(
-                workspace::load_execution_v1(chain, ready.workspace_id, params)
+            let expected = match stage {
+                Stage::OutputWritten => vec![Stage::Completed],
+                Stage::Completed => vec![],
+                _ => vec![
+                    Stage::OutputReserved,
+                    Stage::PartialOutput,
+                    Stage::OutputWritten,
+                    Stage::Completed,
+                ],
+            };
+            assert_eq!(*checkpoints.borrow(), expected);
+            assert_candidate_workspace_execution_complete(&recovered);
+            if let Some(digest) = reserved_digest {
+                assert_eq!(
+                    recovered.output_digest, digest,
+                    "{format:?} reserved digest must not be upgraded to a new document"
+                );
+            }
+            let digest = recovered.output_digest;
+            assert_eq!(
+                workspace::execute_v1(chain, ready.workspace_id, params)
                     .unwrap()
-                    .is_none()
+                    .output_digest,
+                digest
             );
+            let store = workspace::load_typed_execution_snapshot_for_test_v1(
+                chain,
+                ready.workspace_id,
+                params,
+            )
+            .unwrap();
+            assert_eq!(
+                recovered.post_state_root,
+                to_hex(
+                    &native_record_commitment::consensus_state_root_v1(&store.module_state)
+                        .unwrap()
+                )
+            );
+            assert_eq!(
+                recovered.receipt_root,
+                to_hex(&native_record_commitment::cumulative_receipt_root_v1(&store).unwrap())
+            );
+            assert_eq!(
+                workspace::load_execution_v1(chain, ready.workspace_id, params).unwrap(),
+                Some(recovered.clone())
+            );
+            if format == RecordOutputRecoveryFixture::DeltaV3 {
+                // The helper first validates the full input, then forbids
+                // output materialization while checking the lazy view; its
+                // explicit cold comparison is outside that read boundary.
+                workspace::assert_delta_output_point_read_for_test_v1(
+                    chain,
+                    ready.workspace_id,
+                    params,
+                )
+                .unwrap();
+            }
+            let fee = transfer_candidate_fee(&plan.raw_txs[0]);
+            assert_eq!(
+                native_account_asset_balance_v1(&store, &transfer_candidate_account(payer), "NOV"),
+                1000 - amount - fee
+            );
+            assert_eq!(
+                native_account_asset_balance_v1(
+                    &store,
+                    &transfer_candidate_account(recipient),
+                    "NOV"
+                ),
+                amount
+            );
+            let reservation = transfer_candidate_reservation(&plan.raw_txs[0]);
+            assert_eq!(
+                store.module_state.native_auth_next_nonces[&reservation.identity_key],
+                1
+            );
+            assert_eq!(store.module_state.aoem_semantic_ledger_sequence, 1);
+            assert_eq!(store.receipts.len(), 1);
+            let receipt = &store.receipts[&reservation.tx_hash];
+            assert!(receipt.status);
+            assert_eq!(receipt.settled_fee_nov, fee);
+            assert_eq!(store.module_state.treasury_settled_nov_total, fee);
+            assert_eq!(
+                store.module_state.native_auth_nonce_reservations[&reservation.ledger_key],
+                reservation.reservation_id
+            );
+            assert_transfer_candidate_compute_logs(receipt, 1);
             assert_authority_unchanged();
-        });
+        }
+        if format == RecordOutputRecoveryFixture::DeltaV3 {
+            return;
+        }
+        let bad = plan_for(19);
+        let ready = workspace::create_from_genesis_v1(&bad, pin, params).unwrap();
+        let seed = match format {
+            RecordOutputRecoveryFixture::LegacyV1 => {
+                workspace::seed_legacy_record_output_for_test_v1
+            }
+            RecordOutputRecoveryFixture::PreviousV2 => {
+                workspace::seed_previous_record_output_for_test_v1
+            }
+            RecordOutputRecoveryFixture::DeltaV3 => unreachable!(),
+        };
+        seed(
+            chain,
+            ready.workspace_id,
+            params,
+            Stage::OutputReserved,
+            true,
+        )
+        .unwrap();
+        reset_native_aoem_semantic_ingress_session_v1();
+        let error =
+            workspace::execute_with_checkpoint_v1(chain, ready.workspace_id, params, |_| {
+                panic!("corrupt {format:?} reservation cannot publish or replace output")
+            })
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("reserved bytes"), "{error:#}");
+        assert!(
+            workspace::load_execution_v1(chain, ready.workspace_id, params)
+                .unwrap()
+                .is_none()
+        );
+        assert_authority_unchanged();
     });
 }
 

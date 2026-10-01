@@ -12,6 +12,8 @@ use crate::native_root_codecs::NativeRootCodecProfileV1;
 mod block_artifact;
 #[path = "native_candidate_promotion.rs"]
 mod promotion;
+#[path = "native_candidate_rooted_output.rs"]
+mod rooted_output;
 pub use block_artifact::{
     load_block_artifact_v1, prepare_genesis_promotion_v1, register_block_candidate_v1,
     register_genesis_block_candidate_v1, with_verified_block_candidate_v1,
@@ -36,6 +38,9 @@ pub(crate) use promotion::{
     RetirementCheckpointV1,
 };
 pub(crate) use promotion::{load_startup_artifact_v1, load_startup_successor_v1};
+#[cfg(test)]
+pub(crate) use rooted_output::assert_delta_output_point_read_for_test_v1;
+use rooted_output::{authenticate_payload, read_output_view, OutputView};
 
 const OUTPUT_SCHEMA: &str = "novovm-native-candidate-execution/v1";
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
@@ -283,13 +288,49 @@ fn build_result(
     backend: String,
     profile: NativeRootCodecProfileV1,
 ) -> Result<novovm_exec::NovovmAoemNativeTxBatchResultV1> {
+    let (state_root, receipt_root, snapshot_version) = match profile {
+        NativeRootCodecProfileV1::LegacyWireV1 => (
+            native_semantic_ledger_state_digest_v1(&store.module_state),
+            native_execution_receipt_root_v2(store)?,
+            1,
+        ),
+        NativeRootCodecProfileV1::RecordTreeV1 => (
+            to_hex(&native_record_commitment::consensus_state_root_v1(
+                &store.module_state,
+            )?),
+            to_hex(&native_record_commitment::cumulative_receipt_root_v1(
+                store,
+            )?),
+            2,
+        ),
+    };
+    build_result_from_commitments(
+        batch,
+        &store.receipts,
+        state_root,
+        receipt_root,
+        novovm_exec::NovovmAoemSnapshotMetadataV1 {
+            snapshot_version,
+            state_version: store.module_state.aoem_semantic_ledger_sequence,
+            backend,
+            persistence_owner: "aoem_runtime".to_string(),
+        },
+    )
+}
+
+fn build_result_from_commitments(
+    batch: &novovm_exec::NovovmAoemNativeTxBatchV1,
+    current_receipts: &BTreeMap<String, NovNativeExecutionReceiptV1>,
+    state_root: String,
+    receipt_root: String,
+    snapshot: novovm_exec::NovovmAoemSnapshotMetadataV1,
+) -> Result<novovm_exec::NovovmAoemNativeTxBatchResultV1> {
     let receipts = batch
         .tx_items
         .iter()
         .map(|item| {
             let hash = parse_fixed_hex_32_v1(&item.tx_hash, "candidate receipt hash")?;
-            let receipt = store
-                .receipts
+            let receipt = current_receipts
                 .get(&to_hex(&hash))
                 .context("candidate receipt missing")?;
             let meta = receipt
@@ -313,33 +354,12 @@ fn build_result(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let (state_root, receipt_root, snapshot_version) = match profile {
-        NativeRootCodecProfileV1::LegacyWireV1 => (
-            native_semantic_ledger_state_digest_v1(&store.module_state),
-            native_execution_receipt_root_v2(store)?,
-            1,
-        ),
-        NativeRootCodecProfileV1::RecordTreeV1 => (
-            to_hex(&native_record_commitment::consensus_state_root_v1(
-                &store.module_state,
-            )?),
-            to_hex(&native_record_commitment::cumulative_receipt_root_v1(
-                store,
-            )?),
-            2,
-        ),
-    };
     novovm_exec::build_native_tx_batch_result_from_execution_v1(
         batch,
         receipts,
         state_root,
         receipt_root,
-        novovm_exec::NovovmAoemSnapshotMetadataV1 {
-            snapshot_version,
-            state_version: store.module_state.aoem_semantic_ledger_sequence,
-            backend,
-            persistence_owner: "aoem_runtime".to_string(),
-        },
+        snapshot,
     )
 }
 
@@ -351,7 +371,7 @@ fn compute(
 ) -> Result<Output> {
     // Authenticate the ENTIRE ordered batch before any AOEM submission. Never
     // call ingress: even its no-admission variant observes rejected pending.
-    let items = authenticate_plan(&payload.plan, payload.parent_store()?, params)?;
+    let items = authenticate_payload(payload, workspace, params)?;
     let profile = payload.root_codec_profile()?;
     if profile == NativeRootCodecProfileV1::RecordTreeV1
         && items
@@ -444,6 +464,7 @@ fn compute(
             receipts: update.receipts,
             records,
             blob_bytes,
+            changes: Some(update.changes),
         });
     } else {
         store = payload.parent_store()?.clone();
@@ -592,50 +613,7 @@ fn validate_output(
     {
         bail!("candidate execution result/root/receipt binding mismatch");
     }
-    let chunk_size = NOV_NATIVE_AOEM_CONSENSUS_BATCH_CHUNK_SIZE_V1;
-    for (chunk_index, raws) in payload.plan.raw_txs.chunks(chunk_size).enumerate() {
-        let (wire, plan_id) = build_native_aoem_raw_tx_batch_ops_wire_v1(raws, chunk_size)?;
-        let wire_digest = to_hex(&sha256_bytes_v1(&[
-            b"novovm-native-aoem-semantic-wire-digest-v1",
-            &wire.bytes,
-        ]));
-        for offset in 0..raws.len() {
-            let index = chunk_index * chunk_size + offset;
-            let hash = to_hex(&items[index].tx_hash);
-            let receipt = output
-                .store
-                .receipts
-                .get(&hash)
-                .context("candidate receipt missing")?;
-            let meta = receipt
-                .aoem_semantic_ingress
-                .as_ref()
-                .context("candidate precommit metadata missing")?;
-            if receipt.tx_hash != hash
-                || meta.execution_kernel != "AOEM"
-                || meta.semantic_entry != native_aoem_raw_tx_batch_precommit_entry_v1()
-                || !meta.enabled
-                || !meta.submitted
-                || !meta.algebraic_semantic_entry
-                || !meta.batch_mode
-                || meta.ingress_scope != "raw_tx_batch_precommit_item"
-                || meta.plan_id != plan_id
-                || meta.batch_plan_id != Some(plan_id)
-                || meta.wire_digest != wire_digest
-                || meta.op_count != raws.len()
-                || meta.batch_size != raws.len()
-                || meta.batch_item_index != Some(index)
-                || meta.batch_item_count != Some(items.len())
-                || meta.processed_ops as usize != raws.len()
-                || meta.success_ops as usize != raws.len()
-                || meta.fallback_reason.is_some()
-                || receipt.aoem_semantic_commit
-                    != build_native_receipt_aoem_semantic_commit_v1(receipt)
-            {
-                bail!("candidate receipt is not bound to its ordered AOEM precommit chunk");
-            }
-        }
-    }
+    validate_precommit_receipts(payload, &items, &output.store.receipts)?;
     verify_production_native_execution_store_authority_domain_v2(
         &output.store,
         workspace.chain_id,
@@ -687,13 +665,59 @@ fn validate_output(
     Ok(())
 }
 
-fn read_output(
+fn validate_precommit_receipts(
+    payload: &Payload,
+    items: &[AuthenticatedItem],
+    receipts: &BTreeMap<String, NovNativeExecutionReceiptV1>,
+) -> Result<()> {
+    let chunk_size = NOV_NATIVE_AOEM_CONSENSUS_BATCH_CHUNK_SIZE_V1;
+    for (chunk_index, raws) in payload.plan.raw_txs.chunks(chunk_size).enumerate() {
+        let (wire, plan_id) = build_native_aoem_raw_tx_batch_ops_wire_v1(raws, chunk_size)?;
+        let wire_digest = to_hex(&sha256_bytes_v1(&[
+            b"novovm-native-aoem-semantic-wire-digest-v1",
+            &wire.bytes,
+        ]));
+        for offset in 0..raws.len() {
+            let index = chunk_index * chunk_size + offset;
+            let hash = to_hex(&items[index].tx_hash);
+            let receipt = receipts.get(&hash).context("candidate receipt missing")?;
+            let meta = receipt
+                .aoem_semantic_ingress
+                .as_ref()
+                .context("candidate precommit metadata missing")?;
+            if receipt.tx_hash != hash
+                || meta.execution_kernel != "AOEM"
+                || meta.semantic_entry != native_aoem_raw_tx_batch_precommit_entry_v1()
+                || !meta.enabled
+                || !meta.submitted
+                || !meta.algebraic_semantic_entry
+                || !meta.batch_mode
+                || meta.ingress_scope != "raw_tx_batch_precommit_item"
+                || meta.plan_id != plan_id
+                || meta.batch_plan_id != Some(plan_id)
+                || meta.wire_digest != wire_digest
+                || meta.op_count != raws.len()
+                || meta.batch_size != raws.len()
+                || meta.batch_item_index != Some(index)
+                || meta.batch_item_count != Some(items.len())
+                || meta.processed_ops as usize != raws.len()
+                || meta.success_ops as usize != raws.len()
+                || meta.fallback_reason.is_some()
+                || receipt.aoem_semantic_commit
+                    != build_native_receipt_aoem_semantic_commit_v1(receipt)
+            {
+                bail!("candidate receipt is not bound to its ordered AOEM precommit chunk");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_output_bytes(
     workspace: &WorkspaceStore,
     input: &Descriptor,
     descriptor: &OutputDescriptor,
-    payload: &Payload,
-    params: &serde_json::Value,
-) -> Result<Option<Output>> {
+) -> Result<Option<Vec<u8>>> {
     let mut bytes = Vec::with_capacity(descriptor.len);
     for index in 0..descriptor.len.div_ceil(CHUNK_BYTES) {
         let Some(chunk) = workspace
@@ -710,6 +734,22 @@ fn read_output(
     if output_digest(&bytes) != descriptor.digest {
         bail!("candidate output digest mismatch");
     }
+    Ok(Some(bytes))
+}
+
+fn read_output(
+    workspace: &WorkspaceStore,
+    input: &Descriptor,
+    descriptor: &OutputDescriptor,
+    payload: &Payload,
+    params: &serde_json::Value,
+) -> Result<Option<Output>> {
+    let Some(bytes) = read_output_bytes(workspace, input, descriptor)? else {
+        return Ok(None);
+    };
+    // Even explicit cold export/promotion must reject an invalid V3 witness;
+    // full typed root checks do not authorize ignoring its declared transition.
+    rooted_output::try_delta_output_view(workspace, input, &bytes, payload, params)?;
     let (mut output, reference): (Output, _) =
         state_records::decode(workspace, &bytes, &["store"])?;
     output.record_state = reference;
@@ -732,12 +772,11 @@ fn is_complete(
 fn info(
     input: &Descriptor,
     descriptor: &OutputDescriptor,
-    output: Output,
+    output: OutputView,
     profile: NativeRootCodecProfileV1,
 ) -> Result<ExecutionInfoV1> {
     let business_owner = if output.batch_result.per_tx_receipts.iter().any(|item| {
         output
-            .store
             .receipts
             .get(item.tx_hash.trim_start_matches("0x"))
             .is_some_and(|receipt| {
@@ -814,7 +853,7 @@ pub(crate) fn execute_with_checkpoint_v1(
     // A completed or fully written result recovers without resubmitting AOEM
     // or recomputing business transitions, including after authority GC.
     if let Some(descriptor) = existing {
-        if let Some(output) = read_output(&workspace, &input, descriptor, &payload, params)? {
+        if let Some(output) = read_output_view(&workspace, &input, descriptor, &payload, params)? {
             if !complete {
                 publish(&mut workspace, &input, descriptor)?;
                 checkpoint(ExecutionCheckpointV1::Completed)?;
@@ -860,6 +899,14 @@ pub(crate) fn execute_with_checkpoint_v1(
     };
     // A partial old record document is pinned as strictly as an old inline
     // image. Reproduce its original bytes; never upgrade the reservation.
+    if existing.is_some_and(|previous| *previous != descriptor) {
+        prepared = state_records::without_delta(prepared)?;
+        descriptor = OutputDescriptor {
+            len: prepared.bytes.len(),
+            digest: output_digest(&prepared.bytes),
+            input_digest: input.payload,
+        };
+    }
     if existing.is_some_and(|previous| *previous != descriptor) {
         let old = state_records::prepare(
             &workspace,
@@ -937,7 +984,7 @@ pub(crate) fn execute_with_checkpoint_v1(
     checkpoint(ExecutionCheckpointV1::PartialOutput)?;
     workspace.commit(b'O', &input, writes, reservation)?;
     checkpoint(ExecutionCheckpointV1::OutputWritten)?;
-    let readback = read_output(&workspace, &input, &descriptor, &payload, params)?
+    let readback = read_output_view(&workspace, &input, &descriptor, &payload, params)?
         .context("candidate output readback incomplete")?;
     publish(&mut workspace, &input, &descriptor)?;
     checkpoint(ExecutionCheckpointV1::Completed)?;
@@ -982,7 +1029,7 @@ pub fn load_execution_v1(
         return Ok(None);
     }
     let payload = workspace.read_payload(&input)?;
-    let output = read_output(&workspace, &input, descriptor, &payload, params)?
+    let output = read_output_view(&workspace, &input, descriptor, &payload, params)?
         .context("completed candidate output missing")?;
     Ok(Some(info(
         &input,
@@ -1065,7 +1112,7 @@ pub(crate) fn seed_legacy_inline_output_for_test_v1(
     stage: ExecutionCheckpointV1,
     corrupt_descriptor: bool,
 ) -> Result<[u8; 32]> {
-    seed_legacy_output_for_test_v1(chain, id, params, stage, corrupt_descriptor, false)
+    seed_legacy_output_for_test_v1(chain, id, params, stage, corrupt_descriptor, 0)
 }
 
 /// Seed the physical-only record document used before three-root bundles.
@@ -1078,7 +1125,19 @@ pub(crate) fn seed_legacy_record_output_for_test_v1(
     stage: ExecutionCheckpointV1,
     corrupt_descriptor: bool,
 ) -> Result<[u8; 32]> {
-    seed_legacy_output_for_test_v1(chain, id, params, stage, corrupt_descriptor, true)
+    seed_legacy_output_for_test_v1(chain, id, params, stage, corrupt_descriptor, 1)
+}
+
+/// Seed the three-root output format that predates delta witnesses.
+#[cfg(test)]
+pub(crate) fn seed_previous_record_output_for_test_v1(
+    chain: u64,
+    id: [u8; 32],
+    params: &serde_json::Value,
+    stage: ExecutionCheckpointV1,
+    corrupt_descriptor: bool,
+) -> Result<[u8; 32]> {
+    seed_legacy_output_for_test_v1(chain, id, params, stage, corrupt_descriptor, 2)
 }
 
 #[cfg(test)]
@@ -1088,7 +1147,7 @@ fn seed_legacy_output_for_test_v1(
     params: &serde_json::Value,
     stage: ExecutionCheckpointV1,
     corrupt_descriptor: bool,
-    record_document: bool,
+    document_version: u8,
 ) -> Result<[u8; 32]> {
     let mut workspace = WorkspaceStore::open(chain, params)?;
     let input = ready_input(&workspace, id)?;
@@ -1096,9 +1155,26 @@ fn seed_legacy_output_for_test_v1(
         bail!("legacy output fixture requires a new output");
     }
     let payload = workspace.read_payload(&input)?;
-    let output = compute(&payload, &input, &workspace, params)?;
+    let mut output = compute(&payload, &input, &workspace, params)?;
     validate_output(&output, &payload, &input, &workspace, params)?;
-    let prepared = if record_document {
+    let prepared = if document_version == 2 {
+        let parent_store = payload.parent_store()?;
+        let mut updates = output.record_updates.take();
+        if let Some(updates) = &mut updates {
+            updates.changes = None;
+        }
+        Some(state_records::prepare_record_profile(
+            &workspace,
+            &output,
+            &["store"],
+            &output.store,
+            payload
+                .record_state
+                .as_ref()
+                .map(|reference| (reference, parent_store)),
+            updates,
+        )?)
+    } else if document_version == 1 {
         let parent_store = payload.parent_store()?;
         Some(state_records::prepare(
             &workspace,

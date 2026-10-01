@@ -1137,7 +1137,8 @@ pub(super) fn seed_legacy_inline_input_for_test_v1(
 
 #[cfg(test)]
 pub(crate) use execution::{
-    seed_legacy_inline_output_for_test_v1, seed_legacy_record_output_for_test_v1,
+    assert_delta_output_point_read_for_test_v1, seed_legacy_inline_output_for_test_v1,
+    seed_legacy_record_output_for_test_v1, seed_previous_record_output_for_test_v1,
 };
 
 #[cfg(test)]
