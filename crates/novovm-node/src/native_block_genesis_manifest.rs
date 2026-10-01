@@ -72,6 +72,40 @@ fn load_verified(
     expected: [u8; 32],
     namespace: [u8; 32],
 ) -> Result<FreshGenesisConfigV1> {
+    // The original caller's locks still cover its authority-sensitive action.
+    // This is only reuse of byte validation at an unchanged physical revision;
+    // a new candidate, pending intent, damaged key or other write invalidates it.
+    let sequence = ledger.db.latest_sequence_number();
+    let cached = ledger
+        .db
+        .verified_revision
+        .lock()
+        .map_err(|_| anyhow::anyhow!("fresh ledger revision cache poisoned"))?
+        .get(sequence, expected, namespace);
+    if let Some(config) = cached {
+        if ledger.db.latest_sequence_number() != sequence {
+            bail!("fresh ledger revision changed during verified read");
+        }
+        return Ok(config);
+    }
+    let config = load_verified_uncached(ledger, expected, namespace)?;
+    if ledger.db.latest_sequence_number() != sequence {
+        bail!("fresh ledger revision changed during complete validation");
+    }
+    ledger
+        .db
+        .verified_revision
+        .lock()
+        .map_err(|_| anyhow::anyhow!("fresh ledger revision cache poisoned"))?
+        .store(sequence, expected, namespace, &config);
+    Ok(config)
+}
+
+fn load_verified_uncached(
+    ledger: &NovNativeBlockLedgerV1,
+    expected: [u8; 32],
+    namespace: [u8; 32],
+) -> Result<FreshGenesisConfigV1> {
     let _timing = crate::native_fresh_timing::Span::start("ledger.load_verified");
     #[cfg(test)]
     VERIFIED_LOAD_COUNT.with(|count| count.set(count.get() + 1));
@@ -157,6 +191,31 @@ fn load_verified(
 }
 
 impl NovNativeBlockLedgerV1 {
+    /// Explicit full history/storage audit, even with an active runtime lease.
+    /// Normal live reads may reuse unchanged bytes; this entry point never does.
+    pub fn audit_fresh_genesis_config_v1(
+        path: &Path,
+        expected: [u8; 32],
+        namespace: [u8; 32],
+    ) -> Result<Option<FreshGenesisConfigV1>> {
+        let Some(ledger) = Self::open_existing_read_only_inner_v1(path, true)? else {
+            return Ok(None);
+        };
+        let _guard = ledger
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("genesis audit lock poisoned"))?;
+        // A failed explicit audit must not leave a reusable success behind,
+        // including a storage failure which did not advance the WAL sequence.
+        ledger
+            .db
+            .verified_revision
+            .lock()
+            .map_err(|_| anyhow::anyhow!("fresh ledger revision cache poisoned"))?
+            .invalidate();
+        Ok(Some(load_verified_uncached(&ledger, expected, namespace)?))
+    }
+
     /// Count actual complete ledger verifications on this test thread. This is
     /// observation only: nested counts work and neither success nor failure
     /// suppresses validation. Production builds contain no counter.

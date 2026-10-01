@@ -10,8 +10,10 @@ use aoem_bindings::{
     AOEM_ERROR_GRAPH_FAULTED, AOEM_ERROR_INVALID_ARGUMENT, AOEM_SEMANTIC_GRAPH_ABI_V2,
     AOEM_STATUS_OK,
 };
+use std::cell::Cell;
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -93,16 +95,69 @@ impl ComputeContext {
 /// Owns every object reachable by asynchronous FFI, including the loaded DLL.
 /// Do not release only the context when cancellation cannot drain the session.
 struct ComputeOwner {
-    // Rust drops fields in declaration order: destroy/drain the AOEM session
-    // while callback data and descriptor storage are still owned and valid.
-    session: AoemExecSession,
+    // The complete retained flight owns a session reference as well as its
+    // callback data; releasing the public owner cannot unload a live graph.
+    session: Rc<ComputeSessionInner>,
     context: Arc<ComputeContext>,
     seeds: Vec<AoemTaskDescriptorV2>,
     options: AoemGraphSubmitOptionsV2,
     callbacks: AoemGraphCallbacksV2,
 }
 
-/// Executes one bounded independent wave on a dedicated AOEM session.
+struct ComputeSessionInner {
+    session: AoemExecSession,
+    poisoned: Cell<bool>,
+}
+
+/// An explicit, same-thread computation owner. It has no storage provider,
+/// atomic writer, business policy, or global/TLS registration. A candidate can
+/// submit multiple bounded graphs, but only after each previous graph drains.
+/// Any admitted failure permanently poisons this owner; reopening is never an
+/// implicit recovery action. Drop the owner during normal thread execution.
+pub struct AoemComputeSessionV1 {
+    inner: Rc<ComputeSessionInner>,
+}
+
+/// Keeps every asynchronous FFI input alive on errors AND Host unwinding.
+/// Retaining only callback data would allow the DLL/session to be destroyed.
+struct ComputeFlight {
+    owner: Option<Box<ComputeOwner>>,
+    drained: bool,
+}
+
+impl ComputeFlight {
+    fn new(owner: ComputeOwner) -> Self {
+        Self {
+            owner: Some(Box::new(owner)),
+            drained: false,
+        }
+    }
+
+    fn owner(&self) -> &ComputeOwner {
+        self.owner
+            .as_deref()
+            .expect("compute submission owner is live")
+    }
+}
+
+impl Drop for ComputeFlight {
+    fn drop(&mut self) {
+        if !self.drained {
+            if let Some(owner) = self.owner.take() {
+                let _retained = Box::into_raw(owner);
+            }
+        }
+    }
+}
+
+fn validate_task_batch(tasks: &[AoemComputeTaskV1], timeout: Duration) -> Result<()> {
+    if tasks.is_empty() || tasks.len() > MAX_TASKS || timeout.is_zero() {
+        bail!("AOEM compute requires 1..={MAX_TASKS} tasks and a nonzero deadline");
+    }
+    Ok(())
+}
+
+/// Executes one bounded independent wave on a dedicated, cold AOEM session.
 ///
 /// No storage provider, atomic writes, authority marker, or fallback thread pool
 /// is used. Callers own dependency analysis and deterministic state publication.
@@ -114,126 +169,179 @@ pub fn execute_aoem_compute_tasks_v1(
     tasks: Vec<AoemComputeTaskV1>,
     timeout: Duration,
 ) -> Result<AoemComputeReportV1> {
-    if tasks.is_empty() || tasks.len() > MAX_TASKS || timeout.is_zero() {
-        bail!("AOEM compute requires 1..={MAX_TASKS} tasks and a nonzero deadline");
-    }
-    let graph_id = NEXT_GRAPH_ID
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-        .map_err(|_| anyhow::anyhow!("AOEM compute graph identifiers exhausted"))?;
-    let facade =
-        AoemExecFacade::open_with_runtime(runtime).context("open AOEM compute runtime failed")?;
-    let session = facade.create_session()?;
-    if !session.handle.supports_semantic_graph_v2() {
-        bail!("AOEM domain-neutral semantic graph V2 symbols unavailable");
-    }
-    let (sender, receiver) = mpsc::channel();
-    let context = Arc::new(ComputeContext::new(graph_id, tasks, sender));
-    let seeds = (0..context.slots.len())
-        .map(|index| AoemTaskDescriptorV2 {
-            graph_id,
-            task_id: index as u64 + 1,
-            context_handle: index as u64 + 1,
-            sequence: index as u64,
-            ..AoemTaskDescriptorV2::default()
-        })
-        .collect::<Vec<_>>();
-    let owner = Box::new(ComputeOwner {
-        session,
-        options: AoemGraphSubmitOptionsV2 {
-            max_queued_tasks: seeds.len().max(2) as u32,
-            event_capacity: 1,
-            ..AoemGraphSubmitOptionsV2::default()
-        },
-        callbacks: AoemGraphCallbacksV2 {
-            execute: Some(execute_task),
-            retain_context: Some(validate_handle),
-            release_context: Some(validate_handle),
-            state_event: Some(reject_event),
-            completion: Some(complete_graph),
-            user_data: Arc::as_ptr(&context).cast_mut().cast(),
-        },
-        context,
-        seeds,
-    });
-    let submitted = unsafe {
-        owner.session.handle.submit_semantic_graph_v2(
-            &owner.seeds,
-            &owner.options,
-            &owner.callbacks,
-        )
-    };
-    if !matches!(submitted, Ok(AOEM_STATUS_OK)) {
-        let _ = owner.session.cancel_semantic_graph_v2(graph_id);
-        if !drained(&owner, DRAIN_TIMEOUT) {
-            let _retained = Box::into_raw(owner);
-        }
-        bail!("AOEM compute-only graph admission failed: {submitted:?}");
-    }
-    let completion = match receiver.recv_timeout(timeout) {
-        Ok(completion) => completion,
-        Err(error) => {
-            let _ = owner.session.cancel_semantic_graph_v2(graph_id);
-            // The caller's timeout remains failure even if cancellation races success.
-            if !drained(&owner, DRAIN_TIMEOUT) {
-                let _retained = Box::into_raw(owner);
-                bail!("AOEM compute deadline/channel failure ({error}); undrained owner retained");
-            }
-            bail!("AOEM compute deadline/channel failure: {error}");
-        }
-    };
-    if !drained(&owner, DRAIN_TIMEOUT) {
-        let _ = owner.session.cancel_semantic_graph_v2(graph_id);
-        let _retained = Box::into_raw(owner);
-        bail!("AOEM compute completion did not drain; owner retained");
-    }
-    let context = &owner.context;
-    if let Some(error) = context
-        .error
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-    {
-        bail!("AOEM compute task failed: {error}");
-    }
-    let count = owner.seeds.len() as u64;
-    if completion.abi_version != AOEM_SEMANTIC_GRAPH_ABI_V2
-        || completion.graph_id != graph_id
-        || completion.status != AOEM_STATUS_OK
-        || completion.processed != count
-        || completion.succeeded != count
-        || completion.failed != 0
-    {
-        bail!("AOEM compute completion contract mismatch: {completion:?}");
-    }
-    let outputs = context
-        .slots
-        .iter()
-        .map(|slot| {
-            slot.output
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .take()
-                .context("AOEM compute completed without a task result")
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(AoemComputeReportV1 {
-        outputs,
-        processed: completion.processed,
-        succeeded: completion.succeeded,
-        failed: completion.failed,
-        peak_inflight: context.peak.load(Ordering::Acquire),
-    })
+    // Preserve rejection before opening a runtime for existing callers.
+    validate_task_batch(&tasks, timeout)?;
+    AoemComputeSessionV1::open(runtime)?.execute(tasks, timeout)
 }
 
-fn drained(owner: &ComputeOwner, timeout: Duration) -> bool {
+impl AoemComputeSessionV1 {
+    pub fn open(runtime: &AoemRuntimeConfig) -> Result<Self> {
+        let facade = AoemExecFacade::open_with_runtime(runtime)
+            .context("open AOEM compute runtime failed")?;
+        let session = facade.create_session()?;
+        if !session.handle.supports_semantic_graph_v2() {
+            bail!("AOEM domain-neutral semantic graph V2 symbols unavailable");
+        }
+        Ok(Self {
+            inner: Rc::new(ComputeSessionInner {
+                session,
+                poisoned: Cell::new(false),
+            }),
+        })
+    }
+
+    /// Results retain input order. No input may borrow caller stack/state: a
+    /// cancelled callback can outlive this call and even this session owner.
+    /// Rejected pre-admission bounds do not poison an otherwise usable owner.
+    pub fn execute(
+        &mut self,
+        tasks: Vec<AoemComputeTaskV1>,
+        timeout: Duration,
+    ) -> Result<AoemComputeReportV1> {
+        self.execute_with_checkpoint(tasks, timeout, || {})
+    }
+
+    fn execute_with_checkpoint(
+        &mut self,
+        tasks: Vec<AoemComputeTaskV1>,
+        timeout: Duration,
+        after_admission: impl FnOnce(),
+    ) -> Result<AoemComputeReportV1> {
+        if self.inner.poisoned.get() {
+            bail!("AOEM compute session is poisoned; discard this candidate owner");
+        }
+        validate_task_batch(&tasks, timeout)?;
+        let graph_id = NEXT_GRAPH_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map_err(|_| anyhow::anyhow!("AOEM compute graph identifiers exhausted"))?;
+        let (sender, receiver) = mpsc::channel();
+        let context = Arc::new(ComputeContext::new(graph_id, tasks, sender));
+        let seeds = (0..context.slots.len())
+            .map(|index| AoemTaskDescriptorV2 {
+                graph_id,
+                task_id: index as u64 + 1,
+                context_handle: index as u64 + 1,
+                sequence: index as u64,
+                ..AoemTaskDescriptorV2::default()
+            })
+            .collect::<Vec<_>>();
+        let mut flight = ComputeFlight::new(ComputeOwner {
+            session: Rc::clone(&self.inner),
+            options: AoemGraphSubmitOptionsV2 {
+                max_queued_tasks: seeds.len().max(2) as u32,
+                event_capacity: 1,
+                ..AoemGraphSubmitOptionsV2::default()
+            },
+            callbacks: AoemGraphCallbacksV2 {
+                execute: Some(execute_task),
+                retain_context: Some(validate_handle),
+                release_context: Some(validate_handle),
+                state_event: Some(reject_event),
+                completion: Some(complete_graph),
+                user_data: Arc::as_ptr(&context).cast_mut().cast(),
+            },
+            context,
+            seeds,
+        });
+        // Set before FFI admission: an error or unwind must never allow reuse of
+        // a possibly still-live graph, even when no completion was delivered.
+        self.inner.poisoned.set(true);
+        let owner = flight.owner();
+        let submitted = unsafe {
+            owner.session.session.handle.submit_semantic_graph_v2(
+                &owner.seeds,
+                &owner.options,
+                &owner.callbacks,
+            )
+        };
+        if !matches!(submitted, Ok(AOEM_STATUS_OK)) {
+            let _ = owner.session.session.cancel_semantic_graph_v2(graph_id);
+            let _ = drain(&mut flight, DRAIN_TIMEOUT);
+            bail!("AOEM compute-only graph admission failed: {submitted:?}");
+        }
+        after_admission();
+        let completion = match receiver.recv_timeout(timeout) {
+            Ok(completion) => completion,
+            Err(error) => {
+                let _ = flight
+                    .owner()
+                    .session
+                    .session
+                    .cancel_semantic_graph_v2(graph_id);
+                // The caller's timeout remains failure even if cancellation races success.
+                if !drain(&mut flight, DRAIN_TIMEOUT) {
+                    bail!(
+                        "AOEM compute deadline/channel failure ({error}); undrained owner retained"
+                    );
+                }
+                bail!("AOEM compute deadline/channel failure: {error}");
+            }
+        };
+        if !drain(&mut flight, DRAIN_TIMEOUT) {
+            let _ = flight
+                .owner()
+                .session
+                .session
+                .cancel_semantic_graph_v2(graph_id);
+            bail!("AOEM compute completion did not drain; owner retained");
+        }
+        let owner = flight.owner();
+        let context = &owner.context;
+        if let Some(error) = context
+            .error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            bail!("AOEM compute task failed: {error}");
+        }
+        let count = owner.seeds.len() as u64;
+        if completion.abi_version != AOEM_SEMANTIC_GRAPH_ABI_V2
+            || completion.graph_id != graph_id
+            || completion.status != AOEM_STATUS_OK
+            || completion.processed != count
+            || completion.succeeded != count
+            || completion.failed != 0
+        {
+            bail!("AOEM compute completion contract mismatch: {completion:?}");
+        }
+        let outputs = context
+            .slots
+            .iter()
+            .map(|slot| {
+                slot.output
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take()
+                    .context("AOEM compute completed without a task result")
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let report = AoemComputeReportV1 {
+            outputs,
+            processed: completion.processed,
+            succeeded: completion.succeeded,
+            failed: completion.failed,
+            peak_inflight: context.peak.load(Ordering::Acquire),
+        };
+        self.inner.poisoned.set(false);
+        Ok(report)
+    }
+}
+
+fn drain(flight: &mut ComputeFlight, timeout: Duration) -> bool {
     let started = Instant::now();
     loop {
+        let owner = flight.owner();
         // A zero active count is not a guarantee that completion has started.
         if owner.context.completion_seen.load(Ordering::Acquire)
-            && matches!(owner.session.semantic_graph_v2_active_count(), Ok(0))
+            && matches!(
+                owner.session.session.semantic_graph_v2_active_count(),
+                Ok(0)
+            )
             && owner.context.inflight.load(Ordering::Acquire) == 0
             && Arc::strong_count(&owner.context) == 1
         {
+            flight.drained = true;
             return true;
         }
         if started.elapsed() >= timeout {
@@ -473,6 +581,174 @@ mod tests {
         let zero =
             execute_aoem_compute_tasks_v1(&runtime, vec![Box::new(|| Ok(vec![]))], Duration::ZERO);
         assert!(zero.unwrap_err().to_string().contains("requires"));
+    }
+
+    #[test]
+    #[ignore = "requires bundled AOEM; explicit candidate session reuse acceptance"]
+    fn semantic_compute_session_reuses_graphs_and_preserves_poison_boundary() {
+        let runtime = AoemRuntimeConfig::from_env().expect("runtime");
+        let mut session = AoemComputeSessionV1::open(&runtime).expect("compute owner");
+        let weak = Rc::downgrade(&session.inner);
+        let identity = Rc::as_ptr(&session.inner);
+        let first = session
+            .execute(vec![Box::new(|| Ok(vec![1]))], Duration::from_secs(5))
+            .expect("first graph");
+        assert_eq!(first.outputs, vec![vec![1]]);
+        assert!(session.execute(vec![], Duration::from_secs(1)).is_err());
+        assert!(session
+            .execute(vec![Box::new(|| Ok(vec![0]))], Duration::ZERO)
+            .is_err());
+        assert!(!session.inner.poisoned.get());
+        let second = session
+            .execute(
+                vec![Box::new(|| Ok(vec![2])), Box::new(|| Ok(vec![3]))],
+                Duration::from_secs(5),
+            )
+            .expect("second graph after pre-admission rejection");
+        assert_eq!(second.outputs, vec![vec![2], vec![3]]);
+        assert_eq!(
+            (second.processed, second.succeeded, second.failed),
+            (2, 2, 0)
+        );
+        assert_eq!(Rc::as_ptr(&session.inner), identity);
+        assert_eq!(
+            Rc::strong_count(&session.inner),
+            1,
+            "drained flights released"
+        );
+        assert!(session
+            .execute(
+                vec![Box::new(|| bail!("task failure"))],
+                Duration::from_secs(5)
+            )
+            .is_err());
+        assert!(session.inner.poisoned.get());
+        let called = Arc::new(AtomicBool::new(false));
+        let task_called = Arc::clone(&called);
+        let error = session
+            .execute(
+                vec![Box::new(move || {
+                    task_called.store(true, Ordering::Release);
+                    Ok(vec![])
+                })],
+                Duration::from_secs(5),
+            )
+            .expect_err("a failed owner cannot silently reopen");
+        assert!(error.to_string().contains("poisoned"));
+        assert!(!called.load(Ordering::Acquire));
+        assert_eq!(Rc::as_ptr(&session.inner), identity);
+        drop(session);
+        assert!(
+            weak.upgrade().is_none(),
+            "drained failed owner may be released"
+        );
+    }
+
+    fn wait_for(flag: &AtomicBool) {
+        let started = Instant::now();
+        while !flag.load(Ordering::Acquire) {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "callback did not progress"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    struct CaptureDrop(Arc<AtomicBool>);
+    impl Drop for CaptureDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    fn held_task(
+        started: Arc<AtomicBool>,
+        release: Arc<AtomicBool>,
+        dropped: Arc<AtomicBool>,
+    ) -> AoemComputeTaskV1 {
+        let capture = CaptureDrop(dropped);
+        Box::new(move || {
+            let _capture = capture;
+            started.store(true, Ordering::Release);
+            let waiting = Instant::now();
+            while !release.load(Ordering::Acquire) {
+                if waiting.elapsed() > Duration::from_secs(10) {
+                    bail!("test callback release deadline");
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Ok(vec![9])
+        })
+    }
+
+    #[test]
+    #[ignore = "requires bundled AOEM; deliberately retains an undrained cancelled owner"]
+    fn semantic_compute_session_timeout_retains_the_complete_flight() {
+        let runtime = AoemRuntimeConfig::from_env().expect("runtime");
+        let mut session = AoemComputeSessionV1::open(&runtime).expect("compute owner");
+        let weak = Rc::downgrade(&session.inner);
+        let started = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let error = session
+            .execute_with_checkpoint(
+                vec![held_task(started.clone(), release.clone(), dropped.clone())],
+                Duration::from_millis(1),
+                || wait_for(&started),
+            )
+            .expect_err("timeout cannot become a successful graph");
+        assert!(error.to_string().contains("owner retained"), "{error:#}");
+        assert!(session.inner.poisoned.get());
+        assert!(!dropped.load(Ordering::Acquire));
+        assert!(session
+            .execute(vec![Box::new(|| Ok(vec![]))], Duration::from_secs(1))
+            .unwrap_err()
+            .to_string()
+            .contains("poisoned"));
+        drop(session);
+        assert!(
+            weak.upgrade().is_some(),
+            "session/DLL remain with callback data"
+        );
+        release.store(true, Ordering::Release);
+        wait_for(&dropped);
+    }
+
+    #[test]
+    #[ignore = "requires bundled AOEM; deliberately retains a Host-unwound live graph"]
+    fn semantic_compute_session_host_unwind_retains_the_complete_flight() {
+        let runtime = AoemRuntimeConfig::from_env().expect("runtime");
+        let mut session = AoemComputeSessionV1::open(&runtime).expect("compute owner");
+        let weak = Rc::downgrade(&session.inner);
+        let started = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let dropped = Arc::new(AtomicBool::new(false));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            session.execute_with_checkpoint(
+                vec![held_task(started.clone(), release.clone(), dropped.clone())],
+                Duration::from_secs(5),
+                || {
+                    wait_for(&started);
+                    panic!("injected Host unwind after live FFI admission");
+                },
+            )
+        }));
+        assert!(result.is_err());
+        assert!(session.inner.poisoned.get());
+        assert!(!dropped.load(Ordering::Acquire));
+        assert!(session
+            .execute(vec![Box::new(|| Ok(vec![]))], Duration::from_secs(1))
+            .unwrap_err()
+            .to_string()
+            .contains("poisoned"));
+        drop(session);
+        assert!(
+            weak.upgrade().is_some(),
+            "unwinding cannot unload the live DLL"
+        );
+        release.store(true, Ordering::Release);
+        wait_for(&dropped);
     }
 
     #[test]

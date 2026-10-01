@@ -13,10 +13,11 @@
 //! fee funding contributions are reduced with checked arithmetic in original
 //! transaction order after execution; they are not a false dependency between
 //! otherwise independent tasks. A rejected global settlement replaces that
-//! transaction with a nonce-only outcome before the next segment is captured.
+//! transaction with a nonce-only outcome. Component predictions are therefore
+//! checked against the ordered state before they may be applied.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Preserve the exact supported balance identity. A public-key account is not
 /// truncated or silently aliased to its derived 20-byte address.
@@ -466,6 +467,41 @@ pub fn conflict_segments(intents: &[TransferIntent]) -> Vec<Vec<usize>> {
         used.extend(keys);
     }
     segments
+}
+
+/// Disjoint connected components of the exact balance/nonce access graph.
+/// Components and their members are ordered by original transaction index;
+/// only computation may run out of order, never settlement or publication.
+/// A bridge touching two prior components joins both, even when noncontiguous.
+/// This is deliberately not a maximal-parallelism DAG scheduler: each connected
+/// component is computed sequentially on one AOEM callback.
+pub(crate) fn conflict_components_v1(intents: &[TransferIntent]) -> Vec<Vec<usize>> {
+    fn root(parents: &mut [usize], mut index: usize) -> usize {
+        while parents[index] != index {
+            parents[index] = parents[parents[index]];
+            index = parents[index];
+        }
+        index
+    }
+    let mut parents: Vec<_> = (0..intents.len()).collect();
+    let mut previous = BTreeMap::new();
+    for (index, intent) in intents.iter().enumerate() {
+        for key in access_set(intent) {
+            if let Some(earlier) = previous.insert(key, index) {
+                let a = root(&mut parents, earlier);
+                let b = root(&mut parents, index);
+                parents[a.max(b)] = a.min(b);
+            }
+        }
+    }
+    let mut components = BTreeMap::<usize, Vec<usize>>::new();
+    for index in 0..intents.len() {
+        components
+            .entry(root(&mut parents, index))
+            .or_default()
+            .push(index);
+    }
+    components.into_values().collect()
 }
 
 #[cfg(test)]
@@ -954,6 +990,64 @@ mod tests {
                 {
                     assert!(assigned[earlier] < assigned[later]);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn components_join_noncontiguous_bridges_but_preserve_order() {
+        let intents = vec![
+            intent(1, 2, 0),
+            intent(3, 4, 0),
+            intent(5, 6, 0),
+            intent(2, 3, 0),
+            intent(1, 4, 1),
+            intent(5, 6, 1),
+        ];
+        assert_eq!(
+            conflict_components_v1(&intents),
+            vec![vec![0, 1, 3, 4], vec![2, 5]]
+        );
+        assert!(conflict_components_v1(&[]).is_empty());
+        assert_eq!(
+            conflict_components_v1(&intents),
+            conflict_components_v1(&intents)
+        );
+    }
+
+    #[test]
+    fn components_keep_exact_account_width_and_nonce_identity() {
+        let first = intent(1, 2, 0);
+        let mut wide = intent(3, 4, 0);
+        wide.from = [1; 32].into();
+        wide.to = [2; 32].into();
+        assert_eq!(
+            conflict_components_v1(&[first.clone(), wide.clone()]),
+            vec![vec![0], vec![1]]
+        );
+        wide.nonce_identity = first.nonce_identity.clone();
+        assert_eq!(conflict_components_v1(&[first, wide]), vec![vec![0, 1]]);
+    }
+
+    #[test]
+    fn grouped_signer_chains_have_one_component_each_not_one_global_wave_per_nonce() {
+        let intents: Vec<_> = (1..=16)
+            .flat_map(|signer| (0..8).map(move |nonce| intent(signer, signer + 32, nonce)))
+            .collect();
+        let components = conflict_components_v1(&intents);
+        assert_eq!(components.len(), 16);
+        assert!(components.iter().all(|component| component.len() == 8));
+        assert_eq!(components.concat(), (0..128).collect::<Vec<_>>());
+        assert!(conflict_segments(&intents).len() > components.len());
+        for (a, left) in components.iter().enumerate() {
+            let keys: BTreeSet<_> = left
+                .iter()
+                .flat_map(|index| access_set(&intents[*index]))
+                .collect();
+            for right in &components[a + 1..] {
+                assert!(right.iter().all(|index| access_set(&intents[*index])
+                    .iter()
+                    .all(|key| !keys.contains(key))));
             }
         }
     }

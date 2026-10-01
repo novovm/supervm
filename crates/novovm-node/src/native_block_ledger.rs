@@ -22,6 +22,8 @@ pub use genesis_reservation::NovNativeFreshFinalityProofV1;
 pub use genesis_reservation::NovNativeFreshGenesisReservationV1;
 pub use genesis_reservation::NovNativeFreshPromotionIntentV1;
 pub(crate) use genesis_reservation::VerifiedSuccessorPublicationV1;
+#[path = "native_block_verified_revision.rs"]
+mod verified_revision;
 
 pub const NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1: &str = "novovm-native-block-ledger/v1";
 const ISOLATED_LEDGER_SCHEMA_V1: &str = "novovm-native-block-ledger/v1+isolated-candidates-v1";
@@ -347,6 +349,17 @@ pub struct NovNativeBlockLedgerAoemOwnershipV1 {
 struct NovNativeBlockLedgerProcessEntryV1 {
     db: DB,
     write_lock: Arc<Mutex<()>>,
+    verified_revision: Mutex<verified_revision::FreshLedgerVerifiedRevisionV1>,
+}
+
+impl NovNativeBlockLedgerProcessEntryV1 {
+    fn new(db: DB) -> Self {
+        Self {
+            db,
+            write_lock: Arc::new(Mutex::new(())),
+            verified_revision: Mutex::default(),
+        }
+    }
 }
 
 impl Deref for NovNativeBlockLedgerProcessEntryV1 {
@@ -371,12 +384,26 @@ pub struct NovNativeBlockLedgerV1 {
     )>,
 }
 
-/// Keeps an existing fresh ledger's physical connection alive. This is not a
-/// ledger view, a validated snapshot, or permission to write, publish or sign.
-/// Every operation still opens its own logical view and performs live checks.
+/// Keeps an existing fresh ledger's connection and validated content revision.
+/// A revision is local to this exact DB owner and invalidated by ANY DB write;
+/// it is not a retained signing scope or permission to write/publish/sign.
+/// Every operation still opens its logical view and checks its live bindings.
 #[must_use = "dropping the fresh ledger session releases its retained connection"]
 pub struct NovNativeFreshLedgerSessionV1 {
     _entry: Arc<NovNativeBlockLedgerProcessEntryV1>,
+}
+
+impl Drop for NovNativeFreshLedgerSessionV1 {
+    fn drop(&mut self) {
+        // A poisoned verification cache is never used again. Releasing the
+        // lease must still be safe during unwinding.
+        let mut state = self
+            ._entry
+            .verified_revision
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.release();
+    }
 }
 
 impl NovNativeBlockLedgerV1 {
@@ -407,10 +434,7 @@ impl NovNativeBlockLedgerV1 {
                 DB::open(&options, path)
             })
             .with_context(|| format!("retain existing fresh ledger failed: {}", path.display()))?;
-            Arc::new(NovNativeBlockLedgerProcessEntryV1 {
-                db,
-                write_lock: Arc::new(Mutex::new(())),
-            })
+            Arc::new(NovNativeBlockLedgerProcessEntryV1::new(db))
         };
         // Recheck after the read-only preflight, before registering/returning.
         // Do not acquire write_lock while holding registry: verified callbacks
@@ -423,6 +447,11 @@ impl NovNativeBlockLedgerV1 {
         }
         registry.insert(process_key, Arc::downgrade(&entry));
         drop(registry);
+        entry
+            .verified_revision
+            .lock()
+            .map_err(|_| anyhow::anyhow!("fresh ledger revision cache poisoned"))?
+            .retain()?;
         Ok(NovNativeFreshLedgerSessionV1 { _entry: entry })
     }
 
@@ -451,10 +480,7 @@ impl NovNativeBlockLedgerV1 {
                 DB::open(&options, path)
             })
             .with_context(|| format!("open NOV native block ledger failed: {}", path.display()))?;
-            let entry = Arc::new(NovNativeBlockLedgerProcessEntryV1 {
-                db,
-                write_lock: Arc::new(Mutex::new(())),
-            });
+            let entry = Arc::new(NovNativeBlockLedgerProcessEntryV1::new(db));
             registry.insert(process_key, Arc::downgrade(&entry));
             entry
         };
@@ -549,10 +575,7 @@ impl NovNativeBlockLedgerV1 {
                     path.display()
                 )
             })?;
-            Arc::new(NovNativeBlockLedgerProcessEntryV1 {
-                db,
-                write_lock: Arc::new(Mutex::new(())),
-            })
+            Arc::new(NovNativeBlockLedgerProcessEntryV1::new(db))
         };
         drop(registry);
         let ledger = Self {
@@ -3273,6 +3296,7 @@ mod tests {
     use super::*;
     include!("native_block_isolated_candidate_tests.rs");
     include!("native_block_genesis_candidate_tests.rs");
+    include!("native_block_verified_revision_tests.rs");
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 

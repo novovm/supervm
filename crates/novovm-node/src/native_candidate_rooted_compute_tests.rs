@@ -74,19 +74,29 @@ pub(crate) fn exercise_light_first_compute_for_test_v1(
     // prepare, persist and read back without materializing any full Store.
     // The earlier extra computation is only a serialization test oracle.
     let _ = rooted_compute::take_observation_for_test();
+    let _ = native_transfer_dispatch::take_component_observation_for_test_v1();
     let actual = state_records::without_materialization_for_test(|| execute_v1(chain, id, params))?;
-    let (observed_id, task_count, peak_inflight) = rooted_compute::take_observation_for_test()
-        .context("public first-compute did not record its real AOEM task observation")?;
+    let (observed_id, transaction_count, peak_inflight) =
+        rooted_compute::take_observation_for_test()
+            .context("public first-compute did not record its real AOEM observation")?;
+    let plan = native_transfer_dispatch::take_component_observation_for_test_v1()
+        .context("public first-compute did not record its component plan")?;
     if observed_id != id
-        || task_count != 5
-        || task_count != actual.batch_result.per_tx_receipts.len()
+        || transaction_count != 5
+        || transaction_count != actual.batch_result.per_tx_receipts.len()
         || peak_inflight == 0
-        || peak_inflight > task_count
+        || peak_inflight > plan.components
+        || plan.transactions != transaction_count
+        || plan.components == 0
+        || plan.graphs != 1
+        || plan.recomputed_transactions != 0
+        || plan.peak_inflight != peak_inflight
     {
-        bail!("public first-compute AOEM task observation does not match its candidate");
+        bail!("public first-compute AOEM component observation does not match its candidate");
     }
     eprintln!(
-        "guarded NCW2 public first-compute tasks={task_count} peak_inflight={peak_inflight} full_materialization=false"
+        "guarded NCW2 public first-compute transactions={transaction_count} components={} graphs={} peak_inflight={peak_inflight} full_materialization=false",
+        plan.components, plan.graphs,
     );
     if actual.batch_result != expected {
         bail!("guarded public first-compute result differs from the cold writer reference");

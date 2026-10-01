@@ -9,51 +9,125 @@ use sha2::{Digest, Sha256};
 
 impl FreshChainLifecycleV1 {
     pub fn submit_raw_transaction(&mut self, raw: Vec<u8>) -> Result<serde_json::Value> {
+        self.submit_raw_transactions(vec![raw])
+            .pop()
+            .expect("one submission result")
+    }
+
+    /// One owner-thread admission turn. This shares only immutable parent reads
+    /// and the durable pool commit; it does not reserve execution nonces, charge
+    /// fees, grant signing authority, or change any per-transaction wire rules.
+    pub fn submit_raw_transactions(
+        &mut self,
+        raws: Vec<Vec<u8>>,
+    ) -> Vec<Result<serde_json::Value>> {
+        if raws.len() > crate::tx_ingress::fresh_pool::MAX_ENTRIES {
+            return raws
+                .into_iter()
+                .map(|_| Err(anyhow::anyhow!("transaction admission batch limit")))
+                .collect();
+        }
         if self.halted {
-            bail!("fresh lifecycle halted");
+            return raws
+                .into_iter()
+                .map(|_| Err(anyhow::anyhow!("fresh lifecycle halted")))
+                .collect();
         }
-        let entry = PendingTransaction::authenticate(raw, self.chain, &self.params)?;
-        if let Some(parent) = &self.finalized_parent {
-            let (receipt, nonce) = parent.with_records(&self.params, |reader| {
-                let receipt = reader.receipt(&entry.hash)?;
-                let nonce = if receipt.is_none() {
-                    Some(reader.next_nonce(&entry.identity)?)
+        let mut results: Vec<Option<Result<serde_json::Value>>> =
+            (0..raws.len()).map(|_| None).collect();
+        let mut entries = Vec::with_capacity(raws.len());
+        for (index, raw) in raws.into_iter().enumerate() {
+            match PendingTransaction::authenticate(raw, self.chain, &self.params) {
+                Ok(entry) => entries.push((index, entry)),
+                Err(error) => results[index] = Some(Err(error)),
+            }
+        }
+        if entries.is_empty() {
+            return results
+                .into_iter()
+                .map(|result| result.expect("authentication result"))
+                .collect();
+        }
+        let checked = if let Some(parent) = &self.finalized_parent {
+            parent.with_records(&self.params, |reader| {
+                let mut live = Vec::new();
+                let mut nonces = BTreeMap::new();
+                for (index, entry) in entries {
+                    if let Some(receipt) = reader.receipt(&entry.hash)? {
+                        results[index] = Some(Ok(serde_json::json!({
+                            "tx_hash":crate::native_block_seal::hex_v1(&entry.hash),
+                            "status":"finalized", "receipt":receipt,
+                            "finalized_tip_height":parent.block().header.height,
+                        })));
+                        continue;
+                    }
+                    let nonce = match nonces.entry(entry.identity.clone()) {
+                        std::collections::btree_map::Entry::Occupied(entry) => *entry.get(),
+                        std::collections::btree_map::Entry::Vacant(slot) => {
+                            *slot.insert(reader.next_nonce(&entry.identity)?)
+                        }
+                    };
+                    if nonce > entry.nonce {
+                        results[index] =
+                            Some(Err(anyhow::anyhow!("transaction nonce already consumed")));
+                    } else {
+                        live.push((index, entry));
+                    }
+                }
+                Ok(live)
+            })
+        } else {
+            Ok(entries)
+        };
+        let admission = checked.and_then(|live| {
+            if live.is_empty() {
+                return Ok(());
+            }
+            let pool = self
+                .pool
+                .as_mut()
+                .context("durable transaction ingress is disabled")?;
+            let (positions, entries): (Vec<_>, Vec<_>) = live
+                .into_iter()
+                .map(|(index, entry)| ((index, entry.hash), entry))
+                .unzip();
+            let retained = match pool.insert_batch(entries) {
+                Ok(retained) => retained,
+                Err(error) => {
+                    self.halted = true;
+                    self.proposal_window.clear();
+                    return Err(error.context("transaction persistence failed; restart required"));
+                }
+            };
+            for ((index, hash), retained) in positions.into_iter().zip(retained) {
+                results[index] = Some(if retained {
+                    Ok(serde_json::json!({
+                        "tx_hash":crate::native_block_seal::hex_v1(&hash),
+                        "status":"queued", "finalized":false,
+                    }))
                 } else {
-                    None
-                };
-                Ok((receipt, nonce))
-            })?;
-            if let Some(receipt) = receipt {
-                return Ok(serde_json::json!({
-                    "tx_hash":crate::native_block_seal::hex_v1(&entry.hash),
-                    "status":"finalized", "receipt":receipt,
-                    "finalized_tip_height":parent.block().header.height,
-                }));
+                    Err(anyhow::anyhow!(
+                        "transaction pool capacity or signer nonce conflict"
+                    ))
+                });
             }
-            if nonce.is_some_and(|nonce| nonce > entry.nonce) {
-                bail!("transaction nonce already consumed");
-            }
-        }
-        let hash = entry.hash;
-        match self
-            .pool
-            .as_mut()
-            .context("durable transaction ingress is disabled")?
-            .insert(entry)
-        {
-            // The immutable cached finalized view was already checked above.
-            // Successful insertion guarantees queued status; no second DB read.
-            Ok(true) => Ok(serde_json::json!({
-                "tx_hash":crate::native_block_seal::hex_v1(&hash),
-                "status":"queued", "finalized":false,
-            })),
-            Ok(false) => bail!("transaction pool capacity or signer nonce conflict"),
-            Err(error) => {
-                self.halted = true;
-                self.proposal_window.clear();
-                Err(error.context("transaction persistence failed; restart required"))
-            }
-        }
+            Ok(())
+        });
+        let failure = admission.err().map(|error| format!("{error:#}"));
+        // A failed parent read or commit publishes no queued prefix. Already
+        // verified finalized receipts remain independent read-only results;
+        // parent read failures, unlike persistence failures, do not halt.
+        results
+            .into_iter()
+            .map(|result| {
+                result.unwrap_or_else(|| {
+                    Err(anyhow::anyhow!(failure
+                        .as_deref()
+                        .unwrap_or("transaction admission result missing")
+                        .to_owned()))
+                })
+            })
+            .collect()
     }
 
     pub fn transaction_status(&self, hash: [u8; 32]) -> Result<serde_json::Value> {

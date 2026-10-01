@@ -391,3 +391,160 @@ fn real_aoem_custom_finalizer_error_stops_before_next_transaction() {
         assert!(store.module_state.native_auth_nonce_reservations.is_empty());
     }
 }
+
+fn component_fixture(seed: u8, recipient: u8, nonce: u64, amount: u128) -> FinalizerFixture {
+    let mut transaction = transfer();
+    let NovTxKindV1::Transfer(transfer) = &mut transaction.kind else {
+        unreachable!()
+    };
+    transfer.to = novovm_adapter_novovm::address_from_seed_v1([recipient; 32]);
+    transfer.nonce = nonce;
+    transfer.amount = amount;
+    sign_nov_native_tx_with_seed_v1(&mut transaction, [seed; 32]).unwrap();
+    let ir = nov_native_tx_to_adapter_tx_ir_v1(&transaction).unwrap();
+    let tx_hash = tx_hash_array_from_ir_v1(&ir);
+    let request = fee_request_v1(&transaction, tx_hash).unwrap();
+    let subject = fallback_execution_subject_meta_v1(&request);
+    let reservation = nov_native_durable_auth_reservation_v1(&transaction, &ir, tx_hash).unwrap();
+    FinalizerFixture {
+        transaction,
+        request,
+        subject,
+        reservation,
+    }
+}
+
+#[test]
+fn component_prestate_validation_checks_both_balances_and_nonce_without_weakening_binding() {
+    use crate::native_transfer_delta::compute_outcome_v1;
+    let intent = TransferIntent {
+        tx_hash: [1; 32],
+        from: [1; 20].into(),
+        to: [2; 32].into(),
+        nonce_identity: "exact-signer-domain".into(),
+        nonce: 0,
+        amount: 5,
+        approved_fee: 2,
+        fee_cap: 2,
+    };
+    let snapshot = TransferSnapshot {
+        payer_balance: 100,
+        recipient_balance: 10,
+        next_nonce: 0,
+    };
+    let outcome = compute_outcome_v1(&intent, &snapshot, None).unwrap();
+    assert!(outcome_binding_v1(&outcome, &intent).is_ok());
+    assert!(outcome_matches_snapshot_v1(&outcome, snapshot));
+    for altered in [
+        TransferSnapshot {
+            payer_balance: 101,
+            ..snapshot
+        },
+        TransferSnapshot {
+            recipient_balance: 11,
+            ..snapshot
+        },
+        TransferSnapshot {
+            next_nonce: 1,
+            ..snapshot
+        },
+    ] {
+        assert!(!outcome_matches_snapshot_v1(&outcome, altered));
+    }
+    let mut other = intent.clone();
+    other.from = [1; 32].into();
+    assert!(outcome_binding_v1(&outcome, &other).is_err());
+    other = intent;
+    other.tx_hash = [2; 32];
+    assert!(outcome_binding_v1(&outcome, &other).is_err());
+}
+
+#[test]
+#[ignore = "requires the packaged AOEM runtime; run explicitly for integration evidence"]
+fn real_aoem_components_preserve_serial_receipts_and_repair_global_fee_rejections() {
+    for case in ["success", "business", "paused", "overflow"] {
+        // The late B->C bridge must join both A/B and C/D chains. E/F remains
+        // independent although its transactions are interleaved with them.
+        let fixtures = [
+            component_fixture(71, 72, 0, 100),
+            component_fixture(71, 72, 1, 10),
+            component_fixture(75, 76, 0, 40),
+            component_fixture(73, 74, 0, 50),
+            component_fixture(72, 73, 0, if case == "business" { 1_000_000 } else { 30 }),
+            component_fixture(73, 74, 1, 15),
+            component_fixture(75, 76, 1, 5),
+        ];
+        let mut initial = NovNativeExecutionStoreV1::default();
+        for index in [0, 2, 3] {
+            initial.module_state.account_asset_balances.insert(
+                fixtures[index].subject.account_id.clone(),
+                BTreeMap::from([("NOV".into(), 1_000)]),
+            );
+        }
+        if case == "paused" {
+            initial.module_state.treasury_settlement_paused = true;
+        }
+        if case == "overflow" {
+            initial.module_state.treasury_settlements = u64::MAX - 1;
+        }
+        let mut actual = initial.clone();
+        let mut actual_mirrors = Vec::new();
+        take_component_observation_for_test_v1();
+        execute_v1(
+            &mut actual,
+            &fixtures
+                .iter()
+                .map(FinalizerFixture::item)
+                .collect::<Vec<_>>(),
+            123,
+            &mut actual_mirrors,
+        )
+        .unwrap();
+        let observation = take_component_observation_for_test_v1().unwrap();
+        assert_eq!(observation.transactions, fixtures.len());
+        assert_eq!(observation.components, 2);
+        assert!(observation.peak_inflight >= 1);
+        assert!(observation.recomputed_transactions <= fixtures.len());
+        assert_eq!(observation.graphs, 1 + observation.recomputed_transactions);
+        if matches!(case, "success" | "business") {
+            assert_eq!(observation.recomputed_transactions, 0);
+            assert_eq!(observation.graphs, 1);
+        } else {
+            assert!(
+                observation.recomputed_transactions > 0,
+                "must exercise genuine global-fee correction"
+            );
+        }
+        let mut expected = initial;
+        let mut expected_mirrors = Vec::new();
+        for fixture in &fixtures {
+            execute_v1(&mut expected, &[fixture.item()], 123, &mut expected_mirrors).unwrap();
+        }
+        assert_eq!(
+            serde_json::to_vec(&actual).unwrap(),
+            serde_json::to_vec(&expected).unwrap(),
+            "{case}: every balance, fee, nonce, receipt, root and compute digest"
+        );
+        assert_eq!(
+            serde_json::to_vec(&actual_mirrors).unwrap(),
+            serde_json::to_vec(&expected_mirrors).unwrap(),
+            "{case}: ordered semantic mirror bytes"
+        );
+        assert_eq!(actual.receipts.len(), fixtures.len());
+        if case == "success" {
+            assert!(actual.receipts.values().all(|receipt| receipt.status));
+        }
+        if case == "business" {
+            let failure = &actual.receipts[&fixtures[4].reservation.tx_hash];
+            assert!(!failure.status);
+            assert!(failure.settled_fee_nov > 0);
+            assert_eq!(
+                actual.module_state.native_auth_next_nonces[&fixtures[4].reservation.identity_key],
+                1
+            );
+        }
+        eprintln!(
+            "native transfer component serial parity case={case} observation={observation:?}"
+        );
+    }
+}

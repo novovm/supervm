@@ -1,4 +1,4 @@
-//! Compute one independent native-transfer wave on AOEM's generic scheduler.
+//! Compute disjoint native-transfer components on AOEM's generic scheduler.
 //!
 //! This is a pure candidate-computation boundary, not transaction admission or
 //! an authority writer. Callers must authenticate the complete signed batch,
@@ -7,17 +7,22 @@
 //! nonce, receipt, or treasury state is published by this module.
 
 use crate::native_transfer_delta::{
-    compute_outcome_v1, conflict_segments, TransferError, TransferExecutionOutcomeV1,
+    compute_outcome_v1, conflict_components_v1, Account, TransferExecutionOutcomeV1,
     TransferIntent, TransferSnapshot,
 };
+#[cfg(test)]
+use crate::native_transfer_delta::{conflict_segments, TransferError};
 use anyhow::{bail, Context, Result};
-use novovm_exec::{execute_aoem_compute_tasks_v1, AoemComputeTaskV1, AoemRuntimeConfig};
-use std::collections::HashSet;
+#[cfg(test)]
+use novovm_exec::{execute_aoem_compute_tasks_v1, AoemRuntimeConfig};
+use novovm_exec::{AoemComputeSessionV1, AoemComputeTaskV1};
+use std::collections::{BTreeMap, HashSet};
 use std::time::Duration;
 
 const MAX_WAVE_TASKS: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct TransferWaveResultV1 {
     /// Corresponds exactly to input order, independent of callback order.
     pub outcomes: Vec<Result<TransferExecutionOutcomeV1, TransferError>>,
@@ -34,6 +39,130 @@ pub(crate) struct TransferWorkV1 {
     pub fee_rejection: Option<String>,
 }
 
+pub(crate) struct TransferComponentResultV1 {
+    /// One result per original transaction, not per component or callback.
+    pub outcomes: Vec<TransferExecutionOutcomeV1>,
+    pub component_by_index: Vec<usize>,
+    pub component_count: usize,
+    pub peak_inflight: usize,
+}
+
+/// All snapshots refer to the SAME parent prefix. Arithmetic and subsequent
+/// component snapshots are evaluated inside the AOEM callback, not on Host.
+pub(crate) fn execute_transfer_components_v1(
+    session: &mut AoemComputeSessionV1,
+    work: Vec<TransferWorkV1>,
+    timeout: Duration,
+) -> Result<TransferComponentResultV1> {
+    let _timing = crate::native_fresh_timing::Span::start("candidate.transfer_components");
+    validate_work(&work)?;
+    let count = work.len();
+    let intents: Vec<_> = work.iter().map(|item| item.intent.clone()).collect();
+    let components = conflict_components_v1(&intents);
+    let mut component_by_index = vec![0; count];
+    let mut owned: Vec<_> = work.into_iter().map(Some).collect();
+    let mut tasks: Vec<AoemComputeTaskV1> = Vec::with_capacity(components.len());
+    for (component, indices) in components.iter().enumerate() {
+        let mut inputs = Vec::with_capacity(indices.len());
+        for &index in indices {
+            component_by_index[index] = component;
+            inputs.push(
+                owned[index]
+                    .take()
+                    .context("duplicate transfer component index")?,
+            );
+        }
+        tasks.push(Box::new(move || {
+            serde_json::to_vec(&compute_component_v1(inputs)?)
+                .context("encode native transfer component outcomes")
+        }));
+    }
+    let report = session.execute(tasks, timeout)?;
+    if report.processed != components.len() as u64
+        || report.succeeded != components.len() as u64
+        || report.failed != 0
+        || report.outputs.len() != components.len()
+    {
+        bail!("native transfer component graph did not complete all callbacks");
+    }
+    let mut ordered = vec![None; count];
+    for (indices, bytes) in components.iter().zip(&report.outputs) {
+        let outcomes: Vec<TransferExecutionOutcomeV1> =
+            serde_json::from_slice(bytes).context("decode native transfer component outcomes")?;
+        if outcomes.len() != indices.len() {
+            bail!("native transfer component returned an incorrect outcome count");
+        }
+        for (&index, outcome) in indices.iter().zip(outcomes) {
+            ordered[index] = Some(outcome);
+        }
+    }
+    Ok(TransferComponentResultV1 {
+        outcomes: ordered
+            .into_iter()
+            .map(|outcome| outcome.context("missing component outcome"))
+            .collect::<Result<_>>()?,
+        component_by_index,
+        component_count: components.len(),
+        peak_inflight: report.peak_inflight,
+    })
+}
+
+/// Callback-only component evaluator. The private maps contain only touched
+/// balances/nonces, never a whole Store or an authoritative ledger. Global fee
+/// settlement is intentionally not predicted here; Host validates these results
+/// against its original-order prefix and invalidates stale component suffixes.
+fn compute_component_v1(work: Vec<TransferWorkV1>) -> Result<Vec<TransferExecutionOutcomeV1>> {
+    let mut balances = BTreeMap::<Account, u128>::new();
+    let mut nonces = BTreeMap::<String, u64>::new();
+    for item in &work {
+        for (account, value) in [
+            (&item.intent.from, item.snapshot.payer_balance),
+            (&item.intent.to, item.snapshot.recipient_balance),
+        ] {
+            if balances
+                .insert(account.clone(), value)
+                .is_some_and(|old| old != value)
+            {
+                bail!("transfer component has inconsistent parent balance snapshots");
+            }
+        }
+        if nonces
+            .insert(item.intent.nonce_identity.clone(), item.snapshot.next_nonce)
+            .is_some_and(|old| old != item.snapshot.next_nonce)
+        {
+            bail!("transfer component has inconsistent parent nonce snapshots");
+        }
+    }
+    let mut outcomes = Vec::with_capacity(work.len());
+    for item in work {
+        let snapshot = TransferSnapshot {
+            payer_balance: balances[&item.intent.from],
+            recipient_balance: balances[&item.intent.to],
+            next_nonce: nonces[&item.intent.nonce_identity],
+        };
+        let outcome = compute_outcome_v1(&item.intent, &snapshot, item.fee_rejection.as_deref())
+            .context("AOEM transfer component input invariant failed")?;
+        let delta = outcome.delta();
+        balances.insert(delta.payer.account.clone(), delta.payer.after);
+        balances.insert(delta.recipient.account.clone(), delta.recipient.after);
+        nonces.insert(delta.nonce_identity.clone(), delta.nonce_after);
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
+}
+
+fn validate_work(work: &[TransferWorkV1]) -> Result<()> {
+    if work.is_empty() || work.len() > MAX_WAVE_TASKS {
+        bail!("native transfer computation requires 1..=1024 transactions");
+    }
+    let mut hashes = HashSet::with_capacity(work.len());
+    if work.iter().any(|work| !hashes.insert(work.intent.tx_hash)) {
+        bail!("native transfer computation contains duplicate transaction hashes");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 pub(crate) fn execute_transfer_wave_v1(
     runtime: &AoemRuntimeConfig,
     work: Vec<TransferWorkV1>,
@@ -76,14 +205,9 @@ pub(crate) fn execute_transfer_wave_v1(
     })
 }
 
+#[cfg(test)]
 fn validate_wave(work: &[TransferWorkV1]) -> Result<()> {
-    if work.is_empty() || work.len() > MAX_WAVE_TASKS {
-        bail!("native transfer wave requires 1..=1024 tasks");
-    }
-    let mut hashes = HashSet::with_capacity(work.len());
-    if work.iter().any(|work| !hashes.insert(work.intent.tx_hash)) {
-        bail!("native transfer wave contains duplicate transaction hashes");
-    }
+    validate_work(work)?;
     let intents: Vec<_> = work.iter().map(|work| work.intent.clone()).collect();
     if conflict_segments(&intents).len() != 1 {
         bail!("native transfer wave contains conflicting state accesses");
@@ -160,6 +284,97 @@ mod tests {
                 serde_json::from_slice(&bytes).unwrap();
             assert_eq!(decoded, outcome);
         }
+    }
+
+    #[test]
+    fn component_callback_chains_actual_outcomes_and_preserves_business_failures() {
+        let first = work(1);
+        let mut second = first.clone();
+        second.intent.tx_hash = [91; 32];
+        second.intent.nonce = 1;
+        second.intent.amount = 1000;
+        let mut third = first.clone();
+        third.intent.tx_hash = [92; 32];
+        third.intent.nonce = 2;
+        let observed =
+            compute_component_v1(vec![first.clone(), second.clone(), third.clone()]).unwrap();
+        let mut snapshot = first.snapshot;
+        for (input, result) in [first, second, third].into_iter().zip(&observed) {
+            let expected =
+                compute_outcome_v1(&input.intent, &snapshot, input.fee_rejection.as_deref())
+                    .unwrap();
+            assert_eq!(*result, expected);
+            snapshot.payer_balance = expected.delta().payer.after;
+            snapshot.recipient_balance = expected.delta().recipient.after;
+            snapshot.next_nonce = expected.delta().nonce_after;
+        }
+        assert!(observed[0].is_success());
+        assert!(!observed[1].is_success());
+        assert_eq!(observed[1].delta().fee_funding_delta, 2);
+        assert!(observed[2].is_success());
+        assert_eq!(observed[2].delta().nonce_after, 3);
+    }
+
+    #[test]
+    fn component_callback_rejects_inconsistent_parent_and_nonce_inputs() {
+        let first = work(1);
+        let mut second = first.clone();
+        second.intent.tx_hash = [91; 32];
+        second.intent.nonce = 1;
+        second.snapshot.payer_balance += 1;
+        assert!(compute_component_v1(vec![first.clone(), second.clone()])
+            .unwrap_err()
+            .to_string()
+            .contains("parent balance"));
+        second.snapshot = first.snapshot;
+        second.snapshot.next_nonce = 1;
+        assert!(compute_component_v1(vec![first.clone(), second.clone()])
+            .unwrap_err()
+            .to_string()
+            .contains("parent nonce"));
+        second.snapshot = first.snapshot;
+        second.intent.nonce = 2;
+        assert!(compute_component_v1(vec![first, second]).is_err());
+        assert!(validate_work(&vec![work(1); 1025]).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires the packaged AOEM runtime; run explicitly for integration evidence"]
+    fn real_aoem_transfer_components_share_session_and_match_serial_callbacks() {
+        let mut runtime = AoemRuntimeConfig::from_env().unwrap();
+        runtime.ingress_workers = Some(4);
+        let mut session = AoemComputeSessionV1::open(&runtime).unwrap();
+        let mut work_items = Vec::new();
+        for id in (1..=31).step_by(2) {
+            for nonce in 0..8u64 {
+                let mut item = work(id);
+                item.intent.tx_hash[31] = nonce as u8;
+                item.intent.nonce = nonce;
+                work_items.push(item);
+            }
+        }
+        let mut expected = Vec::new();
+        for chain in work_items.chunks(8) {
+            expected.extend(compute_component_v1(chain.to_vec()).unwrap());
+        }
+        let report =
+            execute_transfer_components_v1(&mut session, work_items, Duration::from_secs(30))
+                .unwrap();
+        assert_eq!(report.component_count, 16);
+        assert_eq!(report.outcomes, expected);
+        assert_eq!(
+            report.component_by_index,
+            (0..16).flat_map(|id| [id; 8]).collect::<Vec<_>>()
+        );
+        assert!(report.peak_inflight >= 1);
+        let repair =
+            execute_transfer_components_v1(&mut session, vec![work(99)], Duration::from_secs(30))
+                .unwrap();
+        assert_eq!(
+            repair.outcomes,
+            compute_component_v1(vec![work(99)]).unwrap()
+        );
+        eprintln!("native transfer components transactions=128 components=16 callback_peak={} same_session_second_graph=true", report.peak_inflight);
     }
 
     #[test]

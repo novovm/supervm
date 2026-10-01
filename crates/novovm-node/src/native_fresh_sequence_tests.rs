@@ -1079,6 +1079,15 @@ fn exercise_automatic_proposal(
     let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
     let mut lifecycle = Lifecycle::open(config, &ledger, params, leader, Instant::now()).unwrap();
     assert_eq!(lifecycle.status_json()["height"], 3);
+    let before_oversized_batch = lifecycle.status_json();
+    let oversized_count = crate::tx_ingress::fresh_pool::MAX_ENTRIES + 1;
+    let rejected = lifecycle.submit_raw_transactions(vec![Vec::new(); oversized_count]);
+    assert_eq!(rejected.len(), oversized_count);
+    assert!(rejected.into_iter().all(|result| result
+        .unwrap_err()
+        .to_string()
+        .contains("transaction admission batch limit")));
+    assert_eq!(lifecycle.status_json(), before_oversized_batch);
     // A cold oracle is test-only. Production submission/status must query the
     // immutable finalized cache without materializing its entire Store.
     let query_parent = workspace::load_finalized_genesis_parent_v1(

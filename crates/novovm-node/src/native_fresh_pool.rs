@@ -3,7 +3,7 @@ use rocksdb::{IteratorMode, Options, WriteBatch, WriteOptions, DB};
 use std::collections::BTreeMap;
 
 pub const MAX_RAW_BYTES: usize = 64 * 1024;
-const MAX_ENTRIES: usize = 1024;
+pub(crate) const MAX_ENTRIES: usize = 1024;
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PER_SIGNER: usize = 64;
 
@@ -42,6 +42,10 @@ pub struct FreshTransactionPool {
     db: DB,
     entries: BTreeMap<[u8; 32], PendingTransaction>,
     bytes: usize,
+    #[cfg(test)]
+    admission_sync_commits: usize,
+    #[cfg(test)]
+    fail_next_admission_write: bool,
 }
 
 pub(crate) struct BatchAdmission {
@@ -107,36 +111,80 @@ impl FreshTransactionPool {
             }
             entries.insert(entry.hash, entry);
         }
-        Ok(Self { db, entries, bytes })
+        Ok(Self {
+            db,
+            entries,
+            bytes,
+            #[cfg(test)]
+            admission_sync_commits: 0,
+            #[cfg(test)]
+            fail_next_admission_write: false,
+        })
     }
 
+    #[cfg(test)]
     pub(crate) fn insert(&mut self, entry: PendingTransaction) -> Result<bool> {
-        if let Some(previous) = self.entries.get(&entry.hash) {
-            return Ok(previous.raw == entry.raw);
+        Ok(self.insert_batch(vec![entry])?[0])
+    }
+
+    /// Preserve input-order admission decisions, but publish no new in-memory
+    /// entry or successful result until the single synchronous batch commits.
+    pub(crate) fn insert_batch(&mut self, entries: Vec<PendingTransaction>) -> Result<Vec<bool>> {
+        let mut staged = BTreeMap::<[u8; 32], PendingTransaction>::new();
+        let mut nonces = std::collections::BTreeSet::new();
+        let mut counts = BTreeMap::<String, usize>::new();
+        for entry in self.entries.values() {
+            nonces.insert((entry.identity.clone(), entry.nonce));
+            *counts.entry(entry.identity.clone()).or_default() += 1;
         }
-        if self.entries.len() >= MAX_ENTRIES
-            || self.bytes + entry.raw.len() > MAX_BYTES
-            || self
+        let mut bytes = self.bytes;
+        let mut retained = Vec::with_capacity(entries.len());
+        let mut batch = WriteBatch::default();
+        for entry in entries {
+            if let Some(previous) = self
                 .entries
-                .values()
-                .filter(|other| other.identity == entry.identity)
-                .count()
-                >= MAX_PER_SIGNER
-            || self
-                .entries
-                .values()
-                .any(|other| other.identity == entry.identity && other.nonce == entry.nonce)
-        {
-            return Ok(false);
+                .get(&entry.hash)
+                .or_else(|| staged.get(&entry.hash))
+            {
+                retained.push(previous.raw == entry.raw);
+                continue;
+            }
+            if self.entries.len() + staged.len() >= MAX_ENTRIES
+                || entry.raw.len() > MAX_BYTES.saturating_sub(bytes)
+                || counts.get(&entry.identity).copied().unwrap_or(0) >= MAX_PER_SIGNER
+                || nonces.contains(&(entry.identity.clone(), entry.nonce))
+            {
+                retained.push(false);
+                continue;
+            }
+            bytes += entry.raw.len();
+            nonces.insert((entry.identity.clone(), entry.nonce));
+            *counts.entry(entry.identity.clone()).or_default() += 1;
+            let mut key = vec![b't'];
+            key.extend_from_slice(&entry.hash);
+            batch.put(key, &entry.raw);
+            staged.insert(entry.hash, entry);
+            retained.push(true);
+        }
+        if staged.is_empty() {
+            return Ok(retained);
         }
         let mut sync = WriteOptions::default();
         sync.set_sync(true);
-        let mut key = vec![b't'];
-        key.extend_from_slice(&entry.hash);
-        self.db.put_opt(key, &entry.raw, &sync)?;
-        self.bytes += entry.raw.len();
-        self.entries.insert(entry.hash, entry);
-        Ok(true)
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_admission_write) {
+            // A deterministic pre-submission error, not a simulation of an OS
+            // fsync failure whose durable outcome could be uncertain.
+            bail!("injected transaction admission write failure");
+        }
+        self.db.write_opt(batch, &sync)?;
+        #[cfg(test)]
+        {
+            self.admission_sync_commits += 1;
+        }
+        self.bytes = bytes;
+        self.entries.extend(staged);
+        Ok(retained)
     }
 
     /// Admit already authenticated and transport-bound entries. Finalized
@@ -192,10 +240,18 @@ impl FreshTransactionPool {
             // treated as missing/zero or leave a durably admitted prefix.
             parent.with_records(params, |reader| {
                 let mut live = Vec::new();
+                let mut nonces = BTreeMap::new();
                 for (index, entry) in entries {
-                    if !reader.contains_receipt(&entry.hash)?
-                        && reader.next_nonce(&entry.identity)? <= entry.nonce
-                    {
+                    if reader.contains_receipt(&entry.hash)? {
+                        continue;
+                    }
+                    let nonce = match nonces.entry(entry.identity.clone()) {
+                        std::collections::btree_map::Entry::Occupied(slot) => *slot.get(),
+                        std::collections::btree_map::Entry::Vacant(slot) => {
+                            *slot.insert(reader.next_nonce(&entry.identity)?)
+                        }
+                    };
+                    if nonce <= entry.nonce {
                         live.push((index, entry));
                     }
                 }
@@ -204,9 +260,10 @@ impl FreshTransactionPool {
         } else {
             entries
         };
-        for (index, entry) in live {
-            if self.insert(entry)? {
-                admission.retained[index] = true;
+        let (indices, entries): (Vec<_>, Vec<_>) = live.into_iter().unzip();
+        for (index, retained) in indices.into_iter().zip(self.insert_batch(entries)?) {
+            if retained {
+                admission.retained[index] = retained;
             } else {
                 admission.rejected = admission.rejected.saturating_add(1);
             }
@@ -217,6 +274,16 @@ impl FreshTransactionPool {
     #[cfg(test)]
     pub(crate) fn write_sequence_for_test(&self) -> u64 {
         self.db.latest_sequence_number()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn admission_sync_commits_for_test(&self) -> usize {
+        self.admission_sync_commits
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_admission_write_for_test(&mut self) {
+        self.fail_next_admission_write = true;
     }
 
     pub fn reconcile(

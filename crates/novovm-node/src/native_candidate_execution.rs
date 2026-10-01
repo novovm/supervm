@@ -527,7 +527,7 @@ fn compute(
         let (records, blob_bytes) = update.stats.checked_apply(records, blob_bytes)?;
         let _peak = update.peak_inflight;
         #[cfg(test)]
-        eprintln!("fresh candidate rooted AOEM transfer tasks={} peak_inflight={} parent_tree_import=false", items.len(), _peak);
+        eprintln!("fresh candidate rooted AOEM transfer transactions={} peak_inflight={} parent_tree_import=false", items.len(), _peak);
         // The executor above never scans or imports historical state. Existing
         // output/finality validation still consumes an explicit cold full image;
         // do not confuse removal of the execution import with a fully lazy node.
@@ -594,7 +594,7 @@ fn compute(
                 };
                 #[cfg(test)]
                 eprintln!(
-                    "fresh candidate AOEM transfer tasks={} peak_inflight={_peak}",
+                    "fresh candidate AOEM transfer transactions={} peak_inflight={_peak}",
                     end - index
                 );
                 index = end;

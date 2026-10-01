@@ -43662,9 +43662,10 @@ fn run_fresh_genesis_confirmation_v1(
         &runtime,
         Instant::now(),
     )?;
-    // Retain only the existing physical ledger connection after startup has
-    // validated its paths and authority. Existing locks and live ledger/QC
-    // validation remain in their original call paths; this is not a snapshot.
+    // Retain the physical ledger and its exact validated DB revision after
+    // startup. ANY ledger write invalidates that content validation. Existing
+    // authority/candidate locks and live bindings still guard every transition;
+    // an unchanged history is not replayed on every normal poll.
     let _ledger_session =
         novovm_node::native_block_ledger::NovNativeBlockLedgerV1::retain_existing_fresh_session_v1(
             &ledger_path,

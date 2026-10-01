@@ -16,8 +16,9 @@ std::thread_local! {
     };
 }
 
-/// Actual callbacks observed by this first-compute path, never a cold oracle.
-/// Thread-local isolation also keeps unrelated concurrent tests out of evidence.
+/// Candidate identity, transaction count and actual callback overlap observed
+/// by first-compute. Transaction count is NOT the number of AOEM component tasks.
+/// Thread-local isolation keeps unrelated concurrent tests out of evidence.
 #[cfg(test)]
 pub(super) fn take_observation_for_test() -> Option<([u8; 32], usize, usize)> {
     COMPUTE_OBSERVATION.with(std::cell::Cell::take)

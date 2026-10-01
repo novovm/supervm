@@ -127,4 +127,122 @@ mod fresh_pool_tests {
         drop(db);
         fs::remove_dir_all(path).unwrap();
     }
+
+    #[test]
+    fn batch_admission_commits_once_preserves_duplicates_conflicts_and_restart() {
+        let path = path("batch-order");
+        let chain = 891039;
+        let params = serde_json::json!({"chain_id":chain});
+        let mut pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
+        let first = PendingTransaction::authenticate(raw(chain, 0, 1), chain, &params).unwrap();
+        let next = PendingTransaction::authenticate(raw(chain, 1, 1), chain, &params).unwrap();
+        let conflict = PendingTransaction::authenticate(raw(chain, 0, 2), chain, &params).unwrap();
+        // Deliberately impossible authenticated hash binding: the pool must
+        // still compare exact raw bytes rather than acknowledge a hash alone.
+        let mut collision = next.clone();
+        collision.hash = first.hash;
+        let admission = pool
+            .insert_live_batch_with_retention(
+                vec![
+                    first.clone(),
+                    first.clone(),
+                    conflict.clone(),
+                    next.clone(),
+                    collision,
+                ],
+                None,
+                &params,
+            )
+            .unwrap();
+        assert_eq!(admission.retained, [true, true, false, true, false]);
+        assert_eq!(admission.rejected, 2);
+        assert_eq!(pool.admission_sync_commits_for_test(), 1);
+        assert_eq!(pool.len(), 2);
+        assert_eq!(pool.get(&first.hash).unwrap().raw, first.raw);
+        assert_eq!(pool.get(&next.hash).unwrap().raw, next.raw);
+        assert!(!pool.contains(&conflict.hash));
+        assert_eq!(
+            pool.insert_batch(vec![first.clone(), next.clone()])
+                .unwrap(),
+            [true, true]
+        );
+        assert_eq!(
+            pool.admission_sync_commits_for_test(),
+            1,
+            "duplicates must not create another sync write"
+        );
+        drop(pool);
+        let pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
+        assert_eq!(pool.len(), 2);
+        assert_eq!(pool.get(&first.hash).unwrap().raw, first.raw);
+        assert_eq!(pool.get(&next.hash).unwrap().raw, next.raw);
+        drop(pool);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn batch_admission_signer_capacity_rejects_in_order_without_partial_writes() {
+        let path = path("batch-capacity");
+        let chain = 891040;
+        let params = serde_json::json!({"chain_id":chain});
+        let mut pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
+        let entries = (0..65)
+            .map(|nonce| {
+                PendingTransaction::authenticate(raw(chain, nonce, 1), chain, &params).unwrap()
+            })
+            .collect();
+        let retained = pool.insert_batch(entries).unwrap();
+        assert_eq!(&retained[..64], &[true; 64]);
+        assert!(!retained[64]);
+        assert_eq!(pool.len(), 64);
+        assert_eq!(pool.admission_sync_commits_for_test(), 1);
+        drop(pool);
+        let pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
+        assert_eq!(pool.len(), 64);
+        assert_eq!(
+            pool.ordered()
+                .iter()
+                .map(|entry| entry.nonce)
+                .collect::<Vec<_>>(),
+            (0..64).collect::<Vec<_>>()
+        );
+        drop(pool);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn batch_admission_write_failure_publishes_no_memory_or_durable_prefix() {
+        let path = path("batch-write-failure");
+        let chain = 891041;
+        let params = serde_json::json!({"chain_id":chain});
+        let mut pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
+        let old = PendingTransaction::authenticate(raw(chain, 0, 1), chain, &params).unwrap();
+        assert!(pool.insert(old.clone()).unwrap());
+        let entries: Vec<_> = (1..4)
+            .map(|nonce| {
+                PendingTransaction::authenticate(raw(chain, nonce, 1), chain, &params).unwrap()
+            })
+            .collect();
+        pool.fail_next_admission_write_for_test();
+        let error = pool
+            .insert_live_batch_with_retention(entries.clone(), None, &params)
+            .err()
+            .unwrap();
+        assert!(error
+            .to_string()
+            .contains("injected transaction admission write failure"));
+        assert_eq!(pool.admission_sync_commits_for_test(), 1);
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool.get(&old.hash).unwrap().raw, old.raw);
+        assert!(entries.iter().all(|entry| !pool.contains(&entry.hash)));
+        drop(pool);
+        let mut pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
+        assert_eq!(pool.len(), 1);
+        assert!(entries.iter().all(|entry| !pool.contains(&entry.hash)));
+        assert_eq!(pool.insert_batch(entries).unwrap(), [true; 3]);
+        assert_eq!(pool.admission_sync_commits_for_test(), 1);
+        assert_eq!(pool.len(), 4);
+        drop(pool);
+        fs::remove_dir_all(path).unwrap();
+    }
 }

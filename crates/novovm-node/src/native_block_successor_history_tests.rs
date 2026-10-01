@@ -59,6 +59,19 @@ impl NovNativeBlockLedgerV1 {
             assert_eq!(counts, (2, history.len(), history.len() + 1));
         }
 
+        // Exercise the actual node runtime lease against real signed history.
+        // Stable reads reuse this exact DB revision; every mutation below must
+        // invalidate it, including an old QC or an unrelated historical index.
+        let _runtime = Self::retain_existing_fresh_session_v1(path).unwrap();
+        assert_eq!(read().unwrap().as_ref(), Some(&expected));
+        let (stable, counts) = counted(read);
+        assert_eq!(stable.unwrap().as_ref(), Some(&expected));
+        assert_eq!(
+            counts,
+            (0, 0, 0),
+            "unchanged history is not replayed per call"
+        );
+
         let mut faults = Vec::new();
         for (height, prepare_vote) in [(2, false), (last_height, true)] {
             let mut intent = read_archive(&ledger, height).unwrap().unwrap();
