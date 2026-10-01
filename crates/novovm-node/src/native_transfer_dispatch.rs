@@ -189,6 +189,7 @@ pub(super) trait TransferReceiptFinalizerV1 {
     fn finish(
         &mut self,
         store: &mut NovNativeExecutionStoreV1,
+        transaction: &NovNativeTxWireV1,
         request: &NovExecutionRequestV1,
         settled_fee: &NovSettledFeeV1,
         subject: &NovExecutionSubjectMetaV1,
@@ -216,6 +217,7 @@ impl TransferReceiptFinalizerV1 for LegacyFinalizer<'_> {
     fn finish(
         &mut self,
         store: &mut NovNativeExecutionStoreV1,
+        _transaction: &NovNativeTxWireV1,
         request: &NovExecutionRequestV1,
         settled_fee: &NovSettledFeeV1,
         subject: &NovExecutionSubjectMetaV1,
@@ -505,6 +507,7 @@ pub(super) fn execute_with_finalizer_v1(
             });
         finalizer.finish(
             store,
+            item.transaction,
             item.request,
             &settled_fee,
             &subject,

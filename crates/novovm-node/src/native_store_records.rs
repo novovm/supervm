@@ -327,9 +327,21 @@ pub(super) fn encode_module_v1(state: &super::NovNativeExecutionModuleStateV1) -
     Ok(records)
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static FULL_STORE_ENCODINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn full_store_encodings_for_test_v1() -> usize {
+    FULL_STORE_ENCODINGS.with(std::cell::Cell::get)
+}
+
 /// Cold-path conversion only. RawValue preserves every u128/i128 JSON token;
 /// routing through serde_json::Value would round values above u64 through f64.
 pub(super) fn encode(store: &NovNativeExecutionStoreV1) -> Result<Records> {
+    #[cfg(test)]
+    FULL_STORE_ENCODINGS.with(|count| count.set(count.get() + 1));
     let raw: Box<RawValue> = serde_json::from_slice(&typed_raw_v1(store)?)?;
     let mut records = Records::new();
     visit_object(&raw, &mut Vec::new(), module_maps()?, &mut records)?;

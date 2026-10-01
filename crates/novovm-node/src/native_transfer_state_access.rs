@@ -450,6 +450,13 @@ pub(super) struct SparseTransferStateV1 {
 }
 
 impl SparseTransferStateV1 {
+    /// Candidate-local immutable parent capture for the typed effect journal.
+    /// This does not grant writes: the independent final sparse diff still
+    /// validates every put/delete against `paths` before output publication.
+    pub(super) fn captured_records_v1(&self) -> BTreeMap<Vec<String>, Option<Vec<u8>>> {
+        self.before_records.clone()
+    }
+
     #[cfg(test)]
     pub(super) fn working_store(&self) -> &NovNativeExecutionStoreV1 {
         &self.store

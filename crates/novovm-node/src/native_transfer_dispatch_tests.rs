@@ -187,6 +187,7 @@ fn legacy_finalizer_preserves_direct_receipt_and_store_bytes() {
     finalizer
         .finish(
             &mut store,
+            &fixture.transaction,
             &fixture.request,
             &fee,
             &fixture.subject,
@@ -199,6 +200,7 @@ fn legacy_finalizer_preserves_direct_receipt_and_store_bytes() {
     assert!(finalizer
         .finish(
             &mut store,
+            &fixture.transaction,
             &fixture.request,
             &fee,
             &fixture.subject,
@@ -250,6 +252,7 @@ impl TransferReceiptFinalizerV1 for RecordingFinalizer {
     fn finish(
         &mut self,
         store: &mut NovNativeExecutionStoreV1,
+        _transaction: &NovNativeTxWireV1,
         request: &NovExecutionRequestV1,
         settled_fee: &NovSettledFeeV1,
         subject: &NovExecutionSubjectMetaV1,
@@ -411,6 +414,97 @@ fn component_fixture(seed: u8, recipient: u8, nonce: u64, amount: u128) -> Final
         request,
         subject,
         reservation,
+    }
+}
+
+#[test]
+#[ignore = "requires the packaged AOEM runtime; run explicitly for integration evidence"]
+fn real_aoem_typed_record_effects_match_fullencode_batch_and_each_serial_prefix() {
+    use super::super::native_transfer_record_execution as record;
+    for case in [
+        "success",
+        "business",
+        "quote",
+        "balance",
+        "paused",
+        "overflow",
+        "recipient_overflow",
+        "self",
+        "zero",
+        "day_window",
+    ] {
+        let first = if case == "quote" {
+            FinalizerFixture::new(0, 10, 1)
+        } else {
+            component_fixture(
+                81,
+                if case == "self" { 81 } else { 90 },
+                0,
+                match case {
+                    "business" => u128::MAX,
+                    "zero" => 0,
+                    _ => 10,
+                },
+            )
+        };
+        let second = if case == "quote" {
+            FinalizerFixture::new(1, 1, 0)
+        } else {
+            component_fixture(81, 90, 1, 1)
+        };
+        let fixtures = [first, component_fixture(82, 90, 0, 3), second];
+        let mut initial = NovNativeExecutionStoreV1::default();
+        for fixture in &fixtures[..2] {
+            initial.module_state.account_asset_balances.insert(
+                fixture.subject.account_id.clone(),
+                BTreeMap::from([
+                    ("NOV".into(), if case == "balance" { 0 } else { 1_000 }),
+                    ("USDT".into(), u128::MAX),
+                ]),
+            );
+        }
+        match case {
+            "paused" => initial.module_state.treasury_settlement_paused = true,
+            "overflow" => initial.module_state.treasury_settlements = u64::MAX - 1,
+            "recipient_overflow" => {
+                initial.module_state.account_asset_balances.insert(
+                    to_hex_prefixed_v1(&novovm_adapter_novovm::address_from_seed_v1([90; 32])),
+                    BTreeMap::from([("NOV".into(), u128::MAX)]),
+                );
+            }
+            "day_window" => {
+                initial.module_state.clearing_daily_window_day = 0;
+                initial.module_state.clearing_daily_nov_used = 900;
+            }
+            _ => {}
+        }
+        let now = 86_400_123;
+        let items = fixtures
+            .iter()
+            .map(FinalizerFixture::item)
+            .collect::<Vec<_>>();
+        let mut actual = initial.clone();
+        let mut old_batch = initial.clone();
+        record::execute_segment_v1(&mut actual, &items, now).unwrap();
+        record::execute_segment_fullencode_oracle_for_test_v1(&mut old_batch, &items, now).unwrap();
+        assert_eq!(
+            actual, old_batch,
+            "{case}: complete batch, receipts and mirrors"
+        );
+        let mut typed_prefix = initial.clone();
+        let mut old_prefix = initial;
+        for (index, item) in items.iter().enumerate() {
+            record::execute_segment_v1(&mut typed_prefix, std::slice::from_ref(item), now).unwrap();
+            record::execute_segment_fullencode_oracle_for_test_v1(
+                &mut old_prefix,
+                std::slice::from_ref(item),
+                now,
+            )
+            .unwrap();
+            assert_eq!(typed_prefix, old_prefix, "{case}: full prefix {index}");
+        }
+        assert_eq!(actual, old_prefix, "{case}: batch versus old serial prefix");
+        eprintln!("typed transfer record effects fullencode parity case={case} transactions=3");
     }
 }
 

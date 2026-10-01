@@ -22,6 +22,10 @@ use crate::native_state_records::{
 use crate::native_state_tree::{NodeHash, StateNodeReader};
 use std::cell::RefCell;
 
+#[path = "native_transfer_record_effects.rs"]
+mod effects;
+use effects::TransferRecordEffectsV1;
+
 /// Bounded, execution-local immutable content cache. No roots, verification
 /// permissions or negative lookups survive this call. Traversals still verify
 /// node/blob hashes; shared paths need not repeat AOEM database reads.
@@ -217,6 +221,7 @@ pub(super) fn execute_rooted_segment_v1(
         state: &state,
         receipts: &receipts,
     })?;
+    let mut effects = TransferRecordEffectsV1::new(sparse.captured_records_v1());
     let peak_inflight = native_transfer_dispatch::execute_with_finalizer_v1(
         sparse.working_store_mut(),
         items,
@@ -225,11 +230,17 @@ pub(super) fn execute_rooted_segment_v1(
             state: &mut state,
             receipts: &mut receipts,
             before: None,
+            effects: EffectSource::Typed(&mut effects),
+            #[cfg(test)]
+            encodings_at_begin: 0,
         },
     )?;
     // Unique sorted paths put new parent markers before children, including
     // across staging calls. Bound each call, not the whole candidate's writes.
     let changes = sparse.changed_records()?;
+    if changes != effects.net_changes() {
+        bail!("typed transfer effects differ from independent final sparse patch");
+    }
     let mut stats = RecordStatsDeltaV1::default();
     let mut offset = 0;
     while offset < changes.len() {
@@ -334,6 +345,7 @@ pub(super) fn materialize_update_v1(
 
 /// Diff only a bounded sparse view. Changes are subsequently checked against
 /// its declared access set before being merged into the candidate image.
+#[cfg(test)]
 fn changes(before: &Records, after: &Records) -> Result<Vec<RawPathChangeV1>> {
     let mut result = Vec::new();
     for (key, value) in after {
@@ -393,10 +405,66 @@ fn delta_commitment(changes: &[RawPathChangeV1]) -> Result<(usize, String)> {
     Ok((count, to_hex(&hash.finalize())))
 }
 
+/// The full-view algorithm remains an independent delta oracle in tests only.
+/// Production can only construct the bounded typed effect source.
+enum EffectSource<'a> {
+    Typed(&'a mut TransferRecordEffectsV1),
+    #[cfg(test)]
+    FullEncodeOracle(Option<Records>),
+}
+
+impl EffectSource<'_> {
+    fn begin(&mut self, _store: &NovNativeExecutionStoreV1) -> Result<()> {
+        #[cfg(test)]
+        if let Self::FullEncodeOracle(before) = self {
+            *before = Some(physical::encode(_store)?);
+        }
+        Ok(())
+    }
+
+    fn business(
+        &mut self,
+        store: &NovNativeExecutionStoreV1,
+        transaction: &NovNativeTxWireV1,
+        reservation: &NovNativeDurableAuthReservationV1,
+    ) -> Result<Vec<RawPathChangeV1>> {
+        match self {
+            Self::Typed(effects) => effects.business(store, transaction, reservation),
+            #[cfg(test)]
+            Self::FullEncodeOracle(before) => {
+                let after = physical::encode(store)?;
+                let delta = changes(before.as_ref().context("oracle before missing")?, &after)?;
+                *before = Some(after);
+                Ok(delta)
+            }
+        }
+    }
+
+    fn finalized(
+        &mut self,
+        store: &NovNativeExecutionStoreV1,
+        tx_hash: &str,
+        sequence: u64,
+        evicted: Option<&str>,
+    ) -> Result<Vec<RawPathChangeV1>> {
+        match self {
+            Self::Typed(effects) => effects.finalized(store, tx_hash, sequence, evicted),
+            #[cfg(test)]
+            Self::FullEncodeOracle(before) => changes(
+                &before.take().context("oracle business missing")?,
+                &physical::encode(store)?,
+            ),
+        }
+    }
+}
+
 struct RecordFinalizer<'a, 'r> {
     state: &'a mut RecordOverlayV1<'r>,
     receipts: &'a mut RecordOverlayV1<'r>,
-    before: Option<(Records, NodeHash, u64, String)>,
+    before: Option<(NodeHash, u64, String)>,
+    effects: EffectSource<'a>,
+    #[cfg(test)]
+    encodings_at_begin: usize,
 }
 
 impl TransferReceiptFinalizerV1 for RecordFinalizer<'_, '_> {
@@ -404,8 +472,12 @@ impl TransferReceiptFinalizerV1 for RecordFinalizer<'_, '_> {
         if self.before.is_some() {
             bail!("record finalizer has an unfinished transfer");
         }
+        #[cfg(test)]
+        {
+            self.encodings_at_begin = physical::full_store_encodings_for_test_v1();
+        }
+        self.effects.begin(store)?;
         self.before = Some((
-            physical::encode(store)?,
             self.state.root(),
             store.module_state.aoem_semantic_ledger_sequence,
             store.module_state.aoem_semantic_ledger_head.clone(),
@@ -416,6 +488,7 @@ impl TransferReceiptFinalizerV1 for RecordFinalizer<'_, '_> {
     fn finish(
         &mut self,
         store: &mut NovNativeExecutionStoreV1,
+        transaction: &NovNativeTxWireV1,
         request: &NovExecutionRequestV1,
         fee: &NovSettledFeeV1,
         subject: &NovExecutionSubjectMetaV1,
@@ -424,7 +497,7 @@ impl TransferReceiptFinalizerV1 for RecordFinalizer<'_, '_> {
         now_ms: u128,
         mut receipt: NovNativeExecutionReceiptV1,
     ) -> Result<()> {
-        let (before, before_root, previous_sequence, previous_seal) = self
+        let (before_root, previous_sequence, previous_seal) = self
             .before
             .take()
             .context("record finalizer has no ordered pre-fee state")?;
@@ -433,8 +506,7 @@ impl TransferReceiptFinalizerV1 for RecordFinalizer<'_, '_> {
             .context("semantic sequence overflow")?;
         receipt.aoem_semantic_ingress = Some(ingress);
         commit_nov_native_durable_auth_reservation_v1(store, reservation)?;
-        let business = physical::encode(store)?;
-        let business_changes = changes(&before, &business)?;
+        let business_changes = self.effects.business(store, transaction, reservation)?;
         let (delta_count, delta_digest) = delta_commitment(&business_changes)?;
         consensus::apply_consensus_changes_v1(self.state, &business_changes)?;
         let business_root = self.state.root();
@@ -487,6 +559,17 @@ impl TransferReceiptFinalizerV1 for RecordFinalizer<'_, '_> {
             bail!("record transfer cannot replace a receipt");
         }
         let trace = build_execution_trace_v1(request, fee, &receipt, subject, store, now_ms);
+        // Replacing an existing trace reorders it but does not evict another.
+        // The loader checked the bound and uniqueness, so at most one eviction
+        // is possible when appending this receipt's new trace.
+        let trace_key = normalize_tx_hash_hex_v1(&trace.tx_id);
+        let order = &store.module_state.execution_trace_order;
+        let evicted =
+            if order.len() == NOV_EXECUTION_TRACE_MAX_ENTRIES_V1 && !order.contains(&trace_key) {
+                order.first().cloned()
+            } else {
+                None
+            };
         persist_execution_trace_v1(store, trace);
         store.last_updated_unix_ms = now_ms;
         let mirror = build_native_aoem_semantic_ledger_mirror_record_v1(&receipt, now_ms)
@@ -499,11 +582,23 @@ impl TransferReceiptFinalizerV1 for RecordFinalizer<'_, '_> {
         {
             bail!("record semantic sequence already exists");
         }
-        consensus::apply_consensus_changes_v1(
-            self.state,
-            &changes(&business, &physical::encode(store)?)?,
-        )?;
+        let finalized =
+            self.effects
+                .finalized(store, &receipt.tx_hash, sequence, evicted.as_deref())?;
+        consensus::apply_consensus_changes_v1(self.state, &finalized)?;
         consensus::apply_receipts_v1(self.receipts, &[receipt])?;
+        #[cfg(test)]
+        {
+            let expected = match self.effects {
+                EffectSource::Typed(_) => 0,
+                EffectSource::FullEncodeOracle(_) => 3,
+            };
+            assert_eq!(
+                physical::full_store_encodings_for_test_v1() - self.encodings_at_begin,
+                expected,
+                "per-transaction full sparse Store encoding count"
+            );
+        }
         Ok(())
     }
 }
@@ -511,6 +606,72 @@ impl TransferReceiptFinalizerV1 for RecordFinalizer<'_, '_> {
 /// Real candidate adapter; isolated execution only. A caller must authenticate
 /// the entire candidate first and discard it on any error. No authority writes.
 pub(super) fn execute_segment_v1(
+    store: &mut NovNativeExecutionStoreV1,
+    items: &[Item<'_>],
+    now_ms: u128,
+) -> Result<usize> {
+    let mut records = physical::encode(store)?;
+    let batch: Vec<_> = items
+        .iter()
+        .map(|item| (item.transaction, item.reservation))
+        .collect();
+    let mut sparse = TransferAccessV1::for_batch(&batch)?.load(&EncodedAccess(&records))?;
+    let state_import = consensus::stage_consensus_import_v1(&EmptyReader, &store.module_state)?;
+    let receipt_import = consensus::stage_receipt_import_v1(&EmptyReader, store)?;
+    let state_reader = ImportedReader(&state_import);
+    let receipt_reader = ImportedReader(&receipt_import);
+    let mut state = RecordOverlayV1::new(&state_reader, state_import.root());
+    let mut receipts = RecordOverlayV1::new(&receipt_reader, receipt_import.root());
+    let mut effects = TransferRecordEffectsV1::new(sparse.captured_records_v1());
+    let peak = native_transfer_dispatch::execute_with_finalizer_v1(
+        sparse.working_store_mut(),
+        items,
+        now_ms,
+        &mut RecordFinalizer {
+            state: &mut state,
+            receipts: &mut receipts,
+            before: None,
+            effects: EffectSource::Typed(&mut effects),
+            #[cfg(test)]
+            encodings_at_begin: 0,
+        },
+    )?;
+    // Export only declared changes. Never substitute the sparse view for a
+    // complete store: it deliberately omits untouched accounts/assets/history.
+    let changes = sparse.changed_records()?;
+    if changes != effects.net_changes() {
+        bail!("typed transfer effects differ from independent final sparse patch");
+    }
+    for change in changes {
+        match change {
+            RawPathChangeV1::Put { path, value } => {
+                records.insert(
+                    physical::key(&path)?,
+                    physical::value(&path, &physical::physical_path_value_v1(&path, &value)?)?,
+                );
+            }
+            RawPathChangeV1::Delete { path } => {
+                records.remove(&physical::key(&path)?);
+            }
+        }
+    }
+    let complete = physical::decode(records)?;
+    // Transitional independent cold validation. Remove only when rooted
+    // envelopes carry and verify these same roots, not to hide discrepancies.
+    if consensus::consensus_state_root_v1(&complete.module_state)? != state.root()
+        || consensus::cumulative_receipt_root_v1(&complete)? != receipts.root()
+    {
+        bail!("incremental candidate root differs from complete record projection");
+    }
+    *store = complete;
+    Ok(peak)
+}
+
+/// Independent pre-optimization projection oracle: three full sparse encodes
+/// per transaction, rather than the typed journal. Only tests can call this.
+/// Business computation still runs on AOEM; no fake Host execution is used.
+#[cfg(test)]
+pub(super) fn execute_segment_fullencode_oracle_for_test_v1(
     store: &mut NovNativeExecutionStoreV1,
     items: &[Item<'_>],
     now_ms: u128,
@@ -535,10 +696,10 @@ pub(super) fn execute_segment_v1(
             state: &mut state,
             receipts: &mut receipts,
             before: None,
+            effects: EffectSource::FullEncodeOracle(None),
+            encodings_at_begin: 0,
         },
     )?;
-    // Export only declared changes. Never substitute the sparse view for a
-    // complete store: it deliberately omits untouched accounts/assets/history.
     for change in sparse.changed_records()? {
         match change {
             RawPathChangeV1::Put { path, value } => {
@@ -553,12 +714,10 @@ pub(super) fn execute_segment_v1(
         }
     }
     let complete = physical::decode(records)?;
-    // Transitional independent cold validation. Remove only when rooted
-    // envelopes carry and verify these same roots, not to hide discrepancies.
     if consensus::consensus_state_root_v1(&complete.module_state)? != state.root()
         || consensus::cumulative_receipt_root_v1(&complete)? != receipts.root()
     {
-        bail!("incremental candidate root differs from complete record projection");
+        bail!("fullencode oracle root differs from complete projection");
     }
     *store = complete;
     Ok(peak)

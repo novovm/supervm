@@ -267,7 +267,7 @@ fn transfer_process_serial_parity_run_v1() -> anyhow::Result<()> {
                 .aoem_semantic_ingress
                 .clone()
                 .context("actual precommit ingress missing")?;
-            native_transfer_record_execution::execute_segment_v1(
+            native_transfer_record_execution::execute_segment_fullencode_oracle_for_test_v1(
                 &mut serial,
                 &[native_transfer_dispatch::Item {
                     transaction: &transaction,
