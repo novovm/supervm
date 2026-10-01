@@ -6,9 +6,7 @@
 //! Maps grow by independent immutable records, not by one accumulated blob.
 
 use super::NovNativeExecutionStoreV1;
-#[cfg(test)]
-use crate::native_state_records::RecordChange;
-use crate::native_state_records::{read_record, RecordOverlayV1};
+use crate::native_state_records::{read_record, RecordChange, RecordOverlayV1, RecordStatsDeltaV1};
 use anyhow::{bail, Context, Result};
 #[cfg(test)]
 use serde::de::DeserializeOwned;
@@ -161,22 +159,138 @@ pub(super) fn apply_raw_path_changes_v1(
     overlay: &mut RecordOverlayV1<'_>,
     changes: &[RawPathChangeV1],
 ) -> Result<()> {
-    let changes = changes
-        .iter()
-        .map(|change| match change {
-            RawPathChangeV1::Put { path, value: raw } => Ok(RecordChange::Put {
-                key: key(path)?,
-                value: value(path, &physical_path_value_v1(path, raw)?)?,
-            }),
-            RawPathChangeV1::Delete { path } => {
-                if path.len() > 4 {
-                    bail!("native store record path exceeds layout depth");
-                }
-                Ok(RecordChange::Delete { key: key(path)? })
-            }
+    apply_raw_changes_to_overlay_v1(overlay, changes).map(|_| ())
+}
+
+fn validate_update_path(parts: &[String]) -> Result<()> {
+    static FIELDS: std::sync::OnceLock<std::result::Result<BTreeSet<Vec<String>>, String>> =
+        std::sync::OnceLock::new();
+    let fields = FIELDS
+        .get_or_init(|| {
+            encode(&NovNativeExecutionStoreV1::default())
+                .and_then(|records| {
+                    records
+                        .iter()
+                        .map(|(key, value)| unpack(key, value).map(|(path, _)| path))
+                        .collect()
+                })
+                .map_err(|error| error.to_string())
         })
-        .collect::<Result<Vec<_>>>()?;
-    overlay.stage(&changes)
+        .as_ref()
+        .map_err(|error| anyhow::anyhow!("native record path schema: {error}"))?;
+    if parts.len() > 4 {
+        bail!("native store record path exceeds layout depth");
+    }
+    if parts.is_empty() || parts.len() == 1 || (parts.len() == 2 && parts[0] == "module_state") {
+        if !fields.contains(parts) {
+            bail!("unknown native store record field");
+        }
+    } else {
+        let parent = &parts[..parts.len() - 1];
+        validate_update_path(parent)?;
+        if !is_object_path_v1(parent)? {
+            bail!("native store record parent is not a structural object");
+        }
+    }
+    Ok(())
+}
+
+fn read_checked_physical(
+    overlay: &RecordOverlayV1<'_>,
+    parts: &[String],
+) -> Result<Option<Vec<u8>>> {
+    let record_key = key(parts)?;
+    let Some(bytes) = read_record(overlay, overlay.root(), &record_key)? else {
+        return Ok(None);
+    };
+    let (stored, raw) = unpack(&record_key, &bytes)?;
+    if stored != parts {
+        bail!("native record hash resolves to a different original path");
+    }
+    if is_object_path_v1(parts)? {
+        if raw != OBJECT {
+            bail!("native record structural marker missing");
+        }
+    } else {
+        let parsed: Box<RawValue> = serde_json::from_slice(raw)?;
+        if parsed.get().as_bytes() != raw {
+            bail!("native record value has noncanonical outer whitespace");
+        }
+    }
+    Ok(Some(bytes))
+}
+
+/// Apply a unique raw-path patch and return exact live-record/blob byte deltas.
+/// Parent markers may be created in this same patch, in any order. Existing
+/// markers mean `{}` is a no-op, never replacement of their children. Structural
+/// deletes are deliberately unsupported: without enumerating descendants they
+/// cannot establish that the result has no orphans. Semantic field/type rules
+/// and the truth of the supplied parent root remain the caller's responsibility.
+pub(super) fn apply_raw_changes_to_overlay_v1(
+    overlay: &mut RecordOverlayV1<'_>,
+    changes: &[RawPathChangeV1],
+) -> Result<RecordStatsDeltaV1> {
+    use crate::native_state_records::{MAX_STAGE_BLOB_BYTES, MAX_STAGE_CHANGES};
+    if changes.len() > MAX_STAGE_CHANGES {
+        bail!("too many raw record changes in one stage");
+    }
+    let mut keys = BTreeSet::new();
+    let mut markers = BTreeSet::new();
+    let mut converted = Vec::with_capacity(changes.len());
+    let mut byte_budget = 0usize;
+    for change in changes {
+        let parts = match change {
+            RawPathChangeV1::Put { path, .. } | RawPathChangeV1::Delete { path } => path,
+        };
+        validate_update_path(parts)?;
+        let record_key = key(parts)?;
+        if !keys.insert(record_key.clone()) {
+            bail!("duplicate native record path or path hash");
+        }
+        let converted_change = match change {
+            RawPathChangeV1::Put { value: raw, .. } => {
+                // Bound the input before parsing/copying a possibly large JSON
+                // value. The generic record layer also checks the packed limit.
+                byte_budget = byte_budget
+                    .checked_add(raw.len())
+                    .context("raw record byte budget overflow")?;
+                if raw.len() > crate::native_state_records::MAX_RECORD_VALUE_BYTES_V1
+                    || byte_budget > MAX_STAGE_BLOB_BYTES
+                {
+                    bail!("raw record patch exceeds resource budget");
+                }
+                let raw = physical_path_value_v1(parts, raw)?;
+                if raw == OBJECT {
+                    markers.insert(parts.clone());
+                }
+                RecordChange::Put {
+                    key: record_key,
+                    value: value(parts, &raw)?,
+                }
+            }
+            RawPathChangeV1::Delete { .. } => {
+                if is_object_path_v1(parts)? {
+                    bail!("native record structural deletion requires explicit subtree handling");
+                }
+                RecordChange::Delete { key: record_key }
+            }
+        };
+        converted.push(converted_change);
+    }
+    for change in changes {
+        let parts = match change {
+            RawPathChangeV1::Put { path, .. } | RawPathChangeV1::Delete { path } => path,
+        };
+        // Validate inherited values even for a replacing put or no-op delete.
+        read_checked_physical(overlay, parts)?;
+        for length in 0..parts.len() {
+            let parent = &parts[..length];
+            if read_checked_physical(overlay, parent)?.is_none() && !markers.contains(parent) {
+                bail!("native record patch has a missing structural parent");
+            }
+        }
+    }
+    overlay.stage_with_stats(&converted)
 }
 
 fn visit_object(
@@ -273,6 +387,193 @@ pub(super) fn decode(records: Records) -> Result<NovNativeExecutionStoreV1> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_state_records::StateRecordReader;
+    use crate::native_state_tree::{empty_root, NodeHash, StateNodeReader};
+
+    struct EmptyReader;
+    impl StateNodeReader for EmptyReader {
+        fn read_node(&self, _: &NodeHash) -> Result<Option<Vec<u8>>> {
+            Ok(None)
+        }
+    }
+    impl StateRecordReader for EmptyReader {
+        fn read_record_chunk(&self, _: NodeHash, _: u32) -> Result<Option<Vec<u8>>> {
+            Ok(None)
+        }
+    }
+    fn seeded<'a>(
+        reader: &'a EmptyReader,
+        store: &NovNativeExecutionStoreV1,
+    ) -> RecordOverlayV1<'a> {
+        let mut overlay = RecordOverlayV1::new(reader, empty_root());
+        overlay
+            .stage(
+                &encode(store)
+                    .unwrap()
+                    .into_iter()
+                    .map(|(key, value)| RecordChange::Put { key, value })
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        overlay
+    }
+    fn raw_put(parts: &[&str], raw: &[u8]) -> RawPathChangeV1 {
+        RawPathChangeV1::Put {
+            path: parts.iter().map(|part| (*part).to_owned()).collect(),
+            value: raw.to_vec(),
+        }
+    }
+    fn totals(store: &NovNativeExecutionStoreV1) -> (usize, usize) {
+        let records = encode(store).unwrap();
+        (
+            records.len(),
+            records
+                .iter()
+                .map(|(key, value)| 10 + key.len() + value.len())
+                .sum(),
+        )
+    }
+
+    #[test]
+    fn raw_patch_stats_match_cold_map_and_allow_same_patch_parent_in_any_order() {
+        let reader = EmptyReader;
+        let mut expected = NovNativeExecutionStoreV1::default();
+        expected.module_state.account_asset_balances.insert(
+            "alice".into(),
+            BTreeMap::from([("NOV".into(), u128::MAX), ("USDT".into(), 3)]),
+        );
+        let mut overlay = seeded(&reader, &expected);
+        let mut counts = totals(&expected);
+        let changes = [
+            raw_put(
+                &["module_state", "account_asset_balances", "bob", "NOV"],
+                b"1",
+            ),
+            raw_put(
+                &["module_state", "account_asset_balances", "alice", "NOV"],
+                b"42",
+            ),
+            raw_put(&["module_state", "account_asset_balances", "bob"], b"{ }"),
+        ];
+        let delta = apply_raw_changes_to_overlay_v1(&mut overlay, &changes).unwrap();
+        counts = delta.checked_apply(counts.0, counts.1).unwrap();
+        expected
+            .module_state
+            .account_asset_balances
+            .insert("bob".into(), BTreeMap::from([("NOV".into(), 1)]));
+        expected
+            .module_state
+            .account_asset_balances
+            .get_mut("alice")
+            .unwrap()
+            .insert("NOV".into(), 42);
+        assert_eq!(counts, totals(&expected));
+        assert_eq!(overlay.root(), seeded(&reader, &expected).root());
+        let root = overlay.root();
+        assert_eq!(
+            apply_raw_changes_to_overlay_v1(&mut overlay, &changes).unwrap(),
+            RecordStatsDeltaV1::default()
+        );
+        assert_eq!(root, overlay.root());
+        let changes = [
+            raw_put(
+                &["module_state", "account_asset_balances", "alice", "NOV"],
+                u128::MAX.to_string().as_bytes(),
+            ),
+            RawPathChangeV1::Delete {
+                path: vec![
+                    "module_state".into(),
+                    "account_asset_balances".into(),
+                    "alice".into(),
+                    "USDT".into(),
+                ],
+            },
+            RawPathChangeV1::Delete {
+                path: vec![
+                    "module_state".into(),
+                    "native_auth_next_nonces".into(),
+                    "absent".into(),
+                ],
+            },
+        ];
+        counts = apply_raw_changes_to_overlay_v1(&mut overlay, &changes)
+            .unwrap()
+            .checked_apply(counts.0, counts.1)
+            .unwrap();
+        let balances = expected
+            .module_state
+            .account_asset_balances
+            .get_mut("alice")
+            .unwrap();
+        balances.insert("NOV".into(), u128::MAX);
+        balances.remove("USDT");
+        assert_eq!(counts, totals(&expected));
+        assert_eq!(overlay.root(), seeded(&reader, &expected).root());
+        assert_eq!(
+            read_typed_path_v1::<u128>(
+                &overlay,
+                &["module_state", "account_asset_balances", "alice", "NOV"]
+            )
+            .unwrap(),
+            Some(u128::MAX)
+        );
+    }
+
+    #[test]
+    fn raw_patch_rejects_duplicates_unknown_paths_missing_parents_and_structural_deletes() {
+        let reader = EmptyReader;
+        let mut overlay = seeded(&reader, &NovNativeExecutionStoreV1::default());
+        let initial = overlay.root();
+        let normal = raw_put(&["module_state", "treasury_settled_nov_total"], b"3");
+        for changes in [
+            vec![normal.clone(), normal],
+            vec![raw_put(&["unknown"], b"1")],
+            vec![raw_put(
+                &["module_state", "treasury_settled_nov_total", "child"],
+                b"1",
+            )],
+            vec![raw_put(
+                &["module_state", "account_asset_balances", "missing", "NOV"],
+                b"1",
+            )],
+            vec![raw_put(
+                &["module_state", "account_asset_balances"],
+                br#"{"alice":{}}"#,
+            )],
+            vec![RawPathChangeV1::Delete {
+                path: vec!["module_state".into(), "account_asset_balances".into()],
+            }],
+            vec![raw_put(
+                &["module_state", "treasury_settled_nov_total"],
+                b"\0",
+            )],
+        ] {
+            assert!(apply_raw_changes_to_overlay_v1(&mut overlay, &changes).is_err());
+            assert_eq!(overlay.root(), initial);
+        }
+        // A valid outer blob/leaf cannot hide an NSV1 original-path mismatch.
+        let parts = vec!["module_state".into(), "treasury_settled_nov_total".into()];
+        overlay
+            .stage(&[RecordChange::Put {
+                key: key(&parts).unwrap(),
+                value: value(
+                    &["module_state".into(), "treasury_settlements".into()],
+                    b"1",
+                )
+                .unwrap(),
+            }])
+            .unwrap();
+        let bad_root = overlay.root();
+        assert!(apply_raw_changes_to_overlay_v1(
+            &mut overlay,
+            &[raw_put(
+                &["module_state", "treasury_settled_nov_total"],
+                b"1"
+            )]
+        )
+        .is_err());
+        assert_eq!(overlay.root(), bad_root);
+    }
 
     #[test]
     fn store_records_losslessly_preserve_u128_and_empty_accounts() {

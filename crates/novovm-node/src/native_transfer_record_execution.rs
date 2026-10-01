@@ -16,9 +16,54 @@ use super::native_transfer_dispatch::{Item, TransferReceiptFinalizerV1};
 use super::native_transfer_state_access::TransferAccessV1;
 use super::*;
 use crate::native_state_records::{
-    RecordChange, RecordOverlayV1, StagedRecordUpdate, StateRecordReader,
+    read_record, visit_records, RecordChange, RecordOverlayV1, RecordScanBudget,
+    RecordStatsDeltaV1, StagedRecordUpdate, StateRecordReader,
 };
 use crate::native_state_tree::{NodeHash, StateNodeReader};
+use std::cell::RefCell;
+
+/// Bounded, execution-local immutable content cache. No roots, verification
+/// permissions or negative lookups survive this call. Traversals still verify
+/// node/blob hashes; shared paths need not repeat AOEM database reads.
+struct ExecutionReader<'a> {
+    inner: &'a dyn StateRecordReader,
+    nodes: RefCell<BTreeMap<NodeHash, Vec<u8>>>,
+    chunks: RefCell<BTreeMap<(NodeHash, u32), Vec<u8>>>,
+}
+
+impl StateNodeReader for ExecutionReader<'_> {
+    fn read_node(&self, hash: &NodeHash) -> Result<Option<Vec<u8>>> {
+        if let Some(value) = self.nodes.borrow().get(hash) {
+            return Ok(Some(value.clone()));
+        }
+        let value = self.inner.read_node(hash)?;
+        if let Some(bytes) = &value {
+            crate::native_state_tree::validate_state_node_bytes(hash, bytes)?;
+            if self.nodes.borrow().len() < 16_384 {
+                self.nodes.borrow_mut().insert(*hash, bytes.clone());
+            }
+        }
+        Ok(value)
+    }
+}
+impl StateRecordReader for ExecutionReader<'_> {
+    fn read_record_chunk(&self, hash: NodeHash, index: u32) -> Result<Option<Vec<u8>>> {
+        let key = (hash, index);
+        if let Some(value) = self.chunks.borrow().get(&key) {
+            return Ok(Some(value.clone()));
+        }
+        let value = self.inner.read_record_chunk(hash, index)?;
+        if let Some(bytes) = &value {
+            if bytes.len() > crate::native_state_records::RECORD_CHUNK_BYTES_V1 {
+                bail!("rooted transfer inherited record chunk exceeds codec bound");
+            }
+            if self.chunks.borrow().len() < 4_096 {
+                self.chunks.borrow_mut().insert(key, bytes.clone());
+            }
+        }
+        Ok(value)
+    }
+}
 
 struct EmptyReader;
 impl StateNodeReader for EmptyReader {
@@ -70,6 +115,208 @@ impl NativeRecordAccessV1 for EncodedAccess<'_> {
             raw.to_vec()
         }))
     }
+}
+
+/// A single authenticated physical view plus its independently committed state
+/// and receipt roots. Every requested consensus-bearing value is cross-checked;
+/// a hash-correct physical tree alone is not a business-state authority.
+struct RootedAccess<'a, 'r> {
+    physical: &'a RecordOverlayV1<'r>,
+    state: &'a RecordOverlayV1<'r>,
+    receipts: &'a RecordOverlayV1<'r>,
+}
+
+impl NativeRecordAccessV1 for RootedAccess<'_, '_> {
+    fn read_path(&self, path: &[&str]) -> Result<Option<Vec<u8>>> {
+        let raw = self.physical.read_path(path)?;
+        let owned: Vec<_> = path.iter().map(|part| (*part).to_owned()).collect();
+        let change = match &raw {
+            Some(value) => RawPathChangeV1::Put {
+                path: owned,
+                value: value.clone(),
+            },
+            None => RawPathChangeV1::Delete { path: owned },
+        };
+        if let Some(change) = consensus::consensus_change_v1(&change)? {
+            let (key, expected) = match change {
+                RecordChange::Put { key, value } => (key, Some(value)),
+                RecordChange::Delete { key } => (key, None),
+            };
+            if read_record(self.state, self.state.root(), &key)? != expected {
+                bail!("rooted transfer physical/state read mismatch");
+            }
+        }
+        if let ["receipts", hash] = path {
+            let key = parse_fixed_hex_32_v1(hash, "rooted transfer receipt key")?;
+            let expected = raw
+                .as_ref()
+                .map(|value| -> Result<Vec<u8>> {
+                    let receipt: NovNativeExecutionReceiptV1 = serde_json::from_slice(value)?;
+                    let RecordChange::Put { key: actual, value } =
+                        consensus::receipt_change_v1(&receipt)?
+                    else {
+                        bail!("receipt projection must be a put");
+                    };
+                    if actual != key {
+                        bail!("rooted transfer physical receipt key mismatch");
+                    }
+                    Ok(value)
+                })
+                .transpose()?;
+            if read_record(self.receipts, self.receipts.root(), &key)? != expected {
+                bail!("rooted transfer physical/receipt read mismatch");
+            }
+        }
+        Ok(raw)
+    }
+}
+
+/// Isolated updates, never authority. The physical statistics count live NRB1
+/// blob bytes, not disk writes. Only the caller's existing output protocol may
+/// publish their completion and subsequently seek BFT promotion.
+pub(super) struct RootedTransferUpdateV1 {
+    pub physical: StagedRecordUpdate,
+    pub state: StagedRecordUpdate,
+    pub receipts: StagedRecordUpdate,
+    pub stats: RecordStatsDeltaV1,
+    pub peak_inflight: usize,
+}
+
+/// The caller has verified all three parent roots and authenticated the entire
+/// candidate. This function neither imports nor scans historical state. Only
+/// declared account/nonce/fee/window records are loaded and changed.
+pub(super) fn execute_rooted_segment_v1(
+    reader: &dyn StateRecordReader,
+    physical_root: NodeHash,
+    state_root: NodeHash,
+    receipt_root: NodeHash,
+    items: &[Item<'_>],
+    now_ms: u128,
+) -> Result<RootedTransferUpdateV1> {
+    let reader = ExecutionReader {
+        inner: reader,
+        nodes: RefCell::new(BTreeMap::new()),
+        chunks: RefCell::new(BTreeMap::new()),
+    };
+    let mut physical = RecordOverlayV1::new(&reader, physical_root);
+    let mut state = RecordOverlayV1::new(&reader, state_root);
+    let mut receipts = RecordOverlayV1::new(&reader, receipt_root);
+    let batch: Vec<_> = items
+        .iter()
+        .map(|item| (item.transaction, item.reservation))
+        .collect();
+    let mut sparse = TransferAccessV1::for_batch(&batch)?.load(&RootedAccess {
+        physical: &physical,
+        state: &state,
+        receipts: &receipts,
+    })?;
+    let peak_inflight = native_transfer_dispatch::execute_with_finalizer_v1(
+        sparse.working_store_mut(),
+        items,
+        now_ms,
+        &mut RecordFinalizer {
+            state: &mut state,
+            receipts: &mut receipts,
+            before: None,
+        },
+    )?;
+    // Unique sorted paths put new parent markers before children, including
+    // across staging calls. Bound each call, not the whole candidate's writes.
+    let changes = sparse.changed_records()?;
+    let mut stats = RecordStatsDeltaV1::default();
+    let mut offset = 0;
+    while offset < changes.len() {
+        let mut end = offset;
+        let mut bytes = 0usize;
+        while end < changes.len() && end - offset < 128 {
+            let cost = match &changes[end] {
+                RawPathChangeV1::Put { value, .. } => value.len().saturating_add(512),
+                RawPathChangeV1::Delete { .. } => 512,
+            };
+            if end != offset && bytes.saturating_add(cost) > 8 * 1024 * 1024 {
+                break;
+            }
+            bytes = bytes
+                .checked_add(cost)
+                .context("record patch byte overflow")?;
+            end += 1;
+        }
+        let delta =
+            physical::apply_raw_changes_to_overlay_v1(&mut physical, &changes[offset..end])?;
+        stats.records = stats
+            .records
+            .checked_add(delta.records)
+            .context("record count delta overflow")?;
+        stats.blob_bytes = stats
+            .blob_bytes
+            .checked_add(delta.blob_bytes)
+            .context("record byte delta overflow")?;
+        offset = end;
+    }
+    Ok(RootedTransferUpdateV1 {
+        physical: physical.finish(),
+        state: state.finish(),
+        receipts: receipts.finish(),
+        stats,
+        peak_inflight,
+    })
+}
+
+pub(super) struct UpdatedReaderV1<'a> {
+    pub reader: &'a dyn StateRecordReader,
+    pub update: &'a StagedRecordUpdate,
+}
+impl StateNodeReader for UpdatedReaderV1<'_> {
+    fn read_node(&self, hash: &NodeHash) -> Result<Option<Vec<u8>>> {
+        match self.update.nodes().get(hash) {
+            Some(bytes) => Ok(Some(bytes.clone())),
+            None => self.reader.read_node(hash),
+        }
+    }
+}
+impl StateRecordReader for UpdatedReaderV1<'_> {
+    fn read_record_chunk(&self, hash: NodeHash, index: u32) -> Result<Option<Vec<u8>>> {
+        let Some(blob) = self.update.blobs().get(&hash) else {
+            return self.reader.read_record_chunk(hash, index);
+        };
+        let start = usize::try_from(index)?
+            .checked_mul(512)
+            .context("rooted transfer record chunk overflow")?;
+        Ok(blob
+            .get(start..)
+            .map(|tail| tail[..tail.len().min(512)].to_vec()))
+    }
+}
+
+/// Explicit cold bridge for current output validation and mixed Execute
+/// compatibility. It is not called inside the rooted transaction executor.
+pub(super) fn materialize_update_v1(
+    reader: &dyn StateRecordReader,
+    update: &StagedRecordUpdate,
+    records: usize,
+    blob_bytes: usize,
+) -> Result<NovNativeExecutionStoreV1> {
+    let reader = UpdatedReaderV1 { reader, update };
+    let mut values = BTreeMap::new();
+    let stats = visit_records(
+        &reader,
+        update.root(),
+        RecordScanBudget {
+            max_nodes: records.checked_mul(2).context("record count overflow")?,
+            max_records: records,
+            max_bytes: blob_bytes,
+        },
+        &mut |key, value| {
+            if values.insert(key.to_vec(), value.to_vec()).is_some() {
+                bail!("duplicate rooted transfer output record");
+            }
+            Ok(())
+        },
+    )?;
+    if stats.records != records || stats.bytes != blob_bytes {
+        bail!("rooted transfer output statistics mismatch");
+    }
+    physical::decode(values)
 }
 
 /// Diff only a bounded sparse view. Changes are subsequently checked against

@@ -83,6 +83,26 @@ fn candidate_workspace_transfer_mixed_execute_fee_nonce_and_recovery() {
 }
 
 #[test]
+fn candidate_workspace_record_bundle_documents_recover_without_repair() {
+    transfer_candidate_on_runtime_stack(|| {
+        let _guard = PLAN_RUNTIME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        with_plan_runtime(|path, params| {
+            funded_candidate_parent(
+                path,
+                params,
+                98_919_725,
+                &[[0xa1; 32]],
+                raw_fixture(98_919_725, 1725),
+            );
+            workspace::exercise_record_profile_document_storage_for_test(98_919_725, params)
+                .unwrap();
+        });
+    });
+}
+
+#[test]
 fn candidate_workspace_record_documents_exceed_old_snapshot_limit_and_reopen() {
     transfer_candidate_on_runtime_stack(|| {
         let _guard = PLAN_RUNTIME_TEST_LOCK

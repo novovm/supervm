@@ -2,6 +2,228 @@
 // validator keys below are isolated test fixtures, not a network acceptance run.
 
 #[test]
+fn candidate_workspace_record_profile_legacy_record_output_four_stage_recovery() {
+    transfer_candidate_on_runtime_stack(|| {
+        use crate::tx_ingress::fresh_genesis::{
+            publication::{publish_v1, verify_persisted_v1},
+            FreshGenesisConfigV1, GenesisAllocationV1, GenesisValidatorV1,
+            GENESIS_SCHEMA_RECORD_V2,
+        };
+        use workspace::ExecutionCheckpointV1 as Stage;
+        let _guard = PLAN_RUNTIME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        with_plan_runtime(|path, params| {
+            let chain = 98_919_726;
+            let (payer, recipient) = ([0x79; 32], [0x7a; 32]);
+            let config = FreshGenesisConfigV1 {
+                schema: GENESIS_SCHEMA_RECORD_V2.into(),
+                chain_id: chain,
+                timestamp_unix_ms: 1_900_000_000_789,
+                protocol_config_commitment: parse_fixed_hex_32_v1(
+                    &native_business_protocol_config_commitment_v1().unwrap(),
+                    "protocol",
+                )
+                .unwrap(),
+                allocations: vec![GenesisAllocationV1 {
+                    account: novovm_adapter_novovm::address_from_seed_v1(payer)
+                        .try_into()
+                        .unwrap(),
+                    nov: "1000".into(),
+                }],
+                total_initial_nov: "1000".into(),
+                validators: (1..=4)
+                    .map(|seed| GenesisValidatorV1 {
+                        public_key: ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+                            .verifying_key()
+                            .to_bytes(),
+                        weight: 1,
+                    })
+                    .collect(),
+            };
+            let compiled = config.compile().unwrap();
+            let pin = compiled.config_commitment();
+            let namespace = parse_fixed_hex_32_v1(
+                &native_aoem_owned_state_namespace_digest_v1(params, chain),
+                "namespace",
+            )
+            .unwrap();
+            let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
+            NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(
+                &ledger, &config, pin, namespace,
+            )
+            .unwrap();
+            publish_v1(chain, pin, params).unwrap();
+            let head_key = native_aoem_owned_state_head_key_v1(chain, &to_hex(&namespace));
+            let authority = candidate_workspace_graph(params).get(&head_key).unwrap();
+            let host_before = load_nov_native_execution_store_v1(path).unwrap();
+            let genesis_before =
+                serde_json::to_vec(&verify_persisted_v1(chain, pin, params).unwrap()).unwrap();
+            let assert_authority_unchanged = || {
+                assert_eq!(
+                    candidate_workspace_graph(params).get(&head_key).unwrap(),
+                    authority
+                );
+                assert_eq!(
+                    load_nov_native_execution_store_v1(path).unwrap(),
+                    host_before
+                );
+                assert_eq!(
+                    serde_json::to_vec(&verify_persisted_v1(chain, pin, params).unwrap()).unwrap(),
+                    genesis_before
+                );
+                assert!(
+                    NovNativeBlockLedgerV1::load_fresh_genesis_published_block_v1(
+                        &ledger, pin, namespace
+                    )
+                    .unwrap()
+                    .is_none()
+                );
+            };
+            let plan_for = |amount| {
+                make_plan(
+                    NovBlockExecutionContextV1 {
+                        chain_id: chain,
+                        block_height: 1,
+                        parent_block_hash: [0; 32],
+                        slot: 1,
+                        timestamp_unix_ms: config.timestamp_unix_ms,
+                    },
+                    compiled.state_root(),
+                    None,
+                    vec![transfer_candidate_raw(chain, 0, payer, recipient, amount)],
+                )
+            };
+            for (index, stage) in [
+                Stage::OutputReserved,
+                Stage::PartialOutput,
+                Stage::OutputWritten,
+                Stage::Completed,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let amount = index as u128 + 1;
+                let plan = plan_for(amount);
+                let ready = workspace::create_from_genesis_v1(&plan, pin, params).unwrap();
+                let digest = workspace::seed_legacy_record_output_for_test_v1(
+                    chain,
+                    ready.workspace_id,
+                    params,
+                    stage,
+                    false,
+                )
+                .unwrap();
+                assert_eq!(
+                    workspace::load_execution_v1(chain, ready.workspace_id, params)
+                        .unwrap()
+                        .is_some(),
+                    stage == Stage::Completed
+                );
+                // Every API opens a new workspace handle. Reset the execution
+                // session too: recovery must be based on durable old bytes.
+                reset_native_aoem_semantic_ingress_session_v1();
+                let checkpoints = std::cell::RefCell::new(Vec::new());
+                let recovered = workspace::execute_with_checkpoint_v1(
+                    chain,
+                    ready.workspace_id,
+                    params,
+                    |checkpoint| {
+                        if matches!(stage, Stage::OutputWritten | Stage::Completed) {
+                            assert_eq!(
+                                checkpoint,
+                                Stage::Completed,
+                                "fully written record/v1 output must not re-execute"
+                            );
+                        }
+                        checkpoints.borrow_mut().push(checkpoint);
+                        Ok(())
+                    },
+                )
+                .unwrap();
+                let expected = match stage {
+                    Stage::OutputWritten => vec![Stage::Completed],
+                    Stage::Completed => vec![],
+                    _ => vec![
+                        Stage::OutputReserved,
+                        Stage::PartialOutput,
+                        Stage::OutputWritten,
+                        Stage::Completed,
+                    ],
+                };
+                assert_eq!(*checkpoints.borrow(), expected);
+                assert_candidate_workspace_execution_complete(&recovered);
+                assert_eq!(
+                    recovered.output_digest, digest,
+                    "record/v1 reserved digest must not be upgraded to record/v2"
+                );
+                assert_eq!(
+                    workspace::execute_v1(chain, ready.workspace_id, params)
+                        .unwrap()
+                        .output_digest,
+                    digest
+                );
+                let store = workspace::load_typed_execution_snapshot_for_test_v1(
+                    chain,
+                    ready.workspace_id,
+                    params,
+                )
+                .unwrap();
+                let fee = transfer_candidate_fee(&plan.raw_txs[0]);
+                assert_eq!(
+                    native_account_asset_balance_v1(
+                        &store,
+                        &transfer_candidate_account(payer),
+                        "NOV"
+                    ),
+                    1000 - amount - fee
+                );
+                assert_eq!(
+                    native_account_asset_balance_v1(
+                        &store,
+                        &transfer_candidate_account(recipient),
+                        "NOV"
+                    ),
+                    amount
+                );
+                let reservation = transfer_candidate_reservation(&plan.raw_txs[0]);
+                assert_eq!(
+                    store.module_state.native_auth_next_nonces[&reservation.identity_key],
+                    1
+                );
+                assert_eq!(store.module_state.aoem_semantic_ledger_sequence, 1);
+                assert_eq!(store.receipts.len(), 1);
+                assert_eq!(store.receipts[&reservation.tx_hash].settled_fee_nov, fee);
+                assert_authority_unchanged();
+            }
+            let bad = plan_for(19);
+            let ready = workspace::create_from_genesis_v1(&bad, pin, params).unwrap();
+            workspace::seed_legacy_record_output_for_test_v1(
+                chain,
+                ready.workspace_id,
+                params,
+                Stage::OutputReserved,
+                true,
+            )
+            .unwrap();
+            reset_native_aoem_semantic_ingress_session_v1();
+            let error =
+                workspace::execute_with_checkpoint_v1(chain, ready.workspace_id, params, |_| {
+                    panic!("corrupt record/v1 reservation cannot publish or replace output")
+                })
+                .unwrap_err();
+            assert!(error.to_string().contains("reserved bytes"), "{error:#}");
+            assert!(
+                workspace::load_execution_v1(chain, ready.workspace_id, params)
+                    .unwrap()
+                    .is_none()
+            );
+            assert_authority_unchanged();
+        });
+    });
+}
+
+#[test]
 fn candidate_workspace_record_profile_fresh_transfers_recover_and_finalize() {
     transfer_candidate_on_runtime_stack(exercise_record_profile_fresh_transfers);
 }
@@ -802,4 +1024,403 @@ fn finalize_record_candidate_fixture(
     let finalized =
         workspace::finalize_genesis_promotion_v1(chain, id, pin, &proof, params).unwrap();
     assert!(finalized.finalized && finalized.ledger_publication_completed);
+}
+
+#[derive(Clone, Default)]
+struct RootedTransferCountingReader {
+    nodes: BTreeMap<[u8; 32], Vec<u8>>,
+    blobs: BTreeMap<[u8; 32], Vec<u8>>,
+    measure: std::cell::Cell<bool>,
+    node_reads: std::cell::Cell<usize>,
+    chunk_reads: std::cell::Cell<usize>,
+    record_keys: std::cell::RefCell<std::collections::BTreeSet<Vec<u8>>>,
+}
+
+impl RootedTransferCountingReader {
+    fn absorb(&mut self, update: &crate::native_state_records::StagedRecordUpdate) {
+        for (hash, bytes) in update.nodes() {
+            if let Some(previous) = self.nodes.insert(*hash, bytes.clone()) {
+                assert_eq!(previous, *bytes, "immutable test node changed");
+            }
+        }
+        for (hash, bytes) in update.blobs() {
+            if let Some(previous) = self.blobs.insert(*hash, bytes.clone()) {
+                assert_eq!(previous, *bytes, "immutable test blob changed");
+            }
+        }
+    }
+
+    fn begin_measurement(&self) {
+        self.node_reads.set(0);
+        self.chunk_reads.set(0);
+        self.record_keys.borrow_mut().clear();
+        self.measure.set(true);
+    }
+
+    fn end_measurement(&self) -> (usize, usize, std::collections::BTreeSet<Vec<u8>>) {
+        self.measure.set(false);
+        (
+            self.node_reads.get(),
+            self.chunk_reads.get(),
+            self.record_keys.borrow().clone(),
+        )
+    }
+}
+
+impl crate::native_state_tree::StateNodeReader for RootedTransferCountingReader {
+    fn read_node(&self, hash: &[u8; 32]) -> Result<Option<Vec<u8>>> {
+        if self.measure.get() {
+            self.node_reads.set(self.node_reads.get() + 1);
+        }
+        Ok(self.nodes.get(hash).cloned())
+    }
+}
+
+impl crate::native_state_records::StateRecordReader for RootedTransferCountingReader {
+    fn read_record_chunk(&self, hash: [u8; 32], index: u32) -> Result<Option<Vec<u8>>> {
+        if self.measure.get() {
+            self.chunk_reads.set(self.chunk_reads.get() + 1);
+        }
+        let Some(blob) = self.blobs.get(&hash) else {
+            return Ok(None);
+        };
+        if self.measure.get() {
+            self.record_keys
+                .borrow_mut()
+                .insert(rooted_transfer_test_blob_parts(blob).0.to_vec());
+        }
+        let start = usize::try_from(index)?
+            .checked_mul(crate::native_state_records::RECORD_CHUNK_BYTES_V1)
+            .context("test record chunk offset overflow")?;
+        Ok(blob.get(start..).map(|tail| {
+            tail[..tail
+                .len()
+                .min(crate::native_state_records::RECORD_CHUNK_BYTES_V1)]
+                .to_vec()
+        }))
+    }
+}
+
+// Inspect only our own canonical fixture blobs to attribute measured reads.
+// Production parsing/hash validation remains in read_record, never this helper.
+fn rooted_transfer_test_blob_parts(blob: &[u8]) -> (&[u8], &[u8]) {
+    assert_eq!(&blob[..4], b"NRB1");
+    let key_end = 10 + usize::from(u16::from_be_bytes(blob[4..6].try_into().unwrap()));
+    (&blob[10..key_end], &blob[key_end..])
+}
+
+#[test]
+fn candidate_workspace_record_profile_rooted_transfer_point_reads_ignore_unrelated_history() {
+    transfer_candidate_on_runtime_stack(|| {
+        use crate::native_state_records::{stage_record_update, RecordChange};
+        use crate::native_state_tree::empty_root;
+        let _guard = PLAN_RUNTIME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        with_plan_runtime(|_path, params| {
+            let chain = 98_919_731;
+            let (payer_seed, recipient_seed) = ([0x7a; 32], [0x7b; 32]);
+            let raw = transfer_candidate_raw(chain, 0, payer_seed, recipient_seed, 17);
+            let transaction = decode_nov_native_tx_wire_v1(&raw).unwrap();
+            let ir = nov_native_tx_to_adapter_tx_ir_v1(&transaction).unwrap();
+            let tx_hash = tx_hash_array_from_ir_v1(&ir);
+            // Real signature verification precedes every execution fixture.
+            verify_nov_native_auth_v1(params, &transaction, &ir, tx_hash).unwrap();
+            let reservation = transfer_candidate_reservation(&raw);
+            let request = native_transfer_dispatch::fee_request_v1(&transaction, tx_hash).unwrap();
+            let subject = fallback_execution_subject_meta_v1(&request);
+            let ingress = NovAoemSemanticIngressMetaV1 {
+                execution_kernel: "AOEM".into(),
+                semantic_entry: "test.rooted_transfer.compute".into(),
+                plan_id: 731,
+                wire_digest: to_hex(&sha256_bytes_v1(&[&raw])),
+                // This component test submits real generic compute tasks, not
+                // the candidate's separate raw-wire precommit. Do not claim it.
+                ..Default::default()
+            };
+            let item = || native_transfer_dispatch::Item {
+                transaction: &transaction,
+                request: &request,
+                subject: &subject,
+                reservation: &reservation,
+                ingress: ingress.clone(),
+            };
+            let mut measurements = Vec::new();
+            for history in [0usize, 1024] {
+                let mut original = NovNativeExecutionStoreV1 {
+                    authority_chain_id: Some(chain),
+                    authority_namespace_digest: native_aoem_owned_state_namespace_digest_v1(
+                        params, chain,
+                    ),
+                    ..Default::default()
+                };
+                bind_native_business_protocol_config_v1(&mut original).unwrap();
+                original.module_state.account_asset_balances.insert(
+                    subject.account_id.clone(),
+                    BTreeMap::from([("NOV".into(), 10_000), ("USDT".into(), 91)]),
+                );
+                original.module_state.account_asset_balances.insert(
+                    transfer_candidate_account(recipient_seed),
+                    BTreeMap::from([("NOV".into(), 20)]),
+                );
+                let mut historical_keys = std::collections::BTreeSet::new();
+                for index in 0..history {
+                    let account = format!("unrelated-history-{index}");
+                    original.module_state.account_asset_balances.insert(
+                        account.clone(),
+                        BTreeMap::from([("NOV".into(), u128::MAX - index as u128)]),
+                    );
+                    historical_keys.insert(
+                        native_store_records::key(&[
+                            "module_state".into(),
+                            "account_asset_balances".into(),
+                            account.clone(),
+                        ])
+                        .unwrap(),
+                    );
+                    historical_keys.insert(
+                        native_store_records::key(&[
+                            "module_state".into(),
+                            "account_asset_balances".into(),
+                            account,
+                            "NOV".into(),
+                        ])
+                        .unwrap(),
+                    );
+                }
+                // Deliberately seed unrelated record history, not a claimed
+                // independently finalized chain. The executor consumes trusted
+                // tree roots; full candidate/authority gates are tested above.
+                for index in 0..usize::from(history != 0) * 100 {
+                    let mut receipt = build_failed_native_receipt_v1(
+                        &request,
+                        &unresolved_settled_fee_v1(&request),
+                        &subject,
+                        "fee".into(),
+                        "quote".into(),
+                        "old fixture receipt".into(),
+                    );
+                    receipt.tx_hash = format!("{:064x}", index + 1);
+                    historical_keys.insert(
+                        native_store_records::key(&["receipts".into(), receipt.tx_hash.clone()])
+                            .unwrap(),
+                    );
+                    historical_keys.insert(
+                        parse_fixed_hex_32_v1(&receipt.tx_hash, "old receipt")
+                            .unwrap()
+                            .to_vec(),
+                    );
+                    original.receipts.insert(receipt.tx_hash.clone(), receipt);
+                }
+                let physical_records = native_store_records::encode(&original).unwrap();
+                let parent_records = physical_records.len();
+                let parent_bytes = physical_records
+                    .iter()
+                    .map(|(key, value)| 10 + key.len() + value.len())
+                    .sum::<usize>();
+                let physical = stage_record_update(
+                    &RootedTransferCountingReader::default(),
+                    empty_root(),
+                    &physical_records
+                        .into_iter()
+                        .map(|(key, value)| RecordChange::Put { key, value })
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap();
+                let state = native_record_commitment::stage_consensus_import_v1(
+                    &RootedTransferCountingReader::default(),
+                    &original.module_state,
+                )
+                .unwrap();
+                let receipts = native_record_commitment::stage_receipt_import_v1(
+                    &RootedTransferCountingReader::default(),
+                    &original,
+                )
+                .unwrap();
+                let mut reader = RootedTransferCountingReader::default();
+                for update in [&physical, &state, &receipts] {
+                    reader.absorb(update);
+                }
+
+                // Imports are complete before counters start. No scan/import or
+                // cold materialization is part of the measured execution scope.
+                reader.begin_measurement();
+                let update = native_transfer_record_execution::execute_rooted_segment_v1(
+                    &reader,
+                    physical.root(),
+                    state.root(),
+                    receipts.root(),
+                    &[item()],
+                    123,
+                )
+                .unwrap();
+                let measured = reader.end_measurement();
+                assert_eq!(
+                    update.peak_inflight, 1,
+                    "one real AOEM callback must execute"
+                );
+                assert!(measured.0 > 0 && measured.1 > 0);
+                assert!(
+                    measured.2.is_disjoint(&historical_keys),
+                    "rooted computation read an unrelated historical blob"
+                );
+                eprintln!("rooted transfer history_accounts={history} historical_receipts={} node_reads={} chunk_reads={} unique_record_keys={} peak_inflight={}", usize::from(history != 0) * 100, measured.0, measured.1, measured.2.len(), update.peak_inflight);
+                measurements.push(measured);
+
+                let (records, bytes) = update
+                    .stats
+                    .checked_apply(parent_records, parent_bytes)
+                    .unwrap();
+                let actual = native_transfer_record_execution::materialize_update_v1(
+                    &reader,
+                    &update.physical,
+                    records,
+                    bytes,
+                )
+                .unwrap();
+                let mut serial = original.clone();
+                native_transfer_record_execution::execute_segment_v1(&mut serial, &[item()], 123)
+                    .unwrap();
+                assert_eq!(actual, serial, "rooted and cold scheduling must preserve complete state, receipts, fees and nonce");
+                assert_eq!(
+                    serde_json::to_vec(&actual).unwrap(),
+                    serde_json::to_vec(&serial).unwrap()
+                );
+                assert_eq!(
+                    native_record_commitment::consensus_state_root_v1(&actual.module_state)
+                        .unwrap(),
+                    update.state.root()
+                );
+                assert_eq!(
+                    native_record_commitment::cumulative_receipt_root_v1(&actual).unwrap(),
+                    update.receipts.root()
+                );
+                let fee = transfer_candidate_fee(&raw);
+                assert_eq!(
+                    native_account_asset_balance_v1(&actual, &subject.account_id, "NOV"),
+                    10_000 - 17 - fee
+                );
+                assert_eq!(
+                    native_account_asset_balance_v1(
+                        &actual,
+                        &transfer_candidate_account(recipient_seed),
+                        "NOV"
+                    ),
+                    37
+                );
+                assert_eq!(
+                    actual.module_state.native_auth_next_nonces[&reservation.identity_key],
+                    1
+                );
+                assert_eq!(actual.receipts[&reservation.tx_hash].settled_fee_nov, fee);
+                assert_eq!(actual.module_state.treasury_reserves["NOV"], fee);
+
+                if history == 0 {
+                    let mut wrong = original.clone();
+                    wrong
+                        .module_state
+                        .account_asset_balances
+                        .get_mut(&subject.account_id)
+                        .unwrap()
+                        .insert("NOV".into(), 9_999);
+                    let wrong_state = native_record_commitment::stage_consensus_import_v1(
+                        &RootedTransferCountingReader::default(),
+                        &wrong.module_state,
+                    )
+                    .unwrap();
+                    reader.absorb(&wrong_state);
+                    let error = native_transfer_record_execution::execute_rooted_segment_v1(
+                        &reader,
+                        physical.root(),
+                        wrong_state.root(),
+                        receipts.root(),
+                        &[item()],
+                        123,
+                    )
+                    .err()
+                    .expect("different state root must be rejected");
+                    assert!(
+                        format!("{error:#}").contains("physical/state read mismatch"),
+                        "{error:#}"
+                    );
+
+                    let mut wrong = original.clone();
+                    wrong.receipts.insert(
+                        reservation.tx_hash.clone(),
+                        actual.receipts[&reservation.tx_hash].clone(),
+                    );
+                    let wrong_receipts = native_record_commitment::stage_receipt_import_v1(
+                        &RootedTransferCountingReader::default(),
+                        &wrong,
+                    )
+                    .unwrap();
+                    reader.absorb(&wrong_receipts);
+                    let error = native_transfer_record_execution::execute_rooted_segment_v1(
+                        &reader,
+                        physical.root(),
+                        state.root(),
+                        wrong_receipts.root(),
+                        &[item()],
+                        123,
+                    )
+                    .err()
+                    .expect("different receipt root must be rejected");
+                    assert!(
+                        format!("{error:#}").contains("physical/receipt read mismatch"),
+                        "{error:#}"
+                    );
+
+                    let payer_key = native_store_records::key(&[
+                        "module_state".into(),
+                        "account_asset_balances".into(),
+                        subject.account_id.clone(),
+                        "NOV".into(),
+                    ])
+                    .unwrap();
+                    let blob_hash = physical
+                        .blobs()
+                        .iter()
+                        .find_map(|(hash, blob)| {
+                            let (key, value) = rooted_transfer_test_blob_parts(blob);
+                            (key == payer_key && value.starts_with(b"NSV1")).then_some(*hash)
+                        })
+                        .expect("payer's physical NOV record blob");
+                    let mut missing = reader.clone();
+                    missing.blobs.remove(&blob_hash);
+                    let error = native_transfer_record_execution::execute_rooted_segment_v1(
+                        &missing,
+                        physical.root(),
+                        state.root(),
+                        receipts.root(),
+                        &[item()],
+                        123,
+                    )
+                    .err()
+                    .expect("missing touched blob cannot synthesize a zero balance");
+                    assert!(
+                        format!("{error:#}").contains("state record chunk missing"),
+                        "{error:#}"
+                    );
+                }
+            }
+            let small = &measurements[0];
+            let large = &measurements[1];
+            assert_eq!(
+                large.1, small.1,
+                "adding unrelated history must not add record-blob reads"
+            );
+            assert_eq!(
+                large.2, small.2,
+                "record access set must depend on the transfer, not history"
+            );
+            // Patricia traversal grows with key-path depth, not a full-tree
+            // scan. The exact blob-set assertion above is the stronger guard.
+            assert!(
+                large.0 <= small.0 * 4 + 128,
+                "unexpected node-read growth: small={} large={}",
+                small.0,
+                large.0
+            );
+        });
+    });
 }

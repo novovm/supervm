@@ -19,9 +19,9 @@ pub const RECORD_CHUNK_BYTES_V1: usize = 512;
 const MAX_KEY_BYTES: usize = 256;
 const BLOB_HEADER_BYTES: usize = 10;
 const LEAF_BYTES: usize = 40;
-const MAX_STAGE_CHANGES: usize = 4096;
+pub(crate) const MAX_STAGE_CHANGES: usize = 4096;
 // One staging call is bounded. An overlay can combine calls against one root.
-const MAX_STAGE_BLOB_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_STAGE_BLOB_BYTES: usize = 16 * 1024 * 1024;
 const MAX_BLOB_BYTES: usize = BLOB_HEADER_BYTES + MAX_KEY_BYTES + MAX_RECORD_VALUE_BYTES_V1;
 pub type StateRecordVisitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<()> + 'a;
 
@@ -78,6 +78,31 @@ pub struct RecordScanStats {
     pub nodes: usize,
     pub records: usize,
     pub bytes: usize,
+}
+
+/// Change in live records and canonical NRB1 blob bytes at the new root, not
+/// cumulative disk writes, retained history, tree nodes or authority metadata.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RecordStatsDeltaV1 {
+    pub records: i128,
+    pub blob_bytes: i128,
+}
+
+impl RecordStatsDeltaV1 {
+    /// The supplied totals must already belong to the independently verified
+    /// parent root. This arithmetic cannot establish or repair their truth.
+    pub fn checked_apply(self, records: usize, blob_bytes: usize) -> Result<(usize, usize)> {
+        fn apply(base: usize, delta: i128) -> Result<usize> {
+            let next = i128::try_from(base)?
+                .checked_add(delta)
+                .context("record statistics overflow")?;
+            usize::try_from(next).context("record statistics underflow or overflow")
+        }
+        Ok((
+            apply(records, self.records)?,
+            apply(blob_bytes, self.blob_bytes)?,
+        ))
+    }
 }
 
 fn blob_hash(bytes: &[u8]) -> NodeHash {
@@ -215,11 +240,7 @@ pub fn visit_records(
     Ok(stats)
 }
 
-pub fn stage_record_update(
-    reader: &dyn StateRecordReader,
-    parent_root: NodeHash,
-    changes: &[RecordChange],
-) -> Result<StagedRecordUpdate> {
+fn validate_stage_bounds(changes: &[RecordChange]) -> Result<()> {
     if changes.len() > MAX_STAGE_CHANGES {
         bail!("too many record changes in one stage");
     }
@@ -241,6 +262,15 @@ pub fn stage_record_update(
             bail!("record staging exceeds per-call byte budget");
         }
     }
+    Ok(())
+}
+
+pub fn stage_record_update(
+    reader: &dyn StateRecordReader,
+    parent_root: NodeHash,
+    changes: &[RecordChange],
+) -> Result<StagedRecordUpdate> {
+    validate_stage_bounds(changes)?;
     let mut blobs = BTreeMap::new();
     let mut tree_changes = Vec::with_capacity(changes.len());
     for change in changes {
@@ -325,6 +355,35 @@ impl<'a> RecordOverlayV1<'a> {
         self.update.root = next.root;
         self.update.loaded_nodes = loaded_nodes;
         Ok(())
+    }
+
+    /// Inspect only touched records and stage once. Repeated keys/hashes are
+    /// rejected even for identical puts; missing/corrupt inherited blobs are
+    /// errors, never interpreted as absence or repaired by an overwrite.
+    /// Errors leave the overlay unchanged and return no statistics delta.
+    pub fn stage_with_stats(&mut self, changes: &[RecordChange]) -> Result<RecordStatsDeltaV1> {
+        validate_stage_bounds(changes)?;
+        let mut hashes = std::collections::BTreeSet::new();
+        let mut delta = RecordStatsDeltaV1::default();
+        for change in changes {
+            let (key, new_value) = match change {
+                RecordChange::Put { key, value } => (key, Some(value)),
+                RecordChange::Delete { key } => (key, None),
+            };
+            if !hashes.insert(state_key_hash(key)?) {
+                bail!("duplicate record key or key hash in statistics update");
+            }
+            let old_value = read_record(self, self.root(), key)?;
+            let before = old_value
+                .as_ref()
+                .map(|value| BLOB_HEADER_BYTES + key.len() + value.len());
+            let after = new_value.map(|value| BLOB_HEADER_BYTES + key.len() + value.len());
+            delta.records += i128::from(after.is_some()) - i128::from(before.is_some());
+            delta.blob_bytes +=
+                i128::try_from(after.unwrap_or(0))? - i128::try_from(before.unwrap_or(0))?;
+        }
+        self.stage(changes)?;
+        Ok(delta)
     }
 
     pub fn finish(self) -> StagedRecordUpdate {
@@ -619,6 +678,91 @@ mod tests {
             },
             &mut |_, _| bail!("consumer rejected")
         )
+        .is_err());
+    }
+
+    #[test]
+    fn record_stats_match_live_map_across_put_delete_replace_and_noops() {
+        let memory = Memory::default();
+        let mut overlay = RecordOverlayV1::new(&memory, empty_root());
+        let mut expected = BTreeMap::new();
+        let mut counts = (0usize, 0usize);
+        for index in 0..240usize {
+            let key = (index % 23).to_be_bytes().to_vec();
+            let change = if index % 4 == 0 {
+                expected.remove(&key);
+                RecordChange::Delete { key }
+            } else {
+                let bytes = vec![(index % 7) as u8; index % 47];
+                expected.insert(key.clone(), bytes.clone());
+                put(&key, &bytes)
+            };
+            let delta = overlay
+                .stage_with_stats(std::slice::from_ref(&change))
+                .unwrap();
+            counts = delta.checked_apply(counts.0, counts.1).unwrap();
+            assert_eq!(
+                counts,
+                (
+                    expected.len(),
+                    expected.iter().map(|(k, v)| 10 + k.len() + v.len()).sum()
+                )
+            );
+            let root = overlay.root();
+            assert_eq!(
+                overlay.stage_with_stats(&[change]).unwrap(),
+                RecordStatsDeltaV1::default()
+            );
+            assert_eq!(overlay.root(), root);
+        }
+        assert_eq!(scan(&overlay, overlay.root()).unwrap(), expected);
+    }
+
+    #[test]
+    fn record_stats_reject_bounds_duplicates_and_missing_blobs_without_mutation() {
+        let memory = Memory::default();
+        let mut overlay = RecordOverlayV1::new(&memory, empty_root());
+        for changes in [
+            vec![put(b"a", b"one"), put(b"a", b"one")],
+            vec![
+                put(b"a", b"one"),
+                RecordChange::Delete { key: b"a".to_vec() },
+            ],
+            vec![put(&[], b"invalid")],
+            vec![put(b"a", &vec![0; MAX_RECORD_VALUE_BYTES_V1 + 1])],
+            vec![
+                RecordChange::Delete {
+                    key: b"absent".to_vec()
+                };
+                MAX_STAGE_CHANGES + 1
+            ],
+        ] {
+            assert!(overlay.stage_with_stats(&changes).is_err());
+            assert_eq!(overlay.root(), empty_root());
+        }
+        let mut broken = Memory::default();
+        let update = stage_record_update(&broken, empty_root(), &[put(b"a", b"old")]).unwrap();
+        let root = broken.apply(update);
+        broken.chunks.clear();
+        let mut overlay = RecordOverlayV1::new(&broken, root);
+        assert!(overlay
+            .stage_with_stats(&[put(b"a", b"replacement")])
+            .is_err());
+        assert!(overlay
+            .stage_with_stats(&[RecordChange::Delete { key: b"a".to_vec() }])
+            .is_err());
+        assert_eq!(overlay.root(), root);
+        assert!(RecordStatsDeltaV1 {
+            records: -1,
+            blob_bytes: 0
+        }
+        .checked_apply(0, 1)
+        .is_err());
+        assert!(RecordStatsDeltaV1 {
+            records: 0,
+            blob_bytes: 1
+        }
+        .checked_apply(0, usize::MAX)
         .is_err());
     }
 

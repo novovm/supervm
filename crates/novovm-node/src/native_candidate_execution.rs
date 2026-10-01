@@ -89,6 +89,8 @@ struct Output {
     store: NovNativeExecutionStoreV1,
     #[serde(skip)]
     record_state: Option<state_records::StoreRef>,
+    #[serde(skip)]
+    record_updates: Option<state_records::RecordTreeUpdatesV1>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -378,87 +380,154 @@ fn compute(
     {
         bail!("candidate AOEM precommit did not complete the full authenticated batch");
     }
-    let mut store = payload.parent_store()?.clone();
-    let mut mirror_records = Vec::new();
-    let mut index = 0;
-    while index < items.len() {
-        let item = &items[index];
-        if matches!(item.native_tx.kind, NovTxKindV1::Transfer(_)) {
-            // Execute is a barrier: it may change any balance, policy or fee
-            // state. Only contiguous Transfer runs are submitted together.
-            let end = items[index..]
-                .iter()
-                .position(|item| !matches!(item.native_tx.kind, NovTxKindV1::Transfer(_)))
-                .map_or(items.len(), |offset| index + offset);
-            let transfer_items: Vec<_> = items[index..end]
-                .iter()
-                .enumerate()
-                .map(|(offset, item)| {
-                    let position = index + offset;
-                    native_transfer_dispatch::Item {
-                        transaction: &item.native_tx,
-                        request: &item.execution_request,
-                        subject: &item.execution_subject,
-                        reservation: &item.durable_auth_reservation,
-                        ingress: native_aoem_batch_item_ingress_meta_v1(
-                            &chunks[position / chunk_size],
-                            position,
-                            items.len(),
-                        ),
-                    }
-                })
-                .collect();
-            let now_ms = u128::from(payload.plan.context.timestamp_unix_ms);
-            let _peak = match payload.root_codec_profile()? {
-                NativeRootCodecProfileV1::LegacyWireV1 => native_transfer_dispatch::execute_v1(
-                    &mut store,
-                    &transfer_items,
-                    now_ms,
-                    &mut mirror_records,
-                )?,
-                NativeRootCodecProfileV1::RecordTreeV1 => {
-                    native_transfer_record_execution::execute_segment_v1(
-                        &mut store,
-                        &transfer_items,
-                        now_ms,
-                    )?
-                }
-            };
-            #[cfg(test)]
-            eprintln!(
-                "fresh candidate AOEM transfer tasks={} peak_inflight={_peak}",
-                end - index
-            );
-            index = end;
-            continue;
+    let rooted = if profile == NativeRootCodecProfileV1::RecordTreeV1
+        && items
+            .iter()
+            .all(|item| matches!(item.native_tx.kind, NovTxKindV1::Transfer(_)))
+    {
+        payload
+            .record_state
+            .as_ref()
+            .map(|reference| reference.rooted_parts())
+            .transpose()?
+            .flatten()
+    } else {
+        None
+    };
+    let mut record_updates = None;
+    let mut store;
+    if let Some((physical_root, state_root, receipt_root, records, blob_bytes)) = rooted {
+        if state_root != payload.plan.pre_state_root {
+            bail!("rooted candidate state differs from authenticated parent");
         }
-        if profile == NativeRootCodecProfileV1::RecordTreeV1 {
-            // A preceding Transfer run may have created a >u64 balance even
-            // when every parent balance passed the initial domain check.
-            validate_legacy_execution_json_domain_v1(&store.module_state)?;
-        }
-        dispatch_nov_execution_request_into_loaded_store_v1(
-            &mut store,
-            &item.execution_request,
-            NovExecutionRequestDispatchContextV1 {
-                // This path is never used: mirror records are collected only.
-                mirror_base_path: Path::new(""),
-                subject_meta: Some(&item.execution_subject),
-                requested_behavior: Some(&item.requested_execution_behavior),
-                authenticated_key_algo: Some(UcaKeyAlgo::Ed25519),
-                unified_account_store_path: None,
-                durable_auth_reservation: Some(&item.durable_auth_reservation),
-                aoem_semantic_ingress_override: Some(native_aoem_batch_item_ingress_meta_v1(
+        let reader =
+            crate::native_state_storage::AoemStateReaderV1::new(&workspace.graph, workspace.scope);
+        let transfer_items: Vec<_> = items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| native_transfer_dispatch::Item {
+                transaction: &item.native_tx,
+                request: &item.execution_request,
+                subject: &item.execution_subject,
+                reservation: &item.durable_auth_reservation,
+                ingress: native_aoem_batch_item_ingress_meta_v1(
                     &chunks[index / chunk_size],
                     index,
                     items.len(),
-                )),
-                mirror_records: Some(&mut mirror_records),
-                emit_policy_observability: false,
-                now_ms: u128::from(payload.plan.context.timestamp_unix_ms),
-            },
+                ),
+            })
+            .collect();
+        let update = native_transfer_record_execution::execute_rooted_segment_v1(
+            &reader,
+            physical_root,
+            state_root,
+            receipt_root,
+            &transfer_items,
+            u128::from(payload.plan.context.timestamp_unix_ms),
         )?;
-        index += 1;
+        let (records, blob_bytes) = update.stats.checked_apply(records, blob_bytes)?;
+        let _peak = update.peak_inflight;
+        #[cfg(test)]
+        eprintln!("fresh candidate rooted AOEM transfer tasks={} peak_inflight={} parent_tree_import=false", items.len(), _peak);
+        // The executor above never scans or imports historical state. Existing
+        // output/finality validation still consumes an explicit cold full image;
+        // do not confuse removal of the execution import with a fully lazy node.
+        store = native_transfer_record_execution::materialize_update_v1(
+            &reader,
+            &update.physical,
+            records,
+            blob_bytes,
+        )?;
+        record_updates = Some(state_records::RecordTreeUpdatesV1 {
+            physical: update.physical,
+            state: update.state,
+            receipts: update.receipts,
+            records,
+            blob_bytes,
+        });
+    } else {
+        store = payload.parent_store()?.clone();
+        let mut mirror_records = Vec::new();
+        let mut index = 0;
+        while index < items.len() {
+            let item = &items[index];
+            if matches!(item.native_tx.kind, NovTxKindV1::Transfer(_)) {
+                // Execute is a barrier: it may change any balance, policy or fee
+                // state. Only contiguous Transfer runs are submitted together.
+                let end = items[index..]
+                    .iter()
+                    .position(|item| !matches!(item.native_tx.kind, NovTxKindV1::Transfer(_)))
+                    .map_or(items.len(), |offset| index + offset);
+                let transfer_items: Vec<_> = items[index..end]
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, item)| {
+                        let position = index + offset;
+                        native_transfer_dispatch::Item {
+                            transaction: &item.native_tx,
+                            request: &item.execution_request,
+                            subject: &item.execution_subject,
+                            reservation: &item.durable_auth_reservation,
+                            ingress: native_aoem_batch_item_ingress_meta_v1(
+                                &chunks[position / chunk_size],
+                                position,
+                                items.len(),
+                            ),
+                        }
+                    })
+                    .collect();
+                let now_ms = u128::from(payload.plan.context.timestamp_unix_ms);
+                let _peak = match payload.root_codec_profile()? {
+                    NativeRootCodecProfileV1::LegacyWireV1 => native_transfer_dispatch::execute_v1(
+                        &mut store,
+                        &transfer_items,
+                        now_ms,
+                        &mut mirror_records,
+                    )?,
+                    NativeRootCodecProfileV1::RecordTreeV1 => {
+                        native_transfer_record_execution::execute_segment_v1(
+                            &mut store,
+                            &transfer_items,
+                            now_ms,
+                        )?
+                    }
+                };
+                #[cfg(test)]
+                eprintln!(
+                    "fresh candidate AOEM transfer tasks={} peak_inflight={_peak}",
+                    end - index
+                );
+                index = end;
+                continue;
+            }
+            if profile == NativeRootCodecProfileV1::RecordTreeV1 {
+                // A preceding Transfer run may have created a >u64 balance even
+                // when every parent balance passed the initial domain check.
+                validate_legacy_execution_json_domain_v1(&store.module_state)?;
+            }
+            dispatch_nov_execution_request_into_loaded_store_v1(
+                &mut store,
+                &item.execution_request,
+                NovExecutionRequestDispatchContextV1 {
+                    // This path is never used: mirror records are collected only.
+                    mirror_base_path: Path::new(""),
+                    subject_meta: Some(&item.execution_subject),
+                    requested_behavior: Some(&item.requested_execution_behavior),
+                    authenticated_key_algo: Some(UcaKeyAlgo::Ed25519),
+                    unified_account_store_path: None,
+                    durable_auth_reservation: Some(&item.durable_auth_reservation),
+                    aoem_semantic_ingress_override: Some(native_aoem_batch_item_ingress_meta_v1(
+                        &chunks[index / chunk_size],
+                        index,
+                        items.len(),
+                    )),
+                    mirror_records: Some(&mut mirror_records),
+                    emit_policy_observability: false,
+                    now_ms: u128::from(payload.plan.context.timestamp_unix_ms),
+                },
+            )?;
+            index += 1;
+        }
     }
     verify_native_business_protocol_config_v1(&store)?;
     if verify_required_native_business_protocol_config_pin_v1()? != to_hex(&workspace.protocol) {
@@ -478,6 +547,7 @@ fn compute(
         batch_result,
         store,
         record_state: None,
+        record_updates,
     })
 }
 
@@ -755,24 +825,62 @@ pub(crate) fn execute_with_checkpoint_v1(
             bail!("completed candidate output has missing chunks");
         }
     }
-    let output = compute(&payload, &input, &workspace, params)?;
+    let mut output = compute(&payload, &input, &workspace, params)?;
     validate_output(&output, &payload, &input, &workspace, params)?;
     let parent_store = payload.parent_store()?;
-    let prepared = state_records::prepare(
-        &workspace,
-        &output,
-        &["store"],
-        &output.store,
-        payload
-            .record_state
-            .as_ref()
-            .map(|reference| (reference, parent_store)),
-    )?;
+    let mut prepared = if payload.root_codec_profile()? == NativeRootCodecProfileV1::RecordTreeV1 {
+        let updates = output.record_updates.take();
+        state_records::prepare_record_profile(
+            &workspace,
+            &output,
+            &["store"],
+            &output.store,
+            payload
+                .record_state
+                .as_ref()
+                .map(|reference| (reference, parent_store)),
+            updates,
+        )?
+    } else {
+        state_records::prepare(
+            &workspace,
+            &output,
+            &["store"],
+            &output.store,
+            payload
+                .record_state
+                .as_ref()
+                .map(|reference| (reference, parent_store)),
+        )?
+    };
     let mut descriptor = OutputDescriptor {
         len: prepared.bytes.len(),
         digest: output_digest(&prepared.bytes),
         input_digest: input.payload,
     };
+    // A partial old record document is pinned as strictly as an old inline
+    // image. Reproduce its original bytes; never upgrade the reservation.
+    if existing.is_some_and(|previous| *previous != descriptor) {
+        let old = state_records::prepare(
+            &workspace,
+            &output,
+            &["store"],
+            &output.store,
+            payload
+                .record_state
+                .as_ref()
+                .map(|reference| (reference, parent_store)),
+        )?;
+        let old_descriptor = OutputDescriptor {
+            len: old.bytes.len(),
+            digest: output_digest(&old.bytes),
+            input_digest: input.payload,
+        };
+        if existing == Some(&old_descriptor) {
+            prepared = old;
+            descriptor = old_descriptor;
+        }
+    }
     // Recover old partial inline output only when the recomputed typed image
     // reproduces EVERY byte bound by its original reservation. New candidates
     // still always use record documents; this is not a fallback on corruption.
@@ -957,15 +1065,61 @@ pub(crate) fn seed_legacy_inline_output_for_test_v1(
     stage: ExecutionCheckpointV1,
     corrupt_descriptor: bool,
 ) -> Result<[u8; 32]> {
+    seed_legacy_output_for_test_v1(chain, id, params, stage, corrupt_descriptor, false)
+}
+
+/// Seed the physical-only record document used before three-root bundles.
+/// This helper does not alter the production serializer or recovery policy.
+#[cfg(test)]
+pub(crate) fn seed_legacy_record_output_for_test_v1(
+    chain: u64,
+    id: [u8; 32],
+    params: &serde_json::Value,
+    stage: ExecutionCheckpointV1,
+    corrupt_descriptor: bool,
+) -> Result<[u8; 32]> {
+    seed_legacy_output_for_test_v1(chain, id, params, stage, corrupt_descriptor, true)
+}
+
+#[cfg(test)]
+fn seed_legacy_output_for_test_v1(
+    chain: u64,
+    id: [u8; 32],
+    params: &serde_json::Value,
+    stage: ExecutionCheckpointV1,
+    corrupt_descriptor: bool,
+    record_document: bool,
+) -> Result<[u8; 32]> {
     let mut workspace = WorkspaceStore::open(chain, params)?;
     let input = ready_input(&workspace, id)?;
     if catalog(&workspace)?.iter().any(|(known, _)| *known == id) {
-        bail!("legacy inline fixture requires a new output");
+        bail!("legacy output fixture requires a new output");
     }
     let payload = workspace.read_payload(&input)?;
     let output = compute(&payload, &input, &workspace, params)?;
     validate_output(&output, &payload, &input, &workspace, params)?;
-    let bytes = serde_json::to_vec(&output)?;
+    let prepared = if record_document {
+        let parent_store = payload.parent_store()?;
+        Some(state_records::prepare(
+            &workspace,
+            &output,
+            &["store"],
+            &output.store,
+            payload
+                .record_state
+                .as_ref()
+                .map(|reference| (reference, parent_store)),
+        )?)
+    } else {
+        None
+    };
+    let bytes = match &prepared {
+        Some(prepared) => prepared.bytes.clone(),
+        None => serde_json::to_vec(&output)?,
+    };
+    if stage == ExecutionCheckpointV1::PartialOutput && bytes.len() <= CHUNK_BYTES {
+        bail!("legacy partial-output fixture requires more than one chunk");
+    }
     check_output_capacity(0, bytes.len())?;
     let mut descriptor = OutputDescriptor {
         len: bytes.len(),
@@ -980,6 +1134,13 @@ pub(crate) fn seed_legacy_inline_output_for_test_v1(
         value: descriptor.encode(),
     };
     workspace.commit(b'V', &input, vec![reservation.clone()], reservation.clone())?;
+    // The old producer persisted physical records after OutputReserved and
+    // before writing output chunks. Recreate each crash boundary exactly.
+    if stage != ExecutionCheckpointV1::OutputReserved {
+        if let Some(prepared) = &prepared {
+            state_records::persist(&workspace, prepared)?;
+        }
+    }
     let writes: Vec<_> = bytes
         .chunks(CHUNK_BYTES)
         .enumerate()

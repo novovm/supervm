@@ -39,6 +39,8 @@ pub use finalized_parent::create_from_finalized_genesis_v1;
 use finalized_parent::FinalizedParentSnapshot;
 #[cfg(test)]
 pub(crate) use state_records::exercise_record_document_storage_for_test;
+#[cfg(test)]
+pub(crate) use state_records::exercise_record_profile_document_storage_for_test;
 
 use super::*;
 use crate::native_candidate_plan::NovNativeCandidateExecutionPlanV1;
@@ -803,16 +805,32 @@ fn stage_payload(
     checkpoint: impl Fn(CheckpointV1) -> Result<()>,
 ) -> Result<WorkspaceInfoV1> {
     let parent_store = payload.parent_store()?;
-    let prepared = state_records::prepare(
-        workspace,
-        payload,
-        &state_records::payload_path(payload)?,
-        parent_store,
-        payload
-            .record_state
-            .as_ref()
-            .map(|reference| (reference, parent_store)),
-    )?;
+    let mut prepared = if payload.root_codec_profile()?
+        == crate::native_root_codecs::NativeRootCodecProfileV1::RecordTreeV1
+    {
+        state_records::prepare_record_profile(
+            workspace,
+            payload,
+            &state_records::payload_path(payload)?,
+            parent_store,
+            payload
+                .record_state
+                .as_ref()
+                .map(|reference| (reference, parent_store)),
+            None,
+        )?
+    } else {
+        state_records::prepare(
+            workspace,
+            payload,
+            &state_records::payload_path(payload)?,
+            parent_store,
+            payload
+                .record_state
+                .as_ref()
+                .map(|reference| (reference, parent_store)),
+        )?
+    };
     let mut descriptor = describe(payload, &prepared.bytes, &workspace.scope)?;
     let id = descriptor.id;
     if workspace.graph.get(&workspace.key(b'g', &id))?.is_some() {
@@ -820,6 +838,23 @@ fn stage_payload(
     }
     let catalog = workspace.catalog()?;
     let existing = catalog.iter().find(|(_, previous)| previous.id == id);
+    if existing.is_some_and(|(_, previous)| *previous != descriptor) {
+        let old = state_records::prepare(
+            workspace,
+            payload,
+            &state_records::payload_path(payload)?,
+            parent_store,
+            payload
+                .record_state
+                .as_ref()
+                .map(|reference| (reference, parent_store)),
+        )?;
+        let old_descriptor = describe(payload, &old.bytes, &workspace.scope)?;
+        if existing.is_some_and(|(_, previous)| *previous == old_descriptor) {
+            prepared = old;
+            descriptor = old_descriptor;
+        }
+    }
     // An existing reservation pins its exact physical encoding. An upgrade may
     // read/replay an old inline image, but must not replace it with a record
     // document under the same workspace id or relax the captured-parent check.
@@ -1101,7 +1136,9 @@ pub(super) fn seed_legacy_inline_input_for_test_v1(
 }
 
 #[cfg(test)]
-pub(crate) use execution::seed_legacy_inline_output_for_test_v1;
+pub(crate) use execution::{
+    seed_legacy_inline_output_for_test_v1, seed_legacy_record_output_for_test_v1,
+};
 
 #[cfg(test)]
 mod tests {
