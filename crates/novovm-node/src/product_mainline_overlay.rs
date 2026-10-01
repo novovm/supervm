@@ -284,18 +284,23 @@ pub struct ProductMainlineOverlayRelayAdmissionV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProductMainlineOverlayRecipientAckDispositionV1 {
     JournalPersisted,
+    /// Authenticated raw transaction is synchronously retained in the fresh
+    /// transaction pool. Not the legacy delivery journal, execution or finality.
+    PendingTransactionPersisted,
 }
 
 impl ProductMainlineOverlayRecipientAckDispositionV1 {
     const fn code(self) -> u8 {
         match self {
             Self::JournalPersisted => 1,
+            Self::PendingTransactionPersisted => 2,
         }
     }
 
     fn from_code(code: u8) -> Result<Self> {
         match code {
             1 => Ok(Self::JournalPersisted),
+            2 => Ok(Self::PendingTransactionPersisted),
             _ => bail!("product mainline overlay recipient ACK disposition {code} is unsupported"),
         }
     }
@@ -314,6 +319,20 @@ pub struct ProductMainlineOverlayRecipientAckV1 {
     pub accepted_at_ms: u64,
     pub disposition: ProductMainlineOverlayRecipientAckDispositionV1,
     pub signature: [u8; PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_SIGNATURE_BYTES_V1],
+}
+
+impl ProductMainlineOverlayRecipientAckV1 {
+    /// Recheck typed events at a consumer boundary using the canonical wire
+    /// verifier. The public structure alone is not proof of authentication.
+    pub(crate) fn verify_route(&self, chain: u64, sender: &str, recipient: &str) -> Result<()> {
+        decode_and_verify_recipient_ack_v1(
+            &encode_recipient_ack_v1(self)?,
+            chain,
+            sender,
+            recipient,
+        )
+        .map(|_| ())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1113,28 +1132,7 @@ impl ProductMainlineOverlayRuntimeV1 {
         original_sender_peer_id: &str,
         accepted_at_ms: u64,
     ) -> Result<bool> {
-        if accepted_at_ms == 0 {
-            bail!("product mainline overlay recipient ACK accepted_at_ms must be positive");
-        }
-        if !self
-            .remote_peer_ids
-            .iter()
-            .any(|configured| configured == original_sender_peer_id)
-        {
-            bail!("product mainline overlay recipient ACK source peer is not configured");
-        }
-        let expected_delivery_id = product_delivery_id_v1(
-            self.chain_id,
-            payload_class.label(),
-            object_hash,
-            payload_sha256,
-            original_sender_peer_id,
-            self.startup.local_peer_id.as_str(),
-        );
-        if delivery_id != expected_delivery_id {
-            bail!("product mainline overlay recipient ACK delivery id is invalid");
-        }
-        let request = ProductMainlineOverlayRecipientAckRequestV1 {
+        self.try_submit_recipient_ack_request(ProductMainlineOverlayRecipientAckRequestV1 {
             payload_class,
             object_hash,
             payload_sha256,
@@ -1143,7 +1141,56 @@ impl ProductMainlineOverlayRuntimeV1 {
             recipient_peer_id: self.startup.local_peer_id.clone(),
             accepted_at_ms,
             disposition: ProductMainlineOverlayRecipientAckDispositionV1::JournalPersisted,
-        };
+        })
+    }
+
+    /// Fresh ingress may call this only after synchronous pool admission. It
+    /// deliberately does not claim that the legacy delivery journal accepted it.
+    pub(crate) fn try_submit_pending_transaction_ack(
+        &self,
+        inbound: &ProductMainlineOverlayInboundV1,
+    ) -> Result<bool> {
+        if inbound.payload_class != ProductMainlineOverlayPayloadClassV1::NativeTransaction {
+            bail!("pending transaction ACK requires a native transaction");
+        }
+        self.try_submit_recipient_ack_request(ProductMainlineOverlayRecipientAckRequestV1 {
+            payload_class: inbound.payload_class,
+            object_hash: inbound.object_hash,
+            payload_sha256: inbound.payload_sha256,
+            delivery_id: inbound.delivery_id,
+            original_sender_peer_id: inbound.source_peer_id.clone(),
+            recipient_peer_id: self.startup.local_peer_id.clone(),
+            accepted_at_ms: now_ms_v1(),
+            disposition:
+                ProductMainlineOverlayRecipientAckDispositionV1::PendingTransactionPersisted,
+        })
+    }
+
+    fn try_submit_recipient_ack_request(
+        &self,
+        request: ProductMainlineOverlayRecipientAckRequestV1,
+    ) -> Result<bool> {
+        if request.accepted_at_ms == 0 {
+            bail!("product mainline overlay recipient ACK accepted_at_ms must be positive");
+        }
+        if !self
+            .remote_peer_ids
+            .iter()
+            .any(|configured| configured == &request.original_sender_peer_id)
+        {
+            bail!("product mainline overlay recipient ACK source peer is not configured");
+        }
+        let expected_delivery_id = product_delivery_id_v1(
+            self.chain_id,
+            request.payload_class.label(),
+            request.object_hash,
+            request.payload_sha256,
+            &request.original_sender_peer_id,
+            self.startup.local_peer_id.as_str(),
+        );
+        if request.delivery_id != expected_delivery_id {
+            bail!("product mainline overlay recipient ACK delivery id is invalid");
+        }
         match self.recipient_acks.try_send(request) {
             Ok(()) => Ok(true),
             Err(TrySendError::Full(_)) => Ok(false),
@@ -1310,6 +1357,12 @@ fn recipient_ack_signing_bytes_v1(ack: &ProductMainlineOverlayRecipientAckV1) ->
     {
         bail!("product mainline overlay recipient ACK header is invalid");
     }
+    if ack.disposition
+        == ProductMainlineOverlayRecipientAckDispositionV1::PendingTransactionPersisted
+        && ack.payload_class != ProductMainlineOverlayPayloadClassV1::NativeTransaction
+    {
+        bail!("pending transaction ACK has a non-transaction class");
+    }
     validate_ack_peer_id_v1(ack.original_sender_peer_id.as_str())?;
     validate_ack_peer_id_v1(ack.recipient_peer_id.as_str())?;
     let domain_len = u16::try_from(PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1.len())
@@ -1440,6 +1493,12 @@ fn decode_and_verify_recipient_ack_v1(
         || ack.accepted_at_ms == 0
     {
         bail!("product mainline overlay recipient ACK route or domain correlation mismatch");
+    }
+    if ack.disposition
+        == ProductMainlineOverlayRecipientAckDispositionV1::PendingTransactionPersisted
+        && ack.payload_class != ProductMainlineOverlayPayloadClassV1::NativeTransaction
+    {
+        bail!("pending transaction ACK has a non-transaction class");
     }
     let expected_delivery_id = product_delivery_id_v1(
         ack.chain_id,
@@ -2431,97 +2490,124 @@ fn send_one_mesh_recipient_ack_v1(
     worker: &ProductMainlineOverlayWorkerV1,
     peers: &mut BTreeMap<String, ProductMainlineMeshPeerStateV1>,
     pending_by_peer: &mut BTreeMap<String, VecDeque<ProductMainlineOverlayRecipientAckRequestV1>>,
+    next_ack_peer_index: &mut usize,
 ) -> Result<bool> {
-    for peer in &worker.remote_peers {
-        let Some(request) = pending_by_peer
-            .get(&peer.peer_id)
-            .and_then(|queue| queue.front())
-            .cloned()
-        else {
-            continue;
+    let Some(peer_index) =
+        next_mesh_ack_peer_v1(worker.remote_peers.len(), next_ack_peer_index, |index| {
+            let peer_id = &worker.remote_peers[index].peer_id;
+            pending_by_peer
+                .get(peer_id)
+                .is_some_and(|queue| !queue.is_empty())
+                && peers.get(peer_id).is_some_and(|state| {
+                    matches!(state.phase, ProductMainlineMeshPeerPhaseV1::Active(_))
+                })
+        })
+    else {
+        return Ok(false);
+    };
+    let peer = &worker.remote_peers[peer_index];
+    let request = pending_by_peer
+        .get(&peer.peer_id)
+        .and_then(|queue| queue.front())
+        .cloned()
+        .context("selected mesh recipient ACK disappeared")?;
+    let state = peers
+        .get(&peer.peer_id)
+        .context("selected mesh ACK peer disappeared")?;
+    let frame_sequence = state.frame_sequence;
+    let frame = recipient_ack_frame_v1(&worker.identity, worker.chain_id, frame_sequence, &request)
+        .context("build multi-peer recipient ACK frame")?;
+    let envelope = {
+        let state = peers
+            .get_mut(&peer.peer_id)
+            .context("configured mesh peer state disappeared while sealing ACK")?;
+        let ProductMainlineMeshPeerPhaseV1::Active(channel) = &mut state.phase else {
+            bail!("selected mesh ACK peer is no longer active");
         };
-        let Some(state) = peers.get(&peer.peer_id) else {
-            continue;
-        };
-        if !matches!(state.phase, ProductMainlineMeshPeerPhaseV1::Active(_)) {
-            continue;
-        }
-        let frame_sequence = state.frame_sequence;
-        let frame =
-            recipient_ack_frame_v1(&worker.identity, worker.chain_id, frame_sequence, &request)
-                .context("build multi-peer recipient ACK frame")?;
-        let envelope = {
-            let state = peers
-                .get_mut(&peer.peer_id)
-                .context("configured mesh peer state disappeared while sealing ACK")?;
-            let ProductMainlineMeshPeerPhaseV1::Active(channel) = &mut state.phase else {
-                continue;
-            };
-            channel
-                .seal_novorudp_frame(&frame)
-                .context("seal multi-peer recipient ACK")?
-        };
-        let outcome = match relay.send_envelope_with_outcome_v1(envelope) {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                publish_recipient_ack_relay_admission_v1(
-                    worker,
-                    &request,
-                    peer.metric_peer_id,
-                    false,
-                    None,
-                    Some(format!("send multi-peer recipient ACK: {error:#}")),
-                )?;
-                return Err(error.context("send multi-peer recipient ACK; retained for reconnect"));
-            }
-        };
-        if outcome.disposition == RelayForwardDispositionV1::RejectedQueuePeerLimit {
+        channel
+            .seal_novorudp_frame(&frame)
+            .context("seal multi-peer recipient ACK")?
+    };
+    let outcome = match relay.send_envelope_with_outcome_v1(envelope) {
+        Ok(outcome) => outcome,
+        Err(error) => {
             publish_recipient_ack_relay_admission_v1(
                 worker,
                 &request,
                 peer.metric_peer_id,
                 false,
-                Some(outcome.disposition),
-                Some("relay rejected recipient ACK target-local offline queue admission".into()),
+                None,
+                Some(format!("send multi-peer recipient ACK: {error:#}")),
             )?;
-            isolate_mesh_peer_v1(
-                peers,
-                &peer.peer_id,
-                "relay rejected recipient ACK target-local offline queue admission",
-                worker,
-            )?;
-            return Ok(true);
+            return Err(error.context("send multi-peer recipient ACK; retained for reconnect"));
         }
-        if let Err(error) = ensure_shared_relay_forward_accepted_v1(&outcome) {
-            publish_recipient_ack_relay_admission_v1(
-                worker,
-                &request,
-                peer.metric_peer_id,
-                false,
-                Some(outcome.disposition),
-                Some(error.to_string()),
-            )?;
-            return Err(error.context("shared relay rejected recipient ACK admission"));
-        }
+    };
+    if outcome.disposition == RelayForwardDispositionV1::RejectedQueuePeerLimit {
         publish_recipient_ack_relay_admission_v1(
             worker,
             &request,
             peer.metric_peer_id,
-            true,
+            false,
             Some(outcome.disposition),
-            None,
+            Some("relay rejected recipient ACK target-local offline queue admission".into()),
         )?;
-        peers
-            .get_mut(&peer.peer_id)
-            .context("configured mesh peer state disappeared after ACK")?
-            .frame_sequence = frame_sequence.saturating_add(1);
-        pending_by_peer
-            .get_mut(&peer.peer_id)
-            .and_then(VecDeque::pop_front)
-            .context("multi-peer recipient ACK queue lost admitted item")?;
+        isolate_mesh_peer_v1(
+            peers,
+            &peer.peer_id,
+            "relay rejected recipient ACK target-local offline queue admission",
+            worker,
+        )?;
         return Ok(true);
     }
-    Ok(false)
+    if let Err(error) = ensure_shared_relay_forward_accepted_v1(&outcome) {
+        publish_recipient_ack_relay_admission_v1(
+            worker,
+            &request,
+            peer.metric_peer_id,
+            false,
+            Some(outcome.disposition),
+            Some(error.to_string()),
+        )?;
+        return Err(error.context("shared relay rejected recipient ACK admission"));
+    }
+    publish_recipient_ack_relay_admission_v1(
+        worker,
+        &request,
+        peer.metric_peer_id,
+        true,
+        Some(outcome.disposition),
+        None,
+    )?;
+    peers
+        .get_mut(&peer.peer_id)
+        .context("configured mesh peer state disappeared after ACK")?
+        .frame_sequence = frame_sequence.saturating_add(1);
+    pending_by_peer
+        .get_mut(&peer.peer_id)
+        .and_then(VecDeque::pop_front)
+        .context("multi-peer recipient ACK queue lost admitted item")?;
+    Ok(true)
+}
+
+/// ACK traffic has its own peer turn: a continuously refilled first queue must
+/// not starve later peers. Advance on a selected attempt, including a rejection;
+/// retry/failure still retains the original queue item until relay admission.
+fn next_mesh_ack_peer_v1(
+    peer_count: usize,
+    next_peer: &mut usize,
+    mut ready: impl FnMut(usize) -> bool,
+) -> Option<usize> {
+    if peer_count == 0 {
+        return None;
+    }
+    for offset in 0..peer_count {
+        let index = (*next_peer % peer_count + offset) % peer_count;
+        if ready(index) {
+            *next_peer = (index + 1) % peer_count;
+            return Some(index);
+        }
+    }
+    None
 }
 
 /// Waiting for a forward outcome can buffer already decoded inbound events.
@@ -2566,6 +2652,7 @@ fn run_duplex_mesh_session_v1(
 
     let mut last_heartbeat = std::time::Instant::now();
     let mut next_outbound_peer_index = 0usize;
+    let mut next_ack_peer_index = 0usize;
     while !worker.stop.load(Ordering::Acquire) {
         if product_overlay_heartbeat_due_v1(last_heartbeat, std::time::Instant::now()) {
             relay
@@ -2581,7 +2668,13 @@ fn run_duplex_mesh_session_v1(
         start_due_mesh_peer_handshakes_v1(relay, worker, &mut peers)?;
 
         mesh_send_when_inbound_drained_v1(relay.has_buffered_events(), || {
-            send_one_mesh_recipient_ack_v1(relay, worker, &mut peers, pending_acks_by_peer)
+            send_one_mesh_recipient_ack_v1(
+                relay,
+                worker,
+                &mut peers,
+                pending_acks_by_peer,
+                &mut next_ack_peer_index,
+            )
         })?;
 
         mesh_send_when_inbound_drained_v1(relay.has_buffered_events(), || {
@@ -3875,6 +3968,7 @@ mod tests {
     use std::{net::TcpListener, thread, time::Instant};
 
     include!("product_mainline_overlay_pending_tests.rs");
+    include!("product_mainline_overlay_receipt_tests.rs");
 
     static NATIVE_INGRESS_FIXTURE_ENV_LOCK_V1: std::sync::Mutex<()> = std::sync::Mutex::new(());
 

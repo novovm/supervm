@@ -34782,18 +34782,12 @@ impl NativeExecutionPipelineProductOverlayDriveV1 {
         ack: ProductMainlineOverlayRecipientAckV1,
         metric_peer_id: u64,
     ) -> Result<bool> {
-        let result = self.delivery_journal.mark_outbound_recipient_ack(
-            &ProductDeliveryRecipientAckV1 {
-                delivery_id: ack.delivery_id,
-                chain_id: ack.chain_id,
-                payload_class: ack.payload_class.label().to_string(),
-                object_hash: ack.object_hash,
-                payload_sha256: ack.payload_sha256,
-                original_sender_peer_id: ack.original_sender_peer_id,
-                recipient_peer_id: ack.recipient_peer_id.clone(),
-            },
-            now_unix_ms(),
-        )?;
+        let Some(binding) = legacy_journal_recipient_ack_binding_v1(&ack) else {
+            return Ok(false);
+        };
+        let result = self
+            .delivery_journal
+            .mark_outbound_recipient_ack(&binding, now_unix_ms())?;
         self.apply_delivery_cleanup_summary_v1(&result.cleanup)?;
         if result.late_after_expiry {
             record_product_mainline_peer_delivery_failure_v1(
@@ -35084,6 +35078,27 @@ fn record_product_mainline_peer_delivery_failure_v1(
     ));
 }
 
+// Overlay verifies the signature before dispatch. This conversion additionally
+// gates the storage meaning: a fresh pool receipt cannot finish a journal obligation.
+fn legacy_journal_recipient_ack_binding_v1(
+    ack: &ProductMainlineOverlayRecipientAckV1,
+) -> Option<ProductDeliveryRecipientAckV1> {
+    if ack.disposition
+        != novovm_node::product_mainline_overlay::ProductMainlineOverlayRecipientAckDispositionV1::JournalPersisted
+    {
+        return None;
+    }
+    Some(ProductDeliveryRecipientAckV1 {
+        delivery_id: ack.delivery_id,
+        chain_id: ack.chain_id,
+        payload_class: ack.payload_class.label().to_string(),
+        object_hash: ack.object_hash,
+        payload_sha256: ack.payload_sha256,
+        original_sender_peer_id: ack.original_sender_peer_id.clone(),
+        recipient_peer_id: ack.recipient_peer_id.clone(),
+    })
+}
+
 enum ProductMainlinePeerIngressOutcomeV1 {
     Accepted { tx_hash: [u8; 32] },
     Rejected { error: String },
@@ -35137,6 +35152,56 @@ fn classify_product_mainline_peer_ingress_v1(
 #[cfg(test)]
 mod product_mainline_peer_ingress_tests {
     use super::*;
+    use novovm_node::product_mainline_overlay::ProductMainlineOverlayRecipientAckDispositionV1;
+
+    fn recipient_ack_binding_fixture(
+        disposition: ProductMainlineOverlayRecipientAckDispositionV1,
+    ) -> ProductMainlineOverlayRecipientAckV1 {
+        // The helper tests the typed storage boundary, not signature verification.
+        ProductMainlineOverlayRecipientAckV1 {
+            version: 1,
+            chain_id: 7_991_337,
+            payload_class: ProductMainlineOverlayPayloadClassV1::NativeTransaction,
+            object_hash: [0x11; 32],
+            payload_sha256: [0x22; 32],
+            delivery_id: [0x33; 32],
+            original_sender_peer_id: "44".repeat(32),
+            recipient_peer_id: "55".repeat(32),
+            accepted_at_ms: 123_456,
+            disposition,
+            signature: [0; 64],
+        }
+    }
+
+    #[test]
+    fn journal_recipient_ack_conversion_preserves_every_mutation_binding() {
+        let mut ack = recipient_ack_binding_fixture(
+            ProductMainlineOverlayRecipientAckDispositionV1::JournalPersisted,
+        );
+        for payload_class in [
+            ProductMainlineOverlayPayloadClassV1::NativeTransaction,
+            ProductMainlineOverlayPayloadClassV1::NativeSeal,
+        ] {
+            ack.payload_class = payload_class;
+            let binding = legacy_journal_recipient_ack_binding_v1(&ack)
+                .expect("journal disposition must retain the legacy binding");
+            assert_eq!(binding.delivery_id, ack.delivery_id);
+            assert_eq!(binding.chain_id, ack.chain_id);
+            assert_eq!(binding.payload_class, ack.payload_class.label());
+            assert_eq!(binding.object_hash, ack.object_hash);
+            assert_eq!(binding.payload_sha256, ack.payload_sha256);
+            assert_eq!(binding.original_sender_peer_id, ack.original_sender_peer_id);
+            assert_eq!(binding.recipient_peer_id, ack.recipient_peer_id);
+        }
+    }
+
+    #[test]
+    fn pending_transaction_ack_cannot_produce_a_journal_mutation_binding() {
+        let ack = recipient_ack_binding_fixture(
+            ProductMainlineOverlayRecipientAckDispositionV1::PendingTransactionPersisted,
+        );
+        assert!(legacy_journal_recipient_ack_binding_v1(&ack).is_none());
+    }
 
     #[test]
     fn failed_delivery_is_counted_and_reported_as_peer_error() {
@@ -43620,6 +43685,7 @@ fn run_fresh_genesis_confirmation_v1(
             })?;
         }
         for event in runtime.drain_events(128) {
+            lifecycle.observe_transaction_transport_event(&event);
             match event {
                 ProductMainlineOverlayEventV1::Inbound(inbound) => {
                     #[cfg(test)]

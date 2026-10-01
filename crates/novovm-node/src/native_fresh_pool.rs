@@ -44,6 +44,12 @@ pub struct FreshTransactionPool {
     bytes: usize,
 }
 
+pub(crate) struct BatchAdmission {
+    pub(crate) rejected: u64,
+    /// One result per original input, never a hash-only acknowledgement map.
+    pub(crate) retained: Vec<bool>,
+}
+
 impl FreshTransactionPool {
     pub fn open(
         path: &Path,
@@ -137,20 +143,40 @@ impl FreshTransactionPool {
     /// replays are filtered before any synchronous pool write, not put/deleted
     /// on every gossip round. The immutable parent only filters stale entries;
     /// candidate execution still revalidates current authority and nonce.
+    #[cfg(test)]
     pub(crate) fn insert_live_batch(
         &mut self,
         entries: Vec<PendingTransaction>,
         parent: Option<&candidate_workspace::FinalizedParentViewV1>,
         params: &serde_json::Value,
     ) -> Result<u64> {
-        let mut rejected = 0u64;
+        self.insert_live_batch_with_retention(entries, parent, params)
+            .map(|admission| admission.rejected)
+    }
+
+    /// Report only entries durably present with these exact raw bytes. Filtered
+    /// finalized/consumed inputs are not retained. A read or write failure
+    /// returns no admission result, so callers must not acknowledge a prefix.
+    pub(crate) fn insert_live_batch_with_retention(
+        &mut self,
+        entries: Vec<PendingTransaction>,
+        parent: Option<&candidate_workspace::FinalizedParentViewV1>,
+        params: &serde_json::Value,
+    ) -> Result<BatchAdmission> {
+        let mut admission = BatchAdmission {
+            rejected: 0,
+            retained: vec![false; entries.len()],
+        };
         let entries: Vec<_> = entries
             .into_iter()
-            .filter(|entry| {
+            .enumerate()
+            .filter(|(index, entry)| {
                 if let Some(previous) = self.entries.get(&entry.hash) {
                     // Hash alone must never authorize a different raw payload.
-                    if previous.raw != entry.raw {
-                        rejected = rejected.saturating_add(1);
+                    if previous.raw == entry.raw {
+                        admission.retained[*index] = true;
+                    } else {
+                        admission.rejected = admission.rejected.saturating_add(1);
                     }
                     false
                 } else {
@@ -159,18 +185,18 @@ impl FreshTransactionPool {
             })
             .collect();
         if entries.is_empty() {
-            return Ok(rejected);
+            return Ok(admission);
         }
         let live = if let Some(parent) = parent {
             // Finish ALL reads before insertion: damaged data must not be
             // treated as missing/zero or leave a durably admitted prefix.
             parent.with_records(params, |reader| {
                 let mut live = Vec::new();
-                for entry in entries {
+                for (index, entry) in entries {
                     if !reader.contains_receipt(&entry.hash)?
                         && reader.next_nonce(&entry.identity)? <= entry.nonce
                     {
-                        live.push(entry);
+                        live.push((index, entry));
                     }
                 }
                 Ok(live)
@@ -178,12 +204,14 @@ impl FreshTransactionPool {
         } else {
             entries
         };
-        for entry in live {
-            if !self.insert(entry)? {
-                rejected = rejected.saturating_add(1);
+        for (index, entry) in live {
+            if self.insert(entry)? {
+                admission.retained[index] = true;
+            } else {
+                admission.rejected = admission.rejected.saturating_add(1);
             }
         }
-        Ok(rejected)
+        Ok(admission)
     }
 
     #[cfg(test)]
@@ -273,6 +301,9 @@ impl FreshTransactionPool {
 
     pub fn contains(&self, hash: &[u8; 32]) -> bool {
         self.entries.contains_key(hash)
+    }
+    pub(crate) fn get(&self, hash: &[u8; 32]) -> Option<&PendingTransaction> {
+        self.entries.get(hash)
     }
     pub fn len(&self) -> usize {
         self.entries.len()

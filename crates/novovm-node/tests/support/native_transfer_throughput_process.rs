@@ -12,6 +12,8 @@ use novovm_protocol::{
 use std::collections::BTreeSet;
 
 pub(super) const LABEL: &str = "continuous-record-transfer-measurement";
+pub(super) const DURABLE_RECEIPTS_LABEL: &str =
+    "continuous-record-transfer-durable-receipts-measurement";
 const SIGNERS: usize = 32;
 const BATCHES: usize = 3;
 const CONTINUOUS_ROUNDS: usize = 8;
@@ -25,6 +27,7 @@ const DEADLINE: Duration = Duration::from_secs(300);
 pub(super) enum TransportProfile {
     LegacyLimits,
     Bounded64,
+    Bounded64DurableReceipts,
     LegacyLimitsCollect250,
     Bounded64Collect250,
 }
@@ -34,6 +37,7 @@ impl TransportProfile {
         match self {
             Self::LegacyLimits => "legacy_limits_independent_transaction_lane",
             Self::Bounded64 => "explicit_bounded_64_transaction_lane",
+            Self::Bounded64DurableReceipts => "explicit_bounded_64_durable_receipts",
             Self::LegacyLimitsCollect250 => "legacy_limits_collect_250ms",
             Self::Bounded64Collect250 => "explicit_bounded_64_collect_250ms",
         }
@@ -42,18 +46,36 @@ impl TransportProfile {
     fn configuration(self) -> Option<Value> {
         match self {
             Self::LegacyLimits | Self::LegacyLimitsCollect250 => None,
-            Self::Bounded64 | Self::Bounded64Collect250 => Some(serde_json::json!({
+            Self::Bounded64 | Self::Bounded64Collect250 | Self::Bounded64DurableReceipts => {
+                let mut config = serde_json::json!({
                 "per_peer_queue":64,"ingress_per_source_per_second":64,
                 "ingress_per_poll":64,"gossip_per_peer_per_second":64,
                 "gossip_per_poll":192,"bytes_per_poll":1048576,
-            })),
+                });
+                if self.durable_receipts() {
+                    config["durable_receipts"] = true.into();
+                }
+                Some(config)
+            }
         }
     }
 
     fn collect_ms(self) -> u64 {
         match self {
-            Self::LegacyLimits | Self::Bounded64 => 0,
+            Self::LegacyLimits | Self::Bounded64 | Self::Bounded64DurableReceipts => 0,
             Self::LegacyLimitsCollect250 | Self::Bounded64Collect250 => 250,
+        }
+    }
+
+    fn durable_receipts(self) -> bool {
+        matches!(self, Self::Bounded64DurableReceipts)
+    }
+
+    fn measurement_label(self) -> &'static str {
+        if self.durable_receipts() {
+            DURABLE_RECEIPTS_LABEL
+        } else {
+            LABEL
         }
     }
 }
@@ -106,10 +128,6 @@ pub(super) fn inputs() -> (FreshGenesisConfigV1, NovNativeCandidateExecutionPlan
     )
     .unwrap();
     (genesis, plan)
-}
-
-fn address(node: &Node) -> Option<String> {
-    address_for(node, LABEL)
 }
 
 pub(super) fn address_for(node: &Node, label: &str) -> Option<String> {
@@ -543,6 +561,7 @@ fn measure_continuous(
                         "durable_pending_transactions":result.as_ref().ok().map(|v|&v["durable_pending_transactions"]),
                         "phase":result.as_ref().ok().map(|v|&v["phase"]),
                         "lifecycle_halted":result.as_ref().ok().map(|v|&v["lifecycle_halted"]),
+                        "transaction_transport":result.as_ref().ok().map(|v|&v["transaction_transport"]),
                         "error":result.as_ref().err().map(|e|format!("{e:#}")),
                     }));
                     let result = result.and_then(|value| {
@@ -628,6 +647,15 @@ pub(super) fn exercise_continuous(nodes: &[Node], evidence: &std::path::Path) {
     exercise_workload(nodes, evidence, TransportProfile::Bounded64, true);
 }
 
+pub(super) fn exercise_continuous_durable_receipts(nodes: &[Node], evidence: &std::path::Path) {
+    exercise_workload(
+        nodes,
+        evidence,
+        TransportProfile::Bounded64DurableReceipts,
+        true,
+    );
+}
+
 fn exercise_workload(
     nodes: &[Node],
     evidence: &std::path::Path,
@@ -672,10 +700,14 @@ fn exercise_workload(
         })
         .collect();
     let active: Vec<_> = (0..nodes.len()).collect();
-    let mut children = start_cluster(nodes, &active, LABEL, 0);
+    let mut children = start_cluster(nodes, &active, profile.measurement_label(), 0);
     let readiness = Instant::now();
     let addresses = loop {
-        if let Some(addresses) = nodes.iter().map(address).collect::<Option<Vec<_>>>() {
+        if let Some(addresses) = nodes
+            .iter()
+            .map(|node| address_for(node, profile.measurement_label()))
+            .collect::<Option<Vec<_>>>()
+        {
             break addresses;
         }
         for (_, child) in &mut children {
@@ -872,6 +904,8 @@ fn exercise_workload(
             "nonce_rounds":rounds,"continuous_backlog":continuous_evidence,
             "slow_call_diagnostics_enabled":diagnostics_enabled(),
             "transaction_transport_profile":profile.label(),
+            "durable_receipts_enabled":profile.durable_receipts(),
+            "measurement_label":profile.measurement_label(),
             "proposal_collect_ms":profile.collect_ms(),
         }))
         .unwrap(),
@@ -882,6 +916,40 @@ fn exercise_workload(
         .iter()
         .map(|address| rpc_once(address, "nov_chainStatus", serde_json::json!([])).unwrap())
         .collect();
+    let ack_acceptances: Vec<_> = statuses
+        .iter()
+        .map(|status| {
+            status["transaction_transport"]["recipient_acks_accepted"]
+                .as_u64()
+                .expect("running node must report durable receipt acceptance count")
+        })
+        .collect();
+    if profile.durable_receipts() {
+        // Save actual counters before assertions, including when this profile
+        // was configured but did not exercise a genuine multi-node ACK route.
+        fs::write(
+            evidence.join("transfer-recipient-ack-observations.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "transaction_transport_profile":profile.label(),
+                "measurement_label":profile.measurement_label(),
+                "recipient_ack_acceptances_by_node":ack_acceptances,
+                "accepted_counts_include_duplicate_valid_acks":true,
+                "accepted_counts_are_not_unique_transactions_or_finality":true,
+                "transaction_transport_status_by_node":statuses.iter()
+                    .map(|status|&status["transaction_transport"]).collect::<Vec<_>>(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            ack_acceptances[0] > 0,
+            "single-ingress node did not consume durable peer receipts"
+        );
+        assert!(
+            ack_acceptances.iter().filter(|count| **count > 0).count() >= 2,
+            "durable receipt profile must exercise acceptance on at least two nodes"
+        );
+    }
     let tip = statuses[0]["height"].as_u64().unwrap();
     let expected_transport = profile.configuration().unwrap_or_else(|| {
         serde_json::json!({
@@ -898,6 +966,10 @@ fn exercise_workload(
             assert_eq!(status["durable_pending_transactions"], 0);
         }
         assert_eq!(status["proposal_collect_ms"], profile.collect_ms());
+        assert_eq!(
+            status["transaction_transport"]["limits"]["durable_receipts"],
+            profile.durable_receipts()
+        );
         for (field, expected) in expected_transport.as_object().unwrap() {
             assert_eq!(
                 &status["transaction_transport"]["limits"][field], expected,
@@ -967,7 +1039,11 @@ fn exercise_workload(
     run_cluster_at_height(
         nodes,
         &active,
-        "continuous-transfer-measurement-restart",
+        if profile.durable_receipts() {
+            "continuous-transfer-durable-receipts-measurement-restart"
+        } else {
+            "continuous-transfer-measurement-restart"
+        },
         8,
         true,
         true,
@@ -990,6 +1066,10 @@ fn exercise_workload(
         "tick_interval_ms":250,"consensus_poll_interval_ms":100,
         "seal_ingress_per_source_per_second":8,"seal_ingress_per_poll":16,
         "transaction_transport_profile":profile.label(),
+        "durable_receipts_enabled":profile.durable_receipts(),
+        "measurement_label":profile.measurement_label(),
+        "recipient_ack_acceptances_by_node":ack_acceptances,
+        "recipient_ack_counts_include_duplicates_not_unique_finality":true,
         "transaction_transport_status_by_node":statuses.iter().map(|status|&status["transaction_transport"]).collect::<Vec<_>>(),
         "proposal_collection_status_by_node":statuses.iter().map(|status|&status["proposal_collection"]).collect::<Vec<_>>(),
     });
@@ -1045,6 +1125,26 @@ fn exercise_workload(
 #[cfg(test)]
 mod continuous_scheduler_tests {
     use super::*;
+
+    #[test]
+    fn durable_receipt_profile_changes_only_the_explicit_receipt_flag() {
+        let baseline = TransportProfile::Bounded64;
+        let enabled = TransportProfile::Bounded64DurableReceipts;
+        let mut config = enabled.configuration().unwrap();
+        assert_eq!(
+            config.as_object_mut().unwrap().remove("durable_receipts"),
+            Some(true.into())
+        );
+        assert_eq!(Some(config), baseline.configuration());
+        assert!(!baseline.durable_receipts());
+        assert!(enabled.durable_receipts());
+        assert_eq!(enabled.collect_ms(), baseline.collect_ms());
+        assert_ne!(enabled.label(), baseline.label());
+        assert_ne!(enabled.measurement_label(), baseline.measurement_label());
+        assert_eq!(SIGNERS * BATCHES, 96);
+        assert_eq!(SIGNERS * CONTINUOUS_ROUNDS, 256);
+        assert_eq!(DEADLINE, Duration::from_secs(300));
+    }
 
     fn sample(index: usize) -> Sample {
         Sample {

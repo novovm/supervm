@@ -54,6 +54,7 @@ mod transfer_throughput;
 enum TransferScenario {
     Throughput(transfer_throughput::TransportProfile),
     ContinuousBacklog,
+    ContinuousBacklogDurableReceipts,
     MixedParity,
 }
 impl Drop for Child {
@@ -123,7 +124,10 @@ fn start_cluster(nodes: &[Node], active: &[usize], label: &str, ticks: u64) -> V
         }
         // Preserve environment isolation; forward only this explicit diagnostic
         // switch, and only to the measured workload (not genesis/recovery).
-        if label == transfer_throughput::LABEL && transfer_throughput::diagnostics_enabled() {
+        if (label == transfer_throughput::LABEL
+            || label == transfer_throughput::DURABLE_RECEIPTS_LABEL)
+            && transfer_throughput::diagnostics_enabled()
+        {
             cmd.env("NOVOVM_NATIVE_FRESH_TIMING", "1");
         }
         cmd.env("NOVOVM_NODE_MODE", "native_execution_tick")
@@ -349,6 +353,34 @@ fn fresh_record_transfers_continuous_backlog_measure_rpc_to_finality() {
 }
 
 #[test]
+#[ignore = "real four-process 96-transfer durable receipt measurement; exclusive loopback 127.0.0.2:443"]
+fn fresh_record_transfers_durable_receipts_measure_rpc_to_finality() {
+    run_real_aoem_main_nodes_scenario(
+        true,
+        true,
+        false,
+        false,
+        LocalFault::None,
+        Some(TransferScenario::Throughput(
+            transfer_throughput::TransportProfile::Bounded64DurableReceipts,
+        )),
+    );
+}
+
+#[test]
+#[ignore = "real four-process 256-transfer durable receipt backlog; exclusive loopback 127.0.0.2:443"]
+fn fresh_record_transfers_durable_receipts_continuous_backlog_measure_rpc_to_finality() {
+    run_real_aoem_main_nodes_scenario(
+        true,
+        true,
+        false,
+        false,
+        LocalFault::None,
+        Some(TransferScenario::ContinuousBacklogDurableReceipts),
+    );
+}
+
+#[test]
 #[ignore = "real four-process proposal collection measurement; exclusive loopback 127.0.0.2:443"]
 fn fresh_record_transfers_collect_250_measure_rpc_to_finality() {
     run_real_aoem_main_nodes_scenario(
@@ -464,9 +496,11 @@ fn run_real_aoem_main_nodes_scenario(
     let reserve = std::net::TcpListener::bind("127.0.0.2:443")
         .expect("exclusive loopback 443 required; do not stop other services");
     let (genesis, fresh_plan) = match &transfer_scenario {
-        Some(TransferScenario::Throughput(_) | TransferScenario::ContinuousBacklog) => {
-            transfer_throughput::inputs()
-        }
+        Some(
+            TransferScenario::Throughput(_)
+            | TransferScenario::ContinuousBacklog
+            | TransferScenario::ContinuousBacklogDurableReceipts,
+        ) => transfer_throughput::inputs(),
         Some(TransferScenario::MixedParity) => transfer_mixed::inputs(),
         None => super::native_fresh_genesis_cli::inputs(),
     };
@@ -863,6 +897,9 @@ fn run_real_aoem_main_nodes_scenario(
                 }
                 TransferScenario::ContinuousBacklog => {
                     transfer_throughput::exercise_continuous(&nodes, &root)
+                }
+                TransferScenario::ContinuousBacklogDurableReceipts => {
+                    transfer_throughput::exercise_continuous_durable_receipts(&nodes, &root)
                 }
                 TransferScenario::MixedParity => transfer_mixed::exercise(&nodes, &root),
             }

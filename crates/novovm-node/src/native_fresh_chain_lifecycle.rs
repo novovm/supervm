@@ -322,7 +322,7 @@ impl FreshChainLifecycleV1 {
             }
         }
         measure("lifecycle.transactions_poll", || {
-            self.poll_transactions(now)
+            self.poll_transactions(runtime, now)
         })?;
         self.clock_waiting = false;
         if let Some(service) = self.service.as_mut() {

@@ -1,4 +1,9 @@
 use super::*;
+use crate::product_mainline_overlay::{
+    ProductMainlineOverlayEventV1 as TransportEvent,
+    ProductMainlineOverlayRecipientAckDispositionV1 as ReceiptKind,
+    ProductMainlineOverlayRecipientAckV1 as Receipt,
+};
 use crate::tx_ingress::fresh_pool::PendingTransaction;
 use sha2::{Digest, Sha256};
 
@@ -73,17 +78,96 @@ impl FreshChainLifecycleV1 {
         Ok(serde_json::json!({"tx_hash":hex,"status":status,"finalized":false}))
     }
 
-    pub(super) fn poll_transactions(&mut self, now: Instant) -> Result<()> {
+    /// These events only affect transport retries, never consensus or pool
+    /// ownership. A new connection forgets receipt suppression conservatively.
+    pub fn observe_transaction_transport_event(&mut self, event: &TransportEvent) {
+        if self.halted {
+            return;
+        }
+        match event {
+            TransportEvent::RecipientAck { ack, .. } => {
+                self.accept_transaction_receipt(ack);
+            }
+            TransportEvent::E2eSessionEstablished { remote_peer_id }
+            | TransportEvent::PeerIsolated { remote_peer_id, .. } => {
+                self.transaction_transport
+                    .reset_peer_receipts(remote_peer_id);
+            }
+            TransportEvent::RelayDisconnected { .. }
+            | TransportEvent::RelayRotated { .. }
+            | TransportEvent::WorkerStopped
+            | TransportEvent::WorkerFailed(_) => {
+                self.transaction_transport.reset_all_receipts();
+            }
+            _ => {}
+        }
+    }
+
+    fn accept_transaction_receipt(&mut self, receipt: &Receipt) -> bool {
+        let Some(config) = &self.config else {
+            return false;
+        };
+        if !config.transaction_transport_limits().durable_receipts
+            || receipt.disposition != ReceiptKind::PendingTransactionPersisted
+            || receipt.payload_class != ProductMainlineOverlayPayloadClassV1::NativeTransaction
+        {
+            return false;
+        }
+        let Some(local) = config
+            .authority
+            .transport_bindings
+            .iter()
+            .find(|binding| binding.validator_id == config.local_validator_id)
+        else {
+            return false;
+        };
+        let Some(entry) = self
+            .pool
+            .as_ref()
+            .and_then(|pool| pool.get(&receipt.object_hash))
+        else {
+            return false;
+        };
+        if receipt
+            .verify_route(
+                self.chain,
+                &local.transport_peer_id,
+                &receipt.recipient_peer_id,
+            )
+            .is_err()
+        {
+            return false;
+        }
+        self.transaction_transport.acknowledge(
+            &receipt.recipient_peer_id,
+            entry,
+            receipt.payload_sha256,
+        )
+    }
+
+    pub(super) fn poll_transactions(
+        &mut self,
+        runtime: &ProductMainlineOverlayRuntimeV1,
+        now: Instant,
+    ) -> Result<()> {
         if self.pool.is_none() {
             return Ok(());
         }
+        let receipts_enabled = self
+            .config
+            .as_ref()
+            .is_some_and(|config| config.transaction_transport_limits().durable_receipts);
         let (events, rate_rejected) = self.transaction_transport.drain(now);
         self.rejected = self.rejected.saturating_add(rate_rejected as u64);
         let mut authenticated = Vec::with_capacity(events.len());
-        for event in events {
+        let mut bindings = Vec::with_capacity(events.len());
+        for mut event in events {
             let digest: [u8; 32] = Sha256::digest(&event.frame.payload).into();
-            let entry =
-                PendingTransaction::authenticate(event.frame.payload, self.chain, &self.params);
+            let entry = PendingTransaction::authenticate(
+                std::mem::take(&mut event.frame.payload),
+                self.chain,
+                &self.params,
+            );
             let Ok(entry) = entry else {
                 self.rejected = self.rejected.saturating_add(1);
                 continue;
@@ -92,16 +176,43 @@ impl FreshChainLifecycleV1 {
                 self.rejected = self.rejected.saturating_add(1);
                 continue;
             }
+            if receipts_enabled
+                && event.delivery_id
+                    != crate::product_delivery_journal::product_delivery_id_v1(
+                        self.chain,
+                        event.payload_class.label(),
+                        event.object_hash,
+                        digest,
+                        &event.source_peer_id,
+                        &runtime.startup().local_peer_id,
+                    )
+            {
+                self.rejected = self.rejected.saturating_add(1);
+                continue;
+            }
             authenticated.push(entry);
+            // Retain bounded metadata only, not a second raw payload copy.
+            bindings.push(event);
         }
         let pool = self.pool.as_mut().expect("pool exists");
-        self.rejected = self.rejected.saturating_add(pool.insert_live_batch(
+        let admitted = pool.insert_live_batch_with_retention(
             authenticated,
             self.finalized_parent.as_ref(),
             &self.params,
-        )?);
+        )?;
+        self.rejected = self.rejected.saturating_add(admitted.rejected);
         if let Some(parent) = &self.finalized_parent {
             pool.reconcile_rooted(parent, &self.params)?;
+        }
+        if receipts_enabled {
+            for (binding, retained) in bindings.iter().zip(admitted.retained) {
+                if retained && pool.contains(&binding.object_hash) {
+                    // Full raw equality was checked for this individual input.
+                    // False/backpressure does not suppress any future ACK:
+                    // the sender retries and exact durable duplicates re-ACK.
+                    runtime.try_submit_pending_transaction_ack(binding)?;
+                }
+            }
         }
         Ok(())
     }

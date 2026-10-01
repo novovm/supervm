@@ -25,7 +25,8 @@ fn default_proposal_max_transactions() -> usize {
 }
 
 /// Independent transaction work budgets; these do not enlarge seal ingress.
-/// An explicit object must specify every field so tuning is never partial.
+/// An explicit object must specify every numeric budget. Durable receipts are
+/// opt-in because older peers do not understand their new ACK disposition.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct FreshTransactionTransportV1 {
@@ -35,6 +36,12 @@ pub(crate) struct FreshTransactionTransportV1 {
     pub(crate) gossip_per_peer_per_second: usize,
     pub(crate) gossip_per_poll: usize,
     pub(crate) bytes_per_poll: usize,
+    #[serde(default, skip_serializing_if = "receipt_acks_disabled")]
+    pub(crate) durable_receipts: bool,
+}
+
+fn receipt_acks_disabled(enabled: &bool) -> bool {
+    !enabled
 }
 
 impl FreshTransactionTransportV1 {
@@ -244,6 +251,7 @@ impl NovNativeSealServiceConfigV1 {
                 gossip_per_peer_per_second: 4,
                 gossip_per_poll: 64,
                 bytes_per_poll: 1024 * 1024,
+                durable_receipts: false,
             })
     }
 
@@ -531,6 +539,11 @@ impl NovNativeSealServiceConfigV1 {
     pub(crate) fn validate(&self, expected_chain_id: u64) -> Result<()> {
         if let Some(limits) = self.transaction_transport {
             limits.validate()?;
+            if limits.durable_receipts
+                && (!self.is_fresh_genesis() || self.transaction_pool_path().is_none())
+            {
+                bail!("durable transaction receipts require fresh-chain durable ingress");
+            }
         }
         if !(1..=crate::native_block_ledger::NOV_NATIVE_BLOCK_LEDGER_MAX_TXS_V1)
             .contains(&self.proposal_max_transactions)
@@ -1008,6 +1021,7 @@ mod tests {
         assert!(ingress_only.transaction_ingress_enabled);
         assert!(ingress_only.transaction_pool_path().is_some());
         assert!(!ingress_only.transaction_pool_path().unwrap().exists());
+        assert_fresh_durable_receipt_configuration(&mut fixture);
         assert!(
             super::super::service_paths::validate_service_paths_v1(
                 &ingress_only,
@@ -1199,6 +1213,130 @@ mod tests {
             .unwrap()
             .next()
             .is_none());
+    }
+
+    // Reuse the existing approved-fresh, ingress-only fixture above. Loading
+    // these settings must not open a pool, ledger, or generate any keys.
+    fn assert_fresh_durable_receipt_configuration(fixture: &mut Fixture) {
+        let original = fixture.config.clone();
+        let base = explicit_transaction_transport();
+        for flag in [None, Some(false), Some(true)] {
+            let mut transport = base.clone();
+            if let Some(enabled) = flag {
+                transport["durable_receipts"] = json!(enabled);
+            }
+            fixture.config["transaction_transport"] = transport;
+            fixture.write();
+            let loaded = fixture.load().unwrap();
+            let limits = loaded.transaction_transport_limits();
+            assert!(loaded.is_fresh_genesis());
+            assert!(loaded.transaction_pool_path().is_some());
+            assert_eq!(limits.durable_receipts, flag.unwrap_or(false));
+            let mut expected = base.clone();
+            if flag == Some(true) {
+                expected["durable_receipts"] = json!(true);
+            }
+            let encoded = serde_json::to_vec(&limits).unwrap();
+            let decoded: FreshTransactionTransportV1 = serde_json::from_slice(&encoded).unwrap();
+            assert_eq!(serde_json::to_value(decoded).unwrap(), expected);
+            assert!(!loaded.transaction_pool_path().unwrap().exists());
+            loaded.validate(22922).unwrap();
+        }
+
+        // The now-enabled configuration cannot sign durable-pool receipts if
+        // ingress/proposal is disabled, including after in-memory mutation.
+        let mut runtime = fixture.load().unwrap();
+        runtime.propose_successors = false;
+        runtime.transaction_ingress_enabled = false;
+        assert!(runtime.transaction_pool_path().is_none());
+        assert!(runtime
+            .validate(22922)
+            .unwrap_err()
+            .to_string()
+            .contains("durable transaction receipts require fresh-chain durable ingress"));
+        fixture.config["propose_successors"] = json!(false);
+        fixture.config["transaction_ingress_enabled"] = json!(false);
+        fixture.write();
+        assert_transport_rejected_read_only(fixture);
+        fixture.config["transaction_transport"]["durable_receipts"] = json!(false);
+        fixture.write();
+        assert!(fixture.load().unwrap().transaction_pool_path().is_none());
+        fixture.config = original;
+        fixture.write();
+    }
+
+    #[test]
+    fn native_seal_service_config_durable_receipts_preserve_legacy_json_and_require_fresh() {
+        let mut fixture = Fixture::new();
+        let base = explicit_transaction_transport();
+        assert!(
+            !fixture
+                .load()
+                .unwrap()
+                .transaction_transport_limits()
+                .durable_receipts
+        );
+        for flag in [None, Some(false)] {
+            let mut transport = base.clone();
+            if let Some(enabled) = flag {
+                transport["durable_receipts"] = json!(enabled);
+            }
+            fixture.config["transaction_transport"] = transport;
+            fixture.write();
+            let loaded = fixture.load().unwrap();
+            assert!(!loaded.transaction_transport_limits().durable_receipts);
+            // False is omitted, preserving the exact old serialized object.
+            assert_eq!(
+                serde_json::to_value(loaded.transaction_transport_limits()).unwrap(),
+                base
+            );
+        }
+        let mut enabled = base;
+        enabled["durable_receipts"] = json!(true);
+        let mut runtime = fixture.load().unwrap();
+        runtime.transaction_transport = Some(serde_json::from_value(enabled.clone()).unwrap());
+        assert!(runtime
+            .validate(22922)
+            .unwrap_err()
+            .to_string()
+            .contains("durable transaction receipts require fresh-chain durable ingress"));
+        fixture.config["transaction_transport"] = enabled;
+        fixture.write();
+        assert_transport_rejected_read_only(&fixture);
+    }
+
+    #[test]
+    fn native_seal_service_config_durable_receipts_reject_wrong_types_and_missing_budgets() {
+        let mut fixture = Fixture::new();
+        let base = explicit_transaction_transport();
+        for malformed in [
+            Value::Null,
+            json!(0),
+            json!(1),
+            json!("true"),
+            json!([]),
+            json!({}),
+        ] {
+            let mut transport = base.clone();
+            transport["durable_receipts"] = malformed;
+            assert!(
+                serde_json::from_value::<FreshTransactionTransportV1>(transport.clone()).is_err()
+            );
+            fixture.config["transaction_transport"] = transport;
+            fixture.write();
+            assert_transport_rejected_read_only(&fixture);
+        }
+        for field in base.as_object().unwrap().keys() {
+            let mut transport = base.clone();
+            transport["durable_receipts"] = json!(true);
+            transport.as_object_mut().unwrap().remove(field);
+            assert!(
+                serde_json::from_value::<FreshTransactionTransportV1>(transport.clone()).is_err()
+            );
+            fixture.config["transaction_transport"] = transport;
+            fixture.write();
+            assert_transport_rejected_read_only(&fixture);
+        }
     }
 
     #[test]

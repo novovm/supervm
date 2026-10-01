@@ -1,4 +1,5 @@
 include!("native_successor_publication_bundle_tests.rs");
+include!("native_fresh_transaction_ack_integration_tests.rs");
 
 fn with_record_signing_guard<T>(
     record_profile: bool,
@@ -1072,6 +1073,7 @@ fn exercise_automatic_proposal(
     config.ingress_per_source_per_second = 2;
     let mut transport = config.transaction_transport_limits();
     transport.ingress_per_poll = 3;
+    transport.durable_receipts = true;
     config.transaction_transport = Some(transport);
     let restart_config = config.clone();
     let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
@@ -1163,6 +1165,10 @@ fn exercise_automatic_proposal(
         std::thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(lifecycle.status_json()["height"], 3); // Enqueue does not execute.
+    assert!(!sender.drain_events(128).iter().any(|event| matches!(event,
+        Event::RecipientAck { ack, .. }
+        if ack.disposition == crate::product_mainline_overlay::ProductMainlineOverlayRecipientAckDispositionV1::PendingTransactionPersisted
+    )), "staging alone must not emit a durable receipt");
     let subject = &expected.proposal().unwrap().subject;
     let at = Instant::now();
     with_record_signing_guard(record_profile, || lifecycle
@@ -1172,6 +1178,11 @@ fn exercise_automatic_proposal(
     assert_eq!(lifecycle.status_json()["proposed_successors"], 0);
     assert_eq!(lifecycle.status_json()["successor_rejected"], 2);
     assert_eq!(lifecycle.status_json()["durable_pending_transactions"], 1);
+    exercise_fresh_pool_receipts(
+        path, authority.chain_id, restart_config.fresh_genesis_config_commitment.unwrap(),
+        params, &mut lifecycle, leader, sender,
+        canonical_nov_native_tx_hash_from_payload_v1(&invalid[1]).unwrap(),
+    );
     assert_eq!(lifecycle.status_json()["proposal_collection"]["waiting"], false);
     with_record_signing_guard(record_profile, || lifecycle
         .poll_with_wall_time(

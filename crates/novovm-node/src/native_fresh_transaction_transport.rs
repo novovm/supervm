@@ -1,6 +1,7 @@
 //! Bounded transaction staging and fair transport attempts, not authentication,
-//! durable admission, delivery acknowledgement or permission to vote. The owner
-//! retains this scheduler across candidate transitions and validates every raw.
+//! durable admission or permission to vote. The owner validates every raw and
+//! recipient ACK; this scheduler only remembers explicitly verified peer receipts
+//! in memory, separately from local transport queue acceptance.
 
 use crate::native_block_seal::service_config::FreshTransactionTransportV1;
 use crate::product_mainline_overlay::{
@@ -9,6 +10,7 @@ use crate::product_mainline_overlay::{
 use crate::tx_ingress::fresh_pool::{PendingTransaction, MAX_RAW_BYTES};
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -53,6 +55,7 @@ struct Peer {
     cursor: usize,
     retry: Option<[u8; 32]>,
     sent: BTreeSet<[u8; 32]>,
+    acked: BTreeMap<[u8; 32], [u8; 32]>,
 }
 
 #[derive(Default)]
@@ -65,6 +68,8 @@ struct Counters {
     gossip_attempt_bytes: u64,
     submitted: u64,
     backpressure: u64,
+    recipient_acks_accepted: u64,
+    recipient_acks_rejected: u64,
 }
 
 pub(super) struct TransactionTransport {
@@ -96,6 +101,7 @@ impl TransactionTransport {
                 cursor: 0,
                 retry: None,
                 sent: BTreeSet::new(),
+                acked: BTreeMap::new(),
             })
             .collect();
         let peer_index = peers
@@ -192,6 +198,91 @@ impl TransactionTransport {
         (result, rejected)
     }
 
+    /// The owner must first verify the ACK signature, chain, disposition and
+    /// complete delivery binding against this exact current durable pool entry.
+    /// Nothing here grants admission, finality or permission to remove that entry.
+    pub(super) fn acknowledge(
+        &mut self,
+        peer: &str,
+        entry: &PendingTransaction,
+        payload_sha256: [u8; 32],
+    ) -> bool {
+        if !self.limits.durable_receipts {
+            self.counters.recipient_acks_rejected =
+                self.counters.recipient_acks_rejected.saturating_add(1);
+            return false;
+        }
+        let Some(index) = self.peer_index.get(peer).copied() else {
+            self.counters.recipient_acks_rejected =
+                self.counters.recipient_acks_rejected.saturating_add(1);
+            return false;
+        };
+        let peer = &mut self.peers[index];
+        if entry.raw.is_empty()
+            || entry.raw.len() > MAX_RAW_BYTES
+            || <[u8; 32]>::from(Sha256::digest(&entry.raw)) != payload_sha256
+            || (peer.acked.len() >= MAX_STAGED_ENTRIES && !peer.acked.contains_key(&entry.hash))
+        {
+            self.counters.recipient_acks_rejected =
+                self.counters.recipient_acks_rejected.saturating_add(1);
+            return false;
+        }
+        peer.acked.insert(entry.hash, payload_sha256);
+        if peer.retry == Some(entry.hash) {
+            peer.retry = None;
+        }
+        self.counters.recipient_acks_accepted =
+            self.counters.recipient_acks_accepted.saturating_add(1);
+        true
+    }
+
+    /// A new/failed session cannot inherit an assumption of remote retention.
+    /// Retry within the remaining original rate budget; do not reset quotas or
+    /// discard staged inbound transactions when clearing peer receipt knowledge.
+    pub(super) fn reset_peer_receipts(&mut self, peer: &str) {
+        if !self.limits.durable_receipts {
+            return;
+        }
+        if let Some(index) = self.peer_index.get(peer).copied() {
+            self.peers[index].acked.clear();
+            self.peers[index].sent.clear();
+        }
+    }
+
+    pub(super) fn reset_all_receipts(&mut self) {
+        if !self.limits.durable_receipts {
+            return;
+        }
+        for peer in &mut self.peers {
+            peer.acked.clear();
+            peer.sent.clear();
+        }
+    }
+
+    fn retain_live_receipts(&mut self, entries: &[&PendingTransaction]) {
+        if !self.peers.iter().any(|peer| !peer.acked.is_empty()) {
+            return;
+        }
+        let live: BTreeMap<_, _> = entries.iter().map(|entry| (entry.hash, *entry)).collect();
+        // Hash only entries referenced by a receipt, at most once per call even
+        // when several peers acknowledged them. No cross-poll validation cache.
+        let mut digests = BTreeMap::<[u8; 32], [u8; 32]>::new();
+        for peer in &mut self.peers {
+            peer.acked.retain(|hash, expected| {
+                let Some(entry) = live.get(hash) else {
+                    return false;
+                };
+                if entry.raw.is_empty() || entry.raw.len() > MAX_RAW_BYTES {
+                    return false;
+                }
+                let actual = digests
+                    .entry(*hash)
+                    .or_insert_with(|| Sha256::digest(&entry.raw).into());
+                actual == expected
+            });
+        }
+    }
+
     /// Each call has a separate outbound count/byte budget. False means local
     /// transport backpressure, consumes an attempt, and preserves the exact
     /// hash for this peer. True is queue acceptance only, never durable receipt.
@@ -202,11 +293,12 @@ impl TransactionTransport {
         now: Instant,
         mut send: impl FnMut(&str, &PendingTransaction) -> Result<bool>,
     ) -> Result<()> {
-        if entries.is_empty() || self.peers.is_empty() {
-            return Ok(());
-        }
         if entries.len() > MAX_STAGED_ENTRIES {
             bail!("transaction gossip exceeds the durable pool entry bound");
+        }
+        self.retain_live_receipts(entries);
+        if entries.is_empty() || self.peers.is_empty() {
+            return Ok(());
         }
         let mut blocked = vec![false; self.peers.len()];
         let (mut attempts, mut bytes, mut idle) = (0, 0, 0);
@@ -230,6 +322,7 @@ impl TransactionTransport {
             }
             let retry = peer
                 .retry
+                .filter(|hash| !peer.acked.contains_key(hash))
                 .and_then(|hash| entries.iter().position(|entry| entry.hash == hash));
             if retry.is_none() {
                 peer.retry = None;
@@ -237,7 +330,10 @@ impl TransactionTransport {
             let selected = retry.or_else(|| {
                 (0..entries.len())
                     .map(|offset| (peer.cursor + offset) % entries.len())
-                    .find(|position| !peer.sent.contains(&entries[*position].hash))
+                    .find(|position| {
+                        !peer.sent.contains(&entries[*position].hash)
+                            && !peer.acked.contains_key(&entries[*position].hash)
+                    })
             });
             let Some(position) = selected else {
                 blocked[index] = true;
@@ -291,9 +387,11 @@ impl TransactionTransport {
                 "ingress_per_poll":self.limits.ingress_per_poll,
                 "gossip_per_peer_per_second":self.limits.gossip_per_peer_per_second,
                 "gossip_per_poll":self.limits.gossip_per_poll,
+                "durable_receipts":self.limits.durable_receipts,
                 "bytes_per_poll":self.limits.bytes_per_poll,
                 "global_staged_entries":MAX_STAGED_ENTRIES,
                 "global_staged_bytes":MAX_STAGED_BYTES,
+                "max_acked_transactions_per_peer":MAX_STAGED_ENTRIES,
             },
             "queued_entries":self.queued_entries,"queued_bytes":self.queued_bytes,
             "staging_rejected":self.counters.staging_rejected,
@@ -304,6 +402,10 @@ impl TransactionTransport {
             "gossip_attempt_bytes":self.counters.gossip_attempt_bytes,
             "submitted":self.counters.submitted,"backpressure":self.counters.backpressure,
             "submitted_is_transport_queue_acceptance":true,
+            "recipient_acks_accepted":self.counters.recipient_acks_accepted,
+            "recipient_acks_rejected":self.counters.recipient_acks_rejected,
+            "acked_peer_transactions":self.peers.iter().map(|peer| peer.acked.len()).sum::<usize>(),
+            "recipient_ack_records_are_volatile":true,
         })
     }
 }
@@ -315,6 +417,7 @@ mod tests {
 
     fn limits() -> FreshTransactionTransportV1 {
         FreshTransactionTransportV1 {
+            durable_receipts: false,
             per_peer_queue: 4,
             ingress_per_source_per_second: 8,
             ingress_per_poll: 16,
@@ -791,5 +894,238 @@ mod tests {
             .gossip(&[&replacement], now + WINDOW, |_, _| Ok(true))
             .unwrap();
         assert_eq!(scheduler.peers[0].sent.len(), 1);
+    }
+
+    fn receipt_transport(peers: &[&str], now: Instant) -> TransactionTransport {
+        let mut config = limits();
+        config.durable_receipts = true;
+        transport(peers, config, now)
+    }
+
+    fn raw_digest(entry: &PendingTransaction) -> [u8; 32] {
+        Sha256::digest(&entry.raw).into()
+    }
+
+    #[test]
+    fn recipient_receipts_require_opt_in_pinned_peer_and_matching_bounded_raw() {
+        let now = Instant::now();
+        let entry = transaction(1, 4);
+        let mut disabled = transport(&["a"], limits(), now);
+        assert!(!disabled.acknowledge("a", &entry, raw_digest(&entry)));
+        assert_eq!(disabled.status_json()["acked_peer_transactions"], 0);
+        disabled.gossip(&[&entry], now, |_, _| Ok(true)).unwrap();
+        disabled.reset_all_receipts();
+        disabled.reset_peer_receipts("a");
+        disabled
+            .gossip(&[&entry], now, |_, _| panic!("disabled behavior changed"))
+            .unwrap();
+
+        let mut scheduler = receipt_transport(&["a"], now);
+        assert!(!scheduler.acknowledge("unknown", &entry, raw_digest(&entry)));
+        assert!(!scheduler.acknowledge("a", &entry, [0; 32]));
+        for entry in [transaction(1, 0), transaction(1, MAX_RAW_BYTES + 1)] {
+            assert!(!scheduler.acknowledge("a", &entry, raw_digest(&entry)));
+        }
+        assert_eq!(scheduler.status_json()["recipient_acks_rejected"], 4);
+        assert_eq!(scheduler.status_json()["acked_peer_transactions"], 0);
+        assert!(scheduler.acknowledge("a", &entry, raw_digest(&entry)));
+        assert_eq!(scheduler.status_json()["recipient_acks_accepted"], 1);
+    }
+
+    #[test]
+    fn receipt_suppresses_only_its_peer_while_missing_ack_retries_each_window() {
+        let now = Instant::now();
+        let mut scheduler = receipt_transport(&["a", "b"], now);
+        let entry = transaction(1, 4);
+        let mut sent = Vec::new();
+        scheduler
+            .gossip(&[&entry], now, |peer, _| {
+                sent.push(peer.to_owned());
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(sent, ["a", "b"]);
+        assert!(scheduler.acknowledge("a", &entry, raw_digest(&entry)));
+        for window in 1..=3 {
+            sent.clear();
+            scheduler
+                .gossip(&[&entry], now + WINDOW * window, |peer, _| {
+                    sent.push(peer.to_owned());
+                    Ok(true)
+                })
+                .unwrap();
+            assert_eq!(sent, ["b"]);
+        }
+        assert_eq!(entry.raw, [1; 4]);
+        assert_eq!(scheduler.status_json()["acked_peer_transactions"], 1);
+        assert_eq!(scheduler.status_json()["submitted"], 5);
+        assert_eq!(
+            scheduler.status_json()["submitted_is_transport_queue_acceptance"],
+            true
+        );
+    }
+
+    #[test]
+    fn receipt_for_a_backpressured_retry_does_not_block_the_next_transaction() {
+        let now = Instant::now();
+        let mut scheduler = receipt_transport(&["a"], now);
+        let first = transaction(1, 4);
+        let second = transaction(2, 4);
+        scheduler
+            .gossip(&[&first, &second], now, |_, entry| {
+                assert_eq!(entry.hash, first.hash);
+                Ok(false)
+            })
+            .unwrap();
+        assert_eq!(scheduler.peers[0].retry, Some(first.hash));
+        assert!(scheduler.acknowledge("a", &first, raw_digest(&first)));
+        assert!(scheduler.peers[0].retry.is_none());
+        let mut sent = Vec::new();
+        scheduler
+            .gossip(&[&first, &second], now, |_, entry| {
+                sent.push(entry.hash);
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(sent, [second.hash]);
+        assert_eq!(scheduler.status_json()["gossip_attempts"], 2);
+    }
+
+    #[test]
+    fn same_hash_changed_raw_invalidates_receipt_before_selection() {
+        let now = Instant::now();
+        let mut scheduler = receipt_transport(&["a"], now);
+        let original = transaction(1, 4);
+        assert!(scheduler.acknowledge("a", &original, raw_digest(&original)));
+        scheduler
+            .gossip(&[&original], now, |_, _| panic!("already acknowledged"))
+            .unwrap();
+        let mut changed = original.clone();
+        changed.raw[0] ^= 1;
+        assert!(!scheduler.acknowledge("a", &changed, raw_digest(&original)));
+        let mut sent = 0;
+        scheduler
+            .gossip(&[&changed], now, |_, entry| {
+                assert_eq!(entry.raw, changed.raw);
+                sent += 1;
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(sent, 1);
+        assert_eq!(scheduler.status_json()["acked_peer_transactions"], 0);
+        assert!(scheduler.acknowledge("a", &changed, raw_digest(&changed)));
+        scheduler
+            .gossip(&[&changed], now + WINDOW, |_, _| {
+                panic!("new raw was acknowledged")
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn receipt_memory_tracks_exact_live_pool_and_clears_when_pool_is_empty() {
+        let now = Instant::now();
+        let mut scheduler = receipt_transport(&["a", "b"], now);
+        let first = transaction(1, 4);
+        let second = transaction(2, 4);
+        for peer in ["a", "b"] {
+            for entry in [&first, &second] {
+                assert!(scheduler.acknowledge(peer, entry, raw_digest(entry)));
+            }
+        }
+        scheduler
+            .gossip(&[&second], now, |_, _| {
+                panic!("remaining entry acknowledged")
+            })
+            .unwrap();
+        assert_eq!(scheduler.status_json()["acked_peer_transactions"], 2);
+        scheduler
+            .gossip(&[], now, |_, _| panic!("empty pool"))
+            .unwrap();
+        assert_eq!(scheduler.status_json()["acked_peer_transactions"], 0);
+        let mut sent = 0;
+        scheduler
+            .gossip(&[&second], now, |_, _| {
+                sent += 1;
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(
+            sent, 2,
+            "reintroduced entries must not inherit old receipts"
+        );
+    }
+
+    #[test]
+    fn reconnect_resets_receipts_and_sent_but_preserves_rate_budgets_and_ingress() {
+        let now = Instant::now();
+        let mut scheduler = receipt_transport(&["a", "b"], now);
+        scheduler.limits.gossip_per_peer_per_second = 1;
+        let entry = transaction(1, 4);
+        scheduler.gossip(&[&entry], now, |_, _| Ok(true)).unwrap();
+        for peer in ["a", "b"] {
+            assert!(scheduler.acknowledge(peer, &entry, raw_digest(&entry)));
+            assert!(scheduler.enqueue(inbound(peer, 1, 3)));
+        }
+        scheduler.reset_peer_receipts("unknown");
+        assert_eq!(scheduler.status_json()["acked_peer_transactions"], 2);
+        scheduler.reset_peer_receipts("a");
+        assert_eq!(scheduler.status_json()["acked_peer_transactions"], 1);
+        assert!(scheduler.peers[0].sent.is_empty());
+        assert_eq!(scheduler.peers[1].sent.len(), 1);
+        scheduler
+            .gossip(&[&entry], now, |_, _| {
+                panic!("reconnect must not reset quota")
+            })
+            .unwrap();
+        let mut sent = Vec::new();
+        scheduler
+            .gossip(&[&entry], now + WINDOW, |peer, _| {
+                sent.push(peer.to_owned());
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(sent, ["a"]);
+        scheduler.reset_all_receipts();
+        sent.clear();
+        scheduler
+            .gossip(&[&entry], now + WINDOW, |peer, _| {
+                sent.push(peer.to_owned());
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(sent, ["b"]);
+        scheduler.reset_all_receipts();
+        scheduler
+            .gossip(&[&entry], now + WINDOW, |_, _| {
+                panic!("all-peer reset changed quotas")
+            })
+            .unwrap();
+        assert_eq!(scheduler.status_json()["queued_entries"], 2);
+        assert_eq!(scheduler.status_json()["queued_bytes"], 6);
+        assert_eq!(scheduler.drain(now).0.len(), 2);
+    }
+
+    #[test]
+    fn receipt_memory_is_bounded_per_peer_even_before_pool_pruning() {
+        let now = Instant::now();
+        let mut scheduler = receipt_transport(&["a", "b"], now);
+        let mut first = None;
+        for index in 0..MAX_STAGED_ENTRIES {
+            let mut entry = transaction(1, 1);
+            entry.hash[..8].copy_from_slice(&(index as u64).to_le_bytes());
+            assert!(scheduler.acknowledge("a", &entry, raw_digest(&entry)));
+            first.get_or_insert(entry);
+        }
+        let first = first.unwrap();
+        let replacement = transaction(255, 1);
+        assert!(!scheduler.acknowledge("a", &replacement, raw_digest(&replacement)));
+        assert!(scheduler.acknowledge("a", &first, raw_digest(&first)));
+        assert!(scheduler.acknowledge("b", &replacement, raw_digest(&replacement)));
+        assert_eq!(scheduler.peers[0].acked.len(), MAX_STAGED_ENTRIES);
+        assert_eq!(scheduler.peers[1].acked.len(), 1);
+        scheduler.gossip(&[&first], now, |_, _| Ok(true)).unwrap();
+        assert_eq!(scheduler.peers[0].acked.len(), 1);
+        assert_eq!(scheduler.peers[1].acked.len(), 0);
+        assert!(scheduler.acknowledge("a", &replacement, raw_digest(&replacement)));
     }
 }

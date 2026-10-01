@@ -306,6 +306,17 @@ pub(crate) fn exercise_finalized_record_queries_for_test_v1(
     let open_admission = || FreshTransactionPool::open(&admission_path, chain, genesis, params);
     let mut admission = open_admission()?;
     let admission_sequence = admission.write_sequence_for_test();
+    let retained_path = native_path.with_extension("finalized-record-retention-read-pool");
+    if retained_path.exists() {
+        bail!("retention fixture refuses to reuse an existing pool path");
+    }
+    let open_retained = || FreshTransactionPool::open(&retained_path, chain, genesis, params);
+    let mut retained_probe = open_retained()?;
+    if !retained_probe.insert(pending[0].clone())? {
+        bail!("retention read-failure fixture requires one already durable entry");
+    }
+    let retained_image = pool_image(&retained_probe);
+    let retained_sequence = retained_probe.write_sequence_for_test();
     // Live entries first ensure a later corrupted stale record cannot leave
     // an admitted prefix. Include both successful and failed finalized raws.
     let admission_entries: Vec<_> = pending
@@ -377,8 +388,22 @@ pub(crate) fn exercise_finalized_record_queries_for_test_v1(
                     "faulted pool reconciliation",
                 )?;
                 rejection(
-                    admission.insert_live_batch(admission_entries.clone(), Some(&view), params),
+                    admission.insert_live_batch_with_retention(
+                        admission_entries.clone(),
+                        Some(&view),
+                        params,
+                    ),
                     "faulted batch admission",
+                )?;
+                // The first input already has a positive durable match, but a
+                // later required read failure must return Err, not partial ACKs.
+                rejection(
+                    retained_probe.insert_live_batch_with_retention(
+                        admission_entries.clone(),
+                        Some(&view),
+                        params,
+                    ),
+                    "faulted admission after an existing retained match",
                 )
             })?;
             if pool_image(&pool) != all {
@@ -387,17 +412,29 @@ pub(crate) fn exercise_finalized_record_queries_for_test_v1(
             if !admission.is_empty() || admission.write_sequence_for_test() != admission_sequence {
                 bail!("faulted batch admission wrote an earlier live prefix");
             }
+            if pool_image(&retained_probe) != retained_image
+                || retained_probe.write_sequence_for_test() != retained_sequence
+            {
+                bail!("faulted retention result changed an already durable pool");
+            }
             Ok(())
         })?;
         drop(pool);
         pool = open_pool()?;
         drop(admission);
         admission = open_admission()?;
+        drop(retained_probe);
+        retained_probe = open_retained()?;
         if !admission.is_empty() || admission.write_sequence_for_test() != admission_sequence {
             bail!("faulted batch admission changed durable pool after restart");
         }
         if pool_image(&pool) != all {
             bail!("failed record query partially deleted durable pool entries");
+        }
+        if pool_image(&retained_probe) != retained_image
+            || retained_probe.write_sequence_for_test() != retained_sequence
+        {
+            bail!("failed retained-prefix admission changed after restart");
         }
         check_queries()?;
     }
@@ -434,24 +471,78 @@ pub(crate) fn exercise_finalized_record_queries_for_test_v1(
         bail!("record-backed reconciliation is not idempotent after restart");
     }
     state_records::without_materialization_for_test(|| {
-        if admission.insert_live_batch(admission_entries.clone(), Some(&view), params)? != 0
+        let mut expected_retained = vec![false; admission_entries.len()];
+        expected_retained[..pending.len()].fill(true);
+        // Keep result positions distinct even for repeated hashes. These two
+        // fabricated authenticated entries exercise the second-layer raw and
+        // nonce checks; neither may be persisted or acknowledged.
+        let mut mismatch = pending[0].clone();
+        mismatch.raw.push(0);
+        let mut conflict = pending[0].clone();
+        conflict.hash[0] ^= 1;
+        conflict.raw.push(1);
+        let mut batch = admission_entries.clone();
+        batch.extend([
+            pending[0].clone(),
+            mismatch.clone(),
+            original_entries[0].clone(),
+            alternative.clone(),
+            conflict,
+        ]);
+        let mut first_expected = expected_retained.clone();
+        first_expected.extend([true, false, false, false, false]);
+        let accepted = admission.insert_live_batch_with_retention(batch, Some(&view), params)?;
+        if accepted.rejected != 2
+            || accepted.retained != first_expected
             || pool_image(&admission) != remaining
             || admission.write_sequence_for_test() != admission_sequence + pending.len() as u64
         {
-            bail!("admission did not write exactly the live transactions");
+            bail!("admission did not retain exactly the live inputs in their original positions");
+        }
+        for entry in &pending {
+            if admission
+                .get(&entry.hash)
+                .map(|retained| retained.raw.as_slice())
+                != Some(entry.raw.as_slice())
+            {
+                bail!("retained acknowledgement lookup did not bind exact pending raw bytes");
+            }
+        }
+        if admission.get(&alternative.hash).is_some()
+            || original_entries
+                .iter()
+                .any(|entry| admission.get(&entry.hash).is_some())
+        {
+            bail!("filtered finalized or consumed input became acknowledgeable");
         }
         let sequence = admission.write_sequence_for_test();
         for _ in 0..3 {
+            let accepted = admission.insert_live_batch_with_retention(
+                admission_entries.clone(),
+                Some(&view),
+                params,
+            )?;
+            if accepted.rejected != 0 || accepted.retained != expected_retained {
+                bail!("existing pending replay retention differs from filtered stale inputs");
+            }
+            // Preserve coverage of the old rejected-count-only API as well.
             if admission.insert_live_batch(admission_entries.clone(), Some(&view), params)? != 0 {
                 bail!("exact pending replay was rejected");
             }
             admission.reconcile_rooted(&view, params)?;
         }
-        // Already-authenticated entry is deliberately forged only in this test
-        // to exercise the second-layer same-hash/full-raw consistency check.
-        let mut mismatch = pending[0].clone();
-        mismatch.raw.push(0);
-        if admission.insert_live_batch(vec![mismatch], Some(&view), params)? != 1
+        let accepted = admission.insert_live_batch_with_retention(
+            vec![
+                mismatch.clone(),
+                pending[0].clone(),
+                mismatch,
+                pending[1].clone(),
+            ],
+            None,
+            params,
+        )?;
+        if accepted.rejected != 2
+            || accepted.retained != [false, true, false, true]
             || admission.write_sequence_for_test() != sequence
             || pool_image(&admission) != remaining
         {
@@ -460,11 +551,24 @@ pub(crate) fn exercise_finalized_record_queries_for_test_v1(
         Ok(())
     })?;
     drop(admission);
-    let admission = open_admission()?;
+    let mut admission = open_admission()?;
     if pool_image(&admission) != remaining
         || admission.write_sequence_for_test() != admission_sequence + pending.len() as u64
     {
         bail!("filtered batch admission changed across restart");
+    }
+    let sequence = admission.write_sequence_for_test();
+    let accepted = state_records::without_materialization_for_test(|| {
+        admission.insert_live_batch_with_retention(admission_entries.clone(), Some(&view), params)
+    })?;
+    let mut expected_retained = vec![false; admission_entries.len()];
+    expected_retained[..pending.len()].fill(true);
+    if accepted.rejected != 0
+        || accepted.retained != expected_retained
+        || admission.write_sequence_for_test() != sequence
+        || pool_image(&admission) != remaining
+    {
+        bail!("durable retention acknowledgements changed after pool recovery");
     }
     let workspace = WorkspaceStore::open(chain, params)?;
     if workspace.graph.get(&native_aoem_owned_state_head_key_v1(
