@@ -4,10 +4,11 @@
 
 use super::authentication::{authenticate_transfer_v3, SignatureCheckedTransfer};
 use crate::execution::plan::{
-    BatchContext, BatchPlan, OwnedBatchInput, PlanBudget, UnpublishedBatchEffects,
+    BatchContext, BatchPlan, BoundBatchCapture, OwnedBatchInput, PlanBudget,
+    UnpublishedBatchEffects,
 };
-use crate::state::frontier::{CaptureBudget, DeclaredAccess};
-use crate::state::tree::{StateChange, StateNodeReader};
+use crate::state::frontier::{CaptureBudget, CaptureStep, DeclaredAccess};
+use crate::state::tree::{NodeHash, StateChange, StateNodeReader};
 use anyhow::{ensure, Context, Result};
 use novovm_aoem::{ComputeSession, ComputeTask};
 use std::collections::BTreeSet;
@@ -75,6 +76,41 @@ impl SignatureCheckedPlan {
     ) -> Result<SignatureCheckedInput> {
         Ok(SignatureCheckedInput {
             input: self.plan.capture(reader, budget)?,
+            transactions: self.transactions,
+        })
+    }
+
+    /// Incremental capture owns this exact plan and authenticated metadata.
+    /// There is no API for attaching an unrelated prebuilt state witness.
+    pub fn begin_capture(self, budget: CaptureBudget) -> Result<SignatureCheckedCapture> {
+        Ok(SignatureCheckedCapture {
+            capture: self.plan.begin_capture(budget)?,
+            transactions: self.transactions,
+        })
+    }
+}
+
+pub struct SignatureCheckedCapture {
+    capture: BoundBatchCapture,
+    transactions: Vec<SignatureCheckedTransfer>,
+}
+
+impl SignatureCheckedCapture {
+    pub fn advance(&mut self, max_edge_steps: usize) -> Result<CaptureStep> {
+        self.capture.advance(max_edge_steps)
+    }
+
+    pub fn next_request(&mut self) -> Result<Option<Vec<NodeHash>>> {
+        self.capture.next_request()
+    }
+
+    pub fn accept(&mut self, values: Vec<Option<Vec<u8>>>) -> Result<()> {
+        self.capture.accept(values)
+    }
+
+    pub fn finish(self) -> Result<SignatureCheckedInput> {
+        Ok(SignatureCheckedInput {
+            input: self.capture.finish()?,
             transactions: self.transactions,
         })
     }

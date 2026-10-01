@@ -38,6 +38,7 @@ impl Default for IoBudget {
 struct Usage {
     requests: usize,
     bytes: usize,
+    notify: Option<thread::Thread>,
 }
 
 struct Permit {
@@ -50,6 +51,11 @@ impl Drop for Permit {
         let mut usage = self.usage.lock().unwrap_or_else(|error| error.into_inner());
         usage.requests -= 1;
         usage.bytes -= self.bytes;
+        let notify = usage.notify.clone();
+        drop(usage);
+        if let Some(thread) = &notify {
+            thread.unpark();
+        }
     }
 }
 
@@ -121,22 +127,112 @@ pub struct IoService {
     budget: IoBudget,
 }
 
+/// A read-only admission lane, sharing the SAME native owner and database.
+/// Separate bounded reply accounting prevents unconsumed public query replies
+/// from reserving every candidate-capture/write permit and deadlocking drain.
+pub(crate) struct IoReadClient {
+    sender: mpsc::SyncSender<Command>,
+    usage: Arc<Mutex<Usage>>,
+    budget: IoBudget,
+}
+
+impl IoReadClient {
+    pub(crate) fn try_read_value(
+        &self,
+        root: NodeHash,
+        key: Vec<u8>,
+    ) -> Result<Option<IoTicket<Option<Vec<u8>>>>> {
+        ensure!(
+            !key.is_empty() && key.len() <= 256,
+            "I/O state key length invalid"
+        );
+        let permit = reserve(&self.usage, self.budget, key.len() + 32 + 257)?;
+        enqueue(&self.sender, permit, |reply| Operation::Value {
+            root,
+            key,
+            reply,
+        })
+    }
+}
+
+fn reserve(
+    accounting: &Arc<Mutex<Usage>>,
+    budget: IoBudget,
+    bytes: usize,
+) -> Result<Option<Arc<Permit>>> {
+    ensure!(bytes <= budget.bytes, "request exceeds I/O byte budget");
+    let mut usage = match accounting.try_lock() {
+        Ok(usage) => usage,
+        Err(TryLockError::WouldBlock) => return Ok(None),
+        Err(TryLockError::Poisoned(_)) => anyhow::bail!("I/O admission accounting poisoned"),
+    };
+    if usage.requests >= budget.requests || bytes > budget.bytes - usage.bytes {
+        return Ok(None);
+    }
+    usage.requests += 1;
+    usage.bytes += bytes;
+    Ok(Some(Arc::new(Permit {
+        usage: accounting.clone(),
+        bytes,
+    })))
+}
+
+fn enqueue<T>(
+    sender: &mpsc::SyncSender<Command>,
+    permit: Option<Arc<Permit>>,
+    operation: impl FnOnce(mpsc::Sender<Result<T>>) -> Operation,
+) -> Result<Option<IoTicket<T>>> {
+    let Some(permit) = permit else {
+        return Ok(None);
+    };
+    let (reply, receiver) = mpsc::channel();
+    let command = Command {
+        operation: operation(reply),
+        permit: permit.clone(),
+    };
+    match sender.try_send(command) {
+        Ok(()) => Ok(Some(IoTicket {
+            receiver,
+            permit: Some(permit),
+        })),
+        Err(mpsc::TrySendError::Full(_)) => Ok(None),
+        Err(mpsc::TrySendError::Disconnected(_)) => {
+            anyhow::bail!("candidate I/O owner unavailable")
+        }
+    }
+}
+
 impl IoService {
     /// Blocking initialization on a new thread; call before activating network
     /// service. Opening never transfers a live native handle across threads.
     pub fn start(config: StoreConfig, mode: OpenMode, budget: IoBudget) -> Result<Self> {
+        Self::start_with_notify(config, mode, budget, None)
+    }
+
+    /// Completion wakeup for the replacement pipeline coordinator. Notification
+    /// has no data/authority; the receiving ticket still owns the exact result.
+    pub(crate) fn start_with_notify(
+        config: StoreConfig,
+        mode: OpenMode,
+        budget: IoBudget,
+        notify: Option<thread::Thread>,
+    ) -> Result<Self> {
         ensure!(
             budget.requests > 0 && budget.requests <= 65_536 && budget.bytes > 0,
             "invalid I/O admission budget"
         );
         let (sender, receiver) = mpsc::sync_channel(budget.requests);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let usage = Arc::new(Mutex::new(Usage {
+            notify: notify.clone(),
+            ..Usage::default()
+        }));
         let worker = thread::Builder::new()
             .name("novovm-candidate-io".into())
             .spawn(move || match CandidateStore::open(config, mode) {
                 Ok(store) => {
                     if ready_tx.send(Ok(())).is_ok() {
-                        run_owner(store, receiver);
+                        run_owner(store, receiver, notify);
                     }
                 }
                 Err(error) => {
@@ -150,30 +246,13 @@ impl IoService {
         Ok(Self {
             sender,
             worker,
-            usage: Arc::new(Mutex::new(Usage::default())),
+            usage,
             budget,
         })
     }
 
     fn reserve(&self, bytes: usize) -> Result<Option<Arc<Permit>>> {
-        ensure!(
-            bytes <= self.budget.bytes,
-            "request exceeds I/O byte budget"
-        );
-        let mut usage = match self.usage.try_lock() {
-            Ok(usage) => usage,
-            Err(TryLockError::WouldBlock) => return Ok(None),
-            Err(TryLockError::Poisoned(_)) => anyhow::bail!("I/O admission accounting poisoned"),
-        };
-        if usage.requests >= self.budget.requests || bytes > self.budget.bytes - usage.bytes {
-            return Ok(None);
-        }
-        usage.requests += 1;
-        usage.bytes += bytes;
-        Ok(Some(Arc::new(Permit {
-            usage: self.usage.clone(),
-            bytes,
-        })))
+        reserve(&self.usage, self.budget, bytes)
     }
 
     fn enqueue<T>(
@@ -181,24 +260,30 @@ impl IoService {
         bytes: usize,
         operation: impl FnOnce(mpsc::Sender<Result<T>>) -> Operation,
     ) -> Result<Option<IoTicket<T>>> {
-        let Some(permit) = self.reserve(bytes)? else {
-            return Ok(None);
+        enqueue(&self.sender, self.reserve(bytes)?, operation)
+    }
+
+    /// One separately bounded public query lane for the pipeline. This opens no
+    /// new engine or DB. Must drop its sender before joining the I/O owner.
+    pub(crate) fn read_client(&self) -> Result<IoReadClient> {
+        let budget = IoBudget {
+            requests: self.budget.requests,
+            bytes: self.budget.requests * (256 + 32 + 257),
         };
-        let (reply, receiver) = mpsc::channel();
-        let command = Command {
-            operation: operation(reply),
-            permit: permit.clone(),
-        };
-        match self.sender.try_send(command) {
-            Ok(()) => Ok(Some(IoTicket {
-                receiver,
-                permit: Some(permit),
+        let notify = self
+            .usage
+            .lock()
+            .map_err(|_| anyhow::anyhow!("I/O accounting poisoned"))?
+            .notify
+            .clone();
+        Ok(IoReadClient {
+            sender: self.sender.clone(),
+            budget,
+            usage: Arc::new(Mutex::new(Usage {
+                notify,
+                ..Usage::default()
             })),
-            Err(mpsc::TrySendError::Full(_)) => Ok(None),
-            Err(mpsc::TrySendError::Disconnected(_)) => {
-                anyhow::bail!("candidate I/O owner unavailable")
-            }
-        }
+        })
     }
 
     /// None is backpressure, NOT acceptance. The caller retains its Arc and can
@@ -253,11 +338,16 @@ impl IoService {
     }
 }
 
-fn run_owner(store: CandidateStore, receiver: mpsc::Receiver<Command>) {
+fn run_owner(
+    store: CandidateStore,
+    receiver: mpsc::Receiver<Command>,
+    notify: Option<thread::Thread>,
+) {
     let mut pending = VecDeque::new();
     let mut active: Option<WriteJob> = None;
     let mut connected = true;
     while connected || active.is_some() || !pending.is_empty() {
+        let mut completed = false;
         // At most one admitted command before advancing the active writer:
         // reads cannot starve writes; writer preflight cannot monopolize reads.
         let command = if active.is_none() && pending.is_empty() {
@@ -291,9 +381,11 @@ fn run_owner(store: CandidateStore, receiver: mpsc::Receiver<Command>) {
                         Ok(values)
                     });
                     let _ = reply.send(result);
+                    completed = true;
                 }
                 Operation::Value { root, key, reply } => {
                     let _ = reply.send(read_state_value(&store, root, &key));
+                    completed = true;
                 }
             }
         } else if active.is_none() && pending.is_empty() {
@@ -312,6 +404,7 @@ fn run_owner(store: CandidateStore, receiver: mpsc::Receiver<Command>) {
                     }
                     Err(error) => {
                         let _ = reply.send(Err(error));
+                        completed = true;
                     }
                 }
             }
@@ -323,8 +416,14 @@ fn run_owner(store: CandidateStore, receiver: mpsc::Receiver<Command>) {
                     let result = result
                         .and_then(|done| done.context("candidate persistence completion missing"));
                     let _ = job.reply.send(result);
+                    completed = true;
                     active = None;
                 }
+            }
+        }
+        if completed {
+            if let Some(thread) = &notify {
+                thread.unpark();
             }
         }
     }

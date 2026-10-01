@@ -13,10 +13,12 @@
 use super::direct_nov_fee::{DirectNovFeePolicy, FeeState, TransferFeeRequest};
 use super::quoted_transfer::Account;
 use super::record_pages;
-use crate::execution::plan::{BatchContext, PlanBudget};
+use crate::execution::plan::{BatchContext, BatchPlan, PlanBudget};
 use crate::ingress::authentication::check_nonce_sequence;
-use crate::ingress::batch::{SignatureCheckedBatch, SignatureCheckedInput, SignatureCheckedPlan};
-use crate::state::frontier::{CaptureBudget, DeclaredAccess};
+use crate::ingress::batch::{
+    SignatureCheckedBatch, SignatureCheckedCapture, SignatureCheckedInput, SignatureCheckedPlan,
+};
+use crate::state::frontier::{CaptureBudget, CaptureStep, DeclaredAccess};
 use crate::state::tree::{NodeHash, StateChange, StateNodeReader};
 use anyhow::{ensure, Context, Result};
 use serde::{de::DeserializeOwned, Serialize};
@@ -192,12 +194,78 @@ impl NovTransferPlan {
         self.plan.plan().commitment()
     }
 
+    pub fn plan(&self) -> &BatchPlan {
+        self.plan.plan()
+    }
+
     pub fn capture(
         self,
         reader: &dyn StateNodeReader,
         budget: CaptureBudget,
     ) -> Result<NovTransferInput> {
-        let input = self.plan.capture(reader, budget)?;
+        NovCapturedInput {
+            input: self.plan.capture(reader, budget)?,
+            policy: self.policy,
+            requests: self.requests,
+        }
+        .finalize_capture()
+    }
+
+    pub fn begin_capture(self, budget: CaptureBudget) -> Result<NovTransferCapture> {
+        Ok(NovTransferCapture {
+            capture: self.plan.begin_capture(budget)?,
+            policy: self.policy,
+            requests: self.requests,
+        })
+    }
+}
+
+/// Bounded incremental capture; neither state nor authenticated plan is replaceable.
+pub struct NovTransferCapture {
+    capture: SignatureCheckedCapture,
+    policy: DirectNovFeePolicy,
+    requests: Vec<TransferFeeRequest>,
+}
+
+impl NovTransferCapture {
+    pub fn advance(&mut self, max_edge_steps: usize) -> Result<CaptureStep> {
+        self.capture.advance(max_edge_steps)
+    }
+
+    pub fn next_request(&mut self) -> Result<Option<Vec<NodeHash>>> {
+        self.capture.next_request()
+    }
+
+    pub fn accept(&mut self, values: Vec<Option<Vec<u8>>>) -> Result<()> {
+        self.capture.accept(values)
+    }
+
+    /// Move-only completion. Policy/nonce decoding and dependency compilation
+    /// remain on the compute owner, not the network/control loop.
+    pub fn finish(self) -> Result<NovCapturedInput> {
+        Ok(NovCapturedInput {
+            input: self.capture.finish()?,
+            policy: self.policy,
+            requests: self.requests,
+        })
+    }
+}
+
+/// Detached exact capture, not yet a business-admitted input or an authority.
+/// Private construction prevents replacing authenticated raw input/parent.
+pub struct NovCapturedInput {
+    input: SignatureCheckedInput,
+    policy: DirectNovFeePolicy,
+    requests: Vec<TransferFeeRequest>,
+}
+
+impl NovCapturedInput {
+    pub fn plan(&self) -> &BatchPlan {
+        self.input.plan()
+    }
+
+    pub(crate) fn finalize_capture(self) -> Result<NovTransferInput> {
+        let input = self.input;
         let captured_policy: DirectNovFeePolicy =
             decode_record(&record_pages::read(&input, POLICY_PREFIX, POLICY_BYTES)?)?;
         captured_policy.validate()?;

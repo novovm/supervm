@@ -14,6 +14,9 @@ use anyhow::{bail, Context, Result};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
+mod capture;
+pub use capture::{BulkCapture, CaptureStep};
+
 #[derive(Clone, Debug)]
 pub struct DeclaredAccess {
     pub key: Vec<u8>,

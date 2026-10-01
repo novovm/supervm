@@ -7,7 +7,9 @@
 //! count, or candidate slot enters the statement. Local budgets do not affect
 //! its identity. Constructing a plan never allocates a persistent candidate.
 
-use crate::state::frontier::{CaptureBudget, DeclaredAccess, OwnedStateInput};
+use crate::state::frontier::{
+    BulkCapture, CaptureBudget, CaptureStep, DeclaredAccess, OwnedStateInput,
+};
 use crate::state::tree::{self, NodeHash, StagedStateUpdate, StateChange, StateNodeReader};
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
@@ -213,6 +215,44 @@ impl BatchPlan {
             budget,
         )?;
         Ok(OwnedBatchInput { plan: self, state })
+    }
+
+    /// Start incremental bulk capture bound to this exact plan. The returned
+    /// state machine owns the plan; no caller can attach a substitute frontier,
+    /// body, parent or wider declarations when finishing.
+    pub fn begin_capture(self, budget: CaptureBudget) -> Result<BoundBatchCapture> {
+        let capture = BulkCapture::new(
+            self.context.parent_state_root,
+            &self.declared_access,
+            budget,
+        )?;
+        Ok(BoundBatchCapture {
+            plan: self,
+            capture,
+        })
+    }
+}
+
+pub struct BoundBatchCapture {
+    plan: BatchPlan,
+    capture: BulkCapture,
+}
+
+impl BoundBatchCapture {
+    pub fn advance(&mut self, max_edge_steps: usize) -> Result<CaptureStep> {
+        self.capture.advance(max_edge_steps)
+    }
+    pub fn next_request(&mut self) -> Result<Option<Vec<NodeHash>>> {
+        self.capture.next_request()
+    }
+    pub fn accept(&mut self, values: Vec<Option<Vec<u8>>>) -> Result<()> {
+        self.capture.accept(values)
+    }
+    pub fn finish(self) -> Result<OwnedBatchInput> {
+        Ok(OwnedBatchInput {
+            plan: self.plan,
+            state: self.capture.finish()?,
+        })
     }
 }
 

@@ -518,6 +518,112 @@ pub fn capture_update_path_v1(
     Ok(())
 }
 
+/// One retained lookup/deletion frontier cursor. Each call consumes exactly
+/// one authenticated incoming edge, including a deletion's immediate sibling.
+/// Shared node bytes do not let a different edge skip placement validation.
+pub(crate) struct CaptureCursor {
+    key: NodeHash,
+    may_delete: bool,
+    state: CaptureCursorState,
+}
+
+enum CaptureCursorState {
+    Path {
+        hash: NodeHash,
+        minimum_bit: u16,
+    },
+    Sibling {
+        hash: NodeHash,
+        path: NodeHash,
+        minimum_bit: u16,
+        next: NodeHash,
+    },
+    Complete,
+}
+
+impl CaptureCursor {
+    pub(crate) fn new(root: NodeHash, key: &[u8], may_delete: bool) -> Result<Self> {
+        Ok(Self {
+            key: digest_key(key)?,
+            may_delete,
+            state: if root == empty_root() {
+                CaptureCursorState::Complete
+            } else {
+                CaptureCursorState::Path {
+                    hash: root,
+                    minimum_bit: 0,
+                }
+            },
+        })
+    }
+
+    pub(crate) fn needed_hash(&self) -> Option<NodeHash> {
+        match self.state {
+            CaptureCursorState::Path { hash, .. } | CaptureCursorState::Sibling { hash, .. } => {
+                Some(hash)
+            }
+            CaptureCursorState::Complete => None,
+        }
+    }
+
+    pub(crate) fn advance(&mut self, bytes: &[u8]) -> Result<()> {
+        let state = match self.state {
+            CaptureCursorState::Complete => anyhow::bail!("capture cursor already complete"),
+            CaptureCursorState::Sibling {
+                hash,
+                path,
+                minimum_bit,
+                next,
+            } => {
+                decode_state_node(&hash, bytes)?.validate_path(&path, minimum_bit)?;
+                CaptureCursorState::Path {
+                    hash: next,
+                    minimum_bit,
+                }
+            }
+            CaptureCursorState::Path { hash, minimum_bit } => {
+                let node = decode_state_node(&hash, bytes)?;
+                node.validate_path(&self.key, minimum_bit)?;
+                match node {
+                    Node::Leaf { .. } => CaptureCursorState::Complete,
+                    Node::Branch {
+                        bit,
+                        prefix,
+                        left,
+                        right,
+                    } => {
+                        if common_prefix(&self.key, &prefix) < bit {
+                            CaptureCursorState::Complete
+                        } else {
+                            let goes_right = bit_at(&self.key, bit);
+                            let next = if goes_right { right } else { left };
+                            if self.may_delete {
+                                let mut path = prefix;
+                                if !goes_right {
+                                    path[usize::from(bit / 8)] |= 0x80 >> (bit % 8);
+                                }
+                                CaptureCursorState::Sibling {
+                                    hash: if goes_right { left } else { right },
+                                    path,
+                                    minimum_bit: bit + 1,
+                                    next,
+                                }
+                            } else {
+                                CaptureCursorState::Path {
+                                    hash: next,
+                                    minimum_bit: bit + 1,
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        self.state = state;
+        Ok(())
+    }
+}
+
 /// Stream leaves of a trusted root in canonical hashed-key order. Every visited
 /// node, including each child's authenticated direction, is checked. The stack
 /// is bounded by the 256-bit key depth, not by the size of the ledger.
