@@ -548,3 +548,69 @@ fn real_aoem_components_preserve_serial_receipts_and_repair_global_fee_rejection
         );
     }
 }
+
+#[test]
+#[ignore = "requires the packaged AOEM runtime; run explicitly for integration evidence"]
+fn real_aoem_checked_credit_preserves_serial_store_and_global_fee_repairs() {
+    for case in ["success", "business", "paused", "overflow", "zero"] {
+        let fixtures = [
+            component_fixture(81, 90, 0, if case == "zero" { 0 } else { 30 }),
+            component_fixture(82, 90, 0, if case == "business" { 1_000_000 } else { 40 }),
+            component_fixture(83, 90, 0, 5),
+            component_fixture(81, 90, 1, 7),
+            component_fixture(82, 90, 1, 9),
+        ];
+        let mut initial = NovNativeExecutionStoreV1::default();
+        for fixture in &fixtures[..3] {
+            initial.module_state.account_asset_balances.insert(
+                fixture.subject.account_id.clone(),
+                BTreeMap::from([("NOV".into(), 1_000)]),
+            );
+        }
+        if case == "paused" {
+            initial.module_state.treasury_settlement_paused = true;
+        }
+        if case == "overflow" {
+            initial.module_state.treasury_settlements = u64::MAX;
+        }
+        let mut actual = initial.clone();
+        let mut mirrors = Vec::new();
+        take_component_observation_for_test_v1();
+        execute_v1(
+            &mut actual,
+            &fixtures
+                .iter()
+                .map(FinalizerFixture::item)
+                .collect::<Vec<_>>(),
+            123,
+            &mut mirrors,
+        )
+        .unwrap();
+        let observation = take_component_observation_for_test_v1().unwrap();
+        assert_eq!(observation.components, 3);
+        assert_eq!(observation.graphs, 1 + observation.recomputed_transactions);
+        if matches!(case, "paused" | "overflow") {
+            // The first rejected credit also invalidates predictions in OTHER
+            // components, not only the rejected payer's later nonce.
+            assert!(observation.recomputed_transactions >= 2);
+        } else {
+            assert_eq!(observation.recomputed_transactions, 0);
+        }
+        let mut expected = initial;
+        let mut expected_mirrors = Vec::new();
+        for fixture in &fixtures {
+            execute_v1(&mut expected, &[fixture.item()], 123, &mut expected_mirrors).unwrap();
+        }
+        assert_eq!(
+            serde_json::to_vec(&actual).unwrap(),
+            serde_json::to_vec(&expected).unwrap(),
+            "{case}: full Store, receipts, nonce, fee allocation, roots and compute digests"
+        );
+        assert_eq!(
+            serde_json::to_vec(&mirrors).unwrap(),
+            serde_json::to_vec(&expected_mirrors).unwrap(),
+            "{case}: exact original-order semantic mirrors"
+        );
+        eprintln!("checked credit full-store parity case={case} observation={observation:?}");
+    }
+}

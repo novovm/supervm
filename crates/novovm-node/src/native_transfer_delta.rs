@@ -476,6 +476,15 @@ pub fn conflict_segments(intents: &[TransferIntent]) -> Vec<Vec<usize>> {
 /// This is deliberately not a maximal-parallelism DAG scheduler: each connected
 /// component is computed sequentially on one AOEM callback.
 pub(crate) fn conflict_components_v1(intents: &[TransferIntent]) -> Vec<Vec<usize>> {
+    conflict_components_excluding_credits_v1(intents, &BTreeSet::new())
+}
+
+/// Only the checked effect planner may remove credit-only keys. Payer and
+/// nonce dependencies are never removed, including self-transfers.
+fn conflict_components_excluding_credits_v1(
+    intents: &[TransferIntent],
+    credit_keys: &BTreeSet<Account>,
+) -> Vec<Vec<usize>> {
     fn root(parents: &mut [usize], mut index: usize) -> usize {
         while parents[index] != index {
             parents[index] = parents[parents[index]];
@@ -487,6 +496,11 @@ pub(crate) fn conflict_components_v1(intents: &[TransferIntent]) -> Vec<Vec<usiz
     let mut previous = BTreeMap::new();
     for (index, intent) in intents.iter().enumerate() {
         for key in access_set(intent) {
+            if matches!(&key, AccessKey::NovBalance(account)
+                if account != &intent.from && credit_keys.contains(account))
+            {
+                continue;
+            }
             if let Some(earlier) = previous.insert(key, index) {
                 let a = root(&mut parents, earlier);
                 let b = root(&mut parents, index);
@@ -503,6 +517,9 @@ pub(crate) fn conflict_components_v1(intents: &[TransferIntent]) -> Vec<Vec<usiz
     }
     components.into_values().collect()
 }
+
+#[path = "native_transfer_effects.rs"]
+pub(crate) mod effects;
 
 #[cfg(test)]
 mod tests {

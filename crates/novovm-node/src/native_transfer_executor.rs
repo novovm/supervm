@@ -7,7 +7,7 @@
 //! nonce, receipt, or treasury state is published by this module.
 
 use crate::native_transfer_delta::{
-    compute_outcome_v1, conflict_components_v1, Account, TransferExecutionOutcomeV1,
+    compute_outcome_v1, effects::TransferEffectPlanV1, Account, TransferExecutionOutcomeV1,
     TransferIntent, TransferSnapshot,
 };
 #[cfg(test)]
@@ -17,6 +17,7 @@ use anyhow::{bail, Context, Result};
 use novovm_exec::{execute_aoem_compute_tasks_v1, AoemRuntimeConfig};
 use novovm_exec::{AoemComputeSessionV1, AoemComputeTaskV1};
 use std::collections::{BTreeMap, HashSet};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const MAX_WAVE_TASKS: usize = 1024;
@@ -58,7 +59,15 @@ pub(crate) fn execute_transfer_components_v1(
     validate_work(&work)?;
     let count = work.len();
     let intents: Vec<_> = work.iter().map(|item| item.intent.clone()).collect();
-    let components = conflict_components_v1(&intents);
+    let snapshots: Vec<_> = work.iter().map(|item| item.snapshot).collect();
+    let plan = Arc::new(TransferEffectPlanV1::build(&intents, &snapshots)?);
+    let components = &plan.components;
+    let reduction = plan.has_credit_reduction().then(|| {
+        Arc::new(Mutex::new(CreditReductionJoinV1 {
+            remaining: components.len(),
+            outcomes: vec![None; count],
+        }))
+    });
     let mut component_by_index = vec![0; count];
     let mut owned: Vec<_> = work.into_iter().map(Some).collect();
     let mut tasks: Vec<AoemComputeTaskV1> = Vec::with_capacity(components.len());
@@ -72,9 +81,23 @@ pub(crate) fn execute_transfer_components_v1(
                     .context("duplicate transfer component index")?,
             );
         }
+        let reduction = reduction.clone();
+        let plan = Arc::clone(&plan);
+        let indices = indices.clone();
         tasks.push(Box::new(move || {
-            serde_json::to_vec(&compute_component_v1(inputs)?)
-                .context("encode native transfer component outcomes")
+            let outcomes = compute_component_v1(inputs)?;
+            if let Some(join) = reduction {
+                // No callback waits for another callback. The last arrival
+                // performs checked reduction ON THE AOEM WORKER, in this same
+                // graph. Other callbacks return no payload. This is a data
+                // join, not a second Host executor or a spinning barrier.
+                let mut joined = join
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("credit reduction join poisoned"))?;
+                joined.arrive(&indices, outcomes, &plan)
+            } else {
+                serde_json::to_vec(&outcomes).context("encode native transfer component outcomes")
+            }
         }));
     }
     let report = session.execute(tasks, timeout)?;
@@ -84,6 +107,24 @@ pub(crate) fn execute_transfer_components_v1(
         || report.outputs.len() != components.len()
     {
         bail!("native transfer component graph did not complete all callbacks");
+    }
+    if reduction.is_some() {
+        let mut outputs = report.outputs.iter().filter(|bytes| !bytes.is_empty());
+        let outcomes: Vec<TransferExecutionOutcomeV1> = serde_json::from_slice(
+            outputs
+                .next()
+                .context("missing AOEM credit reduction result")?,
+        )
+        .context("decode AOEM credit reduction result")?;
+        if outcomes.len() != count || outputs.next().is_some() {
+            bail!("AOEM credit reduction must publish exactly one complete result");
+        }
+        return Ok(TransferComponentResultV1 {
+            outcomes,
+            component_by_index,
+            component_count: components.len(),
+            peak_inflight: report.peak_inflight,
+        });
     }
     let mut ordered = vec![None; count];
     for (indices, bytes) in components.iter().zip(&report.outputs) {
@@ -105,6 +146,47 @@ pub(crate) fn execute_transfer_components_v1(
         component_count: components.len(),
         peak_inflight: report.peak_inflight,
     })
+}
+
+struct CreditReductionJoinV1 {
+    remaining: usize,
+    outcomes: Vec<Option<TransferExecutionOutcomeV1>>,
+}
+
+impl CreditReductionJoinV1 {
+    fn arrive(
+        &mut self,
+        indices: &[usize],
+        outcomes: Vec<TransferExecutionOutcomeV1>,
+        plan: &TransferEffectPlanV1,
+    ) -> Result<Vec<u8>> {
+        if indices.len() != outcomes.len() || self.remaining == 0 {
+            bail!("invalid credit reduction component completion");
+        }
+        for (&index, outcome) in indices.iter().zip(outcomes) {
+            let slot = self
+                .outcomes
+                .get_mut(index)
+                .context("invalid credit reduction index")?;
+            if slot.replace(outcome).is_some() {
+                bail!("duplicate credit reduction outcome");
+            }
+        }
+        self.remaining -= 1;
+        if self.remaining != 0 {
+            return Ok(Vec::new());
+        }
+        let mut ordered = self
+            .outcomes
+            .iter_mut()
+            .map(|slot| {
+                slot.take()
+                    .context("missing credit reduction component outcome")
+            })
+            .collect::<Result<Vec<_>>>()?;
+        plan.reduce_ordered(&mut ordered)?;
+        serde_json::to_vec(&ordered).context("encode AOEM checked credit reduction")
+    }
 }
 
 /// Callback-only component evaluator. The private maps contain only touched
@@ -336,6 +418,54 @@ mod tests {
         second.intent.nonce = 2;
         assert!(compute_component_v1(vec![first, second]).is_err());
         assert!(validate_work(&vec![work(1); 1025]).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires the packaged AOEM runtime; run explicitly for integration evidence"]
+    fn real_aoem_checked_shared_credits_match_serial_callbacks() {
+        let mut runtime = AoemRuntimeConfig::from_env().unwrap();
+        runtime.ingress_workers = Some(4);
+        let mut session = AoemComputeSessionV1::open(&runtime).unwrap();
+        let mut inputs = Vec::new();
+        // 128 payer/nonce chains previously became ONE component through a
+        // common recipient. No sleeps/barriers inflate the overlap observation.
+        for nonce in 0..8u64 {
+            for id in 1..=128u8 {
+                let mut item = work(id);
+                item.intent.to = [254; 32].into();
+                item.intent.tx_hash[31] = nonce as u8;
+                item.intent.nonce = nonce;
+                item.snapshot.payer_balance = 1_000;
+                item.snapshot.recipient_balance = u64::MAX as u128 + 1;
+                if id == 1 && nonce == 1 {
+                    item.intent.amount = 10_000; // fee-paid business failure
+                }
+                if id == 2 && nonce == 2 {
+                    item.fee_rejection = Some("fee.quote.test_rejection".into());
+                }
+                inputs.push(item);
+            }
+        }
+        assert_eq!(
+            crate::native_transfer_delta::conflict_components_v1(
+                &inputs
+                    .iter()
+                    .map(|item| item.intent.clone())
+                    .collect::<Vec<_>>()
+            )
+            .len(),
+            1
+        );
+        let expected = compute_component_v1(inputs.clone()).unwrap();
+        let actual =
+            execute_transfer_components_v1(&mut session, inputs, Duration::from_secs(30)).unwrap();
+        assert_eq!(actual.component_count, 128);
+        assert_eq!(actual.outcomes, expected);
+        assert!(
+            actual.peak_inflight > 1,
+            "must observe real AOEM callback overlap"
+        );
+        eprintln!("checked credit AOEM parity: transactions=1024 old_components=1 components={} actual_callback_peak={} ordered_outcomes_equal=true", actual.component_count, actual.peak_inflight);
     }
 
     #[test]
