@@ -12,11 +12,16 @@ use crate::native_root_codecs::NativeRootCodecProfileV1;
 mod block_artifact;
 #[path = "native_candidate_promotion.rs"]
 mod promotion;
+#[cfg(test)]
+#[path = "native_candidate_publication_readback_tests.rs"]
+mod publication_readback_tests;
 #[path = "native_candidate_rooted_compute.rs"]
 mod rooted_compute;
 #[cfg(test)]
 #[path = "native_candidate_rooted_compute_tests.rs"]
 mod rooted_compute_tests;
+#[cfg(test)]
+pub(crate) use publication_readback_tests::exercise_publication_readback_for_test_v1;
 #[path = "native_candidate_rooted_output.rs"]
 mod rooted_output;
 pub use block_artifact::{

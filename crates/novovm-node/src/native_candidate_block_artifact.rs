@@ -54,6 +54,18 @@ pub(super) fn load_block_artifact_inner_v1(
     id: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<Option<IsolatedBlockArtifactV1>> {
+    load_block_artifact_with_parent_archive_v1(workspace, id, params, None)
+}
+
+/// Reuse only this candidate's direct-parent archive, fully verified in the
+/// same workspace/authority scope. All candidate input/output reads and checks
+/// remain mandatory. Cold decoding never inherits the archive for ancestors.
+pub(super) fn load_block_artifact_with_parent_archive_v1(
+    workspace: &WorkspaceStore,
+    id: [u8; 32],
+    params: &serde_json::Value,
+    verified_parent_archive: Option<&crate::native_block_ledger::FinalizedRecordArchiveV1>,
+) -> Result<Option<IsolatedBlockArtifactV1>> {
     if !workspace.catalog()?.iter().any(|(_, input)| input.id == id) {
         return Ok(None);
     }
@@ -65,7 +77,7 @@ pub(super) fn load_block_artifact_inner_v1(
     if !is_complete(workspace, &input, descriptor)? {
         return Ok(None);
     }
-    let payload = workspace.read_input(&input)?;
+    let payload = workspace.read_input_with_parent_archive(&input, verified_parent_archive)?;
     let output = read_output_view(workspace, &input, descriptor, &payload, params)?
         .context("completed isolated block output missing")?;
     let plan = payload.plan();

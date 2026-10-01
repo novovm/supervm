@@ -429,7 +429,16 @@ fn run_locked(
         {
             bail!("successor publication readback mismatch");
         }
-        if block_artifact::load_block_artifact_inner_v1(workspace, id, params)?.as_ref()
+        // Only this child's readback can reuse the same-call, fully verified
+        // direct-parent archive. The first artifact read and the parent's cold
+        // fallback above keep their own ledger lookups (possibly for a grandparent).
+        if block_artifact::load_block_artifact_with_parent_archive_v1(
+            workspace,
+            id,
+            params,
+            verified.as_ref().map(|verified| &verified.parent_archive),
+        )?
+        .as_ref()
             != Some(&artifact)
         {
             bail!("published successor AOEM output changed");

@@ -343,7 +343,7 @@ fn exercise_fresh_sequence(
             .unwrap();
         if record_profile && height == 3 {
             exercise_successor_publication_bundle(
-                &ledger, pin, namespace, parent, &artifact, SuccessorBundleStage::Prepared,
+                &ledger, pin, namespace, parent, &artifact, SuccessorBundleStage::Prepared, params,
             );
         }
         // Preparing publication pins the decision; it must never authorize new
@@ -381,7 +381,7 @@ fn exercise_fresh_sequence(
         assert!(format!("{interrupted:#}").contains("simulated response loss"));
         if record_profile && height == 3 {
             exercise_successor_publication_bundle(
-                &ledger, pin, namespace, parent, &artifact, SuccessorBundleStage::Published,
+                &ledger, pin, namespace, parent, &artifact, SuccessorBundleStage::Published, params,
             );
         }
         assert!(
@@ -426,7 +426,7 @@ fn exercise_fresh_sequence(
         assert!(report.finalized && report.ledger_publication_completed);
         if record_profile && height == 3 {
             exercise_successor_publication_bundle(
-                &ledger, pin, namespace, parent, &artifact, SuccessorBundleStage::Finalized,
+                &ledger, pin, namespace, parent, &artifact, SuccessorBundleStage::Finalized, params,
             );
         }
         with_record_signing_guard(record_profile, || {

@@ -40,10 +40,10 @@ pub(super) use execution::{
     complete_successor_with_checkpoint_v1, complete_with_checkpoint_v1,
     corrupt_execution_output_for_test_v1, execute_with_checkpoint_v1,
     exercise_light_first_compute_for_test_v1, exercise_light_output_recovery_for_test_v1,
-    finalize_successor_with_checkpoint_v1, load_execution_snapshot_for_test_v1,
-    load_typed_execution_snapshot_for_test_v1, publish_successor_with_checkpoint_v1,
-    publish_with_checkpoint_v1, retire_with_checkpoint_v1, ExecutionCheckpointV1,
-    PromotionCheckpointV1, RetirementCheckpointV1,
+    exercise_publication_readback_for_test_v1, finalize_successor_with_checkpoint_v1,
+    load_execution_snapshot_for_test_v1, load_typed_execution_snapshot_for_test_v1,
+    publish_successor_with_checkpoint_v1, publish_with_checkpoint_v1, retire_with_checkpoint_v1,
+    ExecutionCheckpointV1, PromotionCheckpointV1, RetirementCheckpointV1,
 };
 pub(crate) use execution::{load_startup_artifact_v1, load_startup_successor_v1};
 pub use finalized_parent::create_from_finalized_genesis_v1;
@@ -535,6 +535,16 @@ impl WorkspaceStore {
     }
 
     fn read_input(&self, descriptor: &Descriptor) -> Result<VerifiedInput> {
+        self.read_input_with_parent_archive(descriptor, None)
+    }
+
+    /// Same-call reuse for NCW2 only. Cold inputs and any further ancestor
+    /// reads retain their original validation and do not inherit this archive.
+    fn read_input_with_parent_archive(
+        &self,
+        descriptor: &Descriptor,
+        verified_parent_archive: Option<&crate::native_block_ledger::FinalizedRecordArchiveV1>,
+    ) -> Result<VerifiedInput> {
         let mut bytes = Vec::with_capacity(descriptor.len);
         for index in 0..descriptor.len.div_ceil(CHUNK_BYTES) {
             let chunk = self
@@ -568,7 +578,7 @@ impl WorkspaceStore {
                 )?;
                 let mut payload = document.inline;
                 payload.record_state = Some(document.state);
-                validate_light_payload(&payload, self)?;
+                validate_light_payload_with_archive(&payload, self, verified_parent_archive)?;
                 let reference = payload
                     .record_state
                     .as_ref()
@@ -684,6 +694,14 @@ fn plan_contains_only_transfers(plan: &NovNativeCandidateExecutionPlanV1) -> Res
 }
 
 fn validate_light_payload(payload: &LightPayload, workspace: &WorkspaceStore) -> Result<()> {
+    validate_light_payload_with_archive(payload, workspace, None)
+}
+
+fn validate_light_payload_with_archive(
+    payload: &LightPayload,
+    workspace: &WorkspaceStore,
+    verified_parent_archive: Option<&crate::native_block_ledger::FinalizedRecordArchiveV1>,
+) -> Result<()> {
     let plan = &payload.plan;
     plan.validate()?;
     if payload.schema != LIGHT_SCHEMA
@@ -698,15 +716,22 @@ fn validate_light_payload(payload: &LightPayload, workspace: &WorkspaceStore) ->
             bail!("candidate workspace body does not match canonical transaction hashes");
         }
     }
-    payload.finalized_parent.validate(
-        workspace,
-        plan,
-        payload
-            .record_state
-            .as_ref()
-            .context("NCW2 parent reference missing")?,
-        &workspace.params,
-    )
+    let reference = payload
+        .record_state
+        .as_ref()
+        .context("NCW2 parent reference missing")?;
+    match verified_parent_archive {
+        Some(archive) => payload.finalized_parent.validate_with_archive(
+            workspace,
+            plan,
+            reference,
+            &workspace.params,
+            Some(archive),
+        ),
+        None => payload
+            .finalized_parent
+            .validate(workspace, plan, reference, &workspace.params),
+    }
 }
 
 fn validate_payload(payload: &Payload, workspace: &WorkspaceStore) -> Result<()> {

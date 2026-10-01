@@ -46,8 +46,26 @@ impl RootedParentSnapshot {
         normalized_ref: &state_records::StoreRef,
         params: &serde_json::Value,
     ) -> Result<()> {
+        self.validate_with_archive(workspace, plan, normalized_ref, params, None)
+    }
+
+    /// The optional archive must have been fully verified during this same
+    /// locked operation. It only replaces a duplicate historical ledger read;
+    /// source identity, publication evidence, roots and successor binding are
+    /// still checked below. Never retain it as future signing authority.
+    pub(super) fn validate_with_archive(
+        &self,
+        workspace: &WorkspaceStore,
+        plan: &NovNativeCandidateExecutionPlanV1,
+        normalized_ref: &state_records::StoreRef,
+        params: &serde_json::Value,
+        verified_archive: Option<&crate::native_block_ledger::FinalizedRecordArchiveV1>,
+    ) -> Result<()> {
         plan.validate()?;
-        let source = self.verify_source(workspace, params)?;
+        let source = match verified_archive {
+            Some(archive) => self.verify_source_with_archive(workspace, params, archive)?,
+            None => self.verify_source(workspace, params)?,
+        };
         // NCW2 identity links point parent_root at root. The original output's
         // links refer to its preceding block, so compare roots/statistics rather
         // than incorrectly demanding that these two encodings match bytewise.

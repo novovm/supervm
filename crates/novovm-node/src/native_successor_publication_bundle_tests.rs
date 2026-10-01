@@ -14,6 +14,7 @@ fn exercise_successor_publication_bundle(
     parent: [u8; 32],
     artifact: &workspace::IsolatedBlockArtifactV1,
     stage: SuccessorBundleStage,
+    params: &serde_json::Value,
 ) {
     use crate::native_block_ledger::{
         NovNativeBlockLedgerV1 as Ledger, NovNativeIsolatedExecutionBindingV1 as Binding,
@@ -70,6 +71,55 @@ fn exercise_successor_publication_bundle(
         !matches!(stage, SuccessorBundleStage::Prepared)
     );
     assert_eq!(bundle.finality.is_some(), matches!(stage, SuccessorBundleStage::Finalized));
+    assert_eq!(successor_bundle_ledger_snapshot(ledger), before);
+
+    workspace::exercise_publication_readback_for_test_v1(
+        artifact.block().header.chain_id,
+        artifact.workspace_id,
+        params,
+        &bundle.parent_archive,
+    )
+    .unwrap();
+    let (verified, count) = Ledger::count_fresh_ledger_verifications_for_test_v1(|| {
+        workspace::without_materialization_for_test(|| {
+            workspace::verify_successor_authority_v1(
+                artifact.block().header.chain_id,
+                parent,
+                artifact.workspace_id,
+                pin,
+                params,
+            )
+        })
+    });
+    if matches!(stage, SuccessorBundleStage::Prepared) {
+        // Merely preparing a valid intent cannot turn the old authority head
+        // into this child. This fails before the second artifact readback.
+        let error = verified.unwrap_err();
+        assert!(format!("{error:#}").contains(
+            "successor publication requires the exact live parent or completed target"
+        ));
+    } else {
+        assert_eq!(
+            count, 2,
+            "full NCW2/V3 Verify retains first-artifact and bundle history checks, not a third readback lookup"
+        );
+        let header = &artifact.block().header;
+        // The reference getter values above supply every prior report field;
+        // artifact equivalence is checked independently by the readback helper.
+        assert_eq!(verified.unwrap(), workspace::FreshSuccessorPublicationV1 {
+            chain_id: header.chain_id,
+            block_hash: header.block_hash,
+            workspace_id: artifact.workspace_id,
+            intent_commitment: commitment,
+            state_root: header.post_state_root,
+            receipt_root: header.cumulative_receipt_root,
+            state_version: header.state_version,
+            aoem_authority_published: true,
+            aoem_readback_verified: true,
+            ledger_publication_completed: published.is_some(),
+            finalized: finality.is_some(),
+        });
+    }
     assert_eq!(successor_bundle_ledger_snapshot(ledger), before);
 
     if matches!(stage, SuccessorBundleStage::Prepared) {
