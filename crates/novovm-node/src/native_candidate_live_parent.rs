@@ -22,6 +22,99 @@ enum ParentView {
 /// No public constructor or Deserialize: caller-supplied roots are not parents.
 pub(crate) struct FinalizedParentViewV1(ParentView);
 
+/// Restricted reads from one already captured finalized parent. This is not a
+/// live authority or an arbitrary state-tree interface. Callers provide the
+/// same nonce identity key used by native authentication, not an account alias.
+pub(crate) trait FinalizedRecordReaderV1 {
+    fn next_nonce(&self, identity: &str) -> Result<u64>;
+    fn receipt(&self, hash: &[u8; 32]) -> Result<Option<NovNativeExecutionReceiptV1>>;
+    fn contains_receipt(&self, hash: &[u8; 32]) -> Result<bool> {
+        Ok(self.receipt(hash)?.is_some())
+    }
+}
+
+struct ColdFinalizedRecords<'a>(&'a NovNativeExecutionStoreV1);
+
+impl FinalizedRecordReaderV1 for ColdFinalizedRecords<'_> {
+    fn next_nonce(&self, identity: &str) -> Result<u64> {
+        Ok(self
+            .0
+            .module_state
+            .native_auth_next_nonces
+            .get(identity)
+            .copied()
+            .unwrap_or(0))
+    }
+
+    fn receipt(&self, hash: &[u8; 32]) -> Result<Option<NovNativeExecutionReceiptV1>> {
+        let key = to_hex(hash);
+        let receipt = self.0.receipts.get(&key);
+        if receipt.is_some_and(|receipt| receipt.tx_hash != key) {
+            bail!("finalized receipt map key differs from its transaction hash");
+        }
+        Ok(receipt.cloned())
+    }
+}
+
+struct RootedFinalizedRecords<'a>(&'a dyn NativeRecordAccessV1);
+
+impl<'a> RootedFinalizedRecords<'a> {
+    fn new(access: &'a dyn NativeRecordAccessV1) -> Result<Self> {
+        // A missing map is corruption, never evidence that every key is absent.
+        // RootedAccess also checks each consensus-bearing marker against its
+        // independently committed tree before the callback can query anything.
+        for path in [
+            &[][..],
+            &["module_state"][..],
+            &["module_state", "native_auth_next_nonces"][..],
+            &["receipts"][..],
+        ] {
+            if access.read_path(path)?.as_deref() != Some(b"{}") {
+                bail!("finalized query required object marker missing or invalid: {path:?}");
+            }
+        }
+        Ok(Self(access))
+    }
+}
+
+impl FinalizedRecordReaderV1 for RootedFinalizedRecords<'_> {
+    fn next_nonce(&self, identity: &str) -> Result<u64> {
+        match self
+            .0
+            .read_path(&["module_state", "native_auth_next_nonces", identity])?
+        {
+            None => Ok(0),
+            Some(raw) => serde_json::from_slice(&raw)
+                .context("finalized next nonce must be a u64 JSON integer"),
+        }
+    }
+
+    fn receipt(&self, hash: &[u8; 32]) -> Result<Option<NovNativeExecutionReceiptV1>> {
+        let key = to_hex(hash);
+        let Some(raw) = self.0.read_path(&["receipts", &key])? else {
+            return Ok(None);
+        };
+        // RootedAccess has compared the exact typed receipt commitment with
+        // the receipt tree. Parse directly into u128 fields, never via Value.
+        let receipt: NovNativeExecutionReceiptV1 =
+            serde_json::from_slice(&raw).context("invalid finalized typed receipt record")?;
+        if receipt.tx_hash != key {
+            bail!("finalized receipt record differs from requested transaction hash");
+        }
+        Ok(Some(receipt))
+    }
+}
+
+/// Isolated tests may exercise the restricted reader with genuine tree
+/// fixtures. This does not construct a verified parent or authorize a root.
+#[cfg(test)]
+pub(super) fn with_rooted_records_for_test_v1<T>(
+    access: &dyn NativeRecordAccessV1,
+    f: impl FnOnce(&dyn FinalizedRecordReaderV1) -> Result<T>,
+) -> Result<T> {
+    f(&RootedFinalizedRecords::new(access)?)
+}
+
 pub(crate) fn load_finalized_parent_view_v1(
     chain: u64,
     id: [u8; 32],
@@ -192,6 +285,44 @@ fn verify_record_domain(
 }
 
 impl FinalizedParentViewV1 {
+    /// Read nonce/receipt records from this immutable historical image. The
+    /// rooted branch opens one workspace/provider and shares one bounded node
+    /// and blob reader for the whole callback. It does not recheck the live head
+    /// or grant permission to admit, sign or publish against this saved image.
+    /// The callback must not re-enter workspace APIs while this lock is held.
+    pub(crate) fn with_records<T>(
+        &self,
+        params: &serde_json::Value,
+        f: impl FnOnce(&dyn FinalizedRecordReaderV1) -> Result<T>,
+    ) -> Result<T> {
+        let chain = self.block().header.chain_id;
+        if let ParentView::Cold(parent) = &self.0 {
+            let store = parent.state();
+            verify_native_nonce_identity_scheme_v2(store)?;
+            verify_production_native_execution_store_authority_domain_v2(
+                store,
+                chain,
+                &native_aoem_owned_state_namespace_digest_v1(params, chain),
+            )?;
+            verify_native_business_protocol_config_v1(store)?;
+            if store.module_state.aoem_semantic_ledger_sequence != self.block().header.state_version
+                || store.module_state.protocol_config_commitment
+                    != to_hex(&self.genesis_config().protocol_config_commitment)
+            {
+                bail!("finalized query cold state version/protocol mismatch");
+            }
+            return f(&ColdFinalizedRecords(store));
+        }
+        let workspace = WorkspaceStore::open(chain, params)?;
+        if workspace.protocol != self.genesis_config().protocol_config_commitment {
+            bail!("finalized query workspace protocol differs from captured parent");
+        }
+        self.with_record_access(&workspace, |access| {
+            verify_record_domain(access, &workspace, self.block().header.state_version)?;
+            f(&RootedFinalizedRecords::new(access)?)
+        })
+    }
+
     pub(crate) fn block(&self) -> &NovNativeDurableBlockV1 {
         match &self.0 {
             ParentView::Cold(p) => p.block(),

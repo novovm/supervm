@@ -16,7 +16,7 @@ mod proposer;
 #[path = "native_fresh_chain_transactions.rs"]
 mod transactions;
 use crate::tx_ingress::{
-    candidate_workspace::FinalizedGenesisParentV1, fresh_pool::FreshTransactionPool,
+    candidate_workspace::FinalizedParentViewV1, fresh_pool::FreshTransactionPool,
 };
 
 /// The existing main-node execution thread budget. Debug AOEM verification and
@@ -28,7 +28,7 @@ pub struct FreshChainLifecycleV1 {
     clock_waiting: bool,
     future_timestamp_rejected: u64,
     pool: Option<FreshTransactionPool>,
-    finalized_parent: Option<FinalizedGenesisParentV1>,
+    finalized_parent: Option<FinalizedParentViewV1>,
     next_gossip: Instant,
     gossip_cursor: usize,
     history: Option<history::HistorySync>,
@@ -145,6 +145,10 @@ impl FreshChainLifecycleV1 {
         };
         this.arm_body_reception(now)?;
         if this.finalized_parent.is_none() && this.pool.is_some() {
+            // The publication driver above completes a durable pending QC
+            // before caching a tip. Otherwise open_configured has already
+            // required a fully finalized parent. Do not move this strict view
+            // into the pending-tolerant startup-artifact discovery phase.
             if let Some(parent_id) = this
                 .config
                 .as_ref()
@@ -154,17 +158,16 @@ impl FreshChainLifecycleV1 {
                     .config
                     .as_ref()
                     .context("recovery configuration missing")?;
-                let parent =
-                    crate::tx_ingress::candidate_workspace::load_finalized_genesis_parent_v1(
-                        config.chain_id,
-                        parent_id,
-                        config
-                            .fresh_genesis_config_commitment
-                            .context("recovery genesis missing")?,
-                        params,
-                    )?;
+                let parent = crate::tx_ingress::candidate_workspace::load_finalized_parent_view_v1(
+                    config.chain_id,
+                    parent_id,
+                    config
+                        .fresh_genesis_config_commitment
+                        .context("recovery genesis missing")?,
+                    params,
+                )?;
                 if let Some(pool) = &mut this.pool {
-                    pool.reconcile(&parent)?;
+                    pool.reconcile_rooted(&parent, params)?;
                 }
                 this.finalized_parent = Some(parent);
             }
@@ -175,7 +178,7 @@ impl FreshChainLifecycleV1 {
     fn arm_body_reception(&mut self, now: Instant) -> Result<()> {
         if self.receive_successors && self.publication.is_some() {
             let config = self.config.as_ref().context("successor identity missing")?;
-            let parent = crate::tx_ingress::candidate_workspace::load_finalized_genesis_parent_v1(
+            let parent = crate::tx_ingress::candidate_workspace::load_finalized_parent_view_v1(
                 config.chain_id,
                 config
                     .isolated_workspace_id
@@ -186,7 +189,7 @@ impl FreshChainLifecycleV1 {
                 &self.params,
             )?;
             if let Some(pool) = &mut self.pool {
-                pool.reconcile(&parent)?;
+                pool.reconcile_rooted(&parent, &self.params)?;
             }
             self.finalized_parent = Some(parent);
             self.pacemaker = Some(pacemaker::ParentPacemaker::open(config, &self.params, now)?);

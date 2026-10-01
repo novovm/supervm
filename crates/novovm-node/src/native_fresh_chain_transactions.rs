@@ -8,20 +8,24 @@ impl FreshChainLifecycleV1 {
             bail!("fresh lifecycle halted");
         }
         let entry = PendingTransaction::authenticate(raw, self.chain, &self.params)?;
-        let status = self.transaction_status(entry.hash)?;
-        if status["status"] == "finalized" {
-            return Ok(status);
-        }
         if let Some(parent) = &self.finalized_parent {
-            if parent
-                .state()
-                .module_state
-                .native_auth_next_nonces
-                .get(&entry.identity)
-                .copied()
-                .unwrap_or(0)
-                > entry.nonce
-            {
+            let (receipt, nonce) = parent.with_records(&self.params, |reader| {
+                let receipt = reader.receipt(&entry.hash)?;
+                let nonce = if receipt.is_none() {
+                    Some(reader.next_nonce(&entry.identity)?)
+                } else {
+                    None
+                };
+                Ok((receipt, nonce))
+            })?;
+            if let Some(receipt) = receipt {
+                return Ok(serde_json::json!({
+                    "tx_hash":crate::native_block_seal::hex_v1(&entry.hash),
+                    "status":"finalized", "receipt":receipt,
+                    "finalized_tip_height":parent.block().header.height,
+                }));
+            }
+            if nonce.is_some_and(|nonce| nonce > entry.nonce) {
                 bail!("transaction nonce already consumed");
             }
         }
@@ -32,7 +36,12 @@ impl FreshChainLifecycleV1 {
             .context("durable transaction ingress is disabled")?
             .insert(entry)
         {
-            Ok(true) => self.transaction_status(hash),
+            // The immutable cached finalized view was already checked above.
+            // Successful insertion guarantees queued status; no second DB read.
+            Ok(true) => Ok(serde_json::json!({
+                "tx_hash":crate::native_block_seal::hex_v1(&hash),
+                "status":"queued", "finalized":false,
+            })),
             Ok(false) => bail!("transaction pool capacity or signer nonce conflict"),
             Err(error) => {
                 self.halted = true;
@@ -47,7 +56,9 @@ impl FreshChainLifecycleV1 {
         }
         let hex = crate::native_block_seal::hex_v1(&hash);
         if let Some(parent) = &self.finalized_parent {
-            if let Some(receipt) = parent.state().receipts.get(&hex) {
+            if let Some(receipt) =
+                parent.with_records(&self.params, |reader| reader.receipt(&hash))?
+            {
                 return Ok(
                     serde_json::json!({"tx_hash":hex,"status":"finalized","receipt":receipt,"finalized_tip_height":parent.block().header.height}),
                 );
@@ -116,7 +127,7 @@ impl FreshChainLifecycleV1 {
         }
         let pool = self.pool.as_mut().expect("pool exists");
         if let Some(parent) = &self.finalized_parent {
-            pool.reconcile(parent)?;
+            pool.reconcile_rooted(parent, &self.params)?;
         }
         if now < self.next_gossip {
             return Ok(());

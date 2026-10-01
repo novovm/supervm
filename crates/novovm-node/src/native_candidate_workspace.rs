@@ -11,7 +11,12 @@ mod execution;
 mod finalized_parent;
 #[path = "native_candidate_live_parent.rs"]
 mod live_parent;
-pub(crate) use live_parent::load_finalized_parent_view_v1;
+pub(crate) use live_parent::{load_finalized_parent_view_v1, FinalizedParentViewV1};
+#[cfg(test)]
+#[path = "native_candidate_finalized_query_tests.rs"]
+mod finalized_query_tests;
+#[cfg(test)]
+pub(super) use finalized_query_tests::exercise_finalized_record_queries_for_test_v1;
 #[path = "native_candidate_rooted_parent.rs"]
 mod rooted_parent;
 #[path = "native_candidate_state_records.rs"]

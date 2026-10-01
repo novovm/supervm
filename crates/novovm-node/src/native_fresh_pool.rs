@@ -153,6 +153,34 @@ impl FreshTransactionPool {
             })
             .map(|entry| entry.hash)
             .collect();
+        self.retire_entries(retired)
+    }
+
+    pub(crate) fn reconcile_rooted(
+        &mut self,
+        parent: &candidate_workspace::FinalizedParentViewV1,
+        params: &serde_json::Value,
+    ) -> Result<()> {
+        if self.entries.is_empty() {
+            return Ok(());
+        }
+        // One scoped reader for the whole batch. Read failure must not delete
+        // an earlier prefix or be interpreted as a missing receipt/zero nonce.
+        let retired = parent.with_records(params, |reader| {
+            let mut retired = Vec::new();
+            for entry in self.entries.values() {
+                if reader.contains_receipt(&entry.hash)?
+                    || reader.next_nonce(&entry.identity)? > entry.nonce
+                {
+                    retired.push(entry.hash);
+                }
+            }
+            Ok(retired)
+        })?;
+        self.retire_entries(retired)
+    }
+
+    fn retire_entries(&mut self, retired: Vec<[u8; 32]>) -> Result<()> {
         if retired.is_empty() {
             return Ok(());
         }

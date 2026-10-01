@@ -942,6 +942,37 @@ fn exercise_automatic_proposal(
     let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
     let mut lifecycle = Lifecycle::open(config, &ledger, params, leader, Instant::now()).unwrap();
     assert_eq!(lifecycle.status_json()["height"], 3);
+    // A cold oracle is test-only. Production submission/status must query the
+    // immutable finalized cache without materializing its entire Store.
+    let query_parent = workspace::load_finalized_genesis_parent_v1(
+        authority.chain_id,
+        restart_config.isolated_workspace_id.unwrap(),
+        restart_config.fresh_genesis_config_commitment.unwrap(),
+        params,
+    )
+    .unwrap();
+    let committed_raw = query_parent.block().body.raw_txs[0].clone();
+    let committed_hash = query_parent.block().body.tx_hashes[0];
+    let pending_before_query = lifecycle.status_json()["durable_pending_transactions"].clone();
+    workspace::without_materialization_for_test(|| {
+        let status = lifecycle.transaction_status(committed_hash)?;
+        assert_eq!(status["status"], "finalized");
+        assert_eq!(
+            status["receipt"],
+            serde_json::to_value(&query_parent.state().receipts[&to_hex(&committed_hash)])?
+        );
+        assert_eq!(lifecycle.submit_raw_transaction(committed_raw)?, status);
+        let stale = transfer_candidate_raw(authority.chain_id, 3, [0xc3; 32], [0xd4; 32], 11);
+        let error = lifecycle.submit_raw_transaction(stale).unwrap_err();
+        assert!(error.to_string().contains("transaction nonce already consumed"));
+        assert_eq!(lifecycle.transaction_status([0; 32])?["status"], "unknown");
+        assert_eq!(
+            lifecycle.status_json()["durable_pending_transactions"],
+            pending_before_query,
+        );
+        Ok(())
+    })
+    .unwrap();
     // Real authenticated transport, but invalid signed chain/nonce must never
     // become a candidate. A later valid input in the same bounded poll survives.
     let invalid = [
@@ -1032,6 +1063,16 @@ fn exercise_automatic_proposal(
     assert_eq!(lifecycle.status_json()["proposed_successors"], 1);
     assert_eq!(lifecycle.status_json()["successor_rejected"], 2);
     assert_eq!(lifecycle.status_json()["durable_pending_transactions"], 2);
+    workspace::without_materialization_for_test(|| {
+        assert_eq!(
+            lifecycle.submit_raw_transaction(raws[0].clone())?,
+            lifecycle.transaction_status(valid_hash)?,
+        );
+        assert_eq!(lifecycle.transaction_status(valid_hash)?["status"], "queued");
+        assert_eq!(lifecycle.status_json()["durable_pending_transactions"], 2);
+        Ok(())
+    })
+    .unwrap();
     assert_eq!(lifecycle.status_json()["decision_confirmed"], false);
     assert_eq!(lifecycle.status_json()["body_delivery_targets"], 0);
     let before = workspace::list_v1(authority.chain_id, params).unwrap();

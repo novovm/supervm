@@ -941,6 +941,18 @@ fn exercise_record_profile_fresh_transfers() {
                 .unwrap();
         assert_eq!(parent.state(), &store);
         assert_eq!(parent.block(), block);
+        workspace::exercise_finalized_record_queries_for_test_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            params,
+            &transfer_candidate_raw(chain, 0, a, b, 999),
+            &[
+                transfer_candidate_raw(chain, 2, a, b, 1),
+                transfer_candidate_raw(chain, 0, d, a, 1),
+            ],
+        )
+        .unwrap();
         let context = NovBlockExecutionContextV1 {
             chain_id: chain,
             block_height: 2,
