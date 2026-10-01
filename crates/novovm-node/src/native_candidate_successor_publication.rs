@@ -437,6 +437,7 @@ fn run_locked(
         capture(FinalizedGenesisParentV1 {
             block: artifact.block().clone(),
             store: output.store,
+            record_state: output.record_state,
             batch_result: output.batch_result,
             genesis: config,
             workspace_id: id,

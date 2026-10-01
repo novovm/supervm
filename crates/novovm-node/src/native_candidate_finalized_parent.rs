@@ -116,6 +116,7 @@ pub fn create_from_finalized_genesis_v1(
         parent_snapshot: None,
         genesis: None,
         finalized_parent: Some(FinalizedParentSnapshot::capture(&parent)),
+        record_state: parent.record_state.clone(),
     };
     validate_payload(&payload, &workspace)?;
     stage_payload(&mut workspace, &payload, |_| Ok(()))

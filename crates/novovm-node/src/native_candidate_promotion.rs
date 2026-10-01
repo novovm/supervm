@@ -98,6 +98,7 @@ pub fn prepare_successor_promotion_v1(
 pub struct FinalizedGenesisParentV1 {
     block: NovNativeDurableBlockV1,
     store: NovNativeExecutionStoreV1,
+    pub(in super::super) record_state: Option<state_records::StoreRef>,
     batch_result: novovm_exec::NovovmAoemNativeTxBatchResultV1,
     genesis: fresh_genesis::FreshGenesisConfigV1,
     workspace_id: [u8; 32],
@@ -806,6 +807,7 @@ fn run_locked(
         action(FinalizedGenesisParentV1 {
             block: artifact.block().clone(),
             store: output.store,
+            record_state: output.record_state,
             batch_result: output.batch_result,
             genesis: config,
             workspace_id: id,

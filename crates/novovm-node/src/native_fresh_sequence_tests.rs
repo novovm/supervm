@@ -61,12 +61,8 @@ fn exercise_fresh_sequence(
             let plan = parent_image
                 .successor_plan(
                     context,
-                    vec![candidate_workspace_execution_raw(
-                        chain,
-                        height,
-                        [0xc3; 32],
-                        10,
-                        "deposit_reserve",
+                    vec![transfer_candidate_raw(
+                        chain, height, [0xc3; 32], [0xd4; 32], 10,
                     )],
                     params,
                 )
@@ -342,6 +338,27 @@ fn exercise_fresh_sequence(
         assert_eq!(current.block().header.height, height);
         assert_eq!(current.block().header.state_version, height + 1);
         assert_eq!(current.state().receipts.len(), height as usize + 1);
+        if height == 4 {
+            // The same signed Transfer now crosses prepare QC, decision QC,
+            // publication interruption, lifecycle restart and final recovery.
+            // Immutable records must also survive earlier workspace retirement.
+            let raw = &current.block().body.raw_txs[0];
+            let fee = transfer_candidate_fee(raw);
+            let payer = transfer_candidate_account([0xc3; 32]);
+            let recipient = transfer_candidate_account([0xd4; 32]);
+            let receipt = &current.state().receipts[&to_hex(&current.block().body.tx_hashes[0])];
+            assert!(receipt.status);
+            assert_eq!(receipt.settled_fee_nov, fee);
+            assert_transfer_candidate_compute_logs(receipt, 1);
+            assert_eq!(
+                native_account_asset_balance_v1(current.state(), &payer, "NOV"),
+                native_account_asset_balance_v1(parent_image.state(), &payer, "NOV") - fee - 10,
+            );
+            assert_eq!(
+                native_account_asset_balance_v1(current.state(), &recipient, "NOV"),
+                native_account_asset_balance_v1(parent_image.state(), &recipient, "NOV") + 10,
+            );
+        }
         if height == 3 {
             workspace::corrupt_first_chunk_for_test_v1(chain, candidate, params).unwrap();
             assert!(workspace::abort_v1(chain, candidate, params).is_err());

@@ -14,6 +14,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub type NodeHash = [u8; 32];
+pub type StateLeafVisitor<'a> = dyn FnMut(NodeHash, &[u8]) -> Result<()> + 'a;
 pub const STATE_TREE_CODEC_V1: &str = "novovm-state-patricia-sha256/v1";
 const MAX_KEY_BYTES: usize = 256;
 const MAX_VALUE_BYTES: usize = 256;
@@ -90,6 +91,11 @@ fn digest_key(key: &[u8]) -> Result<NodeHash> {
     hash.update((key.len() as u64).to_be_bytes());
     hash.update(key);
     Ok(hash.finalize().into())
+}
+
+/// The canonical tree-key digest, used to bind recoverable record keys to leaves.
+pub fn state_key_hash(key: &[u8]) -> Result<NodeHash> {
+    digest_key(key)
 }
 
 fn digest_node(bytes: &[u8]) -> NodeHash {
@@ -451,6 +457,52 @@ pub fn read_state_value(
     Ok(None)
 }
 
+/// Stream leaves of a trusted root in canonical hashed-key order. Every visited
+/// node, including each child's authenticated direction, is checked. The stack
+/// is bounded by the 256-bit key depth, not by the size of the ledger.
+///
+/// `max_nodes` is the caller's budget for this explicit scan, not a state-size
+/// limit. A failure can follow earlier callbacks: callers must discard any
+/// partially reconstructed view and must not publish state from callbacks.
+pub fn visit_state_leaves(
+    reader: &dyn StateNodeReader,
+    root: NodeHash,
+    max_nodes: usize,
+    visitor: &mut StateLeafVisitor<'_>,
+) -> Result<usize> {
+    if root == empty_root() {
+        return Ok(0);
+    }
+    let mut stack = vec![(root, [0; 32], 0u16)];
+    let mut visited = 0usize;
+    while let Some((hash, path, minimum_bit)) = stack.pop() {
+        if visited >= max_nodes {
+            bail!("state scan exceeds node budget");
+        }
+        visited += 1;
+        let bytes = reader
+            .read_node(&hash)?
+            .context("state scan node missing")?;
+        let node = decode_state_node(&hash, &bytes)?;
+        node.validate_path(&path, minimum_bit)?;
+        match node {
+            Node::Leaf { key, value } => visitor(key, &value)?,
+            Node::Branch {
+                bit,
+                prefix,
+                left,
+                right,
+            } => {
+                let mut right_path = prefix;
+                right_path[usize::from(bit / 8)] |= 0x80 >> (bit % 8);
+                stack.push((right, right_path, bit + 1));
+                stack.push((left, prefix, bit + 1));
+            }
+        }
+    }
+    Ok(visited)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -532,6 +584,52 @@ mod tests {
             );
         }
         assert_eq!(root, empty_root());
+    }
+
+    #[test]
+    fn streaming_scan_validates_all_child_paths_and_respects_budget() {
+        let mut memory = Memory::default();
+        let changes: Vec<_> = (0..25).map(|key| put(key, 3)).collect();
+        let update = stage_state_update(&memory, empty_root(), &changes).unwrap();
+        let root = persist(&mut memory, update);
+        let mut keys = Vec::new();
+        assert_eq!(
+            visit_state_leaves(&memory, root, 49, &mut |key, value| {
+                assert_eq!(value, &[3]);
+                keys.push(key);
+                Ok(())
+            })
+            .unwrap(),
+            49
+        );
+        assert_eq!(keys.len(), 25);
+        assert!(keys.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(visit_state_leaves(&memory, root, 48, &mut |_, _| Ok(())).is_err());
+        let Node::Branch {
+            bit,
+            prefix,
+            left,
+            right,
+        } = Node::decode(&memory.0[&root]).unwrap()
+        else {
+            panic!("expected branch");
+        };
+        let bad = Node::Branch {
+            bit,
+            prefix,
+            left: right,
+            right: left,
+        }
+        .encode();
+        let bad_root = digest_node(&bad);
+        memory.0.insert(bad_root, bad);
+        assert!(visit_state_leaves(&memory, bad_root, 49, &mut |_, _| Ok(())).is_err());
+        memory.0.remove(&left);
+        assert!(visit_state_leaves(&memory, root, 49, &mut |_, _| Ok(())).is_err());
+        assert_eq!(
+            visit_state_leaves(&memory, empty_root(), 0, &mut |_, _| Ok(())).unwrap(),
+            0
+        );
     }
 
     #[test]

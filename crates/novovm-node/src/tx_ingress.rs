@@ -10,6 +10,9 @@ pub mod fresh_pool;
 #[path = "native_transfer_dispatch.rs"]
 mod native_transfer_dispatch;
 
+#[path = "native_store_records.rs"]
+mod native_store_records;
+
 #[path = "native_nonce_migration.rs"]
 pub mod native_nonce_migration;
 

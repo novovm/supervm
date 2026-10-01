@@ -2,7 +2,8 @@
 
 //! Fresh-candidate NOV transfers: AOEM computes small immutable account views;
 //! the Host merges outcomes and the existing unified fee settlement in order.
-//! This intentionally still uses the existing full candidate store/root codec.
+//! Receipt finalization is supplied by the candidate's state codec. The default
+//! entry point retains the existing full candidate store/root codec.
 
 use super::*;
 use crate::native_transfer_delta::{
@@ -87,13 +88,102 @@ pub(super) struct Item<'a> {
     pub ingress: NovAoemSemanticIngressMetaV1,
 }
 
-/// Returns observed callback overlap for local diagnostics only. Never put it
-/// in a receipt, state root, or byte-identical recoverable output descriptor.
+/// A candidate-owned receipt boundary, not an authority publication hook.
+///
+/// `begin` observes the ordered pre-fee state. `finish` must commit the valid
+/// nonce and receipt even for a fee/business rejection, before the next item
+/// can read state. An error aborts execution; the caller must discard/recover
+/// its isolated candidate, not assume that mutations have been rolled back.
+pub(super) trait TransferReceiptFinalizerV1 {
+    fn begin(&mut self, store: &NovNativeExecutionStoreV1) -> Result<()>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish(
+        &mut self,
+        store: &mut NovNativeExecutionStoreV1,
+        request: &NovExecutionRequestV1,
+        settled_fee: &NovSettledFeeV1,
+        subject: &NovExecutionSubjectMetaV1,
+        reservation: &NovNativeDurableAuthReservationV1,
+        ingress: NovAoemSemanticIngressMetaV1,
+        now_ms: u128,
+        receipt: NovNativeExecutionReceiptV1,
+    ) -> Result<()>;
+}
+
+struct LegacyFinalizer<'a> {
+    before: Option<NovNativeExecutionModuleStateV1>,
+    mirrors: &'a mut Vec<NovAoemSemanticLedgerMirrorRecordV1>,
+}
+
+impl TransferReceiptFinalizerV1 for LegacyFinalizer<'_> {
+    fn begin(&mut self, store: &NovNativeExecutionStoreV1) -> Result<()> {
+        if self.before.is_some() {
+            bail!("transfer legacy finalizer already has an unfinished item");
+        }
+        self.before = Some(store.module_state.clone());
+        Ok(())
+    }
+
+    fn finish(
+        &mut self,
+        store: &mut NovNativeExecutionStoreV1,
+        request: &NovExecutionRequestV1,
+        settled_fee: &NovSettledFeeV1,
+        subject: &NovExecutionSubjectMetaV1,
+        reservation: &NovNativeDurableAuthReservationV1,
+        ingress: NovAoemSemanticIngressMetaV1,
+        now_ms: u128,
+        receipt: NovNativeExecutionReceiptV1,
+    ) -> Result<()> {
+        let before = self
+            .before
+            .take()
+            .context("transfer legacy finalizer has no pre-fee state")?;
+        finalize_native_execution_receipt_v1(
+            store,
+            request,
+            settled_fee,
+            subject,
+            Some(reservation),
+            Some(ingress),
+            &before,
+            Path::new(""),
+            Some(self.mirrors),
+            now_ms,
+            receipt,
+        )?;
+        Ok(())
+    }
+}
+
+/// Preserve the existing finalization format until a candidate explicitly
+/// selects another versioned state codec.
 pub(super) fn execute_v1(
     store: &mut NovNativeExecutionStoreV1,
     items: &[Item<'_>],
     now_ms: u128,
     mirrors: &mut Vec<NovAoemSemanticLedgerMirrorRecordV1>,
+) -> Result<usize> {
+    execute_with_finalizer_v1(
+        store,
+        items,
+        now_ms,
+        &mut LegacyFinalizer {
+            before: None,
+            mirrors,
+        },
+    )
+}
+
+/// Execute AOEM computation and ordered unified fees without a full-state
+/// clone or a prescribed receipt/root codec. Returns callback overlap for local
+/// diagnostics only, never for a receipt or deterministic output commitment.
+pub(super) fn execute_with_finalizer_v1(
+    store: &mut NovNativeExecutionStoreV1,
+    items: &[Item<'_>],
+    now_ms: u128,
+    finalizer: &mut impl TransferReceiptFinalizerV1,
 ) -> Result<usize> {
     if items.is_empty() || items.len() > 1024 {
         bail!("transfer dispatch requires 1..=1024 authenticated transactions");
@@ -200,7 +290,7 @@ pub(super) fn execute_v1(
                 b"novovm-native-transfer-compute-output-v1\0",
                 &serde_json::to_vec(&outcome)?,
             ]));
-            let before = store.module_state.clone();
+            finalizer.begin(store)?;
             let subject = enforce_requested_execution_behavior_with_observability_v1(
                 item.subject,
                 None,
@@ -321,16 +411,13 @@ pub(super) fn execute_v1(
                 data: serde_json::json!({"scheduler":"aoem_generic_compute_v2", "tx_hash":item.reservation.tx_hash, "output_digest":computed_digest,
                     "phase":"pre_global_fee_reduction", "authorizes_state_publication":false}),
             });
-            finalize_native_execution_receipt_v1(
+            finalizer.finish(
                 store,
                 item.request,
                 &settled_fee,
                 &subject,
-                Some(item.reservation),
-                Some(item.ingress.clone()),
-                &before,
-                Path::new(""),
-                Some(mirrors),
+                item.reservation,
+                item.ingress.clone(),
                 now_ms,
                 receipt,
             )?;

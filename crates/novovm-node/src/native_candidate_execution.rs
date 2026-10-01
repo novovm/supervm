@@ -86,6 +86,8 @@ struct Output {
     expected_output_commitment: String,
     batch_result: novovm_exec::NovovmAoemNativeTxBatchResultV1,
     store: NovNativeExecutionStoreV1,
+    #[serde(skip)]
+    record_state: Option<state_records::StoreRef>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -406,6 +408,7 @@ fn compute(
         expected_output_commitment: batch.expected_output_commitment,
         batch_result,
         store,
+        record_state: None,
     })
 }
 
@@ -567,7 +570,9 @@ fn read_output(
     if output_digest(&bytes) != descriptor.digest {
         bail!("candidate output digest mismatch");
     }
-    let output: Output = serde_json::from_slice(&bytes)?;
+    let (mut output, reference): (Output, _) =
+        state_records::decode(workspace, &bytes, &["store"])?;
+    output.record_state = reference;
     validate_output(&output, payload, input, workspace, params)?;
     Ok(Some(output))
 }
@@ -680,13 +685,42 @@ pub(crate) fn execute_with_checkpoint_v1(
     }
     let output = compute(&payload, &input, &workspace, params)?;
     validate_output(&output, &payload, &input, &workspace, params)?;
-    let bytes = serde_json::to_vec(&output)?;
-    check_output_capacity(0, bytes.len())?;
-    let descriptor = OutputDescriptor {
-        len: bytes.len(),
-        digest: output_digest(&bytes),
+    let parent_store = payload.parent_store()?;
+    let prepared = state_records::prepare(
+        &workspace,
+        &output,
+        &["store"],
+        &output.store,
+        payload
+            .record_state
+            .as_ref()
+            .map(|reference| (reference, parent_store)),
+    )?;
+    let mut descriptor = OutputDescriptor {
+        len: prepared.bytes.len(),
+        digest: output_digest(&prepared.bytes),
         input_digest: input.payload,
     };
+    // Recover old partial inline output only when the recomputed typed image
+    // reproduces EVERY byte bound by its original reservation. New candidates
+    // still always use record documents; this is not a fallback on corruption.
+    let inline = if let Some(previous) = existing.filter(|previous| **previous != descriptor) {
+        let bytes = serde_json::to_vec(&output)?;
+        let legacy = OutputDescriptor {
+            len: bytes.len(),
+            digest: output_digest(&bytes),
+            input_digest: input.payload,
+        };
+        if *previous != legacy {
+            bail!("incomplete candidate output recomputation differs from reserved bytes");
+        }
+        descriptor = legacy;
+        Some(bytes)
+    } else {
+        None
+    };
+    let bytes = inline.as_deref().unwrap_or(&prepared.bytes);
+    check_output_capacity(0, bytes.len())?;
     if let Some(previous) = existing {
         if previous != &descriptor {
             bail!("incomplete candidate output recomputation differs from reserved bytes");
@@ -704,6 +738,9 @@ pub(crate) fn execute_with_checkpoint_v1(
         workspace.commit(b'V', &input, vec![reservation.clone()], reservation)?;
     }
     checkpoint(ExecutionCheckpointV1::OutputReserved)?;
+    if inline.is_none() {
+        state_records::persist(&workspace, &prepared)?;
+    }
     let writes: Vec<_> = bytes
         .chunks(CHUNK_BYTES)
         .enumerate()
@@ -821,6 +858,61 @@ pub(crate) fn corrupt_execution_output_for_test_v1(
         vec![AoemAtomicGraphWriteV1::Put { key, value: bytes }],
         marker,
     )
+}
+
+/// Preserve the old output reservation/chunk encoding for upgrade tests only.
+#[cfg(test)]
+pub(crate) fn seed_legacy_inline_output_for_test_v1(
+    chain: u64,
+    id: [u8; 32],
+    params: &serde_json::Value,
+    stage: ExecutionCheckpointV1,
+    corrupt_descriptor: bool,
+) -> Result<[u8; 32]> {
+    let mut workspace = WorkspaceStore::open(chain, params)?;
+    let input = ready_input(&workspace, id)?;
+    if catalog(&workspace)?.iter().any(|(known, _)| *known == id) {
+        bail!("legacy inline fixture requires a new output");
+    }
+    let payload = workspace.read_payload(&input)?;
+    let output = compute(&payload, &input, &workspace, params)?;
+    validate_output(&output, &payload, &input, &workspace, params)?;
+    let bytes = serde_json::to_vec(&output)?;
+    check_output_capacity(0, bytes.len())?;
+    let mut descriptor = OutputDescriptor {
+        len: bytes.len(),
+        digest: output_digest(&bytes),
+        input_digest: input.payload,
+    };
+    if corrupt_descriptor {
+        descriptor.digest[0] ^= 1;
+    }
+    let reservation = AoemAtomicGraphWriteV1::Put {
+        key: workspace.key(b'v', &id),
+        value: descriptor.encode(),
+    };
+    workspace.commit(b'V', &input, vec![reservation.clone()], reservation.clone())?;
+    let writes: Vec<_> = bytes
+        .chunks(CHUNK_BYTES)
+        .enumerate()
+        .map(|(index, chunk)| AoemAtomicGraphWriteV1::Put {
+            key: output_chunk_key(&workspace, &id, index),
+            value: chunk.to_vec(),
+        })
+        .collect();
+    match stage {
+        ExecutionCheckpointV1::OutputReserved => {}
+        ExecutionCheckpointV1::PartialOutput => {
+            workspace.commit(b'P', &input, writes[..1].to_vec(), reservation)?;
+        }
+        ExecutionCheckpointV1::OutputWritten | ExecutionCheckpointV1::Completed => {
+            workspace.commit(b'O', &input, writes, reservation)?;
+            if stage == ExecutionCheckpointV1::Completed {
+                publish(&mut workspace, &input, &descriptor)?;
+            }
+        }
+    }
+    Ok(descriptor.digest)
 }
 
 #[cfg(test)]

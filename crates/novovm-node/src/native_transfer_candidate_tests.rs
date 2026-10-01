@@ -80,6 +80,20 @@ fn candidate_workspace_transfer_mixed_execute_fee_nonce_and_recovery() {
     transfer_candidate_on_runtime_stack(exercise_transfer_candidate_mixed_execution);
 }
 
+#[test]
+fn candidate_workspace_record_documents_exceed_old_snapshot_limit_and_reopen() {
+    transfer_candidate_on_runtime_stack(|| {
+        let _guard = PLAN_RUNTIME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        with_plan_runtime(|path, params| {
+            let chain = 98_919_710;
+            funded_candidate_parent(path, params, chain, &[[0xa1; 32]], raw_fixture(chain, 1710));
+            workspace::exercise_record_document_storage_for_test(chain, params).unwrap();
+        });
+    });
+}
+
 fn exercise_transfer_candidate_mixed_execution() {
     let _guard = PLAN_RUNTIME_TEST_LOCK
         .lock()

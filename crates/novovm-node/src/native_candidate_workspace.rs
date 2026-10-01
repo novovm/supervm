@@ -9,6 +9,8 @@ mod auth;
 mod execution;
 #[path = "native_candidate_finalized_parent.rs"]
 mod finalized_parent;
+#[path = "native_candidate_state_records.rs"]
+mod state_records;
 pub use execution::{
     complete_genesis_promotion_v1, complete_successor_ledger_v1, execute_v1,
     finalize_genesis_promotion_v1, finalize_successor_v1, load_block_artifact_v1,
@@ -34,6 +36,8 @@ pub(super) use execution::{
 pub(crate) use execution::{load_startup_artifact_v1, load_startup_successor_v1};
 pub use finalized_parent::create_from_finalized_genesis_v1;
 use finalized_parent::FinalizedParentSnapshot;
+#[cfg(test)]
+pub(crate) use state_records::exercise_record_document_storage_for_test;
 
 use super::*;
 use crate::native_candidate_plan::NovNativeCandidateExecutionPlanV1;
@@ -173,6 +177,8 @@ struct Payload {
     genesis: Option<fresh_genesis::publication::GenesisSnapshotV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     finalized_parent: Option<FinalizedParentSnapshot>,
+    #[serde(skip)]
+    record_state: Option<state_records::StoreRef>,
 }
 
 impl Payload {
@@ -452,8 +458,8 @@ impl WorkspaceStore {
         if payload_digest(&bytes) != descriptor.payload {
             bail!("candidate workspace payload digest mismatch");
         }
-        let payload: Payload =
-            serde_json::from_slice(&bytes).context("decode candidate workspace payload")?;
+        let payload = state_records::decode_payload(self, &bytes)
+            .context("decode candidate workspace payload")?;
         validate_payload(&payload, self)?;
         if descriptor != &describe(&payload, &bytes, &self.scope)? {
             bail!("candidate workspace descriptor does not bind its parent and plan");
@@ -661,6 +667,7 @@ fn capture_parent_locked(
         parent_snapshot: Some(parent_snapshot),
         genesis: None,
         finalized_parent: None,
+        record_state: None,
     };
     validate_payload(&payload, workspace)?;
     Ok(payload)
@@ -762,6 +769,7 @@ fn create_inner_v1(
             parent_snapshot: None,
             genesis: Some(genesis),
             finalized_parent: None,
+            record_state: None,
         };
         validate_payload(&payload, &workspace)?;
         payload
@@ -776,14 +784,40 @@ fn stage_payload(
     payload: &Payload,
     checkpoint: impl Fn(CheckpointV1) -> Result<()>,
 ) -> Result<WorkspaceInfoV1> {
-    let bytes = serde_json::to_vec(payload)?;
-    let descriptor = describe(payload, &bytes, &workspace.scope)?;
+    let parent_store = payload.parent_store()?;
+    let prepared = state_records::prepare(
+        workspace,
+        payload,
+        &state_records::payload_path(payload)?,
+        parent_store,
+        payload
+            .record_state
+            .as_ref()
+            .map(|reference| (reference, parent_store)),
+    )?;
+    let mut descriptor = describe(payload, &prepared.bytes, &workspace.scope)?;
     let id = descriptor.id;
     if workspace.graph.get(&workspace.key(b'g', &id))?.is_some() {
         bail!("retired candidate workspace cannot be revived");
     }
     let catalog = workspace.catalog()?;
     let existing = catalog.iter().find(|(_, previous)| previous.id == id);
+    // An existing reservation pins its exact physical encoding. An upgrade may
+    // read/replay an old inline image, but must not replace it with a record
+    // document under the same workspace id or relax the captured-parent check.
+    let inline =
+        if let Some((_, previous)) = existing.filter(|(_, previous)| *previous != descriptor) {
+            let bytes = serde_json::to_vec(payload)?;
+            let legacy = describe(payload, &bytes, &workspace.scope)?;
+            if *previous != legacy {
+                bail!("candidate workspace replay changed its captured parent");
+            }
+            descriptor = legacy;
+            Some(bytes)
+        } else {
+            None
+        };
+    let bytes = inline.as_deref().unwrap_or(&prepared.bytes);
     if let Some((slot, previous)) = existing {
         if previous != &descriptor {
             bail!("candidate workspace replay changed its captured parent");
@@ -811,6 +845,9 @@ fn stage_payload(
         slot
     };
     checkpoint(CheckpointV1::Reserved)?;
+    if inline.is_none() {
+        state_records::persist(workspace, &prepared)?;
+    }
     let writes: Vec<_> = bytes
         .chunks(CHUNK_BYTES)
         .enumerate()
@@ -972,6 +1009,81 @@ pub(super) fn corrupt_first_chunk_for_test_v1(
     };
     workspace.commit(b'x', &descriptor, vec![write], ready)
 }
+
+/// Write the pre-record-document format to exercise real upgrade recovery.
+#[cfg(test)]
+pub(super) fn seed_legacy_inline_input_for_test_v1(
+    plan: &NovNativeCandidateExecutionPlanV1,
+    params: &serde_json::Value,
+    stage: CheckpointV1,
+    corrupt_descriptor: bool,
+) -> Result<WorkspaceInfoV1> {
+    let mut workspace = WorkspaceStore::open(plan.context.chain_id, params)?;
+    let payload = capture_parent(plan, params, &workspace)?;
+    let bytes = serde_json::to_vec(&payload)?;
+    let mut descriptor = describe(&payload, &bytes, &workspace.scope)?;
+    let catalog = workspace.catalog()?;
+    if catalog.iter().any(|(_, entry)| entry.id == descriptor.id) {
+        bail!("legacy inline fixture requires a new workspace");
+    }
+    let slot = allocate_slot(&catalog, bytes.len())?;
+    if corrupt_descriptor {
+        descriptor.payload[0] ^= 1;
+    }
+    let reservation = AoemAtomicGraphWriteV1::Put {
+        key: workspace.slot_key(slot),
+        value: descriptor.encode(),
+    };
+    workspace.commit(
+        b's',
+        &descriptor,
+        vec![reservation.clone()],
+        reservation.clone(),
+    )?;
+    let writes: Vec<_> = bytes
+        .chunks(CHUNK_BYTES)
+        .enumerate()
+        .map(|(index, chunk)| AoemAtomicGraphWriteV1::Put {
+            key: workspace.chunk_key(&descriptor.id, index),
+            value: chunk.to_vec(),
+        })
+        .collect();
+    if stage == CheckpointV1::PartialPayload {
+        workspace.commit(b'p', &descriptor, writes[..1].to_vec(), reservation)?;
+    } else if matches!(stage, CheckpointV1::PayloadWritten | CheckpointV1::Ready) {
+        workspace.commit(b'c', &descriptor, writes, reservation)?;
+        if stage == CheckpointV1::Ready {
+            let first = AoemAtomicGraphWriteV1::Put {
+                key: workspace.chunk_key(&descriptor.id, 0),
+                value: bytes[..CHUNK_BYTES.min(bytes.len())].to_vec(),
+            };
+            let ready = AoemAtomicGraphWriteV1::Put {
+                key: workspace.key(b'r', &descriptor.id),
+                value: workspace.marker(b'r', slot, &descriptor),
+            };
+            workspace.commit(b'r', &descriptor, vec![first], ready)?;
+        }
+    } else if stage != CheckpointV1::Reserved {
+        bail!("unsupported legacy inline input fixture stage");
+    }
+    let original = workspace.info(slot, &descriptor)?;
+    if stage == CheckpointV1::Ready {
+        // The finalized-parent creator calls stage_payload directly; ordinary
+        // create_v1 has an earlier ready fast path. Exercise both entry shapes.
+        let replay = stage_payload(&mut workspace, &payload, |_| {
+            bail!("ready legacy replay must not write or reach checkpoints")
+        })?;
+        if workspace.graph.get(&workspace.slot_key(slot))? != Some(descriptor.encode())
+            || replay.workspace_id != original.workspace_id
+        {
+            bail!("ready legacy replay changed its reservation");
+        }
+    }
+    Ok(original)
+}
+
+#[cfg(test)]
+pub(crate) use execution::seed_legacy_inline_output_for_test_v1;
 
 #[cfg(test)]
 mod tests {
