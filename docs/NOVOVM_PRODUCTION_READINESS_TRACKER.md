@@ -14,6 +14,80 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
+## 设备 A：S1 checked-credit 条件交换首片（2026-10-02）
+
+运行代码 `d6aa770`，父提交为计划/分工 `fcfff87`。验证使用 Git 索引导出的
+干净源码快照，tree=`6f26fae0dc6362ad96729ca0b6926ba54b145610`，等于该
+代码提交的 tree；不含本机原有 27 个异步试验文件。它们原样保留、未提交。
+快照在仓库内部 `artifacts/audit/semantic-credit-index-20261002/`，不是新
+分支、另一个产品账本或新的开发主线。测试后逐文件核对 Git 规范化 blob
+一致（Windows checkout 换行不同不作源码差异）。
+
+实现：同一父视图、账户批内只收不支、父余额加全部请求金额上界 checked-u128
+不溢出，才允许共享收款跨组件；不满足则保守调度，不拒绝原本可执行的批次。
+组件业务计算和原序 credit 前缀归并均运行在 AOEM 回调内；最后到达的回调
+归并，不等待其他 worker、不另造线程或 AOEM 业务 opcode。出账/nonce
+依赖、收费、失败回执与全局结算拒绝后的 AOEM 重算不变。只比较最终余额
+不够，本次还比较逐笔 before/after、compute digest、完整回执与 mirror 字节。
+
+环境：Windows 11 x64 10.0.26200，Core Ultra 9 275HX（24 核/24 逻辑处理器），
+Rust/Cargo 1.94.0，Release，同机四进程 loopback HTTP/WSS/AOEM/BFT；临时
+测试创世与密钥，未接生产服务。干净快照 `cargo fmt --all -- --check`、
+`cargo clippy --locked -p novovm-node --release --lib --tests -- -D warnings`
+及 Release 集成构建通过。不是整仓所有测试或 GitHub CI 全绿声明。
+
+- Transfer 60 项通过，包括 11 项新纯效应测试（含 192 组确定性混合差分）、
+  真实 AOEM 执行、整 Store/费用/nonce/回执对照。1024 笔、128 付款方各
+  8 个 nonce 向同一 32-byte 账户入账：旧 1 组件→新 128 组件，真实回调
+  峰值 24，原序结果完全一致。没有用 sleep/barrier 制造重叠。
+- 费用暂停/溢出时共享收款会跨组件失效，实际 4 笔重算、5 张图；无此
+  失败的成功/业务失败/零金额场景 0 重算、1 张图，全部与串行 Store 相等。
+- 4 项真实候选测试通过：record-profile 首次计算/恢复/最终确认（42.19 秒）、
+  全局费用容量拒绝、20/32-byte 账户共享 signer nonce、u128 供应量重开。
+- 四进程混合交易通过（38.91 秒）：6 笔中 5 成功/1 业务失败，串行 oracle、
+  失败 nonce、重放、完整块/QC、重启回执一致。该场景不声称测得并行峰值。
+- 同条件 256 笔耐久 ACK 持续负载通过：32 signer×8 nonce、4 客户端、
+  outstanding 128、proposal 32/collect 0、显式 transport 64、诊断关闭。
+  256/256 最终确认，69.015780 秒，**3.709297 TPS**；观察 P50/P95/P99
+  =20.948/65.901/68.007 秒，包含 HTTP 与轮询，不是精确提交时刻。四节点
+  完整块与持久 BFT 证明一致，重启读回一致；计量后完成检查总耗时 103.46 秒。
+  块笔数含 bootstrap 为 `1,2,32,32,32,32,32,32,32,30`。与旧提交约
+  3.681/3.749 TPS 相当，不能声称提高主链 TPS；此负载本身是独立收款方，
+  不是共享收款热点，也不是逐块完全同切分 A/B。
+
+Transfer 命令的明确过滤为 `native_transfer --include-ignored --skip
+native_transfer_process_serial_parity_worker_v1 --test-threads=1`。该 worker
+只由四进程夹具提供显式输入调用；此前在脏工作区直接全选 ignored 测试曾
+因缺少 `NOVOVM_TRANSFER_PARITY_INPUT` 失败，未删除或放宽其失败关闭检查。
+四进程复跑使用当前构建的 libtest 作为 `NOVOVM_TRANSFER_PARITY_WORKER`，
+目标 `native_candidate_node_cli` 的精确 ignored 测试分别为
+`native_seal_main_process::fresh_record_transfers_conflict_failure_serial_parity`
+和 `native_seal_main_process::fresh_record_transfers_durable_receipts_continuous_backlog_measure_rpc_to_finality`。
+
+SHA256（本地证据，原始日志/二进制不随 Git 上传）：
+
+- 节点：`e14c5c568d5240583500c16802ecd27c01053166ed860e3d083c36f3770a493e`。
+- 集成 harness：`11adc1768361d3144ae798e62874041e8ea75f64c1c2dae935239077bf05cd4c`；
+  libtest：`7a8714843e3cb9eefae7c7619092ba095d4c1d19e38a6e4189cdbc1b1e611e6e`。
+- AOEM `windows/core/bin/aoem_ffi.dll`：
+  `4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463`。
+- 快照下 `artifacts/audit/candidate-node-processes/seal-relay-23156-1790879976150247300/mixed-transfer-acceptance.json`：
+  `c1161759680b527b06bdd724368e1de8edcbc658c5a8ce4a4dd2a2cd022a23ed`。
+- 同目录 `seal-relay-15280-1790880015221735200/transfer-finality-performance.json`：
+  `19072b52604103398f7fb5fccbb438f776dffdffdb1c8ae2873aab20c6175f33`。
+
+结论：S1 第一片语义/真实并行/主链不回退验收通过，不等于通用 OCCC、GPU、
+完整流水线或高性能主网完成。实体多机、公网和长跑未执行。封印仍明确是
+`bft_decision_v3_with_local_aoem_readback`，`zero_knowledge_execution_proof=false`。
+S4 核对确认本刀不改业务配置 pin/逐笔承诺，不需切换协议版本；未来证明
+必须绑定可信父根、有序交易、业务规则与全局费用结算后的完整结果。
+
+下一刀按计划继续削减实际存储工作：`RecordOverlayV1` 跨 stage 聚积中间
+节点，finish 后仍全部预读/写入/读回；先对 physical/receipt 作显式可达
+裁剪并量化，state 的逐笔承诺根保留。物理树本已合并净变化，最大 journal
+多版本放大在 state，不能把前两树裁剪包装成 S2 完成。后续再处理每笔
+3 次稀疏 Store 编码、状态效应增量和阶段流水线。活动目标保持进行中。
+
 ## 设备 A：原始语义架构复核与重建启动（2026-10-02）
 
 用户确认按历史设计纠偏并开启目标模式。当前执行依据为
