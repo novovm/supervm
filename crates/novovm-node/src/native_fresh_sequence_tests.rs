@@ -1,3 +1,5 @@
+include!("native_successor_publication_bundle_tests.rs");
+
 fn with_record_signing_guard<T>(
     record_profile: bool,
     action: impl FnOnce() -> Result<T>,
@@ -339,6 +341,11 @@ fn exercise_fresh_sequence(
         with_record_signing_guard(record_profile, ||
             workspace::prepare_successor_promotion_v1(chain, parent, candidate, pin, &proof, params))
             .unwrap();
+        if record_profile && height == 3 {
+            exercise_successor_publication_bundle(
+                &ledger, pin, namespace, parent, &artifact, SuccessorBundleStage::Prepared,
+            );
+        }
         // Preparing publication pins the decision; it must never authorize new
         // signing or parent-round callbacks, even though retrying it is allowed.
         with_record_signing_guard(record_profile, || {
@@ -372,6 +379,11 @@ fn exercise_fresh_sequence(
         ))
         .unwrap_err();
         assert!(format!("{interrupted:#}").contains("simulated response loss"));
+        if record_profile && height == 3 {
+            exercise_successor_publication_bundle(
+                &ledger, pin, namespace, parent, &artifact, SuccessorBundleStage::Published,
+            );
+        }
         assert!(
             Ledger::load_fresh_finality_by_height_v1(&ledger, pin, namespace, height)
                 .unwrap()
@@ -412,6 +424,11 @@ fn exercise_fresh_sequence(
         ))
         .unwrap();
         assert!(report.finalized && report.ledger_publication_completed);
+        if record_profile && height == 3 {
+            exercise_successor_publication_bundle(
+                &ledger, pin, namespace, parent, &artifact, SuccessorBundleStage::Finalized,
+            );
+        }
         with_record_signing_guard(record_profile, || {
             let error = workspace::with_verified_finalized_parent_round_v1(
                 chain, parent, pin, params,

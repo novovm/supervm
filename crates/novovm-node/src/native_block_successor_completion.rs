@@ -46,6 +46,22 @@ pub(super) fn validated_keys(ledger: &NovNativeBlockLedgerV1) -> Result<Vec<Vec<
     Ok(expected.into_keys().collect())
 }
 
+/// The caller holds the ledger mutex and has run the complete `load_verified`.
+/// This lookup grants no AOEM publication or signing authority.
+pub(super) fn read_published_block(
+    ledger: &NovNativeBlockLedgerV1,
+) -> Result<Option<NovNativeDurableBlockV1>> {
+    if !ledger
+        .db
+        .get(KEY_SCHEMA_V1)?
+        .is_some_and(|schema| is_successor_published_schema(&schema))
+    {
+        return Ok(None);
+    }
+    let expected = block(ledger)?;
+    ledger.load_by_hash_inner_v1(expected.header.chain_id, expected.header.block_hash)
+}
+
 impl NovNativeBlockLedgerV1 {
     /// Historical ledger readback, not proof of current AOEM availability.
     pub fn load_fresh_successor_published_block_v1(
@@ -60,15 +76,7 @@ impl NovNativeBlockLedgerV1 {
             .lock()
             .map_err(|_| anyhow::anyhow!("successor read lock poisoned"))?;
         load_verified(&ledger, genesis, namespace)?;
-        if !ledger
-            .db
-            .get(KEY_SCHEMA_V1)?
-            .is_some_and(|schema| is_successor_published_schema(&schema))
-        {
-            return Ok(None);
-        }
-        let expected = block(&ledger)?;
-        ledger.load_by_hash_inner_v1(expected.header.chain_id, expected.header.block_hash)
+        read_published_block(&ledger)
     }
 
     /// Only the coordinator may call after exact AOEM target/output readback,

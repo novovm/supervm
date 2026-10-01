@@ -19,6 +19,7 @@ mod successor_promotion;
 #[path = "native_block_genesis_successors.rs"]
 mod successors;
 pub use promotion::NovNativeFreshPromotionIntentV1;
+pub(crate) use successor_promotion::VerifiedSuccessorPublicationV1;
 pub(crate) use successors::FinalizedRecordArchiveV1;
 
 pub(super) const MANIFEST_SCHEMA: &str =
@@ -61,11 +62,18 @@ fn manifest_pin(bytes: &[u8]) -> [u8; 32] {
     hash.finalize().into()
 }
 
+#[cfg(test)]
+thread_local! {
+    static VERIFIED_LOAD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn load_verified(
     ledger: &NovNativeBlockLedgerV1,
     expected: [u8; 32],
     namespace: [u8; 32],
 ) -> Result<FreshGenesisConfigV1> {
+    #[cfg(test)]
+    VERIFIED_LOAD_COUNT.with(|count| count.set(count.get() + 1));
     let schema = ledger
         .db
         .get(KEY_SCHEMA_V1)?
@@ -144,6 +152,19 @@ fn load_verified(
 }
 
 impl NovNativeBlockLedgerV1 {
+    /// Count actual complete ledger verifications on this test thread. This is
+    /// observation only: nested counts work and neither success nor failure
+    /// suppresses validation. Production builds contain no counter.
+    #[cfg(test)]
+    pub(crate) fn count_fresh_ledger_verifications_for_test_v1<T>(
+        action: impl FnOnce() -> T,
+    ) -> (T, usize) {
+        let before = VERIFIED_LOAD_COUNT.with(std::cell::Cell::get);
+        let result = action();
+        let after = VERIFIED_LOAD_COUNT.with(std::cell::Cell::get);
+        (result, after - before)
+    }
+
     /// Atomically archive the complete explicit configuration with its computed
     /// reservation. An existing hash-only reservation cannot be upgraded: missing
     /// historical inputs must never be manufactured during recovery.

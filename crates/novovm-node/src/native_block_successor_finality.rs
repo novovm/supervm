@@ -120,6 +120,21 @@ pub(super) fn validated_keys(
     Ok(keys)
 }
 
+/// The caller holds the ledger mutex and has run the complete `load_verified`.
+pub(super) fn read_finality(
+    ledger: &NovNativeBlockLedgerV1,
+) -> Result<Option<NovNativeFreshFinalityProofV1>> {
+    if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() == Some(SUCCESSOR_FINALIZED_SCHEMA.as_bytes()) {
+        let height = successor_promotion::read(ledger)?.height()?;
+        return Ok(Some(
+            read_archive(ledger, height)?
+                .context("successor finality archive missing")?
+                .proof,
+        ));
+    }
+    Ok(None)
+}
+
 impl NovNativeBlockLedgerV1 {
     pub fn load_fresh_finalized_block_by_height_v1(
         path: &Path,
@@ -192,15 +207,7 @@ impl NovNativeBlockLedgerV1 {
             .lock()
             .map_err(|_| anyhow::anyhow!("successor finality read lock poisoned"))?;
         load_verified(&ledger, genesis, namespace)?;
-        if ledger.db.get(KEY_SCHEMA_V1)?.as_deref() == Some(SUCCESSOR_FINALIZED_SCHEMA.as_bytes()) {
-            let height = successor_promotion::read(&ledger)?.height()?;
-            return Ok(Some(
-                read_archive(&ledger, height)?
-                    .context("successor finality archive missing")?
-                    .proof,
-            ));
-        }
-        Ok(None)
+        read_finality(&ledger)
     }
 
     /// Caller retains workspace and authority locks after live AOEM readback.

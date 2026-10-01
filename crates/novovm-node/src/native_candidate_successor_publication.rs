@@ -262,17 +262,42 @@ fn run_locked(
     let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "successor namespace")?;
     let artifact = block_artifact::load_block_artifact_inner_v1(workspace, id, params)?
         .context("successor publication output missing")?;
-    let commitment = NovNativeBlockLedgerV1::verify_fresh_successor_promotion_target_v1(
-        &ledger_path,
-        genesis,
-        namespace,
-        parent,
-        &crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
-            workspace_id: id,
-            plan_commitment: artifact.plan_commitment,
-            output_digest: artifact.output_digest,
-        },
-    )?;
+    let binding = crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
+        workspace_id: id,
+        plan_commitment: artifact.plan_commitment,
+        output_digest: artifact.output_digest,
+    };
+    // Only the public read-only Verify path reuses this same-call snapshot,
+    // while the original authority lock remains held. The legacy capture path
+    // may run a signing/mutating callback: preserve its original getter order.
+    // The getter releases its ledger mutex before source verification, which
+    // may read another archive. All live head/evidence/output readbacks below
+    // remain mandatory; this is not a cached signing capability and does not
+    // optimize the mutating/recovery scopes.
+    let verified: Option<crate::native_block_ledger::VerifiedSuccessorPublicationV1> =
+        if scope == Scope::Verify && capture.is_none() {
+            Some(
+                NovNativeBlockLedgerV1::load_verified_successor_publication_v1(
+                    &ledger_path,
+                    genesis,
+                    namespace,
+                    parent,
+                    &binding,
+                )?,
+            )
+        } else {
+            None
+        };
+    let commitment = match &verified {
+        Some(verified) => verified.commitment,
+        None => NovNativeBlockLedgerV1::verify_fresh_successor_promotion_target_v1(
+            &ledger_path,
+            genesis,
+            namespace,
+            parent,
+            &binding,
+        )?,
+    };
     let parent_height = artifact
         .block()
         .header
@@ -283,12 +308,19 @@ fn run_locked(
     // The child intent is already verified and authority remains held. Use the
     // historical finalized archive here: a strict live-tip capture would reject
     // this legitimate pending intent or its already-published retry.
-    let parent_archive = NovNativeBlockLedgerV1::load_fresh_finalized_archive_v1(
-        &ledger_path,
-        genesis,
-        namespace,
-        parent_height,
-    )?;
+    let loaded_parent_archive;
+    let parent_archive = match &verified {
+        Some(verified) => &verified.parent_archive,
+        None => {
+            loaded_parent_archive = NovNativeBlockLedgerV1::load_fresh_finalized_archive_v1(
+                &ledger_path,
+                genesis,
+                namespace,
+                parent_height,
+            )?;
+            &loaded_parent_archive
+        }
+    };
     let parent_block = &parent_archive.block;
     if parent_archive.execution.workspace_id != parent
         || parent_block.header.height != parent_height
@@ -302,7 +334,7 @@ fn run_locked(
     // publication evidence, and prepared roots without materializing its Store.
     // Only an explicitly identified old format takes the original cold path;
     // a corrupt rooted source is an error, never a reason to downgrade.
-    if live_parent::capture_rooted_archive(workspace, &parent_archive, params)?.is_none() {
+    if live_parent::capture_rooted_archive(workspace, parent_archive, params)?.is_none() {
         let parent_artifact =
             block_artifact::load_block_artifact_inner_v1(workspace, parent, params)?
                 .context("successor parent AOEM output missing")?;
@@ -338,13 +370,20 @@ fn run_locked(
         .get(&head_key)?
         .context("successor authority missing")?;
     let evidence = workspace.graph.get(&evidence_key)?;
-    let published_block = NovNativeBlockLedgerV1::load_fresh_successor_published_block_v1(
-        &ledger_path,
-        genesis,
-        namespace,
-    )?;
-    if published_block.is_some()
-        && (published_block.as_ref() != Some(artifact.block()) || current != target)
+    let loaded_published_block;
+    let published_block = match &verified {
+        Some(verified) => verified.published_block.as_ref(),
+        None => {
+            loaded_published_block =
+                NovNativeBlockLedgerV1::load_fresh_successor_published_block_v1(
+                    &ledger_path,
+                    genesis,
+                    namespace,
+                )?;
+            loaded_published_block.as_ref()
+        }
+    };
+    if published_block.is_some() && (published_block != Some(artifact.block()) || current != target)
     {
         bail!("published successor ledger differs from current AOEM authority");
     }
@@ -416,13 +455,15 @@ fn run_locked(
         )?;
         checkpoint(PromotionCheckpointV1::AfterLedgerCommit)?;
     }
-    let ledger_publication_completed =
-        NovNativeBlockLedgerV1::load_fresh_successor_published_block_v1(
+    let ledger_publication_completed = match &verified {
+        Some(verified) => verified.published_block.is_some(),
+        None => NovNativeBlockLedgerV1::load_fresh_successor_published_block_v1(
             &ledger_path,
             genesis,
             namespace,
         )?
-        .is_some();
+        .is_some(),
+    };
     if scope == Scope::Finality {
         checkpoint(PromotionCheckpointV1::BeforeFinalityCommit)?;
         NovNativeBlockLedgerV1::finalize_fresh_successor_v1(
@@ -433,8 +474,14 @@ fn run_locked(
         )?;
         checkpoint(PromotionCheckpointV1::AfterFinalityCommit)?;
     }
-    let finality =
-        NovNativeBlockLedgerV1::load_fresh_successor_finality_v1(&ledger_path, genesis, namespace)?;
+    let finality = match verified {
+        Some(verified) => verified.finality,
+        None => NovNativeBlockLedgerV1::load_fresh_successor_finality_v1(
+            &ledger_path,
+            genesis,
+            namespace,
+        )?,
+    };
     let finalized = finality.is_some();
     if let Some(capture) = capture {
         let proof = finality.context("next parent requires complete successor finality")?;

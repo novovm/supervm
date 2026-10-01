@@ -5,6 +5,7 @@ mod manifest;
 pub(crate) use manifest::FinalizedRecordArchiveV1;
 pub use manifest::NovNativeFreshFinalityProofV1;
 pub use manifest::NovNativeFreshPromotionIntentV1;
+pub(crate) use manifest::VerifiedSuccessorPublicationV1;
 
 pub(super) const RESERVED_SCHEMA: &str = "novovm-native-block-ledger/v1+genesis-reserved-v1";
 const KEY_INTENT: &[u8] = b"native_block_ledger/v1/genesis/reservation";

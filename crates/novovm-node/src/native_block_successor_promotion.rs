@@ -6,6 +6,15 @@ use crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1;
 const KEY: &[u8] = b"native_block_ledger/v1/successor/promotion";
 const PIN: &[u8] = b"native_block_ledger/v1/successor/promotion-pin";
 
+/// Owned results from one fully verified, mutex-protected ledger read. These
+/// historical facts are not a live capability and must not be cached as one.
+pub(crate) struct VerifiedSuccessorPublicationV1 {
+    pub(crate) commitment: [u8; 32],
+    pub(crate) parent_archive: FinalizedRecordArchiveV1,
+    pub(crate) published_block: Option<NovNativeDurableBlockV1>,
+    pub(crate) finality: Option<NovNativeFreshFinalityProofV1>,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Intent {
@@ -120,7 +129,74 @@ pub(super) fn validated_keys(
     Ok(vec![KEY.to_vec(), PIN.to_vec()])
 }
 
+/// Requires the complete ledger validation before use. Keep the existing
+/// exact-intent checks shared with the non-bundled publication paths.
+fn verify_target(
+    ledger: &NovNativeBlockLedgerV1,
+    parent_workspace: [u8; 32],
+    execution: &NovNativeIsolatedExecutionBindingV1,
+) -> Result<Intent> {
+    if !ledger
+        .db
+        .get(KEY_SCHEMA_V1)?
+        .is_some_and(|schema| has_successor_intent_schema(&schema))
+    {
+        bail!("successor publication requires a durable intent");
+    }
+    let intent = read(ledger)?;
+    if intent.parent_workspace != parent_workspace || intent.execution != *execution {
+        bail!("successor publication differs from pinned target");
+    }
+    Ok(intent)
+}
+
 impl NovNativeBlockLedgerV1 {
+    /// Read all ledger facts needed by the coordinator's read-only Verify scope
+    /// under one ledger mutex and one complete history/QC/key verification.
+    ///
+    /// The coordinator retains workspace then authority locks throughout its
+    /// own AOEM checks and readback. This getter releases the non-reentrant
+    /// ledger mutex before returning, so subsequent source verification may
+    /// safely read historical archives. Only those same-call, read-only checks
+    /// may reuse the result; mutating/recovery scopes keep their old getters.
+    pub(crate) fn load_verified_successor_publication_v1(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        parent_workspace: [u8; 32],
+        execution: &NovNativeIsolatedExecutionBindingV1,
+    ) -> Result<VerifiedSuccessorPublicationV1> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("successor promotion ledger missing")?;
+        let _guard = ledger
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("successor publication read lock poisoned"))?;
+        let config = load_verified(&ledger, genesis, namespace)?;
+        let intent = verify_target(&ledger, parent_workspace, execution)?;
+        let parent_height = intent
+            .height()?
+            .checked_sub(1)
+            .filter(|height| *height > 0)
+            .context("successor publication requires a finalized parent height")?;
+        // has_successor_intent_schema is a strict subset of is_finalized_schema:
+        // the first-block finality gate of load_fresh_finalized_archive_v1 is
+        // already satisfied. Later records still require their height archive.
+        let parent = successors::record_at(&ledger, parent_height)?;
+        Ok(VerifiedSuccessorPublicationV1 {
+            commitment: intent.commitment()?,
+            parent_archive: FinalizedRecordArchiveV1 {
+                config,
+                block: parent.block,
+                proof: parent.proof,
+                execution: parent.execution,
+                commitment: parent.commitment,
+            },
+            published_block: successor_completion::read_published_block(&ledger)?,
+            finality: successor_finality::read_finality(&ledger)?,
+        })
+    }
+
     pub(crate) fn fresh_successor_archived_parent_v1(
         path: &Path,
         genesis: [u8; 32],
@@ -190,18 +266,7 @@ impl NovNativeBlockLedgerV1 {
         let ledger = Self::open_existing_read_only_inner_v1(path, true)?
             .context("successor promotion ledger missing")?;
         load_verified(&ledger, genesis, namespace)?;
-        if !ledger
-            .db
-            .get(KEY_SCHEMA_V1)?
-            .is_some_and(|schema| has_successor_intent_schema(&schema))
-        {
-            bail!("successor publication requires a durable intent");
-        }
-        let intent = read(&ledger)?;
-        if intent.parent_workspace != parent_workspace || intent.execution != *execution {
-            bail!("successor publication differs from pinned target");
-        }
-        intent.commitment()
+        verify_target(&ledger, parent_workspace, execution)?.commitment()
     }
 
     /// The coordinator retains workspace and authority locks and has verified

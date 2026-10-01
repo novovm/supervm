@@ -21,6 +21,7 @@ pub(crate) use genesis_reservation::FinalizedRecordArchiveV1;
 pub use genesis_reservation::NovNativeFreshFinalityProofV1;
 pub use genesis_reservation::NovNativeFreshGenesisReservationV1;
 pub use genesis_reservation::NovNativeFreshPromotionIntentV1;
+pub(crate) use genesis_reservation::VerifiedSuccessorPublicationV1;
 
 pub const NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1: &str = "novovm-native-block-ledger/v1";
 const ISOLATED_LEDGER_SCHEMA_V1: &str = "novovm-native-block-ledger/v1+isolated-candidates-v1";
