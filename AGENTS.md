@@ -28,9 +28,13 @@ Hard rules:
 Shared product and multi-device development contract:
 
 - Before starting or resuming NOVOVM work, read
-  `docs/NOVOVM_DELIVERY_ALIGNMENT.md` and the latest section of
-  `docs/NOVOVM_PRODUCTION_READINESS_TRACKER.md`; verify the actual local and
-  remote commit rather than relying on an earlier conversation snapshot.
+  `docs/NOVOVM_UNIFIED_EXECUTION_REBUILD_PLAN.md` (including its latest short
+  handoff), `docs/NOVOVM_DELIVERY_ALIGNMENT.md`, and the latest section of
+  `docs/NOVOVM_PRODUCTION_READINESS_TRACKER.md`; verify the actual branch,
+  working tree, local and remote commit, and current file claims rather than
+  relying on an earlier conversation snapshot. The rebuild plan is the current
+  implementation priority; older plans and signoffs retain only their stated
+  historical scope.
 - High-performance finalized transactions, cryptographic private assets, and
   post-quantum security remain core product delivery objectives. A runnable
   chain, component benchmark, storage-ownership gate, or green CI does not
@@ -38,6 +42,11 @@ Shared product and multi-device development contract:
 - Keep AOEM domain-neutral. Host business-policy ownership does not justify
   treating serial Host computation plus AOEM persistence as completed parallel
   transaction execution. Follow the delivery contract's acceptance boundaries.
+- Preserve the original algebraic and heterogeneous execution design without
+  restoring old placeholders. Algebraic reordering requires explicit business
+  effects and checked preconditions; failed transactions may still consume
+  nonce and fees. BFT certificates and local execution readback are not business
+  execution validity proofs. Component benchmarks do not sign off mainchain TPS.
 - Work on `main`; do not create branches without explicit user authorization.
   Coordinate overlapping work through the delivery document's lightweight
   claim table. Preserve uncommitted work and other machines' commits; never
