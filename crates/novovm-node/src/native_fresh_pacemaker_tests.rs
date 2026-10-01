@@ -45,6 +45,7 @@ fn candidate_less_pacemaker_quorum_transport_restart_and_no_execution() {
                     poll_interval: Duration::from_millis(100),
                     ingress_per_source_per_second: 32,
                     ingress_per_poll: 64,
+                    transaction_transport: None,
                 }
             })
             .collect::<Vec<_>>();

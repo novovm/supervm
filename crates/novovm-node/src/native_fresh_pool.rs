@@ -202,7 +202,11 @@ impl FreshTransactionPool {
     }
 
     pub fn ordered(&self) -> Vec<PendingTransaction> {
-        let mut entries: Vec<_> = self.entries.values().cloned().collect();
+        self.ordered_refs().into_iter().cloned().collect()
+    }
+
+    pub(crate) fn ordered_refs(&self) -> Vec<&PendingTransaction> {
+        let mut entries: Vec<_> = self.entries.values().collect();
         entries.sort_by(|left, right| {
             (&left.identity, left.nonce).cmp(&(&right.identity, right.nonce))
         });

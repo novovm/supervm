@@ -8,7 +8,7 @@ use crate::native_block_seal_overlay::{
 };
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::SigningKey;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -22,6 +22,52 @@ const MAX_AUTHORITY_BYTES: usize = 256 * 1024;
 
 fn default_proposal_max_transactions() -> usize {
     16
+}
+
+/// Independent transaction work budgets; these do not enlarge seal ingress.
+/// An explicit object must specify every field so tuning is never partial.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FreshTransactionTransportV1 {
+    pub(crate) per_peer_queue: usize,
+    pub(crate) ingress_per_source_per_second: usize,
+    pub(crate) ingress_per_poll: usize,
+    pub(crate) gossip_per_peer_per_second: usize,
+    pub(crate) gossip_per_poll: usize,
+    pub(crate) bytes_per_poll: usize,
+}
+
+impl FreshTransactionTransportV1 {
+    fn validate(&self) -> Result<()> {
+        for (field, value, minimum, maximum) in [
+            ("per_peer_queue", self.per_peer_queue, 1, 256),
+            (
+                "ingress_per_source_per_second",
+                self.ingress_per_source_per_second,
+                1,
+                4096,
+            ),
+            ("ingress_per_poll", self.ingress_per_poll, 1, 256),
+            (
+                "gossip_per_peer_per_second",
+                self.gossip_per_peer_per_second,
+                1,
+                4096,
+            ),
+            ("gossip_per_poll", self.gossip_per_poll, 1, 1024),
+            (
+                "bytes_per_poll",
+                self.bytes_per_poll,
+                64 * 1024,
+                16 * 1024 * 1024,
+            ),
+        ] {
+            if !(minimum..=maximum).contains(&value) {
+                bail!("transaction_transport.{field} must be in {minimum}..={maximum}");
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Intentionally neither Debug nor Serialize: this contains the operator's key.
@@ -50,6 +96,7 @@ pub struct NovNativeSealServiceConfigV1 {
     pub(crate) poll_interval: Duration,
     pub(crate) ingress_per_source_per_second: usize,
     pub(crate) ingress_per_poll: usize,
+    pub(crate) transaction_transport: Option<FreshTransactionTransportV1>,
 }
 
 #[derive(Deserialize)]
@@ -86,6 +133,8 @@ struct ServiceFile {
     poll_interval_ms: u64,
     ingress_per_source_per_second: usize,
     ingress_per_poll: usize,
+    #[serde(default)]
+    transaction_transport: Option<FreshTransactionTransportV1>,
 }
 
 // Authority's existing wire types tolerate unknown JSON members. At this
@@ -178,6 +227,18 @@ impl From<AuthorityFile> for NovNativeSealEpochAuthorityV1 {
 }
 
 impl NovNativeSealServiceConfigV1 {
+    pub(crate) fn transaction_transport_limits(&self) -> FreshTransactionTransportV1 {
+        self.transaction_transport
+            .unwrap_or(FreshTransactionTransportV1 {
+                per_peer_queue: 4,
+                ingress_per_source_per_second: self.ingress_per_source_per_second,
+                ingress_per_poll: self.ingress_per_poll,
+                gossip_per_peer_per_second: 4,
+                gossip_per_poll: 64,
+                bytes_per_poll: 1024 * 1024,
+            })
+    }
+
     pub fn transaction_pool_path(&self) -> Option<PathBuf> {
         self.propose_successors
             .then(|| self.seal_store_path.with_extension("txpool"))
@@ -442,6 +503,7 @@ impl NovNativeSealServiceConfigV1 {
             poll_interval: Duration::from_millis(raw.poll_interval_ms),
             ingress_per_source_per_second: raw.ingress_per_source_per_second,
             ingress_per_poll: raw.ingress_per_poll,
+            transaction_transport: raw.transaction_transport,
         };
         config.validate(expected_chain_id)?;
         Ok(config)
@@ -449,6 +511,9 @@ impl NovNativeSealServiceConfigV1 {
 
     /// Recheck the configuration at the service boundary, before database opens.
     pub(crate) fn validate(&self, expected_chain_id: u64) -> Result<()> {
+        if let Some(limits) = self.transaction_transport {
+            limits.validate()?;
+        }
         if !(1..=crate::native_block_ledger::NOV_NATIVE_BLOCK_LEDGER_MAX_TXS_V1)
             .contains(&self.proposal_max_transactions)
         {
@@ -1024,6 +1089,173 @@ mod tests {
         fixture.config["poll_interval_ms"] = json!(500);
         fixture.write();
         fixture.load().unwrap();
+    }
+
+    fn explicit_transaction_transport() -> Value {
+        json!({
+            "per_peer_queue": 64,
+            "ingress_per_source_per_second": 128,
+            "ingress_per_poll": 128,
+            "gossip_per_peer_per_second": 64,
+            "gossip_per_poll": 256,
+            "bytes_per_poll": 2 * 1024 * 1024,
+        })
+    }
+
+    fn assert_transport_rejected_read_only(fixture: &Fixture) {
+        let paths = [
+            fixture.path(),
+            fixture.root.join("configuration/authority.json"),
+            fixture.root.join("keys/validator.hex"),
+        ];
+        let before = paths
+            .iter()
+            .map(|path| fs::read(path).unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            fixture.load().is_err(),
+            "accepted invalid transaction transport"
+        );
+        for (path, expected) in paths.iter().zip(before) {
+            assert_eq!(fs::read(path).unwrap(), expected);
+        }
+        assert!(fs::read_dir(fixture.root.join("data"))
+            .unwrap()
+            .next()
+            .is_none());
+    }
+
+    #[test]
+    fn native_seal_service_config_transaction_transport_defaults_follow_legacy_fields() {
+        let mut fixture = Fixture::new();
+        let mut loaded = fixture.load().unwrap();
+        assert!(loaded.transaction_transport.is_none());
+        assert_eq!(
+            serde_json::to_value(loaded.transaction_transport_limits()).unwrap(),
+            json!({
+                "per_peer_queue": 4,
+                "ingress_per_source_per_second": 8,
+                "ingress_per_poll": 16,
+                "gossip_per_peer_per_second": 4,
+                "gossip_per_poll": 64,
+                "bytes_per_poll": 1024 * 1024,
+            })
+        );
+        loaded.ingress_per_source_per_second = 2;
+        loaded.ingress_per_poll = 3;
+        loaded.validate(22922).unwrap();
+        let limits = loaded.transaction_transport_limits();
+        assert_eq!(limits.ingress_per_source_per_second, 2);
+        assert_eq!(limits.ingress_per_poll, 3);
+        fixture.config["transaction_transport"] = Value::Null;
+        fixture.write();
+        assert!(fixture.load().unwrap().transaction_transport.is_none());
+        assert!(!loaded.seal_store_path.exists());
+    }
+
+    #[test]
+    fn native_seal_service_config_transaction_transport_explicit_roundtrip_is_independent() {
+        let mut fixture = Fixture::new();
+        let explicit = explicit_transaction_transport();
+        fixture.config["transaction_transport"] = explicit.clone();
+        fixture.write();
+        let before = fs::read(fixture.path()).unwrap();
+        let mut loaded = fixture.load().unwrap();
+        assert_eq!(
+            serde_json::to_value(loaded.transaction_transport_limits()).unwrap(),
+            explicit
+        );
+        assert_eq!(loaded.ingress_per_source_per_second, 8);
+        assert_eq!(loaded.ingress_per_poll, 16);
+        loaded.ingress_per_source_per_second = 1;
+        loaded.ingress_per_poll = 1;
+        loaded.validate(22922).unwrap();
+        assert_eq!(
+            serde_json::to_value(loaded.transaction_transport_limits()).unwrap(),
+            explicit
+        );
+        let encoded = serde_json::to_vec(&loaded.transaction_transport_limits()).unwrap();
+        let decoded: FreshTransactionTransportV1 = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), explicit);
+        assert_eq!(fs::read(fixture.path()).unwrap(), before);
+        assert!(!loaded.seal_store_path.exists());
+        // Transaction tuning cannot relax the original seal/control bounds.
+        loaded.ingress_per_source_per_second = 33;
+        assert!(loaded.validate(22922).is_err());
+        loaded.ingress_per_source_per_second = 8;
+        loaded.ingress_per_poll = 65;
+        assert!(loaded.validate(22922).is_err());
+    }
+
+    #[test]
+    fn native_seal_service_config_transaction_transport_bounds_rechecked_at_runtime() {
+        let mut fixture = Fixture::new();
+        let base = explicit_transaction_transport();
+        let loaded = fixture.load().unwrap();
+        for (field, minimum, maximum) in [
+            ("per_peer_queue", 1, 256),
+            ("ingress_per_source_per_second", 1, 4096),
+            ("ingress_per_poll", 1, 256),
+            ("gossip_per_peer_per_second", 1, 4096),
+            ("gossip_per_poll", 1, 1024),
+            ("bytes_per_poll", 64 * 1024, 16 * 1024 * 1024),
+        ] {
+            for boundary in [minimum, maximum] {
+                fixture.config["transaction_transport"] = base.clone();
+                fixture.config["transaction_transport"][field] = json!(boundary);
+                fixture.write();
+                fixture.load().unwrap();
+                assert!(!fixture.root.join("data/seal").exists());
+            }
+            for invalid in [minimum - 1, maximum + 1] {
+                let mut limits = base.clone();
+                limits[field] = json!(invalid);
+                fixture.config["transaction_transport"] = limits.clone();
+                fixture.write();
+                assert_transport_rejected_read_only(&fixture);
+                let mut runtime = loaded.clone();
+                runtime.transaction_transport = Some(serde_json::from_value(limits).unwrap());
+                assert!(
+                    runtime.validate(22922).is_err(),
+                    "accepted runtime {field}={invalid}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn native_seal_service_config_transaction_transport_is_strict_at_every_field() {
+        let mut fixture = Fixture::new();
+        let base = explicit_transaction_transport();
+        for field in base.as_object().unwrap().keys() {
+            let mut missing = base.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            fixture.config["transaction_transport"] = missing;
+            fixture.write();
+            assert_transport_rejected_read_only(&fixture);
+            for malformed in [
+                json!(-1),
+                json!(1.5),
+                json!("64"),
+                json!(true),
+                Value::Null,
+                json!(u64::MAX),
+            ] {
+                fixture.config["transaction_transport"] = base.clone();
+                fixture.config["transaction_transport"][field] = malformed;
+                fixture.write();
+                assert_transport_rejected_read_only(&fixture);
+            }
+        }
+        fixture.config["transaction_transport"] = base;
+        fixture.config["transaction_transport"]["ignored"] = json!(true);
+        fixture.write();
+        assert_transport_rejected_read_only(&fixture);
+        for malformed in [json!([]), json!("64"), json!(true), json!(64)] {
+            fixture.config["transaction_transport"] = malformed;
+            fixture.write();
+            assert_transport_rejected_read_only(&fixture);
+        }
     }
 
     #[test]

@@ -14,6 +14,8 @@ mod pacemaker;
 pub(crate) use pacemaker::exercise_parent_pacemaker;
 #[path = "native_fresh_chain_proposer.rs"]
 mod proposer;
+#[path = "native_fresh_transaction_transport.rs"]
+mod transaction_transport;
 #[path = "native_fresh_chain_transactions.rs"]
 mod transactions;
 use crate::tx_ingress::{
@@ -30,8 +32,7 @@ pub struct FreshChainLifecycleV1 {
     future_timestamp_rejected: u64,
     pool: Option<FreshTransactionPool>,
     finalized_parent: Option<FinalizedParentViewV1>,
-    next_gossip: Instant,
-    gossip_cursor: usize,
+    transaction_transport: transaction_transport::TransactionTransport,
     history: Option<history::HistorySync>,
     config: Option<NovNativeSealServiceConfigV1>,
     chain: u64,
@@ -44,7 +45,6 @@ pub struct FreshChainLifecycleV1 {
     pacemaker: Option<pacemaker::ParentPacemaker>,
     pending: BTreeMap<String, VecDeque<ProductMainlineOverlayInboundV1>>,
     round_pending: BTreeMap<String, VecDeque<ProductMainlineOverlayInboundV1>>,
-    transaction_budgets: BTreeMap<String, (Instant, usize)>,
     next_peer: usize,
     last_seen: Instant,
     halted: bool,
@@ -95,10 +95,11 @@ impl FreshChainLifecycleV1 {
             .filter(|b| b.validator_id != config.local_validator_id)
             .map(|b| (b.transport_peer_id.clone(), VecDeque::new()))
             .collect();
-        let transaction_budgets = pending
-            .keys()
-            .map(|peer| (peer.clone(), (now, 0)))
-            .collect();
+        let transaction_transport = transaction_transport::TransactionTransport::new(
+            pending.keys().cloned(),
+            config.transaction_transport_limits(),
+            now,
+        );
         let mut this = Self {
             clock_waiting: false,
             future_timestamp_rejected: 0,
@@ -116,8 +117,7 @@ impl FreshChainLifecycleV1 {
                 })
                 .transpose()?,
             finalized_parent: None,
-            next_gossip: now,
-            gossip_cursor: 0,
+            transaction_transport,
             history: config
                 .receive_successors
                 .then(|| history::HistorySync::new(&config, params, now))
@@ -136,7 +136,6 @@ impl FreshChainLifecycleV1 {
                 .map(|peer| (peer.clone(), VecDeque::new()))
                 .collect(),
             pending,
-            transaction_budgets,
             next_peer: 0,
             last_seen: now,
             halted: false,
@@ -224,14 +223,9 @@ impl FreshChainLifecycleV1 {
         if inbound.payload_class == ProductMainlineOverlayPayloadClassV1::NativeTransaction {
             if self.pool.is_some()
                 && inbound.frame.stream_id == self.chain
-                && inbound.frame.payload.len() <= crate::tx_ingress::fresh_pool::MAX_RAW_BYTES
+                && self.transaction_transport.enqueue(inbound)
             {
-                if let Some(queue) = self.pending.get_mut(&inbound.source_peer_id) {
-                    if queue.len() < PER_PEER_QUEUE {
-                        queue.push_back(inbound);
-                        return true;
-                    }
-                }
+                return true;
             }
             self.rejected = self.rejected.saturating_add(1);
             return false;
@@ -282,7 +276,14 @@ impl FreshChainLifecycleV1 {
         if self.halted {
             bail!("fresh lifecycle halted; inspect and restart");
         }
-        let result = self.poll_inner(runtime, now, wall_ms);
+        let result = self.poll_inner(runtime, now, wall_ms).and_then(|()| {
+            // Give this tick's body/vote traffic the first opportunity to use
+            // the shared overlay outbox. Transactions have separate bounded
+            // staging/work budgets; a failed submission retains its peer cursor.
+            measure("lifecycle.transactions_gossip", || {
+                self.gossip_transactions(runtime, now)
+            })
+        });
         if result.is_err() {
             self.halted = true;
         }
@@ -314,7 +315,7 @@ impl FreshChainLifecycleV1 {
             }
         }
         measure("lifecycle.transactions_poll", || {
-            self.poll_transactions(runtime, now)
+            self.poll_transactions(now)
         })?;
         self.clock_waiting = false;
         if let Some(service) = self.service.as_mut() {
@@ -486,6 +487,7 @@ impl FreshChainLifecycleV1 {
             .as_ref()
             .map_or(0, FreshTransactionPool::len)
             .into();
+        value["transaction_transport"] = self.transaction_transport.status_json();
         value["history_responses_served"] = self
             .history
             .as_ref()

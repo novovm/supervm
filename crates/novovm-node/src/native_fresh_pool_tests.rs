@@ -100,6 +100,12 @@ mod fresh_pool_tests {
                 .collect::<Vec<_>>(),
             (0..64).collect::<Vec<_>>()
         );
+        for (borrowed, owned) in pool.ordered_refs().into_iter().zip(pool.ordered()) {
+            assert_eq!(borrowed.hash, owned.hash);
+            assert_eq!(borrowed.raw, owned.raw);
+            assert_eq!(borrowed.identity, owned.identity);
+            assert_eq!(borrowed.nonce, owned.nonce);
+        }
         drop(pool);
         let pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
         assert_eq!(pool.len(), 64);

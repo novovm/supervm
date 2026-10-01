@@ -17,6 +17,32 @@ const CLIENT_CONCURRENCY: usize = 4;
 const POLL_MS: u64 = 100;
 const DEADLINE: Duration = Duration::from_secs(300);
 
+#[derive(Clone, Copy)]
+pub(super) enum TransportProfile {
+    LegacyLimits,
+    Bounded64,
+}
+
+impl TransportProfile {
+    fn label(self) -> &'static str {
+        match self {
+            Self::LegacyLimits => "legacy_limits_independent_transaction_lane",
+            Self::Bounded64 => "explicit_bounded_64_transaction_lane",
+        }
+    }
+
+    fn configuration(self) -> Option<Value> {
+        match self {
+            Self::LegacyLimits => None,
+            Self::Bounded64 => Some(serde_json::json!({
+                "per_peer_queue":64,"ingress_per_source_per_second":64,
+                "ingress_per_poll":64,"gossip_per_peer_per_second":64,
+                "gossip_per_poll":192,"bytes_per_poll":1048576,
+            })),
+        }
+    }
+}
+
 pub(super) fn diagnostics_enabled() -> bool {
     std::env::var("NOVOVM_NATIVE_FRESH_TIMING").as_deref() == Ok("1")
 }
@@ -153,7 +179,7 @@ fn percentile(sorted: &[f64], percent: usize) -> f64 {
     sorted[(sorted.len() * percent).div_ceil(100).saturating_sub(1)]
 }
 
-pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
+pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path, profile: TransportProfile) {
     // Bootstrap/genesis checks above are outside the measurement window.
     let before: Vec<_> = nodes.iter().map(storage).collect();
     for node in nodes {
@@ -163,6 +189,9 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
         config["receive_successors"] = true.into();
         config["propose_successors"] = true.into();
         config["proposal_max_transactions"] = SIGNERS.into();
+        if let Some(transport) = profile.configuration() {
+            config["transaction_transport"] = transport;
+        }
         fs::write(path, serde_json::to_vec(&config).unwrap()).unwrap();
     }
     let original_configs: Vec<_> = nodes
@@ -360,6 +389,7 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
             "error":measurement.as_ref().err().map(|error| format!("{error:#}")),
             "implicit_rpc_retries":0,"batch_count":BATCHES,"signers":SIGNERS,
             "slow_call_diagnostics_enabled":diagnostics_enabled(),
+            "transaction_transport_profile":profile.label(),
         }))
         .unwrap(),
     )
@@ -370,10 +400,23 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
         .map(|address| rpc_once(address, "nov_chainStatus", serde_json::json!([])).unwrap())
         .collect();
     let tip = statuses[0]["height"].as_u64().unwrap();
+    let expected_transport = profile.configuration().unwrap_or_else(|| {
+        serde_json::json!({
+            "per_peer_queue":4,"ingress_per_source_per_second":8,
+            "ingress_per_poll":16,"gossip_per_peer_per_second":4,
+            "gossip_per_poll":64,"bytes_per_poll":1048576,
+        })
+    });
     for status in &statuses {
         assert_eq!(status["height"], tip);
         assert_eq!(status["finalized"], true);
         assert_eq!(status["lifecycle_halted"], false);
+        for (field, expected) in expected_transport.as_object().unwrap() {
+            assert_eq!(
+                &status["transaction_transport"]["limits"][field], expected,
+                "running node must use the declared transaction transport profile"
+            );
+        }
     }
     for (_, child) in &mut children {
         child.0.kill().unwrap();
@@ -447,7 +490,9 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
         "node_executable_sha256":hex(&Sha256::digest(fs::read(env!("CARGO_BIN_EXE_novovm-node")).unwrap())),
         "node_evidence_paths":nodes.iter().map(|node| &node.0).collect::<Vec<_>>(),
         "tick_interval_ms":250,"consensus_poll_interval_ms":100,
-        "gossip_transactions_per_peer_per_second":4,"ingress_per_source_per_second":8,"ingress_per_poll":16,
+        "seal_ingress_per_source_per_second":8,"seal_ingress_per_poll":16,
+        "transaction_transport_profile":profile.label(),
+        "transaction_transport_status_by_node":statuses.iter().map(|status|&status["transaction_transport"]).collect::<Vec<_>>(),
     });
     let workload = serde_json::json!({
         "batches":BATCHES,"transactions_per_batch":SIGNERS,"disjoint_account_pairs_per_batch":SIGNERS,

@@ -72,44 +72,13 @@ impl FreshChainLifecycleV1 {
         Ok(serde_json::json!({"tx_hash":hex,"status":status,"finalized":false}))
     }
 
-    pub(super) fn poll_transactions(
-        &mut self,
-        runtime: &ProductMainlineOverlayRuntimeV1,
-        now: Instant,
-    ) -> Result<()> {
+    pub(super) fn poll_transactions(&mut self, now: Instant) -> Result<()> {
         if self.pool.is_none() {
             return Ok(());
         }
-        let limit = self
-            .config
-            .as_ref()
-            .context("transaction configuration missing")?
-            .ingress_per_source_per_second;
-        let mut events = Vec::new();
-        for queue in self.pending.values_mut() {
-            let mut remaining = VecDeque::new();
-            while let Some(event) = queue.pop_front() {
-                if event.payload_class == ProductMainlineOverlayPayloadClassV1::NativeTransaction {
-                    events.push(event);
-                } else {
-                    remaining.push_back(event);
-                }
-            }
-            *queue = remaining;
-        }
+        let (events, rate_rejected) = self.transaction_transport.drain(now);
+        self.rejected = self.rejected.saturating_add(rate_rejected as u64);
         for event in events {
-            let budget = self
-                .transaction_budgets
-                .get_mut(&event.source_peer_id)
-                .context("transaction source missing")?;
-            if now.duration_since(budget.0) >= Duration::from_secs(1) {
-                *budget = (now, 0);
-            }
-            if budget.1 >= limit {
-                self.rejected = self.rejected.saturating_add(1);
-                continue;
-            }
-            budget.1 += 1;
             let digest: [u8; 32] = Sha256::digest(&event.frame.payload).into();
             let entry =
                 PendingTransaction::authenticate(event.frame.payload, self.chain, &self.params);
@@ -129,26 +98,27 @@ impl FreshChainLifecycleV1 {
         if let Some(parent) = &self.finalized_parent {
             pool.reconcile_rooted(parent, &self.params)?;
         }
-        if now < self.next_gossip {
+        Ok(())
+    }
+
+    pub(super) fn gossip_transactions(
+        &mut self,
+        runtime: &ProductMainlineOverlayRuntimeV1,
+        now: Instant,
+    ) -> Result<()> {
+        let Some(pool) = &self.pool else {
             return Ok(());
-        }
-        self.next_gossip = now + Duration::from_secs(1);
-        let entries = pool.ordered();
-        if entries.is_empty() {
-            return Ok(());
-        }
-        for _ in 0..entries.len().min(4) {
-            let entry = &entries[self.gossip_cursor % entries.len()];
-            self.gossip_cursor = (self.gossip_cursor + 1) % entries.len();
-            for peer in self.pending.keys() {
+        };
+        // Borrow the bounded pool, copying raw bytes only for selected sends.
+        // The durable pool remains authoritative across transport backpressure.
+        self.transaction_transport
+            .gossip(&pool.ordered_refs(), now, |peer, entry| {
                 runtime.try_submit_to_peer(
                     peer,
                     ProductMainlineOverlayPayloadClassV1::NativeTransaction,
                     entry.hash,
                     entry.raw.clone(),
-                )?;
-            }
-        }
-        Ok(())
+                )
+            })
     }
 }

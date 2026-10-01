@@ -300,7 +300,27 @@ fn fresh_genesis_main_nodes_continue_three_heights_without_restart() {
 #[test]
 #[ignore = "real four-process record Transfer measurement; exclusive loopback 127.0.0.2:443"]
 fn fresh_record_transfers_measure_rpc_to_finality() {
-    run_real_aoem_main_nodes_scenario(true, true, false, false, LocalFault::None, true);
+    run_real_aoem_main_nodes_scenario(
+        true,
+        true,
+        false,
+        false,
+        LocalFault::None,
+        Some(transfer_throughput::TransportProfile::LegacyLimits),
+    );
+}
+
+#[test]
+#[ignore = "real four-process bounded transport measurement; exclusive loopback 127.0.0.2:443"]
+fn fresh_record_transfers_bounded_transport_measure_rpc_to_finality() {
+    run_real_aoem_main_nodes_scenario(
+        true,
+        true,
+        false,
+        false,
+        LocalFault::None,
+        Some(transfer_throughput::TransportProfile::Bounded64),
+    );
 }
 
 fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool, continuous: bool) {
@@ -362,7 +382,7 @@ fn run_real_aoem_main_nodes_with_faults(
     failover: bool,
     fault: LocalFault,
 ) {
-    run_real_aoem_main_nodes_scenario(decision_v3, fresh, continuous, failover, fault, false);
+    run_real_aoem_main_nodes_scenario(decision_v3, fresh, continuous, failover, fault, None);
 }
 
 fn run_real_aoem_main_nodes_scenario(
@@ -371,11 +391,11 @@ fn run_real_aoem_main_nodes_scenario(
     continuous: bool,
     failover: bool,
     fault: LocalFault,
-    measure_transfers: bool,
+    measure_transfers: Option<transfer_throughput::TransportProfile>,
 ) {
     let reserve = std::net::TcpListener::bind("127.0.0.2:443")
         .expect("exclusive loopback 443 required; do not stop other services");
-    let (genesis, fresh_plan) = if measure_transfers {
+    let (genesis, fresh_plan) = if measure_transfers.is_some() {
         transfer_throughput::inputs()
     } else {
         super::native_fresh_genesis_cli::inputs()
@@ -766,8 +786,8 @@ fn run_real_aoem_main_nodes_scenario(
         "physical_lan_executed":false,"public_network_executed":false
     })).unwrap()).unwrap();
     if fresh {
-        if measure_transfers {
-            transfer_throughput::exercise(&nodes, &root);
+        if let Some(profile) = measure_transfers {
+            transfer_throughput::exercise(&nodes, &root, profile);
             return;
         }
         if matches!(fault, LocalFault::StorageStartup) {

@@ -1048,6 +1048,9 @@ fn exercise_automatic_proposal(
     config.receive_successors = true;
     config.propose_successors = true;
     config.ingress_per_source_per_second = 2;
+    let mut transport = config.transaction_transport_limits();
+    transport.ingress_per_poll = 3;
+    config.transaction_transport = Some(transport);
     let restart_config = config.clone();
     let ledger = nov_native_block_ledger_rocksdb_path_v1(path);
     let mut lifecycle = Lifecycle::open(config, &ledger, params, leader, Instant::now()).unwrap();
@@ -1159,7 +1162,12 @@ fn exercise_automatic_proposal(
     // Replay the already-authenticated event after the local admission window;
     // this is an application retry, not a new transport or signature fixture.
     let valid_event = valid_event.unwrap();
-    assert!(lifecycle.enqueue(valid_event.clone()));
+    // Admit at most three of four queued messages. The fourth must remain in
+    // the independent transaction lane when proposal preparation clears the
+    // old parent's body/round staging. Repeats are intentionally idempotent.
+    for _ in 0..4 {
+        assert!(lifecycle.enqueue(valid_event.clone()));
+    }
     with_record_signing_guard(record_profile, || lifecycle
         .poll_with_wall_time(
             leader,
@@ -1173,7 +1181,8 @@ fn exercise_automatic_proposal(
         to_hex(&subject.block_hash)
     );
     assert_eq!(lifecycle.status_json()["proposed_successors"], 1);
-    assert_eq!(lifecycle.status_json()["successor_rejected"], 2);
+    assert_eq!(lifecycle.status_json()["successor_rejected"], 3);
+    assert_eq!(lifecycle.status_json()["transaction_transport"]["queued_entries"], 1);
     assert_eq!(lifecycle.status_json()["durable_pending_transactions"], 2);
     workspace::without_materialization_for_test(|| {
         assert_eq!(
