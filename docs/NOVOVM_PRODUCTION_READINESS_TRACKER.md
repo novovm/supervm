@@ -14,6 +14,64 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
+## 设备 A：修复 Windows relay 超时语义及服务端 TLS 错误重试（2026-10-01）
+
+基线 `41c454e`。先在未改生产行为的 daemon 上运行三个真实 rustls/loopback
+故障反例，全部复现预期：模拟 socket 实际发送 7 字节却返回超时，原
+`Stream::write` 吞下写错误后，下一次 flush 重发密文前缀，对端得到真实
+`DecryptError`。这是注入的“不确定进度”反例，不是已捕获实测网络的每次
+系统调用，不能据此声称全部历史 BadRecordMac 都已归因。
+
+本轮修改两处：daemon 的写/flush 错误永久终止连接，成功读写字节数不被
+后置检查错误覆盖；Windows client/daemon 不再将阻塞 `SO_RCVTIMEO` 当作
+普通可恢复空闲，而以现有锁定 Mio 1.1.1 的安全非阻塞收发和单方向 readiness
+等待保留原预算。实际 OS 超时与 readiness 等待结束严格区分；绝对截止不
+因重试续期，clear/begin 不能复活失败连接，虚假关闭事件不能代替实际读写
+结果。不新增 runtime，不放宽 TLS/身份验证、队列容量或 300 秒验收标准。
+Windows 平台依据见 [Microsoft socket options](https://learn.microsoft.com/en-us/windows/win32/winsock/sol-socket-socket-options)；
+就绪事件处理遵循 [Mio Poll 的平台契约](https://docs.rs/mio/1.1.1/mio/struct.Poll.html)。
+Linux 保持原阻塞 I/O 与内核有效 timeout，不引入 Windows 依赖。
+
+严格 Clippy 与 Release 构建通过；relay 48 项、Overlay 26 项通过。新增
+daemon 6 项真实 TLS/故障测试及 socket 6 项测试，包含真实背压后完整 8 MiB
+字节一致性、读空闲后双向通信、EOF、截止不续期及终止后零后续 I/O。
+初轮两个新 socket 夹具断言失败，已修正为检查当前 socket 内核选项、在
+连接前限制接收窗口后复跑全 48 项通过；未删除背压断言或降低字节要求。
+WSL 仅直接编译同一 socket 源码并运行非 Windows 的 3 项测试通过，不是
+Linux 整个 node 构建或多节点验收。
+
+第一次持续负载仍记 **FAIL/不可用于性能比较**：relay 在约 35.206 秒以
+`reason=error` 提前退出；163 笔入池、35 笔四节点确认，最高确认 h3，
+300 秒末池为 `[128,96,96,96]`。退出恰逢本次操作读取实时 `report.json`，
+疑似 Windows 替换报告时的共享冲突，但原始退出错误未被夹具保存，不能
+写成已证实根因。本轮不读取活跃报告重新运行；没有修改报告失败策略。
+证据：`artifacts/audit/candidate-node-processes/seal-relay-26912-1790855059664174200/transfer-finality-observations.json`。
+
+第二次持续负载 **FAIL**：relay 正常存活至测试结束，256/256 入池，300 秒
+内四节点共同确认 194 笔，最高确认 h8/state_version 195，各池剩余 62；
+末尾 h9 `Prepared` 不算确认。最后入池约 96.711 秒，最后一次四节点确认
+观察约 237.450 秒。日志交叉核对 h1–h8 的块/状态/回执根一致，但此失败
+路径没有执行最终完整离线 QC/重启验收，没有通过型性能报告。
+四节点测量日志的 `BadRecordMac`/`DecryptError`/`cannot decrypt` 均为 0；
+断线 18 次（17 reset、1 入站事件缓存达限），peer 隔离 72 次（58 offer
+接纳拒绝、13 offline queue 接纳拒绝、1 握手过期）。relay 另有写 readiness
+等待到期后的终止输出，不把它冒作普通读空闲。中继注册/断开 34/34、
+转发 141740 帧，接纳 wire 370757378 字节；重复传播和背压仍很严重。
+这比历史基线少会话抖动且未复现解密错，但完成量仍为 194，不是吞吐提升。
+证据：同父目录 `seal-relay-17008-1790855399889062000/transfer-finality-observations.json`。
+
+同一生产二进制的原 96 笔短场景 **PASS**：完整四节点块/QC/重启读回、
+96 笔成功回执及 state_version 增长通过。窗口 36.982 秒、2.596 TPS，
+观察 P95/P99 为 16.236/16.379 秒，业务块 `3,29,4,28,2,30`；不是稳定
+加速或饱和吞吐成绩。报告：同父目录
+`seal-relay-3436-1790855753712531900/transfer-finality-performance.json`。
+节点 SHA256：`cc1699eea36786d2bf667dcd66ec40ec649e9fb6b9ffcf4a7c79d3ccfa958190`。
+两次负载及短场景未并行构建/其他重型测试，环境与下一节相同。
+
+下一步仍需降低实际重复传播和候选/账本检查开销，再复跑持续负载；不能
+将本次 TLS 修复当作高性能目标完成。实体 LAN、Linux 整链、公网和长跑
+本轮未执行；没有改 AOEM、交易/经济/共识规则、正式创世或运行中服务。
+
 ## 设备 A：持续积压负载暴露未完成确认与 TLS 错误恢复缺陷（2026-10-01）
 
 基线 `df20be4`。新增沿用原四进程夹具的持续供给场景：32 个真实签名账户、

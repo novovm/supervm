@@ -1,5 +1,6 @@
 //! Node-side WSS relay client for the product relay protocol.
 
+use crate::product_relay_io::ProductRelaySocketV1;
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ed25519_dalek::SigningKey;
@@ -139,7 +140,7 @@ pub struct ProductRelayClientV1 {
 
 #[derive(Debug)]
 struct ProductRelayDeadlineTcpStreamV1 {
-    inner: TcpStream,
+    inner: ProductRelaySocketV1,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
     handshake_deadline: Option<Instant>,
@@ -219,7 +220,7 @@ impl ProductRelayDeadlineTcpStreamV1 {
         Ok(Self {
             read_timeout: inner.read_timeout()?,
             write_timeout: inner.write_timeout()?,
-            inner,
+            inner: ProductRelaySocketV1::new(inner)?,
             handshake_deadline: Some(handshake_deadline),
             frame_deadline: None,
             write_deadline: None,

@@ -452,10 +452,10 @@ fn serve_product_relay_connection_v1(
             _ = handshake_deadline_cancelled => {}
         }
     });
-    // Accepted sockets inherit the listener's nonblocking mode on Windows. TLS stream I/O uses
-    // bounded blocking reads so that the session loop can service its relay inbox between reads.
-    tcp.set_nonblocking(false)
-        .context("set product relay connection blocking mode")?;
+    // The adapter uses safe readiness waits on Windows, keeping the same idle
+    // budget without continuing a Winsock connection after SO_RCVTIMEO expiry.
+    let mut tcp = crate::product_relay_io::ProductRelaySocketV1::new(tcp)
+        .context("prepare product relay connection I/O")?;
     tcp.set_read_timeout(Some(Duration::from_millis(100)))
         .context("set product relay read timeout")?;
     tcp.set_write_timeout(Some(Duration::from_millis(100)))
@@ -471,6 +471,8 @@ fn serve_product_relay_connection_v1(
         ProductRelayDaemonDeadlineTcpStreamV1 {
             inner: tcp,
             deadline: io_deadline.clone(),
+            #[cfg(test)]
+            test_writes: ProductRelayDaemonTestWritesV1::default(),
         },
     );
     accept_websocket_until_v1(&mut websocket, handshake_deadline, &stopping)?;
@@ -1039,11 +1041,41 @@ struct ProductRelayDaemonIoDeadlineV1 {
 struct ProductRelayDaemonIoDeadlineStateV1 {
     deadline: Option<Instant>,
     lower_read_progressed: bool,
+    terminal_error: Option<String>,
 }
 
 struct ProductRelayDaemonDeadlineTcpStreamV1 {
-    inner: TcpStream,
+    inner: crate::product_relay_io::ProductRelaySocketV1,
     deadline: ProductRelayDaemonIoDeadlineV1,
+    #[cfg(test)]
+    test_writes: ProductRelayDaemonTestWritesV1,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct ProductRelayDaemonTestWritesV1 {
+    fault: Option<ProductRelayDaemonTestWriteFaultV1>,
+    read_fault: Option<ProductRelayDaemonTestReadFaultV1>,
+    capture: bool,
+    calls: usize,
+    reads: usize,
+    flushes: usize,
+    attempted: Vec<Vec<u8>>,
+    sent: Vec<Vec<u8>>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum ProductRelayDaemonTestWriteFaultV1 {
+    ZeroProgressTimeout,
+    TimeoutAfterProgress(usize),
+    ExpireAfterProgress(usize),
+}
+
+#[cfg(test)]
+enum ProductRelayDaemonTestReadFaultV1 {
+    ExpireAfterProgress,
+    ConnectionReset,
 }
 
 impl ProductRelayDaemonIoDeadlineV1 {
@@ -1059,10 +1091,10 @@ impl ProductRelayDaemonIoDeadlineV1 {
             .state
             .lock()
             .map_err(|_| io::Error::other("product relay daemon I/O deadline lock poisoned"))?;
+        self.check_state_v1(&mut state)?;
         state.deadline = Some(deadline);
         state.lower_read_progressed = false;
-        drop(state);
-        self.check_v1()
+        self.check_state_v1(&mut state)
     }
 
     fn begin_if_idle_v1(&self, deadline: Instant) -> io::Result<()> {
@@ -1070,45 +1102,36 @@ impl ProductRelayDaemonIoDeadlineV1 {
             .state
             .lock()
             .map_err(|_| io::Error::other("product relay daemon I/O deadline lock poisoned"))?;
+        self.check_state_v1(&mut state)?;
         if state.deadline.is_none() {
             state.deadline = Some(deadline);
             state.lower_read_progressed = false;
         }
-        drop(state);
-        self.check_v1()
+        self.check_state_v1(&mut state)
     }
 
     fn clear_v1(&self) -> io::Result<()> {
-        self.check_v1()?;
         let mut state = self
             .state
             .lock()
             .map_err(|_| io::Error::other("product relay daemon I/O deadline lock poisoned"))?;
+        self.check_state_v1(&mut state)?;
         state.deadline = None;
         state.lower_read_progressed = false;
         Ok(())
     }
 
     fn preserve_partial_read_deadline_v1(&self) -> io::Result<bool> {
-        if self.stopping.load(Ordering::Acquire) {
-            return Err(io::Error::new(
-                io::ErrorKind::ConnectionAborted,
-                "product relay daemon is stopping",
-            ));
-        }
-        let state = self
+        let mut state = self
             .state
             .lock()
             .map_err(|_| io::Error::other("product relay daemon I/O deadline lock poisoned"))?;
-        if state
-            .deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "product relay daemon partial lower-stream deadline expired",
-            ));
-        }
+        self.check_state_v1(&mut state).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("product relay daemon partial lower-stream deadline: {error}"),
+            )
+        })?;
         Ok(state.lower_read_progressed)
     }
 
@@ -1124,18 +1147,33 @@ impl ProductRelayDaemonIoDeadlineV1 {
     }
 
     fn check_v1(&self) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("product relay daemon I/O deadline lock poisoned"))?;
+        self.check_state_v1(&mut state)
+    }
+
+    fn check_state_v1(&self, state: &mut ProductRelayDaemonIoDeadlineStateV1) -> io::Result<()> {
+        if let Some(reason) = &state.terminal_error {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("product relay daemon terminal lower-stream I/O: {reason}"),
+            ));
+        }
         if self.stopping.load(Ordering::Acquire) {
+            state.terminal_error = Some("product relay daemon is stopping".into());
             return Err(io::Error::new(
                 io::ErrorKind::ConnectionAborted,
                 "product relay daemon is stopping",
             ));
         }
-        let deadline = self
-            .state
-            .lock()
-            .map_err(|_| io::Error::other("product relay daemon I/O deadline lock poisoned"))?
-            .deadline;
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        if state
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            state.terminal_error =
+                Some("product relay daemon absolute lower-stream I/O deadline exceeded".into());
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "product relay daemon absolute lower-stream I/O deadline exceeded",
@@ -1143,34 +1181,135 @@ impl ProductRelayDaemonIoDeadlineV1 {
         }
         Ok(())
     }
+
+    fn fail_v1(&self, error: impl std::fmt::Display) -> io::Error {
+        let reason = error.to_string();
+        if let Ok(mut state) = self.state.lock() {
+            state.terminal_error.get_or_insert(reason.clone());
+        }
+        io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            format!("product relay daemon terminal lower-stream I/O: {reason}"),
+        )
+    }
+
+    fn bounded_timeout_v1(&self, configured: Option<Duration>) -> io::Result<Option<Duration>> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("product relay daemon I/O deadline lock poisoned"))?;
+        self.check_state_v1(&mut state)?;
+        match state.deadline {
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    state.terminal_error = Some(
+                        "product relay daemon absolute lower-stream I/O deadline exceeded".into(),
+                    );
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "product relay daemon absolute lower-stream I/O deadline exceeded",
+                    ));
+                }
+                Ok(Some(
+                    configured.map_or(remaining, |budget| budget.min(remaining)),
+                ))
+            }
+            None => Ok(configured),
+        }
+    }
+
+    fn finish_progress_v1(
+        &self,
+        result: io::Result<usize>,
+        maintenance: io::Result<()>,
+    ) -> io::Result<usize> {
+        match maintenance {
+            Ok(()) => result,
+            Err(error) => {
+                let terminal = self.fail_v1(error);
+                match result {
+                    // Rustls must consume bytes already transferred even when
+                    // the next operation is forbidden by a terminal error.
+                    Ok(count) if count > 0 => Ok(count),
+                    _ => Err(terminal),
+                }
+            }
+        }
+    }
 }
 
 impl Read for ProductRelayDaemonDeadlineTcpStreamV1 {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         self.deadline.check_v1()?;
-        let result = self.inner.read(output);
-        if let Ok(read) = result {
-            self.deadline.record_lower_read_v1(read)?;
-        } else {
-            self.deadline.check_v1()?;
+        let original = self
+            .inner
+            .read_timeout()
+            .map_err(|error| self.deadline.fail_v1(error))?;
+        let bounded = self.deadline.bounded_timeout_v1(original)?;
+        self.inner
+            .set_read_timeout(bounded)
+            .map_err(|error| self.deadline.fail_v1(error))?;
+        #[cfg(test)]
+        {
+            self.test_writes.reads += 1;
         }
-        result
+        #[cfg(not(test))]
+        let result = self.inner.read(output);
+        #[cfg(test)]
+        let result = self.test_read_v1(output);
+        let restored = self.inner.set_read_timeout(original);
+        let checked = match &result {
+            Ok(read) => self.deadline.record_lower_read_v1(*read),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                ) =>
+            {
+                self.deadline.check_v1()
+            }
+            Err(error) => Err(self.deadline.fail_v1(error)),
+        };
+        self.deadline
+            .finish_progress_v1(result, restored.and(checked))
     }
 }
 
 impl Write for ProductRelayDaemonDeadlineTcpStreamV1 {
     fn write(&mut self, input: &[u8]) -> io::Result<usize> {
         self.deadline.check_v1()?;
+        let original = self
+            .inner
+            .write_timeout()
+            .map_err(|error| self.deadline.fail_v1(error))?;
+        let bounded = self.deadline.bounded_timeout_v1(original)?;
+        self.inner
+            .set_write_timeout(bounded)
+            .map_err(|error| self.deadline.fail_v1(error))?;
+        #[cfg(not(test))]
         let result = self.inner.write(input);
-        self.deadline.check_v1()?;
-        result
+        #[cfg(test)]
+        let result = self.test_write_v1(input);
+        let restored = self.inner.set_write_timeout(original);
+        let checked = match &result {
+            Ok(_) => self.deadline.check_v1(),
+            Err(error) => Err(self.deadline.fail_v1(error)),
+        };
+        self.deadline
+            .finish_progress_v1(result, restored.and(checked))
     }
 
     fn flush(&mut self) -> io::Result<()> {
         self.deadline.check_v1()?;
-        let result = self.inner.flush();
-        self.deadline.check_v1()?;
-        result
+        #[cfg(test)]
+        {
+            self.test_writes.flushes += 1;
+        }
+        if let Err(error) = self.inner.flush() {
+            return Err(self.deadline.fail_v1(error));
+        }
+        self.deadline.check_v1()
     }
 }
 
@@ -1509,6 +1648,8 @@ mod tests {
 
     type TestClientWebSocketV1 = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
 
+    include!("product_relay_daemon_io_tests.rs");
+
     struct TestControlledRelayDaemonV1 {
         root: PathBuf,
         report_path: PathBuf,
@@ -1800,12 +1941,17 @@ mod tests {
             .begin_v1(Instant::now() + Duration::from_millis(35))
             .unwrap();
         let mut guarded = ProductRelayDaemonDeadlineTcpStreamV1 {
-            inner: tcp,
+            inner: crate::product_relay_io::ProductRelaySocketV1::new(tcp).unwrap(),
             deadline,
+            test_writes: ProductRelayDaemonTestWritesV1::default(),
         };
         let mut bytes = [0u8; 8];
         let error = guarded.read_exact(&mut bytes).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            error.kind() == io::ErrorKind::TimedOut
+                || (error.kind() == io::ErrorKind::BrokenPipe
+                    && error.to_string().contains("terminal lower-stream"))
+        );
         assert!(error.to_string().contains("absolute lower-stream"));
         drop(guarded);
         server.join().unwrap();

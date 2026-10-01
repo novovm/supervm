@@ -1665,6 +1665,7 @@ dependencies = [
  "k256",
  "lettre",
  "libloading",
+ "mio",
  "novovm-adapter-api",
  "novovm-adapter-evm-core",
  "novovm-adapter-evm-plugin",
