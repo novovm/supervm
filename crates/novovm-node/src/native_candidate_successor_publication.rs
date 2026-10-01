@@ -260,34 +260,62 @@ fn run_locked(
     let authority_lock = acquire_nov_native_execution_store_write_lock_v1(&native_path)?;
     let ledger_path = nov_native_block_ledger_rocksdb_path_v1(&native_path);
     let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "successor namespace")?;
-    let artifact = block_artifact::load_block_artifact_inner_v1(workspace, id, params)?
-        .context("successor publication output missing")?;
-    let binding = crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
-        workspace_id: id,
-        plan_commitment: artifact.plan_commitment,
-        output_digest: artifact.output_digest,
-    };
-    // Only the public read-only Verify path reuses this same-call snapshot,
-    // while the original authority lock remains held. The legacy capture path
-    // may run a signing/mutating callback: preserve its original getter order.
-    // The getter releases its ledger mutex before source verification, which
-    // may read another archive. All live head/evidence/output readbacks below
-    // remain mandatory; this is not a cached signing capability and does not
-    // optimize the mutating/recovery scopes.
-    let verified: Option<crate::native_block_ledger::VerifiedSuccessorPublicationV1> =
-        if scope == Scope::Verify && capture.is_none() {
-            Some(
-                NovNativeBlockLedgerV1::load_verified_successor_publication_v1(
-                    &ledger_path,
-                    genesis,
-                    namespace,
-                    parent,
-                    &binding,
-                )?,
-            )
-        } else {
-            None
+    // Only public read-only Verify can reuse one complete artifact validation
+    // under these uninterrupted workspace/authority locks. It cannot publish,
+    // reach a checkpoint, or invoke a signing/mutating capture callback. Other
+    // scopes retain their original read/commit/readback order below.
+    let (artifact, binding, verified) = if scope == Scope::Verify && capture.is_none() {
+        let input = ready_input(workspace, id)?;
+        let descriptor = catalog(workspace)?
+            .into_iter()
+            .find_map(|(known, descriptor)| (known == id).then_some(descriptor))
+            .context("successor publication output missing")?;
+        if !is_complete(workspace, &input, &descriptor)? {
+            bail!("successor publication output missing");
+        }
+        // This descriptor binding is only a lookup constraint, not trusted
+        // output evidence. The ledger must match it and the complete artifact
+        // validator below must independently reproduce it from durable bytes.
+        let binding = crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
+            workspace_id: id,
+            plan_commitment: input.plan,
+            output_digest: descriptor.digest,
         };
+        let verified: crate::native_block_ledger::VerifiedSuccessorPublicationV1 =
+            NovNativeBlockLedgerV1::load_verified_successor_publication_v1(
+                &ledger_path,
+                genesis,
+                namespace,
+                parent,
+                &binding,
+            )?;
+        // The getter has released its non-reentrant ledger mutex. Reuse only
+        // its direct-parent archive; input/output, QC/source, and exact delta
+        // checks remain mandatory, with no error-to-cold fallback.
+        let artifact = block_artifact::load_block_artifact_with_parent_archive_v1(
+            workspace,
+            id,
+            params,
+            Some(&verified.parent_archive),
+        )?
+        .context("successor publication output missing")?;
+        if artifact.workspace_id != binding.workspace_id
+            || artifact.plan_commitment != binding.plan_commitment
+            || artifact.output_digest != binding.output_digest
+        {
+            bail!("successor publication artifact differs from completed binding");
+        }
+        (artifact, binding, Some(verified))
+    } else {
+        let artifact = block_artifact::load_block_artifact_inner_v1(workspace, id, params)?
+            .context("successor publication output missing")?;
+        let binding = crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
+            workspace_id: id,
+            plan_commitment: artifact.plan_commitment,
+            output_digest: artifact.output_digest,
+        };
+        (artifact, binding, None)
+    };
     let commitment = match &verified {
         Some(verified) => verified.commitment,
         None => NovNativeBlockLedgerV1::verify_fresh_successor_promotion_target_v1(
@@ -429,17 +457,15 @@ fn run_locked(
         {
             bail!("successor publication readback mismatch");
         }
-        // Only this child's readback can reuse the same-call, fully verified
-        // direct-parent archive. The first artifact read and the parent's cold
-        // fallback above keep their own ledger lookups (possibly for a grandparent).
-        if block_artifact::load_block_artifact_with_parent_archive_v1(
-            workspace,
-            id,
-            params,
-            verified.as_ref().map(|verified| &verified.parent_archive),
-        )?
-        .as_ref()
-            != Some(&artifact)
+        // Read-only Verify has already fully validated this immutable artifact
+        // once, with both locks still held and no write/checkpoint/callback in
+        // between. Replaying its three-tree transition again adds no new state
+        // boundary. Preserve full readback for every mutating/recovery scope
+        // and for capture callbacks; live authority/evidence reads above are
+        // retained in all cases. Nothing is cached across calls.
+        if verified.is_none()
+            && block_artifact::load_block_artifact_inner_v1(workspace, id, params)?.as_ref()
+                != Some(&artifact)
         {
             bail!("published successor AOEM output changed");
         }

@@ -17,6 +17,11 @@ pub(crate) use live_parent::{load_finalized_parent_view_v1, FinalizedParentViewV
 mod finalized_query_tests;
 #[cfg(test)]
 pub(super) use finalized_query_tests::exercise_finalized_record_queries_for_test_v1;
+#[cfg(test)]
+#[path = "native_candidate_publication_verify_tests.rs"]
+mod publication_verify_tests;
+#[cfg(test)]
+pub(crate) use publication_verify_tests::exercise_publication_verify_corruption_for_test_v1;
 #[path = "native_candidate_rooted_parent.rs"]
 mod rooted_parent;
 #[path = "native_candidate_state_records.rs"]

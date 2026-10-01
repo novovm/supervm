@@ -80,7 +80,7 @@ fn exercise_successor_publication_bundle(
         &bundle.parent_archive,
     )
     .unwrap();
-    let (verified, count) = Ledger::count_fresh_ledger_verifications_for_test_v1(|| {
+    let verify = || {
         workspace::without_materialization_for_test(|| {
             workspace::verify_successor_authority_v1(
                 artifact.block().header.chain_id,
@@ -90,19 +90,22 @@ fn exercise_successor_publication_bundle(
                 params,
             )
         })
-    });
+    };
+    let ((verified, count), artifact_count) =
+        workspace::IsolatedBlockArtifactV1::count_validations_for_test_v1(
+            artifact.workspace_id,
+            || Ledger::count_fresh_ledger_verifications_for_test_v1(verify),
+        );
+    assert_eq!(artifact_count, 1, "read-only Verify must fully validate the child once");
+    assert_eq!(count, 1, "NCW2/V3 Verify reuses the same-call verified direct parent");
     if matches!(stage, SuccessorBundleStage::Prepared) {
         // Merely preparing a valid intent cannot turn the old authority head
-        // into this child. This fails before the second artifact readback.
+        // into this child, even after its artifact has been fully validated.
         let error = verified.unwrap_err();
         assert!(format!("{error:#}").contains(
             "successor publication requires the exact live parent or completed target"
         ));
     } else {
-        assert_eq!(
-            count, 2,
-            "full NCW2/V3 Verify retains first-artifact and bundle history checks, not a third readback lookup"
-        );
         let header = &artifact.block().header;
         // The reference getter values above supply every prior report field;
         // artifact equivalence is checked independently by the readback helper.
@@ -119,6 +122,9 @@ fn exercise_successor_publication_bundle(
             ledger_publication_completed: published.is_some(),
             finalized: finality.is_some(),
         });
+        workspace::exercise_publication_verify_corruption_for_test_v1(
+            header.chain_id, parent, artifact.workspace_id, pin, params,
+        ).unwrap();
     }
     assert_eq!(successor_bundle_ledger_snapshot(ledger), before);
 
@@ -174,11 +180,17 @@ fn exercise_successor_publication_bundle(
     }
     if matches!(stage, SuccessorBundleStage::Finalized) {
         successor_bundle_ledger_fault(
-            ledger, b"native_block_ledger/v1/successor/finalized-intent", None, &read,
+            ledger, b"native_block_ledger/v1/successor/finalized-intent", None, &verify,
         );
         successor_bundle_ledger_fault(
-            ledger, b"bundle-test-unexpected-ledger-state", Some(vec![1]), &read,
+            ledger, b"bundle-test-unexpected-ledger-state", Some(vec![1]), &verify,
         );
+        let archive_key = format!(
+            "native_block_ledger/v1/successor/finalized/{:016x}",
+            artifact.block().header.height - 1
+        ).into_bytes();
+        successor_bundle_ledger_fault(ledger, &archive_key, None, &verify);
+        assert!(verify().unwrap().finalized, "restored public Verify must succeed again");
     }
     assert!(read().is_ok(), "restored fixture must remain fully readable");
     assert_eq!(successor_bundle_ledger_snapshot(ledger), before);
@@ -194,11 +206,11 @@ fn successor_bundle_ledger_snapshot(path: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
         .collect()
 }
 
-fn successor_bundle_ledger_fault(
+fn successor_bundle_ledger_fault<T>(
     path: &Path,
     key: &[u8],
     replacement: Option<Vec<u8>>,
-    read: &impl Fn() -> Result<crate::native_block_ledger::VerifiedSuccessorPublicationV1>,
+    read: &impl Fn() -> Result<T>,
 ) {
     let before = successor_bundle_ledger_snapshot(path);
     let db = rocksdb::DB::open_default(path).unwrap();
@@ -211,7 +223,7 @@ fn successor_bundle_ledger_fault(
     }
     drop(db);
     let faulted = successor_bundle_ledger_snapshot(path);
-    let rejected = read().is_err();
+    let rejection = read().err();
     let after = successor_bundle_ledger_snapshot(path);
     let db = rocksdb::DB::open_default(path).unwrap();
     if let Some(bytes) = original {
@@ -220,7 +232,13 @@ fn successor_bundle_ledger_fault(
         db.delete(key).unwrap();
     }
     drop(db);
-    assert!(rejected, "corrupted ledger evidence was accepted: {}", to_hex(key));
+    let rejection = rejection.unwrap_or_else(|| {
+        panic!("corrupted ledger evidence was accepted: {}", to_hex(key))
+    });
+    assert!(
+        !format!("{rejection:#}").contains("unexpected full candidate store materialization"),
+        "corrupt evidence must be rejected, not sent to a forbidden cold fallback"
+    );
     assert_eq!(after, faulted, "rejected bundle must not repair or mutate evidence");
     assert_eq!(successor_bundle_ledger_snapshot(path), before);
 }

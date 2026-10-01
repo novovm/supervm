@@ -9,6 +9,12 @@ use crate::native_block_ledger::{
     NovNativeBlockCandidateRecordV1, NovNativeIsolatedExecutionBindingV1,
 };
 
+#[cfg(test)]
+thread_local! {
+    static ARTIFACT_VALIDATION_COUNT: std::cell::Cell<Option<([u8; 32], usize)>> =
+        const { std::cell::Cell::new(None) };
+}
+
 /// An in-memory artifact, not a ledger membership or current-state capability.
 /// The legacy block codec's canonical_local field describes local continuity;
 /// it does not attest that this artifact has been selected or published.
@@ -32,6 +38,32 @@ impl IsolatedBlockArtifactV1 {
 
     pub fn block(&self) -> &NovNativeDurableBlockV1 {
         &self.block
+    }
+
+    /// Count actual full-validator entries for this workspace only. The scope
+    /// is thread-local and restored on unwind; it changes no production reads.
+    #[cfg(test)]
+    pub(crate) fn count_validations_for_test_v1<T>(
+        id: [u8; 32],
+        action: impl FnOnce() -> T,
+    ) -> (T, usize) {
+        struct Restore(Option<([u8; 32], usize)>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                ARTIFACT_VALIDATION_COUNT.with(|counter| counter.set(self.0));
+            }
+        }
+        let restore =
+            Restore(ARTIFACT_VALIDATION_COUNT.with(|counter| counter.replace(Some((id, 0)))));
+        let result = action();
+        let count = ARTIFACT_VALIDATION_COUNT.with(|counter| {
+            counter
+                .get()
+                .expect("artifact validation count scope missing")
+                .1
+        });
+        drop(restore);
+        (result, count)
     }
 }
 
@@ -66,6 +98,12 @@ pub(super) fn load_block_artifact_with_parent_archive_v1(
     params: &serde_json::Value,
     verified_parent_archive: Option<&crate::native_block_ledger::FinalizedRecordArchiveV1>,
 ) -> Result<Option<IsolatedBlockArtifactV1>> {
+    #[cfg(test)]
+    ARTIFACT_VALIDATION_COUNT.with(|counter| {
+        if let Some((observed, count)) = counter.get().filter(|(observed, _)| *observed == id) {
+            counter.set(Some((observed, count + 1)));
+        }
+    });
     if !workspace.catalog()?.iter().any(|(_, input)| input.id == id) {
         return Ok(None);
     }
