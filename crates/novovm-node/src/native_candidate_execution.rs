@@ -12,6 +12,11 @@ use crate::native_root_codecs::NativeRootCodecProfileV1;
 mod block_artifact;
 #[path = "native_candidate_promotion.rs"]
 mod promotion;
+#[path = "native_candidate_rooted_compute.rs"]
+mod rooted_compute;
+#[cfg(test)]
+#[path = "native_candidate_rooted_compute_tests.rs"]
+mod rooted_compute_tests;
 #[path = "native_candidate_rooted_output.rs"]
 mod rooted_output;
 pub use block_artifact::{
@@ -39,6 +44,10 @@ pub(crate) use promotion::{
     RetirementCheckpointV1,
 };
 pub(crate) use promotion::{load_startup_artifact_v1, load_startup_successor_v1};
+#[cfg(test)]
+pub(crate) use rooted_compute_tests::{
+    exercise_light_first_compute_for_test_v1, exercise_light_output_recovery_for_test_v1,
+};
 #[cfg(test)]
 pub(crate) use rooted_output::{
     assert_delta_output_point_read_for_test_v1, assert_light_input_output_point_read_for_test_v1,
@@ -948,23 +957,194 @@ pub(crate) fn execute_with_checkpoint_v1(
             bail!("completed candidate output has missing chunks");
         }
     }
-    // First computation/output preparation still requires an explicit full
-    // image. Completed NCW2/V3 recovery above never takes this cold boundary.
+    let prepared = prepare_output(&workspace, &input, &verified, existing, params)?;
+    let descriptor = prepared.descriptor(&input);
+    let bytes = prepared.bytes();
+    check_output_capacity(0, bytes.len())?;
+    if let Some(previous) = existing {
+        if previous != &descriptor {
+            bail!("incomplete candidate output recomputation differs from reserved bytes");
+        }
+    } else {
+        let total = outputs
+            .iter()
+            .try_fold(0usize, |total, (_, output)| total.checked_add(output.len))
+            .context("candidate output capacity overflow")?;
+        check_output_capacity(total, bytes.len())?;
+        let reservation = AoemAtomicGraphWriteV1::Put {
+            key: workspace.key(b'v', &id),
+            value: descriptor.encode(),
+        };
+        workspace.commit(b'V', &input, vec![reservation.clone()], reservation)?;
+    }
+    checkpoint(ExecutionCheckpointV1::OutputReserved)?;
+    prepared.persist(&workspace)?;
+    let writes: Vec<_> = bytes
+        .chunks(CHUNK_BYTES)
+        .enumerate()
+        .map(|(index, chunk)| AoemAtomicGraphWriteV1::Put {
+            key: output_chunk_key(&workspace, &id, index),
+            value: chunk.to_vec(),
+        })
+        .collect();
+    let reservation = AoemAtomicGraphWriteV1::Put {
+        key: workspace.key(b'v', &id),
+        value: descriptor.encode(),
+    };
+    workspace.commit(b'P', &input, writes[..1].to_vec(), reservation.clone())?;
+    checkpoint(ExecutionCheckpointV1::PartialOutput)?;
+    workspace.commit(b'O', &input, writes, reservation)?;
+    checkpoint(ExecutionCheckpointV1::OutputWritten)?;
+    let readback = read_output_view(&workspace, &input, &descriptor, &verified, params)?
+        .context("candidate output readback incomplete")?;
+    publish(&mut workspace, &input, &descriptor)?;
+    checkpoint(ExecutionCheckpointV1::Completed)?;
+    info(
+        &input,
+        &descriptor,
+        readback,
+        verified.root_codec_profile()?,
+    )
+}
+
+enum PreparedOutput {
+    Delta {
+        document: Box<state_records::PreparedDeltaDocument>,
+        updates: Box<state_records::RecordTreeUpdatesV1>,
+    },
+    Cold(Box<state_records::PreparedDocument>),
+    Inline(Vec<u8>),
+}
+
+impl PreparedOutput {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Delta { document, .. } => &document.bytes,
+            Self::Cold(document) => &document.bytes,
+            Self::Inline(bytes) => bytes,
+        }
+    }
+
+    fn descriptor(&self, input: &Descriptor) -> OutputDescriptor {
+        OutputDescriptor {
+            len: self.bytes().len(),
+            digest: output_digest(self.bytes()),
+            input_digest: input.payload,
+        }
+    }
+
+    fn persist(&self, workspace: &WorkspaceStore) -> Result<()> {
+        match self {
+            Self::Delta { document, updates } => {
+                state_records::persist_delta(workspace, document, updates)
+            }
+            Self::Cold(document) => state_records::persist(workspace, document),
+            Self::Inline(_) => Ok(()),
+        }
+    }
+}
+
+fn prepare_output(
+    workspace: &WorkspaceStore,
+    input: &Descriptor,
+    verified: &VerifiedInput,
+    existing: Option<&OutputDescriptor>,
+    params: &serde_json::Value,
+) -> Result<PreparedOutput> {
+    let rooted = verified.root_codec_profile()? == NativeRootCodecProfileV1::RecordTreeV1
+        && verified
+            .record_state()
+            .map(state_records::StoreRef::rooted_parts)
+            .transpose()?
+            .flatten()
+            .is_some()
+        && plan_contains_only_transfers(verified.plan())?;
+    // Eligibility is fixed before any AOEM call. All computation and storage
+    // errors stay errors; only exact old-format replay or explicit writer
+    // capacity limits cross the cold compatibility boundary below.
+    let computed = if rooted {
+        let computed = rooted_compute::compute(verified, input, workspace, params)?;
+        let parent = verified
+            .record_state()
+            .context("rooted computation parent missing")?;
+        match state_records::prepare_delta(
+            workspace,
+            &computed.metadata,
+            &["store"],
+            parent,
+            &computed.updates,
+        ) {
+            Ok(document) => {
+                let (_, state_root, receipt_root, _, _) = document
+                    .state()
+                    .rooted_parts()?
+                    .context("prepared delta root bundle missing")?;
+                if parse_fixed_hex_32_v1(
+                    &computed.metadata.batch_result.state_delta_root,
+                    "computed delta state",
+                )? != state_root
+                    || parse_fixed_hex_32_v1(
+                        &computed.metadata.batch_result.receipt_root,
+                        "computed delta receipts",
+                    )? != receipt_root
+                {
+                    bail!("computed metadata differs from its prepared delta roots");
+                }
+                let descriptor = OutputDescriptor {
+                    len: document.bytes.len(),
+                    digest: output_digest(&document.bytes),
+                    input_digest: input.payload,
+                };
+                if existing.is_none_or(|previous| *previous == descriptor) {
+                    return Ok(PreparedOutput::Delta {
+                        document: Box::new(document),
+                        updates: Box::new(computed.updates),
+                    });
+                }
+            }
+            Err(error) if error.is::<state_records::DeltaOutputTooLarge>() => {
+                // Without a reservation this may choose the existing cold V2
+                // format. With a reservation the old bytes MUST match exactly;
+                // capacity never authorizes changing a reserved V3 descriptor.
+            }
+            Err(error) => return Err(error),
+        }
+        Some(computed)
+    } else {
+        None
+    };
+    // Mixed/legacy execution and old reserved byte formats keep complete typed
+    // validation. A rooted fallback reuses the SAME computed updates: no second
+    // business execution, fee settlement or AOEM precommit is submitted.
     let materialized;
     let payload = match verified.cold_payload() {
         Some(payload) => payload,
         None => {
-            materialized = workspace.read_payload(&input)?;
+            materialized = workspace.read_payload(input)?;
             &materialized
         }
     };
-    let mut output = compute(payload, &input, &workspace, params)?;
-    validate_output(&output, payload, &input, &workspace, params)?;
+    let output = match computed {
+        Some(computed) => computed.into_cold(workspace)?,
+        None => compute(payload, input, workspace, params)?,
+    };
+    prepare_cold_output(workspace, input, payload, output, existing, params)
+}
+
+fn prepare_cold_output(
+    workspace: &WorkspaceStore,
+    input: &Descriptor,
+    payload: &Payload,
+    mut output: Output,
+    existing: Option<&OutputDescriptor>,
+    params: &serde_json::Value,
+) -> Result<PreparedOutput> {
+    validate_output(&output, payload, input, workspace, params)?;
     let parent_store = payload.parent_store()?;
     let mut prepared = if payload.root_codec_profile()? == NativeRootCodecProfileV1::RecordTreeV1 {
         let updates = output.record_updates.take();
         state_records::prepare_record_profile(
-            &workspace,
+            workspace,
             &output,
             &["store"],
             &output.store,
@@ -976,7 +1156,7 @@ pub(crate) fn execute_with_checkpoint_v1(
         )?
     } else {
         state_records::prepare(
-            &workspace,
+            workspace,
             &output,
             &["store"],
             &output.store,
@@ -1003,7 +1183,7 @@ pub(crate) fn execute_with_checkpoint_v1(
     }
     if existing.is_some_and(|previous| *previous != descriptor) {
         let old = state_records::prepare(
-            &workspace,
+            workspace,
             &output,
             &["store"],
             &output.store,
@@ -1040,49 +1220,14 @@ pub(crate) fn execute_with_checkpoint_v1(
     } else {
         None
     };
-    let bytes = inline.as_deref().unwrap_or(&prepared.bytes);
-    check_output_capacity(0, bytes.len())?;
-    if let Some(previous) = existing {
-        if previous != &descriptor {
-            bail!("incomplete candidate output recomputation differs from reserved bytes");
-        }
-    } else {
-        let total = outputs
-            .iter()
-            .try_fold(0usize, |total, (_, output)| total.checked_add(output.len))
-            .context("candidate output capacity overflow")?;
-        check_output_capacity(total, bytes.len())?;
-        let reservation = AoemAtomicGraphWriteV1::Put {
-            key: workspace.key(b'v', &id),
-            value: descriptor.encode(),
-        };
-        workspace.commit(b'V', &input, vec![reservation.clone()], reservation)?;
-    }
-    checkpoint(ExecutionCheckpointV1::OutputReserved)?;
-    if inline.is_none() {
-        state_records::persist(&workspace, &prepared)?;
-    }
-    let writes: Vec<_> = bytes
-        .chunks(CHUNK_BYTES)
-        .enumerate()
-        .map(|(index, chunk)| AoemAtomicGraphWriteV1::Put {
-            key: output_chunk_key(&workspace, &id, index),
-            value: chunk.to_vec(),
-        })
-        .collect();
-    let reservation = AoemAtomicGraphWriteV1::Put {
-        key: workspace.key(b'v', &id),
-        value: descriptor.encode(),
+    let result = match inline {
+        Some(bytes) => PreparedOutput::Inline(bytes),
+        None => PreparedOutput::Cold(Box::new(prepared)),
     };
-    workspace.commit(b'P', &input, writes[..1].to_vec(), reservation.clone())?;
-    checkpoint(ExecutionCheckpointV1::PartialOutput)?;
-    workspace.commit(b'O', &input, writes, reservation)?;
-    checkpoint(ExecutionCheckpointV1::OutputWritten)?;
-    let readback = read_output_view(&workspace, &input, &descriptor, &verified, params)?
-        .context("candidate output readback incomplete")?;
-    publish(&mut workspace, &input, &descriptor)?;
-    checkpoint(ExecutionCheckpointV1::Completed)?;
-    info(&input, &descriptor, readback, payload.root_codec_profile()?)
+    if result.descriptor(input) != descriptor || existing.is_some_and(|old| *old != descriptor) {
+        bail!("incomplete candidate output recomputation differs from reserved bytes");
+    }
+    Ok(result)
 }
 
 fn publish(

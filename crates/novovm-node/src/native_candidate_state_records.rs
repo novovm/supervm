@@ -15,6 +15,9 @@ use serde_json::value::RawValue;
 mod delta;
 pub(super) use delta::VerifiedDeltaDocument;
 #[cfg(test)]
+#[path = "native_candidate_prepared_delta_tests.rs"]
+mod prepared_delta_tests;
+#[cfg(test)]
 #[path = "native_candidate_reference_tests.rs"]
 mod reference_tests;
 
@@ -37,6 +40,14 @@ pub(super) fn without_materialization_for_test<T>(f: impl FnOnce() -> Result<T>)
     }
     let _restore = Restore(MATERIALIZATION_FORBIDDEN.with(|flag| flag.replace(true)));
     f()
+}
+
+#[cfg(test)]
+pub(in super::super) fn assert_materialization_allowed_for_test() -> Result<()> {
+    if MATERIALIZATION_FORBIDDEN.with(std::cell::Cell::get) {
+        bail!("unexpected full candidate store materialization");
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,6 +167,40 @@ pub(super) struct PreparedDocument {
     update: StagedRecordUpdate,
     consensus_updates: Option<(StagedRecordUpdate, StagedRecordUpdate)>,
 }
+
+/// A checked V3 output prepared without a complete historical Store. The
+/// original updates stay with the caller for exact legacy-reservation recovery.
+pub(super) struct PreparedDeltaDocument {
+    pub(super) bytes: Vec<u8>,
+    state: StoreRef,
+    parent: StoreRef,
+    commitment: NodeHash,
+}
+
+impl PreparedDeltaDocument {
+    pub(super) fn state(&self) -> &StoreRef {
+        &self.state
+    }
+}
+
+/// Only preparation may return this typed capacity condition. Bad roots,
+/// missing blobs and malformed witnesses are not reasons to choose a cold path.
+#[derive(Debug)]
+pub(super) enum DeltaOutputTooLarge {
+    Document,
+    Witness,
+}
+
+impl std::fmt::Display for DeltaOutputTooLarge {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Document => "delta output exceeds the existing 8 MiB document budget",
+            Self::Witness => "delta output exceeds the existing 8 MiB path or 64 MiB replay budget",
+        })
+    }
+}
+
+impl std::error::Error for DeltaOutputTooLarge {}
 
 /// A metadata-only identity document. Its constructor does not authenticate the
 /// supplied reference: the caller must already have a ledger/QC-bound source.
@@ -655,6 +700,223 @@ pub(super) fn prepare_record_profile<T: Serialize>(
     })
 }
 
+fn delta_reference(parent: &StoreRef, updates: &RecordTreeUpdatesV1) -> Result<StoreRef> {
+    let (physical, state, receipts, _, _) = parent
+        .rooted_parts()?
+        .context("delta preparation requires a verified three-root parent")?;
+    for (update, root) in [&updates.physical, &updates.state, &updates.receipts]
+        .into_iter()
+        .zip([physical, state, receipts])
+    {
+        if update.parent_root() != root {
+            bail!("delta update parent differs from the verified input roots");
+        }
+    }
+    let link = |update: &StagedRecordUpdate| RootLink {
+        parent_root: update.parent_root(),
+        root: update.root(),
+    };
+    let profile = crate::native_root_codecs::NativeRootCodecProfileV1::RecordTreeV1;
+    let reference = StoreRef {
+        layout: STORE_CODEC.into(),
+        tree_codec: STATE_RECORD_CODEC_V1.into(),
+        root: updates.physical.root(),
+        records: updates.records,
+        blob_bytes: updates.blob_bytes,
+        bundle: Some(RootBundle {
+            schema: "novovm-candidate-record-root-bundle/v1".into(),
+            state_codec: profile.state_root_codec().into(),
+            receipt_codec: profile.receipt_root_codec().into(),
+            physical: link(&updates.physical),
+            state: link(&updates.state),
+            receipts: link(&updates.receipts),
+        }),
+    };
+    reference.rooted_parts()?;
+    Ok(reference)
+}
+
+fn verify_delta_projection_points(
+    state_reader: &dyn StateRecordReader,
+    receipt_reader: &dyn StateRecordReader,
+    reference: &StoreRef,
+    changes: &[native_store_records::RawPathChangeV1],
+) -> Result<()> {
+    use crate::native_state_records::read_record;
+    use native_store_records::RawPathChangeV1;
+    let (_, state_root, receipt_root, _, _) = reference
+        .rooted_parts()?
+        .context("delta projection has no root bundle")?;
+    let check = |reader: &dyn StateRecordReader, root, change: RecordChange| -> Result<()> {
+        let (key, expected) = match change {
+            RecordChange::Put { key, value } => (key, Some(value)),
+            RecordChange::Delete { key } => (key, None),
+        };
+        if read_record(reader, root, &key)? != expected {
+            bail!("delta projected point differs from the authenticated physical change");
+        }
+        Ok(())
+    };
+    for change in changes {
+        if let Some(projected) = native_record_commitment::consensus_change_v1(change)? {
+            check(state_reader, state_root, projected)?;
+        }
+        if let RawPathChangeV1::Put { path, value } = change {
+            if path.first().map(String::as_str) == Some("receipts") {
+                let receipt: NovNativeExecutionReceiptV1 = serde_json::from_slice(value)?;
+                check(
+                    receipt_reader,
+                    receipt_root,
+                    native_record_commitment::receipt_change_v1(&receipt)?,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn verify_staged_delta(
+    workspace: &WorkspaceStore,
+    parent: &StoreRef,
+    reference: &StoreRef,
+    updates: &RecordTreeUpdatesV1,
+    witness: &delta::Witness,
+) -> Result<()> {
+    if serde_json::to_vec(&delta_reference(parent, updates)?)? != serde_json::to_vec(reference)? {
+        bail!("delta prepared roots/statistics differ from the supplied updates");
+    }
+    let changes = updates
+        .changes
+        .as_ref()
+        .context("delta preparation requires exact changed paths")?;
+    let reader = AoemStateReaderV1::new(&workspace.graph, workspace.scope);
+    let cached = native_transfer_record_execution::ExecutionReader::new(&reader);
+    let physical = StagedReader {
+        base: &cached,
+        update: &updates.physical,
+    };
+    let cached_physical = native_transfer_record_execution::ExecutionReader::new(&physical);
+    let reconstructed = delta::verify(&cached, &cached_physical, parent, reference, witness)?;
+    if reconstructed != *changes {
+        bail!("delta supplied values differ from their authenticated output records");
+    }
+    verify_delta_projection_points(
+        &StagedReader {
+            base: &cached,
+            update: &updates.state,
+        },
+        &StagedReader {
+            base: &cached,
+            update: &updates.receipts,
+        },
+        reference,
+        changes,
+    )
+}
+
+/// Prepare only a V3 output from verified roots and exact, sorted net changes.
+/// No complete Store is read, cloned or encoded. Business authorization and
+/// execution-result metadata remain the enclosing candidate validator's job.
+pub(super) fn prepare_delta<T: Serialize>(
+    workspace: &WorkspaceStore,
+    inline_with_null_store: &T,
+    store_path: &[&str],
+    verified_parent: &StoreRef,
+    updates: &RecordTreeUpdatesV1,
+) -> Result<PreparedDeltaDocument> {
+    let state = delta_reference(verified_parent, updates)?;
+    let raw = serde_json::value::to_raw_value(inline_with_null_store)?;
+    // Use the identical object ordering as the old full-store V3 writer.
+    let (inline, placeholder) = replace(&raw, store_path, RawValue::from_string("null".into())?)?;
+    if placeholder.get() != "null" {
+        bail!("delta preparation requires exactly a null store placeholder");
+    }
+    let changes = updates
+        .changes
+        .as_ref()
+        .context("delta preparation requires exact changed paths")?;
+    if !delta::writer_budget_allows(changes)? {
+        return Err(DeltaOutputTooLarge::Witness.into());
+    }
+    let witness = delta::Witness::from_changes(changes)?;
+    verify_staged_delta(workspace, verified_parent, &state, updates, &witness)?;
+    let bytes = serde_json::to_vec(&Document {
+        schema: delta::SCHEMA.into(),
+        store_path: store_path.iter().map(|part| (*part).to_owned()).collect(),
+        state: state.clone(),
+        inline,
+        witness: Some(witness),
+    })?;
+    if bytes.len() > MAX_PAYLOAD_BYTES_V1 {
+        return Err(DeltaOutputTooLarge::Document.into());
+    }
+    Ok(PreparedDeltaDocument {
+        commitment: delta::document_commitment(&bytes),
+        bytes,
+        state,
+        parent: verified_parent.clone(),
+    })
+}
+
+/// Persist only a previously checked delta. Ordinary persist remains a cold
+/// boundary. All supplied updates are borrowed so an existing legacy output
+/// reservation can still be recovered without executing business a second time.
+pub(super) fn persist_delta(
+    workspace: &WorkspaceStore,
+    prepared: &PreparedDeltaDocument,
+    updates: &RecordTreeUpdatesV1,
+) -> Result<()> {
+    if prepared.bytes.len() > MAX_PAYLOAD_BYTES_V1
+        || delta::document_commitment(&prepared.bytes) != prepared.commitment
+    {
+        bail!("prepared delta document bytes changed after verification");
+    }
+    let document: Document = serde_json::from_slice(&prepared.bytes)?;
+    if document.schema != delta::SCHEMA
+        || serde_json::to_vec(&document.state)? != serde_json::to_vec(&prepared.state)?
+    {
+        bail!("prepared delta document root or schema binding changed");
+    }
+    let witness = document
+        .witness
+        .as_ref()
+        .context("prepared delta witness missing")?;
+    verify_staged_delta(
+        workspace,
+        &prepared.parent,
+        &prepared.state,
+        updates,
+        witness,
+    )?;
+    let bundle = prepared
+        .state
+        .bundle
+        .as_ref()
+        .context("prepared delta root bundle missing")?;
+    let execution = bundle.commitment()?;
+    let mut storage = AoemStateNodesV1::new(&workspace.graph, workspace.scope)?;
+    for ((role, _), update) in
+        bundle
+            .links()
+            .into_iter()
+            .zip([&updates.physical, &updates.state, &updates.receipts])
+    {
+        storage.persist_record_candidate(
+            delta::prepared_id(prepared.commitment, role),
+            prepared.commitment,
+            execution,
+            update,
+        )?;
+    }
+    validate_prepared_bundle(workspace, &prepared.bytes, &prepared.state)?;
+    // Use a fresh reader: staged or cached pre-write values cannot serve as
+    // readback evidence. Check only named changes, never scan historical trees.
+    let reader = AoemStateReaderV1::new(&workspace.graph, workspace.scope);
+    let cached = native_transfer_record_execution::ExecutionReader::new(&reader);
+    let changes = delta::verify(&cached, &cached, &prepared.parent, &prepared.state, witness)?;
+    verify_delta_projection_points(&cached, &cached, &prepared.state, &changes)
+}
+
 /// Reproduce an already-reserved V2 byte image before considering older
 /// physical-only/inline encodings. This never publishes or repairs a document.
 pub(super) fn without_delta(mut prepared: PreparedDocument) -> Result<PreparedDocument> {
@@ -893,9 +1155,7 @@ fn read_store_from(
     reference: &StoreRef,
 ) -> Result<NovNativeExecutionStoreV1> {
     #[cfg(test)]
-    if MATERIALIZATION_FORBIDDEN.with(std::cell::Cell::get) {
-        bail!("unexpected full candidate store materialization");
-    }
+    assert_materialization_allowed_for_test()?;
     let mut records = BTreeMap::new();
     let stats = visit_records(
         reader,
@@ -1385,6 +1645,8 @@ pub(crate) fn exercise_record_profile_document_storage_for_test(
     assert!(!is_delta_document(&large_fallback.bytes)?);
     assert_eq!(large_fallback.bytes, large_cold.bytes);
     drop(large);
+    let prepared_delta_bytes =
+        prepared_delta_tests::exercise(&workspace, &reference, &document.store)?;
     let reference_bytes = reference_tests::exercise_metadata_reference_storage(
         &workspace,
         &cold.bytes,
@@ -1395,6 +1657,7 @@ pub(crate) fn exercise_record_profile_document_storage_for_test(
     assert_eq!(workspace.graph.get(&head_key)?, authority_before);
     drop(workspace);
     let reopened = WorkspaceStore::open(chain, params)?;
+    prepared_delta_tests::verify_after_reopen(&reopened, &prepared_delta_bytes, &reference)?;
     reference_tests::verify_metadata_reference_after_reopen(&reopened, &reference_bytes)?;
     verify_delta(&reopened)?;
     let (recovered, _): (TestDocument, _) = decode(&reopened, &prepared.bytes, &["store"])?;

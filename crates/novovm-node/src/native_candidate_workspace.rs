@@ -31,6 +31,7 @@ pub use execution::{
 pub(super) use execution::{
     complete_successor_with_checkpoint_v1, complete_with_checkpoint_v1,
     corrupt_execution_output_for_test_v1, execute_with_checkpoint_v1,
+    exercise_light_first_compute_for_test_v1, exercise_light_output_recovery_for_test_v1,
     finalize_successor_with_checkpoint_v1, load_execution_snapshot_for_test_v1,
     load_typed_execution_snapshot_for_test_v1, publish_successor_with_checkpoint_v1,
     publish_with_checkpoint_v1, retire_with_checkpoint_v1, ExecutionCheckpointV1,
@@ -39,6 +40,8 @@ pub(super) use execution::{
 pub(crate) use execution::{load_startup_artifact_v1, load_startup_successor_v1};
 pub use finalized_parent::create_from_finalized_genesis_v1;
 use finalized_parent::FinalizedParentSnapshot;
+#[cfg(test)]
+pub(super) use state_records::assert_materialization_allowed_for_test;
 #[cfg(test)]
 pub(crate) use state_records::exercise_record_document_storage_for_test;
 #[cfg(test)]

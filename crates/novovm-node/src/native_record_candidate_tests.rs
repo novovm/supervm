@@ -963,10 +963,26 @@ fn exercise_record_profile_fresh_transfers() {
         let next_plan = parent
             .successor_plan(
                 context,
-                vec![transfer_candidate_raw(chain, 2, a, d, 1)],
+                vec![
+                    transfer_candidate_raw(chain, 2, a, b, 100),
+                    transfer_candidate_raw(chain, 1, c, d, 2),
+                    transfer_candidate_raw(chain, 3, a, d, 3),
+                    transfer_candidate_raw(chain, 2, b, d, 1_000_000),
+                    transfer_candidate_raw(chain, 3, b, a, 4),
+                ],
                 params,
             )
             .unwrap();
+        // The previous block left b with 150 - 20 - both settled fees.
+        // Fund both following fees and the final successful amount; otherwise
+        // the intended business-failure case would be a fee rejection instead.
+        let funded_b =
+            native_account_asset_balance_v1(parent.state(), &transfer_candidate_account(b), "NOV")
+                + 100;
+        let failed_business_fee = transfer_candidate_fee(&next_plan.raw_txs[3]);
+        let final_success_fee = transfer_candidate_fee(&next_plan.raw_txs[4]);
+        assert!(funded_b >= failed_business_fee + final_success_fee + 4);
+        assert!(funded_b < failed_business_fee + 1_000_000);
         assert_eq!(
             next_plan.aoem_parent.as_ref().unwrap().state_root_codec,
             profile.state_root_codec()
@@ -983,7 +999,12 @@ fn exercise_record_profile_fresh_transfers() {
             params,
         )
         .unwrap();
-        let next_result = workspace::execute_v1(chain, next_input.workspace_id, params).unwrap();
+        let next_result = workspace::exercise_light_first_compute_for_test_v1(
+            chain,
+            next_input.workspace_id,
+            params,
+        )
+        .unwrap();
         workspace::assert_light_input_output_point_read_for_test_v1(
             chain,
             next_input.workspace_id,
@@ -996,9 +1017,118 @@ fn exercise_record_profile_fresh_transfers() {
             params,
         )
         .unwrap();
+        workspace::exercise_light_output_recovery_for_test_v1(
+            chain,
+            next_input.workspace_id,
+            params,
+        )
+        .unwrap();
         assert_candidate_workspace_execution_complete(&next_result);
-        assert!(next_result.batch_result.per_tx_receipts[0].status_ok);
-        assert_eq!(next_result.batch_result.snapshot_metadata.state_version, 6);
+        assert_eq!(
+            next_result
+                .batch_result
+                .per_tx_receipts
+                .iter()
+                .map(|receipt| receipt.status_ok)
+                .collect::<Vec<_>>(),
+            vec![true, true, true, false, true]
+        );
+        assert_eq!(next_result.batch_result.snapshot_metadata.state_version, 10);
+        let next_store = workspace::load_typed_execution_snapshot_for_test_v1(
+            chain,
+            next_input.workspace_id,
+            params,
+        )
+        .unwrap();
+        let failed_receipt = &next_store.receipts[&to_hex(&next_plan.tx_hashes[3])];
+        assert!(failed_receipt
+            .failure_reason
+            .as_deref()
+            .unwrap()
+            .starts_with("native.transfer.insufficient NOV"));
+        assert_eq!(failed_receipt.settled_fee_nov, failed_business_fee);
+        assert!(next_store.receipts[&to_hex(&next_plan.tx_hashes[4])]
+            .failure_reason
+            .is_none());
+        // Preserve the earlier serial-reference standard for the actual NCW2
+        // first-compute path too. Only scheduling changes, not the business
+        // implementation or codec; use the observed ingress diagnostics.
+        let mut next_serial = parent.state().clone();
+        for raw in &next_plan.raw_txs {
+            let transaction = decode_nov_native_tx_wire_v1(raw).unwrap();
+            let reservation = transfer_candidate_reservation(raw);
+            let hash = canonical_nov_native_tx_hash_from_payload_v1(raw).unwrap();
+            let request = native_transfer_dispatch::fee_request_v1(&transaction, hash).unwrap();
+            let subject = fallback_execution_subject_meta_v1(&request);
+            let ingress = next_store.receipts[&reservation.tx_hash]
+                .aoem_semantic_ingress
+                .clone()
+                .unwrap();
+            native_transfer_record_execution::execute_segment_v1(
+                &mut next_serial,
+                &[native_transfer_dispatch::Item {
+                    transaction: &transaction,
+                    request: &request,
+                    subject: &subject,
+                    reservation: &reservation,
+                    ingress,
+                }],
+                u128::from(context.timestamp_unix_ms),
+            )
+            .unwrap();
+        }
+        assert_eq!(next_store, next_serial);
+        assert_eq!(
+            serde_json::to_vec(&next_store).unwrap(),
+            serde_json::to_vec(&next_serial).unwrap()
+        );
+        assert_eq!(next_store.receipts.len(), store.receipts.len() + 5);
+        assert_eq!(
+            next_result.post_state_root,
+            to_hex(
+                &native_record_commitment::consensus_state_root_v1(&next_serial.module_state)
+                    .unwrap()
+            )
+        );
+        assert_eq!(
+            next_result.receipt_root,
+            to_hex(&native_record_commitment::cumulative_receipt_root_v1(&next_serial).unwrap())
+        );
+        let next_fees: u128 = next_plan
+            .raw_txs
+            .iter()
+            .map(|raw| transfer_candidate_fee(raw))
+            .sum();
+        assert_eq!(
+            next_store.module_state.treasury_settled_nov_total,
+            store.module_state.treasury_settled_nov_total + next_fees
+        );
+        assert_eq!(
+            [a, b, c, d]
+                .iter()
+                .map(|seed| native_account_asset_balance_v1(
+                    &next_store,
+                    &transfer_candidate_account(*seed),
+                    "NOV"
+                ))
+                .sum::<u128>()
+                + next_store.module_state.treasury_settled_nov_total,
+            2_000
+        );
+        for (index, next_nonce) in [(2, 4), (1, 2), (4, 4)] {
+            let reservation = transfer_candidate_reservation(&next_plan.raw_txs[index]);
+            assert_eq!(
+                next_store.module_state.native_auth_next_nonces[&reservation.identity_key],
+                next_nonce
+            );
+        }
+        for (index, raw) in next_plan.raw_txs.iter().enumerate() {
+            let reservation = transfer_candidate_reservation(raw);
+            let receipt = &next_store.receipts[&reservation.tx_hash];
+            assert_eq!(receipt.status, index != 3);
+            assert_eq!(receipt.settled_fee_nov, transfer_candidate_fee(raw));
+            assert_transfer_candidate_compute_logs(receipt, 1);
+        }
         let next_block = workspace::load_block_artifact_v1(chain, next_input.workspace_id, params)
             .unwrap()
             .unwrap();

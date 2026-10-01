@@ -18,16 +18,16 @@ pub(super) struct OutputView {
     pub(super) receipts: BTreeMap<String, NovNativeExecutionReceiptV1>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct OutputMetadata {
-    schema: String,
-    workspace_id: [u8; 32],
-    input_digest: [u8; 32],
-    expected_output_commitment: String,
-    batch_result: novovm_exec::NovovmAoemNativeTxBatchResultV1,
+pub(super) struct OutputMetadata {
+    pub(super) schema: String,
+    pub(super) workspace_id: [u8; 32],
+    pub(super) input_digest: [u8; 32],
+    pub(super) expected_output_commitment: String,
+    pub(super) batch_result: novovm_exec::NovovmAoemNativeTxBatchResultV1,
     // A null placeholder, not a Store with fabricated/default historical fields.
-    store: (),
+    pub(super) store: (),
 }
 
 pub(super) fn authenticate_payload(

@@ -149,7 +149,10 @@ AOEM 不可变记录引用，后继复用父记录；物理记录根不进入 QC
 新增本地 NCW2 输入：由原始父输出摘要、finalized ledger/BFT 证明及 AOEM 发布
 证据绑定三树引用，恢复时不加载完整父 Store，不依赖已退休父 workspace chunks。
 旧 NCW1、首块和 Execute/混合批次保持冷路径；NCW2 不是交易或共识版本。
-仍只有一个 authority head；创建候选时的 live-parent capture、首次输出计算/准备、
+从 `5066a50` 继续，已有三树父引用的纯 Transfer 首次计算、输出准备及保存也已
+接入增量路径；NCW2 后继在禁止完整 Store 物化的护栏下，与原冷序列化字节、
+串行状态/费用/nonce/回执一致。旧 reservation 兼容复用同次计算，不重复结算。
+仍只有一个 authority head；创建候选时的 live-parent capture、首块输入、
 晋升及提案等边界仍会全量加载或冷校验，账本验证仍随历史增长，不能称为
 端到端历史无关或高吞吐。默认创世、16 笔选择、经济规则及 AOEM 本轮不变。Execute
 仍走有序旧全量执行；超过旧 JSON 数值域的新 profile Execute 候选明确拒绝，

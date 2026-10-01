@@ -304,6 +304,8 @@ pub(super) fn materialize_update_v1(
     records: usize,
     blob_bytes: usize,
 ) -> Result<NovNativeExecutionStoreV1> {
+    #[cfg(test)]
+    super::candidate_workspace::assert_materialization_allowed_for_test()?;
     let reader = UpdatedReaderV1 { reader, update };
     let mut values = BTreeMap::new();
     let stats = visit_records(
