@@ -1,5 +1,7 @@
 use aoem_bindings::AoemDyn;
-use novovm_prover::pq_signature::{AoemMldsaParameterSet, MldsaVerifier, PqVerificationError};
+use novovm_prover::pq_signature::{
+    AoemMldsaParameterSet, MldsaSigner, MldsaVerifier, PqVerificationError,
+};
 use std::path::PathBuf;
 
 fn packaged_runtime() -> AoemDyn {
@@ -214,4 +216,154 @@ fn verify_parameter_rejections(runtime: &AoemDyn, parameters: AoemMldsaParameter
         Err(PqVerificationError::InvalidSignature)
     );
     secret_key.fill(0);
+}
+
+#[test]
+#[ignore = "requires the trusted packaged AOEM runtime; run explicitly, no silent skip"]
+fn packaged_signer_pairs_with_standard_verifier_for_all_parameter_sets() {
+    let runtime = packaged_runtime();
+    for parameters in [
+        AoemMldsaParameterSet::MlDsa44,
+        AoemMldsaParameterSet::MlDsa65,
+        AoemMldsaParameterSet::MlDsa87,
+    ] {
+        verify_signer_pair(&runtime, parameters);
+    }
+}
+
+fn verify_signer_pair(runtime: &AoemDyn, parameters: AoemMldsaParameterSet) {
+    let signer = MldsaSigner::new(runtime, parameters).expect("qualified signing capability");
+    let verifier = MldsaVerifier::new(runtime, parameters).expect("known-answer qualification");
+    let level = parameters.level();
+    // Ephemeral keys only: never print, serialize or write their secret bytes.
+    let (public_key, mut secret_key) = runtime.mldsa_keygen_v1(level).unwrap();
+    let (other_key, mut other_secret_key) = runtime.mldsa_keygen_v1(level).unwrap();
+    assert_eq!(public_key.len(), parameters.public_key_bytes());
+    assert_eq!(secret_key.len(), parameters.secret_key_bytes());
+    assert_eq!(other_secret_key.len(), parameters.secret_key_bytes());
+    assert_ne!(public_key, other_key);
+
+    for context in [
+        b"".as_slice(),
+        b"test-only signer domain".as_slice(),
+        &[7; 255],
+    ] {
+        for message in [
+            b"".as_slice(),
+            b"test-only:chain=17:nonce=4:amount=7".as_slice(),
+        ] {
+            let signature = signer
+                .sign(&public_key, &secret_key, message, context)
+                .unwrap();
+            verifier
+                .verify(&public_key, message, context, &signature)
+                .unwrap();
+            assert_eq!(signature.len(), parameters.signature_bytes());
+            assert_eq!(
+                signer
+                    .sign(&public_key, &secret_key, message, context)
+                    .unwrap(),
+                signature
+            );
+            // Interoperate with the existing raw/internal ABI: external-pure
+            // framing is added exactly once, including the empty context.
+            let once = framed(message, context);
+            assert_eq!(
+                runtime.mldsa_sign_v1(level, &secret_key, &once).unwrap(),
+                signature
+            );
+            assert!(runtime
+                .mldsa_verify_v1(level, &public_key, &once, &signature)
+                .unwrap());
+            assert!(!runtime
+                .mldsa_verify_v1(level, &public_key, message, &signature)
+                .unwrap());
+            let raw = runtime.mldsa_sign_v1(level, &secret_key, message).unwrap();
+            let twice = runtime
+                .mldsa_sign_v1(level, &secret_key, &framed(&once, context))
+                .unwrap();
+            for incompatible in [&raw, &twice] {
+                assert_eq!(
+                    verifier.verify(&public_key, message, context, incompatible),
+                    Err(PqVerificationError::InvalidSignature)
+                );
+            }
+
+            let mut changed_message = message.to_vec();
+            changed_message.push(1);
+            assert_eq!(
+                verifier.verify(&public_key, &changed_message, context, &signature),
+                Err(PqVerificationError::InvalidSignature)
+            );
+            let mut changed_context = context.to_vec();
+            if changed_context.is_empty() {
+                changed_context.push(1);
+            } else {
+                changed_context[0] ^= 1;
+            }
+            assert_eq!(
+                verifier.verify(&public_key, message, &changed_context, &signature),
+                Err(PqVerificationError::InvalidSignature)
+            );
+            let mut changed_signature = signature.clone();
+            changed_signature[0] ^= 1;
+            assert_eq!(
+                verifier.verify(&public_key, message, context, &changed_signature),
+                Err(PqVerificationError::InvalidSignature)
+            );
+            assert_eq!(
+                verifier.verify(&other_key, message, context, &signature),
+                Err(PqVerificationError::InvalidSignature)
+            );
+        }
+    }
+
+    let message = b"test-only borrowed expanded key";
+    let context = b"test-only signer domain";
+    // Both pairs really sign. The cross-pair failure must come from the output
+    // self-verification, not an artificial malformed secret sent into the FFI.
+    let other_signature = signer
+        .sign(&other_key, &other_secret_key, message, context)
+        .unwrap();
+    verifier
+        .verify(&other_key, message, context, &other_signature)
+        .unwrap();
+    assert_eq!(
+        signer.sign(&other_key, &secret_key, message, context),
+        Err(PqVerificationError::InvalidSignature)
+    );
+
+    for invalid_public_key in [b"".as_slice(), &public_key[..public_key.len() - 1]] {
+        assert_eq!(
+            signer.sign(invalid_public_key, &secret_key, message, context),
+            Err(PqVerificationError::InvalidPublicKeyLength)
+        );
+    }
+    let mut extended_public_key = public_key.clone();
+    extended_public_key.push(0);
+    assert_eq!(
+        signer.sign(&extended_public_key, &secret_key, message, context),
+        Err(PqVerificationError::InvalidPublicKeyLength)
+    );
+    // Length failures must be rejected by the Host before invoking the runtime.
+    // In particular do not test a same-length all-zero malformed secret key.
+    for invalid_secret_key in [b"".as_slice(), &secret_key[..secret_key.len() - 1]] {
+        assert_eq!(
+            signer.sign(&public_key, invalid_secret_key, message, context),
+            Err(PqVerificationError::InvalidSecretKeyLength)
+        );
+    }
+    // Wrong length is rejected by the Host; this is not a malformed equal-length key.
+    let mut extended_secret_key = vec![0; parameters.secret_key_bytes() + 1];
+    assert_eq!(
+        signer.sign(&public_key, &extended_secret_key, message, context),
+        Err(PqVerificationError::InvalidSecretKeyLength)
+    );
+    extended_secret_key.fill(0);
+    assert_eq!(
+        signer.sign(&public_key, &secret_key, message, &[0; 256]),
+        Err(PqVerificationError::InvalidContextLength)
+    );
+    secret_key.fill(0);
+    other_secret_key.fill(0);
 }

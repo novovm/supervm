@@ -4,6 +4,33 @@
 这是开发分工，不是先前网络测试的 A/B 身份。共同约定见
 [产品交付主线](NOVOVM_DELIVERY_ALIGNMENT.md)。
 
+## A 返回的标准签名封装（2026-10-01）
+
+基线 `a36912e`。同一 `novovm_prover::pq_signature` 模块新增
+`MldsaSigner::new(&runtime, explicit_parameters)` 与
+`sign(trusted_public_key, expanded_secret_key, unframed_message, context)`。
+复用现有 verifier 官方正例和篡改负例初始化门禁，不猜参数、不回退；
+签名能力和公钥/私钥/签名尺寸全部核对。按 [FIPS 204](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.204.pdf)
+Table 2、Algorithms 2/3 加一次 external-pure 前缀，沿已有 AOEM 确定性
+签名模式；返回前通过同一验签路径核对公钥、消息和上下文。不是 HashML-DSA。
+
+私钥使用 expanded encoding，不接受 seed；只借用、不缓存或复制私钥。
+调用方仍负责可信密钥来源/身份绑定、存储和擦除。本模块不生成正式密钥、
+不写钱包文件，也不选择主网参数、地址/nonce 规则或单签/双签策略。
+
+本机 Windows/MSVC 与 Linux/WSL 各严格 Clippy、15 项单元和显式 3 项
+runtime 测试通过。新增 signer 测试使用两套临时真实密钥，覆盖 44/65/87、
+空消息、空/255 字节 context、256 拒绝、确定性、单次 framing 与原始 ABI
+互操作、raw/重复 framing 拒绝、错误公钥/私钥配对和篡改。随包 core
+哈希与下节相同；本轮未重跑完整 90 向量矩阵或性能微基准，不声称 FIPS
+认证、实体 Linux 或主链 PQ 通过。
+
+共享 node/protocol 接入继续由 A 协调：旧 V3 交易和 nonce 身份固定
+Ed25519，prepare/decision/timeout/new-view 签名也尚未切换。旧 round
+wire 的序列上限 64、bytes/string 上限 4096 不能直接承载全部 PQ 签名，
+需按批准 profile 做字段级有界版本编码和尺寸测试，不能全局放宽解码。
+主网参数及强制单签/双签选择仍待用户确认；本模块文件锁已释放。
+
 ## A 返回的 ML-DSA FULLMAX 包（2026-10-01）
 
 `aoem/` 现在固定标准修复源 `56e9da15010490ab54435ba6ab1c226f3d739176`，

@@ -33,6 +33,15 @@ impl AoemMldsaParameterSet {
             Self::MlDsa87 => 4627,
         }
     }
+
+    /// Expanded secret-key encoding sizes from FIPS 204, Table 2; not seed sizes.
+    pub const fn secret_key_bytes(self) -> usize {
+        match self {
+            Self::MlDsa44 => 2560,
+            Self::MlDsa65 => 4032,
+            Self::MlDsa87 => 4896,
+        }
+    }
 }
 
 impl TryFrom<u32> for AoemMldsaParameterSet {
@@ -53,9 +62,12 @@ pub enum PqVerificationError {
     UnsupportedParameterSet,
     InvalidPublicKeyLength,
     InvalidSignatureLength,
+    InvalidSecretKeyLength,
     RuntimeUnavailable,
+    SigningUnavailable,
     RuntimeContractMismatch,
     RuntimeFailure,
+    SigningFailure,
     RuntimeIncompatible,
     InvalidContextLength,
     MessageTooLarge,
@@ -73,11 +85,16 @@ impl fmt::Display for PqVerificationError {
             Self::InvalidSignatureLength => {
                 "signature length does not match expected parameter set"
             }
+            Self::InvalidSecretKeyLength => {
+                "expanded secret key length does not match expected parameter set"
+            }
             Self::RuntimeUnavailable => "AOEM ML-DSA verification capability unavailable",
+            Self::SigningUnavailable => "AOEM ML-DSA signing capability unavailable",
             Self::RuntimeContractMismatch => {
                 "AOEM ML-DSA encoding sizes do not match host contract"
             }
             Self::RuntimeFailure => "AOEM ML-DSA verification call failed",
+            Self::SigningFailure => "AOEM ML-DSA signing call failed",
             Self::RuntimeIncompatible => {
                 "AOEM runtime failed ML-DSA known-answer compatibility check"
             }
@@ -123,6 +140,53 @@ impl<'runtime> MldsaVerifier<'runtime> {
             trusted_public_key,
             &signing_message,
             signature,
+        )
+    }
+}
+
+/// Deterministic external-pure ML-DSA signing paired with [`MldsaVerifier`].
+///
+/// The parameter set is always explicit. Construction requires the verifier's
+/// official positive-vector and tampering-negative checks and matching signing
+/// capabilities. This wrapper does not select a chain signature policy or imply
+/// end-to-end post-quantum security for a transaction or consensus protocol.
+pub struct MldsaSigner<'runtime> {
+    verifier: MldsaVerifier<'runtime>,
+}
+
+impl<'runtime> MldsaSigner<'runtime> {
+    pub fn new(
+        runtime: &'runtime AoemDyn,
+        expected_parameters: AoemMldsaParameterSet,
+    ) -> Result<Self, PqVerificationError> {
+        let verifier = MldsaVerifier::new(runtime, expected_parameters)?;
+        ensure_signing_backend(runtime, expected_parameters)?;
+        Ok(Self { verifier })
+    }
+
+    /// Signs the unframed message with a borrowed, expanded secret key.
+    ///
+    /// The caller must establish the public key's trusted identity binding and
+    /// supply a valid expanded secret key from trusted key generation/storage,
+    /// not a seed. The secret is neither copied nor retained by this wrapper;
+    /// ownership, protection and erasure of it remain the caller's responsibility.
+    /// Contexts are limited to 255 bytes. The external-pure prefix is added once,
+    /// and a signature is returned only after the existing verification path
+    /// accepts it for the supplied trusted public key, message and context.
+    pub fn sign(
+        &self,
+        trusted_public_key: &[u8],
+        expanded_secret_key: &[u8],
+        message: &[u8],
+        context: &[u8],
+    ) -> Result<Vec<u8>, PqVerificationError> {
+        sign_with_backend(
+            self.verifier.runtime,
+            self.verifier.parameters,
+            trusted_public_key,
+            expanded_secret_key,
+            message,
+            context,
         )
     }
 }
@@ -259,6 +323,84 @@ impl MldsaBackend for AoemDyn {
         self.mldsa_verify_v1(level, public_key, message, signature)
             .map_err(|_| PqVerificationError::RuntimeFailure)
     }
+}
+
+trait MldsaSigningBackend: MldsaBackend {
+    fn signing_available(&self) -> bool;
+    fn secret_key_size(&self, level: u32) -> Result<usize, PqVerificationError>;
+    fn sign(
+        &self,
+        level: u32,
+        expanded_secret_key: &[u8],
+        signing_message: &[u8],
+    ) -> Result<Vec<u8>, PqVerificationError>;
+}
+
+impl MldsaSigningBackend for AoemDyn {
+    fn signing_available(&self) -> bool {
+        self.supports_mldsa_sign_v1()
+    }
+
+    fn secret_key_size(&self, level: u32) -> Result<usize, PqVerificationError> {
+        self.mldsa_secret_key_size_v1(level)
+            .map_err(|_| PqVerificationError::SigningFailure)
+    }
+
+    fn sign(
+        &self,
+        level: u32,
+        expanded_secret_key: &[u8],
+        signing_message: &[u8],
+    ) -> Result<Vec<u8>, PqVerificationError> {
+        self.mldsa_sign_v1(level, expanded_secret_key, signing_message)
+            .map_err(|_| PqVerificationError::SigningFailure)
+    }
+}
+
+fn ensure_signing_backend(
+    runtime: &impl MldsaSigningBackend,
+    parameters: AoemMldsaParameterSet,
+) -> Result<(), PqVerificationError> {
+    if !runtime.available() {
+        return Err(PqVerificationError::RuntimeUnavailable);
+    }
+    if !runtime.signing_available() {
+        return Err(PqVerificationError::SigningUnavailable);
+    }
+    let level = parameters.level();
+    if runtime.sizes(level)? != (parameters.public_key_bytes(), parameters.signature_bytes())
+        || runtime.secret_key_size(level)? != parameters.secret_key_bytes()
+    {
+        return Err(PqVerificationError::RuntimeContractMismatch);
+    }
+    Ok(())
+}
+
+fn sign_with_backend(
+    runtime: &impl MldsaSigningBackend,
+    parameters: AoemMldsaParameterSet,
+    trusted_public_key: &[u8],
+    expanded_secret_key: &[u8],
+    message: &[u8],
+    context: &[u8],
+) -> Result<Vec<u8>, PqVerificationError> {
+    if trusted_public_key.len() != parameters.public_key_bytes() {
+        return Err(PqVerificationError::InvalidPublicKeyLength);
+    }
+    if expanded_secret_key.len() != parameters.secret_key_bytes() {
+        return Err(PqVerificationError::InvalidSecretKeyLength);
+    }
+    let signing_message = frame_pure_message(message, context)?;
+    ensure_signing_backend(runtime, parameters)?;
+    let signature = runtime.sign(parameters.level(), expanded_secret_key, &signing_message)?;
+    verify_with_backend(
+        runtime,
+        parameters,
+        trusted_public_key,
+        &signing_message,
+        &signature,
+    )?;
+    Ok(signature)
 }
 
 fn verify_with_backend(

@@ -68,15 +68,16 @@ fn check(
 
 #[test]
 fn only_explicit_canonical_parameter_sets_are_accepted() {
-    for (parameters, level, key_bytes, signature_bytes) in [
-        (AoemMldsaParameterSet::MlDsa44, 44, 1312, 2420),
-        (AoemMldsaParameterSet::MlDsa65, 65, 1952, 3309),
-        (AoemMldsaParameterSet::MlDsa87, 87, 2592, 4627),
+    for (parameters, level, key_bytes, signature_bytes, secret_key_bytes) in [
+        (AoemMldsaParameterSet::MlDsa44, 44, 1312, 2420, 2560),
+        (AoemMldsaParameterSet::MlDsa65, 65, 1952, 3309, 4032),
+        (AoemMldsaParameterSet::MlDsa87, 87, 2592, 4627, 4896),
     ] {
         assert_eq!(AoemMldsaParameterSet::try_from(level), Ok(parameters));
         assert_eq!(parameters.level(), level);
         assert_eq!(parameters.public_key_bytes(), key_bytes);
         assert_eq!(parameters.signature_bytes(), signature_bytes);
+        assert_eq!(parameters.secret_key_bytes(), secret_key_bytes);
     }
     for unsupported in [0, 1, 2, 3, 5, 43, 64, 86, 88, u32::MAX] {
         assert_eq!(
@@ -319,5 +320,256 @@ fn bundled_vectors_have_exact_profile_and_encoding_sizes() {
             vector_bytes(invalid),
             Err(PqVerificationError::CompatibilityVectorInvalid)
         );
+    }
+}
+
+struct SigningBackend {
+    verifier: Backend,
+    signing_available: bool,
+    secret_size: Result<usize, PqVerificationError>,
+    sign_result: Result<usize, PqVerificationError>,
+    sign_calls: Cell<usize>,
+    secret_pointer: Cell<*const u8>,
+}
+
+impl SigningBackend {
+    fn new(parameters: AoemMldsaParameterSet) -> Self {
+        Self {
+            verifier: Backend::new(parameters),
+            signing_available: true,
+            secret_size: Ok(parameters.secret_key_bytes()),
+            sign_result: Ok(parameters.signature_bytes()),
+            sign_calls: Cell::new(0),
+            secret_pointer: Cell::new(std::ptr::null()),
+        }
+    }
+}
+
+fn assert_signing_message(message: &[u8]) {
+    assert_eq!(
+        message,
+        b"\x00\x0ctest-contextcaller-provided canonical message"
+    );
+}
+
+impl MldsaBackend for SigningBackend {
+    fn available(&self) -> bool {
+        self.verifier.available()
+    }
+
+    fn sizes(&self, level: u32) -> Result<(usize, usize), PqVerificationError> {
+        self.verifier.sizes(level)
+    }
+
+    fn verify(
+        &self,
+        level: u32,
+        public_key: &[u8],
+        message: &[u8],
+        signature: &[u8],
+    ) -> Result<bool, PqVerificationError> {
+        assert_signing_message(message);
+        self.verifier.verify(
+            level,
+            public_key,
+            b"caller-provided canonical message",
+            signature,
+        )
+    }
+}
+
+impl MldsaSigningBackend for SigningBackend {
+    fn signing_available(&self) -> bool {
+        self.signing_available
+    }
+
+    fn secret_key_size(&self, level: u32) -> Result<usize, PqVerificationError> {
+        assert!(matches!(level, 44 | 65 | 87));
+        self.secret_size
+    }
+
+    fn sign(
+        &self,
+        level: u32,
+        expanded_secret_key: &[u8],
+        signing_message: &[u8],
+    ) -> Result<Vec<u8>, PqVerificationError> {
+        let parameters = AoemMldsaParameterSet::try_from(level).unwrap();
+        assert_eq!(expanded_secret_key.len(), parameters.secret_key_bytes());
+        assert!(std::ptr::eq(
+            expanded_secret_key.as_ptr(),
+            self.secret_pointer.get()
+        ));
+        assert_signing_message(signing_message);
+        self.sign_calls.set(self.sign_calls.get() + 1);
+        self.sign_result.map(|size| vec![0x26; size])
+    }
+}
+
+fn check_signing(
+    backend: &SigningBackend,
+    parameters: AoemMldsaParameterSet,
+    key_len: usize,
+    secret_len: usize,
+    context: &[u8],
+) -> Result<Vec<u8>, PqVerificationError> {
+    // Synthetic bytes are used only by this mock, never by a real runtime.
+    let secret_key = vec![0x37; secret_len];
+    backend.secret_pointer.set(secret_key.as_ptr());
+    sign_with_backend(
+        backend,
+        parameters,
+        &vec![0x15; key_len],
+        &secret_key,
+        b"caller-provided canonical message",
+        context,
+    )
+}
+
+#[test]
+fn malformed_signing_inputs_are_rejected_before_the_backend() {
+    for parameters in PARAMETER_SETS {
+        let backend = SigningBackend::new(parameters);
+        let secret_size = parameters.secret_key_bytes();
+        let key_size = parameters.public_key_bytes();
+        for secret_len in [0, 32, secret_size - 1, secret_size + 1, secret_size * 2] {
+            assert_eq!(
+                check_signing(&backend, parameters, key_size, secret_len, b"test-context"),
+                Err(PqVerificationError::InvalidSecretKeyLength)
+            );
+        }
+        for key_len in [0, 32, key_size - 1, key_size + 1] {
+            assert_eq!(
+                check_signing(&backend, parameters, key_len, secret_size, b"test-context"),
+                Err(PqVerificationError::InvalidPublicKeyLength)
+            );
+        }
+        assert_eq!(
+            check_signing(&backend, parameters, key_size, secret_size, &[0; 256]),
+            Err(PqVerificationError::InvalidContextLength)
+        );
+        assert_eq!(backend.sign_calls.get(), 0);
+        assert_eq!(backend.verifier.calls.get(), 0);
+    }
+}
+
+#[test]
+fn signing_capabilities_and_all_encoding_sizes_fail_closed() {
+    for parameters in PARAMETER_SETS {
+        let mut backend = SigningBackend::new(parameters);
+        let check = |backend: &SigningBackend| {
+            check_signing(
+                backend,
+                parameters,
+                parameters.public_key_bytes(),
+                parameters.secret_key_bytes(),
+                b"test-context",
+            )
+        };
+        backend.verifier.available = false;
+        assert_eq!(
+            check(&backend),
+            Err(PqVerificationError::RuntimeUnavailable)
+        );
+        backend.verifier.available = true;
+        backend.signing_available = false;
+        assert_eq!(
+            check(&backend),
+            Err(PqVerificationError::SigningUnavailable)
+        );
+        backend.signing_available = true;
+        for sizes in [(0, 0), (32, 64), (parameters.public_key_bytes(), 1)] {
+            backend.verifier.sizes = Ok(sizes);
+            assert_eq!(
+                check(&backend),
+                Err(PqVerificationError::RuntimeContractMismatch)
+            );
+        }
+        backend.verifier.sizes = Err(PqVerificationError::RuntimeFailure);
+        assert_eq!(check(&backend), Err(PqVerificationError::RuntimeFailure));
+        backend.verifier.sizes = Ok((parameters.public_key_bytes(), parameters.signature_bytes()));
+        for secret_size in [
+            0,
+            32,
+            parameters.secret_key_bytes() - 1,
+            parameters.secret_key_bytes() + 1,
+        ] {
+            backend.secret_size = Ok(secret_size);
+            assert_eq!(
+                check(&backend),
+                Err(PqVerificationError::RuntimeContractMismatch)
+            );
+        }
+        backend.secret_size = Err(PqVerificationError::SigningFailure);
+        assert_eq!(check(&backend), Err(PqVerificationError::SigningFailure));
+        assert_eq!(backend.sign_calls.get(), 0);
+        assert_eq!(backend.verifier.calls.get(), 0);
+    }
+}
+
+#[test]
+fn failed_or_malformed_signing_output_is_never_returned_or_retried() {
+    for parameters in PARAMETER_SETS {
+        let mut backend = SigningBackend::new(parameters);
+        for (result, expected) in [
+            (
+                Err(PqVerificationError::SigningFailure),
+                PqVerificationError::SigningFailure,
+            ),
+            (Ok(0), PqVerificationError::InvalidSignatureLength),
+            (
+                Ok(parameters.signature_bytes() - 1),
+                PqVerificationError::InvalidSignatureLength,
+            ),
+            (
+                Ok(parameters.signature_bytes() + 1),
+                PqVerificationError::InvalidSignatureLength,
+            ),
+        ] {
+            backend.sign_result = result;
+            let before = backend.sign_calls.get();
+            assert_eq!(
+                check_signing(
+                    &backend,
+                    parameters,
+                    parameters.public_key_bytes(),
+                    parameters.secret_key_bytes(),
+                    b"test-context",
+                ),
+                Err(expected)
+            );
+            assert_eq!(backend.sign_calls.get(), before + 1);
+            assert_eq!(backend.verifier.calls.get(), 0);
+        }
+    }
+}
+
+#[test]
+fn signing_borrows_the_secret_frames_once_and_requires_output_self_verification() {
+    for parameters in PARAMETER_SETS {
+        let mut backend = SigningBackend::new(parameters);
+        for (result, expected) in [
+            (Ok(true), Ok(vec![0x26; parameters.signature_bytes()])),
+            (Ok(false), Err(PqVerificationError::InvalidSignature)),
+            (
+                Err(PqVerificationError::RuntimeFailure),
+                Err(PqVerificationError::RuntimeFailure),
+            ),
+        ] {
+            backend.verifier.result = result;
+            let before = backend.sign_calls.get();
+            assert_eq!(
+                check_signing(
+                    &backend,
+                    parameters,
+                    parameters.public_key_bytes(),
+                    parameters.secret_key_bytes(),
+                    b"test-context",
+                ),
+                expected
+            );
+            assert_eq!(backend.sign_calls.get(), before + 1);
+            assert_eq!(backend.verifier.calls.get(), before + 1);
+        }
     }
 }
