@@ -13,8 +13,15 @@
 //! An outcome is not an authorization token or a business validity proof.
 
 /// Exact balance identity: 20-byte and 32-byte accounts are never aliased.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "Vec<u8>", into = "Vec<u8>")]
 pub struct Account(Vec<u8>);
+
+impl From<Account> for Vec<u8> {
+    fn from(account: Account) -> Self {
+        account.0
+    }
+}
 
 impl Account {
     pub fn as_bytes(&self) -> &[u8] {
@@ -81,21 +88,21 @@ pub struct TransferIntent {
     pub fee_cap: u128,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct TransferSnapshot {
     pub payer_balance: u128,
     pub recipient_balance: u128,
     pub next_nonce: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct BalanceDelta {
     pub account: Account,
     pub before: u128,
     pub after: u128,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct TransferDelta {
     pub tx_hash: [u8; 32],
     pub payer: BalanceDelta,
@@ -108,7 +115,7 @@ pub struct TransferDelta {
     pub fee_funding_delta: u128,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub enum TransferError {
     MissingNonceIdentity,
     NonceMismatch { expected: u64, provided: u64 },
@@ -154,7 +161,7 @@ impl std::fmt::Display for TransferError {
 
 impl std::error::Error for TransferError {}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub enum TransferFailure {
     Fee(String),
     Business(TransferError),
@@ -162,7 +169,7 @@ pub enum TransferFailure {
 
 /// Only the checked operator constructs an outcome. There is deliberately no
 /// Deserialize implementation accepting externally manufactured transitions.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct TransferOutcome {
     delta: TransferDelta,
     failure: Option<TransferFailure>,

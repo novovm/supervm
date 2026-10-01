@@ -32,9 +32,12 @@ $env:NOVOVM_AOEM_TEST_LIBRARY = (Resolve-Path $platformLibrary).Path
 cargo test --workspace --release --locked -- --include-ignored --test-threads=1
 ```
 
-当前新实现已接入 owned 批输入、AOEM 通用计算和真实 V3 批验签组件。
-签名/nonce 联调与转账算术测试尚未合成完整经济执行；费用结果仍在全局结算
-前、状态更新尚未持久化，不是运行节点。V3 仍为 Ed25519，不宣称抗量子。
+当前新实现已接入真实 V3 批验签、精确父输入和 NOV 直付业务批执行：独立
+依赖组件在 AOEM 内计算，纯收款账户经检查后允许并行，最后一个 AOEM 回调
+完成原序费用结算、失败修正、回执输出和一次批状态树更新。费用、nonce 和
+失败规则对照原经济规则；新状态/回执编码不冒充旧账本兼容。
+**输出仍未持久化，没有新运行节点、最终性或主链 TPS 成绩。** 只接 NOV
+Transfer，Execute/其他资产/隐私/PQ 尚未迁入；V3 仍为 Ed25519。
 
 新代码只迁移必要且已审查的局部原语，不依赖旧节点、旧候选容器或旧执行入口。
 测试通过仅表示实际覆盖的模块通过，不等于链已恢复、高 TPS、隐私/PQ 已接通
