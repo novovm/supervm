@@ -14,6 +14,57 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
+## 设备 A：根视图进入实时签票与首次晋升准备（2026-10-01）
+
+基线 `3157bef`。record 父块的候选登记、后继签票、父块换轮签票及首次晋升
+准备已复用根视图，不再为这些动作加载完整父 Store。workspace → authority
+→ ledger 锁顺序不变，authority 从实时验证连续持有到回调结束；历史缓存仍
+不能授权签名。当前最终块、无 pending、QC、head/h、当前与直接前块的
+输入/输出和三树验证保留，损坏数据不降级；明确旧格式才走原冷锁内回调。
+
+首次 prepare 使用严格 scope；已有 verifier 确认 parent/candidate/完整 proof
+完全相同且持久 intent 有效后，才走原 cold 重试检查。它不是 pending 签票许可，
+也没有扩大直接重复 prepare 原先允许的高度范围；标准 resume、发布、账本
+完成及 finalize 状态机未改。交易编码、根、费用、AOEM 和生产参数也未改。
+
+本机 Windows FULLMAX 最终通过 51 项回归，0 失败、0 忽略：49 项转账、费用、
+nonce、增量恢复、旧格式、交易池及无候选换轮定向测试，加 record/legacy
+各一项完整四块生命周期。定向组耗时 208.79 秒，record/legacy 最终完整回归
+分别 265.08/294.81 秒；均含故障和网络恢复，不是出块间隔或 TPS。严格
+Clippy `-D warnings`、格式和补丁检查通过，未宣称全库或远端 CI 已通过。
+新增护栏覆盖真实登记、proposal/vote/decision、父轮次 timeout 签名、服务
+启动/轮询、首次 prepare、发布/账本完成、最终化恢复及自动提案；签名 subject
+与完整父参考相同。实际 OS try_lock 验证回调期间 authority 被持有，正常
+返回和错误返回后均释放。
+未登记、陈旧父、pending、坏 head/h/输出/三根/直接前块均不得进入签名回调。
+
+首轮 record 回归发现新夹具错误要求：删除子块输出 reservation 后，父轮次
+仍应成功。实际共享 catalog 要求 completion 必有 reservation，因此应共同
+拒绝；已按原安全语义修正测试，生产校验未放宽。仅子块 completion/chunk
+缺失仍要求父轮次可用；每个故障逐字节恢复，拒绝不能改写源证据。
+
+第二轮整段护栏进一步发现发布轮询仍通过 parent_artifact 间接读取旧 NCW1
+Execute 父块全状态。现已在原 authority 锁内，用已验证的历史 finalized archive
+及原始输出/输入/QC/h/三树验证父来源，核对父 workspace、链、高度及 hash。
+只有明确旧输出格式冷兼容；不能用 strict no-pending tip getter 替代历史父验证。
+原 head=父或精确目标的条件、原子提交/readback、不确定结果锁保留与恢复均保留。
+发布中断测试要求真的到达 AfterLedgerCommit，不能把物化护栏报错当故障注入通过。
+
+第三轮完整自动提案护栏又发现 service config 为核对直接祖先而加载旧块全状态。
+现改为复用 live capture 在同一锁内已验证的祖先 workspace/hash；历史根视图
+未验证 lineage 或祖先不符直接拒绝，只有明确 Cold 视图保留原兼容分支。
+显式准备、相同请求重试及真实自动提案均加物化护栏；不存在的祖先和真实但
+高度错误的 workspace 都必须在创建候选前拒绝，不改变交易/根/签名协议。
+新反例最初只接受 lineage 报错，但自指祖先会被更早的配置校验拒绝；已分别
+断言两道拒绝原因，并保留零新增候选检查，没有放宽生产校验。
+
+下一步直接处理选单逐前缀重复鉴权和 16 笔限制，并复用现有独立节点 HTTP
+提交/最终确认测试，增加 record-v2 Transfer 连续批次的 TPS/P95/P99 测量。
+账本完整验证仍随历史增长，须以该路径实测；旧独立 nonce 证明格式不是
+record Transfer/BFT 性能测量前置。首块、旧格式、Execute/混合批、启动及
+部分重试仍有冷路径，不据此宣称端到端历史无关或主网高吞吐。
+本轮不代表实体多机、公网、Linux/nightly 或生产验收。
+
 ## 设备 A：最终块点读接入交易池与回执查询（2026-10-01）
 
 基线 `077ba6d`。fresh 生命周期缓存已改为经过验证的最终块视图；record 创世

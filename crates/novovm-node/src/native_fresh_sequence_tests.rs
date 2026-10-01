@@ -1,3 +1,14 @@
+fn with_record_signing_guard<T>(
+    record_profile: bool,
+    action: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    if record_profile {
+        workspace::without_materialization_for_test(action)
+    } else {
+        action()
+    }
+}
+
 // Reuse the same persisted signers and publication APIs across successive heights.
 fn exercise_fresh_sequence(
     path: &Path,
@@ -17,6 +28,8 @@ fn exercise_fresh_sequence(
     let set = compiled.validator_set();
     let chain = set.chain_id;
     let pin = compiled.config_commitment();
+    let record_profile = compiled.root_codec_profile()
+        == crate::native_root_codecs::NativeRootCodecProfileV1::RecordTreeV1;
     let namespace = parse_fixed_hex_32_v1(
         &native_aoem_owned_state_namespace_digest_v1(params, chain),
         "namespace",
@@ -92,16 +105,31 @@ fn exercise_fresh_sequence(
                     params
                 )
                 .is_err());
-            let mut wrong_ancestor = load();
-            wrong_ancestor.finalized_parent_workspace_id = Some([9; 32]);
-            assert!(wrong_ancestor
-                .prepare_fresh_successor(
-                    context.slot,
-                    context.timestamp_unix_ms,
-                    plan.raw_txs.clone(),
-                    params
-                )
-                .is_err());
+            for wrong_id in [[9; 32], parent] {
+                // Both an absent ID and a real workspace at the wrong height
+                // must fail ancestry validation before anything is staged.
+                let mut wrong_ancestor = load();
+                wrong_ancestor.finalized_parent_workspace_id = Some(wrong_id);
+                let error = with_record_signing_guard(record_profile, || wrong_ancestor
+                    .prepare_fresh_successor(
+                        context.slot,
+                        context.timestamp_unix_ms,
+                        plan.raw_txs.clone(),
+                        params
+                    ))
+                    .err().expect("wrong predecessor must fail before candidate staging");
+                let diagnostic = format!("{error:#}");
+                // Self-parenting is already rejected by config.validate;
+                // an absent but otherwise well-formed ID reaches lineage.
+                let expected = if wrong_id == parent {
+                    "explicit finalized parent for successor heights"
+                } else {
+                    "predecessor"
+                };
+                assert!(diagnostic.contains(expected), "{diagnostic}");
+                assert!(!diagnostic.contains("unexpected full candidate store materialization"));
+                assert_eq!(workspace::list_v1(chain, params).unwrap(), before);
+            }
             assert!(load()
                 .prepare_fresh_successor(
                     context.slot,
@@ -111,13 +139,13 @@ fn exercise_fresh_sequence(
                 )
                 .is_err());
             assert_eq!(workspace::list_v1(chain, params).unwrap(), before);
-            let next = load()
+            let next = with_record_signing_guard(record_profile, || load()
                 .prepare_fresh_successor(
                     context.slot,
                     context.timestamp_unix_ms,
                     plan.raw_txs.clone(),
                     params,
-                )
+                ))
                 .unwrap();
             candidate = next.isolated_workspace_id.unwrap();
             assert_eq!(next.height, height);
@@ -125,22 +153,24 @@ fn exercise_fresh_sequence(
             assert_eq!(next.seal_store_path, load().seal_store_path);
             assert_eq!(next.local_validator_id, load().local_validator_id);
             assert_eq!(next.authority, load().authority);
-            let retry = load()
+            let retry = with_record_signing_guard(record_profile, || load()
                 .prepare_fresh_successor(
                     context.slot,
                     context.timestamp_unix_ms,
                     plan.raw_txs.clone(),
                     params,
-                )
+                ))
                 .unwrap();
             assert_eq!(retry.isolated_workspace_id, Some(candidate));
             assert_eq!(retry.block_hash, next.block_hash);
             crate::native_block_seal::tests::native_seal_round_network::with_service_test_transports(chain, |peers| {
                 let (runtime, _) = peers.iter().find(|(_, key)|
                     key.verifying_key() == next.signer.verifying_key()).unwrap();
-                let mut service = crate::native_block_seal::service::NovNativeSealServiceV1::open_configured(
-                    next, &ledger, params, runtime, std::time::Instant::now()).unwrap();
-                service.poll(runtime, std::time::Instant::now()).unwrap();
+                let mut service = with_record_signing_guard(record_profile, ||
+                    crate::native_block_seal::service::NovNativeSealServiceV1::open_configured(
+                        next, &ledger, params, runtime, std::time::Instant::now())).unwrap();
+                with_record_signing_guard(record_profile, ||
+                    service.poll(runtime, std::time::Instant::now())).unwrap();
                 assert_eq!(service.status_json()["height"], height);
                 assert_eq!(service.status_json()["finalized"], false);
                 assert!(!service.halted());
@@ -176,7 +206,25 @@ fn exercise_fresh_sequence(
             workspace::assert_light_input_output_point_read_for_test_v1(chain, candidate, params)
                 .unwrap();
         }
-        workspace::register_finalized_successor_v1(chain, parent, candidate, pin, params).unwrap();
+        if height == 3 {
+            with_record_signing_guard(record_profile, || {
+                let error = workspace::with_verified_finalized_successor_v1(
+                    chain, parent, candidate, pin, params,
+                    |_| -> Result<()> { panic!("unregistered third block reached signing callback") },
+                ).unwrap_err();
+                assert!(!format!("{error:#}")
+                    .contains("unexpected full candidate store materialization"));
+                Ok(())
+            }).unwrap();
+        }
+        with_record_signing_guard(record_profile, ||
+            workspace::register_finalized_successor_v1(chain, parent, candidate, pin, params))
+            .unwrap();
+        if record_profile && height == 3 {
+            workspace::exercise_live_successor_signing_scope_for_test_v1(
+                chain, parent, candidate, pin, params,
+            ).unwrap();
+        }
         if height == 3 {
             exercise_fresh_candidate_service(path, params, compiled, candidate, Some(parent));
         }
@@ -184,6 +232,16 @@ fn exercise_fresh_sequence(
             .unwrap()
             .unwrap();
         let authority = parent_image.finality_proof().authority.clone();
+        with_record_signing_guard(record_profile, || {
+            workspace::with_verified_finalized_parent_round_v1(chain, parent, pin, params, |view| {
+                authority.validate_against_ledger(view)?;
+                assert_eq!(view.fresh_round_height_v1()?, Some(height));
+                let store = Seal::open(&path.with_extension(format!("rooted-parent-round-{height}")))?;
+                store.start_round_tracking(view, set, height)?;
+                store.sign_local_timeout(view, set, height, 0, &keys[0])?.verify(set)?;
+                Ok(())
+            })
+        }).unwrap();
         let leader = authority.expected_leader(height, 0).unwrap();
         let leader_index = set
             .validators
@@ -199,7 +257,7 @@ fn exercise_fresh_sequence(
             round: 0,
             justify_qc_hash: None,
         };
-        let proposal = workspace::with_verified_finalized_successor_v1(
+        let proposal = with_record_signing_guard(record_profile, || workspace::with_verified_finalized_successor_v1(
             chain,
             parent,
             candidate,
@@ -208,8 +266,9 @@ fn exercise_fresh_sequence(
             |view| {
                 stores[leader_index].sign_local_proposal(view, &request, set, &keys[leader_index])
             },
-        )
+        ))
         .unwrap();
+        assert_eq!(proposal.subject, parent_image.successor_seal_subject(&artifact, 0).unwrap());
         if height == 4 {
             exercise_received_successor_body(
                 path,
@@ -223,14 +282,14 @@ fn exercise_fresh_sequence(
         }
         let votes = (0..3)
             .map(|i| {
-                workspace::with_verified_finalized_successor_v1(
+                with_record_signing_guard(record_profile, || workspace::with_verified_finalized_successor_v1(
                     chain,
                     parent,
                     candidate,
                     pin,
                     params,
                     |view| stores[i].sign_local_vote(view, &proposal, set, &keys[i]),
-                )
+                ))
                 .unwrap()
             })
             .collect::<Vec<_>>();
@@ -238,7 +297,7 @@ fn exercise_fresh_sequence(
         let qc = Qc::from_votes(proposal.subject.clone(), set, votes).unwrap();
         let decisions = (0..3)
             .map(|i| {
-                workspace::with_verified_finalized_successor_v1(
+                with_record_signing_guard(record_profile, || workspace::with_verified_finalized_successor_v1(
                     chain,
                     parent,
                     candidate,
@@ -248,20 +307,20 @@ fn exercise_fresh_sequence(
                         stores[i].persist_local_verified_qc(view, &qc, set)?;
                         stores[i].sign_local_decision_vote_v3(view, &qc, set, &keys[i])
                     },
-                )
+                ))
                 .unwrap()
             })
             .collect::<Vec<_>>();
         assert!(Certificate::from_votes(qc.clone(), set, decisions[..2].to_vec()).is_err());
         let decision = Certificate::from_votes(qc, set, decisions).unwrap();
-        workspace::with_verified_finalized_successor_v1(
+        with_record_signing_guard(record_profile, || workspace::with_verified_finalized_successor_v1(
             chain,
             parent,
             candidate,
             pin,
             params,
             |view| stores[0].persist_local_verified_decision_certificate_v3(view, &decision, set),
-        )
+        ))
         .unwrap();
         drop(stores);
         let proof = crate::native_block_ledger::NovNativeFreshFinalityProofV1 {
@@ -277,10 +336,28 @@ fn exercise_fresh_sequence(
                 .unwrap()
                 .is_none()
         );
-        workspace::prepare_successor_promotion_v1(chain, parent, candidate, pin, &proof, params)
+        with_record_signing_guard(record_profile, ||
+            workspace::prepare_successor_promotion_v1(chain, parent, candidate, pin, &proof, params))
             .unwrap();
+        // Preparing publication pins the decision; it must never authorize new
+        // signing or parent-round callbacks, even though retrying it is allowed.
+        with_record_signing_guard(record_profile, || {
+            let signer = workspace::with_verified_finalized_successor_v1(
+                chain, parent, candidate, pin, params,
+                |_| -> Result<()> { panic!("pending promotion reached successor signer") },
+            ).unwrap_err();
+            let round = workspace::with_verified_finalized_parent_round_v1(
+                chain, parent, pin, params,
+                |_| -> Result<()> { panic!("pending promotion reached parent-round signer") },
+            ).unwrap_err();
+            for error in [signer, round] {
+                assert!(!format!("{error:#}")
+                    .contains("unexpected full candidate store materialization"));
+            }
+            Ok(())
+        }).unwrap();
         assert!(workspace::load_finalized_genesis_parent_v1(chain, parent, pin, params).is_err());
-        assert!(workspace::complete_successor_with_checkpoint_v1(
+        let interrupted = with_record_signing_guard(record_profile, || workspace::complete_successor_with_checkpoint_v1(
             chain,
             parent,
             candidate,
@@ -292,8 +369,9 @@ fn exercise_fresh_sequence(
                 }
                 Ok(())
             }
-        )
-        .is_err());
+        ))
+        .unwrap_err();
+        assert!(format!("{interrupted:#}").contains("simulated response loss"));
         assert!(
             Ledger::load_fresh_finality_by_height_v1(&ledger, pin, namespace, height)
                 .unwrap()
@@ -329,16 +407,25 @@ fn exercise_fresh_sequence(
                 assert_eq!(resumed.status_json()["signing_enabled"], false);
             });
         }
-        let report = workspace::resume_successor_promotion_v1(
+        let report = with_record_signing_guard(record_profile, || workspace::resume_successor_promotion_v1(
             chain, parent, candidate, pin, &proof, &ledger, params,
-        )
+        ))
         .unwrap();
         assert!(report.finalized && report.ledger_publication_completed);
+        with_record_signing_guard(record_profile, || {
+            let error = workspace::with_verified_finalized_parent_round_v1(
+                chain, parent, pin, params,
+                |_| -> Result<()> { panic!("stale parent reached parent-round signer") },
+            ).unwrap_err();
+            assert!(!format!("{error:#}")
+                .contains("unexpected full candidate store materialization"));
+            Ok(())
+        }).unwrap();
         assert_eq!(
             report,
-            workspace::resume_successor_promotion_v1(
+            with_record_signing_guard(record_profile, || workspace::resume_successor_promotion_v1(
                 chain, parent, candidate, pin, &proof, &ledger, params
-            )
+            ))
             .unwrap()
         );
         history.push(proof.clone());
@@ -487,6 +574,12 @@ fn exercise_fresh_sequence(
                     )
                     .err()
                     .context("live view accepted a corrupt retained predecessor")?;
+                    assert!(!format!("{error:#}")
+                        .contains("unexpected full candidate store materialization"));
+                    let error = workspace::with_verified_finalized_parent_round_v1(
+                        chain, candidate, pin, params,
+                        |_| -> Result<()> { panic!("corrupt predecessor reached parent-round signer") },
+                    ).unwrap_err();
                     assert!(!format!("{error:#}")
                         .contains("unexpected full candidate store materialization"));
                     Ok(())
@@ -952,6 +1045,8 @@ fn exercise_automatic_proposal(
     )
     .unwrap();
     let committed_raw = query_parent.block().body.raw_txs[0].clone();
+    let record_profile = query_parent.genesis_config().root_codec_profile().unwrap()
+        == crate::native_root_codecs::NativeRootCodecProfileV1::RecordTreeV1;
     let committed_hash = query_parent.block().body.tx_hashes[0];
     let pending_before_query = lifecycle.status_json()["durable_pending_transactions"].clone();
     workspace::without_materialization_for_test(|| {
@@ -976,19 +1071,19 @@ fn exercise_automatic_proposal(
     // Real authenticated transport, but invalid signed chain/nonce must never
     // become a candidate. A later valid input in the same bounded poll survives.
     let invalid = [
-        candidate_workspace_execution_raw(
+        transfer_candidate_raw(
             authority.chain_id + 1,
             4,
             [0xc3; 32],
+            [0xd4; 32],
             10,
-            "deposit_reserve",
         ),
-        candidate_workspace_execution_raw(
+        transfer_candidate_raw(
             authority.chain_id,
             42,
             [0xc3; 32],
+            [0xd4; 32],
             10,
-            "deposit_reserve",
         ),
     ];
     assert_eq!(raws.len(), 1);
@@ -1028,19 +1123,19 @@ fn exercise_automatic_proposal(
     assert_eq!(lifecycle.status_json()["height"], 3); // Enqueue does not execute.
     let subject = &expected.proposal().unwrap().subject;
     let at = Instant::now();
-    lifecycle
-        .poll_with_wall_time(leader, at, subject.timestamp_unix_ms)
+    with_record_signing_guard(record_profile, || lifecycle
+        .poll_with_wall_time(leader, at, subject.timestamp_unix_ms))
         .unwrap();
     assert_eq!(lifecycle.status_json()["height"], 3);
     assert_eq!(lifecycle.status_json()["proposed_successors"], 0);
     assert_eq!(lifecycle.status_json()["successor_rejected"], 2);
     assert_eq!(lifecycle.status_json()["durable_pending_transactions"], 1);
-    lifecycle
+    with_record_signing_guard(record_profile, || lifecycle
         .poll_with_wall_time(
             leader,
             at + Duration::from_secs(1),
             subject.timestamp_unix_ms - 60_000,
-        )
+        ))
         .unwrap();
     assert_eq!(lifecycle.status_json()["clock_waiting"], true);
     assert_eq!(lifecycle.status_json()["proposed_successors"], 0);
@@ -1048,12 +1143,12 @@ fn exercise_automatic_proposal(
     // this is an application retry, not a new transport or signature fixture.
     let valid_event = valid_event.unwrap();
     assert!(lifecycle.enqueue(valid_event.clone()));
-    lifecycle
+    with_record_signing_guard(record_profile, || lifecycle
         .poll_with_wall_time(
             leader,
             at + Duration::from_secs(2),
             subject.timestamp_unix_ms,
-        )
+        ))
         .unwrap();
     assert_eq!(lifecycle.status_json()["height"], 4);
     assert_eq!(

@@ -292,10 +292,17 @@ impl NovNativeSealServiceConfigV1 {
             bail!("successor service differs from the live finalized parent or authority");
         }
         if let Some(predecessor) = self.finalized_parent_workspace_id {
-            let artifact = workspace::load_block_artifact_v1(self.chain_id, predecessor, params)?
-                .context("configured finalized predecessor output missing")?;
-            if artifact.block().header.block_hash != parent.block().header.parent_block_hash {
-                bail!("successor service predecessor differs from finalized ancestry");
+            // Live capture checked the exact retained predecessor's input/output,
+            // roots, QC and publication evidence under the same authority scope.
+            // Do not reload its potentially NCW1 Store just for this identity
+            // check. Only an explicitly cold view uses the original artifact.
+            if !parent.verify_direct_predecessor(predecessor)? {
+                let artifact =
+                    workspace::load_block_artifact_v1(self.chain_id, predecessor, params)?
+                        .context("configured finalized predecessor output missing")?;
+                if artifact.block().header.block_hash != parent.block().header.parent_block_hash {
+                    bail!("successor service predecessor differs from finalized ancestry");
+                }
             }
         }
         let height = self

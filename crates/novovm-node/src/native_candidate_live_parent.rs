@@ -11,11 +11,23 @@ use native_transfer_record_execution::{ExecutionReader, RootedAccess};
 use serde::de::DeserializeOwned;
 use serde_json::value::RawValue;
 
+enum DirectPredecessor {
+    Uncaptured,
+    Genesis,
+    Successor {
+        workspace_id: [u8; 32],
+        block_hash: [u8; 32],
+    },
+}
+
 enum ParentView {
     Cold(Box<FinalizedGenesisParentV1>),
     Rooted {
         snapshot: Box<rooted_parent::RootedParentSnapshot>,
         reference: Box<state_records::StoreRef>,
+        // Populated only by live capture after verifying the retained direct
+        // predecessor archive/source under the same authority lock.
+        direct_predecessor: DirectPredecessor,
     },
 }
 
@@ -133,6 +145,50 @@ pub(super) fn capture_finalized_parent_view_locked(
     genesis: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<FinalizedParentViewV1> {
+    let (view, authority) = capture_rooted_live_parent_locked(workspace, id, genesis, params)?;
+    if let Some(view) = view {
+        return Ok(view);
+    }
+    // The legacy reader reacquires authority and repeats its full verification.
+    // No action is authorized during this compatibility handover.
+    drop(authority);
+    Ok(FinalizedParentViewV1::from_verified_cold(
+        execution::capture_finalized_parent_locked(workspace, id, genesis, params)?,
+    ))
+}
+
+/// Live callback scope, unlike the freely retainable historical view. The
+/// caller already owns the workspace lock; this function retains authority
+/// continuously from verification through completion (or failure) of action.
+/// False means only an identified legacy format, never invalid evidence. The
+/// caller must then run its original cold, authority-locked callback path.
+pub(super) fn try_with_rooted_finalized_parent_view_locked(
+    workspace: &WorkspaceStore,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+    action: &mut dyn FnMut(FinalizedParentViewV1) -> Result<()>,
+) -> Result<bool> {
+    let (view, authority) = capture_rooted_live_parent_locked(workspace, id, genesis, params)?;
+    let Some(view) = view else {
+        return Ok(false);
+    };
+    // Ledger getters used during capture have released their non-reentrant
+    // mutex. The callback may acquire that mutex, but not workspace/authority.
+    let result = action(view);
+    drop(authority);
+    result.map(|()| true)
+}
+
+fn capture_rooted_live_parent_locked(
+    workspace: &WorkspaceStore,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<(
+    Option<FinalizedParentViewV1>,
+    NovNativeExecutionStoreWriteLockV1,
+)> {
     let path = resolve_native_execution_store_path_from_params_v1(params)
         .context("live parent capture requires explicit native path")?;
     let authority = acquire_nov_native_execution_store_write_lock_v1(&path)?;
@@ -174,24 +230,34 @@ pub(super) fn capture_finalized_parent_view_locked(
         Some(previous) => capture_rooted_archive(workspace, previous, params)?.is_some(),
         None => true,
     };
-    if let Some(view) = view.filter(|_| previous_is_rooted) {
+    if let Some(mut view) = view.filter(|_| previous_is_rooted) {
+        if let ParentView::Rooted {
+            direct_predecessor, ..
+        } = &mut view.0
+        {
+            *direct_predecessor = match &previous {
+                Some(previous) => DirectPredecessor::Successor {
+                    workspace_id: previous.execution.workspace_id,
+                    block_hash: previous.block.header.block_hash,
+                },
+                None => DirectPredecessor::Genesis,
+            };
+        }
         // Readback while authority is still locked; no repair on missing evidence.
         verify_live_head(workspace, id, &target)?;
-        return Ok(view);
+        return Ok((Some(view), authority));
     }
     // Only identified compatibility formats reach the original cold reader.
     // It also verifies the retained direct predecessor. A corrupt rooted output
     // never enters this branch; capture_rooted_archive returns an error for it.
-    drop(authority);
-    Ok(FinalizedParentViewV1(ParentView::Cold(Box::new(
-        execution::capture_finalized_parent_locked(workspace, id, genesis, params)?,
-    ))))
+    Ok((None, authority))
 }
 
-/// Verify one retained finalized output, not live authority. The caller obtains
-/// both current and immediate-predecessor archives in one locked ledger read.
+/// Verify one retained finalized output, not live authority. The archive must
+/// come from a verified ledger getter. Callers separately enforce their live
+/// head/pending-intent rules while holding authority around any action.
 /// Do not recurse into earlier workspaces: those may already be retired.
-fn capture_rooted_archive(
+pub(super) fn capture_rooted_archive(
     workspace: &WorkspaceStore,
     archive: &crate::native_block_ledger::FinalizedRecordArchiveV1,
     params: &serde_json::Value,
@@ -232,6 +298,7 @@ fn capture_rooted_archive(
     let view = FinalizedParentViewV1(ParentView::Rooted {
         snapshot: Box::new(snapshot),
         reference: Box::new(reference),
+        direct_predecessor: DirectPredecessor::Uncaptured,
     });
     view.with_record_access(workspace, |access| {
         verify_record_domain(access, workspace, view.block().header.state_version)
@@ -285,6 +352,12 @@ fn verify_record_domain(
 }
 
 impl FinalizedParentViewV1 {
+    /// Only existing fully verified cold capture may construct this variant.
+    /// Its caller remains responsible for retaining authority around actions.
+    pub(super) fn from_verified_cold(parent: FinalizedGenesisParentV1) -> Self {
+        Self(ParentView::Cold(Box::new(parent)))
+    }
+
     /// Read nonce/receipt records from this immutable historical image. The
     /// rooted branch opens one workspace/provider and shares one bounded node
     /// and blob reader for the whole callback. It does not recheck the live head
@@ -355,6 +428,35 @@ impl FinalizedParentViewV1 {
             ParentView::Rooted { snapshot, .. } => snapshot.binding.output_digest,
         }
     }
+    /// Compare historical lineage captured with this live parent, not a live
+    /// permission. Only Cold returns false for the original compatibility check.
+    /// Missing rooted lineage or a configured predecessor of genesis is an error.
+    pub(crate) fn verify_direct_predecessor(&self, predecessor: [u8; 32]) -> Result<bool> {
+        match &self.0 {
+            ParentView::Cold(_) => Ok(false),
+            ParentView::Rooted {
+                direct_predecessor, ..
+            } => match direct_predecessor {
+                DirectPredecessor::Uncaptured => {
+                    bail!("finalized predecessor lineage was not captured")
+                }
+                DirectPredecessor::Genesis => {
+                    bail!("configured finalized predecessor is invalid for genesis")
+                }
+                DirectPredecessor::Successor {
+                    workspace_id,
+                    block_hash,
+                } => {
+                    if predecessor != *workspace_id
+                        || *block_hash != self.block().header.parent_block_hash
+                    {
+                        bail!("successor service predecessor differs from finalized ancestry");
+                    }
+                    Ok(true)
+                }
+            },
+        }
+    }
     pub(super) fn record_state(&self) -> Option<&state_records::StoreRef> {
         match &self.0 {
             ParentView::Cold(p) => p.record_state.as_ref(),
@@ -371,6 +473,7 @@ impl FinalizedParentViewV1 {
             ParentView::Rooted {
                 snapshot,
                 reference,
+                ..
             } => Some(LightPayload {
                 schema: LIGHT_SCHEMA.into(),
                 plan: plan.clone(),

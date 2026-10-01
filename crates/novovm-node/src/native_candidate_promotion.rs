@@ -92,8 +92,21 @@ pub fn prepare_successor_promotion_v1(
     let native_path = resolve_native_execution_store_path_from_params_v1(params)
         .context("successor promotion requires explicit native path")?;
     let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "successor promotion namespace")?;
+    // The first prepare uses the strict current-finalized rooted scope below.
+    // An exact already-pinned intent is a recovery retry, not new permission to
+    // register/sign while pending. Only this existing archive verifier's true
+    // result selects the original cold, authority-locked callback; mismatched
+    // proof/parent/candidate or corrupt evidence is an error, never a fallback.
+    let existing_exact_intent = NovNativeBlockLedgerV1::verify_optional_successor_archive_v1(
+        &nov_native_block_ledger_rocksdb_path_v1(&native_path),
+        genesis,
+        namespace,
+        parent_id,
+        candidate_id,
+        proof,
+    )?;
     let mut commitment = None;
-    with_finalized_parent_locked(&mut workspace, parent_id, genesis, params, &mut |parent| {
+    let mut prepare = |parent: live_parent::FinalizedParentViewV1| {
         parent.successor_seal_subject(&candidate, 0)?;
         commitment = Some(NovNativeBlockLedgerV1::stage_fresh_successor_promotion_v1(
             &nov_native_block_ledger_rocksdb_path_v1(&native_path),
@@ -108,7 +121,18 @@ pub fn prepare_successor_promotion_v1(
             proof.clone(),
         )?);
         Ok(())
-    })?;
+    };
+    if existing_exact_intent {
+        with_cold_finalized_parent_locked(
+            &mut workspace,
+            parent_id,
+            genesis,
+            params,
+            &mut prepare,
+        )?;
+    } else {
+        with_finalized_parent_locked(&mut workspace, parent_id, genesis, params, &mut prepare)?;
+    }
     commitment.context("successor promotion was not staged")
 }
 
@@ -325,12 +349,36 @@ fn with_finalized_parent_locked(
     id: [u8; 32],
     genesis: [u8; 32],
     params: &serde_json::Value,
-    action: &mut dyn FnMut(FinalizedGenesisParentV1) -> Result<()>,
+    action: &mut dyn FnMut(live_parent::FinalizedParentViewV1) -> Result<()>,
 ) -> Result<()> {
+    if live_parent::try_with_rooted_finalized_parent_view_locked(
+        workspace, id, genesis, params, action,
+    )? {
+        return Ok(());
+    }
+    with_cold_finalized_parent_locked(workspace, id, genesis, params, action)
+}
+
+fn with_cold_finalized_parent_locked(
+    workspace: &mut WorkspaceStore,
+    id: [u8; 32],
+    genesis: [u8; 32],
+    params: &serde_json::Value,
+    action: &mut dyn FnMut(live_parent::FinalizedParentViewV1) -> Result<()>,
+) -> Result<()> {
+    // Only recognized legacy/physical-only output reaches this compatibility
+    // branch from the normal live scope. prepare also uses it for a separately
+    // verified exact-intent retry. Both original implementations hold authority
+    // across Capture; never release a captured snapshot's guard before action.
     let artifact = block_artifact::load_block_artifact_inner_v1(workspace, id, params)?
         .context("finalized parent output missing")?;
+    let mut cold_action = |parent| {
+        action(live_parent::FinalizedParentViewV1::from_verified_cold(
+            parent,
+        ))
+    };
     if artifact.block().header.height > 1 {
-        successor::with_finalized_parent(workspace, id, genesis, params, action)
+        successor::with_finalized_parent(workspace, id, genesis, params, &mut cold_action)
     } else {
         run_locked(
             workspace,
@@ -338,7 +386,7 @@ fn with_finalized_parent_locked(
             genesis,
             params,
             false,
-            PublicationScope::Capture(action),
+            PublicationScope::Capture(&mut cold_action),
             |_| Ok(()),
         )?;
         Ok(())
@@ -424,16 +472,15 @@ pub fn with_verified_finalized_parent_round_v1<T>(
     action: impl FnOnce(&NovNativeBlockLedgerV1) -> Result<T>,
 ) -> Result<T> {
     let mut workspace = WorkspaceStore::open(chain, params)?;
-    let artifact = block_artifact::load_block_artifact_inner_v1(&workspace, parent_id, params)?
-        .context("parent round requires complete AOEM output")?;
+    let input = ready_input(&workspace, parent_id)?;
     let native_path = resolve_native_execution_store_path_from_params_v1(params)
         .context("parent round requires explicit native path")?;
     let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "parent round namespace")?;
     let mut action = Some(action);
     let mut result = None;
     with_finalized_parent_locked(&mut workspace, parent_id, genesis, params, &mut |parent| {
-        if parent.block() != artifact.block() || parent.output_digest != artifact.output_digest {
-            bail!("parent round output differs from finalized live execution");
+        if parent.workspace_id() != input.id {
+            bail!("parent round input differs from finalized live execution");
         }
         result = Some(NovNativeBlockLedgerV1::with_fresh_parent_round_scope_v1(
             &nov_native_block_ledger_rocksdb_path_v1(&native_path),
@@ -442,8 +489,8 @@ pub fn with_verified_finalized_parent_round_v1<T>(
             parent.block(),
             &crate::native_block_ledger::NovNativeIsolatedExecutionBindingV1 {
                 workspace_id: parent_id,
-                plan_commitment: artifact.plan_commitment,
-                output_digest: artifact.output_digest,
+                plan_commitment: input.plan,
+                output_digest: parent.output_digest(),
             },
             action
                 .take()

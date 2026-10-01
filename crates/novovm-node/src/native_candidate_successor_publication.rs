@@ -273,23 +273,47 @@ fn run_locked(
             output_digest: artifact.output_digest,
         },
     )?;
-    let parent_artifact = block_artifact::load_block_artifact_inner_v1(workspace, parent, params)?
-        .context("successor parent AOEM output missing")?;
-    let (parent_execution, parent_commitment, parent_block) =
-        NovNativeBlockLedgerV1::load_fresh_finalized_execution_v1(
-            &ledger_path,
-            genesis,
-            namespace,
-            parent_artifact.block().header.height,
-        )?;
-    if parent_execution.workspace_id != parent
-        || parent_execution.plan_commitment != parent_artifact.plan_commitment
-        || parent_execution.output_digest != parent_artifact.output_digest
-        || &parent_block != parent_artifact.block()
+    let parent_height = artifact
+        .block()
+        .header
+        .height
+        .checked_sub(1)
+        .filter(|height| *height > 0)
+        .context("successor publication requires a finalized parent height")?;
+    // The child intent is already verified and authority remains held. Use the
+    // historical finalized archive here: a strict live-tip capture would reject
+    // this legitimate pending intent or its already-published retry.
+    let parent_archive = NovNativeBlockLedgerV1::load_fresh_finalized_archive_v1(
+        &ledger_path,
+        genesis,
+        namespace,
+        parent_height,
+    )?;
+    let parent_block = &parent_archive.block;
+    if parent_archive.execution.workspace_id != parent
+        || parent_block.header.height != parent_height
+        || parent_block.header.chain_id != chain
+        || parent_block.header.chain_id != artifact.block().header.chain_id
+        || parent_block.header.block_hash != artifact.block().header.parent_block_hash
     {
         bail!("successor parent output differs from published ledger");
     }
-    let parent_target = publication_target(
+    // Rooted capture binds the exact completed output, Ready input/plan, QC,
+    // publication evidence, and prepared roots without materializing its Store.
+    // Only an explicitly identified old format takes the original cold path;
+    // a corrupt rooted source is an error, never a reason to downgrade.
+    if live_parent::capture_rooted_archive(workspace, &parent_archive, params)?.is_none() {
+        let parent_artifact =
+            block_artifact::load_block_artifact_inner_v1(workspace, parent, params)?
+                .context("successor parent AOEM output missing")?;
+        if parent_archive.execution.plan_commitment != parent_artifact.plan_commitment
+            || parent_archive.execution.output_digest != parent_artifact.output_digest
+            || parent_block != parent_artifact.block()
+        {
+            bail!("successor parent output differs from published ledger");
+        }
+    }
+    let parent_target = publication_target_fields(
         if parent_block.header.height == 1 {
             b"NVP1"
         } else {
@@ -297,9 +321,10 @@ fn run_locked(
         },
         namespace,
         genesis,
-        parent_commitment,
+        parent_archive.commitment,
         parent,
-        &parent_artifact,
+        parent_archive.execution.output_digest,
+        parent_block,
     );
     let target = publication_target(b"NVP2", namespace, genesis, commitment, id, &artifact);
     let head_key = native_aoem_owned_state_head_key_v1(chain, &workspace.namespace);

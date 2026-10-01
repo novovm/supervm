@@ -60,6 +60,8 @@ pub(super) use live_parent_tests::assert_live_parent_descriptor_binding_for_test
 #[cfg(test)]
 pub(super) use live_parent_tests::exercise_live_parent_admission_for_test_v1;
 #[cfg(test)]
+pub(super) use live_parent_tests::exercise_live_successor_signing_scope_for_test_v1;
+#[cfg(test)]
 pub(crate) use state_records::exercise_record_document_storage_for_test;
 #[cfg(test)]
 pub(crate) use state_records::exercise_record_profile_document_storage_for_test;
