@@ -481,6 +481,11 @@ impl FreshChainLifecycleV1 {
             .as_ref()
             .is_some_and(|c| c.propose_successors)
             .into();
+        value["proposal_max_transactions"] = self
+            .config
+            .as_ref()
+            .map(|c| serde_json::json!(c.proposal_max_transactions))
+            .unwrap_or(serde_json::Value::Null);
         value["proposed_successors"] = self.proposed_successors.into();
         value["successor_signer_retained"] =
             (self.receive_successors && self.config.is_some()).into();

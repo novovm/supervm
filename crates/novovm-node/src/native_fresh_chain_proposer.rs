@@ -3,8 +3,6 @@
 use super::*;
 use crate::tx_ingress::candidate_workspace as workspace;
 
-const MAX_SELECTED: usize = 16;
-
 impl FreshChainLifecycleV1 {
     pub(super) fn propose_from_pool(
         &mut self,
@@ -70,22 +68,14 @@ impl FreshChainLifecycleV1 {
                 .context("proposal slot overflow")?,
             timestamp_unix_ms: wall_ms.max(parent.block().header.timestamp_unix_ms),
         };
-        let mut selected = Vec::new();
-        for entry in pool.ordered() {
-            if selected.len() == MAX_SELECTED {
-                break;
-            }
-            selected.push(entry.raw);
-            // Authenticate the entire proposed prefix against the same verified
-            // parent: signatures, identity, chain, exact nonce ordering and size.
-            // This call has no pending/reservation/authority mutation.
-            if parent
-                .successor_plan(context, selected.clone(), &self.params)
-                .is_err()
-            {
-                selected.pop();
-            }
-        }
+        // Keep the pool's exact identity/nonce ordering, but derive and verify
+        // each item's identity from raw bytes once. The immutable parent is
+        // opened once and each distinct signer's starting nonce is read once.
+        let selected = parent.select_ordered_transactions(
+            pool.ordered().into_iter().map(|entry| entry.raw).collect(),
+            config.proposal_max_transactions,
+            &self.params,
+        )?;
         if selected.is_empty() {
             return Ok(());
         }

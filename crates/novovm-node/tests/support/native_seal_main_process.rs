@@ -46,6 +46,8 @@ mod storage;
 mod storage_startup;
 #[path = "native_seal_successor_process.rs"]
 mod successor;
+#[path = "native_transfer_throughput_process.rs"]
+mod transfer_throughput;
 impl Drop for Child {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -89,6 +91,21 @@ fn run_cluster_at_height(
     inject: Option<&dyn Fn()>,
     kill_after_finalized: bool,
 ) {
+    let mut children = start_cluster(nodes, active, label, ticks);
+    finish_cluster(
+        nodes,
+        &mut children,
+        label,
+        expect_prepared,
+        decision_v3,
+        fresh,
+        height,
+        inject,
+        kill_after_finalized,
+    );
+}
+
+fn start_cluster(nodes: &[Node], active: &[usize], label: &str, ticks: u64) -> Vec<(usize, Child)> {
     let mut children = Vec::new();
     for &index in active {
         let node = &nodes[index];
@@ -124,6 +141,21 @@ fn run_cluster_at_height(
         .unwrap();
         children.push((index, child));
     }
+    children
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_cluster(
+    nodes: &[Node],
+    children: &mut Vec<(usize, Child)>,
+    label: &str,
+    expect_prepared: bool,
+    decision_v3: bool,
+    fresh: bool,
+    height: u64,
+    inject: Option<&dyn Fn()>,
+    kill_after_finalized: bool,
+) {
     let deadline = Instant::now();
     if let Some(inject) = inject {
         inject();
@@ -132,7 +164,7 @@ fn run_cluster_at_height(
     if kill_after_finalized {
         assert!(fresh && decision_v3 && expect_prepared);
         loop {
-            for (index, child) in &mut children {
+            for (index, child) in children.iter_mut() {
                 assert!(
                     child.0.try_wait().unwrap().is_none(),
                     "node exited before forced termination"
@@ -166,12 +198,12 @@ fn run_cluster_at_height(
         }
         // Only handles spawned above, never a process-name-wide kill. Wait for
         // every voter to publish before removing all three simultaneously.
-        for (_, child) in &mut children {
+        for (_, child) in children.iter_mut() {
             assert!(child.0.try_wait().unwrap().is_none());
             child.0.kill().unwrap();
         }
     }
-    for (index, mut child) in children {
+    for (index, mut child) in children.drain(..) {
         let status = loop {
             if let Some(status) = child.0.try_wait().unwrap() {
                 break status;
@@ -260,6 +292,12 @@ fn fresh_genesis_main_nodes_continue_three_heights_without_restart() {
     run_real_aoem_main_nodes(true, true, true);
 }
 
+#[test]
+#[ignore = "real four-process record Transfer measurement; exclusive loopback 127.0.0.2:443"]
+fn fresh_record_transfers_measure_rpc_to_finality() {
+    run_real_aoem_main_nodes_scenario(true, true, false, false, LocalFault::None, true);
+}
+
 fn run_real_aoem_main_nodes(decision_v3: bool, fresh: bool, continuous: bool) {
     run_real_aoem_main_nodes_with_failover(decision_v3, fresh, continuous, false);
 }
@@ -319,9 +357,24 @@ fn run_real_aoem_main_nodes_with_faults(
     failover: bool,
     fault: LocalFault,
 ) {
+    run_real_aoem_main_nodes_scenario(decision_v3, fresh, continuous, failover, fault, false);
+}
+
+fn run_real_aoem_main_nodes_scenario(
+    decision_v3: bool,
+    fresh: bool,
+    continuous: bool,
+    failover: bool,
+    fault: LocalFault,
+    measure_transfers: bool,
+) {
     let reserve = std::net::TcpListener::bind("127.0.0.2:443")
         .expect("exclusive loopback 443 required; do not stop other services");
-    let (genesis, fresh_plan) = super::native_fresh_genesis_cli::inputs();
+    let (genesis, fresh_plan) = if measure_transfers {
+        transfer_throughput::inputs()
+    } else {
+        super::native_fresh_genesis_cli::inputs()
+    };
     let mut fresh_outputs = Vec::new();
     let (nodes, block) = if fresh {
         let mut nodes = Vec::new();
@@ -708,6 +761,10 @@ fn run_real_aoem_main_nodes_with_faults(
         "physical_lan_executed":false,"public_network_executed":false
     })).unwrap()).unwrap();
     if fresh {
+        if measure_transfers {
+            transfer_throughput::exercise(&nodes, &root);
+            return;
+        }
         if matches!(fault, LocalFault::StorageStartup) {
             storage_startup::finish(&nodes, &root);
             return;

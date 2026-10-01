@@ -6,9 +6,12 @@
 
 use super::super::native_store_records::NativeRecordAccessV1;
 use super::super::*;
+use crate::native_block_ledger::{
+    NOV_NATIVE_BLOCK_LEDGER_MAX_BODY_BYTES_V1, NOV_NATIVE_BLOCK_LEDGER_MAX_TXS_V1,
+};
 use crate::native_candidate_plan::NovNativeCandidateExecutionPlanV1;
 use serde::de::DeserializeOwned;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub(super) struct AuthenticatedItem {
     pub(super) native_tx: NovNativeTxWireV1,
@@ -44,17 +47,18 @@ pub(super) fn authenticate_record_plan(
 }
 
 trait ParentAuthAccess {
-    fn verify_domain(&self, plan: &NovNativeCandidateExecutionPlanV1) -> Result<()>;
+    fn verify_domain(&self, chain: u64, protocol: [u8; 32]) -> Result<()>;
     fn contains_reservation(&self, ledger_key: &str) -> Result<bool>;
     fn contains_receipt(&self, tx_hash: &str) -> Result<bool>;
     fn next_nonce(&self, identity_key: &str) -> Result<u64>;
 }
 
 impl ParentAuthAccess for NovNativeExecutionStoreV1 {
-    fn verify_domain(&self, plan: &NovNativeCandidateExecutionPlanV1) -> Result<()> {
+    fn verify_domain(&self, chain: u64, protocol: [u8; 32]) -> Result<()> {
         verify_native_nonce_identity_scheme_v2(self)?;
         verify_parent_domain(
-            plan,
+            chain,
+            protocol,
             self.authority_chain_id,
             &self.module_state.protocol_config_commitment,
         )
@@ -82,14 +86,15 @@ impl ParentAuthAccess for NovNativeExecutionStoreV1 {
 }
 
 fn verify_parent_domain(
-    plan: &NovNativeCandidateExecutionPlanV1,
+    chain: u64,
+    protocol: [u8; 32],
     authority_chain_id: Option<u64>,
     protocol_config_commitment: &str,
 ) -> Result<()> {
-    if authority_chain_id != Some(plan.context.chain_id) {
+    if authority_chain_id != Some(chain) {
         bail!("candidate authentication parent authority chain mismatch");
     }
-    if protocol_config_commitment != to_hex(&plan.protocol_config_commitment) {
+    if protocol_config_commitment != to_hex(&protocol) {
         bail!("candidate authentication parent protocol configuration mismatch");
     }
     Ok(())
@@ -116,7 +121,7 @@ impl RecordParentAuth<'_> {
 }
 
 impl ParentAuthAccess for RecordParentAuth<'_> {
-    fn verify_domain(&self, plan: &NovNativeCandidateExecutionPlanV1) -> Result<()> {
+    fn verify_domain(&self, chain: u64, protocol: [u8; 32]) -> Result<()> {
         // A missing map is corruption, not proof that all of its keys are absent.
         for path in [
             &[][..],
@@ -135,9 +140,10 @@ impl ParentAuthAccess for RecordParentAuth<'_> {
                 scheme
             );
         }
-        let chain = self.required(&["authority_chain_id"])?;
-        let protocol: String = self.required(&["module_state", "protocol_config_commitment"])?;
-        verify_parent_domain(plan, chain, &protocol)
+        let parent_chain = self.required(&["authority_chain_id"])?;
+        let parent_protocol: String =
+            self.required(&["module_state", "protocol_config_commitment"])?;
+        verify_parent_domain(chain, protocol, parent_chain, &parent_protocol)
     }
 
     fn contains_reservation(&self, ledger_key: &str) -> Result<bool> {
@@ -169,7 +175,7 @@ fn authenticate_parent_plan(
     params: &serde_json::Value,
 ) -> Result<Vec<AuthenticatedItem>> {
     plan.validate()?;
-    parent.verify_domain(plan)?;
+    parent.verify_domain(plan.context.chain_id, plan.protocol_config_commitment)?;
 
     // Only cache signers touched by this batch; the immutable parent remains
     // the source for each signer's first nonce, not a cloned historical map.
@@ -179,14 +185,8 @@ fn authenticate_parent_plan(
     let mut authenticated = Vec::with_capacity(plan.raw_txs.len());
 
     for (index, (raw, expected_hash)) in plan.raw_txs.iter().zip(&plan.tx_hashes).enumerate() {
-        let native_tx = decode_nov_native_tx_wire_v1(raw)
-            .with_context(|| format!("decode candidate transaction {index}"))?;
-        if native_tx.chain_id != plan.context.chain_id {
-            bail!("candidate authentication transaction {index} chain domain mismatch");
-        }
-        let ir = nov_native_tx_to_adapter_tx_ir_v1(&native_tx)
-            .with_context(|| format!("derive candidate transaction {index} signed intent"))?;
-        let tx_hash = tx_hash_array_from_ir_v1(&ir);
+        let item = authenticate_transaction(raw, plan.context.chain_id, params, index)?;
+        let tx_hash = item.tx_hash;
         if tx_hash != *expected_hash {
             bail!("candidate authentication transaction {index} canonical hash mismatch");
         }
@@ -194,39 +194,8 @@ fn authenticate_parent_plan(
             bail!("candidate authentication duplicate signed intent at transaction {index}");
         }
 
-        // Call the pure verifier directly. Even ingress(false, false) records
-        // pending-rejection observations on failure and is not isolated.
-        verify_nov_native_auth_v1(params, &native_tx, &ir, tx_hash)
-            .with_context(|| format!("authenticate candidate transaction {index}"))?;
-        native_transfer_dispatch::require_execution_capability_v1(&native_tx, true)?;
-        let (execution_subject, requested_execution_behavior, execution_request) = match &native_tx
-            .kind
-        {
-            NovTxKindV1::Execute(execute) => (
-                subject_meta_from_execute_tx_v1(execute),
-                requested_execution_behavior_v1(
-                    effective_execution_policy_for_fee_asset_v1(
-                        execute.execution_policy,
-                        &execute.fee_policy.pay_asset,
-                    ),
-                    execute.privacy_mode,
-                ),
-                nov_native_tx_to_execution_request_v1(&native_tx)?
-                    .context("candidate authentication requires an executable native request")?,
-            ),
-            NovTxKindV1::Transfer(_) => {
-                let request = native_transfer_dispatch::fee_request_v1(&native_tx, tx_hash)?;
-                (
-                    fallback_execution_subject_meta_v1(&request),
-                    default_execution_behavior_v1(),
-                    request,
-                )
-            }
-            _ => bail!("candidate transaction capability mismatch"),
-        };
-
         // Candidates and authority execution share the pinned V2 signer domain.
-        let reservation = nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash)?;
+        let reservation = &item.durable_auth_reservation;
         if !seen_nonce_keys.insert(reservation.ledger_key.clone()) {
             bail!("candidate authentication duplicate nonce key at transaction {index}");
         }
@@ -253,17 +222,167 @@ fn authenticate_parent_plan(
             Err(novovm_protocol::native_nonce::NonceSequenceErrorV1::Exhausted) => bail!("candidate authentication nonce sequence overflow"),
         };
 
-        authenticated.push(AuthenticatedItem {
-            native_tx,
-            ir,
-            tx_hash,
-            durable_auth_reservation: reservation,
-            execution_subject,
-            requested_execution_behavior,
-            execution_request,
-        });
+        authenticated.push(item);
     }
     Ok(authenticated)
+}
+
+/// Shared pure per-item checks. No parent reads, pending admission or nonce
+/// reservation: both final batch authentication and selection use these rules.
+fn authenticate_transaction(
+    raw: &[u8],
+    chain: u64,
+    params: &serde_json::Value,
+    index: usize,
+) -> Result<AuthenticatedItem> {
+    let native_tx = decode_nov_native_tx_wire_v1(raw)
+        .with_context(|| format!("decode candidate transaction {index}"))?;
+    if native_tx.chain_id != chain {
+        bail!("candidate authentication transaction {index} chain domain mismatch");
+    }
+    let ir = nov_native_tx_to_adapter_tx_ir_v1(&native_tx)
+        .with_context(|| format!("derive candidate transaction {index} signed intent"))?;
+    let tx_hash = tx_hash_array_from_ir_v1(&ir);
+    // Ingress(false, false) would still record rejection observations. Keep
+    // this shared verifier on the original isolated candidate-auth boundary.
+    verify_nov_native_auth_v1(params, &native_tx, &ir, tx_hash)
+        .with_context(|| format!("authenticate candidate transaction {index}"))?;
+    native_transfer_dispatch::require_execution_capability_v1(&native_tx, true)?;
+    let (execution_subject, requested_execution_behavior, execution_request) = match &native_tx.kind
+    {
+        NovTxKindV1::Execute(execute) => (
+            subject_meta_from_execute_tx_v1(execute),
+            requested_execution_behavior_v1(
+                effective_execution_policy_for_fee_asset_v1(
+                    execute.execution_policy,
+                    &execute.fee_policy.pay_asset,
+                ),
+                execute.privacy_mode,
+            ),
+            nov_native_tx_to_execution_request_v1(&native_tx)?
+                .context("candidate authentication requires an executable native request")?,
+        ),
+        NovTxKindV1::Transfer(_) => {
+            let request = native_transfer_dispatch::fee_request_v1(&native_tx, tx_hash)?;
+            (
+                fallback_execution_subject_meta_v1(&request),
+                default_execution_behavior_v1(),
+                request,
+            )
+        }
+        _ => bail!("candidate transaction capability mismatch"),
+    };
+    let reservation = nov_native_durable_auth_reservation_v1(&native_tx, &ir, tx_hash)?;
+    Ok(AuthenticatedItem {
+        native_tx,
+        ir,
+        tx_hash,
+        durable_auth_reservation: reservation,
+        execution_subject,
+        requested_execution_behavior,
+        execution_request,
+    })
+}
+
+pub(super) fn select_transactions(
+    chain: u64,
+    protocol: [u8; 32],
+    parent: &NovNativeExecutionStoreV1,
+    ordered: Vec<Vec<u8>>,
+    params: &serde_json::Value,
+    limit: usize,
+) -> Result<Vec<Vec<u8>>> {
+    select_parent_transactions(chain, protocol, parent, ordered, params, limit)
+}
+
+pub(super) fn select_record_transactions(
+    chain: u64,
+    protocol: [u8; 32],
+    parent: &dyn NativeRecordAccessV1,
+    ordered: Vec<Vec<u8>>,
+    params: &serde_json::Value,
+    limit: usize,
+) -> Result<Vec<Vec<u8>>> {
+    select_parent_transactions(
+        chain,
+        protocol,
+        &RecordParentAuth(parent),
+        ordered,
+        params,
+        limit,
+    )
+}
+
+/// Scan the caller's existing pool order once, without altering its entries.
+/// Authenticate raw bytes rather than trusting cached signer/nonce metadata.
+/// An item rejection cannot consume candidate-local nonce/bytes; parent read
+/// failures abort the whole selection instead of masquerading as absence.
+fn select_parent_transactions(
+    chain: u64,
+    protocol: [u8; 32],
+    parent: &dyn ParentAuthAccess,
+    ordered: Vec<Vec<u8>>,
+    params: &serde_json::Value,
+    limit: usize,
+) -> Result<Vec<Vec<u8>>> {
+    if !(1..=NOV_NATIVE_BLOCK_LEDGER_MAX_TXS_V1).contains(&limit) {
+        bail!("proposal_max_transactions is outside its bounds");
+    }
+    if chain == 0 || protocol == [0; 32] {
+        bail!("transaction selection requires a verified parent chain/protocol domain");
+    }
+    parent.verify_domain(chain, protocol)?;
+    // These maps are lookup-only: randomized bucket order never changes the
+    // externally supplied scan order or the resulting transaction sequence.
+    let mut expected_nonces = HashMap::new();
+    let mut seen_hashes = HashSet::new();
+    let mut seen_nonce_keys = HashSet::new();
+    let mut selected = Vec::with_capacity(limit.min(ordered.len()));
+    let mut body_bytes = 0usize;
+    for (index, raw) in ordered.into_iter().enumerate() {
+        if selected.len() == limit {
+            break;
+        }
+        let Some(next_bytes) = body_bytes.checked_add(raw.len()) else {
+            continue;
+        };
+        if raw.is_empty() || next_bytes > NOV_NATIVE_BLOCK_LEDGER_MAX_BODY_BYTES_V1 {
+            continue;
+        }
+        // As before, a failed per-item authentication is not selected. Do not
+        // label all such failures "bad signatures": auth has other policies.
+        // Final preparation still independently authenticates the whole batch.
+        let Ok(item) = authenticate_transaction(&raw, chain, params, index) else {
+            continue;
+        };
+        let reservation = &item.durable_auth_reservation;
+        if seen_hashes.contains(&item.tx_hash) || seen_nonce_keys.contains(&reservation.ledger_key)
+        {
+            continue;
+        }
+        if parent.contains_reservation(&reservation.ledger_key)?
+            || parent.contains_receipt(&reservation.tx_hash)?
+        {
+            continue;
+        }
+        let expected = match expected_nonces.entry(reservation.identity_key.clone()) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(parent.next_nonce(&reservation.identity_key)?)
+            }
+        };
+        let Ok(next_nonce) =
+            novovm_protocol::native_nonce::advance_nonce_v1(*expected, reservation.nonce)
+        else {
+            continue;
+        };
+        *expected = next_nonce;
+        seen_hashes.insert(item.tx_hash);
+        seen_nonce_keys.insert(reservation.ledger_key.clone());
+        body_bytes = next_bytes;
+        selected.push(raw);
+    }
+    Ok(selected)
 }
 
 #[cfg(test)]
@@ -558,4 +677,6 @@ mod record_tests {
         // A failed late item cannot reserve an earlier valid nonce in the parent.
         assert!(authenticate_record_plan(&plan(&[first]), &Reader::new(&parent), &params).is_ok());
     }
+
+    include!("native_candidate_selection_tests.rs");
 }

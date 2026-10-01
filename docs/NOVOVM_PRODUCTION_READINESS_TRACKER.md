@@ -14,6 +14,54 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
+## 设备 A：有界批量选单通过，真实最终确认测量暴露存储失败（2026-10-01）
+
+基线 `395bf19`。自动选单保留交易池既有 identity/nonce 排序，但不再每加入一笔
+就复制并重新鉴权整个前缀。选单阶段按原始签名交易逐项验证，在同一父状态
+读取作用域内，每个触及的签名身份只点读一次起始 nonce；receipt/reservation
+去重、链域、能力、请求派生、nonce 连续性与原有 2 MiB 块体限制均保留。
+父域、标记或所需记录读取失败直接中止，不能当成坏交易跳过或 nonce=0；
+跳过交易不消耗本轮临时 nonce，交易池不改变，最终 prepare 仍整批重新验证。
+
+节点配置新增 `proposal_max_transactions`，默认 16，显式允许 1–1024；这是
+本地提案预算，不改变原共识上限、交易格式、创世、费用或 AOEM。0、越界及
+错误 JSON 类型均拒绝。池本身仍排序，不把整个流程宣称为完全 O(n)。
+
+本机严格 Clippy、格式检查通过；69 项回归通过，0 失败、0 忽略：67 项
+配置/选单/转账/恢复定向测试（220.35 秒），record/legacy 各一项完整四块
+生命周期（278.61/314.77 秒）。其中新增 8 项验证旧前缀算法选单一致、别名
+同 nonce 域、每身份一次点读、计数/字节上限、读错传播及池重开不变。
+独立四进程 record-v2 Transfer 测量已执行，但失败，不能作为性能验收通过。
+测量只用全新临时创世、32 个已注资测试发送者、3 批各 32 笔、固定一个 HTTP
+入口、真实 WSS gossip/AOEM/BFT；不把签名生成或启动计入计时，也不将同一
+交易直接复制提交到全部节点绕过传播。原 250ms tick、8 连接 RPC 和每 peer
+每秒 4 笔 gossip 限制保留，P95/P99 明确是四节点 RPC 观察确认的延迟上界，
+包含提交/排队/观察开销，不是精确共识提交时间。
+
+首次测量共尝试并获得入池响应 32 笔，尚未观察到四节点最终确认，节点 3 即因
+AOEM owner RocksDB 打开失败而退出，随后 RPC 连接被拒绝。原始错误为
+`status=-4 / Failed to rename 000442.dbtmp to CURRENT / 拒绝访问`；没有生成
+`transfer-finality-performance.json`，不报告 TPS、P95/P99 或 96 笔成功。
+本机证据保留于 `artifacts/audit/candidate-node-processes/` 下
+`seal-relay-21496-1790832955253837700/transfer-finality-observations.json`，以及
+`fresh-validator-3-21496-1790832954105282000/` 的 measurement stderr 和 RocksDB
+`LOG`。前者包含所有已发请求结果及部分观察，不通过自动重试掩盖不确定提交。
+整项测试耗时 74.71 秒，含启动/首块与恢复，不是交易确认耗时。
+
+只读排查确认 Host 的 `WorkspaceStore::open` 每次创建新的 AOEM graph/session，
+失败前数据库多次关闭后重新恢复；记录中的正常关闭均已完成。当前没有证据
+判定哪个句柄导致 Windows rename 拒绝，也不能归因于杀毒软件或断言数据库
+已损坏。固定 AOEM 源的 provider 仅在单个 context 内管理句柄，无跨 session
+物理 DB 缓存；单独添加第二个长驻 graph 会造成 LOCK 冲突，不是可用修法。
+后续应在既有 Host 会话作用域内核对 provider 复用与共享 poison/恢复语义，
+再单独重跑测量，不降低最终性或失败回执检查，不修改 AOEM 业务边界。
+
+复现入口：`cargo test -p novovm-node --test native_candidate_node_cli
+fresh_record_transfers_measure_rpc_to_finality -- --ignored --nocapture --test-threads=1`。
+需要随包 AOEM、独占测试 loopback `127.0.0.2:443` 与现有原生构建环境；Windows
+测试进程设置 `RUST_MIN_STACK=33554432`，不得停止用户服务释放端口。它是显式
+诊断/测量门，不是已通过的默认 CI 或实体多机验收。
+
 ## 设备 A：根视图进入实时签票与首次晋升准备（2026-10-01）
 
 基线 `3157bef`。record 父块的候选登记、后继签票、父块换轮签票及首次晋升

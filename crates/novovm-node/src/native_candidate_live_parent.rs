@@ -510,6 +510,39 @@ impl FinalizedParentViewV1 {
             receipts: &RecordOverlayV1::new(&reader, receipts),
         })
     }
+    /// Select from the pool's established order in one immutable-parent scope.
+    /// Raw entries are authenticated individually; this neither mutates the
+    /// pool nor replaces the final batch/live checks performed by preparation.
+    pub(crate) fn select_ordered_transactions(
+        &self,
+        ordered: Vec<Vec<u8>>,
+        limit: usize,
+        params: &serde_json::Value,
+    ) -> Result<Vec<Vec<u8>>> {
+        let h = &self.block().header;
+        let workspace = WorkspaceStore::open(h.chain_id, params)?;
+        let protocol = self.genesis_config().protocol_config_commitment;
+        if workspace.protocol != protocol
+            || workspace.namespace
+                != native_aoem_owned_state_namespace_digest_v1(params, h.chain_id)
+        {
+            bail!("historical parent selection workspace/protocol/namespace mismatch");
+        }
+        if let ParentView::Cold(parent) = &self.0 {
+            return auth::select_transactions(
+                h.chain_id,
+                protocol,
+                parent.state(),
+                ordered,
+                params,
+                limit,
+            );
+        }
+        self.with_record_access(&workspace, |access| {
+            verify_record_domain(access, &workspace, h.state_version)?;
+            auth::select_record_transactions(h.chain_id, protocol, access, ordered, params, limit)
+        })
+    }
     /// Authenticate an immutable historical parent. This neither reads live
     /// authority nor grants permission to register/sign/publish a successor.
     pub(crate) fn successor_plan(

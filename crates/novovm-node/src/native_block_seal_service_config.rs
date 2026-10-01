@@ -20,11 +20,16 @@ pub const NOV_NATIVE_SEAL_SERVICE_SCHEMA_V1: &str = "novovm-native-seal-service/
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_AUTHORITY_BYTES: usize = 256 * 1024;
 
+fn default_proposal_max_transactions() -> usize {
+    16
+}
+
 /// Intentionally neither Debug nor Serialize: this contains the operator's key.
 /// Callers cannot bypass validation by constructing a public configuration.
 #[derive(Clone)]
 pub struct NovNativeSealServiceConfigV1 {
     pub(crate) propose_successors: bool,
+    pub(crate) proposal_max_transactions: usize,
     pub(crate) receive_successors: bool,
     pub(crate) follow_finalized_tip: bool,
     pub(crate) fresh_genesis_config_commitment: Option<[u8; 32]>,
@@ -52,6 +57,8 @@ pub struct NovNativeSealServiceConfigV1 {
 struct ServiceFile {
     #[serde(default)]
     propose_successors: bool,
+    #[serde(default = "default_proposal_max_transactions")]
+    proposal_max_transactions: usize,
     #[serde(default)]
     receive_successors: bool,
     #[serde(default)]
@@ -402,6 +409,7 @@ impl NovNativeSealServiceConfigV1 {
             .context("native seal signer key is not a pinned validator")?;
         let config = Self {
             propose_successors: raw.propose_successors,
+            proposal_max_transactions: raw.proposal_max_transactions,
             receive_successors: raw.receive_successors,
             follow_finalized_tip: raw.follow_finalized_tip,
             finalized_parent_workspace_id: raw
@@ -441,6 +449,11 @@ impl NovNativeSealServiceConfigV1 {
 
     /// Recheck the configuration at the service boundary, before database opens.
     pub(crate) fn validate(&self, expected_chain_id: u64) -> Result<()> {
+        if !(1..=crate::native_block_ledger::NOV_NATIVE_BLOCK_LEDGER_MAX_TXS_V1)
+            .contains(&self.proposal_max_transactions)
+        {
+            bail!("proposal_max_transactions must be in 1..=1024");
+        }
         if self.propose_successors && !self.receive_successors {
             bail!("automatic proposal requires explicit successor reception");
         }
@@ -1090,4 +1103,6 @@ mod tests {
             "native-prefix conversion must not bypass config containment"
         );
     }
+
+    include!("native_proposal_config_tests.rs");
 }
