@@ -7,4 +7,5 @@
 pub mod business;
 pub mod execution;
 pub mod ingress;
+pub mod persistence;
 pub mod state;

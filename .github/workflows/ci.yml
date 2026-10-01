@@ -36,14 +36,14 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
-      - name: Fetch only the platform AOEM compute binary
+      - name: Fetch only the platform AOEM binary
         env:
           AOEM_TEST_BINARY: ${{ matrix.aoem_library }}
         shell: pwsh
         run: |
           git lfs pull --include="$env:AOEM_TEST_BINARY" --exclude=""
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Real AOEM computation and lifetime tests (not chain acceptance)
+      - name: Real AOEM compute, durable storage and lifetime tests (not chain acceptance)
         env:
           AOEM_TEST_BINARY: ${{ matrix.aoem_library }}
         shell: pwsh

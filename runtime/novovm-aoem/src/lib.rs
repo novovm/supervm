@@ -1,7 +1,7 @@
-//! Minimal, domain-neutral AOEM computation boundary for the replacement runtime.
+//! Minimal, domain-neutral AOEM boundaries for the replacement runtime.
 //!
 //! This crate owns the native FFI boundary; the Host need not use unsafe code.
-//! It does not import legacy crates, request a storage provider, bind a writer,
+//! It does not import legacy crates or bind business policy to a writer,
 //! modify process environment, or provide a fallback executor. The caller supplies a
 //! trusted AOEM library path and owned computations. Production deployment must
 //! authenticate that binary separately; ABI checks are not binary authentication.
@@ -19,5 +19,7 @@
 mod abi;
 mod compute;
 mod library;
+mod storage;
 
 pub use compute::{ComputeReport, ComputeSession, ComputeTask};
+pub use storage::{StorageConfig, StorageLimits, StorageSession, StorageWrite};

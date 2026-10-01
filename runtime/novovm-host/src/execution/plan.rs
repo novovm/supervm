@@ -192,6 +192,12 @@ impl BatchPlan {
         &self.raw_transactions
     }
 
+    /// Immutable compiler-derived access declarations, retained with the raw
+    /// body so durable candidate packets cannot substitute either after execution.
+    pub(crate) fn declared_access(&self) -> &[DeclaredAccess] {
+        &self.declared_access
+    }
+
     /// The source must serve an independently trusted parent. This binds the
     /// exact plan root AND declarations; arbitrary prebuilt witnesses cannot
     /// be attached. It does not check current-parent/round/signing eligibility.
@@ -232,8 +238,7 @@ impl OwnedBatchInput {
     pub fn stage(self, changes: &[StateChange]) -> Result<UnpublishedBatchEffects> {
         let update = self.state.stage(changes)?;
         Ok(UnpublishedBatchEffects {
-            plan_commitment: self.plan.commitment,
-            context: self.plan.context,
+            plan: self.plan,
             update,
         })
     }
@@ -242,18 +247,21 @@ impl OwnedBatchInput {
 /// Plan-bound tentative tree effects only. No successful receipt, economic
 /// settlement, AOEM evidence or finality flag is fabricated by this module.
 pub struct UnpublishedBatchEffects {
-    plan_commitment: NodeHash,
-    context: BatchContext,
+    plan: BatchPlan,
     update: StagedStateUpdate,
 }
 
 impl UnpublishedBatchEffects {
     pub fn plan_commitment(&self) -> NodeHash {
-        self.plan_commitment
+        self.plan.commitment
     }
 
     pub fn context(&self) -> &BatchContext {
-        &self.context
+        &self.plan.context
+    }
+
+    pub(crate) fn plan(&self) -> &BatchPlan {
+        &self.plan
     }
 
     pub fn update(&self) -> &StagedStateUpdate {

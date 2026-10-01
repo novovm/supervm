@@ -24,7 +24,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
 真实 AOEM 组件测试需完整的随包 DLL/SO（不是 Git LFS 指针），启动进程前不得
-设置非空 `AOEM_PERSISTENCE_PATH`。PowerShell 从仓库根运行：
+设置非空 `AOEM_PERSISTENCE_PATH`；`AOEM_BENCH_RELAXED_SYNC` 必须完全不存在
+（空值也不允许），避免基准开关关闭 WAL/同步写。PowerShell 从仓库根运行：
 
 ```powershell
 $platformLibrary = if ($IsWindows) { 'aoem/windows/core/bin/aoem_ffi.dll' } else { 'aoem/linux/core/bin/libaoem_ffi.so' }
@@ -36,7 +37,10 @@ cargo test --workspace --release --locked -- --include-ignored --test-threads=1
 依赖组件在 AOEM 内计算，纯收款账户经检查后允许并行，最后一个 AOEM 回调
 完成原序费用结算、失败修正、回执输出和一次批状态树更新。费用、nonce 和
 失败规则对照原经济规则；新状态/回执编码不冒充旧账本兼容。
-**输出仍未持久化，没有新运行节点、最终性或主链 TPS 成绩。** 只接 NOV
+批输出的原文、回执、新状态节点和完成标记已通过 AOEM 内部 RocksDB 一次
+原子同步批写保存，独立进程恢复及损坏拒绝通过。计算与存储会话常驻复用，
+不逐交易/逐批初始化；有界独立 I/O owner 分段预检/读回，并与查询交错。
+**这些仍是本地候选，没有新运行节点、最终性或主链 TPS 成绩。** 只接 NOV
 Transfer，Execute/其他资产/隐私/PQ 尚未迁入；V3 仍为 Ed25519。
 
 新代码只迁移必要且已审查的局部原语，不依赖旧节点、旧候选容器或旧执行入口。
