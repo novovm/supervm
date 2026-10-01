@@ -1644,13 +1644,13 @@ fn exercise_fresh_genesis_publication_and_retry(genesis_schema: &'static str) {
         let third_plan = latest_parent
             .successor_plan(
                 third_context,
-                vec![candidate_workspace_execution_raw(
-                    chain,
-                    3,
-                    [0xc3; 32],
-                    10,
-                    "deposit_reserve",
-                )],
+                vec![if compiled.root_codec_profile()
+                    == crate::native_root_codecs::NativeRootCodecProfileV1::RecordTreeV1
+                {
+                    transfer_candidate_raw(chain, 3, [0xc3; 32], [0xd4; 32], 10)
+                } else {
+                    candidate_workspace_execution_raw(chain, 3, [0xc3; 32], 10, "deposit_reserve")
+                }],
                 params,
             )
             .unwrap();

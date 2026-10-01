@@ -37,7 +37,8 @@ impl IsolatedBlockArtifactV1 {
 
 /// Revalidates input and output evidence, including transaction auth, exact
 /// state/receipt transitions and completion marker. V3 needs only current-block
-/// output records; input/legacy output retain cold validation. Never executes or repairs.
+/// output records; NCW2 inputs verify published parent references. Old formats
+/// retain cold validation. Never executes or repairs.
 /// Absence/incomplete output returns None; corrupt/aborted evidence is an error.
 pub fn load_block_artifact_v1(
     chain_id: u64,
@@ -64,10 +65,10 @@ pub(super) fn load_block_artifact_inner_v1(
     if !is_complete(workspace, &input, descriptor)? {
         return Ok(None);
     }
-    let payload = workspace.read_payload(&input)?;
+    let payload = workspace.read_input(&input)?;
     let output = read_output_view(workspace, &input, descriptor, &payload, params)?
         .context("completed isolated block output missing")?;
-    let plan = &payload.plan;
+    let plan = payload.plan();
     let mut prepared = build_prepared_block_v1(NovNativeBlockCandidateInputV1 {
         context: plan.context,
         tx_hashes: plan.tx_hashes.clone(),
@@ -113,17 +114,24 @@ pub(super) fn load_block_artifact_inner_v1(
         profile,
     )?;
     plan.validate_against_block(&block)?;
-    let fresh_genesis_identity = if let Some(parent) = &payload.finalized_parent {
-        Some(parent.config.compile()?.identity())
-    } else {
-        payload
-            .genesis
-            .as_ref()
-            .map(|genesis| -> Result<_> {
-                genesis.validate()?;
-                Ok(genesis.config.compile()?.identity())
-            })
-            .transpose()?
+    let fresh_genesis_identity = match &payload {
+        VerifiedInput::Light(payload) => {
+            Some(payload.finalized_parent.config.compile()?.identity())
+        }
+        VerifiedInput::Cold(payload) => {
+            if let Some(parent) = &payload.finalized_parent {
+                Some(parent.config.compile()?.identity())
+            } else {
+                payload
+                    .genesis
+                    .as_ref()
+                    .map(|genesis| -> Result<_> {
+                        genesis.validate()?;
+                        Ok(genesis.config.compile()?.identity())
+                    })
+                    .transpose()?
+            }
+        }
     };
     Ok(Some(IsolatedBlockArtifactV1 {
         workspace_id: id,

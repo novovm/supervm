@@ -14,6 +14,9 @@ use serde_json::value::RawValue;
 #[path = "native_candidate_record_delta.rs"]
 mod delta;
 pub(super) use delta::VerifiedDeltaDocument;
+#[cfg(test)]
+#[path = "native_candidate_reference_tests.rs"]
+mod reference_tests;
 
 const DOCUMENT_SCHEMA: &str = "novovm-candidate-record-document/v1";
 const RECORD_DOCUMENT_SCHEMA: &str = "novovm-candidate-record-document/v2";
@@ -154,6 +157,30 @@ pub(super) struct PreparedDocument {
     consensus_updates: Option<(StagedRecordUpdate, StagedRecordUpdate)>,
 }
 
+/// A metadata-only identity document. Its constructor does not authenticate the
+/// supplied reference: the caller must already have a ledger/QC-bound source.
+/// Keep this separate from PreparedDocument so the cold persistence boundary
+/// cannot be accidentally weakened for normal candidate outputs.
+pub(super) struct PreparedReferenceDocument {
+    pub(super) bytes: Vec<u8>,
+    state: StoreRef,
+    updates: [StagedRecordUpdate; 3],
+}
+
+impl PreparedReferenceDocument {
+    pub(super) fn state(&self) -> &StoreRef {
+        &self.state
+    }
+}
+
+/// Local document/marker binding only, NOT a verified parent or authority
+/// capability. No physical-to-consensus projection, QC or historical data
+/// availability claim is made by this value.
+pub(super) struct BoundRecordMetadata<T> {
+    pub(super) inline: T,
+    pub(super) state: StoreRef,
+}
+
 pub(super) struct RecordTreeUpdatesV1 {
     pub(super) physical: StagedRecordUpdate,
     pub(super) state: StagedRecordUpdate,
@@ -182,6 +209,209 @@ fn replace(
     };
     object.insert((*field).to_owned(), replacement);
     Ok((serde_json::value::to_raw_value(&object)?, removed))
+}
+
+/// Only this pre-reservation size refusal may select an explicit cold input.
+#[derive(Debug)]
+pub(super) struct ReferenceInputTooLarge;
+
+impl std::fmt::Display for ReferenceInputTooLarge {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("reference input document exceeds existing 8 MiB budget")
+    }
+}
+
+impl std::error::Error for ReferenceInputTooLarge {}
+
+/// Bind an already-authorized three-root parent into a new local input document
+/// without importing, cloning or scanning its store. The caller must preserve
+/// the original source-document provenance in the enclosing NCW2 input.
+pub(super) fn prepare_reference<T: Serialize>(
+    workspace: &WorkspaceStore,
+    inline_with_null_store: &T,
+    store_path: &[&str],
+    verified_parent_ref: &StoreRef,
+) -> Result<PreparedReferenceDocument> {
+    verified_parent_ref
+        .rooted_parts()?
+        .context("reference input requires a three-root parent")?;
+    let mut state = verified_parent_ref.clone();
+    let bundle = state
+        .bundle
+        .as_mut()
+        .context("reference input bundle missing")?;
+    for link in [
+        &mut bundle.physical,
+        &mut bundle.state,
+        &mut bundle.receipts,
+    ] {
+        link.parent_root = link.root;
+    }
+    let raw = serde_json::value::to_raw_value(inline_with_null_store)?;
+    let (inline, placeholder) = replace(&raw, store_path, RawValue::from_string("null".into())?)?;
+    if placeholder.get() != "null" {
+        bail!("reference input must contain exactly a null store placeholder");
+    }
+    let bytes = serde_json::to_vec(&Document {
+        schema: RECORD_DOCUMENT_SCHEMA.into(),
+        store_path: store_path.iter().map(|part| (*part).to_owned()).collect(),
+        state: state.clone(),
+        inline,
+        witness: None,
+    })?;
+    if bytes.len() > MAX_PAYLOAD_BYTES_V1 {
+        return Err(ReferenceInputTooLarge.into());
+    }
+    let reader = AoemStateReaderV1::new(&workspace.graph, workspace.scope);
+    let bundle = state
+        .bundle
+        .as_ref()
+        .context("reference input bundle missing")?;
+    let updates = [
+        bundle.physical.root,
+        bundle.state.root,
+        bundle.receipts.root,
+    ]
+    .map(|root| RecordOverlayV1::new(&reader, root).finish());
+    Ok(PreparedReferenceDocument {
+        bytes,
+        state,
+        updates,
+    })
+}
+
+/// Writes identity-update descriptors/completions only, in the existing AOEM
+/// database and scope. No new state/receipt records or authority head are made.
+pub(super) fn persist_reference(
+    workspace: &WorkspaceStore,
+    prepared: &PreparedReferenceDocument,
+) -> Result<()> {
+    if prepared.bytes.len() > MAX_PAYLOAD_BYTES_V1 {
+        bail!("reference input document exceeds existing 8 MiB budget");
+    }
+    let document: Document = serde_json::from_slice(&prepared.bytes)?;
+    let expected_path = document
+        .store_path
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let document = parse_metadata_document(&prepared.bytes, &expected_path, false)?;
+    if serde_json::to_vec(&document.state)? != serde_json::to_vec(&prepared.state)? {
+        bail!("reference input bytes differ from the prepared root bundle");
+    }
+    let bundle = document
+        .state
+        .bundle
+        .as_ref()
+        .context("reference input bundle missing")?;
+    let commitment = record_document_commitment(&prepared.bytes);
+    let execution = bundle.commitment()?;
+    let mut storage = AoemStateNodesV1::new(&workspace.graph, workspace.scope)?;
+    for ((role, link), update) in bundle.links().into_iter().zip(&prepared.updates) {
+        if update.parent_root() != link.root
+            || update.root() != link.root
+            || !update.nodes().is_empty()
+            || !update.blobs().is_empty()
+        {
+            bail!("reference input requires three exact identity updates");
+        }
+        storage.persist_record_candidate(
+            prepared_role_id(commitment, role),
+            commitment,
+            execution,
+            update,
+        )?;
+    }
+    validate_prepared_bundle(workspace, &prepared.bytes, &document.state)
+}
+
+fn parse_metadata_document(
+    bytes: &[u8],
+    expected_path: &[&str],
+    published_output: bool,
+) -> Result<Document> {
+    if bytes.len() > MAX_PAYLOAD_BYTES_V1 {
+        bail!("record metadata document exceeds existing 8 MiB budget");
+    }
+    let document: Document = serde_json::from_slice(bytes)?;
+    match document.schema.as_str() {
+        RECORD_DOCUMENT_SCHEMA if document.witness.is_none() => {}
+        delta::SCHEMA if published_output => document
+            .witness
+            .as_ref()
+            .context("published delta metadata witness missing")?
+            .validate()?,
+        _ => bail!("unsupported record metadata document version or witness"),
+    }
+    if document
+        .store_path
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        != expected_path
+    {
+        bail!("record metadata document store path mismatch");
+    }
+    let (_, placeholder) = replace(
+        &document.inline,
+        expected_path,
+        RawValue::from_string("null".into())?,
+    )?;
+    if placeholder.get() != "null" {
+        bail!("record metadata document contains an ambiguous inline store");
+    }
+    document
+        .state
+        .rooted_parts()?
+        .context("record metadata document needs three roots")?;
+    if !published_output {
+        let bundle = document
+            .state
+            .bundle
+            .as_ref()
+            .context("reference input bundle missing")?;
+        if bundle
+            .links()
+            .iter()
+            .any(|(_, link)| link.parent_root != link.root)
+        {
+            bail!("reference input metadata must bind identity root links");
+        }
+    }
+    Ok(document)
+}
+
+/// NCW2 input metadata only. Rejects inline/V1/V3 and non-identity documents.
+/// The enclosing NCW2 validator still authenticates its source, chain and QC.
+pub(super) fn decode_metadata<T: serde::de::DeserializeOwned>(
+    workspace: &WorkspaceStore,
+    bytes: &[u8],
+    expected_path: &[&str],
+) -> Result<BoundRecordMetadata<T>> {
+    let document = parse_metadata_document(bytes, expected_path, false)?;
+    validate_prepared_bundle(workspace, bytes, &document.state)?;
+    Ok(BoundRecordMetadata {
+        inline: serde_json::from_str(document.inline.get())?,
+        state: document.state,
+    })
+}
+
+/// Metadata from an original ledger-anchored published output. This verifies
+/// document/role-marker binding and, for V3, witness structure only. It does NOT
+/// replay deltas, authorize its parent roots, validate execution or authenticate
+/// publication. The caller must check the exact original bytes against the
+/// ledger's committed output digest and verify the block, QC and authority.
+pub(super) fn decode_published_output_metadata<T: serde::de::DeserializeOwned>(
+    workspace: &WorkspaceStore,
+    bytes: &[u8],
+    expected_path: &[&str],
+) -> Result<BoundRecordMetadata<T>> {
+    let document = parse_metadata_document(bytes, expected_path, true)?;
+    validate_prepared_bundle(workspace, bytes, &document.state)?;
+    Ok(BoundRecordMetadata {
+        inline: serde_json::from_str(document.inline.get())?,
+        state: document.state,
+    })
 }
 
 pub(super) fn prepare<T: Serialize>(
@@ -1155,9 +1385,17 @@ pub(crate) fn exercise_record_profile_document_storage_for_test(
     assert!(!is_delta_document(&large_fallback.bytes)?);
     assert_eq!(large_fallback.bytes, large_cold.bytes);
     drop(large);
+    let reference_bytes = reference_tests::exercise_metadata_reference_storage(
+        &workspace,
+        &cold.bytes,
+        &delta_bytes,
+        &legacy.bytes,
+        &legacy.update,
+    )?;
     assert_eq!(workspace.graph.get(&head_key)?, authority_before);
     drop(workspace);
     let reopened = WorkspaceStore::open(chain, params)?;
+    reference_tests::verify_metadata_reference_after_reopen(&reopened, &reference_bytes)?;
     verify_delta(&reopened)?;
     let (recovered, _): (TestDocument, _) = decode(&reopened, &prepared.bytes, &["store"])?;
     assert_eq!(recovered.store, next.store);

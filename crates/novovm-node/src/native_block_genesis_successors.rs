@@ -8,6 +8,15 @@ pub(super) struct FinalizedRecord {
     pub(super) commitment: [u8; 32],
 }
 
+/// An immutable historical archive, not a live signing/publication capability.
+pub(crate) struct FinalizedRecordArchiveV1 {
+    pub(crate) config: FreshGenesisConfigV1,
+    pub(crate) block: NovNativeDurableBlockV1,
+    pub(crate) proof: NovNativeFreshFinalityProofV1,
+    pub(crate) execution: NovNativeIsolatedExecutionBindingV1,
+    pub(crate) commitment: [u8; 32],
+}
+
 pub(crate) struct FinalizedWorkspaceTipV1 {
     pub(crate) current: [u8; 32],
     pub(crate) previous: Option<[u8; 32]>,
@@ -319,6 +328,46 @@ impl NovNativeBlockLedgerV1 {
             }
         }
         Ok(None)
+    }
+
+    /// Read the configuration and exact finalized record under one ledger lock
+    /// and one complete historical verification. This is still O(history).
+    /// Call only before entering a ledger write-lock callback: the process-shared
+    /// mutex is non-reentrant, including when this getter opens another handle.
+    pub(crate) fn load_fresh_finalized_archive_v1(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        height: u64,
+    ) -> Result<FinalizedRecordArchiveV1> {
+        if height == 0 {
+            bail!("execution finality starts at height one");
+        }
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("finalized archive ledger missing")?;
+        let _guard = ledger
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("finalized archive read lock poisoned"))?;
+        let config = load_verified(&ledger, genesis, namespace)?;
+        // Keep the first-height gate from load_fresh_finality_by_height_v1;
+        // a prepared/published promotion is not already finalized. For later
+        // heights record_at requires the immutable per-height finality archive.
+        if !ledger
+            .db
+            .get(KEY_SCHEMA_V1)?
+            .is_some_and(|schema| is_finalized_schema(&schema))
+        {
+            bail!("finalized record archive requires completed first-block finality");
+        }
+        let record = record_at(&ledger, height)?;
+        Ok(FinalizedRecordArchiveV1 {
+            config,
+            block: record.block,
+            proof: record.proof,
+            execution: record.execution,
+            commitment: record.commitment,
+        })
     }
 
     pub(crate) fn load_fresh_finalized_execution_v1(

@@ -159,6 +159,12 @@ fn exercise_fresh_sequence(
                     .execution_completed
             );
         }
+        if compiled.root_codec_profile()
+            == crate::native_root_codecs::NativeRootCodecProfileV1::RecordTreeV1
+        {
+            workspace::assert_light_input_output_point_read_for_test_v1(chain, candidate, params)
+                .unwrap();
+        }
         workspace::register_finalized_successor_v1(chain, parent, candidate, pin, params).unwrap();
         if height == 3 {
             exercise_fresh_candidate_service(path, params, compiled, candidate, Some(parent));
@@ -474,6 +480,23 @@ fn exercise_fresh_sequence(
                 .unwrap_err();
             assert!(error.to_string().contains("slot released response loss"));
             workspace::retire_old_workspaces_v1(chain, candidate, pin, params).unwrap();
+            if compiled.root_codec_profile()
+                == crate::native_root_codecs::NativeRootCodecProfileV1::RecordTreeV1
+            {
+                // Height 3's immediate parent (height 2) is retired. Its
+                // embedded source document and publication archive must still
+                // support verified reads without the retired parent's chunks.
+                let retired_parent =
+                    Ledger::load_fresh_finalized_execution_v1(&ledger, pin, namespace, 2)
+                        .unwrap()
+                        .0
+                        .workspace_id;
+                assert!(workspace::load_v1(chain, retired_parent, params)
+                    .unwrap()
+                    .is_none());
+                workspace::assert_light_input_output_point_read_for_test_v1(chain, parent, params)
+                    .unwrap();
+            }
             for protected in [parent, candidate] {
                 assert!(workspace::load_block_artifact_v1(chain, protected, params)
                     .unwrap()

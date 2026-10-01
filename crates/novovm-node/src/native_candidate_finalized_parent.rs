@@ -5,9 +5,9 @@ use super::*;
 #[serde(deny_unknown_fields)]
 pub(super) struct FinalizedParentSnapshot {
     pub(super) config: fresh_genesis::FreshGenesisConfigV1,
-    block: NovNativeDurableBlockV1,
+    pub(super) block: NovNativeDurableBlockV1,
     pub(super) store: NovNativeExecutionStoreV1,
-    proof: crate::native_block_ledger::NovNativeFreshFinalityProofV1,
+    pub(super) proof: crate::native_block_ledger::NovNativeFreshFinalityProofV1,
 }
 
 impl FinalizedParentSnapshot {
@@ -127,6 +127,42 @@ pub fn create_from_finalized_genesis_v1(
         {
             bail!("successor parent changed during workspace retirement");
         }
+    }
+    let id = workspace_id(&workspace.scope, &plan.plan_commitment);
+    let existing_version = workspace
+        .catalog()?
+        .into_iter()
+        .find_map(|(_, descriptor)| (descriptor.id == id).then_some(descriptor.version));
+    // Old reservations retain their exact input schema and parent digest. A
+    // physical-only historical output or mixed Execute plan is explicitly cold.
+    let has_three_roots = parent
+        .record_state
+        .as_ref()
+        .map(state_records::StoreRef::rooted_parts)
+        .transpose()?
+        .flatten()
+        .is_some();
+    if existing_version != Some(DescriptorVersion::Ncw1)
+        && parent.genesis_config().root_codec_profile()?
+            == crate::native_root_codecs::NativeRootCodecProfileV1::RecordTreeV1
+        && has_three_roots
+        && plan_contains_only_transfers(plan)?
+    {
+        let payload = LightPayload {
+            schema: LIGHT_SCHEMA.into(),
+            plan: plan.clone(),
+            finalized_parent: rooted_parent::RootedParentSnapshot::capture_from_verified_full(
+                &parent, &workspace, params,
+            )?,
+            record_state: parent.record_state.clone(),
+        };
+        if let Some(info) = stage_light_payload(&mut workspace, &payload, |_| Ok(()))? {
+            return Ok(info);
+        }
+        // Only the typed pre-reservation 8 MiB error can reach this branch.
+        // No invalid reference, partial NCW2 or storage error may fall back.
+    } else if existing_version == Some(DescriptorVersion::Ncw2) {
+        bail!("existing NCW2 input cannot be replayed through a cold parent path");
     }
     let payload = Payload {
         schema: SCHEMA.to_owned(),

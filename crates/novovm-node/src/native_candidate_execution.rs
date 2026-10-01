@@ -20,6 +20,7 @@ pub use block_artifact::{
     with_verified_genesis_block_candidate_v1, IsolatedBlockArtifactV1,
 };
 pub(super) use promotion::capture_finalized_parent_locked;
+pub(super) use promotion::publication_target_fields;
 pub use promotion::{
     complete_genesis_promotion_v1, complete_successor_ledger_v1, finalize_genesis_promotion_v1,
     finalize_successor_v1, load_finalized_genesis_parent_v1, load_latest_finalized_parent_v1,
@@ -39,12 +40,78 @@ pub(crate) use promotion::{
 };
 pub(crate) use promotion::{load_startup_artifact_v1, load_startup_successor_v1};
 #[cfg(test)]
-pub(crate) use rooted_output::assert_delta_output_point_read_for_test_v1;
+pub(crate) use rooted_output::{
+    assert_delta_output_point_read_for_test_v1, assert_light_input_output_point_read_for_test_v1,
+};
 use rooted_output::{authenticate_payload, read_output_view, OutputView};
 
-const OUTPUT_SCHEMA: &str = "novovm-native-candidate-execution/v1";
+pub(super) const OUTPUT_SCHEMA: &str = "novovm-native-candidate-execution/v1";
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TOTAL_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
+
+// Only verified input variants implement this internal view. A rooted parent
+// exposes metadata and point reads, never a fabricated partial Store.
+trait ExecutionInput {
+    fn plan(&self) -> &NovNativeCandidateExecutionPlanV1;
+    fn root_codec_profile(&self) -> Result<NativeRootCodecProfileV1>;
+    fn record_state(&self) -> Option<&state_records::StoreRef>;
+    fn parent_sequence(&self) -> Result<u64>;
+    fn cold_payload(&self) -> Option<&Payload>;
+}
+
+impl ExecutionInput for Payload {
+    fn plan(&self) -> &NovNativeCandidateExecutionPlanV1 {
+        &self.plan
+    }
+    fn root_codec_profile(&self) -> Result<NativeRootCodecProfileV1> {
+        Payload::root_codec_profile(self)
+    }
+    fn record_state(&self) -> Option<&state_records::StoreRef> {
+        self.record_state.as_ref()
+    }
+    fn parent_sequence(&self) -> Result<u64> {
+        Ok(self
+            .parent_store()?
+            .module_state
+            .aoem_semantic_ledger_sequence)
+    }
+    fn cold_payload(&self) -> Option<&Payload> {
+        Some(self)
+    }
+}
+
+impl ExecutionInput for VerifiedInput {
+    fn plan(&self) -> &NovNativeCandidateExecutionPlanV1 {
+        match self {
+            Self::Cold(p) => &p.plan,
+            Self::Light(p) => &p.plan,
+        }
+    }
+    fn root_codec_profile(&self) -> Result<NativeRootCodecProfileV1> {
+        match self {
+            Self::Cold(p) => p.root_codec_profile(),
+            Self::Light(p) => p.finalized_parent.config.root_codec_profile(),
+        }
+    }
+    fn record_state(&self) -> Option<&state_records::StoreRef> {
+        match self {
+            Self::Cold(p) => p.record_state.as_ref(),
+            Self::Light(p) => p.record_state.as_ref(),
+        }
+    }
+    fn parent_sequence(&self) -> Result<u64> {
+        match self {
+            Self::Cold(p) => p.parent_sequence(),
+            Self::Light(p) => Ok(p.finalized_parent.block.header.state_version),
+        }
+    }
+    fn cold_payload(&self) -> Option<&Payload> {
+        match self {
+            Self::Cold(p) => Some(p),
+            Self::Light(_) => None,
+        }
+    }
+}
 
 fn check_output_capacity(reserved: usize, len: usize) -> Result<()> {
     if len == 0 || len > MAX_OUTPUT_BYTES {
@@ -133,7 +200,7 @@ impl OutputDescriptor {
     }
 }
 
-fn output_digest(bytes: &[u8]) -> [u8; 32] {
+pub(super) fn output_digest(bytes: &[u8]) -> [u8; 32] {
     sha256_bytes_v1(&[b"novovm-candidate-output-v1\0", bytes])
 }
 
@@ -197,9 +264,10 @@ fn ready_input(workspace: &WorkspaceStore, id: [u8; 32]) -> Result<Descriptor> {
 }
 
 fn build_batch(
-    payload: &Payload,
+    payload: &impl ExecutionInput,
     items: &[AuthenticatedItem],
 ) -> Result<novovm_exec::NovovmAoemNativeTxBatchV1> {
+    let plan = payload.plan();
     let mut batch_items = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
         let parameter_payload = native_tx_parameter_payload_v1(
@@ -207,7 +275,7 @@ fn build_batch(
             &item.ir,
             Some(&item.execution_request),
             Some(&item.execution_subject),
-            &payload.plan.raw_txs[index],
+            &plan.raw_txs[index],
         );
         let sequence = index as u64;
         let tx_hash = to_hex_prefixed_v1(&item.tx_hash);
@@ -243,11 +311,14 @@ fn build_batch(
             canonical_rebuild_commitment,
         });
     }
-    let context_commitment = payload.plan.context.commitment()?;
+    let context_commitment = plan.context.commitment()?;
     let batch_id = match payload.root_codec_profile()? {
         NativeRootCodecProfileV1::LegacyWireV1 => deterministic_native_aoem_batch_id_v1(
-            payload.plan.context.chain_id,
-            payload.parent_store()?,
+            plan.context.chain_id,
+            payload
+                .cold_payload()
+                .context("legacy batch requires a complete parent")?
+                .parent_store()?,
             &batch_items,
             Some(&context_commitment),
         ),
@@ -255,15 +326,9 @@ fn build_batch(
             use sha2::{Digest, Sha256};
             let mut hash = Sha256::new();
             hash.update(b"novovm-native-record-aoem-batch-id-v1\0");
-            hash.update(payload.plan.context.chain_id.to_be_bytes());
-            hash.update(payload.plan.pre_state_root);
-            hash.update(
-                payload
-                    .parent_store()?
-                    .module_state
-                    .aoem_semantic_ledger_sequence
-                    .to_be_bytes(),
-            );
+            hash.update(plan.context.chain_id.to_be_bytes());
+            hash.update(plan.pre_state_root);
+            hash.update(payload.parent_sequence()?.to_be_bytes());
             hash.update(context_commitment);
             hash.update((batch_items.len() as u64).to_be_bytes());
             for item in &batch_items {
@@ -276,8 +341,8 @@ fn build_batch(
     };
     novovm_exec::build_native_tx_batch_v1(
         batch_id,
-        payload.plan.context.chain_id,
-        Some(payload.plan.context.block_height),
+        plan.context.chain_id,
+        Some(plan.context.block_height),
         batch_items,
     )
 }
@@ -666,12 +731,12 @@ fn validate_output(
 }
 
 fn validate_precommit_receipts(
-    payload: &Payload,
+    payload: &impl ExecutionInput,
     items: &[AuthenticatedItem],
     receipts: &BTreeMap<String, NovNativeExecutionReceiptV1>,
 ) -> Result<()> {
     let chunk_size = NOV_NATIVE_AOEM_CONSENSUS_BATCH_CHUNK_SIZE_V1;
-    for (chunk_index, raws) in payload.plan.raw_txs.chunks(chunk_size).enumerate() {
+    for (chunk_index, raws) in payload.plan().raw_txs.chunks(chunk_size).enumerate() {
         let (wire, plan_id) = build_native_aoem_raw_tx_batch_ops_wire_v1(raws, chunk_size)?;
         let wire_digest = to_hex(&sha256_bytes_v1(&[
             b"novovm-native-aoem-semantic-wire-digest-v1",
@@ -735,6 +800,25 @@ fn read_output_bytes(
         bail!("candidate output digest mismatch");
     }
     Ok(Some(bytes))
+}
+
+// Read the exact completed immutable source document. Its publication and
+// finalized-ledger provenance must be checked separately by the caller.
+pub(super) fn read_completed_output_bytes(
+    workspace: &WorkspaceStore,
+    id: [u8; 32],
+) -> Result<Vec<u8>> {
+    let input = ready_input(workspace, id)?;
+    let descriptor = catalog(workspace)?
+        .into_iter()
+        .find(|(known, _)| *known == id)
+        .context("published parent output reservation missing")?
+        .1;
+    if !is_complete(workspace, &input, &descriptor)? {
+        bail!("published parent output completion missing");
+    }
+    read_output_bytes(workspace, &input, &descriptor)?
+        .context("published parent output chunks missing")
 }
 
 fn read_output(
@@ -840,7 +924,7 @@ pub(crate) fn execute_with_checkpoint_v1(
 ) -> Result<ExecutionInfoV1> {
     let mut workspace = WorkspaceStore::open(chain_id, params)?;
     let input = ready_input(&workspace, id)?;
-    let payload = workspace.read_payload(&input)?;
+    let verified = workspace.read_input(&input)?;
     let outputs = catalog(&workspace)?;
     let existing = outputs
         .iter()
@@ -853,19 +937,29 @@ pub(crate) fn execute_with_checkpoint_v1(
     // A completed or fully written result recovers without resubmitting AOEM
     // or recomputing business transitions, including after authority GC.
     if let Some(descriptor) = existing {
-        if let Some(output) = read_output_view(&workspace, &input, descriptor, &payload, params)? {
+        if let Some(output) = read_output_view(&workspace, &input, descriptor, &verified, params)? {
             if !complete {
                 publish(&mut workspace, &input, descriptor)?;
                 checkpoint(ExecutionCheckpointV1::Completed)?;
             }
-            return info(&input, descriptor, output, payload.root_codec_profile()?);
+            return info(&input, descriptor, output, verified.root_codec_profile()?);
         }
         if complete {
             bail!("completed candidate output has missing chunks");
         }
     }
-    let mut output = compute(&payload, &input, &workspace, params)?;
-    validate_output(&output, &payload, &input, &workspace, params)?;
+    // First computation/output preparation still requires an explicit full
+    // image. Completed NCW2/V3 recovery above never takes this cold boundary.
+    let materialized;
+    let payload = match verified.cold_payload() {
+        Some(payload) => payload,
+        None => {
+            materialized = workspace.read_payload(&input)?;
+            &materialized
+        }
+    };
+    let mut output = compute(payload, &input, &workspace, params)?;
+    validate_output(&output, payload, &input, &workspace, params)?;
     let parent_store = payload.parent_store()?;
     let mut prepared = if payload.root_codec_profile()? == NativeRootCodecProfileV1::RecordTreeV1 {
         let updates = output.record_updates.take();
@@ -984,7 +1078,7 @@ pub(crate) fn execute_with_checkpoint_v1(
     checkpoint(ExecutionCheckpointV1::PartialOutput)?;
     workspace.commit(b'O', &input, writes, reservation)?;
     checkpoint(ExecutionCheckpointV1::OutputWritten)?;
-    let readback = read_output_view(&workspace, &input, &descriptor, &payload, params)?
+    let readback = read_output_view(&workspace, &input, &descriptor, &verified, params)?
         .context("candidate output readback incomplete")?;
     publish(&mut workspace, &input, &descriptor)?;
     checkpoint(ExecutionCheckpointV1::Completed)?;
@@ -1028,7 +1122,7 @@ pub fn load_execution_v1(
     if !is_complete(&workspace, &input, descriptor)? {
         return Ok(None);
     }
-    let payload = workspace.read_payload(&input)?;
+    let payload = workspace.read_input(&input)?;
     let output = read_output_view(&workspace, &input, descriptor, &payload, params)?
         .context("completed candidate output missing")?;
     Ok(Some(info(
@@ -1247,6 +1341,7 @@ mod tests {
     #[test]
     fn candidate_workspace_execution_descriptor_bounds_and_output_capacity_are_closed() {
         let input = Descriptor {
+            version: DescriptorVersion::Ncw1,
             id: [1; 32],
             plan: [2; 32],
             payload: [3; 32],

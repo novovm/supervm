@@ -984,6 +984,18 @@ fn exercise_record_profile_fresh_transfers() {
         )
         .unwrap();
         let next_result = workspace::execute_v1(chain, next_input.workspace_id, params).unwrap();
+        workspace::assert_light_input_output_point_read_for_test_v1(
+            chain,
+            next_input.workspace_id,
+            params,
+        )
+        .unwrap();
+        workspace::exercise_light_input_recovery_for_test_v1(
+            chain,
+            next_input.workspace_id,
+            params,
+        )
+        .unwrap();
         assert_candidate_workspace_execution_complete(&next_result);
         assert!(next_result.batch_result.per_tx_receipts[0].status_ok);
         assert_eq!(next_result.batch_result.snapshot_metadata.state_version, 6);

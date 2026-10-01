@@ -30,7 +30,27 @@ fn publication_target(
     id: [u8; 32],
     artifact: &IsolatedBlockArtifactV1,
 ) -> Vec<u8> {
-    let header = &artifact.block().header;
+    publication_target_fields(
+        magic,
+        namespace,
+        genesis,
+        commitment,
+        id,
+        artifact.output_digest,
+        artifact.block(),
+    )
+}
+
+pub(in super::super) fn publication_target_fields(
+    magic: &[u8; 4],
+    namespace: [u8; 32],
+    genesis: [u8; 32],
+    commitment: [u8; 32],
+    id: [u8; 32],
+    output_digest: [u8; 32],
+    block: &NovNativeDurableBlockV1,
+) -> Vec<u8> {
+    let header = &block.header;
     let mut target = magic.to_vec();
     target.extend_from_slice(&header.chain_id.to_be_bytes());
     for part in [
@@ -38,7 +58,7 @@ fn publication_target(
         genesis,
         commitment,
         id,
-        artifact.output_digest,
+        output_digest,
         header.block_hash,
         header.post_state_root,
         header.cumulative_receipt_root,

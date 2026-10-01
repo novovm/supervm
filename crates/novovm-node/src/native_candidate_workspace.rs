@@ -9,6 +9,8 @@ mod auth;
 mod execution;
 #[path = "native_candidate_finalized_parent.rs"]
 mod finalized_parent;
+#[path = "native_candidate_rooted_parent.rs"]
+mod rooted_parent;
 #[path = "native_candidate_state_records.rs"]
 mod state_records;
 pub use execution::{
@@ -55,6 +57,7 @@ pub const MAX_PAYLOAD_BYTES_V1: usize = 8 * 1024 * 1024;
 pub const MAX_TOTAL_PAYLOAD_BYTES_V1: usize = 64 * 1024 * 1024;
 const CHUNK_BYTES: usize = 512;
 const SCHEMA: &str = "novovm-native-candidate-workspace/v1";
+const LIGHT_SCHEMA: &str = "novovm-native-candidate-workspace/v2";
 const DESCRIPTOR_BYTES: usize = 4 + 32 * 6 + 8;
 const _: () = assert!(DESCRIPTOR_BYTES <= CHUNK_BYTES);
 
@@ -89,8 +92,24 @@ pub struct WorkspaceInfoV1 {
     pub finalized: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DescriptorVersion {
+    Ncw1,
+    Ncw2,
+}
+
+impl DescriptorVersion {
+    fn payload_digest(self, bytes: &[u8]) -> [u8; 32] {
+        match self {
+            Self::Ncw1 => payload_digest(bytes),
+            Self::Ncw2 => sha256_bytes_v1(&[b"novovm-candidate-workspace-payload-v2\0", bytes]),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Descriptor {
+    version: DescriptorVersion,
     id: [u8; 32],
     plan: [u8; 32],
     payload: [u8; 32],
@@ -103,7 +122,10 @@ struct Descriptor {
 impl Descriptor {
     fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(DESCRIPTOR_BYTES);
-        out.extend_from_slice(b"NCW1");
+        out.extend_from_slice(match self.version {
+            DescriptorVersion::Ncw1 => b"NCW1",
+            DescriptorVersion::Ncw2 => b"NCW2",
+        });
         for value in [
             &self.id,
             &self.plan,
@@ -119,15 +141,21 @@ impl Descriptor {
     }
 
     fn decode(bytes: &[u8], scope: &[u8; 32]) -> Result<Self> {
-        if bytes.len() != DESCRIPTOR_BYTES || &bytes[..4] != b"NCW1" {
+        if bytes.len() != DESCRIPTOR_BYTES {
             bail!("invalid candidate workspace descriptor codec");
         }
+        let version = match &bytes[..4] {
+            b"NCW1" => DescriptorVersion::Ncw1,
+            b"NCW2" => DescriptorVersion::Ncw2,
+            _ => bail!("invalid candidate workspace descriptor codec"),
+        };
         let hash = |index: usize| -> [u8; 32] {
             bytes[4 + index * 32..4 + (index + 1) * 32]
                 .try_into()
                 .expect("fixed descriptor")
         };
         let descriptor = Self {
+            version,
             id: hash(0),
             plan: hash(1),
             payload: hash(2),
@@ -147,7 +175,10 @@ impl Descriptor {
 
     fn info(&self, chain_id: u64, slot: usize, status: WorkspaceStatusV1) -> WorkspaceInfoV1 {
         WorkspaceInfoV1 {
-            schema: SCHEMA,
+            schema: match self.version {
+                DescriptorVersion::Ncw1 => SCHEMA,
+                DescriptorVersion::Ncw2 => LIGHT_SCHEMA,
+            },
             workspace_id: self.id,
             slot,
             chain_id,
@@ -182,6 +213,23 @@ struct Payload {
     finalized_parent: Option<FinalizedParentSnapshot>,
     #[serde(skip)]
     record_state: Option<state_records::StoreRef>,
+}
+
+/// A proof-bound input without a fabricated historical Store. The parent
+/// source document and the outer reference are validated independently.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LightPayload {
+    schema: String,
+    plan: NovNativeCandidateExecutionPlanV1,
+    finalized_parent: rooted_parent::RootedParentSnapshot,
+    #[serde(skip)]
+    record_state: Option<state_records::StoreRef>,
+}
+
+enum VerifiedInput {
+    Cold(Box<Payload>),
+    Light(Box<LightPayload>),
 }
 
 impl Payload {
@@ -297,6 +345,7 @@ struct WorkspaceStore {
     namespace: String,
     protocol: [u8; 32],
     chain_id: u64,
+    params: serde_json::Value,
     lock_path: PathBuf,
     lock: Option<WorkspaceLock>,
 }
@@ -345,6 +394,7 @@ impl WorkspaceStore {
             namespace,
             protocol,
             chain_id,
+            params: params.clone(),
             lock_path,
             lock: Some(lock),
         })
@@ -462,7 +512,7 @@ impl WorkspaceStore {
         Ok(())
     }
 
-    fn read_payload(&self, descriptor: &Descriptor) -> Result<Payload> {
+    fn read_input(&self, descriptor: &Descriptor) -> Result<VerifiedInput> {
         let mut bytes = Vec::with_capacity(descriptor.len);
         for index in 0..descriptor.len.div_ceil(CHUNK_BYTES) {
             let chunk = self
@@ -475,22 +525,68 @@ impl WorkspaceStore {
             }
             bytes.extend_from_slice(&chunk);
         }
-        if payload_digest(&bytes) != descriptor.payload {
+        if descriptor.version.payload_digest(&bytes) != descriptor.payload {
             bail!("candidate workspace payload digest mismatch");
         }
-        let payload = state_records::decode_payload(self, &bytes)
-            .context("decode candidate workspace payload")?;
-        validate_payload(&payload, self)?;
-        if descriptor != &describe(&payload, &bytes, &self.scope)? {
-            bail!("candidate workspace descriptor does not bind its parent and plan");
+        match descriptor.version {
+            DescriptorVersion::Ncw1 => {
+                let payload = state_records::decode_payload(self, &bytes)
+                    .context("decode candidate workspace payload")?;
+                validate_payload(&payload, self)?;
+                if descriptor != &describe(&payload, &bytes, &self.scope)? {
+                    bail!("candidate workspace descriptor does not bind its parent and plan");
+                }
+                Ok(VerifiedInput::Cold(Box::new(payload)))
+            }
+            DescriptorVersion::Ncw2 => {
+                let document = state_records::decode_metadata::<LightPayload>(
+                    self,
+                    &bytes,
+                    &["finalized_parent", "store"],
+                )?;
+                let mut payload = document.inline;
+                payload.record_state = Some(document.state);
+                validate_light_payload(&payload, self)?;
+                let reference = payload
+                    .record_state
+                    .as_ref()
+                    .context("NCW2 parent reference missing")?;
+                if descriptor != &describe_light(&payload, &bytes, reference, &self.scope)? {
+                    bail!("candidate NCW2 descriptor does not bind its parent and plan");
+                }
+                Ok(VerifiedInput::Light(Box::new(payload)))
+            }
         }
-        Ok(payload)
+    }
+
+    /// Explicit cold compatibility/export boundary, never used to implement
+    /// light input validation. The reconstructed Store is complete and verified.
+    fn read_payload(&self, descriptor: &Descriptor) -> Result<Payload> {
+        match self.read_input(descriptor)? {
+            VerifiedInput::Cold(payload) => Ok(*payload),
+            VerifiedInput::Light(payload) => {
+                let parent = payload
+                    .finalized_parent
+                    .materialize_cold(self, &self.params)?;
+                let payload = Payload {
+                    schema: SCHEMA.into(),
+                    plan: payload.plan,
+                    parent_block: None,
+                    parent_snapshot: None,
+                    genesis: None,
+                    finalized_parent: Some(parent),
+                    record_state: payload.record_state,
+                };
+                validate_payload(&payload, self)?;
+                Ok(payload)
+            }
+        }
     }
 
     fn info(&self, slot: usize, descriptor: &Descriptor) -> Result<WorkspaceInfoV1> {
         let status = self.status(slot, descriptor)?;
         if status == WorkspaceStatusV1::Ready {
-            self.read_payload(descriptor)?;
+            self.read_input(descriptor)?;
         }
         Ok(descriptor.info(self.chain_id, slot, status))
     }
@@ -509,6 +605,7 @@ fn describe(payload: &Payload, bytes: &[u8], scope: &[u8; 32]) -> Result<Descrip
         bail!("candidate workspace payload exceeds 8 MiB");
     }
     Ok(Descriptor {
+        version: DescriptorVersion::Ncw1,
         id: workspace_id(scope, &payload.plan.plan_commitment),
         plan: payload.plan.plan_commitment,
         payload: payload_digest(bytes),
@@ -526,6 +623,68 @@ fn describe(payload: &Payload, bytes: &[u8], scope: &[u8; 32]) -> Result<Descrip
         ]),
         len: bytes.len(),
     })
+}
+
+fn describe_light(
+    payload: &LightPayload,
+    bytes: &[u8],
+    reference: &state_records::StoreRef,
+    scope: &[u8; 32],
+) -> Result<Descriptor> {
+    if bytes.is_empty() || bytes.len() > MAX_PAYLOAD_BYTES_V1 {
+        bail!("candidate workspace payload exceeds 8 MiB");
+    }
+    Ok(Descriptor {
+        version: DescriptorVersion::Ncw2,
+        id: workspace_id(scope, &payload.plan.plan_commitment),
+        plan: payload.plan.plan_commitment,
+        payload: DescriptorVersion::Ncw2.payload_digest(bytes),
+        parent_block: payload.plan.context.parent_block_hash,
+        parent_state: payload.plan.pre_state_root,
+        parent_snapshot: sha256_bytes_v1(&[
+            b"novovm-candidate-workspace-rooted-parent-v2\0",
+            &serde_json::to_vec(&(&payload.finalized_parent, reference))?,
+        ]),
+        len: bytes.len(),
+    })
+}
+
+fn plan_contains_only_transfers(plan: &NovNativeCandidateExecutionPlanV1) -> Result<bool> {
+    for raw in &plan.raw_txs {
+        if !matches!(
+            decode_nov_native_tx_wire_v1(raw)?.kind,
+            NovTxKindV1::Transfer(_)
+        ) {
+            return Ok(false);
+        }
+    }
+    Ok(!plan.raw_txs.is_empty())
+}
+
+fn validate_light_payload(payload: &LightPayload, workspace: &WorkspaceStore) -> Result<()> {
+    let plan = &payload.plan;
+    plan.validate()?;
+    if payload.schema != LIGHT_SCHEMA
+        || plan.context.chain_id != workspace.chain_id
+        || plan.protocol_config_commitment != workspace.protocol
+        || !plan_contains_only_transfers(plan)?
+    {
+        bail!("candidate NCW2 input schema, domain or transaction kind mismatch");
+    }
+    for (raw, expected) in plan.raw_txs.iter().zip(&plan.tx_hashes) {
+        if canonical_nov_native_tx_hash_from_payload_v1(raw)? != *expected {
+            bail!("candidate workspace body does not match canonical transaction hashes");
+        }
+    }
+    payload.finalized_parent.validate(
+        workspace,
+        plan,
+        payload
+            .record_state
+            .as_ref()
+            .context("NCW2 parent reference missing")?,
+        &workspace.params,
+    )
 }
 
 fn validate_payload(payload: &Payload, workspace: &WorkspaceStore) -> Result<()> {
@@ -871,6 +1030,79 @@ fn stage_payload(
             None
         };
     let bytes = inline.as_deref().unwrap_or(&prepared.bytes);
+    stage_payload_bytes(
+        workspace,
+        descriptor,
+        bytes,
+        |workspace| {
+            if inline.is_none() {
+                state_records::persist(workspace, &prepared)?;
+            }
+            Ok(())
+        },
+        checkpoint,
+    )
+}
+
+/// Only an oversized, never-reserved input may decline NCW2 before writing.
+/// Invalid provenance, mismatching replays and all storage errors stay closed.
+fn stage_light_payload(
+    workspace: &mut WorkspaceStore,
+    payload: &LightPayload,
+    checkpoint: impl Fn(CheckpointV1) -> Result<()>,
+) -> Result<Option<WorkspaceInfoV1>> {
+    validate_light_payload(payload, workspace)?;
+    let id = workspace_id(&workspace.scope, &payload.plan.plan_commitment);
+    if workspace.graph.get(&workspace.key(b'g', &id))?.is_some() {
+        bail!("retired candidate workspace cannot be revived");
+    }
+    let already_reserved = workspace.catalog()?.iter().any(|(_, input)| input.id == id);
+    let prepared = match state_records::prepare_reference(
+        workspace,
+        payload,
+        &["finalized_parent", "store"],
+        payload
+            .record_state
+            .as_ref()
+            .context("NCW2 parent reference missing")?,
+    ) {
+        Ok(prepared) => prepared,
+        Err(error) if !already_reserved && error.is::<state_records::ReferenceInputTooLarge>() => {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    let descriptor = describe_light(payload, &prepared.bytes, prepared.state(), &workspace.scope)?;
+    stage_payload_bytes(
+        workspace,
+        descriptor,
+        &prepared.bytes,
+        |workspace| state_records::persist_reference(workspace, &prepared),
+        checkpoint,
+    )
+    .map(Some)
+}
+
+fn stage_payload_bytes(
+    workspace: &mut WorkspaceStore,
+    descriptor: Descriptor,
+    bytes: &[u8],
+    persist_records: impl FnOnce(&WorkspaceStore) -> Result<()>,
+    checkpoint: impl Fn(CheckpointV1) -> Result<()>,
+) -> Result<WorkspaceInfoV1> {
+    if bytes.is_empty()
+        || bytes.len() > MAX_PAYLOAD_BYTES_V1
+        || descriptor.len != bytes.len()
+        || descriptor.version.payload_digest(bytes) != descriptor.payload
+    {
+        bail!("candidate workspace staged bytes disagree with descriptor bounds or digest");
+    }
+    let id = descriptor.id;
+    if workspace.graph.get(&workspace.key(b'g', &id))?.is_some() {
+        bail!("retired candidate workspace cannot be revived");
+    }
+    let catalog = workspace.catalog()?;
+    let existing = catalog.iter().find(|(_, previous)| previous.id == id);
     if let Some((slot, previous)) = existing {
         if previous != &descriptor {
             bail!("candidate workspace replay changed its captured parent");
@@ -898,9 +1130,7 @@ fn stage_payload(
         slot
     };
     checkpoint(CheckpointV1::Reserved)?;
-    if inline.is_none() {
-        state_records::persist(workspace, &prepared)?;
-    }
+    persist_records(workspace)?;
     let writes: Vec<_> = bytes
         .chunks(CHUNK_BYTES)
         .enumerate()
@@ -918,7 +1148,7 @@ fn stage_payload(
     checkpoint(CheckpointV1::PartialPayload)?;
     workspace.commit(b'c', &descriptor, writes, reservation)?;
     checkpoint(CheckpointV1::PayloadWritten)?;
-    workspace.read_payload(&descriptor)?;
+    workspace.read_input(&descriptor)?;
     let ready = AoemAtomicGraphWriteV1::Put {
         key: workspace.key(b'r', &id),
         value: workspace.marker(b'r', slot, &descriptor),
@@ -1137,9 +1367,196 @@ pub(super) fn seed_legacy_inline_input_for_test_v1(
 
 #[cfg(test)]
 pub(crate) use execution::{
-    assert_delta_output_point_read_for_test_v1, seed_legacy_inline_output_for_test_v1,
-    seed_legacy_record_output_for_test_v1, seed_previous_record_output_for_test_v1,
+    assert_delta_output_point_read_for_test_v1, assert_light_input_output_point_read_for_test_v1,
+    seed_legacy_inline_output_for_test_v1, seed_legacy_record_output_for_test_v1,
+    seed_previous_record_output_for_test_v1,
 };
+
+/// Four isolated input-recovery fixtures reuse the same verified light parent.
+/// No execution output, registration or authority mutation is performed here.
+#[cfg(test)]
+pub(crate) fn exercise_light_input_recovery_for_test_v1(
+    chain: u64,
+    source_id: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<()> {
+    state_records::without_materialization_for_test(|| {
+        let (source_slot, source_descriptor, source_bytes, reference, authority) = {
+            let workspace = WorkspaceStore::open(chain, params)?;
+            let (slot, descriptor) = workspace
+                .catalog()?
+                .into_iter()
+                .find(|(_, input)| input.id == source_id)
+                .context("NCW2 recovery fixture source input missing")?;
+            if workspace.status(slot, &descriptor)? != WorkspaceStatusV1::Ready {
+                bail!("NCW2 recovery fixture source must be ready");
+            }
+            let VerifiedInput::Light(payload) = workspace.read_input(&descriptor)? else {
+                bail!("NCW2 recovery fixture requires a light source input");
+            };
+            let authority = workspace.graph.get(&native_aoem_owned_state_head_key_v1(
+                chain,
+                &workspace.namespace,
+            ))?;
+            (
+                slot,
+                descriptor,
+                serde_json::to_vec(&payload)?,
+                payload.record_state,
+                authority,
+            )
+        };
+        for (index, stop) in [
+            CheckpointV1::Reserved,
+            CheckpointV1::PartialPayload,
+            CheckpointV1::PayloadWritten,
+            CheckpointV1::Ready,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut payload: LightPayload = serde_json::from_slice(&source_bytes)?;
+            payload.record_state = reference.clone();
+            let mut context = payload.plan.context;
+            context.slot = context
+                .slot
+                .checked_add(100 + u64::try_from(index)?)
+                .context("NCW2 recovery fixture slot overflow")?;
+            payload.plan = NovNativeCandidateExecutionPlanV1::new(
+                context,
+                payload.plan.protocol_config_commitment,
+                payload.plan.pre_state_root,
+                payload.plan.aoem_parent.clone(),
+                payload.plan.tx_hashes.clone(),
+                payload.plan.raw_txs.clone(),
+            )?;
+            let (slot, descriptor) = {
+                let mut workspace = WorkspaceStore::open(chain, params)?;
+                let prepared = state_records::prepare_reference(
+                    &workspace,
+                    &payload,
+                    &["finalized_parent", "store"],
+                    payload
+                        .record_state
+                        .as_ref()
+                        .context("NCW2 fixture reference missing")?,
+                )?;
+                let expected = describe_light(
+                    &payload,
+                    &prepared.bytes,
+                    prepared.state(),
+                    &workspace.scope,
+                )?;
+                if workspace
+                    .catalog()?
+                    .iter()
+                    .any(|(_, input)| input.id == expected.id)
+                {
+                    bail!("NCW2 recovery fixture requires an unused input context");
+                }
+                let reached = std::cell::Cell::new(false);
+                let failure = match stage_light_payload(&mut workspace, &payload, |point| {
+                    if point == stop {
+                        reached.set(true);
+                        bail!("NCW2 fixture interrupted input stage");
+                    }
+                    Ok(())
+                }) {
+                    Err(error) => error,
+                    Ok(_) => bail!("NCW2 fixture failed to interrupt its chosen stage"),
+                };
+                if !reached.get()
+                    || !format!("{failure:#}").contains("NCW2 fixture interrupted input stage")
+                {
+                    bail!("NCW2 fixture failed before its chosen stage: {failure:#}");
+                }
+                let (slot, actual) = workspace
+                    .catalog()?
+                    .into_iter()
+                    .find(|(_, input)| input.id == expected.id)
+                    .context("NCW2 interrupted reservation missing")?;
+                let status = if stop == CheckpointV1::Ready {
+                    WorkspaceStatusV1::Ready
+                } else {
+                    WorkspaceStatusV1::Staging
+                };
+                if actual != expected
+                    || actual.version != DescriptorVersion::Ncw2
+                    || workspace.status(slot, &actual)? != status
+                {
+                    bail!("NCW2 interrupted stage changed its reservation or readiness");
+                }
+                (slot, actual)
+            };
+            // A new handle recovers from durable bytes, not an in-memory payload.
+            let mut workspace = WorkspaceStore::open(chain, params)?;
+            if workspace.graph.get(&workspace.slot_key(slot))? != Some(descriptor.encode()) {
+                bail!("NCW2 reopened reservation differs from its original bytes");
+            }
+            let checkpoints = std::cell::RefCell::new(Vec::new());
+            let info = stage_light_payload(&mut workspace, &payload, |point| {
+                checkpoints.borrow_mut().push(point);
+                Ok(())
+            })?
+            .context("NCW2 reserved fixture cannot fall back to a cold input")?;
+            let expected = if stop == CheckpointV1::Ready {
+                Vec::new()
+            } else {
+                vec![
+                    CheckpointV1::Reserved,
+                    CheckpointV1::PartialPayload,
+                    CheckpointV1::PayloadWritten,
+                    CheckpointV1::Ready,
+                ]
+            };
+            if *checkpoints.borrow() != expected
+                || info.schema != LIGHT_SCHEMA
+                || info.workspace_id != descriptor.id
+                || info.payload_digest != descriptor.payload
+                || info.parent_snapshot_digest != descriptor.parent_snapshot
+                || info.status != WorkspaceStatusV1::Ready
+                || workspace.graph.get(&workspace.slot_key(slot))? != Some(descriptor.encode())
+                || !matches!(workspace.read_input(&descriptor)?, VerifiedInput::Light(_))
+                || workspace
+                    .graph
+                    .get(&workspace.key(b'v', &descriptor.id))?
+                    .is_some()
+                || workspace.graph.get(&native_aoem_owned_state_head_key_v1(
+                    chain,
+                    &workspace.namespace,
+                ))? != authority
+            {
+                bail!("NCW2 recovery changed its reserved bytes, output, authority or completion order");
+            }
+        }
+        let mut workspace = WorkspaceStore::open(chain, params)?;
+        let mut wrong_parent: LightPayload = serde_json::from_slice(&source_bytes)?;
+        wrong_parent.record_state = reference;
+        wrong_parent.finalized_parent.promotion_commitment[0] ^= 1;
+        let wrong_reached_stage = std::cell::Cell::new(false);
+        if stage_light_payload(&mut workspace, &wrong_parent, |_| {
+            wrong_reached_stage.set(true);
+            bail!("changed NCW2 parent must fail before staging")
+        })
+        .is_ok()
+            || wrong_reached_stage.get()
+            || workspace.graph.get(&workspace.slot_key(source_slot))?
+                != Some(source_descriptor.encode())
+            || workspace.status(source_slot, &source_descriptor)? != WorkspaceStatusV1::Ready
+            || !matches!(
+                workspace.read_input(&source_descriptor)?,
+                VerifiedInput::Light(_)
+            )
+            || workspace.graph.get(&native_aoem_owned_state_head_key_v1(
+                chain,
+                &workspace.namespace,
+            ))? != authority
+        {
+            bail!("NCW2 same-plan changed-parent replay altered the verified source");
+        }
+        Ok(())
+    })
+}
 
 #[cfg(test)]
 mod tests {
@@ -1147,6 +1564,7 @@ mod tests {
 
     fn descriptor(scope: &[u8; 32], value: u8, len: usize) -> Descriptor {
         Descriptor {
+            version: DescriptorVersion::Ncw1,
             id: workspace_id(scope, &[value; 32]),
             plan: [value; 32],
             payload: [2; 32],
@@ -1177,6 +1595,48 @@ mod tests {
             workspace_id(&scope, &[1; 32]),
             workspace_id(&scope, &[2; 32])
         );
+    }
+
+    #[test]
+    fn candidate_workspace_ncw2_descriptor_keeps_ncw1_bytes_and_separates_domains() {
+        let scope = [9; 32];
+        let original = descriptor(&scope, 1, 513);
+        // Fixed pre-NCW2 layout: no version byte was inserted into its fields.
+        let mut legacy = b"NCW1".to_vec();
+        for field in [original.id, [1; 32], [2; 32], [3; 32], [4; 32], [5; 32]] {
+            legacy.extend_from_slice(&field);
+        }
+        legacy.extend_from_slice(&513u64.to_be_bytes());
+        assert_eq!(legacy.len(), 204);
+        assert_eq!(original.encode(), legacy);
+        assert_eq!(Descriptor::decode(&legacy, &scope).unwrap(), original);
+        let bytes = b"the exact same parent document";
+        assert_eq!(
+            DescriptorVersion::Ncw1.payload_digest(bytes),
+            sha256_bytes_v1(&[b"novovm-candidate-workspace-payload-v1\0", bytes,])
+        );
+        assert_ne!(
+            DescriptorVersion::Ncw1.payload_digest(bytes),
+            DescriptorVersion::Ncw2.payload_digest(bytes)
+        );
+        let mut light = original.clone();
+        light.version = DescriptorVersion::Ncw2;
+        assert_eq!(&light.encode()[..4], b"NCW2");
+        assert_eq!(&light.encode()[4..], &legacy[4..]);
+        assert_eq!(Descriptor::decode(&light.encode(), &scope).unwrap(), light);
+        assert_eq!(
+            original.info(1, 0, WorkspaceStatusV1::Staging).schema,
+            SCHEMA
+        );
+        assert_eq!(
+            light.info(1, 0, WorkspaceStatusV1::Staging).schema,
+            LIGHT_SCHEMA
+        );
+        for magic in [b"NCW0", b"NCW3", b"NCW\0"] {
+            let mut unknown = legacy.clone();
+            unknown[..4].copy_from_slice(magic);
+            assert!(Descriptor::decode(&unknown, &scope).is_err());
+        }
     }
 
     #[test]
