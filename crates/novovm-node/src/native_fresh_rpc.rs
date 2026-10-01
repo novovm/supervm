@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 const MAX_CONNECTIONS: usize = 8;
 const MAX_REQUEST: usize = crate::tx_ingress::fresh_pool::MAX_RAW_BYTES * 2 + 8192;
 const DEADLINE: Duration = Duration::from_secs(3);
+const IDLE_POLL_PAUSE: Duration = Duration::from_millis(5);
 
 struct Connection {
     stream: TcpStream,
@@ -154,6 +155,23 @@ impl FreshRpcServer {
         self.poll_with(|request| handle_fresh_rpc(request, lifecycle))
     }
 
+    /// Service the existing bounded RPC poll within the owner's idle budget.
+    /// The budget never restarts when requests arrive. An individual synchronous
+    /// handler may overrun it; no additional poll or sleep then delays consensus.
+    pub fn poll_during_idle(
+        &mut self,
+        lifecycle: &mut FreshChainLifecycleV1,
+        idle: Duration,
+    ) -> Result<()> {
+        let started = Instant::now();
+        poll_during_idle_with(
+            idle,
+            || crate::native_fresh_timing::measure("rpc.idle_poll", || self.poll(lifecycle)),
+            || started.elapsed(),
+            std::thread::sleep,
+        )
+    }
+
     fn poll_with(&mut self, mut handle: impl FnMut(Value) -> Value) -> Result<()> {
         for _ in 0..MAX_CONNECTIONS {
             match self.listener.accept() {
@@ -209,9 +227,114 @@ impl FreshRpcServer {
     }
 }
 
+// Clock/sleep closures keep budget and error tests deterministic; production
+// uses one monotonic start and ordinary sleep, with no new scheduler or thread.
+fn poll_during_idle_with(
+    idle: Duration,
+    mut poll: impl FnMut() -> Result<()>,
+    mut elapsed: impl FnMut() -> Duration,
+    mut sleep: impl FnMut(Duration),
+) -> Result<()> {
+    while elapsed() < idle {
+        poll()?;
+        let remaining = idle.saturating_sub(elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        sleep(remaining.min(IDLE_POLL_PAUSE));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn idle_rpc_zero_budget_does_not_poll_or_sleep() {
+        poll_during_idle_with(
+            Duration::ZERO,
+            || panic!("zero idle budget polled"),
+            || Duration::ZERO,
+            |_| panic!("zero idle budget slept"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn idle_rpc_keeps_one_budget_and_caps_each_pause() {
+        let elapsed = Cell::new(Duration::ZERO);
+        let mut polls = 0;
+        let mut pauses = Vec::new();
+        poll_during_idle_with(
+            Duration::from_millis(14),
+            || {
+                polls += 1;
+                elapsed.set(elapsed.get() + Duration::from_millis(1));
+                Ok(())
+            },
+            || elapsed.get(),
+            |pause| {
+                pauses.push(pause);
+                elapsed.set(elapsed.get() + pause);
+            },
+        )
+        .unwrap();
+        assert_eq!(polls, 3);
+        assert_eq!(
+            pauses,
+            [
+                Duration::from_millis(5),
+                Duration::from_millis(5),
+                Duration::from_millis(1)
+            ]
+        );
+        assert_eq!(elapsed.get(), Duration::from_millis(14));
+    }
+
+    #[test]
+    fn idle_rpc_slow_poll_exhausts_budget_without_another_poll_or_sleep() {
+        let elapsed = Cell::new(Duration::ZERO);
+        let mut polls = 0;
+        poll_during_idle_with(
+            Duration::from_millis(10),
+            || {
+                polls += 1;
+                elapsed.set(Duration::from_millis(20));
+                Ok(())
+            },
+            || elapsed.get(),
+            |_| panic!("exhausted budget slept"),
+        )
+        .unwrap();
+        assert_eq!(polls, 1);
+    }
+
+    #[test]
+    fn idle_rpc_preserves_poll_error_and_accepts_maximum_duration() {
+        let mut polls = 0;
+        let mut pauses = 0;
+        let result = poll_during_idle_with(
+            Duration::MAX,
+            || {
+                polls += 1;
+                if polls == 3 {
+                    return Err(std::io::Error::other("original poll failure").into());
+                }
+                Ok(())
+            },
+            || Duration::ZERO,
+            |pause| {
+                assert_eq!(pause, IDLE_POLL_PAUSE);
+                pauses += 1;
+            },
+        );
+        let error = result.unwrap_err();
+        assert!(error.is::<std::io::Error>());
+        assert_eq!(error.to_string(), "original poll failure");
+        assert_eq!((polls, pauses), (3, 2));
+    }
 
     #[test]
     fn bounded_http_framing_and_hex() {

@@ -43640,7 +43640,14 @@ fn run_fresh_genesis_confirmation_v1(
         if max_ticks > 0 && ticks >= max_ticks {
             break;
         }
-        std::thread::sleep(Duration::from_millis(interval_ms));
+        let idle = Duration::from_millis(interval_ms);
+        if let Some(rpc) = &mut rpc {
+            // Preserve the lifecycle idle budget, but continue serving bounded
+            // RPC work rather than leaving ready clients asleep with this thread.
+            rpc.poll_during_idle(&mut lifecycle, idle)?;
+        } else {
+            std::thread::sleep(idle);
+        }
     }
     println!(
         "native_fresh_genesis_confirmation_summary: {}",
