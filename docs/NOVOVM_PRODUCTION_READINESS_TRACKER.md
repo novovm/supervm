@@ -14,6 +14,59 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
+## 设备 A：S2 每笔 typed record effects（2026-10-02）
+
+运行代码 `14b32a3`，父提交 `28b0b59`；验证 tree=
+`57ac7a601be82616c45bfe3bfd786925a718a38e`。仅本刀 8 文件进入索引快照
+`artifacts/audit/semantic-record-effects-index-20261002/`，逐文件 Git blob
+核对一致。原 27 个异步试验文件保留、未夹带。仍为同一 Windows 11 / Core
+Ultra 9 275HX（24 核）、Rust 1.94.0、同 packaged AOEM DLL；非实体多机。
+
+用已授权且已加载的 raw records 初始化候选内 typed journal；每笔只投影
+本笔账户/nonce、固定费用字段、当前与实际淘汰 trace、回执/mirror 等路径，
+不再三次编码整稀疏 Store。原业务 helpers、收费和失败 nonce 规则不改；
+业务阶段与收尾阶段保持原 delta/count/root/seal 顺序。批末仍执行原
+`sparse.changed_records()` 独立完整核验，净 patch 必须逐项一致；不把
+合法但不完整的子集当成正确写集，不将 physical-only 字段混入业务 delta。
+
+干净快照 fmt、严格 Clippy（node lib/tests）、Release 构建通过。68 项
+Transfer 测试全过（5.24 秒），新增 7 项投影测试覆盖真实费用五种拒绝、
+业务失败、零金额账户结构、自转、20/32 字节 signer nonce、u128、跨日和
+512 条窗口淘汰/已有 trace 重排。新增真实 AOEM 测试覆盖 10 种场景，
+完整批次及每个串行前缀对照旧三次编码算法，整个 Store/回执/mirror 相同；
+测试计数断言每笔完整 Store 编码 typed=0、旧 oracle=3，不将此计数当 TPS。
+
+4 项候选门通过：delta 四阶段恢复 5.11 秒、bundle 损坏拒绝 1.08 秒、fresh
+Transfer 恢复/最终确认 42.38 秒、无关历史点读 0.40 秒（0 与 1024 个无关
+账户/100 历史回执场景均读取 66 个唯一记录）。四进程混合夹具 38.57 秒通过，
+6 笔中 5 成功/1 业务失败；串行 worker 改用旧三次编码 oracle，完整块、
+费用/nonce/回执、持久 QC 与重启全部一致，不是新算法与自身比较。
+
+同上一条 256 笔耐久 ACK 持续负载参数，诊断关闭，256/256 成功最终确认：
+窗口 **59.538107 秒、4.299767 TPS**，观察 P50/P95/P99=
+17.538/55.594/58.859 秒；含 bootstrap 块笔数
+`1,2,32,32,32,32,32,32,32,30`，state_version 增长 256。全节点完整块/
+持久 BFT proof/重启读回一致；完整夹具 93.63 秒。相对前次 3.748382 TPS
+单次约快 14.7%，未做统计重复或固定逐块切分 A/B，不能承诺稳定同比提速，
+更不是高性能主网签收。签名预生成、bootstrap 不计入测量；观察延迟包含
+客户端 HTTP 与轮询，不等于精确提交时刻。
+
+本地 SHA256（原始日志/二进制不上传 Git）：node=
+`43331906bd94d8dc215710ea71c091009dd27dac84d3deb8dcd6ecb96a586014`，
+harness=`635f01206068a109e84864e581021637814c9a5cc3e3ec44cff57872957fb19d`，
+libtest=`1deb14c2814f8326acd734a5a500c12c8a64d6b42e55243f60eec8116b068bdb`。
+快照内 `artifacts/audit/candidate-node-processes/`：
+`seal-relay-21700-1790882779971174500/transfer-finality-performance.json`，
+SHA256=`f7541ee20721afdbe9e1e5d82b38f481fedfd12bf7faa95ec0fdd1964dace6b1`；
+`seal-relay-17004-1790882728052399300/mixed-transfer-acceptance.json`，
+SHA256=`c1161759680b527b06bdd724368e1de8edcbc658c5a8ce4a4dd2a2cd022a23ed`。
+
+边界：journal/trace order 仍为数组记录，state 逐笔多版本内容仍保留，
+AOEM 通用性/codec/经济规则未改；S2 整体、S3、S4、隐私/PQ 主链接入、
+实体多机、公网/长跑仍未由本刀签收。下一刀按[重建计划](NOVOVM_UNIFIED_EXECUTION_REBUILD_PLAN.md)
+合并同次输出的重复三树重建，保留 OutputWritten checkpoint 后的独立
+耐久读回；当前目标继续进行，不部署、不发行、不生成正式密钥。
+
 ## 设备 A：S2 批内可达写集裁剪首片（2026-10-02）
 
 运行代码 `8f563ff`，验证 tree=`87d4410e0382139eeb98a656616c216b9bee559a`，
