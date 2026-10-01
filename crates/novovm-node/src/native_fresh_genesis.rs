@@ -2,12 +2,14 @@
 use super::*;
 use crate::native_block_ledger::NovNativeFreshGenesisReservationV1;
 use crate::native_block_seal::{NovNativeSealValidatorSetV1, NovNativeSealValidatorV1};
+use crate::native_root_codecs::NativeRootCodecProfileV1;
 use serde::{Deserialize, Serialize};
 
 #[path = "native_fresh_genesis_publication.rs"]
 pub mod publication;
 
 pub const GENESIS_SCHEMA_V1: &str = "novovm-fresh-genesis-config/v1";
+pub const GENESIS_SCHEMA_RECORD_V2: &str = "novovm-fresh-genesis-config/v2";
 const MAX_CONFIG_BYTES: usize = 1024 * 1024;
 const MAX_ALLOCATIONS: usize = 4096;
 
@@ -45,6 +47,7 @@ pub struct CompiledFreshGenesisV1 {
     validator_set: NovNativeSealValidatorSetV1,
     store: NovNativeExecutionStoreV1,
     protocol: [u8; 32],
+    root_codec_profile: NativeRootCodecProfileV1,
 }
 
 /// Chain-wide identity derived only from validated genesis inputs. Neither a
@@ -81,6 +84,16 @@ fn amount(value: &str) -> Result<u128> {
 }
 
 impl FreshGenesisConfigV1 {
+    /// The approved fresh-genesis schema selects one indivisible root profile.
+    /// Unknown schemas never fall back, and this does not migrate existing state.
+    pub fn root_codec_profile(&self) -> Result<NativeRootCodecProfileV1> {
+        match self.schema.as_str() {
+            GENESIS_SCHEMA_V1 => Ok(NativeRootCodecProfileV1::LegacyWireV1),
+            GENESIS_SCHEMA_RECORD_V2 => Ok(NativeRootCodecProfileV1::RecordTreeV1),
+            _ => bail!("unsupported fresh genesis configuration schema"),
+        }
+    }
+
     pub fn from_json(bytes: &[u8]) -> Result<Self> {
         if bytes.len() > MAX_CONFIG_BYTES {
             bail!("genesis configuration exceeds byte limit");
@@ -91,11 +104,11 @@ impl FreshGenesisConfigV1 {
     }
 
     /// Produces a preview for explicit operator pinning. Does not read runtime
-    /// environment or choose economic parameters. v1 fixes epoch/activation to 1,
-    /// nonce scheme to the current fresh-state default, and all history to empty.
+    /// environment or choose economic parameters. Both profiles fix epoch and
+    /// activation to 1, the current fresh nonce scheme, and all history to empty.
     pub fn compile(&self) -> Result<CompiledFreshGenesisV1> {
-        if self.schema != GENESIS_SCHEMA_V1
-            || self.chain_id == 0
+        let root_codec_profile = self.root_codec_profile()?;
+        if self.chain_id == 0
             || self.timestamp_unix_ms == 0
             || self.protocol_config_commitment == [0; 32]
             || self.allocations.len() > MAX_ALLOCATIONS
@@ -135,28 +148,57 @@ impl FreshGenesisConfigV1 {
         if total != amount(&self.total_initial_nov)? {
             bail!("genesis allocation total does not match declared initial NOV");
         }
-        let state_root = parse_fixed_hex_32_v1(
-            &native_semantic_ledger_state_digest_v1(&store.module_state),
-            "genesis state root",
-        )?;
-        // Bind the exact existing consensus state encoding, including all fresh
-        // policy defaults. A future default change necessarily changes this pin.
-        export_native_parent_state_wire_v3(&store.module_state, &state_root)?;
-        let config_commitment = sha256_bytes_v1(&[
-            b"novovm-fresh-genesis-config-v1\0",
-            &self.chain_id.to_be_bytes(),
-            &self.timestamp_unix_ms.to_be_bytes(),
-            &self.protocol_config_commitment,
-            &state_root,
-            &validator_set.validator_set_hash,
-            &total.to_be_bytes(),
-        ]);
+        let state_root = match root_codec_profile {
+            NativeRootCodecProfileV1::LegacyWireV1 => {
+                let root = parse_fixed_hex_32_v1(
+                    &native_semantic_ledger_state_digest_v1(&store.module_state),
+                    "genesis state root",
+                )?;
+                // Preserve the exact old full-state witness contract for v1.
+                export_native_parent_state_wire_v3(&store.module_state, &root)?;
+                root
+            }
+            NativeRootCodecProfileV1::RecordTreeV1 => {
+                // A record root is not the legacy whole-state wire root. Do not
+                // manufacture an old nonce witness for this distinct commitment.
+                native_record_commitment::consensus_state_root_v1(&store.module_state)?
+            }
+        };
+        let config_commitment = match root_codec_profile {
+            NativeRootCodecProfileV1::LegacyWireV1 => sha256_bytes_v1(&[
+                b"novovm-fresh-genesis-config-v1\0",
+                &self.chain_id.to_be_bytes(),
+                &self.timestamp_unix_ms.to_be_bytes(),
+                &self.protocol_config_commitment,
+                &state_root,
+                &validator_set.validator_set_hash,
+                &total.to_be_bytes(),
+            ]),
+            NativeRootCodecProfileV1::RecordTreeV1 => {
+                let state_codec = root_codec_profile.state_root_codec().as_bytes();
+                let receipt_codec = root_codec_profile.receipt_root_codec().as_bytes();
+                sha256_bytes_v1(&[
+                    b"novovm-fresh-genesis-config-v2\0",
+                    &self.chain_id.to_be_bytes(),
+                    &self.timestamp_unix_ms.to_be_bytes(),
+                    &self.protocol_config_commitment,
+                    &(state_codec.len() as u64).to_be_bytes(),
+                    state_codec,
+                    &(receipt_codec.len() as u64).to_be_bytes(),
+                    receipt_codec,
+                    &state_root,
+                    &validator_set.validator_set_hash,
+                    &total.to_be_bytes(),
+                ])
+            }
+        };
         Ok(CompiledFreshGenesisV1 {
             config_commitment,
             state_root,
             validator_set,
             store,
             protocol: self.protocol_config_commitment,
+            root_codec_profile,
         })
     }
 }
@@ -183,6 +225,9 @@ impl CompiledFreshGenesisV1 {
     }
     pub fn state_root(&self) -> [u8; 32] {
         self.state_root
+    }
+    pub fn root_codec_profile(&self) -> NativeRootCodecProfileV1 {
+        self.root_codec_profile
     }
     pub fn validator_set(&self) -> &NovNativeSealValidatorSetV1 {
         &self.validator_set
@@ -241,6 +286,135 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn root_codec_genesis_legacy_commitment_and_witness_bytes_are_unchanged() {
+        let config = config();
+        let compiled = config.compile().unwrap();
+        assert_eq!(
+            config.root_codec_profile().unwrap(),
+            NativeRootCodecProfileV1::LegacyWireV1
+        );
+        assert_eq!(
+            compiled.root_codec_profile(),
+            NativeRootCodecProfileV1::LegacyWireV1
+        );
+        let old_root = parse_fixed_hex_32_v1(
+            &native_semantic_ledger_state_digest_v1(&compiled.store.module_state),
+            "legacy root",
+        )
+        .unwrap();
+        assert_eq!(compiled.state_root(), old_root);
+        let wire =
+            export_native_parent_state_wire_v3(&compiled.store.module_state, &old_root).unwrap();
+        assert_eq!(
+            novovm_protocol::native_parent_nonce::native_state_wire_root_v3(&wire),
+            old_root
+        );
+        let old_commitment = sha256_bytes_v1(&[
+            b"novovm-fresh-genesis-config-v1\0",
+            &config.chain_id.to_be_bytes(),
+            &config.timestamp_unix_ms.to_be_bytes(),
+            &config.protocol_config_commitment,
+            &old_root,
+            &compiled.validator_set.validator_set_hash,
+            &300u128.to_be_bytes(),
+        ]);
+        assert_eq!(compiled.config_commitment(), old_commitment);
+    }
+
+    #[test]
+    fn root_codec_genesis_record_schema_is_explicit_pinned_and_order_independent() {
+        let mut config = config();
+        let legacy = config.compile().unwrap();
+        config.schema = GENESIS_SCHEMA_RECORD_V2.into();
+        let record = config.compile().unwrap();
+        assert_eq!(
+            config.root_codec_profile().unwrap(),
+            NativeRootCodecProfileV1::RecordTreeV1
+        );
+        assert_eq!(
+            record.root_codec_profile(),
+            NativeRootCodecProfileV1::RecordTreeV1
+        );
+        assert_ne!(record.state_root(), legacy.state_root());
+        assert_ne!(record.config_commitment(), legacy.config_commitment());
+        assert_ne!(record.identity(), legacy.identity());
+        assert_eq!(record.initial_store(), legacy.initial_store());
+        assert!(record
+            .reservation(legacy.config_commitment(), [1; 32])
+            .is_err());
+        assert!(legacy
+            .reservation(record.config_commitment(), [1; 32])
+            .is_err());
+        assert!(export_native_parent_state_wire_v3(
+            &record.store.module_state,
+            &record.state_root()
+        )
+        .is_err());
+
+        let state_codec = record.root_codec_profile().state_root_codec().as_bytes();
+        let receipt_codec = record.root_codec_profile().receipt_root_codec().as_bytes();
+        assert_eq!(
+            record.config_commitment(),
+            sha256_bytes_v1(&[
+                b"novovm-fresh-genesis-config-v2\0",
+                &config.chain_id.to_be_bytes(),
+                &config.timestamp_unix_ms.to_be_bytes(),
+                &config.protocol_config_commitment,
+                &(state_codec.len() as u64).to_be_bytes(),
+                state_codec,
+                &(receipt_codec.len() as u64).to_be_bytes(),
+                receipt_codec,
+                &record.state_root(),
+                &record.validator_set.validator_set_hash,
+                &300u128.to_be_bytes(),
+            ])
+        );
+        config.allocations.reverse();
+        config.validators.reverse();
+        assert_eq!(
+            record.config_commitment(),
+            config.compile().unwrap().config_commitment()
+        );
+        let roundtrip =
+            FreshGenesisConfigV1::from_json(&serde_json::to_vec(&config).unwrap()).unwrap();
+        assert_eq!(roundtrip.compile().unwrap().identity(), record.identity());
+        for schema in [
+            "",
+            "novovm-fresh-genesis-config/v3",
+            "novovm-fresh-genesis-config/v2 ",
+        ] {
+            config.schema = schema.into();
+            assert!(config.root_codec_profile().is_err());
+            assert!(config.compile().is_err());
+        }
+    }
+
+    #[test]
+    fn root_codec_genesis_record_amounts_retain_full_u128_precision() {
+        let mut config = config();
+        config.schema = GENESIS_SCHEMA_RECORD_V2.into();
+        config.allocations.truncate(1);
+        config.allocations[0].nov = u128::MAX.to_string();
+        config.total_initial_nov = u128::MAX.to_string();
+        let compiled = config.compile().unwrap();
+        assert_eq!(
+            compiled.store.module_state.account_asset_balances[&to_hex_prefixed_v1(&[1; 20])]
+                ["NOV"],
+            u128::MAX
+        );
+        assert_eq!(
+            compiled.state_root(),
+            native_record_commitment::consensus_state_root_v1(&compiled.store.module_state)
+                .unwrap()
+        );
+        config.allocations[0].nov = (u128::MAX - 1).to_string();
+        config.total_initial_nov = (u128::MAX - 1).to_string();
+        let changed = config.compile().unwrap();
+        assert_ne!(compiled.state_root(), changed.state_root());
+        assert_ne!(compiled.config_commitment(), changed.config_commitment());
     }
 
     #[test]

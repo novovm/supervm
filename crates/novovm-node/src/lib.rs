@@ -18,6 +18,7 @@ pub mod native_block_seal_overlay;
 pub mod native_candidate_body;
 pub mod native_candidate_plan;
 pub mod native_fresh_rpc;
+pub mod native_root_codecs;
 pub mod native_state_records;
 pub mod native_state_storage;
 pub mod native_state_tree;

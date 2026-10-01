@@ -39,7 +39,7 @@ impl GenesisSnapshotV1 {
             || to_hex(&namespace) != self.namespace_digest
             || self.config_commitment != compiled.config_commitment()
             || self.state_root != compiled.state_root()
-            || self.state_root_codec != NOVOVM_NATIVE_STATE_ROOT_CODEC_V3
+            || self.state_root_codec != compiled.root_codec_profile().state_root_codec()
             || self.store != expected
         {
             bail!("genesis snapshot does not match its complete fresh configuration");
@@ -227,7 +227,7 @@ fn run_v1(
         namespace_digest: namespace.clone(),
         config_commitment: expected_config,
         state_root: compiled.state_root(),
-        state_root_codec: NOVOVM_NATIVE_STATE_ROOT_CODEC_V3.into(),
+        state_root_codec: compiled.root_codec_profile().state_root_codec().into(),
         config,
         store,
     })?;
@@ -378,4 +378,85 @@ fn run_v1(
         chain_canonical: false,
         finalized: false,
     })
+}
+
+#[cfg(test)]
+mod root_codec_tests {
+    use super::*;
+
+    fn snapshot(schema: &str) -> GenesisSnapshotV1 {
+        let config = FreshGenesisConfigV1 {
+            schema: schema.into(),
+            chain_id: 998714,
+            timestamp_unix_ms: 1_900_000_000_000,
+            protocol_config_commitment: [7; 32],
+            allocations: vec![GenesisAllocationV1 {
+                account: [1; 20],
+                nov: "100".into(),
+            }],
+            total_initial_nov: "100".into(),
+            validators: (1..=4)
+                .map(|seed| GenesisValidatorV1 {
+                    public_key: ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+                        .verifying_key()
+                        .to_bytes(),
+                    weight: 1,
+                })
+                .collect(),
+        };
+        let compiled = config.compile().unwrap();
+        let namespace_digest = to_hex(&[8; 32]);
+        let mut store = compiled.initial_store().clone();
+        store.authority_chain_id = Some(config.chain_id);
+        store.authority_namespace_digest = namespace_digest.clone();
+        GenesisSnapshotV1 {
+            schema: SCHEMA.into(),
+            chain_id: config.chain_id,
+            namespace_digest,
+            config_commitment: compiled.config_commitment(),
+            state_root: compiled.state_root(),
+            state_root_codec: compiled.root_codec_profile().state_root_codec().into(),
+            config,
+            store,
+        }
+    }
+
+    #[test]
+    fn root_codec_genesis_snapshot_requires_the_exact_config_profile_and_state() {
+        for schema in [GENESIS_SCHEMA_V1, GENESIS_SCHEMA_RECORD_V2] {
+            let original = snapshot(schema);
+            original.validate().unwrap();
+            let bytes = serde_json::to_vec(&original).unwrap();
+            let mut restored: GenesisSnapshotV1 = serde_json::from_slice(&bytes).unwrap();
+            restored.validate().unwrap();
+            let other = if schema == GENESIS_SCHEMA_V1 {
+                GENESIS_SCHEMA_RECORD_V2
+            } else {
+                GENESIS_SCHEMA_V1
+            };
+            restored.config.schema = other.into();
+            assert!(
+                restored.validate().is_err(),
+                "changing the schema cannot retarget the saved pin"
+            );
+            let mut restored: GenesisSnapshotV1 = serde_json::from_slice(&bytes).unwrap();
+            restored.state_root_codec = snapshot(other).state_root_codec;
+            assert!(restored.validate().is_err(), "a root cannot be relabeled");
+            let mut restored: GenesisSnapshotV1 = serde_json::from_slice(&bytes).unwrap();
+            restored.state_root[0] ^= 1;
+            assert!(restored.validate().is_err());
+            let mut restored: GenesisSnapshotV1 = serde_json::from_slice(&bytes).unwrap();
+            restored
+                .store
+                .module_state
+                .account_asset_balances
+                .get_mut(&to_hex_prefixed_v1(&[1; 20]))
+                .unwrap()
+                .insert("NOV".into(), 99);
+            assert!(
+                restored.validate().is_err(),
+                "the full fresh allocation must agree too"
+            );
+        }
+    }
 }

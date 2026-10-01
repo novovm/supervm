@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use crate::native_root_codecs::NativeRootCodecProfileV1;
 use anyhow::{bail, Context, Result};
 use novovm_protocol::NovBlockExecutionContextV1;
 use rocksdb::{Options as RocksDbOptions, WriteBatch as RocksDbWriteBatch, WriteOptions, DB};
@@ -59,8 +60,6 @@ const CANDIDATE_SOURCE_ISOLATED_V1: &str = "local_aoem_isolated_execution";
 const CANDIDATE_STATUS_ACTIVE_V1: &str = "active_unsealed";
 const CANDIDATE_STATUS_ABORTED_V1: &str = "aborted_unsealed";
 const CANDIDATE_ABORT_REASON_MAX_BYTES_V1: usize = 512;
-const POST_STATE_ROOT_CODEC_V1: &str = "novovm-consensus-native-state-wire/v1";
-const CUMULATIVE_RECEIPT_ROOT_CODEC_V1: &str = "novovm-consensus-receipt-wire/v1";
 
 const ORDERED_TX_ROOT_DOMAIN_V1: &[u8] = b"novovm-native-ordered-tx-root-v1\0";
 const BODY_DIGEST_DOMAIN_V1: &[u8] = b"novovm-native-block-body-digest-v1\0";
@@ -2468,13 +2467,24 @@ pub(crate) fn build_durable_block_v1(
     prepared: &NovNativePreparedBlockV1,
     input: NovNativeBlockCommitInputV1,
 ) -> Result<NovNativeDurableBlockV1> {
+    build_durable_block_with_root_codecs_v2(prepared, input, NativeRootCodecProfileV1::LegacyWireV1)
+}
+
+/// Select a complete consensus root profile explicitly. The caller separately
+/// binds fresh genesis/protocol configuration; this never upgrades an old chain.
+pub(crate) fn build_durable_block_with_root_codecs_v2(
+    prepared: &NovNativePreparedBlockV1,
+    input: NovNativeBlockCommitInputV1,
+    profile: NativeRootCodecProfileV1,
+) -> Result<NovNativeDurableBlockV1> {
     validate_prepared_block_v1(prepared)?;
     validate_commit_input_semantics_v1(prepared, &input)?;
+    validate_parent_root_codecs_v2(prepared.aoem_parent.as_ref(), profile)?;
     let block_receipt_root = nov_native_block_receipt_root_v1(
         prepared.tx_hashes.as_slice(),
         input.per_block_receipt_commitments.as_slice(),
     )?;
-    let block_hash = block_hash_v1(prepared, &input, &block_receipt_root);
+    let block_hash = block_hash_with_root_codecs_v2(prepared, &input, &block_receipt_root, profile);
     let tx_count = u32::try_from(prepared.tx_hashes.len())
         .context("NOV native block transaction count exceeds u32")?;
     let header = NovNativeBlockHeaderV1 {
@@ -2492,11 +2502,11 @@ pub(crate) fn build_durable_block_v1(
         pre_state_root: prepared.pre_state_root,
         aoem_parent: prepared.aoem_parent.clone(),
         post_state_root: input.post_state_root,
-        post_state_root_codec: POST_STATE_ROOT_CODEC_V1.to_string(),
+        post_state_root_codec: profile.state_root_codec().to_string(),
         ordered_tx_root: prepared.ordered_tx_root,
         block_receipt_root,
         cumulative_receipt_root: input.cumulative_receipt_root,
-        cumulative_receipt_root_codec: CUMULATIVE_RECEIPT_ROOT_CODEC_V1.to_string(),
+        cumulative_receipt_root_codec: profile.receipt_root_codec().to_string(),
         body_digest: prepared.body_digest,
         body_bytes: prepared.body_bytes,
         tx_count,
@@ -2663,11 +2673,13 @@ fn validate_prepared_block_v1(prepared: &NovNativePreparedBlockV1) -> Result<()>
         if parent.state_root == [0u8; 32]
             || parent.cumulative_receipt_root == [0u8; 32]
             || parent.state_version == 0
-            || parent.state_root_codec != POST_STATE_ROOT_CODEC_V1
-            || parent.receipt_root_codec != CUMULATIVE_RECEIPT_ROOT_CODEC_V1
         {
             bail!("prepared NOV native AOEM parent commitment is invalid");
         }
+        NativeRootCodecProfileV1::from_root_codecs(
+            &parent.state_root_codec,
+            &parent.receipt_root_codec,
+        )?;
         if parent.state_root != prepared.pre_state_root {
             bail!("prepared NOV native pre-state root must equal its AOEM parent state root");
         }
@@ -2676,6 +2688,11 @@ fn validate_prepared_block_v1(prepared: &NovNativePreparedBlockV1) -> Result<()>
 }
 
 pub(crate) fn validate_durable_block_v1(block: &NovNativeDurableBlockV1) -> Result<()> {
+    let root_profile = NativeRootCodecProfileV1::from_root_codecs(
+        &block.header.post_state_root_codec,
+        &block.header.cumulative_receipt_root_codec,
+    )?;
+    validate_parent_root_codecs_v2(block.header.aoem_parent.as_ref(), root_profile)?;
     if block.header.schema != HEADER_SCHEMA_V1
         || block.body.schema != BODY_SCHEMA_V1
         || block.execution_evidence.schema != EVIDENCE_SCHEMA_V1
@@ -2719,8 +2736,6 @@ pub(crate) fn validate_durable_block_v1(block: &NovNativeDurableBlockV1) -> Resu
     };
     validate_prepared_block_v1(&prepared)?;
     if block.header.candidate_kind != CANDIDATE_KIND_V1
-        || block.header.post_state_root_codec != POST_STATE_ROOT_CODEC_V1
-        || block.header.cumulative_receipt_root_codec != CUMULATIVE_RECEIPT_ROOT_CODEC_V1
         || block.header.execution_context
             != (NovBlockExecutionContextV1 {
                 chain_id: block.header.chain_id,
@@ -2777,7 +2792,8 @@ pub(crate) fn validate_durable_block_v1(block: &NovNativeDurableBlockV1) -> Resu
         state_version: block.header.state_version,
     };
     validate_commit_input_semantics_v1(&prepared, &commit_input)?;
-    let block_hash = block_hash_v1(&prepared, &commit_input, &receipt_root);
+    let block_hash =
+        block_hash_with_root_codecs_v2(&prepared, &commit_input, &receipt_root, root_profile);
     if block_hash != block.header.block_hash {
         bail!("NOV native durable block hash mismatch");
     }
@@ -2834,6 +2850,15 @@ fn validate_block_continuity_v1(
     parent: &NovNativeDurableBlockV1,
     child: &NovNativeDurableBlockV1,
 ) -> Result<()> {
+    let parent_profile = NativeRootCodecProfileV1::from_root_codecs(
+        &parent.header.post_state_root_codec,
+        &parent.header.cumulative_receipt_root_codec,
+    )?;
+    let child_profile = NativeRootCodecProfileV1::from_root_codecs(
+        &child.header.post_state_root_codec,
+        &child.header.cumulative_receipt_root_codec,
+    )?;
+    child_profile.validate_successor_of(parent_profile)?;
     let expected_child_height = parent
         .header
         .height
@@ -2983,10 +3008,24 @@ fn candidate_id_v1(
     hasher.finalize().into()
 }
 
-fn block_hash_v1(
+fn validate_parent_root_codecs_v2(
+    parent: Option<&NovNativePreparedAoemParentV1>,
+    profile: NativeRootCodecProfileV1,
+) -> Result<()> {
+    if let Some(parent) = parent {
+        profile.validate_successor_of(NativeRootCodecProfileV1::from_root_codecs(
+            &parent.state_root_codec,
+            &parent.receipt_root_codec,
+        )?)?;
+    }
+    Ok(())
+}
+
+fn block_hash_with_root_codecs_v2(
     prepared: &NovNativePreparedBlockV1,
     input: &NovNativeBlockCommitInputV1,
     block_receipt_root: &[u8; 32],
+    profile: NativeRootCodecProfileV1,
 ) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(BLOCK_HASH_DOMAIN_V1);
@@ -2995,11 +3034,11 @@ fn block_hash_v1(
     hasher.update(prepared.candidate_id);
     hasher.update(prepared.pre_state_root);
     hasher.update(input.post_state_root);
-    update_len_prefixed_v1(&mut hasher, POST_STATE_ROOT_CODEC_V1.as_bytes());
+    update_len_prefixed_v1(&mut hasher, profile.state_root_codec().as_bytes());
     hasher.update(prepared.ordered_tx_root);
     hasher.update(block_receipt_root);
     hasher.update(input.cumulative_receipt_root);
-    update_len_prefixed_v1(&mut hasher, CUMULATIVE_RECEIPT_ROOT_CODEC_V1.as_bytes());
+    update_len_prefixed_v1(&mut hasher, profile.receipt_root_codec().as_bytes());
     hasher.update(prepared.body_digest);
     hasher.update(prepared.body_bytes.to_be_bytes());
     hasher.update((prepared.tx_hashes.len() as u64).to_be_bytes());
@@ -3289,6 +3328,159 @@ mod tests {
         prepared.expected_aoem_batch_id = Some(commit.aoem_batch_id.clone());
         prepared.expected_aoem_output_commitment = Some(format!("{:064x}", commit.state_version));
         build_durable_block_v1(&prepared, commit).expect("build observed durable block")
+    }
+
+    fn root_codec_fixture_v1() -> (NovNativePreparedBlockV1, NovNativeBlockCommitInputV1) {
+        let mut prepared = build_prepared_block_v1(candidate_input_v1(
+            context_v1(71_005, 1, [0; 32]),
+            [0x15; 32],
+            0x25,
+            2,
+        ))
+        .unwrap();
+        let input = commit_input_v1(0x35, 2, 2);
+        prepared.expected_aoem_batch_id = Some(input.aoem_batch_id.clone());
+        prepared.expected_aoem_output_commitment = Some(format!("{:064x}", 2));
+        (prepared, input)
+    }
+
+    #[test]
+    fn root_codec_legacy_block_hash_remains_byte_exact() {
+        let (prepared, input) = root_codec_fixture_v1();
+        let default = build_durable_block_v1(&prepared, input.clone()).unwrap();
+        let explicit = build_durable_block_with_root_codecs_v2(
+            &prepared,
+            input.clone(),
+            NativeRootCodecProfileV1::LegacyWireV1,
+        )
+        .unwrap();
+        assert_eq!(default, explicit);
+
+        // Independent byte layout retained from main@b971c58's block_hash_v1.
+        // In particular, no new profile discriminator or evidence-codec bytes
+        // may be inserted into historical legacy commitments.
+        fn text(bytes: &mut Vec<u8>, value: &str) {
+            bytes.extend_from_slice(&(value.len() as u64).to_be_bytes());
+            bytes.extend_from_slice(value.as_bytes());
+        }
+        let mut bytes = b"novovm-native-block-hash-v1\0".to_vec();
+        text(&mut bytes, "local_unsealed_execution_candidate");
+        bytes.extend_from_slice(&prepared.context_commitment);
+        bytes.extend_from_slice(&prepared.candidate_id);
+        bytes.extend_from_slice(&prepared.pre_state_root);
+        bytes.extend_from_slice(&input.post_state_root);
+        text(&mut bytes, "novovm-consensus-native-state-wire/v1");
+        bytes.extend_from_slice(&prepared.ordered_tx_root);
+        bytes.extend_from_slice(&default.header.block_receipt_root);
+        bytes.extend_from_slice(&input.cumulative_receipt_root);
+        text(&mut bytes, "novovm-consensus-receipt-wire/v1");
+        bytes.extend_from_slice(&prepared.body_digest);
+        bytes.extend_from_slice(&prepared.body_bytes.to_be_bytes());
+        bytes.extend_from_slice(&(prepared.tx_hashes.len() as u64).to_be_bytes());
+        bytes.push(1);
+        bytes.extend_from_slice(&input.state_version.to_be_bytes());
+        text(&mut bytes, &input.aoem_batch_id);
+        text(&mut bytes, &input.aoem_batch_result_id);
+        text(
+            &mut bytes,
+            prepared.expected_aoem_output_commitment.as_deref().unwrap(),
+        );
+        bytes.extend_from_slice(&input.aoem_evidence_commitment);
+        let expected: [u8; 32] = Sha256::digest(bytes).into();
+        assert_eq!(default.header.block_hash, expected);
+    }
+
+    #[test]
+    fn root_codec_record_blocks_bind_codec_and_reject_mixed_labels() {
+        let (prepared, input) = root_codec_fixture_v1();
+        let legacy = build_durable_block_v1(&prepared, input.clone()).unwrap();
+        let record = build_durable_block_with_root_codecs_v2(
+            &prepared,
+            input,
+            NativeRootCodecProfileV1::RecordTreeV1,
+        )
+        .unwrap();
+        assert_ne!(legacy.header.block_hash, record.header.block_hash);
+        validate_durable_block_v1(&record).unwrap();
+        for profile in [
+            NativeRootCodecProfileV1::LegacyWireV1,
+            NativeRootCodecProfileV1::RecordTreeV1,
+        ] {
+            let base = if profile == NativeRootCodecProfileV1::LegacyWireV1 {
+                &legacy
+            } else {
+                &record
+            };
+            let other = if profile == NativeRootCodecProfileV1::LegacyWireV1 {
+                NativeRootCodecProfileV1::RecordTreeV1
+            } else {
+                NativeRootCodecProfileV1::LegacyWireV1
+            };
+            let mut mixed = base.clone();
+            mixed.header.post_state_root_codec = other.state_root_codec().into();
+            assert!(validate_durable_block_v1(&mixed).is_err());
+            mixed.header.cumulative_receipt_root_codec = other.receipt_root_codec().into();
+            assert!(validate_durable_block_v1(&mixed)
+                .unwrap_err()
+                .to_string()
+                .contains("block hash mismatch"));
+            let mut mixed = base.clone();
+            mixed.header.cumulative_receipt_root_codec = other.receipt_root_codec().into();
+            assert!(validate_durable_block_v1(&mixed).is_err());
+            let mut unknown = base.clone();
+            unknown.header.post_state_root_codec = "unknown".into();
+            assert!(validate_durable_block_v1(&unknown).is_err());
+        }
+    }
+
+    #[test]
+    fn root_codec_children_require_the_parent_profile_without_upgrade_or_downgrade() {
+        for profile in [
+            NativeRootCodecProfileV1::LegacyWireV1,
+            NativeRootCodecProfileV1::RecordTreeV1,
+        ] {
+            let (prepared, input) = root_codec_fixture_v1();
+            let parent =
+                build_durable_block_with_root_codecs_v2(&prepared, input, profile).unwrap();
+            let mut child_input = with_aoem_parent_v1(
+                candidate_input_v1(
+                    context_v1(71_005, 2, parent.header.block_hash),
+                    parent.header.post_state_root,
+                    0x45,
+                    1,
+                ),
+                &parent,
+            );
+            let mut prepared = build_prepared_block_v1(child_input.clone()).unwrap();
+            let commit = commit_input_v1(0x55, 1, 3);
+            prepared.expected_aoem_batch_id = Some(commit.aoem_batch_id.clone());
+            prepared.expected_aoem_output_commitment = Some(format!("{:064x}", 3));
+            let child = build_durable_block_with_root_codecs_v2(&prepared, commit.clone(), profile)
+                .unwrap();
+            validate_block_continuity_v1(&parent, &child).unwrap();
+            let other = if profile == NativeRootCodecProfileV1::LegacyWireV1 {
+                NativeRootCodecProfileV1::RecordTreeV1
+            } else {
+                NativeRootCodecProfileV1::LegacyWireV1
+            };
+            assert!(
+                build_durable_block_with_root_codecs_v2(&prepared, commit.clone(), other).is_err()
+            );
+            let mut switched = child.clone();
+            switched.header.post_state_root_codec = other.state_root_codec().into();
+            switched.header.cumulative_receipt_root_codec = other.receipt_root_codec().into();
+            assert!(validate_durable_block_v1(&switched).is_err());
+            assert!(validate_block_continuity_v1(&parent, &switched).is_err());
+
+            child_input.aoem_parent.as_mut().unwrap().state_root_codec =
+                other.state_root_codec().into();
+            let mut mixed_parent = build_prepared_block_v1(child_input).unwrap();
+            mixed_parent.expected_aoem_batch_id = Some(commit.aoem_batch_id.clone());
+            mixed_parent.expected_aoem_output_commitment = prepared.expected_aoem_output_commitment;
+            assert!(
+                build_durable_block_with_root_codecs_v2(&mixed_parent, commit, profile).is_err()
+            );
+        }
     }
 
     #[test]

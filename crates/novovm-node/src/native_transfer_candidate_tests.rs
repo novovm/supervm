@@ -1,5 +1,7 @@
 // Included beside the existing isolated-candidate fixtures. These tests use
-// the real AOEM runtime and never promote their candidate to authority.
+// the real AOEM runtime. Record-profile tests also finalize an isolated test
+// chain; the legacy cases below leave their candidates unpublished.
+include!("native_record_candidate_tests.rs");
 fn transfer_candidate_raw(
     chain: u64,
     nonce: u64,

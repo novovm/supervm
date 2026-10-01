@@ -6,6 +6,7 @@
 
 use super::auth::{authenticate_plan, AuthenticatedItem};
 use super::*;
+use crate::native_root_codecs::NativeRootCodecProfileV1;
 
 #[path = "native_candidate_block_artifact.rs"]
 mod block_artifact;
@@ -236,12 +237,36 @@ fn build_batch(
         });
     }
     let context_commitment = payload.plan.context.commitment()?;
-    let batch_id = deterministic_native_aoem_batch_id_v1(
-        payload.plan.context.chain_id,
-        payload.parent_store()?,
-        &batch_items,
-        Some(&context_commitment),
-    );
+    let batch_id = match payload.root_codec_profile()? {
+        NativeRootCodecProfileV1::LegacyWireV1 => deterministic_native_aoem_batch_id_v1(
+            payload.plan.context.chain_id,
+            payload.parent_store()?,
+            &batch_items,
+            Some(&context_commitment),
+        ),
+        NativeRootCodecProfileV1::RecordTreeV1 => {
+            use sha2::{Digest, Sha256};
+            let mut hash = Sha256::new();
+            hash.update(b"novovm-native-record-aoem-batch-id-v1\0");
+            hash.update(payload.plan.context.chain_id.to_be_bytes());
+            hash.update(payload.plan.pre_state_root);
+            hash.update(
+                payload
+                    .parent_store()?
+                    .module_state
+                    .aoem_semantic_ledger_sequence
+                    .to_be_bytes(),
+            );
+            hash.update(context_commitment);
+            hash.update((batch_items.len() as u64).to_be_bytes());
+            for item in &batch_items {
+                hash.update(item.sequence.to_be_bytes());
+                hash.update((item.canonical_rebuild_commitment.len() as u64).to_be_bytes());
+                hash.update(item.canonical_rebuild_commitment.as_bytes());
+            }
+            format!("novovm-record-aoem-owned-v1-{}", to_hex(&hash.finalize()))
+        }
+    };
     novovm_exec::build_native_tx_batch_v1(
         batch_id,
         payload.plan.context.chain_id,
@@ -254,6 +279,7 @@ fn build_result(
     batch: &novovm_exec::NovovmAoemNativeTxBatchV1,
     store: &NovNativeExecutionStoreV1,
     backend: String,
+    profile: NativeRootCodecProfileV1,
 ) -> Result<novovm_exec::NovovmAoemNativeTxBatchResultV1> {
     let receipts = batch
         .tx_items
@@ -285,13 +311,29 @@ fn build_result(
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    let (state_root, receipt_root, snapshot_version) = match profile {
+        NativeRootCodecProfileV1::LegacyWireV1 => (
+            native_semantic_ledger_state_digest_v1(&store.module_state),
+            native_execution_receipt_root_v2(store)?,
+            1,
+        ),
+        NativeRootCodecProfileV1::RecordTreeV1 => (
+            to_hex(&native_record_commitment::consensus_state_root_v1(
+                &store.module_state,
+            )?),
+            to_hex(&native_record_commitment::cumulative_receipt_root_v1(
+                store,
+            )?),
+            2,
+        ),
+    };
     novovm_exec::build_native_tx_batch_result_from_execution_v1(
         batch,
         receipts,
-        native_semantic_ledger_state_digest_v1(&store.module_state),
-        native_execution_receipt_root_v2(store)?,
+        state_root,
+        receipt_root,
         novovm_exec::NovovmAoemSnapshotMetadataV1 {
-            snapshot_version: 1,
+            snapshot_version,
             state_version: store.module_state.aoem_semantic_ledger_sequence,
             backend,
             persistence_owner: "aoem_runtime".to_string(),
@@ -308,6 +350,17 @@ fn compute(
     // Authenticate the ENTIRE ordered batch before any AOEM submission. Never
     // call ingress: even its no-admission variant observes rejected pending.
     let items = authenticate_plan(&payload.plan, payload.parent_store()?, params)?;
+    let profile = payload.root_codec_profile()?;
+    if profile == NativeRootCodecProfileV1::RecordTreeV1
+        && items
+            .iter()
+            .any(|item| matches!(item.native_tx.kind, NovTxKindV1::Execute(_)))
+    {
+        // Transfer's typed record codec supports every u128. Execute still
+        // uses the legacy JSON evidence domain: reject an unsupported parent
+        // before auxiliary AOEM submission, rather than panic in json! later.
+        validate_legacy_execution_json_domain_v1(&payload.parent_store()?.module_state)?;
+    }
     let batch = build_batch(payload, &items)?;
     if !probe_semantic_graph_v3_capability_v1()?.ready {
         bail!("candidate execution requires AOEM semantic graph V3");
@@ -355,12 +408,22 @@ fn compute(
                     }
                 })
                 .collect();
-            let _peak = native_transfer_dispatch::execute_v1(
-                &mut store,
-                &transfer_items,
-                u128::from(payload.plan.context.timestamp_unix_ms),
-                &mut mirror_records,
-            )?;
+            let now_ms = u128::from(payload.plan.context.timestamp_unix_ms);
+            let _peak = match payload.root_codec_profile()? {
+                NativeRootCodecProfileV1::LegacyWireV1 => native_transfer_dispatch::execute_v1(
+                    &mut store,
+                    &transfer_items,
+                    now_ms,
+                    &mut mirror_records,
+                )?,
+                NativeRootCodecProfileV1::RecordTreeV1 => {
+                    native_transfer_record_execution::execute_segment_v1(
+                        &mut store,
+                        &transfer_items,
+                        now_ms,
+                    )?
+                }
+            };
             #[cfg(test)]
             eprintln!(
                 "fresh candidate AOEM transfer tasks={} peak_inflight={_peak}",
@@ -368,6 +431,11 @@ fn compute(
             );
             index = end;
             continue;
+        }
+        if profile == NativeRootCodecProfileV1::RecordTreeV1 {
+            // A preceding Transfer run may have created a >u64 balance even
+            // when every parent balance passed the initial domain check.
+            validate_legacy_execution_json_domain_v1(&store.module_state)?;
         }
         dispatch_nov_execution_request_into_loaded_store_v1(
             &mut store,
@@ -400,6 +468,7 @@ fn compute(
         &batch,
         &store,
         native_aoem_owned_runtime_config_v1()?.persist_backend,
+        payload.root_codec_profile()?,
     )?;
     Ok(Output {
         schema: OUTPUT_SCHEMA.to_string(),
@@ -448,6 +517,7 @@ fn validate_output(
                 &batch,
                 &output.store,
                 output.batch_result.snapshot_metadata.backend.clone(),
+                payload.root_codec_profile()?,
             )?
     {
         bail!("candidate execution result/root/receipt binding mismatch");
@@ -593,6 +663,7 @@ fn info(
     input: &Descriptor,
     descriptor: &OutputDescriptor,
     output: Output,
+    profile: NativeRootCodecProfileV1,
 ) -> Result<ExecutionInfoV1> {
     let business_owner = if output.batch_result.per_tx_receipts.iter().any(|item| {
         output
@@ -617,8 +688,9 @@ fn info(
         output_digest: descriptor.digest,
         post_state_root: output.batch_result.state_delta_root.clone(),
         receipt_root: output.batch_result.receipt_root.clone(),
-        execution_evidence_commitment: native_aoem_execution_evidence_commitment_v1(
+        execution_evidence_commitment: native_aoem_execution_evidence_with_profile_v1(
             &output.batch_result,
+            profile,
         )?,
         batch_result: output.batch_result,
         transactions_authenticated: true,
@@ -677,7 +749,7 @@ pub(crate) fn execute_with_checkpoint_v1(
                 publish(&mut workspace, &input, descriptor)?;
                 checkpoint(ExecutionCheckpointV1::Completed)?;
             }
-            return info(&input, descriptor, output);
+            return info(&input, descriptor, output, payload.root_codec_profile()?);
         }
         if complete {
             bail!("completed candidate output has missing chunks");
@@ -761,7 +833,7 @@ pub(crate) fn execute_with_checkpoint_v1(
         .context("candidate output readback incomplete")?;
     publish(&mut workspace, &input, &descriptor)?;
     checkpoint(ExecutionCheckpointV1::Completed)?;
-    info(&input, &descriptor, readback)
+    info(&input, &descriptor, readback, payload.root_codec_profile()?)
 }
 
 fn publish(
@@ -804,7 +876,12 @@ pub fn load_execution_v1(
     let payload = workspace.read_payload(&input)?;
     let output = read_output(&workspace, &input, descriptor, &payload, params)?
         .context("completed candidate output missing")?;
-    Ok(Some(info(&input, descriptor, output)?))
+    Ok(Some(info(
+        &input,
+        descriptor,
+        output,
+        payload.root_codec_profile()?,
+    )?))
 }
 
 #[cfg(test)]
@@ -813,6 +890,17 @@ pub(crate) fn load_execution_snapshot_for_test_v1(
     id: [u8; 32],
     params: &serde_json::Value,
 ) -> Result<serde_json::Value> {
+    Ok(serde_json::to_value(
+        load_typed_execution_snapshot_for_test_v1(chain_id, id, params)?,
+    )?)
+}
+
+#[cfg(test)]
+pub(crate) fn load_typed_execution_snapshot_for_test_v1(
+    chain_id: u64,
+    id: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<NovNativeExecutionStoreV1> {
     let workspace = WorkspaceStore::open(chain_id, params)?;
     let input = ready_input(&workspace, id)?;
     let outputs = catalog(&workspace)?;
@@ -826,7 +914,7 @@ pub(crate) fn load_execution_snapshot_for_test_v1(
     let payload = workspace.read_payload(&input)?;
     let output = read_output(&workspace, &input, descriptor, &payload, params)?
         .context("output incomplete")?;
-    Ok(serde_json::to_value(output.store)?)
+    Ok(output.store)
 }
 
 #[cfg(test)]

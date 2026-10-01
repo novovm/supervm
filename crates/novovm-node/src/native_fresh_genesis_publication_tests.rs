@@ -5,16 +5,29 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
     std::thread::Builder::new()
         .name("fresh-chain-integration".into())
         .stack_size(crate::native_block_seal::service::FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1)
-        .spawn(exercise_fresh_genesis_publication_and_retry)
+        .spawn(|| {
+            exercise_fresh_genesis_publication_and_retry(
+                crate::tx_ingress::fresh_genesis::GENESIS_SCHEMA_V1,
+            )
+        })
         .unwrap()
         .join()
         .unwrap();
 }
 
-fn exercise_fresh_genesis_publication_and_retry() {
+#[test]
+fn candidate_workspace_execution_record_genesis_real_aoem_finality_and_retry() {
+    transfer_candidate_on_runtime_stack(|| {
+        exercise_fresh_genesis_publication_and_retry(
+            crate::tx_ingress::fresh_genesis::GENESIS_SCHEMA_RECORD_V2,
+        )
+    });
+}
+
+fn exercise_fresh_genesis_publication_and_retry(genesis_schema: &'static str) {
     use crate::tx_ingress::fresh_genesis::{
         publication::{publish_v1, verify_persisted_v1},
-        FreshGenesisConfigV1, GenesisAllocationV1, GenesisValidatorV1, GENESIS_SCHEMA_V1,
+        FreshGenesisConfigV1, GenesisAllocationV1, GenesisValidatorV1,
     };
     let _guard = PLAN_RUNTIME_TEST_LOCK
         .lock()
@@ -27,7 +40,7 @@ fn exercise_fresh_genesis_publication_and_retry() {
         )
         .unwrap();
         let config = FreshGenesisConfigV1 {
-            schema: GENESIS_SCHEMA_V1.into(),
+            schema: genesis_schema.into(),
             chain_id: chain,
             timestamp_unix_ms: 1900000000000,
             protocol_config_commitment: parse_fixed_hex_32_v1(

@@ -30,8 +30,9 @@ pub(super) use execution::{
     complete_successor_with_checkpoint_v1, complete_with_checkpoint_v1,
     corrupt_execution_output_for_test_v1, execute_with_checkpoint_v1,
     finalize_successor_with_checkpoint_v1, load_execution_snapshot_for_test_v1,
-    publish_successor_with_checkpoint_v1, publish_with_checkpoint_v1, retire_with_checkpoint_v1,
-    ExecutionCheckpointV1, PromotionCheckpointV1, RetirementCheckpointV1,
+    load_typed_execution_snapshot_for_test_v1, publish_successor_with_checkpoint_v1,
+    publish_with_checkpoint_v1, retire_with_checkpoint_v1, ExecutionCheckpointV1,
+    PromotionCheckpointV1, RetirementCheckpointV1,
 };
 pub(crate) use execution::{load_startup_artifact_v1, load_startup_successor_v1};
 pub use finalized_parent::create_from_finalized_genesis_v1;
@@ -182,6 +183,23 @@ struct Payload {
 }
 
 impl Payload {
+    fn root_codec_profile(&self) -> Result<crate::native_root_codecs::NativeRootCodecProfileV1> {
+        if let Some(parent) = &self.finalized_parent {
+            return parent.config.root_codec_profile();
+        }
+        if let Some(genesis) = &self.genesis {
+            return genesis.config.root_codec_profile();
+        }
+        let parent = self
+            .parent_snapshot
+            .as_ref()
+            .context("candidate root profile has no parent")?;
+        crate::native_root_codecs::NativeRootCodecProfileV1::from_root_codecs(
+            &parent.state_root_codec,
+            &parent.receipt_root_codec,
+        )
+    }
+
     fn parent_store(&self) -> Result<&NovNativeExecutionStoreV1> {
         if let Some(parent) = &self.finalized_parent {
             if self.parent_block.is_some()

@@ -35,6 +35,28 @@ impl FinalizedParentSnapshot {
         )?;
         verify_native_business_protocol_config_v1(&self.store)?;
         let h = &self.block.header;
+        let profile = self.config.root_codec_profile()?;
+        if h.post_state_root_codec != profile.state_root_codec()
+            || h.cumulative_receipt_root_codec != profile.receipt_root_codec()
+        {
+            bail!("finalized parent root codecs differ from approved fresh genesis profile");
+        }
+        let (state_root, receipt_root) = match profile {
+            crate::native_root_codecs::NativeRootCodecProfileV1::LegacyWireV1 => (
+                parse_fixed_hex_32_v1(
+                    &native_semantic_ledger_state_digest_v1(&self.store.module_state),
+                    "finalized parent legacy state root",
+                )?,
+                parse_fixed_hex_32_v1(
+                    &native_execution_receipt_root_v2(&self.store)?,
+                    "finalized parent legacy receipt root",
+                )?,
+            ),
+            crate::native_root_codecs::NativeRootCodecProfileV1::RecordTreeV1 => (
+                native_record_commitment::consensus_state_root_v1(&self.store.module_state)?,
+                native_record_commitment::cumulative_receipt_root_v1(&self.store)?,
+            ),
+        };
         let expected = NovNativePreparedAoemParentV1 {
             batch_id: h.aoem_batch_id.clone(),
             batch_result_id: h.aoem_batch_result_id.clone(),
@@ -46,11 +68,8 @@ impl FinalizedParentSnapshot {
         };
         if self.config.chain_id != workspace.chain_id
             || self.config.protocol_config_commitment != workspace.protocol
-            || h.post_state_root_codec != NOVOVM_NATIVE_STATE_ROOT_CODEC_V3
-            || h.cumulative_receipt_root_codec != NOVOVM_NATIVE_RECEIPT_ROOT_CODEC_V2
-            || native_semantic_ledger_state_digest_v1(&self.store.module_state)
-                != to_hex(&h.post_state_root)
-            || native_execution_receipt_root_v2(&self.store)? != to_hex(&h.cumulative_receipt_root)
+            || state_root != h.post_state_root
+            || receipt_root != h.cumulative_receipt_root
             || self.store.module_state.aoem_semantic_ledger_sequence != h.state_version
             || plan.aoem_parent.as_ref() != Some(&expected)
             || plan.pre_state_root != h.post_state_root

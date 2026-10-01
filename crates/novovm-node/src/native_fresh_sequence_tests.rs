@@ -799,7 +799,9 @@ fn exercise_body_network(
                 }
                 assert!(
                     start.elapsed() < Duration::from_secs(30),
-                    "body transfer WSS deadline"
+                    "body transfer WSS deadline: elapsed={:?} discarded={} retrying={} manifest={} lifecycle={} future={}",
+                    start.elapsed(), discarded, retrying, manifest.is_some(),
+                    lifecycle.status_json(), future.status_json()
                 );
                 std::thread::sleep(Duration::from_millis(20));
             };

@@ -2,19 +2,55 @@
 //!
 //! This root is NOT a consensus state/receipt root or an authority pointer.
 //! It includes local diagnostics and exists only to recover the exact typed
-//! image required by the current V3 execution/validation compatibility path.
+//! image required by the current candidate loading/validation paths.
 //! Maps grow by independent immutable records, not by one accumulated blob.
 
 use super::NovNativeExecutionStoreV1;
+#[cfg(test)]
+use crate::native_state_records::RecordChange;
+use crate::native_state_records::{read_record, RecordOverlayV1};
 use anyhow::{bail, Context, Result};
+#[cfg(test)]
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use serde_json::value::RawValue;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) type Records = BTreeMap<Vec<u8>, Vec<u8>>;
 type Object = BTreeMap<String, Box<RawValue>>;
-const OBJECT: &[u8] = b"\0";
+pub(super) const OBJECT: &[u8] = b"\0";
 
-fn key(path: &[String]) -> Result<Vec<u8>> {
+pub(super) trait NativeRecordAccessV1 {
+    /// Returns a raw typed JSON token; structural object markers are exposed as
+    /// `{}`. A missing record is distinct from an existing empty object.
+    fn read_path(&self, path: &[&str]) -> Result<Option<Vec<u8>>>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum RawPathChangeV1 {
+    Put { path: Vec<String>, value: Vec<u8> },
+    Delete { path: Vec<String> },
+}
+
+/// Serialize from the concrete Rust type, never through Value/f64. This is the
+/// physical layout's scalar/struct spelling; consensus canonicalization is a
+/// separate projection and must not change the recoverable physical image.
+pub(super) fn typed_raw_v1<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>> {
+    Ok(serde_json::to_vec(value)?)
+}
+
+#[cfg(test)]
+pub(super) fn read_typed_path_v1<T: DeserializeOwned>(
+    reader: &dyn NativeRecordAccessV1,
+    path: &[&str],
+) -> Result<Option<T>> {
+    reader
+        .read_path(path)?
+        .map(|bytes| Ok(serde_json::from_slice(&bytes)?))
+        .transpose()
+}
+
+pub(super) fn key(path: &[String]) -> Result<Vec<u8>> {
     let encoded = serde_json::to_vec(path)?;
     let mut bytes = b"NDS1".to_vec();
     bytes.extend_from_slice(&super::sha256_bytes_v1(&[
@@ -24,7 +60,7 @@ fn key(path: &[String]) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn value(parts: &[String], raw: &[u8]) -> Result<Vec<u8>> {
+pub(super) fn value(parts: &[String], raw: &[u8]) -> Result<Vec<u8>> {
     let encoded = serde_json::to_vec(parts)?;
     let mut bytes = b"NSV1".to_vec();
     bytes.extend_from_slice(&u32::try_from(encoded.len())?.to_be_bytes());
@@ -33,7 +69,7 @@ fn value(parts: &[String], raw: &[u8]) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn unpack<'a>(record_key: &[u8], bytes: &'a [u8]) -> Result<(Vec<String>, &'a [u8])> {
+pub(super) fn unpack<'a>(record_key: &[u8], bytes: &'a [u8]) -> Result<(Vec<String>, &'a [u8])> {
     if bytes.len() < 8 || &bytes[..4] != b"NSV1" {
         bail!("native store record value codec mismatch");
     }
@@ -49,13 +85,21 @@ fn unpack<'a>(record_key: &[u8], bytes: &'a [u8]) -> Result<(Vec<String>, &'a [u
     Ok((parts, &bytes[end..]))
 }
 
-fn module_maps() -> Result<BTreeSet<String>> {
-    let defaults = super::NovNativeExecutionModuleStateV1::default();
-    let fields: Object = serde_json::from_slice(&serde_json::to_vec(&defaults)?)?;
-    Ok(fields
-        .into_iter()
-        .filter_map(|(name, value)| (value.get() == "{}").then_some(name))
-        .collect())
+fn module_maps() -> Result<&'static BTreeSet<String>> {
+    static MAPS: std::sync::OnceLock<std::result::Result<BTreeSet<String>, String>> =
+        std::sync::OnceLock::new();
+    MAPS.get_or_init(|| {
+        let defaults = super::NovNativeExecutionModuleStateV1::default();
+        let fields: Object = serde_json::to_vec(&defaults)
+            .and_then(|bytes| serde_json::from_slice(&bytes))
+            .map_err(|error| error.to_string())?;
+        Ok(fields
+            .into_iter()
+            .filter_map(|(name, value)| (value.get() == "{}").then_some(name))
+            .collect())
+    })
+    .as_ref()
+    .map_err(|error| anyhow::anyhow!("native module map schema: {error}"))
 }
 
 fn split_object(parts: &[String], maps: &BTreeSet<String>) -> bool {
@@ -68,32 +112,113 @@ fn split_object(parts: &[String], maps: &BTreeSet<String>) -> bool {
     }
 }
 
+pub(super) fn is_object_path_v1(parts: &[String]) -> Result<bool> {
+    Ok(split_object(parts, module_maps()?))
+}
+
+/// Convert an API JSON token to the exact physical marker/value spelling.
+/// Putting `{}` at a structural path creates/preserves the marker, not a
+/// subtree replacement. Removing a subtree requires explicit child deletes.
+pub(super) fn physical_path_value_v1(parts: &[String], raw: &[u8]) -> Result<Vec<u8>> {
+    if parts.len() > 4 {
+        bail!("native store record path exceeds layout depth");
+    }
+    if is_object_path_v1(parts)? {
+        let object: Object = serde_json::from_slice(raw)?;
+        if !object.is_empty() {
+            bail!("structural record put must contain an empty object marker");
+        }
+        return Ok(OBJECT.to_vec());
+    }
+    let parsed: Box<RawValue> = serde_json::from_slice(raw)?;
+    Ok(parsed.get().as_bytes().to_vec())
+}
+
+impl NativeRecordAccessV1 for RecordOverlayV1<'_> {
+    fn read_path(&self, path: &[&str]) -> Result<Option<Vec<u8>>> {
+        let parts: Vec<String> = path.iter().map(|part| (*part).to_owned()).collect();
+        let record_key = key(&parts)?;
+        let Some(bytes) = read_record(self, self.root(), &record_key)? else {
+            return Ok(None);
+        };
+        let (stored, raw) = unpack(&record_key, &bytes)?;
+        if stored != parts {
+            bail!("native record lookup path differs from requested path");
+        }
+        if is_object_path_v1(&parts)? {
+            if raw != OBJECT {
+                bail!("native record structural marker missing");
+            }
+            return Ok(Some(b"{}".to_vec()));
+        }
+        let parsed: Box<RawValue> = serde_json::from_slice(raw)?;
+        Ok(Some(parsed.get().as_bytes().to_vec()))
+    }
+}
+
+#[cfg(test)]
+pub(super) fn apply_raw_path_changes_v1(
+    overlay: &mut RecordOverlayV1<'_>,
+    changes: &[RawPathChangeV1],
+) -> Result<()> {
+    let changes = changes
+        .iter()
+        .map(|change| match change {
+            RawPathChangeV1::Put { path, value: raw } => Ok(RecordChange::Put {
+                key: key(path)?,
+                value: value(path, &physical_path_value_v1(path, raw)?)?,
+            }),
+            RawPathChangeV1::Delete { path } => {
+                if path.len() > 4 {
+                    bail!("native store record path exceeds layout depth");
+                }
+                Ok(RecordChange::Delete { key: key(path)? })
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    overlay.stage(&changes)
+}
+
+fn visit_object(
+    value: &RawValue,
+    parts: &mut Vec<String>,
+    maps: &BTreeSet<String>,
+    out: &mut Records,
+) -> Result<()> {
+    let record_key = key(parts)?;
+    if split_object(parts, maps) {
+        out.insert(record_key, self::value(parts, OBJECT)?);
+        let object: Object = serde_json::from_str(value.get())?;
+        for (name, value) in object {
+            parts.push(name);
+            visit_object(&value, parts, maps, out)?;
+            parts.pop();
+        }
+    } else {
+        out.insert(record_key, self::value(parts, value.get().as_bytes())?);
+    }
+    Ok(())
+}
+
+/// Cold state-only conversion; deliberately does not serialize history receipts.
+pub(super) fn encode_module_v1(state: &super::NovNativeExecutionModuleStateV1) -> Result<Records> {
+    let raw: Box<RawValue> = serde_json::from_slice(&typed_raw_v1(state)?)?;
+    let mut records = Records::new();
+    visit_object(
+        &raw,
+        &mut vec!["module_state".into()],
+        module_maps()?,
+        &mut records,
+    )?;
+    Ok(records)
+}
+
 /// Cold-path conversion only. RawValue preserves every u128/i128 JSON token;
 /// routing through serde_json::Value would round values above u64 through f64.
 pub(super) fn encode(store: &NovNativeExecutionStoreV1) -> Result<Records> {
-    fn visit(
-        value: &RawValue,
-        parts: &mut Vec<String>,
-        maps: &BTreeSet<String>,
-        out: &mut Records,
-    ) -> Result<()> {
-        let record_key = key(parts)?;
-        if split_object(parts, maps) {
-            out.insert(record_key, self::value(parts, OBJECT)?);
-            let object: Object = serde_json::from_str(value.get())?;
-            for (name, value) in object {
-                parts.push(name);
-                visit(&value, parts, maps, out)?;
-                parts.pop();
-            }
-        } else {
-            out.insert(record_key, self::value(parts, value.get().as_bytes())?);
-        }
-        Ok(())
-    }
-    let raw = serde_json::value::to_raw_value(store)?;
+    let raw: Box<RawValue> = serde_json::from_slice(&typed_raw_v1(store)?)?;
     let mut records = Records::new();
-    visit(&raw, &mut Vec::new(), &module_maps()?, &mut records)?;
+    visit_object(&raw, &mut Vec::new(), module_maps()?, &mut records)?;
     Ok(records)
 }
 

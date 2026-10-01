@@ -7,6 +7,12 @@ fn validate_first(
     initial_root: [u8; 32],
 ) -> Result<()> {
     validate_durable_block_v1(block)?;
+    let root_profile = config.root_codec_profile()?;
+    if block.header.post_state_root_codec != root_profile.state_root_codec()
+        || block.header.cumulative_receipt_root_codec != root_profile.receipt_root_codec()
+    {
+        bail!("isolated first candidate root codecs differ from pinned fresh genesis profile");
+    }
     if block.header.chain_id != config.chain_id
         || block.header.height != 1
         || block.header.parent_block_hash != [0; 32]
@@ -195,5 +201,137 @@ impl NovNativeBlockLedgerV1 {
             bail!("fresh genesis candidate readback mismatch");
         }
         Ok(readback)
+    }
+}
+
+#[cfg(test)]
+mod root_codec_tests {
+    use super::*;
+    use crate::native_block_ledger::tests::TestLedgerV1;
+    use crate::tx_ingress::fresh_genesis::{
+        GenesisValidatorV1, GENESIS_SCHEMA_RECORD_V2, GENESIS_SCHEMA_V1,
+    };
+
+    #[test]
+    fn root_codec_first_candidate_rejects_wrong_profile_before_persistence() {
+        for schema in [GENESIS_SCHEMA_V1, GENESIS_SCHEMA_RECORD_V2] {
+            let test = TestLedgerV1::new("first-root-profile");
+            let key = ed25519_dalek::SigningKey::from_bytes(&[1; 32]);
+            let config = FreshGenesisConfigV1 {
+                schema: schema.into(),
+                chain_id: 970042,
+                timestamp_unix_ms: 1_900_000_000_000,
+                protocol_config_commitment: [7; 32],
+                allocations: vec![],
+                total_initial_nov: "0".into(),
+                validators: vec![GenesisValidatorV1 {
+                    public_key: key.verifying_key().to_bytes(),
+                    weight: 1,
+                }],
+            };
+            let compiled = config.compile().unwrap();
+            NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(
+                &test.path,
+                &config,
+                compiled.config_commitment(),
+                [3; 32],
+            )
+            .unwrap();
+            let mut prepared = build_prepared_block_v1(NovNativeBlockCandidateInputV1 {
+                context: novovm_protocol::NovBlockExecutionContextV1 {
+                    chain_id: config.chain_id,
+                    block_height: 1,
+                    parent_block_hash: [0; 32],
+                    slot: 1,
+                    timestamp_unix_ms: config.timestamp_unix_ms,
+                },
+                tx_hashes: vec![[1; 32]],
+                raw_txs: vec![vec![2]],
+                pre_state_root: compiled.state_root(),
+                aoem_parent: None,
+            })
+            .unwrap();
+            let input = NovNativeBlockCommitInputV1 {
+                post_state_root: [4; 32],
+                cumulative_receipt_root: [5; 32],
+                per_block_receipt_commitments: vec![[6; 32]],
+                aoem_batch_id: "first-profile".into(),
+                aoem_batch_result_id: "07".repeat(32),
+                aoem_evidence_commitment: [8; 32],
+                state_version: 1,
+            };
+            prepared.expected_aoem_batch_id = Some(input.aoem_batch_id.clone());
+            prepared.expected_aoem_output_commitment = Some("09".repeat(32));
+            let profile = compiled.root_codec_profile();
+            let wrong_profile = if profile == NativeRootCodecProfileV1::LegacyWireV1 {
+                NativeRootCodecProfileV1::RecordTreeV1
+            } else {
+                NativeRootCodecProfileV1::LegacyWireV1
+            };
+            let wrong =
+                build_durable_block_with_root_codecs_v2(&prepared, input.clone(), wrong_profile)
+                    .unwrap();
+            let binding = NovNativeIsolatedExecutionBindingV1 {
+                workspace_id: [10; 32],
+                plan_commitment: [11; 32],
+                output_digest: [12; 32],
+            };
+            let before = test
+                .ledger()
+                .db
+                .iterator(rocksdb::IteratorMode::Start)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert!(NovNativeBlockLedgerV1::register_fresh_genesis_candidate_v1(
+                &test.path,
+                compiled.config_commitment(),
+                [3; 32],
+                wrong,
+                binding.clone(),
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("root codecs differ"));
+            assert_eq!(
+                before,
+                test.ledger()
+                    .db
+                    .iterator(rocksdb::IteratorMode::Start)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
+            );
+            let correct =
+                build_durable_block_with_root_codecs_v2(&prepared, input, profile).unwrap();
+            NovNativeBlockLedgerV1::register_fresh_genesis_candidate_v1(
+                &test.path,
+                compiled.config_commitment(),
+                [3; 32],
+                correct.clone(),
+                binding.clone(),
+            )
+            .unwrap();
+            let seal = crate::native_block_seal::NovNativeBlockSealStoreV1::open(
+                &test.path.join("seal-test"),
+            )
+            .unwrap();
+            NovNativeBlockLedgerV1::with_fresh_genesis_seal_scope_v1(
+                &test.path,
+                compiled.config_commitment(),
+                [3; 32],
+                &correct,
+                &binding,
+                |ledger| {
+                    seal.prepare_local_subject(
+                        ledger,
+                        config.chain_id,
+                        correct.header.block_hash,
+                        compiled.validator_set(),
+                        0,
+                        None,
+                    )
+                },
+            )
+            .unwrap();
+        }
     }
 }

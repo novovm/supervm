@@ -35,7 +35,9 @@ pub(super) fn authenticate_plan(
         bail!("candidate authentication parent protocol configuration mismatch");
     }
 
-    let mut expected_nonces = parent.module_state.native_auth_next_nonces.clone();
+    // Only cache signers touched by this batch; the immutable parent remains
+    // the source for each signer's first nonce, not a cloned historical map.
+    let mut expected_nonces = BTreeMap::new();
     let mut seen_hashes = HashSet::with_capacity(plan.raw_txs.len());
     let mut seen_nonce_keys = HashSet::with_capacity(plan.raw_txs.len());
     let mut authenticated = Vec::with_capacity(plan.raw_txs.len());
@@ -104,7 +106,14 @@ pub(super) fn authenticate_plan(
         }
         let expected = expected_nonces
             .entry(reservation.identity_key.clone())
-            .or_insert(0);
+            .or_insert_with(|| {
+                parent
+                    .module_state
+                    .native_auth_next_nonces
+                    .get(&reservation.identity_key)
+                    .copied()
+                    .unwrap_or(0)
+            });
         *expected = match novovm_protocol::native_nonce::advance_nonce_v1(*expected, reservation.nonce) {
             Ok(next) => next,
             Err(novovm_protocol::native_nonce::NonceSequenceErrorV1::Mismatch) => bail!(

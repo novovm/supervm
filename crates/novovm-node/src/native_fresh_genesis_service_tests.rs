@@ -228,6 +228,27 @@ fn exercise_fresh_candidate_service(
                 );
                 assert_eq!(service.status_json()["finalized"], false);
             }
+            // A decision identifies the execution target, not one particular
+            // valid quorum witness. Preserve each existing node's exact local
+            // certificate across restart; the fourth may first observe another
+            // valid signer subset / prepare witness for the identical target.
+            let preserved = services[..3]
+                .iter()
+                .map(|(index, _, path)| {
+                    let seal = Seal::open(&path.parent().unwrap().join("seal")).unwrap();
+                    let certificate = seal
+                        .load_decision_certificate_by_height_v3(chain, 1, height)
+                        .unwrap()
+                        .unwrap();
+                    certificate.verify(compiled.validator_set()).unwrap();
+                    (*index, certificate)
+                })
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let expected_target = crate::native_block_seal::commit_v3::decision_target_v3(
+                &preserved.values().next().unwrap().prepare,
+                compiled.validator_set(),
+            )
+            .unwrap();
             // Reopen all four: the previously unpolled fourth must catch up from
             // the durable full envelopes retransmitted by the other services.
             let mut reopened = Vec::new();
@@ -258,11 +279,7 @@ fn exercise_fresh_candidate_service(
                 );
                 std::thread::sleep(Duration::from_millis(20));
             }
-            for (_index, service, path) in reopened {
-                assert_eq!(
-                    service.status_json()["decision_certificate_hash"],
-                    confirmed
-                );
+            for (index, service, path) in reopened {
                 assert_eq!(service.status_json()["finalized"], false);
                 // This fixture shares execution state: keep confirmation separate
                 // from the publication/recovery fixture below.
@@ -272,6 +289,25 @@ fn exercise_fresh_candidate_service(
                     .unwrap()
                     .unwrap();
                 certificate.verify(compiled.validator_set()).unwrap();
+                assert_eq!(
+                    service.status_json()["decision_certificate_hash"],
+                    to_hex(&certificate.certificate_hash)
+                );
+                if let Some(previous) = preserved.get(&index) {
+                    assert_eq!(
+                        &certificate, previous,
+                        "existing node {index} changed its durable decision witness"
+                    );
+                }
+                assert_eq!(
+                    crate::native_block_seal::commit_v3::decision_target_v3(
+                        &certificate.prepare,
+                        compiled.validator_set(),
+                    )
+                    .unwrap(),
+                    expected_target,
+                    "node {index} confirmed a different execution target"
+                );
                 assert_eq!(
                     certificate.prepare.subject.block_hash,
                     artifact.block().header.block_hash

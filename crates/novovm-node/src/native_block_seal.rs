@@ -43,6 +43,7 @@ mod source_qc_tests;
 use crate::native_block_ledger::{
     NovNativeBlockCandidateRecordV1, NovNativeBlockLedgerV1, NovNativeDurableBlockV1,
 };
+use crate::native_root_codecs::NativeRootCodecProfileV1;
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rocksdb::{
@@ -362,9 +363,11 @@ impl NovNativeSealSubjectV1 {
             "AOEM expected output commitment",
             self.aoem_expected_output_commitment.as_str(),
         )?;
-        if self.post_state_root_codec != "novovm-consensus-native-state-wire/v1"
-            || self.cumulative_receipt_root_codec != "novovm-consensus-receipt-wire/v1"
-            || self.data_availability_scheme != "inline-full-body-digest/v1"
+        NativeRootCodecProfileV1::from_root_codecs(
+            &self.post_state_root_codec,
+            &self.cumulative_receipt_root_codec,
+        )?;
+        if self.data_availability_scheme != "inline-full-body-digest/v1"
             || self.execution_evidence_kind != "aoem_execution_commitment_not_consensus_seal"
             || self.receipt_count != self.tx_count
         {
@@ -913,6 +916,12 @@ impl NovNativeBlockSealStoreV1 {
         let (record, block) = ledger.load_seal_eligible_local_candidate_v1(chain_id, block_hash)?;
         if let Some((config, _)) = ledger.fresh_genesis_seal_config_v1(chain_id)? {
             let compiled = config.compile()?;
+            let root_profile = compiled.root_codec_profile();
+            if block.header.post_state_root_codec != root_profile.state_root_codec()
+                || block.header.cumulative_receipt_root_codec != root_profile.receipt_root_codec()
+            {
+                bail!("fresh seal block root codecs differ from approved genesis profile");
+            }
             if compiled.validator_set() != validator_set {
                 bail!("first seal validator set differs from approved genesis");
             }
@@ -933,7 +942,7 @@ impl NovNativeBlockSealStoreV1 {
                 );
             }
             let justify = justify_qc_hash.unwrap_or([0; 32]);
-            self.validate_justify_qc_v1(&record, validator_set, justify)?;
+            self.validate_justify_qc_v1(&record, &block, validator_set, justify)?;
             return subject_from_block_profile_v1(
                 &block,
                 validator_set,
@@ -960,7 +969,7 @@ impl NovNativeBlockSealStoreV1 {
             .header
             .block_hash;
         let justify_qc_hash = justify_qc_hash.unwrap_or([0u8; 32]);
-        self.validate_justify_qc_v1(&record, validator_set, justify_qc_hash)?;
+        self.validate_justify_qc_v1(&record, &block, validator_set, justify_qc_hash)?;
         subject_from_block_v1(
             &block,
             validator_set,
@@ -1612,6 +1621,7 @@ impl NovNativeBlockSealStoreV1 {
     fn validate_justify_qc_v1(
         &self,
         candidate: &NovNativeBlockCandidateRecordV1,
+        block: &NovNativeDurableBlockV1,
         validator_set: &NovNativeSealValidatorSetV1,
         justify_qc_hash: [u8; 32],
     ) -> Result<()> {
@@ -1628,6 +1638,15 @@ impl NovNativeBlockSealStoreV1 {
             .load_qc(justify_qc_hash)?
             .context("NOV native seal justify QC is not durably stored")?;
         qc.verify(validator_set)?;
+        let parent_profile = NativeRootCodecProfileV1::from_root_codecs(
+            &qc.subject.post_state_root_codec,
+            &qc.subject.cumulative_receipt_root_codec,
+        )?;
+        NativeRootCodecProfileV1::from_root_codecs(
+            &block.header.post_state_root_codec,
+            &block.header.cumulative_receipt_root_codec,
+        )?
+        .validate_successor_of(parent_profile)?;
         let expected_height = qc
             .subject
             .height
@@ -3172,6 +3191,260 @@ pub(crate) mod tests {
         let set = NovNativeSealValidatorSetV1::new(chain_id, 1, 1, validators)
             .expect("build validator set");
         (keys, set)
+    }
+
+    #[test]
+    fn root_codec_record_subject_and_qc_bind_profiles_and_reject_mixing() {
+        use crate::native_block_ledger::{
+            build_durable_block_with_root_codecs_v2, build_prepared_block_v1,
+        };
+        let chain = 81_023;
+        let (keys, set) = validator_fixture_v1(chain);
+        let mut prepared = build_prepared_block_v1(NovNativeBlockCandidateInputV1 {
+            context: NovBlockExecutionContextV1 {
+                chain_id: chain,
+                block_height: 1,
+                parent_block_hash: [0; 32],
+                slot: 1,
+                timestamp_unix_ms: 1_900_000_000_000,
+            },
+            tx_hashes: vec![[1; 32]],
+            raw_txs: vec![vec![2, 3]],
+            pre_state_root: [4; 32],
+            aoem_parent: None,
+        })
+        .unwrap();
+        let input = NovNativeBlockCommitInputV1 {
+            post_state_root: [5; 32],
+            cumulative_receipt_root: [6; 32],
+            per_block_receipt_commitments: vec![[7; 32]],
+            aoem_batch_id: "root-codec-test-batch".into(),
+            aoem_batch_result_id: "08".repeat(32),
+            aoem_evidence_commitment: [9; 32],
+            state_version: 1,
+        };
+        prepared.expected_aoem_batch_id = Some(input.aoem_batch_id.clone());
+        prepared.expected_aoem_output_commitment = Some("0a".repeat(32));
+        for profile in [
+            NativeRootCodecProfileV1::LegacyWireV1,
+            NativeRootCodecProfileV1::RecordTreeV1,
+        ] {
+            let block =
+                build_durable_block_with_root_codecs_v2(&prepared, input.clone(), profile).unwrap();
+            let subject =
+                subject_from_block_v1(&block, &set, 0, [0; 32], block.header.block_hash, [11; 32])
+                    .unwrap();
+            assert_eq!(subject.post_state_root_codec, profile.state_root_codec());
+            assert_eq!(
+                subject.cumulative_receipt_root_codec,
+                profile.receipt_root_codec()
+            );
+            let proposal = sign_proposal_v1(subject.clone(), &set, &keys[0]).unwrap();
+            let votes = keys
+                .iter()
+                .take(3)
+                .map(|key| sign_vote_v1(&proposal, &set, key).unwrap())
+                .collect::<Vec<_>>();
+            let qc =
+                NovNativeSealQuorumCertificateV1::from_votes(subject.clone(), &set, votes.clone())
+                    .unwrap();
+            qc.verify(&set).unwrap();
+            assert!(NovNativeSealQuorumCertificateV1::from_votes(
+                subject.clone(),
+                &set,
+                votes[..2].to_vec()
+            )
+            .is_err());
+
+            let other = if profile == NativeRootCodecProfileV1::LegacyWireV1 {
+                NativeRootCodecProfileV1::RecordTreeV1
+            } else {
+                NativeRootCodecProfileV1::LegacyWireV1
+            };
+            let mut mixed = subject.clone();
+            mixed.post_state_root_codec = other.state_root_codec().into();
+            mixed.subject_hash = subject_hash_v1(&mixed);
+            assert!(
+                mixed.validate(&set).is_err(),
+                "recommitting a mixed profile cannot make it valid"
+            );
+            let mut mixed = subject.clone();
+            mixed.cumulative_receipt_root_codec = other.receipt_root_codec().into();
+            mixed.subject_hash = subject_hash_v1(&mixed);
+            assert!(mixed.validate(&set).is_err());
+            let mut tampered = qc.clone();
+            tampered.subject.post_state_root_codec = other.state_root_codec().into();
+            tampered.subject.cumulative_receipt_root_codec = other.receipt_root_codec().into();
+            assert!(
+                tampered.verify(&set).is_err(),
+                "existing QC never verifies a relabeled profile"
+            );
+        }
+    }
+
+    #[test]
+    fn root_codec_archived_fresh_finality_rejects_even_signed_wrong_profile() {
+        use crate::native_block_ledger::{
+            build_durable_block_with_root_codecs_v2, build_prepared_block_v1,
+            NovNativeFreshFinalityProofV1,
+        };
+        use crate::native_block_seal::commit_v3::{
+            decision_target_v3, NovNativeSealDecisionCertificateV3, NovNativeSealDecisionVoteV3,
+        };
+        use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1;
+        use crate::native_block_seal_overlay::{
+            NovNativeSealEpochAuthorityV1, NovNativeSealValidatorTransportBindingV1,
+        };
+        use crate::tx_ingress::fresh_genesis::{
+            FreshGenesisConfigV1, GenesisValidatorV1, GENESIS_SCHEMA_RECORD_V2, GENESIS_SCHEMA_V1,
+        };
+
+        let (keys, _) = validator_fixture_v1(81_024);
+        for schema in [GENESIS_SCHEMA_V1, GENESIS_SCHEMA_RECORD_V2] {
+            let config = FreshGenesisConfigV1 {
+                schema: schema.into(),
+                chain_id: 81_024,
+                timestamp_unix_ms: 1_900_000_000_000,
+                protocol_config_commitment: [7; 32],
+                allocations: vec![],
+                total_initial_nov: "0".into(),
+                validators: keys
+                    .iter()
+                    .map(|key| GenesisValidatorV1 {
+                        public_key: key.verifying_key().to_bytes(),
+                        weight: 1,
+                    })
+                    .collect(),
+            };
+            let compiled = config.compile().unwrap();
+            let set = compiled.validator_set();
+            let authority =
+                NovNativeSealEpochAuthorityV1::derive_operator_pinned_fresh_genesis_epoch(
+                    &config,
+                    compiled.config_commitment(),
+                    set.validators
+                        .iter()
+                        .map(|validator| NovNativeSealValidatorTransportBindingV1 {
+                            validator_id: validator.validator_id,
+                            transport_peer_id: novovm_network::peer_id_from_ed25519_public_key_v1(
+                                &validator.public_key,
+                            ),
+                        })
+                        .collect(),
+                )
+                .unwrap();
+            let leader = authority.scheduled_leader_v1(1, 0).unwrap();
+            let proposer = keys
+                .iter()
+                .find(|key| validator_id_v1(key.verifying_key().as_bytes()) == leader)
+                .unwrap();
+            for profile in [
+                NativeRootCodecProfileV1::LegacyWireV1,
+                NativeRootCodecProfileV1::RecordTreeV1,
+            ] {
+                let mut prepared = build_prepared_block_v1(NovNativeBlockCandidateInputV1 {
+                    context: NovBlockExecutionContextV1 {
+                        chain_id: config.chain_id,
+                        block_height: 1,
+                        parent_block_hash: [0; 32],
+                        slot: 1,
+                        timestamp_unix_ms: config.timestamp_unix_ms,
+                    },
+                    tx_hashes: vec![[1; 32]],
+                    raw_txs: vec![vec![2, 3]],
+                    pre_state_root: compiled.state_root(),
+                    aoem_parent: None,
+                })
+                .unwrap();
+                let input = NovNativeBlockCommitInputV1 {
+                    post_state_root: [5; 32],
+                    cumulative_receipt_root: [6; 32],
+                    per_block_receipt_commitments: vec![[7; 32]],
+                    aoem_batch_id: "fresh-profile-test".into(),
+                    aoem_batch_result_id: "08".repeat(32),
+                    aoem_evidence_commitment: [9; 32],
+                    state_version: 1,
+                };
+                prepared.expected_aoem_batch_id = Some(input.aoem_batch_id.clone());
+                prepared.expected_aoem_output_commitment = Some("0a".repeat(32));
+                let block =
+                    build_durable_block_with_root_codecs_v2(&prepared, input, profile).unwrap();
+                let subject = subject_from_block_profile_v1(
+                    &block,
+                    set,
+                    0,
+                    [0; 32],
+                    compiled.identity().anchor(),
+                    config.protocol_config_commitment,
+                    NOV_NATIVE_BLOCK_SEAL_FRESH_GENESIS_PROOF_V1,
+                )
+                .unwrap();
+                let proposal = sign_proposal_v1(subject.clone(), set, proposer).unwrap();
+                let votes = keys
+                    .iter()
+                    .take(3)
+                    .map(|key| sign_vote_v1(&proposal, set, key).unwrap())
+                    .collect();
+                let prepare =
+                    NovNativeSealQuorumCertificateV1::from_votes(subject, set, votes).unwrap();
+                let target_hash = decision_target_v3(&prepare, set).unwrap();
+                let votes = keys
+                    .iter()
+                    .take(3)
+                    .map(|key| {
+                        let validator_id = validator_id_v1(key.verifying_key().as_bytes());
+                        let message = [
+                            b"novovm-native-seal-decision-signing-v3\0".as_slice(),
+                            &target_hash,
+                            &validator_id,
+                        ]
+                        .concat();
+                        let signature = key.sign(&message).to_bytes().to_vec();
+                        let mut hash = Sha256::new();
+                        hash.update(b"novovm-native-seal-decision-vote-v3\0");
+                        hash.update(target_hash);
+                        hash.update(validator_id);
+                        hash.update(&signature);
+                        NovNativeSealDecisionVoteV3 {
+                            schema: "novovm-native-seal-decision-vote/v3".into(),
+                            target_hash,
+                            validator_id,
+                            signature,
+                            vote_hash: hash.finalize().into(),
+                        }
+                    })
+                    .collect();
+                let decision =
+                    NovNativeSealDecisionCertificateV3::from_votes(prepare, set, votes).unwrap();
+                let witness = NovNativeSealRoundMessageV1::DecisionCertificateV3 {
+                    proposal: Box::new(proposal),
+                    decision: Box::new(decision),
+                    certificate: None,
+                };
+                // Both variants have valid signatures, quorum and authority
+                // domain. The explicit genesis profile is the decisive boundary.
+                witness
+                    .validate_authenticated(
+                        &authority,
+                        1,
+                        &authority.transport_bindings[0].transport_peer_id,
+                    )
+                    .unwrap();
+                let proof = NovNativeFreshFinalityProofV1 {
+                    authority: authority.clone(),
+                    witness,
+                };
+                let result = proof.validate_archived_certificate(&config, &block);
+                if profile == compiled.root_codec_profile() {
+                    result.unwrap();
+                } else {
+                    assert!(result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("root codecs differ"));
+                }
+            }
+        }
     }
 
     fn bind_ownership_v1(ledger: &NovNativeBlockLedgerV1, chain_id: u64) {

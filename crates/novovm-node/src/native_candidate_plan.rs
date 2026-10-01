@@ -17,13 +17,12 @@ use crate::native_block_ledger::{
     NovNativeDurableBlockV1, NovNativePreparedAoemParentV1, NovNativePreparedBlockV1,
     NOV_NATIVE_BLOCK_LEDGER_MAX_BODY_BYTES_V1, NOV_NATIVE_BLOCK_LEDGER_MAX_TXS_V1,
 };
+use crate::native_root_codecs::NativeRootCodecProfileV1;
 
 pub const NOV_NATIVE_CANDIDATE_EXECUTION_PLAN_SCHEMA_V1: &str =
     "novovm-native-candidate-execution-plan/v1";
 
 const PLAN_COMMITMENT_DOMAIN_V1: &[u8] = b"novovm-native-candidate-execution-plan-v1\0";
-const STATE_ROOT_CODEC_V1: &str = "novovm-consensus-native-state-wire/v1";
-const RECEIPT_ROOT_CODEC_V1: &str = "novovm-consensus-receipt-wire/v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -90,10 +89,21 @@ impl NovNativeCandidateExecutionPlanV1 {
         Ok(())
     }
 
-    /// Compare input fields only, without trusting the block's state, receipt,
-    /// AOEM result or lifecycle claims. Execution output verification is separate.
+    /// Compare input fields and root-profile continuity, without trusting the
+    /// block's state, receipt, AOEM result or lifecycle claims. Execution output
+    /// verification and fresh-genesis profile pinning are separate.
     pub fn validate_against_block(&self, block: &NovNativeDurableBlockV1) -> Result<()> {
         self.validate()?;
+        let profile = NativeRootCodecProfileV1::from_root_codecs(
+            &block.header.post_state_root_codec,
+            &block.header.cumulative_receipt_root_codec,
+        )?;
+        if let Some(parent) = &self.aoem_parent {
+            profile.validate_successor_of(NativeRootCodecProfileV1::from_root_codecs(
+                &parent.state_root_codec,
+                &parent.receipt_root_codec,
+            )?)?;
+        }
         if self.context != block.header.execution_context
             || self.context.commitment()? != block.header.execution_context_commitment
             || self.context.chain_id != block.header.chain_id
@@ -165,8 +175,6 @@ impl NovNativeCandidateExecutionPlanV1 {
                     .batch_result_id
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                || parent.state_root_codec != STATE_ROOT_CODEC_V1
-                || parent.receipt_root_codec != RECEIPT_ROOT_CODEC_V1
                 || parent.state_root == [0; 32]
                 || parent.cumulative_receipt_root == [0; 32]
                 || parent.state_version == 0
@@ -174,6 +182,10 @@ impl NovNativeCandidateExecutionPlanV1 {
             {
                 bail!("NOV native candidate plan AOEM parent commitment is invalid");
             }
+            NativeRootCodecProfileV1::from_root_codecs(
+                &parent.state_root_codec,
+                &parent.receipt_root_codec,
+            )?;
         }
         Ok(())
     }
@@ -271,6 +283,10 @@ fn deserialize_aoem_parent_v1<'de, D: Deserializer<'de>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_root_codecs::{
+        LEGACY_RECEIPT_ROOT_CODEC_V2 as RECEIPT_ROOT_CODEC_V1,
+        LEGACY_STATE_ROOT_CODEC_V3 as STATE_ROOT_CODEC_V1,
+    };
 
     fn plan() -> NovNativeCandidateExecutionPlanV1 {
         NovNativeCandidateExecutionPlanV1::new(
@@ -393,6 +409,60 @@ mod tests {
                 evidence_kind: "aoem_execution_commitment_not_consensus_seal".into(),
                 proof_sealed: false,
             },
+        }
+    }
+
+    #[test]
+    fn root_codec_plans_accept_matching_record_parent_and_child_only() {
+        let legacy = plan();
+        let mut record = legacy.clone();
+        let parent = record.aoem_parent.as_mut().unwrap();
+        parent.state_root_codec = NativeRootCodecProfileV1::RecordTreeV1
+            .state_root_codec()
+            .into();
+        parent.receipt_root_codec = NativeRootCodecProfileV1::RecordTreeV1
+            .receipt_root_codec()
+            .into();
+        assert!(
+            record.validate().is_err(),
+            "codec changes must alter the plan commitment"
+        );
+        let record = resign(record).unwrap();
+        assert_ne!(record.plan_commitment, legacy.plan_commitment);
+        record
+            .validate_against_prepared(&prepared(&record))
+            .unwrap();
+
+        let mut record_block = block(&record);
+        assert!(
+            record.validate_against_block(&record_block).is_err(),
+            "a record parent cannot produce legacy output"
+        );
+        record_block.header.post_state_root_codec = NativeRootCodecProfileV1::RecordTreeV1
+            .state_root_codec()
+            .into();
+        assert!(
+            record.validate_against_block(&record_block).is_err(),
+            "mixed output codecs"
+        );
+        record_block.header.cumulative_receipt_root_codec = NativeRootCodecProfileV1::RecordTreeV1
+            .receipt_root_codec()
+            .into();
+        record.validate_against_block(&record_block).unwrap();
+
+        for value in [legacy, record] {
+            let mut mixed = value.clone();
+            let parent = mixed.aoem_parent.as_mut().unwrap();
+            parent.state_root_codec = if parent.state_root_codec == STATE_ROOT_CODEC_V1 {
+                NativeRootCodecProfileV1::RecordTreeV1.state_root_codec()
+            } else {
+                STATE_ROOT_CODEC_V1
+            }
+            .into();
+            assert!(
+                resign(mixed).is_err(),
+                "mixed parent codecs cannot be recommitted"
+            );
         }
     }
 

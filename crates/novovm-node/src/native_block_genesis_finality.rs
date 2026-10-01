@@ -53,6 +53,12 @@ impl NovNativeFreshFinalityProofV1 {
         block: &NovNativeDurableBlockV1,
     ) -> Result<()> {
         let compiled = config.compile()?;
+        let root_profile = compiled.root_codec_profile();
+        if block.header.post_state_root_codec != root_profile.state_root_codec()
+            || block.header.cumulative_receipt_root_codec != root_profile.receipt_root_codec()
+        {
+            bail!("archived finality block root codecs differ from approved fresh genesis profile");
+        }
         let rebuilt = NovNativeSealEpochAuthorityV1::derive_operator_pinned_fresh_genesis_epoch(
             config,
             compiled.config_commitment(),

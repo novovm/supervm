@@ -2,7 +2,9 @@
 //! Explicit graph registration is separate and never grants signing permission
 //! or publishes authoritative state.
 use super::*;
-use crate::native_block_ledger::{build_durable_block_v1, build_prepared_block_v1};
+use crate::native_block_ledger::{
+    build_durable_block_with_root_codecs_v2, build_prepared_block_v1,
+};
 use crate::native_block_ledger::{
     NovNativeBlockCandidateRecordV1, NovNativeIsolatedExecutionBindingV1,
 };
@@ -87,7 +89,8 @@ pub(super) fn load_block_artifact_inner_v1(
         })
         .collect::<Result<Vec<_>>>()?;
     let result = &output.batch_result;
-    let block = build_durable_block_v1(
+    let profile = payload.root_codec_profile()?;
+    let block = build_durable_block_with_root_codecs_v2(
         &prepared,
         NovNativeBlockCommitInputV1 {
             post_state_root: parse_fixed_hex_32_v1(
@@ -102,11 +105,12 @@ pub(super) fn load_block_artifact_inner_v1(
             aoem_batch_id: result.batch_id.clone(),
             aoem_batch_result_id: result.batch_result_id.clone(),
             aoem_evidence_commitment: parse_fixed_hex_32_v1(
-                &native_aoem_execution_evidence_commitment_v1(result)?,
+                &native_aoem_execution_evidence_with_profile_v1(result, profile)?,
                 "isolated block evidence",
             )?,
             state_version: result.snapshot_metadata.state_version,
         },
+        profile,
     )?;
     plan.validate_against_block(&block)?;
     let fresh_genesis_identity = if let Some(parent) = &payload.finalized_parent {
@@ -222,7 +226,9 @@ fn with_live_genesis_candidate<T>(
         &workspace.namespace,
         expected_genesis,
     )?;
-    if serde_json::to_value(&current)? != serde_json::to_value(stored_genesis)? {
+    if native_record_commitment::canonical_raw_json_v1(&serde_json::to_vec(&current)?)?
+        != native_record_commitment::canonical_raw_json_v1(&serde_json::to_vec(stored_genesis)?)?
+    {
         bail!("first candidate current genesis differs from captured input");
     }
     action(&store_path, &workspace, artifact)
@@ -323,9 +329,15 @@ pub fn with_verified_block_candidate_v1<T>(
     let _authority_lock = acquire_nov_native_execution_store_write_lock_v1(&store_path)?;
     let current = capture_parent_locked(&payload.plan, &store_path, &workspace)?;
     if current.parent_block != payload.parent_block
-        || serde_json::to_value(&current.parent_snapshot)?
-            != serde_json::to_value(&payload.parent_snapshot)?
-        || serde_json::to_value(&current.genesis)? != serde_json::to_value(&payload.genesis)?
+        || native_record_commitment::canonical_raw_json_v1(&serde_json::to_vec(
+            &current.parent_snapshot,
+        )?)? != native_record_commitment::canonical_raw_json_v1(&serde_json::to_vec(
+            &payload.parent_snapshot,
+        )?)?
+        || native_record_commitment::canonical_raw_json_v1(&serde_json::to_vec(&current.genesis)?)?
+            != native_record_commitment::canonical_raw_json_v1(&serde_json::to_vec(
+                &payload.genesis,
+            )?)?
     {
         bail!("isolated signing authoritative parent no longer matches captured state");
     }

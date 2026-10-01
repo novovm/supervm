@@ -10,8 +10,14 @@ pub mod fresh_pool;
 #[path = "native_transfer_dispatch.rs"]
 mod native_transfer_dispatch;
 
+#[path = "native_record_commitment.rs"]
+mod native_record_commitment;
 #[path = "native_store_records.rs"]
 mod native_store_records;
+#[path = "native_transfer_record_execution.rs"]
+mod native_transfer_record_execution;
+#[path = "native_transfer_state_access.rs"]
+mod native_transfer_state_access;
 
 #[path = "native_nonce_migration.rs"]
 pub mod native_nonce_migration;
@@ -11596,6 +11602,17 @@ struct NovExecutionRequestDispatchContextV1<'a> {
     now_ms: u128,
 }
 
+/// Compatibility guard for the legacy Execute projection/finalizer's JSON
+/// numeric domain. Record-profile balances remain u128, but this old path must
+/// reject an unrepresentable typed state instead of reaching json!().unwrap().
+/// This is not a claim that every business log or derived signed delta supports
+/// the whole u128 range, and it does not change any legacy commitment bytes.
+fn validate_legacy_execution_json_domain_v1(state: &NovNativeExecutionModuleStateV1) -> Result<()> {
+    serde_json::to_value(state)
+        .context("legacy Execute JSON domain cannot represent the typed module state")?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn finalize_native_execution_receipt_v1(
     store: &mut NovNativeExecutionStoreV1,
@@ -11610,6 +11627,11 @@ fn finalize_native_execution_receipt_v1(
     now_ms: u128,
     mut receipt: NovNativeExecutionReceiptV1,
 ) -> Result<NovNativeExecutionReceiptV1> {
+    // Fail before consuming the authenticated nonce or inserting any receipt.
+    // The caller must discard the isolated candidate after an error; this does
+    // not roll back business/fee work already performed on that local image.
+    validate_legacy_execution_json_domain_v1(module_state_before_execution)?;
+    validate_legacy_execution_json_domain_v1(&store.module_state)?;
     receipt.aoem_semantic_ingress = aoem_semantic_ingress;
     if let Some(reservation) = durable_auth_reservation {
         commit_nov_native_durable_auth_reservation_v1(store, reservation)?;
@@ -13640,8 +13662,6 @@ const NOVOVM_NATIVE_RECEIPT_ROOT_CODEC_LEGACY_V1: &str = "novovm-receipt-root-js
 const NOVOVM_NATIVE_RECEIPT_ROOT_CODEC_V2: &str = "novovm-consensus-receipt-wire/v1";
 const NOVOVM_NATIVE_STATE_ROOT_CODEC_LEGACY_V2: &str = "novovm-native-state-json-legacy/v2";
 const NOVOVM_NATIVE_STATE_ROOT_CODEC_V3: &str = "novovm-consensus-native-state-wire/v1";
-const NOVOVM_AOEM_EXECUTION_EVIDENCE_CODEC_V1: &str =
-    "novovm-aoem-native-batch-consensus-evidence/v1";
 const NOVOVM_NATIVE_BLOCK_LEDGER_BOOTSTRAP_MARKER_SCHEMA_V1: &str =
     "novovm-native-block-ledger-bootstrap-marker/v1";
 
@@ -13838,6 +13858,16 @@ struct NovConsensusAoemExecutionEvidenceWireV1<'a> {
 fn native_aoem_execution_evidence_commitment_v1(
     batch_result: &novovm_exec::NovovmAoemNativeTxBatchResultV1,
 ) -> Result<String> {
+    native_aoem_execution_evidence_with_profile_v1(
+        batch_result,
+        crate::native_root_codecs::NativeRootCodecProfileV1::LegacyWireV1,
+    )
+}
+
+fn native_aoem_execution_evidence_with_profile_v1(
+    batch_result: &novovm_exec::NovovmAoemNativeTxBatchResultV1,
+    profile: crate::native_root_codecs::NativeRootCodecProfileV1,
+) -> Result<String> {
     let per_tx_receipts = batch_result
         .per_tx_receipts
         .iter()
@@ -13850,9 +13880,9 @@ fn native_aoem_execution_evidence_commitment_v1(
         })
         .collect();
     let wire = NovConsensusAoemExecutionEvidenceWireV1 {
-        codec: NOVOVM_AOEM_EXECUTION_EVIDENCE_CODEC_V1,
-        state_root_codec: NOVOVM_NATIVE_STATE_ROOT_CODEC_V3,
-        receipt_root_codec: NOVOVM_NATIVE_RECEIPT_ROOT_CODEC_V2,
+        codec: profile.execution_evidence_codec(),
+        state_root_codec: profile.state_root_codec(),
+        receipt_root_codec: profile.receipt_root_codec(),
         schema: batch_result.schema.as_str(),
         batch_result_id: batch_result.batch_result_id.as_str(),
         batch_id: batch_result.batch_id.as_str(),
@@ -21332,6 +21362,116 @@ pub fn load_ops_wire_v1_from_tx_wire_file(path: &Path) -> Result<OpsWirePayload>
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod legacy_execution_json_domain {
+        use super::*;
+
+        #[test]
+        fn legacy_execution_json_domain_accepts_u64_values_without_changing_state() {
+            let mut state = NovNativeExecutionModuleStateV1 {
+                treasury_reserve_bucket_nov: u128::from(u64::MAX),
+                ..Default::default()
+            };
+            state.account_asset_balances.insert(
+                to_hex_prefixed_v1(&[1; 20]),
+                BTreeMap::from([("NOV".into(), u128::from(u64::MAX))]),
+            );
+            let before = serde_json::to_vec(&state).unwrap();
+            validate_legacy_execution_json_domain_v1(&state).unwrap();
+            assert_eq!(serde_json::to_vec(&state).unwrap(), before);
+        }
+
+        #[test]
+        fn legacy_execution_json_domain_returns_errors_not_panics_for_large_values() {
+            for account in [true, false] {
+                let mut state = NovNativeExecutionModuleStateV1::default();
+                if account {
+                    state.account_asset_balances.insert(
+                        to_hex_prefixed_v1(&[1; 20]),
+                        BTreeMap::from([("NOV".into(), u128::from(u64::MAX) + 1)]),
+                    );
+                } else {
+                    state.treasury_settled_nov_total = u128::MAX;
+                }
+                let result =
+                    std::panic::catch_unwind(|| validate_legacy_execution_json_domain_v1(&state))
+                        .expect("numeric domain rejection must not panic");
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("legacy Execute JSON domain"));
+            }
+        }
+
+        #[test]
+        fn legacy_execution_finalizer_rejects_before_nonce_and_receipt_changes() {
+            let request = NovExecutionRequestV1 {
+                tx_hash: [0x81; 32],
+                chain_id: 91_801,
+                caller: vec![1; 20],
+                target: NovExecutionRequestTargetV1::NativeModule("treasury".into()),
+                method: "domain_guard_test".into(),
+                args: b"{}".to_vec(),
+                fee_pay_asset: "NOV".into(),
+                fee_max_pay_amount: 0,
+                fee_slippage_bps: 0,
+                gas_like_limit: None,
+                nonce: 0,
+            };
+            let subject = fallback_execution_subject_meta_v1(&request);
+            let fee = unresolved_settled_fee_v1(&request);
+            let reservation = NovNativeDurableAuthReservationV1 {
+                runtime_key: (request.chain_id, request.caller.clone(), 0),
+                ledger_key: "unit-domain-signer:0".into(),
+                identity_key: "unit-domain-signer".into(),
+                nonce: 0,
+                reservation_id: "82".repeat(32),
+                tx_hash: to_hex(&request.tx_hash),
+            };
+            for invalid_before in [true, false] {
+                let mut store = NovNativeExecutionStoreV1::default();
+                let mut before = store.module_state.clone();
+                if invalid_before {
+                    before.treasury_settled_nov_total = u128::from(u64::MAX) + 1;
+                } else {
+                    store.module_state.treasury_settled_nov_total = u128::from(u64::MAX) + 1;
+                }
+                let expected = serde_json::to_vec(&store).unwrap();
+                let receipt = build_failed_native_receipt_v1(
+                    &request,
+                    &fee,
+                    &subject,
+                    "treasury".into(),
+                    "domain_guard_test".into(),
+                    "test failure".into(),
+                );
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    finalize_native_execution_receipt_v1(
+                        &mut store,
+                        &request,
+                        &fee,
+                        &subject,
+                        Some(&reservation),
+                        None,
+                        &before,
+                        Path::new(""),
+                        None,
+                        1,
+                        receipt,
+                    )
+                }))
+                .expect("finalizer numeric domain rejection must not panic");
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("legacy Execute JSON domain"));
+                assert!(store.module_state.native_auth_next_nonces.is_empty());
+                assert!(store.module_state.native_auth_nonce_reservations.is_empty());
+                assert!(store.receipts.is_empty());
+                assert_eq!(serde_json::to_vec(&store).unwrap(), expected);
+            }
+        }
+    }
+
     mod native_nov_fee_conservation {
         use super::*;
 
