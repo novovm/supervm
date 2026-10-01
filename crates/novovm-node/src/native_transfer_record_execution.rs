@@ -261,9 +261,12 @@ pub(super) fn execute_rooted_segment_v1(
         offset = end;
     }
     Ok(RootedTransferUpdateV1 {
-        physical: physical.finish(),
+        // Only the final physical/receipt roots are published. Intermediate
+        // state roots, in contrast, are bound into individual receipts, so
+        // retain their staged content. Neither operation deletes old roots.
+        physical: physical.finish_compacted()?,
         state: state.finish(),
-        receipts: receipts.finish(),
+        receipts: receipts.finish_compacted()?,
         stats,
         peak_inflight,
         changes,

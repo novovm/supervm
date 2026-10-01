@@ -219,6 +219,62 @@ impl Node {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct StagedNodeReachabilityV1 {
+    pub(crate) nodes: BTreeSet<NodeHash>,
+    pub(crate) leaves: Vec<(NodeHash, Vec<u8>)>,
+}
+
+/// Inspect only a derived update's staged content, without reading its parent.
+/// A child absent from `nodes` is an inherited boundary, not verified absence.
+/// The caller must already trust the parent and retain its durable content;
+/// this helper neither validates an arbitrary root nor grants publication rights.
+pub(crate) fn staged_node_reachability_v1(
+    root: NodeHash,
+    nodes: &BTreeMap<NodeHash, Vec<u8>>,
+) -> Result<StagedNodeReachabilityV1> {
+    // Even superseded content must be well-formed: compaction must not hide a
+    // hash/codec error that the original persistence path would have rejected.
+    for (hash, bytes) in nodes {
+        validate_state_node_bytes(hash, bytes)?;
+    }
+    let mut result = StagedNodeReachabilityV1 {
+        nodes: BTreeSet::new(),
+        leaves: Vec::new(),
+    };
+    if root == empty_root() {
+        return Ok(result);
+    }
+    let mut stack = vec![(root, [0; 32], 0u16)];
+    while let Some((hash, path, minimum_bit)) = stack.pop() {
+        let Some(bytes) = nodes.get(&hash) else {
+            continue;
+        };
+        // All hashes/codecs were checked above. Validate each reached node's
+        // placement before accepting it, including a repeated child reference.
+        let node = Node::decode(bytes)?;
+        node.validate_path(&path, minimum_bit)?;
+        if !result.nodes.insert(hash) {
+            bail!("staged state tree repeats a child node");
+        }
+        match node {
+            Node::Leaf { key, value } => result.leaves.push((key, value)),
+            Node::Branch {
+                bit,
+                prefix,
+                left,
+                right,
+            } => {
+                let mut right_path = prefix;
+                right_path[usize::from(bit / 8)] |= 0x80 >> (bit % 8);
+                stack.push((right, right_path, bit + 1));
+                stack.push((left, prefix, bit + 1));
+            }
+        }
+    }
+    Ok(result)
+}
+
 struct Planner<'a> {
     reader: &'a dyn StateNodeReader,
     nodes: BTreeMap<NodeHash, Vec<u8>>,
@@ -523,6 +579,108 @@ mod tests {
     fn persist(memory: &mut Memory, update: StagedStateUpdate) -> NodeHash {
         memory.0.extend(update.nodes);
         update.root
+    }
+
+    #[test]
+    fn staged_reachability_stops_at_inherited_subtrees_and_excludes_old_stages() {
+        let mut parent = Memory::default();
+        let initial: Vec<_> = (0..32).map(|key| put(key, 7)).collect();
+        let update = stage_state_update(&parent, empty_root(), &initial).unwrap();
+        let parent_root = persist(&mut parent, update);
+        let first = stage_state_update(&parent, parent_root, &[put(2, 8)]).unwrap();
+        let mut combined = Memory(parent.0.clone());
+        combined.0.extend(first.nodes.clone());
+        let second = stage_state_update(&combined, first.root(), &[put(2, 9)]).unwrap();
+        let mut staged = first.nodes;
+        staged.extend(second.nodes.clone());
+        let result = staged_node_reachability_v1(second.root(), &staged).unwrap();
+        assert_eq!(
+            result.nodes,
+            second.nodes.keys().copied().collect::<BTreeSet<_>>()
+        );
+        assert!(result.nodes.len() < staged.len());
+        assert_eq!(
+            result.leaves,
+            vec![(state_key_hash(&2u32.to_be_bytes()).unwrap(), vec![9])]
+        );
+        // The helper has no reader argument: inherited nodes are neither
+        // fetched nor added to this write set. They remain in the parent DB.
+        assert!(result.nodes.iter().all(|hash| !parent.0.contains_key(hash)));
+        let mut restored = Memory(parent.0.clone());
+        for hash in result.nodes {
+            restored.0.insert(hash, staged[&hash].clone());
+        }
+        for key in 0u32..32 {
+            assert_eq!(
+                read_state_value(&restored, second.root(), &key.to_be_bytes()).unwrap(),
+                Some(vec![if key == 2 { 9 } else { 7 }])
+            );
+        }
+        assert_eq!(
+            read_state_value(&restored, parent_root, &2u32.to_be_bytes()).unwrap(),
+            Some(vec![7])
+        );
+    }
+
+    #[test]
+    fn staged_reachability_rejects_bad_hash_and_codec_even_when_unreachable() {
+        let update = stage_state_update(&Memory::default(), empty_root(), &[put(1, 7)]).unwrap();
+        let mut corrupted = update.nodes;
+        corrupted.get_mut(&update.root).unwrap()[35] ^= 1;
+        for root in [update.root, empty_root()] {
+            assert!(staged_node_reachability_v1(root, &corrupted).is_err());
+        }
+        let malformed = vec![1, 2, 3];
+        let wrong_codec = BTreeMap::from([(digest_node(&malformed), malformed)]);
+        assert!(staged_node_reachability_v1(empty_root(), &wrong_codec).is_err());
+    }
+
+    #[test]
+    fn staged_reachability_rejects_hash_correct_children_on_wrong_paths() {
+        let update =
+            stage_state_update(&Memory::default(), empty_root(), &[put(1, 7), put(2, 8)]).unwrap();
+        let Node::Branch {
+            bit,
+            prefix,
+            left,
+            right,
+        } = Node::decode(&update.nodes[&update.root]).unwrap()
+        else {
+            panic!("two keys require a branch");
+        };
+        let wrong_branch = Node::Branch {
+            bit,
+            prefix,
+            left: right,
+            right: left,
+        }
+        .encode();
+        let wrong_root = digest_node(&wrong_branch);
+        let mut staged = update.nodes;
+        staged.insert(wrong_root, wrong_branch);
+        let error = staged_node_reachability_v1(wrong_root, &staged).unwrap_err();
+        assert!(error.to_string().contains("authenticated parent path"));
+    }
+
+    #[test]
+    fn staged_reachability_empty_and_noop_do_not_require_parent_content() {
+        let mut parent = Memory::default();
+        let initial = stage_state_update(&parent, empty_root(), &[put(1, 7)]).unwrap();
+        let unused = initial.nodes.clone();
+        let parent_root = persist(&mut parent, initial);
+        let noop = stage_state_update(&parent, parent_root, &[put(1, 7)]).unwrap();
+        assert_eq!(noop.root(), parent_root);
+        assert!(noop.nodes().is_empty());
+        for (root, nodes) in [
+            (empty_root(), &noop.nodes),
+            (parent_root, &noop.nodes),
+            (empty_root(), &unused),
+        ] {
+            let result = staged_node_reachability_v1(root, nodes).unwrap();
+            assert!(result.nodes.is_empty());
+            assert!(result.leaves.is_empty());
+        }
+        assert_eq!(parent.0, unused);
     }
 
     #[test]

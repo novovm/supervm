@@ -5,8 +5,8 @@
 //! Full traversal is only for an explicit compatibility/materialization path.
 
 use crate::native_state_tree::{
-    read_state_value, stage_state_update, state_key_hash, visit_state_leaves, NodeHash,
-    StateChange, StateNodeReader,
+    read_state_value, stage_state_update, staged_node_reachability_v1, state_key_hash,
+    visit_state_leaves, NodeHash, StateChange, StateNodeReader,
 };
 use anyhow::{bail, Context, Result};
 use sha2::{Digest as _, Sha256};
@@ -389,6 +389,42 @@ impl<'a> RecordOverlayV1<'a> {
     pub fn finish(self) -> StagedRecordUpdate {
         self.update
     }
+
+    /// Retain only this batch's content reachable from its final root. Opt in
+    /// only when intermediate roots are not externally retained: the Transfer
+    /// state tree, whose per-transaction roots appear in receipts, must continue
+    /// to use `finish`. This never deletes durable content or scans a parent.
+    ///
+    /// Staging already checked the trusted parent's accessed paths. A new leaf
+    /// always has its blob in this overlay; inherited leaves/subtrees are not
+    /// copied into the staged node map. Validate before pruning, including hash
+    /// and codec checks on superseded content, so errors cannot become success
+    /// merely because a later update replaced their values.
+    pub fn finish_compacted(mut self) -> Result<StagedRecordUpdate> {
+        for (hash, bytes) in &self.update.blobs {
+            validate_record_blob(hash, bytes)?;
+        }
+        let reachable = staged_node_reachability_v1(self.update.root, &self.update.nodes)?;
+        let mut blobs = std::collections::BTreeSet::new();
+        for (key_hash, leaf) in &reachable.leaves {
+            let (hash, length) = decode_leaf(leaf)?;
+            let bytes = self
+                .update
+                .blobs
+                .get(&hash)
+                .context("compacted staged record leaf is missing its blob")?;
+            let (key, _) = decode_blob(bytes)?;
+            if bytes.len() != length || state_key_hash(key)? != *key_hash {
+                bail!("compacted staged record leaf/blob binding mismatch");
+            }
+            blobs.insert(hash);
+        }
+        self.update
+            .nodes
+            .retain(|hash, _| reachable.nodes.contains(hash));
+        self.update.blobs.retain(|hash, _| blobs.contains(hash));
+        Ok(self.update)
+    }
 }
 
 impl StateNodeReader for RecordOverlayV1<'_> {
@@ -418,6 +454,14 @@ impl StateRecordReader for RecordOverlayV1<'_> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "native_state_record_compaction_tests.rs"]
+mod compaction_tests;
+
+#[cfg(test)]
+#[path = "native_state_record_compaction_runtime_tests.rs"]
+mod compaction_runtime_tests;
 
 #[cfg(test)]
 mod tests {
