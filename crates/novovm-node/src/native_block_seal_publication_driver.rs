@@ -122,8 +122,10 @@ impl FreshGenesisPublicationDriverV1 {
                 Ok((round_wire_object_hash_v1(&wire), wire))
             })
             .collect::<Result<Vec<_>>>()?;
-        let artifact = workspace::load_block_artifact_v1(config.chain_id, id, params)?
-            .context("publication output missing")?;
+        let artifact = crate::native_fresh_timing::measure("publication.artifact", || {
+            workspace::load_block_artifact_v1(config.chain_id, id, params)
+        })?
+        .context("publication output missing")?;
         if artifact.block().header.block_hash != config.block_hash
             || artifact.fresh_genesis_identity().is_none_or(|identity| {
                 identity.config_commitment() != pin
@@ -138,14 +140,19 @@ impl FreshGenesisPublicationDriverV1 {
             &artifact.block().body.raw_txs,
         )?;
         let report = if let Some(parent) = config.finalized_parent_workspace_id {
-            PublicationReport::Successor(workspace::resume_successor_promotion_v1(
-                config.chain_id,
-                parent,
-                id,
-                pin,
-                &proof,
-                ledger_path,
-                params,
+            PublicationReport::Successor(crate::native_fresh_timing::measure(
+                "publication.resume_successor",
+                || {
+                    workspace::resume_successor_promotion_v1(
+                        config.chain_id,
+                        parent,
+                        id,
+                        pin,
+                        &proof,
+                        ledger_path,
+                        params,
+                    )
+                },
             )?)
         } else {
             workspace::resume_genesis_promotion_v1(

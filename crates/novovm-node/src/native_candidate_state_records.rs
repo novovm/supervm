@@ -868,6 +868,7 @@ pub(super) fn persist_delta(
     prepared: &PreparedDeltaDocument,
     updates: &RecordTreeUpdatesV1,
 ) -> Result<()> {
+    let _timing = crate::native_fresh_timing::Span::start("candidate.persist_delta");
     if prepared.bytes.len() > MAX_PAYLOAD_BYTES_V1
         || delta::document_commitment(&prepared.bytes) != prepared.commitment
     {

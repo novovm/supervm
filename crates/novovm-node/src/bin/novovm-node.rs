@@ -43597,6 +43597,13 @@ fn run_fresh_genesis_confirmation_v1(
         &runtime,
         Instant::now(),
     )?;
+    // Retain only the existing physical ledger connection after startup has
+    // validated its paths and authority. Existing locks and live ledger/QC
+    // validation remain in their original call paths; this is not a snapshot.
+    let _ledger_session =
+        novovm_node::native_block_ledger::NovNativeBlockLedgerV1::retain_existing_fresh_session_v1(
+            &ledger_path,
+        )?;
     println!("native_seal_service_startup: {}", lifecycle.status_json());
     let mut ticks = 0u64;
     let mut confirmation_reported = None;

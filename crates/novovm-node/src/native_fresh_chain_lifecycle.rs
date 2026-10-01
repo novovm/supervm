@@ -180,6 +180,7 @@ impl FreshChainLifecycleV1 {
     }
 
     fn arm_body_reception(&mut self, now: Instant) -> Result<()> {
+        let _span = Span::start("lifecycle.arm_body_reception");
         self.proposal_window.clear();
         if self.receive_successors && self.publication.is_some() {
             let config = self.config.as_ref().context("successor identity missing")?;

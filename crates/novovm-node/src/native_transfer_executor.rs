@@ -39,6 +39,7 @@ pub(crate) fn execute_transfer_wave_v1(
     work: Vec<TransferWorkV1>,
     timeout: Duration,
 ) -> Result<TransferWaveResultV1> {
+    let _timing = crate::native_fresh_timing::Span::start("candidate.transfer_wave");
     validate_wave(&work)?;
     let count = work.len();
     let tasks: Vec<AoemComputeTaskV1> = work

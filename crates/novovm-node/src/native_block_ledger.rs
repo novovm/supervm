@@ -371,13 +371,62 @@ pub struct NovNativeBlockLedgerV1 {
     )>,
 }
 
+/// Keeps an existing fresh ledger's physical connection alive. This is not a
+/// ledger view, a validated snapshot, or permission to write, publish or sign.
+/// Every operation still opens its own logical view and performs live checks.
+#[must_use = "dropping the fresh ledger session releases its retained connection"]
+pub struct NovNativeFreshLedgerSessionV1 {
+    _entry: Arc<NovNativeBlockLedgerProcessEntryV1>,
+}
+
 impl NovNativeBlockLedgerV1 {
     pub fn open(path: &Path) -> Result<Self> {
         Self::open_inner_v1(path, false)
     }
 
-    fn open_inner_v1(path: &Path, allow_genesis_reservation: bool) -> Result<Self> {
+    /// Retain storage only after the fresh lifecycle has validated its startup.
+    /// Never create a database, initialize a schema, or retain signing scopes.
+    pub fn retain_existing_fresh_session_v1(path: &Path) -> Result<NovNativeFreshLedgerSessionV1> {
+        let probe = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("fresh ledger session requires an existing reserved ledger")?;
+        // A standalone read-only RocksDB handle is a snapshot. Do not retain it:
+        // later logical read-only views must share the live writable connection.
+        drop(probe);
         let process_key = native_block_ledger_process_key_v1(path)?;
+        let mut registry = native_block_ledger_process_registry_v1()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        registry.retain(|_, entry| entry.strong_count() > 0);
+        let entry = if let Some(entry) = registry.get(process_key.as_str()).and_then(Weak::upgrade)
+        {
+            entry
+        } else {
+            let mut options = RocksDbOptions::default();
+            options.create_if_missing(false);
+            let db = crate::native_fresh_timing::measure("ledger.open_write", || {
+                DB::open(&options, path)
+            })
+            .with_context(|| format!("retain existing fresh ledger failed: {}", path.display()))?;
+            Arc::new(NovNativeBlockLedgerProcessEntryV1 {
+                db,
+                write_lock: Arc::new(Mutex::new(())),
+            })
+        };
+        // Recheck after the read-only preflight, before registering/returning.
+        // Do not acquire write_lock while holding registry: verified callbacks
+        // already holding that lock may open another logical ledger view.
+        let schema = entry
+            .get(KEY_SCHEMA_V1)?
+            .context("fresh ledger session schema missing")?;
+        if !genesis_reservation::is_reserved_schema(&schema) {
+            bail!("fresh ledger session requires reserved genesis schema");
+        }
+        registry.insert(process_key, Arc::downgrade(&entry));
+        drop(registry);
+        Ok(NovNativeFreshLedgerSessionV1 { _entry: entry })
+    }
+
+    fn open_inner_v1(path: &Path, allow_genesis_reservation: bool) -> Result<Self> {
         let mut registry = native_block_ledger_process_registry_v1()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -391,15 +440,17 @@ impl NovNativeBlockLedgerV1 {
                 })?;
             }
         }
+        let process_key = native_block_ledger_process_key_v1(path)?;
         registry.retain(|_, entry| entry.strong_count() > 0);
         let db = if let Some(entry) = registry.get(process_key.as_str()).and_then(Weak::upgrade) {
             entry
         } else {
             let mut options = RocksDbOptions::default();
             options.create_if_missing(true);
-            let db = DB::open(&options, path).with_context(|| {
-                format!("open NOV native block ledger failed: {}", path.display())
-            })?;
+            let db = crate::native_fresh_timing::measure("ledger.open_write", || {
+                DB::open(&options, path)
+            })
+            .with_context(|| format!("open NOV native block ledger failed: {}", path.display()))?;
             let entry = Arc::new(NovNativeBlockLedgerProcessEntryV1 {
                 db,
                 write_lock: Arc::new(Mutex::new(())),
@@ -489,7 +540,10 @@ impl NovNativeBlockLedgerV1 {
             entry
         } else {
             let options = RocksDbOptions::default();
-            let db = DB::open_for_read_only(&options, path, false).with_context(|| {
+            let db = crate::native_fresh_timing::measure("ledger.open_read_only", || {
+                DB::open_for_read_only(&options, path, false)
+            })
+            .with_context(|| {
                 format!(
                     "open existing NOV native block ledger read-only failed: {}",
                     path.display()
@@ -2374,7 +2428,28 @@ fn native_block_ledger_process_registry_v1(
 fn native_block_ledger_process_key_v1(path: &Path) -> Result<String> {
     let absolute = std::path::absolute(path)
         .with_context(|| format!("resolve NOV native block ledger path: {}", path.display()))?;
-    let mut key = absolute.to_string_lossy().replace('\\', "/");
+    // Use physical identity only for the registry. In particular, never pass
+    // Windows canonical \\?\ paths to RocksDB in place of the caller's path.
+    let canonical = if absolute.exists() {
+        fs::canonicalize(&absolute)
+            .with_context(|| format!("canonicalize NOV native block ledger: {}", path.display()))?
+    } else {
+        let parent = absolute
+            .parent()
+            .context("NOV native ledger parent missing")?;
+        let name = absolute
+            .file_name()
+            .context("NOV native ledger name missing")?;
+        fs::canonicalize(parent)
+            .with_context(|| {
+                format!(
+                    "canonicalize NOV native ledger parent: {}",
+                    parent.display()
+                )
+            })?
+            .join(name)
+    };
+    let mut key = canonical.to_string_lossy().replace('\\', "/");
     if cfg!(windows) {
         key.make_ascii_lowercase();
     }
@@ -3243,6 +3318,199 @@ mod tests {
             self.ledger.take();
             let _ = fs::remove_dir_all(self.path.as_path());
         }
+    }
+
+    #[test]
+    fn fresh_ledger_session_rejects_missing_non_database_and_ordinary_without_bootstrap() {
+        let fixture = TestLedgerV1::new("fresh-session-reject");
+        let missing_parent = fixture.path.join("missing-parent");
+        let missing = missing_parent.join("ledger");
+        assert!(NovNativeBlockLedgerV1::retain_existing_fresh_session_v1(&missing).is_err());
+        assert!(!missing_parent.exists());
+
+        let non_database = fixture.path.join("not-a-database");
+        fs::create_dir(&non_database).unwrap();
+        assert!(NovNativeBlockLedgerV1::retain_existing_fresh_session_v1(&non_database).is_err());
+        assert!(!non_database.join("CURRENT").exists());
+        assert!(fs::read_dir(&non_database).unwrap().next().is_none());
+
+        fixture.ledger().db.put(b"preserved", b"ordinary").unwrap();
+        assert!(NovNativeBlockLedgerV1::retain_existing_fresh_session_v1(&fixture.path).is_err());
+        assert_eq!(
+            fixture.ledger().db.get(KEY_SCHEMA_V1).unwrap().unwrap(),
+            NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1.as_bytes()
+        );
+        assert_eq!(
+            fixture.ledger().db.get(b"preserved").unwrap().unwrap(),
+            b"ordinary"
+        );
+    }
+
+    #[test]
+    fn fresh_ledger_session_does_not_initialize_missing_schema() {
+        let fixture = TestLedgerV1::new("fresh-session-no-schema");
+        for occupied in [false, true] {
+            let path = fixture.path.join(if occupied { "orphan" } else { "empty" });
+            let mut options = RocksDbOptions::default();
+            options.create_if_missing(true);
+            let db = DB::open(&options, &path).unwrap();
+            if occupied {
+                db.put(b"orphan", b"preserve").unwrap();
+            }
+            drop(db);
+            assert!(NovNativeBlockLedgerV1::retain_existing_fresh_session_v1(&path).is_err());
+            let db = DB::open(&RocksDbOptions::default(), &path).unwrap();
+            assert!(db.get(KEY_SCHEMA_V1).unwrap().is_none());
+            assert_eq!(
+                db.get(b"orphan").unwrap(),
+                occupied.then(|| b"preserve".to_vec())
+            );
+        }
+    }
+
+    #[test]
+    fn fresh_ledger_session_shares_live_views_and_releases_last_owner() {
+        let (mut fixture, config, block, binding) = fresh_candidate_fixture();
+        let pin = config.compile().unwrap().config_commitment();
+        let old_entry = Arc::downgrade(&fixture.ledger().db);
+        fixture.ledger.take();
+        assert!(old_entry.upgrade().is_none());
+
+        let session =
+            NovNativeBlockLedgerV1::retain_existing_fresh_session_v1(&fixture.path).unwrap();
+        let alias = fixture.path.join(".");
+        let nested = NovNativeBlockLedgerV1::retain_existing_fresh_session_v1(&alias).unwrap();
+        assert!(Arc::ptr_eq(&session._entry, &nested._entry));
+        let reader = NovNativeBlockLedgerV1::open_existing_read_only_inner_v1(&alias, true)
+            .unwrap()
+            .unwrap();
+        let writer = NovNativeBlockLedgerV1::open_inner_v1(&fixture.path, true).unwrap();
+        assert!(Arc::ptr_eq(&session._entry, &reader.db));
+        assert!(Arc::ptr_eq(&session._entry, &writer.db));
+        assert!(Arc::ptr_eq(&reader.write_lock, &writer.write_lock));
+        assert!(reader.read_only && !writer.read_only);
+        assert!(reader.isolated_seal_scope.is_none());
+        assert!(reader.fresh_genesis_seal_scope.is_none());
+        assert!(reader
+            .lock_writes_v1()
+            .unwrap_err()
+            .to_string()
+            .contains("read-only"));
+        assert!(reader
+            .load_candidate_record_inner_v1(config.chain_id, block.header.block_hash)
+            .unwrap()
+            .is_none());
+        let schema_before = reader.db.get(KEY_SCHEMA_V1).unwrap().unwrap();
+        let record = NovNativeBlockLedgerV1::register_fresh_genesis_candidate_v1(
+            &fixture.path,
+            pin,
+            [3; 32],
+            block.clone(),
+            binding,
+        )
+        .unwrap();
+        assert_ne!(
+            reader.db.get(KEY_SCHEMA_V1).unwrap().unwrap(),
+            schema_before
+        );
+        assert_eq!(
+            reader
+                .load_candidate_record_inner_v1(config.chain_id, block.header.block_hash)
+                .unwrap(),
+            Some(record)
+        );
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_config_v1(&alias, pin, [3; 32])
+                .unwrap()
+                .is_some()
+        );
+        assert!(NovNativeBlockLedgerV1::open(&alias).is_err());
+        assert!(NovNativeBlockLedgerV1::open_existing_read_only(&alias).is_err());
+        assert!(writer.lock_writes_v1().is_err());
+        #[cfg(unix)]
+        {
+            let link = fixture.path.join("physical-alias");
+            std::os::unix::fs::symlink(&fixture.path, &link).unwrap();
+            let linked = NovNativeBlockLedgerV1::retain_existing_fresh_session_v1(&link).unwrap();
+            assert!(Arc::ptr_eq(&session._entry, &linked._entry));
+        }
+
+        let retained = Arc::downgrade(&session._entry);
+        drop(reader);
+        drop(writer);
+        drop(session);
+        assert!(retained.upgrade().is_some());
+        drop(nested);
+        assert!(retained.upgrade().is_none());
+        let independent = DB::open(&RocksDbOptions::default(), &fixture.path).unwrap();
+        assert!(genesis_reservation::is_reserved_schema(
+            &independent.get(KEY_SCHEMA_V1).unwrap().unwrap()
+        ));
+    }
+
+    #[test]
+    fn fresh_ledger_session_does_not_cache_approval_or_repair_corruption() {
+        let (fixture, config, block, binding) = fresh_candidate_fixture();
+        let pin = config.compile().unwrap().config_commitment();
+        let session =
+            NovNativeBlockLedgerV1::retain_existing_fresh_session_v1(&fixture.path).unwrap();
+        assert!(Arc::ptr_eq(&fixture.ledger().db, &session._entry));
+        NovNativeBlockLedgerV1::register_fresh_genesis_candidate_v1(
+            &fixture.path,
+            pin,
+            [3; 32],
+            block.clone(),
+            binding,
+        )
+        .unwrap();
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_config_v1(&fixture.path, pin, [3; 32])
+                .unwrap()
+                .is_some()
+        );
+        let key = candidate_artifact_key_v1(config.chain_id, &block.header.block_hash);
+        let original = fixture.ledger().db.get(&key).unwrap().unwrap();
+        fixture.ledger().db.put(&key, b"broken artifact").unwrap();
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_config_v1(&fixture.path, pin, [3; 32])
+                .is_err()
+        );
+        assert_eq!(
+            fixture.ledger().db.get(&key).unwrap().unwrap(),
+            b"broken artifact"
+        );
+        fixture.ledger().db.put(&key, original).unwrap();
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_config_v1(&fixture.path, pin, [3; 32])
+                .unwrap()
+                .is_some()
+        );
+        fixture
+            .ledger()
+            .db
+            .put(KEY_SCHEMA_V1, b"wrong schema")
+            .unwrap();
+        assert!(NovNativeBlockLedgerV1::retain_existing_fresh_session_v1(&fixture.path).is_err());
+        assert_eq!(
+            fixture.ledger().db.get(KEY_SCHEMA_V1).unwrap().unwrap(),
+            b"wrong schema"
+        );
+    }
+
+    #[test]
+    fn ledger_registry_first_open_with_missing_parents_matches_existing_canonical_key() {
+        let fixture = TestLedgerV1::new("registry-new-parent");
+        let path = fixture.path.join("missing").join("nested").join("ledger");
+        assert!(!path.parent().unwrap().exists());
+        let first = NovNativeBlockLedgerV1::open(&path).unwrap();
+        let second = NovNativeBlockLedgerV1::open(&path.join(".")).unwrap();
+        let canonical = fs::canonicalize(&path).unwrap();
+        assert_eq!(
+            native_block_ledger_process_key_v1(&path).unwrap(),
+            native_block_ledger_process_key_v1(&canonical).unwrap()
+        );
+        assert!(Arc::ptr_eq(&first.db, &second.db));
+        assert!(Arc::ptr_eq(&first.write_lock, &second.write_lock));
     }
 
     fn context_v1(chain_id: u64, height: u64, parent: [u8; 32]) -> NovBlockExecutionContextV1 {

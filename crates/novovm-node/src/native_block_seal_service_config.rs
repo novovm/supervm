@@ -354,8 +354,9 @@ impl NovNativeSealServiceConfigV1 {
             .map(|(_, path)| path)
             .collect::<Vec<_>>();
         super::service_paths::validate_service_paths_v1(&self, &ledger, &writes, &[])?;
-        let parent =
-            workspace::load_finalized_parent_view_v1(self.chain_id, parent_id, pin, params)?;
+        let parent = crate::native_fresh_timing::measure("successor.prepare.parent", || {
+            workspace::load_finalized_parent_view_v1(self.chain_id, parent_id, pin, params)
+        })?;
         if parent.block().header.height != self.height
             || parent.block().header.block_hash != self.block_hash
             || parent.finality_proof().authority != self.authority
@@ -393,22 +394,29 @@ impl NovNativeSealServiceConfigV1 {
         )?;
         // Full-batch authentication above precedes staging, GC and execution.
         // Each existing boundary rechecks live parent authority under its locks.
-        let candidate = workspace::create_from_finalized_genesis_v1(&plan, parent_id, pin, params)?;
-        workspace::execute_v1(self.chain_id, candidate.workspace_id, params)?;
-        let artifact =
-            workspace::load_block_artifact_v1(self.chain_id, candidate.workspace_id, params)?
-                .context("prepared successor output missing")?;
+        let candidate = crate::native_fresh_timing::measure("successor.prepare.create", || {
+            workspace::create_from_finalized_genesis_v1(&plan, parent_id, pin, params)
+        })?;
+        crate::native_fresh_timing::measure("successor.prepare.execute", || {
+            workspace::execute_v1(self.chain_id, candidate.workspace_id, params)
+        })?;
+        let artifact = crate::native_fresh_timing::measure("successor.prepare.artifact", || {
+            workspace::load_block_artifact_v1(self.chain_id, candidate.workspace_id, params)
+        })?
+        .context("prepared successor output missing")?;
         let actual = parent.successor_seal_subject(&artifact, expected.map_or(0, |s| s.round))?;
         if expected.is_some_and(|expected| expected != &actual) {
             bail!("received successor output differs from local verified execution");
         }
-        workspace::register_finalized_successor_v1(
-            self.chain_id,
-            parent_id,
-            candidate.workspace_id,
-            pin,
-            params,
-        )?;
+        crate::native_fresh_timing::measure("successor.prepare.register", || {
+            workspace::register_finalized_successor_v1(
+                self.chain_id,
+                parent_id,
+                candidate.workspace_id,
+                pin,
+                params,
+            )
+        })?;
         self.height = height;
         self.block_hash = artifact.block().header.block_hash;
         self.isolated_workspace_id = Some(candidate.workspace_id);
