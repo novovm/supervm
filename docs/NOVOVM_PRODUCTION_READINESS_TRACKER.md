@@ -14,6 +14,53 @@
 用户报告现有四台 Windows 设备及一台阿里云服务器；本轮设备地址、系统、
 身份和可用登录方式尚待采集，旧测试 IP 不作为可用连接配置。
 
+## 设备 A：新批输入与真实 AOEM 计算组件（2026-10-02）
+
+在隔离提交 `161f64d` 上继续，生产源码和测试只新增于 `runtime/`；旧目录
+38 项草稿不改、不夹带提交。此前新模块 CI `36921696822` 的 Windows/Linux
+均成功，不表示本次改动或旧整链已通过远端测试。本次 CI 增加仅下载对应平台
+AOEM core 的 LFS 内容并显式执行真库 Release 测试，结果须按新提交另查。
+
+新增批计划绑定链域、创世配置、协议/业务/完整效应版本、原始交易顺序与长度、
+精确父块/状态/回执根和状态版本、块上下文、访问权限。预算/线程/路径不是
+语义身份。plan 与 captured frontier 私有绑定，拒绝未知键、坏根、漏内容、
+越权及溢出；同 plan 两份不同合法 patch 仍有相同输入承诺、不同输出根，
+明确不能拿输入承诺冒充正确结果。当前 raw 为未验证字节，没有鉴权声明。
+
+只迁入 checked Transfer 算术，保留 exact 20/32 账户、self affordability、
+u128 溢出、业务失败费用和 nonce、quote/cap 拒绝、待归集费额守恒。不导入
+旧 Store/调度器/候选；结果明确为全局结算前，未迁国库分配/日窗/完整回执。
+
+新 `novovm-aoem` 只绑定通用 compute ABI，要求显式可信 DLL/SO 路径、8 个
+必需符号及 ABI1，无 Host 执行 fallback。任务在 AOEM 回调内计算，非预造
+最终写集。错误 session 永久 poison；未知/超时/Host unwind 无法确认排空时
+保留整个 flight/session，防迟到回调访问已释放对象，不伪称能自动恢复。
+DLL 保持进程驻留，正常 session 销毁；每次加载保留 module reference，有
+明确资源代价。随包 `56e9da15` 的 active_count 在 completion 前归零，安全
+还依赖 Host Arc/inflight 和 destroy→shutdown→join，而不是只看 active=0。
+ABI/symbol 检查不等于 FULLMAX/二进制身份认证。当前 create ABI 可能隐式
+读取持久化环境，因此 open 拒绝非空 `AOEM_PERSISTENCE_PATH`、不修改环境；
+仍不保证第三方初始化完全无 I/O。未来 compute-only 创建选项是通用需求，
+本轮不修改兄弟 AOEM 仓库。
+
+本机 Rust 1.94.0 / Windows 实测：fmt、strict Clippy、隔离检查通过。
+使用随包源 `56e9da15` 的 Windows core，实际 DLL SHA256 与 Git LFS oid
+一致：`4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463`。
+默认 63 单测 + 2 编译拒绝通过、7 项显式 ignored。随后 Release
+`--include-ignored --test-threads=1`：**70 单元/集成 + 2 编译拒绝通过，
+0 失败/0 忽略**，包括 32,768 键容量、5 项真库生命周期和 64 项算子联调。
+联调在源 reader 全部销毁后，从批内 fixture raw 在真实 AOEM 回调解码、
+读 owned 状态、计算费用/余额/失败 nonce、stage 树更新并验证每个结果。
+8 种经济边界重复 8 次，源读取计数不再增长；两次自然回调峰值 12/6，
+通用纯 CPU fixture 峰值 8。没有 sleep/barrier 制造计算并发；超时专用
+故障测试的等待仅用于控制回调寿命。测试打印的 panic/compile error 是被
+断言捕获的故障与 compile-fail 用例，不是把实际失败忽略。
+
+这些任务是独立未签名算子夹具，pending fee 不是国库结算，staged nodes
+不是耐久状态，更不是 64 笔主链最终确认。没有新的 TPS/可部署节点/实体
+多机/最终性/业务 validity proof 验收。下一步在同一新 runtime 接真实鉴权
+和完整业务效应编译，保留代数条件交换与异构执行目标，不回旧代码叠加。
+
 ## 设备 A：按用户要求隔离旧源码、独立新工作区（2026-10-02）
 
 迁移源为 `main@ee80271` 加本机未提交工作树。旧源码及关联 Cargo/vendor/

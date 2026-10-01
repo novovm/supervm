@@ -1,5 +1,5 @@
 [workspace]
-members = ["runtime/novovm-host"]
+members = ["runtime/novovm-host", "runtime/novovm-aoem"]
 default-members = ["runtime/novovm-host"]
 exclude = ["legacy/supervm-20261002"]
 resolver = "2"
@@ -12,6 +12,7 @@ publish = false
 [workspace.dependencies]
 anyhow = "=1.0.103"
 sha2 = "=0.10.9"
+libloading = "=0.8.9"
 
 [profile.release]
 overflow-checks = true

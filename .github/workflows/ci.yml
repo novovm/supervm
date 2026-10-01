@@ -19,6 +19,11 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            aoem_library: aoem/linux/core/bin/libaoem_ffi.so
+          - os: windows-latest
+            aoem_library: aoem/windows/core/bin/aoem_ffi.dll
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -31,3 +36,18 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - name: Fetch only the platform AOEM compute binary
+        env:
+          AOEM_TEST_BINARY: ${{ matrix.aoem_library }}
+        shell: pwsh
+        run: |
+          git lfs pull --include="$env:AOEM_TEST_BINARY" --exclude=""
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Real AOEM computation and lifetime tests (not chain acceptance)
+        env:
+          AOEM_TEST_BINARY: ${{ matrix.aoem_library }}
+        shell: pwsh
+        run: |
+          $env:NOVOVM_AOEM_TEST_LIBRARY = (Resolve-Path $env:AOEM_TEST_BINARY).Path
+          cargo test --workspace --release --locked -- --include-ignored --test-threads=1
+          exit $LASTEXITCODE

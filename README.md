@@ -23,6 +23,18 @@ cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
+真实 AOEM 组件测试需完整的随包 DLL/SO（不是 Git LFS 指针），启动进程前不得
+设置非空 `AOEM_PERSISTENCE_PATH`。PowerShell 从仓库根运行：
+
+```powershell
+$platformLibrary = if ($IsWindows) { 'aoem/windows/core/bin/aoem_ffi.dll' } else { 'aoem/linux/core/bin/libaoem_ffi.so' }
+$env:NOVOVM_AOEM_TEST_LIBRARY = (Resolve-Path $platformLibrary).Path
+cargo test --workspace --release --locked -- --include-ignored --test-threads=1
+```
+
+当前新实现已接入 owned 批输入和 AOEM 通用计算组件；测试中的交易为未签名
+算子夹具，费用结果仍在全局结算前、状态更新尚未持久化，不是运行节点。
+
 新代码只迁移必要且已审查的局部原语，不依赖旧节点、旧候选容器或旧执行入口。
 测试通过仅表示实际覆盖的模块通过，不等于链已恢复、高 TPS、隐私/PQ 已接通
 或可以部署。正式创世、发行和生产部署仍需明确授权。
