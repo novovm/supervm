@@ -8,7 +8,92 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：relay 锁外单次编码与发送额度保留，同路径约3677–3703 TPS（2026-10-02）
+
+基于`c09332d`，仅network六文件及既有三文档。host11项/legacy38项草稿仍未
+交付，AOEM/SDK、业务/nonce/共识、生产参数未改。前置CI `36984443097`失败
+详见下一节，不能沿用旧全绿声明；本次提交的远端CI须推送后单独核验。
+
+### 实际改动及反例
+
+Data/Offer/Response先在全局会话锁外生成唯一不可变`Box<[u8]>`，编码器沿用
+1MiB wire上限；回锁将编码与锁等待耗时计入来源/目标TTL重验，再选择当前
+目标session。admission只收费一次，拒绝顺序仍为shutdown/来源/路由/尺寸。
+active/offline队列只存编码对象，额度直接来自该对象长度，保留原路由和入站
+时间。兼容decoded API在交付时本地解码，不是daemon热路径；暂存编码、TLS/
+kernel缓冲不计作已被队列限额包住的总RSS，每物理连接owner至多一个编码任务。
+
+daemon所有inbox出口持原session/global guard至写/flush成功或失败；固定10B
+栈头后借用原payload，省去再次JSON编码和整帧拼接。不是TLS零拷贝，两次write
+可能增加record；写前重验无法撤回写中替换前已发送字节。错误终止旧连接、不
+重发，原100ms单次IO及10秒绝对期限不变；完整末record成功后的deadline错误
+仍可能由外层终止检查报告，不声称所有错误在内层立即返回。
+
+旧版锁内编码探针实际FAIL，日志`encoded-lock-red-windows.log`与快照
+`candidate-c09332d-encoded-lock-red/`保留（树`44d752e25d812969ef141730b2c967887345626b`）。
+新版真实dispatch并发heartbeat/快照/目标替换、编码后失效/过期/shutdown、
+V1字节与收费、离线TTL、lookahead/写中替换guard及真实TLS半写故障门通过。
+新增真实WSS 8×192KiB出站/7×192KiB入站、收齐后逆序ACK，确实写WouldBlock、
+写未完时交付入站、峰值8、credit=7；保留原3秒及250ms poll门。原96大帧门
+不改。新版固定CPU0/1同门三次459.025/442.882/493.706ms PASS，对照旧版
+518.512/503.508/527.423ms；只是本机局部样本，不据此归因远端失败或整链提速。
+
+### 干净版本验收及同路径结果
+
+暂存树`1523a83aa41003c6f3a671e842d0cd0a13c3d101`导出
+`target/runtime-rebuild/candidate-c09332d-encoded-relay-v1/`；97个host/AOEM文件
+标准化后等于HEAD，六network文件等于暂存版本。真库Release include-ignored
+串行测试：Windows531+6编译拒绝、Linux530+6，均0失败/0忽略；实际network
+分别177/176项，Windows独立target重编译。双平台fmt、全targets/host no-native
+strict Clippy通过；Windows隔离脚本通过。Linux缺少pwsh的原127退出记录保留，
+改用真实Linux全量Cargo metadata在PowerShell核验相同三成员/非legacy约束，
+通过；不是声称Linux原脚本已运行。本轮默认Debug整套未本地重跑。
+
+同WSL2、24逻辑CPU、四OS验证进程、一真实WSS/E2E relay和四AOEM RocksDB；
+1024个公开测试账户各64笔连续nonce的Ed25519签名转账，无并行构建/重负载，
+同一二进制两次独立运行，原120秒门不变：
+
+| 样本 | 唯一最终确认交易 | 四节点全部耐久耗时 | finalized TPS | 全量冷恢复 |
+| --- | --- | --- | --- | --- |
+| 第一次 | 65536 | 17.822761600秒 | 3677.095698 | PASS |
+| 第二次 | 65536 | 17.696364915秒 | 3703.359437 | PASS |
+
+样本略低于上轮3727–3882 TPS，**没有吞吐提升签收**；不能因减少复制就推导
+整链已更快。每节点64执行/64决定，execution failure/stale/recompute均0，
+余额/费用/nonce/全状态根/逐笔回执冷oracle一致。sticky旧父决定拒绝仍存在，
+第二轮还有archive parent不匹配；不是错误事件计数，也不称零错误。relay各
+注册4、替换/过期/拒绝0、停机断开4；转发5465/5400帧，接纳128796393/
+127395143字节。第二轮最终report仍有离线3项/7490B、active为0，保留此事实，
+不称停机队列全空。EOF日志保留。计时含节点验签、执行、网络、共识与耐久，
+不含钱包预签/启动/创世/冷恢复；不是实际用户、PQ、四台设备或稳定公网容量。
+
+Host二进制SHA256 `a8ba4506dc3763ba0263068303c07d7eebd4e1a4225eaacb8be77bc5e34e2ff0`；
+网络二进制`34693b827e615ab333399845a78aa4b63093f01fa9f4babb6f7be071d9c5d6fb`；
+AOEM仍`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+日志在`target/runtime-rebuild/encoded-v1-{clean-workspace,clippy}-{windows,linux}.log`、
+`encoded-v1-isolation-linux.log`、`encoded-v1-two-cpu-duplex-{one,two,three}.log`、
+`encoded-v1-clean-linux-long-{one,two}.log`。快照内`target/runtime-rebuild/`
+的`controller-load-1024-422-1790932005864909045/`与
+`controller-load-1024-429-1790932080148028044/`保留measurement和relay/report。
+
+下一处A继续network daemon/IO/client：拆服务端整帧阻塞写，真实背压时仍推进
+入站；保持原guard、半写offset、绝对期限、credit与关闭语义。外层密文JSON
+数字数组膨胀另取实际Data/Delivery字节证据，内层Host/NovoRUDP已二进制，不
+重做其wire。B独立隐私/PQ、S4待明确AOEM切仓授权及Execute/多机/容量/部署
+总目标不变；本次没有创建Skill/分支、正式创世、发行或生产部署。
+
 ## 设备 A：有界多在途转发与增量 TLS/WS，同路径两轮约3727–3882 TPS（2026-10-02）
+
+**后续远端证据：** 交付提交`c09332d`的
+[`36984443097`](https://github.com/novovm/supervm/actions/runs/36984443097)最终FAIL。
+Linux真库Release的`real_wss_three_worker_large_duplex_fanin_crosses_delivery_windows_without_loss`
+在daemon约345ms生命周期内写就绪等待预算耗尽，导致hub连接重置及原会话不变
+断言失败；160项网络PASS、1项FAIL，Windows矩阵取消。这不是status争锁空值，
+也不是10秒帧期限到期。日志`target/runtime-rebuild/c09332d-ci-failure.log`保留。
+同一旧版Linux网络二进制`08c3a61ec3416f7c443aa8c36667c471159abc11f07aefea0ab73b65af843f01`
+在本机taskset固定CPU0/1、无并行构建的同一门三轮均PASS，精确数据阶段
+518.512/503.508/527.423ms；日志`c09332d-two-cpu-duplex-baseline-{one,two,three}.log`。
+不能以这些PASS抹去CI失败或认定锁为其根因；锁外编码改造尚待另行完整验收。
 
 基于`6312da9`，其双平台CI
 [`36980054724`](https://github.com/novovm/supervm/actions/runs/36980054724)成功。

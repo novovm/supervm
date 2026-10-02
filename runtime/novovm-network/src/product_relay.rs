@@ -16,6 +16,12 @@ use std::{
 use thiserror::Error;
 use tokio::sync::{mpsc, RwLock};
 
+mod encoded;
+use encoded::EncodedDeliveryV1;
+
+#[cfg(test)]
+mod encoded_tests;
+
 pub const PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1: usize = 1_048_576;
 // One shared data/control delivery window, negotiated after authentication.
 // This bounds cumulative unconsumed traffic, not just one daemon loop turn.
@@ -191,10 +197,10 @@ pub struct RelaySessionRegistrationV1 {
 pub struct RelaySessionInboxV1 {
     peer_id: String,
     session_id: [u8; 16],
-    receiver: mpsc::Receiver<RelayActiveQueueItemV1<OpaqueRelayDeliveryV1>>,
-    control_receiver: mpsc::Receiver<RelayActiveQueueItemV1<RelayPeerHandshakeDeliveryV1>>,
-    ready_data: Option<RelayActiveQueueItemV1<OpaqueRelayDeliveryV1>>,
-    ready_control: Option<RelayActiveQueueItemV1<RelayPeerHandshakeDeliveryV1>>,
+    receiver: mpsc::Receiver<RelayActiveQueueItemV1<EncodedDeliveryV1>>,
+    control_receiver: mpsc::Receiver<RelayActiveQueueItemV1<EncodedDeliveryV1>>,
+    ready_data: Option<RelayActiveQueueItemV1<EncodedDeliveryV1>>,
+    ready_control: Option<RelayActiveQueueItemV1<EncodedDeliveryV1>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -281,6 +287,8 @@ pub struct ProductRelaySessionManagerV1 {
     config: ProductRelayRuntimeConfigV1,
     accepting: Arc<AtomicBool>,
     state: Arc<RwLock<RelayRuntimeStateV1>>,
+    #[cfg(test)]
+    encode_hook: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 struct RelayRuntimeStateV1 {
@@ -300,8 +308,8 @@ struct RelaySessionEntryV1 {
     session_id: [u8; 16],
     authenticated_at_ms: u64,
     last_seen_ms: u64,
-    sender: mpsc::Sender<RelayActiveQueueItemV1<OpaqueRelayDeliveryV1>>,
-    control_sender: mpsc::Sender<RelayActiveQueueItemV1<RelayPeerHandshakeDeliveryV1>>,
+    sender: mpsc::Sender<RelayActiveQueueItemV1<EncodedDeliveryV1>>,
+    control_sender: mpsc::Sender<RelayActiveQueueItemV1<EncodedDeliveryV1>>,
     active_queue_accounting: Arc<RelayActiveQueueAccountingV1>,
 }
 
@@ -333,8 +341,8 @@ struct RelayQueueUsageV1 {
 }
 
 enum RelayOfflineMessageV1 {
-    Data(OpaqueRelayDeliveryV1),
-    Control(RelayPeerHandshakeDeliveryV1),
+    Data(EncodedDeliveryV1),
+    Control(EncodedDeliveryV1),
 }
 
 struct RelayOfflineQueueItemV1 {
@@ -358,6 +366,16 @@ struct RelayActiveQueueItemV1<T> {
     session_accounting: Arc<RelayActiveQueueAccountingV1>,
     global_accounting: Arc<RelayActiveQueueAccountingV1>,
     released: bool,
+}
+
+/// The daemon owns this original queue charge until its write finishes or fails.
+/// It contains only encoded bytes, never a parallel decoded payload/cache.
+pub(crate) struct RelayEncodedDeliveryV1(RelayActiveQueueItemV1<EncodedDeliveryV1>);
+
+impl RelayEncodedDeliveryV1 {
+    pub(crate) fn wire_bytes(&self) -> &[u8] {
+        self.0.item.as_ref().expect("owned delivery").wire_bytes()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -390,11 +408,25 @@ struct RelayRuntimeCountersV1 {
 }
 
 impl ProductRelaySessionManagerV1 {
+    fn encode_delivery(&self, message: ProductRelayWireMessageV1) -> Option<EncodedDeliveryV1> {
+        // The daemon's bounded connection owner prepares one item at a time.
+        // This temporary wire image is not yet a queue reservation; do not
+        // dispatch unbounded encoding tasks or count it as covered by queue caps.
+        let delivery = EncodedDeliveryV1::prepare(message);
+        #[cfg(test)]
+        if let Some(hook) = &self.encode_hook {
+            hook();
+        }
+        delivery
+    }
+
     pub fn new(config: ProductRelayRuntimeConfigV1) -> Result<Self, ProductRelayRuntimeErrorV1> {
         validate_config_v1(&config)?;
         Ok(Self {
             config,
             accepting: Arc::new(AtomicBool::new(true)),
+            #[cfg(test)]
+            encode_hook: None,
             state: Arc::new(RwLock::new(RelayRuntimeStateV1 {
                 sessions: BTreeMap::new(),
                 source_budgets: BTreeMap::new(),
@@ -614,7 +646,24 @@ impl ProductRelaySessionManagerV1 {
         let target_peer_id = envelope.recipient_peer_id.clone();
         let envelope_session_id = envelope.session_id;
         let envelope_sequence = envelope.sequence;
+        let received_at_ms = now_ms;
+        let started = std::time::Instant::now();
+        let route_matches =
+            envelope.sender_peer_id == source_peer_id && !envelope.recipient_peer_id.is_empty();
+        // The owned ingress token has already consumed its wire budget. Encode
+        // once without the global session lock; it grants no right to enqueue.
+        let delivery = route_matches
+            .then(|| {
+                self.encode_delivery(ProductRelayWireMessageV1::Delivery(OpaqueRelayDeliveryV1 {
+                    source_peer_id: source_peer_id.clone(),
+                    target_peer_id: target_peer_id.clone(),
+                    received_at_ms,
+                    envelope,
+                }))
+            })
+            .flatten();
         let mut state = self.state.write().await;
+        let now_ms = dispatch_time_v1(now_ms, started);
         if !self.accepting.load(Ordering::Acquire) {
             state.counters.shutdown_rejection_total =
                 state.counters.shutdown_rejection_total.saturating_add(1);
@@ -640,7 +689,7 @@ impl ProductRelaySessionManagerV1 {
                 wire_bytes,
             );
         }
-        if envelope.sender_peer_id != source_peer_id || envelope.recipient_peer_id.is_empty() {
+        if !route_matches {
             state.counters.rejected_frame_total =
                 state.counters.rejected_frame_total.saturating_add(1);
             state.counters.rejected_wire_bytes_total = state
@@ -657,16 +706,7 @@ impl ProductRelaySessionManagerV1 {
             );
         }
 
-        let delivery = OpaqueRelayDeliveryV1 {
-            source_peer_id: source_peer_id.clone(),
-            target_peer_id: target_peer_id.clone(),
-            received_at_ms: now_ms,
-            envelope,
-        };
-        let accounted_bytes =
-            serde_json::to_vec(&ProductRelayWireMessageV1::Delivery(delivery.clone()))
-                .map_or(usize::MAX, |wire| wire.len());
-        if accounted_bytes > PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1 {
+        let Some(delivery) = delivery else {
             state.counters.wire_message_too_large_total = state
                 .counters
                 .wire_message_too_large_total
@@ -680,8 +720,7 @@ impl ProductRelaySessionManagerV1 {
                 envelope_sequence,
                 wire_bytes,
             );
-        }
-
+        };
         expire_session_if_stale_v1(&mut state, &self.config, &target_peer_id, now_ms);
         let target_session = state
             .sessions
@@ -703,7 +742,6 @@ impl ProductRelaySessionManagerV1 {
                 match try_push_active_v1(
                     &sender,
                     delivery,
-                    accounted_bytes,
                     &target_accounting,
                     &state.active_queue_accounting,
                     &self.config,
@@ -746,7 +784,7 @@ impl ProductRelaySessionManagerV1 {
                             &mut state,
                             &self.config,
                             error.item,
-                            error.accounted_bytes,
+                            (&source_peer_id, &target_peer_id, received_at_ms),
                             queued_disposition,
                             RelayDataOutcomeMetadataV1 {
                                 envelope_session_id,
@@ -762,7 +800,7 @@ impl ProductRelaySessionManagerV1 {
                 &mut state,
                 &self.config,
                 delivery,
-                accounted_bytes,
+                (&source_peer_id, &target_peer_id, received_at_ms),
                 RelayForwardDispositionV1::QueuedBackpressure,
                 RelayDataOutcomeMetadataV1 {
                     envelope_session_id,
@@ -775,7 +813,7 @@ impl ProductRelaySessionManagerV1 {
                 &mut state,
                 &self.config,
                 delivery,
-                accounted_bytes,
+                (&source_peer_id, &target_peer_id, received_at_ms),
                 RelayForwardDispositionV1::QueuedTargetOffline,
                 RelayDataOutcomeMetadataV1 {
                     envelope_session_id,
@@ -847,7 +885,33 @@ impl ProductRelaySessionManagerV1 {
     ) -> RelayForwardOutcomeV1 {
         let source_peer_id = admission.source_peer_id.clone();
         let wire_bytes = admission.wire_bytes;
+        let received_at_ms = now_ms;
+        let started = std::time::Instant::now();
+        let route_matches = !target_peer_id.is_empty()
+            && match &handshake {
+                RelayPeerHandshakeV1::Offer(offer) => {
+                    offer.initiator_peer_id == source_peer_id
+                        && offer.responder_peer_id == target_peer_id
+                }
+                RelayPeerHandshakeV1::Response(response) => {
+                    response.responder_peer_id == source_peer_id
+                        && response.initiator_peer_id == target_peer_id
+                }
+            };
+        let delivery = route_matches
+            .then(|| {
+                self.encode_delivery(ProductRelayWireMessageV1::PeerHandshakeDelivery(
+                    RelayPeerHandshakeDeliveryV1 {
+                        source_peer_id: source_peer_id.clone(),
+                        target_peer_id: target_peer_id.to_string(),
+                        received_at_ms,
+                        handshake,
+                    },
+                ))
+            })
+            .flatten();
         let mut state = self.state.write().await;
+        let now_ms = dispatch_time_v1(now_ms, started);
         if !self.accepting.load(Ordering::Acquire) {
             state.counters.shutdown_rejection_total =
                 state.counters.shutdown_rejection_total.saturating_add(1);
@@ -864,17 +928,7 @@ impl ProductRelaySessionManagerV1 {
         {
             return outcome_with_wire_v1(disposition, &source_peer_id, target_peer_id, wire_bytes);
         }
-        let route_matches = match &handshake {
-            RelayPeerHandshakeV1::Offer(offer) => {
-                offer.initiator_peer_id == source_peer_id
-                    && offer.responder_peer_id == target_peer_id
-            }
-            RelayPeerHandshakeV1::Response(response) => {
-                response.responder_peer_id == source_peer_id
-                    && response.initiator_peer_id == target_peer_id
-            }
-        };
-        if !route_matches || target_peer_id.is_empty() {
+        if !route_matches {
             state.counters.rejected_frame_total =
                 state.counters.rejected_frame_total.saturating_add(1);
             state.counters.rejected_wire_bytes_total = state
@@ -888,17 +942,7 @@ impl ProductRelaySessionManagerV1 {
                 wire_bytes,
             );
         }
-        let delivery = RelayPeerHandshakeDeliveryV1 {
-            source_peer_id: source_peer_id.clone(),
-            target_peer_id: target_peer_id.to_string(),
-            received_at_ms: now_ms,
-            handshake,
-        };
-        let accounted_bytes = serde_json::to_vec(
-            &ProductRelayWireMessageV1::PeerHandshakeDelivery(delivery.clone()),
-        )
-        .map_or(usize::MAX, |wire| wire.len());
-        if accounted_bytes > PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1 {
+        let Some(delivery) = delivery else {
             state.counters.wire_message_too_large_total = state
                 .counters
                 .wire_message_too_large_total
@@ -910,7 +954,7 @@ impl ProductRelaySessionManagerV1 {
                 target_peer_id,
                 wire_bytes,
             );
-        }
+        };
         expire_session_if_stale_v1(&mut state, &self.config, target_peer_id, now_ms);
         let target_session = state
             .sessions
@@ -931,7 +975,6 @@ impl ProductRelaySessionManagerV1 {
                 match try_push_active_v1(
                     &sender,
                     delivery,
-                    accounted_bytes,
                     &target_accounting,
                     &state.active_queue_accounting,
                     &self.config,
@@ -972,7 +1015,7 @@ impl ProductRelaySessionManagerV1 {
                             &mut state,
                             &self.config,
                             error.item,
-                            error.accounted_bytes,
+                            (&source_peer_id, target_peer_id, received_at_ms),
                             queued_disposition,
                             wire_bytes,
                             now_ms,
@@ -984,7 +1027,7 @@ impl ProductRelaySessionManagerV1 {
                 &mut state,
                 &self.config,
                 delivery,
-                accounted_bytes,
+                (&source_peer_id, target_peer_id, received_at_ms),
                 RelayForwardDispositionV1::QueuedBackpressure,
                 wire_bytes,
                 now_ms,
@@ -993,7 +1036,7 @@ impl ProductRelaySessionManagerV1 {
                 &mut state,
                 &self.config,
                 delivery,
-                accounted_bytes,
+                (&source_peer_id, target_peer_id, received_at_ms),
                 RelayForwardDispositionV1::QueuedTargetOffline,
                 wire_bytes,
                 now_ms,
@@ -1134,42 +1177,52 @@ impl RelaySessionInboxV1 {
 
     pub async fn recv(&mut self) -> Option<OpaqueRelayDeliveryV1> {
         if let Some(item) = self.ready_data.take() {
-            return Some(item.into_inner());
+            return Some(item.into_inner().into_data());
         }
         self.receiver
             .recv()
             .await
-            .map(RelayActiveQueueItemV1::into_inner)
+            .map(|item| item.into_inner().into_data())
     }
 
     pub fn try_recv(&mut self) -> Result<OpaqueRelayDeliveryV1, mpsc::error::TryRecvError> {
+        self.try_recv_encoded()
+            .map(|delivery| delivery.0.into_inner().into_data())
+    }
+
+    pub(crate) fn try_recv_encoded(
+        &mut self,
+    ) -> Result<RelayEncodedDeliveryV1, mpsc::error::TryRecvError> {
         if let Some(item) = self.ready_data.take() {
-            return Ok(item.into_inner());
+            return Ok(RelayEncodedDeliveryV1(item));
         }
-        self.receiver
-            .try_recv()
-            .map(RelayActiveQueueItemV1::into_inner)
+        self.receiver.try_recv().map(RelayEncodedDeliveryV1)
     }
 
     pub async fn recv_peer_handshake(&mut self) -> Option<RelayPeerHandshakeDeliveryV1> {
         if let Some(item) = self.ready_control.take() {
-            return Some(item.into_inner());
+            return Some(item.into_inner().into_control());
         }
         self.control_receiver
             .recv()
             .await
-            .map(RelayActiveQueueItemV1::into_inner)
+            .map(|item| item.into_inner().into_control())
     }
 
     pub fn try_recv_peer_handshake(
         &mut self,
     ) -> Result<RelayPeerHandshakeDeliveryV1, mpsc::error::TryRecvError> {
+        self.try_recv_peer_handshake_encoded()
+            .map(|delivery| delivery.0.into_inner().into_control())
+    }
+
+    pub(crate) fn try_recv_peer_handshake_encoded(
+        &mut self,
+    ) -> Result<RelayEncodedDeliveryV1, mpsc::error::TryRecvError> {
         if let Some(item) = self.ready_control.take() {
-            return Ok(item.into_inner());
+            return Ok(RelayEncodedDeliveryV1(item));
         }
-        self.control_receiver
-            .try_recv()
-            .map(RelayActiveQueueItemV1::into_inner)
+        self.control_receiver.try_recv().map(RelayEncodedDeliveryV1)
     }
 }
 
@@ -1271,13 +1324,6 @@ impl<T> RelayActiveQueueItemV1<T> {
         item
     }
 
-    fn into_parts(mut self) -> (T, usize) {
-        let item = self.item.take().expect("active relay queue item missing");
-        let accounted_bytes = self.accounted_bytes;
-        self.release();
-        (item, accounted_bytes)
-    }
-
     fn release(&mut self) {
         if self.released {
             return;
@@ -1305,7 +1351,6 @@ enum RelayActiveQueuePushErrorKindV1 {
 struct RelayActiveQueuePushErrorV1<T> {
     kind: RelayActiveQueuePushErrorKindV1,
     item: T,
-    accounted_bytes: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1449,6 +1494,12 @@ fn admit_source_frame_v1(
     Ok(())
 }
 
+fn dispatch_time_v1(received_at_ms: u64, started: std::time::Instant) -> u64 {
+    // Preparation and lock acquisition do not renew ingress time or freeze the
+    // session-expiry check at the pre-encoding timestamp.
+    received_at_ms.saturating_add(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64)
+}
+
 fn validate_admitted_source_v1(
     state: &mut RelayRuntimeStateV1,
     config: &ProductRelayRuntimeConfigV1,
@@ -1519,21 +1570,20 @@ fn prune_stale_sessions_locked_v1(
     expired_peer_ids.len()
 }
 
-fn try_push_active_v1<T>(
-    sender: &mpsc::Sender<RelayActiveQueueItemV1<T>>,
-    item: T,
-    accounted_bytes: usize,
+fn try_push_active_v1(
+    sender: &mpsc::Sender<RelayActiveQueueItemV1<EncodedDeliveryV1>>,
+    item: EncodedDeliveryV1,
     session_accounting: &Arc<RelayActiveQueueAccountingV1>,
     global_accounting: &Arc<RelayActiveQueueAccountingV1>,
     config: &ProductRelayRuntimeConfigV1,
-) -> Result<(), RelayActiveQueuePushErrorV1<T>> {
+) -> Result<(), RelayActiveQueuePushErrorV1<EncodedDeliveryV1>> {
+    let accounted_bytes = item.len();
     let aggregate_frame_limit = config.active_queue_total;
     let aggregate_byte_limit = config.active_queue_bytes_total;
     if !try_reserve_active_units_v1(&session_accounting.frames, 1, config.session_queue_capacity) {
         return Err(RelayActiveQueuePushErrorV1 {
             kind: RelayActiveQueuePushErrorKindV1::CountLimit,
             item,
-            accounted_bytes,
         });
     }
     if !try_reserve_active_units_v1(&global_accounting.frames, 1, aggregate_frame_limit) {
@@ -1541,7 +1591,6 @@ fn try_push_active_v1<T>(
         return Err(RelayActiveQueuePushErrorV1 {
             kind: RelayActiveQueuePushErrorKindV1::CountLimit,
             item,
-            accounted_bytes,
         });
     }
     if !try_reserve_active_units_v1(
@@ -1554,7 +1603,6 @@ fn try_push_active_v1<T>(
         return Err(RelayActiveQueuePushErrorV1 {
             kind: RelayActiveQueuePushErrorKindV1::ByteLimit,
             item,
-            accounted_bytes,
         });
     }
     if !try_reserve_active_units_v1(
@@ -1570,7 +1618,6 @@ fn try_push_active_v1<T>(
         return Err(RelayActiveQueuePushErrorV1 {
             kind: RelayActiveQueuePushErrorKindV1::ByteLimit,
             item,
-            accounted_bytes,
         });
     }
     let accounted = RelayActiveQueueItemV1 {
@@ -1582,22 +1629,14 @@ fn try_push_active_v1<T>(
     };
     match sender.try_send(accounted) {
         Ok(()) => Ok(()),
-        Err(mpsc::error::TrySendError::Full(accounted)) => {
-            let (item, accounted_bytes) = accounted.into_parts();
-            Err(RelayActiveQueuePushErrorV1 {
-                kind: RelayActiveQueuePushErrorKindV1::Full,
-                item,
-                accounted_bytes,
-            })
-        }
-        Err(mpsc::error::TrySendError::Closed(accounted)) => {
-            let (item, accounted_bytes) = accounted.into_parts();
-            Err(RelayActiveQueuePushErrorV1 {
-                kind: RelayActiveQueuePushErrorKindV1::Closed,
-                item,
-                accounted_bytes,
-            })
-        }
+        Err(mpsc::error::TrySendError::Full(accounted)) => Err(RelayActiveQueuePushErrorV1 {
+            kind: RelayActiveQueuePushErrorKindV1::Full,
+            item: accounted.into_inner(),
+        }),
+        Err(mpsc::error::TrySendError::Closed(accounted)) => Err(RelayActiveQueuePushErrorV1 {
+            kind: RelayActiveQueuePushErrorKindV1::Closed,
+            item: accounted.into_inner(),
+        }),
     }
 }
 
@@ -1627,32 +1666,36 @@ fn release_active_accounting_v1(accounting: &RelayActiveQueueAccountingV1, accou
 }
 
 impl RelayOfflineQueueItemV1 {
-    fn data(delivery: OpaqueRelayDeliveryV1, active_accounted_bytes: usize) -> Self {
+    fn data(delivery: EncodedDeliveryV1, route: (&str, &str, u64)) -> Self {
+        let (source_peer_id, target_peer_id, received_at_ms) = route;
+        let active_accounted_bytes = delivery.len();
         let offline_accounted_bytes = offline_memory_accounted_bytes_v1(
             active_accounted_bytes,
-            delivery.source_peer_id.len(),
-            delivery.target_peer_id.len(),
+            source_peer_id.len(),
+            target_peer_id.len(),
         );
         Self {
-            source_peer_id: delivery.source_peer_id.clone(),
-            target_peer_id: delivery.target_peer_id.clone(),
-            received_at_ms: delivery.received_at_ms,
+            source_peer_id: source_peer_id.to_string(),
+            target_peer_id: target_peer_id.to_string(),
+            received_at_ms,
             active_accounted_bytes,
             offline_accounted_bytes,
             message: RelayOfflineMessageV1::Data(delivery),
         }
     }
 
-    fn control(delivery: RelayPeerHandshakeDeliveryV1, active_accounted_bytes: usize) -> Self {
+    fn control(delivery: EncodedDeliveryV1, route: (&str, &str, u64)) -> Self {
+        let (source_peer_id, target_peer_id, received_at_ms) = route;
+        let active_accounted_bytes = delivery.len();
         let offline_accounted_bytes = offline_memory_accounted_bytes_v1(
             active_accounted_bytes,
-            delivery.source_peer_id.len(),
-            delivery.target_peer_id.len(),
+            source_peer_id.len(),
+            target_peer_id.len(),
         );
         Self {
-            source_peer_id: delivery.source_peer_id.clone(),
-            target_peer_id: delivery.target_peer_id.clone(),
-            received_at_ms: delivery.received_at_ms,
+            source_peer_id: source_peer_id.to_string(),
+            target_peer_id: target_peer_id.to_string(),
+            received_at_ms,
             active_accounted_bytes,
             offline_accounted_bytes,
             message: RelayOfflineMessageV1::Control(delivery),
@@ -1665,7 +1708,7 @@ fn offline_memory_accounted_bytes_v1(
     source_peer_id_bytes: usize,
     target_peer_id_bytes: usize,
 ) -> usize {
-    // The serialized delivery already upper-bounds its owned string/payload lengths. Offline
+    // The delivery owns exactly one encoded Box (no parallel decoded copy). Offline
     // ownership additionally clones source/target into the queue item and may create one source
     // usage key plus target usage/queue keys. Charge those possible allocations on every item;
     // this deliberately over-accounts shared map keys so the declared byte caps remain hard.
@@ -1780,8 +1823,8 @@ fn drain_offline_queue_into_session_v1(
     config: &ProductRelayRuntimeConfigV1,
     peer_id: &str,
     now_ms: u64,
-    sender: &mpsc::Sender<RelayActiveQueueItemV1<OpaqueRelayDeliveryV1>>,
-    control_sender: &mpsc::Sender<RelayActiveQueueItemV1<RelayPeerHandshakeDeliveryV1>>,
+    sender: &mpsc::Sender<RelayActiveQueueItemV1<EncodedDeliveryV1>>,
+    control_sender: &mpsc::Sender<RelayActiveQueueItemV1<EncodedDeliveryV1>>,
     session_accounting: &Arc<RelayActiveQueueAccountingV1>,
 ) -> u64 {
     prune_expired_offline_peer_v1(state, config, peer_id, now_ms);
@@ -1801,7 +1844,6 @@ fn drain_offline_queue_into_session_v1(
                 RelayOfflineMessageV1::Data(delivery) => try_push_active_v1(
                     sender,
                     delivery,
-                    active_accounted_bytes,
                     session_accounting,
                     &state.active_queue_accounting,
                     config,
@@ -1810,7 +1852,6 @@ fn drain_offline_queue_into_session_v1(
                 RelayOfflineMessageV1::Control(delivery) => try_push_active_v1(
                     control_sender,
                     delivery,
-                    active_accounted_bytes,
                     session_accounting,
                     &state.active_queue_accounting,
                     config,
@@ -1923,26 +1964,25 @@ fn prune_expired_offline_peer_v1(
 fn finish_offline_data_v1(
     state: &mut RelayRuntimeStateV1,
     config: &ProductRelayRuntimeConfigV1,
-    delivery: OpaqueRelayDeliveryV1,
-    accounted_bytes: usize,
+    delivery: EncodedDeliveryV1,
+    route: (&str, &str, u64),
     queued_disposition: RelayForwardDispositionV1,
     metadata: RelayDataOutcomeMetadataV1,
     now_ms: u64,
 ) -> RelayForwardOutcomeV1 {
-    let source_peer_id = delivery.source_peer_id.clone();
-    let target_peer_id = delivery.target_peer_id.clone();
+    let (source_peer_id, target_peer_id, _) = route;
     match enqueue_offline_message_v1(
         state,
         config,
-        RelayOfflineQueueItemV1::data(delivery, accounted_bytes),
+        RelayOfflineQueueItemV1::data(delivery, route),
         now_ms,
     ) {
         Ok(()) => {
             state.counters.queued_frame_total = state.counters.queued_frame_total.saturating_add(1);
             data_outcome_v1(
                 queued_disposition,
-                &source_peer_id,
-                &target_peer_id,
+                source_peer_id,
+                target_peer_id,
                 metadata.envelope_session_id,
                 metadata.envelope_sequence,
                 metadata.wire_bytes,
@@ -1952,8 +1992,8 @@ fn finish_offline_data_v1(
             record_offline_limit_rejection_v1(state, limit, metadata.wire_bytes);
             data_outcome_v1(
                 offline_limit_disposition_v1(limit),
-                &source_peer_id,
-                &target_peer_id,
+                source_peer_id,
+                target_peer_id,
                 metadata.envelope_session_id,
                 metadata.envelope_sequence,
                 metadata.wire_bytes,
@@ -1965,26 +2005,25 @@ fn finish_offline_data_v1(
 fn finish_offline_control_v1(
     state: &mut RelayRuntimeStateV1,
     config: &ProductRelayRuntimeConfigV1,
-    delivery: RelayPeerHandshakeDeliveryV1,
-    accounted_bytes: usize,
+    delivery: EncodedDeliveryV1,
+    route: (&str, &str, u64),
     queued_disposition: RelayForwardDispositionV1,
     wire_bytes: usize,
     now_ms: u64,
 ) -> RelayForwardOutcomeV1 {
-    let source_peer_id = delivery.source_peer_id.clone();
-    let target_peer_id = delivery.target_peer_id.clone();
+    let (source_peer_id, target_peer_id, _) = route;
     match enqueue_offline_message_v1(
         state,
         config,
-        RelayOfflineQueueItemV1::control(delivery, accounted_bytes),
+        RelayOfflineQueueItemV1::control(delivery, route),
         now_ms,
     ) {
         Ok(()) => {
             state.counters.queued_frame_total = state.counters.queued_frame_total.saturating_add(1);
             outcome_with_wire_v1(
                 queued_disposition,
-                &source_peer_id,
-                &target_peer_id,
+                source_peer_id,
+                target_peer_id,
                 wire_bytes,
             )
         }
@@ -1992,8 +2031,8 @@ fn finish_offline_control_v1(
             record_offline_limit_rejection_v1(state, limit, wire_bytes);
             outcome_with_wire_v1(
                 offline_limit_disposition_v1(limit),
-                &source_peer_id,
-                &target_peer_id,
+                source_peer_id,
+                target_peer_id,
                 wire_bytes,
             )
         }
@@ -2254,7 +2293,7 @@ mod tests {
         }
     }
 
-    fn authenticate_to_relay(
+    pub(super) fn authenticate_to_relay(
         node_identity: &SigningKey,
         relay_identity: &SigningKey,
         now_ms: u64,
@@ -2317,7 +2356,7 @@ mod tests {
         )
     }
 
-    fn opaque_envelope(
+    pub(super) fn opaque_envelope(
         source_peer_id: &str,
         target_peer_id: &str,
         sequence: u64,

@@ -474,6 +474,211 @@ fn real_wss_large_read_progresses_during_unfinished_write_with_fixed_socket_buff
 }
 
 #[test]
+#[ignore = "real socket backpressure/latency: run release --include-ignored --test-threads=1"]
+fn real_wss_eight_large_inflight_forwards_receive_seven_deliveries_before_reverse_acks() {
+    const PAYLOAD: usize = 192 * 1024;
+    const OUTGOING: usize = 8;
+    const INCOMING: usize = 7;
+    assert_eq!(MAX_FORWARDS, OUTGOING);
+    let remote = SigningKey::from_bytes(&[218; 32]);
+    let local = SigningKey::from_bytes(&[219; 32]);
+    let local_id = peer_id_from_ed25519_public_key_v1(&local.verifying_key().to_bytes());
+    let now = now_ms_v1();
+    let initiator = NodeHandshakeInitiatorV1::start(&remote, local_id, now, 30_000).unwrap();
+    let responder = NodeHandshakeResponderV1::respond(
+        initiator.offer(),
+        &local,
+        now,
+        30_000,
+        &mut HandshakeReplayCacheV1::default(),
+    )
+    .unwrap();
+    let mut remote_channel = initiator
+        .complete(
+            responder.response(),
+            now,
+            &mut HandshakeReplayCacheV1::default(),
+        )
+        .unwrap();
+    let mut local_channel = responder.into_channel();
+    let frame = |session, sequence, byte| {
+        NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            session,
+            1,
+            2,
+            sequence,
+            0,
+            vec![byte; PAYLOAD],
+        )
+    };
+    let incoming: Vec<_> = (0..INCOMING)
+        .map(|sequence| {
+            remote_channel
+                .seal_novorudp_frame(&frame(
+                    remote_channel.session_id(),
+                    sequence as u64,
+                    sequence as u8,
+                ))
+                .unwrap()
+        })
+        .collect();
+    let mut outgoing: std::collections::VecDeque<_> = (0..OUTGOING)
+        .map(|sequence| {
+            local_channel
+                .seal_novorudp_frame(&frame(
+                    local_channel.session_id(),
+                    sequence as u64,
+                    128 + sequence as u8,
+                ))
+                .unwrap()
+        })
+        .collect();
+    let fixture = delayed_test_relay_v1(move |stream| {
+        let socket = socket2::SockRef::from(&stream.sock);
+        socket.set_send_buffer_size(4096)?;
+        socket.set_recv_buffer_size(64 * 1024)?;
+        // Write all inbound data before reading any client Data or credit.
+        // The client must drain this direction while its own write is blocked.
+        for envelope in incoming {
+            let payload = serde_json::to_vec(&ProductRelayWireMessageV1::Delivery(
+                OpaqueRelayDeliveryV1 {
+                    source_peer_id: envelope.sender_peer_id.clone(),
+                    target_peer_id: envelope.recipient_peer_id.clone(),
+                    received_at_ms: now_ms_v1(),
+                    envelope,
+                },
+            ))?;
+            assert!(payload.len() <= PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1);
+            let mut wire = vec![0x82, 127];
+            wire.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+            wire.extend_from_slice(&payload);
+            stream.write_all(&wire)?;
+            stream.flush()?;
+        }
+        let mut replies = Vec::new();
+        let mut credit_received = false;
+        while replies.len() != OUTGOING || !credit_received {
+            let (message, wire_bytes) = read_test_client_wire_v1(stream)?;
+            match message {
+                ProductRelayWireMessageV1::Data(envelope) => {
+                    let sequence = replies.len();
+                    assert!(sequence < OUTGOING, "unexpected duplicate outgoing Data");
+                    let opened = remote_channel.open_novorudp_frame(&envelope)?;
+                    assert_eq!(
+                        opened,
+                        frame(
+                            remote_channel.session_id(),
+                            sequence as u64,
+                            128 + sequence as u8
+                        )
+                    );
+                    replies.push(outcome(&envelope, wire_bytes));
+                }
+                ProductRelayWireMessageV1::DeliveryConsumedV1 { through } => {
+                    assert_eq!(through, INCOMING as u64);
+                    assert!(!credit_received, "duplicate cumulative credit");
+                    credit_received = true;
+                }
+                other => bail!("unexpected mixed large-frame client message: {other:?}"),
+            }
+        }
+        // No forward ACK exists until eight actual, decryptable Data frames
+        // and the original cumulative credit have traversed this TLS socket.
+        for reply in replies.into_iter().rev() {
+            write_fragmented_test_server_wire_v1(
+                stream,
+                &ProductRelayWireMessageV1::ForwardOutcome(reply),
+            )?;
+        }
+        Ok(())
+    });
+    let client = ProductRelayClientV1::connect(&local, &fixture.config).unwrap();
+    client
+        .stream
+        .sock
+        .inner
+        .set_test_buffer_sizes(4096, 64 * 1024)
+        .unwrap();
+    let mut pipeline = client.into_pipeline().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut submitted = 0;
+    let mut received = 0;
+    let mut completed = 0;
+    let mut peak_pending = 0;
+    let mut stalled = false;
+    let mut during_write = false;
+    while completed != OUTGOING
+        || received != INCOMING
+        || pipeline.client.delivery_consumed_reported != INCOMING as u64
+    {
+        assert!(Instant::now() < deadline, "mixed large-frame pipeline exceeded original 3s gate: submitted={submitted} received={received} completed={completed}");
+        if submitted < OUTGOING && pipeline.can_submit() {
+            let original = outgoing.pop_front().unwrap();
+            assert_eq!(
+                pipeline.try_submit_envelope(original).unwrap(),
+                Some(submitted as u64)
+            );
+            submitted += 1;
+            peak_pending = peak_pending.max(pipeline.pending.len());
+        }
+        let writing_before = pipeline.writing.is_some();
+        let pending_before = pipeline.pending.len();
+        let started = Instant::now();
+        let progress = pipeline.poll().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(250),
+            "poll performed a blocking socket wait"
+        );
+        stalled |= pipeline.write_stall_deadline.is_some();
+        match progress {
+            PipelineProgress::Event(event) => {
+                let ProductRelayClientEventV1::Delivery(delivery) = *event else {
+                    panic!("unexpected mixed large-frame event")
+                };
+                assert!(received < INCOMING, "duplicate inbound delivery");
+                let opened = local_channel
+                    .open_novorudp_frame(&delivery.envelope)
+                    .unwrap();
+                assert_eq!(
+                    opened,
+                    frame(local_channel.session_id(), received as u64, received as u8)
+                );
+                received += 1;
+                during_write |= writing_before;
+            }
+            PipelineProgress::Forward { ticket, outcome } => {
+                assert_eq!(submitted, OUTGOING);
+                assert_eq!(received, INCOMING);
+                assert_eq!(pending_before, OUTGOING - completed);
+                assert_eq!(ticket, (OUTGOING - 1 - completed) as u64);
+                assert_eq!(outcome.envelope_sequence, Some(ticket));
+                assert!(outcome.forwarded && !outcome.queued);
+                completed += 1;
+            }
+            PipelineProgress::Progress => {}
+            PipelineProgress::Idle => pipeline.wait().unwrap(),
+        }
+        assert!(pipeline.pending.len() <= OUTGOING);
+        assert!(pipeline.client.read_buffer.capacity() <= MAX_READ_BUFFER);
+    }
+    assert_eq!(
+        (submitted, peak_pending, completed),
+        (OUTGOING, OUTGOING, OUTGOING)
+    );
+    assert!(outgoing.is_empty() && pipeline.pending.is_empty());
+    assert_eq!(pipeline.client.delivery_consumed, INCOMING as u64);
+    assert_eq!(pipeline.client.delivery_consumed_reported, INCOMING as u64);
+    assert!(stalled, "fixture did not force actual write WouldBlock");
+    assert!(
+        during_write,
+        "inbound delivery waited for the outbound frame to finish"
+    );
+    drop(pipeline);
+    fixture.finish();
+}
+
+#[test]
 fn real_worker_retains_originals_and_serves_inbound_before_reverse_order_acks() {
     use crate::worker::{
         NetworkWorker, NetworkWorkerConfig, Outbound, SendAdmission, WorkerLimits,

@@ -708,6 +708,10 @@ fn relay_connection_loop_v1<S: Read + Write>(
                         return Err(error).context("decode product relay wire message");
                     }
                 };
+                // Dispatch owns its decoded fields; the admitted byte count is
+                // already bound. Do not retain a second input JSON allocation
+                // while admission prepares the immutable egress wire image.
+                drop(bytes);
                 match message {
                     ProductRelayWireMessageV1::Data(envelope) => {
                         let outcome = runtime.block_on(manager.forward_opaque_admitted_v1(
@@ -841,18 +845,14 @@ fn relay_connection_loop_v1<S: Read + Write>(
                 drain_bounded_relay_inbox_v1(
                     MAX_DATA_DELIVERIES_PER_CONNECTION_TICK_V1.min(delivery_window.available()),
                     || stopping.load(Ordering::Acquire),
-                    || inbox.try_recv().ok(),
+                    || inbox.try_recv_encoded().ok(),
                     |delivery| {
-                        if !runtime.block_on(manager.is_current_session(
-                            peer_id,
-                            session_id,
-                            now_ms_v1(),
-                        )) {
-                            bail!("product relay session was replaced before data delivery");
-                        }
-                        write_wire_message_v1(
+                        write_encoded_relay_delivery_v1(
                             websocket,
-                            &ProductRelayWireMessageV1::Delivery(delivery),
+                            manager,
+                            runtime,
+                            (peer_id, session_id),
+                            delivery,
                         )?;
                         delivery_window.sent()
                     },
@@ -861,18 +861,14 @@ fn relay_connection_loop_v1<S: Read + Write>(
                     MAX_PEER_HANDSHAKE_DELIVERIES_PER_CONNECTION_TICK_V1
                         .min(delivery_window.available()),
                     || stopping.load(Ordering::Acquire),
-                    || inbox.try_recv_peer_handshake().ok(),
+                    || inbox.try_recv_peer_handshake_encoded().ok(),
                     |delivery| {
-                        if !runtime.block_on(manager.is_current_session(
-                            peer_id,
-                            session_id,
-                            now_ms_v1(),
-                        )) {
-                            bail!("product relay session was replaced before control delivery");
-                        }
-                        write_wire_message_v1(
+                        write_encoded_relay_delivery_v1(
                             websocket,
-                            &ProductRelayWireMessageV1::PeerHandshakeDelivery(delivery),
+                            manager,
+                            runtime,
+                            (peer_id, session_id),
+                            delivery,
                         )?;
                         delivery_window.sent()
                     },
@@ -919,43 +915,45 @@ fn service_one_relay_inbox_v1<S: Write>(
         return Ok(false);
     }
     runtime.block_on(manager.drain_queued_for_session(peer_id, session_id, now_ms_v1()));
-    enum RelayInboxItemV1 {
-        Data(crate::OpaqueRelayDeliveryV1),
-        Control(crate::RelayPeerHandshakeDeliveryV1),
-    }
     let item = if *prefer_control {
         inbox
-            .try_recv_peer_handshake()
-            .map(RelayInboxItemV1::Control)
-            .or_else(|_| inbox.try_recv().map(RelayInboxItemV1::Data))
+            .try_recv_peer_handshake_encoded()
+            .map(|delivery| (delivery, false))
+            .or_else(|_| inbox.try_recv_encoded().map(|delivery| (delivery, true)))
     } else {
-        inbox.try_recv().map(RelayInboxItemV1::Data).or_else(|_| {
-            inbox
-                .try_recv_peer_handshake()
-                .map(RelayInboxItemV1::Control)
-        })
+        inbox
+            .try_recv_encoded()
+            .map(|delivery| (delivery, true))
+            .or_else(|_| {
+                inbox
+                    .try_recv_peer_handshake_encoded()
+                    .map(|delivery| (delivery, false))
+            })
     };
-    let Ok(item) = item else {
+    let Ok((delivery, next_prefer_control)) = item else {
         return Ok(false);
     };
+    write_encoded_relay_delivery_v1(websocket, manager, runtime, session, delivery)?;
+    *prefer_control = next_prefer_control;
+    delivery_window.sent()?;
+    Ok(true)
+}
+
+fn write_encoded_relay_delivery_v1<S: Write>(
+    websocket: &mut S,
+    manager: &ProductRelaySessionManagerV1,
+    runtime: &Runtime,
+    session: (&str, [u8; 16]),
+    delivery: crate::product_relay::RelayEncodedDeliveryV1,
+) -> Result<()> {
+    let (peer_id, session_id) = session;
     if !runtime.block_on(manager.is_current_session(peer_id, session_id, now_ms_v1())) {
         bail!("product relay session was replaced before queued delivery");
     }
-    match item {
-        RelayInboxItemV1::Data(delivery) => {
-            write_wire_message_v1(websocket, &ProductRelayWireMessageV1::Delivery(delivery))?;
-            *prefer_control = true;
-        }
-        RelayInboxItemV1::Control(delivery) => {
-            write_wire_message_v1(
-                websocket,
-                &ProductRelayWireMessageV1::PeerHandshakeDelivery(delivery),
-            )?;
-            *prefer_control = false;
-        }
-    }
-    delivery_window.sent()?;
-    Ok(true)
+    // The original session/global quota guard stays alive through payload
+    // writing AND flush, including terminal failures. Never decode/re-encode
+    // this immutable, admission-bound wire image on the egress path.
+    write_websocket_frame_v1(websocket, 0x2, delivery.wire_bytes())
 }
 
 fn drain_bounded_relay_inbox_v1<T>(
@@ -1577,21 +1575,26 @@ fn write_websocket_frame_v1<S: Write>(stream: &mut S, opcode: u8, payload: &[u8]
         payload.len(),
         PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1,
     )?;
-    let mut header = Vec::with_capacity(14 + payload.len());
-    header.push(0x80 | (opcode & 0x0f));
-    match payload.len() {
-        len if len <= 125 => header.push(len as u8),
+    let mut header = [0u8; 10];
+    header[0] = 0x80 | (opcode & 0x0f);
+    let header_len = match payload.len() {
+        len if len <= 125 => {
+            header[1] = len as u8;
+            2
+        }
         len if len <= u16::MAX as usize => {
-            header.push(126);
-            header.extend_from_slice(&(len as u16).to_be_bytes());
+            header[1] = 126;
+            header[2..4].copy_from_slice(&(len as u16).to_be_bytes());
+            4
         }
         len => {
-            header.push(127);
-            header.extend_from_slice(&(len as u64).to_be_bytes());
+            header[1] = 127;
+            header[2..10].copy_from_slice(&(len as u64).to_be_bytes());
+            10
         }
-    }
-    header.extend_from_slice(payload);
-    stream.write_all(&header)?;
+    };
+    stream.write_all(&header[..header_len])?;
+    stream.write_all(payload)?;
     stream.flush()?;
     Ok(())
 }
@@ -1839,6 +1842,7 @@ mod tests {
     type TestClientWebSocketV1 = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
 
     include!("product_relay_daemon_io_tests.rs");
+    include!("product_relay_daemon_encoded_tests.rs");
 
     struct TestControlledRelayDaemonV1 {
         report_path: PathBuf,
