@@ -8,6 +8,70 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：worker 出站真实读唤醒，同路径两轮约3716–3824 TPS（2026-10-02）
+
+基于`0a0eda8`，其双平台CI
+[`36976971751`](https://github.com/novovm/supervm/actions/runs/36976971751)已成功。
+本次仅network四文件及既有三文档；host11项/legacy38项草稿保留不提交，
+AOEM/SDK、经济/nonce、共识、生产参数与分支不变。本次远端CI推送后另核。
+
+入队和当前连接读waker的安装共用原队列锁，实际通知在锁外。替换/断连先
+清注册，旧通知不能替换新连接；已接纳原文仍占原队列。burst后只对实际Active
+且含未过期工作的peer重新通知，避免合并通知被outcome读取消耗后又空等；
+Idle/Cooldown/纯过期队列不自旋。普通空闲读的shutdown亦被唤醒；不承诺
+取消进行中的write/outcome/部分帧，也未缩短其原期限。测试观察器只记录真实
+WouldBlock到Mio Poll窗口，不注入延迟或伪造IO就绪，不称精确内核阻塞瞬间。
+
+真WSS已握手后设置合法1秒idle，观测实际读等待窗口再入队：旧unpark路径
+1.001678秒，违反250ms测试门；修后5.27/5.61ms。24条FIFO跨原8次burst约
+6.05ms，原文和字节精确、无丢失/重复/重连；普通空闲shutdown约0.30ms。
+真实会话替换、迟到旧waker、新waker与已缓冲delivery先于唤醒处理专项通过。
+这些是局部唤醒证据，不能单独推出主链吞吐或恒定时延。
+
+### 干净版本的验收
+
+导出0a0eda8，只应用这四文件；97个host/AOEM源文件经换行标准化等于已提交
+版本，没有归档/诊断草稿。完整真库Release串行include-ignored：Windows
+492单元/集成+6编译拒绝、Linux491+6，均0失败/0忽略；两平台全targets及host
+no-native strict Clippy、fmt、隔离检查通过。本轮未重跑默认Debug整套，不借
+上一提交的Debug结果声称本轮已测。Windows首次共享target输出仅134项旧网络
+测试、未真实编译新代码，明确排除；独立`target/windows-verified`重编译后
+实际执行138项（Linux137），上述492/491统计只来自有效重建。
+
+同一WSL2/24逻辑CPU/4 OS验证进程、真实WSS/E2E/4 AOEM RocksDB，1024公开
+测试付款账户×64次连续nonce转账，共65536笔唯一Ed25519签名测试交易。
+同二进制两次独立运行，无并行构建/重负载，原120秒门不变：
+
+| 样本 | 四节点全部耐久耗时 | finalized TPS | 完整冷恢复 |
+| --- | --- | --- | --- |
+| 第一次 | 17.140182755秒 | 3823.529827 | PASS |
+| 第二次 | 17.634378767秒 | 3716.377019 | PASS |
+
+每节点64执行/64决定，execution failure/stale/recompute均0，四头及完整
+余额/nonce/费用/状态根/逐笔回执冷oracle一致。last_error仍含旧父决定拒绝，
+第一轮另有vote context mismatch；sticky字段不等于事件计数，不能称零错误。
+relay两轮注册4、替换/过期/各项拒绝0，终止时各4断开；转发5351/5406帧，
+接纳129041366/127436389字节，终止日志仍保留。钱包预签、启动、创世、冷恢复
+不计TPS；节点验签、执行、网络、共识和四节点耐久计入。有限积压而非稳定到达，
+不是PQ、固定出块周期、实体四机或公网容量，未宣称完整高性能主网。
+
+同二进制SHA256 `b544f9036dbe0df3294446cdfbbcdd457048ad515d766483865458778172a301`；
+Linux AOEM `88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+证据在`target/runtime-rebuild/`：`new-worker-wake-arrival-red-windows.log`保留
+旧反例；`new-worker-wake-isolated-workspace-windows.log`及
+`new-worker-wake-clean-workspace-linux.log`为有效全套；
+`new-worker-wake-clean-linux-long-{one,two}.log`为长负载。
+快照`candidate-0a0eda8-worker-read-wake/target/runtime-rebuild/`下
+`controller-load-1024-438-1790926278660239683/measurement.json`与
+`controller-load-1024-418-1790926351390264326/measurement.json`及各自relay报告
+保留原始结果。旧缓存`new-worker-wake-clean-workspace-windows.log`不计入本轮。
+
+下一处A拆worker/client逐帧outcome阻塞，落实有界多在途、原文计额、稳定条目
+身份、TTL/nonce及精确应答关联；必须真实交替推进读写，不能单纯先写N帧再读。
+握手缺独立请求号、旧代迟到结果、拒绝后已发后继及未知部分写均纳入测试。
+host草稿继续不混入，B独立隐私/PQ分工不变。S4通用证明后端待明确AOEM切仓
+授权；Execute、隐私/PQ、真实多机、稳定容量和部署仍属未完成总目标。
+
 ## 设备 A：网络队列唤醒及有界双工修复，同路径三轮约3229–3498 TPS（2026-10-02）
 
 基于`ad3170e`，其双平台CI

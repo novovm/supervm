@@ -33,12 +33,135 @@ fn unstarted(config: &NetworkWorkerConfig) -> NetworkWorker {
             outbound: Queues::new(&config.peers, config.limits.outbound.clone()),
             inbound: Queues::new(&config.peers, config.limits.inbound.clone()),
             status: WorkerStatus::default(),
+            relay_read_waker: None,
+            read_wait_probe: None,
         })),
         stop: Arc::new(AtomicBool::new(false)),
         worker: None,
         max_payload: config.limits.max_payload_bytes,
         ttl: Duration::from_millis(config.queue_ttl_ms),
     }
+}
+
+#[derive(Default)]
+struct QueueWakeCounter(std::sync::atomic::AtomicUsize);
+
+impl std::task::Wake for QueueWakeCounter {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn queue_admission_and_waker_registration_cover_both_orders_and_replacement() {
+    let config = config(vec![id(2), id(3)]);
+    let mut worker = unstarted(&config);
+    let old = Arc::new(QueueWakeCounter::default());
+    let new = Arc::new(QueueWakeCounter::default());
+    let old_waker = Waker::from(Arc::clone(&old));
+    // The first accepted original predates any authenticated connection.
+    assert_eq!(
+        worker.try_send(id(2), vec![1]).unwrap(),
+        SendAdmission::Accepted
+    );
+    let pending = worker
+        .shared
+        .lock()
+        .unwrap()
+        .install_relay_read_waker(old_waker.clone());
+    assert_eq!(
+        old.0.load(Ordering::Relaxed),
+        0,
+        "wake is issued outside the queue lock"
+    );
+    pending.unwrap().wake();
+    assert_eq!(old.0.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        worker.try_send(id(3), vec![2]).unwrap(),
+        SendAdmission::Accepted
+    );
+    assert_eq!(old.0.load(Ordering::Relaxed), 2);
+    assert!(matches!(
+        worker.try_send(id(4), vec![3]).unwrap(),
+        SendAdmission::Rejected { .. }
+    ));
+    assert_eq!(old.0.load(Ordering::Relaxed), 2);
+
+    worker.shared.lock().unwrap().clear_relay_read_waker();
+    assert_eq!(
+        worker.try_send(id(2), vec![4]).unwrap(),
+        SendAdmission::Accepted
+    );
+    assert_eq!(old.0.load(Ordering::Relaxed), 2);
+    let pending = worker
+        .shared
+        .lock()
+        .unwrap()
+        .install_relay_read_waker(Waker::from(Arc::clone(&new)));
+    pending.unwrap().wake();
+    assert_eq!(new.0.load(Ordering::Relaxed), 1);
+    // A previously cloned notification can finish late; it cannot republish
+    // the old connection or consume the replacement's queued-work obligation.
+    old_waker.wake();
+    assert_eq!(old.0.load(Ordering::Relaxed), 3);
+    assert_eq!(new.0.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        worker.try_send(id(3), vec![5]).unwrap(),
+        SendAdmission::Accepted
+    );
+    assert_eq!(new.0.load(Ordering::Relaxed), 2);
+    assert_eq!(worker.status().unwrap().outbound_messages, 4);
+    worker.shutdown().unwrap();
+    assert_eq!(
+        new.0.load(Ordering::Relaxed),
+        3,
+        "shutdown notifies the current registration"
+    );
+}
+
+#[test]
+fn recv_rearm_requires_live_work_on_the_actual_active_peer_without_changing_fair_turn() {
+    let config = config(vec![id(2), id(3)]);
+    let worker = unstarted(&config);
+    let now = Instant::now();
+    let ttl = Duration::from_secs(1);
+    let expired = now - ttl - Duration::from_millis(1);
+    let mut peers = BTreeMap::from([(id(2), Peer::new()), (id(3), Peer::new())]);
+    let counter = Arc::new(QueueWakeCounter::default());
+    let mut shared = worker.shared.lock().unwrap();
+    assert!(shared
+        .install_relay_read_waker(Waker::from(Arc::clone(&counter)))
+        .is_none());
+    shared.outbound.push(&id(2), vec![1], 1, expired).unwrap();
+    shared.outbound.push(&id(3), vec![2], 1, now).unwrap();
+    // Intentionally stale telemetry must never make Idle/Cooldown runnable.
+    shared.status.active_peers = vec![id(2), id(3)];
+    assert!(shared.runnable_outbound_waker(&peers, now, ttl).is_none());
+    peers.get_mut(&id(3)).unwrap().phase = Phase::Cooldown(now - Duration::from_millis(1));
+    assert!(shared.runnable_outbound_waker(&peers, now, ttl).is_none());
+    let (active, _) = channels(1, 2);
+    peers.get_mut(&id(2)).unwrap().phase = Phase::Active(active);
+    assert!(
+        shared.runnable_outbound_waker(&peers, now, ttl).is_none(),
+        "expired-only active queue must sleep"
+    );
+    shared.outbound.push(&id(2), vec![3], 1, now).unwrap();
+    let turn = shared.outbound.turn;
+    shared
+        .runnable_outbound_waker(&peers, now, ttl)
+        .unwrap()
+        .wake();
+    assert_eq!(counter.0.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        shared.outbound.turn, turn,
+        "readiness check cannot consume the fair scheduling turn"
+    );
+    assert_eq!(shared.outbound.expire(now, ttl), 1);
+    assert_eq!(shared.outbound.pop(&id(2)).unwrap(), vec![3]);
+    assert!(shared.runnable_outbound_waker(&peers, now, ttl).is_none());
 }
 
 #[test]
@@ -490,6 +613,269 @@ fn wait_until(mut predicate: impl FnMut() -> bool) {
         );
         thread::sleep(Duration::from_millis(5));
     }
+}
+
+#[test]
+#[ignore = "real WSS read-wake timing; run release with --include-ignored --test-threads=1"]
+fn real_wss_outbound_admission_wakes_a_known_idle_socket_read() {
+    let relay = RelayFixture::start();
+    let make_config = |peer| {
+        let mut config = config(vec![id(peer)]);
+        config.relay.endpoint = relay.endpoint.clone();
+        config.relay.tls_trust = ProductRelayTlsTrustV1::ExplicitCa {
+            certificate_path: relay.cert.clone(),
+        };
+        config.heartbeat_interval_ms = 5000;
+        config
+    };
+    let mut sender_config = make_config(42);
+    sender_config.relay.read_timeout_ms = 1000;
+    let mut sender = NetworkWorker::start(sender_config, key(41)).unwrap();
+    let mut receiver = NetworkWorker::start(make_config(41), key(42)).unwrap();
+    wait_until(|| {
+        sender
+            .status()
+            .is_ok_and(|status| status.active_peers.len() == 1)
+            && receiver
+                .status()
+                .is_ok_and(|status| status.active_peers.len() == 1)
+    });
+    let initial = sender.status().unwrap();
+    let probe = Arc::clone(
+        sender
+            .shared
+            .lock()
+            .unwrap()
+            .read_wait_probe
+            .as_ref()
+            .unwrap(),
+    );
+    let previous = probe.entries.load(Ordering::Acquire);
+    // Wait for a fresh genuine read-WouldBlock → Poll window, not a guessed
+    // sleep after handshake. The observer never stalls or replaces real I/O.
+    wait_until(|| {
+        probe.polling.load(Ordering::Acquire) && probe.entries.load(Ordering::Acquire) > previous
+    });
+    let payload = b"admitted-after-real-read-park".to_vec();
+    let mut pending = Outbound {
+        peer_id: id(42),
+        bytes: payload.clone(),
+    };
+    let started = Instant::now();
+    loop {
+        match sender.try_send(pending.peer_id, pending.bytes).unwrap() {
+            SendAdmission::Accepted => break,
+            SendAdmission::Backpressure(original) => {
+                pending = original;
+                assert!(
+                    started.elapsed() < Duration::from_millis(250),
+                    "local admission stayed busy"
+                );
+                thread::yield_now();
+            }
+            SendAdmission::Rejected { reason, .. } => {
+                panic!("read-wake fixture rejected: {reason:?}")
+            }
+        }
+    }
+    let mut observed = None;
+    wait_until(|| {
+        if let Some(message) = receiver.try_recv().unwrap() {
+            assert_eq!(message.peer_id, id(41));
+            assert_eq!(message.bytes, payload);
+            observed = Some(started.elapsed());
+            true
+        } else {
+            false
+        }
+    });
+    wait_until(|| {
+        sender
+            .status()
+            .is_ok_and(|status| status.relay_admissions == initial.relay_admissions + 1)
+    });
+    let previous = probe.entries.load(Ordering::Acquire);
+    wait_until(|| {
+        probe.polling.load(Ordering::Acquire) && probe.entries.load(Ordering::Acquire) > previous
+    });
+    let burst_started = Instant::now();
+    let expected: Vec<_> = (0..24)
+        .map(|index| format!("coalesced-ready-tail-{index}").into_bytes())
+        .collect();
+    for bytes in &expected {
+        let mut pending = Outbound {
+            peer_id: id(42),
+            bytes: bytes.clone(),
+        };
+        loop {
+            match sender.try_send(pending.peer_id, pending.bytes).unwrap() {
+                SendAdmission::Accepted => break,
+                SendAdmission::Backpressure(original) => {
+                    pending = original;
+                    assert!(burst_started.elapsed() < Duration::from_millis(250));
+                    thread::yield_now();
+                }
+                SendAdmission::Rejected { reason, .. } => panic!("burst rejected: {reason:?}"),
+            }
+        }
+    }
+    let mut received = Vec::new();
+    wait_until(|| {
+        while let Some(message) = receiver.try_recv().unwrap() {
+            assert_eq!(message.peer_id, id(41));
+            received.push(message.bytes);
+        }
+        received.len() >= expected.len()
+    });
+    let burst_elapsed = burst_started.elapsed();
+    assert_eq!(
+        received, expected,
+        "coalesced notifications must preserve every FIFO original"
+    );
+    wait_until(|| {
+        sender
+            .status()
+            .is_ok_and(|status| status.relay_admissions == initial.relay_admissions + 25)
+    });
+    assert_eq!(
+        sender.status().unwrap().active_sessions,
+        initial.active_sessions
+    );
+    let previous = probe.entries.load(Ordering::Acquire);
+    wait_until(|| {
+        probe.polling.load(Ordering::Acquire) && probe.entries.load(Ordering::Acquire) > previous
+    });
+    let stop_started = Instant::now();
+    sender.shutdown().unwrap();
+    let stop_elapsed = stop_started.elapsed();
+    assert!(!probe.polling.load(Ordering::Acquire));
+    {
+        let shared = sender.shared.lock().unwrap();
+        assert!(shared.relay_read_waker.is_none());
+        assert!(shared.read_wait_probe.is_none());
+    }
+    receiver.shutdown().unwrap();
+    assert!(receiver.try_recv().unwrap().is_none());
+    let final_status = sender.status().unwrap();
+    assert_eq!(final_status.relay_reconnects, initial.relay_reconnects);
+    assert_eq!(final_status.outbound_expired, initial.outbound_expired);
+    let elapsed = observed.unwrap();
+    eprintln!("real post-park admission/decryption latency: {elapsed:?}; 24 FIFO originals after coalesced wakes: {burst_elapsed:?}; ordinary idle shutdown: {stop_elapsed:?}");
+    assert!(
+        elapsed < Duration::from_millis(250),
+        "outbound queue notification did not interrupt the 1s socket idle read: {elapsed:?}"
+    );
+    assert!(burst_elapsed < Duration::from_millis(250), "burst tail paid another full idle read after its notification was consumed: {burst_elapsed:?}");
+    assert!(
+        stop_elapsed < Duration::from_millis(250),
+        "ordinary idle shutdown failed to wake Poll: {stop_elapsed:?}"
+    );
+}
+
+#[test]
+#[ignore = "real WSS connection-generation regression; run release with --include-ignored --test-threads=1"]
+fn real_wss_replacement_rebinds_outbound_wake_and_ignores_late_old_notification() {
+    let relay = RelayFixture::start();
+    let make_config = |peer| {
+        let mut config = config(vec![id(peer)]);
+        config.relay.endpoint = relay.endpoint.clone();
+        config.relay.tls_trust = ProductRelayTlsTrustV1::ExplicitCa {
+            certificate_path: relay.cert.clone(),
+        };
+        config.heartbeat_interval_ms = 5000;
+        config
+    };
+    let mut sender_config = make_config(44);
+    sender_config.relay.read_timeout_ms = 1000;
+    let mut sender = NetworkWorker::start(sender_config.clone(), key(43)).unwrap();
+    let mut receiver = NetworkWorker::start(make_config(43), key(44)).unwrap();
+    wait_until(|| {
+        sender
+            .status()
+            .is_ok_and(|status| status.active_peers.len() == 1)
+            && receiver
+                .status()
+                .is_ok_and(|status| status.active_peers.len() == 1)
+    });
+    let initial = sender.status().unwrap();
+    let receiver_initial = receiver.status().unwrap();
+    let (old_waker, old_probe) = {
+        let shared = sender.shared.lock().unwrap();
+        (
+            shared.relay_read_waker.as_ref().unwrap().clone(),
+            Arc::clone(shared.read_wait_probe.as_ref().unwrap()),
+        )
+    };
+    // A real authenticated replacement revokes the old connection. The worker
+    // itself must recover/rebind; no test setter swaps its production socket.
+    let replacement = ProductRelayClientV1::connect(&key(43), &sender_config.relay).unwrap();
+    drop(replacement);
+    wait_until(|| {
+        sender.status().is_ok_and(|status| {
+            status.relay_reconnects > initial.relay_reconnects && status.active_peers.len() == 1
+        })
+    });
+    let (new_waker, new_probe) = {
+        let shared = sender.shared.lock().unwrap();
+        (
+            shared.relay_read_waker.as_ref().unwrap().clone(),
+            Arc::clone(shared.read_wait_probe.as_ref().unwrap()),
+        )
+    };
+    assert!(!old_waker.will_wake(&new_waker));
+    assert!(!Arc::ptr_eq(&old_probe, &new_probe));
+    assert!(!old_probe.polling.load(Ordering::Acquire));
+    let previous = new_probe.entries.load(Ordering::Acquire);
+    wait_until(|| {
+        new_probe.polling.load(Ordering::Acquire)
+            && new_probe.entries.load(Ordering::Acquire) > previous
+    });
+    old_waker.wake();
+    let payload = b"survives-late-old-connection-wake".to_vec();
+    let mut pending = Some(Outbound {
+        peer_id: id(44),
+        bytes: payload.clone(),
+    });
+    let started = Instant::now();
+    wait_until(|| {
+        let message = pending.take().unwrap();
+        match sender.try_send(message.peer_id, message.bytes).unwrap() {
+            SendAdmission::Accepted => true,
+            SendAdmission::Backpressure(original) => {
+                pending = Some(original);
+                false
+            }
+            SendAdmission::Rejected { reason, .. } => panic!("replacement rejected: {reason:?}"),
+        }
+    });
+    wait_until(|| {
+        if let Some(message) = receiver.try_recv().unwrap() {
+            assert_eq!(message.peer_id, id(43));
+            assert_eq!(message.bytes, payload);
+            true
+        } else {
+            false
+        }
+    });
+    let elapsed = started.elapsed();
+    wait_until(|| {
+        sender
+            .status()
+            .is_ok_and(|status| status.relay_admissions == initial.relay_admissions + 1)
+    });
+    assert_eq!(
+        receiver.status().unwrap().relay_reconnects,
+        receiver_initial.relay_reconnects
+    );
+    sender.shutdown().unwrap();
+    receiver.shutdown().unwrap();
+    assert!(receiver.try_recv().unwrap().is_none());
+    assert!(sender.shared.lock().unwrap().relay_read_waker.is_none());
+    assert!(sender.shared.lock().unwrap().read_wait_probe.is_none());
+    assert!(
+        elapsed < Duration::from_millis(250),
+        "replacement failed to wake current socket: {elapsed:?}"
+    );
 }
 
 #[test]

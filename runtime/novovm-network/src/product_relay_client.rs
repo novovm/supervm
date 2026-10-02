@@ -713,6 +713,15 @@ impl ProductRelayClientV1 {
         !self.pending_events.is_empty()
     }
 
+    pub(crate) fn read_waker(&self) -> std::task::Waker {
+        self.stream.sock.inner.read_waker()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn read_wait_probe(&self) -> Arc<crate::product_relay_io::ReadWaitProbe> {
+        self.stream.sock.inner.read_wait_probe()
+    }
+
     pub fn recv_event(&mut self) -> Result<ProductRelayClientEventV1> {
         self.stream.sock.check_io_deadlines_v1()?;
         self.heartbeat_health.check(Instant::now())?;
@@ -2031,12 +2040,19 @@ mod tests {
         assert_eq!(client.delivery_consumed, 0);
         assert_eq!(client.delivery_consumed_reported, 0);
         assert_eq!(client.pending_events.len(), 8);
+        // An outbound queue notification must not overtake already decoded
+        // inbound work or return transport credits merely because it fired.
+        client.read_waker().wake_by_ref();
         assert_eq!(
             client.recv_event().unwrap(),
             ProductRelayClientEventV1::HeartbeatAck
         );
         assert_eq!(client.delivery_consumed, 0);
         for expected in 1..=14 {
+            client.read_waker().wake_by_ref();
+            if expected <= 7 {
+                assert!(client.has_buffered_events());
+            }
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {
                 match client.recv_event() {

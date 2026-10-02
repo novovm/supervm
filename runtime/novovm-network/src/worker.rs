@@ -26,6 +26,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex, TryLockError,
 };
+use std::task::Waker;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -245,6 +246,56 @@ struct Shared {
     outbound: Queues<Vec<u8>>,
     inbound: Queues<Vec<u8>>,
     status: WorkerStatus,
+    relay_read_waker: Option<Waker>,
+    #[cfg(test)]
+    read_wait_probe: Option<Arc<crate::product_relay_io::ReadWaitProbe>>,
+}
+
+impl Shared {
+    /// Publish under the SAME lock as queue admission. The returned wake must
+    /// be issued after releasing the lock; pre-existing work cannot be missed
+    /// just because it arrived before this authenticated connection existed.
+    fn install_relay_read_waker(&mut self, waker: Waker) -> Option<Waker> {
+        self.relay_read_waker = Some(waker);
+        (self.outbound.count != 0).then(|| {
+            self.relay_read_waker
+                .as_ref()
+                .expect("installed waker")
+                .clone()
+        })
+    }
+
+    fn clear_relay_read_waker(&mut self) {
+        self.relay_read_waker = None;
+        #[cfg(test)]
+        {
+            self.read_wait_probe = None;
+        }
+    }
+
+    fn runnable_outbound_waker(
+        &self,
+        peers: &BTreeMap<String, Peer>,
+        now: Instant,
+        ttl: Duration,
+    ) -> Option<Waker> {
+        // Real current peer phases, not the last published telemetry. Queued
+        // handshakes/cooldowns and expired-only queues must still sleep. The
+        // next turn expires old fronts, so a live tail behind one is runnable.
+        self.outbound
+            .peers
+            .iter()
+            .any(|(id, queue)| {
+                peers
+                    .get(id)
+                    .is_some_and(|peer| matches!(peer.phase, Phase::Active(_)))
+                    && queue
+                        .back()
+                        .is_some_and(|item| now.saturating_duration_since(item.enqueued) < ttl)
+            })
+            .then(|| self.relay_read_waker.clone())
+            .flatten()
+    }
 }
 
 pub struct NetworkWorker {
@@ -264,6 +315,9 @@ impl NetworkWorker {
             outbound: Queues::new(&config.peers, config.limits.outbound.clone()),
             inbound: Queues::new(&config.peers, config.limits.inbound.clone()),
             status: WorkerStatus::default(),
+            relay_read_waker: None,
+            #[cfg(test)]
+            read_wait_probe: None,
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let max_payload = config.limits.max_payload_bytes;
@@ -278,6 +332,7 @@ impl NetworkWorker {
                 }
                 worker_stop.store(true, Ordering::Release);
                 if let Ok(mut shared) = worker_shared.lock() {
+                    shared.clear_relay_read_waker();
                     shared.status.relay_connected = false;
                     shared.status.active_peers.clear();
                     shared.status.active_sessions.clear();
@@ -329,7 +384,11 @@ impl NetworkWorker {
                 bytes,
             }));
         }
+        let read_waker = shared.relay_read_waker.clone();
         drop(shared);
+        if let Some(waker) = read_waker {
+            waker.wake();
+        }
         if let Some(worker) = &self.worker {
             worker.thread().unpark();
         }
@@ -371,6 +430,16 @@ impl NetworkWorker {
     /// waits for the client's bounded current I/O operation to finish.
     pub fn shutdown(&mut self) -> Result<()> {
         self.stop.store(true, Ordering::Release);
+        let read_waker = self
+            .shared
+            .lock()
+            .ok()
+            .and_then(|shared| shared.relay_read_waker.clone());
+        if let Some(waker) = read_waker {
+            // Interrupt an ordinary idle read, not an in-flight authenticated
+            // write or outcome obligation; those retain their old deadlines.
+            waker.wake();
+        }
         if let Some(worker) = self.worker.take() {
             worker.thread().unpark();
             worker
@@ -560,17 +629,31 @@ fn run_worker(
         let connection = ProductRelayClientV1::connect(identity, &config.relay);
         match connection {
             Ok(mut relay) => {
-                {
+                let initial_wake = {
                     let mut shared = shared
                         .lock()
                         .map_err(|_| anyhow::anyhow!("network queue poisoned"))?;
                     shared.status.relay_connected = true;
+                    #[cfg(test)]
+                    {
+                        shared.read_wait_probe = Some(relay.read_wait_probe());
+                    }
                     shared.status.relay_reconnects =
                         shared.status.relay_reconnects.saturating_add(1);
+                    shared.install_relay_read_waker(relay.read_waker())
+                };
+                if let Some(waker) = initial_wake {
+                    waker.wake();
                 }
-                if let Err(error) =
-                    run_session(&mut relay, config, identity, &mut peers, shared, stop)
-                {
+                let result = run_session(&mut relay, config, identity, &mut peers, shared, stop);
+                // One owner switches generations. Clear before dropping the
+                // stream; a clone taken by an earlier admission can only wake
+                // the old Poll, never restore it as the current registration.
+                shared
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("network queue poisoned"))?
+                    .clear_relay_read_waker();
+                if let Err(error) = result {
                     record_error(shared, &error);
                 }
                 // Dropping a failed/uncertain TLS stream must not retry a write.
@@ -666,6 +749,9 @@ fn run_session(
                 break;
             }
         }
+        if stop.load(Ordering::Acquire) {
+            break;
+        }
         if let Some(id) = preauth.next_peer(|id| {
             peers
                 .get(id)
@@ -674,6 +760,16 @@ fn run_session(
             let delivery = preauth.pop(&id).expect("selected preauth queue");
             receive_delivery(delivery, config, peers, shared, &mut preauth)?;
             continue;
+        }
+        let read_waker = shared
+            .lock()
+            .map_err(|_| anyhow::anyhow!("network queue poisoned"))?
+            .runnable_outbound_waker(peers, Instant::now(), ttl);
+        if let Some(waker) = read_waker {
+            // Admission wakes can coalesce or be consumed inside an outcome
+            // wait. Rearm only work the next turn can actually send. recv_event
+            // still drains buffered/real input first, preserving duplex fairness.
+            waker.wake();
         }
         match relay.recv_event() {
             Ok(ProductRelayClientEventV1::Delivery(delivery)) => {

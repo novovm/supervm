@@ -166,6 +166,13 @@ impl Wake for ReadWake {
 }
 
 #[derive(Debug)]
+#[cfg(test)]
+pub(crate) struct ReadWaitProbe {
+    pub(crate) polling: AtomicBool,
+    pub(crate) entries: std::sync::atomic::AtomicUsize,
+}
+
+#[derive(Debug)]
 pub(crate) struct ProductRelaySocketV1 {
     inner: mio::net::TcpStream,
     poll: mio::Poll,
@@ -174,6 +181,8 @@ pub(crate) struct ProductRelaySocketV1 {
     read_ahead: ReadAhead,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
+    #[cfg(test)]
+    read_wait_probe: Arc<ReadWaitProbe>,
 }
 
 impl ProductRelaySocketV1 {
@@ -206,11 +215,21 @@ impl ProductRelaySocketV1 {
             read_ahead: ReadAhead::default(),
             read_timeout,
             write_timeout,
+            #[cfg(test)]
+            read_wait_probe: Arc::new(ReadWaitProbe {
+                polling: AtomicBool::new(false),
+                entries: std::sync::atomic::AtomicUsize::new(0),
+            }),
         })
     }
 
     pub(crate) fn read_waker(&self) -> Waker {
         Waker::from(Arc::clone(&self.read_wake))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn read_wait_probe(&self) -> Arc<ReadWaitProbe> {
+        Arc::clone(&self.read_wait_probe)
     }
 
     pub(crate) fn enable_duplex_read_ahead(&mut self) {
@@ -302,7 +321,19 @@ impl ProductRelaySocketV1 {
                 registered_interest = wait_interest;
             }
             let remaining = remaining_timeout(deadline)?;
-            match self.poll.poll(&mut self.events, remaining) {
+            // Observe a genuine socket WouldBlock and the actual Poll below;
+            // the test hook does not replace I/O or pause the network owner.
+            #[cfg(test)]
+            if interest.is_readable() {
+                self.read_wait_probe.entries.fetch_add(1, Ordering::Release);
+                self.read_wait_probe.polling.store(true, Ordering::Release);
+            }
+            let polled = self.poll.poll(&mut self.events, remaining);
+            #[cfg(test)]
+            if interest.is_readable() {
+                self.read_wait_probe.polling.store(false, Ordering::Release);
+            }
+            match polled {
                 // Close/error readiness can also be spurious. Only the next
                 // real socket result establishes EOF or a terminal error.
                 Ok(()) => {}
