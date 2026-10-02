@@ -142,7 +142,11 @@ impl BatchRequest {
         // Reserve the maximum retained logical batch content through all stages,
         // including an unconsumed completed reply. This is not a total allocator
         // or native-engine memory cap. No data-dependent widening after admission.
-        self.body_bytes
+        Self::retained_reservation(self.body_bytes, config)
+    }
+
+    fn retained_reservation(body_bytes: usize, config: &PipelineConfig) -> Result<usize> {
+        body_bytes
             .checked_mul(3)
             .and_then(|n| n.checked_add(config.capture.bytes))
             .and_then(|n| {
@@ -268,16 +272,19 @@ impl std::error::Error for PipelineFailure {}
 struct Usage {
     batches: usize,
     bytes: usize,
+    background: usize,
 }
 struct Permit {
     usage: Arc<Mutex<Usage>>,
     bytes: usize,
+    background: bool,
 }
 impl Drop for Permit {
     fn drop(&mut self) {
         let mut usage = self.usage.lock().unwrap_or_else(|error| error.into_inner());
         usage.batches -= 1;
         usage.bytes -= self.bytes;
+        usage.background -= usize::from(self.background);
     }
 }
 
@@ -316,6 +323,7 @@ struct Command {
     request: BatchRequest,
     reply: mpsc::Sender<Result<DurableBatch>>,
     permit: Arc<Permit>,
+    background: bool,
 }
 
 pub struct CandidatePipeline {
@@ -376,9 +384,41 @@ impl CandidatePipeline {
         &self,
         request: BatchRequest,
     ) -> std::result::Result<Submission, RejectedSubmission> {
+        self.try_submit_with_priority(request, false)
+    }
+
+    /// At most one optional background job, reserving one whole ordinary job's
+    /// maximum logical content and admission slot. This is scheduling only,
+    /// never authority to use a speculative parent or publish its result.
+    pub(crate) fn try_submit_background_owned(
+        &self,
+        request: BatchRequest,
+    ) -> std::result::Result<Submission, RejectedSubmission> {
+        self.try_submit_with_priority(request, true)
+    }
+
+    fn try_submit_with_priority(
+        &self,
+        request: BatchRequest,
+        background: bool,
+    ) -> std::result::Result<Submission, RejectedSubmission> {
         let bytes = match request.reservation(&self.config) {
             Ok(bytes) => bytes,
             Err(error) => return Err(RejectedSubmission { request, error }),
+        };
+        let current_reserve = if background {
+            match BatchRequest::retained_reservation(
+                self.config
+                    .authentication
+                    .body_bytes
+                    .min(self.config.plan.body_bytes),
+                &self.config,
+            ) {
+                Ok(bytes) => bytes,
+                Err(error) => return Err(RejectedSubmission { request, error }),
+            }
+        } else {
+            0
         };
         if bytes > self.config.max_retained_bytes {
             return Err(RejectedSubmission {
@@ -412,21 +452,33 @@ impl CandidatePipeline {
         };
         if usage.batches >= self.config.max_batches
             || bytes > self.config.max_retained_bytes.saturating_sub(usage.bytes)
+            || (background
+                && (usage.background != 0
+                    || usage.batches >= self.config.max_batches.saturating_sub(1)
+                    || current_reserve
+                        > self
+                            .config
+                            .max_retained_bytes
+                            .saturating_sub(usage.bytes)
+                            .saturating_sub(bytes)))
         {
             return Ok(Submission::Backpressured(request));
         }
         usage.batches += 1;
         usage.bytes += bytes;
+        usage.background += usize::from(background);
         drop(usage);
         let permit = Arc::new(Permit {
             usage: self.usage.clone(),
             bytes,
+            background,
         });
         let (reply, receiver) = mpsc::channel();
         let command = Command {
             request,
             reply,
             permit: permit.clone(),
+            background,
         };
         match sender.try_send(command) {
             Ok(()) => {

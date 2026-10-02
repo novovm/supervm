@@ -20,6 +20,8 @@ const LONG_LOAD_HEIGHTS: u64 = 64;
 pub(super) struct LoadSpec {
     pub batch_size: usize,
     pub heights: u64,
+    #[serde(default)]
+    pub successor: bool,
 }
 
 fn pipeline_config_for(fixture: &Fixture) -> Result<PipelineConfig> {
@@ -136,6 +138,11 @@ struct Observation {
     current_height: u64,
     round: u64,
     executed_batches: u64,
+    successor_started: u64,
+    successor_completed_before_parent: u64,
+    successor_reused: u64,
+    successor_promoted_inflight: u64,
+    successor_discarded: u64,
     execution_failures: u64,
     stale_results: u64,
     durable_decisions: u64,
@@ -156,6 +163,11 @@ impl Observation {
             current_height: controller.context().height,
             round: controller.round(),
             executed_batches: stats.executed_batches,
+            successor_started: stats.successor_started,
+            successor_completed_before_parent: stats.successor_completed_before_parent,
+            successor_reused: stats.successor_reused,
+            successor_promoted_inflight: stats.successor_promoted_inflight,
+            successor_discarded: stats.successor_discarded,
             execution_failures: stats.execution_failures,
             stale_results: stats.stale_results,
             durable_decisions: stats.durable_decisions,
@@ -273,39 +285,55 @@ pub(super) fn run_controller(fixture: &Fixture, spec: LoadSpec) -> Result<()> {
                     go = fixture.directory.join("go").exists();
                 }
                 let current = (controller.context().height, controller.round());
+                let desired = if controller.is_local_leader()? && current.0 <= spec.heights {
+                    Some((current, controller.parent(), false))
+                } else if spec.successor {
+                    controller
+                        .successor_parent()?
+                        .filter(|parent| parent.height < spec.heights)
+                        .map(|parent| ((parent.height + 1, 0), parent, true))
+                } else {
+                    None
+                };
                 if input
                     .as_ref()
-                    .is_some_and(|(position, _)| *position != current)
+                    .is_some_and(|(position, body)| desired.is_none_or(|(wanted, parent, _)| {
+                        *position != wanted || !matches!(body.as_ref(), Message::Body { context, .. } if context.parent_block_hash == parent.block_hash)
+                    }))
                 {
                     input = None;
                 }
-                if go
-                    && current.0 <= spec.heights
-                    && controller.is_local_leader()?
-                    && offered != Some(current)
+                if let Some((position, parent, future)) =
+                    desired.filter(|(position, parent, future)| {
+                        go && offered != Some((*position, parent.block_hash, *future))
+                    })
                 {
                     if input.is_none() && !requested {
-                        let parent = controller.parent();
                         let mut context = batch_context(fixture.root);
-                        context.height = current.0;
+                        context.height = position.0;
                         context.parent_height = parent.height;
                         context.parent_block_hash = parent.block_hash;
                         context.parent_state_root = parent.state_root;
                         context.parent_receipt_root = parent.receipt_batch_commitment;
                         context.parent_state_version = parent.state_version;
-                        context.slot = current.0;
-                        context.timestamp_unix_ms += current.0;
+                        context.slot = position.0;
+                        context.timestamp_unix_ms += position.0;
                         wallet
                             .tx
                             .as_ref()
                             .unwrap()
-                            .try_send((current, context))
+                            .try_send((position, context))
                             .map_err(|_| anyhow::anyhow!("bounded wallet request unavailable"))?;
                         requested = true;
                     }
                     if let Some((_, body)) = &input {
-                        if controller.try_submit_body(body)? {
-                            offered = Some(current);
+                        let accepted = if future {
+                            controller.try_submit_successor_body(body)?
+                        } else {
+                            controller.try_submit_body(body)?
+                        };
+                        if accepted {
+                            offered = Some((position, parent.block_hash, future));
                             input = None;
                         }
                     }
@@ -351,6 +379,7 @@ fn read_observation(path: &Path) -> Option<Observation> {
 
 #[derive(Serialize)]
 struct Measurement {
+    successor_enabled: bool,
     schema: &'static str,
     topology: &'static str,
     batch_size: usize,
@@ -543,6 +572,7 @@ fn one_load(spec: LoadSpec) -> Result<()> {
         );
     }
     let report = Measurement {
+        successor_enabled: spec.successor,
         schema: "novovm/controller-load/v1", topology: "one host; four OS validator processes; one real WSS/E2E relay",
         batch_size: spec.batch_size, heights: spec.heights, unique_finalized_transactions: count,
         successful_transactions: count, business_failed_transactions: 0,
@@ -563,6 +593,18 @@ fn one_load(spec: LoadSpec) -> Result<()> {
         directory.join("measurement.json"),
         serde_json::to_vec_pretty(&report)?,
     )?;
+    if spec.successor {
+        ensure!(
+            report
+                .observers
+                .iter()
+                .any(|node| node.successor_started > 0)
+                && report.observers.iter().any(|node| {
+                    node.successor_reused > 0 || node.successor_promoted_inflight > 0
+                }),
+            "successor fixture completed without executing and promoting any successor"
+        );
+    }
     eprintln!("batch={} unique_finalized={} all_four_seconds={elapsed:.6} finalized_tps={:.6}; full cold-state oracle passed", spec.batch_size, count, report.finalized_tps);
     Ok(())
 }
@@ -593,6 +635,21 @@ fn four_process_continuous_signed_load() -> Result<()> {
         one_load(LoadSpec {
             batch_size,
             heights,
+            successor: load_setting("NOVOVM_CONTROLLER_LOAD_SUCCESSOR")?.as_deref() == Some("1"),
+        })?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires real AOEM; actual successor execution, four-process finality and cold economic oracle"]
+fn four_process_successor_signed_load() -> Result<()> {
+    let _ = library()?;
+    for batch_size in [32, 1024] {
+        one_load(LoadSpec {
+            batch_size,
+            heights: LOAD_HEIGHTS,
+            successor: true,
         })?;
     }
     Ok(())

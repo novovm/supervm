@@ -73,6 +73,102 @@ fn admitted(pipeline: &CandidatePipeline, request: BatchRequest) -> PipelineTick
 }
 
 #[test]
+fn background_admission_reserves_an_ordinary_slot_and_worst_case_content() {
+    let cfg = config("unused-background".into());
+    let (single, _) = inert_pipeline(cfg.clone());
+    assert!(matches!(
+        single
+            .try_submit_background_owned(request(empty_root()))
+            .unwrap(),
+        Submission::Backpressured(_)
+    ));
+    let bytes = request(empty_root()).reservation(&cfg).unwrap();
+    let reserve = BatchRequest::retained_reservation(
+        cfg.authentication.body_bytes.min(cfg.plan.body_bytes),
+        &cfg,
+    )
+    .unwrap();
+    let mut cfg = cfg;
+    cfg.max_batches = 2;
+    cfg.max_retained_bytes = bytes + reserve - 1;
+    let (short, _) = inert_pipeline(cfg.clone());
+    assert!(matches!(
+        short
+            .try_submit_background_owned(request(empty_root()))
+            .unwrap(),
+        Submission::Backpressured(_)
+    ));
+    cfg.max_retained_bytes += 1;
+    let (pipeline, receiver) = inert_pipeline(cfg);
+    let Submission::Accepted(background) = pipeline
+        .try_submit_background_owned(request(empty_root()))
+        .unwrap()
+    else {
+        panic!("exact reservation should fit")
+    };
+    let command = receiver.recv().unwrap();
+    assert!(command.background);
+    assert!(matches!(
+        pipeline
+            .try_submit_background_owned(request(empty_root()))
+            .unwrap(),
+        Submission::Backpressured(_)
+    ));
+    let ordinary = admitted(&pipeline, request(empty_root()));
+    let normal_command = receiver.recv().unwrap();
+    assert!(!normal_command.background);
+    assert_eq!(pipeline.usage.lock().unwrap().batches, 2);
+    drop(background);
+    drop(command);
+    assert_eq!(pipeline.usage.lock().unwrap().background, 0);
+    drop(ordinary);
+    drop(normal_command);
+    assert_eq!(pipeline.usage.lock().unwrap().bytes, 0);
+}
+
+#[test]
+fn background_reply_and_abandoned_ticket_never_release_live_work_early() {
+    let mut cfg = config("unused-background-lifetime".into());
+    cfg.max_batches = 4;
+    cfg.max_retained_bytes = 512 * 1024 * 1024;
+    let (pipeline, receiver) = inert_pipeline(cfg);
+    let Submission::Accepted(mut ticket) = pipeline
+        .try_submit_background_owned(request(empty_root()))
+        .unwrap()
+    else {
+        panic!("expected background admission")
+    };
+    let command = receiver.recv().unwrap();
+    command
+        .reply
+        .send(Err(anyhow::anyhow!("fixture rejection")))
+        .ok()
+        .unwrap();
+    drop(command);
+    assert_eq!(pipeline.usage.lock().unwrap().background, 1);
+    assert!(matches!(
+        pipeline
+            .try_submit_background_owned(request(empty_root()))
+            .unwrap(),
+        Submission::Backpressured(_)
+    ));
+    assert!(ticket.try_take().is_err());
+    assert_eq!(pipeline.usage.lock().unwrap().background, 0);
+    let Submission::Accepted(ticket) = pipeline
+        .try_submit_background_owned(request(empty_root()))
+        .unwrap()
+    else {
+        panic!("background permit should recover")
+    };
+    drop(ticket);
+    assert_eq!(pipeline.usage.lock().unwrap().background, 1);
+    let command = receiver.recv().unwrap();
+    drop(command);
+    assert_eq!(pipeline.usage.lock().unwrap().background, 0);
+    assert_eq!(pipeline.usage.lock().unwrap().bytes, 0);
+}
+
+#[test]
 fn unconsumed_error_reply_and_lost_ticket_keep_whole_job_reservations() {
     let (pipeline, receiver) = inert_pipeline(config("unused".into()));
     let input = request(empty_root());

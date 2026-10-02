@@ -9,6 +9,8 @@
 #[path = "controller_recovery.rs"]
 mod recovery;
 use recovery::Recovery;
+mod successor;
+use successor::Successor;
 
 use super::channel::{
     ChannelEvent, HostChannel, Outbound, PrepareAdmission, PrepareInput, PrepareRequest,
@@ -75,6 +77,11 @@ pub struct ControllerConfig {
 #[derive(Clone, Debug, Default)]
 pub struct ControllerStats {
     pub executed_batches: u64,
+    pub successor_started: u64,
+    pub successor_completed_before_parent: u64,
+    pub successor_reused: u64,
+    pub successor_promoted_inflight: u64,
+    pub successor_discarded: u64,
     /// Sum of component counts from successful DurableBatch observations,
     /// including stale completions. Not finalized transactions or parallelism.
     pub execution_components_total: u64,
@@ -166,6 +173,7 @@ struct Offered {
 }
 
 enum Purpose {
+    SuccessorBody(successor::Pin),
     LocalBody {
         context: Context,
         round: u64,
@@ -279,6 +287,8 @@ pub struct Controller {
     bodies: BTreeMap<Hash, Body>,
     offers: BTreeMap<(String, bool), Offered>,
     inflight: Vec<Execution>,
+    successor: Option<Successor>,
+    successor_drain: Option<PipelineTicket>,
     preparing: BTreeMap<u64, Preparation>,
     fixed: VecDeque<Fixed>,
     archives: BTreeMap<String, ArchiveJob>,
@@ -345,6 +355,8 @@ impl Controller {
             bodies: BTreeMap::new(),
             offers: BTreeMap::new(),
             inflight: Vec::new(),
+            successor: None,
+            successor_drain: None,
             preparing: BTreeMap::new(),
             fixed: VecDeque::new(),
             archives: BTreeMap::new(),
@@ -552,6 +564,7 @@ impl Controller {
             self.drive_consensus()?;
             self.pacemaker
                 .poll(&mut self.journal, &self.collector, now)?;
+            self.poll_successor(pipeline)?;
         }
         self.flush_preparations()?;
         self.flush_sends(now)?;
@@ -560,7 +573,7 @@ impl Controller {
         self.stats.precommit_weight = self.collector.phase_weight(self.round(), Phase::Precommit);
         self.stats.retained_bodies = self.bodies.len();
         self.stats.retained_body_bytes = self.body_bytes();
-        self.stats.inflight = self.inflight.len();
+        self.stats.inflight = self.inflight_count();
         Ok(())
     }
 
@@ -632,6 +645,9 @@ impl Controller {
         let ready = match result {
             Ok(ready) => ready,
             Err(error) => {
+                if let Purpose::SuccessorBody(pin) = &pending.purpose {
+                    self.successor_preparation_failed(*pin);
+                }
                 if matches!(pending.purpose, Purpose::RecoveryBody(_) | Purpose::Replay) {
                     anyhow::bail!("cold replay preparation failed: {error}");
                 }
@@ -646,6 +662,7 @@ impl Controller {
             }
         };
         match pending.purpose {
+            Purpose::SuccessorBody(pin) => self.successor_prepared(pin, ready)?,
             Purpose::RecoveryBody(locator) => self.recovered_body(locator, ready)?,
             Purpose::LocalBody { context, round } => {
                 if context != self.context() || round != self.round() {
@@ -734,6 +751,9 @@ impl Controller {
                 // signed hints and can answer RequestBody after recovery.
                 self.retire(Retirement::Ready(ready));
                 return Ok(());
+            }
+            if self.is_successor_body(&ready) {
+                return self.keep_successor_body(source, ready, false);
             }
             return self.keep_body(source, ready, None);
         }
@@ -855,6 +875,7 @@ impl Controller {
         self.bodies
             .values()
             .map(|body| (body.prepared.fragment_id(), body.prepared.retained_bytes()))
+            .chain(self.successor.as_ref().and_then(Successor::retained_body))
             .chain(
                 self.fixed
                     .iter()
@@ -932,6 +953,7 @@ impl Controller {
             }
         }
         let charge = ready.prepared.retained_bytes();
+        self.preempt_successor_for_body(charge)?;
         if self.retained_bodies().len() >= self.config.limits.max_bodies
             || charge
                 > self
@@ -1043,7 +1065,7 @@ impl Controller {
             .chain(self.config.peers.values().cloned())
             .collect();
         for _ in 0..requesters.len() {
-            if self.inflight.len() >= self.config.limits.max_inflight {
+            if self.inflight_count() >= self.config.limits.max_inflight {
                 break;
             }
             let requester = requesters[self.execution_turn % requesters.len()].clone();
@@ -1285,6 +1307,7 @@ impl Controller {
                     || message_round(fixed.prepared.message()) == Some(round)
             });
         }
+        self.reconcile_successor()?;
         if let Some(message) = message {
             let message = match message {
                 DurableMessage::Vote(vote) => {

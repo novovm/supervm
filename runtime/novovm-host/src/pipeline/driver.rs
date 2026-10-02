@@ -90,6 +90,7 @@ struct Job {
     candidate_id: Option<NodeHash>,
     reply: mpsc::Sender<Result<DurableBatch>>,
     _permit: Arc<Permit>,
+    background: bool,
 }
 
 impl From<Command> for Job {
@@ -99,6 +100,7 @@ impl From<Command> for Job {
             candidate_id: None,
             reply: command.reply,
             _permit: command.permit,
+            background: command.background,
         }
     }
 }
@@ -260,7 +262,7 @@ pub(super) fn run(
     while connected || !jobs.is_empty() {
         if jobs.is_empty() && connected {
             match receiver.recv() {
-                Ok(command) => jobs.push_back(command.into()),
+                Ok(command) => enqueue(&mut jobs, command.into()),
                 Err(_) => {
                     connected = false;
                     continue;
@@ -269,7 +271,7 @@ pub(super) fn run(
         }
         while connected && jobs.len() < config.max_batches {
             match receiver.try_recv() {
-                Ok(command) => jobs.push_back(command.into()),
+                Ok(command) => enqueue(&mut jobs, command.into()),
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => connected = false,
             }
@@ -283,6 +285,7 @@ pub(super) fn run(
                 mut candidate_id,
                 reply,
                 _permit,
+                background,
             } = jobs.pop_front().expect("fixed round length");
             let label = stage.label();
             match advance(stage, &mut candidate_id, config, io, compute, identity) {
@@ -296,6 +299,7 @@ pub(super) fn run(
                         candidate_id,
                         reply,
                         _permit,
+                        background,
                     });
                 }
                 Ok(Advancement::Complete(output)) => {
@@ -321,3 +325,20 @@ pub(super) fn run(
         }
     }
 }
+
+fn enqueue(jobs: &mut VecDeque<Job>, job: Job) {
+    // Do not cancel or restart a background native operation already in flight.
+    // On each bounded round ordinary jobs get their transition first; complete
+    // round rotation preserves this order, including after a job completes.
+    let index = if job.background {
+        jobs.len()
+    } else {
+        jobs.iter()
+            .position(|pending| pending.background)
+            .unwrap_or(jobs.len())
+    };
+    jobs.insert(index, job);
+}
+
+#[cfg(test)]
+mod tests;

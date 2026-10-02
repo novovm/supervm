@@ -8,6 +8,101 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：一层后继流水线与父最终性重叠（2026-10-02）
+
+基于`ed22c5d`，其CI `37008042238`两项均成功：Linux5分24秒、Windows12分
+57秒。本刀仅8个新runtime源/测试文件和三文档；不是生产/稳定容量/S4签收。
+
+同基线独立时间线诊断`candidate-ed22c5d-height-profile-v1/`记录每节点320项
+真实事件，0丢失；候选耐久→decision ACK均值43.12–45.92ms，decision→
+advance ACK3.34–3.57ms，advance→下块正文就绪66.35–67.66ms。仅用于找到
+交接依赖，不把全部等待当作无用开销。提议者原先到提议耐久ACK后才传播正文，
+跟随者因而较晚开始计算；新后继正文仍使用既有HostChannel/加密网络路径。
+
+早期干净可变开发快照`candidate-ed22c5d-successor-dev-v1/`、日志
+`successor-dev-v1b-load32.log`及`successor-dev-v1b-load1024.log`：
+
+- 32×8：256笔、0.264732秒/967.016437 TPS；四节点各8执行、7次后继
+  在父确认前完成、7次精确晋升复用。完整冷恢复经济oracle通过。
+- 1024×64：65536笔、8.307132491秒/7889.124204 TPS；四节点各64执行、
+  53/54/55/55次后继启动，0提前完成/0完成态复用、0执行失败/陈旧结果。
+  这些后继在父确认前被pipeline接纳，未取回完成回执的ticket转入当前路径；
+  接纳不是AOEM回调开始，也不是已提前完成。四节点耐久与冷恢复oracle通过。
+- 1024报告：快照内`target/runtime-rebuild/controller-load-1024-389-1790946427315380884/`。
+  两组仍有旧父上下文拒绝，停止时TLS close_notify告警保留。
+
+以上是**同机四进程、Ed25519测试账户、有限预签名负载**，不是四台实体设备/
+PQ/稳定容量；验签/业务/网络/共识/四库耐久均计时，钱包签名和冷恢复不计时。
+
+### 接入、真实反例与双平台回归
+
+`controller/successor.rs`只从本机真实已耐久父候选派生一层输入；只有下一
+高度round0 leader可预发正文，仍走原HostChannel/网络。私有后继不进入当前
+候选表；完整context、六字段父点、已ACK head及round0全匹配才晋升，原journal
+再查签票权限。落败/换轮票据移独立drain，不占同requester当前槽，不挂回后来
+同ID正文。尚未获ACK的持久内容不是最终块，孤儿内容不会因重启自动获得能力。
+
+pipeline仅一个后台许可，未消费回执仍计额，普通任务保留槽及最大逻辑内容；
+driver每轮普通任务优先、每job一次有界转换。审查发现后台正文可能挤满缓存，
+已加当前正文对后继及固定发送引用的抢占，原上限不变。已接受native任务不
+取消，继续排空。错误路径保留owned状态/交回退休owner，不在poll线程丢大型体。
+
+新增6项真实AOEM安全测试：提前完成不签未来票/精确晋升、另一父胜出（完成与
+未取回票据）、换轮后同requester准入且同ID迟到结果不复活、编码回执晚到、
+构造允许的紧正文预算抢占、真实关闭数据库重开后孤儿可读但能力失效。
+它们控制回执消费时序而非伪造候选；经济记录与独立普通执行对照，完整费用
+守恒仍由四进程经济oracle覆盖。4项准入/调度测试与32/1024×8后继专项纳入
+全回归。未知write/进程kill由既有全量门覆盖，未新增“后继执行中进程kill”
+或持续ingress下drain专门故障注入，不将相邻门宣称为该专项已执行。
+
+最终源`target/runtime-rebuild/candidate-ed22c5d-successor-v1/`：8个覆盖文件，
+其余142个tracked runtime文件与HEAD相同；controller/load不带旧11项Host
+草稿，其余47项旧草稿SHA256未变。真实库Release Windows **609+6**、Linux
+**608+6**，均0失败/0忽略；Host356、AOEM31、Network211/210、11集成、6文档。
+fmt、双平台strict Clippy（含native-free）和三成员隔离检查通过。
+
+保留失败：首次新增测试nonce查询类型错误，改用真实鉴权nonce_identity后
+6/6通过；`successor-dev-v1g-preemption-red.log`移除抢占后确实拒绝当前正文，
+负对照1失败。随后Linux复用target误运行该负对照旧二进制，输出仍指向dev，
+该次355通过/1失败不计最终验收；独立`successor-v1-linux`重编译全部通过。
+最终日志：`successor-v1-workspace-windows.log`、`successor-v1-workspace-linux-fresh.log`、
+`successor-v1-clippy-windows.log`、`successor-v1-clippy-linux-fresh.log`。
+
+### 冻结二进制新/旧/新交错
+
+构建/其他重测试全部终态后单独顺序运行，仍同机WSL2/24逻辑CPU、原120秒
+期限、1024笔×64高，预签名/创世/冷恢复不计入TPS。旧为当前ed22运行基线，
+不是更旧ab1或引擎小循环；12份最终head完全相同、各64实际执行/64耐久决定，
+0执行失败/陈旧结果/重算。保留旧父点拒绝、未来正文早于本机父耐久时的拒绝
+及停机TLS告警，不称日志零错。
+
+| 样本 | 四节点全部耐久秒数 | 唯一交易TPS | backlog P95/P99秒 | 完整冷恢复 |
+| --- | --- | --- | --- | --- |
+| 后继v1第一轮 | 7.798657914 | 8403.497207 | 7.350784632 / 7.798657914 | PASS |
+| ed22对照 | 12.934339380 | 5066.822361 | 12.323403429 / 12.934339380 | PASS |
+| 后继v1第二轮 | 7.710410158 | 8499.677534 | 7.428536795 / 7.710410158 | PASS |
+
+约66%–68%的有限负载改善，不是稳定容量/百万TPS签收。第一轮各节点接纳
+58/58/53/55个后继，全部在无完成回执时晋升；第二轮接纳59/54/52/58个、无
+完成回执晋升58/54/52/57个，另两节点各1次提前完成复用。接纳不能证明native
+实际开始时刻；32×8和安全专项证明真实提前完成存在，不外推为每块都已算完。
+
+新冻结`candidate-ed22c5d-successor-v1/bin/novovm-host-successor` SHA256
+`31069ad90c9d4598e13c919c2c09ea9e730c944a447a8b467f5d6762bc1e5ebd`；
+旧`candidate-ab1fbf0-read-v2/bin/novovm-host-read-batch` SHA256
+`c6f39379f8bc5600948052cfae3f752dd3ab3b1bec25168c74b77183b4cb7367`。
+Linux AOEM仍`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+新报告在v1快照自己的`target/runtime-rebuild/controller-load-1024-365-1790948617986179547/`
+与`controller-load-1024-400-1790948771861333567/`，旧在read-v2快照下
+`controller-load-1024-401-1790948684921828480/`；日志依次为
+`successor-v1-long-1.log`、`successor-base-long-1.log`、`successor-v1-long-2.log`。
+
+后台只是有界预算及轮次优先，不能抢占已进入AOEM/native I/O的调用，不承诺
+当前任务零延迟影响。退役不删除已经落盘的孤儿内容，不冒称磁盘已回收。
+下一处A继续关联真实worker进入/完成与父ACK，按实测消除剩余强制串联；
+未修改AOEM/SDK/共享业务证明关系，S4后端授权、B隐私/PQ、Execute、多机长跑、
+正式部署完整目标保持。本提交远端CI待推送后另核。
+
 ## 设备 A：完整声明的精确父输入批读取（2026-10-02）
 
 基于`ab1fbf0816f13a310a514fb8d29ff8d801e13fcc`，该提交CI `37004594892`
