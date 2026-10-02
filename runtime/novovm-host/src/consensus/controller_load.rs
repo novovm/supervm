@@ -3,6 +3,7 @@
 //! an engine benchmark, RPC benchmark, four machines or production parameters.
 use super::*;
 use crate::consensus::tests::controller_workload::{Workload, BATCH_SIZES};
+use crate::consensus::transport::EarlyBodyScope;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::thread::JoinHandle;
 
@@ -22,13 +23,16 @@ pub(super) struct LoadSpec {
     pub heights: u64,
     #[serde(default)]
     pub successor: bool,
+    #[serde(default)]
+    pub early_body: bool,
 }
 
 fn pipeline_config_for(fixture: &Fixture) -> Result<PipelineConfig> {
     let spec = fixture.load.context("load configuration absent")?;
     ensure!(
         BATCH_SIZES.contains(&spec.batch_size)
-            && [LOAD_HEIGHTS, LONG_LOAD_HEIGHTS].contains(&spec.heights),
+            && [LOAD_HEIGHTS, LONG_LOAD_HEIGHTS].contains(&spec.heights)
+            && !(spec.successor && spec.early_body),
         "unbounded or unknown load configuration"
     );
     let mut config = pipeline_config(&fixture.ledger)?;
@@ -51,18 +55,118 @@ enum WalletReply {
     Body((u64, u64), Arc<Message>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalletRequest {
+    Full(BatchContext),
+    Early(EarlyBodyScope),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalletOffer {
+    Full {
+        position: (u64, u64),
+        context: BatchContext,
+        successor: bool,
+    },
+    Early(EarlyBodyScope),
+}
+
+impl WalletOffer {
+    fn position(self) -> (u64, u64) {
+        match self {
+            Self::Full { position, .. } => position,
+            Self::Early(scope) => (scope.target_height, 0),
+        }
+    }
+
+    fn request(self) -> WalletRequest {
+        match self {
+            Self::Full { context, .. } => WalletRequest::Full(context),
+            Self::Early(scope) => WalletRequest::Early(scope),
+        }
+    }
+
+    // Exact scalar metadata only: no hashing/cloning a whole body on this
+    // control loop. The source context AND source round pin an early reply.
+    fn matches(self, position: (u64, u64), message: &Message) -> bool {
+        if position != self.position() {
+            return false;
+        }
+        match (self.request(), message) {
+            (WalletRequest::Full(expected), Message::Body { context, .. }) => expected == *context,
+            (WalletRequest::Early(expected), Message::EarlyBody { scope, .. }) => {
+                expected == *scope
+            }
+            _ => false,
+        }
+    }
+}
+
+fn full_offer(
+    mut context: BatchContext,
+    position: (u64, u64),
+    parent: ParentPoint,
+    successor: bool,
+) -> Result<WalletOffer> {
+    context.height = position.0;
+    context.parent_height = parent.height;
+    context.parent_block_hash = parent.block_hash;
+    context.parent_state_root = parent.state_root;
+    context.parent_receipt_root = parent.receipt_batch_commitment;
+    context.parent_state_version = parent.state_version;
+    context.slot = position.0;
+    context.timestamp_unix_ms = context
+        .timestamp_unix_ms
+        .checked_add(position.0)
+        .context("fixture timestamp overflow")?;
+    Ok(WalletOffer::Full {
+        position,
+        context,
+        successor,
+    })
+}
+
+fn desired_offer(
+    controller: &Controller,
+    template: BatchContext,
+    spec: LoadSpec,
+) -> Result<Option<WalletOffer>> {
+    let current = (controller.context().height, controller.round());
+    if controller.is_local_leader()?
+        && current.0 <= spec.heights
+        && !(spec.early_body && controller.has_early_target(current.0))
+    {
+        // Missing current-height work always wins over optional preparation.
+        return full_offer(template, current, controller.parent(), false).map(Some);
+    }
+    if spec.early_body {
+        return Ok(controller
+            .early_body_scope()?
+            .filter(|scope| scope.target_height <= spec.heights)
+            .map(WalletOffer::Early));
+    }
+    if spec.successor {
+        return controller
+            .successor_parent()?
+            .filter(|parent| parent.height < spec.heights)
+            .map(|parent| full_offer(template, (parent.height + 1, 0), parent, true))
+            .transpose();
+    }
+    Ok(None)
+}
+
 /// Signing, whole-body cloning and destruction stay off the controller thread.
 /// Only this bounded test wallet knows the future backlog; validators receive
 /// no expected writes, receipt, proposal, certificate or publish permission.
 struct Wallet {
-    tx: Option<SyncSender<((u64, u64), BatchContext)>>,
+    tx: Option<SyncSender<((u64, u64), WalletRequest)>>,
     rx: Option<Receiver<Result<WalletReply>>>,
     join: Option<JoinHandle<()>>,
 }
 
 impl Wallet {
     fn start(spec: LoadSpec) -> Result<Self> {
-        let (tx, requests) = mpsc::sync_channel::<((u64, u64), BatchContext)>(1);
+        let (tx, requests) = mpsc::sync_channel::<((u64, u64), WalletRequest)>(1);
         let (replies, rx) = mpsc::sync_channel(1);
         let join = std::thread::Builder::new()
             .name("fixture-signed-wallet".into())
@@ -84,14 +188,20 @@ impl Wallet {
                 // Retain the previous result until replacing it on this owner;
                 // dropping a stale reply on the control thread is then O(1).
                 let mut last = None;
-                while let Ok((position, context)) = requests.recv() {
+                while let Ok((position, request)) = requests.recv() {
                     let Some(body) = raw.get(position.0.saturating_sub(1) as usize) else {
                         let _ = replies.send(Err(anyhow::anyhow!("wallet height out of range")));
                         break;
                     };
-                    let message = Arc::new(Message::Body {
-                        context,
-                        raw_transactions: body.clone(),
+                    let message = Arc::new(match request {
+                        WalletRequest::Full(context) => Message::Body {
+                            context,
+                            raw_transactions: body.clone(),
+                        },
+                        WalletRequest::Early(scope) => Message::EarlyBody {
+                            scope,
+                            raw_transactions: body.clone(),
+                        },
                     });
                     last = Some(message.clone());
                     if replies
@@ -143,6 +253,13 @@ struct Observation {
     successor_reused: u64,
     successor_promoted_inflight: u64,
     successor_discarded: u64,
+    early_authentication_started: u64,
+    early_authentication_completed: u64,
+    // Actual authentication result taken while the corresponding local
+    // durable parent candidate is absent, not submission or pre-finality work.
+    early_authentication_completed_before_parent: u64,
+    early_bind_reused: u64,
+    early_discarded: u64,
     execution_failures: u64,
     stale_results: u64,
     durable_decisions: u64,
@@ -168,6 +285,12 @@ impl Observation {
             successor_reused: stats.successor_reused,
             successor_promoted_inflight: stats.successor_promoted_inflight,
             successor_discarded: stats.successor_discarded,
+            early_authentication_started: stats.early_authentication_started,
+            early_authentication_completed: stats.early_authentication_completed,
+            early_authentication_completed_before_parent: stats
+                .early_authentication_completed_before_parent,
+            early_bind_reused: stats.early_bind_reused,
+            early_discarded: stats.early_discarded,
             execution_failures: stats.execution_failures,
             stale_results: stats.stale_results,
             durable_decisions: stats.durable_decisions,
@@ -253,6 +376,9 @@ pub(super) fn run_controller(fixture: &Fixture, spec: LoadSpec) -> Result<()> {
     let result = (|| -> Result<()> {
         let mut controller = open_controller(fixture, &pipeline)?;
         let result = (|| -> Result<()> {
+            // Pure immutable fixture pins, not a cached live parent or permit.
+            // Avoid recomputing program/policy commitments on every poll.
+            let context_template = batch_context(fixture.root);
             let deadline = Instant::now() + RUN_BUDGET;
             let mut ready = false;
             let mut go = false;
@@ -284,56 +410,44 @@ pub(super) fn run_controller(fixture: &Fixture, spec: LoadSpec) -> Result<()> {
                 if !go && ready {
                     go = fixture.directory.join("go").exists();
                 }
-                let current = (controller.context().height, controller.round());
-                let desired = if controller.is_local_leader()? && current.0 <= spec.heights {
-                    Some((current, controller.parent(), false))
-                } else if spec.successor {
-                    controller
-                        .successor_parent()?
-                        .filter(|parent| parent.height < spec.heights)
-                        .map(|parent| ((parent.height + 1, 0), parent, true))
-                } else {
-                    None
-                };
-                if input
-                    .as_ref()
-                    .is_some_and(|(position, body)| desired.is_none_or(|(wanted, parent, _)| {
-                        *position != wanted || !matches!(body.as_ref(), Message::Body { context, .. } if context.parent_block_hash == parent.block_hash)
-                    }))
-                {
+                let desired = desired_offer(&controller, context_template, spec)?;
+                if input.as_ref().is_some_and(|(position, body)| {
+                    desired.is_none_or(|wanted| !wanted.matches(*position, body))
+                }) {
                     input = None;
                 }
-                if let Some((position, parent, future)) =
-                    desired.filter(|(position, parent, future)| {
-                        go && offered != Some((*position, parent.block_hash, *future))
-                    })
-                {
+                if let Some(wanted) = desired.filter(|wanted| go && offered != Some(*wanted)) {
                     if input.is_none() && !requested {
-                        let mut context = batch_context(fixture.root);
-                        context.height = position.0;
-                        context.parent_height = parent.height;
-                        context.parent_block_hash = parent.block_hash;
-                        context.parent_state_root = parent.state_root;
-                        context.parent_receipt_root = parent.receipt_batch_commitment;
-                        context.parent_state_version = parent.state_version;
-                        context.slot = position.0;
-                        context.timestamp_unix_ms += position.0;
                         wallet
                             .tx
                             .as_ref()
                             .unwrap()
-                            .try_send((position, context))
+                            .try_send((wanted.position(), wanted.request()))
                             .map_err(|_| anyhow::anyhow!("bounded wallet request unavailable"))?;
                         requested = true;
                     }
                     if let Some((_, body)) = &input {
-                        let accepted = if future {
-                            controller.try_submit_successor_body(body)?
-                        } else {
-                            controller.try_submit_body(body)?
+                        let accepted = match wanted {
+                            WalletOffer::Full {
+                                successor: true, ..
+                            } => controller.try_submit_successor_body(body)?,
+                            WalletOffer::Full {
+                                successor: false, ..
+                            } => controller.try_submit_body(body)?,
+                            WalletOffer::Early(scope) => {
+                                let timestamp = context_template
+                                    .timestamp_unix_ms
+                                    .checked_add(scope.target_height)
+                                    .context("fixture timestamp overflow")?;
+                                controller.try_submit_early_body(
+                                    body,
+                                    scope.target_height,
+                                    timestamp,
+                                )?
+                            }
                         };
                         if accepted {
-                            offered = Some((position, parent.block_hash, future));
+                            offered = Some(wanted);
                             input = None;
                         }
                     }
@@ -380,6 +494,7 @@ fn read_observation(path: &Path) -> Option<Observation> {
 #[derive(Serialize)]
 struct Measurement {
     successor_enabled: bool,
+    early_body_enabled: bool,
     schema: &'static str,
     topology: &'static str,
     batch_size: usize,
@@ -573,6 +688,7 @@ fn one_load(spec: LoadSpec) -> Result<()> {
     }
     let report = Measurement {
         successor_enabled: spec.successor,
+        early_body_enabled: spec.early_body,
         schema: "novovm/controller-load/v1", topology: "one host; four OS validator processes; one real WSS/E2E relay",
         batch_size: spec.batch_size, heights: spec.heights, unique_finalized_transactions: count,
         successful_transactions: count, business_failed_transactions: 0,
@@ -580,7 +696,7 @@ fn one_load(spec: LoadSpec) -> Result<()> {
         observed_backlog_latency_p95_seconds: percentile(&times, 95),
         observed_backlog_latency_p99_seconds: percentile(&times, 99),
         backlog_release_to_all_four_observed_seconds_by_height: times,
-        measurement_scope: format!("excludes key generation/signing, process startup, genesis and cold recovery; includes body construction, signature verification, execution, WSS/E2E including any remaining handshake, consensus and durable ACK; parent observes owner-published per-height files with 1ms requested polling (not guaranteed resolution); latency starts at release of entire finite backlog, includes waiting for prior heights; {} equal-size batch samples, not stable tail-latency or sustained mainnet capacity", spec.heights),
+        measurement_scope: format!("excludes key generation/signing, process startup, genesis and cold recovery; includes body construction, signature verification, execution, WSS/E2E including any remaining handshake, consensus and durable ACK; parent observes owner-published per-height files with 1ms requested polling (not guaranteed resolution); latency starts at release of entire finite backlog, includes waiting for prior heights; {} equal-size batch samples, not stable tail-latency or sustained mainnet capacity{}", spec.heights, if spec.early_body { "; early_authentication_completed_before_parent counts a real authentication result taken without the corresponding local durable parent candidate, not admission, business execution or parent-finality overlap" } else { "" }),
         observers: final_reports, cold_recovery_pass: true,
         relay_lifetime_admitted_wire_bytes: relay_report.relay_runtime.admitted_wire_bytes_total,
         relay_lifetime_source_byte_rejections: relay_report.relay_runtime.source_byte_limited_frame_total,
@@ -603,6 +719,15 @@ fn one_load(spec: LoadSpec) -> Result<()> {
                     node.successor_reused > 0 || node.successor_promoted_inflight > 0
                 }),
             "successor fixture completed without executing and promoting any successor"
+        );
+    }
+    if spec.early_body {
+        ensure!(
+            report.observers.iter().any(|node| node.early_authentication_started > 0)
+                && report.observers.iter().any(|node| node.early_authentication_completed > 0)
+                && report.observers.iter().any(|node| node.early_authentication_completed_before_parent > 0)
+                && report.observers.iter().any(|node| node.early_bind_reused > 0),
+            "early-body fixture completed without real pre-parent authentication and exact-parent bind reuse"
         );
     }
     eprintln!("batch={} unique_finalized={} all_four_seconds={elapsed:.6} finalized_tps={:.6}; full cold-state oracle passed", spec.batch_size, count, report.finalized_tps);
@@ -636,6 +761,7 @@ fn four_process_continuous_signed_load() -> Result<()> {
             batch_size,
             heights,
             successor: load_setting("NOVOVM_CONTROLLER_LOAD_SUCCESSOR")?.as_deref() == Some("1"),
+            early_body: load_setting("NOVOVM_CONTROLLER_LOAD_EARLY_BODY")?.as_deref() == Some("1"),
         })?;
     }
     Ok(())
@@ -650,6 +776,24 @@ fn four_process_successor_signed_load() -> Result<()> {
             batch_size,
             heights: LOAD_HEIGHTS,
             successor: true,
+            early_body: false,
+        })?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires real AOEM; actual parent-independent authentication, four-process finality and full cold economic oracle"]
+fn four_process_early_body_signed_load() -> Result<()> {
+    let _ = library()?;
+    // Same admitted batch and height sizes as the baseline measurements, not
+    // larger queues or a longer deadline. The small case is not a TPS claim.
+    for (batch_size, heights) in [(32, LOAD_HEIGHTS), (1024, LONG_LOAD_HEIGHTS)] {
+        one_load(LoadSpec {
+            batch_size,
+            heights,
+            successor: false,
+            early_body: true,
         })?;
     }
     Ok(())
@@ -667,4 +811,132 @@ fn load_setting(name: &str) -> Result<Option<String>> {
 fn nearest_rank_percentile_is_explicit_for_short_backlog_samples() {
     assert_eq!(percentile(&[1., 2., 3., 4., 5., 6., 7., 8.], 95), 8.);
     assert_eq!(percentile(&[1., 2., 3., 4.], 50), 2.);
+}
+
+#[test]
+fn old_load_configuration_defaults_to_neither_optional_mode() -> Result<()> {
+    let old: LoadSpec = serde_json::from_str(r#"{"batch_size":32,"heights":8}"#)?;
+    assert!(!old.successor && !old.early_body);
+    let successor: LoadSpec =
+        serde_json::from_str(r#"{"batch_size":32,"heights":8,"successor":true}"#)?;
+    assert!(successor.successor && !successor.early_body);
+    let early = LoadSpec {
+        early_body: true,
+        ..old
+    };
+    let restored: LoadSpec = serde_json::from_slice(&serde_json::to_vec(&early)?)?;
+    assert!(restored.early_body && !restored.successor);
+    assert_eq!((restored.batch_size, restored.heights), (32, 8));
+    Ok(())
+}
+
+#[test]
+fn wallet_reply_matching_pins_exact_source_round_and_full_context() {
+    // Only metadata matching is tested here. Opaque bytes are never evidence
+    // of a valid transaction, successful authentication or parent authority.
+    let source = ConsensusContext {
+        chain_id: CHAIN,
+        genesis_config_commitment: GENESIS,
+        protocol_commitment: PROTOCOL,
+        epoch: 1,
+        validator_set_hash: [3; 32],
+        height: 7,
+        parent_block_hash: [4; 32],
+        parent_decision_hash: [5; 32],
+    };
+    let scope = EarlyBodyScope {
+        source,
+        source_round: 2,
+        target_height: 8,
+    };
+    let early = WalletOffer::Early(scope);
+    let message = Message::EarlyBody {
+        scope,
+        raw_transactions: vec![vec![1]],
+    };
+    assert!(early.matches((8, 0), &message));
+    assert!(!early.matches((8, 1), &message));
+    for stale in [
+        EarlyBodyScope {
+            source_round: 3,
+            ..scope
+        },
+        EarlyBodyScope {
+            source: ConsensusContext {
+                parent_block_hash: [6; 32],
+                ..source
+            },
+            ..scope
+        },
+        EarlyBodyScope {
+            source: ConsensusContext {
+                parent_decision_hash: [6; 32],
+                ..source
+            },
+            ..scope
+        },
+        EarlyBodyScope {
+            source: ConsensusContext {
+                validator_set_hash: [6; 32],
+                ..source
+            },
+            ..scope
+        },
+        EarlyBodyScope {
+            source: ConsensusContext { epoch: 2, ..source },
+            ..scope
+        },
+        EarlyBodyScope {
+            target_height: 9,
+            ..scope
+        },
+    ] {
+        assert!(!early.matches(
+            (8, 0),
+            &Message::EarlyBody {
+                scope: stale,
+                raw_transactions: vec![vec![1]]
+            }
+        ));
+    }
+    let context = batch_context([7; 32]);
+    let full = WalletOffer::Full {
+        position: (8, 0),
+        context,
+        successor: false,
+    };
+    let body = Message::Body {
+        context,
+        raw_transactions: vec![vec![1]],
+    };
+    assert!(full.matches((8, 0), &body));
+    assert!(!full.matches((8, 1), &body));
+    assert!(!early.matches((8, 0), &body));
+    assert!(!full.matches((8, 0), &message));
+    for stale in [
+        BatchContext {
+            parent_state_root: [8; 32],
+            ..context
+        },
+        BatchContext {
+            parent_receipt_root: [8; 32],
+            ..context
+        },
+        BatchContext {
+            slot: context.slot + 1,
+            ..context
+        },
+        BatchContext {
+            timestamp_unix_ms: context.timestamp_unix_ms + 1,
+            ..context
+        },
+    ] {
+        assert!(!full.matches(
+            (8, 0),
+            &Message::Body {
+                context: stale,
+                raw_transactions: vec![vec![1]]
+            }
+        ));
+    }
 }

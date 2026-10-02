@@ -209,6 +209,7 @@ fn completed_reply_body_bind_and_backpressure_keep_the_original_permit() {
         panic!("wrong bound command");
     };
     assert_eq!(Arc::as_ptr(&command.request.body.permit), permit);
+    assert!(!command.background);
     assert_eq!(usage(&pipeline), expected);
     assert!(command
         .reply
@@ -218,6 +219,120 @@ fn completed_reply_body_bind_and_backpressure_keep_the_original_permit() {
     assert_eq!(usage(&pipeline), expected);
     assert!(bound.try_take().is_err());
     assert_eq!(usage(&pipeline), (0, 0, 0));
+}
+
+#[test]
+fn background_bind_keeps_exact_permit_at_full_quota_and_does_not_take_current_slot() {
+    for lose_ticket in [false, true] {
+        let mut config = cfg();
+        config.max_batches = 2;
+        let bytes = input().reservation(&config).unwrap();
+        let ordinary_reserve = BatchRequest::retained_reservation(
+            config.authentication.body_bytes.min(config.plan.body_bytes),
+            &config,
+        )
+        .unwrap();
+        config.max_retained_bytes = bytes + ordinary_reserve;
+        let (pipeline, receiver) = inert_pipeline(config);
+        let mut auth = admitted(&pipeline);
+        complete_authentication(&pipeline, next_auth(&receiver));
+        let body = auth.try_take().unwrap().unwrap();
+        let permit = Arc::as_ptr(&body.permit);
+        let body_pointer = body.body.as_ref() as *const _;
+        let baseline = (1, bytes, 1);
+        assert_eq!(usage(&pipeline), baseline);
+        let bound_request = body.bind(context(empty_root()));
+        let context_pointer = bound_request.context.as_ref() as *const _;
+
+        // The normal request owns the remaining logical slot AND fills the
+        // one-entry inert command queue. Failure must return the exact token.
+        let Submission::Accepted(ordinary) =
+            pipeline.try_submit_owned(request(empty_root())).unwrap()
+        else {
+            panic!("reserved ordinary slot was unavailable");
+        };
+        let full = usage(&pipeline);
+        assert_eq!(full.0, 2);
+        assert_eq!(full.2, 1);
+        let AuthenticatedSubmission::Backpressured(returned) = pipeline
+            .try_submit_authenticated_background_owned(bound_request)
+            .unwrap()
+        else {
+            panic!("full command queue accepted background bind");
+        };
+        assert_eq!(Arc::as_ptr(&returned.body.permit), permit);
+        assert_eq!(returned.body.body.as_ref() as *const _, body_pointer);
+        assert_eq!(returned.context.as_ref() as *const _, context_pointer);
+        assert_eq!(usage(&pipeline), full);
+        let ordinary_command = receiver.try_recv().unwrap();
+
+        // No queue occupancy remains, but BOTH quota slots are still owned.
+        // Also hold the quota lock: trying reserve() again must not be needed.
+        let quota_lock = pipeline.usage.lock().unwrap();
+        let submission = pipeline.try_submit_authenticated_background_owned(returned);
+        drop(quota_lock);
+        let AuthenticatedSubmission::Accepted(bound) = submission.unwrap() else {
+            panic!("bind attempted to reserve a second permit");
+        };
+        assert_eq!(Arc::as_ptr(bound.permit.as_ref().unwrap()), permit);
+        assert_eq!(usage(&pipeline), full);
+        let DriverMessage::Bind(command) = receiver.try_recv().unwrap() else {
+            panic!("wrong background driver command");
+        };
+        assert!(command.background);
+        assert!(command.request.body.permit.background);
+        assert_eq!(Arc::as_ptr(&command.request.body.permit), permit);
+        assert_eq!(command.request.body.body.as_ref() as *const _, body_pointer);
+        assert_eq!(
+            command.request.context.as_ref() as *const _,
+            context_pointer
+        );
+        drop((ordinary, ordinary_command));
+        assert_eq!(usage(&pipeline), baseline);
+
+        assert!(matches!(
+            pipeline.try_authenticate_owned(input()).unwrap(),
+            AuthenticationSubmission::Backpressured(_)
+        ));
+        assert!(matches!(
+            pipeline
+                .try_submit_background_owned(request(empty_root()))
+                .unwrap(),
+            Submission::Backpressured(_)
+        ));
+        let Submission::Accepted(current) =
+            pipeline.try_submit_owned(request(empty_root())).unwrap()
+        else {
+            panic!("background bind consumed the reserved current slot");
+        };
+        drop((current, receiver.try_recv().unwrap()));
+        assert_eq!(usage(&pipeline), baseline);
+
+        if lose_ticket {
+            drop(bound);
+            assert_eq!(usage(&pipeline), baseline); // Live owner command remains.
+            assert!(command
+                .reply
+                .send(Err(anyhow::anyhow!("owner drained after lost ticket")))
+                .is_err());
+            drop(command);
+        } else {
+            let mut bound = bound;
+            assert!(command
+                .reply
+                .send(Err(anyhow::anyhow!("owner-side bind rejection")))
+                .is_ok());
+            drop(command);
+            assert_eq!(usage(&pipeline), baseline); // Unconsumed terminal reply.
+            assert!(matches!(
+                pipeline.try_authenticate_owned(input()).unwrap(),
+                AuthenticationSubmission::Backpressured(_)
+            ));
+            assert!(bound.try_take().is_err());
+            assert!(bound.try_take().is_err());
+        }
+        assert_eq!(usage(&pipeline), (0, 0, 0));
+    }
 }
 
 #[test]
@@ -522,6 +637,125 @@ fn real_parent_independent_authentication_rebinds_only_through_fresh_capture_and
                 "exact economic projection changed after database reopen"
             );
         }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY; real background bind/retained reply/cold records, not finality or native preemption"]
+fn real_background_bind_keeps_original_permit_through_shutdown_and_unconsumed_success() -> Result<()>
+{
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/runtime-rebuild/pipeline-background-bind-tests")
+        .join(format!(
+            "{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+    std::fs::create_dir_all(&directory)?;
+    let mut config = cfg();
+    config.max_batches = 2;
+    config.store.database = directory.join("state.rocksdb");
+    config.store.library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+        .context("explicit trusted AOEM test library required")?
+        .into();
+    let raw = vec![signed(1, 10), signed(2, 20)];
+    let mut changes = fee_record_changes(&policy(), &FeeState::default())?;
+    for seed in [1, 2] {
+        changes.push(StateChange::Put {
+            key: balance_key(&account(seed)),
+            value: 10_000u128.to_le_bytes().to_vec(),
+        });
+    }
+    let update = stage_state_update(&Memory::default(), empty_root(), &changes)?;
+    let memory = Memory(update.nodes().clone());
+    let store = CandidateStore::open(config.store.clone(), OpenMode::CreateNew)?;
+    store.install_unpublished_state(&update)?;
+    drop(store);
+    let context = context(update.root());
+    let expected = NovTransferPlan::compile(
+        authenticate_batch_for_proof(domain().chain_id, raw.clone(), config.authentication)?,
+        context,
+        policy(),
+        config.plan,
+    )?
+    .capture(&memory, config.capture)?
+    .execute_for_proof()?;
+    let mut projected = Memory(memory.0.clone());
+    projected
+        .0
+        .extend(expected.effects().update().nodes().clone());
+    let expected_values = expected
+        .effects()
+        .plan()
+        .declared_access()
+        .iter()
+        .map(|access| {
+            Ok((
+                access.key.clone(),
+                read_state_value(&projected, expected.effects().update().root(), &access.key)?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let expected = PreparedCandidate::from_executed(expected, config.store.packet_budget)?;
+
+    let pipeline = CandidatePipeline::start(config.clone(), OpenMode::Existing)?;
+    let body = real_authenticate(&pipeline, raw.clone())?;
+    let original_permit = Arc::as_ptr(&body.permit);
+    let reserved = usage(&pipeline);
+    assert_eq!(reserved.0, 1);
+    assert_eq!(reserved.2, 1);
+    let AuthenticatedSubmission::Accepted(mut ticket) = pipeline
+        .try_submit_authenticated_background_owned(body.bind(context))
+        .map_err(|rejected| rejected.error)?
+    else {
+        anyhow::bail!("completed authentication could not reuse its background reservation");
+    };
+    assert_eq!(
+        Arc::as_ptr(ticket.permit.as_ref().unwrap()),
+        original_permit
+    );
+    assert_eq!(usage(&pipeline), reserved);
+    assert!(matches!(
+        pipeline.try_authenticate_owned(input()).unwrap(),
+        AuthenticationSubmission::Backpressured(_)
+    ));
+    let retained = pipeline.usage.clone();
+    // This drains the REAL driver/native/I/O owners. A successful shutdown
+    // proves the terminal reply exists without polling/consuming that reply.
+    pipeline.shutdown()?;
+    {
+        let usage = retained.lock().unwrap();
+        assert_eq!((usage.batches, usage.bytes, usage.background), reserved);
+    }
+    let result = ticket
+        .try_take()?
+        .context("drained background job has no terminal reply")?;
+    assert!(ticket.try_take().is_err());
+    {
+        let usage = retained.lock().unwrap();
+        assert_eq!((usage.batches, usage.bytes, usage.background), (0, 0, 0));
+    }
+    assert_eq!(result.packet.records(), expected.records());
+    assert_eq!(result.persisted.candidate_id, expected.candidate_id());
+    assert_eq!(result.persisted.state_root, expected.state_root());
+    assert_eq!(
+        result.persisted.statement_commitment,
+        expected.statement_commitment()
+    );
+    assert!(result.observation.peak_callbacks > 0);
+    let store = CandidateStore::open(config.store, OpenMode::Existing)?;
+    let recovered = store
+        .recover(expected.candidate_id())?
+        .context("background candidate missing after reopen")?;
+    assert!(expected.matches(&recovered));
+    assert_eq!(recovered.raw_transactions(), raw);
+    for (key, value) in expected_values {
+        assert_eq!(
+            read_state_value(&store, expected.state_root(), &key)?,
+            value,
+            "background bind changed the cold economic projection"
+        );
     }
     Ok(())
 }

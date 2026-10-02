@@ -19,6 +19,9 @@ const MAGIC: &[u8; 8] = b"NVHOSTN1";
 const PREFIX_BYTES: usize = 11;
 const CONTEXT_BYTES: usize = 308;
 
+mod early;
+pub use early::{early_body_id, EarlyBodyScope};
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
     Body {
@@ -44,6 +47,19 @@ pub enum Message {
     /// A request grants neither archive authority nor permission to sign.
     RequestDecision {
         context: wire::Context,
+    },
+    /// Optional parent-independent raw input, never a candidate or a vote.
+    /// Tags 7/8 carry their own explicit payload version; old decoders reject.
+    EarlyBody {
+        scope: EarlyBodyScope,
+        raw_transactions: Vec<Vec<u8>>,
+    },
+    /// A small reference to one immutable announcement. The controller must
+    /// check the origin/round and authorize this exact parent independently.
+    BindBody {
+        scope: EarlyBodyScope,
+        announcement_id: Hash,
+        context: BatchContext,
     },
 }
 
@@ -119,6 +135,8 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::Decision { .. } => 4,
         Message::RequestBody { .. } => 5,
         Message::RequestDecision { .. } => 6,
+        Message::EarlyBody { .. } => 7,
+        Message::BindBody { .. } => 8,
     });
     match message {
         Message::Body {
@@ -159,6 +177,19 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
             out.extend_from_slice(&context.parent_block_hash);
             out.extend_from_slice(&context.parent_decision_hash);
         }
+        Message::EarlyBody {
+            scope,
+            raw_transactions,
+        } => {
+            early::append_body(&mut out, scope, raw_transactions, limits)?;
+        }
+        Message::BindBody {
+            scope,
+            announcement_id,
+            context,
+        } => {
+            early::append_bind(&mut out, scope, announcement_id, context, limits)?;
+        }
     }
     ensure!(
         out.len() <= limits.message_bytes,
@@ -176,8 +207,8 @@ pub(crate) fn body_prefix(bytes: &[u8]) -> Result<bool> {
         "host network protocol/version mismatch"
     );
     match bytes[10] {
-        1 => Ok(true),
-        2..=6 => Ok(false),
+        1 | 7 => Ok(true),
+        2..=6 | 8 => Ok(false),
         _ => anyhow::bail!("unknown host network message kind"),
     }
 }
@@ -259,6 +290,8 @@ pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
             context.validate_shape()?;
             Message::RequestDecision { context }
         }
+        7 => early::decode_body(&mut reader, limits)?,
+        8 => early::decode_bind(&mut reader)?,
         _ => anyhow::bail!("unknown host network message kind"),
     };
     ensure!(
@@ -383,6 +416,9 @@ impl<'a> Reader<'a> {
     fn u32(&mut self) -> Result<u32> {
         Ok(u32::from_be_bytes(self.take(4)?.try_into()?))
     }
+    fn u16(&mut self) -> Result<u16> {
+        Ok(u16::from_be_bytes(self.take(2)?.try_into()?))
+    }
     fn u64(&mut self) -> Result<u64> {
         Ok(u64::from_be_bytes(self.take(8)?.try_into()?))
     }
@@ -398,3 +434,7 @@ impl<'a> Reader<'a> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "transport/early_tests.rs"]
+mod early_tests;

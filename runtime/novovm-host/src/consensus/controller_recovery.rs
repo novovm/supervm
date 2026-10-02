@@ -82,6 +82,8 @@ impl Controller {
                 prepared: ready.prepared.clone(),
                 evidence: ready.evidence.clone(),
                 body: None,
+                early: None,
+                bound_early: None,
             },
         });
         Ok(true)

@@ -150,9 +150,31 @@ pub(super) struct AuthenticationCommand {
 pub(super) struct BindCommand {
     pub request: AuthenticatedRequest,
     pub reply: mpsc::Sender<Result<DurableBatch>>,
+    pub background: bool,
 }
 
 impl CandidatePipeline {
+    /// Static feasibility, not queue availability or a reservation. Controllers
+    /// must not hold current-height input forever when optional background
+    /// authentication cannot fit even an otherwise empty configured pipeline.
+    pub(crate) fn can_authenticate_background(
+        &self,
+        request: &AuthenticationRequest,
+    ) -> Result<bool> {
+        let bytes = request.reservation(&self.config)?;
+        let current = BatchRequest::retained_reservation(
+            self.config
+                .authentication
+                .body_bytes
+                .min(self.config.plan.body_bytes),
+            &self.config,
+        )?;
+        Ok(self.config.max_batches > 1
+            && bytes
+                .checked_add(current)
+                .is_some_and(|total| total <= self.config.max_retained_bytes))
+    }
+
     /// Optional work: at most one background permit and always reserve a full
     /// ordinary batch. The ordinary and preauthenticated routes share budgets,
     /// the compute session and all subsequent state/persistence validation.
@@ -209,6 +231,24 @@ impl CandidatePipeline {
         &self,
         request: AuthenticatedRequest,
     ) -> std::result::Result<AuthenticatedSubmission, RejectedAuthenticatedSubmission> {
+        self.try_submit_authenticated_with_priority(request, false)
+    }
+
+    /// Continue optional future work without promoting its scheduling priority
+    /// before the exact parent ACK. This reuses its original background permit;
+    /// it neither reserves a second slot nor grants any parent authority.
+    pub(crate) fn try_submit_authenticated_background_owned(
+        &self,
+        request: AuthenticatedRequest,
+    ) -> std::result::Result<AuthenticatedSubmission, RejectedAuthenticatedSubmission> {
+        self.try_submit_authenticated_with_priority(request, true)
+    }
+
+    fn try_submit_authenticated_with_priority(
+        &self,
+        request: AuthenticatedRequest,
+        background: bool,
+    ) -> std::result::Result<AuthenticatedSubmission, RejectedAuthenticatedSubmission> {
         let prerequisites = (|| {
             ensure!(
                 Arc::ptr_eq(&request.body.owner, &self.identity),
@@ -235,7 +275,11 @@ impl CandidatePipeline {
         };
         let permit = request.body.permit.clone();
         let (reply, receiver) = mpsc::channel();
-        match sender.try_send(DriverMessage::Bind(BindCommand { request, reply })) {
+        match sender.try_send(DriverMessage::Bind(BindCommand {
+            request,
+            reply,
+            background,
+        })) {
             Ok(()) => {
                 worker.thread().unpark();
                 Ok(AuthenticatedSubmission::Accepted(PipelineTicket {

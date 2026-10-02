@@ -8,7 +8,73 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：提前原文与真实节点绑定接入（2026-10-03，本地验收）
+
+基于`1fb606f`，19个runtime源/测试（13个已有+6个新增），其他140个tracked
+runtime文件与HEAD一致；旧49草稿保留，不作为本刀构建输入。最终干净快照
+为下述同一dev目录，最后测试日志`early-dev-workspace-{windows,linux}-v3.log`。
+真库Release Windows **653+8**、Linux **652+8**，零失败/零忽略：Host400、
+AOEM31、Network211/210、11集成、8文档。fmt、双平台strict Clippy、native-free
+library与三成员无legacy隔离通过。最终Windows binary SHA256
+`557bf83933f4e57af97088a973c19193203a9f1f85466b6f2683138f07ddecef`；Linux
+`4af9c617059bb6eb915cef225244e3aea4c424ca29c4d0d06bf1f62c77904649`。
+
+新增28项，包括8项真实controller反例：无父真实鉴权、错来源/域/ID、首绑定
+不可改、父ACK跨认证/组装回执、未来拒签/当前持久签票、换轮drain/旧代拒绝、
+单槽回退、坏签同代重放与冷恢复、持续有效控制流公平、真实单batch重开、
+紧预算下Early/Bind缓存清理且live successor票据仍排空。另有真实后台bind
+跨shutdown及未消费成功回执的原permit保留，typed真实Job排序与队满返还。
+不是扣住native回调的抢占测试，也不假称逐帧网络session pin已贯通。
+
+初轮真实新增经济oracle有3项FAIL：测试误以为max_pay_amount=0免手续费，
+实际是自动报价上限，每笔既有费用45；修为两付款方999710/999810、收款300、
+nonce2，保留普通执行全records对照和冷余额/nonce。生产经济未改。全量v2
+双平台各399/400，旧prefix测试把tag7当未知；补7/8正确分类及截断拒绝，
+未知标签改测0/9/255。原失败日志保留，未放宽资源/期限/经济断言。
+
+独立Linux有限负载早/原后继/早模式（同一binary
+`fd148e136b6c8cb86e47c661374231a7e73bceab15763d3b9cceef61fac4911f`）：
+65536笔分别9.187579411/9.262477893/8.385941412秒，即7133.108/7075.428/
+7814.984 TPS；三次全经济冷恢复通过，12个最终head完全相同。报告目录依次
+`controller-load-1024-3362-1790957886297414682`、
+`controller-load-1024-378-1790957979708235213`、
+`controller-load-1024-365-1790958054493169430`（均在快照内target/runtime-rebuild）。
+首轮各节点真实auth完成/绑定复用59/59/54/59；父能力前消费5/4/10/5。
+不是全量回归并行运行期间的性能数，也不与旧机器时段8400样本直接相比；
+当前不足以签收稳定吞吐提升、证明最终性、实体多机或公网容量。
+
+A后续处理父写入阻塞子capture的只读后态seed，保持精确父成功持久ACK和
+原预算。S4通用后端、隐私/PQ主链接入、Execute、多机和生产总目标仍未完成。
+本次提交及远端CI另核。
+
+### 先前开发记录（保留当时范围）
+
+未提交，`main/origin/main=1fb606f`。仅忽略开发快照
+`target/runtime-rebuild/candidate-1fb606f-early-body-dev-v1/`，root旧49草稿保持。
+EarlyBody tag7/BindBody tag8独立payload v1，不改原1–6编码；绑定恢复同一
+immutable raw的原canonical Body，真实认证body跨父绑定复用原背景permit。
+本轮并未修改AOEM/SDK、旧实现或生产参数。
+
+开发证据（不是最终签收）：Windows check、15项相关测试及strict Clippy通过，
+WSL check通过。初版Windows真AOEM四进程32×8完成256笔和四库完整冷经济oracle；
+各节点提前鉴权started/completed/reused为7/6/7/5，观察到父能力前消费auth
+回执为1/1/1/3。后者不是物理写盘/native callback计时。日志
+`early-dev-load32-windows-v1.log`；报告目录
+`target/runtime-rebuild/controller-load-32-21740-1790957319674055700/`（位于快照内）。
+0.610209秒是Windows小负载开发样本，不和旧Linux大负载对比或签收提速。
+停止时4条TLS close_notify告警、旧上下文消息拒绝仍保留。
+
+上述初版之后已补持续控制消息公平性、max_inflight/背景额度不可用回退、
+同source代退休后重放限制、早后继退休时原文/绑定缓存清理。新真实反例在写，
+最终全量双平台、1024×64与旧版对照尚未运行；不能以初版结果覆盖后续改动。
+父写入阻塞子capture的只读后态seed尚未实现，S4、隐私/PQ、通用执行与生产
+验收保持未完成。
+
 ## 设备 A：父状态无关鉴权与精确父绑定（2026-10-02）
+
+交付更新：本节11个runtime文件与三文档现为`1fb606fe7c8b7a7fba3a5f185a62785bcfc9b076`，
+已推送main并核对远端一致。CI `37023171845` Windows/Linux均成功；不是
+提前原文协议/主链性能或完整产品签收。后续干净early-body开发快照未验收。
 
 基于`0bca25d`；其远端CI `37016049228`双平台成功。本刀仅11个新runtime
 源/测试与既有三文档，旧host11/legacy38保留，compute只提交新差异。

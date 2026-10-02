@@ -6,6 +6,53 @@
 
 ## 最新短交接
 
+- **本刀已完成本地验收，准备提交（2026-10-03）：** 基于`1fb606f`，19个
+  新runtime源/测试文件和三文档，不带root旧49草稿。EarlyBody先送原文，
+  BindBody只送精确父context，同一常驻AOEM预鉴权结果直接交原当前/后继
+  执行，背景permit不重复计取；普通Full仅作缺失/恢复，先验签不授予签票权。
+  静态不可用背景额度回退、控制流公平、同source代重放限制、退休缓存清理和
+  精确ACK/换轮/迟到均有真实反例。冻结源仍在`candidate-1fb606f-early-body-dev-v1`，
+  最终真库Release Windows653+8/Linux652+8，fmt/双平台strict Clippy/
+  native-free library及隔离通过；日志`early-dev-workspace-*-v3.log`。
+  初轮新增sender oracle漏算既有45/笔费用，已纠正预期、经济代码未改；旧
+  prefix测试把新tag7视为未知也已按新协议更新，原失败日志保留。
+  同Linux二进制的早模式/原后继/早模式65536笔为7133.108/7075.428/7814.984
+  TPS，完整冷经济核对和12个head相同；样本不足以签收稳定提速或主网容量。
+  A下一步处理实际父写入对下一批capture读取的强制等待：真实执行的父见证+
+  delta只读seed、逐边/访问授权重验、精确父成功持久ACK前不得让子持久完成，
+  同时闭合seed内存与原任务槽，不增加限额代替结构修正。此seed尚未实现。
+  B隐私/PQ与S4通用后端阻断、Execute/实体多机/持续容量/部署完整目标不变。
+
+- **2026-10-03 开发中，尚未提交：** `main/origin/main`仍为`1fb606f`。
+  `candidate-1fb606f-early-body-dev-v1`已接版本化EarlyBody/BindBody、
+  HostChannel双份预算、controller预鉴权/精确父绑定与原后继/当前执行，
+  同一驻留AOEM和原背景permit贯穿，不重复Full常规广播；Full缺件恢复保留。
+  首轮Windows编译、15项相关纯测试和strict Clippy通过；WSL check通过。
+  初版真实Windows四进程32×8完整冷经济oracle通过，各节点取回真实提前鉴权
+  7/6/7/5次、复用7/6/7/5次；这是开发检查，不是最终快照或提速签收。
+  随后补持续控制流公平调度、无背景容量回退、同source代重放拒绝和退役缓存
+  清理，相关真实反例正在编写，尚待重跑。`completed_before_parent`只说明
+  controller取回真实鉴权结果时尚未持有相应耐久父能力，不是物理写盘计时。
+  Root集成，协作代理分别补基础绑定/ACK与调度/预算真实反例；均属于设备A。
+  独立target为快照内`target/early-body-dev-v1-{windows,linux}`。后态seed
+  仍未实现；完整性能、S4/隐私/PQ/Execute/实体多机/部署目标不缩减。
+
+- **续作入口：`main@1fb606f`已推送，CI `37023171845`双平台成功。** 已交付
+  两阶段pipeline，但节点提前原文接入尚未完成。A正在干净忽略快照
+  `target/runtime-rebuild/candidate-1fb606f-early-body-dev-v1/`开发下一段；
+  不直接编辑/混入root旧49草稿。协议方案为版本化`EarlyBody`先传原文，
+  `BindBody`后传精确context小引用，旧Full Body保留缺件/恢复；不能重复
+  全量fanout。来源限定下一高度round0 leader的认证peer，绑定当前完整
+  source context/round、announcement ID和本地代次，不假称逐帧网络session
+  已贯通。父ACK前绑定仍须背景调度并沿用原permit；提前完成不授权投票。
+  快照已开始修改、尚未构建/签收；Root负责controller/pipeline，协作代理
+  分别负责transport与HostChannel，均属于A，不代表设备B。
+  新发现：现真实夹具`max_batches=2、io.requests=1`，父写票据占内部读写
+  许可，子capture miss仍等父持久ACK。下一结构性候选是父真实执行产生的
+  captured witness+新delta只读后态seed，子仍重新核验来边/声明；子Persist
+  必须等待精确父candidate/statement/document的成功ACK，不依赖root存在。
+  seed保留量/父槽与当前批预留须先闭合，不能只加额度。此seed尚未实现。
+
 - **当前切片：父状态无关鉴权与精确父绑定。** 基于`0bca25d`（远端CI
   `37016049228`双平台成功），仅11个新runtime源/测试与三文档；旧49草稿
   保留，compute部分提交不带旧diagnostics。`NovTransferBody`提前推导完整

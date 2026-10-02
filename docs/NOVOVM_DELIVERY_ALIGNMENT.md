@@ -2,6 +2,29 @@
 
 更新日期：2026-10-02。隔离前旧节点运行基线：`main@14b32a3`；不是新 runtime 的能力声明。
 
+**当前A验收（2026-10-03，基于1fb606f，提交/CI另核）：** 提前原文+小父绑定
+已接同一真实节点controller/AOEM流水线，19个runtime文件，不带旧49草稿。
+真库Release Windows653+8/Linux652+8和严格检查通过；真实绑定/ACK/换轮/
+公平/单槽回退/缓存抢占反例完成。65536笔同二进制早/后继/早模式约7133/
+7075/7815 TPS，四库全量冷经济与12head一致，不宣称稳定提速或完整产品。
+A下一处认领原pipeline/execution/state/persistence的精确父只读后态seed与
+父持久完成依赖；目标减少子捕获被父写盘强制挡住，仍逐边认证和保留原额度。
+尚未实现，不向B扩散共享文件；B独立隐私/PQ、S4后端/Execute/多机等目标保留。
+
+**2026-10-03 A开发中：** `main@1fb606f`不变，提前原文/小父绑定已在忽略快照
+`candidate-1fb606f-early-body-dev-v1`接入controller和真实四进程夹具；初版32×8
+真实AOEM、完整冷经济核对通过，尚未做最终双平台/大负载回归或提交，不称提速。
+后补公平调度、不可用背景额度回退、同代重放拒绝、缓存退休正在反例验证。
+A继续独占共享transport/channel/controller/pipeline/load接口；B保持独立
+隐私/PQ范围。原root49草稿不混入，后态seed与S4等总目标未完成。详见重建计划顶部。
+
+**续作状态：** 两阶段pipeline已提交推送为`1fb606f`，CI `37023171845`
+Windows/Linux成功。A在干净忽略快照`candidate-1fb606f-early-body-dev-v1`
+实施现有controller/HostChannel的版本化提前原文/小父绑定消息，尚未验收。
+原root49草稿保留；B不覆盖transport/channel/controller/pipeline共享接口。
+实际单内部I/O许可导致的子捕获等待也已确认，后态seed契约尚未实现；
+不把提前验签或组件测试当主链提速。恢复细节见重建计划最新短交接。
+
 **当前A交付：** 基于`0bca25d`（CI `37016049228`双平台成功），父状态无关
 鉴权→消费式精确父绑定已接同一驻留AOEM/pipeline；11个runtime文件，原额度
 跨在途/未消费body保留，旧host11/legacy38草稿不混入。真实双父经济/重开/旧

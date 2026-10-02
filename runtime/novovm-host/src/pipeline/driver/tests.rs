@@ -75,3 +75,86 @@ fn completed_jobs_do_not_skip_or_promote_background_in_the_next_round() {
         assert_eq!(order(&jobs), expected);
     }
 }
+
+// Build an actual typed Bind command from proof-verified signed transactions,
+// then exercise the PRODUCTION DriverMessage -> Job conversion. No native
+// session, live admission or scheduling/preemption timing is claimed here.
+fn bound_job(marker: u8, background: bool) -> (Job, Arc<Mutex<Usage>>) {
+    use crate::ingress::batch::authenticate_batch_for_proof;
+    use crate::pipeline::authentication::BindCommand;
+    use crate::pipeline::compute::tests::{context, domain, policy, signed};
+    use crate::state::tree::empty_root;
+
+    let config = crate::pipeline::tests::config("unused-driver-bound-fixture".into());
+    let raw = vec![signed(1, 10), signed(2, 20)];
+    let bytes =
+        BatchRequest::retained_reservation(raw.iter().map(Vec::len).sum(), &config).unwrap();
+    let body = NovTransferBody::prepare(
+        authenticate_batch_for_proof(domain().chain_id, raw, config.authentication).unwrap(),
+        policy(),
+        config.plan,
+    )
+    .unwrap();
+    let usage = Arc::new(Mutex::new(Usage {
+        batches: 1,
+        bytes,
+        background: 1,
+    }));
+    // Authentication ALWAYS owns the optional permit. Bind scheduling priority
+    // must come from the command, not from changing or inspecting this flag.
+    let permit = Arc::new(Permit {
+        usage: usage.clone(),
+        bytes,
+        background: true,
+    });
+    let original = Arc::as_ptr(&permit);
+    let (reply, _) = mpsc::channel();
+    let command = BindCommand {
+        request: AuthenticatedBody {
+            body: Box::new(body),
+            owner: Arc::new(()),
+            permit,
+        }
+        .bind(context(empty_root())),
+        reply,
+        background,
+    };
+    let mut job = Job::from(DriverMessage::Bind(command));
+    assert!(matches!(job.stage, Stage::Bind(_)));
+    assert!(job.candidate_id.is_none());
+    assert_eq!(Arc::as_ptr(&job._permit), original);
+    assert!(job._permit.background);
+    // Test-only ordering marker; not a computed candidate identity.
+    job.candidate_id = Some([marker; 32]);
+    (job, usage)
+}
+
+#[test]
+fn typed_background_bind_stays_after_ordinary_and_priority_is_not_permit_class() {
+    let (optional, optional_usage) = bound_job(9, true);
+    let (ordinary_bind, ordinary_usage) = bound_job(1, false);
+    assert!(optional.background);
+    assert!(!ordinary_bind.background);
+    assert!(ordinary_bind._permit.background);
+    let mut jobs = VecDeque::new();
+    enqueue(&mut jobs, optional);
+    enqueue(&mut jobs, ordinary_bind);
+    enqueue(&mut jobs, job(2, false));
+    assert_eq!(order(&jobs), [1, 2, 9]);
+    // A later current request must still go ahead of the bound optional job
+    // after a full pending round, without promoting or restarting that job.
+    for _ in 0..jobs.len() {
+        let job = jobs.pop_front().unwrap();
+        jobs.push_back(job);
+    }
+    enqueue(&mut jobs, job(3, false));
+    assert_eq!(order(&jobs), [1, 2, 3, 9]);
+    assert!(matches!(jobs.back().unwrap().stage, Stage::Bind(_)));
+    assert_eq!(optional_usage.lock().unwrap().background, 1);
+    assert_eq!(ordinary_usage.lock().unwrap().background, 1);
+    drop(jobs);
+    for usage in [optional_usage, ordinary_usage] {
+        let usage = usage.lock().unwrap();
+        assert_eq!((usage.batches, usage.bytes, usage.background), (0, 0, 0));
+    }
+}

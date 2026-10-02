@@ -146,7 +146,7 @@ impl From<DriverMessage> for Job {
                 candidate_id: None,
                 reply: Reply::Durable(command.reply),
                 _permit: command.request.body.permit,
-                background: false,
+                background: command.background,
             },
         }
     }

@@ -11,6 +11,8 @@ mod recovery;
 use recovery::Recovery;
 mod successor;
 use successor::Successor;
+mod early_body;
+use early_body::{EarlyOrigin, EarlyWork};
 
 use super::channel::{
     ChannelEvent, HostChannel, Outbound, PrepareAdmission, PrepareInput, PrepareRequest,
@@ -28,7 +30,8 @@ use super::{ArchiveRead, DurableMessage, TimeoutStep, ValidatorJournal};
 use crate::business::nov_transfer_batch::ExecutionObservation;
 use crate::execution::plan::BatchContext;
 use crate::pipeline::{
-    BatchRequest, CandidatePipeline, DurableCandidate, PipelineTicket, Submission,
+    AuthenticatedRequest, AuthenticatedSubmission, AuthenticationTicket, BatchRequest,
+    CandidatePipeline, DurableCandidate, PipelineTicket, Submission,
 };
 use anyhow::{ensure, Context as _, Result};
 use novovm_network::product_overlay::peer_id_from_ed25519_public_key_v1;
@@ -82,6 +85,14 @@ pub struct ControllerStats {
     pub successor_reused: u64,
     pub successor_promoted_inflight: u64,
     pub successor_discarded: u64,
+    pub early_authentication_started: u64,
+    pub early_authentication_completed: u64,
+    /// Real authentication reply observed before this controller holds the
+    /// matching durable-parent capability. Not a disk/native completion clock,
+    /// business-execution overlap, enqueue count or cross-process clock delta.
+    pub early_authentication_completed_before_parent: u64,
+    pub early_bind_reused: u64,
+    pub early_discarded: u64,
     /// Sum of component counts from successful DurableBatch observations,
     /// including stale completions. Not finalized transactions or parallelism.
     pub execution_components_total: u64,
@@ -149,6 +160,8 @@ struct Body {
     source: String,
     prepared: PreparedMessage,
     request: Option<BatchRequest>,
+    authenticated: Option<AuthenticatedRequest>,
+    early_origin: Option<EarlyOrigin>,
     candidate: Option<(Hash, DurableCandidate)>,
     failed: bool,
     local_round: Option<u64>,
@@ -173,6 +186,9 @@ struct Offered {
 }
 
 enum Purpose {
+    EarlyBody(u64),
+    BindEarly(u64),
+    EarlyBinding(EarlyOrigin),
     SuccessorBody(successor::Pin),
     LocalBody {
         context: Context,
@@ -289,6 +305,9 @@ pub struct Controller {
     inflight: Vec<Execution>,
     successor: Option<Successor>,
     successor_drain: Option<PipelineTicket>,
+    early: Option<EarlyWork>,
+    early_drain: Option<AuthenticationTicket>,
+    early_attempted_scope: Option<super::transport::EarlyBodyScope>,
     preparing: BTreeMap<u64, Preparation>,
     fixed: VecDeque<Fixed>,
     archives: BTreeMap<String, ArchiveJob>,
@@ -357,6 +376,9 @@ impl Controller {
             inflight: Vec::new(),
             successor: None,
             successor_drain: None,
+            early: None,
+            early_drain: None,
+            early_attempted_scope: None,
             preparing: BTreeMap::new(),
             fixed: VecDeque::new(),
             archives: BTreeMap::new(),
@@ -530,6 +552,10 @@ impl Controller {
             // execution/archive progress forever. Genuine pending retirement
             // still backpressures admission, and new bodies wait one poll.
             self.submit_executions(pipeline)?;
+            // Accepted lookahead may now target the current height. Give it
+            // one bounded turn before fresh control ingress adds retirement;
+            // otherwise even a healthy owner could starve its exact binding.
+            self.poll_early(pipeline)?;
             self.poll_archives(pipeline)?;
             if self.retired.is_empty() {
                 self.request_missing(now)?;
@@ -645,6 +671,11 @@ impl Controller {
         let ready = match result {
             Ok(ready) => ready,
             Err(error) => {
+                if let Purpose::EarlyBody(generation) | Purpose::BindEarly(generation) =
+                    &pending.purpose
+                {
+                    self.early_preparation_failed(*generation);
+                }
                 if let Purpose::SuccessorBody(pin) = &pending.purpose {
                     self.successor_preparation_failed(*pin);
                 }
@@ -662,6 +693,14 @@ impl Controller {
             }
         };
         match pending.purpose {
+            Purpose::EarlyBody(generation) => self.early_prepared(generation, ready)?,
+            Purpose::BindEarly(generation) => self.early_bound_prepared(generation, ready)?,
+            Purpose::EarlyBinding(origin) => {
+                if self.live_early_origin(origin) {
+                    self.cache(ready.prepared.clone(), None);
+                }
+                self.retire(Retirement::Ready(ready));
+            }
             Purpose::SuccessorBody(pin) => self.successor_prepared(pin, ready)?,
             Purpose::RecoveryBody(locator) => self.recovered_body(locator, ready)?,
             Purpose::LocalBody { context, round } => {
@@ -745,6 +784,9 @@ impl Controller {
             self.retire(Retirement::Ready(ready));
             return Ok(());
         }
+        if matches!(ready.message.as_ref(), Message::EarlyBody { .. }) {
+            return self.keep_early(source, ready, None);
+        }
         if matches!(ready.message.as_ref(), Message::Body { .. }) {
             if self.is_recovering() {
                 // Replay roots have reserved precedence. Peers retain their
@@ -765,6 +807,14 @@ impl Controller {
     fn receive_control(&mut self, source: String, ready: &Ready) -> Result<()> {
         match ready.message.as_ref() {
             Message::Body { .. } => unreachable!("body routed separately"),
+            Message::EarlyBody { .. } => unreachable!("early body routed separately"),
+            Message::BindBody {
+                scope,
+                announcement_id,
+                context,
+            } => {
+                self.receive_early_binding(&source, *scope, *announcement_id, *context)?;
+            }
             Message::Vote(vote) => {
                 if !matches!(ready.evidence.as_ref(), VerifiedEvidence::Vote(_)) {
                     self.reject("vote missing owner evidence");
@@ -876,11 +926,15 @@ impl Controller {
             .values()
             .map(|body| (body.prepared.fragment_id(), body.prepared.retained_bytes()))
             .chain(self.successor.as_ref().and_then(Successor::retained_body))
+            .chain(self.early.iter().flat_map(EarlyWork::retained_bodies))
             .chain(
                 self.fixed
                     .iter()
                     .filter(|fixed| {
-                        matches!(fixed.prepared.message().as_ref(), Message::Body { .. })
+                        matches!(
+                            fixed.prepared.message().as_ref(),
+                            Message::Body { .. } | Message::EarlyBody { .. }
+                        )
                     })
                     .map(|fixed| {
                         (
@@ -953,6 +1007,7 @@ impl Controller {
             }
         }
         let charge = ready.prepared.retained_bytes();
+        self.preempt_early_for_body(charge);
         self.preempt_successor_for_body(charge)?;
         if self.retained_bodies().len() >= self.config.limits.max_bodies
             || charge
@@ -973,6 +1028,8 @@ impl Controller {
                 source,
                 prepared: ready.prepared,
                 request: body.take_request(),
+                authenticated: None,
+                early_origin: None,
                 candidate: None,
                 failed: false,
                 local_round,
@@ -1083,7 +1140,7 @@ impl Controller {
                 (demanded
                     && !body.failed
                     && body.candidate.is_none()
-                    && body.request.is_some()
+                    && (body.request.is_some() || body.authenticated.is_some())
                     && !self.inflight.iter().any(|work| work.id == *id))
                 .then_some(*id)
             });
@@ -1091,6 +1148,30 @@ impl Controller {
                 continue;
             };
             let body = self.bodies.get_mut(&id).expect("selected body");
+            if let Some(request) = body.authenticated.take() {
+                ensure!(body.request.is_none(), "body has two execution inputs");
+                match pipeline.try_submit_authenticated_owned(request) {
+                    Ok(AuthenticatedSubmission::Accepted(ticket)) => {
+                        self.inflight.push(Execution {
+                            id,
+                            context,
+                            parent,
+                            requester,
+                            ticket,
+                            recovery: None,
+                        })
+                    }
+                    Ok(AuthenticatedSubmission::Backpressured(request)) => {
+                        body.authenticated = Some(request);
+                        break;
+                    }
+                    Err(rejected) => {
+                        self.retire(Retirement::AuthenticatedRequest(rejected.request));
+                        return Err(rejected.error);
+                    }
+                }
+                continue;
+            }
             let Some(request) = body.request.take() else {
                 continue;
             };
@@ -1273,7 +1354,12 @@ impl Controller {
             self.request_due = None;
             // Outstanding pipeline tickets are intentionally retained/drained.
             // Historical direct replay caches survive height advancement.
-            self.prune_fixed(|fixed| fixed.destination.is_some());
+            let current = self.context();
+            let parent = self.parent();
+            self.prune_fixed(|fixed| {
+                fixed.destination.is_some()
+                    || early_body::survives_parent_ack(fixed.prepared.message(), current, parent)
+            });
             self.stats.head_advances += 1;
         } else if self.round() != old_round {
             self.collector
@@ -1308,6 +1394,7 @@ impl Controller {
             });
         }
         self.reconcile_successor()?;
+        self.reconcile_early(old_context, old_round)?;
         if let Some(message) = message {
             let message = match message {
                 DurableMessage::Vote(vote) => {
@@ -1319,7 +1406,11 @@ impl Controller {
                     let (id, _) = self
                         .candidate(proposal.value)
                         .context("durable proposal lost executed candidate")?;
-                    if let Some(body) = self.bodies.get(&id) {
+                    if let Some(body) = self
+                        .bodies
+                        .get(&id)
+                        .filter(|body| body.early_origin.is_none())
+                    {
                         self.cache(body.prepared.clone(), None);
                     }
                     Message::Proposal {
@@ -1388,7 +1479,10 @@ impl Controller {
                     || matches!(old.prepared.message().as_ref(), Message::Body { .. }) != body
             });
         }
-        if matches!(prepared.message().as_ref(), Message::Body { .. }) {
+        if matches!(
+            prepared.message().as_ref(),
+            Message::Body { .. } | Message::EarlyBody { .. }
+        ) {
             let retained = self.retained_bodies();
             if !retained.contains_key(&id)
                 && (retained.len() >= self.config.limits.max_bodies
@@ -1410,7 +1504,10 @@ impl Controller {
             return false;
         }
         let body_fanout = (destination.is_none()
-            && matches!(prepared.message().as_ref(), Message::Body { .. }))
+            && matches!(
+                prepared.message().as_ref(),
+                Message::Body { .. } | Message::EarlyBody { .. }
+            ))
         .then(|| BodyFanout::new(self.config.peers.len()));
         self.fixed.push_back(Fixed {
             prepared,
@@ -1639,6 +1736,12 @@ impl Controller {
     }
 
     fn retire_body(&mut self, body: Body) {
+        if let Some(origin) = body.early_origin {
+            self.retire_early_origin_cache(origin);
+        }
+        if let Some(request) = body.authenticated {
+            self.retire(Retirement::AuthenticatedRequest(request));
+        }
         self.retire(Retirement::Body {
             prepared: body.prepared,
             request: body.request,

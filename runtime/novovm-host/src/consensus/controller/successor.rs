@@ -76,6 +76,8 @@ impl Controller {
         self.inflight.len()
             + usize::from(self.successor.as_ref().is_some_and(|s| s.ticket.is_some()))
             + usize::from(self.successor_drain.is_some())
+            + usize::from(self.early.as_ref().is_some_and(EarlyWork::has_ticket))
+            + usize::from(self.early_drain.is_some())
     }
 
     /// An execution hint for the scheduled next-height leader, NOT a verified
@@ -106,6 +108,7 @@ impl Controller {
             anyhow::bail!("successor input is not a body");
         };
         if self.is_recovering()
+            || self.early.is_some()
             || !self.retired.is_empty()
             || self.preparing.len() >= self.preparation_limit()
         {
@@ -209,6 +212,33 @@ impl Controller {
         Ok(None)
     }
 
+    pub(super) fn early_parent(
+        &self,
+        expected: Option<&BatchContext>,
+    ) -> Result<Option<ParentPoint>> {
+        Ok(self.successor_basis(expected)?.map(|basis| basis.pin.point))
+    }
+
+    pub(super) fn successor_has_origin(&self, origin: EarlyOrigin) -> bool {
+        self.successor
+            .as_ref()
+            .and_then(|s| s.body.as_ref())
+            .is_some_and(|body| body.early_origin == Some(origin))
+    }
+
+    pub(super) fn successor_has_local_early_target(&self, height: u64) -> bool {
+        self.successor.as_ref().and_then(|s| s.body.as_ref()).is_some_and(|body|
+            body.source == self.local_peer && !body.failed && body.early_origin.is_some()
+                && matches!(body.prepared.message().as_ref(), Message::Body { context, .. } if context.height == height))
+    }
+
+    pub(super) fn successor_body_mut(&mut self, id: Hash) -> Option<&mut Body> {
+        self.successor
+            .as_mut()
+            .and_then(|s| s.body.as_mut())
+            .filter(|body| body.prepared.body_id() == Some(id))
+    }
+
     pub(super) fn is_successor_body(&self, ready: &Ready) -> bool {
         ready
             .body
@@ -278,6 +308,8 @@ impl Controller {
             source,
             prepared: prepared.clone(),
             request: request.take_request(),
+            authenticated: None,
+            early_origin: None,
             candidate: None,
             failed: false,
             local_round: local.then_some(0),
@@ -333,6 +365,26 @@ impl Controller {
         {
             successor.basis.parent.bind_to(&pipeline.owner_identity())?;
             if let Some(body) = &mut successor.body {
+                if let Some(request) = body.authenticated.take() {
+                    ensure!(body.request.is_none(), "successor has two execution inputs");
+                    match pipeline.try_submit_authenticated_background_owned(request) {
+                        Ok(AuthenticatedSubmission::Accepted(ticket)) => {
+                            successor.ticket = Some(ticket);
+                            successor.attempted = true;
+                            self.stats.successor_started += 1;
+                        }
+                        Ok(AuthenticatedSubmission::Backpressured(request)) => {
+                            body.authenticated = Some(request)
+                        }
+                        Err(rejected) => {
+                            body.failed = true;
+                            successor.attempted = true;
+                            self.retire(Retirement::AuthenticatedRequest(rejected.request));
+                            self.reject(rejected.error);
+                        }
+                    }
+                    return Ok(());
+                }
                 if let Some(request) = body.request.take() {
                     match pipeline.try_submit_background_owned(request) {
                         Ok(Submission::Accepted(ticket)) => {

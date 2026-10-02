@@ -9,12 +9,15 @@
 //! remote reception, and outgoing jobs have independent control/body lanes.
 //! Callers must budget handles/replies they retain after taking ownership.
 
-use super::transport::{self, DecodeLimits, Message};
+use super::transport::{self, DecodeLimits, EarlyBodyScope, Message};
 use super::wire::{Hash, Phase, ValidatorSet, VerifiedProposal, VerifiedQuorum, VerifiedVote};
 use crate::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::execution::plan::BatchContext;
 use crate::persistence::StoredCandidate;
-use crate::pipeline::{BatchRequest, DurableBatch, DurableCandidate};
+use crate::pipeline::{
+    AuthenticatedBody, AuthenticatedRequest, AuthenticationRequest, AuthenticationTicket,
+    BatchRequest, DurableBatch, DurableCandidate,
+};
 use anyhow::{ensure, Context, Result};
 use novovm_network::fragments::{
     FragmentAdmission, OutgoingMessage, Reassembler, ReassemblyLimits,
@@ -76,6 +79,7 @@ struct PreparedInner {
     encoded: OutgoingMessage,
     evidence: Arc<VerifiedEvidence>,
     body_id: Option<Hash>,
+    early_id: Option<Hash>,
     charge: usize,
     lane: usize,
 }
@@ -91,6 +95,9 @@ impl PreparedMessage {
     }
     pub fn body_id(&self) -> Option<Hash> {
         self.0.body_id
+    }
+    pub fn early_id(&self) -> Option<Hash> {
+        self.0.early_id
     }
     pub fn fragment_id(&self) -> Hash {
         self.0.encoded.id()
@@ -127,11 +134,34 @@ impl PreparedBody {
     }
 }
 
+/// Parent-independent, unverified input. Neither this wrapper nor its identity
+/// grants permission to execute against a parent, persist, or vote.
+pub struct PreparedEarlyBody {
+    id: Hash,
+    scope: EarlyBodyScope,
+    request: Option<AuthenticationRequest>,
+}
+
+impl PreparedEarlyBody {
+    pub fn id(&self) -> Hash {
+        self.id
+    }
+    pub fn scope(&self) -> &EarlyBodyScope {
+        &self.scope
+    }
+    pub fn take_request(&mut self) -> Option<AuthenticationRequest> {
+        self.request.take()
+    }
+}
+
 pub struct Ready {
     pub message: Arc<Message>,
     pub prepared: PreparedMessage,
     pub evidence: Arc<VerifiedEvidence>,
     pub body: Option<PreparedBody>,
+    pub early: Option<PreparedEarlyBody>,
+    /// Correlation for this binding reply, not authorization of its parent.
+    pub bound_early: Option<(EarlyBodyScope, Hash)>,
 }
 
 pub struct Received {
@@ -139,12 +169,21 @@ pub struct Received {
     pub ready: Ready,
 }
 
+// Binding carries only a fixed-size context beside its O(1) handle. Do not
+// require a new heap allocation on the admission/control caller.
+#[allow(clippy::large_enum_variant)]
 pub enum PrepareInput {
     New(Arc<Message>),
     Cached(PreparedMessage),
     /// A validated local archive's bytes, copied only on this owner. It does
     /// not grant permission to execute or sign a historical/current height.
     StoredBody(Arc<StoredCandidate>),
+    /// Rebuild the canonical old Body on its originating owner. Both the old
+    /// prepared allocation and the new worst-case reply are reserved together.
+    BindEarly {
+        early: PreparedMessage,
+        context: BatchContext,
+    },
 }
 
 pub struct PrepareRequest {
@@ -190,6 +229,10 @@ pub enum Retirement {
     Batch(DurableBatch),
     Input(PrepareInput),
     Request(BatchRequest),
+    AuthenticationRequest(AuthenticationRequest),
+    AuthenticatedBody(AuthenticatedBody),
+    AuthenticatedRequest(AuthenticatedRequest),
+    AuthenticationTicket(AuthenticationTicket),
     Message(Arc<Message>),
 }
 
@@ -295,7 +338,10 @@ pub struct HostChannel {
 }
 
 fn lane(message: &Message) -> usize {
-    usize::from(matches!(message, Message::Body { .. }))
+    usize::from(matches!(
+        message,
+        Message::Body { .. } | Message::EarlyBody { .. }
+    ))
 }
 fn budget(limits: LaneBudget, lane: usize) -> QueueBudget {
     if lane == 0 {
@@ -319,6 +365,14 @@ impl HostChannel {
     /// Controllers can use the same bound for their own retained-body quotas.
     pub fn preparation_charge(&self) -> usize {
         self.charge
+    }
+
+    /// Optional early binding co-retains two distinct body allocations. Old
+    /// one-body configurations remain valid, but must use ordinary Body input.
+    pub(crate) fn supports_early_binding(&self) -> bool {
+        self.charge
+            .checked_mul(2)
+            .is_some_and(|bytes| bytes <= self.prepare_budget.body.bytes)
     }
 
     pub fn start(network: NetworkWorker, config: ChannelConfig) -> Result<Self> {
@@ -379,11 +433,25 @@ impl HostChannel {
                 message.0.lane
             }
             PrepareInput::StoredBody(_) => 1,
+            PrepareInput::BindEarly { early, .. } => {
+                if !Arc::ptr_eq(&early.0.scope, &self.scope) {
+                    return Ok(PrepareAdmission::Rejected {
+                        request,
+                        reason: "prepared handle belongs to another channel".into(),
+                    });
+                }
+                1
+            }
         };
         // Archive input also retains decoded receipts/state nodes while queued;
         // its cached record size is available without walking the body here.
         let charge = match &request.input {
             PrepareInput::StoredBody(stored) => self.charge.checked_add(stored.record_bytes()),
+            // Equal announcement identities do not make the retained early
+            // allocation and the freshly rebuilt canonical body one allocation.
+            PrepareInput::BindEarly { early, .. } => {
+                self.charge.checked_add(early.retained_bytes())
+            }
             _ => Some(self.charge),
         };
         let Some(charge) =
@@ -530,12 +598,17 @@ impl HostChannel {
             Retirement::Prepared(prepared) => prepared.0.lane,
             Retirement::Body { .. }
             | Retirement::Request(_)
+            | Retirement::AuthenticationRequest(_)
+            | Retirement::AuthenticatedBody(_)
+            | Retirement::AuthenticatedRequest(_)
+            | Retirement::AuthenticationTicket(_)
             | Retirement::Candidate(_)
             | Retirement::Batch(_) => 1,
             Retirement::Input(input) => match input {
                 PrepareInput::New(message) => lane(message),
                 PrepareInput::Cached(prepared) => prepared.0.lane,
                 PrepareInput::StoredBody(_) => 1,
+                PrepareInput::BindEarly { .. } => 1,
             },
             Retirement::Message(message) => lane(message),
         };
@@ -553,6 +626,10 @@ impl HostChannel {
                 .record_bytes()
                 .checked_add(batch.candidate().packet().record_bytes()),
             Retirement::Input(PrepareInput::StoredBody(stored)) => Some(stored.record_bytes()),
+            // Unaccepted BindEarly retains only its old prepared allocation;
+            // retirement never builds a second body/reply. The base charge
+            // therefore suffices even when a tight lane rejected preparation.
+            Retirement::Input(PrepareInput::BindEarly { .. }) => Some(0),
             _ => Some(0),
         };
         let Some(charge) = packet_bytes.and_then(|bytes| self.charge.checked_add(bytes)) else {
@@ -698,6 +775,41 @@ fn fixed_context(context: &super::wire::Context, config: &ChannelConfig) -> Resu
     Ok(())
 }
 
+fn fixed_early(scope: &EarlyBodyScope, config: &ChannelConfig) -> Result<()> {
+    scope.validate_shape()?;
+    fixed_context(&scope.source, config)
+}
+
+/// Shape only: all nonzero parent roots, program pins and time fields remain
+/// untrusted claims. The controller/compiler must independently authorize them.
+fn fixed_binding(
+    scope: &EarlyBodyScope,
+    id: &Hash,
+    context: &BatchContext,
+    config: &ChannelConfig,
+) -> Result<()> {
+    fixed_early(scope, config)?;
+    scope.validate_binding(id, context)?;
+    ensure!(
+        context.semantic_version != 0,
+        "empty bound semantic version"
+    );
+    ensure!(
+        (context.parent_height == 0) == (context.parent_block_hash == [0; 32]),
+        "bound first-block parent hash convention mismatch"
+    );
+    for hash in [
+        context.business_program,
+        context.effect_contract,
+        context.parent_state_root,
+        context.parent_receipt_root,
+        context.receipt_codec,
+    ] {
+        ensure!(hash != [0; 32], "empty bound domain/root commitment");
+    }
+    Ok(())
+}
+
 fn evidence(message: &Message, config: &ChannelConfig) -> Result<VerifiedEvidence> {
     match message {
         Message::Body { context, .. } => {
@@ -707,6 +819,18 @@ fn evidence(message: &Message, config: &ChannelConfig) -> Result<VerifiedEvidenc
                     && context.protocol_commitment == config.protocol,
                 "body differs from local chain domain"
             );
+            Ok(VerifiedEvidence::None)
+        }
+        Message::EarlyBody { scope, .. } => {
+            fixed_early(scope, config)?;
+            Ok(VerifiedEvidence::None)
+        }
+        Message::BindBody {
+            scope,
+            announcement_id,
+            context,
+        } => {
+            fixed_binding(scope, announcement_id, context, config)?;
             Ok(VerifiedEvidence::None)
         }
         Message::Proposal {
@@ -787,11 +911,30 @@ fn ready(prepared: PreparedMessage, config: &ChannelConfig) -> Result<Ready> {
         }),
         _ => None,
     };
+    let early = match message.as_ref() {
+        Message::EarlyBody {
+            scope,
+            raw_transactions,
+        } => Some(PreparedEarlyBody {
+            id: prepared
+                .0
+                .early_id
+                .context("prepared early body lacks identity")?,
+            scope: *scope,
+            request: Some(AuthenticationRequest::new(
+                raw_transactions.clone(),
+                config.policy.clone(),
+            )?),
+        }),
+        _ => None,
+    };
     Ok(Ready {
         message,
         evidence: prepared.0.evidence.clone(),
         prepared,
         body,
+        early,
+        bound_early: None,
     })
 }
 
@@ -810,6 +953,17 @@ fn prepare(
         } => Some(transport::body_id(context, raw_transactions, config.codec)?),
         _ => None,
     };
+    let early_id = match message.as_ref() {
+        Message::EarlyBody {
+            scope,
+            raw_transactions,
+        } => Some(transport::early_body_id(
+            scope,
+            raw_transactions,
+            config.codec,
+        )?),
+        _ => None,
+    };
     let selected = lane(&message);
     let encoded = OutgoingMessage::new(
         transport::fragment_domain(config.chain_id, config.genesis, config.protocol),
@@ -823,11 +977,45 @@ fn prepare(
             encoded,
             evidence,
             body_id,
+            early_id,
             charge,
             lane: selected,
         })),
         config,
     )
+}
+
+fn bind_early(
+    early: PreparedMessage,
+    context: BatchContext,
+    config: &ChannelConfig,
+    owner: &Arc<()>,
+    charge: usize,
+) -> Result<Ready> {
+    ensure!(
+        Arc::ptr_eq(&early.0.scope, owner),
+        "early handle belongs to another channel"
+    );
+    let Message::EarlyBody {
+        scope,
+        raw_transactions,
+    } = early.message().as_ref()
+    else {
+        anyhow::bail!("binding requires an early-body handle");
+    };
+    let id = early.early_id().context("early handle lacks identity")?;
+    fixed_binding(scope, &id, &context, config)?;
+    let message = Arc::new(Message::Body {
+        context,
+        raw_transactions: raw_transactions.clone(),
+    });
+    let encoded = transport::encode(&message, config.codec)?;
+    let mut result = prepare(message, encoded, config, owner, charge)?;
+    result.bound_early = Some((*scope, id));
+    // Keep the original allocation live through the entire overlap above. Its
+    // independent admission charge is held until the local reply is consumed.
+    drop(early);
+    Ok(result)
 }
 
 fn run(
@@ -922,6 +1110,11 @@ fn prepare_one(
         );
         let message = match job.value.input {
             PrepareInput::Cached(message) => return ready(message, config),
+            PrepareInput::BindEarly { early, context } => {
+                let ready = bind_early(early, context, config, scope, charge)?;
+                encoded_new = true;
+                return Ok(ready);
+            }
             PrepareInput::New(message) => message,
             PrepareInput::StoredBody(stored) => {
                 let transactions = stored.raw_transactions();
@@ -1145,3 +1338,6 @@ fn receive_one(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod early_tests;
