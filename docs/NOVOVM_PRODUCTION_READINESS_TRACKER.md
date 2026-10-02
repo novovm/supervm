@@ -8,6 +8,159 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：共享前缀批更新实际接入 NOV 输出（2026-10-02）
+
+本提交基于`86e4c8a`，该前置提交的CI `36996694111`双平台成功；本提交远端
+结果须推送后另核。仅7个新runtime Host源/测试文件与既有三文档；AOEM/SDK、
+网络生产代码、经济/签名/共识版本、原额度和期限不变，host11/legacy38草稿
+仍保留、不混入。本轮是实际代码与验证进展，不是完整目标签收。
+
+### 实际改变及正确性边界
+
+`stage_state_update`将连续且digest不同的Put段按共享前缀一起构造，不再每个
+key重建全部祖先后丢弃中间版本。Delete保持原位置，重复digest段仍逐条原序；
+不跨Delete聚合、不改变业务执行顺序。整批共用Planner，4096变更/65536节点/
+原读取界限不增大；访问节点逐边认证、删除survivor、缺失/损坏拒绝及原树字节
+保持。临时节点减少会改变某些资源耗尽结果，畸形输入的首报错误顺序也可能不同，
+不宣称拒绝集合逐字相同。空批仍不验证父根；不扫描未访问子树、不增加发布权限。
+
+原逐条`Planner::change`作独立oracle，比较根及完整可达节点字节；覆盖64个父
+版本、不同Put顺序、256层、每个旧必读节点删除/篡改、有效hash错误边、稀疏
+owned前沿、重复/Delete混合与资源界限。512-key纯树夹具构建/替换stage调用
+由4557/5279降到1023，仅是工作量，不是主链TPS。
+
+新增真实AOEM回归使用同一controller签名负载生成器，32/1024笔、连续两高度，
+重新验签/编译/捕获/真实回调执行，再核对完整经济oracle及手续费/nonce。
+test-only计数确认1024笔实际输出的2049项账户/nonce段确实批处理，两个高度
+stage调用4123/4127，可达节点均4103；32笔对应65项。不是Host预造执行结果。
+
+### 完整回归与失败保留
+
+最终干净快照`target/runtime-rebuild/candidate-86e4c8a-bulk-tree-v6/`，7个覆盖
+文件与工作区逐字一致，其余138个tracked runtime文件按Git规范化内容等于HEAD。
+真实随包库Release：Windows **585+6**、Linux **584+6**通过，0失败/0忽略；
+其中Host332、AOEM31、Network211/210，其余为集成和6项编译拒绝。fmt、双平台
+strict Clippy（含no-default-features）及双平台三成员/无legacy隔离检查通过。
+
+- v1：新纯树测试错误假定旧调用必定超过新调用3倍，实际按digest排序的旧对照
+  仅约2.83倍。改为原输入顺序和精确共享祖先次数，不降低业务/恢复门。
+- v2：全量通过且两轮约4048/3992 TPS，但真实费用分页含Delete，整批回退旧
+  路径；**不签收v2主链优化**。这也是增加真实执行路径计数回归的直接原因。
+- v3：新增两高度夹具遗漏第二高度的非零父hash，真实验证拒绝；修夹具绑定，
+  不放宽父点规则。v4全量通过，但strict Clippy拒绝测试中的`>= n + 1`，
+  改等价`> n`。这些快照及失败日志全部保留。
+- v5：Windows全新快照+外置编译目录使两个网络夹具找不到本地artifact目录；
+  它们依赖其他测试先创建目录。v6只使夹具自行创建并规范化同仓目录，原路径
+  边界不变；在Linux测试尚未启动的全新目录中，两项Windows反例独立转绿。
+- 最初v2诊断复用了旧Cargo二进制，输出落到错误manifest目录且没有profile，
+  明确排除该次诊断；随后独立target重编译才取证。不能只据cargo命令名信任版本。
+
+日志均在仓库`target/runtime-rebuild/`：`bulk-tree-v6-workspace-{windows,linux}.log`、
+`bulk-tree-v6-clippy-{windows,linux}.log`、`bulk-tree-v6-fresh-artifacts-windows.log`、
+`bulk-tree-v6-real-nov-windows.log`；此前各v1–v5日志保持原名，不覆盖失败。
+
+### 同路径交错对照
+
+同一WSL2/24逻辑CPU，四OS验证进程、真实WSS/E2E、四AOEM RocksDB。1024个
+公开测试账户各64笔独立Ed25519签名，共65,536笔/64块；全量测试/编译结束后
+按“新→旧→新”顺序单独运行，未同时构建。原120秒、验签/费用/nonce、完整
+冷重启状态和逐笔回执oracle不变。签名生成/启动/创世/冷恢复不计入TPS，节点
+验签、执行、网络、共识和四库durable ACK计入；不是四设备、公网或PQ负载。
+
+| 样本 | 四节点耐久秒数 | 唯一交易TPS | backlog P95/P99秒 | 完整冷恢复 |
+| --- | --- | --- | --- | --- |
+| v6第一轮 | 14.321378143 | 4576.095914 | 13.674838885 / 14.321378143 | PASS |
+| 原86基线交错复测 | 17.490405712 | 3746.968543 | 16.720616826 / 17.490405712 | PASS |
+| v6第二轮 | 14.770417527 | 4436.976807 | 14.132601736 / 14.770417527 | PASS |
+
+两轮比中间对照约高18%–22%，属于本机有限负载改善，不是稳定主网容量或百万
+TPS签收；此前基线另两次3749.785/4038.898也保留，不只挑最慢值。P95/P99从
+一次性释放整个backlog起算，包含前面高度排队，不能当单笔服务延迟。三个样本
+所有节点均64次执行/64次耐久决定、0执行失败/陈旧结果/重算，最终块/状态/
+回执/决定值相同。仍有旧父点/归档上下文拒绝记录，停机TLS close_notify告警
+保留，不能称日志零错误。回调峰值不充当吞吐或所有业务的并行证明。
+
+v6二进制SHA256 `a52cba1a3762ecf796012764dbb6aabec7cd038d07f69752510a6ab50dce4fda`，
+冻结在该快照`bin/novovm-host-bulk-tree`；原基线冻结在`...-bulk-tree-base/bin/novovm-host-baseline`，
+SHA256 `ab41fb6d77ddbbb5d855122b4355123aa24b90c301fa3c931de1691e881f0165`。
+v6报告在其`target/runtime-rebuild/controller-load-1024-397-1790942129441150592/`
+和`controller-load-1024-2083-1790942200984141215/`；原基线在自己的
+`controller-load-1024-1243-1790942163648666641/`。原始日志分别为
+`bulk-tree-v6-long-1.log`、`bulk-tree-base-long-3.log`、`bulk-tree-v6-long-2.log`。
+随包Linux AOEM SHA保持`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+
+诊断单独从相同源码加前述40项test-only计时导出，使用全新target重编译，3项
+计数测试通过；`candidate-86e4c8a-bulk-tree-profile-v6`实际输出在自己的目录、
+含335项Host测试及完整profile。该轮14.810557534秒/4424.951583 TPS与冷oracle
+通过，作为定位而非正式容量样本。每节点64块的business_stage约0.465–0.489秒，
+前一个真实但未命中批路径的v2诊断约1.96–1.99秒；compute_execute现在约
+2.123–2.151秒，finalize_capture0.938–0.966秒、pipeline_capture0.791–0.832秒、
+persist_step1.479–1.949秒。恢复次数35–42也高于前轮，不把不同运行的阶段
+变化都归因于树算法。嵌套计时不可相加作CPU或关键路径，park含合法等待。
+诊断二进制SHA256 `e1a3b61973bdedaa9496ce9cb5d687231e7bc08abac7de1edf2593fbf2d1fc9b`，
+该快照的`target/runtime-rebuild/controller-load-1024-6792-1790942364916087995/`
+保留四份`live-*.json`与完整measurement；日志`bulk-tree-profile-v6-build.log`、
+`bulk-tree-profile-v6-long-1.log`。这些诊断改动没有混入本次交付代码。
+
+### 证明与后续范围
+
+v4已对相同生产代码真实重建RISC0 2.3.2 guest（v5/v6只修改测试）：组合program
+909796B，SHA256 `cbd92a66861ce14c7914e1228e70e1116aa3aa7a164d7f8221357ae926a32346`，
+image `[2258603708,954323974,3056129725,1567023945,596580575,4811308,3333476220,1287232694]`。
+真实AOEM单笔fixture的input/journal摘要与此前相同；记录在`bulk-tree-v4-proof-*.log`
+和`bulk-tree-v4-proof-fixture/`。本轮未重跑密码prove/verify，旧后端不兼容阻断
+未解除；不能用构建、relation测试或QC宣称S4完成。
+
+下一处A认领新runtime的owned前沿批读取/完成捕获：当前`finalize_capture`
+仍逐key调用`OwnedStateInput::read`重复遍历相同不可变树。减少重复路径构造
+与解码必须保持访问权限、每条认证边、缺失/损坏/父根绑定和增量I/O公平性，
+不能由缓存授予新父点权限。先独立旧逐点oracle/真实业务对照，再按同路径
+阶段与完整负载验收；此下一切片尚未实施。不回旧归档草稿。B独立隐私/PQ认领和S4通用
+AOEM后端的明确切仓授权边界不变。Execute、隐私/PQ主链接入、实体多机、
+长时容量、正式部署仍未完成；没有新Skill/分支、正式创世、发行或部署。
+
+## 设备 A：阶段实测指向批量状态树更新（2026-10-02，前置诊断）
+
+运行基线`86e4c8a`，CI `36996694111`已终态成功：Linux7分8秒、Windows12分44秒。
+只在HEAD导出的诊断快照增加可关闭的测试计时，不合入旧host归档草稿、不改调度。
+前一目标轮属进展；本轮实际完成阶段测量，不能以状态重述替代开发。
+
+同一WSL2/24逻辑CPU、四OS验证进程/四AOEM RocksDB、65536笔Ed25519测试转账，
+原120秒与完整冷经济oracle均保留：
+
+| 诊断样本 | 四节点全部耐久耗时 | finalized TPS | 冷恢复 |
+| --- | --- | --- | --- |
+| v1开启36项计时 | 17.821044413秒 | 3677.450013 | PASS |
+| 同v1二进制关闭计时 | 18.000255733秒 | 3640.837162 | PASS |
+| v2细分finish为40项计时 | 25.796245567秒 | 2540.524738 | PASS |
+
+v2较慢事实保留，不能把整轮差异直接归因于四个计时点或声称稳定容量。计时为
+各进程完成操作的累计墙钟，嵌套重叠、不能相加作关键路径或CPU时间；park包含
+等待计算/I/O和真实空闲，不自动等于浪费。I/O排队从try_send尝试前到owner取出，
+不含内部writer队列。签名提前生成，验签计时；不是PQ或四台实体设备。
+
+v1各node的compute_execute约3.92–3.97秒、finish约2.46–2.48秒；HostChannel
+encode/body_id分别不足5毫秒，归档实际恢复仅1–4次、约7–29毫秒。v2进一步
+测得finish约3.22–3.41秒，其中input.stage约2.92–3.12秒，费用/业务有序归并
+约0.20–0.22秒，变更集约0.02秒，回执承诺约0.04秒。据此优先改树更新，而非
+盲加归档缓存。源码当前逐key重建共享祖先，并最终丢弃中间节点；A认领通用
+unique Put批更新，根/字节及逐边验证对照、删除/重复key原序与全部资源界限保留。
+本节仅诊断证据及在做任务，不是算法或主链提速签收。
+
+原始快照`target/runtime-rebuild/candidate-86e4c8a-stage-profile-v1/`与`...-v2/`
+各保留独立源码。v1报告在其`target/runtime-rebuild/`下
+`controller-load-1024-414-1790938545430139283`和
+`controller-load-1024-411-1790938727929286226`；v2为
+`controller-load-1024-405-1790938942352033967`。
+日志在仓库`target/runtime-rebuild/stage-profile-v1-long-1.log`、
+`stage-profile-v1-control-1.log`及`stage-profile-v2-long-1.log`。
+v1 Host SHA256 `8d68127d4b217683c2e6667a8ee41ed3b793b808dc8664e106e8ed7b8cb5acc4`；
+v2 `690d52423c6455047656fa205d926d01d61ca5cbff88a193e0ebe69ea8ac6ada`。
+AOEM SHA256保持`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+诊断计数3项测试均通过；初次36项Serialize数组编译失败已改为切片序列化，
+失败日志仍保留。host11/legacy38草稿不提交，B独立隐私/PQ、S4后端待明确AOEM
+切仓授权及Execute/真实多机/容量/部署等总目标不变；未正式创世、发行或部署。
+
 ## 设备 A：显式协商的紧凑载体，传输减量与整链性能分开验收（2026-10-02）
 
 基于`97f9322`，其远端CI `36993299183`已实际完成：Windows/Linux均成功，

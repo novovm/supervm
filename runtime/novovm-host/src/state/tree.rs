@@ -16,6 +16,10 @@ use anyhow::{bail, Context, Result};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod batch;
+#[cfg(test)]
+mod batch_conformance;
+
 pub type NodeHash = [u8; 32];
 pub type StateLeafVisitor<'a> = dyn FnMut(NodeHash, &[u8]) -> Result<()> + 'a;
 pub const STATE_TREE_CODEC_V1: &str = "novovm-state-patricia-sha256/v1";
@@ -47,6 +51,10 @@ pub struct StagedStateUpdate {
     /// These writes do not publish authority.
     nodes: BTreeMap<NodeHash, Vec<u8>>,
     loaded_nodes: usize,
+    #[cfg(test)]
+    staged_calls: usize,
+    #[cfg(test)]
+    max_batched_puts: usize,
 }
 
 impl StagedStateUpdate {
@@ -64,6 +72,16 @@ impl StagedStateUpdate {
 
     pub fn loaded_nodes(&self) -> usize {
         self.loaded_nodes
+    }
+
+    #[cfg(test)]
+    pub(crate) fn staged_calls(&self) -> usize {
+        self.staged_calls
+    }
+
+    #[cfg(test)]
+    pub(crate) fn max_batched_puts(&self) -> usize {
+        self.max_batched_puts
     }
 }
 
@@ -227,6 +245,10 @@ struct Planner<'a> {
     nodes: BTreeMap<NodeHash, Vec<u8>>,
     cache: BTreeMap<NodeHash, Node>,
     loaded_nodes: usize,
+    #[cfg(test)]
+    staged_calls: usize,
+    #[cfg(test)]
+    max_batched_puts: usize,
 }
 
 impl<'a> Planner<'a> {
@@ -236,6 +258,10 @@ impl<'a> Planner<'a> {
             nodes: BTreeMap::new(),
             cache: BTreeMap::new(),
             loaded_nodes: 0,
+            #[cfg(test)]
+            staged_calls: 0,
+            #[cfg(test)]
+            max_batched_puts: 0,
         }
     }
 
@@ -262,6 +288,10 @@ impl<'a> Planner<'a> {
     }
 
     fn stage(&mut self, node: Node) -> Result<NodeHash> {
+        #[cfg(test)]
+        {
+            self.staged_calls += 1;
+        }
         let bytes = node.encode();
         let hash = digest_node(&bytes);
         if !self.nodes.contains_key(&hash) && self.nodes.len() >= MAX_STAGED_NODES {
@@ -392,7 +422,9 @@ impl<'a> Planner<'a> {
 }
 
 /// Construct a new root without mutating the provider or any authority pointer.
-/// Repeated changes to the same key are applied in the supplied order.
+/// Consecutive distinct puts share ancestor construction. Deletes retain their
+/// supplied position; a put run with a repeated tree-key digest stays ordered.
+/// Puts are never coalesced across a delete.
 /// `parent_root` must be an already validated, durably completed root, not an
 /// untrusted import. Only accessed paths are checked; untouched subtrees are not
 /// scanned. In particular, an empty change set does not validate its parent.
@@ -406,17 +438,42 @@ pub fn stage_state_update(
     }
     let mut planner = Planner::new(reader);
     let mut root = parent_root;
-    for change in changes {
-        let (key, value) = match change {
-            StateChange::Put { key, value } => {
-                if value.len() > MAX_VALUE_BYTES {
-                    bail!("state leaf value exceeds 256 bytes");
-                }
-                (key.as_slice(), Some(value.as_slice()))
+    let mut remaining = changes;
+    while !remaining.is_empty() {
+        let run_len = remaining
+            .iter()
+            .take_while(|change| matches!(change, StateChange::Put { .. }))
+            .count();
+        if run_len == 0 {
+            let StateChange::Delete { key } = &remaining[0] else {
+                unreachable!("a non-put change is a delete");
+            };
+            root = planner.change(root, digest_key(key)?, None, 0)?;
+            remaining = &remaining[1..];
+            continue;
+        }
+        let (run, rest) = remaining.split_at(run_len);
+        if let Some(puts) = batch::unique_puts(run)? {
+            #[cfg(test)]
+            {
+                planner.max_batched_puts = planner.max_batched_puts.max(puts.len());
             }
-            StateChange::Delete { key } => (key.as_slice(), None),
-        };
-        root = planner.change(root, digest_key(key)?, value, 0)?;
+            root = planner.change_many(root, &puts, 0)?;
+        } else {
+            for change in run {
+                let (key, value) = match change {
+                    StateChange::Put { key, value } => {
+                        if value.len() > MAX_VALUE_BYTES {
+                            bail!("state leaf value exceeds 256 bytes");
+                        }
+                        (key.as_slice(), Some(value.as_slice()))
+                    }
+                    StateChange::Delete { key } => (key.as_slice(), None),
+                };
+                root = planner.change(root, digest_key(key)?, value, 0)?;
+            }
+        }
+        remaining = rest;
     }
     planner.retain_reachable(root)?;
     Ok(StagedStateUpdate {
@@ -424,6 +481,10 @@ pub fn stage_state_update(
         root,
         nodes: planner.nodes,
         loaded_nodes: planner.loaded_nodes,
+        #[cfg(test)]
+        staged_calls: planner.staged_calls,
+        #[cfg(test)]
+        max_batched_puts: planner.max_batched_puts,
     })
 }
 

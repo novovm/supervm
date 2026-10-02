@@ -7,6 +7,9 @@
 
 #![cfg(test)]
 
+#[path = "controller_workload_tree_tests.rs"]
+mod tree_batch_tests;
+
 use crate::business::direct_nov_fee::{
     quote_and_settle, quote_transfer, DirectNovFeePolicy, FeeState, TransferFeeRequest,
 };

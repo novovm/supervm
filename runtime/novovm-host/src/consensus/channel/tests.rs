@@ -738,10 +738,11 @@ impl Relay {
             .join("../..")
             .canonicalize()
             .unwrap();
-        let base = repository
-            .join("target/runtime-rebuild")
-            .canonicalize()
-            .unwrap();
+        // A fresh checkout with an external CARGO_TARGET_DIR has no local
+        // artifact directory yet. Do not depend on another test creating it.
+        let base = repository.join("target/runtime-rebuild");
+        fs::create_dir_all(&base).unwrap();
+        let base = base.canonicalize().unwrap();
         assert!(base.starts_with(repository));
         let root = base.join(format!(
             "channel-{}-{}",
