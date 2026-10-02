@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 
 mod capture;
 pub use capture::{BulkCapture, CaptureStep};
+mod witness;
 
 #[derive(Clone, Debug)]
 pub struct DeclaredAccess {

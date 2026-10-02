@@ -7,8 +7,11 @@ use crate::business::quoted_transfer::{
     TransferSnapshot,
 };
 use crate::execution::plan::UnpublishedBatchEffects;
+#[cfg(feature = "native")]
 use novovm_aoem::{ComputeSession, ComputeTask};
+#[cfg(feature = "native")]
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "native")]
 use std::time::Duration;
 
 /// A new ordered receipt encoding. The final state binds diagnostics; this
@@ -73,6 +76,7 @@ struct Prediction {
     outcome: TransferOutcome,
 }
 
+#[cfg(feature = "native")]
 struct Completion {
     input: Option<SignatureCheckedInput>,
     remaining: usize,
@@ -80,9 +84,23 @@ struct Completion {
 }
 
 impl NovTransferInput {
+    /// Deterministic proof-side scheduling of the SAME component computation
+    /// and ordered settlement used by native execution. No AOEM callback or
+    /// publication authority is fabricated; this remains crate-internal.
+    pub(crate) fn execute_for_proof(self) -> Result<ExecutedNovBatch> {
+        let now = u128::from(self.input.plan().context().timestamp_unix_ms);
+        let count = self.prepared.components.len();
+        ensure!(count > 0, "empty NOV component plan");
+        let predictions = (0..count)
+            .map(|component| speculate(&self.prepared, component, now).map(Some))
+            .collect::<Result<Vec<_>>>()?;
+        finish(self.input, &self.prepared, predictions, now)
+    }
+
     /// Blocking on the designated compute owner, never the node control loop.
     /// Last-completing callback reduces on the AOEM thread; no callback waits
     /// for other callbacks and no per-key message or live DB handle is carried.
+    #[cfg(feature = "native")]
     pub fn execute(
         self,
         session: &mut ComputeSession,

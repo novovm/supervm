@@ -10,9 +10,12 @@ use crate::execution::plan::{
 use crate::state::frontier::{CaptureBudget, CaptureStep, DeclaredAccess};
 use crate::state::tree::{NodeHash, StateChange, StateNodeReader};
 use anyhow::{ensure, Context, Result};
+#[cfg(feature = "native")]
 use novovm_aoem::{ComputeSession, ComputeTask};
 use std::collections::BTreeSet;
+#[cfg(feature = "native")]
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "native")]
 use std::time::Duration;
 
 #[derive(Clone, Copy)]
@@ -80,6 +83,17 @@ impl SignatureCheckedPlan {
         })
     }
 
+    pub(crate) fn capture_witness(
+        self,
+        wire: &[u8],
+        budget: CaptureBudget,
+    ) -> Result<SignatureCheckedInput> {
+        Ok(SignatureCheckedInput {
+            input: self.plan.capture_witness(wire, budget)?,
+            transactions: self.transactions,
+        })
+    }
+
     /// Incremental capture owns this exact plan and authenticated metadata.
     /// There is no API for attaching an unrelated prebuilt state witness.
     pub fn begin_capture(self, budget: CaptureBudget) -> Result<SignatureCheckedCapture> {
@@ -134,6 +148,10 @@ impl SignatureCheckedInput {
         self.input.read(key)
     }
 
+    pub(crate) fn encode_witness(&self, budget: CaptureBudget) -> Result<Vec<u8>> {
+        self.input.encode_witness(budget)
+    }
+
     /// Tentative effects only; signature-checked inputs do not prove arbitrary
     /// patches implement the business program, settlement, or nonce transitions.
     pub fn stage(self, changes: &[StateChange]) -> Result<UnpublishedBatchEffects> {
@@ -141,16 +159,12 @@ impl SignatureCheckedInput {
     }
 }
 
-/// Blocking work for the designated compute owner, not the network/control loop.
-/// All input bounds are checked before graph admission. One failed signature
-/// returns no accepted batch; it does not mutate state or consume a nonce.
-pub fn authenticate_batch(
-    session: &mut ComputeSession,
+/// Shared preflight bounds for native graph admission and proof execution.
+fn validate_authentication_input(
     configured_chain_id: u64,
-    raw_transactions: Vec<Vec<u8>>,
+    raw_transactions: &[Vec<u8>],
     budget: AuthenticationBudget,
-    timeout: Duration,
-) -> Result<SignatureCheckedBatch> {
+) -> Result<()> {
     ensure!(
         configured_chain_id != 0,
         "configured chain id must be nonzero"
@@ -160,7 +174,7 @@ pub fn authenticate_batch(
         "authentication batch empty or transaction budget exceeded"
     );
     let mut bytes = 0usize;
-    for raw in &raw_transactions {
+    for raw in raw_transactions {
         ensure!(
             !raw.is_empty() && raw.len() <= budget.transaction_bytes,
             "authentication transaction byte budget exceeded"
@@ -173,6 +187,61 @@ pub fn authenticate_batch(
             "authentication body byte budget exceeded"
         );
     }
+    Ok(())
+}
+
+fn finish_authentication(
+    configured_chain_id: u64,
+    raw_transactions: Vec<Vec<u8>>,
+    transactions: Vec<SignatureCheckedTransfer>,
+    peak_callbacks: usize,
+) -> Result<SignatureCheckedBatch> {
+    ensure!(
+        transactions.len() == raw_transactions.len(),
+        "authentication result count mismatch"
+    );
+    let mut seen = BTreeSet::new();
+    for transaction in &transactions {
+        ensure!(
+            seen.insert(transaction.tx_hash()),
+            "duplicate canonical transaction in authenticated batch"
+        );
+    }
+    Ok(SignatureCheckedBatch {
+        chain_id: configured_chain_id,
+        raw_transactions,
+        transactions,
+        peak_callbacks,
+    })
+}
+
+/// Proof execution uses the same bounds, cryptographic admission and duplicate
+/// rejection as native admission. This is not an AOEM execution observation.
+pub(crate) fn authenticate_batch_for_proof(
+    configured_chain_id: u64,
+    raw_transactions: Vec<Vec<u8>>,
+    budget: AuthenticationBudget,
+) -> Result<SignatureCheckedBatch> {
+    validate_authentication_input(configured_chain_id, &raw_transactions, budget)?;
+    let transactions = raw_transactions
+        .iter()
+        .map(|raw| authenticate_transfer_v3(raw, configured_chain_id, budget.transaction_bytes))
+        .collect::<Result<Vec<_>>>()?;
+    finish_authentication(configured_chain_id, raw_transactions, transactions, 0)
+}
+
+/// Blocking work for the designated compute owner, not the network/control loop.
+/// All input bounds are checked before graph admission. One failed signature
+/// returns no accepted batch; it does not mutate state or consume a nonce.
+#[cfg(feature = "native")]
+pub fn authenticate_batch(
+    session: &mut ComputeSession,
+    configured_chain_id: u64,
+    raw_transactions: Vec<Vec<u8>>,
+    budget: AuthenticationBudget,
+    timeout: Duration,
+) -> Result<SignatureCheckedBatch> {
+    validate_authentication_input(configured_chain_id, &raw_transactions, budget)?;
     // Share immutable input allocation, not one copy of the whole body per task.
     let body = Arc::new(raw_transactions);
     let slots: Vec<_> = (0..body.len())
@@ -210,7 +279,6 @@ pub fn authenticate_batch(
         report.outputs.len() == body.len(),
         "authentication output count mismatch"
     );
-    let mut seen = BTreeSet::new();
     let mut transactions = Vec::with_capacity(body.len());
     for (slot, output) in slots.into_iter().zip(report.outputs) {
         let authentication = slot
@@ -231,19 +299,15 @@ pub fn authenticate_batch(
                 return Err(error.context("signature batch rejected without state admission"));
             }
         };
-        ensure!(
-            seen.insert(transaction.tx_hash()),
-            "duplicate canonical transaction in authenticated batch"
-        );
         transactions.push(transaction);
     }
     let raw_transactions = Arc::try_unwrap(body).map_err(|_| {
         anyhow::anyhow!("authentication callbacks retained batch input after completion")
     })?;
-    Ok(SignatureCheckedBatch {
-        chain_id: configured_chain_id,
+    finish_authentication(
+        configured_chain_id,
         raw_transactions,
         transactions,
-        peak_callbacks: report.peak_inflight,
-    })
+        report.peak_inflight,
+    )
 }

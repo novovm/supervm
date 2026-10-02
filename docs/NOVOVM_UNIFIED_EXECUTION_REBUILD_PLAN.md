@@ -6,6 +6,24 @@
 
 ## 最新短交接
 
+- **当前切片：S4 完整 NOV 业务关系、父前沿见证及真实 zkVM 构建。** 基于
+  `3bac1b6`，前置远端CI `36960204788` 已核验成功。A仅修改新runtime、独立
+  proof workspace和既有文档；未创建Skill、分支，未修改AOEM/SDK/旧38项。
+  guest重新验签、编译访问集、认证原父见证，再调用与原生AOEM执行相同的
+  `speculate/finish`，覆盖完整费用归并、nonce、余额及状态/回执根。原生路径
+  仍使用AOEM组件并行；公开proof入口仅产152B journal，不制造候选发布权限。
+  Windows466+6、WSL463+6完整真库Release回归通过，含原6类经济oracle场景
+  与proof relation逐项对照；这不是实际密码证明。RISC0 2.3.2 guest及probe
+  已真实构建，双锁复验通过，platform/zkos-v1compat均2.2.3。旧1.2.6 guest
+  有官方sys_read漏洞，不得恢复旧image以凑通过；新组合program binary
+  SHA256 `1a13500aed1a8f9f9ee17695d3109ad427aa7e3679fee2250df3b3b3a287bb61`。
+  单笔公开测试夹具确由真实AOEM执行并导出期待journal；现随包Linux库及历史
+  sidecar实调新program皆`prove=-4`，无receipt，独立密码验证尚未执行。
+  已请求用户授权下一步切换AOEM升级**通用**zkVM backend；回复前只改SUPERVM。
+  具体复现见 [新证明入口](../runtime/proofs/nov-transfer/README.md) 和台账。
+  S4主链证明队列/最终性策略、Execute、隐私/PQ、真实多机、容量长跑及部署
+  仍未完成；本轮没有设置生产出块参数或激活强制证明规则。
+
 - **当前切片：未决高度原签名/候选冷恢复，及 Linux 真实网络停顿修复。**
   基于 `ba9ee1f`；其 CI `36956208818` Linux 1024 档负载确实失败，Windows
   被矩阵取消，不沿用更早的全绿声明。本轮仍仅 A 的新 runtime 和既有文档。

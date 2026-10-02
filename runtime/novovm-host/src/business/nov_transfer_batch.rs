@@ -218,6 +218,19 @@ impl NovTransferPlan {
             requests: self.requests,
         })
     }
+
+    pub(crate) fn capture_witness(
+        self,
+        wire: &[u8],
+        budget: CaptureBudget,
+    ) -> Result<NovTransferInput> {
+        NovCapturedInput {
+            input: self.plan.capture_witness(wire, budget)?,
+            policy: self.policy,
+            requests: self.requests,
+        }
+        .finalize_capture()
+    }
 }
 
 /// Bounded incremental capture; neither state nor authenticated plan is replaceable.
@@ -262,6 +275,17 @@ pub struct NovCapturedInput {
 impl NovCapturedInput {
     pub fn plan(&self) -> &BatchPlan {
         self.input.plan()
+    }
+
+    /// Export on an input/proof worker, not the consensus poll. This contains
+    /// original authenticated parent inputs, not predicted/candidate outputs.
+    /// It confers no verification, publication or finality authority.
+    pub fn execution_proof_input(&self) -> Result<Vec<u8>> {
+        crate::proof::encode_input(
+            self.plan(),
+            &self.policy,
+            &self.input.encode_witness(crate::proof::capture_budget())?,
+        )
     }
 
     pub(crate) fn finalize_capture(self) -> Result<NovTransferInput> {
@@ -344,6 +368,18 @@ impl NovCapturedInput {
 pub struct NovTransferInput {
     input: SignatureCheckedInput,
     prepared: Prepared,
+}
+
+impl NovTransferInput {
+    /// Same parent-input export after admission. It neither runs the native
+    /// executor nor turns the resulting bytes into proof/publication authority.
+    pub fn execution_proof_input(&self) -> Result<Vec<u8>> {
+        crate::proof::encode_input(
+            self.input.plan(),
+            &self.prepared.policy,
+            &self.input.encode_witness(crate::proof::capture_budget())?,
+        )
+    }
 }
 
 struct Prepared {

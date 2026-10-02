@@ -35,6 +35,8 @@ jobs:
         run: ./runtime/check-isolation.ps1
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Shared proof relation without native dependencies (not zkVM proof)
+        run: cargo clippy -p novovm-host --lib --no-default-features --locked -- -D warnings
       - run: cargo test --workspace --locked
       - name: Fetch only the platform AOEM binary
         env:

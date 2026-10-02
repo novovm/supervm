@@ -5,11 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+default = ["native"]
+native = ["dep:novovm-aoem", "dep:novovm-network"]
+
 [dependencies]
 anyhow.workspace = true
 sha2.workspace = true
-novovm-aoem = { path = "../novovm-aoem" }
-novovm-network = { path = "../novovm-network" }
+novovm-aoem = { path = "../novovm-aoem", optional = true }
+novovm-network = { path = "../novovm-network", optional = true }
 ed25519-dalek.workspace = true
 serde.workspace = true
 postcard.workspace = true

@@ -8,6 +8,100 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：完整 NOV 执行证明关系与修复版 guest，后端尚不兼容（2026-10-02）
+
+基于 `3bac1b6`；其远端CI
+[`36960204788`](https://github.com/novovm/supervm/actions/runs/36960204788)
+已核验成功。这是新runtime的S4切片，不是恢复旧guest或主网证明激活。
+仅SUPERVM内修改，AOEM源码/SDK未变，旧38项草稿保持原状，无Skill/新分支。
+
+### 已实现并验证的关系
+
+- `NVFRNT01`有界父前沿编码：独立父根和编译访问集下重新捕获，包括删除
+  压缩需要的兄弟节点。拒绝缺失、夹带、错序、错误权限及错误root；不存在
+  必须由认证路径证明，不能由“没有读到”推定。9项边界/正反例通过。
+- `NVEXIN01`包含精确BatchContext、原序原始V3、完整政策和原父见证。Guest
+  重新执行原鉴权、NOV compiler、nonce校验和同一`speculate→finish→stage`，
+  不反序列化外来已鉴权能力或最终写集。原生AOEM scheduler仍在默认native
+  feature中；纯guest不链接AOEM/网络，没有第二套经济实现。
+- `NVEXEC01`固定152字节，输出plan/candidate承诺、完整后状态根、完整原序
+  回执承诺、execution statement、交易数/状态版本。全局费用拒绝、诊断、
+  nonce及余额均进入原状态/回执承诺；不只证明费用归并前的预测。
+- 公开proof执行只导出journal，不导出可供候选持久化的ExecutedNovBatch。
+  期待journal与可信image须由验证端独立选择；父根的链上可信性、物理文档
+  摘要、BFT决定和发布权限不在这段关系中。
+- 新通用ReceiptSession仅调用SDK已有prove/verify/free，精确可信库路径、
+  ABI1/init、进程驻留和单owner；RAII释放成功/失败返回缓冲。7项stub/边界
+  测试及!Sync编译拒绝通过；stub通过不等于真实密码证明。`-5`类型化为后端
+  不可用，没有trace/fake fallback。C ABI无取消，必须隔离证明worker/进程。
+
+### 真库回归与真实构建
+
+- Windows完整Release **466单元/集成+6编译拒绝**，WSL Linux **463+6**，均
+  0失败/0忽略。原6个AOEM经济对照场景增加proof-input/journal相等检查，仍
+  与独立经济oracle比较全部余额/nonce/费用/回执/完整状态根，覆盖混合失败、
+  自转、账户别名、全局费用容量、溢出及共享credit。它们运行的是本地关系，
+  不是密码证明生成；四进程最终性/冷恢复等原门保持通过。
+- 12项纯proof测试通过，含坏签名、错误业务/链/nonce、父policy、缺/坏见证、
+  非规范编码、每处截断及资源上界。合法变化的parent/config/raw必须改变
+  journal，不将其一律拒绝冒充“已认证链上父点”。
+- 根workspace fmt/strict Clippy、无native lib strict Clippy、3成员无legacy
+  依赖检查通过。根CI增加无native检查，但不把它称为zkVM目标验证。
+- 新独立workspace实际编译 **RISC0 2.3.2** guest和probe，外层与嵌套guest
+  `--locked`复验通过；guest tree确认`risc0-zkvm-platform`和
+  `risc0-zkos-v1compat`均为**2.2.3**。
+- 旧1.2.6试编曾成功，但因
+  [官方sys_read漏洞](https://github.com/risc0/risc0/security/advisories/GHSA-jqq4-c7wq-36h7)
+  被明确淘汰，不签收其image/安全性。新2.x image绑定用户ELF与kernel组成
+  的program binary；不能为适配旧AOEM偷换回裸ELF或旧image。
+
+新program为899068字节，SHA256
+`1a13500aed1a8f9f9ee17695d3109ad427aa7e3679fee2250df3b3b3a287bb61`。
+可信build image words为
+`[2710623886,3003392925,656144283,158781046,534824962,4215304921,676798502,4060083415]`。
+
+### 实际未通过：不能据编译/对照宣称证明完成
+
+独立probe用公开测试密钥及测试父树，经随包AOEM库**真实执行**一笔带收费NOV
+转账，导出3866B原父输入和152B期待journal，本地guest关系与其完全一致。
+此夹具不是生产创世，也不是当前四节点账本的导出。
+
+`RISC0_PROVER=local`、移除`RISC0_DEV_MODE`后实际调用：
+
+| 库 | SHA256 | 新program的真实结果 |
+| --- | --- | --- |
+| SUPERVM随包Linux core | `88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675` | prove返回`-4`，没有receipt |
+| 历史独立RISC0 sidecar | `908a6e198a89e425ddd345d837064e0cb8129721b05729642d0c055f0bacb464` | prove返回`-4`，没有receipt |
+
+因此实际证明生成 **FAIL**，独立密码验证/变异拒绝 **NOT EXECUTED**。CLI已
+实现独立verify及12项变异检查，但不能把“代码已写”当成这些门已运行。
+旧库1.2.6与新program格式的兼容升级是下一步检查/修复对象，`-4`本身不是
+完整根因诊断。补充只读源码确认：AOEM的`risc0_backend.rs::prove_program`
+先用1.2.6 `compute_image_id→Program::load_elf→ElfBytes::minimal_parse`，
+而2.3.2 build以`ProgramBinary::encode`生成含kernel的`R0BF`组合格式，格式
+层确实不匹配。portable C入口将内部错误折为`-4`，不存入带handle的
+`aoem_last_error`；没有用另建compute handle伪造该调用的错误详情。
+已向用户请求下一步切换AOEM升级通用backend的授权；回复前
+不改兄弟仓、不在SUPERVM另造一个绕过AOEM的密码引擎。
+
+原始产物位于`target/runtime-rebuild/`：
+`complete-proof-windows-release.log`、`complete-proof-linux-release.log`、
+`complete-proof-fixture.log`、`complete-proof-packaged-attempt.log`、
+`complete-proof-sidecar-attempt.log`、`nov-transfer-proof/risc0-guest-locked.log`，
+夹具目录`nov-transfer-fixture/`。输入SHA256
+`78bfa36213bdd659ab815902c7c5ee286e0aa994fe54c2fd2fd25e445bcc7876`，
+期待journal SHA256
+`6873f4f3939c25052d28e32f0a2eb1b72fc5d3ada69caf957e33ae092be2410c`。
+构建锁和复现命令见[证明入口](../runtime/proofs/nov-transfer/README.md)。
+独立proof/guest workspace格式检查和跳guest的strict Clippy均通过；随后
+清除skip并按双锁真实重建probe，恢复上述新image（bin哈希不变）。最终probe
+SHA256为`c67edac67b322cc015b95026afaa610c431111447d83d67e8351af752c39839c`。
+跳guest的lint本身不计作真实构建或密码证明。
+
+**仍未交付：** 真密码证明成功与主链有界证明队列/可信父点/最终性政策组合，
+通用Execute、隐私/PQ主链接入、真实多机、持续容量及部署入口。未宣称主链
+TPS改变、S4封盘、隐私/后量子证明或生产可部署；正式创世/发行仍另需授权。
+
 ## 设备 A：未决候选冷恢复与 Linux 小消息停顿修复（2026-10-02）
 
 基于 `ba9ee1f`，仅新runtime及既有文档；旧38项草稿保持隔离，AOEM SDK/源码

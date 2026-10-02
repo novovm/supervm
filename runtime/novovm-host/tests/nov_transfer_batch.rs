@@ -21,6 +21,7 @@ use novovm_host::ingress::batch::{authenticate_batch, AuthenticationBudget};
 use novovm_host::ingress::wire::{
     canonical_tx_hash, encode_transfer_v3, signing_message, FeePolicy, TransferV3,
 };
+use novovm_host::proof::{execute_to_journal, ExecutionJournalV1, JOURNAL_BYTES};
 use novovm_host::state::frontier::CaptureBudget;
 use novovm_host::state::tree::{
     empty_root, read_state_value, stage_state_update, NodeHash, StateChange, StateNodeReader,
@@ -571,7 +572,15 @@ fn run_and_check(
     assert!(captured_reads > 0);
     drop(source);
     assert_eq!(drops.load(Ordering::SeqCst), 1);
+    let proof_input = input.execution_proof_input()?;
     let actual = input.execute(session, TIMEOUT)?;
+    // Compare the shared guest relation to a REAL independently scheduled AOEM
+    // result, which all checks below compare to the independent economic oracle.
+    // Native byte equality does not generate or verify a cryptographic proof.
+    let proof_journal = execute_to_journal(&proof_input)?.encode();
+    let expected_journal = ExecutionJournalV1::from_executed(&actual)?.encode();
+    assert_eq!(JOURNAL_BYTES, 152);
+    assert_eq!(proof_journal, expected_journal);
     assert_eq!(
         reads.load(Ordering::SeqCst),
         captured_reads,

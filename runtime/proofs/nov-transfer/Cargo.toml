@@ -1,0 +1,7 @@
+[workspace]
+members = ["methods", "probe"]
+exclude = ["methods/guest"]
+resolver = "2"
+
+[profile.release]
+overflow-checks = true

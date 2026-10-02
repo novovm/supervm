@@ -1,0 +1,13 @@
+[package]
+name = "novovm-transfer-proof-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "=1.0.103"
+sha2 = "=0.10.9"
+novovm-transfer-methods = { path = "../methods" }
+novovm-aoem = { path = "../../../novovm-aoem" }
+novovm-host = { path = "../../../novovm-host" }
+ed25519-dalek = "=2.2.0"

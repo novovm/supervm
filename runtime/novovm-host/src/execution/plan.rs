@@ -217,6 +217,22 @@ impl BatchPlan {
         Ok(OwnedBatchInput { plan: self, state })
     }
 
+    /// Proof-only import still binds the witness to this exact compiled plan.
+    /// Neither a claimed root nor wire permissions can replace that binding.
+    pub(crate) fn capture_witness(
+        self,
+        wire: &[u8],
+        budget: CaptureBudget,
+    ) -> Result<OwnedBatchInput> {
+        let state = OwnedStateInput::from_witness(
+            self.context.parent_state_root,
+            &self.declared_access,
+            wire,
+            budget,
+        )?;
+        Ok(OwnedBatchInput { plan: self, state })
+    }
+
     /// Start incremental bulk capture bound to this exact plan. The returned
     /// state machine owns the plan; no caller can attach a substitute frontier,
     /// body, parent or wider declarations when finishing.
@@ -272,6 +288,10 @@ impl OwnedBatchInput {
         self.state.read(key)
     }
 
+    pub(crate) fn encode_witness(&self, budget: CaptureBudget) -> Result<Vec<u8>> {
+        self.state.encode_witness(budget)
+    }
+
     /// Record derived effects without claiming their business validity. The
     /// pinned business program must compute and validate them in the execution
     /// layer. This constructor cannot produce a durable/finalized certificate.
@@ -300,6 +320,7 @@ impl UnpublishedBatchEffects {
         &self.plan.context
     }
 
+    #[cfg(any(feature = "native", test))]
     pub(crate) fn plan(&self) -> &BatchPlan {
         &self.plan
     }
