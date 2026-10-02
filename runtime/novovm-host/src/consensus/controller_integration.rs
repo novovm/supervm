@@ -20,6 +20,9 @@ use novovm_network::worker::{NetworkWorker, NetworkWorkerConfig, WorkerLimits};
 use serde::{Deserialize, Serialize};
 use std::process::{Child, Command, Stdio};
 
+#[path = "controller_load.rs"]
+mod load;
+
 const TEST_NAME: &str = "consensus::tests::controller_integration::real_four_process_controllers_finalize_and_late_join_from_archive";
 const CHILD_CONFIG: &str = "NOVOVM_CONTROLLER_TEST_CONFIG";
 const CHILD_MODE: &str = "NOVOVM_CONTROLLER_TEST_MODE";
@@ -34,6 +37,8 @@ struct Fixture {
     endpoint: String,
     certificate: PathBuf,
     root: Hash,
+    #[serde(default)]
+    load: Option<load::LoadSpec>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -154,12 +159,16 @@ fn channel(fixture: &Fixture, set: Arc<ValidatorSet>) -> Result<HostChannel> {
         },
         validator_key(fixture.index),
     )?;
-    let codec = DecodeLimits {
+    let mut codec = DecodeLimits {
         transactions: 8,
         transaction_bytes: 1024,
         body_bytes: 8192,
         message_bytes: 512 * 1024,
     };
+    if let Some(spec) = fixture.load {
+        codec.transactions = spec.batch_size;
+        codec.body_bytes = (spec.batch_size * 1024).min(384 * 1024);
+    }
     let lane = LaneBudget {
         control: QueueBudget {
             messages: 32,
@@ -242,6 +251,9 @@ fn read_archive(
 }
 
 fn recover(fixture: &Fixture) -> Result<()> {
+    if let Some(spec) = fixture.load {
+        return load::recover(fixture, spec);
+    }
     let set = validator_set()?;
     let (context, parent) = anchor(fixture.root, &set);
     let pipeline = CandidatePipeline::start(pipeline_config(&fixture.ledger)?, OpenMode::Existing)?;
@@ -400,53 +412,60 @@ fn wait_for(
     }
 }
 
-fn run_controller(fixture: &Fixture) -> Result<()> {
+fn open_controller(fixture: &Fixture, pipeline: &CandidatePipeline) -> Result<Controller> {
     let set = validator_set()?;
     let (context, parent) = anchor(fixture.root, &set);
+    let journal = open_journal(
+        ValidatorJournal::open(
+            pipeline,
+            context,
+            parent,
+            set.clone(),
+            validator_key(fixture.index),
+        )?,
+        pipeline,
+    )?;
+    let ids = (0..4)
+        .map(|i| {
+            Validator::new(validator_key(i).verifying_key().to_bytes(), 1)
+                .map(|validator| validator.id())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Controller::new(
+        ControllerConfig {
+            validators: set.clone(),
+            local_validator: ids[fixture.index],
+            peers: (0..4)
+                .filter(|i| *i != fixture.index)
+                .map(|i| (ids[i], peer(i)))
+                .collect(),
+            execution: batch_context(fixture.root),
+            collector: CollectorLimits {
+                max_retained_rounds: 2,
+                max_future_round_span: 64,
+                max_votes: set.members().len() * 7,
+            },
+            timeouts: TimeoutPolicy {
+                propose: Duration::from_secs(5),
+                prevote: Duration::from_secs(5),
+                precommit: Duration::from_secs(5),
+                round_increment: Duration::from_secs(1),
+            },
+            limits: ControllerLimits::default(),
+            retransmit: Duration::from_millis(100),
+        },
+        journal,
+        channel(fixture, set)?,
+    )
+}
+
+fn run_controller(fixture: &Fixture) -> Result<()> {
+    if let Some(spec) = fixture.load {
+        return load::run_controller(fixture, spec);
+    }
     let pipeline = CandidatePipeline::start(pipeline_config(&fixture.ledger)?, OpenMode::Existing)?;
     let result = (|| -> Result<()> {
-        let journal = open_journal(
-            ValidatorJournal::open(
-                &pipeline,
-                context,
-                parent,
-                set.clone(),
-                validator_key(fixture.index),
-            )?,
-            &pipeline,
-        )?;
-        let ids = (0..4)
-            .map(|i| {
-                Validator::new(validator_key(i).verifying_key().to_bytes(), 1)
-                    .map(|validator| validator.id())
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let mut controller = Controller::new(
-            ControllerConfig {
-                validators: set.clone(),
-                local_validator: ids[fixture.index],
-                peers: (0..4)
-                    .filter(|i| *i != fixture.index)
-                    .map(|i| (ids[i], peer(i)))
-                    .collect(),
-                execution: batch_context(fixture.root),
-                collector: CollectorLimits {
-                    max_retained_rounds: 2,
-                    max_future_round_span: 64,
-                    max_votes: set.members().len() * 7,
-                },
-                timeouts: TimeoutPolicy {
-                    propose: Duration::from_secs(5),
-                    prevote: Duration::from_secs(5),
-                    precommit: Duration::from_secs(5),
-                    round_increment: Duration::from_secs(1),
-                },
-                limits: ControllerLimits::default(),
-                retransmit: Duration::from_millis(100),
-            },
-            journal,
-            channel(fixture, set)?,
-        )?;
+        let mut controller = open_controller(fixture, &pipeline)?;
         let result = (|| -> Result<()> {
             let deadline = Instant::now() + RUN_BUDGET;
             let mut next_report = Instant::now();
@@ -606,6 +625,7 @@ fn real_four_process_controllers_finalize_and_late_join_from_archive() -> Result
             directory: directory.clone(),
             endpoint: relay.endpoint.clone(),
             certificate: relay.certificate.clone(),
+            load: None,
         });
     }
     ensure!(

@@ -18,6 +18,7 @@ use super::wire::{
     Context, Hash, Phase, Proposal, Quorum, ValidatorSet, VerifiedProposal, VerifiedQuorum,
 };
 use super::{ArchiveRead, DurableMessage, TimeoutStep, ValidatorJournal};
+use crate::business::nov_transfer_batch::ExecutionObservation;
 use crate::execution::plan::BatchContext;
 use crate::pipeline::{
     BatchRequest, CandidatePipeline, DurableCandidate, PipelineTicket, Submission,
@@ -69,6 +70,21 @@ pub struct ControllerConfig {
 #[derive(Clone, Debug, Default)]
 pub struct ControllerStats {
     pub executed_batches: u64,
+    /// Sum of component counts from successful DurableBatch observations,
+    /// including stale completions. Not finalized transactions or parallelism.
+    pub execution_components_total: u64,
+    /// Sum per execution, not distinct accounts over the controller lifetime.
+    pub execution_credit_only_accounts_total: u64,
+    /// Actual business reducer repairs, not consensus/pipeline retry counts.
+    pub execution_recomputed_transactions_total: u64,
+    /// Maximum observed simultaneous AOEM business callbacks in a batch. This
+    /// is neither the configured worker count nor a unique-thread measurement.
+    pub execution_peak_callbacks: usize,
+    /// Fixed-size scalar copy of the last successful execution observation;
+    /// it can describe a stale candidate and confers no finality authority.
+    pub last_execution_observation: Option<ExecutionObservation>,
+    /// Saturation is explicit and never changes consensus progress or timing.
+    pub execution_observation_saturated: bool,
     pub execution_failures: u64,
     pub stale_results: u64,
     pub durable_votes: u64,
@@ -82,6 +98,39 @@ pub struct ControllerStats {
     pub retained_body_bytes: usize,
     pub inflight: usize,
     pub last_error: Option<String>,
+}
+
+impl ControllerStats {
+    /// O(1): copy/accumulate only the executor's existing four scalar fields.
+    /// No controller wall time or configured worker value enters this report.
+    fn observe_execution(&mut self, observation: ExecutionObservation) {
+        self.execution_observation_saturated |=
+            accumulate_observed(&mut self.execution_components_total, observation.components);
+        self.execution_observation_saturated |= accumulate_observed(
+            &mut self.execution_credit_only_accounts_total,
+            observation.credit_only_accounts,
+        );
+        self.execution_observation_saturated |= accumulate_observed(
+            &mut self.execution_recomputed_transactions_total,
+            observation.recomputed_transactions,
+        );
+        self.execution_peak_callbacks = self
+            .execution_peak_callbacks
+            .max(observation.peak_callbacks);
+        self.last_execution_observation = Some(observation);
+    }
+}
+
+fn accumulate_observed(total: &mut u64, observed: usize) -> bool {
+    let Some(sum) = u64::try_from(observed)
+        .ok()
+        .and_then(|value| total.checked_add(value))
+    else {
+        *total = u64::MAX;
+        return true;
+    };
+    *total = sum;
+    false
 }
 
 struct Body {
@@ -131,6 +180,36 @@ struct Fixed {
     prepared: PreparedMessage,
     destination: Option<String>,
     schedule: RetrySchedule,
+    body_fanout: Option<BodyFanout>,
+}
+
+/// A large body's initial fanout is admitted once per configured peer. This is
+/// NOT delivery evidence: repeated signed offers let a missing receiver ask for
+/// the exact body again. Direct RequestBody replies retain their existing retry
+/// and request-driven wake-up rules. Control evidence still retransmits.
+struct BodyFanout {
+    pending: Vec<bool>,
+    remaining: usize,
+}
+
+impl BodyFanout {
+    fn new(peers: usize) -> Self {
+        Self {
+            pending: vec![true; peers],
+            remaining: peers,
+        }
+    }
+    fn needs(&self, peer: usize) -> bool {
+        self.pending.get(peer).copied().unwrap_or(false)
+    }
+    fn accepted(&mut self, peer: usize) {
+        if let Some(pending) = self.pending.get_mut(peer) {
+            if *pending {
+                *pending = false;
+                self.remaining -= 1;
+            }
+        }
+    }
 }
 
 struct RetrySchedule {
@@ -545,7 +624,7 @@ impl Controller {
                     self.retire(Retirement::Ready(ready));
                     return Ok(());
                 }
-                if !self.cache(ready.prepared.clone(), Some(peer.clone()))
+                if !self.cache_archive_body(ready.prepared.clone(), peer.clone())
                     || !self.prepare(
                         PrepareInput::New(Arc::new(Message::Decision {
                             proposal,
@@ -647,8 +726,21 @@ impl Controller {
                 );
             }
             Message::RequestBody { body_id } => {
-                if let Some(body) = self.bodies.get(body_id) {
-                    self.cache(body.prepared.clone(), Some(source));
+                let prepared = self
+                    .bodies
+                    .get(body_id)
+                    .map(|body| body.prepared.clone())
+                    .or_else(|| {
+                        self.fixed
+                            .iter()
+                            .find(|fixed| {
+                                fixed.destination.as_ref() == Some(&source)
+                                    && fixed.prepared.body_id() == Some(*body_id)
+                            })
+                            .map(|fixed| fixed.prepared.clone())
+                    });
+                if let Some(prepared) = prepared {
+                    self.cache(prepared, Some(source));
                 }
             }
             Message::RequestDecision { context } => self.request_archive(source, *context)?,
@@ -795,6 +887,9 @@ impl Controller {
                 Ok(None) => unreachable!(),
             };
             self.stats.executed_batches += 1;
+            // Count every successful completion, even when it is drained as
+            // stale below. These are execution costs, not finalized throughput.
+            self.stats.observe_execution(batch.observation);
             if work.context != self.context()
                 || work.parent != self.parent()
                 || !self.matches_context(batch.packet.context())
@@ -1125,6 +1220,23 @@ impl Controller {
         Ok(())
     }
 
+    fn cache_archive_body(&mut self, prepared: PreparedMessage, peer: String) -> bool {
+        let id = prepared.fragment_id();
+        if !self.cache(prepared, Some(peer.clone())) {
+            return false;
+        }
+        // A decision query is not a body request. Cache the owner-prepared
+        // archive so an exact RequestBody can wake it, but do not send the full
+        // block on every small decision retry from a peer that may already have
+        // executed it. Lost requests/replies use the normal request retry path.
+        if let Some(fixed) = self.fixed.iter_mut().find(|fixed| {
+            fixed.destination.as_ref() == Some(&peer) && fixed.prepared.fragment_id() == id
+        }) {
+            fixed.schedule.active = false;
+        }
+        true
+    }
+
     fn cache(&mut self, prepared: PreparedMessage, destination: Option<String>) -> bool {
         let id = prepared.fragment_id();
         if let Some(old) = self
@@ -1165,10 +1277,14 @@ impl Controller {
             self.retire(Retirement::Prepared(prepared));
             return false;
         }
+        let body_fanout = (destination.is_none()
+            && matches!(prepared.message().as_ref(), Message::Body { .. }))
+        .then(|| BodyFanout::new(self.config.peers.len()));
         self.fixed.push_back(Fixed {
             prepared,
             destination,
             schedule: RetrySchedule::new(),
+            body_fanout,
         });
         true
     }
@@ -1178,23 +1294,43 @@ impl Controller {
             let Some(mut fixed) = self.fixed.pop_front() else {
                 break;
             };
+            if fixed
+                .body_fanout
+                .as_ref()
+                .is_some_and(|fanout| fanout.remaining == 0)
+            {
+                fixed.schedule.active = false;
+            }
             if fixed.schedule.active && fixed.schedule.due.is_none_or(|due| now >= due) {
                 let peer = fixed
                     .destination
                     .clone()
                     .or_else(|| peers.get(fixed.schedule.next_peer).cloned());
                 if let Some(peer) = peer {
-                    let admitted = match self.channel.try_send(Outbound {
-                        peer,
-                        message: fixed.prepared.clone(),
-                    })? {
-                        SendAdmission::Accepted => true,
-                        SendAdmission::Backpressure(_) => false,
-                        SendAdmission::Rejected { reason, .. } => {
-                            self.reject(reason);
-                            false
+                    let needed = fixed
+                        .body_fanout
+                        .as_ref()
+                        .is_none_or(|fanout| fanout.needs(fixed.schedule.next_peer));
+                    let admitted = if !needed {
+                        false
+                    } else {
+                        match self.channel.try_send(Outbound {
+                            peer,
+                            message: fixed.prepared.clone(),
+                        })? {
+                            SendAdmission::Accepted => true,
+                            SendAdmission::Backpressure(_) => false,
+                            SendAdmission::Rejected { reason, .. } => {
+                                self.reject(reason);
+                                false
+                            }
                         }
                     };
+                    if admitted {
+                        if let Some(fanout) = &mut fixed.body_fanout {
+                            fanout.accepted(fixed.schedule.next_peer);
+                        }
+                    }
                     // An offline/full peer cannot stop this fixed broadcast
                     // from reaching the remaining healthy peers. All peers are
                     // retried next cycle; admission is not delivery evidence.
@@ -1302,7 +1438,9 @@ impl Controller {
         });
         if self.archive_requests.get(&peer) == Some(&requested) && cached {
             for fixed in &mut self.fixed {
-                if fixed.destination.as_ref() == Some(&peer) {
+                if fixed.destination.as_ref() == Some(&peer)
+                    && matches!(fixed.prepared.message().as_ref(), Message::Decision { .. })
+                {
                     fixed.schedule.wake();
                 }
             }

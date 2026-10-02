@@ -15,6 +15,9 @@ mod network_integration;
 #[path = "controller_integration.rs"]
 mod controller_integration;
 
+#[path = "controller_workload.rs"]
+mod controller_workload;
+
 #[path = "controller/tests.rs"]
 mod controller_tests;
 

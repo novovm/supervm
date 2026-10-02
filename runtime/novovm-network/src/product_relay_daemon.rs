@@ -374,6 +374,11 @@ pub fn run_product_relay_daemon_with_shutdown_v1(
         run_result.as_ref().copied().unwrap_or("error"),
         started_at.elapsed().as_millis(),
     );
+    if let Err(error) = &run_result {
+        // This loop propagates only accept/spawn/report errors, never key or
+        // payload material. Preserve the cause even if an owner drops the result.
+        eprintln!("product relay run failed: {error:#}");
+    }
     let shutdown_report = write_product_relay_report_v1(
         &config.report_path,
         &listen_addr,

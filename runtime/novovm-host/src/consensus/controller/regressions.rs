@@ -3,6 +3,109 @@
 use super::*;
 
 #[test]
+fn body_fanout_does_not_resend_admitted_peers_but_keeps_backpressured_peer() -> Result<()> {
+    let now = Instant::now();
+    let interval = Duration::from_millis(100);
+    let mut fanout = BodyFanout::new(3);
+    let mut schedule = RetrySchedule::new();
+    // Offline first peer must not delay the two healthy peers.
+    schedule.attempted(false, false, 3, now, interval)?;
+    for peer in [1, 2] {
+        assert_eq!(schedule.next_peer, peer);
+        assert!(fanout.needs(peer));
+        fanout.accepted(peer);
+        schedule.attempted(false, true, 3, now, interval)?;
+    }
+    assert_eq!(fanout.remaining, 1);
+    assert!(fanout.needs(0));
+    assert!(!fanout.needs(1) && !fanout.needs(2));
+    assert_eq!(schedule.next_peer, 0);
+    fanout.accepted(0);
+    assert_eq!(fanout.remaining, 0);
+    fanout.accepted(0);
+    assert_eq!(
+        fanout.remaining, 0,
+        "duplicate admission underflowed fanout"
+    );
+    // No receipt/finality state exists here: a lost initial send is recovered
+    // through a separate exact RequestBody, whose direct schedule can re-arm.
+    let mut requested = RetrySchedule::new();
+    requested.attempted(true, true, 3, now, interval)?;
+    assert!(!requested.active);
+    requested.wake();
+    assert!(requested.active);
+    assert!(!fanout.needs(0), "direct request restarted blind broadcast");
+    Ok(())
+}
+
+#[test]
+fn execution_observations_accumulate_scalars_and_maximum_without_claiming_workers() {
+    let mut stats = ControllerStats::default();
+    assert!(stats.last_execution_observation.is_none());
+    let first = ExecutionObservation {
+        components: 6,
+        credit_only_accounts: 2,
+        recomputed_transactions: 3,
+        peak_callbacks: 4,
+    };
+    let last = ExecutionObservation {
+        components: 3,
+        credit_only_accounts: 1,
+        recomputed_transactions: 2,
+        peak_callbacks: 1,
+    };
+    stats.observe_execution(first);
+    stats.observe_execution(last);
+    assert_eq!(stats.execution_components_total, 9);
+    assert_eq!(stats.execution_credit_only_accounts_total, 3);
+    assert_eq!(stats.execution_recomputed_transactions_total, 5);
+    assert_eq!(stats.execution_peak_callbacks, 4);
+    assert_eq!(stats.last_execution_observation, Some(last));
+    assert!(!stats.execution_observation_saturated);
+    assert_eq!(
+        stats.executed_batches, 0,
+        "observation aggregation invented a completed batch"
+    );
+    assert_eq!(
+        stats.durable_decisions, 0,
+        "observation aggregation invented finality"
+    );
+}
+
+#[test]
+fn execution_observation_overflow_is_explicit_and_does_not_wrap() {
+    let mut stats = ControllerStats {
+        execution_components_total: u64::MAX - 1,
+        execution_credit_only_accounts_total: u64::MAX,
+        execution_recomputed_transactions_total: u64::MAX - 2,
+        ..ControllerStats::default()
+    };
+    let observation = ExecutionObservation {
+        components: 2,
+        credit_only_accounts: 1,
+        recomputed_transactions: 3,
+        peak_callbacks: 1,
+    };
+    stats.observe_execution(observation);
+    assert_eq!(stats.execution_components_total, u64::MAX);
+    assert_eq!(stats.execution_credit_only_accounts_total, u64::MAX);
+    assert_eq!(stats.execution_recomputed_transactions_total, u64::MAX);
+    assert!(stats.execution_observation_saturated);
+    assert_eq!(stats.last_execution_observation, Some(observation));
+    stats.observe_execution(ExecutionObservation {
+        components: 0,
+        credit_only_accounts: 0,
+        recomputed_transactions: 0,
+        peak_callbacks: 0,
+    });
+    assert!(
+        stats.execution_observation_saturated,
+        "later observation hid saturation"
+    );
+    assert_eq!(stats.execution_peak_callbacks, 1);
+}
+
+#[test]
 fn direct_history_is_demand_driven_not_a_permanent_background_retransmission() -> Result<()> {
     let now = Instant::now();
     let interval = Duration::from_millis(100);
