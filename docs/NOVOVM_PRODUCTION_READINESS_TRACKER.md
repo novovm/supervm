@@ -8,6 +8,68 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：guest曲线电路与严格验签真实证明（2026-10-03，本地验收）
+
+基线`b027e4043c1aab1174da4298ae3f73457a419fc4`与远端一致；其CI
+`37074245213`双平台completed/success，Windows14分50秒、Linux8分59秒。
+本轮在干净快照`target/runtime-rebuild/candidate-b027e40-curve-v1/`开发，
+不构建/提交根49草稿。仅guest固定官方curve25519-dalek 4.1.3
+`385adda1fa3b66d9aaa8b8fcc99ddc324d33ba32`与必需crypto-bigint 0.5.5
+`3ab63a6f1048833f7047d5a50532e4a4cc789384`。Ed25519仍registry2.2.0、
+原verify_strict不动；主guest源码、根/外层锁、业务、原生节点、AOEM仓与
+FULLMAX资产不改。guest实际bits32/serial通过目标条件选RISC0域/标量后端，
+不靠改签名政策或启legacy_compatibility提速。
+
+同前两轮Linux/WSL、Core Ultra 9 275HX、Release CPU证明sidecar（下节
+SHA256 `cfdd4469...`）、Composite/poseidon2，无CUDA、无DEV生成。相同
+单笔完整NOV input/152B journal不变；计时期间不并行构建。真实生成
+**242.870秒、1,674,684B**，初始独立验证79ms；最终probe再验82ms，14反例
+仍拒绝并再次接受原件。sha-only旧image与新image双向拒绝错配receipt，
+各自原配对仍成功；DEV生成返回-4且无输出文件。前轮为350.455秒/2,250,432B；
+这是有限功能样本，**不是稳定加速比例、主链TPS、出块间隔或批量证明容量**。
+
+- 主guest image：`[1144495143,3612026493,4005071765,1634377336,1879036010,4171784104,1710951644,1407711336]`
+- 主program：907896B，SHA256 `316be9300d357cfad9372a13118f048e0830c1b67b7cc72fb36baf653a9d1515`
+- 首次producer SHA256：`5ac3e76066a617bf4230f170a099e4a45f13d08f483164389c7b5e33759b066f`
+- 最终probe SHA256：`fd333f3ce7cd811d829fd83c180b9d8d6832b447a43375a46a6c1c4cfb6cac10`
+- 主receipt SHA256：`0ca027f95f9d548323e828d9387f23e1a06f01a0e3d7ac7d668be73ccec32271`
+
+另加独立`novovm-auth-conformance-guest`，只调用原authenticate_transfer_v3，
+不含余额/见证执行，避免后续状态失败冒充验签拒绝。原生未patch实现先检查
+固定公开夹具的规范编码、链/账户/nonce前置条件及准确错误层；guest实际
+输出6接受/10拒绝，journal绑定完整输入摘要与顺序，没有输入预期结果。
+包括多钥/多消息/20与32字节账户、改签名/金额、S=L及S+L、非规范/不可解压
+R、不可解压A、identity A/R，以及A=identity/R=B/S=1的弱A-only反例。
+两个弱A例先确认ordinary可通过、strict须拒绝；不是随机坏签名假门。
+
+该专项真实生成/验证成功，356.549秒、2,250,244B；生产者退出后独立进程
+在DEV=1下验证108ms，错输出/image拒绝后原正例仍成功。其image/journal
+独立，**不能当NOV状态转换证明或主链授权**。guest证明成功位，详细错误
+阶段来自native预检；R单独门、mixed-torsion正例、全部标量/点边界未穷尽，
+不称完整密码审计。expected文件须来自受信native producer，不能取自receipt。
+
+- 诊断image：`[3788971418,596289292,2523777155,577641825,151983570,1374351363,3650584798,2381207193]`
+- 诊断program：452932B，SHA256 `06ebcb7a9468ebbed149b9cbe82a3828ae2724bbfab14fec6416cd98b079b10`
+- 2914B诊断input SHA256：`9b87d00b8233ef0a69fe1863156301597582eaa291b3ccd52327f3dd7c25bc6e`
+- 58B诊断journal SHA256：`815d2c6078bdecc65ad2303673f75b3d490462787479642dfa588c6497dcaed4`
+- 诊断receipt SHA256：`86af7ad10470c31d4dbf3737f3b993be8a12fad03fd0581a324290b541afb361`
+
+真实两个guest均locked构建、不skip；加入诊断后主guest image/字节完全不变，
+最终probe成功验证初始producer的receipt。fmt/diff检查通过；独立lint target
+用SKIP只做probe host all-targets strict Clippy通过，不冒充guest构建/证明。
+本轮没有重跑全工作区、Windows真实证明或四节点负载。官方电路没有严格
+恒时保证，不外推秘密签名/隐私；经典Ed25519也不是PQ。Composite执行长度
+泄漏、SHA复制累计heap、1024上限未实测等上一切片边界继续保留。
+
+日志位于`target/runtime-rebuild/proof-curve-*`：`build-initial`、`build-final`、
+`build-final-v2`、`guest-features`、`prove`、`verify-initial`、`verify-final`、
+`old-image-reject`、`new-image-reject`、`dev-reject`、`positive-recheck`、
+`auth-conformance`和`probe-lint-only`，均为`.log`。主receipt保存为原夹具目录
+`receipt-curve.bin`，诊断原件在`nov-auth-conformance-curve-v1/`；复现见
+[proof说明](../runtime/proofs/nov-transfer/README.md)。A下一步先实测多笔关系
+固定开销与内存，再接同候选显式后台证明/原AOEM耐久恢复；不占执行批槽、
+不暗改最终性。S4主链、隐私/PQ/Execute、实体多机/长跑/部署仍未完成。
+
 ## 设备 A：同一完整业务关系的 SHA-256 证明加速（2026-10-03，本地验收）
 
 基线`77bb9619e99efa77c2b01dd3283b074aebf70081`与远端一致，其CI

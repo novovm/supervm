@@ -52,6 +52,14 @@ FULLMAX core及其header仍是旧发布资产，不能因源码接线便假称�
 没有因此加速。不可启用`force-soft`后仍声称用了电路加速。任何guest依赖
 变动都须重建并重新钉住可信image，不能沿用旧receipt的image作信任依据。
 
+同一guest另固定`curve25519-dalek 4.1.3`官方补丁
+`385adda1fa3b66d9aaa8b8fcc99ddc324d33ba32`及其必需配套`crypto-bigint 0.5.5`
+补丁`3ab63a6f1048833f7047d5a50532e4a4cc789384`。保留registry Ed25519 2.2.0
+和原`verify_strict`，不降到fork里的2.1.1，也不增加torsion-free等新政策。
+guest的`bits=32/backend=serial`仍按zkvm目标选择RISC0域/标量后端；不是
+原生节点验签提速或抗量子升级。官方预编译没有严格恒时保证，不能把本次
+公开交易验签测量外推为秘密签名或隐私用途的侧信道验收。
+
 证明工具链独立于根产品workspace，普通节点构建不安装它。根CI覆盖共享关系
 与无native依赖检查，但**不运行 zkVM 构建或真实证明**。缺这两项不能签收S4。
 
@@ -94,6 +102,24 @@ RISC0_DEV_MODE=1 "$probe" verify-negatives "$AOEM_PROOF_LIBRARY" \
 receipt取信任pin。负例包括所有公开字段、空/追加journal、错误image、篡改/
 截断receipt、旧封装与尾随字节（共14项），并再次检查原正例；后端不可用
 不算负例验证成功。旧/未来封装在适配单测中的拒绝不替代真实密码验证。
+
+## 独立验签一致性诊断（不是完整业务证明）
+
+`novovm-auth-conformance-guest`只调用原`authenticate_transfer_v3`，对有界
+测试交易逐项提交验签结果，并绑定完整输入摘要。它有自己的image/journal；
+不能冒充上面的NOV状态转换关系，不能用于候选发布或主链最终性。
+host先用未patch的原生实现检查固定正反例，再在实际guest中生成证明，避免
+坏交易在后续witness环节失败却被误计为验签门通过。测试用固定公开密钥，
+不是生产账户。该有限回归不宣称穷尽Ed25519接受集合或完成密码学独立审计。
+
+```sh
+env -u RISC0_DEV_MODE RISC0_PROVER=local "$probe" auth-conformance \
+  "$AOEM_PROOF_LIBRARY" target/runtime-rebuild/nov-auth-conformance
+# 生产者退出后，独立进程只加载receipt与受信期待journal，不再生成夹具。
+RISC0_DEV_MODE=1 "$probe" auth-conformance-verify "$AOEM_PROOF_LIBRARY" \
+  target/runtime-rebuild/nov-auth-conformance/receipt.bin \
+  target/runtime-rebuild/nov-auth-conformance/expected-journal.bin
+```
 
 同步 C ABI 没有取消/时间/工作内存额度：只能在独立证明owner或隔离进程中
 调用，不能放入共识poll；超时不可遗弃线程后释放输入。字节上限不等于prover

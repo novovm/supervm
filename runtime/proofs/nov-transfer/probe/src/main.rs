@@ -11,6 +11,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Instant;
 
+mod auth_conformance;
 mod fixture;
 
 fn read_bounded(path: &Path, maximum: usize) -> Result<Vec<u8>> {
@@ -58,6 +59,14 @@ fn main() -> Result<()> {
     let command = args.first().and_then(|s| s.to_str()).unwrap_or("");
     match (command, args.len()) {
         ("fixture", 3) => fixture::create(Path::new(&args[1]), Path::new(&args[2])),
+        ("auth-conformance", 3) => {
+            auth_conformance::run(Path::new(&args[1]), Path::new(&args[2]))
+        }
+        ("auth-conformance-verify", 4) => auth_conformance::verify(
+            Path::new(&args[1]),
+            Path::new(&args[2]),
+            Path::new(&args[3]),
+        ),
         ("image", 1) => {
             require_image()?;
             println!("image={:?} elf_bytes={} elf_sha256={}", NOVOVM_TRANSFER_GUEST_ID,
@@ -100,7 +109,7 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        _ => bail!("usage: fixture <trusted-compute-lib> <new-dir> | image | prove <trusted-proof-lib> <input> <trusted-journal> <new-receipt> | verify[-negatives] <trusted-proof-lib> <receipt> <trusted-journal>"),
+        _ => bail!("usage: fixture <trusted-compute-lib> <new-dir> | image | prove <trusted-proof-lib> <input> <trusted-journal> <new-receipt> | verify[-negatives] <trusted-proof-lib> <receipt> <trusted-journal> | auth-conformance <trusted-proof-lib> <new-dir> | auth-conformance-verify <trusted-proof-lib> <receipt> <trusted-journal>"),
     }
 }
 
