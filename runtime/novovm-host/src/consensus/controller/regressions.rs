@@ -154,6 +154,56 @@ fn offline_first_peer_does_not_block_healthy_broadcast_recipients() -> Result<()
 }
 
 impl Controller {
+    /// Keep one genuine owner-verified remote control ready for the ordinary
+    /// warm receive path. This changes ingress timing only, not verification,
+    /// execution, retirement admission, or the controller's event budget.
+    pub(in crate::consensus) fn regression_warm_control(
+        &mut self,
+        peer: &str,
+        ready: &Ready,
+    ) -> Result<bool> {
+        ensure!(
+            !self.is_recovering(),
+            "warm ingress fixture used during recovery"
+        );
+        let Message::Vote(vote) = ready.message.as_ref() else {
+            anyhow::bail!("warm ingress fixture requires a vote");
+        };
+        let VerifiedEvidence::Vote(verified) = ready.evidence.as_ref() else {
+            anyhow::bail!("warm ingress fixture requires owner verification");
+        };
+        ensure!(
+            verified.vote() == vote
+                && vote.context == self.context()
+                && vote.round == self.round()
+                && vote.phase == Phase::Prevote
+                && vote.value.is_none()
+                && ready.body.is_none()
+                && self
+                    .config
+                    .peers
+                    .get(&vote.validator_id)
+                    .map(String::as_str)
+                    == Some(peer),
+            "warm ingress fixture requires the exact remote nil prevote and route"
+        );
+        if self.recovery_test_ingress.is_some() {
+            // Owner backpressure must preserve the previous slot, not replace
+            // or synchronously destroy its original Ready on the control path.
+            return Ok(false);
+        }
+        self.recovery_test_ingress = Some(crate::consensus::channel::Received {
+            peer: peer.to_owned(),
+            ready: Ready {
+                message: ready.message.clone(),
+                prepared: ready.prepared.clone(),
+                evidence: ready.evidence.clone(),
+                body: None,
+            },
+        });
+        Ok(true)
+    }
+
     /// Called only from the real AOEM test after an ACTUAL candidate has staged
     /// a journal write, but before that write is polled/ACKed. The second body
     /// is genuinely prepared by HostChannel, not a fabricated private packet.

@@ -8,6 +8,60 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：持续控制消息不能饿死真实交易执行（2026-10-02）
+
+基于`fac0e84`；其双平台CI
+[`36963188460`](https://github.com/novovm/supervm/actions/runs/36963188460)已成功。
+本轮仅新controller、两处测试及既有交接文档；无AOEM/SDK/旧38项/Skill/分支改动。
+
+- **先红：** 实际AOEM、真实签名body、真实HostChannel验证的远端nil prevote，
+  仅固定每poll控制消息到达时机。旧调度在60.11秒失败：`retained_bodies=1`、
+  `inflight=0`、`executed_batches=0`、`durable_votes=0`。固定协议时钟，不能
+  用超时nil票冒充执行进展。原二进制SHA256
+  `8297ea964e11b10dabe509ce78da704ececdaeb7eca775fdae5d3c46e401c7d4`。
+- **修复：** ACK与执行完成先处理，然后在新入站控制消息之前调度已有执行、
+  归档和缺体查询；保持原次数/预算及真实回收背压，不循环等待或在控制线程
+  销毁正文。入口captured recovery门保留；已收证据仍先drive consensus再
+  pacemaker。刚收到body/offer要等下一poll；不承诺所有队列事件处理顺序不变。
+- **后绿：** 默认32和1事件预算都真实执行、持久化本地非nil prevote；重复
+  远端票不增权，2/4没有head。重开AOEM日志验证原签名/域/阶段。原cold控制流
+  回归也过，专项3项共0.43秒。不是WSS吞吐测试或执行有效性密码证明。
+- 全量真库Release Windows **468单元/集成+6编译拒绝**、WSL **465+6**，均
+  0失败/0忽略；fmt、strict Clippy、无native检查和3成员隔离检查通过。
+
+修前独立WSL同机四OS进程、1024笔/批×64高度：65536笔唯一耐久最终确认，
+79.611634秒、823.196269 TPS，冷恢复完整经济oracle通过。四节点每高仅执行
+一次、全部round0，无失败/stale/重算；首8高6.646秒、末8高14.346秒，仍有
+随高度变慢。此前116.253秒包含一次换轮，不能将两个旧运行之差算作本轮优化。
+不改120秒期限、网络限额或业务内容。修后同一二进制独立两次实测：
+
+| 65536笔 / 64高 | 四节点全部耐久确认 | 唯一最终确认TPS | 完整冷恢复经济oracle |
+| --- | --- | --- | --- |
+| 首轮 | 57.437175秒 | 1141.003198 | PASS |
+| 独立复跑 | 63.949987秒 | 1024.800838 | PASS |
+
+两轮四节点均各64执行/64决定、所有高度round0，执行失败/stale/重算为0；
+relay分别150253751/154547939字节，排队1/0帧，队列/source/rate拒绝0，
+均4次初始注册、无中途替换/过期。迟到旧context消息仍被拒绝，不称日志无错。
+首轮最后8高仍需13.735秒，复跑分段也有波动；不签收稳定容量或归因全部退化。
+两轮未同时运行其他Cargo负载；WSL2 `/mnt/d`、24逻辑CPU、同机四进程与四库，
+不是四台设备/公网。计时含节点验签、真实执行、网络、共识与耐久确认；不含
+钱包预签、进程/测试创世启动和事后冷恢复，不将四份重复执行累加为TPS。
+宿主二进制SHA256 `ba224c78754b1236394d5a11965caa561a333e03751b37a894964be3c4f38588`，
+AOEM仍为`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+
+原始证据均在`target/runtime-rebuild/`：`fac0e84-linux-long-baseline.log`、
+`controller-warm-starvation-red.log`、`controller-warm-starvation-green.log`、
+`controller-fairness-windows-release.log`、`controller-fairness-linux-release.log`、
+`controller-fairness-linux-long.log`、`controller-fairness-linux-long-repeat.log`。
+基线measurement目录为`controller-load-1024-434-1790914249279808112/`。
+修后为`controller-load-1024-13569-1790915342199049443/`和
+`controller-load-1024-426-1790915466271056317/`。
+已证实的是调度公平缺陷，不是全部长测退化根因。下一处A检查历史Decision查询
+仍读取完整candidate并准备正文的开销；不删除持久化/读回来换TPS。
+S4旧证明库仍不支持新guest，升级AOEM需明确切仓授权；其余总目标及正式部署
+授权边界保持，不宣称高性能、隐私/PQ或生产完成。
+
 ## 设备 A：完整 NOV 执行证明关系与修复版 guest，后端尚不兼容（2026-10-02）
 
 基于 `3bac1b6`；其远端CI

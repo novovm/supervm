@@ -875,3 +875,174 @@ fn real_cold_recovery_progresses_with_control_retirement_on_every_poll() -> Resu
     services.shutdown()?;
     result
 }
+
+#[test]
+#[ignore = "requires explicit real AOEM; deterministic verified-control ingress during warm execution"]
+fn real_warm_execution_progresses_with_control_retirement_on_every_poll() -> Result<()> {
+    warm_control_retirement(ControllerLimits::default().events_per_poll)
+}
+
+#[test]
+#[ignore = "requires explicit real AOEM; one-event warm controller scheduling budget"]
+fn real_warm_execution_progresses_with_one_event_per_poll() -> Result<()> {
+    warm_control_retirement(1)
+}
+
+fn warm_control_retirement(events_per_poll: usize) -> Result<()> {
+    // Only ingress timing is deterministic here. Body preparation, signature
+    // checking, AOEM execution, persistence and signing use the real owners.
+    // This is not a live-WSS, independent-process or throughput acceptance.
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/runtime-rebuild/controller-tests")
+        .join(format!(
+            "warm-ingress-{events_per_poll}-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+    let root = initialize(&directory)?;
+    let mut services = Services(vec![CandidatePipeline::start(
+        pipeline_config(&directory)?,
+        OpenMode::Existing,
+    )?]);
+    let pipeline = &services.0[0];
+    let (mut config, index, context, parent) = fixture(root)?;
+    config.limits.events_per_poll = events_per_poll;
+    let set = config.validators.clone();
+    let local = config.local_validator;
+    let remote_index = (0..4).find(|candidate| *candidate != index).unwrap();
+    let remote = Validator::new(validator_key(remote_index).verifying_key().to_bytes(), 1)?.id();
+    let peer = config
+        .peers
+        .get(&remote)
+        .context("remote route missing")?
+        .clone();
+    let vote = wire::Vote::sign(
+        context,
+        0,
+        Phase::Prevote,
+        None,
+        &set,
+        &validator_key(remote_index),
+    )?;
+    let journal = open_journal(
+        ValidatorJournal::open(pipeline, context, parent, set.clone(), validator_key(index))?,
+        pipeline,
+    )?;
+    let channel = disconnected_channel(&config, index)?;
+    let ready = (|| -> Result<_> {
+        let deadline = Instant::now() + DEADLINE;
+        let mut request = PrepareRequest {
+            token: u64::MAX,
+            input: PrepareInput::New(Arc::new(Message::Vote(vote))),
+        };
+        loop {
+            ensure!(
+                Instant::now() < deadline,
+                "warm control preparation admission stalled"
+            );
+            match channel.try_prepare(request)? {
+                PrepareAdmission::Accepted => break,
+                PrepareAdmission::Backpressure(returned) => request = returned,
+                PrepareAdmission::Rejected { reason, .. } => bail!(reason),
+            }
+            std::thread::yield_now();
+        }
+        loop {
+            ensure!(
+                Instant::now() < deadline,
+                "warm control preparation stalled"
+            );
+            match channel.try_recv()? {
+                Some(ChannelEvent::Prepared {
+                    token: u64::MAX,
+                    result,
+                }) => return result.map_err(anyhow::Error::msg),
+                None => std::thread::yield_now(),
+                Some(_) => bail!("unexpected event on disconnected preparation owner"),
+            }
+        }
+    })()?;
+    let mut controller = Controller::new(config, journal, channel)?;
+    let result = (|| -> Result<()> {
+        ensure!(
+            !controller.is_recovering(),
+            "fresh journal entered recovery"
+        );
+        let body = Arc::new(Message::Body {
+            context: batch_context(root),
+            raw_transactions: raw()?,
+        });
+        // Keep the protocol clock fixed. A wall-clock failure must not turn
+        // into a timeout/nil vote and make the execution assertion pass.
+        let now = Instant::now();
+        let deadline = now + DEADLINE;
+        let mut supplied = 0usize;
+        while !controller.try_submit_body(&body)? {
+            ensure!(Instant::now() < deadline, "warm body admission stalled");
+            supplied += usize::from(controller.regression_warm_control(&peer, &ready)?);
+            controller.poll(pipeline, now)?;
+            std::thread::yield_now();
+        }
+        while controller.stats().durable_votes != 1
+            || controller.is_pending()
+            || controller.stats().prevote_weight != 2
+        {
+            ensure!(
+                Instant::now() < deadline,
+                "control retirement starved warm execution/durable prevote: {:?}",
+                controller.stats()
+            );
+            supplied += usize::from(controller.regression_warm_control(&peer, &ready)?);
+            controller.poll(pipeline, now)?;
+            std::thread::yield_now();
+        }
+        ensure!(supplied >= 2, "fixture did not sustain control ingress");
+        let stats = controller.stats();
+        let observed = stats
+            .last_execution_observation
+            .context("warm execution lacks actual AOEM callback observation")?;
+        ensure!(
+            stats.executed_batches == 1
+                && stats.execution_failures == 0
+                && observed.components > 0
+                && observed.peak_callbacks > 0
+                && stats.durable_votes == 1
+                && stats.received_votes == 2
+                && stats.prevote_weight == 2
+                && stats.precommit_weight == 0
+                && stats.durable_decisions == 0
+                && controller.head().is_none()
+                && controller.context() == context
+                && controller.parent() == parent
+                && controller.round() == 0,
+            "warm control flow skipped real execution, invented votes or finalized: {stats:?}"
+        );
+        // Re-read the actual AOEM journal. Its latest ACK must be our non-nil
+        // prevote, not the injected remote vote or a timer-created nil vote.
+        let reopened = open_journal(
+            ValidatorJournal::open(pipeline, context, parent, set.clone(), validator_key(index))?,
+            pipeline,
+        )?;
+        let Some(DurableMessage::Vote(vote)) = reopened.last_durable_message() else {
+            bail!("warm execution did not persist a local prevote");
+        };
+        vote.verify(&set)?;
+        ensure!(
+            vote.validator_id == local
+                && vote.context == context
+                && vote.round == 0
+                && vote.phase == Phase::Prevote
+                && vote.value.is_some()
+                && reopened.decided().is_none(),
+            "warm execution persisted the wrong signer/phase/value or a decision"
+        );
+        Ok(())
+    })();
+    let channel_shutdown = controller.shutdown();
+    drop(controller);
+    drop(ready);
+    let pipeline_shutdown = services.shutdown();
+    result?;
+    channel_shutdown?;
+    pipeline_shutdown
+}

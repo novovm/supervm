@@ -510,6 +510,18 @@ impl Controller {
             // append fresh retirement. Otherwise even one control message per
             // poll could indefinitely starve recovery without owner congestion.
             self.poll_recovery(pipeline)?;
+        } else if self.retired.is_empty() {
+            // Give already-ready data work a bounded turn BEFORE fresh control
+            // ingress can append retirement. A received vote/request awaiting
+            // its first owner handoff is not evidence of owner congestion; if
+            // it gated this work later in poll, steady ingress could starve
+            // execution/archive progress forever. Genuine pending retirement
+            // still backpressures admission, and new bodies wait one poll.
+            self.submit_executions(pipeline)?;
+            self.poll_archives(pipeline)?;
+            if self.retired.is_empty() {
+                self.request_missing(now)?;
+            }
         }
         for _ in 0..self.config.limits.events_per_poll {
             if !self.retired.is_empty() {
@@ -540,16 +552,6 @@ impl Controller {
             self.drive_consensus()?;
             self.pacemaker
                 .poll(&mut self.journal, &self.collector, now)?;
-        }
-        // A congested reclamation owner backpressures new data work too. Only
-        // the finite already-accepted journal/execution completions above may
-        // add retirement items until this queue drains.
-        if !recovering && self.retired.is_empty() {
-            self.submit_executions(pipeline)?;
-            self.poll_archives(pipeline)?;
-            if self.retired.is_empty() {
-                self.request_missing(now)?;
-            }
         }
         self.flush_preparations()?;
         self.flush_sends(now)?;
