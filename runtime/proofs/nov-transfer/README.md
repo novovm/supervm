@@ -19,6 +19,12 @@
 - 只覆盖当前 NOV 直付/Ed25519 V3 业务，不覆盖 Execute、隐私资产或 ML-DSA。
   zkVM 关系不等于隐私或抗量子声明。
 
+当前 AOEM 默认生成 **Composite STARK 执行有效性证明**，不是递归压缩后的
+Succinct/Groth16。[RISC0 2.3.2 安全模型](https://github.com/risc0/risc0/blob/v2.3.2/website/api/security-model.md#zero-knowledge-proving)
+明确未递归证明泄露执行长度，并对关键隐私应用保留警告。不能因工具名含
+zkVM就宣称已完成严格零知识隐私；普通交易公开性也不会被执行证明自动隐藏。
+证明正确执行、隐藏资产信息及BFT最终性是不同验收边界。
+
 guest 本地资源配置为最多1024笔、单笔64KiB、body8MiB、4096访问键、16384个
 父节点/5MiB节点数据，总输入16MiB减4字节stdin长度框。它不是主网出块参数；
 超过时拒绝，不静默切批或宣称已经证明。新输入格式不是公开交易wire升级。
@@ -37,6 +43,14 @@ guest来适配旧后端。AOEM `34d66a51`已将通用后端固定到2.3.2，原C
 `AORCP001`拒绝，不回退旧verifier。须显式选定匹配的可信证明库；现随包
 FULLMAX core及其header仍是旧发布资产，不能因源码接线便假称已更新。
 独立证明sidecar不能覆盖承担计算/存储的FULLMAX core。
+
+只有独立 guest workspace 对 `sha2 0.10.9` 使用官方
+[RISC0 SHA-256 补丁](https://github.com/risc0/RustCrypto-hashes/releases/tag/sha2-v0.10.9-risczero.0)，
+固定revision `8631fabdea7bdffa97b11868e04e73491d8e5bcf`，guest锁文件必须
+引用该Git源。它在riscv32/zkvm中调用SHA-256预编译电路；共享业务源码、
+原生节点与外层probe依赖不变，Ed25519仍为2.2.0 `verify_strict`，SHA-512
+没有因此加速。不可启用`force-soft`后仍声称用了电路加速。任何guest依赖
+变动都须重建并重新钉住可信image，不能沿用旧receipt的image作信任依据。
 
 证明工具链独立于根产品workspace，普通节点构建不安装它。根CI覆盖共享关系
 与无native依赖检查，但**不运行 zkVM 构建或真实证明**。缺这两项不能签收S4。

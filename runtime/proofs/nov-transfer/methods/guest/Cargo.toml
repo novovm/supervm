@@ -10,5 +10,10 @@ publish = false
 risc0-zkvm = { version = "=2.3.2", default-features = false, features = ["std"] }
 novovm-host = { path = "../../../../novovm-host", default-features = false }
 
+[patch.crates-io]
+# Guest-only SHA-256 circuit acceleration; keep the same sha2 0.10.9 API
+# and all shared business/authentication semantics. Pin the reviewed source.
+sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", rev = "8631fabdea7bdffa97b11868e04e73491d8e5bcf" }
+
 [profile.release]
 overflow-checks = true

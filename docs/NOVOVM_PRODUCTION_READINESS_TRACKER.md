@@ -8,6 +8,60 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：同一完整业务关系的 SHA-256 证明加速（2026-10-03，本地验收）
+
+基线`77bb9619e99efa77c2b01dd3283b074aebf70081`与远端一致，其CI
+`37070716271`双平台completed/success；CI不构建guest或执行真实证明。
+本刀只有独立guest manifest/lock变更及交接文档，sha2版本仍0.10.9，官方
+补丁精确revision为`8631fabdea7bdffa97b11868e04e73491d8e5bcf`。实际guest
+锁和feature树核对Git源，未启用force-soft；根/外层probe锁及所有业务、
+guest源码不改。AOEM仓库、原49草稿与随包FULLMAX不改，不创建分支。
+
+干净HEAD快照`target/runtime-rebuild/candidate-77bb961-sha256-v1/`加上述
+两文件，Linux/WSL正常locked构建、无SKIP。CPU Intel Core Ultra 9 275HX，
+本轮证明期间没有并行构建；仍为同一Release AOEM 2.3.2 CPU sidecar、
+Composite/poseidon2、无CUDA。副库SHA256沿用下节`cfdd4469...`；未重新
+生成交易或期待journal，直接使用前轮同一单笔真实签名/扣费/nonce夹具。
+
+| 同输入功能样本 | 前轮未接电路 | 本轮接电路 |
+| --- | --- | --- |
+| 生成调用（含后端验证/序列化） | 717.393秒 | 350.455秒 |
+| 生产者退出后独立验证 | 212ms | 102ms |
+| receipt字节 | 4,768,434 | 2,250,432 |
+
+公开152B journal完全相同。14项密码反例全部拒绝、之后原正例再通过；
+另外真实旧image拒绝新receipt、新image拒绝旧receipt，两边原配对仍通过。
+DEV=1生成返回-4且没有输出文件；DEV=1 verifier依然接受真实proof。
+这只是两次功能样本，旧轮有同时lint；**不是配对独占基准、稳定加速承诺、
+批量/GPU证明容量、出块间隔或主链TPS**。350秒仍远不足以签收证明吞吐。
+
+- 新image：`[3524215403,1941157418,2598198666,397176697,3779815785,1105963016,3655555763,2967265936]`
+- 新组合program：918208B，SHA256 `11df0ed068b1f36069d47571eea98564be616be39994819aa3a19a0c92edf01c`
+- 新probe SHA256：`99cb846445f5d39ef1b5fe03d4a617f4961b356d25ad692e8915b33da95d99f5`
+- 新receipt SHA256：`5ff2b39687be2bbac4979153fe24726501e261441087c0fa9ffe37a7be8a67a0`
+- 原input/journal SHA256仍为下节`78bfa362...` / `6873f4f3...`；不从receipt取信任pin。
+
+补充检查：Linux原生共享关系12测试通过，proof/guest fmt及diff检查通过；
+未重跑完整工作区、Windows真实证明或四节点负载。首次从guest workspace
+给外部Host包传feature被Cargo拒绝，改用干净根workspace后才计12门；该
+native-free lib-test仍有原有read_batch测试import告警，不宣称本刀strict
+Clippy通过。Windows tar对历史中文文件名解包失败，已用WSL tar完整重解；
+不从缺文件快照构建。原始日志均保留，不豁免或更改既有测试。
+
+边界纠正：默认Composite是STARK执行有效性证明，不是完整隐私能力。
+[固定版本官方安全模型](https://github.com/risc0/risc0/blob/v2.3.2/website/api/security-model.md#zero-knowledge-proving)
+明确未经递归处理会泄露执行长度，关键隐私用途仍有警告。SHA-512/Ed25519
+曲线没有被本刀加速；官方SHA补丁的非对齐复制在当前bump allocator里累计
+占堆，最大批量内存、全部SHA边界向量尚未测。不得把单笔通过外推1024笔。
+
+证据：`target/runtime-rebuild/proof-sha256-{build-linux,guest-features,prove,
+verify,old-image-reject,new-image-reject,positive-recheck,dev-reject,shared-tests,
+shared-tests-v2}.log`；receipt为`nov-transfer-aorcp002-fixture/receipt-sha256.bin`。
+旧producer保留为`proof-v2-baseline-probe`。复现仍用[原proof入口](../runtime/proofs/nov-transfer/README.md)，
+使用新输出文件名，不能覆盖旧receipt。A继续验签/批量成本，再接同候选显式
+后台证明附件与原AOEM持久/恢复；不占原执行批槽、不暗启强制策略。S4主链、
+隐私/PQ、Execute、实体多机、长跑/部署未完成，本刀提交后CI另核。
+
 ## 设备 A：AOEM 2.3.2 与完整 NOV 关系真实证明（2026-10-03，本地验收）
 
 用户明确授权临时激活AOEM后，在其main保留GPU/APFL远端提交，基于
