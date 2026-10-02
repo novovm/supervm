@@ -17,6 +17,7 @@ use thiserror::Error;
 use tokio::sync::{mpsc, RwLock};
 
 mod encoded;
+use crate::product_relay_wire::encode_message_v2;
 use encoded::EncodedDeliveryV1;
 
 #[cfg(test)]
@@ -115,7 +116,8 @@ pub struct RelayPeerHandshakeDeliveryV1 {
     pub handshake: RelayPeerHandshakeV1,
 }
 
-/// Transport-neutral binary message contract for an authenticated product relay session.
+/// Logical message contract; binary carrier v2 is negotiated before authentication.
+/// The V1 suffix identifies message/envelope semantics, not the outer carrier codec.
 /// WSS is one carrier; the messages contain neither plaintext NOVORUDP nor execution semantics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "body", rename_all = "snake_case")]
@@ -592,7 +594,7 @@ impl ProductRelaySessionManagerV1 {
         envelope: SecureNovoRudpEnvelopeV1,
         now_ms: u64,
     ) -> RelayForwardOutcomeV1 {
-        let wire_bytes = serde_json::to_vec(&ProductRelayWireMessageV1::Data(envelope.clone()))
+        let wire_bytes = encode_message_v2(&ProductRelayWireMessageV1::Data(envelope.clone()))
             .map_or(usize::MAX, |wire| wire.len());
         self.forward_opaque_with_wire_bytes(
             source_peer_id,
@@ -833,7 +835,7 @@ impl ProductRelaySessionManagerV1 {
         handshake: RelayPeerHandshakeV1,
         now_ms: u64,
     ) -> RelayForwardOutcomeV1 {
-        let wire_bytes = serde_json::to_vec(&ProductRelayWireMessageV1::PeerHandshake {
+        let wire_bytes = encode_message_v2(&ProductRelayWireMessageV1::PeerHandshake {
             target_peer_id: target_peer_id.to_string(),
             handshake: handshake.clone(),
         })
@@ -3467,7 +3469,7 @@ mod tests {
         let node_a_peer_id = node_b_auth_peer_id_v1(&node_a);
         let node_b_peer_id = node_b_auth_peer_id_v1(&node_b);
         let first_envelope = opaque_envelope(&node_a_peer_id, &node_b_peer_id, 1, 32);
-        let delivery_bytes = serde_json::to_vec(&ProductRelayWireMessageV1::Delivery(
+        let delivery_bytes = encode_message_v2(&ProductRelayWireMessageV1::Delivery(
             OpaqueRelayDeliveryV1 {
                 source_peer_id: node_a_peer_id.clone(),
                 target_peer_id: node_b_peer_id.clone(),
@@ -3834,7 +3836,7 @@ mod tests {
         let target_peer_id = node_b_auth_peer_id_v1(&target);
         let first_envelope = opaque_envelope(&source_peer_id, &target_peer_id, 1, 64);
         let second_envelope = opaque_envelope(&source_peer_id, &target_peer_id, 2, 64);
-        let first_bytes = serde_json::to_vec(&ProductRelayWireMessageV1::Delivery(
+        let first_bytes = encode_message_v2(&ProductRelayWireMessageV1::Delivery(
             OpaqueRelayDeliveryV1 {
                 source_peer_id: source_peer_id.clone(),
                 target_peer_id: target_peer_id.clone(),
@@ -3844,7 +3846,7 @@ mod tests {
         ))
         .unwrap()
         .len();
-        let second_bytes = serde_json::to_vec(&ProductRelayWireMessageV1::Delivery(
+        let second_bytes = encode_message_v2(&ProductRelayWireMessageV1::Delivery(
             OpaqueRelayDeliveryV1 {
                 source_peer_id: source_peer_id.clone(),
                 target_peer_id: target_peer_id.clone(),
@@ -3996,9 +3998,8 @@ mod tests {
         while low < high {
             let midpoint = low + (high - low).div_ceil(2);
             let envelope = opaque_envelope(&node_a_peer_id, &node_b_peer_id, 7, midpoint);
-            let input_len = serde_json::to_vec(&ProductRelayWireMessageV1::Data(envelope))
-                .unwrap()
-                .len();
+            let input_len = encode_message_v2(&ProductRelayWireMessageV1::Data(envelope))
+                .map_or(usize::MAX, |wire| wire.len());
             if input_len <= PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1 {
                 low = midpoint;
             } else {
@@ -4006,21 +4007,22 @@ mod tests {
             }
         }
         let envelope = opaque_envelope(&node_a_peer_id, &node_b_peer_id, 7, low);
-        let input_len = serde_json::to_vec(&ProductRelayWireMessageV1::Data(envelope.clone()))
+        let input_len = encode_message_v2(&ProductRelayWireMessageV1::Data(envelope.clone()))
             .unwrap()
             .len();
-        let delivery_len = serde_json::to_vec(&ProductRelayWireMessageV1::Delivery(
+        let delivery = encode_message_v2(&ProductRelayWireMessageV1::Delivery(
             OpaqueRelayDeliveryV1 {
                 source_peer_id: node_a_peer_id.clone(),
                 target_peer_id: node_b_peer_id.clone(),
                 received_at_ms: 6_010,
                 envelope: envelope.clone(),
             },
-        ))
-        .unwrap()
-        .len();
+        ));
         assert!(input_len <= PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1);
-        assert!(delivery_len > PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1);
+        assert!(
+            delivery.is_err(),
+            "larger delivery wrapper must be rejected before allocation"
+        );
 
         let manager =
             ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1::default()).unwrap();

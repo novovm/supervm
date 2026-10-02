@@ -47,7 +47,7 @@ impl Replies {
     }
 
     fn wire(&mut self, message: ProductRelayWireMessageV1, deadline: Instant) -> Result<()> {
-        self.push(0x2, serde_json::to_vec(&message)?, deadline)
+        self.push(0x2, encode_message_v2(&message)?, deadline)
     }
 
     fn earliest_deadline(&self) -> Option<Instant> {
@@ -260,7 +260,7 @@ fn dispatch(
                         "product relay rejected raw authenticated wire admission: {reason:?}"
                     )
                 })?;
-            let message: ProductRelayWireMessageV1 = match serde_json::from_slice(&bytes) {
+            let message: ProductRelayWireMessageV1 = match decode_message_v2(&bytes) {
                 Ok(message) => message,
                 Err(error) => {
                     runtime.block_on(manager.reject_admitted_wire_v1(admission));

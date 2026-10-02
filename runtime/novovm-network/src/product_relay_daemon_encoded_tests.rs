@@ -84,7 +84,7 @@ impl EncodedDeliveryFixtureV1 {
             _source_inbox: source_inbox,
             relay,
             target,
-            expected_wire: serde_json::to_vec(&expected).unwrap(),
+            expected_wire: crate::product_relay_wire::encode_message_v2(&expected).unwrap(),
             control,
         }
     }

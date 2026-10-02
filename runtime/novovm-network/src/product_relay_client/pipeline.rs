@@ -188,7 +188,7 @@ impl ProductRelayPipelineV1 {
         }) {
             bail!("relay forward correlation key is already in flight");
         }
-        let payload = serde_json::to_vec(&message)?;
+        let payload = encode_message_v2(&message)?;
         expected.wire_bytes = payload.len();
         let bytes = encode_masked_frame_v1(0x2, &payload)?;
         let ticket = self.next_ticket;
@@ -456,7 +456,7 @@ impl ProductRelayPipelineV1 {
         wire: ProductRelayWireMessageV1,
         purpose: WritePurpose,
     ) -> Result<()> {
-        let bytes = encode_masked_frame_v1(0x2, &serde_json::to_vec(&wire)?)?;
+        let bytes = encode_masked_frame_v1(0x2, &encode_message_v2(&wire)?)?;
         self.start_frame(bytes, purpose)
     }
 

@@ -8,6 +8,83 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：显式协商的紧凑载体，传输减量与整链性能分开验收（2026-10-02）
+
+基于`97f9322`，其远端CI `36993299183`已实际完成：Windows/Linux均成功，
+包含此前失败的原96大帧门；不据单次成功抹去下方旧失败。本轮仅network十三
+文件和既有三文档，host11/legacy38草稿、AOEM/SDK、经济/签名/共识规则不改。
+
+### 载体与兼容边界
+
+Data/Delivery的密文不再编码为JSON数字数组。`NVRLY002`加消息tag、固定大端
+字段和有界长度前缀，保留原字段/路由/nonce/密文，控制消息仍用原JSON。
+整体1MiB上限不变；binary完整长度/UTF-8/尾字节预检后才复制字段，旧JSON
+Data/Delivery（包括转义和字段重排）明确拒绝。WebSocket请求和响应必须确认
+唯一`novovm.relay.binary.v2`，缺失/错值/混合/重复拒绝，发生在身份注册前；
+同一manager的active/offline始终存同一种唯一编码，无旧格式回退或双份缓存。
+这是外层载体V2，不是交易V3、PQ、共识或AEAD版本变更；所有端点须同步升级。
+客户端原HTTP状态/Accept子串判断同时改为精确状态码/字段、重复拒绝及
+Upgrade/Connection token检查，合法header大小写/OWS保留。
+
+实际wire计额、锁外一次编码、原guard跨部分写、TTL、15项累计credit及
+100ms写停顿/10秒帧期限保留。192KiB原文得到196720B密文和197111B Delivery，
+对比原样本约702993B，减少约72%。固定4KiB发送/64KiB接收fixture仍真实触发
+WouldBlock，原大帧guard未释放时第三接收者恢复48B原文（本次约0.332ms）。
+固定2 CPU原96大帧门180.671ms通过，无中途重连/丢失；这些均不是主链TPS。
+
+首轮工作树网络测试Windows208 PASS/1 FAIL、Linux207 PASS/1 FAIL：旧延迟请求
+fixture的40个200KB大包因不再JSON膨胀，不能满足原>16MiB压力前提。仅把测试
+输入增至90个，保留原门槛、累计投递上限与余额断言，未提高生产额度；首轮
+失败日志保留。随后HTTP复审修正和完整验收均在下述冻结源码完成。
+
+### 干净快照与完整路径
+
+树`6a3dd1615446b9162996f128b9d49c12040a7792`导出到
+`target/runtime-rebuild/candidate-97f9322-compact-carrier-v1/`；按Git规范化内容
+逐一核对97个host/AOEM文件等于HEAD、十三network文件等于暂存版，旧草稿未混入。
+真实随包AOEM、Release include-ignored串行测试Windows **565+6**、Linux **564+6**
+全部通过，0失败/0忽略；network分别211/210。双平台fmt、全targets与Host
+no-native strict Clippy通过；Windows隔离脚本及Linux全量metadata三成员/无
+legacy检查通过（后者在PowerShell判断，不冒称Linux原生pwsh脚本）。默认
+Debug全套本地未重跑，本次新提交远端CI须另核。
+
+同WSL2/24逻辑CPU、四OS验证进程/四AOEM RocksDB、真实WSS/E2E；1024公开测试
+付款账户各64笔连续nonce的Ed25519转账。重负载构建结束后同二进制独立两轮，
+原120秒门、四节点耐久head和完整冷经济oracle不变：
+
+| 样本 | 唯一最终确认交易 | 四节点全部耐久耗时 | finalized TPS | 全量冷恢复 |
+| --- | --- | --- | --- | --- |
+| 第一次 | 65536 | 17.825803749秒 | 3676.468165 | PASS |
+| 第二次 | 65536 | 17.382711173秒 | 3770.182876 | PASS |
+
+**与前版3565/3637 TPS仍接近，不签收性能突破或稳定容量。** 计时含节点验签、
+执行、网络、共识与耐久，不含钱包预签/启动/创世/冷恢复；不是PQ、真实用户或
+四台实体机。积压P95/P99分别17.004/17.826秒、16.593/17.383秒，含等待前序
+高度，不是单笔服务时间或生产出块周期。每节点64执行/64决定，失败/陈旧/
+重算均0；实际回调峰值21/24/13/19和12/24/14/16，不能当作主链吞吐。
+仍有`decision not for exact current parent`拒绝，不称零错误。两轮四库冷重开
+后64高head、候选、逐笔回执/nonce/费用/全状态根均通过完整oracle并读回核对。
+relay各注册4、替换/过期/拒绝0、停机断开4，转发5399/5385帧；全生存期接纳
+36349754/36341848B（前版约128MB），包括启动/退出，不换算精确测量窗带宽。
+停机所有队列归零，停机TLS无close_notify日志仍保留。
+
+原始日志均在`target/runtime-rebuild/`：`compact-carrier-work-network-{windows,linux}.log`
+是首轮失败；`compact-carrier-v1-clean-workspace-{windows,linux}.log`、
+`compact-carrier-v1-clean-clippy-{windows,linux}.log`、`compact-carrier-v1-two-cpu-linux.log`、
+`compact-carrier-v1-real-backpressure-linux.log`及`compact-carrier-v1-clean-linux-long-1.log`、
+`compact-carrier-v1-clean-linux-long-2.log`。两轮独立measurement、四库/live/recovered
+报告位于快照内`target/runtime-rebuild/controller-load-1024-406-1790937196329367614/`
+和`controller-load-1024-406-1790937265966862080/`，未复用或覆盖上一轮输出。
+Linux Host SHA256 `0f727a861d042757186414b77e7abf027a55aebdde7810f18a60cc1390477c38`；
+network `ec3c2356bf026b1684ebf9697f11ea5a09eff65c035d0dbdb89e8115419e4385`；
+AOEM仍`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+
+下一处A按同路径阶段数据定位整链等待，而非继续假定网络字节是主瓶颈。
+源码候选为HostChannel整块encode/body_id重复编码、按peer整候选归档恢复，
+以及AOEM顺序收尾/packet/I/O工作；先区分排队与实际服务，再选结构性改动，
+不直接合入旧归档/诊断草稿或放宽额度/期限。B独立隐私/PQ、S4通用后端待明确
+AOEM切仓授权、Execute/多机/容量/部署总目标均保留，未创世、发行或部署。
+
 ## 设备 A：服务端增量双向处理，真实写背压仍能转发入站（2026-10-02）
 
 基于`2ea0473`，其远端CI失败事实保留在下一节。本轮只改network七文件及

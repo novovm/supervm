@@ -96,7 +96,7 @@ impl Fixture {
             Lane::Data => {
                 let mut envelope =
                     opaque_envelope(&self.source.peer_id, &self.target.peer_id, 7, 4096);
-                // Exercise every JSON byte width, not only the cheapest zero encoding.
+                // Exercise every byte value in the compact opaque carrier.
                 for (index, byte) in envelope.ciphertext.iter_mut().enumerate() {
                     *byte = index as u8;
                 }
@@ -150,7 +150,7 @@ impl Fixture {
             .admit_authenticated_wire_v1(
                 &self.source.peer_id,
                 self.source.session_id,
-                serde_json::to_vec(input).unwrap().len(),
+                encode_message_v2(input).unwrap().len(),
                 now_ms,
             )
             .await
@@ -183,7 +183,7 @@ fn expected_delivery(
         }),
         _ => unreachable!(),
     };
-    serde_json::to_vec(&message).unwrap()
+    encode_message_v2(&message).unwrap()
 }
 
 async fn dispatch(
@@ -244,7 +244,7 @@ async fn both_encoded_lanes_revalidate_source_and_shutdown_without_recharging() 
             })
             .await;
             let input = fixture.input(lane);
-            let input_bytes = serde_json::to_vec(&input).unwrap().len();
+            let input_bytes = encode_message_v2(&input).unwrap().len();
             let admission = fixture.admit(&input, 1010).await;
             let state = Arc::clone(&fixture.manager.state);
             let accepting = Arc::clone(&fixture.manager.accepting);
@@ -304,7 +304,7 @@ async fn encoded_dispatch_allows_cross_thread_heartbeat_snapshot_and_target_repl
         let mut fixture = Fixture::new(Default::default()).await;
         let input = fixture.input(lane);
         let expected = expected_delivery(&input, &fixture.source.peer_id, 1010);
-        let input_bytes = serde_json::to_vec(&input).unwrap().len();
+        let input_bytes = encode_message_v2(&input).unwrap().len();
         let admission = fixture.admit(&input, 1010).await;
         let (entered_tx, entered_rx) = std::sync::mpsc::sync_channel(1);
         let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
@@ -375,11 +375,11 @@ async fn encoded_dispatch_allows_cross_thread_heartbeat_snapshot_and_target_repl
 }
 
 #[tokio::test]
-async fn encoded_bytes_match_v1_and_decoded_compatibility_while_charge_matches_output() {
+async fn encoded_bytes_match_v2_and_decoded_compatibility_while_charge_matches_output() {
     for lane in LANES {
         let mut fixture = Fixture::new(Default::default()).await;
         let input = fixture.input(lane);
-        let input_bytes = serde_json::to_vec(&input).unwrap().len();
+        let input_bytes = encode_message_v2(&input).unwrap().len();
         let expected = expected_delivery(&input, &fixture.source.peer_id, 1010);
         assert_ne!(input_bytes, expected.len());
         let admission = fixture.admit(&input, 1010).await;
@@ -409,7 +409,7 @@ async fn encoded_bytes_match_v1_and_decoded_compatibility_while_charge_matches_o
                 fixture.inbox.try_recv_peer_handshake().unwrap(),
             ),
         };
-        assert_eq!(serde_json::to_vec(&decoded).unwrap(), expected);
+        assert_eq!(encode_message_v2(&decoded).unwrap(), expected);
         let snapshot = fixture.manager.snapshot().await;
         assert_eq!(snapshot.active_queued_frame_count, 0);
         assert_eq!(snapshot.active_queued_bytes, 0);

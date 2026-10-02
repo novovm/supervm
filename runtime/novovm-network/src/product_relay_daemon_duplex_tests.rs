@@ -33,7 +33,7 @@ fn read_duplex_client_message_v1(
     let WebSocketFrameV1::Binary(bytes) = read_websocket_frame_v1(client, false)? else {
         bail!("expected a binary relay delivery/reply");
     };
-    Ok((serde_json::from_slice(&bytes)?, bytes))
+    Ok((crate::product_relay_wire::decode_message_v2(&bytes)?, bytes))
 }
 
 #[test]
@@ -78,14 +78,26 @@ fn daemon_dispatches_inbound_application_while_large_delivery_is_write_blocked()
     for (index, frame) in [&small_frame, &large_frame].into_iter().enumerate() {
         let envelope = sender_channel.seal_novorudp_frame(frame)?;
         if index == 1 {
-            expected_large_wire = serde_json::to_vec(&ProductRelayWireMessageV1::Delivery(
-                crate::OpaqueRelayDeliveryV1 {
+            // Carrier v2 stores ciphertext directly. Count the actual routing
+            // strings, not a new assumption about the identity's text length.
+            let expected_len = 75
+                + sender.peer_id.len()
+                + peer.peer_id.len()
+                + envelope.sender_peer_id.len()
+                + envelope.recipient_peer_id.len()
+                + envelope.ciphertext.len();
+            expected_large_wire = crate::product_relay_wire::encode_message_v2(
+                &ProductRelayWireMessageV1::Delivery(crate::OpaqueRelayDeliveryV1 {
                     source_peer_id: sender.peer_id.clone(),
                     target_peer_id: peer.peer_id.clone(),
                     received_at_ms: now,
                     envelope: envelope.clone(),
-                },
-            ))?;
+                }),
+            )?;
+            ensure!(
+                expected_large_wire.len() == expected_len,
+                "compact delivery differs from its fixed header, route fields and ciphertext"
+            );
         }
         let outcome = runtime.block_on(manager.forward_opaque(
             &sender.peer_id,
@@ -99,8 +111,9 @@ fn daemon_dispatches_inbound_application_while_large_delivery_is_write_blocked()
         );
     }
     ensure!(
-        expected_large_wire.len() > 512 * 1024,
-        "fixture lacks a genuinely large wire frame"
+        expected_large_wire.len() > large_frame.payload.len()
+            && expected_large_wire.len() <= large_frame.payload.len() + 1024,
+        "compact delivery must retain the original 192KiB body with only bounded framing overhead"
     );
     let baseline = runtime.block_on(manager.snapshot());
     ensure!(
@@ -120,8 +133,18 @@ fn daemon_dispatches_inbound_application_while_large_delivery_is_write_blocked()
         b"application ingress during blocked daemon egress".to_vec(),
     );
     let inbound_envelope = inbound_sender.seal_novorudp_frame(&inbound_frame)?;
-    let data_wire_bytes =
-        serde_json::to_vec(&ProductRelayWireMessageV1::Data(inbound_envelope.clone()))?.len();
+    let data_wire_bytes = crate::product_relay_wire::encode_message_v2(
+        &ProductRelayWireMessageV1::Data(inbound_envelope.clone()),
+    )?
+    .len();
+    ensure!(
+        data_wire_bytes
+            == 59
+                + inbound_envelope.sender_peer_id.len()
+                + inbound_envelope.recipient_peer_id.len()
+                + inbound_envelope.ciphertext.len(),
+        "compact input admission must count its actual header, routes and ciphertext"
+    );
     let messages = [
         ProductRelayWireMessageV1::Heartbeat,
         ProductRelayWireMessageV1::Data(inbound_envelope),
@@ -132,7 +155,7 @@ fn daemon_dispatches_inbound_application_while_large_delivery_is_write_blocked()
     let mut requests = Vec::new();
     let mut request_wire_bytes = 0u64;
     for message in &messages {
-        request_wire_bytes += serde_json::to_vec(message)?.len() as u64;
+        request_wire_bytes += crate::product_relay_wire::encode_message_v2(message)?.len() as u64;
         write_masked_wire_message_v1(&mut requests, message)?;
     }
 
@@ -311,7 +334,7 @@ fn daemon_dispatches_inbound_application_while_large_delivery_is_write_blocked()
             ProductRelayWireMessageV1::DeliveryConsumedV1 { through: 2 },
             ProductRelayWireMessageV1::Close,
         ] {
-            finish_bytes += serde_json::to_vec(&message)?.len() as u64;
+            finish_bytes += crate::product_relay_wire::encode_message_v2(&message)?.len() as u64;
             write_masked_wire_message_v1(&mut finish_wire, &message)?;
         }
         write_duplex_client_without_reading_v1(&mut client, &finish_wire)?;
@@ -358,9 +381,9 @@ fn daemon_bad_json_or_credit_closes_before_following_heartbeat_and_releases_guar
             "negative fixture must own a real queued delivery guard"
         );
         let bad_payload = if invalid_credit {
-            serde_json::to_vec(&ProductRelayWireMessageV1::DeliveryConsumedV1 {
-                through: u64::MAX,
-            })?
+            crate::product_relay_wire::encode_message_v2(
+                &ProductRelayWireMessageV1::DeliveryConsumedV1 { through: u64::MAX },
+            )?
         } else {
             b"{".to_vec()
         };

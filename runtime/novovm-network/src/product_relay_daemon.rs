@@ -10,6 +10,9 @@ use crate::product_relay_client::{
     PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_BYTES_V1,
     PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_EVENTS_V1,
 };
+use crate::product_relay_wire::{
+    decode_message_v2, encode_message_v2, PRODUCT_RELAY_WEBSOCKET_SUBPROTOCOL_V2,
+};
 use crate::{
     HandshakeReplayCacheV1, NodeHandshakeResponderV1, ProductRelayRuntimeConfigV1,
     ProductRelaySessionManagerV1, ProductRelayWireMessageV1,
@@ -716,7 +719,7 @@ fn relay_connection_loop_v1<S: Read + Write>(
                         bail!("product relay rejected raw authenticated wire admission: {disposition:?}")
                     }
                 };
-                let message: ProductRelayWireMessageV1 = match serde_json::from_slice(&bytes) {
+                let message: ProductRelayWireMessageV1 = match decode_message_v2(&bytes) {
                     Ok(message) => message,
                     Err(error) => {
                         runtime.block_on(manager.reject_admitted_wire_v1(admission));
@@ -1514,7 +1517,7 @@ fn accept_websocket_until_v1<S: Read + Write>(
     hasher.update(key.as_bytes());
     hasher.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
     let accept = BASE64_STANDARD.encode(hasher.finalize());
-    write!(stream, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n")?;
+    write!(stream, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\nSec-WebSocket-Protocol: {PRODUCT_RELAY_WEBSOCKET_SUBPROTOCOL_V2}\r\n\r\n")?;
     stream.flush()?;
     ensure_read_deadline_v1(Some(&guard))?;
     Ok(())
@@ -1538,6 +1541,7 @@ fn validate_websocket_upgrade_request_v1(request: &str) -> Result<String> {
     let mut connection_upgrade = false;
     let mut version_13 = false;
     let mut key = None;
+    let mut subprotocol = None;
     for line in lines.filter(|line| !line.is_empty()) {
         let (name, value) = line
             .split_once(':')
@@ -1553,6 +1557,10 @@ fn validate_websocket_upgrade_request_v1(request: &str) -> Result<String> {
                 .any(|token| token.trim().eq_ignore_ascii_case("upgrade"));
         } else if name.eq_ignore_ascii_case("sec-websocket-version") {
             version_13 |= value == "13";
+        } else if name.eq_ignore_ascii_case("sec-websocket-protocol") {
+            if subprotocol.replace(value).is_some() {
+                bail!("duplicate Sec-WebSocket-Protocol");
+            }
         } else if name.eq_ignore_ascii_case("sec-websocket-key")
             && key.replace(value.to_string()).is_some()
         {
@@ -1561,6 +1569,12 @@ fn validate_websocket_upgrade_request_v1(request: &str) -> Result<String> {
     }
     if !host_present || !upgrade_websocket || !connection_upgrade || !version_13 {
         bail!("relay WebSocket upgrade headers are incomplete or invalid");
+    }
+    // One codec for the complete manager lifetime, including offline queues.
+    // Reject old/mixed carriers before identity registration can replace a
+    // session or transfer any queued delivery to a different decoder.
+    if subprotocol != Some(PRODUCT_RELAY_WEBSOCKET_SUBPROTOCOL_V2) {
+        bail!("relay requires the binary v2 WebSocket subprotocol");
     }
     let key = key.context("missing Sec-WebSocket-Key")?;
     let decoded = BASE64_STANDARD
@@ -1597,7 +1611,7 @@ fn write_wire_message_v1<S: Write>(
     stream: &mut S,
     message: &ProductRelayWireMessageV1,
 ) -> Result<()> {
-    write_websocket_frame_v1(stream, 0x2, &serde_json::to_vec(message)?)
+    write_websocket_frame_v1(stream, 0x2, &encode_message_v2(message)?)
 }
 
 fn write_websocket_frame_v1<S: Write>(stream: &mut S, opcode: u8, payload: &[u8]) -> Result<()> {
@@ -2132,11 +2146,21 @@ mod tests {
 
     #[test]
     fn websocket_upgrade_requires_rfc6455_headers_and_fresh_key_shape() {
-        let valid = "GET /novovm HTTP/1.1\r\nHost: relay.example\r\nUpgrade: websocket\r\nConnection: keep-alive, Upgrade\r\nSec-WebSocket-Key: AAECAwQFBgcICQoLDA0ODw==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+        let valid = "GET /novovm HTTP/1.1\r\nHost: relay.example\r\nUpgrade: websocket\r\nConnection: keep-alive, Upgrade\r\nSec-WebSocket-Key: AAECAwQFBgcICQoLDA0ODw==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: novovm.relay.binary.v2\r\n\r\n";
         assert_eq!(
             validate_websocket_upgrade_request_v1(valid).unwrap(),
             "AAECAwQFBgcICQoLDA0ODw=="
         );
+        for replacement in [
+            "",
+            "Sec-WebSocket-Protocol: novovm.relay.binary.v1\r\n",
+            "Sec-WebSocket-Protocol: novovm.relay.binary.v2, legacy\r\n",
+            "Sec-WebSocket-Protocol: novovm.relay.binary.v2\r\nSec-WebSocket-Protocol: novovm.relay.binary.v2\r\n",
+        ] {
+            assert!(validate_websocket_upgrade_request_v1(&valid.replace(
+                "Sec-WebSocket-Protocol: novovm.relay.binary.v2\r\n", replacement
+            )).is_err());
+        }
         assert!(validate_websocket_upgrade_request_v1(
             &valid.replace("Upgrade: websocket\r\n", "")
         )
@@ -2153,6 +2177,42 @@ mod tests {
         .unwrap_err()
         .to_string()
         .contains("exactly 16 bytes"));
+    }
+
+    #[test]
+    fn carrier_negotiation_rejects_legacy_before_reading_identity_or_writing_success() {
+        let base = "GET /novovm HTTP/1.1\r\nHost: relay.example\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: AAECAwQFBgcICQoLDA0ODw==\r\nSec-WebSocket-Version: 13\r\n";
+        for protocol in [
+            "",
+            "Sec-WebSocket-Protocol: legacy\r\n",
+            "Sec-WebSocket-Protocol: novovm.relay.binary.v2, legacy\r\n",
+            "Sec-WebSocket-Protocol: novovm.relay.binary.v2\r\nSec-WebSocket-Protocol: novovm.relay.binary.v2\r\n",
+        ] {
+            let request = format!("{base}{protocol}\r\n");
+            let header_length = request.len();
+            let mut bytes = request.into_bytes();
+            bytes.extend_from_slice(b"identity-offer-must-not-be-consumed");
+            let mut stream = ScriptedWebSocketV1 { reads: Cursor::new(bytes), writes: Vec::new() };
+            let result = accept_websocket_until_v1(&mut stream, Instant::now() + Duration::from_secs(1), &AtomicBool::new(false));
+            assert!(result.is_err());
+            assert_eq!(stream.reads.position() as usize, header_length);
+            assert!(stream.writes.is_empty());
+        }
+        let mut stream = ScriptedWebSocketV1 {
+            reads: Cursor::new(format!("{base}Sec-WebSocket-Protocol: {PRODUCT_RELAY_WEBSOCKET_SUBPROTOCOL_V2}\r\n\r\n").into_bytes()),
+            writes: Vec::new(),
+        };
+        accept_websocket_until_v1(
+            &mut stream,
+            Instant::now() + Duration::from_secs(1),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let response = String::from_utf8(stream.writes).unwrap();
+        assert_eq!(response.matches("Sec-WebSocket-Protocol:").count(), 1);
+        assert!(response.contains(&format!(
+            "Sec-WebSocket-Protocol: {PRODUCT_RELAY_WEBSOCKET_SUBPROTOCOL_V2}\r\n"
+        )));
     }
 
     #[test]
@@ -2488,7 +2548,7 @@ mod tests {
                     panic!("queue wake did not produce a binary delivery");
                 };
                 let ProductRelayWireMessageV1::Delivery(delivery) =
-                    serde_json::from_slice(&bytes).unwrap()
+                    decode_message_v2(&bytes).unwrap()
                 else {
                     panic!("queue wake produced a non-delivery message");
                 };
@@ -2568,8 +2628,11 @@ mod tests {
                 ))
                 .unwrap();
         let (mut ca, mut cb) = test_peer_channels_v1(&a, &b, now);
-        for seq in 0..40 {
-            let mut frame = test_data_frame_v1(seq);
+        // Compact ciphertext no longer gains ~3.6x JSON array expansion.
+        // Keep the original >16 MiB pressure premise with real input bytes.
+        const QUEUED_DELIVERIES: usize = 90;
+        for seq in 0..QUEUED_DELIVERIES {
+            let mut frame = test_data_frame_v1(seq as u64);
             frame.payload = vec![seq as u8; 200_000];
             let envelope = cb.seal_novorudp_frame(&frame).unwrap();
             assert!(
@@ -2628,7 +2691,7 @@ mod tests {
             else {
                 panic!("unexpected frame");
             };
-            match serde_json::from_slice(&bytes).unwrap() {
+            match decode_message_v2(&bytes).unwrap() {
                 ProductRelayWireMessageV1::Delivery(delivery) => {
                     let frame = ca.open_novorudp_frame(&delivery.envelope).unwrap();
                     assert_eq!(frame.payload, vec![delivered as u8; 200_000]);
@@ -2650,7 +2713,7 @@ mod tests {
             runtime
                 .block_on(manager.snapshot())
                 .active_queued_frame_count,
-            19
+            QUEUED_DELIVERIES - 22 + 1
         );
     }
 
@@ -2730,7 +2793,7 @@ mod tests {
             else {
                 panic!("sender request did not receive a binary forward outcome");
             };
-            let message: ProductRelayWireMessageV1 = serde_json::from_slice(&bytes).unwrap();
+            let message: ProductRelayWireMessageV1 = decode_message_v2(&bytes).unwrap();
             assert!(matches!(
                 message,
                 ProductRelayWireMessageV1::ForwardOutcome(outcome)
@@ -2741,7 +2804,7 @@ mod tests {
             else {
                 panic!("bounded fair egress did not follow the forward outcome");
             };
-            let message: ProductRelayWireMessageV1 = serde_json::from_slice(&bytes).unwrap();
+            let message: ProductRelayWireMessageV1 = decode_message_v2(&bytes).unwrap();
             assert!(matches!(message, ProductRelayWireMessageV1::Delivery(_)));
         }
         assert!(writes.is_empty());
@@ -2968,14 +3031,10 @@ mod tests {
         .unwrap();
         let relay_offer = loop {
             match read_websocket_frame_v1(&mut client_b, false) {
-                Ok(WebSocketFrameV1::Binary(bytes)) => {
-                    match serde_json::from_slice::<ProductRelayWireMessageV1>(&bytes).unwrap() {
-                        ProductRelayWireMessageV1::PeerHandshakeDelivery(delivery) => {
-                            break delivery
-                        }
-                        _ => continue,
-                    }
-                }
+                Ok(WebSocketFrameV1::Binary(bytes)) => match decode_message_v2(&bytes).unwrap() {
+                    ProductRelayWireMessageV1::PeerHandshakeDelivery(delivery) => break delivery,
+                    _ => continue,
+                },
                 Err(error) if is_timeout_v1(&error) => continue,
                 other => panic!("unexpected relay handshake offer result: {other:?}"),
             }
@@ -3004,14 +3063,10 @@ mod tests {
         .unwrap();
         let relayed_response = loop {
             match read_websocket_frame_v1(&mut client_a, false) {
-                Ok(WebSocketFrameV1::Binary(bytes)) => {
-                    match serde_json::from_slice::<ProductRelayWireMessageV1>(&bytes).unwrap() {
-                        ProductRelayWireMessageV1::PeerHandshakeDelivery(delivery) => {
-                            break delivery
-                        }
-                        _ => continue,
-                    }
-                }
+                Ok(WebSocketFrameV1::Binary(bytes)) => match decode_message_v2(&bytes).unwrap() {
+                    ProductRelayWireMessageV1::PeerHandshakeDelivery(delivery) => break delivery,
+                    _ => continue,
+                },
                 Err(error) if is_timeout_v1(&error) => continue,
                 other => panic!("unexpected relay handshake response result: {other:?}"),
             }
@@ -3043,12 +3098,10 @@ mod tests {
                 panic!("relay delivery deadline exceeded");
             }
             match read_websocket_frame_v1(&mut client_b, false) {
-                Ok(WebSocketFrameV1::Binary(bytes)) => {
-                    match serde_json::from_slice::<ProductRelayWireMessageV1>(&bytes).unwrap() {
-                        ProductRelayWireMessageV1::Delivery(delivery) => break delivery,
-                        _ => continue,
-                    }
-                }
+                Ok(WebSocketFrameV1::Binary(bytes)) => match decode_message_v2(&bytes).unwrap() {
+                    ProductRelayWireMessageV1::Delivery(delivery) => break delivery,
+                    _ => continue,
+                },
                 Err(error) if is_timeout_v1(&error) => continue,
                 other => panic!("unexpected relay delivery result: {other:?}"),
             }
@@ -3189,7 +3242,7 @@ mod tests {
         let connection = rustls::ClientConnection::new(client_config, server_name).unwrap();
         let mut stream = rustls::StreamOwned::new(connection, tcp);
         let key = BASE64_STANDARD.encode([9u8; 16]);
-        write!(stream, "GET /novovm HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").unwrap();
+        write!(stream, "GET /novovm HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: {PRODUCT_RELAY_WEBSOCKET_SUBPROTOCOL_V2}\r\n\r\n").unwrap();
         stream.flush().unwrap();
         let response = read_http_headers_v1(&mut stream).unwrap();
         assert!(response.starts_with("HTTP/1.1 101"));
@@ -3212,7 +3265,7 @@ mod tests {
         stream: &mut S,
         message: &ProductRelayWireMessageV1,
     ) -> Result<()> {
-        let payload = serde_json::to_vec(message)?;
+        let payload = encode_message_v2(message)?;
         let mask = [0x13, 0x37, 0x39, 0x41];
         let mut header = Vec::with_capacity(payload.len() + 14);
         header.push(0x82);

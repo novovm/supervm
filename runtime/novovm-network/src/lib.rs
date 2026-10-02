@@ -11,6 +11,7 @@ pub mod product_relay;
 pub mod product_relay_client;
 pub mod product_relay_daemon;
 mod product_relay_io;
+mod product_relay_wire;
 pub mod worker;
 
 pub use novorudp::*;

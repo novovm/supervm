@@ -390,7 +390,7 @@ fn real_wss_large_read_progresses_during_unfinished_write_with_fixed_socket_buff
                 received_at_ms: now_ms_v1(),
                 envelope,
             });
-            let payload = serde_json::to_vec(&wire)?;
+            let payload = encode_message_v2(&wire)?;
             assert!(payload.len() <= PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1);
             let mut bytes = vec![0x82, 127];
             bytes.extend_from_slice(&(payload.len() as u64).to_be_bytes());
@@ -541,7 +541,7 @@ fn real_wss_eight_large_inflight_forwards_receive_seven_deliveries_before_revers
         // Write all inbound data before reading any client Data or credit.
         // The client must drain this direction while its own write is blocked.
         for envelope in incoming {
-            let payload = serde_json::to_vec(&ProductRelayWireMessageV1::Delivery(
+            let payload = encode_message_v2(&ProductRelayWireMessageV1::Delivery(
                 OpaqueRelayDeliveryV1 {
                     source_peer_id: envelope.sender_peer_id.clone(),
                     target_peer_id: envelope.recipient_peer_id.clone(),
