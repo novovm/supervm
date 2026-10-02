@@ -1,14 +1,14 @@
 use super::*;
 use crate::product_relay_client::ProductRelayTlsTrustV1;
 
-fn key(seed: u8) -> SigningKey {
+pub(super) fn key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
 }
-fn id(seed: u8) -> String {
+pub(super) fn id(seed: u8) -> String {
     peer_id_from_ed25519_public_key_v1(&key(seed).verifying_key().to_bytes())
 }
 
-fn config(peers: Vec<String>) -> NetworkWorkerConfig {
+pub(super) fn config(peers: Vec<String>) -> NetworkWorkerConfig {
     NetworkWorkerConfig {
         chain_id: 77,
         relay: ProductRelayClientConfigV1 {
@@ -27,10 +27,10 @@ fn config(peers: Vec<String>) -> NetworkWorkerConfig {
     }
 }
 
-fn unstarted(config: &NetworkWorkerConfig) -> NetworkWorker {
+pub(super) fn unstarted(config: &NetworkWorkerConfig) -> NetworkWorker {
     NetworkWorker {
         shared: Arc::new(Mutex::new(Shared {
-            outbound: Queues::new(&config.peers, config.limits.outbound.clone()),
+            outbound: OutboundQueues::new(&config.peers, config.limits.outbound.clone()),
             inbound: Queues::new(&config.peers, config.limits.inbound.clone()),
             status: WorkerStatus::default(),
             relay_read_waker: None,
@@ -139,29 +139,52 @@ fn recv_rearm_requires_live_work_on_the_actual_active_peer_without_changing_fair
     shared.outbound.push(&id(3), vec![2], 1, now).unwrap();
     // Intentionally stale telemetry must never make Idle/Cooldown runnable.
     shared.status.active_peers = vec![id(2), id(3)];
-    assert!(shared.runnable_outbound_waker(&peers, now, ttl).is_none());
+    assert!(shared
+        .runnable_outbound_waker(&peers, now, ttl, true)
+        .is_none());
     peers.get_mut(&id(3)).unwrap().phase = Phase::Cooldown(now - Duration::from_millis(1));
-    assert!(shared.runnable_outbound_waker(&peers, now, ttl).is_none());
+    assert!(shared
+        .runnable_outbound_waker(&peers, now, ttl, true)
+        .is_none());
     let (active, _) = channels(1, 2);
     peers.get_mut(&id(2)).unwrap().phase = Phase::Active(active);
     assert!(
-        shared.runnable_outbound_waker(&peers, now, ttl).is_none(),
+        shared
+            .runnable_outbound_waker(&peers, now, ttl, true)
+            .is_none(),
         "expired-only active queue must sleep"
     );
     shared.outbound.push(&id(2), vec![3], 1, now).unwrap();
-    let turn = shared.outbound.turn;
+    let turn = shared.outbound.turn();
+    assert!(shared
+        .runnable_outbound_waker(&peers, now, ttl, false)
+        .is_none());
     shared
-        .runnable_outbound_waker(&peers, now, ttl)
+        .runnable_outbound_waker(&peers, now, ttl, true)
         .unwrap()
         .wake();
     assert_eq!(counter.0.load(Ordering::Relaxed), 1);
     assert_eq!(
-        shared.outbound.turn, turn,
+        shared.outbound.turn(),
+        turn,
         "readiness check cannot consume the fair scheduling turn"
     );
     assert_eq!(shared.outbound.expire(now, ttl), 1);
-    assert_eq!(shared.outbound.pop(&id(2)).unwrap(), vec![3]);
-    assert!(shared.runnable_outbound_waker(&peers, now, ttl).is_none());
+    let (peer, entry, bytes) = shared
+        .outbound
+        .reserve_next(|id| id == self::id(2), 1)
+        .unwrap();
+    assert_eq!(bytes, vec![3]);
+    assert!(
+        shared
+            .runnable_outbound_waker(&peers, now, ttl, true)
+            .is_none(),
+        "in-flight original cannot self-wake"
+    );
+    shared.outbound.settle_exact(&peer, entry, 1, true).unwrap();
+    assert!(shared
+        .runnable_outbound_waker(&peers, now, ttl, true)
+        .is_none());
 }
 
 #[test]
@@ -192,7 +215,7 @@ fn queue_admission_returns_original_on_count_bytes_peer_and_contention_pressure(
         SendAdmission::Accepted
     );
     assert_eq!(worker.status().unwrap().outbound_bytes, 5);
-    // The in-flight front remains charged until the network owner pops it.
+    // In-flight originals remain charged until the exact correlated result.
     {
         let shared = worker.shared.lock().unwrap();
         let original = vec![9, 9];
@@ -206,7 +229,14 @@ fn queue_admission_returns_original_on_count_bytes_peer_and_contention_pressure(
         assert!(worker.try_recv().unwrap().is_none());
         assert_eq!(shared.outbound.count, 2);
     }
-    worker.shared.lock().unwrap().outbound.pop(&id(2));
+    {
+        let mut shared = worker.shared.lock().unwrap();
+        let (peer, entry, _) = shared
+            .outbound
+            .reserve_next(|id| id == self::id(2), 1)
+            .unwrap();
+        shared.outbound.settle_exact(&peer, entry, 1, true).unwrap();
+    }
     assert_eq!(
         worker.try_send(id(2), vec![1]).unwrap(),
         SendAdmission::Accepted
@@ -307,7 +337,7 @@ fn start_and_queue_admission_do_not_wait_on_stalled_relay_handshake() {
     worker.shutdown().unwrap();
 }
 
-fn channels(local: u8, remote: u8) -> (E2eSecureChannelV1, E2eSecureChannelV1) {
+pub(super) fn channels(local: u8, remote: u8) -> (E2eSecureChannelV1, E2eSecureChannelV1) {
     let initiator =
         NodeHandshakeInitiatorV1::start(&key(local), id(remote), now_ms(), 5000).unwrap();
     let responder = NodeHandshakeResponderV1::respond(

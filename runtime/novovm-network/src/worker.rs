@@ -16,8 +16,7 @@ use crate::product_relay::{
     OpaqueRelayDeliveryV1, RelayForwardDispositionV1, RelayPeerHandshakeV1,
 };
 use crate::product_relay_client::{
-    product_relay_client_read_is_idle_timeout_v1, ProductRelayClientConfigV1,
-    ProductRelayClientEventV1, ProductRelayClientV1,
+    ProductRelayClientConfigV1, ProductRelayClientEventV1, ProductRelayClientV1,
 };
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::SigningKey;
@@ -34,8 +33,11 @@ pub const NETWORK_WORKER_MAX_PAYLOAD_BYTES: usize = 192 * 1024;
 const FRAME_DOMAIN: u64 = u64::from_le_bytes(*b"NVNET001");
 const FRAME_OVERHEAD: usize = 96 + 16;
 const MAX_PEERS: usize = 1024;
-// Scheduling quantum, not a larger queue or a protocol delivery guarantee.
-const MAX_PAYLOADS_PER_TURN: usize = 8;
+
+mod outbound;
+mod session;
+use outbound::OutboundQueues;
+use session::run_session;
 
 #[derive(Debug, Clone)]
 pub struct QueueLimits {
@@ -137,6 +139,10 @@ pub struct WorkerStatus {
     pub inbound_dropped: u64,
     pub invalid_frames: u64,
     pub relay_admissions: u64,
+    /// Actual data submissions awaiting their precisely correlated relay result.
+    /// This is not application delivery or consensus finality.
+    pub pending_forwards: usize,
+    pub peak_pending_forwards: usize,
     pub relay_reconnects: u64,
     pub last_error: Option<String>,
 }
@@ -243,7 +249,7 @@ impl<T> Queues<T> {
 }
 
 struct Shared {
-    outbound: Queues<Vec<u8>>,
+    outbound: OutboundQueues,
     inbound: Queues<Vec<u8>>,
     status: WorkerStatus,
     relay_read_waker: Option<Waker>,
@@ -278,23 +284,16 @@ impl Shared {
         peers: &BTreeMap<String, Peer>,
         now: Instant,
         ttl: Duration,
+        can_submit: bool,
     ) -> Option<Waker> {
-        // Real current peer phases, not the last published telemetry. Queued
-        // handshakes/cooldowns and expired-only queues must still sleep. The
-        // next turn expires old fronts, so a live tail behind one is runnable.
-        self.outbound
-            .peers
-            .iter()
-            .any(|(id, queue)| {
-                peers
-                    .get(id)
-                    .is_some_and(|peer| matches!(peer.phase, Phase::Active(_)))
-                    && queue
-                        .back()
-                        .is_some_and(|item| now.saturating_duration_since(item.enqueued) < ttl)
-            })
-            .then(|| self.relay_read_waker.clone())
-            .flatten()
+        // A full forward window or an all-in-flight queue cannot be advanced
+        // by self-waking: only a real ACK/socket event can release that budget.
+        (can_submit
+            && self
+                .outbound
+                .has_ready(|id| peers.get(id).is_some_and(Peer::can_send), now, ttl))
+        .then(|| self.relay_read_waker.clone())
+        .flatten()
     }
 }
 
@@ -312,7 +311,7 @@ impl NetworkWorker {
     pub fn start(config: NetworkWorkerConfig, identity: SigningKey) -> Result<Self> {
         validate_config(&config, &identity)?;
         let shared = Arc::new(Mutex::new(Shared {
-            outbound: Queues::new(&config.peers, config.limits.outbound.clone()),
+            outbound: OutboundQueues::new(&config.peers, config.limits.outbound.clone()),
             inbound: Queues::new(&config.peers, config.limits.inbound.clone()),
             status: WorkerStatus::default(),
             relay_read_waker: None,
@@ -365,14 +364,14 @@ impl NetworkWorker {
             Err(TryLockError::WouldBlock) => return Ok(SendAdmission::Backpressure(message)),
             Err(TryLockError::Poisoned(_)) => bail!("network queue poisoned"),
         };
-        if !shared.outbound.peers.contains_key(&message.peer_id) {
+        if !shared.outbound.contains_peer(&message.peer_id) {
             return Ok(SendAdmission::Rejected {
                 message,
                 reason: SendRejection::UnknownPeer,
             });
         }
-        // Only the network owner expires/removes outbound fronts: a front may
-        // currently be in flight without holding the queue lock.
+        // Ready and in-flight originals share this same count/byte budget.
+        // Only the owner can settle exact entries or expire unsent originals.
         let size = message.bytes.len();
         if let Err(bytes) =
             shared
@@ -427,7 +426,8 @@ impl NetworkWorker {
     }
 
     /// Signals and joins the socket owner. Unlike try_send/try_recv, shutdown
-    /// waits for the client's bounded current I/O operation to finish.
+    /// wakes the owner's I/O wait. Dropping a partial write closes that TLS
+    /// session; its ciphertext is never retried on another connection.
     pub fn shutdown(&mut self) -> Result<()> {
         self.stop.store(true, Ordering::Release);
         let read_waker = self
@@ -436,8 +436,6 @@ impl NetworkWorker {
             .ok()
             .and_then(|shared| shared.relay_read_waker.clone());
         if let Some(waker) = read_waker {
-            // Interrupt an ordinary idle read, not an in-flight authenticated
-            // write or outcome obligation; those retain their old deadlines.
             waker.wake();
         }
         if let Some(worker) = self.worker.take() {
@@ -540,6 +538,9 @@ struct Peer {
     phase: Phase,
     replay: HandshakeReplayCacheV1,
     frame_sequence: u64,
+    /// A rejected frame freezes new sends until all already submitted frames
+    /// for this generation have been settled individually.
+    retiring: bool,
 }
 
 impl Peer {
@@ -548,7 +549,11 @@ impl Peer {
             phase: Phase::Idle,
             replay: HandshakeReplayCacheV1::new(256),
             frame_sequence: 0,
+            retiring: false,
         }
+    }
+    fn can_send(&self) -> bool {
+        matches!(self.phase, Phase::Active(_)) && !self.retiring
     }
     fn expected_session(&self, session: [u8; 16]) -> bool {
         match &self.phase {
@@ -595,6 +600,7 @@ fn publish_active(shared: &Mutex<Shared>, peers: &BTreeMap<String, Peer>) -> Res
 fn isolate(peer: &mut Peer, config: &NetworkWorkerConfig) {
     peer.phase = Phase::Cooldown(Instant::now() + Duration::from_millis(config.reconnect_delay_ms));
     peer.frame_sequence = 0;
+    peer.retiring = false;
 }
 
 fn admitted(disposition: RelayForwardDispositionV1) -> bool {
@@ -626,7 +632,8 @@ fn run_worker(
         .map(|id| (id.clone(), Peer::new()))
         .collect();
     while !stop.load(Ordering::Acquire) {
-        let connection = ProductRelayClientV1::connect(identity, &config.relay);
+        let connection = ProductRelayClientV1::connect(identity, &config.relay)
+            .and_then(ProductRelayClientV1::into_pipeline);
         match connection {
             Ok(mut relay) => {
                 let initial_wake = {
@@ -664,6 +671,7 @@ fn run_worker(
         for peer in peers.values_mut() {
             peer.phase = Phase::Idle;
             peer.frame_sequence = 0;
+            peer.retiring = false;
         }
         {
             let mut shared = shared
@@ -672,6 +680,11 @@ fn run_worker(
             shared.status.relay_connected = false;
             shared.status.active_peers.clear();
             shared.status.active_sessions.clear();
+            // Every return (including unknown partial writes) drops the old
+            // TLS owner first. Retain original admission time and re-encrypt
+            // only after a fresh authenticated E2E session is established.
+            shared.outbound.release_all();
+            shared.status.pending_forwards = 0;
             let expired = shared
                 .outbound
                 .expire(Instant::now(), Duration::from_millis(config.queue_ttl_ms));
@@ -682,317 +695,6 @@ fn run_worker(
         }
     }
     Ok(())
-}
-
-fn run_session(
-    relay: &mut ProductRelayClientV1,
-    config: &NetworkWorkerConfig,
-    identity: &SigningKey,
-    peers: &mut BTreeMap<String, Peer>,
-    shared: &Mutex<Shared>,
-    stop: &AtomicBool,
-) -> Result<()> {
-    let local = peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
-    let mut preauth = Queues::new(&config.peers, config.limits.preauth.clone());
-    let mut handshake_turn = 0;
-    let mut heartbeat_at = Instant::now();
-    let ttl = Duration::from_millis(config.queue_ttl_ms);
-    while !stop.load(Ordering::Acquire) {
-        let now = Instant::now();
-        {
-            let mut shared = shared
-                .lock()
-                .map_err(|_| anyhow::anyhow!("network queue poisoned"))?;
-            let expired = shared.outbound.expire(now, ttl);
-            shared.status.outbound_expired = shared.status.outbound_expired.saturating_add(expired);
-            let expired = shared.inbound.expire(now, ttl)
-                + preauth.expire(now, Duration::from_millis(config.handshake_timeout_ms));
-            shared.status.inbound_dropped = shared.status.inbound_dropped.saturating_add(expired);
-        }
-        for (id, peer) in peers.iter_mut() {
-            if matches!(&peer.phase, Phase::Handshaking { deadline, .. } | Phase::Responding { deadline, .. } if *deadline <= now)
-            {
-                isolate(peer, config);
-                let dropped = preauth.clear_peer(id);
-                let mut shared = shared
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("network queue poisoned"))?;
-                shared.status.inbound_dropped =
-                    shared.status.inbound_dropped.saturating_add(dropped);
-            }
-        }
-        publish_active(shared, peers)?;
-        // Each active send can buffer decoded events while waiting for its
-        // outcome. Re-check immediately before EVERY active-send stage.
-        if !relay.has_buffered_events()
-            && heartbeat_at.elapsed() >= Duration::from_millis(config.heartbeat_interval_ms)
-        {
-            relay.heartbeat()?;
-            heartbeat_at = Instant::now();
-        }
-        if !relay.has_buffered_events() {
-            send_one_handshake(relay, config, identity, peers, &mut handshake_turn)?;
-        }
-        // The outcome wait already reads the WSS stream and buffers incoming
-        // events. Continue queued sends only while there is no such event;
-        // do not pay an idle receive timeout after every queued payload.
-        // Both count and the existing read-idle budget bound this turn. An
-        // in-progress outcome keeps its original absolute deadline, and no
-        // additional send starts after a slow outcome exhausts this budget.
-        let send_started = Instant::now();
-        for _ in 0..MAX_PAYLOADS_PER_TURN {
-            if stop.load(Ordering::Acquire)
-                || relay.has_buffered_events()
-                || send_started.elapsed() >= Duration::from_millis(config.relay.read_timeout_ms)
-                || !send_one_payload(relay, config, peers, shared)?
-            {
-                break;
-            }
-        }
-        if stop.load(Ordering::Acquire) {
-            break;
-        }
-        if let Some(id) = preauth.next_peer(|id| {
-            peers
-                .get(id)
-                .is_some_and(|peer| matches!(peer.phase, Phase::Active(_)))
-        }) {
-            let delivery = preauth.pop(&id).expect("selected preauth queue");
-            receive_delivery(delivery, config, peers, shared, &mut preauth)?;
-            continue;
-        }
-        let read_waker = shared
-            .lock()
-            .map_err(|_| anyhow::anyhow!("network queue poisoned"))?
-            .runnable_outbound_waker(peers, Instant::now(), ttl);
-        if let Some(waker) = read_waker {
-            // Admission wakes can coalesce or be consumed inside an outcome
-            // wait. Rearm only work the next turn can actually send. recv_event
-            // still drains buffered/real input first, preserving duplex fairness.
-            waker.wake();
-        }
-        match relay.recv_event() {
-            Ok(ProductRelayClientEventV1::Delivery(delivery)) => {
-                receive_delivery(delivery, config, peers, shared, &mut preauth)?
-            }
-            Ok(ProductRelayClientEventV1::PeerHandshake(delivery)) => {
-                if delivery.target_peer_id != local {
-                    continue;
-                }
-                let Some(peer) = peers.get_mut(&delivery.source_peer_id) else {
-                    continue;
-                };
-                match delivery.handshake {
-                    RelayPeerHandshakeV1::Offer(offer) => {
-                        if offer.initiator_peer_id != delivery.source_peer_id
-                            || offer.responder_peer_id != local
-                        {
-                            continue;
-                        }
-                        if matches!(peer.phase, Phase::Handshaking { .. })
-                            && local < delivery.source_peer_id
-                        {
-                            continue;
-                        }
-                        // Verify before replacing a live peer generation. Bad or
-                        // replayed offers cannot reset an authenticated channel.
-                        match NodeHandshakeResponderV1::respond(
-                            &offer,
-                            identity,
-                            now_ms(),
-                            config.handshake_timeout_ms,
-                            &mut peer.replay,
-                        ) {
-                            Ok(responder) => {
-                                peer.phase = Phase::Responding {
-                                    response: Box::new(responder.response().clone()),
-                                    channel: responder.into_channel(),
-                                    deadline: Instant::now()
-                                        + Duration::from_millis(config.handshake_timeout_ms),
-                                };
-                                peer.frame_sequence = 0;
-                                let dropped = preauth.clear_peer(&delivery.source_peer_id);
-                                let mut shared = shared
-                                    .lock()
-                                    .map_err(|_| anyhow::anyhow!("network queue poisoned"))?;
-                                shared.status.inbound_dropped =
-                                    shared.status.inbound_dropped.saturating_add(dropped);
-                            }
-                            Err(error) => record_error(shared, &error.into()),
-                        }
-                    }
-                    RelayPeerHandshakeV1::Response(response) => {
-                        if !peer.expected_session(response.session_id)
-                            || response.responder_peer_id != delivery.source_peer_id
-                        {
-                            continue;
-                        }
-                        if !matches!(peer.phase, Phase::Handshaking { .. }) {
-                            continue;
-                        }
-                        let Phase::Handshaking { initiator, .. } =
-                            std::mem::replace(&mut peer.phase, Phase::Idle)
-                        else {
-                            unreachable!()
-                        };
-                        match initiator.complete(&response, now_ms(), &mut peer.replay) {
-                            Ok(channel) => {
-                                peer.phase = Phase::Active(channel);
-                                peer.frame_sequence = 0;
-                            }
-                            Err(error) => {
-                                record_error(shared, &error.into());
-                                isolate(peer, config);
-                            }
-                        }
-                    }
-                }
-                publish_active(shared, peers)?;
-            }
-            Ok(ProductRelayClientEventV1::HeartbeatAck) => {}
-            Ok(ProductRelayClientEventV1::Closed) => bail!("relay closed network session"),
-            Err(error) if product_relay_client_read_is_idle_timeout_v1(&error) => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(())
-}
-
-fn send_one_handshake(
-    relay: &mut ProductRelayClientV1,
-    config: &NetworkWorkerConfig,
-    identity: &SigningKey,
-    peers: &mut BTreeMap<String, Peer>,
-    turn: &mut usize,
-) -> Result<()> {
-    for offset in 0..config.peers.len() {
-        let index = (*turn + offset) % config.peers.len();
-        let id = &config.peers[index];
-        let peer = peers.get_mut(id).expect("configured peer");
-        let due = matches!(peer.phase, Phase::Idle | Phase::Responding { .. })
-            || matches!(peer.phase, Phase::Cooldown(at) if at <= Instant::now());
-        if !due {
-            continue;
-        }
-        *turn = (index + 1) % config.peers.len();
-        let phase = std::mem::replace(&mut peer.phase, Phase::Idle);
-        let (message, next) = match phase {
-            Phase::Responding {
-                response, channel, ..
-            } => (
-                RelayPeerHandshakeV1::Response(*response),
-                Phase::Active(channel),
-            ),
-            _ => {
-                let initiator = NodeHandshakeInitiatorV1::start(
-                    identity,
-                    id,
-                    now_ms(),
-                    config.handshake_timeout_ms,
-                )?;
-                let message = RelayPeerHandshakeV1::Offer(initiator.offer().clone());
-                (
-                    message,
-                    Phase::Handshaking {
-                        initiator,
-                        deadline: Instant::now()
-                            + Duration::from_millis(config.handshake_timeout_ms),
-                    },
-                )
-            }
-        };
-        let outcome = relay.send_peer_handshake_with_outcome_v1(id.clone(), message)?;
-        if admitted(outcome.disposition) {
-            peer.phase = next;
-        } else {
-            isolate(peer, config);
-        }
-        break;
-    }
-    Ok(())
-}
-
-fn send_one_payload(
-    relay: &mut ProductRelayClientV1,
-    config: &NetworkWorkerConfig,
-    peers: &mut BTreeMap<String, Peer>,
-    shared: &Mutex<Shared>,
-) -> Result<bool> {
-    let selected = {
-        let mut shared = shared
-            .lock()
-            .map_err(|_| anyhow::anyhow!("network queue poisoned"))?;
-        // Every send keeps the original TTL check, including later sends in a
-        // burst. A previous outcome wait may have consumed substantial time.
-        let expired = shared
-            .outbound
-            .expire(Instant::now(), Duration::from_millis(config.queue_ttl_ms));
-        shared.status.outbound_expired = shared.status.outbound_expired.saturating_add(expired);
-        shared
-            .outbound
-            .next_peer(|id| {
-                peers
-                    .get(id)
-                    .is_some_and(|peer| matches!(peer.phase, Phase::Active(_)))
-            })
-            .map(|id| {
-                let bytes = shared.outbound.peers[&id]
-                    .front()
-                    .expect("selected outgoing queue")
-                    .item
-                    .clone();
-                (id, bytes)
-            })
-    };
-    let Some((id, bytes)) = selected else {
-        return Ok(false);
-    };
-    let peer = peers.get_mut(&id).expect("configured outgoing peer");
-    let Phase::Active(channel) = &mut peer.phase else {
-        return Ok(false);
-    };
-    let Some(next_sequence) = peer.frame_sequence.checked_add(1) else {
-        isolate(peer, config);
-        return Ok(true);
-    };
-    let frame = NovoRudpTransportFrameV0::new(
-        NovoRudpTransportFrameKindV0::Data,
-        channel.session_id(),
-        config.chain_id,
-        FRAME_DOMAIN,
-        peer.frame_sequence,
-        0,
-        bytes,
-    );
-    let envelope = match channel.seal_novorudp_frame(&frame) {
-        Ok(envelope) => envelope,
-        Err(error) => {
-            record_error(shared, &error.into());
-            isolate(peer, config);
-            return Ok(true);
-        }
-    };
-    let outcome = relay.send_envelope_with_outcome_v1(envelope)?;
-    if admitted(outcome.disposition) {
-        peer.frame_sequence = next_sequence;
-        let mut shared = shared
-            .lock()
-            .map_err(|_| anyhow::anyhow!("network queue poisoned"))?;
-        shared
-            .outbound
-            .pop(&id)
-            .context("outgoing in-flight front disappeared")?;
-        shared.status.relay_admissions = shared.status.relay_admissions.saturating_add(1);
-    } else {
-        // Retain the original plaintext and isolate only this peer. Other peer
-        // channels and their replay windows remain live.
-        isolate(peer, config);
-        record_error(
-            shared,
-            &anyhow::anyhow!("relay admission rejected: {:?}", outcome.disposition),
-        );
-    }
-    Ok(true)
 }
 
 fn receive_delivery(

@@ -35,6 +35,7 @@ const MAX_WEBSOCKET_CONTROL_FRAME_BYTES_V1: usize = 125;
 const PRODUCT_RELAY_FRAME_DEADLINE_MS_V1: u64 = 10_000;
 const PRODUCT_RELAY_PROTOCOL_ITEM_DEADLINE_MS_V1: u64 = 10_000;
 const PRODUCT_RELAY_MAX_CONTROL_FRAMES_PER_PROTOCOL_ITEM_V1: usize = 64;
+pub(crate) mod pipeline;
 pub(crate) const PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_EVENTS_V1: usize = 64;
 pub(crate) const PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_BYTES_V1: usize = 16 * 1024 * 1024;
 
@@ -709,6 +710,7 @@ impl ProductRelayClientV1 {
 
     /// Already decoded inbound events buffered while waiting for a correlated
     /// send outcome. Partial TLS/WebSocket bytes are not ready events.
+    #[cfg(test)]
     pub(crate) fn has_buffered_events(&self) -> bool {
         !self.pending_events.is_empty()
     }
@@ -822,28 +824,14 @@ impl ProductRelayClientV1 {
                     )?;
                 }
                 ProductRelayClientProtocolItemV1::ForwardOutcome(outcome) => {
-                    if outcome.source_peer_id != expected_source_peer_id
-                        || outcome.target_peer_id != expected_target_peer_id
-                        || outcome.envelope_session_id != expected_envelope_session_id
-                        || outcome.envelope_sequence != expected_envelope_sequence
-                        || outcome.admitted_wire_bytes != expected_admitted_wire_bytes
-                        || !outcome.payload_treated_opaque
-                    {
-                        bail!("relay forward outcome correlation mismatch");
-                    }
-                    let flags_match_disposition = match outcome.disposition {
-                        RelayForwardDispositionV1::Forwarded => {
-                            outcome.forwarded && !outcome.queued
-                        }
-                        RelayForwardDispositionV1::QueuedTargetOffline
-                        | RelayForwardDispositionV1::QueuedBackpressure => {
-                            !outcome.forwarded && outcome.queued
-                        }
-                        _ => !outcome.forwarded && !outcome.queued,
-                    };
-                    if !flags_match_disposition {
-                        bail!("relay forward outcome flags contradict its disposition");
-                    }
+                    validate_forward_outcome_v1(
+                        &outcome,
+                        expected_source_peer_id,
+                        expected_target_peer_id,
+                        expected_envelope_session_id,
+                        expected_envelope_sequence,
+                        expected_admitted_wire_bytes,
+                    )?;
                     return Ok(outcome);
                 }
             }
@@ -909,33 +897,7 @@ impl ProductRelayClientV1 {
                 protocol_item_deadline,
             )? {
                 RelayClientFrameV1::Binary(bytes) => {
-                    let wire_bytes = bytes.len();
-                    let message = serde_json::from_slice(&bytes).context("decode relay event")?;
-                    return match message {
-                        ProductRelayWireMessageV1::Delivery(delivery) => {
-                            Ok(ProductRelayClientProtocolItemV1::Event {
-                                event: Box::new(ProductRelayClientEventV1::Delivery(delivery)),
-                                wire_bytes,
-                            })
-                        }
-                        ProductRelayWireMessageV1::PeerHandshakeDelivery(delivery) => {
-                            Ok(ProductRelayClientProtocolItemV1::Event {
-                                event: Box::new(ProductRelayClientEventV1::PeerHandshake(delivery)),
-                                wire_bytes,
-                            })
-                        }
-                        ProductRelayWireMessageV1::HeartbeatAck => {
-                            self.heartbeat_health.acknowledge(Instant::now())?;
-                            Ok(ProductRelayClientProtocolItemV1::Event {
-                                event: Box::new(ProductRelayClientEventV1::HeartbeatAck),
-                                wire_bytes,
-                            })
-                        }
-                        ProductRelayWireMessageV1::ForwardOutcome(outcome) => {
-                            Ok(ProductRelayClientProtocolItemV1::ForwardOutcome(outcome))
-                        }
-                        _ => bail!("unexpected relay event"),
-                    };
+                    return decode_protocol_item_v1(&bytes, &mut self.heartbeat_health);
                 }
                 RelayClientFrameV1::Ping(payload) => {
                     control_frame_count = control_frame_count.saturating_add(1);
@@ -989,6 +951,61 @@ impl ProductRelayClientV1 {
             ))
         })
     }
+}
+
+fn validate_forward_outcome_v1(
+    outcome: &RelayForwardOutcomeV1,
+    source: &str,
+    target: &str,
+    session: Option<[u8; 16]>,
+    sequence: Option<u64>,
+    wire_bytes: usize,
+) -> Result<()> {
+    if outcome.source_peer_id != source
+        || outcome.target_peer_id != target
+        || outcome.envelope_session_id != session
+        || outcome.envelope_sequence != sequence
+        || outcome.admitted_wire_bytes != wire_bytes
+        || !outcome.payload_treated_opaque
+    {
+        bail!("relay forward outcome correlation mismatch");
+    }
+    let valid_flags = match outcome.disposition {
+        RelayForwardDispositionV1::Forwarded => outcome.forwarded && !outcome.queued,
+        RelayForwardDispositionV1::QueuedTargetOffline
+        | RelayForwardDispositionV1::QueuedBackpressure => !outcome.forwarded && outcome.queued,
+        _ => !outcome.forwarded && !outcome.queued,
+    };
+    if !valid_flags {
+        bail!("relay forward outcome flags contradict its disposition");
+    }
+    Ok(())
+}
+
+fn decode_protocol_item_v1(
+    bytes: &[u8],
+    heartbeat: &mut RelayHeartbeatHealthV1,
+) -> Result<ProductRelayClientProtocolItemV1> {
+    let event = match serde_json::from_slice(bytes).context("decode relay event")? {
+        ProductRelayWireMessageV1::Delivery(delivery) => {
+            ProductRelayClientEventV1::Delivery(delivery)
+        }
+        ProductRelayWireMessageV1::PeerHandshakeDelivery(delivery) => {
+            ProductRelayClientEventV1::PeerHandshake(delivery)
+        }
+        ProductRelayWireMessageV1::HeartbeatAck => {
+            heartbeat.acknowledge(Instant::now())?;
+            ProductRelayClientEventV1::HeartbeatAck
+        }
+        ProductRelayWireMessageV1::ForwardOutcome(outcome) => {
+            return Ok(ProductRelayClientProtocolItemV1::ForwardOutcome(outcome));
+        }
+        _ => bail!("unexpected relay event"),
+    };
+    Ok(ProductRelayClientProtocolItemV1::Event {
+        event: Box::new(event),
+        wire_bytes: bytes.len(),
+    })
 }
 
 fn confirm_delivery_window_v1<S: Read + Write>(stream: &mut S) -> Result<()> {
@@ -1304,6 +1321,13 @@ fn write_wire_v1<S: Write>(stream: &mut S, message: &ProductRelayWireMessageV1) 
 }
 
 fn write_masked_frame_v1<S: Write>(stream: &mut S, opcode: u8, payload: &[u8]) -> Result<()> {
+    let frame = encode_masked_frame_v1(opcode, payload)?;
+    stream.write_all(&frame)?;
+    stream.flush()?;
+    Ok(())
+}
+
+fn encode_masked_frame_v1(opcode: u8, payload: &[u8]) -> Result<Vec<u8>> {
     validate_websocket_payload_size_v1(opcode, payload.len())?;
     let mut mask = [0u8; 4];
     OsRng.fill_bytes(&mut mask);
@@ -1327,9 +1351,7 @@ fn write_masked_frame_v1<S: Write>(stream: &mut S, opcode: u8, payload: &[u8]) -
             .enumerate()
             .map(|(index, byte)| byte ^ mask[index % 4]),
     );
-    stream.write_all(&frame)?;
-    stream.flush()?;
-    Ok(())
+    Ok(frame)
 }
 
 fn read_buffered_frame_v1(
@@ -1925,7 +1947,7 @@ mod tests {
         }
     }
 
-    fn test_window_deliveries_v1() -> Vec<ProductRelayWireMessageV1> {
+    pub(super) fn test_window_deliveries_v1() -> Vec<ProductRelayWireMessageV1> {
         let source = SigningKey::from_bytes(&[210; 32]);
         let target = SigningKey::from_bytes(&[211; 32]);
         let source_id = peer_id_from_ed25519_public_key_v1(&source.verifying_key().to_bytes());
@@ -1977,6 +1999,77 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn real_wss_multiple_forwards_progress_before_first_outcome() {
+        let envelopes: Vec<_> = test_window_deliveries_v1()
+            .into_iter()
+            .filter_map(|wire| match wire {
+                ProductRelayWireMessageV1::Delivery(delivery) => Some(delivery.envelope),
+                _ => None,
+            })
+            .collect();
+        let expected = envelopes.clone();
+        let fixture = delayed_test_relay_v1(move |stream| {
+            let mut outcomes = Vec::new();
+            for expected in expected {
+                let (ProductRelayWireMessageV1::Data(actual), wire_bytes) =
+                    read_test_client_wire_v1(stream)?
+                else {
+                    bail!("expected original encrypted data before releasing any outcome");
+                };
+                assert_eq!(actual, expected);
+                outcomes.push(RelayForwardOutcomeV1 {
+                    disposition: RelayForwardDispositionV1::Forwarded,
+                    source_peer_id: actual.sender_peer_id,
+                    target_peer_id: actual.recipient_peer_id,
+                    forwarded: true,
+                    queued: false,
+                    payload_treated_opaque: true,
+                    envelope_session_id: Some(actual.session_id),
+                    envelope_sequence: Some(actual.sequence),
+                    admitted_wire_bytes: wire_bytes,
+                });
+            }
+            for outcome in outcomes.into_iter().rev() {
+                write_fragmented_test_server_wire_v1(
+                    stream,
+                    &ProductRelayWireMessageV1::ForwardOutcome(outcome),
+                )?;
+            }
+            Ok(())
+        });
+        let client =
+            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[210; 32]), &fixture.config)
+                .unwrap();
+        let mut pipeline = client.into_pipeline().unwrap();
+        let mut envelopes = envelopes.into_iter().peekable();
+        let mut completed = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while completed.len() != 7 {
+            assert!(
+                Instant::now() < deadline,
+                "pipeline stalled before all correlated outcomes"
+            );
+            if pipeline.can_submit() {
+                if let Some(envelope) = envelopes.next() {
+                    assert!(pipeline.try_submit_envelope(envelope).unwrap().is_some());
+                }
+            }
+            match pipeline.poll().unwrap() {
+                pipeline::PipelineProgress::Forward { ticket, outcome } => {
+                    assert_eq!(outcome.disposition, RelayForwardDispositionV1::Forwarded);
+                    completed.push(ticket);
+                }
+                pipeline::PipelineProgress::Idle => pipeline.wait().unwrap(),
+                pipeline::PipelineProgress::Progress => {}
+                other => panic!("unexpected pipeline event {other:?}"),
+            }
+        }
+        assert_eq!(completed, [6, 5, 4, 3, 2, 1, 0]);
+        drop(pipeline);
+        fixture.finish();
     }
 
     #[test]
@@ -2136,14 +2229,14 @@ mod tests {
         }
     }
 
-    struct DelayedTestRelayV1 {
-        config: ProductRelayClientConfigV1,
+    pub(super) struct DelayedTestRelayV1 {
+        pub(super) config: ProductRelayClientConfigV1,
         stop: std::sync::mpsc::Sender<()>,
         server: Option<thread::JoinHandle<Result<()>>>,
     }
 
     impl DelayedTestRelayV1 {
-        fn finish(mut self) {
+        pub(super) fn finish(mut self) {
             let _ = self.stop.send(());
             self.server.take().unwrap().join().unwrap().unwrap();
         }
@@ -2158,7 +2251,7 @@ mod tests {
         }
     }
 
-    fn delayed_test_relay_v1(
+    pub(super) fn delayed_test_relay_v1(
         after_handshake: impl FnOnce(&mut TestRelayTlsStreamV1) -> Result<()> + Send + 'static,
     ) -> DelayedTestRelayV1 {
         delayed_test_relay_with_window_v1(
@@ -2283,7 +2376,7 @@ mod tests {
         }
     }
 
-    fn read_test_client_wire_v1(
+    pub(super) fn read_test_client_wire_v1(
         stream: &mut TestRelayTlsStreamV1,
     ) -> Result<(ProductRelayWireMessageV1, usize)> {
         let mut header = [0; 2];
@@ -2297,7 +2390,15 @@ mod tests {
                 stream.read_exact(&mut length)?;
                 usize::from(u16::from_be_bytes(length))
             }
-            127 => bail!("test relay fixture only accepts small messages"),
+            127 => {
+                let mut length = [0; 8];
+                stream.read_exact(&mut length)?;
+                let length = usize::try_from(u64::from_be_bytes(length))?;
+                if length > PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1 {
+                    bail!("test relay frame exceeds real wire limit");
+                }
+                length
+            }
             length => usize::from(length),
         };
         let mut mask = [0; 4];
@@ -2310,7 +2411,7 @@ mod tests {
         Ok((serde_json::from_slice(&bytes)?, length))
     }
 
-    fn write_fragmented_test_server_wire_v1(
+    pub(super) fn write_fragmented_test_server_wire_v1(
         stream: &mut TestRelayTlsStreamV1,
         message: &ProductRelayWireMessageV1,
     ) -> Result<()> {

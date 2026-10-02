@@ -181,6 +181,7 @@ pub(crate) struct ProductRelaySocketV1 {
     read_ahead: ReadAhead,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
+    incremental_read_blocked: bool,
     #[cfg(test)]
     read_wait_probe: Arc<ReadWaitProbe>,
 }
@@ -215,6 +216,7 @@ impl ProductRelaySocketV1 {
             read_ahead: ReadAhead::default(),
             read_timeout,
             write_timeout,
+            incremental_read_blocked: false,
             #[cfg(test)]
             read_wait_probe: Arc::new(ReadWaitProbe {
                 polling: AtomicBool::new(false),
@@ -232,12 +234,79 @@ impl ProductRelaySocketV1 {
         Arc::clone(&self.read_wait_probe)
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_test_buffer_sizes(&self, send: usize, receive: usize) -> io::Result<()> {
+        let socket = socket2::SockRef::from(&self.inner);
+        socket.set_send_buffer_size(send)?;
+        socket.set_recv_buffer_size(receive)
+    }
+
     pub(crate) fn enable_duplex_read_ahead(&mut self) {
         self.read_ahead.enabled = true;
     }
 
     pub(crate) fn read_ahead_started_at(&self) -> Option<Instant> {
         self.read_ahead.started_at()
+    }
+
+    /// One real nonblocking read for an incremental TLS owner. Unlike `Read`,
+    /// this never waits; the same owner calls `wait_ready` only after both
+    /// directions have run out of work. Existing prefetched bytes retain FIFO.
+    pub(crate) fn try_read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if output.is_empty() {
+            return Ok(0);
+        }
+        let count = self.read_ahead.take(output);
+        let result = if count != 0 {
+            Ok(count)
+        } else if self.read_ahead.eof {
+            Ok(0)
+        } else {
+            self.inner.read(output).map_err(terminal_socket_timeout)
+        };
+        self.incremental_read_blocked = result
+            .as_ref()
+            .is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock);
+        result
+    }
+
+    /// One write, without waiting or secretly reading into another byte queue.
+    pub(crate) fn try_write(&mut self, input: &[u8]) -> io::Result<usize> {
+        self.inner.write(input).map_err(terminal_socket_timeout)
+    }
+
+    pub(crate) fn wait_ready(
+        &mut self,
+        interest: mio::Interest,
+        timeout: Duration,
+    ) -> io::Result<()> {
+        if interest.is_readable() {
+            if self.read_ahead.buffered_len() != 0 {
+                return Ok(());
+            }
+            if self.incremental_read_blocked
+                && self.read_wake.pending.swap(false, Ordering::Acquire)
+            {
+                return Ok(());
+            }
+        }
+        self.poll
+            .registry()
+            .reregister(&mut self.inner, SOCKET_TOKEN, interest)
+            .map_err(terminal_socket_timeout)?;
+        #[cfg(test)]
+        if interest.is_readable() && self.incremental_read_blocked {
+            self.read_wait_probe.entries.fetch_add(1, Ordering::Release);
+            self.read_wait_probe.polling.store(true, Ordering::Release);
+        }
+        let result = self.poll.poll(&mut self.events, Some(timeout));
+        #[cfg(test)]
+        self.read_wait_probe.polling.store(false, Ordering::Release);
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(()),
+            Err(error) => Err(terminal_socket_timeout(error)),
+        }
     }
 
     pub(crate) fn read_timeout(&self) -> io::Result<Option<Duration>> {

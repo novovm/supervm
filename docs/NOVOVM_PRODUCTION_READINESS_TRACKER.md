@@ -8,6 +8,84 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：有界多在途转发与增量 TLS/WS，同路径两轮约3727–3882 TPS（2026-10-02）
+
+基于`6312da9`，其双平台CI
+[`36980054724`](https://github.com/novovm/supervm/actions/runs/36980054724)成功。
+只交付network九文件和既有三文档；host11项/legacy38项草稿不混入，AOEM/SDK、
+业务/nonce/共识、生产参数和分支未改。本次远端CI须推送后另核。
+
+### 实际交付与边界
+
+已认证连接的常驻owner显式调用rustls非阻塞读写；每poll有界推进读和写，只有
+没有进展才等待Mio就绪，不再借StreamOwned隐藏等待或先写N帧再读。最多8个
+转发元数据项和1个正在写的WS帧；TLS配置64KiB写缓冲另有有限record开销，
+不是声称全部内存严格64KiB。没有新增明文应用队列；原队列原文继续计额。
+Delivery实际交给worker才累计归还credit，解码缓存不算消费。原frame/写入/
+outcome/heartbeat期限独立保持；原chunk级时间跟踪不冒充精确首字节时间。
+
+Data按source/target/session/sequence/bytes/flags验证并映射至稳定条目和预留号，
+不是收到回执就弹队首。乱序、拒绝后已接纳后继、TTL已过的在途项、旧会话迟到
+回执均逐项结算。序号在加密提交前递增、绝不回滚。未知部分写关闭旧TLS；保留
+原文原入队时间，重新鉴权后再加密，不承诺网络exactly-once。握手wire没有独立
+请求号，限制为最多一个握手在途；不能识别恶意relay伪造的同路由同长度旧ACK。
+初始连接仍同步，daemon仍整帧写；这是发送流水线，不是整链全异步或证明最终性。
+
+真实WSS服务端收到7个Data前扣住所有ACK：旧同步路径3.26秒FAIL，增量路径
+约0.81秒PASS并逆序结算。真实worker门确认原7条/224B在ACK前仍计额，同时
+可收7条反向E2E原文，逆序ACK逐项清空；错误/重复ACK、未知半写与close_notify
+完整末帧/半帧门通过。原四路由96×192KiB双工、跨窗口与重连门保持通过。
+
+**保留失败：** v1干净Linux全套160网络项通过、1项失败：TLS建连后两端接收窗
+强缩4KiB，3秒只收到首大帧64–96KiB；ss显示接收窗限制与重传，客户端仍实际读，
+不是已证pump停止读取。仅fixture接收改64KiB、发送仍4KiB，原3秒、实际write
+WouldBlock、出站未写完时交付入站、7×192KiB精确原文/credit/outcome门全部保留。
+接收窗单变量A/B Linux三轮0.50/0.54/0.50秒，Windows0.36/0.37/0.42秒通过；
+清除临时诊断后Linux0.50/Windows0.36秒通过。不宣称4KiB Linux已通过或精确
+归因所有TCP机制，未修改生产缓冲/期限。另修复真实TLS close_notify空转边界。
+
+### 干净版本验收与完整交易测量
+
+v2暂存树`501e732780bcf7ad26b32e75b6a3de5c78f9f4f6`导出到
+`target/runtime-rebuild/candidate-6312da9-async-relay-v2/`；97个host/AOEM文件
+标准化后等于HEAD、九network文件等于暂存版本。完整真库Release串行include-
+ignored：Windows516+6编译拒绝、Linux515+6，全部0失败/0忽略；双平台fmt、
+全targets strict Clippy、host no-native strict Clippy及三成员隔离检查通过。
+Windows独立target重建、Linux日志实际重建三crate；本轮默认Debug整套未重跑。
+
+同WSL2/24逻辑CPU/四OS进程、真实WSS/E2E/四AOEM RocksDB；1024个公开测试
+付款账户各64笔连续nonce转账，每轮65536笔不同Ed25519签名的测试交易。
+无并行构建/重负载、原120秒门不变，同二进制两次独立运行：
+
+| 样本 | 四节点全部耐久耗时 | finalized TPS | 完整冷恢复 |
+| --- | --- | --- | --- |
+| 第一次 | 16.883561685秒 | 3881.645427 | PASS |
+| 第二次 | 17.585384942秒 | 3726.731045 | PASS |
+
+与上一版3716–3824 TPS接近，不宣称显著提速或稳定容量。每节点64执行/64决定，
+execution failure/stale/recompute均0，完整余额/nonce/费用/状态根/逐笔回执冷
+oracle一致。sticky last_error仍有旧父决定拒绝，第二轮还有archive parent不匹配；
+不能把sticky字段当事件计数或称零错误。relay各注册4、替换/过期/拒绝0，停机
+各4断开；转发5385/5426帧、接纳129168826/129327911字节，停机EOF日志保留。
+计时包含节点验签/执行/网络/共识/四节点耐久，不含钱包预签/启动/创世/冷恢复；
+不是实际用户/生产币、PQ、固定出块周期、四台设备、公网容量或主网完成声明。
+
+二进制SHA256 `28f75a208d1165bb24f732f76af20102b4bb762d256b1cf1ef3c9ab478693259`；
+AOEM仍`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+证据在`target/runtime-rebuild/`的`pipeline-v2-clean-workspace-{windows,linux}.log`、
+`pipeline-v2-clippy-{windows,linux}.log`、`pipeline-v2-clean-linux-long-{one,two}.log`。
+上述v2快照内`target/runtime-rebuild/controller-load-1024-408-1790929501622737248/`
+与`controller-load-1024-1292-1790929551287115796/`包含measurement及relay/report。
+旧反例`new-client-pipeline-first-outcome-red-windows.log`、v1全套失败
+`pipeline-clean-workspace-linux.log`、`new-client-pipeline-fixed-buffers-*-diagnostic-linux.log`
+以及`new-client-pipeline-recv-window-ab-{linux,windows}-{one,two,three}.log`保留。
+
+下一处A认领relay/daemon及相邻测试：全局state写锁内将Delivery克隆/编码仅取
+长度、发送时再次编码，需以不可变绑定产物消除重复遍历并移出共享锁；保持V1
+wire、重新入锁会话验证、完整内存额度和原guard。外层JSON密文约3.57倍膨胀与
+控制消息队头阻塞仍未解决，不凭代码观察推断TPS。B独立隐私/PQ分工不变；S4
+通用后端待明确AOEM切仓授权，Execute、多机/容量/部署等完整总目标继续保持。
+
 ## 设备 A：worker 出站真实读唤醒，同路径两轮约3716–3824 TPS（2026-10-02）
 
 基于`0a0eda8`，其双平台CI
