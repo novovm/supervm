@@ -14,6 +14,7 @@ fn admission_service(budget: IoBudget, capacity: usize) -> (IoService, mpsc::Rec
         worker: thread::spawn(|| {}),
         usage: Arc::new(Mutex::new(Usage::default())),
         budget,
+        recovery_bytes: 1024,
     };
     (service, receiver)
 }

@@ -9,6 +9,7 @@ use novovm_aoem::StorageWrite;
 use std::collections::BTreeSet;
 
 const MAX_KEYS: usize = 8;
+const MAX_GUARDS: usize = 2;
 // Accommodates the bounded 1024-validator certificate/outbox profile while
 // retaining the independent 1 MiB total expected-plus-new transition budget.
 const MAX_VALUE_BYTES: usize = 512 * 1024;
@@ -19,6 +20,8 @@ const PREFIX: &[u8] = b"m/consensus/v1/";
 pub(crate) enum MetaKey {
     ConsensusState([u8; 32]),
     ConsensusOutbox { validator: [u8; 32], sequence: u64 },
+    ChainHead,
+    ChainBlock { height: u64 },
 }
 
 impl MetaKey {
@@ -35,6 +38,10 @@ impl MetaKey {
                 &sequence.to_be_bytes(),
             ]
             .concat(),
+            Self::ChainHead => [PREFIX, b"chain/head"].concat(),
+            Self::ChainBlock { height } => {
+                [PREFIX, b"chain/block/", &height.to_be_bytes()].concat()
+            }
         }
     }
 }
@@ -50,18 +57,33 @@ pub(crate) struct MetaChange {
     pub value: Vec<u8>,
 }
 
+/// A read-only precondition, checked even when every mutation is already present.
+pub(crate) struct MetaGuard {
+    pub key: MetaKey,
+    pub expected: Option<Vec<u8>>,
+}
+
 /// Private construction enforces storage bounds, NOT consensus authorization.
 /// No Deserialize implementation may manufacture a checked transition.
 pub(crate) struct MetaTransition {
     changes: Vec<MetaChange>,
+    guards: Vec<MetaGuard>,
     retained_bytes: usize,
 }
 
 impl MetaTransition {
     pub(crate) fn new(changes: Vec<MetaChange>) -> Result<Self> {
+        Self::with_guards(changes, Vec::new())
+    }
+
+    pub(crate) fn with_guards(changes: Vec<MetaChange>, guards: Vec<MetaGuard>) -> Result<Self> {
         ensure!(
             (1..=MAX_KEYS).contains(&changes.len()),
             "metadata transition key count invalid"
+        );
+        ensure!(
+            guards.len() <= MAX_GUARDS && changes.len() + guards.len() <= MAX_KEYS,
+            "metadata transition guard/total key count invalid"
         );
         let mut seen = BTreeSet::new();
         let mut values = 0usize;
@@ -80,8 +102,11 @@ impl MetaTransition {
                 "metadata transition value exceeds bound"
             );
             ensure!(
-                !matches!(change.key, MetaKey::ConsensusOutbox { .. }) || change.expected.is_none(),
-                "consensus outbox is append-only; expected must be absent"
+                !matches!(
+                    change.key,
+                    MetaKey::ConsensusOutbox { .. } | MetaKey::ChainBlock { .. }
+                ) || change.expected.is_none(),
+                "consensus outbox/chain block is append-only; expected must be absent"
             );
             values = values
                 .checked_add(change.value.len())
@@ -95,16 +120,38 @@ impl MetaTransition {
                 .checked_add(change.key.relative_key().len())
                 .context("metadata key byte count overflow")?;
         }
+        for guard in &guards {
+            ensure!(
+                seen.insert(&guard.key),
+                "duplicate or mutated metadata guard key"
+            );
+            let expected = guard.expected.as_ref().map_or(0, Vec::len);
+            ensure!(
+                expected <= MAX_VALUE_BYTES,
+                "metadata guard value exceeds bound"
+            );
+            values = values
+                .checked_add(expected)
+                .context("metadata guard byte count overflow")?;
+            ensure!(
+                values <= MAX_TRANSITION_BYTES,
+                "metadata transition exceeds total byte budget"
+            );
+            keys = keys
+                .checked_add(guard.key.relative_key().len())
+                .context("metadata key byte count overflow")?;
+        }
         Ok(Self {
             changes,
+            guards,
             retained_bytes: values
                 .checked_add(keys)
                 .context("metadata retained size overflow")?,
         })
     }
 
-    /// Retained logical request keys/expected/new values, excluding allocator,
-    /// native-wire and DB overhead. The reply itself is a fixed-size outcome.
+    /// Retained logical keys and guard/mutation expected/new values, excluding
+    /// allocator, native-wire and DB overhead. The reply is a fixed-size outcome.
     pub(crate) fn retained_bytes(&self) -> usize {
         self.retained_bytes
     }
@@ -145,19 +192,30 @@ impl CandidateStore {
     pub(crate) fn apply_metadata(&self, transition: &MetaTransition) -> Result<MetaOutcome> {
         self.writable()?;
         let keys: Vec<_> = transition
-            .changes
+            .guards
             .iter()
-            .map(|change| change.key.clone())
+            .map(|guard| guard.key.clone())
+            .chain(transition.changes.iter().map(|change| change.key.clone()))
             .collect();
         let actual = self.read_metadata(&keys)?.values;
-        if actual
+        let (actual_guards, actual_changes) = actual.split_at(transition.guards.len());
+        // A stale parent/head must reject even an exact replay. Guard keys are
+        // never written, and all conditions share this non-yielding owner turn.
+        if !actual_guards
+            .iter()
+            .zip(&transition.guards)
+            .all(|(value, guard)| value == &guard.expected)
+        {
+            return Ok(MetaOutcome::Conflict);
+        }
+        if actual_changes
             .iter()
             .zip(&transition.changes)
             .all(|(value, change)| value.as_ref() == Some(&change.value))
         {
             return Ok(MetaOutcome::AlreadyPresent);
         }
-        if !actual
+        if !actual_changes
             .iter()
             .zip(&transition.changes)
             .all(|(value, change)| value == &change.expected)
@@ -181,8 +239,15 @@ impl CandidateStore {
                 if snapshot
                     .values
                     .iter()
-                    .zip(&transition.changes)
-                    .all(|(value, change)| value.as_ref() == Some(&change.value)) =>
+                    .take(transition.guards.len())
+                    .zip(&transition.guards)
+                    .all(|(value, guard)| value == &guard.expected)
+                    && snapshot
+                        .values
+                        .iter()
+                        .skip(transition.guards.len())
+                        .zip(&transition.changes)
+                        .all(|(value, change)| value.as_ref() == Some(&change.value)) =>
             {
                 Ok(MetaOutcome::Applied)
             }

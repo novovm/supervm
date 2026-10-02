@@ -23,6 +23,12 @@ fn change(key: MetaKey, expected: Option<&[u8]>, value: &[u8]) -> MetaChange {
         value: value.to_vec(),
     }
 }
+fn guard(key: MetaKey, expected: Option<&[u8]>) -> MetaGuard {
+    MetaGuard {
+        key,
+        expected: expected.map(<[u8]>::to_vec),
+    }
+}
 
 #[test]
 fn keys_are_closed_separated_and_sequence_is_fixed_width() {
@@ -33,6 +39,10 @@ fn keys_are_closed_separated_and_sequence_is_fixed_width() {
         outbox(1, 1),
         outbox(1, u64::MAX),
         outbox(2, 0),
+        MetaKey::ChainHead,
+        MetaKey::ChainBlock { height: 0 },
+        MetaKey::ChainBlock { height: 1 },
+        MetaKey::ChainBlock { height: u64::MAX },
     ];
     let encoded: BTreeSet<_> = keys.iter().map(MetaKey::relative_key).collect();
     assert_eq!(encoded.len(), keys.len());
@@ -47,6 +57,34 @@ fn keys_are_closed_separated_and_sequence_is_fixed_width() {
     let one = outbox(1, 1).relative_key();
     assert_eq!(&one[one.len() - 8..], &1u64.to_be_bytes());
     assert_eq!(one.len(), outbox(1, u64::MAX).relative_key().len());
+    assert_eq!(
+        one,
+        [
+            b"m/consensus/v1/outbox/".as_slice(),
+            &[1; 32],
+            &1u64.to_be_bytes()
+        ]
+        .concat()
+    );
+    assert_eq!(
+        MetaKey::ChainHead.relative_key(),
+        b"m/consensus/v1/chain/head"
+    );
+    let block = MetaKey::ChainBlock { height: 1 }.relative_key();
+    assert_eq!(
+        block,
+        [
+            b"m/consensus/v1/chain/block/".as_slice(),
+            &1u64.to_be_bytes()
+        ]
+        .concat()
+    );
+    assert_eq!(
+        block.len(),
+        MetaKey::ChainBlock { height: u64::MAX }
+            .relative_key()
+            .len()
+    );
 }
 
 #[test]
@@ -68,6 +106,25 @@ fn construction_bounds_expected_and_new_bytes_without_weakening_append_only_keys
     assert!(MetaTransition::new(vec![change(outbox(1, 0), Some(b"old"), b"new")]).is_err());
     assert!(MetaTransition::new(vec![change(outbox(1, 0), Some(b""), b"")]).is_err());
     assert!(MetaTransition::new(vec![change(outbox(1, 0), None, b"")]).is_ok());
+    assert!(MetaTransition::new(vec![change(
+        MetaKey::ChainBlock { height: 1 },
+        Some(b"old"),
+        b"new"
+    )])
+    .is_err());
+    assert!(MetaTransition::new(vec![change(
+        MetaKey::ChainBlock { height: 1 },
+        Some(b""),
+        b""
+    )])
+    .is_err());
+    assert!(MetaTransition::new(vec![change(
+        MetaKey::ChainBlock { height: 1 },
+        None,
+        b"block"
+    )])
+    .is_ok());
+    assert!(MetaTransition::new(vec![change(MetaKey::ChainHead, Some(b"old"), b"new")]).is_ok());
     let max = vec![1; MAX_VALUE_BYTES];
     let too_big = vec![1; MAX_VALUE_BYTES + 1];
     assert!(MetaTransition::new(vec![change(state(1), None, &too_big)]).is_err());
@@ -81,6 +138,88 @@ fn construction_bounds_expected_and_new_bytes_without_weakening_append_only_keys
         change(state(1), Some(&max), &max),
         change(state(2), None, b"x")
     ])
+    .is_err());
+}
+
+#[test]
+fn guards_share_total_bounds_and_cannot_overlap_mutations_or_each_other() {
+    assert!(
+        MetaTransition::with_guards(Vec::new(), vec![guard(MetaKey::ChainHead, None)]).is_err()
+    );
+    assert!(MetaTransition::with_guards(
+        vec![change(state(1), None, b"v")],
+        vec![
+            guard(MetaKey::ChainHead, None),
+            guard(MetaKey::ChainHead, None)
+        ]
+    )
+    .is_err());
+    assert!(MetaTransition::with_guards(
+        vec![change(MetaKey::ChainHead, None, b"v")],
+        vec![guard(MetaKey::ChainHead, None)]
+    )
+    .is_err());
+    assert!(MetaTransition::with_guards(
+        vec![change(state(1), None, b"v")],
+        vec![
+            guard(state(2), None),
+            guard(state(3), None),
+            guard(state(4), None)
+        ]
+    )
+    .is_err());
+    let six = (0..6)
+        .map(|index| change(state(index), None, b"v"))
+        .collect();
+    assert!(MetaTransition::with_guards(
+        six,
+        vec![
+            guard(MetaKey::ChainHead, None),
+            guard(MetaKey::ChainBlock { height: 1 }, None)
+        ]
+    )
+    .is_ok());
+    let seven = (0..7)
+        .map(|index| change(state(index), None, b"v"))
+        .collect();
+    assert!(MetaTransition::with_guards(
+        seven,
+        vec![
+            guard(MetaKey::ChainHead, None),
+            guard(MetaKey::ChainBlock { height: 1 }, None)
+        ]
+    )
+    .is_err());
+    let max = vec![1; MAX_VALUE_BYTES];
+    let too_big = vec![1; MAX_VALUE_BYTES + 1];
+    assert!(MetaTransition::with_guards(
+        vec![change(state(1), None, b"")],
+        vec![guard(MetaKey::ChainHead, Some(&too_big))]
+    )
+    .is_err());
+    let exact = MetaTransition::with_guards(
+        vec![change(state(1), None, &max)],
+        vec![guard(MetaKey::ChainHead, Some(&max))],
+    )
+    .unwrap();
+    assert_eq!(
+        exact.retained_bytes(),
+        MAX_TRANSITION_BYTES
+            + state(1).relative_key().len()
+            + MetaKey::ChainHead.relative_key().len()
+    );
+    assert!(MetaTransition::with_guards(
+        vec![change(state(1), Some(b"x"), &max)],
+        vec![guard(MetaKey::ChainHead, Some(&max))]
+    )
+    .is_err());
+    assert!(MetaTransition::with_guards(
+        vec![change(state(1), None, &max)],
+        vec![
+            guard(MetaKey::ChainHead, Some(&max)),
+            guard(state(2), Some(b"x"))
+        ]
+    )
     .is_err());
 }
 
@@ -257,5 +396,130 @@ fn real_oversized_metadata_is_rejected_and_cannot_be_repaired_by_transition() ->
     assert!(store.is_write_frozen());
     let attempt = MetaTransition::new(vec![change(key, None, b"replacement")])?;
     assert!(store.apply_metadata(&attempt).is_err());
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY; head guards and immutable blocks"]
+fn real_head_guard_rejects_stale_votes_including_exact_replay_and_blocks_are_append_only(
+) -> Result<()> {
+    let config = config(&directory("head-guards")?)?;
+    let store = CandidateStore::open(config.clone(), OpenMode::CreateNew)?;
+    let initial = MetaTransition::new(vec![change(MetaKey::ChainHead, None, b"parent-0")])?;
+    assert_eq!(store.apply_metadata(&initial)?, MetaOutcome::Applied);
+    let vote = MetaTransition::with_guards(
+        vec![
+            change(state(1), None, b"signed-state"),
+            change(outbox(1, 1), None, b"signed-vote"),
+        ],
+        vec![
+            guard(MetaKey::ChainHead, Some(b"parent-0")),
+            guard(MetaKey::ChainBlock { height: 1 }, None),
+        ],
+    )?;
+    assert_eq!(store.apply_metadata(&vote)?, MetaOutcome::Applied);
+    assert_eq!(store.apply_metadata(&vote)?, MetaOutcome::AlreadyPresent);
+    assert_eq!(
+        store
+            .read_metadata(&[MetaKey::ChainHead, MetaKey::ChainBlock { height: 1 }])?
+            .values,
+        vec![Some(b"parent-0".to_vec()), None],
+        "read-only guards must not materialize or replace data"
+    );
+    let promote = MetaTransition::new(vec![
+        change(MetaKey::ChainHead, Some(b"parent-0"), b"parent-1"),
+        change(MetaKey::ChainBlock { height: 1 }, None, b"block-1"),
+    ])?;
+    assert_eq!(store.apply_metadata(&promote)?, MetaOutcome::Applied);
+    assert_eq!(store.apply_metadata(&promote)?, MetaOutcome::AlreadyPresent);
+    // Existing signed bytes alone are not authorization after the head changed.
+    assert_eq!(store.apply_metadata(&vote)?, MetaOutcome::Conflict);
+    let late_vote = MetaTransition::with_guards(
+        vec![
+            change(state(1), Some(b"signed-state"), b"late-state"),
+            change(outbox(1, 2), None, b"must-not-be-written"),
+        ],
+        vec![guard(MetaKey::ChainHead, Some(b"parent-0"))],
+    )?;
+    assert_eq!(store.apply_metadata(&late_vote)?, MetaOutcome::Conflict);
+    let overwrite = MetaTransition::new(vec![
+        change(MetaKey::ChainHead, Some(b"parent-1"), b"must-not-advance"),
+        change(MetaKey::ChainBlock { height: 1 }, None, b"different-block"),
+    ])?;
+    assert_eq!(store.apply_metadata(&overwrite)?, MetaOutcome::Conflict);
+    assert_eq!(
+        store
+            .read_metadata(&[
+                MetaKey::ChainHead,
+                MetaKey::ChainBlock { height: 1 },
+                state(1),
+                outbox(1, 2)
+            ])?
+            .values,
+        vec![
+            Some(b"parent-1".to_vec()),
+            Some(b"block-1".to_vec()),
+            Some(b"signed-state".to_vec()),
+            None
+        ]
+    );
+    assert!(!store.is_write_frozen());
+    drop(store);
+    let reopened = CandidateStore::open(config, OpenMode::Existing)?;
+    assert_eq!(reopened.apply_metadata(&vote)?, MetaOutcome::Conflict);
+    assert_eq!(
+        reopened.apply_metadata(&promote)?,
+        MetaOutcome::AlreadyPresent
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY; guard absence differs from empty"]
+fn real_guards_do_not_write_absent_keys_and_empty_is_not_absent() -> Result<()> {
+    let store = CandidateStore::open(config(&directory("guard-absence")?)?, OpenMode::CreateNew)?;
+    let absent = MetaTransition::with_guards(
+        vec![change(state(2), None, b"one")],
+        vec![guard(MetaKey::ChainHead, None)],
+    )?;
+    assert_eq!(store.apply_metadata(&absent)?, MetaOutcome::Applied);
+    assert_eq!(
+        store.read_metadata(&[MetaKey::ChainHead])?.values,
+        vec![None]
+    );
+    let head = MetaTransition::new(vec![change(MetaKey::ChainHead, None, b"")])?;
+    assert_eq!(store.apply_metadata(&head)?, MetaOutcome::Applied);
+    assert_eq!(store.apply_metadata(&absent)?, MetaOutcome::Conflict);
+    let empty = MetaTransition::with_guards(
+        vec![change(state(2), Some(b"one"), b"two")],
+        vec![guard(MetaKey::ChainHead, Some(b""))],
+    )?;
+    assert_eq!(store.apply_metadata(&empty)?, MetaOutcome::Applied);
+    assert_eq!(store.apply_metadata(&empty)?, MetaOutcome::AlreadyPresent);
+    assert_eq!(
+        store.read_metadata(&[MetaKey::ChainHead, state(2)])?.values,
+        vec![Some(Vec::new()), Some(b"two".to_vec())]
+    );
+    let second_guard = MetaTransition::with_guards(
+        vec![change(state(3), None, b"three")],
+        vec![
+            guard(MetaKey::ChainHead, Some(b"")),
+            guard(MetaKey::ChainBlock { height: 1 }, None),
+        ],
+    )?;
+    assert_eq!(store.apply_metadata(&second_guard)?, MetaOutcome::Applied);
+    let block = MetaTransition::new(vec![change(
+        MetaKey::ChainBlock { height: 1 },
+        None,
+        b"block",
+    )])?;
+    assert_eq!(store.apply_metadata(&block)?, MetaOutcome::Applied);
+    // First guard and all changed bytes still match; only the second guard
+    // changed. Its failure must also defeat the AlreadyPresent fast path.
+    assert_eq!(store.apply_metadata(&second_guard)?, MetaOutcome::Conflict);
+    assert_eq!(
+        store.read_metadata(&[MetaKey::ChainHead, state(3)])?.values,
+        vec![Some(Vec::new()), Some(b"three".to_vec())]
+    );
     Ok(())
 }

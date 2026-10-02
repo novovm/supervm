@@ -5,6 +5,7 @@
 //! availability, a current parent capability, or a durable canonical head.
 //! No production configuration, validator key, genesis or network is activated.
 
+mod chain;
 mod journal;
 pub use journal::{DurableMessage, JournalOpening, TimeoutStep, ValidatorJournal};
 pub(crate) mod round;

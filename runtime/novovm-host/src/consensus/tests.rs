@@ -1,7 +1,10 @@
 //! Same-process, four-independent-database integration. Real signed NOV batches
 //! use the resident AOEM pipeline; signed consensus messages are transported as
-//! encoded bytes by this fixture, not by a real network. Decision archival is
-//! deliberately NOT canonical-head publication, execution proof or mainnet TPS.
+//! encoded bytes by this fixture, not by a real network. Local head publication
+//! is not an execution validity proof or mainnet TPS measurement.
+
+#[path = "chain_integration.rs"]
+mod chain_integration;
 
 use super::statement::{BlockStatement, ParentPoint};
 use super::wire::{
@@ -657,7 +660,7 @@ fn real_four_validator_journals_persist_before_emit_recover_and_reject_stale() -
                 Ok(_) => bail!("changed parent reopened journal"),
             };
             ensure!(
-                format!("{error:#}").contains("identity/parent mismatch"),
+                format!("{error:#}").contains("parent") || format!("{error:#}").contains("prefix"),
                 "wrong changed-parent rejection: {error:#}"
             );
         }

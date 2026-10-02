@@ -420,6 +420,16 @@ impl CandidatePipeline {
             .try_read(keys)
     }
 
+    pub(crate) fn try_recover_consensus_candidate(
+        &self,
+        candidate: NodeHash,
+    ) -> Result<Option<IoTicket<Option<crate::persistence::StoredCandidate>>>> {
+        self.metadata
+            .as_ref()
+            .context("pipeline metadata closed")?
+            .try_recover(candidate)
+    }
+
     pub(crate) fn storage_domain(&self) -> crate::persistence::StorageDomain {
         self.config.store.domain
     }

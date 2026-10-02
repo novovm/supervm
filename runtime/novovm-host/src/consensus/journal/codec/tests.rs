@@ -216,3 +216,164 @@ fn restored_locked_state_requires_exact_valid_quorum_not_a_claimed_round() {
     let wrong_phase = encode_snapshot(&identity, &snapshot).unwrap();
     assert!(decode_snapshot(&identity, &wrong_phase).is_err());
 }
+
+#[test]
+fn maximum_validator_decision_transition_fits_unchanged_metadata_budgets() {
+    // Codec/budget coverage only: this synthetic value is not an executed block
+    // or finality evidence. Retain every validator, not merely quorum weight.
+    assert_eq!(wire::MAX_VALIDATORS, 1024);
+    let keys: Vec<_> = (0..wire::MAX_VALIDATORS)
+        .map(|index| {
+            let mut seed = [0x78; 32];
+            seed[..8].copy_from_slice(&(index as u64).to_be_bytes());
+            SigningKey::from_bytes(&seed)
+        })
+        .collect();
+    let members = keys
+        .iter()
+        .map(|key| Validator::new(key.verifying_key().to_bytes(), 1).unwrap())
+        .collect();
+    let mut identity = identity();
+    identity.set = Arc::new(ValidatorSet::new(71, 1, 1, members).unwrap());
+    identity.context.validator_set_hash = identity.set.hash();
+    identity.validator = identity.set.leader(identity.context.height, 0).unwrap();
+    identity.key = keys
+        .iter()
+        .find(|key| {
+            key.verifying_key().to_bytes()
+                == *identity
+                    .set
+                    .member(&identity.validator)
+                    .unwrap()
+                    .public_key()
+        })
+        .unwrap()
+        .clone();
+    let value = [0x79; 32];
+    let proposal = Proposal::sign(
+        identity.context,
+        0,
+        value,
+        None,
+        &identity.set,
+        &identity.key,
+    )
+    .unwrap();
+    let verified_proposal = proposal.verify(&identity.set).unwrap();
+    let quorum = |phase| {
+        let votes = keys
+            .iter()
+            .map(|key| {
+                Vote::sign(identity.context, 0, phase, Some(value), &identity.set, key).unwrap()
+            })
+            .collect();
+        let quorum = Quorum::from_votes(&identity.set, votes).unwrap();
+        let encoded = wire::encode_quorum(&quorum).unwrap();
+        assert_eq!(quorum.votes.len(), wire::MAX_VALIDATORS);
+        assert_eq!(encoded.len(), wire::MAX_WIRE_BYTES);
+        assert_eq!(wire::decode_quorum(&encoded).unwrap(), quorum);
+        quorum
+    };
+    let prevote = quorum(wire::Phase::Prevote);
+    let precommit = quorum(wire::Phase::Precommit);
+    let state = State::new(identity.context)
+        .unwrap()
+        .prepare_proposal(&verified_proposal, value, None)
+        .unwrap()
+        .into_parts()
+        .0
+        .prepare_prevote_quorum(
+            &prevote.verify(&identity.set).unwrap(),
+            Some((&verified_proposal, value)),
+        )
+        .unwrap()
+        .into_parts()
+        .0;
+    let old = Snapshot {
+        state,
+        revision: 3,
+        proposed: Some((0, value, None)),
+        witness: Some(prevote),
+    };
+    let next = Snapshot {
+        state: old
+            .state
+            .prepare_decision(
+                &verified_proposal,
+                value,
+                &precommit.verify(&identity.set).unwrap(),
+            )
+            .unwrap()
+            .into_parts()
+            .0,
+        revision: 4,
+        ..old.clone()
+    };
+    let old_saved = encode_snapshot(&identity, &old).unwrap();
+    let next_saved = encode_snapshot(&identity, &next).unwrap();
+    for (snapshot, saved) in [(&old, &old_saved), (&next, &next_saved)] {
+        let recovered = decode_snapshot(&identity, saved).unwrap();
+        assert_eq!(recovered.state, snapshot.state);
+        assert_eq!(recovered.witness, snapshot.witness);
+        assert_eq!(recovered.witness.unwrap().votes.len(), wire::MAX_VALIDATORS);
+    }
+    let decision = DurableMessage::Decision {
+        proposal,
+        certificate: precommit,
+    };
+    let outbox = encode_outbox(&next, &next_saved, Some(&decision)).unwrap();
+    let recovered = decode_outbox(&identity, &next, &next_saved, &outbox)
+        .unwrap()
+        .unwrap();
+    let DurableMessage::Decision { certificate, .. } = &recovered else {
+        panic!("decision outbox lost its certificate");
+    };
+    assert_eq!(certificate.votes.len(), wire::MAX_VALIDATORS);
+    assert_eq!(
+        encode_outbox(&next, &next_saved, Some(&recovered)).unwrap(),
+        outbox
+    );
+
+    // Reserve the entire 4 KiB chain-codec envelope for each old/new head and
+    // immutable archive record. These opaque reservations deliberately exceed
+    // actual small records; the certificate lives only in the exact outbox.
+    let chain_record_bytes = 4096;
+    let retained_values =
+        old_saved.len() + next_saved.len() + outbox.len() + 3 * chain_record_bytes;
+    assert_eq!(MAX_RECORD, 512 * 1024);
+    assert!([&old_saved, &next_saved, &outbox]
+        .into_iter()
+        .all(|bytes| bytes.len() <= 512 * 1024));
+    assert!(retained_values <= 1024 * 1024);
+    let transition = MetaTransition::new(vec![
+        MetaChange {
+            key: MetaKey::ConsensusState(identity.validator),
+            expected: Some(old_saved),
+            value: next_saved,
+        },
+        MetaChange {
+            key: MetaKey::ConsensusOutbox {
+                validator: identity.validator,
+                sequence: next.revision,
+            },
+            expected: None,
+            value: outbox,
+        },
+        MetaChange {
+            key: MetaKey::ChainHead,
+            expected: Some(vec![0x80; chain_record_bytes]),
+            value: vec![0x81; chain_record_bytes],
+        },
+        MetaChange {
+            key: MetaKey::ChainBlock {
+                height: identity.context.height,
+            },
+            expected: None,
+            value: vec![0x82; chain_record_bytes],
+        },
+    ])
+    .unwrap();
+    // The owner also retains logical key bytes, not just the checked values.
+    assert!(transition.retained_bytes() > retained_values);
+    assert!(transition.retained_bytes() <= 1024 * 1024);
+}

@@ -44,17 +44,26 @@ fn seal(mut bytes: Vec<u8>) -> Result<Vec<u8>> {
 }
 
 pub(super) fn encode_snapshot(identity: &Identity, snapshot: &Snapshot) -> Result<Vec<u8>> {
+    encode_snapshot_at(identity, identity.context, identity.parent, snapshot)
+}
+
+pub(super) fn encode_snapshot_at(
+    identity: &Identity,
+    context: ConsensusContext,
+    parent: ParentPoint,
+    snapshot: &Snapshot,
+) -> Result<Vec<u8>> {
     ensure!(
         snapshot.revision > 0,
         "durable signing snapshot requires revision"
     );
     ensure!(
-        snapshot.state.context() == &identity.context,
+        snapshot.state.context() == &context,
         "snapshot context differs from pinned signer"
     );
     let mut bytes = SNAP.to_vec();
     bytes.extend_from_slice(&identity.validator);
-    bytes.extend_from_slice(&parent_digest(&identity.parent));
+    bytes.extend_from_slice(&parent_digest(&parent));
     bytes.extend_from_slice(&snapshot.revision.to_be_bytes());
     match snapshot.proposed {
         None => bytes.push(0),
@@ -271,6 +280,23 @@ pub(super) fn decode_outbox(
         "noncanonical signing outbox"
     );
     Ok(message)
+}
+
+/// Parse an immutable decision archive without pretending it is a current
+/// signer snapshot. The caller verifies the full QC/set, block statement and
+/// exact outbox digest/locator; this decoder alone grants no authority.
+pub(crate) fn decode_archived_decision(bytes: &[u8], revision: u64) -> Result<(Proposal, Quorum)> {
+    let mut reader = Reader::open(bytes, OUT)?;
+    ensure!(
+        reader.u64()? == revision && revision != 0,
+        "archived decision revision mismatch"
+    );
+    let _snapshot_digest = reader.hash()?;
+    ensure!(reader.byte()? == 3, "archive is not a decision outbox");
+    let proposal = wire::decode_proposal(reader.frame(wire::MAX_WIRE_BYTES)?)?;
+    let certificate = wire::decode_quorum(reader.frame(wire::MAX_WIRE_BYTES)?)?;
+    reader.finish()?;
+    Ok((proposal, certificate))
 }
 
 struct Reader<'a> {

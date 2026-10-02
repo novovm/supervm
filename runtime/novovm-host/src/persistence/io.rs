@@ -9,7 +9,9 @@
 
 use super::metadata::{MetaKey, MetaOutcome, MetaTransition, MetadataSnapshot};
 use super::store::{PersistProgress, BULK_KEYS};
-use super::{CandidateStore, OpenMode, PersistedCandidate, PreparedCandidate, StoreConfig};
+use super::{
+    CandidateStore, OpenMode, PersistedCandidate, PreparedCandidate, StoreConfig, StoredCandidate,
+};
 use crate::state::tree::{read_state_value, validate_state_node_bytes, NodeHash};
 use anyhow::{ensure, Context, Result};
 use std::collections::VecDeque;
@@ -94,6 +96,10 @@ impl<T> IoTicket<T> {
 }
 
 enum Operation {
+    Recover {
+        candidate: NodeHash,
+        reply: mpsc::Sender<Result<Option<StoredCandidate>>>,
+    },
     MetadataRead {
         keys: Vec<MetaKey>,
         reply: mpsc::Sender<Result<MetadataSnapshot>>,
@@ -134,6 +140,7 @@ pub struct IoService {
     worker: JoinHandle<()>,
     usage: Arc<Mutex<Usage>>,
     budget: IoBudget,
+    recovery_bytes: usize,
 }
 
 /// A read-only admission lane, sharing the SAME native owner and database.
@@ -152,9 +159,22 @@ pub(crate) struct IoMetadataClient {
     sender: mpsc::SyncSender<Command>,
     usage: Arc<Mutex<Usage>>,
     budget: IoBudget,
+    recovery_bytes: usize,
 }
 
 impl IoMetadataClient {
+    /// Cold-start only. The caller must not use complete-candidate recovery in
+    /// an ordinary consensus tick. One candidate may occupy the I/O owner.
+    pub(crate) fn try_recover(
+        &self,
+        candidate: NodeHash,
+    ) -> Result<Option<IoTicket<Option<StoredCandidate>>>> {
+        enqueue(
+            &self.sender,
+            reserve(&self.usage, self.budget, self.recovery_bytes)?,
+            |reply| Operation::Recover { candidate, reply },
+        )
+    }
     pub(crate) fn try_read(
         &self,
         keys: Vec<MetaKey>,
@@ -272,6 +292,12 @@ impl IoService {
             "invalid I/O admission budget"
         );
         let (sender, receiver) = mpsc::sync_channel(budget.requests);
+        let recovery_bytes = config
+            .packet_budget
+            .max_bytes
+            .checked_mul(2)
+            .and_then(|n| n.checked_add(4096))
+            .context("recovery reservation overflow")?;
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let usage = Arc::new(Mutex::new(Usage {
             notify: notify.clone(),
@@ -298,6 +324,7 @@ impl IoService {
             worker,
             usage,
             budget,
+            recovery_bytes,
         })
     }
 
@@ -346,6 +373,7 @@ impl IoService {
         Ok(IoMetadataClient {
             sender: self.sender.clone(),
             budget: self.budget,
+            recovery_bytes: self.recovery_bytes,
             usage: Arc::new(Mutex::new(Usage {
                 notify,
                 ..Usage::default()
@@ -431,6 +459,10 @@ fn run_owner(
         };
         if let Some(command) = command {
             match command.operation {
+                Operation::Recover { candidate, reply } => {
+                    let _ = reply.send(store.recover(candidate));
+                    completed = true;
+                }
                 Operation::MetadataRead { keys, reply } => {
                     let _ = reply.send(store.read_metadata(&keys));
                     completed = true;

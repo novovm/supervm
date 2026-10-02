@@ -1,11 +1,13 @@
-//! One pinned-height durable signing session over the SAME AOEM I/O owner.
+//! Consecutive-height durable signing over the SAME AOEM I/O owner.
 //! All messages stay private until safety state + exact outbox bytes have been
-//! atomically persisted and read back. This is not a canonical head manager,
-//! network reactor or complete pacemaker. Opening pins operator-supplied parent
-//! authority; a node must not reuse this session after changing that authority.
+//! atomically persisted and read back. A decision advances the local chain head
+//! in that same batch. No network reactor, full pacemaker or execution proof.
 
-mod codec;
+pub(crate) mod codec;
+mod opening;
+pub use opening::JournalOpening;
 
+use super::chain::ChainRecord;
 use super::round::{LocalTimeout, PreparedStep, State, Step};
 use super::statement::{BlockStatement, ParentPoint};
 use super::wire::{
@@ -13,15 +15,14 @@ use super::wire::{
     VerifiedProposal, VerifiedQuorum, Vote,
 };
 use crate::persistence::io::IoTicket;
-use crate::persistence::metadata::{
-    MetaChange, MetaKey, MetaOutcome, MetaTransition, MetadataSnapshot,
-};
+use crate::persistence::metadata::{MetaChange, MetaGuard, MetaKey, MetaOutcome, MetaTransition};
 use crate::pipeline::{CandidatePipeline, DurableCandidate};
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::SigningKey;
 use std::sync::Arc;
 
-/// Durable protocol evidence, not a published block or execution validity proof.
+/// Durable protocol evidence. An acknowledged Decision also publishes the
+/// local head; none of these messages alone proves business execution validity.
 #[derive(Clone, Debug)]
 pub enum DurableMessage {
     Proposal(Proposal),
@@ -71,133 +72,14 @@ impl Identity {
     }
 }
 
-/// Nonblocking startup. A missing snapshot is fresh ONLY when its first outbox
-/// slot is also absent. Existing state never silently resets after corruption.
-pub struct JournalOpening {
-    identity: Option<Identity>,
-    initial: Option<IoTicket<MetadataSnapshot>>,
-    recovered: Option<(Snapshot, Vec<u8>)>,
-    last: Option<IoTicket<MetadataSnapshot>>,
-    failed: bool,
-}
-
-impl JournalOpening {
-    pub fn poll(&mut self, pipeline: &CandidatePipeline) -> Result<Option<ValidatorJournal>> {
-        ensure!(
-            !self.failed,
-            "signing journal startup failed; explicit recovery required"
-        );
-        let result = self.poll_inner(pipeline);
-        if result.is_err() {
-            self.failed = true;
-        }
-        result
-    }
-
-    fn poll_inner(&mut self, pipeline: &CandidatePipeline) -> Result<Option<ValidatorJournal>> {
-        let identity = self
-            .identity
-            .as_ref()
-            .context("journal startup already consumed")?;
-        identity.check_owner(pipeline)?;
-        if let Some((snapshot, saved)) = self.recovered.take() {
-            if self.last.is_none() {
-                self.last =
-                    pipeline.try_read_consensus_metadata(vec![MetaKey::ConsensusOutbox {
-                        validator: identity.validator,
-                        sequence: snapshot.revision,
-                    }])?;
-            }
-            let result = self
-                .last
-                .as_mut()
-                .map(IoTicket::try_take)
-                .transpose()?
-                .flatten();
-            let Some(result) = result else {
-                self.recovered = Some((snapshot, saved));
-                return Ok(None);
-            };
-            ensure!(
-                result.values.len() == 1,
-                "journal outbox reply count mismatch"
-            );
-            let last = result.values[0]
-                .as_deref()
-                .context("durable signing outbox missing")?;
-            let message = codec::decode_outbox(identity, &snapshot, &saved, last)?;
-            return Ok(Some(ValidatorJournal {
-                identity: self.identity.take().unwrap(),
-                snapshot,
-                saved: Some(saved),
-                last_message: message,
-                pending: None,
-                frozen: false,
-            }));
-        }
-        if self.initial.is_none() {
-            self.initial = pipeline.try_read_consensus_metadata(vec![
-                MetaKey::ConsensusState(identity.validator),
-                MetaKey::ConsensusOutbox {
-                    validator: identity.validator,
-                    sequence: 1,
-                },
-            ])?;
-        }
-        let result = self
-            .initial
-            .as_mut()
-            .map(IoTicket::try_take)
-            .transpose()?
-            .flatten();
-        let Some(result) = result else {
-            return Ok(None);
-        };
-        ensure!(
-            result.values.len() == 2,
-            "journal startup reply count mismatch"
-        );
-        self.initial.take();
-        match result.values[0].as_ref() {
-            None => {
-                ensure!(
-                    result.values[1].is_none(),
-                    "signing snapshot disappeared; refuse reset"
-                );
-                let snapshot = Snapshot {
-                    state: State::new(identity.context)?,
-                    revision: 0,
-                    proposed: None,
-                    witness: None,
-                };
-                Ok(Some(ValidatorJournal {
-                    identity: self.identity.take().unwrap(),
-                    snapshot,
-                    saved: None,
-                    last_message: None,
-                    pending: None,
-                    frozen: false,
-                }))
-            }
-            Some(bytes) => {
-                ensure!(
-                    result.values[1].is_some(),
-                    "initial signing outbox disappeared"
-                );
-                let snapshot = codec::decode_snapshot(identity, bytes)?;
-                self.recovered = Some((snapshot, bytes.clone()));
-                Ok(None)
-            }
-        }
-    }
-}
-
 struct Pending {
     snapshot: Snapshot,
     saved: Vec<u8>,
     outbox: Vec<u8>,
     message: Option<DurableMessage>,
     applying: Option<IoTicket<MetaOutcome>>,
+    publication: Option<ChainRecord>,
+    next_identity: Option<(ConsensusContext, ParentPoint)>,
 }
 
 /// Real signing is fail-closed on stale metadata, unknown writes or bad readback.
@@ -210,11 +92,14 @@ pub struct ValidatorJournal {
     last_message: Option<DurableMessage>,
     pending: Option<Pending>,
     frozen: bool,
+    head_record: Option<ChainRecord>,
+    head_bytes: Option<Vec<u8>>,
 }
 
 impl ValidatorJournal {
-    /// Explicit local configuration, not production genesis creation. The
-    /// configured parent must come from independently verified chain authority.
+    /// Explicit cold recovery from the configured genesis anchor, not genesis
+    /// creation or an arbitrary checkpoint supplied by a peer. One local signer
+    /// owns each ledger; changing its key/set requires a separate protocol.
     pub fn open(
         pipeline: &CandidatePipeline,
         context: ConsensusContext,
@@ -223,6 +108,10 @@ impl ValidatorJournal {
         key: SigningKey,
     ) -> Result<JournalOpening> {
         context.validate(&set)?;
+        ensure!(
+            context.height == 1 && parent.height == 0,
+            "journal opening requires the configured genesis anchor, not an arbitrary checkpoint"
+        );
         let domain = pipeline.storage_domain();
         ensure!(
             context.chain_id == domain.chain_id
@@ -243,20 +132,51 @@ impl ValidatorJournal {
             set.member(&validator).is_some(),
             "local signer is not in validator set"
         );
-        Ok(JournalOpening {
-            identity: Some(Identity {
-                owner: pipeline.owner_identity(),
-                context,
-                parent,
-                set,
-                key,
-                validator,
-            }),
-            initial: None,
-            recovered: None,
-            last: None,
-            failed: false,
-        })
+        Ok(JournalOpening::new(Identity {
+            owner: pipeline.owner_identity(),
+            context,
+            parent,
+            set,
+            key,
+            validator,
+        }))
+    }
+
+    pub fn context(&self) -> ConsensusContext {
+        self.identity.context
+    }
+    pub fn parent(&self) -> ParentPoint {
+        self.identity.parent
+    }
+    /// Last locally acknowledged head, not cached signing permission.
+    pub fn head(&self) -> Option<ParentPoint> {
+        self.head_record.as_ref().map(ChainRecord::point)
+    }
+
+    /// Advance only from our durably decided head; preserve the GLOBAL signer
+    /// revision/outbox. Resetting keys by height would bypass anti-double-sign.
+    pub fn advance_height(&mut self) -> Result<()> {
+        ensure!(
+            !self.frozen && self.pending.is_none(),
+            "journal frozen or transition in flight"
+        );
+        let record = self
+            .head_record
+            .as_ref()
+            .context("no decided head to advance")?;
+        ensure!(
+            self.decided() == Some(record.point().block_hash) && self.context() == record.context(),
+            "signer has not decided the current head"
+        );
+        let parent = record.point();
+        let context = successor_context(self.context(), parent)?;
+        let next = Snapshot {
+            state: State::new(context)?,
+            revision: self.snapshot.revision,
+            proposed: None,
+            witness: None,
+        };
+        self.stage_full(next, None, None, Some((context, parent)))
     }
 
     pub fn round(&self) -> u64 {
@@ -397,7 +317,8 @@ impl ValidatorJournal {
         self.stage_step(prepared, None, None)
     }
 
-    /// Archive a locally checked decision, without changing the canonical head.
+    /// Atomically archive the local decision and move the head. Candidate data
+    /// is already immutable and durable; no second business state copy is made.
     pub fn observe_decision(
         &mut self,
         proposal: &VerifiedProposal,
@@ -405,17 +326,27 @@ impl ValidatorJournal {
         certificate: &VerifiedQuorum,
     ) -> Result<()> {
         self.ready()?;
-        let value = self.identity.statement(candidate)?.hash();
+        let statement = self.identity.statement(candidate)?;
+        let value = statement.hash();
         let step = self
             .snapshot
             .state
             .prepare_decision(proposal, value, certificate)?;
-        self.stage_step(
-            step,
+        ensure!(
+            step.intent().is_none() && step.decision() == Some(value),
+            "decision transition emitted unexpected vote/value"
+        );
+        let next = Snapshot {
+            state: step.into_parts().0,
+            ..self.snapshot.clone()
+        };
+        self.stage_full(
+            next,
             Some(DurableMessage::Decision {
                 proposal: proposal.proposal().clone(),
                 certificate: certificate.quorum().clone(),
             }),
+            Some((statement, candidate)),
             None,
         )
     }
@@ -460,28 +391,63 @@ impl ValidatorJournal {
         self.stage(next, message)
     }
 
-    fn stage(&mut self, mut next: Snapshot, message: Option<DurableMessage>) -> Result<()> {
+    fn stage(&mut self, next: Snapshot, message: Option<DurableMessage>) -> Result<()> {
+        self.stage_full(next, message, None, None)
+    }
+
+    fn stage_full(
+        &mut self,
+        mut next: Snapshot,
+        message: Option<DurableMessage>,
+        publication: Option<(BlockStatement, &DurableCandidate)>,
+        next_identity: Option<(ConsensusContext, ParentPoint)>,
+    ) -> Result<()> {
         next.revision = self
             .snapshot
             .revision
             .checked_add(1)
             .context("signing revision exhausted")?;
-        let saved = codec::encode_snapshot(&self.identity, &next)?;
+        let saved = match next_identity {
+            Some((context, parent)) => {
+                codec::encode_snapshot_at(&self.identity, context, parent, &next)?
+            }
+            None => codec::encode_snapshot(&self.identity, &next)?,
+        };
         let outbox = codec::encode_outbox(&next, &saved, message.as_ref())?;
+        let publication = publication
+            .map(|(statement, candidate)| {
+                ChainRecord::new(
+                    &statement,
+                    candidate.packet(),
+                    self.identity.parent,
+                    self.identity.validator,
+                    next.revision,
+                    &outbox,
+                )
+            })
+            .transpose()?;
         // Validate the COMPLETE conditional batch before accepting the action.
-        let _ = self.transition(&saved, &outbox, next.revision)?;
+        let _ = self.transition(&saved, &outbox, next.revision, publication.as_ref())?;
         self.pending = Some(Pending {
             snapshot: next,
             saved,
             outbox,
             message,
             applying: None,
+            publication,
+            next_identity,
         });
         Ok(())
     }
 
-    fn transition(&self, saved: &[u8], outbox: &[u8], revision: u64) -> Result<MetaTransition> {
-        MetaTransition::new(vec![
+    fn transition(
+        &self,
+        saved: &[u8],
+        outbox: &[u8],
+        revision: u64,
+        publication: Option<&ChainRecord>,
+    ) -> Result<MetaTransition> {
+        let mut changes = vec![
             MetaChange {
                 key: MetaKey::ConsensusState(self.identity.validator),
                 expected: self.saved.clone(),
@@ -495,7 +461,30 @@ impl ValidatorJournal {
                 expected: None,
                 value: outbox.to_vec(),
             },
-        ])
+        ];
+        if let Some(record) = publication {
+            changes.push(MetaChange {
+                key: MetaKey::ChainHead,
+                expected: self.head_bytes.clone(),
+                value: record.head_bytes()?,
+            });
+            changes.push(MetaChange {
+                key: MetaKey::ChainBlock {
+                    height: record.point().height,
+                },
+                expected: None,
+                value: record.encode()?,
+            });
+            MetaTransition::new(changes)
+        } else {
+            MetaTransition::with_guards(
+                changes,
+                vec![MetaGuard {
+                    key: MetaKey::ChainHead,
+                    expected: self.head_bytes.clone(),
+                }],
+            )
+        }
     }
 
     /// None means pending/backpressure. Some(None) is a durable state-only
@@ -539,6 +528,14 @@ impl ValidatorJournal {
         self.snapshot = pending.snapshot;
         self.saved = Some(pending.saved);
         self.last_message = pending.message;
+        if let Some(record) = pending.publication {
+            self.head_bytes = Some(record.head_bytes()?);
+            self.head_record = Some(record);
+        }
+        if let Some((context, parent)) = pending.next_identity {
+            self.identity.context = context;
+            self.identity.parent = parent;
+        }
         Ok(Some(self.last_message.clone()))
     }
 
@@ -548,6 +545,7 @@ impl ValidatorJournal {
                 &pending.saved,
                 &pending.outbox,
                 pending.snapshot.revision,
+                pending.publication.as_ref(),
             )?)?;
         }
         Ok(())
@@ -569,4 +567,16 @@ impl ValidatorJournal {
         result?;
         Ok(accepted)
     }
+}
+
+fn successor_context(context: ConsensusContext, parent: ParentPoint) -> Result<ConsensusContext> {
+    Ok(ConsensusContext {
+        height: parent
+            .height
+            .checked_add(1)
+            .context("chain height exhausted")?,
+        parent_block_hash: parent.block_hash,
+        parent_decision_hash: parent.decision_hash,
+        ..context
+    })
 }

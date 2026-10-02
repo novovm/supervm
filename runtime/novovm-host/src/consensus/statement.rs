@@ -8,14 +8,14 @@ mod tests;
 
 use super::wire::{Context as ConsensusContext, Hash, ValidatorSet};
 use crate::execution::plan::BatchContext;
-use crate::persistence::PreparedCandidate;
+use crate::persistence::{PreparedCandidate, StoredCandidate};
 use anyhow::{ensure, Context, Result};
 use sha2::{Digest, Sha256};
 
 /// A caller's parent snapshot, not a self-authenticating finality certificate.
 /// A chain owner must derive this from its configured genesis or verified head,
 /// and recheck that head at signing/publication. No setter promotes a candidate.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ParentPoint {
     pub height: u64,
     pub block_hash: Hash,
@@ -45,28 +45,47 @@ pub struct BlockStatement {
 }
 
 impl BlockStatement {
+    /// Cold archive reconstruction only. This does not confer execution or
+    /// durability capability; the journal requires a real DurableCandidate.
+    pub(crate) fn from_stored(
+        stored: &StoredCandidate,
+        consensus: ConsensusContext,
+        set: &ValidatorSet,
+        parent: &ParentPoint,
+    ) -> Result<Self> {
+        let execution = *stored.context();
+        let transaction_count = u64::try_from(stored.raw_transactions().len())?;
+        let statement = Self {
+            consensus,
+            execution,
+            candidate_id: stored.candidate_id(),
+            state_root: stored.state_root(),
+            receipt_batch_commitment: stored.receipt_batch_commitment(),
+            execution_statement: stored.statement_commitment(),
+            document_digest: stored.document_digest(),
+            transaction_count,
+            state_version: execution
+                .parent_state_version
+                .checked_add(transaction_count)
+                .context("executed statement state version overflow")?,
+            hash: [0; 32],
+        };
+        statement.checked(set, parent)
+    }
+
     pub fn from_executed(
         packet: &PreparedCandidate,
         consensus: ConsensusContext,
         set: &ValidatorSet,
         parent: &ParentPoint,
     ) -> Result<Self> {
-        consensus.validate(set)?;
         let execution = *packet.context();
-        ensure!(
-            consensus.chain_id == execution.chain_id
-                && consensus.genesis_config_commitment == execution.genesis_config_commitment
-                && consensus.protocol_commitment == execution.protocol_commitment
-                && consensus.height == execution.height
-                && consensus.parent_block_hash == execution.parent_block_hash,
-            "consensus and executed candidate domain/parent mismatch"
-        );
         let transaction_count = u64::try_from(packet.transaction_count())?;
         let state_version = execution
             .parent_state_version
             .checked_add(transaction_count)
             .context("executed statement state version overflow")?;
-        let mut statement = Self {
+        let statement = Self {
             consensus,
             execution,
             candidate_id: packet.candidate_id(),
@@ -78,9 +97,23 @@ impl BlockStatement {
             state_version,
             hash: [0; 32],
         };
-        statement.validate_parent(parent)?;
-        statement.hash = statement.compute_hash();
-        Ok(statement)
+        statement.checked(set, parent)
+    }
+
+    fn checked(mut self, set: &ValidatorSet, parent: &ParentPoint) -> Result<Self> {
+        self.consensus.validate(set)?;
+        let (consensus, execution) = (&self.consensus, &self.execution);
+        ensure!(
+            consensus.chain_id == execution.chain_id
+                && consensus.genesis_config_commitment == execution.genesis_config_commitment
+                && consensus.protocol_commitment == execution.protocol_commitment
+                && consensus.height == execution.height
+                && consensus.parent_block_hash == execution.parent_block_hash,
+            "consensus and executed candidate domain/parent mismatch"
+        );
+        self.validate_parent(parent)?;
+        self.hash = self.compute_hash();
+        Ok(self)
     }
 
     pub fn hash(&self) -> Hash {
