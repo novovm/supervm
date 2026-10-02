@@ -8,6 +8,100 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：共享历史回复试验未签收，保留性能退化证据（2026-10-02）
+
+基于`035004d`；该提交的双平台CI
+[`36965164287`](https://github.com/novovm/supervm/actions/runs/36965164287)已成功。
+**本次仅提交文档。以下runtime改动是本机未提交草稿，不是GitHub已交付能力。**
+不改AOEM/SDK、旧38项草稿、业务/费用/nonce、wire、签票规则或生产参数；
+没有创建Skill或分支。A继续独占controller及负载测试，B不覆盖这些本机草稿。
+
+- 同一历史高度的请求共用一个任务，贯穿完整ArchiveRead、StoredBody准备和
+  Decision准备；准备途中加入的peer不重新读取/组装。首个请求的未可信父点
+  不作为任务身份，恢复依然依据本地已验证耐久前缀；回复逐peer匹配完整context。
+- 只共享本channel的不可变PreparedMessage；不缓存StoredCandidate、BatchRequest
+  或执行/发布权限。Ready及最后共享根交owner回收；job正文计入prepared正文
+  预算，job Decision计入固定槽位。已有缓存命中无需再次恢复/编码。
+- 每peer最多一个已接纳请求，改变高/低高度只更新最新请求、不取消其他人的
+  任务。按FIFO逐peer分发，重入排尾。RequestDecision只唤醒证书，不主动发
+  正文，也不关闭已由该peer RequestBody唤醒的正文重试。
+- **先红后绿：** 共享任务初稿从BTreeMap头挑peer，真实库反例0.32秒失败：
+  字典序靠前的错误父点peer重入后连续获两次分发，已排队合法peer仍未获回复。
+  FIFO修复后三个真实库专项全过（Windows合计0.99秒），不是把旧已发布版本
+  与尚未提交的共享初稿混为一谈。
+- 最终四个专项各使用4个真实AOEM库、2个实际执行/持久投票高度，不预造QC。覆盖
+  1次恢复/1次正文/1次证书准备、共享Arc、两个准备阶段late join、错误父点、
+  持续错误重入、升降高度、按需正文及重查不取消正文；头/签票/outbox元数据
+  前后相等，查询不产生新执行或票。这些专项是进程内投递，不冒充真实网络。
+- 追加两个反例也实际先红：正文在job已准备、Decision尚未分发时，真实RequestBody
+  被丢弃；固定缓存171/173槽时，最后回复因Decision预留双计只能到172、缺证书。
+  修复为按精确body_id立即服务已准备正文、最后waiter移交预留槽；四专项最终
+  1.31秒全部通过。满槽夹具使用真实owner准备的无权限RequestBody占位，不造QC、
+  不改额度；它不是prepare队列背压或实际网络容量证明。
+- 共享初稿全量真库Release：Windows **471单元/集成+6编译拒绝**、WSL Linux **468+6**，
+  均0失败/0忽略。fmt、全targets strict Clippy、无native strict Clippy及
+  3成员无legacy依赖检查通过。四进程WSS/晚到追赶/强杀恢复等原门保留。
+- 最终两处边界修复后的全量真库Release再次通过：Windows **472单元/集成+6编译拒绝**、
+  WSL Linux **469+6**，均0失败/0忽略。它们覆盖最终草稿的正确性回归，
+  不改变下面长负载性能未签收的结论。
+
+同机WSL2 `/mnt/d`、24逻辑CPU、四OS进程WSS/E2E、1024笔×64高的首轮
+**120.50秒FAIL**：四节点共同只到51，另外三节点到59，未执行冷恢复签收；
+H49/53/57有换轮，执行失败/stale/重算为0。relay排队4716帧、数量拒34、字节
+拒3，admitted约261MB，无source/rate拒绝和中途重连。不能用全量短门覆盖它。
+只添加超时才求值的测试诊断后，同生产代码复跑为62.602105秒、1046.865764 TPS，
+65536笔四节点耐久确认及冷恢复通过；256快照round0、每节点64执行/64决定，
+relay155624662字节、排队2、队列/source/rate拒0。该PASS不证明首轮失败已修复。
+诊断版二进制SHA256
+`ff8a8d73e1b8b71fe3a271ca7187874bdb4049c3996f5168300bdbdca3bdd3e3`。
+
+随后在`target/runtime-rebuild/baseline-035004d-archive-check/`机械导出已提交
+`035004d`源码，未建分支/覆盖工作树，以同一AOEM库和负载独立对照：
+52.844171秒、1240.174633 TPS、冷恢复通过。目录变化会改变嵌入路径/二进制，
+不冒充同一二进制。已找到共享初稿重复命中额外排入Prepared回收的具体差异，
+改成原地wake，并补无新增回收断言。此版独立长测81.585976秒/803.275311 TPS；
+再补提前正文与槽位移交后的最终草稿101.399229秒/646.316550 TPS。两轮都是
+65536笔全部四节点耐久确认且冷恢复通过，但不能据此说修复了首次失败、
+提高了吞吐或适合合入。最终草稿Linux二进制SHA256
+`73c017d0d5817570640e7896a5bcd28e5fc761114dddb5017e9db203fda8c656`，
+AOEM保持`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+这些不是同一二进制的重复样本，不作统计显著性或唯一根因声明。
+
+最终草稿前56高已耗时71.923秒，最后8高29.477秒；H61四节点各换到round1并
+多执行一次，最终各65执行/64决定，执行失败/stale/业务重算为0。因此不能把
+全部退化归因于单次换轮。relay最终排队1528帧、数量拒14、字节拒3、
+约226.128MB admitted数据；同机基线排队4、无队列拒绝、
+约147.593MB。无source/rate限流和中途重连。阶段/队列开销仍须直接测量，
+不能据这些相关现象断言AOEM执行慢或网络是唯一原因。
+
+**后续A认领：** 先在既有真实负载中记录正常完成/停顿时的实际队列、历史查询
+和阶段代价，与035稳定基线对照；必要时重做此归档调度草稿，不恢复legacy，
+不再凭减少操作数断言性能改善。未找到并验证退化原因前，不提交该运行实现。
+
+明确剩余边界：首次cache miss仍完整恢复候选/准备正文，没有持久body_id可以
+安全替代它；不以candidate_id或document digest偷换transport body_id。
+`preparing.request=StoredBody`在channel背压期间仍只受既有任务数/单候选边界，
+尚不计入prepared正文缓存字节总额；本轮没有新增prepare满额专项，不宣称全部
+pending内容已有统一内存上限。长账本稳定容量、S4真实证明、Execute、隐私/PQ、
+实体多机与部署仍未完成。AOEM通用后端升级继续等待明确切仓授权。
+
+本机原始日志在`target/runtime-rebuild/`：`controller-archive-fifo-red.log`、
+`controller-archive-sharing-windows.log`、`controller-archive-windows-release.log`、
+`controller-archive-linux-release.log`。首轮失败日志`controller-archive-linux-long.log`，
+目录`controller-load-1024-426-1790917454981326679/`；诊断复跑日志
+`controller-archive-linux-long-diagnostic.log`及目录
+`controller-load-1024-496-1790917754624403875/`。基线日志
+`controller-archive-035-baseline-long.log`，measurement在上述隔离目录下的
+`target/runtime-rebuild/controller-load-1024-578-1790917940977004409/`。
+原地wake版日志`controller-archive-linux-long-hotwake.log`、目录
+`controller-load-1024-491-1790918134946765959/`；最终草稿日志
+`controller-archive-linux-long-final.log`、目录`controller-load-1024-499-1790918656940993864/`。
+两个新增反例在`controller-archive-boundaries-red.log`，最终专项绿灯在
+`controller-archive-sharing-final-windows.log`；最终双平台全回归分别在
+`controller-archive-final-windows-release.log`和`controller-archive-final-linux-release.log`。
+这些原始文件是本机target证据，
+未随文档提交到GitHub；另一台机器须自行重跑，不能把不存在的远端artifact当证据。
+
 ## 设备 A：持续控制消息不能饿死真实交易执行（2026-10-02）
 
 基于`fac0e84`；其双平台CI
