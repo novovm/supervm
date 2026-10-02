@@ -351,8 +351,8 @@ impl State {
         }
     }
 
-    /// Local timeout only. Never clear a lock. No f+1 remote round-jump rule or
-    /// timeout scheduling is implemented here; a precommit timeout advances by
+    /// Local timeout only. Never clear a lock. Timeout scheduling is not
+    /// implemented here; a precommit timeout advances by
     /// exactly one round and is checked against this exact height/round/step.
     pub(crate) fn prepare_timeout(&self, timeout: LocalTimeout) -> Result<PreparedStep> {
         self.active()?;
@@ -381,6 +381,19 @@ impl State {
                 self.prepared(next, None, None)
             }
         }
+    }
+
+    /// Caller must establish either a verified f+1 SAME-round catch-up witness
+    /// or expiration of the quorum-qualified local precommit wait. This pure
+    /// operation preserves locks/valid values and emits no vote. It cannot
+    /// publish itself; the journal must persist before adopting this state.
+    pub(crate) fn prepare_round_change(&self, target: u64) -> Result<PreparedStep> {
+        self.active()?;
+        ensure!(target > self.round, "round catch-up must move forward");
+        let mut next = self.clone();
+        next.round = target;
+        next.step = Step::Propose;
+        self.prepared(next, None, None)
     }
 
     /// Algorithm 1 lines 49-54: a non-nil PRECOMMIT certificate plus its exact

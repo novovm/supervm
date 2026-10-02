@@ -1,5 +1,5 @@
 [workspace]
-members = ["runtime/novovm-host", "runtime/novovm-aoem"]
+members = ["runtime/novovm-host", "runtime/novovm-aoem", "runtime/novovm-network"]
 default-members = ["runtime/novovm-host"]
 exclude = ["legacy/supervm-20261002"]
 resolver = "2"

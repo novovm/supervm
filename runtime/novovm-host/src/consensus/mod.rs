@@ -6,7 +6,10 @@
 //! No production configuration, validator key, genesis or network is activated.
 
 mod chain;
+pub mod collector;
 mod journal;
+pub mod pacemaker;
+pub mod transport;
 pub use journal::{DurableMessage, JournalOpening, TimeoutStep, ValidatorJournal};
 pub(crate) mod round;
 pub mod statement;

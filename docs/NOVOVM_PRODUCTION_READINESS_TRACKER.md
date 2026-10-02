@@ -8,6 +8,77 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：加密网络与耐久共识调度接线（2026-10-02）
+
+基于 `b4db3880`；该基线 Windows/Linux CI
+[`36944400550`](https://github.com/novovm/supervm/actions/runs/36944400550) 已重新
+核验成功，不替代本次改动的CI。仅新runtime、根Cargo和既有交接文档；
+隔离旧38项草稿、AOEM源码/SDK、正式创世、发行及运行中服务不改。
+
+### 数据与共识仍走同一条真实路径
+
+- 新 `novovm-network` 局部迁移隔离区的 `novorudp.rs` 帧编解码、
+  `product_overlay.rs` 加密握手与E2E，以及 `product_relay*` 的WSS载体、
+  client/daemon/IO和回归。没有旧crate依赖、旧节点入口或旧业务执行器。
+  帧校验和不是认证；线上worker使用严格Ed25519握手、ECDH/HKDF和AEAD，
+  保留独立peer/session/replay边界，不声明网络抗量子。
+- 专属网络线程负责阻塞socket操作；启动不等连接，try_send/try_recv不等
+  网络。全局/peer条目与字节额度、TTL、公平peer轮转和重连边界保留。
+  transport接纳不是收到/执行/最终确认，丢包/过期后仍由上层重发固定消息。
+- 不提高192KiB载体payload常量。分片绑定本地链域和完整message hash；
+  首片按整消息预留额度，缺片过期、乱序/重复/冲突及坏hash均有回归。
+  接收hash按有限chunk推进；大body encode/decode/hash属于assembly/ingress
+  owner，不能回到共识poll。64MiB是解码安全上界，不是批准的主网块大小。
+- Host开发消息编码承载原始批body、proposal、vote和QC；body引用不授予
+  执行/签票权限。每库仍以本地policy建立BatchRequest，经同一常驻AOEM
+  pipeline真实执行并落盘，journal核对完整BlockStatement后才能出票。
+- collector/pacemaker使用精确context/round/phase和独立签者权重；当前轮
+  >2/3跨值票只启动计时，不成为同值QC。依
+  [Algorithm 1](https://arxiv.org/pdf/1807.04938) 的合格超时或>1/3同一高轮
+  证据暂存换轮，原AOEM日志ACK后采用，保留lock/valid/历史和head guard。
+  proposal/prevote/precommit failure deadline不是固定出块间隔；测试毫秒
+  数值不是生产参数，也没有加入挖矿发奖。
+
+### 验证、实际反例与边界
+
+Windows Release真实DLL的网络联测已通过：4个独立数据库、同一测试进程，
+2笔唯一签名原文各库实际执行（共8次），body/proposal/vote/QC经过实际
+loopback WSS/E2E和Host codec。2/4双方确实收齐两票仍无head/高度归档；
+第三实际启动网络后3/4各自确认；第四在决定后启动、收body并自行执行、
+收票、确认。四库state/head一致、收款150、冷重开保留原outbox和余额。
+fixture不在外部替节点预签QC；但它是集中确定步骤的测试驱动，不是生产
+controller、4个独立主进程、网络连续高度或性能测量。
+
+网络113项Release回归已通过，0失败/0忽略，原始日志
+`target/runtime-rebuild/network-release.log`。包括三worker真正双向收发、
+单peer重启不重置健康session和WebSocket原127字节解析边界修复。
+计时/追赶真AOEM专项也已通过；首轮fixture在单metadata额度下又等第二个
+读屏障造成超时，保留失败日志，修正夹具不扩大额度后通过。
+收票先红复现future碎票挤占current预算；独立review又复现future桶可被
+单恶意签者占住，阻止诚实同高轮追赶证据进入。最终改成每validator/phase
+最高future tip及固定的最高已形成追赶证据，单人更新不能抢别人位置或撤销
+已形成证据。明确预留current 2N、future tips 2N、固定witness最多N条，
+额外额度才保留历史；5N是本地内存容量条件，不是确认门槛或生产参数。
+退休/晋升显式原子核对，旧证据不能静默被覆盖；future方案19项及修复后
+真AOEM计时/锁恢复专项已通过。
+
+最终源码Windows/Rust1.94/随包真DLL Release全量重跑：**376单元/集成+
+5编译拒绝通过，0失败/0忽略**，含新collector后的四库真实网络和计时/锁
+恢复再次验证。分项24 AOEM、228 Host、11外部集成、113网络；不重复计算
+单测内场景为新增测试数。fmt、workspace全目标strict Clippy及3成员无
+legacy依赖检查通过。原始日志：
+`target/runtime-rebuild/network-consensus-full-release.log`。
+默认debug套件也通过（其真库项按配置ignored，已由上述Release显式全部
+执行），日志`target/runtime-rebuild/network-consensus-full-debug.log`。
+本次远端CI须另行核验，前置提交的通过状态不替代本轮验收。
+
+下一处唯一认领为A的同一runtime：接独立进程controller、
+有界body/签名输入owner、重发/追赶与连续高度负载，测真实最终确认TPS和
+尾延迟。当前没有新节点可部署、执行有效性证明、Execute/隐私/PQ接入或
+实体多机/公网签收；全目标保持，不回旧主循环，不以测试通过替代这些要求。
+当前collector高轮证据仅统计vote、不计proposal；固定epoch/set和显式peer/
+单relay配置，不宣称完整Tendermint实现、动态验证者或relay自动切换已完成。
+
 ## 设备 A：同一流水线的链头原子发布与连续高度（2026-10-02）
 
 继续 `main@26fe3777`，前置 Windows/Linux CI

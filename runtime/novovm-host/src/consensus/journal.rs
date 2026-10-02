@@ -33,7 +33,7 @@ pub enum DurableMessage {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimeoutStep {
     Propose,
     Prevote,
@@ -182,6 +182,13 @@ impl ValidatorJournal {
     pub fn round(&self) -> u64 {
         self.snapshot.state.round()
     }
+    pub fn step(&self) -> TimeoutStep {
+        match self.snapshot.state.step() {
+            Step::Propose => TimeoutStep::Propose,
+            Step::Prevote => TimeoutStep::Prevote,
+            Step::Precommit => TimeoutStep::Precommit,
+        }
+    }
     pub fn decided(&self) -> Option<Hash> {
         self.snapshot.state.decided()
     }
@@ -314,6 +321,34 @@ impl ValidatorJournal {
             round: expected_round,
             step,
         })?;
+        self.stage_step(prepared, None, None)
+    }
+
+    /// Authenticated SAME-round >1/3 evidence only changes the local round;
+    /// locked/valid value, durable signing history and current head survive.
+    /// This stages metadata; callers must poll for durable acknowledgement.
+    pub fn catch_up(&mut self, evidence: &super::collector::CatchUpEvidence) -> Result<()> {
+        self.ready()?;
+        ensure!(
+            evidence.context() == &self.context()
+                && u128::from(evidence.signed_weight()) * 3
+                    > u128::from(self.identity.set.total_weight()),
+            "round catch-up context/threshold mismatch"
+        );
+        let prepared = self.snapshot.state.prepare_round_change(evidence.round())?;
+        self.stage_step(prepared, None, None)
+    }
+
+    /// Called only by the local pacemaker after the SAME-round precommit
+    /// quorum wait expires (Algorithm 1 lines 47/67), even if a proposal/body
+    /// is still missing locally. Never emits an invented intermediate vote.
+    pub(super) fn round_wait_elapsed(&mut self, expected_round: u64) -> Result<()> {
+        self.ready()?;
+        ensure!(expected_round == self.round(), "stale round wait timeout");
+        let target = expected_round
+            .checked_add(1)
+            .context("consensus round exhausted")?;
+        let prepared = self.snapshot.state.prepare_round_change(target)?;
         self.stage_step(prepared, None, None)
     }
 

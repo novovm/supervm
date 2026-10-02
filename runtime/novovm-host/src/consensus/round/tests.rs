@@ -163,6 +163,32 @@ fn assert_vote(step: &PreparedStep, phase: Phase, value: Option<Hash>) {
 }
 
 #[test]
+fn authenticated_round_change_preserves_lock_valid_and_never_invents_votes() {
+    let fixture = Fixture::new();
+    let original = fixture.locked(2, A);
+    let step = original.prepare_round_change(6).unwrap();
+    assert_eq!(original.round(), 2);
+    assert_eq!(step.next().round(), 6);
+    assert_eq!(step.next().step(), Step::Propose);
+    assert_eq!(step.next().locked(), original.locked());
+    assert_eq!(step.next().valid(), original.valid());
+    assert!(step.intent().is_none() && step.decision().is_none());
+    assert!(original.prepare_round_change(2).is_err());
+    assert!(original.prepare_round_change(1).is_err());
+    let proposal = fixture.proposal(6, B, None);
+    assert_vote(
+        &step.next().prepare_proposal(&proposal, B, None).unwrap(),
+        Phase::Prevote,
+        None,
+    );
+    let encoded = step.next().encode().unwrap();
+    assert_eq!(
+        State::restore(&encoded, &fixture.context).unwrap(),
+        *step.next()
+    );
+}
+
+#[test]
 fn no_quorum_a_a_b_split_does_not_lock_and_can_converge_next_round() {
     let fixture = Fixture::new();
     let mut states = Vec::new();

@@ -6,6 +6,12 @@
 #[path = "chain_integration.rs"]
 mod chain_integration;
 
+#[path = "pacemaker_integration.rs"]
+mod pacemaker_integration;
+
+#[path = "network_integration.rs"]
+mod network_integration;
+
 use super::statement::{BlockStatement, ParentPoint};
 use super::wire::{
     self, Context as ConsensusContext, Hash, Phase, Quorum, Validator, ValidatorSet,

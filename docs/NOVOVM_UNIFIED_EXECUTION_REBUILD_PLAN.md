@@ -6,6 +6,26 @@
 
 ## 最新短交接
 
+- **最新切片：真实加密网络、收票与耐久计时换轮接线。** 基于
+  `b4db3880`（该基线 Windows/Linux CI `36944400550` 已通过），本轮仍仅
+  新 `runtime/`、根 Cargo 和既有文档；旧38项草稿、AOEM源码/SDK不改。
+  新 `novovm-network` 局部迁移已审的 NovoRUDP 帧、E2E、WSS relay/client/IO，
+  不依赖旧 crate 或搬回旧节点主循环；网络专属线程提供有界非阻塞接口。
+  超过192KiB的块体/QC走域绑定分片、全消息额度预留、过期和有界增量hash。
+  Host新开发message格式保留原始交易体，解析不等于鉴权/执行；本地政策和
+  真实 `BatchRequest` 执行结果仍是签票前置，不能信任peer给的body引用。
+  收票按精确域/轮/phase/签者去重，current预留、逐validator/phase future
+  tips和固定已形成追赶证据，关闭两处实际先红的恶意占槽停滞反例。
+  quorum资格后启动本地单调计时；>1/3同一高轮证据或合格timeout只暂存
+  换轮，原AOEM日志确认后才采用，保留lock/valid/签票历史。
+  四独立库同进程真实WSS/E2E联测通过：网络收到原文后各自真实执行、
+  出票/收票；2/4无head，第三加入确认，第四补执行追赶及四库重开一致。
+  真DLL Release全量 **376单元/集成+5编译拒绝通过，0失败/0忽略**；
+  fmt、strict Clippy和3成员无legacy依赖检查通过。本次远端CI另行核验。
+  不把fixture称为可部署节点、4主进程、连续网络链、TPS或生产出块间隔。
+  下一处唯一编辑权仍为A：同一pipeline+日志的独立进程controller、连续高度
+  与实际负载；大块encode/decode/hash不得塞回共识poll，不能复活旧编排。
+
 - **最新切片：同一常驻流水线的链头原子发布与连续高度。** 继续
   `26fe3777`，前置 Windows/Linux CI `36939293078` 已成功。仅新 `runtime/`
   与既有文档；旧38项草稿、AOEM源码/SDK未改。决定outbox、全局签票
