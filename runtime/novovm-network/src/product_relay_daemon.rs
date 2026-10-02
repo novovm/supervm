@@ -36,6 +36,9 @@ use std::{
 };
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Runtime};
 
+mod connection;
+mod pump;
+
 pub(crate) const PRODUCT_RELAY_DAEMON_VERSION_V2: u16 = 2;
 const PRODUCT_RELAY_WEBSOCKET_PATH_V1: &str = "/novovm";
 // Keep physical admission above the default authenticated-session ceiling so authenticated
@@ -505,7 +508,6 @@ fn serve_product_relay_connection_v1(
     // budget without continuing a Winsock connection after SO_RCVTIMEO expiry.
     let mut tcp = crate::product_relay_io::ProductRelaySocketV1::new(tcp)
         .context("prepare product relay connection I/O")?;
-    let read_waker = tcp.read_waker();
     tcp.set_read_timeout(Some(Duration::from_millis(100)))
         .context("set product relay read timeout")?;
     tcp.set_write_timeout(Some(Duration::from_millis(100)))
@@ -521,6 +523,7 @@ fn serve_product_relay_connection_v1(
         ProductRelayDaemonDeadlineTcpStreamV1 {
             inner: tcp,
             deadline: io_deadline.clone(),
+            inbound_tls_records: pump::InboundTlsRecords::default(),
             #[cfg(test)]
             test_writes: ProductRelayDaemonTestWritesV1::default(),
         },
@@ -615,12 +618,10 @@ fn serve_product_relay_connection_v1(
     }
     websocket.sock.inner.enable_duplex_read_ahead();
     let _ = handshake_finished.send(());
-    if let Err(error) = io_deadline.clear_v1() {
-        runtime.block_on(manager.disconnect(&peer_id, session_id));
-        return Err(error).context("finish product relay lower-stream handshake deadline");
-    }
-    let result = relay_connection_loop_v1(
-        &mut websocket,
+    // The incremental owner inherits any already-buffered input's original
+    // deadline before retiring the completed handshake operation.
+    let result = relay_incremental_connection_loop_v1(
+        websocket,
         ProductRelayConnectionLoopV1 {
             manager: &manager,
             runtime: &runtime,
@@ -628,8 +629,10 @@ fn serve_product_relay_connection_v1(
             session_id,
             inbox: &mut inbox,
             stopping: &stopping,
-            io_deadline: Some(&io_deadline),
-            read_waker: Some(&read_waker),
+            #[cfg(test)]
+            io_deadline: None,
+            #[cfg(test)]
+            read_waker: None,
         },
     );
     runtime.block_on(manager.disconnect(&peer_id, session_id));
@@ -643,10 +646,22 @@ struct ProductRelayConnectionLoopV1<'a> {
     session_id: [u8; 16],
     inbox: &'a mut crate::RelaySessionInboxV1,
     stopping: &'a AtomicBool,
+    #[cfg(test)]
     io_deadline: Option<&'a ProductRelayDaemonIoDeadlineV1>,
+    #[cfg(test)]
     read_waker: Option<&'a std::task::Waker>,
 }
 
+fn relay_incremental_connection_loop_v1(
+    websocket: rustls::StreamOwned<rustls::ServerConnection, ProductRelayDaemonDeadlineTcpStreamV1>,
+    context: ProductRelayConnectionLoopV1<'_>,
+) -> Result<()> {
+    connection::run(websocket, context)
+}
+
+// Retained as a test-only synchronous reference for the migrated fault gates.
+// Production authenticated connections use the incremental owner above.
+#[cfg(test)]
 fn relay_connection_loop_v1<S: Read + Write>(
     websocket: &mut S,
     context: ProductRelayConnectionLoopV1<'_>,
@@ -901,6 +916,7 @@ fn relay_forward_disposition_requires_close_v1(
     )
 }
 
+#[cfg(test)]
 fn service_one_relay_inbox_v1<S: Write>(
     websocket: &mut S,
     manager: &ProductRelaySessionManagerV1,
@@ -939,6 +955,7 @@ fn service_one_relay_inbox_v1<S: Write>(
     Ok(true)
 }
 
+#[cfg(test)]
 fn write_encoded_relay_delivery_v1<S: Write>(
     websocket: &mut S,
     manager: &ProductRelaySessionManagerV1,
@@ -956,6 +973,7 @@ fn write_encoded_relay_delivery_v1<S: Write>(
     write_websocket_frame_v1(websocket, 0x2, delivery.wire_bytes())
 }
 
+#[cfg(test)]
 fn drain_bounded_relay_inbox_v1<T>(
     limit: usize,
     mut should_stop: impl FnMut() -> bool,
@@ -1171,6 +1189,9 @@ struct ProductRelayDaemonIoDeadlineStateV1 {
 struct ProductRelayDaemonDeadlineTcpStreamV1 {
     inner: crate::product_relay_io::ProductRelaySocketV1,
     deadline: ProductRelayDaemonIoDeadlineV1,
+    // Record boundaries start at the first handshake byte; transferring a
+    // live TLS owner must not renew a half-record already in rustls buffers.
+    inbound_tls_records: pump::InboundTlsRecords,
     #[cfg(test)]
     test_writes: ProductRelayDaemonTestWritesV1,
 }
@@ -1221,6 +1242,7 @@ impl ProductRelayDaemonIoDeadlineV1 {
         self.check_state_v1(&mut state)
     }
 
+    #[cfg(test)]
     fn begin_if_idle_v1(&self, deadline: Instant) -> io::Result<()> {
         let mut state = self
             .state
@@ -1234,6 +1256,7 @@ impl ProductRelayDaemonIoDeadlineV1 {
         self.check_state_v1(&mut state)
     }
 
+    #[cfg(test)]
     fn clear_v1(&self) -> io::Result<()> {
         let mut state = self
             .state
@@ -1266,6 +1289,7 @@ impl ProductRelayDaemonIoDeadlineV1 {
         self.check_state_v1(&mut state)
     }
 
+    #[cfg(test)]
     fn preserve_partial_read_deadline_v1(&self) -> io::Result<bool> {
         let mut state = self
             .state
@@ -1387,6 +1411,10 @@ impl ProductRelayDaemonIoDeadlineV1 {
 impl Read for ProductRelayDaemonDeadlineTcpStreamV1 {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         self.deadline.check_v1()?;
+        let read_started = self
+            .inner
+            .read_ahead_started_at()
+            .unwrap_or_else(Instant::now);
         let original = self
             .inner
             .read_timeout()
@@ -1408,7 +1436,10 @@ impl Read for ProductRelayDaemonDeadlineTcpStreamV1 {
                 .observe_read_ahead_v1(self.inner.read_ahead_started_at())
         });
         let checked = match &result {
-            Ok(read) => self.deadline.record_lower_read_v1(*read),
+            Ok(read) => self
+                .inbound_tls_records
+                .observe(&output[..*read], read_started)
+                .and_then(|()| self.deadline.record_lower_read_v1(*read)),
             Err(error)
                 if matches!(
                     error.kind(),
@@ -1629,6 +1660,7 @@ fn read_websocket_frame_until_v1<S: Read>(
     read_websocket_frame_with_guard_v1(stream, require_masked, max_payload_bytes, Some(&guard))
 }
 
+#[cfg(test)]
 fn read_authenticated_websocket_frame_until_v1<S: Read>(
     stream: &mut S,
     require_masked: bool,
@@ -1770,6 +1802,7 @@ fn read_exact_with_guard_v1<S: Read>(
     ensure_read_deadline_v1(guard)
 }
 
+#[cfg(test)]
 fn is_timeout_v1(error: &anyhow::Error) -> bool {
     error.downcast_ref::<io::Error>().is_some_and(|io| {
         matches!(
@@ -1843,6 +1876,7 @@ mod tests {
 
     include!("product_relay_daemon_io_tests.rs");
     include!("product_relay_daemon_encoded_tests.rs");
+    include!("product_relay_daemon_duplex_tests.rs");
 
     struct TestControlledRelayDaemonV1 {
         report_path: PathBuf,
@@ -2165,6 +2199,7 @@ mod tests {
         let mut guarded = ProductRelayDaemonDeadlineTcpStreamV1 {
             inner: crate::product_relay_io::ProductRelaySocketV1::new(tcp).unwrap(),
             deadline,
+            inbound_tls_records: super::pump::InboundTlsRecords::default(),
             test_writes: ProductRelayDaemonTestWritesV1::default(),
         };
         let mut bytes = [0u8; 8];

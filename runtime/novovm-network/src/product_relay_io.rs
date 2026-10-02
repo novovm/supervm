@@ -184,6 +184,8 @@ pub(crate) struct ProductRelaySocketV1 {
     incremental_read_blocked: bool,
     #[cfg(test)]
     read_wait_probe: Arc<ReadWaitProbe>,
+    #[cfg(test)]
+    write_would_block_probe: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl ProductRelaySocketV1 {
@@ -222,6 +224,8 @@ impl ProductRelaySocketV1 {
                 polling: AtomicBool::new(false),
                 entries: std::sync::atomic::AtomicUsize::new(0),
             }),
+            #[cfg(test)]
+            write_would_block_probe: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
     }
 
@@ -232,6 +236,11 @@ impl ProductRelaySocketV1 {
     #[cfg(test)]
     pub(crate) fn read_wait_probe(&self) -> Arc<ReadWaitProbe> {
         Arc::clone(&self.read_wait_probe)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn write_would_block_probe(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        Arc::clone(&self.write_would_block_probe)
     }
 
     #[cfg(test)]
@@ -272,7 +281,15 @@ impl ProductRelaySocketV1 {
 
     /// One write, without waiting or secretly reading into another byte queue.
     pub(crate) fn try_write(&mut self, input: &[u8]) -> io::Result<usize> {
-        self.inner.write(input).map_err(terminal_socket_timeout)
+        let result = self.inner.write(input).map_err(terminal_socket_timeout);
+        #[cfg(test)]
+        if result
+            .as_ref()
+            .is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock)
+        {
+            self.write_would_block_probe.fetch_add(1, Ordering::Release);
+        }
+        result
     }
 
     pub(crate) fn wait_ready(
@@ -356,7 +373,12 @@ impl ProductRelaySocketV1 {
                 // Never replace successful progress with a post-I/O error.
                 Ok(count) => return Ok(count),
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    #[cfg(test)]
+                    if interest.is_writable() {
+                        self.write_would_block_probe.fetch_add(1, Ordering::Release);
+                    }
+                }
                 Err(error) => return Err(terminal_socket_timeout(error)),
             }
             if interest.is_readable() && self.read_wake.pending.swap(false, Ordering::Acquire) {

@@ -70,7 +70,8 @@ impl ProductRelayDaemonDeadlineTcpStreamV1 {
 type TestDaemonTlsStreamV1 =
     rustls::StreamOwned<rustls::ServerConnection, ProductRelayDaemonDeadlineTcpStreamV1>;
 
-fn daemon_tls_io_fixture_v1() -> (TestDaemonTlsStreamV1, rustls::ClientConnection, TcpStream) {
+pub(super) fn daemon_tls_io_fixture_v1(
+) -> (TestDaemonTlsStreamV1, rustls::ClientConnection, TcpStream) {
     let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let certificate_der = certificate.serialize_der().unwrap();
     let server_config = rustls::ServerConfig::builder_with_provider(tls_crypto_provider_v1())
@@ -128,6 +129,7 @@ fn daemon_tls_io_fixture_v1() -> (TestDaemonTlsStreamV1, rustls::ClientConnectio
     let socket = ProductRelayDaemonDeadlineTcpStreamV1 {
         inner: crate::product_relay_io::ProductRelaySocketV1::new(socket).unwrap(),
         deadline,
+        inbound_tls_records: super::pump::InboundTlsRecords::default(),
         test_writes: ProductRelayDaemonTestWritesV1 {
             capture: true,
             ..Default::default()

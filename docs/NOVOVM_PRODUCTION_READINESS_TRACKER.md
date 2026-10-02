@@ -8,7 +8,95 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：服务端增量双向处理，真实写背压仍能转发入站（2026-10-02）
+
+基于`2ea0473`，其远端CI失败事实保留在下一节。本轮只改network七文件及
+既有三文档；host11项和legacy38项草稿不混入，AOEM/SDK、业务/nonce/共识、
+生产参数均不改。服务端认证后改为单owner增量TLS/WS读写，读写各16KiB量子；
+写入受阻时仍解析、鉴权准入和转发反向业务，而非仅把原始字节预读到缓冲。
+初始握手仍同步，完整单帧内不能插入另一帧，不称整链全异步或TLS零拷贝。
+
+### 原额度、期限与真实反例
+
+同一时刻只持一个Delivery；原额度guard跨部分写保留到该帧实际TLS密文发送
+完成，按FIFO密文字节水位区分后来TLS控制输出。完成计数先于同轮credit；
+回复与inbox公平轮转，排队加正在写的回复合计最多64项/1MiB，不因出队提前
+归还额度。半写错误永久终止、不重发旧密文。原100ms写等待/10秒帧期限不变，
+反向读进展不能续期写停顿；从握手第一字节跟踪半TLS记录，KeyUpdate不制造
+虚假半帧期限、也不清掉真实半帧原期限。已消费帧在解析和独立写量子之后仍
+检查其原期限，不能因read timer转向后继而把过期帧交给业务。
+
+旧HEAD加同一真实反例的冻结快照`candidate-2ea0473-daemon-duplex-red/`
+（树`79317626d887e646f6f51f478f375d3fbc2b5612`）实际FAIL：约703KB Delivery
+未完成且原guard仍占1项，socket真实WouldBlock后，反向业务不能到第三接收者，
+最终100ms写等待断连。首稿新owner在同条件下约0.196ms完成反向转发，原大帧
+仍持有额度；随后精确原文、一次收费、heartbeat/outcome、credit与关闭通过。
+这是结构性反例，不声称精确复现GitHub慢runner的全部原因。
+
+新增测试还覆盖坏JSON/越界credit后不继续处理后继heartbeat、额度归还、
+TLS close_notify完整尾帧/半帧、真实部分写/未知进度、换钥和原期限。
+v1真库Release Windows550+6、Linux549+6通过；但strict Clippy发现两条测试
+风格问题，且复审发现上面的已消费帧期限缺口，所以v1不作为最终交付。
+两处修复后冻结v2，不覆盖红例或v1原日志。
+
+### 最终快照与整路径验收
+
+暂存树`f362ed6e56a15c6a43d7f5fd48aeb48de3eaf091`导出
+`target/runtime-rebuild/candidate-2ea0473-daemon-duplex-v2/`；97个host/AOEM文件
+等于HEAD，七network文件等于暂存版本。最终真库Release include-ignored、
+串行测试Windows551+6编译拒绝、Linux550+6全部通过，0失败/0忽略；network
+分别197/196项。双平台fmt、全targets及host no-native strict Clippy通过；
+Windows隔离脚本通过，Linux实际全量Cargo metadata的相同三成员/无legacy
+检查通过（PowerShell执行检查，不冒称Linux原生pwsh脚本）。默认Debug全套
+本地未重跑，本次远端CI推送后另核，不能提前称前述慢runner故障已根治。
+
+同WSL2/24逻辑CPU、四OS验证进程、真实WSS/E2E与四AOEM RocksDB；1024个公开
+测试账户各64笔连续nonce的Ed25519转账，不是用户资金或PQ签名。重负载构建
+全部结束后，同一二进制独立运行两次，原120秒门不变：
+
+| 样本 | 唯一最终确认交易 | 四节点全部耐久耗时 | finalized TPS | 全量冷恢复 |
+| --- | --- | --- | --- | --- |
+| 第一次 | 65536 | 18.385189608秒 | 3564.608329 | PASS |
+| 第二次 | 65536 | 18.021523978秒 | 3636.540399 | PASS |
+
+**比上一版3677–3703 TPS略低，不签收吞吐提升。** 每节点64执行/64决定，
+execution failure/stale/recompute均0，余额/费用/nonce/全状态根/逐笔回执
+冷oracle通过；旧父决定拒绝仍存在，第一轮有archive parent不匹配，不能称
+零错误。relay各注册4、替换/过期/拒绝0、停机断开4，实际转发5479/5484帧，
+接纳127638883/129474411B；两轮停机active/offline队列均0。这些是有限样本，
+不是四台机器/公网稳定容量。计时含节点验签、执行、网络、共识与耐久，不含
+钱包预签/启动/创世/冷恢复；不能用AOEM回调峰值24替代主链吞吐。
+
+原96大帧门固定2 CPU三次469.531/478.332/480.416ms通过，无重连/丢失；只是
+局部样本。原始双平台日志为`daemon-duplex-v2-clean-workspace-{windows,linux}.log`
+和`daemon-duplex-v2-clippy-{windows,linux}.log`，Linux隔离为
+`daemon-duplex-v2-isolation-linux.log`。合并命令的WSL循环变量展开导致控制台
+日志名称后缀丢失并被后轮覆盖，`daemon-duplex-v2-two-cpu-.log`只留第三轮、
+`daemon-duplex-v2-clean-linux-long-.log`只留第二轮；工具输出记录仍有各轮结果，
+不把后轮日志冒充完整前轮。两轮独立measurement、四库及各live/recover日志
+均保留在v2快照内`target/runtime-rebuild/`：
+`controller-load-1024-473-1790935094779685808/`、
+`controller-load-1024-1345-1790935132437251086/`，已逐一读回核对。
+
+Host二进制SHA256 `301e77416f0d51224508ddc59edb21467184430a3492c0f2b45f64723e26c126`；
+网络二进制`7338a3ccc98ed7823c104f7b75d10948b255a1be7b9bdd49e407b2dda0fde8c1`；
+AOEM仍`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+
+下一处A继续network外层Data/Delivery紧凑载体：实际192KiB原文生成196720B
+密文，当前JSON数字数组Delivery约703KB；Host消息/分片及NovoRUDP内层已经
+二进制，不重写它们。必须显式版本边界/握手确认，考虑离线队列保存唯一编码
+及会话替换，保留实际wire计额、AEAD含义、原窗口和期限；字节减少不等于TPS
+同比提高，仍以同一路径四节点耐久及冷恢复测量裁决。B独立隐私/PQ、S4通用
+后端待明确AOEM切仓授权及Execute/多机/容量/部署总目标不缩减。
+
 ## 设备 A：relay 锁外单次编码与发送额度保留，同路径约3677–3703 TPS（2026-10-02）
+
+**后续远端结果：** 提交`2ea0473`的
+[`36988488739`](https://github.com/novovm/supervm/actions/runs/36988488739) FAIL。
+Linux真库Release原96大帧双工门175项PASS/1项FAIL，daemon生命周期约756ms
+内再次`relay socket readiness wait expired`，真实peer断连，Windows被取消。
+日志`target/runtime-rebuild/2ea0473-ci-failure.log`保留；不能把本机通过当作
+远端修复。后续服务端增量owner草稿仍待真实反例及整路径验收，原期限不放宽。
 
 基于`c09332d`，仅network六文件及既有三文档。host11项/legacy38项草稿仍未
 交付，AOEM/SDK、业务/nonce/共识、生产参数未改。前置CI `36984443097`失败
