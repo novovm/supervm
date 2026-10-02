@@ -8,6 +8,81 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：真实阶段诊断与网络空等反例，运行草稿继续未签收（2026-10-02）
+
+前一证据文档已推送`d527ad9`，其双平台CI
+[`36969824273`](https://github.com/novovm/supervm/actions/runs/36969824273)成功。
+**本次仍只提交文档；已交付运行代码仍035004d。** 下列诊断、归档与发送burst
+是本机草稿，不是另一台已拉到的新能力；不把新PASS覆盖上节120秒FAIL。
+未改AOEM/SDK、legacy、Skill、分支、经济/共识或生产参数，目标保持完整。
+
+### 实际测量改变了下一步
+
+测试专属`NOVOVM_LOAD_PROFILE=1`记录20个固定阶段的完成次数/同步服务墙钟
+累计与最大值，复用原100ms观察器及逐head文件；默认关闭，无逐poll文件写。
+计时包括等待OS调度，不是CPU时间；不包含尚未完成操作，跨线程/嵌套值不能
+直接求和当关键路径，也没有将队列等待混称AOEM计算。三个计数/溢出/枚举测试通过。
+
+同一WSL2主机、24逻辑CPU、原4进程WSS/E2E/4真实AOEM库、1024笔×64高：
+
+| 诊断开启的源码 | 四节点耐久65536笔 | TPS | 每节点compute_execute服务 | 每节点controller_poll服务 | 候选恢复次数/节点 |
+| --- | --- | --- | --- | --- | --- |
+| 当前共享归档草稿 | 56.756990秒 | 1154.677166 | 3.706–3.773秒 | 0.350–0.355秒 | 71–73 |
+| 导出035004d加完全相同诊断 | 58.205762秒 | 1125.936641 | 3.704–3.743秒 | 0.389–0.411秒 | 143–153 |
+
+两轮全部冷恢复经济oracle通过，各节点64执行/64决定，无失败/stale/重算；
+诊断表明共享确实减少恢复调用，但已完成的同步服务并未占满整个观察窗口。
+它**不证明共享稳定提速，也不证明网络是唯一根因**；此前无诊断的646/803/1240
+样本仍保留，不能用这对诊断运行作无扰动统计签收。首个诊断命令误用短名
+`--exact`实际0测试，未计入结果；随后去掉exact确实执行1项64高测试。
+
+诊断草稿二进制SHA256
+`edfeeff78a079c9f1f8394545577e14699c6d88cf6d2f3701a96018ca20d473c`；
+035诊断导出二进制`c4d805cc74dcf4a9a0e9af8e390db897bb85bbd61995bf0973e4e1862b0b89f1`。
+AOEM仍`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+
+### 已证发送空等，不等于整链性能修复
+
+当前worker每轮仅发一条，然后即使仍有排队正文也进入recv_event。真实双端
+WSS/E2E专项将合法read_idle设250ms，完成握手后接纳8个不同正文：旧实现
+1秒内只获得4/8个relay接纳，之后8个原文均精确解密，真实先红而非造丢包。
+草稿按最多8次/原read_idle墙钟双预算继续发送，遇pending入站或stop立即让出；
+每包仍复查TTL、公平选peer、等待原匹配outcome，失败隔离且不复用已使用nonce。
+不修改协议/队列额度/原绝对超时。Windows原反例后绿；最终network全库
+Windows115、Linux112项Release通过，0失败/0忽略，含双向/重启/配额/TLS失败。
+该时序专项默认ignored，正式CI已有release `--include-ignored --test-threads=1`
+会实际执行；不能用默认跳过当通过。不是去掉每帧outcome的全异步网络。
+
+为排除host归档草稿，另机械导出d527ad9的已提交runtime，仅移植上述network
+两个文件（LF标准化逐文件相等，无诊断/共享归档/新分支）。真实64高结果仍为
+**78.748443秒/832.219629 TPS**，65536笔四节点耐久确认及完整冷oracle通过。
+四节点各64执行/64决定、round0，无失败/stale/重算；relay166721826字节、
+排队3、队列/source/rate拒绝0，初始注册4、无替换/过期。二进制
+`4889291e78025a8120ef430927bdf36b412afd44953a7d066a12e17d4abccb53`。
+局部延迟回归修复不能代替主链提速：本轮不提交这项运行草稿为已接受实现。
+本轮fmt、workspace all-target strict Clippy、无native strict Clippy和3成员
+隔离检查通过；不是对新增诊断后的整个host再跑全库，旧全库范围见上节。
+
+### 下一处唯一认领及恢复入口
+
+A保留13项本机runtime草稿：原host归档6项，加channel/lib/persistence/io/
+pipeline/compute/diagnostics共5项，加worker及其tests两项；旧38项仍不改。
+继续同一链路的读写就绪/队列唤醒边界：daemon连接先阻塞读，普通输入后只
+转发一个inbox项，空闲100ms后才批量排出；多peer扇入可能使投递依赖目标的
+反向发送节奏。**这是源码确定的组织方式，尚未量化为78.7秒的唯一原因。**
+下一步必须以真实等待/扇入反例验证并解耦，保留ACK先行、有限pending容量、
+双向公平、会话代际、TLS部分写终止及绝对期限；不能只缩短timeout或增加缓存。
+S4通用后端仍待明确AOEM切仓授权；Execute、隐私/PQ、真实多机、稳定容量及
+部署入口均未完成，正式创世/发行/生产仍需另行批准。
+
+本机证据根为`target/runtime-rebuild/`，未随文档推送原始artifacts：
+`controller-archive-profile-linux-run.log`及`controller-load-1024-434-1790919881032114356/`；
+`controller-035-profile-linux-run.log`及`baseline-035004d-profile/target/runtime-rebuild/controller-load-1024-531-1790920019298103523/`；
+`network-burst-red-windows.log`、`network-burst-green-windows.log`、
+`network-burst-final-windows.log`、`network-burst-final-linux.log`；
+`network-burst-clean-linux-long.log`及`candidate-d527ad9-network-burst/target/runtime-rebuild/controller-load-1024-576-1790920503905873064/`。
+另一台只能据此了解状态；草稿/原始证据未推送，不冒充远端可直接复跑。
+
 ## 设备 A：共享历史回复试验未签收，保留性能退化证据（2026-10-02）
 
 基于`035004d`；该提交的双平台CI
