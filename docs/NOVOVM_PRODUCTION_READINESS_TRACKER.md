@@ -8,6 +8,74 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：AOEM 2.3.2 与完整 NOV 关系真实证明（2026-10-03，本地验收）
+
+用户明确授权临时激活AOEM后，在其main保留GPU/APFL远端提交，基于
+`7f0c1490`交付通用修复`34d66a5187173c1da9d0ba4a89072b2cf0dfb9e2`，
+已用XujueKing SSH推送并核对远端一致。SDK/build/两guest均固定2.3.2，
+新`AORCP002`显式拒绝001；C ABI v1符号/所有权不变，无NOV专属业务。
+Fake及嵌套assumption拒绝、显式非DEV verifier；Rust Release34测试通过，
+Linux直接/插件跨进程真实Fibonacci证明与反例通过。Windows/Linux无后端
+边界通过；Windows未执行真实证明，未发布新FULLMAX，也不冒充隐私/PQ。
+
+随后回到SUPERVM `12b2a813058812bbe8be29abbbe0e1ff39505c4d`（其CI
+`37046086286`现已成功）。干净HEAD archive加本次三个源/测试差异，冻结在
+`target/runtime-rebuild/candidate-12b2a81-proof-v2/`；不构建或提交根49草稿。
+适配仅接受002、001/003在native调用前拒绝；producer错误封装仍原库释放。
+原probe补旧封装/尾字节反例，不新增证明API、队列或业务执行器。
+
+Linux/WSL实际locked构建当前guest与probe，未使用`RISC0_SKIP_BUILD`；
+guest platform/zkos-v1compat均2.2.3。image为
+`[2276991241,3165397454,1971004867,473585677,2298952761,2672596182,3695874062,410919473]`，
+934332B组合program SHA256
+`e03315ffc499e2202557d522270a8abbd09612649cb2434c3ac1be599baa4f2a`。
+probe SHA256 `e8027d31d35539858491a3ea75ec1064df7850f072614227874d7ccbbee7452d8`。
+旧read-v1 probe/旧image不作为当前版本证据。
+
+夹具用原随包FULLMAX core（SHA256
+`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`）
+真实验签、执行业务、结算费用并导出期待journal；这是公开测试密钥/父树的
+**一笔**NOV直付，不是正式创世、真实用户、多机或已finalized块。
+证明单独调用AOEM新Release CPU sidecar，SHA256
+`cfdd4469ec588e5e274d647fad143fa8de129077d125805289e6ec8b2b5201ee`；
+不覆盖计算/存储core，不更新随包header或发布包。`RISC0_PROVER=local`、
+无DEV生成，默认Composite/poseidon2，无CUDA；probe自身为debug不改变
+native Release prover。程序、image及期待journal均由可信构建/夹具独立提供。
+
+真实结果：生成并验证成功，receipt **4,768,434B**。生产进程结束后新进程
+在DEV=1下仍能验证真proof，**14项反例全部拒绝**并再次接受原正例：7公开
+字段、空/追加journal、错image、篡改/截断receipt、旧001及尾字节。
+另一个DEV=1生产进程对相同真实program/input返回`-4`，没有生成文件。
+未来003仅属适配单测，不混计密码反例。
+
+- input SHA256：`78bfa36213bdd659ab815902c7c5ee286e0aa994fe54c2fd2fd25e445bcc7876`
+- 152B journal SHA256：`6873f4f3939c25052d28e32f0a2eb1b72fc5d3ada69caf957e33ae092be2410c`
+- receipt SHA256：`c4273ef7e8efbd4f0c8b4d69d36f71abe04b094c4e669d28174c84452be87c52`
+
+本次生成调用717.393秒（含AOEM内部验证/序列化），同进程另验197ms，独立
+验证212ms；同时运行过lint，**不是独占性能基准、TPS或出块间隔**。原生
+业务执行和生成密码证明不是同一计时。此成本不能接受为高性能证明主网；
+没有测批量、GPU、连续证明容量或证明最终性，不把慢证明同步塞入共识poll。
+
+两平台各8 receipt适配单测、适配crate strict Clippy通过，Windows3项
+compile-fail、干净workspace fmt/差异检查通过。首次probe strict Clippy在
+嵌套guest build失败，日志保留；随后在独立`proof-v2-probe-lint` target用
+`RISC0_SKIP_BUILD=1`仅做host lint通过，**该target未用于真实证明**。
+首次Windows测试日志目标目录不存在，cargo未执行；纠正日志路径后才计PASS。
+本轮没有重跑完整工作区/四节点负载；提交后CI须另核。
+
+证据均位于`target/runtime-rebuild/`：`proof-v2-build-linux.log`、
+`proof-v2-fixture.log`、`proof-v2-prove.log`、`proof-v2-verify.log`、
+`proof-v2-dev-reject.log`、`proof-v2-tests-{windows,linux}.log`、
+`proof-v2-probe-clippy.log`、`proof-v2-probe-lint-only.log`；原始输入/输出为
+`nov-transfer-aorcp002-fixture/`。复现命令见[既有proof入口](../runtime/proofs/nov-transfer/README.md)。
+
+本刀解除的是通用后端兼容与完整关系实证阻断；S4主链有界证明owner、同候选
+耐久绑定/恢复、批量/异构证明成本与最终性策略仍未完成。A继续这些共享范围，
+B独立隐私/PQ不覆盖；Execute、多机/长跑/部署总目标不缩减。原目标仍保留，
+工具实查blocked，不能由模型改成active；人工开发继续，自动续跑需用户恢复
+原目标卡片。未新建分支、未生成正式创世或发行、未部署生产。
+
 ## 设备 A：候选持久后有界只读后态输入复用（2026-10-03，本地验收）
 
 远端复验（2026-10-03）：`6b6196658b183c3016bc8e0071f2ba0cc8a192e9`

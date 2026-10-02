@@ -1,4 +1,5 @@
-//! Reviewed portable receipt ABI from `aoem/{windows,linux}/include/aoem.h`.
+//! Portable C ABI v1, with the AOEM RISC0 2.3.2 `AORCP002` envelope.
+//! Requires an explicitly selected matching proof library, not any older bundle.
 //! No trace/profile fallback, native computation handle or Host business policy.
 
 use crate::abi::{AbiVersion, GlobalInit};
@@ -12,7 +13,7 @@ use std::path::Path;
 
 const MAX_ELF_BYTES: usize = 64 * 1024 * 1024;
 const MAX_BYTES: usize = 16 * 1024 * 1024;
-const MAGIC: &[u8; 8] = b"AORCP001";
+const MAGIC: &[u8; 8] = b"AORCP002";
 
 // image_id addresses eight host-endian u32 words, not an ELF SHA256. All
 // slices remain alive through these synchronous calls and do not alias output.
@@ -213,14 +214,15 @@ impl ReceiptSession {
     /// Runs a trusted local guest and returns an opaque, NOT YET VERIFIED
     /// receipt. The owner must separately verify independently selected image
     /// and exact journal pins. This method grants no candidate/finality rights.
-    /// ELF/image must come from trusted build policy, not from a remote receipt.
+    /// The combined user+kernel program/image must come from trusted build
+    /// policy, not from a remote receipt. The v1 ABI still calls this input ELF.
     pub fn prove(&mut self, elf: &[u8], input: &[u8], image: &[u32; 8]) -> Result<Vec<u8>> {
         self.library.api.prove(self.limits, elf, input, image)
     }
 
     /// Performs real backend verification against independently trusted image
     /// and complete expected journal bytes. Empty journal means exactly empty,
-    /// never skip/wildcard. `AORCP001` alone does not establish proof validity.
+    /// never skip/wildcard. `AORCP002` alone does not establish proof validity.
     /// Successful verification proves only this pinned guest's statement; it
     /// does not validate unrelated business claims or authorize publication.
     pub fn verify(

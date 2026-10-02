@@ -127,6 +127,15 @@ fn negative_checks(session: &mut ReceiptSession, receipt: &[u8], expected: &[u8]
     require_rejection(session.verify(&wrong, &NOVOVM_TRANSFER_GUEST_ID, expected))?;
     require_rejection(session.verify(&receipt[..last], &NOVOVM_TRANSFER_GUEST_ID, expected))?;
     rejected += 2;
+    let mut old_envelope = receipt.to_vec();
+    old_envelope[..8].copy_from_slice(b"AORCP001");
+    require_rejection(session.verify(&old_envelope, &NOVOVM_TRANSFER_GUEST_ID, expected))?;
+    require_rejection(session.verify(
+        &[receipt, &[0]].concat(),
+        &NOVOVM_TRANSFER_GUEST_ID,
+        expected,
+    ))?;
+    rejected += 2;
     // Negative requests must not turn a failed/poisoned backend into false
     // evidence that later mutations were cryptographically rejected.
     session.verify(receipt, &NOVOVM_TRANSFER_GUEST_ID, expected)?;

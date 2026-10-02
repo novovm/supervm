@@ -249,6 +249,8 @@ fn receipt_producer_errors_and_malformed_buffers_free_exactly_once() {
         (0, Some(MAGIC.to_vec()), Some(MAX_BYTES + 1)),
         (0, Some(b"notproof".to_vec()), None),
         (0, Some(b"AORCP00".to_vec()), None),
+        (0, Some(b"AORCP001".to_vec()), None),
+        (0, Some(b"AORCP003".to_vec()), None),
     ] {
         let allocated = response.is_some();
         let expected_length =
@@ -290,7 +292,7 @@ fn receipt_policy_rejects_before_any_native_call() {
     assert!(api().prove(limits, &[], &[], &[0; 8]).is_err());
     assert!(api().prove(limits, b"xx", &[], &[0; 8]).is_err());
     assert!(api().prove(limits, b"x", b"xx", &[0; 8]).is_err());
-    for receipt in [b"".as_slice(), b"trace-digest", b"AORCP001x"] {
+    for receipt in [b"".as_slice(), b"trace-digest", b"AORCP002x"] {
         assert!(api().verify(limits, receipt, &[0; 8], &[]).is_err());
     }
     assert!(api().verify(limits, MAGIC, &[0; 8], b"xx").is_err());
@@ -298,6 +300,23 @@ fn receipt_policy_rejects_before_any_native_call() {
         let state = slot.borrow();
         assert_eq!(state.prove_calls + state.verify_calls + state.free_calls, 0);
     });
+}
+
+#[test]
+fn receipt_version_is_explicit_and_older_or_future_envelopes_never_reach_backend() {
+    assert_eq!(MAGIC, b"AORCP002");
+    reset(Stub::default());
+    for envelope in [b"AORCP001", b"AORCP003"] {
+        assert!(api()
+            .verify(ReceiptLimits::default(), envelope, &[0; 8], &[])
+            .is_err());
+    }
+    STUB.with(|slot| assert_eq!(slot.borrow().verify_calls, 0));
+    // Structural forwarding only: this stub is not cryptographic proof evidence.
+    api()
+        .verify(ReceiptLimits::default(), b"AORCP002", &[0; 8], &[])
+        .unwrap();
+    STUB.with(|slot| assert_eq!(slot.borrow().verify_calls, 1));
 }
 
 #[test]

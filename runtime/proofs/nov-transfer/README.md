@@ -32,7 +32,11 @@ guest 本地资源配置为最多1024笔、单笔64KiB、body8MiB、4096访问�
 
 2.x build输出是用户ELF与兼容kernel组成的 **program binary `.bin`**，即使生成
 常量仍叫 `_ELF`。image绑定整个程序；不能偷偷改用旁边裸ELF、旧image或旧
-guest来适配旧后端。现有 AOEM C ABI 是否可消费此格式，以真实调用为准。
+guest来适配旧后端。AOEM `34d66a51`已将通用后端固定到2.3.2，原C ABI v1
+符号不变，receipt封装显式升级为`AORCP002`；本适配器仅接受新版本，旧
+`AORCP001`拒绝，不回退旧verifier。须显式选定匹配的可信证明库；现随包
+FULLMAX core及其header仍是旧发布资产，不能因源码接线便假称已更新。
+独立证明sidecar不能覆盖承担计算/存储的FULLMAX core。
 
 证明工具链独立于根产品workspace，普通节点构建不安装它。根CI覆盖共享关系
 与无native依赖检查，但**不运行 zkVM 构建或真实证明**。缺这两项不能签收S4。
@@ -74,7 +78,8 @@ RISC0_DEV_MODE=1 "$probe" verify-negatives "$AOEM_PROOF_LIBRARY" \
 期待journal由原生AOEM真实执行导出；这个示例的父树本身是测试夹具，不是
 已部署主链。验证者使用可信构建的image与独立提供的期待journal，绝不从
 receipt取信任pin。负例包括所有公开字段、空/追加journal、错误image、篡改/
-截断receipt，并再次检查原正例；后端不可用不算负例验证成功。
+截断receipt、旧封装与尾随字节（共14项），并再次检查原正例；后端不可用
+不算负例验证成功。旧/未来封装在适配单测中的拒绝不替代真实密码验证。
 
 同步 C ABI 没有取消/时间/工作内存额度：只能在独立证明owner或隔离进程中
 调用，不能放入共识poll；超时不可遗弃线程后释放输入。字节上限不等于prover
