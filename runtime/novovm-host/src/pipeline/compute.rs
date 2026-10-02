@@ -25,6 +25,7 @@ pub(crate) struct ComputeConfig {
     pub authentication: AuthenticationBudget,
     pub plan: PlanBudget,
     pub packet: PacketBudget,
+    pub capture: crate::state::frontier::CaptureBudget,
     pub timeout: Duration,
     pub domain: StorageDomain,
 }
@@ -48,6 +49,7 @@ pub(crate) struct BindRequest {
 pub(crate) struct ComputedCandidate {
     pub packet: PreparedCandidate,
     pub observation: ExecutionObservation,
+    pub seed: Option<crate::state::frontier::PostStateSeed>,
 }
 
 /// Full means not admitted: return the exact owned input for a later attempt.
@@ -335,10 +337,12 @@ fn execute(
     domain_matches(config.domain, input.plan().context())?;
     let executed = input.finalize_capture()?.execute(session, config.timeout)?;
     let observation = *executed.observation();
-    let packet = PreparedCandidate::from_executed(executed, config.packet)?;
+    let (packet, seed) =
+        PreparedCandidate::from_executed_with_seed(executed, config.packet, config.capture)?;
     Ok(ComputedCandidate {
         packet,
         observation,
+        seed,
     })
 }
 

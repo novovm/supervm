@@ -106,6 +106,10 @@ pub struct ControllerStats {
     /// Fixed-size scalar copy of the last successful execution observation;
     /// it can describe a stale candidate and confers no finality authority.
     pub last_execution_observation: Option<ExecutionObservation>,
+    /// Actual captured nodes obtained from a durable read-locality hint.
+    pub capture_seed_nodes: u64,
+    pub capture_storage_nodes: u64,
+    pub capture_storage_requests: u64,
     /// Saturation is explicit and never changes consensus progress or timing.
     pub execution_observation_saturated: bool,
     pub execution_failures: u64,
@@ -141,6 +145,17 @@ impl ControllerStats {
             .execution_peak_callbacks
             .max(observation.peak_callbacks);
         self.last_execution_observation = Some(observation);
+    }
+
+    fn observe_capture(&mut self, observation: crate::pipeline::CaptureObservation) {
+        self.execution_observation_saturated |=
+            accumulate_observed(&mut self.capture_seed_nodes, observation.seed_nodes);
+        self.execution_observation_saturated |=
+            accumulate_observed(&mut self.capture_storage_nodes, observation.storage_nodes);
+        self.execution_observation_saturated |= accumulate_observed(
+            &mut self.capture_storage_requests,
+            observation.storage_requests,
+        );
     }
 }
 
@@ -1067,6 +1082,7 @@ impl Controller {
             // Count every successful completion, even when it is drained as
             // stale below. These are execution costs, not finalized throughput.
             self.stats.observe_execution(batch.observation);
+            self.stats.observe_capture(batch.capture);
             if work.context != self.context()
                 || work.parent != self.parent()
                 || !self.matches_context(batch.packet.context())

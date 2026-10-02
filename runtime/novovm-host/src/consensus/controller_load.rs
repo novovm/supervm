@@ -260,6 +260,9 @@ struct Observation {
     early_authentication_completed_before_parent: u64,
     early_bind_reused: u64,
     early_discarded: u64,
+    capture_seed_nodes: u64,
+    capture_storage_nodes: u64,
+    capture_storage_requests: u64,
     execution_failures: u64,
     stale_results: u64,
     durable_decisions: u64,
@@ -291,6 +294,9 @@ impl Observation {
                 .early_authentication_completed_before_parent,
             early_bind_reused: stats.early_bind_reused,
             early_discarded: stats.early_discarded,
+            capture_seed_nodes: stats.capture_seed_nodes,
+            capture_storage_nodes: stats.capture_storage_nodes,
+            capture_storage_requests: stats.capture_storage_requests,
             execution_failures: stats.execution_failures,
             stale_results: stats.stale_results,
             durable_decisions: stats.durable_decisions,
@@ -728,6 +734,13 @@ fn one_load(spec: LoadSpec) -> Result<()> {
                 && report.observers.iter().any(|node| node.early_authentication_completed_before_parent > 0)
                 && report.observers.iter().any(|node| node.early_bind_reused > 0),
             "early-body fixture completed without real pre-parent authentication and exact-parent bind reuse"
+        );
+        ensure!(
+            report
+                .observers
+                .iter()
+                .all(|node| node.capture_seed_nodes > 0),
+            "early-body fixture never used durable poststate read locality on a validator"
         );
     }
     eprintln!("batch={} unique_finalized={} all_four_seconds={elapsed:.6} finalized_tps={:.6}; full cold-state oracle passed", spec.batch_size, count, report.finalized_tps);

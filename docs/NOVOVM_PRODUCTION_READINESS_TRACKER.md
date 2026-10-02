@@ -8,7 +8,67 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：候选持久后有界只读后态输入复用（2026-10-03，本地验收）
+
+基于`bae6703`（CI `37035987145`已成功），20个runtime源/测试文件；未更改
+AOEM/经济/交易和共识编码，旧49草稿保留。运行路径是原签名NOV执行、同一
+常驻AOEM/存储与controller，不是额外演示链或新数据库。
+
+父捕获见证与真实staged delta移动保留，不克隆整个输入；包括hash的两层
+实际节点字节计费。仅候选ID/状态根/statement/document四字段持久ACK核对
+后安装单个driver内seed。子按自己的声明和root按需加载、逐边重验，缺项
+批读原库；计数不包含持久预检和冷恢复的读取。byte-only lease不保留父
+任务槽；动态保留一个最大当前批、静态保留背景+当前两个最大批，避免早
+鉴权被缓存永久挡住。超额或最大预留无法计算时不缓存，不改交易成功范围。
+独立匹配仅筛选内容源；父块hash/round/QC仍由原controller独立授权。
+
+定位更正：现有successor必须先拿DurableCandidate，不能把其捕获等待
+解释成尚未完成的同一父候选写。此刀减少持久父之后的重复读取与I/O竞争，
+没有实现父候选持久之前的子执行或完整跨高度推测权限。
+
+新增13门（7前沿、5纯cache、1真库）：含hash/错边/错root/权限/子预算、
+partial miss/缺失拒绝、移动分配计费、inclusive双批额度、错误domain/
+receipt/version、最大预留溢出、真实两高度2+2签名交易。原128MiB配置明确
+回退；既有256MiB配置第二批必须实际命中；极大上限的合法小批仍成功。
+三路完整packet一致，费用/余额/nonce/全部声明页和冷重开一致，shutdown
+释放全部缓存计费。不声称模拟了native写ACK失败注入。
+
+最终真库Release Windows **666+8**、Linux **665+8**，零失败/零忽略；
+Host413、AOEM31、Network211/210、11集成、8文档。fmt、双平台strict Clippy、
+native-free library与三成员无legacy隔离通过。冻结快照
+`target/runtime-rebuild/candidate-bae6703-parent-seed-dev-v2/`；日志
+`seed-workspace-{windows,linux}-v2.log`、`seed-clippy-windows-v4.log`、
+`seed-checks-linux-v2.log`。最终binary SHA256：Windows
+`1635c42006251144aa3f03ced917d6f708736c4320f939ab68093908247d8c25`，Linux
+`f2031cbf64e46aba1d075e4b78ac51d82460332d8f093da196a17acdc239cacd`。
+
+独占顺序新/旧/新、WSL同机四进程、64×1024预签名Ed25519测试转账：
+8.742167/8.790665/6.300640秒，7496.539/7455.181/10401.483 TPS。钱包签名、
+启动和冷恢复不计时；验签/业务/网络/BFT/四库耐久计时。三轮全经济冷恢复
+通过，12个最终head完全一致；新版每节点seed捕获258615节点、库捕获2055
+节点/39请求、0执行失败。旧binary为上一刀已验收SHA
+`4af9c617059bb6eb915cef225244e3aea4c424ca29c4d0d06bf1f62c77904649`。
+新版两报告目录为快照内`target/runtime-rebuild/`下
+`controller-load-1024-291-1790963412327824681`和
+`controller-load-1024-2075-1790963469326427778`；旧报告位于上一刀快照内
+`controller-load-1024-1228-1790963441335082931`。原始日志本快照
+`seed-bench-new1.log`、`seed-bench-baseline.log`、`seed-bench-new2.log`。
+结果波动大，不宣称稳定提速、主网容量、实体四机或证明最终性。
+
+首轮真实32批冷经济通过但seed全未命中，新断言FAIL：错误把父状态版本
+按块+1而非交易数增加，已修。编译初轮缺计数字段、后补测试Debug约束错误
+均修复，失败日志保留；没有降低命中/资源/经济门槛。本节提交/CI另核。
+原目标模式仍blocked且模型工具不能恢复；已询问用户下一阶段AOEM通用
+证明后端切仓授权，当前未切仓。S4、隐私/PQ、Execute、多机/长跑和部署
+总目标未完成，未建分支、未开启正式创世/发行/生产部署。
+
 ## 设备 A：提前原文与真实节点绑定接入（2026-10-03，本地验收）
+
+远端复验：`bae6703`的CI `37035987145`已completed/success（2026-10-03
+本轮核验）；以下in_progress为保留的推送时记录，不是当前结果。
+
+交付更新：本节已提交推送为`bae6703a8764b77976848193e29e533fafab080d`，
+本地及远端main一致，旧49草稿保留；CI `37035987145`进行中，未签收远端结果。
 
 基于`1fb606f`，19个runtime源/测试（13个已有+6个新增），其他140个tracked
 runtime文件与HEAD一致；旧49草稿保留，不作为本刀构建输入。最终干净快照

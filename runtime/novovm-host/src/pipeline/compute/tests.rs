@@ -313,6 +313,11 @@ fn real_resident_owner_authenticates_and_executes_repeated_owned_captures() -> R
             access_keys: 4096,
         },
         packet: PacketBudget::default(),
+        capture: CaptureBudget {
+            keys: 4096,
+            nodes: 4096,
+            bytes: 1024 * 1024,
+        },
         timeout: Duration::from_secs(30),
         domain: domain(),
     };

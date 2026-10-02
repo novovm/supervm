@@ -2,12 +2,14 @@ use super::compute::{
     AuthenticateRequest, BindRequest, ComputeConfig, ComputeOwner, ComputeTicket,
     ComputedCandidate, PrepareRequest,
 };
+use super::seed::SeedCache;
 use super::*;
 use crate::business::nov_transfer_batch::{
     NovCapturedInput, NovTransferBody, NovTransferCapture, NovTransferPlan,
 };
 use crate::persistence::io::NodeReadReply;
 use crate::state::frontier::CaptureStep;
+use crate::state::frontier::PostStateSeed;
 use std::collections::VecDeque;
 
 pub(super) fn start(
@@ -33,6 +35,7 @@ pub(super) fn start(
                 authentication: config.authentication,
                 plan: config.plan,
                 packet: config.store.packet_budget,
+                capture: config.capture,
                 timeout: config.compute_timeout,
                 domain: config.store.domain,
             },
@@ -72,11 +75,13 @@ enum Stage {
     Persist {
         packet: Arc<PreparedCandidate>,
         observation: ExecutionObservation,
+        seed: Option<PostStateSeed>,
     },
     Persisting {
         packet: Arc<PreparedCandidate>,
         observation: ExecutionObservation,
         ticket: IoTicket<PersistedCandidate>,
+        seed: Option<PostStateSeed>,
     },
 }
 
@@ -101,6 +106,7 @@ struct Job {
     reply: Reply,
     _permit: Arc<Permit>,
     background: bool,
+    capture: CaptureObservation,
 }
 
 enum Reply {
@@ -125,6 +131,7 @@ impl From<DriverMessage> for Job {
     fn from(message: DriverMessage) -> Self {
         match message {
             DriverMessage::Batch(command) => Self {
+                capture: CaptureObservation::default(),
                 stage: Stage::Prepare(command.request.request),
                 candidate_id: None,
                 reply: Reply::Durable(command.reply),
@@ -132,6 +139,7 @@ impl From<DriverMessage> for Job {
                 background: command.background,
             },
             DriverMessage::Authenticate(command) => Self {
+                capture: CaptureObservation::default(),
                 stage: Stage::Authenticate(command.request.request),
                 candidate_id: None,
                 reply: Reply::Authenticated(command.reply),
@@ -139,6 +147,7 @@ impl From<DriverMessage> for Job {
                 background: true,
             },
             DriverMessage::Bind(command) => Self {
+                capture: CaptureObservation::default(),
                 stage: Stage::Bind(Box::new(BindRequest {
                     body: *command.request.body.body,
                     context: *command.request.context,
@@ -164,12 +173,15 @@ fn pending(stage: Stage, progressed: bool) -> Advancement {
 
 fn advance(
     stage: Stage,
-    id: &mut Option<NodeHash>,
+    progress: (&mut Option<NodeHash>, &mut CaptureObservation),
     config: &PipelineConfig,
     io: &IoService,
     compute: &ComputeOwner,
     identity: &Arc<()>,
+    locality: (&mut Option<SeedCache>, &Arc<Mutex<Usage>>),
 ) -> Result<Advancement> {
+    let (id, capture_observation) = progress;
+    let (cache, usage) = locality;
     use super::compute::Submission as ComputeSubmission;
     match stage {
         Stage::Authenticate(request) => Ok(match compute.try_authenticate(*request)? {
@@ -208,16 +220,27 @@ fn advance(
                 Ok(pending(Stage::Preparing(ticket), false))
             }
         }
-        Stage::Capture(mut capture) => match capture.advance(config.capture_edge_quantum)? {
+        Stage::Capture(mut capture) => match capture.advance_with_seed(
+            config.capture_edge_quantum,
+            cache
+                .as_ref()
+                .and_then(|cache| cache.for_context(capture.context())),
+        )? {
             CaptureStep::More => Ok(pending(Stage::Capture(capture), true)),
-            CaptureStep::Complete => Ok(pending(Stage::Execute(Box::new(capture.finish()?)), true)),
+            CaptureStep::Complete => {
+                capture_observation.seed_nodes = capture.seed_hits();
+                Ok(pending(Stage::Execute(Box::new(capture.finish()?)), true))
+            }
             CaptureStep::NeedRead => {
                 let hashes = capture
                     .next_request()?
                     .context("capture needs a read without requested hashes")?;
                 // The response ticket never leaves this exact capture state.
                 // There is only one outstanding frontier request per job.
+                let count = hashes.len();
                 if let Some(ticket) = io.try_read_nodes(hashes)? {
+                    capture_observation.storage_requests += 1;
+                    capture_observation.storage_nodes += count;
                     Ok(pending(Stage::Reading { capture, ticket }, true))
                 } else {
                     Ok(pending(Stage::Capture(capture), false))
@@ -251,6 +274,7 @@ fn advance(
                     Stage::Persist {
                         packet: Arc::new(computed.packet),
                         observation: computed.observation,
+                        seed: computed.seed,
                     },
                     true,
                 ))
@@ -261,6 +285,7 @@ fn advance(
         Stage::Persist {
             packet,
             observation,
+            seed,
         } => {
             if let Some(ticket) = io.try_persist(packet.clone())? {
                 Ok(pending(
@@ -268,6 +293,7 @@ fn advance(
                         packet,
                         observation,
                         ticket,
+                        seed,
                     },
                     true,
                 ))
@@ -276,6 +302,7 @@ fn advance(
                     Stage::Persist {
                         packet,
                         observation,
+                        seed,
                     },
                     false,
                 ))
@@ -285,6 +312,7 @@ fn advance(
             packet,
             observation,
             mut ticket,
+            seed,
         } => {
             if let Some(persisted) = ticket.try_take()? {
                 ensure!(
@@ -294,6 +322,12 @@ fn advance(
                         && persisted.document_digest == packet.document_digest(),
                     "stored reply differs from executed packet"
                 );
+                // Successful content completion, not head finality. Replacing
+                // this one optional byte source never retains a parent slot.
+                *cache = None;
+                if let Some(seed) = seed {
+                    *cache = SeedCache::try_install(seed, &packet, config, usage)?;
+                }
                 Ok(Advancement::Complete(DurableBatch {
                     candidate: DurableCandidate {
                         owner: identity.clone(),
@@ -302,6 +336,7 @@ fn advance(
                     packet,
                     persisted,
                     observation,
+                    capture: *capture_observation,
                 }))
             } else {
                 Ok(pending(
@@ -309,6 +344,7 @@ fn advance(
                         packet,
                         observation,
                         ticket,
+                        seed,
                     },
                     false,
                 ))
@@ -326,6 +362,7 @@ pub(super) fn run(
 ) {
     let mut jobs = VecDeque::<Job>::new();
     let mut connected = true;
+    let mut cache = None;
     while connected || !jobs.is_empty() {
         if jobs.is_empty() && connected {
             match receiver.recv() {
@@ -353,9 +390,18 @@ pub(super) fn run(
                 reply,
                 _permit,
                 background,
+                mut capture,
             } = jobs.pop_front().expect("fixed round length");
             let label = stage.label();
-            match advance(stage, &mut candidate_id, config, io, compute, identity) {
+            match advance(
+                stage,
+                (&mut candidate_id, &mut capture),
+                config,
+                io,
+                compute,
+                identity,
+                (&mut cache, &_permit.usage),
+            ) {
                 Ok(Advancement::Pending {
                     stage,
                     progressed: made_progress,
@@ -367,6 +413,7 @@ pub(super) fn run(
                         reply,
                         _permit,
                         background,
+                        capture,
                     });
                 }
                 Ok(Advancement::Complete(output)) => {

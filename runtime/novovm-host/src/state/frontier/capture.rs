@@ -1,7 +1,7 @@
 //! Incremental content-addressed frontier capture. No source handles, synchronous
 //! proxy reads, root replays after a miss, or whole-tree enumeration are used.
 
-use super::{CaptureBudget, DeclaredAccess, OwnedStateInput};
+use super::{CaptureBudget, DeclaredAccess, OwnedStateInput, PostStateSeed};
 use crate::state::tree::{validate_state_node_bytes, CaptureCursor, NodeHash};
 use anyhow::{ensure, Context, Result};
 use std::collections::{BTreeMap, VecDeque};
@@ -30,6 +30,8 @@ pub struct BulkCapture {
     request: Option<Vec<NodeHash>>,
     complete: usize,
     failed: bool,
+    #[cfg(any(feature = "native", test))]
+    seed_hits: usize,
     #[cfg(test)]
     edge_steps: usize,
 }
@@ -80,20 +82,45 @@ impl BulkCapture {
             request: None,
             complete,
             failed: false,
+            #[cfg(any(feature = "native", test))]
+            seed_hits: 0,
             #[cfg(test)]
             edge_steps: 0,
         })
     }
 
     pub fn advance(&mut self, max_edge_steps: usize) -> Result<CaptureStep> {
-        let result = self.advance_inner(max_edge_steps);
+        self.advance_with_seed(max_edge_steps, None)
+    }
+
+    /// Newly retained node values, not visits, reused edges or authority checks.
+    #[cfg(any(feature = "native", test))]
+    pub(crate) fn seed_hits(&self) -> usize {
+        self.seed_hits
+    }
+
+    /// Optional immutable content source, never inherited access or authority.
+    /// A different poststate root is an ordinary cache miss. Each hit is copied
+    /// only after this child's own bounds are checked, and its cursor still
+    /// authenticates every incoming edge. The seed's separate retained-byte
+    /// reservation must remain held by its owner for the duration of this call.
+    pub(crate) fn advance_with_seed(
+        &mut self,
+        max_edge_steps: usize,
+        seed: Option<&PostStateSeed>,
+    ) -> Result<CaptureStep> {
+        let result = self.advance_inner(max_edge_steps, seed);
         if result.is_err() {
             self.failed = true;
         }
         result
     }
 
-    fn advance_inner(&mut self, max_edge_steps: usize) -> Result<CaptureStep> {
+    fn advance_inner(
+        &mut self,
+        max_edge_steps: usize,
+        seed: Option<&PostStateSeed>,
+    ) -> Result<CaptureStep> {
         ensure!(!self.failed, "input capture already failed");
         ensure!(
             max_edge_steps > 0,
@@ -102,6 +129,7 @@ impl BulkCapture {
         if self.request.is_some() {
             return Ok(CaptureStep::NeedRead);
         }
+        let seed = seed.filter(|seed| seed.root() == self.state.root);
         for _ in 0..max_edge_steps {
             let Some(index) = self.ready.pop_front() else {
                 break;
@@ -109,6 +137,30 @@ impl BulkCapture {
             let hash = self.cursors[index]
                 .needed_hash()
                 .context("completed cursor queued")?;
+            if !self.state.nodes.contains_key(&hash) {
+                if let Some(bytes) = seed.and_then(|seed| seed.node(&hash)) {
+                    validate_state_node_bytes(&hash, bytes)?;
+                    let total = self
+                        .state
+                        .bytes
+                        .checked_add(bytes.len())
+                        .context("input capture byte count overflow")?;
+                    ensure!(
+                        total <= self.budget.bytes,
+                        "input capture byte budget exceeded"
+                    );
+                    ensure!(
+                        self.state.nodes.len() < self.budget.nodes,
+                        "input capture node budget exceeded"
+                    );
+                    self.state.nodes.insert(hash, bytes.to_vec());
+                    self.state.bytes = total;
+                    #[cfg(any(feature = "native", test))]
+                    {
+                        self.seed_hits += 1;
+                    }
+                }
+            }
             if let Some(bytes) = self.state.nodes.get(&hash) {
                 self.cursors[index].advance(bytes)?;
                 #[cfg(test)]

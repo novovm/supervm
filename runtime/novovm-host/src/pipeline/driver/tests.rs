@@ -4,6 +4,7 @@ use super::*;
 fn job(marker: u8, background: bool) -> Job {
     let (reply, _) = mpsc::channel();
     Job {
+        capture: CaptureObservation::default(),
         stage: Stage::Prepare(Box::new(
             super::super::compute::tests::control_test_request([marker; 32]),
         )),

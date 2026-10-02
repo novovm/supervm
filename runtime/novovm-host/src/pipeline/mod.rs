@@ -12,6 +12,7 @@
 mod authentication;
 mod compute;
 mod driver;
+mod seed;
 pub use authentication::{
     AuthenticatedBody, AuthenticatedRequest, AuthenticatedSubmission, AuthenticationRequest,
     AuthenticationSubmission, AuthenticationTicket, RejectedAuthenticatedSubmission,
@@ -205,7 +206,16 @@ pub struct DurableBatch {
     pub packet: Arc<PreparedCandidate>,
     pub persisted: PersistedCandidate,
     pub observation: ExecutionObservation,
+    /// Read-locality counters, not proof, parallelism or throughput claims.
+    pub capture: CaptureObservation,
     candidate: DurableCandidate,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CaptureObservation {
+    pub seed_nodes: usize,
+    pub storage_requests: usize,
+    pub storage_nodes: usize,
 }
 
 impl DurableBatch {

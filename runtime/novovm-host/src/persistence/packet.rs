@@ -95,6 +95,20 @@ struct Resources {
 
 impl PreparedCandidate {
     pub fn from_executed(batch: ExecutedNovBatch, budget: PacketBudget) -> Result<Self> {
+        Self::prepare_executed(&batch, budget)
+    }
+
+    pub(crate) fn from_executed_with_seed(
+        batch: ExecutedNovBatch,
+        budget: PacketBudget,
+        capture: crate::state::frontier::CaptureBudget,
+    ) -> Result<(Self, Option<crate::state::frontier::PostStateSeed>)> {
+        let packet = Self::prepare_executed(&batch, budget)?;
+        let seed = batch.into_poststate_seed(capture)?;
+        Ok((packet, seed))
+    }
+
+    fn prepare_executed(batch: &ExecutedNovBatch, budget: PacketBudget) -> Result<Self> {
         let effects = batch.effects();
         ensure!(
             effects.update().parent_root() == effects.context().parent_state_root,

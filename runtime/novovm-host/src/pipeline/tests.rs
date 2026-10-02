@@ -470,6 +470,11 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
     )?);
     let compute = compute::ComputeOwner::start(
         compute::ComputeConfig {
+            capture: CaptureBudget {
+                keys: 4096,
+                nodes: 4096,
+                bytes: 1024 * 1024,
+            },
             library: cfg.store.library.clone(),
             workers: cfg.workers,
             queue_capacity: cfg.max_batches,

@@ -334,6 +334,25 @@ pub struct NovTransferCapture {
 }
 
 impl NovTransferCapture {
+    #[cfg(feature = "native")]
+    pub(crate) fn seed_hits(&self) -> usize {
+        self.capture.seed_hits()
+    }
+
+    #[cfg(feature = "native")]
+    pub(crate) fn context(&self) -> &BatchContext {
+        self.capture.context()
+    }
+
+    #[cfg(feature = "native")]
+    pub(crate) fn advance_with_seed(
+        &mut self,
+        max_edge_steps: usize,
+        seed: Option<&crate::state::frontier::PostStateSeed>,
+    ) -> Result<CaptureStep> {
+        self.capture.advance_with_seed(max_edge_steps, seed)
+    }
+
     pub fn advance(&mut self, max_edge_steps: usize) -> Result<CaptureStep> {
         self.capture.advance(max_edge_steps)
     }

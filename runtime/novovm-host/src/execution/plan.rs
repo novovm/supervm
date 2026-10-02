@@ -255,6 +255,25 @@ pub struct BoundBatchCapture {
 }
 
 impl BoundBatchCapture {
+    #[cfg(feature = "native")]
+    pub(crate) fn seed_hits(&self) -> usize {
+        self.capture.seed_hits()
+    }
+
+    #[cfg(feature = "native")]
+    pub(crate) fn context(&self) -> &BatchContext {
+        self.plan.context()
+    }
+
+    #[cfg(feature = "native")]
+    pub(crate) fn advance_with_seed(
+        &mut self,
+        max_edge_steps: usize,
+        seed: Option<&crate::state::frontier::PostStateSeed>,
+    ) -> Result<CaptureStep> {
+        self.capture.advance_with_seed(max_edge_steps, seed)
+    }
+
     pub fn advance(&mut self, max_edge_steps: usize) -> Result<CaptureStep> {
         self.capture.advance(max_edge_steps)
     }
@@ -304,6 +323,8 @@ impl OwnedBatchInput {
         Ok(UnpublishedBatchEffects {
             plan: self.plan,
             update,
+            #[cfg(feature = "native")]
+            input: self.state,
         })
     }
 }
@@ -313,9 +334,21 @@ impl OwnedBatchInput {
 pub struct UnpublishedBatchEffects {
     plan: BatchPlan,
     update: StagedStateUpdate,
+    // Move the actual captured witness through packaging; never recapture or
+    // clone a complete frontier just to create a read-locality hint.
+    #[cfg(feature = "native")]
+    input: OwnedStateInput,
 }
 
 impl UnpublishedBatchEffects {
+    #[cfg(feature = "native")]
+    pub(crate) fn into_poststate_seed(
+        self,
+        budget: CaptureBudget,
+    ) -> Result<Option<crate::state::frontier::PostStateSeed>> {
+        self.input.into_poststate_seed(self.update, budget)
+    }
+
     pub fn plan_commitment(&self) -> NodeHash {
         self.plan.commitment
     }

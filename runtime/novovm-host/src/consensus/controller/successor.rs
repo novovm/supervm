@@ -409,6 +409,7 @@ impl Controller {
     fn finish_successor(&mut self, successor: &mut Successor, batch: DurableBatch) -> Result<()> {
         self.stats.executed_batches += 1;
         self.stats.observe_execution(batch.observation);
+        self.stats.observe_capture(batch.capture);
         let pin = successor.basis.pin;
         let statement = BlockStatement::from_executed(
             batch.candidate().packet(),
@@ -534,6 +535,7 @@ impl Controller {
             Ok(Some(batch)) => {
                 self.stats.executed_batches += 1;
                 self.stats.observe_execution(batch.observation);
+                self.stats.observe_capture(batch.capture);
                 self.stats.stale_results += 1;
                 self.retire(Retirement::Batch(batch));
             }

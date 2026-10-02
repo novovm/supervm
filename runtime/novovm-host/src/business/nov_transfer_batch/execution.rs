@@ -50,6 +50,14 @@ pub struct ExecutedNovBatch {
 }
 
 impl ExecutedNovBatch {
+    #[cfg(feature = "native")]
+    pub(crate) fn into_poststate_seed(
+        self,
+        budget: CaptureBudget,
+    ) -> Result<Option<crate::state::frontier::PostStateSeed>> {
+        self.effects.into_poststate_seed(budget)
+    }
+
     pub fn effects(&self) -> &UnpublishedBatchEffects {
         &self.effects
     }
