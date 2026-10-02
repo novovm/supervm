@@ -7,8 +7,9 @@
 //! is migrated separately; no legacy crate is a dependency.
 
 use super::tree::{
-    capture_update_path_v1, read_state_value, stage_state_update, validate_state_node_bytes,
-    NodeHash, StagedStateUpdate, StateChange, StateNodeReader,
+    capture_update_path_v1, read_state_value, read_state_values, stage_state_update,
+    validate_state_node_bytes, NodeHash, StagedStateUpdate, StateChange, StateNodeReader,
+    MAX_BATCH_READ_KEYS,
 };
 use anyhow::{bail, Context, Result};
 use std::cell::RefCell;
@@ -111,6 +112,22 @@ impl OwnedStateInput {
             bail!("execution read outside declared input");
         }
         read_state_value(&OwnedNodeReader(self), self.root, key)
+    }
+
+    /// Read at most 4096 declared keys from this immutable parent in one shared
+    /// traversal. Results retain input order and duplicates. All permissions
+    /// are checked before traversing any node; no partial result escapes on an
+    /// error. Captured sibling bytes never grant access to undeclared keys.
+    pub fn read_many(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>> {
+        if keys.len() > MAX_BATCH_READ_KEYS {
+            bail!("execution read batch exceeds key budget");
+        }
+        for key in keys {
+            if !self.access.contains_key(key) {
+                bail!("execution read outside declared input");
+            }
+        }
+        read_state_values(&OwnedNodeReader(self), self.root, keys)
     }
 
     /// Pure isolated effects. Repeated changes retain their supplied order.

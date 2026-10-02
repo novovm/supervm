@@ -49,7 +49,8 @@ fn real_nov_fee_page_deletes_do_not_disable_batched_account_updates() -> Result<
                 },
                 timeout,
             )?;
-            let input = NovTransferPlan::compile(
+            let reads_before = crate::state::tree::read_batch_stats_for_test();
+            let plan = NovTransferPlan::compile(
                 authenticated,
                 context,
                 policy.clone(),
@@ -59,8 +60,9 @@ fn real_nov_fee_page_deletes_do_not_disable_batched_account_updates() -> Result<
                     body_bytes: size * 1024,
                     access_keys: size * 2 + 128,
                 },
-            )?
-            .capture(
+            )?;
+            let declared_keys = plan.plan().declared_access().len();
+            let input = plan.capture(
                 &memory,
                 CaptureBudget {
                     keys: size * 2 + 128,
@@ -68,6 +70,17 @@ fn real_nov_fee_page_deletes_do_not_disable_batched_account_updates() -> Result<
                     bytes: 16 * 1024 * 1024,
                 },
             )?;
+            let reads_after = crate::state::tree::read_batch_stats_for_test();
+            assert_eq!(reads_after.0 - reads_before.0, 1);
+            assert_eq!(
+                reads_after.1 - reads_before.1,
+                declared_keys,
+                "batch read must include every declared policy/fee page, including absent tails"
+            );
+            assert!(
+                reads_after.1 - reads_before.1 > size * 2,
+                "real NOV finalize_capture must batch all accounts/nonces and complete fee pages"
+            );
             let executed = input.execute(&mut session, timeout)?;
             let update = executed.effects().update();
             let expected = workload.expected_through(height, |h| u128::from(now - height + h))?;
@@ -92,7 +105,8 @@ fn real_nov_fee_page_deletes_do_not_disable_batched_account_updates() -> Result<
                 "fee-tail Deletes must not return the real account/nonce batch to per-key updates"
             );
             eprintln!(
-                "real NOV batch={size} height={height} max_batched_puts={} staged_calls={} reachable_nodes={}",
+                "real NOV batch={size} height={height} batched_reads={} max_batched_puts={} staged_calls={} reachable_nodes={}",
+                reads_after.1 - reads_before.1,
                 update.max_batched_puts(),
                 update.staged_calls(),
                 update.nodes().len()

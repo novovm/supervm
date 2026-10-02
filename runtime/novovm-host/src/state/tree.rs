@@ -19,6 +19,11 @@ use std::collections::{BTreeMap, BTreeSet};
 mod batch;
 #[cfg(test)]
 mod batch_conformance;
+mod read_batch;
+
+#[cfg(test)]
+pub(crate) use read_batch::read_batch_stats_for_test;
+pub use read_batch::{read_state_values, MAX_BATCH_READ_KEYS};
 
 pub type NodeHash = [u8; 32];
 pub type StateLeafVisitor<'a> = dyn FnMut(NodeHash, &[u8]) -> Result<()> + 'a;

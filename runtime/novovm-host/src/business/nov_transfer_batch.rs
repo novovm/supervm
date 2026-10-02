@@ -290,21 +290,44 @@ impl NovCapturedInput {
 
     pub(crate) fn finalize_capture(self) -> Result<NovTransferInput> {
         let input = self.input;
-        let captured_policy: DirectNovFeePolicy =
-            decode_record(&record_pages::read(&input, POLICY_PREFIX, POLICY_BYTES)?)?;
+        // Read the complete compiler-declared set in one authenticated tree
+        // traversal, including every absent fee/policy tail page. This local
+        // immutable projection belongs only to this exact owned parent input;
+        // it carries no storage handle or authority for a different candidate.
+        let keys: Vec<_> = input
+            .plan()
+            .declared_access()
+            .iter()
+            .map(|access| access.key.clone())
+            .collect();
+        let values = input.read_many(&keys)?;
+        ensure!(values.len() == keys.len(), "NOV batch read length mismatch");
+        let records: BTreeMap<_, _> = keys.into_iter().zip(values).collect();
+        let read = |key: &[u8]| {
+            records
+                .get(key)
+                .cloned()
+                .context("NOV read outside complete parent record projection")
+        };
+        let captured_policy: DirectNovFeePolicy = decode_record(&record_pages::read_with(
+            &read,
+            POLICY_PREFIX,
+            POLICY_BYTES,
+        )?)?;
         captured_policy.validate()?;
         ensure!(
             captured_policy == self.policy,
             "fee policy differs from exact parent state"
         );
-        let fees: FeeState = decode_record(&record_pages::read(&input, FEE_PREFIX, FEE_BYTES)?)?;
+        let fees: FeeState =
+            decode_record(&record_pages::read_with(&read, FEE_PREFIX, FEE_BYTES)?)?;
         fees.validate()?;
         let mut balances = BTreeMap::new();
         let mut nonces = BTreeMap::new();
         for (request, tx) in self.requests.iter().zip(input.transactions()) {
             for account in [&request.payer, &request.recipient] {
                 if !balances.contains_key(account) {
-                    let raw = input.read(&balance_key(account))?;
+                    let raw = read(&balance_key(account))?;
                     let value = raw
                         .as_ref()
                         .map(|raw| {
@@ -320,7 +343,7 @@ impl NovCapturedInput {
             }
             let identity = tx.nonce_identity();
             if let std::collections::btree_map::Entry::Vacant(entry) = nonces.entry(identity) {
-                let raw = input.read(&nonce_key(&identity))?;
+                let raw = read(&nonce_key(&identity))?;
                 // Only a proved absent key, not a missing input, means new signer.
                 let value = raw
                     .as_ref()

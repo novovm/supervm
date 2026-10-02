@@ -8,6 +8,109 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：完整声明的精确父输入批读取（2026-10-02）
+
+基于`ab1fbf0816f13a310a514fb8d29ff8d801e13fcc`，该提交CI `37004594892`
+已终态双平台成功（Linux7分42秒、Windows12分23秒）。本次只提交十个新runtime
+Host源/测试文件与三份既有文档；49项旧草稿（host11/legacy38）按文件摘要
+保全，不改AOEM/SDK、网络生产代码、经济/签名/共识版本或原额度/期限。本轮
+续作实际完成正确性和同路径性能证据，不以解释数字或状态重述代替目标进展。
+
+### 接入与拒绝边界
+
+`read_state_values`将最多4096个key的digest排序，一次遍历共享路径，保持原
+输入顺序和重复项。访问节点先核对hash/codec及来边，再判定认证缺席；压缩
+前缀两端查询均缺席时仍查中间命中区间。只读、不stage、不访问未查询子树，
+空查询仍不验证父根，保留节点/读取预算。批预算按调用而非全进程，失败首报
+顺序可能改变，不宣称与逐点接口所有资源耗尽结果逐字相同。
+
+`OwnedStateInput::read_many`在遍历前检查全部声明权限；为删除而捕获的兄弟
+节点不因此变成可读账户，源释放/跨线程后仍只依赖owned数据。NOV完成捕获
+一次读取编译器全部声明，包括policy9项、fee33项完整尾页，再由原分页codec
+和业务验证构造输入。缺投影项为错误，只有认证的`None`表示不存在；此局部
+不可变投影不是数据库、跨父缓存或签票权限。既有编译器已限制声明<=4096，
+不缩小合法NOV输入集合；原逐点接口保留，原增量捕获/I/O公平性不变。
+
+新增10项纯树、3项owned边界测试；覆盖旧逐点oracle、乱序/重复/中间命中、
+256层、每个旧必读节点缺失/损坏、正确hash错误来边、缓存命中和预算。512-key
+夹具读节点由5279降至1023，只是工作量证据。真实AOEM原两高度经济oracle
+回归确认32/1024笔每次捕获分别只调用一次批读、恰好107/2091项，精确等于
+编译器声明数；之前实际2049项Put批更新也仍生效。余额、nonce、费用、回执
+及失败归并代码未改，native/proof复用同一完成捕获关系。
+
+### 双平台与冻结证据
+
+最终快照`target/runtime-rebuild/candidate-ab1fbf0-read-v2/`只含活跃构建源；
+十个覆盖文件与工作区逐字相同，其余137个tracked runtime文件等于HEAD。
+真实随包库Release Windows **598+6**、Linux **597+6**通过，0失败/0忽略；
+Host345、AOEM31、Network211/210、其余11集成及6编译拒绝。双平台fmt、
+strict Clippy（含no-default-features）、三成员无legacy隔离检查通过。
+v1也全过；独立复核发现原真实查询计数`>2*batch`不能单独证明尾页进入批读，
+v2加强为精确等于全部声明数并重跑全量。未改变生产逻辑或降低任何旧门。
+日志`read-v2-workspace-{windows,linux}.log`、`read-v2-clippy-{windows,linux}.log`、
+`read-v2-real-nov-windows.log`均在仓库`target/runtime-rebuild/`，v1记录保留。
+
+### 同路径新/旧/新交错
+
+原WSL2/24逻辑CPU、四独立OS验证进程/四AOEM RocksDB、真实WSS/E2E；1024个
+公开测试账户各64次不同nonce的Ed25519测试转账，共65,536笔，不是真实资产
+或用户，也不是PQ/四台设备。编译结束后单独顺序运行，保持原120秒和完整
+冷恢复经济/逐笔回执oracle。TPS包含节点验签、执行、网络、共识和四库耐久
+ACK，不含预先签名/启动/创世/冷恢复。P95/P99从整个有限backlog释放起算。
+
+| 样本 | 四节点耐久秒数 | 唯一交易TPS | backlog P95/P99秒 | 冷恢复 |
+| --- | --- | --- | --- | --- |
+| 批读v2第一轮 | 13.720710331 | 4776.429093 | 13.104059752 / 13.720710331 | PASS |
+| ab1运行基线交错复测 | 14.781715159 | 4433.585636 | 14.146088635 / 14.781715159 | PASS |
+| 批读v2第二轮 | 13.118875195 | 4995.550230 | 12.533330933 / 13.118875195 | PASS |
+
+新样本比中间对照高约8%–13%，不签收稳定容量/百万TPS；旧基线前两次
+4576.096/4436.977也保留。全部12份observer均64执行/64耐久、0执行失败/
+陈旧结果/重算，完整head（块hash、状态根、回执承诺、决定值和版本）完全相同。
+仍有旧父点/collector上下文拒绝，停机TLS close_notify告警保留，不称日志零错。
+
+新冻结二进制`candidate-ab1fbf0-read-v2/bin/novovm-host-read-batch` SHA256
+`c6f39379f8bc5600948052cfae3f752dd3ab3b1bec25168c74b77183b4cb7367`；
+旧对照为已签收`candidate-86e4c8a-bulk-tree-v6/bin/novovm-host-bulk-tree`，
+SHA256 `a52cba1a3762ecf796012764dbb6aabec7cd038d07f69752510a6ab50dce4fda`，
+不是更旧86运行版。Linux AOEM仍为
+`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+新报告在v2快照自己的`target/runtime-rebuild/`下
+`controller-load-1024-386-1790944088944112263/`与
+`controller-load-1024-399-1790944188553808826/`；旧报告在旧快照下
+`controller-load-1024-1242-1790944123316931722/`。对应日志依次为
+`read-v2-long-1.log`、`read-base-long-1.log`、`read-v2-long-2.log`。
+
+独立诊断快照`candidate-ab1fbf0-read-profile-v2/`仅另加既有40项test-only
+计时，用全新target重编译；3项计数测试通过、实际348项Host测试。一次同负载
+13.367325789秒/4902.700887 TPS、完整冷恢复通过，只作定位。每节点64块
+`finalize_capture`由旧诊断0.938–0.966秒降至0.279–0.299秒，`compute_execute`
+由2.123–2.151秒降至1.493–1.501秒；`pipeline_capture`仍0.788–0.822秒，
+`io_persist_step`1.393–1.639秒。计时包含嵌套，不能相加作CPU或关键路径。
+诊断二进制SHA256 `4de7c3e29a606f2b5c0b96533ab9808b6a28b2f4cec1cb7a71081fa3aa6eb6d5`，
+该快照报告`controller-load-1024-383-1790944369004409383/`在自己的
+`target/runtime-rebuild/`下；`read-profile-v2-{build,counts,long-1}.log`保存原始
+结果。诊断源码不合入运行代码，也不以park时间证明某个等待必定可消除。
+
+### 同关系证明与下一处结构工作
+
+相同生产代码（v2只加强测试）真实重建RISC0 2.3.2组合program：931496B，
+SHA256 `1a737aa714f76654d6d09e6c65408790e2ea7d292cd2ac140dd4676fe7d12852`，
+image `[2059554605,1731202156,985988505,2180991583,242081205,2542116061,3383213490,2657932241]`。
+真实AOEM单笔fixture的input/journal摘要与前版相同；证据在`read-v1-proof-*.log`
+和`read-v1-proof-fixture/`。未重跑密码prove/verify，旧后端不兼容未解除；构建/
+共享relation通过不等于S4，也不能用旧有漏洞guest绕过阻断。
+
+HEAD只读审查确认：现有controller多inflight是当前精确父下的候选，实际负载
+pipeline为2个job、1项I/O请求；计算/持久化可交错，但后继仍等待候选耐久、
+decision metadata ACK、advance ACK之后才切context/生成下一批。下一处A
+认领controller/pipeline/channel的跨高度关联时间线及有界一层后继推测；
+尚未实现。只能从本机真实执行且耐久父候选派生私有输入，父正式确认后逐项
+重验才可进入签票；当前高度优先、落败父排空、未知写入和恢复不能弱化。
+不能只放宽context检查或增加max_batches，也不把预验签等同后继业务已执行。
+旧host11归档/诊断草稿不直接合入。B独立隐私/PQ、S4明确AOEM切仓授权、
+Execute、多机/长跑/部署等完整目标不缩减；本次新提交CI须推送后另核。
+
 ## 设备 A：共享前缀批更新实际接入 NOV 输出（2026-10-02）
 
 本提交基于`86e4c8a`，该前置提交的CI `36996694111`双平台成功；本提交远端

@@ -88,6 +88,99 @@ fn owned_input_is_send_sync_and_static() {
 }
 
 #[test]
+fn batch_reads_preserve_absence_order_duplicates_and_source_independence() {
+    let (memory, root) = parent(&[put(b"payer", b"100"), put(b"recipient", b"7")]);
+    let status = Arc::new(SourceStatus::default());
+    let source = Source {
+        memory,
+        status: Arc::clone(&status),
+    };
+    let owned = OwnedStateInput::capture(
+        &source,
+        root,
+        &[
+            access(b"payer", true, false),
+            access(b"recipient", false, true),
+            access(b"absent", false, false),
+        ],
+        budget(),
+    )
+    .unwrap();
+    let reads = status.reads.load(Ordering::SeqCst);
+    drop(source);
+    assert!(status.dropped.load(Ordering::SeqCst));
+    let keys = vec![
+        b"recipient".to_vec(),
+        b"absent".to_vec(),
+        b"payer".to_vec(),
+        b"payer".to_vec(),
+    ];
+    let expected = keys
+        .iter()
+        .map(|key| owned.read(key))
+        .collect::<Result<Vec<_>>>()
+        .unwrap();
+    let returned = std::thread::spawn(move || {
+        assert_eq!(owned.read_many(&keys).unwrap(), expected);
+        assert!(owned.read_many(&[]).unwrap().is_empty());
+        owned
+    })
+    .join()
+    .unwrap();
+    assert_eq!(status.reads.load(Ordering::SeqCst), reads);
+    // Reading a projection never widens the original write permissions.
+    assert!(returned.stage(&[put(b"recipient", b"8")]).is_err());
+    assert!(returned.stage(&[delete(b"payer")]).is_err());
+}
+
+#[test]
+fn batch_reads_do_not_expose_captured_deletion_siblings_or_a_successful_prefix() {
+    let (memory, root) = parent(&[put(b"declared", b"yes"), put(b"secret", b"hidden")]);
+    let owned =
+        OwnedStateInput::capture(&memory, root, &[access(b"declared", true, true)], budget())
+            .unwrap();
+    // This sibling really was captured for a possible delete, but has no read
+    // declaration. Physical availability is not access permission.
+    assert_eq!(
+        read_state_value(&OwnedNodeReader(&owned), root, b"secret").unwrap(),
+        Some(b"hidden".to_vec())
+    );
+    let error = owned
+        .read_many(&[b"declared".to_vec(), b"secret".to_vec()])
+        .unwrap_err();
+    assert!(error.to_string().contains("outside declared input"));
+    assert!(owned.read_many(&[b"secret".to_vec()]).is_err());
+    assert!(owned
+        .read_many(&vec![b"declared".to_vec(); MAX_BATCH_READ_KEYS + 1])
+        .unwrap_err()
+        .to_string()
+        .contains("key budget"));
+}
+
+#[test]
+fn batch_read_failure_does_not_turn_missing_captured_content_into_absence() {
+    let (memory, root) = parent(&[put(b"existing", b"value")]);
+    let mut owned = OwnedStateInput::capture(
+        &memory,
+        root,
+        &[
+            access(b"existing", false, false),
+            access(b"absent", false, false),
+        ],
+        budget(),
+    )
+    .unwrap();
+    owned.nodes.remove(&root); // Test-only corruption of normally private data.
+    assert!(owned.read_many(&[b"absent".to_vec()]).is_err());
+    assert!(owned.read_many(&[b"existing".to_vec()]).is_err());
+    assert!(owned
+        .read_many(&[b"existing".to_vec(), b"not-declared".to_vec()])
+        .unwrap_err()
+        .to_string()
+        .contains("outside declared input"));
+}
+
+#[test]
 fn threaded_computation_uses_no_source_after_capture_and_drop() {
     let (memory, root) = parent(&[put(b"payer", b"100"), put(b"recipient", b"7")]);
     let changes = [

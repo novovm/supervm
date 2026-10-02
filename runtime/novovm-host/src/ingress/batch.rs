@@ -148,6 +148,10 @@ impl SignatureCheckedInput {
         self.input.read(key)
     }
 
+    pub(crate) fn read_many(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>> {
+        self.input.read_many(keys)
+    }
+
     pub(crate) fn encode_witness(&self, budget: CaptureBudget) -> Result<Vec<u8>> {
         self.input.encode_witness(budget)
     }

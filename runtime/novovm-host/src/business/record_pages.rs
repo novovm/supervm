@@ -6,7 +6,6 @@
 //! reinterpret the same prefix under a smaller maximum to hide old tail pages.
 //! This is a codec, not storage, authentication or permission to publish.
 
-use crate::ingress::batch::SignatureCheckedInput;
 use crate::state::frontier::DeclaredAccess;
 use crate::state::tree::StateChange;
 use anyhow::{ensure, Context, Result};
@@ -66,15 +65,7 @@ pub(crate) fn declarations(
     Ok(access)
 }
 
-pub(crate) fn read(
-    input: &SignatureCheckedInput,
-    prefix: &[u8],
-    max_bytes: usize,
-) -> Result<Vec<u8>> {
-    read_with(|key| input.read(key), prefix, max_bytes)
-}
-
-fn read_with(
+pub(super) fn read_with(
     mut read_value: impl FnMut(&[u8]) -> Result<Option<Vec<u8>>>,
     prefix: &[u8],
     max_bytes: usize,
