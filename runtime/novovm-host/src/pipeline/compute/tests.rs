@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-fn policy() -> DirectNovFeePolicy {
+pub(crate) fn policy() -> DirectNovFeePolicy {
     DirectNovFeePolicy {
         quote_ttl_ms: 15_000,
         policy_version: 1,
@@ -41,7 +41,7 @@ fn policy() -> DirectNovFeePolicy {
     }
 }
 
-fn domain() -> StorageDomain {
+pub(crate) fn domain() -> StorageDomain {
     StorageDomain {
         chain_id: 717,
         genesis_config_commitment: [1; 32],
@@ -49,7 +49,7 @@ fn domain() -> StorageDomain {
     }
 }
 
-fn context(root: NodeHash) -> BatchContext {
+pub(crate) fn context(root: NodeHash) -> BatchContext {
     BatchContext {
         chain_id: domain().chain_id,
         genesis_config_commitment: domain().genesis_config_commitment,
@@ -213,14 +213,14 @@ impl StateNodeReader for Memory {
     }
 }
 
-fn account(seed: u8) -> Account {
+pub(crate) fn account(seed: u8) -> Account {
     let key = SigningKey::from_bytes(&[seed; 32])
         .verifying_key()
         .to_bytes();
     Account::try_from(Sha256::digest(key)[12..].to_vec()).unwrap()
 }
 
-fn signed(seed: u8, amount: u128) -> Vec<u8> {
+pub(crate) fn signed(seed: u8, amount: u128) -> Vec<u8> {
     let signer = SigningKey::from_bytes(&[seed; 32]);
     let mut tx = TransferV3 {
         chain_id: domain().chain_id,

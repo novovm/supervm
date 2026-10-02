@@ -108,38 +108,73 @@ fn is_nov(asset: &str) -> bool {
     asset.trim().is_empty() || asset.trim().eq_ignore_ascii_case("NOV")
 }
 
-/// Only this compiler derives access declarations for the complete profile.
-/// A caller cannot attach arbitrary declarations, metadata or another policy
-/// to the result. Its claimed parent still needs independent chain authority.
-pub struct NovTransferPlan {
-    plan: SignatureCheckedPlan,
+/// Parent-independent, authenticated NOV business input. This compiler alone
+/// derives the typed requests and complete access declarations from the exact
+/// signature-checked body. It owns no parent, root, timestamp, state witness,
+/// balance/nonce approval, or permission to execute, persist or sign.
+///
+/// Binding consumes the body; a captured input cannot be relabelled with a new
+/// parent. The caller must independently authorize every supplied context.
+///
+/// ```compile_fail
+/// use novovm_host::business::nov_transfer_batch::NovTransferBody;
+/// use novovm_host::execution::plan::BatchContext;
+/// fn reuse(body: NovTransferBody, context: BatchContext) {
+///     let first = body.bind(context);
+///     let second = body.bind(context);
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use novovm_host::business::nov_transfer_batch::NovTransferBody;
+/// fn replace_declarations(mut body: NovTransferBody) {
+///     body.declarations.clear();
+/// }
+/// ```
+pub struct NovTransferBody {
+    batch: SignatureCheckedBatch,
     policy: DirectNovFeePolicy,
     requests: Vec<TransferFeeRequest>,
+    declarations: Vec<DeclaredAccess>,
+    effect_contract: NodeHash,
+    budget: PlanBudget,
 }
 
-impl NovTransferPlan {
-    pub fn compile(
+impl NovTransferBody {
+    /// Authentication and canonical transaction deduplication have already
+    /// succeeded in SignatureCheckedBatch. Plan limits are checked again here
+    /// before retaining compiler-derived work; the structural plan rechecks
+    /// them at binding. No parent state is read during preparation.
+    pub fn prepare(
         batch: SignatureCheckedBatch,
-        context: BatchContext,
         policy: DirectNovFeePolicy,
         budget: PlanBudget,
     ) -> Result<Self> {
+        let effect_contract = effect_contract(&policy)?;
+        let raw = batch.raw_transactions();
+        // The same size predicates as BatchPlan::new, evaluated before a
+        // parent exists. Its raw-content deduplication is already implied by
+        // canonical transaction deduplication in this privately built batch;
+        // bind still runs the canonical constructor, including all remaining
+        // context-dependent checks. No provisional context is manufactured.
         ensure!(
-            context.business_program == program_id(),
-            "unsupported NOV business program"
+            !raw.is_empty() && raw.len() <= budget.transactions,
+            "batch transaction budget exceeded or empty"
         );
-        ensure!(
-            context.semantic_version == SEMANTIC_VERSION,
-            "unsupported NOV semantic version"
-        );
-        ensure!(
-            context.receipt_codec == receipt_codec(),
-            "unsupported NOV receipt codec"
-        );
-        ensure!(
-            context.effect_contract == effect_contract(&policy)?,
-            "fee/effect policy commitment mismatch"
-        );
+        let mut bytes = 0usize;
+        for transaction in raw {
+            ensure!(
+                !transaction.is_empty() && transaction.len() <= budget.transaction_bytes,
+                "batch raw transaction size exceeds budget or empty"
+            );
+            bytes = bytes
+                .checked_add(transaction.len())
+                .context("batch body overflow")?;
+            ensure!(
+                bytes <= budget.body_bytes,
+                "batch body byte budget exceeded"
+            );
+        }
         let mut keys = BTreeSet::new();
         let mut requests = Vec::with_capacity(batch.transactions().len());
         for authenticated in batch.transactions() {
@@ -183,11 +218,69 @@ impl NovTransferPlan {
             declarations.len() <= 4096,
             "NOV effect key budget exceeds tree bound"
         );
+        ensure!(
+            declarations.len() <= budget.access_keys,
+            "batch access budget exceeded or empty"
+        );
         Ok(Self {
-            plan: batch.bind(context, declarations, budget)?,
+            batch,
             policy,
             requests,
+            declarations,
+            effect_contract,
+            budget,
         })
+    }
+
+    /// Bind only the immutable body/policy to this exact claimed context. The
+    /// existing structural constructor still checks chain, parent shape,
+    /// nonzero domain pins, height/version arithmetic, body and access limits.
+    /// Successful binding is not validation of the parent's authority or state.
+    pub fn bind(self, context: BatchContext) -> Result<NovTransferPlan> {
+        ensure!(
+            context.business_program == program_id(),
+            "unsupported NOV business program"
+        );
+        ensure!(
+            context.semantic_version == SEMANTIC_VERSION,
+            "unsupported NOV semantic version"
+        );
+        ensure!(
+            context.receipt_codec == receipt_codec(),
+            "unsupported NOV receipt codec"
+        );
+        ensure!(
+            context.effect_contract == self.effect_contract,
+            "fee/effect policy commitment mismatch"
+        );
+        Ok(NovTransferPlan {
+            plan: self.batch.bind(context, self.declarations, self.budget)?,
+            policy: self.policy,
+            requests: self.requests,
+        })
+    }
+}
+
+/// Only this compiler derives access declarations for the complete profile.
+/// A caller cannot attach arbitrary declarations, metadata or another policy
+/// to the result. Its claimed parent still needs independent chain authority.
+pub struct NovTransferPlan {
+    plan: SignatureCheckedPlan,
+    policy: DirectNovFeePolicy,
+    requests: Vec<TransferFeeRequest>,
+}
+
+impl NovTransferPlan {
+    /// Compatibility entry on the same preparation/binding path. Independent
+    /// policy/body errors can now precede context errors; no rejection or
+    /// parent-state check is removed or converted into execution authority.
+    pub fn compile(
+        batch: SignatureCheckedBatch,
+        context: BatchContext,
+        policy: DirectNovFeePolicy,
+        budget: PlanBudget,
+    ) -> Result<Self> {
+        NovTransferBody::prepare(batch, policy, budget)?.bind(context)
     }
 
     pub fn commitment(&self) -> NodeHash {
@@ -481,3 +574,7 @@ fn union(parents: &mut [usize], left: usize, right: usize) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "nov_transfer_batch/body_tests.rs"]
+mod body_tests;

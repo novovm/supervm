@@ -9,8 +9,14 @@
 //! Callers supply independently authorized parent/domain policy. Different jobs
 //! may deliberately be competing local candidates, not a selected chain.
 
+mod authentication;
 mod compute;
 mod driver;
+pub use authentication::{
+    AuthenticatedBody, AuthenticatedRequest, AuthenticatedSubmission, AuthenticationRequest,
+    AuthenticationSubmission, AuthenticationTicket, RejectedAuthenticatedSubmission,
+    RejectedAuthenticationSubmission,
+};
 
 use crate::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::business::nov_transfer_batch::ExecutionObservation;
@@ -326,9 +332,15 @@ struct Command {
     background: bool,
 }
 
+enum DriverMessage {
+    Batch(Command),
+    Authenticate(authentication::AuthenticationCommand),
+    Bind(authentication::BindCommand),
+}
+
 pub struct CandidatePipeline {
     config: PipelineConfig,
-    sender: Option<mpsc::SyncSender<Command>>,
+    sender: Option<mpsc::SyncSender<DriverMessage>>,
     worker: Option<JoinHandle<Result<()>>>,
     io: Option<Arc<IoService>>,
     queries: Option<IoReadClient>,
@@ -406,26 +418,6 @@ impl CandidatePipeline {
             Ok(bytes) => bytes,
             Err(error) => return Err(RejectedSubmission { request, error }),
         };
-        let current_reserve = if background {
-            match BatchRequest::retained_reservation(
-                self.config
-                    .authentication
-                    .body_bytes
-                    .min(self.config.plan.body_bytes),
-                &self.config,
-            ) {
-                Ok(bytes) => bytes,
-                Err(error) => return Err(RejectedSubmission { request, error }),
-            }
-        } else {
-            0
-        };
-        if bytes > self.config.max_retained_bytes {
-            return Err(RejectedSubmission {
-                request,
-                error: anyhow::anyhow!("one batch exceeds pipeline retained-content budget"),
-            });
-        }
         // Check all fallible local service prerequisites BEFORE reserving or
         // enqueueing. The worker cannot be looked up with `?` after try_send.
         let Some(sender) = self.sender.as_ref() else {
@@ -440,14 +432,60 @@ impl CandidatePipeline {
                 error: anyhow::anyhow!("pipeline worker unavailable"),
             });
         };
+        let permit = match self.reserve(bytes, background) {
+            Ok(Some(permit)) => permit,
+            Ok(None) => return Ok(Submission::Backpressured(request)),
+            Err(error) => return Err(RejectedSubmission { request, error }),
+        };
+        let (reply, receiver) = mpsc::channel();
+        let command = Command {
+            request,
+            reply,
+            permit: permit.clone(),
+            background,
+        };
+        match sender.try_send(DriverMessage::Batch(command)) {
+            Ok(()) => {
+                worker.thread().unpark();
+                Ok(Submission::Accepted(PipelineTicket {
+                    receiver,
+                    permit: Some(permit),
+                }))
+            }
+            Err(mpsc::TrySendError::Full(DriverMessage::Batch(command))) => {
+                Ok(Submission::Backpressured(command.request))
+            }
+            Err(mpsc::TrySendError::Disconnected(DriverMessage::Batch(command))) => {
+                Err(RejectedSubmission {
+                    request: command.request,
+                    error: anyhow::anyhow!("pipeline unavailable; request not accepted"),
+                })
+            }
+            Err(_) => unreachable!("typed pipeline command changed while sending"),
+        }
+    }
+
+    fn reserve(&self, bytes: usize, background: bool) -> Result<Option<Arc<Permit>>> {
+        ensure!(
+            bytes <= self.config.max_retained_bytes,
+            "one batch exceeds pipeline retained-content budget"
+        );
+        let current_reserve = if background {
+            BatchRequest::retained_reservation(
+                self.config
+                    .authentication
+                    .body_bytes
+                    .min(self.config.plan.body_bytes),
+                &self.config,
+            )?
+        } else {
+            0
+        };
         let mut usage = match self.usage.try_lock() {
             Ok(usage) => usage,
-            Err(TryLockError::WouldBlock) => return Ok(Submission::Backpressured(request)),
+            Err(TryLockError::WouldBlock) => return Ok(None),
             Err(TryLockError::Poisoned(_)) => {
-                return Err(RejectedSubmission {
-                    request,
-                    error: anyhow::anyhow!("pipeline admission accounting poisoned"),
-                });
+                anyhow::bail!("pipeline admission accounting poisoned");
             }
         };
         if usage.batches >= self.config.max_batches
@@ -462,40 +500,17 @@ impl CandidatePipeline {
                             .saturating_sub(usage.bytes)
                             .saturating_sub(bytes)))
         {
-            return Ok(Submission::Backpressured(request));
+            return Ok(None);
         }
         usage.batches += 1;
         usage.bytes += bytes;
         usage.background += usize::from(background);
         drop(usage);
-        let permit = Arc::new(Permit {
+        Ok(Some(Arc::new(Permit {
             usage: self.usage.clone(),
             bytes,
             background,
-        });
-        let (reply, receiver) = mpsc::channel();
-        let command = Command {
-            request,
-            reply,
-            permit: permit.clone(),
-            background,
-        };
-        match sender.try_send(command) {
-            Ok(()) => {
-                worker.thread().unpark();
-                Ok(Submission::Accepted(PipelineTicket {
-                    receiver,
-                    permit: Some(permit),
-                }))
-            }
-            Err(mpsc::TrySendError::Full(command)) => {
-                Ok(Submission::Backpressured(command.request))
-            }
-            Err(mpsc::TrySendError::Disconnected(command)) => Err(RejectedSubmission {
-                request: command.request,
-                error: anyhow::anyhow!("pipeline unavailable; request not accepted"),
-            }),
-        }
+        })))
     }
 
     pub fn try_read_value(

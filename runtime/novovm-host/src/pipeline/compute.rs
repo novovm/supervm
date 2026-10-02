@@ -5,7 +5,7 @@
 
 use crate::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::business::nov_transfer_batch::{
-    ExecutionObservation, NovCapturedInput, NovTransferPlan,
+    ExecutionObservation, NovCapturedInput, NovTransferBody, NovTransferPlan,
 };
 use crate::execution::plan::{BatchContext, PlanBudget};
 use crate::ingress::batch::{authenticate_batch, AuthenticationBudget};
@@ -33,6 +33,16 @@ pub(crate) struct PrepareRequest {
     pub raw_transactions: Vec<Vec<u8>>,
     pub context: BatchContext,
     pub policy: DirectNovFeePolicy,
+}
+
+pub(crate) struct AuthenticateRequest {
+    pub raw_transactions: Vec<Vec<u8>>,
+    pub policy: DirectNovFeePolicy,
+}
+
+pub(crate) struct BindRequest {
+    pub body: NovTransferBody,
+    pub context: BatchContext,
 }
 
 pub(crate) struct ComputedCandidate {
@@ -77,6 +87,14 @@ impl<T> ComputeTicket<T> {
 }
 
 enum Command {
+    Authenticate {
+        request: Box<AuthenticateRequest>,
+        reply: mpsc::Sender<Result<NovTransferBody>>,
+    },
+    Bind {
+        request: Box<BindRequest>,
+        reply: mpsc::Sender<Result<NovTransferPlan>>,
+    },
     Prepare {
         request: Box<PrepareRequest>,
         reply: mpsc::Sender<Result<NovTransferPlan>>,
@@ -98,6 +116,48 @@ pub(crate) struct ComputeOwner {
 }
 
 impl ComputeOwner {
+    pub(crate) fn try_authenticate(
+        &self,
+        request: AuthenticateRequest,
+    ) -> Result<Submission<AuthenticateRequest, NovTransferBody>> {
+        let (reply, receiver) = mpsc::channel();
+        match self.sender.try_send(Command::Authenticate {
+            request: Box::new(request),
+            reply,
+        }) {
+            Ok(()) => Ok(Submission::Accepted(ComputeTicket {
+                receiver,
+                consumed: false,
+            })),
+            Err(mpsc::TrySendError::Full(Command::Authenticate { request, .. })) => {
+                Ok(Submission::Backpressured(*request))
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => anyhow::bail!("compute owner unavailable"),
+            Err(mpsc::TrySendError::Full(_)) => unreachable!("typed command changed while sending"),
+        }
+    }
+
+    pub(crate) fn try_bind(
+        &self,
+        request: BindRequest,
+    ) -> Result<Submission<BindRequest, NovTransferPlan>> {
+        let (reply, receiver) = mpsc::channel();
+        match self.sender.try_send(Command::Bind {
+            request: Box::new(request),
+            reply,
+        }) {
+            Ok(()) => Ok(Submission::Accepted(ComputeTicket {
+                receiver,
+                consumed: false,
+            })),
+            Err(mpsc::TrySendError::Full(Command::Bind { request, .. })) => {
+                Ok(Submission::Backpressured(*request))
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => anyhow::bail!("compute owner unavailable"),
+            Err(mpsc::TrySendError::Full(_)) => unreachable!("typed command changed while sending"),
+        }
+    }
+
     /// Startup only. The native session is constructed AND destroyed on this
     /// thread, never transferred or reopened between batches. The pipeline owns
     /// end-to-end logical byte/request permits, including unconsumed replies.
@@ -241,6 +301,22 @@ fn prepare(
     request: PrepareRequest,
 ) -> Result<NovTransferPlan> {
     domain_matches(config.domain, &request.context)?;
+    let body = authenticate(
+        session,
+        config,
+        AuthenticateRequest {
+            raw_transactions: request.raw_transactions,
+            policy: request.policy,
+        },
+    )?;
+    body.bind(request.context)
+}
+
+fn authenticate(
+    session: &mut ComputeSession,
+    config: &ComputeConfig,
+    request: AuthenticateRequest,
+) -> Result<NovTransferBody> {
     let batch = authenticate_batch(
         session,
         config.domain.chain_id,
@@ -248,7 +324,7 @@ fn prepare(
         config.authentication,
         config.timeout,
     )?;
-    NovTransferPlan::compile(batch, request.context, request.policy, config.plan)
+    NovTransferBody::prepare(batch, request.policy, config.plan)
 }
 
 fn execute(
@@ -275,6 +351,17 @@ fn run_owner(
     let mut panicked = false;
     while let Ok(command) = receiver.recv() {
         match command {
+            Command::Authenticate { request, reply } => {
+                let result = run_checked(&mut panicked, || authenticate(session, config, *request));
+                let _ = reply.send(result);
+            }
+            Command::Bind { request, reply } => {
+                let result = run_checked(&mut panicked, || {
+                    domain_matches(config.domain, &request.context)?;
+                    request.body.bind(request.context)
+                });
+                let _ = reply.send(result);
+            }
             Command::Prepare { request, reply } => {
                 let result = run_checked(&mut panicked, || prepare(session, config, *request));
                 let _ = reply.send(result);

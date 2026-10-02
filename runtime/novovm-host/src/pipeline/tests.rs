@@ -4,12 +4,12 @@ use crate::state::tree::{empty_root, stage_state_update, StateChange, StateNodeR
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-fn request(root: NodeHash) -> BatchRequest {
+pub(super) fn request(root: NodeHash) -> BatchRequest {
     let input = compute::tests::control_test_request(root);
     BatchRequest::new(input.raw_transactions, input.context, input.policy).unwrap()
 }
 
-fn config(database: PathBuf) -> PipelineConfig {
+pub(super) fn config(database: PathBuf) -> PipelineConfig {
     let context = request(empty_root()).request.context;
     PipelineConfig {
         store: StoreConfig {
@@ -48,7 +48,9 @@ fn config(database: PathBuf) -> PipelineConfig {
     }
 }
 
-fn inert_pipeline(config: PipelineConfig) -> (CandidatePipeline, mpsc::Receiver<Command>) {
+pub(super) fn inert_pipeline(
+    config: PipelineConfig,
+) -> (CandidatePipeline, mpsc::Receiver<DriverMessage>) {
     let (sender, receiver) = mpsc::sync_channel(1);
     (
         CandidatePipeline {
@@ -69,6 +71,13 @@ fn admitted(pipeline: &CandidatePipeline, request: BatchRequest) -> PipelineTick
     match pipeline.try_submit(request).unwrap() {
         Submission::Accepted(ticket) => ticket,
         Submission::Backpressured(_) => panic!("unexpected test backpressure"),
+    }
+}
+
+fn recv_batch(receiver: &mpsc::Receiver<DriverMessage>) -> Command {
+    match receiver.recv().unwrap() {
+        DriverMessage::Batch(command) => command,
+        _ => panic!("expected ordinary batch command"),
     }
 }
 
@@ -106,7 +115,7 @@ fn background_admission_reserves_an_ordinary_slot_and_worst_case_content() {
     else {
         panic!("exact reservation should fit")
     };
-    let command = receiver.recv().unwrap();
+    let command = recv_batch(&receiver);
     assert!(command.background);
     assert!(matches!(
         pipeline
@@ -115,7 +124,7 @@ fn background_admission_reserves_an_ordinary_slot_and_worst_case_content() {
         Submission::Backpressured(_)
     ));
     let ordinary = admitted(&pipeline, request(empty_root()));
-    let normal_command = receiver.recv().unwrap();
+    let normal_command = recv_batch(&receiver);
     assert!(!normal_command.background);
     assert_eq!(pipeline.usage.lock().unwrap().batches, 2);
     drop(background);
@@ -138,7 +147,7 @@ fn background_reply_and_abandoned_ticket_never_release_live_work_early() {
     else {
         panic!("expected background admission")
     };
-    let command = receiver.recv().unwrap();
+    let command = recv_batch(&receiver);
     command
         .reply
         .send(Err(anyhow::anyhow!("fixture rejection")))
@@ -162,7 +171,7 @@ fn background_reply_and_abandoned_ticket_never_release_live_work_early() {
     };
     drop(ticket);
     assert_eq!(pipeline.usage.lock().unwrap().background, 1);
-    let command = receiver.recv().unwrap();
+    let command = recv_batch(&receiver);
     drop(command);
     assert_eq!(pipeline.usage.lock().unwrap().background, 0);
     assert_eq!(pipeline.usage.lock().unwrap().bytes, 0);
@@ -174,7 +183,7 @@ fn unconsumed_error_reply_and_lost_ticket_keep_whole_job_reservations() {
     let input = request(empty_root());
     let bytes = input.reservation(&pipeline.config).unwrap();
     let mut ticket = admitted(&pipeline, input);
-    let command = receiver.recv().unwrap();
+    let command = recv_batch(&receiver);
     command
         .reply
         .send(Err(anyhow::anyhow!("explicit rejection")))
@@ -192,7 +201,7 @@ fn unconsumed_error_reply_and_lost_ticket_keep_whole_job_reservations() {
     let ticket = admitted(&pipeline, request(empty_root()));
     drop(ticket);
     assert_eq!(pipeline.usage.lock().unwrap().batches, 1);
-    let command = receiver.recv().unwrap();
+    let command = recv_batch(&receiver);
     assert_eq!(command.request.transaction_count, 1);
     drop(command);
     assert_eq!(pipeline.usage.lock().unwrap().batches, 0);
@@ -378,7 +387,7 @@ fn owned_full_and_busy_admission_preserve_allocation_and_release_unused_permits(
     };
     assert_eq!(allocation(&returned), expected);
     assert_eq!(accounting(&pipeline), before);
-    let command = receiver.recv().unwrap();
+    let command = recv_batch(&receiver);
     drop(command);
     drop(first);
     assert_eq!(accounting(&pipeline), (0, 0));
@@ -407,7 +416,7 @@ fn owned_success_is_accepted_even_when_the_reply_is_later_lost() {
     let Submission::Accepted(mut ticket) = pipeline.try_submit_owned(input).unwrap() else {
         panic!("empty queue rejected input");
     };
-    let command = receiver.recv().unwrap();
+    let command = recv_batch(&receiver);
     assert_eq!(allocation(&command.request), expected);
     assert_eq!(accounting(&pipeline), (1, bytes));
     drop(command);

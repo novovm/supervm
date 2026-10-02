@@ -6,6 +6,26 @@
 
 ## 最新短交接
 
+- **当前切片：父状态无关鉴权与精确父绑定。** 基于`0bca25d`（远端CI
+  `37016049228`双平台成功），仅11个新runtime源/测试与三文档；旧49草稿
+  保留，compute部分提交不带旧diagnostics。`NovTransferBody`提前推导完整
+  业务输入；两阶段CandidatePipeline在同一驻留AOEM先真实验签，再消费式
+  绑定精确context，走原capture/execute/persist。全阶段原额度跨在途、
+  未消费结果和外持body保留，背景最多一项并预留当前批；没有重复验签、
+  新AOEM实例、nonce租约或签票权限。新实例拒绝旧实例body，双父完整经济
+  对照与真实数据库重开通过。最终干净快照真库Release Windows625+8、
+  Linux624+8，fmt/strict Clippy/native-free library和隔离检查通过。
+  快照`target/runtime-rebuild/candidate-0bca25d-preauth-dev-v1/`，最终日志
+  `preauth-workspace-*-v2.log`；首轮未用import及误用native-free all-targets
+  的失败保留，未放宽检查。详见台账顶部，本次远端CI推送后另核。
+  **controller/网络尚未提前预鉴权，不签收整链提速。** 独立0bca25d诊断
+  64高的子批提前接纳约52–54次，而真实业务回调在父ACK前仅4/1/1/3次；
+  每节点捕获链段2.07–2.21秒（含排队/I/O），验签0.33–0.38秒，不可把
+  所有等待当CPU热点。A下一步接有界原文预发/预鉴权到现有controller与
+  HostChannel，按精确正文和父关系消费，不绕过当前块优先/陈旧结果退休；
+  同时继续解除实际输入捕获的强制串联。B隐私/PQ、S4后端明确授权阻断、
+  Execute/实体多机/持续容量等完整目标不缩减，不创建分支或生产部署。
+
 - **当前切片：一层后继流水线与父最终性重叠。** 基于`ed22c5d`，前置CI
   `37008042238` Linux5分24秒/Windows12分57秒成功。仅8个新runtime源/测试
   文件与三文档，旧host11/legacy38草稿保留，controller/load从干净快照部分

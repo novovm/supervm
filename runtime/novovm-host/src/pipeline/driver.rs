@@ -1,8 +1,11 @@
 use super::compute::{
-    ComputeConfig, ComputeOwner, ComputeTicket, ComputedCandidate, PrepareRequest,
+    AuthenticateRequest, BindRequest, ComputeConfig, ComputeOwner, ComputeTicket,
+    ComputedCandidate, PrepareRequest,
 };
 use super::*;
-use crate::business::nov_transfer_batch::{NovCapturedInput, NovTransferCapture, NovTransferPlan};
+use crate::business::nov_transfer_batch::{
+    NovCapturedInput, NovTransferBody, NovTransferCapture, NovTransferPlan,
+};
 use crate::persistence::io::NodeReadReply;
 use crate::state::frontier::CaptureStep;
 use std::collections::VecDeque;
@@ -10,7 +13,7 @@ use std::collections::VecDeque;
 pub(super) fn start(
     config: PipelineConfig,
     mode: OpenMode,
-    receiver: mpsc::Receiver<Command>,
+    receiver: mpsc::Receiver<DriverMessage>,
     ready: mpsc::SyncSender<Result<Arc<IoService>>>,
     identity: Arc<()>,
 ) -> Result<()> {
@@ -54,6 +57,9 @@ pub(super) fn start(
 }
 
 enum Stage {
+    Authenticate(Box<AuthenticateRequest>),
+    Authenticating(ComputeTicket<NovTransferBody>),
+    Bind(Box<BindRequest>),
     Prepare(Box<PrepareRequest>),
     Preparing(ComputeTicket<NovTransferPlan>),
     Capture(Box<NovTransferCapture>),
@@ -77,7 +83,11 @@ enum Stage {
 impl Stage {
     fn label(&self) -> FailureStage {
         match self {
-            Self::Prepare(_) | Self::Preparing(_) => FailureStage::Prepare,
+            Self::Authenticate(_)
+            | Self::Authenticating(_)
+            | Self::Bind(_)
+            | Self::Prepare(_)
+            | Self::Preparing(_) => FailureStage::Prepare,
             Self::Capture(_) | Self::Reading { .. } => FailureStage::Capture,
             Self::Execute(_) | Self::Executing(_) => FailureStage::Execute,
             Self::Persist { .. } | Self::Persisting { .. } => FailureStage::Persist,
@@ -88,19 +98,56 @@ impl Stage {
 struct Job {
     stage: Stage,
     candidate_id: Option<NodeHash>,
-    reply: mpsc::Sender<Result<DurableBatch>>,
+    reply: Reply,
     _permit: Arc<Permit>,
     background: bool,
 }
 
-impl From<Command> for Job {
-    fn from(command: Command) -> Self {
-        Self {
-            stage: Stage::Prepare(command.request.request),
-            candidate_id: None,
-            reply: command.reply,
-            _permit: command.permit,
-            background: command.background,
+enum Reply {
+    Durable(mpsc::Sender<Result<DurableBatch>>),
+    Authenticated(mpsc::Sender<Result<AuthenticatedBody>>),
+}
+
+impl Reply {
+    fn fail(self, error: anyhow::Error) {
+        match self {
+            Self::Durable(reply) => {
+                let _ = reply.send(Err(error));
+            }
+            Self::Authenticated(reply) => {
+                let _ = reply.send(Err(error));
+            }
+        }
+    }
+}
+
+impl From<DriverMessage> for Job {
+    fn from(message: DriverMessage) -> Self {
+        match message {
+            DriverMessage::Batch(command) => Self {
+                stage: Stage::Prepare(command.request.request),
+                candidate_id: None,
+                reply: Reply::Durable(command.reply),
+                _permit: command.permit,
+                background: command.background,
+            },
+            DriverMessage::Authenticate(command) => Self {
+                stage: Stage::Authenticate(command.request.request),
+                candidate_id: None,
+                reply: Reply::Authenticated(command.reply),
+                _permit: command.permit,
+                background: true,
+            },
+            DriverMessage::Bind(command) => Self {
+                stage: Stage::Bind(Box::new(BindRequest {
+                    body: *command.request.body.body,
+                    context: *command.request.context,
+                })),
+                candidate_id: None,
+                reply: Reply::Durable(command.reply),
+                _permit: command.request.body.permit,
+                background: false,
+            },
         }
     }
 }
@@ -108,6 +155,7 @@ impl From<Command> for Job {
 enum Advancement {
     Pending { stage: Stage, progressed: bool },
     Complete(DurableBatch),
+    Authenticated(NovTransferBody),
 }
 
 fn pending(stage: Stage, progressed: bool) -> Advancement {
@@ -124,6 +172,25 @@ fn advance(
 ) -> Result<Advancement> {
     use super::compute::Submission as ComputeSubmission;
     match stage {
+        Stage::Authenticate(request) => Ok(match compute.try_authenticate(*request)? {
+            ComputeSubmission::Accepted(ticket) => pending(Stage::Authenticating(ticket), true),
+            ComputeSubmission::Backpressured(request) => {
+                pending(Stage::Authenticate(Box::new(request)), false)
+            }
+        }),
+        Stage::Authenticating(mut ticket) => {
+            if let Some(body) = ticket.try_take()? {
+                Ok(Advancement::Authenticated(body))
+            } else {
+                Ok(pending(Stage::Authenticating(ticket), false))
+            }
+        }
+        Stage::Bind(request) => Ok(match compute.try_bind(*request)? {
+            ComputeSubmission::Accepted(ticket) => pending(Stage::Preparing(ticket), true),
+            ComputeSubmission::Backpressured(request) => {
+                pending(Stage::Bind(Box::new(request)), false)
+            }
+        }),
         Stage::Prepare(request) => Ok(match compute.try_prepare(*request)? {
             ComputeSubmission::Accepted(ticket) => pending(Stage::Preparing(ticket), true),
             ComputeSubmission::Backpressured(request) => {
@@ -254,7 +321,7 @@ pub(super) fn run(
     config: &PipelineConfig,
     io: &IoService,
     compute: &ComputeOwner,
-    receiver: mpsc::Receiver<Command>,
+    receiver: mpsc::Receiver<DriverMessage>,
     identity: &Arc<()>,
 ) {
     let mut jobs = VecDeque::<Job>::new();
@@ -303,7 +370,25 @@ pub(super) fn run(
                     });
                 }
                 Ok(Advancement::Complete(output)) => {
-                    let _ = reply.send(Ok(output));
+                    if let Reply::Durable(reply) = reply {
+                        let _ = reply.send(Ok(output));
+                    } else {
+                        reply.fail(anyhow::anyhow!(
+                            "durable result for authentication-only request"
+                        ));
+                    }
+                    progressed = true;
+                }
+                Ok(Advancement::Authenticated(body)) => {
+                    if let Reply::Authenticated(reply) = reply {
+                        let _ = reply.send(Ok(AuthenticatedBody {
+                            body: Box::new(body),
+                            owner: identity.clone(),
+                            permit: _permit,
+                        }));
+                    } else {
+                        reply.fail(anyhow::anyhow!("authentication result for durable request"));
+                    }
                     progressed = true;
                 }
                 Err(error) => {
@@ -312,7 +397,7 @@ pub(super) fn run(
                         candidate_id,
                         message: format!("{error:#}"),
                     };
-                    let _ = reply.send(Err(error.into()));
+                    reply.fail(error.into());
                     progressed = true;
                 }
             }

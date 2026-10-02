@@ -8,6 +8,60 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：父状态无关鉴权与精确父绑定（2026-10-02）
+
+基于`0bca25d`；其远端CI `37016049228`双平台成功。本刀仅11个新runtime
+源/测试与既有三文档，旧host11/legacy38保留，compute只提交新差异。
+
+先对0bca25d干净导出做一次独立64×1024诊断：四进程、WSL2、24逻辑CPU、
+真实WSS/AOEM与完整冷经济oracle PASS，8.409863秒/7792.754493 TPS；带诊断
+开销，不与前版非诊断样本比较提速。每节点64个candidate/job精确关联、63对
+完整父点，事件1334/1333/1333/1333、0丢失。父decision ACK前接纳/Prepare
+约54/52/53/52次，真实首业务回调仅4/1/1/3次，AOEM返回2/0/0/2、耐久
+完成1/0/0/2。每节点验签0.327–0.379秒；plan→capture完成2.069–2.214秒，
+含增量I/O与排队；AOEM API0.827–0.880秒，finish0.754–0.804秒为其嵌套
+部分，不能相加。不同进程时钟不相减，接纳时刻用enqueue前后区间处理。
+报告在`target/runtime-rebuild/candidate-0bca25d-successor-profile-v1/`
+的`SUCCESSOR_PROFILE_REPORT.md`，原始目录为其内
+`target/runtime-rebuild/controller-load-1024-412-1790950434457956118/`。
+诊断binary SHA256 `d28fecef57df8f8f0e5b85aeb41c1f7bbfae63c7904266dbd9fd03eb9cce42af`。
+
+实现路径：`NovTransferBody::prepare`只接已验签body、固定policy与预算，
+提前推导完整请求/声明，无父根/时间/余额/nonce授权；消费式bind仍走原
+BatchPlan全部链域/程序/效应/codec/父形状验证，状态须重新精确capture。
+原compile和普通pipeline复用这条路径。新增`try_authenticate_owned`及
+`try_submit_authenticated_owned`均接同一驻留compute owner；绑定不重复
+验签，不开启额外引擎。背景与原后继共用一个许可，预留完整普通批；原
+Permit跨真实在途、未消费reply、外持body、bind和最终回执连续保留。
+错误/队满退回原件，新pipeline（即使同库重开）拒绝旧owner body。
+
+新增16项测试与2项compile-fail：原编译器对照/预算/签名/错误context，
+双精确父余额/nonce/费用/回执结果，channel丢票/回压/未消费额度/owner，
+真实AOEM坏签后继续、错误程序拒绝、预鉴权不持久化候选、查询与数据库
+重开完整经济投影、外持body不阻塞shutdown、新实例拒绝旧body。
+真实native回调被扣住时丢认证ticket的专项未做；channel门不冒充该证据。
+
+最终源快照`target/runtime-rebuild/candidate-0bca25d-preauth-dev-v1/`：
+8个tracked改动+3新文件，其他142个tracked runtime文件等于HEAD；旧46项
+无重叠草稿hash未变，controller/load未改，compute旧diagnostics不混入。
+真实库Release Windows **625+8**、Linux **624+8**，零失败/零忽略；Host372，
+AOEM31、Network211/210、11集成、8文档。fmt、双平台严格Clippy及native-free
+library、三成员无legacy隔离通过。最终日志为快照内
+`preauth-workspace-{windows,linux}-v2.log`、`preauth-clippy-*-v2.log`、
+`preauth-proof-lib-clippy-*.log`。首轮unused import使strict Clippy失败已修；
+误将native-free用于all-targets导致native集成测试编译失败，未修改这些
+集成门，改按CI既定`--lib --no-default-features`检查，原失败日志保留。
+Windows test binary SHA256 `509412c4750be68382d09cbae19216286a0f84d8c0f6d0a9c3a58dc642329c7f`；
+Linux `de89eff9579288f3dfac70f102f7ea2fb1aba0004914a0b00047cde91288b9d3`。
+AOEM随包库不变。本次远端CI推送后单独核对。
+
+限制：controller/网络尚未使用提前鉴权入口，无本刀主链TPS改善声明。
+背景绑定后按普通优先推进，但原background许可仍占至完成回执消费，不能
+说可同时再预鉴权一批；AOEM已接受图仍不可抢占。Host逻辑额度不是异常
+native保留内存硬上限。下一步接现有controller/HostChannel有界提前原文，
+按精确正文/父点消费，并继续解除捕获强制串联，不绕过经济或共识。
+S4后端授权、Execute、隐私/PQ、实体多机/持续容量/生产授权等总目标仍未完成。
+
 ## 设备 A：一层后继流水线与父最终性重叠（2026-10-02）
 
 基于`ed22c5d`，其CI `37008042238`两项均成功：Linux5分24秒、Windows12分

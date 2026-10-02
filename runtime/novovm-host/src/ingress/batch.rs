@@ -33,6 +33,12 @@ pub struct SignatureCheckedBatch {
 }
 
 impl SignatureCheckedBatch {
+    /// Immutable authenticated bytes; business preparation may check its own
+    /// bounds before a parent context exists. This grants no state authority.
+    pub(crate) fn raw_transactions(&self) -> &[Vec<u8>] {
+        &self.raw_transactions
+    }
+
     pub fn transactions(&self) -> &[SignatureCheckedTransfer] {
         &self.transactions
     }

@@ -8,7 +8,7 @@ fn job(marker: u8, background: bool) -> Job {
             super::super::compute::tests::control_test_request([marker; 32]),
         )),
         candidate_id: Some([marker; 32]),
-        reply,
+        reply: Reply::Durable(reply),
         _permit: Arc::new(Permit {
             usage: Arc::new(Mutex::new(Usage {
                 batches: 1,
