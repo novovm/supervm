@@ -82,7 +82,64 @@ fn specimens() -> Vec<Message> {
             body_id,
         },
         Message::RequestBody { body_id },
+        Message::RequestDecision { context },
     ]
+}
+
+#[test]
+fn decision_request_binds_exact_parent_and_rejects_unbounded_or_ambiguous_input() {
+    let Message::RequestDecision { context } = specimens().pop().unwrap() else {
+        panic!("missing request specimen");
+    };
+    let message = Message::RequestDecision { context };
+    let bytes = encode(&message, limits()).unwrap();
+    assert_eq!(bytes.len(), PREFIX_BYTES + 3 * 8 + 5 * 32);
+    for end in 0..bytes.len() {
+        assert!(decode(&bytes[..end], limits()).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(decode(&trailing, limits()).is_err());
+    assert!(encode(
+        &Message::RequestDecision {
+            context: ConsensusContext {
+                height: 0,
+                ..context
+            }
+        },
+        limits()
+    )
+    .is_err());
+    let next = ConsensusContext {
+        height: 2,
+        parent_block_hash: [8; 32],
+        parent_decision_hash: [9; 32],
+        ..context
+    };
+    for changed in [
+        next,
+        ConsensusContext {
+            parent_decision_hash: [10; 32],
+            ..next
+        },
+    ] {
+        let encoded = encode(&Message::RequestDecision { context: changed }, limits()).unwrap();
+        assert_ne!(encoded, bytes);
+        assert_eq!(
+            decode(&encoded, limits()).unwrap(),
+            Message::RequestDecision { context: changed }
+        );
+    }
+    assert!(decode(
+        &bytes,
+        DecodeLimits {
+            message_bytes: bytes.len() - 1,
+            body_bytes: 1,
+            transaction_bytes: 1,
+            transactions: 1
+        }
+    )
+    .is_err());
 }
 
 #[test]

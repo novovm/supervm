@@ -5,7 +5,7 @@
 
 use super::journal::codec::decode_archived_decision;
 use super::statement::{BlockStatement, ParentPoint};
-use super::wire::{Context as ConsensusContext, Hash, Phase, ValidatorSet};
+use super::wire::{Context as ConsensusContext, Hash, Phase, Proposal, Quorum, ValidatorSet};
 use crate::persistence::io::IoTicket;
 use crate::persistence::metadata::{MetaKey, MetadataSnapshot};
 use crate::persistence::{PreparedCandidate, StoredCandidate};
@@ -206,6 +206,10 @@ impl ChainRecord {
     }
 
     fn verify_outbox(&self, bytes: &[u8], set: &ValidatorSet) -> Result<()> {
+        self.checked_outbox(bytes, set).map(|_| ())
+    }
+
+    fn checked_outbox(&self, bytes: &[u8], set: &ValidatorSet) -> Result<(Proposal, Quorum)> {
         ensure!(
             archived_outbox_digest(bytes) == self.outbox_digest,
             "chain decision outbox digest mismatch"
@@ -216,17 +220,17 @@ impl ChainRecord {
         );
         let (proposal, quorum) = decode_archived_decision(bytes, self.outbox_revision)?;
         proposal.verify(set)?;
-        let quorum = quorum.verify(set)?;
+        let verified = quorum.verify(set)?;
         ensure!(
             proposal.context == self.context
                 && proposal.value == self.point.block_hash
-                && quorum.context() == &self.context
-                && quorum.round() == proposal.round
-                && quorum.phase() == Phase::Precommit
-                && quorum.value() == Some(self.point.block_hash),
+                && verified.context() == &self.context
+                && verified.round() == proposal.round
+                && verified.phase() == Phase::Precommit
+                && verified.value() == Some(self.point.block_hash),
             "archived proposal/precommit certificate does not bind chain value"
         );
-        Ok(())
+        Ok((proposal, quorum))
     }
 
     fn verify_candidate(&self, stored: &StoredCandidate, set: &ValidatorSet) -> Result<()> {
@@ -319,6 +323,249 @@ fn decode_local<T: Serialize + DeserializeOwned>(magic: &[u8; 8], bytes: &[u8]) 
         "noncanonical chain metadata"
     );
     Ok(value)
+}
+
+/// Read-only replay material from a locally verified decided prefix. This is
+/// neither a `DurableCandidate` nor permission to sign, execute or publish.
+/// Clone raw bodies and encode transport messages on the assembly owner, not
+/// in the consensus poll loop.
+pub struct ArchiveBlock {
+    stored: Arc<StoredCandidate>,
+    proposal: Proposal,
+    certificate: Quorum,
+    parent: ParentPoint,
+    point: ParentPoint,
+}
+
+impl ArchiveBlock {
+    pub fn stored(&self) -> &Arc<StoredCandidate> {
+        &self.stored
+    }
+    pub fn proposal(&self) -> &Proposal {
+        &self.proposal
+    }
+    pub fn certificate(&self) -> &Quorum {
+        &self.certificate
+    }
+    pub fn parent(&self) -> ParentPoint {
+        self.parent
+    }
+    pub fn point(&self) -> ParentPoint {
+        self.point
+    }
+    pub fn context(&self) -> ConsensusContext {
+        self.proposal.context
+    }
+}
+
+struct ArchiveEvidence {
+    record: ChainRecord,
+    proposal: Proposal,
+    certificate: Quorum,
+}
+
+enum ArchiveStage {
+    Head(Option<IoTicket<MetadataSnapshot>>),
+    Block {
+        head: Head,
+        ticket: Option<IoTicket<MetadataSnapshot>>,
+    },
+    Outbox {
+        record: Box<ChainRecord>,
+        ticket: Option<IoTicket<MetadataSnapshot>>,
+    },
+    Candidate {
+        evidence: Box<ArchiveEvidence>,
+        ticket: Option<IoTicket<Option<StoredCandidate>>>,
+    },
+    Finished,
+}
+
+/// Bounded historical replay, not cold chain recovery. The caller MUST supply
+/// its locally validated durable head and local fixed chain/epoch/set context;
+/// a peer's advertised head is not an acceptable ceiling. Ancestor membership
+/// is inherited from that already verified local prefix, not established here
+/// by scanning history. Only the requested block and its exact proof/content
+/// are read. No API manufactures a current-session execution capability.
+pub struct ArchiveRead {
+    height: u64,
+    ceiling: ParentPoint,
+    context: ConsensusContext,
+    set: Arc<ValidatorSet>,
+    owner: Option<Arc<()>>,
+    stage: ArchiveStage,
+}
+
+impl ArchiveRead {
+    pub fn new(
+        height: u64,
+        ceiling: ParentPoint,
+        context: ConsensusContext,
+        set: Arc<ValidatorSet>,
+    ) -> Result<Self> {
+        context.validate(&set)?;
+        ensure!(
+            height != 0 && height <= ceiling.height && height >= set.activation_height(),
+            "archive request is outside locally validated decided prefix"
+        );
+        ensure!(
+            ceiling.block_hash != [0; 32]
+                && ceiling.state_root != [0; 32]
+                && ceiling.receipt_batch_commitment != [0; 32]
+                && ceiling.state_version != 0
+                && ceiling.decision_hash != [0; 32],
+            "archive ceiling is not a decided head"
+        );
+        Ok(Self {
+            height,
+            ceiling,
+            context,
+            set,
+            owner: None,
+            stage: ArchiveStage::Head(None),
+        })
+    }
+
+    /// `None` is pending/backpressure; `Some(None)` is a missing requested
+    /// block; `Some(Some(block))` is checked replay material. A present block
+    /// with missing/damaged outbox or candidate is an error, never a cache miss.
+    /// Every poll advances at most one I/O stage. Completion/error is terminal.
+    /// Candidate recovery uses the existing bounded I/O-owner operation; its
+    /// complete content verification is not incremental within that operation.
+    pub fn poll(&mut self, pipeline: &CandidatePipeline) -> Result<Option<Option<ArchiveBlock>>> {
+        ensure!(
+            !matches!(self.stage, ArchiveStage::Finished),
+            "archive read finished or failed; create an explicit new request"
+        );
+        let stage = std::mem::replace(&mut self.stage, ArchiveStage::Finished);
+        let domain = pipeline.storage_domain();
+        ensure!(
+            domain.chain_id == self.context.chain_id
+                && domain.genesis_config_commitment == self.context.genesis_config_commitment
+                && domain.protocol_commitment == self.context.protocol_commitment,
+            "archive read storage domain mismatch"
+        );
+        let owner = pipeline.owner_identity();
+        if let Some(expected) = &self.owner {
+            ensure!(
+                Arc::ptr_eq(expected, &owner),
+                "archive read pipeline changed"
+            );
+        } else {
+            self.owner = Some(owner);
+        }
+        match stage {
+            ArchiveStage::Head(mut ticket) => {
+                if ticket.is_none() {
+                    ticket = pipeline.try_read_consensus_metadata(vec![MetaKey::ChainHead])?;
+                }
+                let Some(reply) = take_reply(&mut ticket)? else {
+                    self.stage = ArchiveStage::Head(ticket);
+                    return Ok(None);
+                };
+                let head = Head::decode(&required_value(reply, "archive durable head missing")?)?;
+                self.check_head(&head)?;
+                self.stage = ArchiveStage::Block { head, ticket: None };
+                Ok(None)
+            }
+            ArchiveStage::Block { head, mut ticket } => {
+                if ticket.is_none() {
+                    ticket = pipeline.try_read_consensus_metadata(vec![MetaKey::ChainBlock {
+                        height: self.height,
+                    }])?;
+                }
+                let Some(mut reply) = take_reply(&mut ticket)? else {
+                    self.stage = ArchiveStage::Block { head, ticket };
+                    return Ok(None);
+                };
+                ensure!(
+                    reply.values.len() == 1,
+                    "archive block reply count mismatch"
+                );
+                let Some(bytes) = reply.values.pop().flatten() else {
+                    return Ok(Some(None));
+                };
+                let record = ChainRecord::decode(&bytes)?;
+                self.check_record(&record, &head)?;
+                self.stage = ArchiveStage::Outbox {
+                    record: Box::new(record),
+                    ticket: None,
+                };
+                Ok(None)
+            }
+            ArchiveStage::Outbox { record, mut ticket } => {
+                if ticket.is_none() {
+                    ticket = pipeline.try_read_consensus_metadata(vec![record.outbox_key()])?;
+                }
+                let Some(reply) = take_reply(&mut ticket)? else {
+                    self.stage = ArchiveStage::Outbox { record, ticket };
+                    return Ok(None);
+                };
+                let (proposal, certificate) = record.checked_outbox(
+                    &required_value(reply, "archive decision outbox missing")?,
+                    &self.set,
+                )?;
+                self.stage = ArchiveStage::Candidate {
+                    evidence: Box::new(ArchiveEvidence {
+                        record: *record,
+                        proposal,
+                        certificate,
+                    }),
+                    ticket: None,
+                };
+                Ok(None)
+            }
+            ArchiveStage::Candidate {
+                evidence,
+                mut ticket,
+            } => {
+                if ticket.is_none() {
+                    ticket =
+                        pipeline.try_recover_consensus_candidate(evidence.record.candidate_id())?;
+                }
+                let Some(reply) = take_reply(&mut ticket)? else {
+                    self.stage = ArchiveStage::Candidate { evidence, ticket };
+                    return Ok(None);
+                };
+                let stored = reply.context("archive decided candidate missing")?;
+                evidence.record.verify_candidate(&stored, &self.set)?;
+                Ok(Some(Some(ArchiveBlock {
+                    stored: Arc::new(stored),
+                    proposal: evidence.proposal,
+                    certificate: evidence.certificate,
+                    parent: evidence.record.parent(),
+                    point: evidence.record.point(),
+                })))
+            }
+            ArchiveStage::Finished => unreachable!(),
+        }
+    }
+
+    fn check_head(&self, head: &Head) -> Result<()> {
+        ensure!(
+            head.height >= self.ceiling.height
+                && (head.height != self.ceiling.height
+                    || head.block_hash == self.ceiling.block_hash),
+            "archive durable head differs from locally validated ceiling"
+        );
+        Ok(())
+    }
+
+    fn check_record(&self, record: &ChainRecord, head: &Head) -> Result<()> {
+        ensure!(
+            record.point.height == self.height,
+            "archive record differs from requested height"
+        );
+        record.verify_prefix(&self.context, &record.parent, &self.set)?;
+        ensure!(
+            self.height != self.ceiling.height || record.point == self.ceiling,
+            "archive record differs from locally validated head"
+        );
+        if self.height == head.height {
+            head.verify_record(record)?;
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct RecoveredChain {
@@ -562,3 +809,6 @@ fn required_value(snapshot: MetadataSnapshot, message: &'static str) -> Result<V
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod replay_tests;

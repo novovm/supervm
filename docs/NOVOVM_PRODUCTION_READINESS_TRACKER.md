@@ -8,6 +8,60 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：自治四进程连续链与历史补块（2026-10-02）
+
+基于 `46e064f`，其 Windows/Linux CI
+[`36948570845`](https://github.com/novovm/supervm/actions/runs/36948570845) 已实时
+核验成功，不替代本轮验证。只改新runtime与既有文档，旧38项草稿保留，
+未修改AOEM源码/SDK、启动正式创世、发行、部署或建立新分支/Skill。
+
+- `HostChannel`常驻owner负责整块编解码、hash、入站签名/QC验证、构造
+  本地政策BatchRequest及大对象销毁；控制/正文/回收独立额度。发送按
+  peer均分原有全局条目/字节预算，离线peer不能占满健康peer额度。
+- `Controller`仅注入原文即可驱动同一pipeline/ValidatorJournal的执行、
+  提议、投票、收票、合格计时、连续高度及重试。签票/链头仍在原AOEM
+  库实际ACK后可见；pending候选保留，迟到输出不能授权新父或新轮。
+- `ArchiveRead`从本机验证过的head按高度读取不可变块、精确outbox/QC、
+  完整原始候选。缺块与损坏证据区分，不扫描全历史、不造DurableCandidate。
+  迟到节点通过真实网络获得原文后自行执行，不能只复制peer的状态根。
+  请求仅调度缓存，不授权head；失败可重试，冷重启允许请求较低高度。
+- `try_submit_owned`拒收时归还原输入，已有接纳不误报为拒收；大正文、
+  BatchRequest和packet走有界owner回收。额度是逻辑内容/条目边界，不是
+  本机RSS或AOEM原生内存测量；整归档恢复仍由I/O owner完整校验。
+
+### 真正失败过的独立进程验收
+
+前两轮三在线进程只完成两块，第三高度换轮停滞，均在原120秒门失败。
+发现两个实际队首阻塞：离线peer占满Host发送全局额度，以及广播游标在
+该peer背压处不前进；历史应答永久100ms重发进一步增加旧流量。修复
+每peer隔离、公平尝试（未接纳仍保留重试）、按请求唤醒历史应答后，
+第三轮在**16.55秒**通过，未改测试期限/5秒失败计时/3-of-4阈值。
+定向真实WSS反例还验证：离线peer两层队列满，健康peer仍收到已验签票，
+`expired_sends=0`，不靠等TTL释放资源。未改NetworkWorker的有界pending门。
+
+`controller_integration`父进程只启动/停止进程和提供测试交易，不构造
+proposal/vote/QC或指定决定值。四个独立OS进程和AOEM库真实WSS三高度：
+2/4收齐票仍无head，第三加入自行推进；第四从空测试账本启动、逐块获取
+归档并执行追赶。6笔唯一原文、每库3批实际执行（合计24次交易执行）；
+含1笔业务失败，最终收款350、两付款方nonce均3。四个新的恢复进程独立
+核验所有历史原文/证书、块/状态/回执相等。测试种子仅用于夹具。
+这不是四台实体机器、可部署CLI、持续负载TPS或250ms出块签收。
+原始日志保留在 `target/runtime-rebuild/controller-process-{first,second,third}.log`，
+通过轮详细产物为 `autonomous-controllers-23012-1790905674291445900/`。
+
+最终源码Windows/Rust1.94/随包真DLL Release全量通过：**414单元/集成+
+5编译拒绝，0失败/0忽略**（24 AOEM、266 Host、11外部集成、113网络）。
+包含四进程三块再次执行、实际journal pending ACK窗候选保留、所有旧安全/
+费用/nonce/损坏恢复门，不把测试内场景重复计数。fmt、workspace全目标
+strict Clippy、3成员无legacy依赖检查通过。日志：
+`target/runtime-rebuild/autonomous-full-release.log`。本次远端CI另行核验。
+默认debug套件也通过，日志`target/runtime-rebuild/autonomous-full-debug.log`；
+其按配置忽略的真实DLL/容量项已在上述Release逐项显式执行，不以忽略代过关。
+下一处唯一认领仍为A的新runtime：持续同路径负载、未决高度冷重启的
+完整body/outbox重放。已决定账本恢复不等于所有崩溃点活性；当前固定
+epoch/set、显式peer/单relay、Transfer V3/Ed25519，S4业务有效性证明、
+Execute/隐私/PQ接入、动态验证者和公网多机仍未完成。总目标不缩小。
+
 ## 设备 A：加密网络与耐久共识调度接线（2026-10-02）
 
 基于 `b4db3880`；该基线 Windows/Linux CI

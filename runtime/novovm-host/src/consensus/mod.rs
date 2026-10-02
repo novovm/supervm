@@ -6,7 +6,10 @@
 //! No production configuration, validator key, genesis or network is activated.
 
 mod chain;
+pub use chain::{ArchiveBlock, ArchiveRead};
+pub mod channel;
 pub mod collector;
+pub mod controller;
 mod journal;
 pub mod pacemaker;
 pub mod transport;

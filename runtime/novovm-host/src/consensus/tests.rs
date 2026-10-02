@@ -12,6 +12,12 @@ mod pacemaker_integration;
 #[path = "network_integration.rs"]
 mod network_integration;
 
+#[path = "controller_integration.rs"]
+mod controller_integration;
+
+#[path = "controller/tests.rs"]
+mod controller_tests;
+
 use super::statement::{BlockStatement, ParentPoint};
 use super::wire::{
     self, Context as ConsensusContext, Hash, Phase, Quorum, Validator, ValidatorSet,

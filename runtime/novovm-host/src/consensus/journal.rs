@@ -145,6 +145,10 @@ impl ValidatorJournal {
     pub fn context(&self) -> ConsensusContext {
         self.identity.context
     }
+    /// Immutable configured signer identity, not a key or signing capability.
+    pub fn local_validator(&self) -> Hash {
+        self.identity.validator
+    }
     pub fn parent(&self) -> ParentPoint {
         self.identity.parent
     }

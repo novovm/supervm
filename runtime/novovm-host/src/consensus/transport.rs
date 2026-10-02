@@ -39,6 +39,12 @@ pub enum Message {
     RequestBody {
         body_id: Hash,
     },
+    /// Ask for an already decided block extending THIS exact parent. This is
+    /// a development-v1 message extension (tag 6); older decoders reject it.
+    /// A request grants neither archive authority nor permission to sign.
+    RequestDecision {
+        context: wire::Context,
+    },
 }
 
 /// Operational decoder ceilings, not activated production block parameters.
@@ -112,6 +118,7 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::Vote(_) => 3,
         Message::Decision { .. } => 4,
         Message::RequestBody { .. } => 5,
+        Message::RequestDecision { .. } => 6,
     });
     match message {
         Message::Body {
@@ -141,12 +148,38 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
             out.extend_from_slice(body_id);
         }
         Message::RequestBody { body_id } => out.extend_from_slice(body_id),
+        Message::RequestDecision { context } => {
+            context.validate_shape()?;
+            out.extend_from_slice(&context.chain_id.to_be_bytes());
+            out.extend_from_slice(&context.genesis_config_commitment);
+            out.extend_from_slice(&context.protocol_commitment);
+            out.extend_from_slice(&context.epoch.to_be_bytes());
+            out.extend_from_slice(&context.validator_set_hash);
+            out.extend_from_slice(&context.height.to_be_bytes());
+            out.extend_from_slice(&context.parent_block_hash);
+            out.extend_from_slice(&context.parent_decision_hash);
+        }
     }
     ensure!(
         out.len() <= limits.message_bytes,
         "host network message exceeds byte budget"
     );
     Ok(out)
+}
+
+/// Allocation-free lane classification for the ingress owner's reservation.
+/// This checks only the wire prefix; it grants no decode or signing authority.
+pub(crate) fn body_prefix(bytes: &[u8]) -> Result<bool> {
+    ensure!(bytes.len() >= PREFIX_BYTES, "truncated host network prefix");
+    ensure!(
+        &bytes[..8] == MAGIC && bytes[8..10] == 1u16.to_be_bytes(),
+        "host network protocol/version mismatch"
+    );
+    match bytes[10] {
+        1 => Ok(true),
+        2..=6 => Ok(false),
+        _ => anyhow::bail!("unknown host network message kind"),
+    }
 }
 
 pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
@@ -212,6 +245,20 @@ pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
         5 => Message::RequestBody {
             body_id: reader.hash()?,
         },
+        6 => {
+            let context = wire::Context {
+                chain_id: reader.u64()?,
+                genesis_config_commitment: reader.hash()?,
+                protocol_commitment: reader.hash()?,
+                epoch: reader.u64()?,
+                validator_set_hash: reader.hash()?,
+                height: reader.u64()?,
+                parent_block_hash: reader.hash()?,
+                parent_decision_hash: reader.hash()?,
+            };
+            context.validate_shape()?;
+            Message::RequestDecision { context }
+        }
         _ => anyhow::bail!("unknown host network message kind"),
     };
     ensure!(

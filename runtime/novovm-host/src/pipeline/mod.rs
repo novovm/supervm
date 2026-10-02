@@ -171,6 +171,24 @@ pub enum Submission {
     Backpressured(BatchRequest),
 }
 
+/// Admission failed BEFORE acceptance. The exact owned allocation is returned
+/// so a latency-sensitive caller can retire it on its body/assembly owner.
+/// Moving this value is O(1); dropping it may destroy a complete large body.
+/// Deliberately not an `Error`: callers must explicitly handle the request
+/// rather than silently discarding it through an error conversion.
+pub struct RejectedSubmission {
+    pub request: BatchRequest,
+    pub error: anyhow::Error,
+}
+
+impl std::fmt::Debug for RejectedSubmission {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RejectedSubmission")
+            .field("error", &self.error)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Durable LOCAL content only. The packet cannot be substituted after execution
 /// or promoted to finality by obtaining this reply.
 pub struct DurableBatch {
@@ -342,21 +360,58 @@ impl CandidatePipeline {
         })
     }
 
+    /// Compatibility admission for synchronous callers/tests. Unlike
+    /// `try_submit_owned`, this wrapper destroys rejected input on the caller;
+    /// do not use it inside a latency-sensitive control loop.
     pub fn try_submit(&self, request: BatchRequest) -> Result<Submission> {
-        let bytes = request.reservation(&self.config)?;
-        ensure!(
-            bytes <= self.config.max_retained_bytes,
-            "one batch exceeds pipeline retained-content budget"
-        );
+        self.try_submit_owned(request)
+            .map_err(|rejected| rejected.error)
+    }
+
+    /// Every non-accepted path returns the exact original request, including
+    /// invalid domain/limits, closed service, poisoned accounting and a broken
+    /// channel. Successful enqueue ALWAYS returns an accepted ticket: a later
+    /// coordinator failure has an unknown outcome, never permission to resubmit.
+    pub fn try_submit_owned(
+        &self,
+        request: BatchRequest,
+    ) -> std::result::Result<Submission, RejectedSubmission> {
+        let bytes = match request.reservation(&self.config) {
+            Ok(bytes) => bytes,
+            Err(error) => return Err(RejectedSubmission { request, error }),
+        };
+        if bytes > self.config.max_retained_bytes {
+            return Err(RejectedSubmission {
+                request,
+                error: anyhow::anyhow!("one batch exceeds pipeline retained-content budget"),
+            });
+        }
+        // Check all fallible local service prerequisites BEFORE reserving or
+        // enqueueing. The worker cannot be looked up with `?` after try_send.
+        let Some(sender) = self.sender.as_ref() else {
+            return Err(RejectedSubmission {
+                request,
+                error: anyhow::anyhow!("pipeline closed"),
+            });
+        };
+        let Some(worker) = self.worker.as_ref() else {
+            return Err(RejectedSubmission {
+                request,
+                error: anyhow::anyhow!("pipeline worker unavailable"),
+            });
+        };
         let mut usage = match self.usage.try_lock() {
             Ok(usage) => usage,
             Err(TryLockError::WouldBlock) => return Ok(Submission::Backpressured(request)),
             Err(TryLockError::Poisoned(_)) => {
-                anyhow::bail!("pipeline admission accounting poisoned")
+                return Err(RejectedSubmission {
+                    request,
+                    error: anyhow::anyhow!("pipeline admission accounting poisoned"),
+                });
             }
         };
         if usage.batches >= self.config.max_batches
-            || bytes > self.config.max_retained_bytes - usage.bytes
+            || bytes > self.config.max_retained_bytes.saturating_sub(usage.bytes)
         {
             return Ok(Submission::Backpressured(request));
         }
@@ -373,18 +428,9 @@ impl CandidatePipeline {
             reply,
             permit: permit.clone(),
         };
-        match self
-            .sender
-            .as_ref()
-            .context("pipeline closed")?
-            .try_send(command)
-        {
+        match sender.try_send(command) {
             Ok(()) => {
-                self.worker
-                    .as_ref()
-                    .context("pipeline worker unavailable")?
-                    .thread()
-                    .unpark();
+                worker.thread().unpark();
                 Ok(Submission::Accepted(PipelineTicket {
                     receiver,
                     permit: Some(permit),
@@ -393,9 +439,10 @@ impl CandidatePipeline {
             Err(mpsc::TrySendError::Full(command)) => {
                 Ok(Submission::Backpressured(command.request))
             }
-            Err(mpsc::TrySendError::Disconnected(_)) => {
-                anyhow::bail!("pipeline unavailable; request not accepted")
-            }
+            Err(mpsc::TrySendError::Disconnected(command)) => Err(RejectedSubmission {
+                request: command.request,
+                error: anyhow::anyhow!("pipeline unavailable; request not accepted"),
+            }),
         }
     }
 

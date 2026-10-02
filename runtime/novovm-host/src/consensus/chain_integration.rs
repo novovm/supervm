@@ -3,6 +3,7 @@
 use super::*;
 use crate::business::nov_transfer_batch::nonce_key;
 use crate::consensus::chain::ChainRecord;
+use crate::consensus::{transport, ArchiveBlock, ArchiveRead};
 use crate::ingress::authentication::authenticate_transfer_v3;
 use crate::persistence::packet::marker_key;
 use novovm_aoem::{StorageSession, StorageWrite};
@@ -87,6 +88,86 @@ fn execute_height(
         );
     }
     Ok(candidates)
+}
+
+struct ReplayExpected {
+    records: Vec<ChainRecord>,
+    proposal: Vec<u8>,
+    certificates: Vec<Vec<u8>>,
+}
+
+fn finish_archive_read(
+    read: &mut ArchiveRead,
+    pipeline: &CandidatePipeline,
+) -> Result<Option<ArchiveBlock>> {
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        ensure!(Instant::now() < deadline, "archive replay timed out");
+        if let Some(done) = read.poll(pipeline)? {
+            return Ok(done);
+        }
+        std::thread::yield_now();
+    }
+}
+
+fn check_archive_replay(
+    pipeline: &CandidatePipeline,
+    context: ConsensusContext,
+    ceiling: ParentPoint,
+    set: Arc<ValidatorSet>,
+    expected: &ReplayExpected,
+    local: usize,
+) -> Result<()> {
+    let record = &expected.records[local];
+    let mut read = ArchiveRead::new(record.point().height, ceiling, context, set)?;
+    let block =
+        finish_archive_read(&mut read, pipeline)?.context("decided historical block absent")?;
+    ensure!(
+        read.poll(pipeline).is_err(),
+        "finished archive read restarted"
+    );
+    ensure!(
+        block.context() == record.context()
+            && block.parent() == record.parent()
+            && block.point() == record.point()
+            && block.stored().candidate_id() == record.candidate_id()
+            && block.stored().state_root() == record.point().state_root
+            && block.stored().receipt_batch_commitment() == record.point().receipt_batch_commitment
+            && wire::encode_proposal(block.proposal())? == expected.proposal
+            && wire::encode_quorum(block.certificate())? == expected.certificates[local],
+        "archive replay changed local decided content or exact QC subset"
+    );
+    let mut expected_context = batch_context(record.parent().state_root);
+    expected_context.height = record.point().height;
+    expected_context.parent_height = record.parent().height;
+    expected_context.parent_block_hash = record.parent().block_hash;
+    expected_context.parent_receipt_root = record.parent().receipt_batch_commitment;
+    expected_context.parent_state_version = record.parent().state_version;
+    expected_context.slot = record.point().height - 1;
+    expected_context.timestamp_unix_ms += record.point().height;
+    let expected_raw = raw_at(record.point().height)?;
+    ensure!(
+        block.stored().context() == &expected_context
+            && block.stored().raw_transactions() == expected_raw,
+        "archive replay changed original body or exact execution parent"
+    );
+    // Full-body work deliberately happens AFTER ArchiveRead::poll, in this
+    // fixture's assembly role. No transport work is added to the real reader.
+    let limits = transport::DecodeLimits {
+        transactions: 8,
+        transaction_bytes: 1024,
+        body_bytes: 8192,
+        message_bytes: 16_384,
+    };
+    ensure!(
+        transport::body_id(
+            block.stored().context(),
+            block.stored().raw_transactions(),
+            limits,
+        )? == transport::body_id(&expected_context, &expected_raw, limits)?,
+        "archive replay changed network body identity"
+    );
+    Ok(())
 }
 
 fn state_only(journal: &mut ValidatorJournal, pipeline: &CandidatePipeline) -> Result<()> {
@@ -303,6 +384,7 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
     let mut previous_revisions = [0u64; 4];
     let mut rollback_snapshot = None;
     let mut records = Vec::new();
+    let mut replay_expected = Vec::new();
     for height in 1..=3 {
         let context = journals[0].as_ref().unwrap().context();
         let parent = journals[0].as_ref().unwrap().parent();
@@ -463,6 +545,11 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
             records[0].head_bytes()? != records[1].head_bytes()?,
             "fixture failed to exercise node-local proof locators"
         );
+        replay_expected.push(ReplayExpected {
+            records: records.clone(),
+            proposal: wire::encode_proposal(proposal.proposal())?,
+            certificates: certificate_bytes,
+        });
         if height == 1 {
             expect_poll_error(&mut stale, &services.0[0], "durable signing state changed")?;
         }
@@ -514,6 +601,34 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
         previous_candidates = Some(candidates);
     }
     let final_head = expected_head.unwrap();
+    let current = journals[0].as_ref().unwrap();
+    ensure!(
+        ArchiveRead::new(4, final_head, current.context(), set.clone()).is_err(),
+        "archive read accepted height beyond local decided head"
+    );
+    let before_replay = read_metadata(
+        &services.0[0],
+        vec![MetaKey::ChainHead, records[0].outbox_key()],
+    )?;
+    for expected in [&replay_expected[0], &replay_expected[2]] {
+        check_archive_replay(
+            &services.0[0],
+            current.context(),
+            final_head,
+            set.clone(),
+            expected,
+            0,
+        )?;
+    }
+    ensure!(
+        read_metadata(
+            &services.0[0],
+            vec![MetaKey::ChainHead, records[0].outbox_key()],
+        )?
+        .values
+            == before_replay.values,
+        "historical replay mutated local head or decision outbox"
+    );
     let exact_messages = journals
         .iter()
         .flatten()
@@ -540,6 +655,18 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
                 && message_bytes(journal.last_durable_message())? == exact_messages[i],
             "cold prefix recovery lost head or signing outbox"
         );
+        // Reopened resident session: replay reconstructs only read-only stored
+        // content, never a DurableCandidate from the retired session.
+        for expected in [&replay_expected[0], &replay_expected[2]] {
+            check_archive_replay(
+                pipeline,
+                journal.context(),
+                journal.head().unwrap(),
+                set.clone(),
+                expected,
+                i,
+            )?;
+        }
         ensure!(
             u128::from_le_bytes(
                 value(pipeline, final_head.state_root, balance_key(&account(2)))?
@@ -631,8 +758,43 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
             format!("{error:#}").contains(expected),
             "wrong damage rejection: {error:#}"
         );
+        // Reuse the existing deliberately damaged stores without repairing or
+        // weakening the journal's cold-recovery rejections above. Only absence
+        // of the requested ChainBlock is a replay miss, never missing evidence
+        // for a block that is present.
+        let mut replay = ArchiveRead::new(
+            if i == 3 { 2 } else { 3 },
+            final_head,
+            records[i].context(),
+            set.clone(),
+        )?;
+        let replayed = finish_archive_read(&mut replay, pipeline);
+        if i == 3 {
+            ensure!(
+                replayed?.is_none(),
+                "missing archive block was not distinct from pending"
+            );
+        } else {
+            let error = match replayed {
+                Ok(_) => bail!("damaged archived evidence was reported as readable or missing"),
+                Err(error) => error,
+            };
+            let expected = [
+                "archive durable head missing",
+                "archive decision outbox missing",
+                "archive decided candidate missing",
+            ][i];
+            ensure!(
+                format!("{error:#}").contains(expected),
+                "wrong archive damage rejection: {error:#}"
+            );
+        }
+        ensure!(
+            replay.poll(pipeline).is_err(),
+            "terminal archive read retried"
+        );
     }
     services.shutdown()?;
-    println!("real AOEM four stores x three consecutive blocks: six distinct transactions / 24 executions, different QC subsets, global signer log, stale-head guard, lost decision/advance ACK, cold recovery, balance/nonces, partial rollback and four corruption rejections PASS; same process, no network/TPS/proof claim; {}", directory.display());
+    println!("real AOEM four stores x three consecutive blocks: six distinct transactions / 24 executions, different QC subsets, global signer log, stale-head guard, lost decision/advance ACK, cold recovery, historical/latest archive replay before and after reopen, balance/nonces, partial rollback and four corruption rejections PASS; same process, no network/TPS/proof claim; {}", directory.display());
     Ok(())
 }

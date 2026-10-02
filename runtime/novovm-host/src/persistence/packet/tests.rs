@@ -190,6 +190,7 @@ fn exact_packet_roundtrip_keeps_body_access_receipts_nodes_and_all_commitments()
         .unwrap()
         .unwrap();
     assert!(packet.matches(&stored));
+    assert_eq!(stored.record_bytes(), packet.record_bytes());
     assert_eq!(stored.context(), fixture.plan.context());
     assert_eq!(stored.raw_transactions(), fixture.plan.raw_transactions());
     let access = |items: &[DeclaredAccess]| {

@@ -130,6 +130,200 @@ fn full_queue_returns_exact_input_and_domain_byte_limits_precede_admission() {
     assert_eq!(pipeline.usage.lock().unwrap().batches, 0);
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct RequestAllocation {
+    owner: *const compute::PrepareRequest,
+    transactions: *const Vec<u8>,
+    bodies: Vec<(*const u8, usize, usize)>,
+}
+
+fn allocation(input: &BatchRequest) -> RequestAllocation {
+    RequestAllocation {
+        owner: input.request.as_ref(),
+        transactions: input.request.raw_transactions.as_ptr(),
+        bodies: input
+            .request
+            .raw_transactions
+            .iter()
+            .map(|raw| (raw.as_ptr(), raw.len(), raw.capacity()))
+            .collect(),
+    }
+}
+
+fn accounting(pipeline: &CandidatePipeline) -> (usize, usize) {
+    let usage = pipeline
+        .usage
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    (usage.batches, usage.bytes)
+}
+
+fn expect_owned_rejection(
+    pipeline: &CandidatePipeline,
+    input: BatchRequest,
+    expected_error: &str,
+) -> BatchRequest {
+    let expected = allocation(&input);
+    let usage = accounting(pipeline);
+    let rejected = match pipeline.try_submit_owned(input) {
+        Err(rejected) => rejected,
+        Ok(_) => panic!("invalid input/service was not rejected"),
+    };
+    assert!(
+        rejected.error.to_string().contains(expected_error),
+        "wrong rejection: {}",
+        rejected.error
+    );
+    assert_eq!(allocation(&rejected.request), expected);
+    assert_eq!(accounting(pipeline), usage);
+    rejected.request
+}
+
+#[test]
+fn owned_admission_returns_allocations_on_domain_size_and_reservation_errors() {
+    let (pipeline, receiver) = inert_pipeline(config("unused".into()));
+    let mut wrong = request(empty_root());
+    wrong.request.context.genesis_config_commitment[0] ^= 1;
+    let _returned = expect_owned_rejection(&pipeline, wrong, "domain mismatch");
+    let mut oversized = request(empty_root());
+    oversized.body_bytes = usize::MAX;
+    let _returned = expect_owned_rejection(&pipeline, oversized, "input budget");
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+
+    let mut cfg = config("unused".into());
+    cfg.max_retained_bytes = 1;
+    let (pipeline, receiver) = inert_pipeline(cfg);
+    let _returned = expect_owned_rejection(
+        &pipeline,
+        request(empty_root()),
+        "one batch exceeds pipeline retained-content budget",
+    );
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+
+    let mut cfg = config("unused".into());
+    cfg.capture.bytes = usize::MAX;
+    let (pipeline, receiver) = inert_pipeline(cfg);
+    let _returned = expect_owned_rejection(&pipeline, request(empty_root()), "budget overflow");
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+}
+
+#[test]
+fn owned_admission_checks_sender_and_worker_before_enqueue() {
+    let (mut pipeline, receiver) = inert_pipeline(config("unused".into()));
+    pipeline.sender.take();
+    let _returned = expect_owned_rejection(&pipeline, request(empty_root()), "pipeline closed");
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(mpsc::TryRecvError::Disconnected)
+    ));
+
+    let (mut pipeline, receiver) = inert_pipeline(config("unused".into()));
+    pipeline.worker.take().unwrap().join().unwrap().unwrap();
+    let _returned = expect_owned_rejection(&pipeline, request(empty_root()), "worker unavailable");
+    // A missing worker must not enqueue and then falsely report non-acceptance.
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    assert_eq!(accounting(&pipeline), (0, 0));
+}
+
+#[test]
+fn owned_disconnected_and_poisoned_admission_return_request_without_leaking_quota() {
+    let (pipeline, receiver) = inert_pipeline(config("unused".into()));
+    drop(receiver);
+    let _returned = expect_owned_rejection(
+        &pipeline,
+        request(empty_root()),
+        "pipeline unavailable; request not accepted",
+    );
+    assert_eq!(accounting(&pipeline), (0, 0));
+
+    let (pipeline, receiver) = inert_pipeline(config("unused".into()));
+    let usage = pipeline.usage.clone();
+    let poisoned = std::panic::catch_unwind(move || {
+        let _guard = usage.lock().unwrap();
+        panic!("deliberate admission accounting poison");
+    });
+    assert!(poisoned.is_err());
+    let _returned = expect_owned_rejection(
+        &pipeline,
+        request(empty_root()),
+        "admission accounting poisoned",
+    );
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    assert_eq!(accounting(&pipeline), (0, 0));
+}
+
+#[test]
+fn owned_full_and_busy_admission_preserve_allocation_and_release_unused_permits() {
+    let mut cfg = config("unused".into());
+    cfg.max_batches = 4;
+    cfg.max_retained_bytes = 512 * 1024 * 1024;
+    let (pipeline, receiver) = inert_pipeline(cfg);
+    let first = admitted(&pipeline, request(empty_root()));
+    let before = accounting(&pipeline);
+    let input = request(empty_root());
+    let expected = allocation(&input);
+    let Submission::Backpressured(returned) = pipeline.try_submit_owned(input).unwrap() else {
+        panic!("full queue accepted input");
+    };
+    assert_eq!(allocation(&returned), expected);
+    assert_eq!(accounting(&pipeline), before);
+    let command = receiver.recv().unwrap();
+    drop(command);
+    drop(first);
+    assert_eq!(accounting(&pipeline), (0, 0));
+
+    let usage = pipeline.usage.lock().unwrap();
+    let input = request(empty_root());
+    let expected = allocation(&input);
+    let Submission::Backpressured(returned) = pipeline.try_submit_owned(input).unwrap() else {
+        panic!("busy admission accounting accepted input");
+    };
+    assert_eq!(allocation(&returned), expected);
+    drop(usage);
+    assert_eq!(accounting(&pipeline), (0, 0));
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+}
+
+#[test]
+fn owned_success_is_accepted_even_when_the_reply_is_later_lost() {
+    let (pipeline, receiver) = inert_pipeline(config("unused".into()));
+    let input = request(empty_root());
+    let expected = allocation(&input);
+    let bytes = input.reservation(&pipeline.config).unwrap();
+    let Submission::Accepted(mut ticket) = pipeline.try_submit_owned(input).unwrap() else {
+        panic!("empty queue rejected input");
+    };
+    let command = receiver.recv().unwrap();
+    assert_eq!(allocation(&command.request), expected);
+    assert_eq!(accounting(&pipeline), (1, bytes));
+    drop(command);
+    assert!(ticket
+        .try_take()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("accepted request outcome unknown"));
+    assert_eq!(accounting(&pipeline), (0, 0));
+}
+
 struct Empty;
 impl StateNodeReader for Empty {
     fn read_node(&self, _: &NodeHash) -> Result<Option<Vec<u8>>> {

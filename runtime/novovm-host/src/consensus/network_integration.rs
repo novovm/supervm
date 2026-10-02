@@ -32,15 +32,15 @@ fn peer_id(index: usize) -> String {
     peer_id_from_ed25519_public_key_v1(&validator_key(index).verifying_key().to_bytes())
 }
 
-struct Relay {
-    endpoint: String,
-    certificate: PathBuf,
+pub(super) struct Relay {
+    pub(super) endpoint: String,
+    pub(super) certificate: PathBuf,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<Result<()>>>,
 }
 
 impl Relay {
-    fn start(directory: &Path) -> Result<Self> {
+    pub(super) fn start(directory: &Path) -> Result<Self> {
         fs::create_dir(directory)?;
         let certificate =
             rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])?;
@@ -86,7 +86,7 @@ impl Relay {
         }
     }
 
-    fn shutdown(&mut self) -> Result<()> {
+    pub(super) fn shutdown(&mut self) -> Result<()> {
         self.stop.store(true, Ordering::Release);
         if let Some(worker) = self.thread.take() {
             worker

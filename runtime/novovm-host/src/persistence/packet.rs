@@ -181,6 +181,7 @@ pub struct StoredCandidate {
     plan: BatchPlan,
     receipts: Vec<Vec<u8>>,
     nodes: BTreeMap<NodeHash, Vec<u8>>,
+    record_bytes: usize,
 }
 
 impl StoredCandidate {
@@ -255,6 +256,7 @@ impl StoredCandidate {
             plan: decoded.plan,
             receipts: decoded.receipts,
             nodes,
+            record_bytes: total,
         }))
     }
 
@@ -293,6 +295,13 @@ impl StoredCandidate {
     }
     pub fn nodes(&self) -> &BTreeMap<NodeHash, Vec<u8>> {
         &self.nodes
+    }
+    /// Cached sum of the independently loaded record keys and values. This
+    /// conservative logical-content accounting is not allocator/RSS usage.
+    /// Retaining or retiring an archive need not rescan every raw transaction,
+    /// receipt and state node on a control thread.
+    pub fn record_bytes(&self) -> usize {
+        self.record_bytes
     }
 }
 
