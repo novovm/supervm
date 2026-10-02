@@ -8,6 +8,110 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：网络队列唤醒及有界双工修复，同路径三轮约3229–3498 TPS（2026-10-02）
+
+基于`ad3170e`，其双平台CI
+[`36971756089`](https://github.com/novovm/supervm/actions/runs/36971756089)成功。
+本次仅交付`runtime/novovm-network`七文件及既有三份交接文档；host归档/诊断
+11项草稿与legacy旧38项保留未提交。未修改AOEM/SDK、经济/nonce、共识签票、
+生产参数、Skill或分支。以下是本机验收；本次远端CI在推送后另行核验。
+
+### 修复的是实际等待边界
+
+- 两平台统一非阻塞Mio等待，原读/写时间预算不变；inbox的data/control队列
+  注册真实读唤醒，lookahead继续持有原配额guard，替换会话不得偷放额度。
+  可读字节/EOF/真实错误先于队列通知；写不被通知中断。
+- relay显式协商`DeliveryWindowV1/DeliveryConsumedV1`，最多15项未消费投递；
+  客户端真正向调用方取出7项后汇报累计水位。等待outcome时暂存不算消费，
+  重复水位不增加额度，倒退/越界拒绝，heartbeat/新请求/tick不重置窗口。
+  **这是relay传输扩展，须两端同步升级，旧端失败关闭，无静默兼容降级。**
+  它不是链/交易版本，也不是应用处理、耐久或最终性ACK。
+- 同一个连接owner在真实write WouldBlock时也推进对向原始TCP/TLS字节；
+  认证及协商后才启用，按需最多68×16KiB=1088KiB。已消费chunk不追加；
+  满额/EOF不再订阅READABLE，成功写入进度不被后续错误覆盖。原未完帧期限
+  不因心跳、写完成或新预读重置；时间跟踪为原始chunk级，不冒充所有TLS/WS
+  帧首字节精确时间。默认512物理连接若全分配，额外载荷上限544MiB加有限元数据。
+  此项明确增加有限传输缓冲，但未放大原业务/明文事件队列或放宽超时。
+- worker按最多8次/原read_idle时间双预算连续处理待发原文，保留公平、TTL、
+  单帧精确outcome相关性、nonce及未知写结果终止规则；仍非全异步发送。
+
+### 先失败再修复，未用TPS掩盖功能反例
+
+真实TCP对照：不接队列waker时客户端1秒期限失败，接上后打断5秒空闲读并
+获得可解密原文。脚本socket+真实加密的40×200KB堆积专项验证15项累计上限、
+延迟outcome、重复水位和剩余原文；此脚本专项不冒充真实大帧双向网络。
+
+首稿wake+credit在64高曾19.086185秒/3433.687778 TPS，但真实WSS三worker
+大帧双向测试两次发生原100ms写等待超时（当轮全库125通过/1失败），因此未
+签收。Linux固定小socket窗口双向1MiB写反例原实现0.11秒失败，有限预读后
+0.01秒通过；Windows同raw fixture原本可通过，不制造跨平台先红证据。
+最终真实WSS/E2E四条路由×24条×192KiB，96条全部精确有序，跨越投递窗口，
+原有队列/TTL/20秒测试期限不变，无重连/丢弃/过期；独立Windows网络轮约515ms。
+旧FAIL、先前主链120秒FAIL与退化样本均保留，不用新结果覆盖。
+
+### 干净版本的同一路径测量
+
+机械导出ad3170e（运行host仍035004d），只移植network七文件；97个已提交
+host/AOEM源文件经CRLF标准化核对相等，排除了未签收归档与诊断草稿。两次
+独立运行同一二进制，测量期间没有并行构建/重负载测试；原120秒门不变。
+拓扑为同一WSL2主机、24逻辑CPU、4验证节点OS进程、真实WSS/E2E及4个真实
+AOEM RocksDB。1024个公开测试账户各连续64笔，每笔实作Ed25519签名及验签，
+共65536笔不同**测试转账**，不是实际用户或生产币，也不乘四虚增TPS。
+
+| 样本 | 四节点全部耐久65536笔 | finalized TPS | 完整冷恢复 |
+| --- | --- | --- | --- |
+| 本轮未改运行代码基线 | 98.331516秒 | 666.480116 | PASS |
+| 最终网络修复第一次 | 20.297235秒 | 3228.814208 | PASS |
+| 最终网络修复第二次 | 18.736891秒 | 3497.698769 | PASS |
+| 最后仅测试断言修正后的最终版本 | 19.907676秒 | 3291.996572 | PASS |
+
+基线既往还测到57.437/63.950秒（1141/1025 TPS），波动不能隐藏，不将单次
+98秒样本宣传成稳定倍数。新两轮均64高、65536成功，4头/状态根/回执/完整
+余额、nonce及费用冷oracle相符；每节点64执行/64决定，执行失败/stale/重算0。
+但`last_error`四节点均仍记录`decision not for exact current parent`；逐高度
+快照另见vote/proposal/archive等上下文不匹配拒绝。它们是sticky最后拒绝信息，
+不是拒绝事件计数，不得写成“零错误/零上下文拒绝”，本轮没有定量归因。
+relay两轮初始注册均4、无替换/过期及source/aggregate/queue/protocol拒绝；
+终止时正常断开4个连接，无TLS close_notify日志保留，不能写成无断连日志。
+
+计时不含生成密钥/钱包签名、启动、创世和冷恢复；包含正文构造、验签、执行、
+WSS/E2E、BFT与全部节点耐久确认。全部有限积压一起释放，按高度采样，不是
+稳定到达流延迟，不是PQ性能、固定出块周期、四台实体设备或公网稳定容量。
+两轮测量二进制SHA256为
+`1936ae621d587ea8885690f3b150f96b9efc0ba69ffcbb5c46d8f47b4a894f80`；
+测试断言修正后的第三轮最终版本SHA256为
+`d19601a8ff1c3fb8581dd2bfaf07a7f97b8b953e72dcd4b8ee36402f61ceb16e`，
+同样65536笔四节点耐久及完整冷oracle通过，不与前两轮冒称同一二进制。
+Linux AOEM仍`88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+
+### 验证与下一处恢复入口
+
+干净版本完整真库Release串行包含ignored：Windows488项+6编译拒绝、Linux487+6，
+0失败/0忽略；差一项为Windows专属OS超时分类。两平台strict Clippy（全targets
+及host无native模式）、fmt和3成员legacy隔离检查通过。默认Debug通过但会跳过
+显式真库/时序门，不能把该跳过当通过。最后一处仅测试断言的Clippy修正不改
+上述测量生产路径，随后完整Release复跑；没有随测量修改源文件。
+
+原始证据在本机`target/runtime-rebuild/`，未把大体积artifacts推送：
+`network-wake-credit-final-windows.log`保留首稿FAIL；
+`network-duplex-read-ahead-{red,green}-linux.log`为raw双工反例；
+`network-duplex-final-verified-workspace-{windows,linux}.log`为最终全库；
+`network-duplex-clean-{debug-windows,debug-linux,linux-long-one,linux-long-two}.log`；
+`candidate-ad3170e-network-duplex-final/target/runtime-rebuild/`下
+`controller-load-1024-430-1790924241678803613/measurement.json`及
+`controller-load-1024-418-1790924330084568624/measurement.json`对应两轮最终负载。
+第三轮见`network-duplex-final-verified-linux-long.log`及同快照下
+`controller-load-1024-436-1790924786393775834/measurement.json`。
+基线见`network-wake-baseline-linux-long.log`及
+`baseline-ad3170e-network-wake/target/runtime-rebuild/controller-load-1024-539-1790922475529193414/`。
+
+A下一处是worker出站真实IO唤醒：现`thread.unpark`不能中断Mio Poll，入队及
+burst剩余可执行工作需要同锁安装/检查当前连接waker，不能因通知合并又空等。
+再拆逐帧outcome等待，必须保留在途原文计额、TTL、nonce和精确相关性；不以
+先写完全部消息冒充安全流水线。A仍持有host11项草稿；B独立隐私/PQ不覆盖。
+S4真实证明通用后端待明确AOEM切仓授权，Execute、隐私/PQ、真实多机、稳定
+容量与部署入口仍未完成；正式创世、发行与生产部署仍须另行授权。
+
 ## 设备 A：真实阶段诊断与网络空等反例，运行草稿继续未签收（2026-10-02）
 
 前一证据文档已推送`d527ad9`，其双平台CI

@@ -3,6 +3,7 @@
 //!
 //! Node-side WSS relay client for the product relay protocol.
 
+use crate::product_relay::PRODUCT_RELAY_DELIVERY_WINDOW_V1;
 use crate::product_relay_io::ProductRelaySocketV1;
 use crate::{
     HandshakeReplayCacheV1, NodeHandshakeInitiatorV1, OpaqueRelayDeliveryV1,
@@ -139,6 +140,8 @@ pub struct ProductRelayClientV1 {
     pending_events: VecDeque<ProductRelayPendingEventV1>,
     pending_event_bytes: usize,
     heartbeat_health: RelayHeartbeatHealthV1,
+    delivery_consumed: u64,
+    delivery_consumed_reported: u64,
 }
 
 #[derive(Debug)]
@@ -249,6 +252,7 @@ impl ProductRelayDeadlineTcpStreamV1 {
         self.write_timeout = Some(write_timeout);
         self.handshake_deadline = None;
         self.frame_deadline = None;
+        self.inner.enable_duplex_read_ahead();
         Ok(())
     }
 
@@ -259,7 +263,22 @@ impl ProductRelayDeadlineTcpStreamV1 {
         } else {
             None
         };
-        Ok(())
+        self.retain_read_ahead_deadline_v1(self.inner.read_ahead_started_at())
+    }
+
+    fn retain_read_ahead_deadline_v1(&mut self, started: Option<Instant>) -> io::Result<()> {
+        if self.handshake_deadline.is_none() {
+            if let Some(started) = started {
+                let deadline = started
+                    .checked_add(Duration::from_millis(PRODUCT_RELAY_FRAME_DEADLINE_MS_V1))
+                    .ok_or_else(|| io::Error::other("relay read-ahead deadline overflow"))?;
+                self.frame_deadline = Some(
+                    self.frame_deadline
+                        .map_or(deadline, |old| old.min(deadline)),
+                );
+            }
+        }
+        self.check_io_deadlines_v1()
     }
 
     fn ensure_frame_deadline_v1(&mut self) -> io::Result<()> {
@@ -475,6 +494,7 @@ impl Write for ProductRelayDeadlineTcpStreamV1 {
                 if timeout != self.write_timeout {
                     self.inner.set_write_timeout(self.write_timeout)?;
                 }
+                self.retain_read_ahead_deadline_v1(self.inner.read_ahead_started_at())?;
                 self.check_io_deadlines_v1()
             })();
             self.finish_io_progress_v1(result, maintenance)
@@ -583,6 +603,7 @@ impl ProductRelayClientV1 {
         initiator
             .complete(&response, now_ms_v1(), &mut replay)
             .context("relay node identity challenge-response failed")?;
+        confirm_delivery_window_v1(&mut stream)?;
         stream
             .sock
             .finish_handshake_v1(read_timeout, connect_timeout)
@@ -601,6 +622,8 @@ impl ProductRelayClientV1 {
             pending_events: VecDeque::new(),
             pending_event_bytes: 0,
             heartbeat_health: RelayHeartbeatHealthV1::default(),
+            delivery_consumed: 0,
+            delivery_consumed_reported: 0,
         })
     }
 
@@ -696,14 +719,43 @@ impl ProductRelayClientV1 {
         if let Some(event) =
             pop_pending_relay_event_v1(&mut self.pending_events, &mut self.pending_event_bytes)
         {
+            self.record_consumed_delivery_v1(&event)?;
             return Ok(event);
         }
         match self.read_protocol_item_v1()? {
-            ProductRelayClientProtocolItemV1::Event { event, .. } => Ok(*event),
+            ProductRelayClientProtocolItemV1::Event { event, .. } => {
+                self.record_consumed_delivery_v1(&event)?;
+                Ok(*event)
+            }
             ProductRelayClientProtocolItemV1::ForwardOutcome(_) => {
                 bail!("relay returned an unsolicited forward outcome")
             }
         }
+    }
+
+    // Transport consumption only: this releases the client's bounded event
+    // window, not application delivery, durable receipt, or consensus finality.
+    // In particular wait_for_forward_outcome never invokes this on buffering.
+    fn record_consumed_delivery_v1(&mut self, event: &ProductRelayClientEventV1) -> Result<()> {
+        if !matches!(
+            event,
+            ProductRelayClientEventV1::Delivery(_) | ProductRelayClientEventV1::PeerHandshake(_)
+        ) {
+            return Ok(());
+        }
+        let Some(next) = self.delivery_consumed.checked_add(1) else {
+            let error = anyhow::anyhow!("product relay delivery consumption counter overflow");
+            self.stream.sock.poison_v1(&error);
+            return Err(error);
+        };
+        self.delivery_consumed = next;
+        if next - self.delivery_consumed_reported >= PRODUCT_RELAY_DELIVERY_WINDOW_V1 / 2 {
+            self.write_authenticated_wire_v1(&ProductRelayWireMessageV1::DeliveryConsumedV1 {
+                through: next,
+            })?;
+            self.delivery_consumed_reported = next;
+        }
+        Ok(())
     }
 
     pub fn close(mut self) -> Result<()> {
@@ -928,6 +980,22 @@ impl ProductRelayClientV1 {
             ))
         })
     }
+}
+
+fn confirm_delivery_window_v1<S: Read + Write>(stream: &mut S) -> Result<()> {
+    let RelayClientFrameV1::Binary(bytes) = read_frame_v1(stream)? else {
+        bail!("relay delivery window negotiation was not a binary frame");
+    };
+    match serde_json::from_slice(&bytes).context("decode relay delivery window negotiation")? {
+        ProductRelayWireMessageV1::DeliveryWindowV1 { max_unconsumed }
+            if max_unconsumed == PRODUCT_RELAY_DELIVERY_WINDOW_V1 => {}
+        _ => bail!("relay did not advertise the supported delivery window v1"),
+    }
+    write_wire_v1(
+        stream,
+        &ProductRelayWireMessageV1::DeliveryConsumedV1 { through: 0 },
+    )?;
+    Ok(())
 }
 
 fn ensure_protocol_item_progress_v1(deadline: Instant, control_frame_count: usize) -> Result<()> {
@@ -1831,6 +1899,227 @@ mod tests {
 
     type TestRelayTlsStreamV1 = rustls::StreamOwned<rustls::ServerConnection, TcpStream>;
 
+    #[test]
+    fn delivery_window_negotiation_rejects_wrong_size_and_legacy_messages() {
+        for advertisement in [
+            ProductRelayWireMessageV1::DeliveryWindowV1 { max_unconsumed: 14 },
+            ProductRelayWireMessageV1::DeliveryWindowV1 { max_unconsumed: 16 },
+            ProductRelayWireMessageV1::HeartbeatAck,
+        ] {
+            let fixture = delayed_test_relay_with_window_v1(advertisement, false, |_| Ok(()));
+            let error =
+                ProductRelayClientV1::connect(&SigningKey::from_bytes(&[211; 32]), &fixture.config)
+                    .err()
+                    .expect("unsupported delivery window must fail closed");
+            assert!(error.to_string().contains("supported delivery window v1"));
+            fixture.finish();
+        }
+    }
+
+    fn test_window_deliveries_v1() -> Vec<ProductRelayWireMessageV1> {
+        let source = SigningKey::from_bytes(&[210; 32]);
+        let target = SigningKey::from_bytes(&[211; 32]);
+        let source_id = peer_id_from_ed25519_public_key_v1(&source.verifying_key().to_bytes());
+        let target_id = peer_id_from_ed25519_public_key_v1(&target.verifying_key().to_bytes());
+        let now = now_ms_v1();
+        let initiator =
+            NodeHandshakeInitiatorV1::start(&source, target_id.clone(), now, 30_000).unwrap();
+        let offer = initiator.offer().clone();
+        let responder = NodeHandshakeResponderV1::respond(
+            &offer,
+            &target,
+            now,
+            30_000,
+            &mut HandshakeReplayCacheV1::default(),
+        )
+        .unwrap();
+        let mut channel = initiator
+            .complete(
+                responder.response(),
+                now,
+                &mut HandshakeReplayCacheV1::default(),
+            )
+            .unwrap();
+        (0..14)
+            .map(|sequence| {
+                if sequence % 2 == 0 {
+                    let frame = NovoRudpTransportFrameV0::new(
+                        NovoRudpTransportFrameKindV0::Data,
+                        [212; 16],
+                        sequence,
+                        0,
+                        0,
+                        0,
+                        sequence.to_le_bytes().to_vec(),
+                    );
+                    ProductRelayWireMessageV1::Delivery(OpaqueRelayDeliveryV1 {
+                        source_peer_id: source_id.clone(),
+                        target_peer_id: target_id.clone(),
+                        received_at_ms: now,
+                        envelope: channel.seal_novorudp_frame(&frame).unwrap(),
+                    })
+                } else {
+                    ProductRelayWireMessageV1::PeerHandshakeDelivery(RelayPeerHandshakeDeliveryV1 {
+                        source_peer_id: source_id.clone(),
+                        target_peer_id: target_id.clone(),
+                        received_at_ms: now,
+                        handshake: RelayPeerHandshakeV1::Offer(offer.clone()),
+                    })
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn delivery_window_consumes_returned_events_not_outcome_wait_buffering() {
+        let deliveries = test_window_deliveries_v1();
+        let fixture = delayed_test_relay_v1(move |stream| {
+            let (message, wire_bytes) = read_test_client_wire_v1(stream)?;
+            let ProductRelayWireMessageV1::PeerHandshake {
+                target_peer_id,
+                handshake: RelayPeerHandshakeV1::Offer(offer),
+            } = message
+            else {
+                bail!("expected peer offer before the outcome wait");
+            };
+            write_fragmented_test_server_wire_v1(stream, &ProductRelayWireMessageV1::HeartbeatAck)?;
+            for message in &deliveries[..7] {
+                write_fragmented_test_server_wire_v1(stream, message)?;
+            }
+            write_fragmented_test_server_wire_v1(
+                stream,
+                &ProductRelayWireMessageV1::ForwardOutcome(RelayForwardOutcomeV1 {
+                    disposition: RelayForwardDispositionV1::Forwarded,
+                    source_peer_id: offer.initiator_peer_id,
+                    target_peer_id,
+                    forwarded: true,
+                    queued: false,
+                    payload_treated_opaque: true,
+                    envelope_session_id: None,
+                    envelope_sequence: None,
+                    admitted_wire_bytes: wire_bytes,
+                }),
+            )?;
+            assert!(matches!(
+                read_test_client_wire_v1(stream)?.0,
+                ProductRelayWireMessageV1::DeliveryConsumedV1 { through: 7 }
+            ));
+            for message in &deliveries[7..] {
+                write_fragmented_test_server_wire_v1(stream, message)?;
+            }
+            assert!(matches!(
+                read_test_client_wire_v1(stream)?.0,
+                ProductRelayWireMessageV1::DeliveryConsumedV1 { through: 14 }
+            ));
+            Ok(())
+        });
+        let identity = SigningKey::from_bytes(&[211; 32]);
+        let mut client = ProductRelayClientV1::connect(&identity, &fixture.config).unwrap();
+        let target = peer_id_from_ed25519_public_key_v1(
+            &SigningKey::from_bytes(&[210; 32])
+                .verifying_key()
+                .to_bytes(),
+        );
+        let offer = NodeHandshakeInitiatorV1::start(&identity, target.clone(), now_ms_v1(), 30_000)
+            .unwrap();
+        client
+            .send_peer_handshake_with_outcome_v1(
+                target,
+                RelayPeerHandshakeV1::Offer(offer.offer().clone()),
+            )
+            .unwrap();
+        assert_eq!(client.delivery_consumed, 0);
+        assert_eq!(client.delivery_consumed_reported, 0);
+        assert_eq!(client.pending_events.len(), 8);
+        assert_eq!(
+            client.recv_event().unwrap(),
+            ProductRelayClientEventV1::HeartbeatAck
+        );
+        assert_eq!(client.delivery_consumed, 0);
+        for expected in 1..=14 {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                match client.recv_event() {
+                    Ok(
+                        ProductRelayClientEventV1::Delivery(_)
+                        | ProductRelayClientEventV1::PeerHandshake(_),
+                    ) => break,
+                    Err(error)
+                        if product_relay_client_read_is_idle_timeout_v1(&error)
+                            && Instant::now() < deadline => {}
+                    other => panic!("expected a bounded delivery: {other:?}"),
+                }
+            }
+            assert_eq!(client.delivery_consumed, expected);
+            assert_eq!(client.delivery_consumed_reported, expected / 7 * 7);
+        }
+        assert!(client.pending_events.is_empty());
+        assert_eq!(client.pending_event_bytes, 0);
+        drop(client);
+        fixture.finish();
+    }
+
+    #[test]
+    fn prefetched_inbound_deadline_is_not_reset_by_outbound_completion() {
+        let fixture = delayed_test_relay_v1(|_| Ok(()));
+        let mut client =
+            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[212; 32]), &fixture.config)
+                .unwrap();
+        let now = Instant::now();
+        client
+            .stream
+            .sock
+            .retain_read_ahead_deadline_v1(Some(now - Duration::from_secs(8)))
+            .unwrap();
+        let original = client.stream.sock.frame_deadline;
+        assert_eq!(original, Some(now + Duration::from_secs(2)));
+        client.stream.sock.begin_authenticated_write_v1().unwrap();
+        client.stream.sock.finish_authenticated_write_v1().unwrap();
+        client
+            .stream
+            .sock
+            .retain_read_ahead_deadline_v1(Some(now))
+            .unwrap();
+        assert_eq!(client.stream.sock.frame_deadline, original);
+        assert!(client
+            .stream
+            .sock
+            .retain_read_ahead_deadline_v1(Some(now - Duration::from_secs(11)))
+            .is_err());
+        assert!(client.stream.sock.terminal_error.is_some());
+        assert!(client.heartbeat().is_err());
+        drop(client);
+        fixture.finish();
+    }
+
+    #[test]
+    fn delivery_window_credit_write_failure_and_counter_overflow_are_terminal() {
+        for overflow in [false, true] {
+            let fixture = delayed_test_relay_v1(|_| Ok(()));
+            let mut client =
+                ProductRelayClientV1::connect(&SigningKey::from_bytes(&[211; 32]), &fixture.config)
+                    .unwrap();
+            client.delivery_consumed = if overflow { u64::MAX } else { 6 };
+            if !overflow {
+                client.stream.sock.test_write_fault = Some(ProductRelayClientWriteFaultV1::Timeout);
+            }
+            let ProductRelayWireMessageV1::Delivery(delivery) =
+                test_window_deliveries_v1().remove(0)
+            else {
+                unreachable!()
+            };
+            assert!(client
+                .record_consumed_delivery_v1(&ProductRelayClientEventV1::Delivery(delivery))
+                .is_err());
+            assert_eq!(client.delivery_consumed_reported, 0);
+            assert!(client.stream.sock.terminal_error.is_some());
+            assert!(client.recv_event().is_err());
+            assert!(client.heartbeat().is_err());
+            drop(client);
+            fixture.finish();
+        }
+    }
+
     struct DelayedTestRelayV1 {
         config: ProductRelayClientConfigV1,
         stop: std::sync::mpsc::Sender<()>,
@@ -1854,6 +2143,20 @@ mod tests {
     }
 
     fn delayed_test_relay_v1(
+        after_handshake: impl FnOnce(&mut TestRelayTlsStreamV1) -> Result<()> + Send + 'static,
+    ) -> DelayedTestRelayV1 {
+        delayed_test_relay_with_window_v1(
+            ProductRelayWireMessageV1::DeliveryWindowV1 {
+                max_unconsumed: PRODUCT_RELAY_DELIVERY_WINDOW_V1,
+            },
+            true,
+            after_handshake,
+        )
+    }
+
+    fn delayed_test_relay_with_window_v1(
+        advertised_window: ProductRelayWireMessageV1,
+        expect_confirmation: bool,
         after_handshake: impl FnOnce(&mut TestRelayTlsStreamV1) -> Result<()> + Send + 'static,
     ) -> DelayedTestRelayV1 {
         let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
@@ -1937,6 +2240,16 @@ mod tests {
                 &mut stream,
                 &ProductRelayWireMessageV1::HandshakeResponse(responder.response().clone()),
             )?;
+            write_fragmented_test_server_wire_v1(&mut stream, &advertised_window)?;
+            if expect_confirmation {
+                let (confirmation, _) = read_test_client_wire_v1(&mut stream)?;
+                if !matches!(
+                    confirmation,
+                    ProductRelayWireMessageV1::DeliveryConsumedV1 { through: 0 }
+                ) {
+                    bail!("test relay expected delivery window confirmation");
+                }
+            }
             after_handshake(&mut stream)?;
             let _ = stopping.recv_timeout(Duration::from_secs(5));
             Ok(())

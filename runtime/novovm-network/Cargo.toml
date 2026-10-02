@@ -22,12 +22,8 @@ sha1 = "=0.10.6"
 rustls = "=0.23.45"
 rustls-native-certs = "=0.8.4"
 tokio = { version = "=1.50.0", features = ["rt", "rt-multi-thread", "sync", "macros", "time"] }
-
-[target.'cfg(windows)'.dependencies]
 mio = { version = "=1.1.1", default-features = false, features = ["os-poll", "net"] }
 
 [dev-dependencies]
 rcgen = "=0.12.1"
-
-[target.'cfg(windows)'.dev-dependencies]
 socket2 = "=0.6.1"

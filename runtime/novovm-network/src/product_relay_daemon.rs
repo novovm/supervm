@@ -47,8 +47,8 @@ const MAX_HANDSHAKE_WIRE_MESSAGE_BYTES_V1: usize = 16 * 1024;
 const MAX_WEBSOCKET_CONTROL_FRAME_BYTES_V1: usize = 125;
 const PRODUCT_RELAY_FRAME_DEADLINE_MS_V1: u64 = 10_000;
 const PRODUCT_RELAY_MAINTENANCE_INTERVAL_MS_V1: u64 = 1_000;
-// Use the available client byte budget rather than leaving most of each idle
-// tick unused. Reserve control deliveries and one maximum-sized frame of slack.
+// Per-turn fairness is separate from the cumulative connection delivery
+// window below. Neither a wake nor a timeout replenishes unconsumed credit.
 const MAX_DATA_DELIVERIES_PER_CONNECTION_TICK_V1: usize =
     PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_BYTES_V1 / PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1
         - MAX_PEER_HANDSHAKE_DELIVERIES_PER_CONNECTION_TICK_V1
@@ -59,6 +59,47 @@ const _: () = assert!(
         + MAX_PEER_HANDSHAKE_DELIVERIES_PER_CONNECTION_TICK_V1
         < PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_EVENTS_V1
 );
+const _: () = assert!(
+    crate::product_relay::PRODUCT_RELAY_DELIVERY_WINDOW_V1 as usize
+        * PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1
+        < PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_BYTES_V1
+);
+const _: () = assert!(
+    crate::product_relay::PRODUCT_RELAY_DELIVERY_WINDOW_V1 as usize + 1
+        < PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_EVENTS_V1
+);
+
+#[derive(Default)]
+struct RelayDeliveryWindowV1 {
+    sent: u64,
+    consumed: u64,
+}
+
+impl RelayDeliveryWindowV1 {
+    fn available(&self) -> usize {
+        (crate::product_relay::PRODUCT_RELAY_DELIVERY_WINDOW_V1 - (self.sent - self.consumed))
+            as usize
+    }
+
+    fn acknowledge(&mut self, through: u64) -> Result<()> {
+        if through < self.consumed || through > self.sent {
+            bail!("invalid relay delivery consumption watermark");
+        }
+        self.consumed = through;
+        Ok(())
+    }
+
+    fn sent(&mut self) -> Result<()> {
+        if self.available() == 0 {
+            bail!("relay delivery window exhausted");
+        }
+        self.sent = self
+            .sent
+            .checked_add(1)
+            .context("relay delivery counter overflow")?;
+        Ok(())
+    }
+}
 const _: () = assert!(
     (MAX_DATA_DELIVERIES_PER_CONNECTION_TICK_V1
         + MAX_PEER_HANDSHAKE_DELIVERIES_PER_CONNECTION_TICK_V1)
@@ -464,6 +505,7 @@ fn serve_product_relay_connection_v1(
     // budget without continuing a Winsock connection after SO_RCVTIMEO expiry.
     let mut tcp = crate::product_relay_io::ProductRelaySocketV1::new(tcp)
         .context("prepare product relay connection I/O")?;
+    let read_waker = tcp.read_waker();
     tcp.set_read_timeout(Some(Duration::from_millis(100)))
         .context("set product relay read timeout")?;
     tcp.set_write_timeout(Some(Duration::from_millis(100)))
@@ -527,6 +569,51 @@ fn serve_product_relay_connection_v1(
         runtime.block_on(manager.disconnect(&peer_id, session_id));
         return Err(error).context("write admitted product relay handshake response");
     }
+    // Flow-control v1 is mandatory before queued deliveries. It is distinct
+    // from the signed node identity handshake and from all chain protocols.
+    // No legacy fallback, new timeout, or unbounded pre-negotiation egress.
+    let flow_negotiation = (|| -> Result<()> {
+        write_wire_message_v1(
+            &mut websocket,
+            &ProductRelayWireMessageV1::DeliveryWindowV1 {
+                max_unconsumed: crate::product_relay::PRODUCT_RELAY_DELIVERY_WINDOW_V1,
+            },
+        )?;
+        let WebSocketFrameV1::Binary(bytes) = read_websocket_frame_until_v1(
+            &mut websocket,
+            true,
+            MAX_HANDSHAKE_WIRE_MESSAGE_BYTES_V1,
+            handshake_deadline,
+            &stopping,
+        )?
+        else {
+            bail!("relay delivery-window confirmation must be binary");
+        };
+        let admission = runtime
+            .block_on(manager.admit_authenticated_wire_v1(
+                &peer_id,
+                session_id,
+                bytes.len(),
+                now_ms_v1(),
+            ))
+            .map_err(|reason| anyhow::anyhow!("relay window confirmation rejected: {reason:?}"))?;
+        if !matches!(
+            serde_json::from_slice(&bytes),
+            Ok(ProductRelayWireMessageV1::DeliveryConsumedV1 { through: 0 })
+        ) {
+            runtime.block_on(manager.reject_admitted_wire_v1(admission));
+            bail!("relay delivery-window v1 confirmation required");
+        }
+        if !runtime.block_on(manager.heartbeat_admitted_v1(admission, now_ms_v1())) {
+            bail!("relay delivery-window confirmation session expired");
+        }
+        Ok(())
+    })();
+    if let Err(error) = flow_negotiation {
+        runtime.block_on(manager.disconnect(&peer_id, session_id));
+        return Err(error);
+    }
+    websocket.sock.inner.enable_duplex_read_ahead();
     let _ = handshake_finished.send(());
     if let Err(error) = io_deadline.clear_v1() {
         runtime.block_on(manager.disconnect(&peer_id, session_id));
@@ -542,6 +629,7 @@ fn serve_product_relay_connection_v1(
             inbox: &mut inbox,
             stopping: &stopping,
             io_deadline: Some(&io_deadline),
+            read_waker: Some(&read_waker),
         },
     );
     runtime.block_on(manager.disconnect(&peer_id, session_id));
@@ -556,6 +644,7 @@ struct ProductRelayConnectionLoopV1<'a> {
     inbox: &'a mut crate::RelaySessionInboxV1,
     stopping: &'a AtomicBool,
     io_deadline: Option<&'a ProductRelayDaemonIoDeadlineV1>,
+    read_waker: Option<&'a std::task::Waker>,
 }
 
 fn relay_connection_loop_v1<S: Read + Write>(
@@ -570,11 +659,18 @@ fn relay_connection_loop_v1<S: Read + Write>(
         inbox,
         stopping,
         io_deadline,
+        read_waker,
     } = context;
     let mut prefer_control_delivery = false;
+    let mut delivery_window = RelayDeliveryWindowV1::default();
     while !stopping.load(Ordering::Acquire) {
         if !runtime.block_on(manager.is_current_session(peer_id, session_id, now_ms_v1())) {
             bail!("product relay session was replaced, expired, or revoked");
+        }
+        if delivery_window.available() > 0 {
+            if let Some(waker) = read_waker {
+                inbox.arm_delivery_wake(waker);
+            }
         }
         let frame_deadline = Instant::now()
             .checked_add(Duration::from_millis(PRODUCT_RELAY_FRAME_DEADLINE_MS_V1))
@@ -654,9 +750,22 @@ fn relay_connection_loop_v1<S: Read + Write>(
                         }
                         write_wire_message_v1(websocket, &ProductRelayWireMessageV1::HeartbeatAck)?;
                     }
+                    ProductRelayWireMessageV1::DeliveryConsumedV1 { through } => {
+                        // Count the control wire against the same admission
+                        // budgets and refresh only THIS current session.
+                        if let Err(error) = delivery_window.acknowledge(through) {
+                            runtime.block_on(manager.reject_admitted_wire_v1(admission));
+                            return Err(error);
+                        }
+                        if !runtime.block_on(manager.heartbeat_admitted_v1(admission, now_ms_v1()))
+                        {
+                            bail!("relay rejected delivery consumption session");
+                        }
+                    }
                     ProductRelayWireMessageV1::Close => return Ok(()),
                     ProductRelayWireMessageV1::HandshakeOffer(_)
                     | ProductRelayWireMessageV1::HandshakeResponse(_)
+                    | ProductRelayWireMessageV1::DeliveryWindowV1 { .. }
                     | ProductRelayWireMessageV1::Delivery(_)
                     | ProductRelayWireMessageV1::PeerHandshakeDelivery(_)
                     | ProductRelayWireMessageV1::HeartbeatAck
@@ -669,10 +778,10 @@ fn relay_connection_loop_v1<S: Read + Write>(
                     websocket,
                     manager,
                     runtime,
-                    peer_id,
-                    session_id,
+                    (peer_id, session_id),
                     inbox,
                     &mut prefer_control_delivery,
+                    &mut delivery_window,
                 )?;
             }
             Ok(WebSocketFrameV1::Ping(payload)) => {
@@ -689,10 +798,10 @@ fn relay_connection_loop_v1<S: Read + Write>(
                     websocket,
                     manager,
                     runtime,
-                    peer_id,
-                    session_id,
+                    (peer_id, session_id),
                     inbox,
                     &mut prefer_control_delivery,
+                    &mut delivery_window,
                 )?;
             }
             Ok(WebSocketFrameV1::Pong(payload)) => {
@@ -708,10 +817,10 @@ fn relay_connection_loop_v1<S: Read + Write>(
                     websocket,
                     manager,
                     runtime,
-                    peer_id,
-                    session_id,
+                    (peer_id, session_id),
                     inbox,
                     &mut prefer_control_delivery,
+                    &mut delivery_window,
                 )?;
             }
             Ok(WebSocketFrameV1::Close) => return Ok(()),
@@ -730,7 +839,7 @@ fn relay_connection_loop_v1<S: Read + Write>(
                     now_ms_v1(),
                 ));
                 drain_bounded_relay_inbox_v1(
-                    MAX_DATA_DELIVERIES_PER_CONNECTION_TICK_V1,
+                    MAX_DATA_DELIVERIES_PER_CONNECTION_TICK_V1.min(delivery_window.available()),
                     || stopping.load(Ordering::Acquire),
                     || inbox.try_recv().ok(),
                     |delivery| {
@@ -744,11 +853,13 @@ fn relay_connection_loop_v1<S: Read + Write>(
                         write_wire_message_v1(
                             websocket,
                             &ProductRelayWireMessageV1::Delivery(delivery),
-                        )
+                        )?;
+                        delivery_window.sent()
                     },
                 )?;
                 drain_bounded_relay_inbox_v1(
-                    MAX_PEER_HANDSHAKE_DELIVERIES_PER_CONNECTION_TICK_V1,
+                    MAX_PEER_HANDSHAKE_DELIVERIES_PER_CONNECTION_TICK_V1
+                        .min(delivery_window.available()),
                     || stopping.load(Ordering::Acquire),
                     || inbox.try_recv_peer_handshake().ok(),
                     |delivery| {
@@ -762,7 +873,8 @@ fn relay_connection_loop_v1<S: Read + Write>(
                         write_wire_message_v1(
                             websocket,
                             &ProductRelayWireMessageV1::PeerHandshakeDelivery(delivery),
-                        )
+                        )?;
+                        delivery_window.sent()
                     },
                 )?;
             }
@@ -797,11 +909,15 @@ fn service_one_relay_inbox_v1<S: Write>(
     websocket: &mut S,
     manager: &ProductRelaySessionManagerV1,
     runtime: &Runtime,
-    peer_id: &str,
-    session_id: [u8; 16],
+    session: (&str, [u8; 16]),
     inbox: &mut crate::RelaySessionInboxV1,
     prefer_control: &mut bool,
+    delivery_window: &mut RelayDeliveryWindowV1,
 ) -> Result<bool> {
+    let (peer_id, session_id) = session;
+    if delivery_window.available() == 0 {
+        return Ok(false);
+    }
     runtime.block_on(manager.drain_queued_for_session(peer_id, session_id, now_ms_v1()));
     enum RelayInboxItemV1 {
         Data(crate::OpaqueRelayDeliveryV1),
@@ -838,6 +954,7 @@ fn service_one_relay_inbox_v1<S: Write>(
             *prefer_control = false;
         }
     }
+    delivery_window.sent()?;
     Ok(true)
 }
 
@@ -1049,6 +1166,7 @@ struct ProductRelayDaemonIoDeadlineV1 {
 struct ProductRelayDaemonIoDeadlineStateV1 {
     deadline: Option<Instant>,
     lower_read_progressed: bool,
+    buffered_read_deadline: Option<Instant>,
     terminal_error: Option<String>,
 }
 
@@ -1124,9 +1242,30 @@ impl ProductRelayDaemonIoDeadlineV1 {
             .lock()
             .map_err(|_| io::Error::other("product relay daemon I/O deadline lock poisoned"))?;
         self.check_state_v1(&mut state)?;
-        state.deadline = None;
-        state.lower_read_progressed = false;
+        // This boundary finishes a WebSocket frame (or an entirely idle
+        // read). Pending ciphertext for the NEXT frame keeps its own oldest
+        // timestamp, not the completed frame's now-obsolete deadline.
+        state.deadline = state.buffered_read_deadline;
+        state.lower_read_progressed = state.buffered_read_deadline.is_some();
         Ok(())
+    }
+
+    fn observe_read_ahead_v1(&self, started: Option<Instant>) -> io::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("product relay daemon I/O deadline lock poisoned"))?;
+        self.check_state_v1(&mut state)?;
+        state.buffered_read_deadline = None;
+        if let Some(started) = started {
+            let deadline = started
+                .checked_add(Duration::from_millis(PRODUCT_RELAY_FRAME_DEADLINE_MS_V1))
+                .ok_or_else(|| io::Error::other("relay read-ahead deadline overflow"))?;
+            state.buffered_read_deadline = Some(deadline);
+            state.deadline = Some(state.deadline.map_or(deadline, |old| old.min(deadline)));
+            state.lower_read_progressed = true;
+        }
+        self.check_state_v1(&mut state)
     }
 
     fn preserve_partial_read_deadline_v1(&self) -> io::Result<bool> {
@@ -1266,7 +1405,10 @@ impl Read for ProductRelayDaemonDeadlineTcpStreamV1 {
         let result = self.inner.read(output);
         #[cfg(test)]
         let result = self.test_read_v1(output);
-        let restored = self.inner.set_read_timeout(original);
+        let restored = self.inner.set_read_timeout(original).and_then(|()| {
+            self.deadline
+                .observe_read_ahead_v1(self.inner.read_ahead_started_at())
+        });
         let checked = match &result {
             Ok(read) => self.deadline.record_lower_read_v1(*read),
             Err(error)
@@ -1299,7 +1441,10 @@ impl Write for ProductRelayDaemonDeadlineTcpStreamV1 {
         let result = self.inner.write(input);
         #[cfg(test)]
         let result = self.test_write_v1(input);
-        let restored = self.inner.set_write_timeout(original);
+        let restored = self.inner.set_write_timeout(original).and_then(|()| {
+            self.deadline
+                .observe_read_ahead_v1(self.inner.read_ahead_started_at())
+        });
         let checked = match &result {
             Ok(_) => self.deadline.check_v1(),
             Err(error) => Err(self.deadline.fail_v1(error)),
@@ -2098,6 +2243,379 @@ mod tests {
     }
 
     #[test]
+    fn completed_frame_can_advance_to_the_remaining_prefetch_timestamp() {
+        let now = Instant::now();
+        let deadline = ProductRelayDaemonIoDeadlineV1::new(Arc::new(AtomicBool::new(false)));
+        deadline
+            .observe_read_ahead_v1(Some(now - Duration::from_secs(8)))
+            .unwrap();
+        deadline
+            .observe_read_ahead_v1(Some(now - Duration::from_secs(1)))
+            .unwrap();
+        assert_eq!(
+            deadline.state.lock().unwrap().deadline,
+            Some(now + Duration::from_secs(2))
+        );
+        // Advancing the buffered-byte timestamp cannot extend an unfinished
+        // frame. Only finishing that frame permits the next frame's budget.
+        deadline.clear_v1().unwrap();
+        assert_eq!(
+            deadline.state.lock().unwrap().deadline,
+            Some(now + Duration::from_secs(9))
+        );
+    }
+
+    #[test]
+    fn prefetched_tls_bytes_keep_their_original_deadline_across_outer_clear() {
+        let now = Instant::now();
+        let deadline = ProductRelayDaemonIoDeadlineV1::new(Arc::new(AtomicBool::new(false)));
+        deadline.begin_v1(now + Duration::from_secs(10)).unwrap();
+        deadline
+            .observe_read_ahead_v1(Some(now - Duration::from_secs(8)))
+            .unwrap();
+        let original = deadline.state.lock().unwrap().deadline;
+        assert_eq!(original, Some(now + Duration::from_secs(2)));
+        deadline.clear_v1().unwrap();
+        deadline
+            .begin_if_idle_v1(now + Duration::from_secs(10))
+            .unwrap();
+        deadline.observe_read_ahead_v1(Some(now)).unwrap();
+        assert_eq!(deadline.state.lock().unwrap().deadline, original);
+        // Consuming the raw buffer does not end a partially decoded TLS/WS
+        // frame; its lower-progress deadline is retained until frame finish.
+        deadline.observe_read_ahead_v1(None).unwrap();
+        assert!(deadline.preserve_partial_read_deadline_v1().unwrap());
+        assert_eq!(deadline.state.lock().unwrap().deadline, original);
+        deadline.clear_v1().unwrap();
+        assert_eq!(deadline.state.lock().unwrap().deadline, None);
+        assert!(deadline
+            .observe_read_ahead_v1(Some(now - Duration::from_secs(11)))
+            .is_err());
+        assert!(deadline.clear_v1().is_err());
+    }
+
+    #[test]
+    fn delivery_window_is_cumulative_not_refilled_by_idle_or_duplicate_credit() {
+        let mut window = RelayDeliveryWindowV1::default();
+        assert_eq!(window.available(), 15);
+        for _ in 0..15 {
+            window.sent().unwrap();
+        }
+        assert_eq!(window.available(), 0);
+        assert!(window.sent().is_err());
+        window.acknowledge(0).unwrap();
+        assert_eq!(window.available(), 0);
+        window.acknowledge(7).unwrap();
+        assert_eq!(window.available(), 7);
+        for _ in 0..7 {
+            window.sent().unwrap();
+        }
+        window.acknowledge(7).unwrap();
+        assert_eq!(window.available(), 0);
+        assert!(window.acknowledge(6).is_err());
+        assert!(window.acknowledge(23).is_err());
+        assert_eq!(window.available(), 0);
+        let mut overflow = RelayDeliveryWindowV1 {
+            sent: u64::MAX,
+            consumed: u64::MAX,
+        };
+        assert!(overflow.sent().is_err());
+        assert_eq!(overflow.sent, u64::MAX);
+    }
+
+    #[test]
+    #[ignore = "real read-wake deadline regression; run release with --include-ignored --test-threads=1"]
+    fn real_tcp_inbox_notification_interrupts_five_second_idle_read() {
+        // This isolates queue -> authenticated connection scheduling over REAL
+        // TCP/Mio, not TLS performance. The manager identity handshake and
+        // opaque payload use real signatures/E2E. The disconnected-waker
+        // control must time out at the reader before the unchanged 5s idle.
+        struct ReadStartedSocket {
+            inner: crate::product_relay_io::ProductRelaySocketV1,
+            started: Option<std::sync::mpsc::Sender<()>>,
+        }
+        impl Read for ReadStartedSocket {
+            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+                if let Some(started) = self.started.take() {
+                    let _ = started.send(());
+                }
+                self.inner.read(out)
+            }
+        }
+        impl Write for ReadStartedSocket {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.inner.write(bytes)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                self.inner.flush()
+            }
+        }
+
+        for connect_waker in [false, true] {
+            let runtime = TokioRuntimeBuilder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let manager =
+                ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1::default()).unwrap();
+            let relay = SigningKey::from_bytes(&[164; 32]);
+            let source = SigningKey::from_bytes(&[165; 32]);
+            let target = SigningKey::from_bytes(&[166; 32]);
+            let now = now_ms_v1();
+            let (source_registration, _source_inbox) = runtime
+                .block_on(manager.register_authenticated_session(
+                    authenticate_test_peer_v1(&source, &relay, now),
+                    now,
+                ))
+                .unwrap();
+            let (target_registration, mut inbox) = runtime
+                .block_on(manager.register_authenticated_session(
+                    authenticate_test_peer_v1(&target, &relay, now),
+                    now,
+                ))
+                .unwrap();
+            let (mut sender, mut receiver) = test_peer_channels_v1(&source, &target, now);
+            let expected = test_data_frame_v1(0x2345);
+            let envelope = sender.seal_novorudp_frame(&expected).unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            let (server, _) = listener.accept().unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let mut server = crate::product_relay_io::ProductRelaySocketV1::new(server).unwrap();
+            server
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            server
+                .set_write_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let waker = server.read_waker();
+            let (started, read_started) = std::sync::mpsc::channel();
+            let stopping = Arc::new(AtomicBool::new(false));
+            let worker = thread::spawn({
+                let manager = manager.clone();
+                let stopping = Arc::clone(&stopping);
+                move || {
+                    let runtime = TokioRuntimeBuilder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    let mut socket = ReadStartedSocket {
+                        inner: server,
+                        started: Some(started),
+                    };
+                    relay_connection_loop_v1(
+                        &mut socket,
+                        ProductRelayConnectionLoopV1 {
+                            manager: &manager,
+                            runtime: &runtime,
+                            peer_id: &target_registration.peer_id,
+                            session_id: target_registration.session_id,
+                            inbox: &mut inbox,
+                            stopping: &stopping,
+                            io_deadline: None,
+                            read_waker: connect_waker.then_some(&waker),
+                        },
+                    )
+                }
+            });
+            // No assertion may detach the worker: even a timeout or setup
+            // error below shuts down both TCP directions and joins first.
+            let observation = (|| -> Result<(crate::RelayForwardOutcomeV1, Result<WebSocketFrameV1>, Duration)> {
+                read_started.recv_timeout(Duration::from_secs(5)).context("relay did not enter its socket read")?;
+                let admitted = runtime.block_on(manager.forward_opaque(
+                    &source_registration.peer_id,
+                    source_registration.session_id,
+                    envelope,
+                    now_ms_v1(),
+                ));
+                let start = Instant::now();
+                let received = read_websocket_frame_v1(&mut client, false);
+                Ok((admitted, received, start.elapsed()))
+            })();
+            stopping.store(true, Ordering::Release);
+            let _ = client.shutdown(Shutdown::Both);
+            drop(client);
+            let _terminated = worker.join().expect("relay connection worker panicked");
+            let (admitted, received, elapsed) = observation.unwrap();
+            assert!(admitted.forwarded && !admitted.queued);
+            if connect_waker {
+                assert!(
+                    elapsed < Duration::from_secs(1),
+                    "queue wake waited for idle timeout: {elapsed:?}"
+                );
+                let WebSocketFrameV1::Binary(bytes) = received.unwrap() else {
+                    panic!("queue wake did not produce a binary delivery");
+                };
+                let ProductRelayWireMessageV1::Delivery(delivery) =
+                    serde_json::from_slice(&bytes).unwrap()
+                else {
+                    panic!("queue wake produced a non-delivery message");
+                };
+                assert_eq!(
+                    receiver.open_novorudp_frame(&delivery.envelope).unwrap(),
+                    expected
+                );
+            } else {
+                let error = match received {
+                    Err(error) => error,
+                    Ok(_) => panic!("unwired control unexpectedly bypassed the 5s read"),
+                };
+                assert!(
+                    is_timeout_v1(&error),
+                    "unwired control failed for a non-idle reason: {error:#}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn delayed_request_cannot_receive_unbounded_egress_before_its_outcome() {
+        // The read script models an arbitrarily delayed request while the
+        // authenticated target already has >16 MiB of REAL opaque ciphertext.
+        // Many idle/wake turns must not each grant a fresh delivery window.
+        struct DelayedRequest {
+            chunks: VecDeque<Option<Vec<u8>>>,
+            current: Cursor<Vec<u8>>,
+            writes: Vec<u8>,
+        }
+        impl Read for DelayedRequest {
+            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+                if self.current.position() == self.current.get_ref().len() as u64 {
+                    match self.chunks.pop_front() {
+                        Some(Some(bytes)) => self.current = Cursor::new(bytes),
+                        Some(None) => return Err(io::ErrorKind::WouldBlock.into()),
+                        None => return Ok(0),
+                    }
+                }
+                self.current.read(out)
+            }
+        }
+        impl Write for DelayedRequest {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.writes.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let runtime = TokioRuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1 {
+            session_queue_bytes: 64 * 1024 * 1024,
+            ..ProductRelayRuntimeConfigV1::default()
+        })
+        .unwrap();
+        let relay = SigningKey::from_bytes(&[161; 32]);
+        let a = SigningKey::from_bytes(&[162; 32]);
+        let b = SigningKey::from_bytes(&[163; 32]);
+        let now = now_ms_v1();
+        let (ra, mut ia) =
+            runtime
+                .block_on(manager.register_authenticated_session(
+                    authenticate_test_peer_v1(&a, &relay, now),
+                    now,
+                ))
+                .unwrap();
+        let (rb, _ib) =
+            runtime
+                .block_on(manager.register_authenticated_session(
+                    authenticate_test_peer_v1(&b, &relay, now),
+                    now,
+                ))
+                .unwrap();
+        let (mut ca, mut cb) = test_peer_channels_v1(&a, &b, now);
+        for seq in 0..40 {
+            let mut frame = test_data_frame_v1(seq);
+            frame.payload = vec![seq as u8; 200_000];
+            let envelope = cb.seal_novorudp_frame(&frame).unwrap();
+            assert!(
+                runtime
+                    .block_on(manager.forward_opaque(&rb.peer_id, rb.session_id, envelope, now))
+                    .forwarded
+            );
+        }
+        assert!(
+            runtime.block_on(manager.snapshot()).active_queued_bytes
+                > PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_BYTES_V1
+        );
+        let wire = |message: ProductRelayWireMessageV1| {
+            let mut bytes = Vec::new();
+            write_masked_wire_message_v1(&mut bytes, &message).unwrap();
+            Some(bytes)
+        };
+        let mut chunks = VecDeque::from([None, None, None, None]);
+        chunks.push_back(wire(ProductRelayWireMessageV1::Data(
+            ca.seal_novorudp_frame(&test_data_frame_v1(100)).unwrap(),
+        )));
+        chunks.push_back(wire(ProductRelayWireMessageV1::DeliveryConsumedV1 {
+            through: 7,
+        }));
+        chunks.extend([None, None, None]);
+        chunks.push_back(wire(ProductRelayWireMessageV1::DeliveryConsumedV1 {
+            through: 7,
+        }));
+        chunks.extend([None, None]);
+        chunks.push_back(wire(ProductRelayWireMessageV1::Close));
+        let mut socket = DelayedRequest {
+            chunks,
+            current: Cursor::new(Vec::new()),
+            writes: Vec::new(),
+        };
+        relay_connection_loop_v1(
+            &mut socket,
+            ProductRelayConnectionLoopV1 {
+                manager: &manager,
+                runtime: &runtime,
+                peer_id: &ra.peer_id,
+                session_id: ra.session_id,
+                inbox: &mut ia,
+                stopping: &AtomicBool::new(false),
+                io_deadline: None,
+                read_waker: None,
+            },
+        )
+        .unwrap();
+        let mut writes = socket.writes.as_slice();
+        let mut delivered = 0;
+        let mut outcome_count = 0;
+        while !writes.is_empty() {
+            let WebSocketFrameV1::Binary(bytes) =
+                read_websocket_frame_v1(&mut writes, false).unwrap()
+            else {
+                panic!("unexpected frame");
+            };
+            match serde_json::from_slice(&bytes).unwrap() {
+                ProductRelayWireMessageV1::Delivery(delivery) => {
+                    let frame = ca.open_novorudp_frame(&delivery.envelope).unwrap();
+                    assert_eq!(frame.payload, vec![delivered as u8; 200_000]);
+                    delivered += 1;
+                }
+                ProductRelayWireMessageV1::ForwardOutcome(outcome) => {
+                    assert!(outcome.forwarded);
+                    assert_eq!(
+                        delivered, 15,
+                        "unconsumed egress exceeded cumulative window"
+                    );
+                    outcome_count += 1;
+                }
+                other => panic!("unexpected output: {other:?}"),
+            }
+        }
+        assert_eq!((delivered, outcome_count), (22, 1));
+        assert_eq!(
+            runtime
+                .block_on(manager.snapshot())
+                .active_queued_frame_count,
+            19
+        );
+    }
+
+    #[test]
     fn sender_outcomes_precede_one_fair_egress_item_per_request() {
         let runtime = TokioRuntimeBuilder::new_current_thread()
             .enable_all()
@@ -2161,6 +2679,7 @@ mod tests {
                 inbox: &mut inbox_a,
                 stopping: &stopping,
                 io_deadline: None,
+                read_waker: None,
             },
         )
         .unwrap();
@@ -2604,6 +3123,19 @@ mod tests {
         initiator
             .complete(&response, now_ms_v1(), &mut replay)
             .unwrap();
+        let WebSocketFrameV1::Binary(bytes) = read_websocket_frame_v1(&mut stream, false).unwrap()
+        else {
+            panic!("missing delivery window");
+        };
+        assert!(matches!(
+            serde_json::from_slice(&bytes).unwrap(),
+            ProductRelayWireMessageV1::DeliveryWindowV1 { max_unconsumed: 15 }
+        ));
+        write_masked_wire_message_v1(
+            &mut stream,
+            &ProductRelayWireMessageV1::DeliveryConsumedV1 { through: 0 },
+        )
+        .unwrap();
         stream
     }
 

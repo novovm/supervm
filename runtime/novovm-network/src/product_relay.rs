@@ -11,11 +11,15 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
+    task::{Context, Poll, Waker},
 };
 use thiserror::Error;
 use tokio::sync::{mpsc, RwLock};
 
 pub const PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1: usize = 1_048_576;
+// One shared data/control delivery window, negotiated after authentication.
+// This bounds cumulative unconsumed traffic, not just one daemon loop turn.
+pub(crate) const PRODUCT_RELAY_DELIVERY_WINDOW_V1: u64 = 15;
 const PRODUCT_RELAY_BYTE_RATE_WINDOW_MS_V1: u64 = 60_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,6 +116,14 @@ pub struct RelayPeerHandshakeDeliveryV1 {
 pub enum ProductRelayWireMessageV1 {
     HandshakeOffer(NodeHandshakeOfferV1),
     HandshakeResponse(NodeHandshakeResponseV1),
+    /// Mandatory transport flow-control negotiation; not a blockchain version.
+    DeliveryWindowV1 {
+        max_unconsumed: u64,
+    },
+    /// Cumulative deliveries consumed on THIS authenticated connection only.
+    DeliveryConsumedV1 {
+        through: u64,
+    },
     Data(SecureNovoRudpEnvelopeV1),
     Delivery(OpaqueRelayDeliveryV1),
     PeerHandshake {
@@ -181,6 +193,8 @@ pub struct RelaySessionInboxV1 {
     session_id: [u8; 16],
     receiver: mpsc::Receiver<RelayActiveQueueItemV1<OpaqueRelayDeliveryV1>>,
     control_receiver: mpsc::Receiver<RelayActiveQueueItemV1<RelayPeerHandshakeDeliveryV1>>,
+    ready_data: Option<RelayActiveQueueItemV1<OpaqueRelayDeliveryV1>>,
+    ready_control: Option<RelayActiveQueueItemV1<RelayPeerHandshakeDeliveryV1>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -462,6 +476,8 @@ impl ProductRelaySessionManagerV1 {
                 session_id,
                 receiver,
                 control_receiver,
+                ready_data: None,
+                ready_control: None,
             },
         ))
     }
@@ -1085,6 +1101,27 @@ impl ProductRelaySessionManagerV1 {
 }
 
 impl RelaySessionInboxV1 {
+    /// Register both receive lanes before sleeping on socket readiness. Any
+    /// immediately available item retains its ORIGINAL quota guard until recv
+    /// or drop; lookahead is not a second, unaccounted queue. Rearm each turn:
+    /// a read wake can be consumed while the parser finishes a partial frame.
+    pub(crate) fn arm_delivery_wake(&mut self, waker: &Waker) {
+        let mut context = Context::from_waker(waker);
+        if self.ready_data.is_none() {
+            if let Poll::Ready(item) = self.receiver.poll_recv(&mut context) {
+                self.ready_data = item;
+            }
+        }
+        if self.ready_control.is_none() {
+            if let Poll::Ready(item) = self.control_receiver.poll_recv(&mut context) {
+                self.ready_control = item;
+            }
+        }
+        if self.ready_data.is_some() || self.ready_control.is_some() {
+            waker.wake_by_ref();
+        }
+    }
+
     #[must_use]
     pub fn peer_id(&self) -> &str {
         &self.peer_id
@@ -1096,6 +1133,9 @@ impl RelaySessionInboxV1 {
     }
 
     pub async fn recv(&mut self) -> Option<OpaqueRelayDeliveryV1> {
+        if let Some(item) = self.ready_data.take() {
+            return Some(item.into_inner());
+        }
         self.receiver
             .recv()
             .await
@@ -1103,12 +1143,18 @@ impl RelaySessionInboxV1 {
     }
 
     pub fn try_recv(&mut self) -> Result<OpaqueRelayDeliveryV1, mpsc::error::TryRecvError> {
+        if let Some(item) = self.ready_data.take() {
+            return Ok(item.into_inner());
+        }
         self.receiver
             .try_recv()
             .map(RelayActiveQueueItemV1::into_inner)
     }
 
     pub async fn recv_peer_handshake(&mut self) -> Option<RelayPeerHandshakeDeliveryV1> {
+        if let Some(item) = self.ready_control.take() {
+            return Some(item.into_inner());
+        }
         self.control_receiver
             .recv()
             .await
@@ -1118,6 +1164,9 @@ impl RelaySessionInboxV1 {
     pub fn try_recv_peer_handshake(
         &mut self,
     ) -> Result<RelayPeerHandshakeDeliveryV1, mpsc::error::TryRecvError> {
+        if let Some(item) = self.ready_control.take() {
+            return Ok(item.into_inner());
+        }
         self.control_receiver
             .try_recv()
             .map(RelayActiveQueueItemV1::into_inner)
@@ -2192,6 +2241,19 @@ mod tests {
     };
     use ed25519_dalek::SigningKey;
 
+    #[derive(Default)]
+    struct DeliveryWakeCounter(AtomicUsize);
+
+    impl std::task::Wake for DeliveryWakeCounter {
+        fn wake(self: Arc<Self>) {
+            self.wake_by_ref();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     fn authenticate_to_relay(
         node_identity: &SigningKey,
         relay_identity: &SigningKey,
@@ -2270,6 +2332,338 @@ mod tests {
             nonce: [0x55; 12],
             ciphertext: vec![0; ciphertext_bytes],
         }
+    }
+
+    #[tokio::test]
+    async fn armed_lookahead_retains_quota_and_both_lane_receive_orders() {
+        let relay = SigningKey::from_bytes(&[130; 32]);
+        let source = SigningKey::from_bytes(&[131; 32]);
+        let target = SigningKey::from_bytes(&[132; 32]);
+        let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1 {
+            session_queue_capacity: 4,
+            active_queue_total: 8,
+            ..ProductRelayRuntimeConfigV1::default()
+        })
+        .unwrap();
+        let (registration, _source_inbox) = manager
+            .register_authenticated_session(authenticate_to_relay(&source, &relay, 1_000), 1_000)
+            .await
+            .unwrap();
+        let (target_registration, mut inbox) = manager
+            .register_authenticated_session(authenticate_to_relay(&target, &relay, 1_000), 1_000)
+            .await
+            .unwrap();
+        let (mut sender, mut receiver) = peer_channels(&source, &target, 1_000);
+        let offers: Vec<_> = (1..=2)
+            .map(|sequence| {
+                NodeHandshakeInitiatorV1::start(
+                    &source,
+                    target_registration.peer_id.clone(),
+                    1_010 + sequence,
+                    5_000,
+                )
+                .unwrap()
+                .offer()
+                .clone()
+            })
+            .collect();
+        for (index, offer) in offers.iter().enumerate() {
+            assert_eq!(
+                manager
+                    .forward_opaque(
+                        &registration.peer_id,
+                        registration.session_id,
+                        sender
+                            .seal_novorudp_frame(&frame(index as u64 + 1))
+                            .unwrap(),
+                        1_020,
+                    )
+                    .await
+                    .disposition,
+                RelayForwardDispositionV1::Forwarded
+            );
+            assert_eq!(
+                manager
+                    .forward_peer_handshake(
+                        &registration.peer_id,
+                        registration.session_id,
+                        &target_registration.peer_id,
+                        RelayPeerHandshakeV1::Offer(offer.clone()),
+                        1_020,
+                    )
+                    .await
+                    .disposition,
+                RelayForwardDispositionV1::Forwarded
+            );
+        }
+        let before = manager.snapshot().await;
+        assert_eq!(before.active_queued_frame_count, 4);
+        let counter = Arc::new(DeliveryWakeCounter::default());
+        let waker = Waker::from(Arc::clone(&counter));
+        inbox.arm_delivery_wake(&waker);
+        assert!(counter.0.load(Ordering::Relaxed) > 0);
+        assert!(inbox.ready_data.is_some() && inbox.ready_control.is_some());
+        let after = manager.snapshot().await;
+        assert_eq!(
+            after.active_queued_frame_count,
+            before.active_queued_frame_count
+        );
+        assert_eq!(after.active_queued_bytes, before.active_queued_bytes);
+        let target_usage = after
+            .active_sessions
+            .iter()
+            .find(|session| session.peer_id == target_registration.peer_id)
+            .unwrap();
+        assert_eq!(target_usage.queued_frame_count, 4);
+        assert_eq!(target_usage.queued_bytes, before.active_queued_bytes);
+        // Both channel slots were released by poll_recv, but their retained
+        // guards must still prevent another per-session admission.
+        assert_eq!(
+            manager
+                .forward_opaque(
+                    &registration.peer_id,
+                    registration.session_id,
+                    sender.seal_novorudp_frame(&frame(3)).unwrap(),
+                    1_021,
+                )
+                .await
+                .disposition,
+            RelayForwardDispositionV1::QueuedBackpressure
+        );
+        let first = inbox.try_recv().unwrap();
+        assert_eq!(
+            receiver.open_novorudp_frame(&first.envelope).unwrap(),
+            frame(1)
+        );
+        assert_eq!(
+            inbox.recv_peer_handshake().await.unwrap().handshake,
+            RelayPeerHandshakeV1::Offer(offers[0].clone())
+        );
+        inbox.arm_delivery_wake(&waker);
+        assert_eq!(manager.snapshot().await.active_queued_frame_count, 2);
+        let second = inbox.recv().await.unwrap();
+        assert_eq!(
+            receiver.open_novorudp_frame(&second.envelope).unwrap(),
+            frame(2)
+        );
+        assert_eq!(
+            inbox.try_recv_peer_handshake().unwrap().handshake,
+            RelayPeerHandshakeV1::Offer(offers[1].clone())
+        );
+        assert_eq!(manager.snapshot().await.active_queued_frame_count, 0);
+        assert_eq!(
+            manager
+                .drain_queued_for_session(
+                    &target_registration.peer_id,
+                    target_registration.session_id,
+                    1_022
+                )
+                .await,
+            1
+        );
+        let third = inbox.recv().await.unwrap();
+        assert_eq!(
+            receiver.open_novorudp_frame(&third.envelope).unwrap(),
+            frame(3)
+        );
+        let after = manager.snapshot().await;
+        assert_eq!(after.queued_frame_count, 0);
+        assert_eq!(after.queued_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn empty_armed_inbox_wakes_for_both_lanes_but_not_rejected_source() {
+        let relay = SigningKey::from_bytes(&[133; 32]);
+        let source = SigningKey::from_bytes(&[134; 32]);
+        let target = SigningKey::from_bytes(&[135; 32]);
+        let manager =
+            ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1::default()).unwrap();
+        let (registration, _source_inbox) = manager
+            .register_authenticated_session(authenticate_to_relay(&source, &relay, 1_000), 1_000)
+            .await
+            .unwrap();
+        let (target_registration, mut inbox) = manager
+            .register_authenticated_session(authenticate_to_relay(&target, &relay, 1_000), 1_000)
+            .await
+            .unwrap();
+        let (mut sender, mut receiver) = peer_channels(&source, &target, 1_000);
+        let counter = Arc::new(DeliveryWakeCounter::default());
+        let waker = Waker::from(Arc::clone(&counter));
+        inbox.arm_delivery_wake(&waker);
+        assert_eq!(counter.0.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            manager
+                .forward_opaque(
+                    &registration.peer_id,
+                    registration.session_id,
+                    sender.seal_novorudp_frame(&frame(1)).unwrap(),
+                    1_010,
+                )
+                .await
+                .disposition,
+            RelayForwardDispositionV1::Forwarded
+        );
+        assert!(counter.0.load(Ordering::Relaxed) > 0);
+        let delivered = inbox.try_recv().unwrap();
+        assert_eq!(
+            receiver.open_novorudp_frame(&delivered.envelope).unwrap(),
+            frame(1)
+        );
+        let before = counter.0.load(Ordering::Relaxed);
+        inbox.arm_delivery_wake(&waker);
+        assert_eq!(counter.0.load(Ordering::Relaxed), before);
+        let offer = NodeHandshakeInitiatorV1::start(
+            &source,
+            target_registration.peer_id.clone(),
+            1_020,
+            5_000,
+        )
+        .unwrap()
+        .offer()
+        .clone();
+        assert_eq!(
+            manager
+                .forward_peer_handshake(
+                    &registration.peer_id,
+                    registration.session_id,
+                    &target_registration.peer_id,
+                    RelayPeerHandshakeV1::Offer(offer.clone()),
+                    1_021,
+                )
+                .await
+                .disposition,
+            RelayForwardDispositionV1::Forwarded
+        );
+        assert!(counter.0.load(Ordering::Relaxed) > before);
+        assert_eq!(
+            inbox.try_recv_peer_handshake().unwrap().handshake,
+            RelayPeerHandshakeV1::Offer(offer)
+        );
+        inbox.arm_delivery_wake(&waker);
+        let before = counter.0.load(Ordering::Relaxed);
+        assert_eq!(
+            manager
+                .forward_opaque(
+                    &registration.peer_id,
+                    [0; 16],
+                    sender.seal_novorudp_frame(&frame(2)).unwrap(),
+                    1_022,
+                )
+                .await
+                .disposition,
+            RelayForwardDispositionV1::RejectedStaleSourceSession
+        );
+        assert_eq!(counter.0.load(Ordering::Relaxed), before);
+        assert_eq!(inbox.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+        assert_eq!(manager.snapshot().await.active_queued_frame_count, 0);
+    }
+
+    #[tokio::test]
+    async fn replaced_session_lookahead_stays_owned_and_counted_until_drop() {
+        let relay = SigningKey::from_bytes(&[136; 32]);
+        let source = SigningKey::from_bytes(&[137; 32]);
+        let target = SigningKey::from_bytes(&[138; 32]);
+        let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1 {
+            session_queue_capacity: 1,
+            active_queue_total: 1,
+            ..ProductRelayRuntimeConfigV1::default()
+        })
+        .unwrap();
+        let (registration, _source_inbox) = manager
+            .register_authenticated_session(authenticate_to_relay(&source, &relay, 1_000), 1_000)
+            .await
+            .unwrap();
+        let (old_registration, mut old_inbox) = manager
+            .register_authenticated_session(authenticate_to_relay(&target, &relay, 1_000), 1_000)
+            .await
+            .unwrap();
+        let (mut sender, mut receiver) = peer_channels(&source, &target, 1_000);
+        assert_eq!(
+            manager
+                .forward_opaque(
+                    &registration.peer_id,
+                    registration.session_id,
+                    sender.seal_novorudp_frame(&frame(1)).unwrap(),
+                    1_010
+                )
+                .await
+                .disposition,
+            RelayForwardDispositionV1::Forwarded
+        );
+        old_inbox.arm_delivery_wake(&Waker::from(Arc::new(DeliveryWakeCounter::default())));
+        assert!(old_inbox.ready_data.is_some());
+        let counted_bytes = manager.snapshot().await.active_queued_bytes;
+        let (new_registration, mut new_inbox) = manager
+            .register_authenticated_session(authenticate_to_relay(&target, &relay, 1_020), 1_020)
+            .await
+            .unwrap();
+        assert!(new_registration.replaced_existing_session);
+        assert_ne!(old_registration.session_id, new_registration.session_id);
+        assert_eq!(old_inbox.session_id(), old_registration.session_id);
+        assert!(
+            !manager
+                .is_current_session(
+                    &old_registration.peer_id,
+                    old_registration.session_id,
+                    1_021
+                )
+                .await
+        );
+        assert!(
+            manager
+                .is_current_session(
+                    &new_registration.peer_id,
+                    new_registration.session_id,
+                    1_021
+                )
+                .await
+        );
+        let after = manager.snapshot().await;
+        assert_eq!(after.active_queued_frame_count, 1);
+        assert_eq!(after.active_queued_bytes, counted_bytes);
+        assert_eq!(new_inbox.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+        assert_eq!(
+            manager
+                .forward_opaque(
+                    &registration.peer_id,
+                    registration.session_id,
+                    sender.seal_novorudp_frame(&frame(2)).unwrap(),
+                    1_022
+                )
+                .await
+                .disposition,
+            RelayForwardDispositionV1::QueuedBackpressure
+        );
+        assert_eq!(
+            manager
+                .drain_queued_for_session(
+                    &new_registration.peer_id,
+                    new_registration.session_id,
+                    1_023
+                )
+                .await,
+            0
+        );
+        drop(old_inbox);
+        assert_eq!(manager.snapshot().await.active_queued_frame_count, 0);
+        assert_eq!(manager.snapshot().await.active_queued_bytes, 0);
+        assert_eq!(
+            manager
+                .drain_queued_for_session(
+                    &new_registration.peer_id,
+                    new_registration.session_id,
+                    1_024
+                )
+                .await,
+            1
+        );
+        let delivered = new_inbox.recv().await.unwrap();
+        assert_eq!(
+            receiver.open_novorudp_frame(&delivered.envelope).unwrap(),
+            frame(2)
+        );
+        assert_eq!(new_inbox.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+        assert_eq!(manager.snapshot().await.queued_frame_count, 0);
     }
 
     #[tokio::test]

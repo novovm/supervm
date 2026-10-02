@@ -493,6 +493,313 @@ fn wait_until(mut predicate: impl FnMut() -> bool) {
 }
 
 #[test]
+#[ignore = "real WSS latency regression; run release with --include-ignored --test-threads=1"]
+fn real_wss_queued_payload_burst_does_not_pay_idle_read_timeout_per_message() {
+    let relay = RelayFixture::start();
+    let sender_id = id(21);
+    let receiver_id = id(22);
+    let mut sender_config = config(vec![receiver_id.clone()]);
+    sender_config.relay.endpoint = relay.endpoint.clone();
+    sender_config.relay.tls_trust = ProductRelayTlsTrustV1::ExplicitCa {
+        certificate_path: relay.cert.clone(),
+    };
+    // Exercise a legal idle-read setting, without changing queue limits or TTL.
+    sender_config.relay.read_timeout_ms = 250;
+    sender_config.heartbeat_interval_ms = 1000;
+    let mut receiver_config = config(vec![sender_id.clone()]);
+    receiver_config.relay.endpoint = relay.endpoint.clone();
+    receiver_config.relay.tls_trust = ProductRelayTlsTrustV1::ExplicitCa {
+        certificate_path: relay.cert.clone(),
+    };
+    let mut sender = NetworkWorker::start(sender_config, key(21)).unwrap();
+    let mut receiver = NetworkWorker::start(receiver_config, key(22)).unwrap();
+
+    // Complete real WSS and E2E handshakes before starting the admission clock.
+    let mut initial = None;
+    wait_until(|| {
+        let (Ok(sent), Ok(received)) = (sender.status(), receiver.status()) else {
+            return false;
+        };
+        if sent.active_sessions.contains_key(&receiver_id)
+            && received.active_sessions.contains_key(&sender_id)
+        {
+            initial = Some((sent, received));
+            true
+        } else {
+            false
+        }
+    });
+    let (initial_sender, initial_receiver) = initial.unwrap();
+    let expected: Vec<_> = (0..8)
+        .map(|index| format!("queued-burst-payload-{index}").into_bytes())
+        .collect();
+    let target_admissions = initial_sender.relay_admissions + expected.len() as u64;
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(1);
+    for bytes in &expected {
+        let mut pending = Outbound {
+            peer_id: receiver_id.clone(),
+            bytes: bytes.clone(),
+        };
+        loop {
+            match sender.try_send(pending.peer_id, pending.bytes).unwrap() {
+                SendAdmission::Accepted => break,
+                SendAdmission::Backpressure(original) => {
+                    // Only retry an unaccepted original; never duplicate a send.
+                    pending = original;
+                    assert!(Instant::now() < deadline, "burst admission stayed busy");
+                    thread::sleep(Duration::from_millis(1));
+                }
+                SendAdmission::Rejected { reason, .. } => {
+                    panic!("burst payload rejected: {reason:?}");
+                }
+            }
+        }
+    }
+
+    let mut admitted_in_time = None;
+    let mut observed_admissions = initial_sender.relay_admissions;
+    while Instant::now() < deadline {
+        if let Ok(status) = sender.status() {
+            observed_admissions = status.relay_admissions;
+            if observed_admissions == target_admissions {
+                let elapsed = started.elapsed();
+                if elapsed < Duration::from_secs(1) {
+                    admitted_in_time = Some(elapsed);
+                }
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+
+    // Also finish the real decrypt/readback when the timing regression is red.
+    // Relay disposition is not a peer-delivery ACK or a transaction TPS result.
+    let mut received = Vec::new();
+    wait_until(|| {
+        while let Some(message) = receiver.try_recv().unwrap() {
+            assert_eq!(message.peer_id, sender_id);
+            received.push(message.bytes);
+        }
+        received.len() >= expected.len()
+            && sender
+                .status()
+                .is_ok_and(|status| status.relay_admissions == target_admissions)
+    });
+    sender.shutdown().unwrap();
+    receiver.shutdown().unwrap();
+    while let Some(message) = receiver.try_recv().unwrap() {
+        assert_eq!(message.peer_id, sender_id);
+        received.push(message.bytes);
+    }
+    assert_eq!(
+        received, expected,
+        "decrypted payloads must be exact and unique"
+    );
+    let final_sender = sender.status().unwrap();
+    let final_receiver = receiver.status().unwrap();
+    assert_eq!(final_sender.relay_admissions, target_admissions);
+    assert_eq!(
+        final_sender.relay_reconnects,
+        initial_sender.relay_reconnects
+    );
+    assert_eq!(
+        final_receiver.relay_reconnects,
+        initial_receiver.relay_reconnects
+    );
+    assert!(
+        admitted_in_time.is_some(),
+        "8 accepted payloads paid repeated idle reads: only {} relay admissions observed within 1s; all 8 later decrypted exactly; sender={final_sender:?}, receiver={final_receiver:?}",
+        observed_admissions - initial_sender.relay_admissions,
+    );
+    eprintln!(
+        "real queued burst: 8 relay admissions in {:?}; 8 exact peer decryptions, no reconnect",
+        admitted_in_time.unwrap()
+    );
+}
+
+#[test]
+#[ignore = "real WSS large-frame regression; run release with --include-ignored --test-threads=1"]
+fn real_wss_three_worker_large_duplex_fanin_crosses_delivery_windows_without_loss() {
+    const MESSAGES_PER_ROUTE: usize = 24;
+    const PAYLOAD_BYTES: usize = 192 * 1024;
+    fn payload(source: u8, target: u8, sequence: usize) -> Vec<u8> {
+        (0..PAYLOAD_BYTES)
+            .map(|index| {
+                ((index + source as usize * 31 + target as usize * 7 + sequence * 17) % 251) as u8
+            })
+            .collect()
+    }
+
+    let relay = RelayFixture::start();
+    let seeds = [31, 32, 33];
+    let ids: Vec<_> = seeds.into_iter().map(id).collect();
+    let configs: Vec<_> = (0..seeds.len())
+        .map(|index| {
+            let mut config = config(
+                ids.iter()
+                    .enumerate()
+                    .filter(|(other, _)| *other != index)
+                    .map(|(_, peer)| peer.clone())
+                    .collect(),
+            );
+            config.relay.endpoint = relay.endpoint.clone();
+            config.relay.tls_trust = ProductRelayTlsTrustV1::ExplicitCa {
+                certificate_path: relay.cert.clone(),
+            };
+            assert!(PAYLOAD_BYTES <= config.limits.max_payload_bytes);
+            // Twenty-four maximum-sized payloads exceed the default per-peer
+            // queue, so the producer must respect real backpressure. Do not
+            // enlarge the queue, TTL, socket timeout, or the 20-second gate.
+            assert!(MESSAGES_PER_ROUTE * PAYLOAD_BYTES > config.limits.outbound.peer_max_bytes);
+            config
+        })
+        .collect();
+    let mut workers: Vec<_> = configs
+        .iter()
+        .zip(seeds)
+        .map(|(config, seed)| NetworkWorker::start(config.clone(), key(seed)).unwrap())
+        .collect();
+    let mut initial = None;
+    wait_until(|| {
+        let Ok(statuses) = workers
+            .iter()
+            .map(NetworkWorker::status)
+            .collect::<Result<Vec<_>>>()
+        else {
+            return false;
+        };
+        if statuses
+            .iter()
+            .all(|status| status.relay_connected && status.active_sessions.len() == 2)
+        {
+            initial = Some(statuses);
+            true
+        } else {
+            false
+        }
+    });
+    let initial = initial.unwrap();
+    // Two leaves feed the same hub while the hub concurrently sends a full
+    // stream to each leaf. Every direction exceeds the shared delivery window;
+    // these are real worker WSS/E2E frames, not scripted plaintext I/O.
+    let routes = [(0usize, 1usize), (0, 2), (1, 0), (2, 0)];
+    assert!(MESSAGES_PER_ROUTE as u64 > crate::product_relay::PRODUCT_RELAY_DELIVERY_WINDOW_V1);
+    let mut submitted = [0usize; 4];
+    let mut received = [0usize; 4];
+    let mut pending: [Option<Outbound>; 4] = std::array::from_fn(|_| None);
+    let mut seen = BTreeSet::new();
+    let started = Instant::now();
+    let mut printed = false;
+    wait_until(|| {
+        for (route, &(source, target)) in routes.iter().enumerate() {
+            if submitted[route] == MESSAGES_PER_ROUTE {
+                continue;
+            }
+            let message = pending[route].take().unwrap_or_else(|| Outbound {
+                peer_id: ids[target].clone(),
+                bytes: payload(seeds[source], seeds[target], submitted[route]),
+            });
+            match workers[source]
+                .try_send(message.peer_id, message.bytes)
+                .unwrap()
+            {
+                SendAdmission::Accepted => submitted[route] += 1,
+                // The exact unaccepted original is retained; an Accepted item
+                // is never recreated or resubmitted by this producer.
+                SendAdmission::Backpressure(original) => pending[route] = Some(original),
+                SendAdmission::Rejected { reason, .. } => {
+                    panic!("large duplex rejected: {reason:?}")
+                }
+            }
+        }
+        for (target, worker) in workers.iter().enumerate() {
+            while let Some(message) = worker.try_recv().unwrap() {
+                let source = ids
+                    .iter()
+                    .position(|peer| peer == &message.peer_id)
+                    .expect("configured source");
+                let route = routes
+                    .iter()
+                    .position(|pair| *pair == (source, target))
+                    .expect("active payload route");
+                let sequence = received[route];
+                assert!(
+                    sequence < MESSAGES_PER_ROUTE,
+                    "duplicate or extra delivery on route {route}"
+                );
+                assert!(
+                    message.bytes == payload(seeds[source], seeds[target], sequence),
+                    "exact per-route FIFO, route {route}, sequence {sequence}"
+                );
+                assert!(seen.insert((route, sequence)), "duplicate large payload");
+                received[route] += 1;
+            }
+        }
+        let statuses: Vec<_> = workers.iter().map(NetworkWorker::status).collect();
+        for (index, status) in statuses.iter().enumerate() {
+            if let Ok(status) = status {
+                assert_eq!(
+                    status.relay_reconnects, initial[index].relay_reconnects,
+                    "large duplex relay reconnect: {statuses:?}"
+                );
+                assert_eq!(
+                    status.inbound_dropped, initial[index].inbound_dropped,
+                    "large duplex dropped plaintext: {statuses:?}"
+                );
+                assert_eq!(
+                    status.outbound_expired, initial[index].outbound_expired,
+                    "large duplex expired plaintext: {statuses:?}"
+                );
+                assert_eq!(
+                    status.invalid_frames, initial[index].invalid_frames,
+                    "large duplex invalid frame: {statuses:?}"
+                );
+                assert_eq!(
+                    status.active_sessions, initial[index].active_sessions,
+                    "healthy E2E sessions must remain unchanged: {statuses:?}"
+                );
+                assert!(status.outbound_bytes <= configs[index].limits.outbound.max_bytes);
+                assert!(status.inbound_bytes <= configs[index].limits.inbound.max_bytes);
+            }
+        }
+        if !printed && started.elapsed() > Duration::from_secs(19) {
+            eprintln!("large duplex nearing unchanged 20s deadline: submitted={submitted:?}, received={received:?}, statuses={statuses:?}");
+            printed = true;
+        }
+        submitted.iter().all(|count| *count == MESSAGES_PER_ROUTE)
+            && received.iter().all(|count| *count == MESSAGES_PER_ROUTE)
+            && statuses.iter().enumerate().all(|(index, status)| {
+                let outgoing = routes.iter().filter(|(source, _)| *source == index).count()
+                    * MESSAGES_PER_ROUTE;
+                status.as_ref().is_ok_and(|status| {
+                    status.outbound_messages == 0
+                        && status.relay_admissions
+                            == initial[index].relay_admissions + outgoing as u64
+                })
+            })
+    });
+    assert!(pending.iter().all(Option::is_none));
+    assert_eq!(seen.len(), routes.len() * MESSAGES_PER_ROUTE);
+    let elapsed = started.elapsed();
+    for worker in &mut workers {
+        worker.shutdown().unwrap();
+    }
+    for (index, worker) in workers.iter().enumerate() {
+        assert!(
+            worker.try_recv().unwrap().is_none(),
+            "extra delivery after completion"
+        );
+        let status = worker.status().unwrap();
+        assert_eq!(status.relay_reconnects, initial[index].relay_reconnects);
+        assert_eq!(status.inbound_dropped, initial[index].inbound_dropped);
+        assert_eq!(status.outbound_expired, initial[index].outbound_expired);
+        assert_eq!(status.invalid_frames, initial[index].invalid_frames);
+    }
+    eprintln!("real WSS/E2E large duplex fan-in: 4 routes x {MESSAGES_PER_ROUTE} x {PAYLOAD_BYTES} exact bytes in {elapsed:?}; unchanged bounded queues, sessions, no reconnect/drop");
+}
+
+#[test]
 fn real_wss_three_worker_duplex_and_peer_restart_preserve_healthy_session() {
     let relay = RelayFixture::start();
     let seeds = [11, 12, 13];

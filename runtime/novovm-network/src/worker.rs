@@ -33,6 +33,8 @@ pub const NETWORK_WORKER_MAX_PAYLOAD_BYTES: usize = 192 * 1024;
 const FRAME_DOMAIN: u64 = u64::from_le_bytes(*b"NVNET001");
 const FRAME_OVERHEAD: usize = 96 + 16;
 const MAX_PEERS: usize = 1024;
+// Scheduling quantum, not a larger queue or a protocol delivery guarantee.
+const MAX_PAYLOADS_PER_TURN: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct QueueLimits {
@@ -648,8 +650,21 @@ fn run_session(
         if !relay.has_buffered_events() {
             send_one_handshake(relay, config, identity, peers, &mut handshake_turn)?;
         }
-        if !relay.has_buffered_events() {
-            send_one_payload(relay, config, peers, shared)?;
+        // The outcome wait already reads the WSS stream and buffers incoming
+        // events. Continue queued sends only while there is no such event;
+        // do not pay an idle receive timeout after every queued payload.
+        // Both count and the existing read-idle budget bound this turn. An
+        // in-progress outcome keeps its original absolute deadline, and no
+        // additional send starts after a slow outcome exhausts this budget.
+        let send_started = Instant::now();
+        for _ in 0..MAX_PAYLOADS_PER_TURN {
+            if stop.load(Ordering::Acquire)
+                || relay.has_buffered_events()
+                || send_started.elapsed() >= Duration::from_millis(config.relay.read_timeout_ms)
+                || !send_one_payload(relay, config, peers, shared)?
+            {
+                break;
+            }
         }
         if let Some(id) = preauth.next_peer(|id| {
             peers
@@ -806,11 +821,17 @@ fn send_one_payload(
     config: &NetworkWorkerConfig,
     peers: &mut BTreeMap<String, Peer>,
     shared: &Mutex<Shared>,
-) -> Result<()> {
+) -> Result<bool> {
     let selected = {
         let mut shared = shared
             .lock()
             .map_err(|_| anyhow::anyhow!("network queue poisoned"))?;
+        // Every send keeps the original TTL check, including later sends in a
+        // burst. A previous outcome wait may have consumed substantial time.
+        let expired = shared
+            .outbound
+            .expire(Instant::now(), Duration::from_millis(config.queue_ttl_ms));
+        shared.status.outbound_expired = shared.status.outbound_expired.saturating_add(expired);
         shared
             .outbound
             .next_peer(|id| {
@@ -828,15 +849,15 @@ fn send_one_payload(
             })
     };
     let Some((id, bytes)) = selected else {
-        return Ok(());
+        return Ok(false);
     };
     let peer = peers.get_mut(&id).expect("configured outgoing peer");
     let Phase::Active(channel) = &mut peer.phase else {
-        return Ok(());
+        return Ok(false);
     };
     let Some(next_sequence) = peer.frame_sequence.checked_add(1) else {
         isolate(peer, config);
-        return Ok(());
+        return Ok(true);
     };
     let frame = NovoRudpTransportFrameV0::new(
         NovoRudpTransportFrameKindV0::Data,
@@ -852,7 +873,7 @@ fn send_one_payload(
         Err(error) => {
             record_error(shared, &error.into());
             isolate(peer, config);
-            return Ok(());
+            return Ok(true);
         }
     };
     let outcome = relay.send_envelope_with_outcome_v1(envelope)?;
@@ -875,7 +896,7 @@ fn send_one_payload(
             &anyhow::anyhow!("relay admission rejected: {:?}", outcome.disposition),
         );
     }
-    Ok(())
+    Ok(true)
 }
 
 fn receive_delivery(
