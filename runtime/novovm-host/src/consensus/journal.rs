@@ -33,6 +33,99 @@ pub enum DurableMessage {
     },
 }
 
+pub(crate) const MAX_REPLAY_RECORDS: usize = 5;
+
+/// Immutable local candidate locator, never a durable execution capability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CandidateLocator {
+    pub value: Hash,
+    pub candidate_id: Hash,
+    pub document_digest: Hash,
+}
+
+impl CandidateLocator {
+    fn from_candidate(value: Hash, candidate: &DurableCandidate) -> Self {
+        Self {
+            value,
+            candidate_id: candidate.packet().candidate_id(),
+            document_digest: candidate.packet().document_digest(),
+        }
+    }
+}
+
+/// Opening verifies signatures/QCs once. Controllers may use this evidence to
+/// recover original bodies, but must regain execution through their pipeline.
+#[derive(Clone, Debug)]
+pub(crate) enum ReplayEvidence {
+    None,
+    Proposal {
+        proposal: VerifiedProposal,
+        justification: Option<VerifiedQuorum>,
+        candidate: CandidateLocator,
+    },
+    Certified {
+        proposal: VerifiedProposal,
+        certificate: VerifiedQuorum,
+        candidate: CandidateLocator,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ReplayRecord {
+    pub revision: u64,
+    pub message: Option<DurableMessage>,
+    pub evidence: ReplayEvidence,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReplayRef {
+    revision: u64,
+    digest: Hash,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ReplayIndex {
+    proposal: Option<ReplayRef>,
+    prevote: Option<ReplayRef>,
+    precommit: Option<ReplayRef>,
+    locked: Option<ReplayRef>,
+    valid: Option<ReplayRef>,
+}
+
+impl ReplayIndex {
+    fn references(&self) -> Result<Vec<ReplayRef>> {
+        let mut records = std::collections::BTreeMap::new();
+        for reference in [
+            self.proposal,
+            self.prevote,
+            self.precommit,
+            self.locked,
+            self.valid,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(previous) = records.insert(reference.revision, reference) {
+                ensure!(
+                    previous == reference,
+                    "replay revision has conflicting payload pins"
+                );
+            }
+        }
+        ensure!(
+            records.len() <= MAX_REPLAY_RECORDS,
+            "replay index exceeds role bound"
+        );
+        Ok(records.into_values().collect())
+    }
+
+    fn clear_current(&mut self) {
+        self.proposal = None;
+        self.prevote = None;
+        self.precommit = None;
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimeoutStep {
     Propose,
@@ -46,6 +139,7 @@ struct Snapshot {
     revision: u64,
     proposed: Option<(u64, Hash, Option<u64>)>,
     witness: Option<Quorum>,
+    replay: ReplayIndex,
 }
 
 struct Identity {
@@ -80,6 +174,8 @@ struct Pending {
     applying: Option<IoTicket<MetaOutcome>>,
     publication: Option<ChainRecord>,
     next_identity: Option<(ConsensusContext, ParentPoint)>,
+    replace_witness: bool,
+    verified_witness: Option<Arc<VerifiedQuorum>>,
 }
 
 /// Real signing is fail-closed on stale metadata, unknown writes or bad readback.
@@ -94,6 +190,8 @@ pub struct ValidatorJournal {
     frozen: bool,
     head_record: Option<ChainRecord>,
     head_bytes: Option<Vec<u8>>,
+    verified_witness: Option<Arc<VerifiedQuorum>>,
+    replay_records: Vec<ReplayRecord>,
 }
 
 impl ValidatorJournal {
@@ -179,8 +277,15 @@ impl ValidatorJournal {
             revision: self.snapshot.revision,
             proposed: None,
             witness: None,
+            replay: ReplayIndex::default(),
         };
-        self.stage_full(next, None, None, Some((context, parent)))
+        self.stage_full(
+            next,
+            None,
+            ReplayEvidence::None,
+            None,
+            Some((context, parent)),
+        )
     }
 
     pub fn round(&self) -> u64 {
@@ -204,6 +309,17 @@ impl ValidatorJournal {
     }
     pub fn valid_certificate(&self) -> Option<&Quorum> {
         self.snapshot.witness.as_ref()
+    }
+
+    /// O(1) typed evidence handoff; never repeat a large QC verification in poll.
+    pub(crate) fn verified_valid_certificate(&self) -> Option<Arc<VerifiedQuorum>> {
+        self.verified_witness.clone()
+    }
+
+    /// Cold-opening evidence only. Historical role messages are NOT permission
+    /// to retransmit at a different height/round or to skip local execution.
+    pub(crate) fn take_replay_records(&mut self) -> Vec<ReplayRecord> {
+        std::mem::take(&mut self.replay_records)
     }
 
     /// Fixed historical bytes only. Resending does not create another vote or
@@ -273,7 +389,12 @@ impl ValidatorJournal {
         )?;
         let mut next = self.snapshot.clone();
         next.proposed = Some((round, value, valid_round));
-        self.stage(next, Some(DurableMessage::Proposal(proposal)))
+        let evidence = ReplayEvidence::Proposal {
+            proposal: proposal.verify(&self.identity.set)?,
+            justification: valid.cloned(),
+            candidate: CandidateLocator::from_candidate(value, candidate),
+        };
+        self.stage(next, Some(DurableMessage::Proposal(proposal)), evidence)
     }
 
     pub fn accept_proposal(
@@ -288,7 +409,12 @@ impl ValidatorJournal {
             .snapshot
             .state
             .prepare_proposal(proposal, statement.hash(), valid)?;
-        self.stage_step(step, None, None)
+        let evidence = ReplayEvidence::Proposal {
+            proposal: proposal.clone(),
+            justification: valid.cloned(),
+            candidate: CandidateLocator::from_candidate(statement.hash(), candidate),
+        };
+        self.stage_step(step, None, None, evidence)
     }
 
     /// A nil quorum needs no packet; a value quorum requires the full locally
@@ -308,7 +434,23 @@ impl ValidatorJournal {
             .zip(statement.as_ref())
             .map(|((proposal, _), statement)| (*proposal, statement.hash()));
         let step = self.snapshot.state.prepare_prevote_quorum(quorum, input)?;
-        self.stage_step(step, None, Some(quorum.quorum().clone()))
+        let evidence = if quorum.value().is_some() {
+            let (proposal, candidate) = candidate.context("value quorum lacks local candidate")?;
+            ReplayEvidence::Certified {
+                proposal: proposal.clone(),
+                certificate: quorum.clone(),
+                candidate: CandidateLocator::from_candidate(
+                    statement
+                        .as_ref()
+                        .context("candidate statement missing")?
+                        .hash(),
+                    candidate,
+                ),
+            }
+        } else {
+            ReplayEvidence::None
+        };
+        self.stage_step(step, None, Some(quorum), evidence)
     }
 
     /// Explicit LOCAL timer event. A network message cannot manufacture one.
@@ -325,7 +467,7 @@ impl ValidatorJournal {
             round: expected_round,
             step,
         })?;
-        self.stage_step(prepared, None, None)
+        self.stage_step(prepared, None, None, ReplayEvidence::None)
     }
 
     /// Authenticated SAME-round >1/3 evidence only changes the local round;
@@ -340,7 +482,7 @@ impl ValidatorJournal {
             "round catch-up context/threshold mismatch"
         );
         let prepared = self.snapshot.state.prepare_round_change(evidence.round())?;
-        self.stage_step(prepared, None, None)
+        self.stage_step(prepared, None, None, ReplayEvidence::None)
     }
 
     /// Called only by the local pacemaker after the SAME-round precommit
@@ -353,7 +495,7 @@ impl ValidatorJournal {
             .checked_add(1)
             .context("consensus round exhausted")?;
         let prepared = self.snapshot.state.prepare_round_change(target)?;
-        self.stage_step(prepared, None, None)
+        self.stage_step(prepared, None, None, ReplayEvidence::None)
     }
 
     /// Atomically archive the local decision and move the head. Candidate data
@@ -385,6 +527,7 @@ impl ValidatorJournal {
                 proposal: proposal.proposal().clone(),
                 certificate: certificate.quorum().clone(),
             }),
+            ReplayEvidence::None,
             Some((statement, candidate)),
             None,
         )
@@ -394,7 +537,8 @@ impl ValidatorJournal {
         &mut self,
         prepared: PreparedStep,
         decision: Option<DurableMessage>,
-        witness: Option<Quorum>,
+        witness: Option<&VerifiedQuorum>,
+        evidence: ReplayEvidence,
     ) -> Result<()> {
         let decision_value = match &decision {
             Some(DurableMessage::Decision { proposal, .. }) => Some(proposal.value),
@@ -424,20 +568,30 @@ impl ValidatorJournal {
             ..self.snapshot.clone()
         };
         if changed_valid {
-            next.witness =
-                Some(witness.context("valid state transition missing durable quorum witness")?);
+            next.witness = Some(
+                witness
+                    .context("valid state transition missing durable quorum witness")?
+                    .quorum()
+                    .clone(),
+            );
         }
-        self.stage(next, message)
+        self.stage(next, message, evidence)
     }
 
-    fn stage(&mut self, next: Snapshot, message: Option<DurableMessage>) -> Result<()> {
-        self.stage_full(next, message, None, None)
+    fn stage(
+        &mut self,
+        next: Snapshot,
+        message: Option<DurableMessage>,
+        evidence: ReplayEvidence,
+    ) -> Result<()> {
+        self.stage_full(next, message, evidence, None, None)
     }
 
     fn stage_full(
         &mut self,
         mut next: Snapshot,
         message: Option<DurableMessage>,
+        evidence: ReplayEvidence,
         publication: Option<(BlockStatement, &DurableCandidate)>,
         next_identity: Option<(ConsensusContext, ParentPoint)>,
     ) -> Result<()> {
@@ -446,13 +600,53 @@ impl ValidatorJournal {
             .revision
             .checked_add(1)
             .context("signing revision exhausted")?;
+        let replace_witness = next.state.context() != self.snapshot.state.context()
+            || next.state.valid() != self.snapshot.state.valid();
+        let verified_witness = if replace_witness && next.state.valid().is_some() {
+            let ReplayEvidence::Certified { certificate, .. } = &evidence else {
+                anyhow::bail!("new valid state requires typed certified replay evidence")
+            };
+            Some(Arc::new(certificate.clone()))
+        } else {
+            None
+        };
+        let record = ReplayRecord {
+            revision: next.revision,
+            message,
+            evidence,
+        };
+        let reference = ReplayRef {
+            revision: next.revision,
+            digest: codec::replay_digest(&record)?,
+        };
+        if next_identity.is_some() || next.state.decided().is_some() {
+            next.replay = ReplayIndex::default();
+        } else {
+            if next.state.round() != self.snapshot.state.round() {
+                next.replay.clear_current();
+            }
+            match &record.message {
+                Some(DurableMessage::Proposal(_)) => next.replay.proposal = Some(reference),
+                Some(DurableMessage::Vote(vote)) => match vote.phase {
+                    wire::Phase::Prevote => next.replay.prevote = Some(reference),
+                    wire::Phase::Precommit => next.replay.precommit = Some(reference),
+                },
+                Some(DurableMessage::Decision { .. }) | None => {}
+            }
+            if next.state.locked() != self.snapshot.state.locked() {
+                next.replay.locked = next.state.locked().map(|_| reference);
+            }
+            if next.state.valid() != self.snapshot.state.valid() {
+                next.replay.valid = next.state.valid().map(|_| reference);
+            }
+        }
         let saved = match next_identity {
             Some((context, parent)) => {
                 codec::encode_snapshot_at(&self.identity, context, parent, &next)?
             }
             None => codec::encode_snapshot(&self.identity, &next)?,
         };
-        let outbox = codec::encode_outbox(&next, &saved, message.as_ref())?;
+        let outbox = codec::encode_outbox(&next, &saved, &record)?;
         let publication = publication
             .map(|(statement, candidate)| {
                 ChainRecord::new(
@@ -471,10 +665,12 @@ impl ValidatorJournal {
             snapshot: next,
             saved,
             outbox,
-            message,
+            message: record.message,
             applying: None,
             publication,
             next_identity,
+            replace_witness,
+            verified_witness,
         });
         Ok(())
     }
@@ -567,6 +763,10 @@ impl ValidatorJournal {
         self.snapshot = pending.snapshot;
         self.saved = Some(pending.saved);
         self.last_message = pending.message;
+        self.replay_records.clear();
+        if pending.replace_witness {
+            self.verified_witness = pending.verified_witness;
+        }
         if let Some(record) = pending.publication {
             self.head_bytes = Some(record.head_bytes()?);
             self.head_record = Some(record);

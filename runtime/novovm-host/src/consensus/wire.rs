@@ -332,6 +332,11 @@ pub struct VerifiedProposal {
     proposal: Proposal,
 }
 impl VerifiedProposal {
+    /// Move already-verified historical bytes to the transport owner without
+    /// cloning them or granting a new signing permission.
+    pub(crate) fn into_proposal(self) -> Proposal {
+        self.proposal
+    }
     pub fn proposal(&self) -> &Proposal {
         &self.proposal
     }
@@ -426,6 +431,10 @@ pub struct VerifiedQuorum {
     signed_weight: u64,
 }
 impl VerifiedQuorum {
+    /// Consume an immutable verified certificate without copying its vote set.
+    pub(crate) fn into_quorum(self) -> Quorum {
+        self.quorum
+    }
     pub fn context(&self) -> &Context {
         &self.quorum.votes[0].context
     }

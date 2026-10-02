@@ -3,14 +3,19 @@
 //! to the SAME resident CandidatePipeline. Only journal readback publishes a
 //! signature, adopted round, or head. Transport admission is never an ACK.
 //!
-//! This does not reconstruct all undecided body locators/outbox history after
-//! a cold restart. The journal is never reset to work around that limitation.
+//! Cold replay re-executes referenced undecided bodies on this resident owner
+//! before enabling new signing or timers. Stored content is never a capability.
+
+#[path = "controller_recovery.rs"]
+mod recovery;
+use recovery::Recovery;
 
 use super::channel::{
     ChannelEvent, HostChannel, Outbound, PrepareAdmission, PrepareInput, PrepareRequest,
     PreparedMessage, Ready, RetireAdmission, Retirement, SendAdmission, VerifiedEvidence,
 };
 use super::collector::{CollectorLimits, VoteCollector, VoteInsert};
+use super::journal::CandidateLocator;
 use super::pacemaker::{Pacemaker, TimeoutPolicy};
 use super::statement::{BlockStatement, ParentPoint};
 use super::transport::Message;
@@ -140,6 +145,8 @@ struct Body {
     candidate: Option<(Hash, DurableCandidate)>,
     failed: bool,
     local_round: Option<u64>,
+    /// At most the bounded cold replay roots; retain until this height retires.
+    recovered: bool,
 }
 
 struct Execution {
@@ -148,6 +155,7 @@ struct Execution {
     parent: ParentPoint,
     requester: String,
     ticket: PipelineTicket,
+    recovery: Option<CandidateLocator>,
 }
 
 struct Offered {
@@ -163,6 +171,9 @@ enum Purpose {
         round: u64,
     },
     Broadcast,
+    /// Already-durable local bytes. A failed preparation must fail recovery.
+    Replay,
+    RecoveryBody(CandidateLocator),
     ArchiveDecision(String),
     ArchiveBody {
         peer: String,
@@ -283,12 +294,16 @@ pub struct Controller {
     request_due: Option<Instant>,
     now: Option<Instant>,
     stats: ControllerStats,
+    recovery: Option<Recovery>,
+    recovery_failure: Option<String>,
+    #[cfg(test)]
+    recovery_test_ingress: Option<super::channel::Received>,
 }
 
 impl Controller {
     pub fn new(
         config: ControllerConfig,
-        journal: ValidatorJournal,
+        mut journal: ValidatorJournal,
         channel: HostChannel,
     ) -> Result<Self> {
         validate_config(&config, &journal)?;
@@ -314,7 +329,12 @@ impl Controller {
             config.collector,
         )?;
         let pacemaker = Pacemaker::new(config.timeouts)?;
-        let last = journal.last_durable_message().cloned();
+        let replay = journal.take_replay_records();
+        let last = if replay.is_empty() {
+            journal.last_durable_message().cloned()
+        } else {
+            None
+        };
         let mut this = Self {
             config,
             journal,
@@ -340,17 +360,30 @@ impl Controller {
             request_due: None,
             now: None,
             stats: ControllerStats::default(),
+            recovery: None,
+            recovery_failure: None,
+            #[cfg(test)]
+            recovery_test_ingress: None,
         };
-        // Replay known fixed signed bytes only; never reset the signer or invent
-        // a body locator for an undecided proposal recovered from the journal.
+        this.initialize_recovery(replay)?;
+        // Compatibility for an acknowledged in-memory nil vote. Non-nil warm
+        // journals need explicit reopening to supply their complete replay roots.
         match last {
             Some(DurableMessage::Vote(vote)) => {
+                ensure!(
+                    vote.value.is_none() && this.journal.valid_certificate().is_none(),
+                    "undecided journal replay dependencies not loaded; reopen explicitly"
+                );
                 this.prepare(
                     PrepareInput::New(Arc::new(Message::Vote(vote))),
                     Purpose::Broadcast,
                 )?;
             }
-            Some(DurableMessage::Proposal(proposal)) => this.proposed_round = Some(proposal.round),
+            Some(DurableMessage::Proposal(_)) => {
+                anyhow::bail!(
+                    "undecided proposal replay dependencies not loaded; reopen explicitly"
+                )
+            }
             _ => {}
         }
         Ok(this)
@@ -373,6 +406,9 @@ impl Controller {
     }
     pub fn is_pending(&self) -> bool {
         self.journal.is_pending()
+    }
+    pub fn is_recovering(&self) -> bool {
+        self.recovery.is_some() || self.recovery_failure.is_some()
     }
     pub fn stats(&self) -> &ControllerStats {
         &self.stats
@@ -398,7 +434,8 @@ impl Controller {
             self.matches_context(context),
             "local body does not extend exact configured parent/business"
         );
-        if !self.retired.is_empty()
+        if self.is_recovering()
+            || !self.retired.is_empty()
             || !self.is_local_leader()?
             || self.journal.decided().is_some()
             || self.journal.step() != TimeoutStep::Propose
@@ -444,18 +481,51 @@ impl Controller {
     /// caller keeps servicing ingress/query paths while AOEM or storage runs.
     pub fn poll(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {
         ensure!(
+            self.recovery_failure.is_none(),
+            "controller cold recovery failed; explicit restart required: {:?}",
+            self.recovery_failure
+        );
+        let recovering = self.recovery.is_some();
+        let result = self.poll_inner(pipeline, now);
+        if recovering {
+            if let Err(error) = &result {
+                self.recovery_failure = Some(error.to_string().chars().take(256).collect());
+            }
+        }
+        result
+    }
+
+    fn poll_inner(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {
+        ensure!(
             self.now.is_none_or(|previous| now >= previous),
             "controller clock moved backwards"
         );
         self.now = Some(now);
+        let recovering = self.recovery.is_some();
         self.flush_retired()?;
         self.poll_journal(pipeline)?;
         self.poll_executions()?;
+        if recovering {
+            // Service one bounded cold step BEFORE this poll's ingress can
+            // append fresh retirement. Otherwise even one control message per
+            // poll could indefinitely starve recovery without owner congestion.
+            self.poll_recovery(pipeline)?;
+        }
         for _ in 0..self.config.limits.events_per_poll {
             if !self.retired.is_empty() {
                 break;
             }
-            let Some(event) = self.channel.try_recv()? else {
+            let event = self.channel.try_recv()?;
+            // Do not let the test's synthetic ingress timing bypass the real
+            // channel's independent local-reply progress. The queued control
+            // remains present on every poll until its ordinary slot is served.
+            #[cfg(test)]
+            let event = event.or_else(|| {
+                self.recovery_test_ingress
+                    .take()
+                    .map(ChannelEvent::Received)
+            });
+            let Some(event) = event else {
                 break;
             };
             match event {
@@ -463,14 +533,18 @@ impl Controller {
                 ChannelEvent::Received(received) => self.receive(received.peer, received.ready)?,
             }
         }
-        // Eligible execution/proposal/QC always wins over a failure timer.
-        self.drive_consensus()?;
-        self.pacemaker
-            .poll(&mut self.journal, &self.collector, now)?;
+        if !recovering {
+            // Even the poll that completes recovery must not start a timer or
+            // sign: normal consensus resumes on the following poll only.
+            // Eligible execution/proposal/QC always wins over a failure timer.
+            self.drive_consensus()?;
+            self.pacemaker
+                .poll(&mut self.journal, &self.collector, now)?;
+        }
         // A congested reclamation owner backpressures new data work too. Only
         // the finite already-accepted journal/execution completions above may
         // add retirement items until this queue drains.
-        if self.retired.is_empty() {
+        if !recovering && self.retired.is_empty() {
             self.submit_executions(pipeline)?;
             self.poll_archives(pipeline)?;
             if self.retired.is_empty() {
@@ -556,6 +630,9 @@ impl Controller {
         let ready = match result {
             Ok(ready) => ready,
             Err(error) => {
+                if matches!(pending.purpose, Purpose::RecoveryBody(_) | Purpose::Replay) {
+                    anyhow::bail!("cold replay preparation failed: {error}");
+                }
                 match &pending.purpose {
                     Purpose::ArchiveBody { peer, .. } | Purpose::ArchiveDecision(peer) => {
                         self.archive_requests.remove(peer);
@@ -567,6 +644,7 @@ impl Controller {
             }
         };
         match pending.purpose {
+            Purpose::RecoveryBody(locator) => self.recovered_body(locator, ready)?,
             Purpose::LocalBody { context, round } => {
                 if context != self.context() || round != self.round() {
                     self.stats.stale_results += 1;
@@ -575,7 +653,7 @@ impl Controller {
                 }
                 self.keep_body(self.local_peer.clone(), ready, Some(round))?;
             }
-            Purpose::Broadcast => {
+            Purpose::Broadcast | Purpose::Replay => {
                 if message_context(&ready.message).is_some_and(|context| context != self.context())
                 {
                     self.retire(Retirement::Ready(ready));
@@ -649,6 +727,12 @@ impl Controller {
             return Ok(());
         }
         if matches!(ready.message.as_ref(), Message::Body { .. }) {
+            if self.is_recovering() {
+                // Replay roots have reserved precedence. Peers retain their
+                // signed hints and can answer RequestBody after recovery.
+                self.retire(Retirement::Ready(ready));
+                return Ok(());
+            }
             return self.keep_body(source, ready, None);
         }
         let result = self.receive_control(source, &ready);
@@ -743,7 +827,13 @@ impl Controller {
                     self.cache(prepared, Some(source));
                 }
             }
-            Message::RequestDecision { context } => self.request_archive(source, *context)?,
+            Message::RequestDecision { context } => {
+                // Do not let remote archive reads occupy cold replay's sole
+                // bounded I/O slot. The existing requester retries this hint.
+                if !self.is_recovering() {
+                    self.request_archive(source, *context)?;
+                }
+            }
         }
         Ok(())
     }
@@ -779,10 +869,12 @@ impl Controller {
             .collect()
     }
     fn body_bytes(&self) -> usize {
-        self.retained_bodies().values().sum()
+        self.retained_bodies().values().sum::<usize>()
+            + self.recovery.as_ref().map_or(0, Recovery::retained_bytes)
     }
     fn pinned(&self, id: &Hash) -> bool {
-        self.inflight.iter().any(|work| &work.id == id)
+        self.bodies.get(id).is_some_and(|body| body.recovered)
+            || self.inflight.iter().any(|work| &work.id == id)
             || self
                 .bodies
                 .get(id)
@@ -860,6 +952,7 @@ impl Controller {
                 candidate: None,
                 failed: false,
                 local_round,
+                recovered: false,
             },
         );
         Ok(())
@@ -882,6 +975,9 @@ impl Controller {
                         body.failed = true;
                     }
                     self.stats.last_error = Some(error.to_string().chars().take(256).collect());
+                    if work.recovery.is_some() {
+                        return Err(error.context("cold candidate re-execution failed"));
+                    }
                     continue;
                 }
                 Ok(None) => unreachable!(),
@@ -896,6 +992,10 @@ impl Controller {
             {
                 self.stats.stale_results += 1;
                 self.retire(Retirement::Batch(batch));
+                ensure!(
+                    work.recovery.is_none(),
+                    "cold execution changed its pinned parent"
+                );
                 continue;
             }
             let statement = match BlockStatement::from_executed(
@@ -910,6 +1010,16 @@ impl Controller {
                     return Err(error);
                 }
             };
+            if let Some(locator) = work.recovery {
+                if statement.hash() != locator.value
+                    || batch.packet.candidate_id() != locator.candidate_id
+                    || batch.packet.document_digest() != locator.document_digest
+                    || !self.bodies.contains_key(&work.id)
+                {
+                    self.retire(Retirement::Batch(batch));
+                    anyhow::bail!("cold re-execution differs from durable replay locator");
+                }
+            }
             if let Some(body) = self.bodies.get_mut(&work.id) {
                 body.candidate = Some((statement.hash(), batch.candidate().clone()));
             } else {
@@ -967,6 +1077,7 @@ impl Controller {
                     parent,
                     requester,
                     ticket,
+                    recovery: None,
                 }),
                 Ok(Submission::Backpressured(request)) => {
                     body.request = Some(request);
@@ -1064,11 +1175,7 @@ impl Controller {
                 return Ok(());
             }
             if self.is_local_leader()? && self.proposed_round != Some(self.round()) {
-                let valid = self
-                    .journal
-                    .valid_certificate()
-                    .map(|qc| qc.verify(&self.config.validators))
-                    .transpose()?;
+                let valid = self.journal.verified_valid_certificate();
                 let candidate = match &valid {
                     Some(qc) => qc.value().and_then(|value| self.candidate(value)),
                     None => self.bodies.iter().find_map(|(id, body)| {
@@ -1079,7 +1186,7 @@ impl Controller {
                     }),
                 };
                 if let Some((_, candidate)) = candidate {
-                    self.journal.propose(&candidate, valid.as_ref())?;
+                    self.journal.propose(&candidate, valid.as_deref())?;
                     self.pending_value = Some(
                         BlockStatement::from_executed(
                             candidate.packet(),

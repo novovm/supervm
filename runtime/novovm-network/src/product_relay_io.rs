@@ -36,6 +36,11 @@ pub(crate) struct ProductRelaySocketV1 {
 
 impl ProductRelaySocketV1 {
     pub(crate) fn new(stream: TcpStream) -> io::Result<Self> {
+        // Small consensus/relay replies must not wait for an unrelated TCP
+        // acknowledgement before their remaining TLS records can be sent.
+        // Apply this to both outgoing and accepted streams, not only fixtures.
+        // Application framing, backpressure and operation deadlines are intact.
+        stream.set_nodelay(true)?;
         // Capture caller budgets before removing Windows kernel timeouts.
         #[cfg(windows)]
         {
@@ -241,6 +246,20 @@ mod tests {
         client.set_nodelay(true).unwrap();
         server.set_nodelay(true).unwrap();
         (client, server)
+    }
+
+    #[test]
+    fn both_production_socket_directions_disable_nagle_before_tls() {
+        let (client, server) = pair();
+        // Unlike other transport fixtures, start from the OS default. The
+        // production adapter must set this itself for clients AND accepted
+        // daemon streams; a test-only nodelay setting masks the missing path.
+        client.set_nodelay(false).unwrap();
+        server.set_nodelay(false).unwrap();
+        let client = ProductRelaySocketV1::new(client).unwrap();
+        let server = ProductRelaySocketV1::new(server).unwrap();
+        assert!(client.inner.nodelay().unwrap());
+        assert!(server.inner.nodelay().unwrap());
     }
 
     #[test]

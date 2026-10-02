@@ -110,6 +110,7 @@ impl JournalOpening {
                 revision: 0,
                 proposed: None,
                 witness: None,
+                replay: ReplayIndex::default(),
             };
             return Ok(Some(ValidatorJournal {
                 identity: self.identity.take().unwrap(),
@@ -120,6 +121,8 @@ impl JournalOpening {
                 frozen: false,
                 head_record: None,
                 head_bytes: None,
+                verified_witness: None,
+                replay_records: Vec::new(),
             }));
         };
         if self.recovered.is_none() {
@@ -156,26 +159,38 @@ impl JournalOpening {
             return Ok(None);
         }
         let (snapshot, saved) = self.recovered.as_ref().unwrap();
-        if self.last.is_none() {
-            self.last = pipeline.try_read_consensus_metadata(vec![
-                MetaKey::ConsensusOutbox {
+        let references = snapshot.replay.references()?;
+        let mut keys = vec![MetaKey::ConsensusOutbox {
+            validator: identity.validator,
+            sequence: snapshot.revision,
+        }];
+        for reference in &references {
+            if reference.revision != snapshot.revision {
+                keys.push(MetaKey::ConsensusOutbox {
                     validator: identity.validator,
-                    sequence: snapshot.revision,
-                },
-                MetaKey::ConsensusState(identity.validator),
-                MetaKey::ChainHead,
-            ])?;
+                    sequence: reference.revision,
+                });
+            }
+        }
+        keys.push(MetaKey::ConsensusState(identity.validator));
+        keys.push(MetaKey::ChainHead);
+        ensure!(
+            keys.len() <= MAX_REPLAY_RECORDS + 3,
+            "opening replay read exceeds metadata key bound"
+        );
+        if self.last.is_none() {
+            self.last = pipeline.try_read_consensus_metadata(keys.clone())?;
         }
         let Some(reply) = take(&mut self.last)? else {
             return Ok(None);
         };
         ensure!(
-            reply.values.len() == 3
-                && reply.values[1].as_ref() == Some(saved)
-                && reply.values[2] == chain.head_bytes,
+            reply.values.len() == keys.len()
+                && reply.values[keys.len() - 2].as_ref() == Some(saved)
+                && reply.values[keys.len() - 1] == chain.head_bytes,
             "signing state/head changed during startup"
         );
-        let message = codec::decode_outbox(
+        let latest = codec::decode_outbox(
             identity,
             snapshot,
             saved,
@@ -183,6 +198,45 @@ impl JournalOpening {
                 .as_deref()
                 .context("durable signing outbox missing")?,
         )?;
+        let message = latest.message.clone();
+        let mut latest = Some(latest);
+        let mut replay_records = Vec::with_capacity(references.len());
+        let mut offset = 1;
+        for reference in &references {
+            let record = if reference.revision == snapshot.revision {
+                let record = latest.take().context("duplicate latest replay event")?;
+                ensure!(
+                    codec::replay_digest(&record)? == reference.digest,
+                    "latest outbox replay payload differs from snapshot locator"
+                );
+                record
+            } else {
+                let bytes = reply.values[offset]
+                    .as_deref()
+                    .context("referenced immutable replay outbox missing")?;
+                offset += 1;
+                codec::decode_replay(identity, reference, bytes)?
+            };
+            replay_records.push(record);
+        }
+        codec::validate_replay_index(identity, snapshot, &replay_records)?;
+        let verified_witness = match snapshot.replay.valid {
+            Some(reference) => {
+                let record = replay_records
+                    .iter()
+                    .find(|record| record.revision == reference.revision)
+                    .context("valid replay witness missing after validation")?;
+                let ReplayEvidence::Certified { certificate, .. } = &record.evidence else {
+                    anyhow::bail!("valid replay role has no typed certificate")
+                };
+                Some(Arc::new(certificate.clone()))
+            }
+            None => snapshot
+                .witness
+                .as_ref()
+                .map(|quorum| quorum.verify(&identity.set).map(Arc::new))
+                .transpose()?,
+        };
         let (snapshot, saved) = self.recovered.take().unwrap();
         let chain = self.recovered_chain.take().unwrap();
         Ok(Some(ValidatorJournal {
@@ -194,6 +248,8 @@ impl JournalOpening {
             frozen: false,
             head_record: chain.record,
             head_bytes: chain.head_bytes,
+            verified_witness,
+            replay_records,
         }))
     }
 }

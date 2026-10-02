@@ -702,3 +702,176 @@ fn real_controller_recovers_initial_and_direct_body_loss_before_remote_execution
     pipelines_shutdown?;
     relay_shutdown
 }
+
+#[test]
+#[ignore = "requires explicit real AOEM; deterministic verified-control ingress during cold recovery"]
+fn real_cold_recovery_progresses_with_control_retirement_on_every_poll() -> Result<()> {
+    // This fixture fixes ingress TIMING only. It uses the real AOEM candidate,
+    // persisted journal, reopened pipeline, and real channel preparation owner;
+    // it is not a live-WSS/independent-process or performance measurement.
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/runtime-rebuild/controller-tests")
+        .join(format!(
+            "recovery-ingress-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+    let root = initialize(&directory)?;
+    let mut services = Services::default();
+    services.0.push(CandidatePipeline::start(
+        pipeline_config(&directory)?,
+        OpenMode::Existing,
+    )?);
+    let (config, index, context, parent) = fixture(root)?;
+    let local = config.local_validator;
+    let journal = open_journal(
+        ValidatorJournal::open(
+            &services.0[0],
+            context,
+            parent,
+            config.validators.clone(),
+            validator_key(index),
+        )?,
+        &services.0[0],
+    )?;
+    let channel = disconnected_channel(&config, index)?;
+    let mut controller = Controller::new(config, journal, channel)?;
+    let original = (|| -> Result<MetadataSnapshot> {
+        let body = Arc::new(Message::Body {
+            context: batch_context(root),
+            raw_transactions: raw()?,
+        });
+        let deadline = Instant::now() + DEADLINE;
+        while !controller.try_submit_body(&body)? {
+            ensure!(Instant::now() < deadline, "initial body admission stalled");
+            controller.poll(&services.0[0], Instant::now())?;
+            std::thread::yield_now();
+        }
+        while controller.stats().durable_votes != 1 || controller.is_pending() {
+            ensure!(Instant::now() < deadline, "initial durable prevote stalled");
+            controller.poll(&services.0[0], Instant::now())?;
+            std::thread::yield_now();
+        }
+        ensure!(
+            controller.head().is_none(),
+            "single signer manufactured finality"
+        );
+        read_metadata(&services.0[0], vec![MetaKey::ConsensusState(local)])
+    })();
+    controller.shutdown()?;
+    drop(controller);
+    services.shutdown()?;
+    let original = original?;
+
+    // Nothing from the first execution is submitted to this new owner. Only
+    // the journal's immutable candidate locator can recover the actual body.
+    services.0.push(CandidatePipeline::start(
+        pipeline_config(&directory)?,
+        OpenMode::Existing,
+    )?);
+    let (config, index, context, parent) = fixture(root)?;
+    let remote_index = (0..4).find(|candidate| *candidate != index).unwrap();
+    let remote = Validator::new(validator_key(remote_index).verifying_key().to_bytes(), 1)?.id();
+    let peer = config
+        .peers
+        .get(&remote)
+        .context("remote route missing")?
+        .clone();
+    let vote = wire::Vote::sign(
+        context,
+        0,
+        Phase::Prevote,
+        None,
+        &config.validators,
+        &validator_key(remote_index),
+    )?;
+    let journal = open_journal(
+        ValidatorJournal::open(
+            &services.0[0],
+            context,
+            parent,
+            config.validators.clone(),
+            validator_key(index),
+        )?,
+        &services.0[0],
+    )?;
+    let channel = disconnected_channel(&config, index)?;
+    let ready = (|| -> Result<_> {
+        let deadline = Instant::now() + DEADLINE;
+        let mut request = PrepareRequest {
+            token: u64::MAX,
+            input: PrepareInput::New(Arc::new(Message::Vote(vote))),
+        };
+        loop {
+            ensure!(
+                Instant::now() < deadline,
+                "control preparation admission stalled"
+            );
+            match channel.try_prepare(request)? {
+                PrepareAdmission::Accepted => break,
+                PrepareAdmission::Backpressure(returned) => request = returned,
+                PrepareAdmission::Rejected { reason, .. } => bail!(reason),
+            }
+            std::thread::yield_now();
+        }
+        loop {
+            ensure!(Instant::now() < deadline, "control preparation stalled");
+            match channel.try_recv()? {
+                Some(ChannelEvent::Prepared {
+                    token: u64::MAX,
+                    result,
+                }) => {
+                    return result.map_err(anyhow::Error::msg);
+                }
+                None => std::thread::yield_now(),
+                Some(_) => bail!("unexpected event on disconnected preparation owner"),
+            }
+        }
+    })()?;
+    let mut controller = Controller::new(config, journal, channel)?;
+    let result = (|| -> Result<()> {
+        ensure!(
+            controller.is_recovering(),
+            "cold journal bypassed recovery gate"
+        );
+        let deadline = Instant::now() + DEADLINE;
+        let mut supplied = 0usize;
+        while controller.is_recovering() {
+            ensure!(
+                Instant::now() < deadline,
+                "control retirement starved actual candidate recovery: {:?}",
+                controller.stats()
+            );
+            // Exactly one bounded slot: if prior owner backpressure left the
+            // previous control queued, keep it rather than inventing capacity.
+            supplied += usize::from(controller.regression_recovery_control(&peer, &ready)?);
+            controller.poll(&services.0[0], Instant::now())?;
+            std::thread::yield_now();
+        }
+        ensure!(
+            supplied >= 2,
+            "fixture did not maintain repeated control ingress"
+        );
+        ensure!(
+            controller.stats().executed_batches == 1
+                && controller.stats().durable_votes == 0
+                && controller.stats().received_votes == 2
+                && !controller.is_pending()
+                && controller.head().is_none()
+                && controller.context() == context
+                && controller.parent() == parent,
+            "cold gate skipped real execution or signed/advanced during replay: {:?}",
+            controller.stats()
+        );
+        ensure!(
+            read_metadata(&services.0[0], vec![MetaKey::ConsensusState(local)])? == original,
+            "control ingress/replay changed durable signer revision or safety snapshot"
+        );
+        Ok(())
+    })();
+    controller.shutdown()?;
+    drop(controller);
+    drop(ready);
+    services.shutdown()?;
+    result
+}

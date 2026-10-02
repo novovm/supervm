@@ -23,6 +23,12 @@ use std::process::{Child, Command, Stdio};
 #[path = "controller_load.rs"]
 mod load;
 
+#[path = "controller_crash.rs"]
+mod crash;
+
+#[path = "controller_recovery_multiroot.rs"]
+mod recovery_multiroot;
+
 const TEST_NAME: &str = "consensus::tests::controller_integration::real_four_process_controllers_finalize_and_late_join_from_archive";
 const CHILD_CONFIG: &str = "NOVOVM_CONTROLLER_TEST_CONFIG";
 const CHILD_MODE: &str = "NOVOVM_CONTROLLER_TEST_MODE";
@@ -348,6 +354,10 @@ impl Drop for Children {
 }
 
 fn spawn(fixture: &Fixture, mode: &str) -> Result<Child> {
+    spawn_test(fixture, mode, TEST_NAME)
+}
+
+fn spawn_test(fixture: &Fixture, mode: &str, test_name: &str) -> Result<Child> {
     let path = fixture
         .directory
         .join(format!("config-{}.json", fixture.index));
@@ -365,7 +375,7 @@ fn spawn(fixture: &Fixture, mode: &str) -> Result<Child> {
     Command::new(std::env::current_exe()?)
         .args([
             "--exact",
-            TEST_NAME,
+            test_name,
             "--ignored",
             "--nocapture",
             "--test-threads=1",

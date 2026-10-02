@@ -21,6 +21,9 @@ mod controller_workload;
 #[path = "controller/tests.rs"]
 mod controller_tests;
 
+#[path = "journal_recovery_integration.rs"]
+mod journal_recovery_integration;
+
 use super::statement::{BlockStatement, ParentPoint};
 use super::wire::{
     self, Context as ConsensusContext, Hash, Phase, Quorum, Validator, ValidatorSet,

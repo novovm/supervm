@@ -8,6 +8,103 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 设备 A：未决候选冷恢复与 Linux 小消息停顿修复（2026-10-02）
+
+基于 `ba9ee1f`，仅新runtime及既有文档；旧38项草稿保持隔离，AOEM SDK/源码
+未改，不新增Skill/分支，不启动正式创世、发行或部署。
+基线CI [`36956208818`](https://github.com/novovm/supervm/actions/runs/36956208818)
+Linux1024档在120秒门失败、Windows被取消；较早提交通过不代替本次结果。
+
+### 交付能力与恢复边界
+
+本地日志 `NVSIGN02/NVOUT002` 用5个固定角色引用不可变outbox事件：原提议、
+prevote、precommit、locked、valid。引用按revision去重，事件payload独立哈希
+不递归承诺snapshot；state-only晚QC保留原始签名字节与提议当时的valid_round
+证明。打开时校验签名/域/角色/精确QC/历史引用，再重读同一snapshot与head。
+缺历史事件、错误锁角色、旧锁下无合格证明的异值prevote、跨域/坏pin均拒绝。
+当前轮形成的新锁不倒推篡改之前合法prevote。1024验证者完整QC仍在原512KiB
+单记录和1MiB条件写预算内，没有提高额度。旧NVSIGN01显式拒绝，归档旧决定
+可读；没有实现旧活动日志迁移，严禁用删除/重置日志逃过拒绝。
+
+controller从这些引用取原AOEM库中的完整候选，通过原channel owner重建
+owned请求，再进同一常驻AOEM执行/持久化流水线。候选ID、原文档摘要、完整
+BlockStatement必须与原事件完全相同；旧owner凭据不复用。恢复完成前不
+启动计时、不接外部body、不新签票；可以重播已经耐久的原签名。坏数据后
+保持失败状态，显式重开前不继续。每步使用既有有界槽位/背压/retirement。
+修复了新网络消息不断加入retirement时饿死恢复的问题：每poll先给恢复一步，
+再服务有界入站；真正拥堵时仍背压，不建立新队列。
+
+真实证据：
+
+- 唯一持有正文的进程持久化提议/prevote后被 `Child.kill` 强制结束。四个新
+  进程没有钱包正文重投，各自真实AOEM执行并确认同一head；再四个冷读进程
+  对照原始签名交易、完整回执字节、全状态根、nonce/全部费用记录与资金守恒。
+  原提议/prevote outbox逐字节不变。仅进程kill，不冒充断电或实体四机。
+- 终止后测试库副本删除candidate marker，启动拒绝、不补marker、不改snapshot/
+  outbox/head；另测试删除旧提议事件也拒绝，未清空锁或重置签者。
+- 晚QC产生state-only末事件时仍重开全部原票及旧提议QC；用新owner真实重执行
+  的候选触发“同轮QC已应用”拒绝，不能误靠过期owner拒绝来证明防双签。
+- 旧锁A与新valid B是两个不同原文/状态根的候选：冷controller恰好重执行2批，
+  原snapshot和6条outbox不变、没有第7条或head；分别核对完整业务oracle。
+  这里QC是明确签名fixture，不是第二次自治网络最终性实验。
+- 持续控制消息回归使用真实owner验过的票、每poll一个测试槽，实际进入普通
+  接收/retirement路径；恢复仍完成且无新签/新revision。只有注入时机是测试
+  hook，不伪造执行、候选或签名。不是吞吐测试。
+
+### Linux 失败、实际修复与性能口径
+
+本机WSL Ubuntu24.04真实`.so`复现原1024×8场景：120.52秒失败，仅6/8高度，
+relay未重连/未限流。生产socket未设置NODELAY，而旧网络fixture预设了它；
+统一TCP封装现在对发起和接受连接都设置，避免小共识/TLS消息等待ACK。
+新的OS属性回归先红后绿。原验签/费用/共识/应用背压/TLS期限与relay额度不变。
+同场景修复后 **8192唯一四节点耐久确认 / 5.821531秒 = 1407.190 TPS**，
+全部冷恢复oracle通过。它是同机WSL有限负载，不是公网/长期稳定容量；完整
+回归期间两平台可能同时测试，不把其中时长用作独立性能对比。
+
+随后独立Linux长负载 **65536笔/64高度，116.253498秒，563.734 TPS**，完整
+冷oracle通过。它没有同时运行Windows测试，数据库仍位于WSL的`/mnt/d`
+仓库路径，不等同Linux本机ext4或独立服务器。四个会话无中途重连/源字节
+限流；relay全生命周期224478877 wire bytes，活动队列字节拒绝2次、数量
+拒绝27次、离线peer拒绝3次；四库各65次实际执行、64次决定，重复工作不
+计入唯一交易数。P95/P99积压确认110.354/116.253秒，各库冷重开约59.2MB。
+这轮接近原120秒门且后段变慢，不能以短测1407TPS签收长负载容量；队列
+背压/数据增长/实际阶段耗时仍需分段定位，尚未证明是磁盘或计算单一原因。
+
+原始日志均在 `target/runtime-rebuild/`，不上传测试数据库：
+
+- `linux-load-before-tcp.log` / `controller-load-1024-925-1790909998430697279/`：原失败。
+- `tcp-nodelay-red.log` / `tcp-nodelay-green.log`：真实socket设置反例。
+- `linux-load-after-tcp.log` / `controller-load-1024-886-1790910185475669786/measurement.json`：修复后首轮。
+- `undecided-linux-long-load.log` /
+  `controller-load-1024-437-1790911237852188662/measurement.json`：64块独立复测；
+  测试二进制SHA256 `77e948e341b52492a2dabf12bbc3500467b1f6f57c0b1d1bf7935ee3b3024ef7`，
+  在最后补同轮异值日志拒绝检查前构建，不冒充最终源码重复测量。
+- `undecided-windows-full-release.log`：436单元/集成+5编译拒绝全部通过；
+  `undecided-linux-full-release.log`：433+5全部通过，均0失败/0忽略。
+- 后补独立双候选测试 `undecided-multiroot-windows.log` 与
+  `undecided-multiroot-linux.log` 各1/1；只新增测试，生产源码不变。
+- 最终补齐“旧锁同轮异值QC不能为prevote解锁”拒绝后，再次全量运行：
+  `undecided-final-windows-release.log` **438单元/集成+5编译拒绝**、
+  `undecided-final-linux-release.log` **435+5** 全通过，均0失败/0忽略；
+  包含新增双候选、强杀恢复、持续控制流及三档签名最终确认负载。
+- `undecided-fairness.log`、`undecided-codec.log`、`undecided-crash-first.log`：
+  定向开发证据，最终覆盖以上述完整回归为准。
+
+DLL SHA256 `4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463`；
+SO SHA256 `88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675`。
+格式、strict Clippy及3成员无legacy依赖检查通过；本次远端CI在推送后核验。
+默认debug也通过，日志 `undecided-full-debug.log`；真实库项默认ignored，
+实际已在上述Release显式执行，不能把默认忽略当作通过。
+该debug轮早于最后同轮异值补丁，最终补丁已由上列两平台Release与strict Clippy覆盖。
+
+**范围仍未完成：** 所有最大体积/最紧额度配置下恢复、物理断电、真实四机、
+公网/限流后长跑、部署CLI、动态验证者，均不能由上述测试替代。原文已执行
+但尚未被任何耐久签票/锁角色引用的候选，不属于本次重放闭包。原签名重播
+允许早于全部候选恢复完成；“缺数据拒绝”不等于“网络零输出”。
+下一处A认领S4完整业务有效性证明：核对真实prover，覆盖父根/签名/nonce/
+余额/全局费用及最终输出，不以BFT QC或native-auth局部证明冒充。Execute、
+经典隐私与ML-DSA主链接入仍在活动总目标内；没有缩减为一条普通转账链。
+
 ## 设备 A：同路径最终确认负载与正文按需传输（2026-10-02）
 
 基于 `78183da`；前置 Windows/Linux CI
