@@ -1,0 +1,41 @@
+{
+  "schema": "supervm-e2e-geth-parity-sample/v1",
+  "name": "ethapi-blockreceipts-blob-tx",
+  "chain_id": 1,
+  "store_format": "geth-export-receipts/v1",
+  "store_path": "${NOVOVM_GETH_REPO_ROOT}/internal/ethapi/testdata/eth_getBlockReceipts-block-with-blob-tx.json",
+  "expected": {
+    "block": {
+      "number": "0x6",
+      "tx_count": 1,
+      "tx_types": [
+        "0x3"
+      ],
+      "tx_statuses": [
+        "0x1"
+      ],
+      "tx_contract_addresses": [
+        null
+      ]
+    },
+    "receipts": [
+      {
+        "tx_index": 0,
+        "status": "0x1",
+        "tx_type": "0x3",
+        "gas_used": "0x5208",
+        "cumulative_gas_used": "0x5208",
+        "contract_address": null,
+        "revert_data": null,
+        "log_count": 0
+      }
+    ],
+    "logs_canonical": {
+      "count": 0
+    },
+    "logs_noncanonical": {
+      "count": 0
+    },
+    "typed_failures": []
+  }
+}

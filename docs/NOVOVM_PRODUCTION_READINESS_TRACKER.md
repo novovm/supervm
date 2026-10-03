@@ -8,6 +8,67 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 原产品装配恢复验收
+
+日期 2026-10-03。用户批准[整仓清单](NOVOVM_ISOLATION_UNDO_CHECKLIST.md)后，
+基于 `face41e3` 在仓内独立验证 worktree 恢复 `ee802713` 原件，再以新增
+纠错提交接回 main；未新建开发分支。以下为本机 Windows / Rust 1.94.0
+结果，不是 Linux、多机、公网、nightly 或生产验收。
+
+原 1,292 路径全部有原位对应，六目录和配套共 750 原件完整恢复。根 Cargo
+恢复 20 显式产品成员，含自动纳入的 EVM core 实际 21；真实 node、exec、
+bindings、EVM、共识、网络、Relay、工具及配置重新参与构建。runtime 原实现
+与原锁保存在独立 workspace，避免同名网络包冲突；原 proof、归档及49草稿
+保留，没有混进草稿，也没有新增权威账本。保留后来的 Release 溢出检查。
+
+| 检查 | 本机真实结果及范围 |
+| --- | --- |
+| 产品 `cargo check --workspace --all-targets --locked` | 通过；原模块未删减 |
+| 产品 fmt / 全 workspace all-targets Clippy `-D warnings` | 通过；Cargo 原有同源文件四个 bin target 提示仍在，不是新增 Rust lint |
+| `novovm-node` 实际 binary 构建与入口 | 构建通过；`native_protocol_config_commitment` 模式实际执行成功，未打开生产网络或账本 |
+| Host 默认限制 | 5 项无 SDK 子进程反例通过；另1项真实候选 Execute/混合批在预提交前拒绝通过 |
+| 原 AOEM Transfer 分支 | 显式 `NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=0` 的原 fresh transfer 执行、恢复、最终性用例1/1通过；不是完整主网或 TPS 测试 |
+| bindings / exec | 6 / 41 项通过；exec另11项 opt-in ignored，不将其计作真实库全部签收 |
+| 独立 Relay | 48/48通过，含新增接回的Windows共享I/O测试 |
+| 原耐久账本 | 默认Host许可为0，40/40通过，含恢复、篡改拒绝和索引检查 |
+| 原封印及Overlay回归 | 默认Host许可为0，205/205通过，含本机WSS、换主和重启；不是多台实体机测试 |
+| novovmctl | 修正旧测试证书后24单测+9集成通过；真实签名一致性另1/1通过 |
+| 恢复的PowerShell检查 | 构建输出解析/陈旧拒绝通过，聚合21项通过；后者只使用合成报告，不是网络实测 |
+| 两套workspace边界 | 产品21、保留组件3，均无归档依赖或未经批准的本地跨工作区引用 |
+| 保留runtime普通测试 | 592单测+8文档测试通过；75 opt-in项未在该命令执行，不充当全绿验收 |
+| 保留runtime真实AOEM | 显式运行批计算、常驻候选流水线、跨进程耐久恢复3项，3/3通过 |
+| 保留runtime fmt / strict Clippy | 两项通过，使用显式 `runtime/Cargo.toml` |
+
+首次失败未抹除：
+
+- 完整编译发现原独立 Relay 漏接 node 已有 `product_relay_io`；补模块声明及
+  已有 mio/socket2 依赖边，无网络算法重写、无版本升级。首轮并行编译还读到
+  尚未写完的新增测试 include，文件完成后全目标复验通过。
+- novovmctl 旧证书目标承诺仍为 `f20c3b51…`，而原件代码已经是 `365bfcb1…`。
+  单测独跑也失败，非并发污染；后来的协议字段增加未同步旧夹具。使用原有
+  `print_current_native_nonce_upgrade_authorization_cli_fixture` 测试入口完整
+  重签TEST-key证书，只更新一个JSON。生产校验及错误pin/环境漂移/伪造QC
+  拒绝断言全部保留。签名一致性与完整ctl回归通过后才接受。
+
+运行日志在本机 `artifacts/recovery/` 下的 `product-check-*`、`host-guard-tests`、
+`candidate-host-barrier-tests`、`product-real-aoem-transfer-no-host-permit`、
+`product-relay-tests`、`product-facade-control-tests`、`product-clippy`、
+`node-build`、`node-entry-smoke`、`preserved-runtime-*` 和
+`preserved-real-aoem-tests` 等 `.log`；原首次失败日志保留。
+
+接回本机 main 工作区后再次通过：全workspace/all-targets locked编译、产品fmt、
+ctl 24+9测试、默认限制5测试及真实node binary构建/入口执行。日志为
+`main-product-check`、`main-ctl-tests`、`main-host-guard-tests`、`main-node-build`、
+`main-node-entry-smoke`；未把仍保留的49项草稿加入提交或用于候选验收。
+
+已知限制：旧Host立即/批/tick/mutator及混合Execute新执行默认拒绝；显式
+兼容许可只用于历史对照，CI逐step设置，生产启动不默认设置。默认raw RPC
+立即执行因此拒绝，须显式pending-only；旧统一账户政策写操作也受此限制。
+旧已完成产物读回仍保留，未改已有数据。未解决所有执行所有权问题，未接完
+runtime新成果、统一CPU/GPU、Execute、隐私/PQ或最终确认性能。
+未运行完整旧主门、全部旧业务回归、Linux安装、多机、nightly；恢复工作流和
+本机通过不能据此称远端CI全绿。下一步按路线R2在原node/exec中继续纠偏。
+
 ## 架构审计与恢复路线文档交付
 
 日期 2026-10-03。本轮代码审计基线 `main@eaf4f37`，远端 main 实查一致；

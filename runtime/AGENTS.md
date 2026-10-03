@@ -4,6 +4,9 @@
   and `../docs/NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md` first. Preserve useful
   components for integration under novovm-node and the unified novovm-exec
   facade. Work on main; do not introduce another branch.
+- This is a preserved nested Cargo workspace. Use the explicit
+  `--manifest-path runtime/Cargo.toml` from the repository root for component
+  tests; root Cargo builds the restored product. Keep both lock files.
 - Do not depend on, include, or wrap code from `legacy/` in an active build.
   Migrate a reviewed local algorithm when needed, record its source and tests,
   and remove the old orchestration assumptions from the migrated boundary.

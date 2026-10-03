@@ -1,0 +1,2672 @@
+#![forbid(unsafe_code)]
+
+use anyhow::bail;
+use aoem_bindings::secp256k1_recover_pubkey_v1_auto;
+use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
+use novovm_adapter_api::{BlockIR, ChainType, EvmAccessListEntryV1, TxIR, TxType};
+use sha3::{Digest, Keccak256};
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvmChainProfileKind {
+    EthereumMainnet,
+    BnbMainnet,
+    PolygonMainnet,
+    AvalancheCChainMainnet,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TxType4Policy {
+    Reject,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlobPolicy {
+    ReadOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvmRawTxEnvelopeType {
+    Legacy,
+    Type1AccessList,
+    Type2DynamicFee,
+    Type3Blob,
+    Type4SetCode,
+}
+
+impl EvmRawTxEnvelopeType {
+    #[must_use]
+    pub fn tx_type_number(self) -> u8 {
+        match self {
+            EvmRawTxEnvelopeType::Legacy => 0,
+            EvmRawTxEnvelopeType::Type1AccessList => 1,
+            EvmRawTxEnvelopeType::Type2DynamicFee => 2,
+            EvmRawTxEnvelopeType::Type3Blob => 3,
+            EvmRawTxEnvelopeType::Type4SetCode => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EvmRawTxRouteHint {
+    pub envelope: EvmRawTxEnvelopeType,
+    pub tx_type_number: u8,
+    pub tx_type4: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvmRawTxFieldsM0 {
+    pub hint: EvmRawTxRouteHint,
+    pub chain_id: Option<u64>,
+    pub nonce: Option<u64>,
+    pub gas_limit: Option<u64>,
+    pub gas_price: Option<u64>,
+    pub max_priority_fee_per_gas: Option<u64>,
+    pub max_fee_per_blob_gas: Option<u64>,
+    pub blob_hash_count: Option<u64>,
+    pub access_list_address_count: Option<u64>,
+    pub access_list_storage_key_count: Option<u64>,
+    pub access_list: Vec<EvmAccessListEntryV1>,
+    pub to: Option<Vec<u8>>,
+    pub value: Option<u128>,
+    pub data: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvmRawBlockTxM0 {
+    pub from: Vec<u8>,
+    pub raw_tx: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvmRawBlockM0 {
+    pub hash: Vec<u8>,
+    pub parent_hash: Vec<u8>,
+    pub number: u64,
+    pub timestamp: u64,
+    pub transactions: Vec<EvmRawBlockTxM0>,
+    pub state_root: Vec<u8>,
+    pub transactions_root: Vec<u8>,
+    pub receipts_root: Vec<u8>,
+    pub miner: Vec<u8>,
+    pub difficulty: u64,
+    pub gas_used: u64,
+    pub gas_limit: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RlpItem<'a> {
+    Bytes(&'a [u8]),
+    List(&'a [u8]),
+}
+
+#[derive(Debug, Clone)]
+pub struct EvmChainProfile {
+    pub kind: EvmChainProfileKind,
+    pub chain_type: ChainType,
+    pub chain_id: u64,
+    pub tx_type4_policy: TxType4Policy,
+    pub blob_policy: BlobPolicy,
+}
+
+const ETH_MAINNET_PRECOMPILES_M0: &[&str] = &[
+    "ecrecover",
+    "sha256",
+    "ripemd160",
+    "identity",
+    "modexp",
+    "bn256_add",
+    "bn256_scalar_mul",
+    "bn256_pairing",
+    "blake2f",
+];
+
+const BNB_MAINNET_PRECOMPILES_M0: &[&str] = &[
+    "ecrecover",
+    "sha256",
+    "ripemd160",
+    "identity",
+    "modexp",
+    "bn256_add",
+    "bn256_scalar_mul",
+    "bn256_pairing",
+    "blake2f",
+];
+
+const POLYGON_MAINNET_PRECOMPILES_M0: &[&str] = &[
+    "ecrecover",
+    "sha256",
+    "ripemd160",
+    "identity",
+    "modexp",
+    "bn256_add",
+    "bn256_scalar_mul",
+    "bn256_pairing",
+    "blake2f",
+];
+
+const AVALANCHE_CCHAIN_MAINNET_PRECOMPILES_M0: &[&str] = &[
+    "ecrecover",
+    "sha256",
+    "ripemd160",
+    "identity",
+    "modexp",
+    "bn256_add",
+    "bn256_scalar_mul",
+    "bn256_pairing",
+    "blake2f",
+];
+
+static EVM_CHAIN_TYPE_OVERRIDES: OnceLock<HashMap<u64, ChainType>> = OnceLock::new();
+
+fn parse_evm_chain_type_overrides(raw: &str) -> HashMap<u64, ChainType> {
+    let mut out = HashMap::<u64, ChainType>::new();
+    for entry in raw.split([',', ';']) {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let (chain_id_raw, chain_type_raw) = if let Some((left, right)) = trimmed.split_once('=') {
+            (left.trim(), right.trim())
+        } else if let Some((left, right)) = trimmed.split_once(':') {
+            (left.trim(), right.trim())
+        } else {
+            continue;
+        };
+        let Ok(chain_id) = chain_id_raw.parse::<u64>() else {
+            continue;
+        };
+        let Ok(chain_type) = ChainType::parse(chain_type_raw) else {
+            continue;
+        };
+        if supports_evm_family(chain_type) {
+            out.insert(chain_id, chain_type);
+        }
+    }
+    out
+}
+
+fn evm_chain_type_overrides() -> &'static HashMap<u64, ChainType> {
+    EVM_CHAIN_TYPE_OVERRIDES.get_or_init(|| {
+        std::env::var("NOVOVM_EVM_CHAIN_TYPE_OVERRIDES")
+            .ok()
+            .map(|raw| parse_evm_chain_type_overrides(&raw))
+            .unwrap_or_default()
+    })
+}
+
+fn parse_bool_env(raw: &str) -> Option<bool> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn evm_bool_env(base_key: &str, default: bool) -> bool {
+    std::env::var(base_key)
+        .ok()
+        .and_then(|raw| parse_bool_env(&raw))
+        .unwrap_or(default)
+}
+
+fn evm_chain_bool_env(chain_id: u64, base_key: &str, default: bool) -> bool {
+    let chain_key_dec = format!("{base_key}_CHAIN_{chain_id}");
+    let chain_key_hex = format!("{base_key}_CHAIN_0x{:x}", chain_id);
+    std::env::var(&chain_key_dec)
+        .ok()
+        .or_else(|| std::env::var(&chain_key_hex).ok())
+        .and_then(|raw| parse_bool_env(&raw))
+        .unwrap_or_else(|| evm_bool_env(base_key, default))
+}
+
+fn evm_type1_write_enabled_for_chain(chain_id: u64) -> bool {
+    evm_chain_bool_env(chain_id, "NOVOVM_EVM_ENABLE_TYPE1_WRITE", true)
+}
+
+fn evm_type2_write_enabled_for_chain(chain_id: u64) -> bool {
+    evm_chain_bool_env(chain_id, "NOVOVM_EVM_ENABLE_TYPE2_WRITE", true)
+}
+
+fn evm_type3_write_enabled_for_chain(chain_id: u64) -> bool {
+    evm_chain_bool_env(chain_id, "NOVOVM_EVM_ENABLE_TYPE3_WRITE", false)
+}
+
+fn evm_amsterdam_gas_rules_enabled_for_chain(chain_id: u64) -> bool {
+    evm_chain_bool_env(chain_id, "NOVOVM_EVM_ENABLE_AMSTERDAM_GAS_RULES", false)
+}
+
+fn evm_prague_floor_gas_enabled_for_chain(chain_id: u64) -> bool {
+    evm_chain_bool_env(
+        chain_id,
+        "NOVOVM_EVM_ENABLE_PRAGUE_FLOOR_GAS",
+        evm_amsterdam_gas_rules_enabled_for_chain(chain_id),
+    )
+}
+
+#[must_use]
+pub fn resolve_evm_chain_type_from_chain_id(chain_id: u64) -> ChainType {
+    if let Some(chain_type) = evm_chain_type_overrides().get(&chain_id).copied() {
+        return chain_type;
+    }
+    match chain_id {
+        56 => ChainType::BNB,
+        137 => ChainType::Polygon,
+        43114 => ChainType::Avalanche,
+        _ => ChainType::EVM,
+    }
+}
+
+#[must_use]
+pub fn supports_evm_family(chain_type: ChainType) -> bool {
+    matches!(
+        chain_type,
+        ChainType::EVM | ChainType::BNB | ChainType::Polygon | ChainType::Avalanche
+    )
+}
+
+pub fn resolve_evm_profile(
+    chain_type: ChainType,
+    chain_id: u64,
+) -> anyhow::Result<EvmChainProfile> {
+    match chain_type {
+        ChainType::EVM => Ok(EvmChainProfile {
+            kind: EvmChainProfileKind::EthereumMainnet,
+            chain_type,
+            chain_id,
+            tx_type4_policy: TxType4Policy::Reject,
+            blob_policy: BlobPolicy::ReadOnly,
+        }),
+        ChainType::BNB => Ok(EvmChainProfile {
+            kind: EvmChainProfileKind::BnbMainnet,
+            chain_type,
+            chain_id,
+            tx_type4_policy: TxType4Policy::Reject,
+            blob_policy: BlobPolicy::ReadOnly,
+        }),
+        ChainType::Polygon => Ok(EvmChainProfile {
+            kind: EvmChainProfileKind::PolygonMainnet,
+            chain_type,
+            chain_id,
+            tx_type4_policy: TxType4Policy::Reject,
+            blob_policy: BlobPolicy::ReadOnly,
+        }),
+        ChainType::Avalanche => Ok(EvmChainProfile {
+            kind: EvmChainProfileKind::AvalancheCChainMainnet,
+            chain_type,
+            chain_id,
+            tx_type4_policy: TxType4Policy::Reject,
+            blob_policy: BlobPolicy::ReadOnly,
+        }),
+        _ => bail!("unsupported EVM family chain_type={}", chain_type.as_str()),
+    }
+}
+
+pub fn classify_raw_evm_tx_envelope(raw: &[u8]) -> anyhow::Result<EvmRawTxEnvelopeType> {
+    if raw.is_empty() {
+        bail!("raw tx is empty");
+    }
+    let first = raw[0];
+    if first >= 0xc0 {
+        return Ok(EvmRawTxEnvelopeType::Legacy);
+    }
+    Ok(match first {
+        0x01 => EvmRawTxEnvelopeType::Type1AccessList,
+        0x02 => EvmRawTxEnvelopeType::Type2DynamicFee,
+        0x03 => EvmRawTxEnvelopeType::Type3Blob,
+        0x04 => EvmRawTxEnvelopeType::Type4SetCode,
+        0x00..=0x7f => {
+            bail!("unsupported typed tx envelope: type={}", first);
+        }
+        _ => {
+            bail!("invalid tx envelope prefix: 0x{:02x}", first);
+        }
+    })
+}
+
+pub fn resolve_raw_evm_tx_route_hint_m0(raw: &[u8]) -> anyhow::Result<EvmRawTxRouteHint> {
+    let envelope = classify_raw_evm_tx_envelope(raw)?;
+    match envelope {
+        EvmRawTxEnvelopeType::Legacy
+        | EvmRawTxEnvelopeType::Type1AccessList
+        | EvmRawTxEnvelopeType::Type2DynamicFee => Ok(EvmRawTxRouteHint {
+            envelope,
+            tx_type_number: envelope.tx_type_number(),
+            tx_type4: false,
+        }),
+        EvmRawTxEnvelopeType::Type3Blob => Ok(EvmRawTxRouteHint {
+            envelope,
+            tx_type_number: envelope.tx_type_number(),
+            tx_type4: false,
+        }),
+        EvmRawTxEnvelopeType::Type4SetCode => Ok(EvmRawTxRouteHint {
+            envelope,
+            tx_type_number: envelope.tx_type_number(),
+            tx_type4: true,
+        }),
+    }
+}
+
+fn parse_usize_be(raw: &[u8], field: &str) -> anyhow::Result<usize> {
+    if raw.is_empty() {
+        bail!("{} is empty", field);
+    }
+    if raw.len() > std::mem::size_of::<usize>() {
+        bail!("{} overflows usize", field);
+    }
+    if raw.len() > 1 && raw[0] == 0 {
+        bail!("{} has non-canonical leading zero", field);
+    }
+    let mut out = 0usize;
+    for b in raw {
+        out = (out << 8) | (*b as usize);
+    }
+    Ok(out)
+}
+
+fn parse_rlp_item(input: &[u8]) -> anyhow::Result<(RlpItem<'_>, usize)> {
+    if input.is_empty() {
+        bail!("rlp input is empty");
+    }
+    let b0 = input[0];
+    match b0 {
+        0x00..=0x7f => Ok((RlpItem::Bytes(&input[..1]), 1)),
+        0x80..=0xb7 => {
+            let len = (b0 - 0x80) as usize;
+            if input.len() < 1 + len {
+                bail!("rlp bytes short input");
+            }
+            Ok((RlpItem::Bytes(&input[1..1 + len]), 1 + len))
+        }
+        0xb8..=0xbf => {
+            let len_of_len = (b0 - 0xb7) as usize;
+            if input.len() < 1 + len_of_len {
+                bail!("rlp bytes length-of-length short input");
+            }
+            let len = parse_usize_be(&input[1..1 + len_of_len], "rlp bytes length")?;
+            if input.len() < 1 + len_of_len + len {
+                bail!("rlp bytes payload short input");
+            }
+            Ok((
+                RlpItem::Bytes(&input[1 + len_of_len..1 + len_of_len + len]),
+                1 + len_of_len + len,
+            ))
+        }
+        0xc0..=0xf7 => {
+            let len = (b0 - 0xc0) as usize;
+            if input.len() < 1 + len {
+                bail!("rlp list short input");
+            }
+            Ok((RlpItem::List(&input[1..1 + len]), 1 + len))
+        }
+        0xf8..=0xff => {
+            let len_of_len = (b0 - 0xf7) as usize;
+            if input.len() < 1 + len_of_len {
+                bail!("rlp list length-of-length short input");
+            }
+            let len = parse_usize_be(&input[1..1 + len_of_len], "rlp list length")?;
+            if input.len() < 1 + len_of_len + len {
+                bail!("rlp list payload short input");
+            }
+            Ok((
+                RlpItem::List(&input[1 + len_of_len..1 + len_of_len + len]),
+                1 + len_of_len + len,
+            ))
+        }
+    }
+}
+
+fn parse_rlp_list_payload_items<'a>(payload: &'a [u8]) -> anyhow::Result<Vec<RlpItem<'a>>> {
+    let mut items = Vec::new();
+    let mut offset = 0usize;
+    while offset < payload.len() {
+        let (item, used) = parse_rlp_item(&payload[offset..])?;
+        items.push(item);
+        offset += used;
+    }
+    if offset != payload.len() {
+        bail!("rlp list payload decode did not consume all bytes");
+    }
+    Ok(items)
+}
+
+fn parse_top_level_rlp_list(raw: &[u8]) -> anyhow::Result<Vec<RlpItem<'_>>> {
+    let (top, used) = parse_rlp_item(raw)?;
+    if used != raw.len() {
+        bail!("rlp top-level item has trailing bytes");
+    }
+    match top {
+        RlpItem::List(payload) => parse_rlp_list_payload_items(payload),
+        RlpItem::Bytes(_) => bail!("rlp top-level is not a list"),
+    }
+}
+
+fn rlp_item_as_bytes<'a>(item: &'a RlpItem<'a>, field: &str) -> anyhow::Result<&'a [u8]> {
+    match item {
+        RlpItem::Bytes(v) => Ok(*v),
+        RlpItem::List(_) => bail!("{} must be bytes, got list", field),
+    }
+}
+
+fn rlp_item_as_u64(item: &RlpItem<'_>, field: &str) -> anyhow::Result<u64> {
+    let raw = rlp_item_as_bytes(item, field)?;
+    if raw.is_empty() {
+        return Ok(0);
+    }
+    if raw.len() > 8 {
+        bail!("{} overflows u64", field);
+    }
+    if raw.len() > 1 && raw[0] == 0 {
+        bail!("{} has non-canonical leading zero", field);
+    }
+    let mut out = 0u64;
+    for b in raw {
+        out = (out << 8) | (*b as u64);
+    }
+    Ok(out)
+}
+
+fn rlp_item_as_u128(item: &RlpItem<'_>, field: &str) -> anyhow::Result<u128> {
+    let raw = rlp_item_as_bytes(item, field)?;
+    if raw.is_empty() {
+        return Ok(0);
+    }
+    if raw.len() > 16 {
+        bail!("{} overflows u128", field);
+    }
+    if raw.len() > 1 && raw[0] == 0 {
+        bail!("{} has non-canonical leading zero", field);
+    }
+    let mut out = 0u128;
+    for b in raw {
+        out = (out << 8) | (*b as u128);
+    }
+    Ok(out)
+}
+
+fn rlp_item_as_address(item: &RlpItem<'_>, field: &str) -> anyhow::Result<Option<Vec<u8>>> {
+    let raw = rlp_item_as_bytes(item, field)?;
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    if raw.len() != 20 {
+        bail!("{} must be 20 bytes or empty, got {}", field, raw.len());
+    }
+    Ok(Some(raw.to_vec()))
+}
+
+fn rlp_encode_len(prefix_small: u8, prefix_long: u8, len: usize) -> Vec<u8> {
+    if len < 56 {
+        return vec![prefix_small + len as u8];
+    }
+    let mut len_bytes = Vec::new();
+    let mut n = len;
+    while n > 0 {
+        len_bytes.push((n & 0xff) as u8);
+        n >>= 8;
+    }
+    len_bytes.reverse();
+    let mut out = Vec::with_capacity(1 + len_bytes.len());
+    out.push(prefix_long + len_bytes.len() as u8);
+    out.extend_from_slice(&len_bytes);
+    out
+}
+
+fn rlp_encode_bytes(bytes: &[u8]) -> Vec<u8> {
+    if bytes.len() == 1 && bytes[0] < 0x80 {
+        return vec![bytes[0]];
+    }
+    let mut out = rlp_encode_len(0x80, 0xb7, bytes.len());
+    out.extend_from_slice(bytes);
+    out
+}
+
+fn rlp_encode_u128(v: u128) -> Vec<u8> {
+    if v == 0 {
+        return rlp_encode_bytes(&[]);
+    }
+    let bytes = v.to_be_bytes();
+    let first_non_zero = bytes
+        .iter()
+        .position(|value| *value != 0)
+        .unwrap_or(bytes.len() - 1);
+    rlp_encode_bytes(&bytes[first_non_zero..])
+}
+
+fn rlp_encode_item(item: &RlpItem<'_>) -> Vec<u8> {
+    match item {
+        RlpItem::Bytes(bytes) => rlp_encode_bytes(bytes),
+        RlpItem::List(payload) => {
+            let mut out = rlp_encode_len(0xc0, 0xf7, payload.len());
+            out.extend_from_slice(payload);
+            out
+        }
+    }
+}
+
+fn rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
+    let payload_len: usize = items.iter().map(Vec::len).sum();
+    let mut out = rlp_encode_len(0xc0, 0xf7, payload_len);
+    for item in items {
+        out.extend_from_slice(item);
+    }
+    out
+}
+
+#[must_use]
+pub fn evm_address20_from_bytes_m0(address: &[u8]) -> [u8; 20] {
+    let mut out = [0u8; 20];
+    if address.len() >= 20 {
+        out.copy_from_slice(&address[address.len() - 20..]);
+    } else {
+        out[20 - address.len()..].copy_from_slice(address);
+    }
+    out
+}
+
+#[must_use]
+pub fn evm_word32_from_bytes_m0(bytes: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    if bytes.len() >= 32 {
+        out.copy_from_slice(&bytes[bytes.len() - 32..]);
+    } else {
+        out[32 - bytes.len()..].copy_from_slice(bytes);
+    }
+    out
+}
+
+#[must_use]
+pub fn derive_create_contract_address_m0(from: &[u8], nonce: u64) -> Vec<u8> {
+    let from20 = evm_address20_from_bytes_m0(from);
+    let encoded = rlp_encode_list(&[rlp_encode_bytes(&from20), rlp_encode_u128(nonce as u128)]);
+    let digest = Keccak256::digest(encoded);
+    digest[12..32].to_vec()
+}
+
+#[must_use]
+pub fn derive_create2_contract_address_m0(
+    from: &[u8],
+    salt: &[u8],
+    init_code_hash: &[u8],
+) -> Vec<u8> {
+    let from20 = evm_address20_from_bytes_m0(from);
+    let salt32 = evm_word32_from_bytes_m0(salt);
+    let mut preimage = Vec::with_capacity(1 + 20 + 32 + init_code_hash.len());
+    preimage.push(0xff);
+    preimage.extend_from_slice(&from20);
+    preimage.extend_from_slice(&salt32);
+    preimage.extend_from_slice(init_code_hash);
+    let digest = Keccak256::digest(preimage);
+    digest[12..32].to_vec()
+}
+
+fn pad_signature_word_to_32(raw: &[u8], field: &str) -> anyhow::Result<[u8; 32]> {
+    if raw.len() > 32 {
+        bail!("{field} must be <=32 bytes, got {}", raw.len());
+    }
+    let mut out = [0u8; 32];
+    let start = 32usize.saturating_sub(raw.len());
+    out[start..].copy_from_slice(raw);
+    Ok(out)
+}
+
+fn normalize_legacy_recovery_id(v: u128) -> anyhow::Result<(u8, Option<u128>)> {
+    match v {
+        0 | 1 => Ok((v as u8, None)),
+        27 | 28 => Ok(((v - 27) as u8, None)),
+        35.. => Ok((((v - 35) % 2) as u8, Some((v - 35) / 2))),
+        _ => bail!("legacy.v must be 0/1/27/28 or >=35, got {}", v),
+    }
+}
+
+fn normalize_typed_recovery_id(v: u128, field: &str) -> anyhow::Result<u8> {
+    match v {
+        0 | 1 => Ok(v as u8),
+        27 | 28 => Ok((v - 27) as u8),
+        _ => bail!("{field} must be 0/1/27/28, got {}", v),
+    }
+}
+
+fn build_signature65(r_raw: &[u8], s_raw: &[u8], recovery_id: u8) -> anyhow::Result<[u8; 65]> {
+    if recovery_id > 1 {
+        bail!("recovery_id must be 0 or 1, got {}", recovery_id);
+    }
+    let r = pad_signature_word_to_32(r_raw, "signature.r")?;
+    let s = pad_signature_word_to_32(s_raw, "signature.s")?;
+    let mut out = [0u8; 65];
+    out[..32].copy_from_slice(&r);
+    out[32..64].copy_from_slice(&s);
+    out[64] = recovery_id;
+    Ok(out)
+}
+
+fn evm_address_from_secp256k1_pubkey(pubkey: &[u8]) -> Option<Vec<u8>> {
+    let body = match pubkey {
+        [0x04, tail @ ..] if tail.len() == 64 => tail,
+        tail if tail.len() == 64 => tail,
+        _ => return None,
+    };
+    let digest = Keccak256::digest(body);
+    Some(digest[12..].to_vec())
+}
+
+fn typed_tx_recovery_input(
+    raw: &[u8],
+    tx_type_prefix: u8,
+    unsigned_item_count: usize,
+    v_idx: usize,
+    r_idx: usize,
+    s_idx: usize,
+    field_prefix: &str,
+) -> anyhow::Result<([u8; 32], [u8; 65])> {
+    if raw.len() < 2 {
+        bail!("{field_prefix} raw tx payload is empty");
+    }
+    let items = parse_top_level_rlp_list(&raw[1..])?;
+    if items.len() <= s_idx {
+        bail!(
+            "{field_prefix} tx rlp list too short: expected >={}, got {}",
+            s_idx + 1,
+            items.len()
+        );
+    }
+    let v = rlp_item_as_u128(&items[v_idx], &format!("{field_prefix}.v"))?;
+    let recovery_id = normalize_typed_recovery_id(v, &format!("{field_prefix}.v"))?;
+    let r = rlp_item_as_bytes(&items[r_idx], &format!("{field_prefix}.r"))?;
+    let s = rlp_item_as_bytes(&items[s_idx], &format!("{field_prefix}.s"))?;
+    let signature65 = build_signature65(r, s, recovery_id)?;
+    let unsigned_items = items[..unsigned_item_count]
+        .iter()
+        .map(rlp_encode_item)
+        .collect::<Vec<_>>();
+    let mut sign_payload = vec![tx_type_prefix];
+    sign_payload.extend_from_slice(&rlp_encode_list(&unsigned_items));
+    let digest = Keccak256::digest(&sign_payload);
+    let mut message32 = [0u8; 32];
+    message32.copy_from_slice(&digest);
+    Ok((message32, signature65))
+}
+
+fn build_raw_evm_sender_recovery_input_m0(raw: &[u8]) -> anyhow::Result<([u8; 32], [u8; 65])> {
+    let hint = resolve_raw_evm_tx_route_hint_m0(raw)?;
+    match hint.envelope {
+        EvmRawTxEnvelopeType::Legacy => {
+            let items = parse_top_level_rlp_list(raw)?;
+            if items.len() < 9 {
+                bail!(
+                    "legacy tx rlp list too short for sender recovery: expected >=9, got {}",
+                    items.len()
+                );
+            }
+            let v = rlp_item_as_u128(&items[6], "legacy.v")?;
+            let (recovery_id, eip155_chain_id) = normalize_legacy_recovery_id(v)?;
+            let r = rlp_item_as_bytes(&items[7], "legacy.r")?;
+            let s = rlp_item_as_bytes(&items[8], "legacy.s")?;
+            let signature65 = build_signature65(r, s, recovery_id)?;
+            let mut unsigned_items = items[..6].iter().map(rlp_encode_item).collect::<Vec<_>>();
+            if let Some(chain_id) = eip155_chain_id {
+                unsigned_items.push(rlp_encode_u128(chain_id));
+                unsigned_items.push(rlp_encode_bytes(&[]));
+                unsigned_items.push(rlp_encode_bytes(&[]));
+            }
+            let digest = Keccak256::digest(rlp_encode_list(&unsigned_items));
+            let mut message32 = [0u8; 32];
+            message32.copy_from_slice(&digest);
+            Ok((message32, signature65))
+        }
+        EvmRawTxEnvelopeType::Type1AccessList => {
+            typed_tx_recovery_input(raw, 0x01, 8, 8, 9, 10, "type1")
+        }
+        EvmRawTxEnvelopeType::Type2DynamicFee => {
+            typed_tx_recovery_input(raw, 0x02, 9, 9, 10, 11, "type2")
+        }
+        EvmRawTxEnvelopeType::Type3Blob => {
+            typed_tx_recovery_input(raw, 0x03, 11, 11, 12, 13, "type3")
+        }
+        EvmRawTxEnvelopeType::Type4SetCode => {
+            bail!("type4 sender recovery is not enabled in M0")
+        }
+    }
+}
+
+pub fn recover_raw_evm_tx_sender_m0(raw: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
+    let (message32, signature65) = match build_raw_evm_sender_recovery_input_m0(raw) {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let pubkey =
+        if let Some(pubkey) = recover_secp256k1_pubkey_fallback_m0(&message32, &signature65) {
+            pubkey
+        } else if let Some(pubkey) = secp256k1_recover_pubkey_v1_auto(&message32, &signature65)? {
+            pubkey
+        } else {
+            return Ok(None);
+        };
+    Ok(evm_address_from_secp256k1_pubkey(&pubkey))
+}
+
+fn recover_secp256k1_pubkey_fallback_m0(
+    message32: &[u8; 32],
+    signature65: &[u8; 65],
+) -> Option<Vec<u8>> {
+    let signature = Signature::from_slice(&signature65[..64]).ok()?;
+    let recovery_id = RecoveryId::from_byte(signature65[64])?;
+    let verifying_key =
+        VerifyingKey::recover_from_prehash(message32, &signature, recovery_id).ok()?;
+    Some(verifying_key.to_encoded_point(false).as_bytes().to_vec())
+}
+
+fn rlp_item_as_list_items<'a>(
+    item: &'a RlpItem<'a>,
+    field: &str,
+) -> anyhow::Result<Vec<RlpItem<'a>>> {
+    match item {
+        RlpItem::List(payload) => parse_rlp_list_payload_items(payload),
+        RlpItem::Bytes(_) => bail!("{} must be list", field),
+    }
+}
+
+fn rlp_access_list_entries(
+    item: &RlpItem<'_>,
+    field: &str,
+) -> anyhow::Result<Vec<EvmAccessListEntryV1>> {
+    let entries = rlp_item_as_list_items(item, field)?;
+    let mut out = Vec::with_capacity(entries.len());
+    for (entry_idx, entry) in entries.iter().enumerate() {
+        let entry_field = format!("{}[{}]", field, entry_idx);
+        let entry_items = rlp_item_as_list_items(entry, &entry_field)?;
+        if entry_items.len() < 2 {
+            bail!("{} must be [address,storageKeys]", entry_field);
+        }
+        let address_field = format!("{}.address", entry_field);
+        let address_raw = rlp_item_as_bytes(&entry_items[0], &address_field)?;
+        if address_raw.len() != 20 {
+            bail!(
+                "{} must be 20 bytes, got {}",
+                address_field,
+                address_raw.len()
+            );
+        }
+
+        let storage_keys_field = format!("{}.storageKeys", entry_field);
+        let storage_keys = rlp_item_as_list_items(&entry_items[1], &storage_keys_field)?;
+        let mut parsed_storage_keys = Vec::with_capacity(storage_keys.len());
+        for (key_idx, storage_key) in storage_keys.iter().enumerate() {
+            let key_field = format!("{}[{}]", storage_keys_field, key_idx);
+            let key_raw = rlp_item_as_bytes(storage_key, &key_field)?;
+            if key_raw.len() != 32 {
+                bail!("{} must be 32 bytes, got {}", key_field, key_raw.len());
+            }
+            parsed_storage_keys.push(key_raw.to_vec());
+        }
+        out.push(EvmAccessListEntryV1 {
+            address: address_raw.to_vec(),
+            storage_keys: parsed_storage_keys,
+        });
+    }
+    Ok(out)
+}
+
+fn access_list_intrinsic_counts(entries: &[EvmAccessListEntryV1]) -> (u64, u64) {
+    let address_count = entries.len() as u64;
+    let storage_key_count = entries.iter().fold(0u64, |acc: u64, entry| {
+        acc.saturating_add(entry.storage_keys.len() as u64)
+    });
+    (address_count, storage_key_count)
+}
+
+fn tx_fields_from_legacy_list(
+    items: &[RlpItem<'_>],
+    hint: EvmRawTxRouteHint,
+) -> anyhow::Result<EvmRawTxFieldsM0> {
+    if items.len() < 6 {
+        bail!("legacy tx rlp list too short: expected >=6 fields");
+    }
+    let nonce = rlp_item_as_u64(&items[0], "legacy.nonce")?;
+    let gas_price = rlp_item_as_u64(&items[1], "legacy.gas_price")?;
+    let gas_limit = rlp_item_as_u64(&items[2], "legacy.gas_limit")?;
+    let to = rlp_item_as_address(&items[3], "legacy.to")?;
+    let value = rlp_item_as_u128(&items[4], "legacy.value")?;
+    let data = rlp_item_as_bytes(&items[5], "legacy.data")?.to_vec();
+
+    let chain_id = if items.len() > 6 {
+        let v = rlp_item_as_u128(&items[6], "legacy.v")?;
+        if v >= 35 {
+            let cid = ((v - 35) / 2) as u64;
+            Some(cid)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(EvmRawTxFieldsM0 {
+        hint,
+        chain_id,
+        nonce: Some(nonce),
+        gas_limit: Some(gas_limit),
+        gas_price: Some(gas_price),
+        max_priority_fee_per_gas: None,
+        max_fee_per_blob_gas: None,
+        blob_hash_count: None,
+        access_list_address_count: None,
+        access_list_storage_key_count: None,
+        access_list: Vec::new(),
+        to,
+        value: Some(value),
+        data: Some(data),
+    })
+}
+
+fn tx_fields_from_type1_list(
+    items: &[RlpItem<'_>],
+    hint: EvmRawTxRouteHint,
+) -> anyhow::Result<EvmRawTxFieldsM0> {
+    if items.len() < 8 {
+        bail!("type1 tx rlp list too short: expected >=8 fields");
+    }
+    let chain_id = rlp_item_as_u64(&items[0], "type1.chain_id")?;
+    let nonce = rlp_item_as_u64(&items[1], "type1.nonce")?;
+    let gas_price = rlp_item_as_u64(&items[2], "type1.gas_price")?;
+    let gas_limit = rlp_item_as_u64(&items[3], "type1.gas_limit")?;
+    let to = rlp_item_as_address(&items[4], "type1.to")?;
+    let value = rlp_item_as_u128(&items[5], "type1.value")?;
+    let data = rlp_item_as_bytes(&items[6], "type1.data")?.to_vec();
+    let access_list = rlp_access_list_entries(&items[7], "type1.access_list")?;
+    let (access_list_address_count, access_list_storage_key_count) =
+        access_list_intrinsic_counts(&access_list);
+    Ok(EvmRawTxFieldsM0 {
+        hint,
+        chain_id: Some(chain_id),
+        nonce: Some(nonce),
+        gas_limit: Some(gas_limit),
+        gas_price: Some(gas_price),
+        max_priority_fee_per_gas: None,
+        max_fee_per_blob_gas: None,
+        blob_hash_count: None,
+        access_list_address_count: Some(access_list_address_count),
+        access_list_storage_key_count: Some(access_list_storage_key_count),
+        access_list,
+        to,
+        value: Some(value),
+        data: Some(data),
+    })
+}
+
+fn tx_fields_from_type2_list(
+    items: &[RlpItem<'_>],
+    hint: EvmRawTxRouteHint,
+) -> anyhow::Result<EvmRawTxFieldsM0> {
+    if items.len() < 9 {
+        bail!("type2 tx rlp list too short: expected >=9 fields");
+    }
+    let chain_id = rlp_item_as_u64(&items[0], "type2.chain_id")?;
+    let nonce = rlp_item_as_u64(&items[1], "type2.nonce")?;
+    let max_priority_fee_per_gas = rlp_item_as_u64(&items[2], "type2.max_priority_fee_per_gas")?;
+    let max_fee_per_gas = rlp_item_as_u64(&items[3], "type2.max_fee_per_gas")?;
+    let gas_limit = rlp_item_as_u64(&items[4], "type2.gas_limit")?;
+    let to = rlp_item_as_address(&items[5], "type2.to")?;
+    let value = rlp_item_as_u128(&items[6], "type2.value")?;
+    let data = rlp_item_as_bytes(&items[7], "type2.data")?.to_vec();
+    let access_list = rlp_access_list_entries(&items[8], "type2.access_list")?;
+    let (access_list_address_count, access_list_storage_key_count) =
+        access_list_intrinsic_counts(&access_list);
+    Ok(EvmRawTxFieldsM0 {
+        hint,
+        chain_id: Some(chain_id),
+        nonce: Some(nonce),
+        gas_limit: Some(gas_limit),
+        gas_price: Some(max_fee_per_gas),
+        max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
+        max_fee_per_blob_gas: None,
+        blob_hash_count: None,
+        access_list_address_count: Some(access_list_address_count),
+        access_list_storage_key_count: Some(access_list_storage_key_count),
+        access_list,
+        to,
+        value: Some(value),
+        data: Some(data),
+    })
+}
+
+fn rlp_blob_hash_count(item: &RlpItem<'_>, field: &str) -> anyhow::Result<u64> {
+    let RlpItem::List(payload) = item else {
+        bail!("{field} must be rlp list");
+    };
+    let mut cursor = 0usize;
+    let mut count = 0u64;
+    while cursor < payload.len() {
+        let (entry, consumed) = parse_rlp_item(&payload[cursor..])?;
+        let raw = rlp_item_as_bytes(&entry, field)?;
+        if raw.len() != 32 {
+            bail!("{field} entry must be 32 bytes");
+        }
+        cursor = cursor.saturating_add(consumed);
+        count = count.saturating_add(1);
+    }
+    if cursor != payload.len() {
+        bail!("{field} malformed list payload");
+    }
+    Ok(count)
+}
+
+fn tx_fields_from_type3_list(
+    items: &[RlpItem<'_>],
+    hint: EvmRawTxRouteHint,
+) -> anyhow::Result<EvmRawTxFieldsM0> {
+    if items.len() < 11 {
+        bail!("type3 tx rlp list too short: expected >=11 fields");
+    }
+    let chain_id = rlp_item_as_u64(&items[0], "type3.chain_id")?;
+    let nonce = rlp_item_as_u64(&items[1], "type3.nonce")?;
+    let max_priority_fee_per_gas = rlp_item_as_u64(&items[2], "type3.max_priority_fee_per_gas")?;
+    let max_fee_per_gas = rlp_item_as_u64(&items[3], "type3.max_fee_per_gas")?;
+    let gas_limit = rlp_item_as_u64(&items[4], "type3.gas_limit")?;
+    let to = rlp_item_as_address(&items[5], "type3.to")?;
+    let value = rlp_item_as_u128(&items[6], "type3.value")?;
+    let data = rlp_item_as_bytes(&items[7], "type3.data")?.to_vec();
+    let access_list = rlp_access_list_entries(&items[8], "type3.access_list")?;
+    let (access_list_address_count, access_list_storage_key_count) =
+        access_list_intrinsic_counts(&access_list);
+    let max_fee_per_blob_gas = rlp_item_as_u64(&items[9], "type3.max_fee_per_blob_gas")?;
+    let blob_hash_count = rlp_blob_hash_count(&items[10], "type3.blob_versioned_hashes")?;
+    Ok(EvmRawTxFieldsM0 {
+        hint,
+        chain_id: Some(chain_id),
+        nonce: Some(nonce),
+        gas_limit: Some(gas_limit),
+        gas_price: Some(max_fee_per_gas),
+        max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
+        max_fee_per_blob_gas: Some(max_fee_per_blob_gas),
+        blob_hash_count: Some(blob_hash_count),
+        access_list_address_count: Some(access_list_address_count),
+        access_list_storage_key_count: Some(access_list_storage_key_count),
+        access_list,
+        to,
+        value: Some(value),
+        data: Some(data),
+    })
+}
+
+pub fn translate_raw_evm_tx_fields_m0(raw: &[u8]) -> anyhow::Result<EvmRawTxFieldsM0> {
+    let hint = resolve_raw_evm_tx_route_hint_m0(raw)?;
+    let fields = match hint.envelope {
+        EvmRawTxEnvelopeType::Legacy => {
+            let items = parse_top_level_rlp_list(raw)?;
+            tx_fields_from_legacy_list(&items, hint)
+        }
+        EvmRawTxEnvelopeType::Type1AccessList => {
+            if raw.len() < 2 {
+                bail!("type1 tx payload is empty");
+            }
+            let items = parse_top_level_rlp_list(&raw[1..])?;
+            tx_fields_from_type1_list(&items, hint)
+        }
+        EvmRawTxEnvelopeType::Type2DynamicFee => {
+            if raw.len() < 2 {
+                bail!("type2 tx payload is empty");
+            }
+            let items = parse_top_level_rlp_list(&raw[1..])?;
+            tx_fields_from_type2_list(&items, hint)
+        }
+        EvmRawTxEnvelopeType::Type3Blob => {
+            if raw.len() < 2 {
+                bail!("type3 tx payload is empty");
+            }
+            let items = parse_top_level_rlp_list(&raw[1..])?;
+            tx_fields_from_type3_list(&items, hint)
+        }
+        EvmRawTxEnvelopeType::Type4SetCode => Ok(EvmRawTxFieldsM0 {
+            hint,
+            chain_id: None,
+            nonce: None,
+            gas_limit: None,
+            gas_price: None,
+            max_priority_fee_per_gas: None,
+            max_fee_per_blob_gas: None,
+            blob_hash_count: None,
+            access_list_address_count: None,
+            access_list_storage_key_count: None,
+            access_list: Vec::new(),
+            to: None,
+            value: None,
+            data: None,
+        }),
+    }?;
+    let chain_id = fields.chain_id.unwrap_or_default();
+    match fields.hint.envelope {
+        EvmRawTxEnvelopeType::Type1AccessList => {
+            if !evm_type1_write_enabled_for_chain(chain_id) {
+                bail!(
+                    "unsupported eth tx type: access-list (type 1) write path disabled in M0 for chain_id={}",
+                    chain_id
+                );
+            }
+        }
+        EvmRawTxEnvelopeType::Type2DynamicFee => {
+            if !evm_type2_write_enabled_for_chain(chain_id) {
+                bail!(
+                    "unsupported eth tx type: dynamic-fee (type 2) write path disabled in M0 for chain_id={}",
+                    chain_id
+                );
+            }
+        }
+        EvmRawTxEnvelopeType::Type3Blob => {
+            if !evm_type3_write_enabled_for_chain(chain_id) {
+                bail!(
+                    "unsupported eth tx type: blob (type 3) write path disabled in M0 for chain_id={}",
+                    chain_id
+                );
+            }
+        }
+        _ => {}
+    }
+    Ok(fields)
+}
+
+pub fn translate_raw_evm_tx_to_ir_m0(
+    raw: &[u8],
+    from: Vec<u8>,
+    fallback_chain_id: u64,
+) -> anyhow::Result<TxIR> {
+    let fields = translate_raw_evm_tx_fields_m0(raw)?;
+    Ok(tx_ir_from_raw_fields_m0(
+        &fields,
+        raw,
+        from,
+        fallback_chain_id,
+    ))
+}
+
+#[must_use]
+pub fn tx_ir_from_raw_fields_m0(
+    fields: &EvmRawTxFieldsM0,
+    raw: &[u8],
+    from: Vec<u8>,
+    fallback_chain_id: u64,
+) -> TxIR {
+    let chain_id = fields.chain_id.unwrap_or(fallback_chain_id);
+    let nonce = fields.nonce.unwrap_or(0);
+    let gas_limit = fields.gas_limit.unwrap_or(21_000);
+    let gas_price = fields.gas_price.unwrap_or(1);
+    let to = fields.to.clone();
+    let data = fields.data.clone().unwrap_or_default();
+    let tx_type = if fields.hint.tx_type4 {
+        TxType::ContractCall
+    } else if to.is_none() {
+        TxType::ContractDeploy
+    } else if data.is_empty() {
+        TxType::Transfer
+    } else {
+        TxType::ContractCall
+    };
+
+    let mut tx = TxIR {
+        hash: Vec::new(),
+        from,
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
+        to,
+        value: fields.value.unwrap_or(0),
+        gas_limit,
+        gas_price,
+        nonce,
+        data,
+        signature: raw.to_vec(),
+        chain_id,
+        tx_type,
+        execution_policy: Default::default(),
+        evm_access_list: fields.access_list.clone(),
+        source_chain: None,
+        target_chain: None,
+    };
+    tx.compute_hash();
+    tx
+}
+
+pub fn translate_raw_evm_block_to_ir_m0(
+    block: &EvmRawBlockM0,
+    fallback_chain_id: u64,
+) -> anyhow::Result<BlockIR> {
+    if block.hash.is_empty() {
+        bail!("evm block hash is required");
+    }
+    if block.parent_hash.is_empty() {
+        bail!("evm block parent_hash is required");
+    }
+    let mut transactions = Vec::with_capacity(block.transactions.len());
+    for (idx, tx) in block.transactions.iter().enumerate() {
+        if tx.from.is_empty() {
+            bail!("evm block tx.from is required at index {}", idx);
+        }
+        if tx.raw_tx.is_empty() {
+            bail!("evm block tx.raw_tx is empty at index {}", idx);
+        }
+        transactions.push(translate_raw_evm_tx_to_ir_m0(
+            &tx.raw_tx,
+            tx.from.clone(),
+            fallback_chain_id,
+        )?);
+    }
+
+    Ok(BlockIR {
+        hash: block.hash.clone(),
+        parent_hash: block.parent_hash.clone(),
+        number: block.number,
+        timestamp: block.timestamp,
+        transactions,
+        state_root: block.state_root.clone(),
+        transactions_root: block.transactions_root.clone(),
+        receipts_root: block.receipts_root.clone(),
+        miner: block.miner.clone(),
+        difficulty: block.difficulty,
+        gas_used: block.gas_used,
+        gas_limit: block.gas_limit,
+    })
+}
+
+#[must_use]
+pub fn active_precompile_set_m0(profile: &EvmChainProfile) -> &'static [&'static str] {
+    match profile.kind {
+        EvmChainProfileKind::EthereumMainnet => ETH_MAINNET_PRECOMPILES_M0,
+        EvmChainProfileKind::BnbMainnet => BNB_MAINNET_PRECOMPILES_M0,
+        EvmChainProfileKind::PolygonMainnet => POLYGON_MAINNET_PRECOMPILES_M0,
+        EvmChainProfileKind::AvalancheCChainMainnet => AVALANCHE_CCHAIN_MAINNET_PRECOMPILES_M0,
+    }
+}
+
+#[must_use]
+pub fn estimate_intrinsic_gas_m0(tx: &TxIR) -> u64 {
+    const TX_BASE_GAS: u64 = 21_000;
+    const TX_CREATE_EXTRA_GAS: u64 = 32_000;
+    const TX_DATA_ZERO_BYTE_GAS: u64 = 4;
+    const TX_DATA_NON_ZERO_BYTE_GAS: u64 = 16;
+    const TX_INITCODE_WORD_GAS: u64 = 2;
+
+    let zero_bytes = tx.data.iter().filter(|b| **b == 0).count() as u64;
+    let non_zero_bytes = tx.data.len() as u64 - zero_bytes;
+    let mut intrinsic = TX_BASE_GAS
+        .saturating_add(zero_bytes.saturating_mul(TX_DATA_ZERO_BYTE_GAS))
+        .saturating_add(non_zero_bytes.saturating_mul(TX_DATA_NON_ZERO_BYTE_GAS));
+    if matches!(tx.tx_type, TxType::ContractDeploy) {
+        let initcode_words = (tx.data.len() as u64).saturating_add(31) / 32;
+        intrinsic = intrinsic
+            .saturating_add(TX_CREATE_EXTRA_GAS)
+            .saturating_add(initcode_words.saturating_mul(TX_INITCODE_WORD_GAS));
+    }
+    intrinsic
+}
+
+#[must_use]
+pub fn estimate_access_list_intrinsic_extra_gas_m0(
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+) -> u64 {
+    access_list_address_count
+        .saturating_mul(EVM_ACCESS_LIST_ADDRESS_INTRINSIC_GAS_M0)
+        .saturating_add(
+            access_list_storage_key_count
+                .saturating_mul(EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0),
+        )
+}
+
+pub const EVM_WARM_ACCESS_GAS_M0: u64 = 100;
+pub const EVM_COLD_ACCOUNT_ACCESS_GAS_M0: u64 = 2_600;
+pub const EVM_COLD_SLOAD_GAS_M0: u64 = 2_100;
+pub const EVM_ACCESS_LIST_ADDRESS_INTRINSIC_GAS_M0: u64 = 2_400;
+pub const EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0: u64 = 1_900;
+pub const EVM_SSTORE_SET_GAS_M0: u64 = 20_000;
+pub const EVM_SSTORE_RESET_GAS_M0: u64 = 5_000;
+pub const EVM_SSTORE_RESET_GAS_EIP2929_M0: u64 = EVM_SSTORE_RESET_GAS_M0 - EVM_COLD_SLOAD_GAS_M0;
+pub const EVM_SSTORE_SENTRY_GAS_M0: u64 = 2_300;
+pub const EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0: u64 =
+    EVM_SSTORE_RESET_GAS_M0 - EVM_COLD_SLOAD_GAS_M0 + EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0;
+pub const EVM_REFUND_QUOTIENT_EIP3529_M0: u64 = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EvmSstoreTransitionGasM0 {
+    pub gas_cost: u64,
+    pub refund_delta: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EvmStorageAccessKeyM0 {
+    pub address: [u8; 20],
+    pub slot: [u8; 32],
+}
+
+#[must_use]
+pub fn estimate_eip2929_account_access_gas_m0(
+    account_access_count: u64,
+    warm_account_access_count: u64,
+) -> u64 {
+    let warm = warm_account_access_count.min(account_access_count);
+    let cold = account_access_count.saturating_sub(warm);
+    cold.saturating_mul(EVM_COLD_ACCOUNT_ACCESS_GAS_M0)
+        .saturating_add(warm.saturating_mul(EVM_WARM_ACCESS_GAS_M0))
+}
+
+#[must_use]
+pub fn estimate_eip2929_storage_read_gas_m0(
+    storage_read_count: u64,
+    warm_storage_read_count: u64,
+) -> u64 {
+    let warm = warm_storage_read_count.min(storage_read_count);
+    let cold = storage_read_count.saturating_sub(warm);
+    cold.saturating_mul(EVM_COLD_SLOAD_GAS_M0)
+        .saturating_add(warm.saturating_mul(EVM_WARM_ACCESS_GAS_M0))
+}
+
+#[must_use]
+pub fn estimate_eip2929_storage_read_sequence_gas_m0(
+    initial_warm_storage_keys: &[EvmStorageAccessKeyM0],
+    storage_read_sequence: &[EvmStorageAccessKeyM0],
+) -> u64 {
+    let mut warm_storage_keys = initial_warm_storage_keys
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    storage_read_sequence.iter().fold(0u64, |acc, key| {
+        let cost = if warm_storage_keys.insert(*key) {
+            EVM_COLD_SLOAD_GAS_M0
+        } else {
+            EVM_WARM_ACCESS_GAS_M0
+        };
+        acc.saturating_add(cost)
+    })
+}
+
+#[must_use]
+pub fn estimate_access_list_execution_warm_savings_m0(
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+) -> u64 {
+    access_list_address_count
+        .saturating_mul(EVM_COLD_ACCOUNT_ACCESS_GAS_M0.saturating_sub(EVM_WARM_ACCESS_GAS_M0))
+        .saturating_add(
+            access_list_storage_key_count
+                .saturating_mul(EVM_COLD_SLOAD_GAS_M0.saturating_sub(EVM_WARM_ACCESS_GAS_M0)),
+        )
+}
+
+#[must_use]
+pub fn estimate_eip3529_sstore_clear_refund_m0(
+    original_value_is_non_zero: bool,
+    current_value_is_non_zero: bool,
+    new_value_is_zero: bool,
+) -> u64 {
+    if original_value_is_non_zero && current_value_is_non_zero && new_value_is_zero {
+        EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0
+    } else {
+        0
+    }
+}
+
+#[must_use]
+pub fn eip2200_sstore_sentry_allows_m0(gas_left: u64) -> bool {
+    gas_left > EVM_SSTORE_SENTRY_GAS_M0
+}
+
+#[must_use]
+pub fn estimate_eip3529_sstore_transition_gas_m0(
+    original_value: [u8; 32],
+    current_value: [u8; 32],
+    new_value: [u8; 32],
+    slot_warm: bool,
+) -> EvmSstoreTransitionGasM0 {
+    let cold_cost = if slot_warm { 0 } else { EVM_COLD_SLOAD_GAS_M0 };
+    if current_value == new_value {
+        return EvmSstoreTransitionGasM0 {
+            gas_cost: cold_cost.saturating_add(EVM_WARM_ACCESS_GAS_M0),
+            refund_delta: 0,
+        };
+    }
+
+    let zero = [0u8; 32];
+    let original_is_zero = original_value == zero;
+    let current_is_zero = current_value == zero;
+    let new_is_zero = new_value == zero;
+
+    if original_value == current_value {
+        let refund_delta = if !original_is_zero && new_is_zero {
+            EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0 as i64
+        } else {
+            0
+        };
+        let gas_cost = if original_is_zero {
+            EVM_SSTORE_SET_GAS_M0
+        } else {
+            EVM_SSTORE_RESET_GAS_EIP2929_M0
+        };
+        return EvmSstoreTransitionGasM0 {
+            gas_cost: cold_cost.saturating_add(gas_cost),
+            refund_delta,
+        };
+    }
+
+    let mut refund_delta = 0i64;
+    if !original_is_zero {
+        if current_is_zero {
+            refund_delta -= EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0 as i64;
+        } else if new_is_zero {
+            refund_delta += EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0 as i64;
+        }
+    }
+    if original_value == new_value {
+        if original_is_zero {
+            refund_delta += (EVM_SSTORE_SET_GAS_M0 - EVM_WARM_ACCESS_GAS_M0) as i64;
+        } else {
+            refund_delta += (EVM_SSTORE_RESET_GAS_EIP2929_M0 - EVM_WARM_ACCESS_GAS_M0) as i64;
+        }
+    }
+
+    EvmSstoreTransitionGasM0 {
+        gas_cost: cold_cost.saturating_add(EVM_WARM_ACCESS_GAS_M0),
+        refund_delta,
+    }
+}
+
+#[must_use]
+pub fn cap_eip3529_gas_refund_m0(gas_used_before_refund: u64, refund_counter: u64) -> u64 {
+    refund_counter.min(gas_used_before_refund / EVM_REFUND_QUOTIENT_EIP3529_M0)
+}
+
+#[must_use]
+pub fn apply_eip3529_gas_refund_with_floor_m0(
+    gas_used_before_refund: u64,
+    refund_counter: u64,
+    floor_gas: u64,
+) -> u64 {
+    gas_used_before_refund
+        .saturating_sub(cap_eip3529_gas_refund_m0(
+            gas_used_before_refund,
+            refund_counter,
+        ))
+        .max(floor_gas)
+}
+
+#[must_use]
+pub fn apply_eip3529_gas_refund_m0(gas_used_before_refund: u64, refund_counter: u64) -> u64 {
+    apply_eip3529_gas_refund_with_floor_m0(gas_used_before_refund, refund_counter, 0)
+}
+
+#[must_use]
+pub fn estimate_amsterdam_access_list_intrinsic_extra_gas_m0(
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+) -> u64 {
+    const ADDRESS_BYTES: u64 = 20;
+    const STORAGE_KEY_BYTES: u64 = 32;
+    const TX_TOKEN_PER_NON_ZERO_BYTE: u64 = 4;
+    const TX_COST_FLOOR_PER_TOKEN_7976: u64 = 16;
+
+    let address_cost = ADDRESS_BYTES
+        .saturating_mul(TX_TOKEN_PER_NON_ZERO_BYTE)
+        .saturating_mul(TX_COST_FLOOR_PER_TOKEN_7976);
+    let storage_key_cost = STORAGE_KEY_BYTES
+        .saturating_mul(TX_TOKEN_PER_NON_ZERO_BYTE)
+        .saturating_mul(TX_COST_FLOOR_PER_TOKEN_7976);
+    access_list_address_count
+        .saturating_mul(address_cost)
+        .saturating_add(access_list_storage_key_count.saturating_mul(storage_key_cost))
+}
+
+#[must_use]
+pub fn estimate_intrinsic_gas_with_access_list_m0(
+    tx: &TxIR,
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+) -> u64 {
+    estimate_intrinsic_gas_m0(tx).saturating_add(estimate_access_list_intrinsic_extra_gas_m0(
+        access_list_address_count,
+        access_list_storage_key_count,
+    ))
+}
+
+#[must_use]
+pub fn estimate_intrinsic_gas_with_access_list_rules_m0(
+    tx: &TxIR,
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+    amsterdam_rules: bool,
+) -> u64 {
+    let base = estimate_intrinsic_gas_with_access_list_m0(
+        tx,
+        access_list_address_count,
+        access_list_storage_key_count,
+    );
+    if amsterdam_rules {
+        base.saturating_add(estimate_amsterdam_access_list_intrinsic_extra_gas_m0(
+            access_list_address_count,
+            access_list_storage_key_count,
+        ))
+    } else {
+        base
+    }
+}
+
+#[must_use]
+pub fn estimate_blob_intrinsic_extra_gas_m0(blob_hash_count: u64) -> u64 {
+    const BLOB_GAS_PER_BLOB: u64 = 131_072;
+    blob_hash_count.saturating_mul(BLOB_GAS_PER_BLOB)
+}
+
+#[must_use]
+pub fn estimate_intrinsic_gas_with_envelope_extras_m0(
+    tx: &TxIR,
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+    blob_hash_count: u64,
+) -> u64 {
+    estimate_intrinsic_gas_with_access_list_m0(
+        tx,
+        access_list_address_count,
+        access_list_storage_key_count,
+    )
+    .saturating_add(estimate_blob_intrinsic_extra_gas_m0(blob_hash_count))
+}
+
+#[must_use]
+pub fn estimate_intrinsic_gas_with_envelope_extras_for_chain_m0(
+    chain_id: u64,
+    tx: &TxIR,
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+    blob_hash_count: u64,
+) -> u64 {
+    estimate_intrinsic_gas_with_access_list_rules_m0(
+        tx,
+        access_list_address_count,
+        access_list_storage_key_count,
+        evm_amsterdam_gas_rules_enabled_for_chain(chain_id),
+    )
+    .saturating_add(estimate_blob_intrinsic_extra_gas_m0(blob_hash_count))
+}
+
+#[must_use]
+pub fn estimate_calldata_floor_gas_m0(
+    tx: &TxIR,
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+    amsterdam_rules: bool,
+) -> u64 {
+    const TX_BASE_GAS: u64 = 21_000;
+    const TX_TOKEN_PER_NON_ZERO_BYTE: u64 = 4;
+    const TX_COST_FLOOR_PER_TOKEN: u64 = 10;
+    const TX_COST_FLOOR_PER_TOKEN_7976: u64 = 16;
+    const ADDRESS_BYTES: u64 = 20;
+    const STORAGE_KEY_BYTES: u64 = 32;
+
+    let tokens = if amsterdam_rules {
+        let data_tokens = (tx.data.len() as u64).saturating_mul(TX_TOKEN_PER_NON_ZERO_BYTE);
+        let address_tokens = access_list_address_count
+            .saturating_mul(ADDRESS_BYTES)
+            .saturating_mul(TX_TOKEN_PER_NON_ZERO_BYTE);
+        let storage_key_tokens = access_list_storage_key_count
+            .saturating_mul(STORAGE_KEY_BYTES)
+            .saturating_mul(TX_TOKEN_PER_NON_ZERO_BYTE);
+        data_tokens
+            .saturating_add(address_tokens)
+            .saturating_add(storage_key_tokens)
+    } else {
+        let zero_bytes = tx.data.iter().filter(|b| **b == 0).count() as u64;
+        let non_zero_bytes = tx.data.len() as u64 - zero_bytes;
+        non_zero_bytes
+            .saturating_mul(TX_TOKEN_PER_NON_ZERO_BYTE)
+            .saturating_add(zero_bytes)
+    };
+    let token_cost = if amsterdam_rules {
+        TX_COST_FLOOR_PER_TOKEN_7976
+    } else {
+        TX_COST_FLOOR_PER_TOKEN
+    };
+    TX_BASE_GAS.saturating_add(tokens.saturating_mul(token_cost))
+}
+
+#[must_use]
+pub fn estimate_calldata_floor_gas_for_chain_m0(
+    chain_id: u64,
+    tx: &TxIR,
+    access_list_address_count: u64,
+    access_list_storage_key_count: u64,
+) -> u64 {
+    estimate_calldata_floor_gas_m0(
+        tx,
+        access_list_address_count,
+        access_list_storage_key_count,
+        evm_amsterdam_gas_rules_enabled_for_chain(chain_id),
+    )
+}
+
+pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow::Result<()> {
+    const MAX_INITCODE_SIZE_BYTES_POST_AMSTERDAM: usize = 65_536;
+
+    if tx.chain_id != profile.chain_id {
+        bail!(
+            "chain_id mismatch for profile: tx_chain={} profile_chain={}",
+            tx.chain_id,
+            profile.chain_id
+        );
+    }
+
+    match tx.tx_type {
+        TxType::Transfer | TxType::ContractCall => {
+            if tx.to.is_none() {
+                bail!("tx missing recipient for {:?}", tx.tx_type);
+            }
+        }
+        TxType::ContractDeploy => {
+            if tx.to.is_some() {
+                bail!("contract deploy tx must not set recipient");
+            }
+            if tx.data.is_empty() {
+                bail!("contract deploy tx missing init code");
+            }
+            if tx.data.len() > MAX_INITCODE_SIZE_BYTES_POST_AMSTERDAM {
+                bail!(
+                    "contract deploy init code too large: len={} max={}",
+                    tx.data.len(),
+                    MAX_INITCODE_SIZE_BYTES_POST_AMSTERDAM
+                );
+            }
+        }
+        _ => {
+            bail!(
+                "unsupported tx_type in M0 boundary: {:?} (expected Transfer|ContractCall|ContractDeploy)",
+                tx.tx_type
+            );
+        }
+    }
+
+    if tx.signature.is_empty() {
+        bail!("missing signature");
+    }
+
+    let parsed_fields = translate_raw_evm_tx_fields_m0(&tx.signature).ok();
+    if let Some(fields) = parsed_fields.as_ref() {
+        if let (Some(max_priority), Some(max_fee)) =
+            (fields.max_priority_fee_per_gas, fields.gas_price)
+        {
+            if max_priority > max_fee {
+                bail!(
+                    "max_priority_fee_per_gas exceeds max_fee_per_gas: priority={} max_fee={}",
+                    max_priority,
+                    max_fee
+                );
+            }
+        }
+        match fields.hint.envelope {
+            EvmRawTxEnvelopeType::Type1AccessList => {
+                if !evm_type1_write_enabled_for_chain(profile.chain_id) {
+                    bail!(
+                        "unsupported eth tx type: access-list (type 1) write path disabled in M0 for chain_id={}",
+                        profile.chain_id
+                    );
+                }
+            }
+            EvmRawTxEnvelopeType::Type2DynamicFee => {
+                if !evm_type2_write_enabled_for_chain(profile.chain_id) {
+                    bail!(
+                        "unsupported eth tx type: dynamic-fee (type 2) write path disabled in M0 for chain_id={}",
+                        profile.chain_id
+                    );
+                }
+            }
+            EvmRawTxEnvelopeType::Type3Blob => {
+                if !evm_type3_write_enabled_for_chain(profile.chain_id) {
+                    bail!(
+                        "unsupported eth tx type: blob (type 3) write path disabled in M0 for chain_id={}",
+                        profile.chain_id
+                    );
+                }
+                if fields.max_fee_per_blob_gas.unwrap_or(0) == 0 {
+                    bail!("blob tx max_fee_per_blob_gas must be non-zero");
+                }
+                if fields.blob_hash_count.unwrap_or(0) == 0 {
+                    bail!("blob tx must include at least one blob_versioned_hash");
+                }
+            }
+            EvmRawTxEnvelopeType::Type4SetCode => {
+                if matches!(profile.tx_type4_policy, TxType4Policy::Reject) {
+                    bail!("unsupported eth tx type: set-code (type 4) rejected by profile");
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let access_list_address_count = parsed_fields
+        .as_ref()
+        .and_then(|fields| fields.access_list_address_count)
+        .unwrap_or(0);
+    let access_list_storage_key_count = parsed_fields
+        .as_ref()
+        .and_then(|fields| fields.access_list_storage_key_count)
+        .unwrap_or(0);
+    let blob_hash_count = parsed_fields
+        .as_ref()
+        .and_then(|fields| fields.blob_hash_count)
+        .unwrap_or(0);
+    let intrinsic = estimate_intrinsic_gas_with_envelope_extras_for_chain_m0(
+        profile.chain_id,
+        tx,
+        access_list_address_count,
+        access_list_storage_key_count,
+        blob_hash_count,
+    );
+    if tx.gas_limit < intrinsic {
+        bail!(
+            "intrinsic gas too low: gas_limit={} intrinsic={}",
+            tx.gas_limit,
+            intrinsic
+        );
+    }
+    if evm_prague_floor_gas_enabled_for_chain(profile.chain_id) {
+        let floor_gas = estimate_calldata_floor_gas_for_chain_m0(
+            profile.chain_id,
+            tx,
+            access_list_address_count,
+            access_list_storage_key_count,
+        );
+        if tx.gas_limit < floor_gas {
+            bail!(
+                "calldata floor gas too low: gas_limit={} floor_gas={}",
+                tx.gas_limit,
+                floor_gas
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hex_bytes(raw: &str) -> Vec<u8> {
+        let normalized = raw.trim_start_matches("0x");
+        assert_eq!(normalized.len() % 2, 0, "hex length must be even");
+        let bytes = normalized.as_bytes();
+        let mut out = Vec::with_capacity(normalized.len() / 2);
+        let mut cursor = 0usize;
+        while cursor < bytes.len() {
+            let hi = (bytes[cursor] as char).to_digit(16).expect("hex hi digit");
+            let lo = (bytes[cursor + 1] as char)
+                .to_digit(16)
+                .expect("hex lo digit");
+            out.push(((hi << 4) | lo) as u8);
+            cursor += 2;
+        }
+        out
+    }
+
+    fn official_address_fixture_subset_m0() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/ethereum-official-address-subset.json"
+        ))
+        .expect("decode official EVM address fixture subset")
+    }
+
+    fn enc_bytes(raw: &[u8]) -> Vec<u8> {
+        if raw.len() == 1 && raw[0] < 0x80 {
+            return vec![raw[0]];
+        }
+        if raw.len() <= 55 {
+            let mut out = Vec::with_capacity(1 + raw.len());
+            out.push(0x80 + raw.len() as u8);
+            out.extend_from_slice(raw);
+            return out;
+        }
+        let len = raw.len();
+        let mut len_bytes = Vec::new();
+        let mut n = len;
+        while n > 0 {
+            len_bytes.push((n & 0xff) as u8);
+            n >>= 8;
+        }
+        len_bytes.reverse();
+        let mut out = Vec::with_capacity(1 + len_bytes.len() + raw.len());
+        out.push(0xb7 + len_bytes.len() as u8);
+        out.extend_from_slice(&len_bytes);
+        out.extend_from_slice(raw);
+        out
+    }
+
+    fn enc_u64(v: u64) -> Vec<u8> {
+        if v == 0 {
+            return enc_bytes(&[]);
+        }
+        let bytes = v.to_be_bytes();
+        let first_non_zero = bytes
+            .iter()
+            .position(|b| *b != 0)
+            .unwrap_or(bytes.len() - 1);
+        enc_bytes(&bytes[first_non_zero..])
+    }
+
+    fn enc_u128(v: u128) -> Vec<u8> {
+        if v == 0 {
+            return enc_bytes(&[]);
+        }
+        let bytes = v.to_be_bytes();
+        let first_non_zero = bytes
+            .iter()
+            .position(|b| *b != 0)
+            .unwrap_or(bytes.len() - 1);
+        enc_bytes(&bytes[first_non_zero..])
+    }
+
+    fn enc_list(items: &[Vec<u8>]) -> Vec<u8> {
+        let total_len: usize = items.iter().map(Vec::len).sum();
+        if total_len <= 55 {
+            let mut out = Vec::with_capacity(1 + total_len);
+            out.push(0xc0 + total_len as u8);
+            for item in items {
+                out.extend_from_slice(item);
+            }
+            return out;
+        }
+        let mut len_bytes = Vec::new();
+        let mut n = total_len;
+        while n > 0 {
+            len_bytes.push((n & 0xff) as u8);
+            n >>= 8;
+        }
+        len_bytes.reverse();
+        let mut out = Vec::with_capacity(1 + len_bytes.len() + total_len);
+        out.push(0xf7 + len_bytes.len() as u8);
+        out.extend_from_slice(&len_bytes);
+        for item in items {
+            out.extend_from_slice(item);
+        }
+        out
+    }
+
+    fn sample_tx(chain_id: u64) -> TxIR {
+        TxIR {
+            hash: Vec::new(),
+            from: vec![1u8; 20],
+            account_id: None,
+            fee_owner_account_id: None,
+            nonce_owner_account_id: None,
+            to: Some(vec![2u8; 20]),
+            value: 1,
+            gas_limit: 21_000,
+            gas_price: 1,
+            nonce: 0,
+            data: Vec::new(),
+            signature: vec![9u8; 32],
+            chain_id,
+            tx_type: TxType::Transfer,
+            execution_policy: Default::default(),
+            evm_access_list: Vec::new(),
+            source_chain: None,
+            target_chain: None,
+        }
+    }
+
+    #[test]
+    fn supports_evm_family_includes_polygon_and_avalanche() {
+        assert!(supports_evm_family(ChainType::EVM));
+        assert!(supports_evm_family(ChainType::BNB));
+        assert!(supports_evm_family(ChainType::Polygon));
+        assert!(supports_evm_family(ChainType::Avalanche));
+        assert!(!supports_evm_family(ChainType::Solana));
+    }
+
+    #[test]
+    fn resolve_profile_supports_m0_evm_family() {
+        let eth = resolve_evm_profile(ChainType::EVM, 1).expect("eth profile");
+        assert_eq!(eth.kind, EvmChainProfileKind::EthereumMainnet);
+        let bnb = resolve_evm_profile(ChainType::BNB, 56).expect("bnb profile");
+        assert_eq!(bnb.kind, EvmChainProfileKind::BnbMainnet);
+        let polygon = resolve_evm_profile(ChainType::Polygon, 137).expect("polygon profile");
+        assert_eq!(polygon.kind, EvmChainProfileKind::PolygonMainnet);
+        let avalanche =
+            resolve_evm_profile(ChainType::Avalanche, 43114).expect("avalanche profile");
+        assert_eq!(avalanche.kind, EvmChainProfileKind::AvalancheCChainMainnet);
+    }
+
+    #[test]
+    fn intrinsic_gas_matches_base_for_empty_data() {
+        let tx = sample_tx(1);
+        assert_eq!(estimate_intrinsic_gas_m0(&tx), 21_000);
+    }
+
+    #[test]
+    fn intrinsic_gas_contract_deploy_includes_create_and_initcode_word_cost() {
+        let mut tx = sample_tx(1);
+        tx.tx_type = TxType::ContractDeploy;
+        tx.to = None;
+        tx.data = vec![0x60, 0x00, 0x60, 0x00];
+        assert_eq!(estimate_intrinsic_gas_m0(&tx), 53_042);
+    }
+
+    #[test]
+    fn validate_tx_m0_rejects_low_gas() {
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
+        let mut tx = sample_tx(1);
+        tx.gas_limit = 20_999;
+        let err = validate_tx_semantics_m0(&profile, &tx).expect_err("must reject low gas");
+        assert!(err.to_string().contains("intrinsic gas too low"));
+    }
+
+    #[test]
+    fn validate_tx_m0_accepts_transfer() {
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
+        let tx = sample_tx(1);
+        validate_tx_semantics_m0(&profile, &tx).expect("valid transfer");
+    }
+
+    #[test]
+    fn validate_tx_m0_accepts_contract_call() {
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
+        let mut tx = sample_tx(1);
+        tx.tx_type = TxType::ContractCall;
+        tx.data = vec![1, 2, 3];
+        tx.gas_limit = 22_000;
+        validate_tx_semantics_m0(&profile, &tx).expect("valid contract call");
+    }
+
+    #[test]
+    fn validate_tx_m0_accepts_contract_deploy() {
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
+        let mut tx = sample_tx(1);
+        tx.tx_type = TxType::ContractDeploy;
+        tx.to = None;
+        tx.data = vec![0x60, 0x00, 0x60, 0x00];
+        tx.gas_limit = 53_042;
+        validate_tx_semantics_m0(&profile, &tx).expect("valid contract deploy");
+    }
+
+    #[test]
+    fn validate_tx_m0_rejects_contract_deploy_oversized_initcode() {
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
+        let mut tx = sample_tx(1);
+        tx.tx_type = TxType::ContractDeploy;
+        tx.to = None;
+        tx.data = vec![0x60; 65_537];
+        tx.gas_limit = u64::MAX;
+        let err =
+            validate_tx_semantics_m0(&profile, &tx).expect_err("must reject oversized initcode");
+        assert!(err.to_string().contains("init code too large"));
+    }
+
+    #[test]
+    fn precompile_set_not_empty() {
+        let profile = resolve_evm_profile(ChainType::BNB, 56).expect("profile");
+        assert!(!active_precompile_set_m0(&profile).is_empty());
+        let profile = resolve_evm_profile(ChainType::Polygon, 137).expect("profile");
+        assert!(!active_precompile_set_m0(&profile).is_empty());
+        let profile = resolve_evm_profile(ChainType::Avalanche, 43114).expect("profile");
+        assert!(!active_precompile_set_m0(&profile).is_empty());
+    }
+
+    #[test]
+    fn derive_create_contract_address_matches_geth_vectors_m0() {
+        let fixture = official_address_fixture_subset_m0();
+        assert_eq!(
+            fixture["source"]["kind"].as_str(),
+            Some("go-ethereum-official-tests")
+        );
+        let vectors = fixture["create"]
+            .as_array()
+            .expect("create fixture vector array");
+        assert!(
+            !vectors.is_empty(),
+            "create fixture subset must not be empty"
+        );
+        for vector in vectors {
+            let sender = vector["sender"].as_str().expect("create sender");
+            let nonce = vector["nonce"].as_u64().expect("create nonce");
+            let expected = vector["expected"].as_str().expect("create expected");
+            assert_eq!(
+                derive_create_contract_address_m0(&hex_bytes(sender), nonce),
+                hex_bytes(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn derive_create2_contract_address_matches_geth_vectors_m0() {
+        let fixture = official_address_fixture_subset_m0();
+        assert_eq!(
+            fixture["source"]["kind"].as_str(),
+            Some("go-ethereum-official-tests")
+        );
+        let vectors = fixture["create2"]
+            .as_array()
+            .expect("create2 fixture vector array");
+        assert!(
+            !vectors.is_empty(),
+            "create2 fixture subset must not be empty"
+        );
+        for vector in vectors {
+            let origin = vector["origin"].as_str().expect("create2 origin");
+            let salt = vector["salt"].as_str().expect("create2 salt");
+            let init_code = vector["initCode"].as_str().expect("create2 init code");
+            let expected = vector["expected"].as_str().expect("create2 expected");
+            let code_hash = Keccak256::digest(hex_bytes(init_code));
+            assert_eq!(
+                derive_create2_contract_address_m0(
+                    &hex_bytes(origin),
+                    &hex_bytes(salt),
+                    code_hash.as_slice(),
+                ),
+                hex_bytes(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_chain_type_from_chain_id_uses_builtin_defaults() {
+        assert_eq!(resolve_evm_chain_type_from_chain_id(1), ChainType::EVM);
+        assert_eq!(resolve_evm_chain_type_from_chain_id(56), ChainType::BNB);
+        assert_eq!(
+            resolve_evm_chain_type_from_chain_id(137),
+            ChainType::Polygon
+        );
+        assert_eq!(
+            resolve_evm_chain_type_from_chain_id(43114),
+            ChainType::Avalanche
+        );
+        assert_eq!(resolve_evm_chain_type_from_chain_id(8453), ChainType::EVM);
+    }
+
+    #[test]
+    fn classify_raw_tx_envelope_supports_legacy_and_typed() {
+        let legacy = classify_raw_evm_tx_envelope(&[0xf8, 0x00]).expect("legacy envelope");
+        assert_eq!(legacy, EvmRawTxEnvelopeType::Legacy);
+        let t1 = classify_raw_evm_tx_envelope(&[0x01, 0xc0]).expect("type1 envelope");
+        assert_eq!(t1, EvmRawTxEnvelopeType::Type1AccessList);
+        let t2 = classify_raw_evm_tx_envelope(&[0x02, 0xc0]).expect("type2 envelope");
+        assert_eq!(t2, EvmRawTxEnvelopeType::Type2DynamicFee);
+    }
+
+    #[test]
+    fn route_hint_m0_accepts_blob_envelope_type() {
+        let hint = resolve_raw_evm_tx_route_hint_m0(&[0x03, 0xc0]).expect("blob route hint");
+        assert_eq!(hint.tx_type_number, 3);
+        assert!(!hint.tx_type4);
+    }
+
+    #[test]
+    fn route_hint_m0_marks_type4_flag() {
+        let hint = resolve_raw_evm_tx_route_hint_m0(&[0x04, 0xc0]).expect("type4 hint");
+        assert_eq!(hint.tx_type_number, 4);
+        assert!(hint.tx_type4);
+    }
+
+    #[test]
+    fn translate_legacy_fields_extracts_nonce_and_chain_id() {
+        let to = vec![0x11u8; 20];
+        let raw = enc_list(&[
+            enc_u64(7),
+            enc_u64(1),
+            enc_u64(21_000),
+            enc_bytes(&to),
+            enc_u128(9),
+            enc_bytes(&[]),
+            enc_u64(37),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let fields = translate_raw_evm_tx_fields_m0(&raw).expect("legacy tx decode");
+        assert_eq!(fields.hint.tx_type_number, 0);
+        assert_eq!(fields.chain_id, Some(1));
+        assert_eq!(fields.nonce, Some(7));
+        assert_eq!(fields.gas_limit, Some(21_000));
+        assert_eq!(fields.gas_price, Some(1));
+        assert_eq!(fields.access_list_address_count, None);
+        assert_eq!(fields.access_list_storage_key_count, None);
+        assert_eq!(fields.to, Some(to));
+        assert_eq!(fields.value, Some(9));
+    }
+
+    #[test]
+    fn translate_type1_fields_extracts_core_values() {
+        let to = vec![0x22u8; 20];
+        let payload = enc_list(&[
+            enc_u64(1),
+            enc_u64(8),
+            enc_u64(2),
+            enc_u64(22_000),
+            enc_bytes(&to),
+            enc_u128(3),
+            enc_bytes(&[0xaa, 0xbb]),
+            enc_list(&[]),
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw = vec![0x01];
+        raw.extend_from_slice(&payload);
+        let fields = translate_raw_evm_tx_fields_m0(&raw).expect("type1 tx decode");
+        assert_eq!(fields.hint.tx_type_number, 1);
+        assert_eq!(fields.chain_id, Some(1));
+        assert_eq!(fields.nonce, Some(8));
+        assert_eq!(fields.gas_limit, Some(22_000));
+        assert_eq!(fields.gas_price, Some(2));
+        assert_eq!(fields.access_list_address_count, Some(0));
+        assert_eq!(fields.access_list_storage_key_count, Some(0));
+        assert_eq!(fields.to, Some(to));
+        assert_eq!(fields.value, Some(3));
+        assert_eq!(fields.data, Some(vec![0xaa, 0xbb]));
+    }
+
+    #[test]
+    fn translate_type2_fields_extracts_max_fee_and_nonce() {
+        let to = vec![0x33u8; 20];
+        let payload = enc_list(&[
+            enc_u64(1),
+            enc_u64(9),
+            enc_u64(2),
+            enc_u64(30),
+            enc_u64(30_000),
+            enc_bytes(&to),
+            enc_u128(4),
+            enc_bytes(&[]),
+            enc_list(&[]),
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw = vec![0x02];
+        raw.extend_from_slice(&payload);
+        let fields = translate_raw_evm_tx_fields_m0(&raw).expect("type2 tx decode");
+        assert_eq!(fields.hint.tx_type_number, 2);
+        assert_eq!(fields.chain_id, Some(1));
+        assert_eq!(fields.nonce, Some(9));
+        assert_eq!(fields.gas_limit, Some(30_000));
+        assert_eq!(fields.gas_price, Some(30));
+        assert_eq!(fields.access_list_address_count, Some(0));
+        assert_eq!(fields.access_list_storage_key_count, Some(0));
+        assert_eq!(fields.to, Some(to));
+        assert_eq!(fields.value, Some(4));
+    }
+
+    #[test]
+    fn translate_type3_fields_extracts_blob_fee_and_hash_count() {
+        let to = vec![0x44u8; 20];
+        let payload = enc_list(&[
+            enc_u64(1),
+            enc_u64(9),
+            enc_u64(2),
+            enc_u64(30),
+            enc_u64(30_000),
+            enc_bytes(&to),
+            enc_u128(4),
+            enc_bytes(&[]),
+            enc_list(&[]),
+            enc_u64(7),
+            enc_list(&[enc_bytes(&[0x11; 32]), enc_bytes(&[0x22; 32])]),
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let items = parse_top_level_rlp_list(&payload).expect("type3 payload");
+        let hint = EvmRawTxRouteHint {
+            envelope: EvmRawTxEnvelopeType::Type3Blob,
+            tx_type_number: 3,
+            tx_type4: false,
+        };
+        let fields = tx_fields_from_type3_list(&items, hint).expect("type3 decode");
+        assert_eq!(fields.chain_id, Some(1));
+        assert_eq!(fields.nonce, Some(9));
+        assert_eq!(fields.gas_limit, Some(30_000));
+        assert_eq!(fields.gas_price, Some(30));
+        assert_eq!(fields.max_fee_per_blob_gas, Some(7));
+        assert_eq!(fields.blob_hash_count, Some(2));
+    }
+
+    #[test]
+    fn translate_type3_fields_respects_chain_scoped_type3_toggle() {
+        let to = vec![0x44u8; 20];
+        let payload = enc_list(&[
+            enc_u64(137),
+            enc_u64(9),
+            enc_u64(2),
+            enc_u64(30),
+            enc_u64(30_000),
+            enc_bytes(&to),
+            enc_u128(4),
+            enc_bytes(&[]),
+            enc_list(&[]),
+            enc_u64(7),
+            enc_list(&[enc_bytes(&[0x11; 32])]),
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw = vec![0x03];
+        raw.extend_from_slice(&payload);
+
+        let keys = [
+            "NOVOVM_EVM_ENABLE_TYPE3_WRITE",
+            "NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_137",
+        ];
+        let captured = keys
+            .iter()
+            .map(|k| (k.to_string(), std::env::var(k).ok()))
+            .collect::<Vec<_>>();
+        std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE", "0");
+        std::env::remove_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_137");
+        let err = translate_raw_evm_tx_fields_m0(&raw).expect_err("type3 should reject by default");
+        assert!(err
+            .to_string()
+            .contains("blob (type 3) write path disabled in M0"));
+
+        std::env::set_var("NOVOVM_EVM_ENABLE_TYPE3_WRITE_CHAIN_137", "1");
+        let fields =
+            translate_raw_evm_tx_fields_m0(&raw).expect("type3 should pass on chain override");
+        assert_eq!(fields.chain_id, Some(137));
+        assert_eq!(fields.hint.tx_type_number, 3);
+
+        for (key, value) in captured {
+            if let Some(value) = value {
+                std::env::set_var(&key, value);
+            } else {
+                std::env::remove_var(&key);
+            }
+        }
+    }
+
+    #[test]
+    fn translate_type1_fields_extracts_access_list_intrinsic_counts() {
+        let to = vec![0x55u8; 20];
+        let access_list = enc_list(&[
+            enc_list(&[
+                enc_bytes(&[0x10; 20]),
+                enc_list(&[enc_bytes(&[0x01; 32]), enc_bytes(&[0x02; 32])]),
+            ]),
+            enc_list(&[enc_bytes(&[0x20; 20]), enc_list(&[enc_bytes(&[0x03; 32])])]),
+        ]);
+        let payload = enc_list(&[
+            enc_u64(1),
+            enc_u64(8),
+            enc_u64(2),
+            enc_u64(30_500),
+            enc_bytes(&to),
+            enc_u128(3),
+            enc_bytes(&[0xaa]),
+            access_list,
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw = vec![0x01];
+        raw.extend_from_slice(&payload);
+        let fields = translate_raw_evm_tx_fields_m0(&raw).expect("type1 tx decode");
+        assert_eq!(fields.access_list_address_count, Some(2));
+        assert_eq!(fields.access_list_storage_key_count, Some(3));
+        assert_eq!(fields.access_list.len(), 2);
+        assert_eq!(fields.access_list[0].address, vec![0x10; 20]);
+        assert_eq!(
+            fields.access_list[0].storage_keys,
+            vec![vec![0x01; 32], vec![0x02; 32]]
+        );
+        assert_eq!(fields.access_list[1].address, vec![0x20; 20]);
+        assert_eq!(fields.access_list[1].storage_keys, vec![vec![0x03; 32]]);
+        let tx = tx_ir_from_raw_fields_m0(&fields, &raw, vec![0x77; 20], 1);
+        assert_eq!(tx.evm_access_list, fields.access_list);
+    }
+
+    #[test]
+    fn validate_tx_m0_rejects_type1_raw_when_access_list_intrinsic_not_covered() {
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
+        let to = vec![0x77u8; 20];
+        let access_list = enc_list(&[enc_list(&[
+            enc_bytes(&[0x31; 20]),
+            enc_list(&[enc_bytes(&[0x91; 32])]),
+        ])]);
+        let payload = enc_list(&[
+            enc_u64(1),
+            enc_u64(8),
+            enc_u64(2),
+            enc_u64(25_000),
+            enc_bytes(&to),
+            enc_u128(3),
+            enc_bytes(&[0xaa]),
+            access_list,
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw = vec![0x01];
+        raw.extend_from_slice(&payload);
+        let tx =
+            translate_raw_evm_tx_to_ir_m0(&raw, vec![0x7fu8; 20], 1).expect("translate tx to ir");
+        let err = validate_tx_semantics_m0(&profile, &tx)
+            .expect_err("must reject low gas after access list intrinsic");
+        assert!(err.to_string().contains("intrinsic gas too low"));
+    }
+
+    #[test]
+    fn amsterdam_access_list_intrinsic_adds_eip7981_data_cost() {
+        let tx = sample_tx(1);
+        let pre_amsterdam = estimate_intrinsic_gas_with_access_list_rules_m0(&tx, 2, 3, false);
+        let amsterdam = estimate_intrinsic_gas_with_access_list_rules_m0(&tx, 2, 3, true);
+        let expected_extra = 2 * 20 * 4 * 16 + 3 * 32 * 4 * 16;
+        assert_eq!(amsterdam, pre_amsterdam + expected_extra);
+    }
+
+    #[test]
+    fn access_list_warm_storage_read_reduces_execution_gas_m0() {
+        let cold_read = estimate_eip2929_storage_read_gas_m0(1, 0);
+        let warm_read = estimate_eip2929_storage_read_gas_m0(1, 1);
+
+        assert_eq!(cold_read, EVM_COLD_SLOAD_GAS_M0);
+        assert_eq!(warm_read, EVM_WARM_ACCESS_GAS_M0);
+        assert_eq!(cold_read - warm_read, 2_000);
+        assert_eq!(estimate_access_list_execution_warm_savings_m0(0, 1), 2_000);
+        assert_eq!(
+            estimate_access_list_execution_warm_savings_m0(0, 1)
+                - estimate_access_list_intrinsic_extra_gas_m0(0, 1),
+            100
+        );
+    }
+
+    #[test]
+    fn access_list_warm_account_access_reduces_execution_gas_m0() {
+        let cold_access = estimate_eip2929_account_access_gas_m0(1, 0);
+        let warm_access = estimate_eip2929_account_access_gas_m0(1, 1);
+
+        assert_eq!(cold_access, EVM_COLD_ACCOUNT_ACCESS_GAS_M0);
+        assert_eq!(warm_access, EVM_WARM_ACCESS_GAS_M0);
+        assert_eq!(cold_access - warm_access, 2_500);
+        assert_eq!(estimate_access_list_execution_warm_savings_m0(1, 0), 2_500);
+        assert_eq!(
+            estimate_access_list_execution_warm_savings_m0(1, 0)
+                - estimate_access_list_intrinsic_extra_gas_m0(1, 0),
+            100
+        );
+    }
+
+    #[test]
+    fn sstore_clear_refund_matches_eip3529_schedule_m0() {
+        assert_eq!(
+            EVM_SSTORE_CLEARS_SCHEDULE_REFUND_EIP3529_M0,
+            EVM_SSTORE_RESET_GAS_M0 - EVM_COLD_SLOAD_GAS_M0
+                + EVM_ACCESS_LIST_STORAGE_KEY_INTRINSIC_GAS_M0
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_clear_refund_m0(true, true, true),
+            4_800
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_clear_refund_m0(false, true, true),
+            0
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_clear_refund_m0(true, false, true),
+            0
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_clear_refund_m0(true, true, false),
+            0
+        );
+    }
+
+    #[test]
+    fn eip3529_refund_cap_limits_refunded_gas_m0() {
+        let refund_counter = estimate_eip3529_sstore_clear_refund_m0(true, true, true);
+        assert_eq!(cap_eip3529_gas_refund_m0(24_000, refund_counter), 4_800);
+        assert_eq!(apply_eip3529_gas_refund_m0(24_000, refund_counter), 19_200);
+        assert_eq!(cap_eip3529_gas_refund_m0(10_000, refund_counter), 2_000);
+        assert_eq!(apply_eip3529_gas_refund_m0(10_000, refund_counter), 8_000);
+        assert_eq!(
+            apply_eip3529_gas_refund_with_floor_m0(10_000, refund_counter, 9_000),
+            9_000
+        );
+    }
+
+    fn word32(value: u8) -> [u8; 32] {
+        [value; 32]
+    }
+
+    fn storage_key(address_byte: u8, slot_byte: u8) -> EvmStorageAccessKeyM0 {
+        EvmStorageAccessKeyM0 {
+            address: [address_byte; 20],
+            slot: [slot_byte; 32],
+        }
+    }
+
+    #[test]
+    fn sload_sequence_reuses_warm_storage_key_m0() {
+        let slot = storage_key(1, 7);
+        assert_eq!(
+            estimate_eip2929_storage_read_sequence_gas_m0(&[], &[slot, slot, slot]),
+            EVM_COLD_SLOAD_GAS_M0 + 2 * EVM_WARM_ACCESS_GAS_M0
+        );
+    }
+
+    #[test]
+    fn sload_sequence_respects_access_list_initial_warm_set_m0() {
+        let warm_slot = storage_key(1, 7);
+        let cold_slot = storage_key(1, 8);
+        assert_eq!(
+            estimate_eip2929_storage_read_sequence_gas_m0(
+                &[warm_slot],
+                &[warm_slot, warm_slot, cold_slot]
+            ),
+            2 * EVM_WARM_ACCESS_GAS_M0 + EVM_COLD_SLOAD_GAS_M0
+        );
+    }
+
+    #[test]
+    fn sload_sequence_keeps_address_and_slot_in_access_key_m0() {
+        let left = storage_key(1, 7);
+        let right = storage_key(2, 7);
+        assert_eq!(
+            estimate_eip2929_storage_read_sequence_gas_m0(&[], &[left, right, left]),
+            2 * EVM_COLD_SLOAD_GAS_M0 + EVM_WARM_ACCESS_GAS_M0
+        );
+    }
+
+    #[test]
+    fn sstore_transition_clean_slots_match_eip3529_m0() {
+        let zero = [0u8; 32];
+        let non_zero = word32(1);
+        let other = word32(2);
+
+        assert!(!eip2200_sstore_sentry_allows_m0(EVM_SSTORE_SENTRY_GAS_M0));
+        assert!(eip2200_sstore_sentry_allows_m0(
+            EVM_SSTORE_SENTRY_GAS_M0 + 1
+        ));
+
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(zero, zero, non_zero, false),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_COLD_SLOAD_GAS_M0 + EVM_SSTORE_SET_GAS_M0,
+                refund_delta: 0,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(non_zero, non_zero, zero, false),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_COLD_SLOAD_GAS_M0 + EVM_SSTORE_RESET_GAS_EIP2929_M0,
+                refund_delta: 4_800,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(non_zero, non_zero, other, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_SSTORE_RESET_GAS_EIP2929_M0,
+                refund_delta: 0,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(non_zero, non_zero, non_zero, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn sstore_transition_dirty_slots_match_eip3529_m0() {
+        let zero = [0u8; 32];
+        let original = word32(1);
+        let current = word32(2);
+
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(original, zero, current, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: -4_800,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(original, current, zero, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: 4_800,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(original, current, original, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: 2_800,
+            }
+        );
+        assert_eq!(
+            estimate_eip3529_sstore_transition_gas_m0(zero, current, zero, true),
+            EvmSstoreTransitionGasM0 {
+                gas_cost: EVM_WARM_ACCESS_GAS_M0,
+                refund_delta: 19_900,
+            }
+        );
+    }
+
+    #[test]
+    fn amsterdam_floor_gas_charges_calldata_and_access_list_tokens() {
+        let mut tx = sample_tx(1);
+        tx.data = vec![0x00, 0x11, 0x22];
+        let pre_amsterdam = estimate_calldata_floor_gas_m0(&tx, 1, 1, false);
+        let amsterdam = estimate_calldata_floor_gas_m0(&tx, 1, 1, true);
+        assert_eq!(pre_amsterdam, 21_000 + (1 + 2 * 4) * 10);
+        assert_eq!(amsterdam, 21_000 + ((3 + 20 + 32) * 4) * 16);
+        assert!(amsterdam > pre_amsterdam);
+    }
+
+    #[test]
+    fn validate_tx_m0_rejects_amsterdam_access_list_intrinsic_when_enabled() {
+        let key = "NOVOVM_EVM_ENABLE_AMSTERDAM_GAS_RULES_CHAIN_1";
+        let captured = std::env::var(key).ok();
+        std::env::set_var(key, "1");
+
+        let profile = resolve_evm_profile(ChainType::EVM, 1).expect("profile");
+        let to = vec![0x77u8; 20];
+        let access_list = enc_list(&[enc_list(&[
+            enc_bytes(&[0x31; 20]),
+            enc_list(&[enc_bytes(&[0x91; 32])]),
+        ])]);
+        let pre_amsterdam_intrinsic = 21_000 + 16 + 2_400 + 1_900;
+        let payload = enc_list(&[
+            enc_u64(1),
+            enc_u64(8),
+            enc_u64(2),
+            enc_u64(pre_amsterdam_intrinsic),
+            enc_bytes(&to),
+            enc_u128(3),
+            enc_bytes(&[0xaa]),
+            access_list,
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw = vec![0x01];
+        raw.extend_from_slice(&payload);
+        let tx =
+            translate_raw_evm_tx_to_ir_m0(&raw, vec![0x7fu8; 20], 1).expect("translate tx to ir");
+        let err = validate_tx_semantics_m0(&profile, &tx)
+            .expect_err("Amsterdam access list data cost must be enforced");
+        assert!(err.to_string().contains("intrinsic gas too low"));
+
+        if let Some(value) = captured {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn translate_type2_to_ir_maps_to_transfer() {
+        let payload = enc_list(&[
+            enc_u64(1),
+            enc_u64(0),
+            enc_u64(2),
+            enc_u64(30),
+            enc_u64(30_000),
+            enc_bytes(&[0x4e; 20]),
+            enc_u128(4),
+            enc_bytes(&[]),
+            enc_list(&[]),
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw = vec![0x02];
+        raw.extend_from_slice(&payload);
+        let tx =
+            translate_raw_evm_tx_to_ir_m0(&raw, vec![0x7f; 20], 1).expect("translate tx to ir");
+        assert_eq!(tx.chain_id, 1);
+        assert_eq!(tx.nonce, 0);
+        assert_eq!(tx.gas_limit, 30_000);
+        assert_eq!(tx.gas_price, 30);
+        assert_eq!(tx.tx_type, TxType::Transfer);
+        assert_eq!(tx.hash.len(), 32);
+        assert!(!tx.signature.is_empty());
+    }
+
+    #[test]
+    fn translate_type1_with_data_maps_to_contract_call() {
+        let payload = enc_list(&[
+            enc_u64(1),
+            enc_u64(8),
+            enc_u64(2),
+            enc_u64(22_000),
+            enc_bytes(&[0x3e; 20]),
+            enc_u128(3),
+            enc_bytes(&[0xaa, 0xbb]),
+            enc_list(&[]),
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw = vec![0x01];
+        raw.extend_from_slice(&payload);
+        let tx =
+            translate_raw_evm_tx_to_ir_m0(&raw, vec![0x5f; 20], 1).expect("translate tx to ir");
+        assert_eq!(tx.chain_id, 1);
+        assert_eq!(tx.nonce, 8);
+        assert_eq!(tx.tx_type, TxType::ContractCall);
+        assert_eq!(tx.data, vec![0xaa, 0xbb]);
+    }
+
+    #[test]
+    fn recover_raw_tx_sender_fake_legacy_signature_is_optional_but_well_formed() {
+        let raw = enc_list(&[
+            enc_u64(7),
+            enc_u64(1),
+            enc_u64(21_000),
+            enc_bytes(&[0x11u8; 20]),
+            enc_u128(9),
+            enc_bytes(&[]),
+            enc_u64(37),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let sender = recover_raw_evm_tx_sender_m0(&raw).expect("recovery path should not error");
+        if let Some(sender) = sender {
+            assert_eq!(sender.len(), 20);
+        }
+    }
+
+    #[test]
+    fn translate_raw_block_to_ir_m0_maps_header_and_transactions() {
+        let payload_transfer = enc_list(&[
+            enc_u64(1),
+            enc_u64(0),
+            enc_u64(2),
+            enc_u64(30),
+            enc_u64(30_000),
+            enc_bytes(&[0x4e; 20]),
+            enc_u128(4),
+            enc_bytes(&[]),
+            enc_list(&[]),
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw_transfer = vec![0x02];
+        raw_transfer.extend_from_slice(&payload_transfer);
+
+        let payload_call = enc_list(&[
+            enc_u64(1),
+            enc_u64(8),
+            enc_u64(2),
+            enc_u64(22_000),
+            enc_bytes(&[0x3e; 20]),
+            enc_u128(3),
+            enc_bytes(&[0xaa, 0xbb]),
+            enc_list(&[]),
+            enc_u64(1),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut raw_call = vec![0x01];
+        raw_call.extend_from_slice(&payload_call);
+
+        let raw_block = EvmRawBlockM0 {
+            hash: vec![0x11; 32],
+            parent_hash: vec![0x22; 32],
+            number: 99,
+            timestamp: 1_234_567,
+            transactions: vec![
+                EvmRawBlockTxM0 {
+                    from: vec![0x7f; 20],
+                    raw_tx: raw_transfer,
+                },
+                EvmRawBlockTxM0 {
+                    from: vec![0x5f; 20],
+                    raw_tx: raw_call,
+                },
+            ],
+            state_root: vec![0x33; 32],
+            transactions_root: vec![0x44; 32],
+            receipts_root: vec![0x55; 32],
+            miner: vec![0x66; 20],
+            difficulty: 10,
+            gas_used: 52_000,
+            gas_limit: 30_000_000,
+        };
+
+        let block = translate_raw_evm_block_to_ir_m0(&raw_block, 1).expect("block translator");
+        assert_eq!(block.number, 99);
+        assert_eq!(block.timestamp, 1_234_567);
+        assert_eq!(block.transactions.len(), 2);
+        assert_eq!(block.transactions[0].chain_id, 1);
+        assert_eq!(block.transactions[0].nonce, 0);
+        assert_eq!(block.transactions[0].tx_type, TxType::Transfer);
+        assert_eq!(block.transactions[1].nonce, 8);
+        assert_eq!(block.transactions[1].tx_type, TxType::ContractCall);
+        assert_eq!(block.miner, vec![0x66; 20]);
+    }
+
+    #[test]
+    fn translate_raw_block_to_ir_m0_rejects_missing_hash() {
+        let block = EvmRawBlockM0 {
+            hash: Vec::new(),
+            parent_hash: vec![0x22; 32],
+            number: 1,
+            timestamp: 10,
+            transactions: Vec::new(),
+            state_root: vec![0x33; 32],
+            transactions_root: vec![0x44; 32],
+            receipts_root: vec![0x55; 32],
+            miner: vec![0x66; 20],
+            difficulty: 0,
+            gas_used: 0,
+            gas_limit: 30_000_000,
+        };
+        let err =
+            translate_raw_evm_block_to_ir_m0(&block, 1).expect_err("missing hash should reject");
+        assert!(err.to_string().contains("evm block hash is required"));
+    }
+
+    #[test]
+    fn estimate_intrinsic_with_blob_adds_blob_gas() {
+        let tx = sample_tx(1);
+        let plain = estimate_intrinsic_gas_with_access_list_m0(&tx, 0, 0);
+        let with_blob = estimate_intrinsic_gas_with_envelope_extras_m0(&tx, 0, 0, 2);
+        assert_eq!(with_blob, plain.saturating_add(2 * 131_072));
+    }
+}

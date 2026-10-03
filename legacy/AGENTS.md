@@ -12,5 +12,5 @@ the complete original product assets using the approved Git-tree checklist,
 not a subjective selection of modules. Review behavioral acceptance and later
 integration separately; runtime is not the only permitted destination. Do not directly depend
 on a legacy crate or include archived source by path to bypass review. Preserve
-originals and drafts until restoration is verified. Existing test data is not
-production genesis. The current documentation task does not relocate code.
+originals and drafts even after restoration. Existing test data is not
+production genesis. Restoration uses Git originals, not this dirty archive.

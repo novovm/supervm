@@ -1,0 +1,15 @@
+[package]
+name = "novovm-protocol"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["SuperVM Core Team"]
+description = "NOVOVM protocol types (wire messages, ids, encoding)."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+thiserror = "1"
+sha3 = "0.10"
+sha2 = "0.10"
+

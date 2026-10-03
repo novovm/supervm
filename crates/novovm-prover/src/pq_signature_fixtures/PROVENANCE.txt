@@ -1,0 +1,22 @@
+Public ML-DSA sigVer known-answer samples (no private keys)
+
+Source: usnistgov/ACVP-Server, gen-val/json-files/ML-DSA-sigVer-FIPS204
+Fetched 2026-09-30 UTC. The upstream branch can change; hashes identify the
+exact downloaded input and expected-results pair used for extraction.
+
+https://raw.githubusercontent.com/usnistgov/ACVP-Server/master/gen-val/json-files/ML-DSA-sigVer-FIPS204/prompt.json
+SHA256 e2cba4589389756fa0bea1a7e6837138bf0a81f9d14234c9ee8f6d33caa1654e
+https://raw.githubusercontent.com/usnistgov/ACVP-Server/master/gen-val/json-files/ML-DSA-sigVer-FIPS204/expectedResults.json
+SHA256 e1d84ef1b2f35196278ab0b0ed6a46ec62cc03d2dfa92c564199e1999bfb8ea6
+
+Subset: external signatureInterface, pure preHash, expected testPassed=true.
+44: tgId=1, tcId=11; 65: tgId=3, tcId=43; 87: tgId=5, tcId=70.
+Each sample is the smallest message+context among that group's valid cases.
+pk is renamed public_key; group/parameter metadata is retained explicitly.
+message, context, public key and signature bytes are unmodified.
+
+These are compatibility sentinels, not an exhaustive validation suite or a
+FIPS/CAVP certificate. Negative sentinel: flip signature byte 0; it must fail.
+AOEM's message ABI is raw/internal: the host supplies the FIPS 204 pure-mode
+external framing 0x00 || one-byte context length || context || message.
+No prehash mode or automatic algorithm negotiation is introduced.

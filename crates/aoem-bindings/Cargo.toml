@@ -1,0 +1,15 @@
+[package]
+name = "aoem-bindings"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[features]
+default = ["ffi-dll"]
+ffi-dll = []
+
+[dependencies]
+anyhow = "1"
+libloading = "0.8"
+serde_json = "1"
+sha2 = "0.10"

@@ -38,12 +38,17 @@ Shared product and multi-device development contract:
   by complete Git-tree mapping, not by screening individual modules for value.
   Preserve all post-isolation code, tests, evidence and drafts before integration;
   review their product wiring separately. Do not roll
-  back all later fixes or create a second product chain. The current Cargo/CI
-  still build runtime libraries only; documentation does not restore the node.
+  back all later fixes or create a second product chain. Root Cargo/CI now
+  cover the original product; runtime is a preserved nested component workspace,
+  not the default product. Its same-named network package must be tested with
+  an explicit `--manifest-path runtime/Cargo.toml`.
   The complete restoration checklist is
-  `docs/NOVOVM_ISOLATION_UNDO_CHECKLIST.md`; obtain the user's checklist approval
-  before moving files or changing product assembly. Do not block that restoration
-  on completing the whole historical execution-ownership audit.
+  `docs/NOVOVM_ISOLATION_UNDO_CHECKLIST.md`; the user approved that restoration
+  on 2026-10-03. Assembly recovery does not sign off execution ownership or
+  performance. Legacy Host compute/write paths are default-denied; the explicit
+  `NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1` opt-in is for historical comparison only,
+  never a production launcher default. Keep readers, EVM and reviewed AOEM
+  Transfer paths available. Follow the roadmap for the next ownership stage.
 
 - Before starting or resuming NOVOVM work, read
   `docs/NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md` first, then

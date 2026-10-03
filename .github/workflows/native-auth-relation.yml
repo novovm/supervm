@@ -1,0 +1,45 @@
+name: Native auth relation (host checks only)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'proofs/native-auth/**'
+      - 'crates/novovm-adapter-api/**'
+      - 'crates/novovm-protocol/**'
+      - 'crates/novovm-exec/**'
+      - 'crates/aoem-bindings/**'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/native-auth-relation.yml'
+  pull_request:
+    paths:
+      - 'proofs/native-auth/**'
+      - 'crates/novovm-adapter-api/**'
+      - 'crates/novovm-protocol/**'
+      - 'crates/novovm-exec/**'
+      - 'crates/aoem-bindings/**'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/native-auth-relation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RISC0_SKIP_BUILD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install repository Rust toolchain components
+        run: rustup show active-toolchain && rustup component add rustfmt clippy
+      - name: Format (including guest source)
+        run: |
+          cargo fmt --manifest-path proofs/native-auth/Cargo.toml --all -- --check
+          rustfmt --check --edition 2021 proofs/native-auth/methods/guest/src/main.rs
+          rustfmt --check --edition 2021 proofs/native-auth/methods/guest/src/bin/novovm-parent-nonce-guest.rs
+      - name: Signature relation and frozen statement tests
+        run: cargo test --manifest-path proofs/native-auth/Cargo.toml --workspace --locked
+      - name: Host and core strict Clippy
+        run: cargo clippy --manifest-path proofs/native-auth/Cargo.toml --workspace --all-targets --locked -- -D warnings
+      - name: State scope
+        run: echo 'Host checks only. Guest build and real AOEM proof roundtrip NOT EXECUTED by this workflow.'

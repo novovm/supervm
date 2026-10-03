@@ -1,0 +1,14 @@
+{
+  "name": "gateway_eth_nonraw_contract_deploy_regression_v1",
+  "method": "eth_sendTransaction",
+  "params": {
+    "chain_id": 1,
+    "nonce": 4,
+    "signature_domain": "evm:1",
+    "tx_type": 0,
+    "value": "0x0",
+    "gas": "0x186a0",
+    "gasPrice": "0x1",
+    "data": "0x60006000556001600055"
+  }
+}

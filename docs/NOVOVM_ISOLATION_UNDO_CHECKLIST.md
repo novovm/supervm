@@ -1,11 +1,69 @@
 # SUPERVM 整仓隔离撤销清单
 
-日期：2026-10-03。状态：**清点与保全完成，等待用户确认恢复范围；目录、
-Cargo、CI 和业务源码均未恢复或修改。** 本清单落实
+日期：2026-10-03。状态：**用户已批准并执行原产品装配恢复；不代表执行
+所有权、主链性能或生产部署已完成。** 本清单落实
 [架构纠偏路线](NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md)，不替代执行所有权审计。
 
 恢复原工程，同时保留 10 月 2 日以后全部成果。恢复依据是完整 Git 树，
 不是挑选几个“值得保留”的模块，也不是把当前仓库退回旧提交。
+
+## 恢复执行结果
+
+本次变更基线 `face41e3`，装配原件来自 `ee802713`。先在仓内独立验证
+worktree 执行，未创建开发分支；核对、构建和测试后以新增纠错提交接回 main。
+原 49 项草稿逐文件仍与已保全 SHA256 一致，没有继承到新恢复源码。
+清点后增量仅为已推送的清单文档提交，未重启全量备份。
+
+- 原 1,292 个路径全部在原位置有对应文件，未恢复原路径 **0 项**。
+  六目录及原配套文件完整恢复，不以模块价值筛选；原归档和后续文件不删除。
+  750 个恢复对象中，739 个与 `ee802713` 的 blob 完全一致，11 个必要差异
+  逐项列于下表；26 个 Windows 自动换行转换已纠正为原对象，未混入格式重写。
+- 原 20 个显式工作区成员恢复，Cargo 另自动识别原有 EVM core，实际 21 个。
+  真实 `crates/novovm-node/src/bin/novovm-node.rs` 仍是总入口，exec/bindings
+  及原产品依赖接回；不是把 runtime 测试节点改名。
+- 原 lock 为装配基准，只为 Relay 的漏接线补入已有 mio/socket2 依赖边，
+  未升级依赖版本。Relay 共用 node 已有 I/O 源码，没有重造网络实现。
+- runtime 完整保留，新增独立 `Cargo.toml`，其 lock 与 `face41e3` 原根锁一致；
+  使用显式 manifest 分别测试两个同名 `novovm-network`。原 proof 独立工程不变。
+- CI 恢复原产品检查并保留 runtime 双平台/真实 AOEM 检查。边界脚本检查
+  两套批准成员及归档隔离，不再要求整个原产品退出构建。根 Node 项目当前
+  不存在，不虚报其已测试；nightly 恢复配置不等于已经执行。
+
+只新增必要写边界限制：旧 Host immediate、batch、pending/tick、通用 Host
+mutation，以及候选 Execute/混合 Host barrier 默认拒绝；RPC 参数和旧
+ownership 标签不能放行。在加载/锁库/入池或 AOEM 预提交之前拦截。
+`NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1` 仅用于显式历史对照，不是生产默认；
+CI 只给相应历史回归步骤设置它。只读查询、签名后的 pending-only 入口、
+EVM 和已有真实 AOEM Transfer 分支未整体禁用。旧已完成产物的读回不在本轮
+协议禁用范围内，实际运行账本未触碰，生产仍须全新创世。
+
+具体限制：原 `nov_sendRawTransaction` 默认立即执行会被拒绝，调用者需显式
+使用 pending-only；不能因此称默认交易闭环已恢复。统一账户等通过上述
+Host mutator 落账的旧政策写操作同样受限，不等于所有 EVM 功能均被关闭。
+
+构建、测试、首次失败与修复及未执行范围见
+[本轮验收记录](NOVOVM_PRODUCTION_READINESS_TRACKER.md#原产品装配恢复验收)。
+
+| 恢复原件的有意差异（共 11 个文件） | 原因 |
+| --- | --- |
+| `Cargo.toml` | 保留原20成员，排除归档及独立组件工程；保留后来的Release溢出检查 |
+| `Cargo.lock` | Relay仅新增已有mio/socket2依赖边，无版本更新 |
+| `README.md` | 恢复原产品说明，标明恢复范围及当前限制 |
+| `.github/workflows/ci.yml` | 原产品覆盖与后续runtime覆盖并存；增加默认拒绝和真实Transfer正向检查 |
+| `.github/workflows/mainline-nightly-soak.yml` | 仅旧Host历史对照步骤显式许可，不设置全局许可 |
+| `crates/novovm-node/src/tx_ingress.rs` | 旧Host计算/写入路径默认限制，查询和pending-only不整体禁用 |
+| `crates/novovm-node/src/native_candidate_execution.rs` | 新Execute/混合Host计算默认限制，保留纯Transfer既有AOEM路径 |
+| `crates/novovm-node/src/native_candidate_execution_tests.rs` | 新增真实候选默认拒绝反例，不删旧测试 |
+| `crates/novovm-relay/Cargo.toml` | 补共享I/O已有依赖声明 |
+| `crates/novovm-relay/src/main.rs` | 接回node已有共享I/O模块，不重写网络 |
+| `crates/novovmctl/tests/fixtures/native_nonce_upgrade_authorization_v1.json` | 原有测试入口重签已过期测试证书，不放松生产校验 |
+
+新增Host限制测试文件单独计为新文件；以上不是把本地草稿改名迁入。
+恢复差异中的空白检查告警均来自与原blob完全一致的原件，未为消除告警
+而改写这些文件。原有runtime/legacy共917受控路径无删除，只有开发规则及
+边界检查更新；runtime源码、证明与测试未被本轮替换。
+
+以下清点与保全数据保留其原基线，不改写为本次所有测试已通过的声明。
 
 ## 整仓核对结果
 
@@ -111,4 +169,5 @@ dispatch/load/clone/save、旧批入口及其 RPC 路由，不能只打开 owner
 这项生产边界检查不要求先完成半年历史审计。
 
 本阶段只验收原工程装配和入口。业务执行所有权、统一 CPU/GPU 语义、
-最终确认吞吐、隐私、抗量子、多机及部署分别验收；本轮未构建或重跑业务测试。
+最终确认吞吐、隐私、抗量子、多机及部署分别验收；恢复前清点不含构建，
+恢复后的实际测试结果以上方执行结果及台账为准。

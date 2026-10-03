@@ -1,0 +1,22 @@
+{
+  "bind_addr": "127.0.0.1:45172",
+  "tls_cert_path": "/run/credentials/supervm-relay.service/tls.cert",
+  "tls_key_path": "/run/credentials/supervm-relay.service/tls.key",
+  "relay_identity_key_path": "/run/credentials/supervm-relay.service/identity.hex",
+  "report_path": "/var/lib/supervm-relay/report.json",
+  "report_interval_ms": 5000,
+  "max_connections": 32,
+  "max_sessions": 16,
+  "max_tracked_sources": 64,
+  "session_queue_capacity": 128,
+  "session_queue_bytes": 2097152,
+  "active_queue_total": 512,
+  "active_queue_bytes_total": 16777216,
+  "offline_queue_per_peer": 64,
+  "offline_queue_bytes_per_peer": 2097152,
+  "offline_queue_per_source": 128,
+  "offline_queue_bytes_per_source": 4194304,
+  "offline_queue_total": 512,
+  "offline_queue_bytes_total": 16777216,
+  "offline_queue_ttl_ms": 30000
+}

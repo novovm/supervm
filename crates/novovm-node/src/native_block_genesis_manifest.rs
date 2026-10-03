@@ -1,0 +1,502 @@
+//! Durable approved inputs only. No AOEM write or genesis activation.
+use super::*;
+use crate::tx_ingress::fresh_genesis::{FreshGenesisConfigV1, FreshGenesisValidationV1};
+#[path = "native_block_genesis_candidates.rs"]
+mod candidates;
+#[path = "native_block_genesis_completion.rs"]
+mod completion;
+#[path = "native_block_genesis_finality.rs"]
+mod finality;
+pub use finality::NovNativeFreshFinalityProofV1;
+#[path = "native_block_genesis_promotion.rs"]
+mod promotion;
+#[path = "native_block_successor_completion.rs"]
+mod successor_completion;
+#[path = "native_block_successor_finality.rs"]
+mod successor_finality;
+#[path = "native_block_successor_promotion.rs"]
+mod successor_promotion;
+#[path = "native_block_genesis_successors.rs"]
+mod successors;
+pub use promotion::NovNativeFreshPromotionIntentV1;
+pub(crate) use successor_promotion::VerifiedSuccessorPublicationV1;
+pub(crate) use successors::FinalizedRecordArchiveV1;
+
+pub(super) const MANIFEST_SCHEMA: &str =
+    "novovm-native-block-ledger/v1+genesis-manifest-reserved-v1";
+pub(super) const CANDIDATES_SCHEMA: &str =
+    "novovm-native-block-ledger/v1+genesis-isolated-candidates-v1";
+pub(super) const PROMOTION_SCHEMA: &str =
+    "novovm-native-block-ledger/v1+genesis-promotion-intent-v1";
+pub(super) const PUBLISHED_SCHEMA: &str = "novovm-native-block-ledger/v1+genesis-published-v1";
+pub(super) const FINALIZED_SCHEMA: &str = "novovm-native-block-ledger/v1+genesis-finalized-v1";
+pub(super) const SUCCESSOR_INTENT_SCHEMA: &str =
+    "novovm-native-block-ledger/v1+fresh-successor-intent-v1";
+pub(super) const SUCCESSOR_PUBLISHED_SCHEMA: &str =
+    "novovm-native-block-ledger/v1+fresh-successor-published-v1";
+pub(super) fn is_successor_published_schema(raw: &[u8]) -> bool {
+    raw == SUCCESSOR_PUBLISHED_SCHEMA.as_bytes() || raw == SUCCESSOR_FINALIZED_SCHEMA.as_bytes()
+}
+pub(super) const SUCCESSOR_FINALIZED_SCHEMA: &str =
+    "novovm-native-block-ledger/v1+fresh-successor-finalized-by-height-v1";
+pub(super) fn has_successor_intent_schema(raw: &[u8]) -> bool {
+    raw == SUCCESSOR_INTENT_SCHEMA.as_bytes() || is_successor_published_schema(raw)
+}
+pub(super) fn is_finalized_schema(raw: &[u8]) -> bool {
+    raw == FINALIZED_SCHEMA.as_bytes() || has_successor_intent_schema(raw)
+}
+pub(super) fn is_published_schema(raw: &[u8]) -> bool {
+    raw == PUBLISHED_SCHEMA.as_bytes() || is_finalized_schema(raw)
+}
+const KEY_MANIFEST: &[u8] = b"native_block_ledger/v1/genesis/manifest";
+const KEY_MANIFEST_PIN: &[u8] = b"native_block_ledger/v1/genesis/manifest-pin";
+
+pub(super) fn has_manifest_evidence(db: &DB) -> Result<bool> {
+    Ok(db.get(KEY_MANIFEST)?.is_some() || db.get(KEY_MANIFEST_PIN)?.is_some())
+}
+
+fn manifest_pin(bytes: &[u8]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"novovm-fresh-genesis-manifest-archive-v1\0");
+    hash.update(bytes);
+    hash.finalize().into()
+}
+
+#[cfg(test)]
+thread_local! {
+    static VERIFIED_LOAD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn load_verified(
+    ledger: &NovNativeBlockLedgerV1,
+    expected: [u8; 32],
+    namespace: [u8; 32],
+) -> Result<FreshGenesisConfigV1> {
+    // The original caller's locks still cover its authority-sensitive action.
+    // This is only reuse of byte validation at an unchanged physical revision;
+    // a new candidate, pending intent, damaged key or other write invalidates it.
+    let sequence = ledger.db.latest_sequence_number();
+    let cached = ledger
+        .db
+        .verified_revision
+        .lock()
+        .map_err(|_| anyhow::anyhow!("fresh ledger revision cache poisoned"))?
+        .get(sequence, expected, namespace);
+    if let Some(config) = cached {
+        if ledger.db.latest_sequence_number() != sequence {
+            bail!("fresh ledger revision changed during verified read");
+        }
+        return Ok(config);
+    }
+    let config = load_verified_uncached(ledger, expected, namespace)?;
+    if ledger.db.latest_sequence_number() != sequence {
+        bail!("fresh ledger revision changed during complete validation");
+    }
+    ledger
+        .db
+        .verified_revision
+        .lock()
+        .map_err(|_| anyhow::anyhow!("fresh ledger revision cache poisoned"))?
+        .store(sequence, expected, namespace, &config);
+    Ok(config)
+}
+
+fn load_verified_uncached(
+    ledger: &NovNativeBlockLedgerV1,
+    expected: [u8; 32],
+    namespace: [u8; 32],
+) -> Result<FreshGenesisConfigV1> {
+    let _timing = crate::native_fresh_timing::Span::start("ledger.load_verified");
+    #[cfg(test)]
+    VERIFIED_LOAD_COUNT.with(|count| count.set(count.get() + 1));
+    let schema = ledger
+        .db
+        .get(KEY_SCHEMA_V1)?
+        .context("genesis schema missing")?;
+    if schema != MANIFEST_SCHEMA.as_bytes()
+        && schema != CANDIDATES_SCHEMA.as_bytes()
+        && schema != PROMOTION_SCHEMA.as_bytes()
+        && !is_published_schema(&schema)
+    {
+        bail!("complete genesis manifest reservation is required; no implicit upgrade");
+    }
+    let bytes = ledger
+        .db
+        .get(KEY_MANIFEST)?
+        .context("genesis manifest missing")?;
+    if ledger.db.get(KEY_MANIFEST_PIN)?.as_deref() != Some(&manifest_pin(&bytes)[..]) {
+        bail!("genesis manifest archive pin mismatch");
+    }
+    // This immutable configuration is compiled once for this verification only.
+    // Every ledger read, signature check and exact key comparison below remains
+    // live; the context is neither a ledger snapshot nor a signing capability.
+    FreshGenesisConfigV1::from_json_validated_with(&bytes, |validation| {
+        let rebuilt = validation.compiled().reservation(expected, namespace)?;
+        let stored = read_json_v1::<NovNativeFreshGenesisReservationV1>(
+            &ledger.db,
+            KEY_INTENT,
+            "genesis manifest reservation",
+        )?
+        .context("genesis manifest reservation missing")?;
+        stored.validate()?;
+        if stored != rebuilt || ledger.db.get(KEY_PIN)?.as_deref() != Some(&stored.pin()[..]) {
+            bail!("genesis manifest does not reconstruct the pinned reservation");
+        }
+        let mut allowed_keys: HashSet<Vec<u8>> = [
+            KEY_SCHEMA_V1,
+            KEY_INTENT,
+            KEY_PIN,
+            KEY_MANIFEST,
+            KEY_MANIFEST_PIN,
+        ]
+        .into_iter()
+        .map(<[u8]>::to_vec)
+        .collect();
+        if schema != MANIFEST_SCHEMA.as_bytes() {
+            allowed_keys.extend(candidates::validated_keys(ledger, validation)?);
+        }
+        if schema == PROMOTION_SCHEMA.as_bytes() || is_published_schema(&schema) {
+            allowed_keys.extend(promotion::validated_keys(
+                ledger, validation, expected, namespace,
+            )?);
+        }
+        if is_published_schema(&schema) {
+            allowed_keys.extend(completion::validated_keys(ledger)?);
+        }
+        if is_finalized_schema(&schema) {
+            allowed_keys.extend(finality::validated_keys(ledger, validation)?);
+            allowed_keys.extend(successors::validated_keys(ledger)?);
+            if has_successor_intent_schema(&schema) {
+                allowed_keys.extend(successor_promotion::validated_keys(
+                    ledger, validation, namespace,
+                )?);
+            }
+            if is_successor_published_schema(&schema) {
+                allowed_keys.extend(successor_completion::validated_keys(ledger)?);
+            }
+            if has_successor_intent_schema(&schema) {
+                allowed_keys.extend(successor_finality::validated_keys(
+                    ledger, validation, namespace,
+                )?);
+            }
+        }
+        for entry in ledger.db.iterator(rocksdb::IteratorMode::Start) {
+            let (key, _) = entry?;
+            if !allowed_keys.contains(key.as_ref()) {
+                bail!("genesis manifest reservation contains unexpected ledger state");
+            }
+        }
+        Ok(())
+    })
+}
+
+impl NovNativeBlockLedgerV1 {
+    /// Explicit full history/storage audit, even with an active runtime lease.
+    /// Normal live reads may reuse unchanged bytes; this entry point never does.
+    pub fn audit_fresh_genesis_config_v1(
+        path: &Path,
+        expected: [u8; 32],
+        namespace: [u8; 32],
+    ) -> Result<Option<FreshGenesisConfigV1>> {
+        let Some(ledger) = Self::open_existing_read_only_inner_v1(path, true)? else {
+            return Ok(None);
+        };
+        let _guard = ledger
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("genesis audit lock poisoned"))?;
+        // A failed explicit audit must not leave a reusable success behind,
+        // including a storage failure which did not advance the WAL sequence.
+        ledger
+            .db
+            .verified_revision
+            .lock()
+            .map_err(|_| anyhow::anyhow!("fresh ledger revision cache poisoned"))?
+            .invalidate();
+        Ok(Some(load_verified_uncached(&ledger, expected, namespace)?))
+    }
+
+    /// Count actual complete ledger verifications on this test thread. This is
+    /// observation only: nested counts work and neither success nor failure
+    /// suppresses validation. Production builds contain no counter.
+    #[cfg(test)]
+    pub(crate) fn count_fresh_ledger_verifications_for_test_v1<T>(
+        action: impl FnOnce() -> T,
+    ) -> (T, usize) {
+        let before = VERIFIED_LOAD_COUNT.with(std::cell::Cell::get);
+        let result = action();
+        let after = VERIFIED_LOAD_COUNT.with(std::cell::Cell::get);
+        (result, after - before)
+    }
+
+    /// Atomically archive the complete explicit configuration with its computed
+    /// reservation. An existing hash-only reservation cannot be upgraded: missing
+    /// historical inputs must never be manufactured during recovery.
+    pub fn reserve_fresh_genesis_config_v1(
+        path: &Path,
+        config: &FreshGenesisConfigV1,
+        expected: [u8; 32],
+        namespace: [u8; 32],
+    ) -> Result<()> {
+        let request = config.compile()?.reservation(expected, namespace)?;
+        let bytes = serde_json::to_vec(config)?;
+        FreshGenesisConfigV1::from_json(&bytes)?; // enforce durable byte bound before IO
+        let ledger = Self::open_inner_v1(path, true)?;
+        let _guard = ledger
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("genesis ledger lock poisoned"))?;
+        let schema = ledger
+            .db
+            .get(KEY_SCHEMA_V1)?
+            .context("genesis ledger schema missing")?;
+        if schema.as_slice() == MANIFEST_SCHEMA.as_bytes()
+            || schema.as_slice() == CANDIDATES_SCHEMA.as_bytes()
+        {
+            load_verified(&ledger, expected, namespace)?;
+            return Ok(()); // preserve the original archived representation
+        }
+        if schema.as_slice() != NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1.as_bytes() {
+            bail!("fresh genesis manifest requires an unused ledger");
+        }
+        for entry in ledger.db.iterator(rocksdb::IteratorMode::Start) {
+            let (key, _) = entry?;
+            if key.as_ref() != KEY_SCHEMA_V1 {
+                bail!("fresh genesis manifest refuses occupied ledger; data preserved");
+            }
+        }
+        let mut batch = RocksDbWriteBatch::default();
+        batch.put(KEY_SCHEMA_V1, MANIFEST_SCHEMA.as_bytes());
+        put_json_v1(
+            &mut batch,
+            KEY_INTENT,
+            &request,
+            "genesis manifest reservation",
+        )?;
+        batch.put(KEY_PIN, request.pin());
+        batch.put(KEY_MANIFEST, &bytes);
+        batch.put(KEY_MANIFEST_PIN, manifest_pin(&bytes));
+        write_sync_v1(&ledger.db, batch)?;
+        load_verified(&ledger, expected, namespace)?;
+        Ok(())
+    }
+
+    /// Read-only recovery of approved inputs; does not create a DB, repair lost
+    /// evidence, publish AOEM state or clear the ordinary-writer fence.
+    pub fn load_fresh_genesis_config_v1(
+        path: &Path,
+        expected: [u8; 32],
+        namespace: [u8; 32],
+    ) -> Result<Option<FreshGenesisConfigV1>> {
+        let Some(ledger) = Self::open_existing_read_only_inner_v1(path, true)? else {
+            return Ok(None);
+        };
+        let _guard = ledger
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("genesis ledger lock poisoned"))?;
+        Ok(Some(load_verified(&ledger, expected, namespace)?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_block_ledger::tests::TestLedgerV1;
+    use crate::tx_ingress::fresh_genesis::{
+        GenesisAllocationV1, GenesisValidatorV1, GENESIS_SCHEMA_V1,
+    };
+
+    fn config() -> FreshGenesisConfigV1 {
+        FreshGenesisConfigV1 {
+            schema: GENESIS_SCHEMA_V1.into(),
+            chain_id: 97,
+            timestamp_unix_ms: 1900000000000,
+            protocol_config_commitment: [1; 32],
+            allocations: vec![GenesisAllocationV1 {
+                account: [8; 20],
+                nov: "123".into(),
+            }],
+            total_initial_nov: "123".into(),
+            validators: vec![GenesisValidatorV1 {
+                public_key: ed25519_dalek::SigningKey::from_bytes(&[1; 32])
+                    .verifying_key()
+                    .to_bytes(),
+                weight: 1,
+            }],
+        }
+    }
+
+    #[test]
+    fn genesis_manifest_restart_rebuilds_exact_state_and_preserves_fence() {
+        let mut fixture = TestLedgerV1::new("manifest-restart");
+        let config = config();
+        let compiled = config.compile().unwrap();
+        let pin = compiled.config_commitment();
+        NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(
+            &fixture.path,
+            &config,
+            pin,
+            [3; 32],
+        )
+        .unwrap();
+        fixture.ledger.take();
+        let restored =
+            NovNativeBlockLedgerV1::load_fresh_genesis_config_v1(&fixture.path, pin, [3; 32])
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            restored.compile().unwrap().initial_store(),
+            compiled.initial_store()
+        );
+        NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(
+            &fixture.path,
+            &restored,
+            pin,
+            [3; 32],
+        )
+        .unwrap();
+        assert!(NovNativeBlockLedgerV1::open(&fixture.path).is_err());
+        assert!(NovNativeBlockLedgerV1::load_fresh_genesis_config_v1(
+            &fixture.path,
+            [9; 32],
+            [3; 32]
+        )
+        .is_err());
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_config_v1(&fixture.path, pin, [4; 32])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn genesis_manifest_missing_evidence_is_never_repaired_by_retry() {
+        for key in [
+            KEY_MANIFEST,
+            KEY_MANIFEST_PIN,
+            KEY_INTENT,
+            KEY_PIN,
+            KEY_SCHEMA_V1,
+        ] {
+            let fixture = TestLedgerV1::new("manifest-loss");
+            let config = config();
+            let pin = config.compile().unwrap().config_commitment();
+            NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(
+                &fixture.path,
+                &config,
+                pin,
+                [3; 32],
+            )
+            .unwrap();
+            fixture.ledger().db.delete(key).unwrap();
+            assert!(NovNativeBlockLedgerV1::load_fresh_genesis_config_v1(
+                &fixture.path,
+                pin,
+                [3; 32]
+            )
+            .is_err());
+            assert!(NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(
+                &fixture.path,
+                &config,
+                pin,
+                [3; 32]
+            )
+            .is_err());
+            assert!(fixture.ledger().db.get(key).unwrap().is_none());
+        }
+    }
+
+    #[test]
+    fn genesis_manifest_rejects_tampering_even_with_recomputed_archive_checksum() {
+        let fixture = TestLedgerV1::new("manifest-tamper");
+        let mut config = config();
+        let pin = config.compile().unwrap().config_commitment();
+        NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(
+            &fixture.path,
+            &config,
+            pin,
+            [3; 32],
+        )
+        .unwrap();
+        config.timestamp_unix_ms += 1;
+        let bytes = serde_json::to_vec(&config).unwrap();
+        fixture.ledger().db.put(KEY_MANIFEST, &bytes).unwrap();
+        fixture
+            .ledger()
+            .db
+            .put(KEY_MANIFEST_PIN, manifest_pin(&bytes))
+            .unwrap();
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_config_v1(&fixture.path, pin, [3; 32])
+                .is_err()
+        );
+        fixture
+            .ledger()
+            .db
+            .put(KEY_SCHEMA_V1, NOV_NATIVE_BLOCK_LEDGER_SCHEMA_V1.as_bytes())
+            .unwrap();
+        assert!(NovNativeBlockLedgerV1::open(&fixture.path).is_err());
+    }
+
+    #[test]
+    fn genesis_manifest_read_missing_path_has_no_side_effects() {
+        let fixture = TestLedgerV1::new("manifest-absent");
+        let path = fixture.path.join("absent");
+        assert!(
+            NovNativeBlockLedgerV1::load_fresh_genesis_config_v1(&path, [1; 32], [3; 32])
+                .unwrap()
+                .is_none()
+        );
+        assert!(!path.exists());
+        let config = config();
+        assert!(NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(
+            &path, &config, [9; 32], [3; 32]
+        )
+        .is_err());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn genesis_manifest_refuses_occupied_or_hash_only_ledgers() {
+        let config = config();
+        let compiled = config.compile().unwrap();
+        let pin = compiled.config_commitment();
+        let fixture = TestLedgerV1::new("manifest-occupied");
+        fixture
+            .ledger()
+            .db
+            .put(b"existing-test-history", b"untouched")
+            .unwrap();
+        assert!(NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(
+            &fixture.path,
+            &config,
+            pin,
+            [3; 32]
+        )
+        .is_err());
+        assert_eq!(
+            fixture
+                .ledger()
+                .db
+                .get(b"existing-test-history")
+                .unwrap()
+                .unwrap(),
+            b"untouched"
+        );
+        assert!(fixture.ledger().db.get(KEY_MANIFEST).unwrap().is_none());
+        let fixture = TestLedgerV1::new("manifest-no-upgrade");
+        NovNativeBlockLedgerV1::reserve_fresh_genesis_v1(
+            &fixture.path,
+            &compiled.reservation(pin, [3; 32]).unwrap(),
+        )
+        .unwrap();
+        assert!(NovNativeBlockLedgerV1::reserve_fresh_genesis_config_v1(
+            &fixture.path,
+            &config,
+            pin,
+            [3; 32]
+        )
+        .is_err());
+        assert!(fixture.ledger().db.get(KEY_MANIFEST).unwrap().is_none());
+    }
+}

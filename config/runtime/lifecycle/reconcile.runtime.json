@@ -1,0 +1,31 @@
+{
+  "profiles": {
+    "default": {
+      "enabled": false,
+      "sender_address": "",
+      "rpc_endpoint": "http://127.0.0.1:9899",
+      "interval_seconds": 15,
+      "restart_delay_seconds": 3,
+      "replay_max_per_payout": 3,
+      "replay_cooldown_sec": 30
+    },
+    "dev": {
+      "enabled": false,
+      "sender_address": "",
+      "rpc_endpoint": "http://127.0.0.1:9899",
+      "interval_seconds": 15,
+      "restart_delay_seconds": 3,
+      "replay_max_per_payout": 3,
+      "replay_cooldown_sec": 30
+    },
+    "prod": {
+      "enabled": true,
+      "sender_address": "",
+      "rpc_endpoint": "http://127.0.0.1:9899",
+      "interval_seconds": 15,
+      "restart_delay_seconds": 3,
+      "replay_max_per_payout": 3,
+      "replay_cooldown_sec": 30
+    }
+  }
+}

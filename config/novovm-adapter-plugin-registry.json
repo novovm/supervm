@@ -1,0 +1,54 @@
+{
+  "version": "novovm_adapter_registry_v1",
+  "allowed_abi_versions": [1],
+  "plugins": [
+    {
+      "name": "novovm_adapter_sample_plugin_windows",
+      "path": "novovm_adapter_sample_plugin.dll",
+      "abi": 1,
+      "required_caps": "0x1",
+      "chains": ["novovm", "evm", "polygon", "bnb", "avalanche", "custom"],
+      "enabled": true
+    },
+    {
+      "name": "novovm_adapter_sample_plugin_linux",
+      "path": "libnovovm_adapter_sample_plugin.so",
+      "abi": 1,
+      "required_caps": "0x1",
+      "chains": ["novovm", "evm", "polygon", "bnb", "avalanche", "custom"],
+      "enabled": true
+    },
+    {
+      "name": "novovm_adapter_sample_plugin_macos",
+      "path": "libnovovm_adapter_sample_plugin.dylib",
+      "abi": 1,
+      "required_caps": "0x1",
+      "chains": ["novovm", "evm", "polygon", "bnb", "avalanche", "custom"],
+      "enabled": true
+    },
+    {
+      "name": "novovm_adapter_evm_plugin_windows",
+      "path": "novovm_adapter_evm_plugin.dll",
+      "abi": 1,
+      "required_caps": "0x1",
+      "chains": ["evm", "polygon", "bnb", "avalanche"],
+      "enabled": true
+    },
+    {
+      "name": "novovm_adapter_evm_plugin_linux",
+      "path": "libnovovm_adapter_evm_plugin.so",
+      "abi": 1,
+      "required_caps": "0x1",
+      "chains": ["evm", "polygon", "bnb", "avalanche"],
+      "enabled": true
+    },
+    {
+      "name": "novovm_adapter_evm_plugin_macos",
+      "path": "libnovovm_adapter_evm_plugin.dylib",
+      "abi": 1,
+      "required_caps": "0x1",
+      "chains": ["evm", "polygon", "bnb", "avalanche"],
+      "enabled": true
+    }
+  ]
+}

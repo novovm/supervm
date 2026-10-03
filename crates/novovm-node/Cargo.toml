@@ -1,0 +1,156 @@
+[package]
+name = "novovm-node"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+autobins = false
+
+[dependencies]
+anyhow = "1"
+aoem-bindings = { path = "../aoem-bindings" }
+base64 = "0.22"
+novovm-exec = { path = "../novovm-exec" }
+novovm-consensus = { path = "../novovm-consensus" }
+novovm-network = { path = "../novovm-network" }
+novovm-udp-batch = { path = "../novovm-udp-batch" }
+novovm-protocol = { path = "../novovm-protocol" }
+novovm-adapter-api = { path = "../novovm-adapter-api" }
+novovm-governance-observability = { path = "../novovm-governance-observability" }
+novovm-adapter-novovm = { path = "../novovm-adapter-novovm" }
+novovm-adapter-evm-core = { path = "../plugins/evm/core" }
+novovm-adapter-evm-plugin = { path = "../plugins/evm/plugin" }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
+rand = "0.8"
+rcgen = "0.12"
+rustls = "0.23.45"
+rustls-native-certs = "0.8.4"
+sha1 = "0.10"
+sha2 = "0.10"
+sha3 = "0.10"
+libloading = "0.8"
+socket2 = "0.6"
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+tiny_http = "0.12"
+rocksdb = { version = "0.22", default-features = false }
+ureq = "2"
+lettre = "0.11.22"
+
+[target.'cfg(windows)'.dependencies]
+mio = { version = "1.1.1", default-features = false, features = ["os-poll", "net"] }
+
+[[bin]]
+name = "novovm-node"
+path = "src/bin/novovm-node.rs"
+
+[[bin]]
+name = "novovm-product-relay"
+path = "src/bin/novovm-product-relay.rs"
+
+[[bin]]
+name = "novovm-product-node-overlay"
+path = "src/bin/novovm-product-node-overlay.rs"
+
+[[bin]]
+name = "novovm-product-nat"
+path = "src/bin/novovm-product-nat.rs"
+
+[[bin]]
+name = "novovm-product-evidence"
+path = "src/bin/novovm-product-evidence.rs"
+
+[[bin]]
+name = "novovm-product-peer"
+path = "src/bin/novovm-product-peer.rs"
+
+[[bin]]
+name = "novovm-product-topology"
+path = "src/bin/novovm-product-topology.rs"
+
+[[bin]]
+name = "supervm-mainline-gate"
+path = "src/bin/supervm-mainline-gate.rs"
+
+[[bin]]
+name = "supervm-mainline-preflight"
+path = "src/bin/supervm-mainline-preflight.rs"
+
+[[bin]]
+name = "supervm-mainline-query"
+path = "src/bin/supervm-mainline-query.rs"
+
+[[bin]]
+name = "supervm-mainline-geth-sample-sync"
+path = "src/bin/supervm-mainline-geth-sample-sync.rs"
+
+[[bin]]
+name = "supervm-mainline-soak"
+path = "src/bin/supervm-mainline-soak.rs"
+
+[[bin]]
+name = "supervm-mainline-nightly-gate"
+path = "src/bin/supervm-mainline-nightly-gate.rs"
+
+[[bin]]
+name = "supervm-mainline-duty-report"
+path = "src/bin/supervm-mainline-duty-report.rs"
+
+[[bin]]
+name = "supervm-mainline-p2d-sample-inject"
+path = "src/bin/supervm-mainline-p2d-sample-inject.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-dual-node-gate"
+path = "src/bin/supervm-native-pipeline-dual-node-gate.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-production-soak"
+path = "src/bin/supervm-native-pipeline-production-soak.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-rocksdb-recovery-gate"
+path = "src/bin/supervm-native-pipeline-rocksdb-recovery-gate.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-network-fault-gate"
+path = "src/bin/supervm-native-pipeline-network-fault-gate.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-pending-crash-recovery-gate"
+path = "src/bin/supervm-native-pipeline-pending-crash-recovery-gate.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-remote-reentry-dedup-gate"
+path = "src/bin/supervm-native-pipeline-remote-reentry-dedup-gate.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-cross-machine-udp-soak"
+path = "src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-cross-machine-fault-udp-soak"
+path = "src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-cross-machine-sustained-soak"
+path = "src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs"
+
+[[bin]]
+name = "supervm-native-pipeline-memory-bisect-gate"
+path = "src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs"
+
+[[bin]]
+name = "supervm-novorudp-network-only-gate"
+path = "src/bin/supervm-novorudp-network-only-gate.rs"
+
+[[bin]]
+name = "supervm-udp-raw-ceiling-bench"
+path = "src/bin/supervm-udp-raw-ceiling-bench.rs"
+
+[[bin]]
+name = "supervm-network-overlay-gate"
+path = "src/bin/supervm-network-overlay-gate.rs"

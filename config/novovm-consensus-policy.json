@@ -1,0 +1,6 @@
+{
+  "mode": "enforce",
+  "equivocation_threshold": 1,
+  "min_active_validators": 2,
+  "cooldown_epochs": 0
+}

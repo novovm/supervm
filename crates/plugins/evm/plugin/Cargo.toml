@@ -1,0 +1,25 @@
+[package]
+name = "novovm-adapter-evm-plugin"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["SuperVM Core Team"]
+description = "EVM-focused dynamic adapter plugin for NOVOVM (C ABI)."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[dependencies]
+anyhow = "1"
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+rocksdb = { version = "0.22", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+novovm-adapter-api = { path = "../../../novovm-adapter-api" }
+novovm-adapter-evm-core = { path = "../core" }
+novovm-adapter-novovm = { path = "../../../novovm-adapter-novovm" }
+novovm-exec = { path = "../../../novovm-exec" }
+novovm-protocol = { path = "../../../novovm-protocol" }
+

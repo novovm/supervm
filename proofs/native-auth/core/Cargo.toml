@@ -1,0 +1,10 @@
+[package]
+name = "novovm-auth-statement"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+novovm-adapter-api = { path = "../../../crates/novovm-adapter-api" }
+novovm-protocol = { path = "../../../crates/novovm-protocol" }
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }

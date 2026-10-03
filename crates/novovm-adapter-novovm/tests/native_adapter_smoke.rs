@@ -1,0 +1,182 @@
+use anyhow::Result;
+use novovm_adapter_api::{
+    default_chain_id, AccountState, ChainConfig, ChainType, SerializationFormat, StateIR, TxIR,
+    TxType,
+};
+use novovm_adapter_novovm::{
+    address_from_seed_v1, create_native_adapter, signature_payload_with_seed_v1,
+    supports_native_chain,
+};
+
+const TEST_SIGN_SEED: [u8; 32] = [7u8; 32];
+
+fn encode_address(seed: u64) -> Vec<u8> {
+    let mut out = vec![0u8; 20];
+    out[12..20].copy_from_slice(&seed.to_be_bytes());
+    out
+}
+
+fn sample_transfer(chain_id: u64, nonce: u64, value: u128) -> TxIR {
+    let mut tx = TxIR {
+        hash: Vec::new(),
+        from: address_from_seed_v1(TEST_SIGN_SEED),
+        account_id: None,
+        fee_owner_account_id: None,
+        nonce_owner_account_id: None,
+        to: Some(encode_address(2000)),
+        value,
+        gas_limit: 21_000,
+        gas_price: 1,
+        nonce,
+        data: Vec::new(),
+        signature: Vec::new(),
+        chain_id,
+        tx_type: TxType::Transfer,
+        execution_policy: Default::default(),
+        evm_access_list: Vec::new(),
+        source_chain: None,
+        target_chain: None,
+    };
+    tx.compute_hash();
+    tx.signature = signature_payload_with_seed_v1(&tx, TEST_SIGN_SEED);
+    tx
+}
+
+fn fund_sender(state: &mut StateIR, tx: &TxIR, balance: u128) {
+    state.set_account(
+        tx.from.clone(),
+        AccountState {
+            balance,
+            nonce: tx.nonce,
+            code_hash: None,
+            storage_root: vec![0u8; 32],
+        },
+    );
+}
+
+#[test]
+fn native_adapter_executes_transfer_and_updates_state() -> Result<()> {
+    let chain_id = default_chain_id(ChainType::NovoVM);
+    let mut adapter = create_native_adapter(ChainConfig::novovm(chain_id))?;
+    adapter.initialize()?;
+
+    let tx = sample_transfer(chain_id, 0, 7);
+    let raw = tx.serialize(SerializationFormat::Bincode)?;
+    let parsed = adapter.parse_transaction(&raw)?;
+    assert!(adapter.verify_transaction(&parsed)?);
+
+    let mut state = StateIR::new();
+    fund_sender(&mut state, &parsed, 100_000);
+    adapter.execute_transaction(&parsed, &mut state)?;
+    let root = adapter.state_root()?;
+    assert_eq!(root.len(), 32);
+    assert_eq!(state.state_root.len(), 32);
+    assert_eq!(adapter.get_balance(&encode_address(2000))?, 7);
+    assert_eq!(
+        state.get_account(&parsed.from).map(|acc| acc.balance),
+        Some(78_993)
+    );
+    assert_eq!(adapter.get_nonce(&parsed.from)?, 1);
+
+    adapter.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn native_adapter_rejects_wrong_chain_id() -> Result<()> {
+    let chain_id = default_chain_id(ChainType::NovoVM);
+    let mut adapter = create_native_adapter(ChainConfig::novovm(chain_id))?;
+    adapter.initialize()?;
+
+    let tx = sample_transfer(chain_id + 1, 0, 3);
+    assert!(!adapter.verify_transaction(&tx)?);
+
+    adapter.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn native_adapter_rejects_tampered_hash() -> Result<()> {
+    let chain_id = default_chain_id(ChainType::NovoVM);
+    let mut adapter = create_native_adapter(ChainConfig::novovm(chain_id))?;
+    adapter.initialize()?;
+
+    let mut tx = sample_transfer(chain_id, 0, 3);
+    tx.hash[0] ^= 0x55;
+    assert!(!adapter.verify_transaction(&tx)?);
+
+    adapter.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn native_adapter_rejects_tampered_signature() -> Result<()> {
+    let chain_id = default_chain_id(ChainType::NovoVM);
+    let mut adapter = create_native_adapter(ChainConfig::novovm(chain_id))?;
+    adapter.initialize()?;
+
+    let mut tx = sample_transfer(chain_id, 0, 3);
+    tx.signature[40] ^= 0xAA;
+    assert!(!adapter.verify_transaction(&tx)?);
+
+    adapter.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn native_adapter_supports_non_novovm_samples() {
+    assert!(supports_native_chain(ChainType::NovoVM));
+    assert!(supports_native_chain(ChainType::EVM));
+    assert!(supports_native_chain(ChainType::BNB));
+    assert!(supports_native_chain(ChainType::Custom));
+    assert!(!supports_native_chain(ChainType::Solana));
+}
+
+#[test]
+fn native_adapter_accepts_evm_chain_config() -> Result<()> {
+    let chain_id = default_chain_id(ChainType::EVM);
+    let cfg = ChainConfig {
+        chain_type: ChainType::EVM,
+        chain_id,
+        name: "EVM".to_string(),
+        enabled: true,
+        custom_config: None,
+    };
+    let mut adapter = create_native_adapter(cfg)?;
+    adapter.initialize()?;
+
+    let tx = sample_transfer(chain_id, 0, 9);
+    assert!(adapter.verify_transaction(&tx)?);
+
+    let mut state = StateIR::new();
+    fund_sender(&mut state, &tx, 100_000);
+    adapter.execute_transaction(&tx, &mut state)?;
+    assert_eq!(adapter.get_balance(&encode_address(2000))?, 9);
+    adapter.shutdown()?;
+    Ok(())
+}
+
+#[test]
+fn native_adapter_unified_account_guard_rejects_replay_nonce() -> Result<()> {
+    let chain_id = default_chain_id(ChainType::NovoVM);
+    let mut adapter = create_native_adapter(ChainConfig::novovm(chain_id))?;
+    adapter.initialize()?;
+
+    let mut state = StateIR::new();
+    let first = sample_transfer(chain_id, 0, 5);
+    fund_sender(&mut state, &first, 100_000);
+    adapter.execute_transaction(&first, &mut state)?;
+
+    let replay = sample_transfer(chain_id, 0, 3);
+    let err = adapter
+        .execute_transaction(&replay, &mut state)
+        .expect_err("replay nonce should be rejected by unified account ingress guard");
+    assert!(
+        err.to_string().contains("nonce rejected"),
+        "unexpected replay error: {}",
+        err
+    );
+
+    adapter.shutdown()?;
+    Ok(())
+}

@@ -1,0 +1,39 @@
+{
+  "schema": "supervm-e2e-geth-parity-sample/v1",
+  "name": "geth-deploy-success-with-logs",
+  "scenario": "adapter_e2e_geth_deploy_success_with_logs_v1",
+  "chain_id": 1,
+  "expected": {
+    "block": {
+      "number": "0x2",
+      "tx_count": 1,
+      "tx_types": ["0x0"],
+      "tx_statuses": ["0x1"],
+      "tx_contract_addresses": ["0xae9bea628c4ce503dcfd7e305cab4e29e7476592"]
+    },
+    "receipts": [
+      {
+        "tx_index": 0,
+        "status": "0x1",
+        "tx_type": "0x0",
+        "gas_used": "0xcf50",
+        "cumulative_gas_used": "0xcf50",
+        "contract_address": "0xae9bea628c4ce503dcfd7e305cab4e29e7476592",
+        "revert_data": null,
+        "log_count": 1
+      }
+    ],
+    "logs_canonical": {
+      "count": 1,
+      "first_removed": false,
+      "first_address": "0xae9bea628c4ce503dcfd7e305cab4e29e7476592"
+    },
+    "logs_noncanonical": {
+      "count": 1,
+      "first_removed": true,
+      "first_log_ownership": "non_canonical",
+      "first_address": "0xae9bea628c4ce503dcfd7e305cab4e29e7476592"
+    },
+    "typed_failures": []
+  }
+}
