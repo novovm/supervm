@@ -1,18 +1,19 @@
 //! Product RPC adapter for the resident core. No RPC handler mutates balances,
 //! publishes a head, constructs votes or substitutes a receipt for execution.
-//! This explicit experimental profile has a local bounded pool. Automatic
-//! cross-node mempool gossip is not implemented here: clients can submit to the
-//! scheduled proposer (or fan out identical signed bytes). Consensus bodies
-//! always traverse the same authenticated duplex network as the load fixture.
+//! This experimental profile has a bounded, NON-durable pool and best-effort
+//! signed-input fanout over the existing authenticated duplex channel. Receipt
+//! queries, not transport admission, determine execution/finality. Clients must
+//! retain signed input until confirmed and may resubmit after loss/restart.
 
 use super::{ResidentConfig, ResidentNode, StartMode};
 use crate::native_fresh_rpc::FreshRpcServer;
 use crate::native_pipeline::business::nov_transfer_batch::balance_key;
 use crate::native_pipeline::business::quoted_transfer::Account;
-use crate::native_pipeline::consensus::transport::Message;
+use crate::native_pipeline::consensus::transport::{EarlyBodyScope, Message};
 use crate::native_pipeline::consensus::wire::Hash;
 use crate::native_pipeline::consensus::ArchiveRead;
 use crate::native_pipeline::ingress::authentication::authenticate_transfer_v3;
+use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v3};
 use crate::native_pipeline::persistence::io::IoTicket;
 use crate::native_pipeline::persistence::packet::ReceiptView;
 use anyhow::{ensure, Context, Result};
@@ -49,6 +50,17 @@ struct Position {
     successor: bool,
 }
 
+struct EarlyOffer {
+    scope: EarlyBodyScope,
+    hint: Arc<Message>,
+    message: Arc<Message>,
+}
+
+struct GossipOffer {
+    hashes: Vec<Hash>,
+    message: Arc<Message>,
+}
+
 /// Derived query/admission projection only. Rebuilt from verified archive on
 /// restart; never saved as a second authoritative state/head. A full cache does
 /// not drop accepted input or manufacture finality.
@@ -66,6 +78,15 @@ pub struct RpcLifecycle {
     archive: Option<ArchiveRead>,
     offer: Option<(Position, Arc<Message>)>,
     offered: Option<Position>,
+    early_offer: Option<EarlyOffer>,
+    gossip_order: VecDeque<Hash>,
+    gossip_queued: BTreeSet<Hash>,
+    gossip_offer: Option<GossipOffer>,
+    incoming: Option<(Arc<Message>, usize)>,
+    ingress_batch_boundary: bool,
+    gossip_verified: u64,
+    gossip_rejected: u64,
+    authentication_cache_hits: u64,
     projection_error: Option<String>,
     balances: VecDeque<BalanceQuery>,
 }
@@ -87,6 +108,15 @@ impl RpcLifecycle {
             archive: None,
             offer: None,
             offered: None,
+            early_offer: None,
+            gossip_order: VecDeque::new(),
+            gossip_queued: BTreeSet::new(),
+            gossip_offer: None,
+            incoming: None,
+            ingress_batch_boundary: false,
+            gossip_verified: 0,
+            gossip_rejected: 0,
+            authentication_cache_hits: 0,
             projection_error: None,
             balances: VecDeque::new(),
         })
@@ -100,6 +130,7 @@ impl RpcLifecycle {
                 self.projection_error = Some(format!("{error:#}"));
             }
         }
+        self.poll_gossip()?;
         if self.projection_error.is_some() || self.node.controller.is_recovering() {
             return Ok(());
         }
@@ -109,8 +140,22 @@ impl RpcLifecycle {
         if self.indexed_height != self.node.controller.parent().height {
             return Ok(());
         }
+        // Give a finite incoming body time to finish its strict admission
+        // rather than turning every 32-signature service quantum into a block.
+        // Every completed body grants a proposal turn even if the next body
+        // has begun, so a continuous inbound stream cannot starve selection.
+        if self.incoming.is_some() && !self.ingress_batch_boundary {
+            return Ok(());
+        }
+        // Announce h+1 input while h is still executing/awaiting consensus.
+        // Its nonce prefix is a scheduling hint only; the existing core binds
+        // the exact durable parent and rechecks the real state before voting.
+        self.poll_early_offer()?;
         let successor = self.node.controller.successor_parent()?;
-        let (parent, position) = if self.node.controller.is_local_leader()? {
+        let current_height = self.node.controller.context().height;
+        let (parent, position) = if self.node.controller.is_local_leader()?
+            && !self.node.controller.has_early_target(current_height)
+        {
             let parent = self.node.controller.parent();
             (
                 parent,
@@ -143,18 +188,10 @@ impl RpcLifecycle {
                 let Some(body) = self.node.controller.executed_body(parent.block_hash) else {
                     return Ok(());
                 };
-                if let Message::Body {
-                    raw_transactions, ..
-                } = body.as_ref()
-                {
-                    for raw in raw_transactions {
-                        let checked =
-                            authenticate_transfer_v3(raw, self.node.template.chain_id, 1024)?;
-                        next.insert(checked.nonce_identity(), checked.transfer().nonce + 1);
-                    }
-                } else {
+                let Some(prefix) = pending_body_prefix(&body, &self.pending, &self.nonces)? else {
                     return Ok(());
-                }
+                };
+                next = prefix;
             }
             let raw_transactions = select_pending_batch(
                 &self.order,
@@ -197,6 +234,58 @@ impl RpcLifecycle {
         }
         // Retain original signed inputs until an actual archive receipt confirms
         // them, including re-proposals after changed rounds/parents.
+        Ok(())
+    }
+
+    fn poll_early_offer(&mut self) -> Result<()> {
+        let Some(scope) = self.node.controller.early_body_scope()? else {
+            self.early_offer = None;
+            return Ok(());
+        };
+        let Some(body) = self.node.controller.current_body_hint()? else {
+            self.early_offer = None;
+            return Ok(());
+        };
+        if self
+            .early_offer
+            .as_ref()
+            .is_none_or(|old| old.scope != scope || !Arc::ptr_eq(&old.hint, &body))
+        {
+            let Some(next) = pending_body_prefix(&body, &self.pending, &self.nonces)? else {
+                return Ok(());
+            };
+            let raw_transactions = select_pending_batch(
+                &self.order,
+                &self.pending,
+                &self.nonces,
+                next,
+                self.batch_size,
+            );
+            if raw_transactions.is_empty() {
+                return Ok(());
+            }
+            self.early_offer = Some(EarlyOffer {
+                scope,
+                hint: body,
+                message: Arc::new(Message::EarlyBody {
+                    scope,
+                    raw_transactions,
+                }),
+            });
+        }
+        let timestamp = self
+            .node
+            .template
+            .timestamp_unix_ms
+            .checked_add(scope.target_height)
+            .context("resident early timestamp overflow")?;
+        if self.node.controller.try_submit_early_body(
+            &self.early_offer.as_ref().expect("early RPC body").message,
+            scope.target_height,
+            timestamp,
+        )? {
+            self.early_offer = None;
+        }
         Ok(())
     }
 
@@ -267,20 +356,44 @@ impl RpcLifecycle {
             self.receipts.remove(&self.recent.pop_front().unwrap());
         }
         self.order.retain(|hash| self.pending.contains_key(hash));
+        self.gossip_order
+            .retain(|hash| self.pending.contains_key(hash));
+        self.gossip_queued
+            .retain(|hash| self.pending.contains_key(hash));
         self.indexed_height = block.point().height;
         self.archive = None;
         Ok(())
     }
 
     fn submit(&mut self, raw: Vec<u8>) -> Result<Value> {
+        self.admit(raw, true)
+    }
+
+    fn admit(&mut self, raw: Vec<u8>, broadcast: bool) -> Result<Value> {
         ensure!(
             self.projection_error.is_none(),
             "RPC projection unavailable"
         );
-        ensure!(
-            self.indexed_height == self.node.controller.head().map_or(0, |h| h.height),
-            "RPC recovery projection catching up; retry signed input"
-        );
+        // Signature-checked memory admission is not current-state admission.
+        // A lagging query projection must not stall ingress. Selection still
+        // waits for the exact published parent above; projection removes stale
+        // nonces before any new current-height body can be submitted.
+        // A peer fanout and a client retry may carry the very same input. Reuse
+        // ONLY an exact byte match still held in the signature-checked pool;
+        // the canonical ID alone omits the signature and is insufficient.
+        let decoded = decode_transfer_v3(&raw, 1024)?;
+        let hash = canonical_tx_hash(&decoded)?;
+        if self
+            .pending
+            .get(&hash)
+            .is_some_and(|entry| entry.raw == raw)
+        {
+            self.authentication_cache_hits = self.authentication_cache_hits.saturating_add(1);
+            if broadcast {
+                self.queue_gossip(hash);
+            }
+            return Ok(self.pending_status(hash));
+        }
         let checked = authenticate_transfer_v3(&raw, self.node.template.chain_id, 1024)?;
         for asset in [
             &checked.transfer().asset,
@@ -296,6 +409,9 @@ impl RpcLifecycle {
             return Ok(result.clone());
         }
         if self.pending.contains_key(&hash) {
+            if broadcast {
+                self.queue_gossip(hash);
+            }
             return Ok(self.pending_status(hash));
         }
         let signer = checked.nonce_identity();
@@ -317,12 +433,104 @@ impl RpcLifecycle {
         self.pending.insert(hash, Pending { raw, signer, nonce });
         self.reservations.insert((signer, nonce));
         self.order.push_back(hash);
+        if broadcast {
+            self.queue_gossip(hash);
+        }
         Ok(self.pending_status(hash))
+    }
+
+    fn queue_gossip(&mut self, hash: Hash) {
+        if self.gossip_queued.insert(hash) {
+            self.gossip_order.push_back(hash);
+        }
+    }
+
+    fn poll_gossip(&mut self) -> Result<()> {
+        self.ingress_batch_boundary = false;
+        if self.projection_error.is_some() {
+            return Ok(());
+        }
+        // Network identity authenticates the source, not its transactions. Work
+        // is bounded independently of control events and never re-broadcasts
+        // received input. A partially consumed batch retains one bounded Arc.
+        for _ in 0..32 {
+            if self.incoming.is_none() {
+                self.incoming = self
+                    .node
+                    .controller
+                    .take_transactions()
+                    .map(|received| (received.message, 0));
+            }
+            let Some((message, index)) = self.incoming.as_mut() else {
+                break;
+            };
+            let Message::Transactions {
+                raw_transactions, ..
+            } = message.as_ref()
+            else {
+                anyhow::bail!("transaction channel returned a non-transaction message");
+            };
+            let raw = raw_transactions[*index].clone();
+            *index += 1;
+            if *index == raw_transactions.len() {
+                self.incoming = None;
+                self.ingress_batch_boundary = true;
+            }
+            match self.admit(raw, false) {
+                Ok(_) => self.gossip_verified = self.gossip_verified.saturating_add(1),
+                Err(_) => self.gossip_rejected = self.gossip_rejected.saturating_add(1),
+            }
+        }
+        if self.gossip_offer.is_none() {
+            let mut hashes = Vec::new();
+            let mut raw_transactions = Vec::new();
+            let mut bytes = 0;
+            // All stale hashes are removed as the finalized projection drains;
+            // only a finite body is copied on each scheduling turn.
+            while let Some(hash) = self.gossip_order.front().copied() {
+                if let Some(entry) = self.pending.get(&hash) {
+                    if hashes.len() == self.batch_size
+                        || bytes + entry.raw.len() > super::body_byte_limit(self.batch_size)
+                    {
+                        break;
+                    }
+                    bytes += entry.raw.len();
+                    hashes.push(hash);
+                    raw_transactions.push(entry.raw.clone());
+                } else {
+                    self.gossip_queued.remove(&hash);
+                }
+                self.gossip_order.pop_front();
+            }
+            if !raw_transactions.is_empty() {
+                self.gossip_offer = Some(GossipOffer {
+                    hashes,
+                    message: self
+                        .node
+                        .controller
+                        .transactions_message(raw_transactions)?,
+                });
+            }
+        }
+        if let Some(offer) = &self.gossip_offer {
+            if self
+                .node
+                .controller
+                .try_submit_transactions(&offer.message)?
+            {
+                for hash in &offer.hashes {
+                    self.gossip_queued.remove(hash);
+                }
+                self.gossip_offer = None;
+            }
+        }
+        Ok(())
     }
 
     fn pending_status(&self, hash: Hash) -> Value {
         json!({"tx_hash":hex(&hash),"state":"received","signature_verified":true,
             "admission_durable":false,"nonce_checked_at_execution":true,
+            "nonce_projection_height":self.indexed_height,
             "executed":false,"finalized":false,"proof_verified":false})
     }
 
@@ -424,11 +632,23 @@ impl RpcLifecycle {
             "rpc_indexed_height":self.indexed_height,"projection_error":self.projection_error,
             "recovery_in_progress":controller.is_recovering(),
             "executed_batches":stats.executed_batches,"durable_decisions":stats.durable_decisions,
+            "execution_components_total":stats.execution_components_total,
+            "execution_credit_only_accounts_total":stats.execution_credit_only_accounts_total,
+            "execution_peak_callbacks":stats.execution_peak_callbacks,
+            "execution_recomputed_transactions_total":stats.execution_recomputed_transactions_total,
             "successor_reused":stats.successor_reused,"capture_seed_nodes":stats.capture_seed_nodes,
+            "early_authentication_started":stats.early_authentication_started,
+            "early_authentication_completed":stats.early_authentication_completed,
+            "early_authentication_completed_before_parent":stats.early_authentication_completed_before_parent,
+            "early_bind_reused":stats.early_bind_reused,"early_discarded":stats.early_discarded,
             "execution_failures":stats.execution_failures,"last_error":stats.last_error,
             "execution_backend":"aoem_semantic_v2_cpu_callbacks",
             "business_gpu_active":false,"business_proof_required":false,"business_proof_verified":false,
-            "mempool_gossip":false,"pending_survives_restart":false,
+            "mempool_gossip":true,"gossip_delivery":"best_effort_not_durable",
+            "transaction_gossip":self.node.controller.transactions_stats(),
+            "gossip_verified_inputs":self.gossip_verified,"gossip_rejected_inputs":self.gossip_rejected,
+            "authentication_cache_hits":self.authentication_cache_hits,
+            "pending_survives_restart":false,
             "receipt_query_scope":"recent 65536 entries, rebuilt from durable archive"})
     }
 
@@ -478,6 +698,50 @@ impl RpcLifecycle {
             Err(err) => error(id, &err.to_string()),
         }
     }
+}
+
+/// Exclude a proposed prefix using only exact already-verified pool bytes.
+/// The canonical transaction hash deliberately omits the signature; hash
+/// equality alone is NOT authentication. Unknown/altered/gapped input makes
+/// lookahead unavailable, never changes finalized nonce or removes pending.
+fn pending_body_prefix(
+    body: &Message,
+    pending: &BTreeMap<Hash, Pending>,
+    nonces: &BTreeMap<Hash, u64>,
+) -> Result<Option<BTreeMap<Hash, u64>>> {
+    let Message::Body {
+        raw_transactions, ..
+    } = body
+    else {
+        return Ok(None);
+    };
+    pending_raw_prefix(raw_transactions, pending, nonces)
+}
+
+fn pending_raw_prefix(
+    raw_transactions: &[Vec<u8>],
+    pending: &BTreeMap<Hash, Pending>,
+    nonces: &BTreeMap<Hash, u64>,
+) -> Result<Option<BTreeMap<Hash, u64>>> {
+    let mut next = BTreeMap::new();
+    for raw in raw_transactions {
+        let decoded = match decode_transfer_v3(raw, 1024) {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+        let hash = canonical_tx_hash(&decoded)?;
+        let Some(entry) = pending.get(&hash).filter(|entry| entry.raw == *raw) else {
+            return Ok(None);
+        };
+        let expected = next
+            .entry(entry.signer)
+            .or_insert_with(|| nonces.get(&entry.signer).copied().unwrap_or(0));
+        if *expected != entry.nonce {
+            return Ok(None);
+        }
+        *expected = expected.checked_add(1).context("hint nonce overflow")?;
+    }
+    Ok(Some(next))
 }
 
 fn select_pending_batch(
@@ -582,7 +846,20 @@ pub fn run(path: &Path, mode: StartMode, run_for: Option<Duration>) -> Result<()
             if run_for.is_some_and(|limit| started.elapsed() >= limit) {
                 break;
             }
-            std::thread::sleep(Duration::from_millis(1));
+            // Do not park between chunks of already-received signature work.
+            // Each chunk still returns here through controller and HTTP polling.
+            // Mere outbound backpressure is NOT work and must not cause a spin.
+            if lifecycle.projection_error.is_some()
+                || (lifecycle.incoming.is_none()
+                    && lifecycle
+                        .node
+                        .controller
+                        .transactions_stats()
+                        .inbound_pending
+                        == 0)
+            {
+                std::thread::sleep(Duration::from_millis(1));
+            }
         }
         Ok(())
     })();
@@ -627,6 +904,75 @@ pub fn run_from_env() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn early_selection_uses_exact_verified_bytes_and_never_mutates_parent_nonces() {
+        let raws: Vec<_> = (0..3)
+            .map(|n| super::super::tests::signed_raw(19, n))
+            .collect();
+        let mut pending = BTreeMap::new();
+        let mut order = VecDeque::new();
+        for raw in &raws {
+            let checked = authenticate_transfer_v3(raw, 71, 1024).unwrap();
+            order.push_back(checked.tx_hash());
+            pending.insert(
+                checked.tx_hash(),
+                Pending {
+                    raw: raw.clone(),
+                    signer: checked.nonce_identity(),
+                    nonce: checked.transfer().nonce,
+                },
+            );
+        }
+        let signer = authenticate_transfer_v3(&raws[0], 71, 1024)
+            .unwrap()
+            .nonce_identity();
+        let nonces = BTreeMap::from([(signer, 0)]);
+        let prefix = pending_raw_prefix(&raws[..2], &pending, &nonces)
+            .unwrap()
+            .unwrap();
+        assert_eq!(prefix[&signer], 2);
+        assert_eq!(
+            select_pending_batch(&order, &pending, &nonces, prefix, 1024),
+            vec![raws[2].clone()]
+        );
+        assert_eq!(nonces[&signer], 0);
+        assert_eq!(pending.len(), 3);
+        assert!(pending_raw_prefix(&raws[1..], &pending, &nonces)
+            .unwrap()
+            .is_none());
+        assert!(
+            pending_raw_prefix(&[raws[0].clone(), raws[0].clone()], &pending, &nonces)
+                .unwrap()
+                .is_none()
+        );
+        let mut tampered = raws[0].clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        let canonical =
+            |raw: &[u8]| canonical_tx_hash(&decode_transfer_v3(raw, 1024).unwrap()).unwrap();
+        assert_eq!(
+            canonical(&tampered),
+            canonical(&raws[0]),
+            "canonical ID omits signature"
+        );
+        assert!(pending_raw_prefix(&[tampered], &pending, &nonces)
+            .unwrap()
+            .is_none());
+        let unknown = super::super::tests::signed_raw(20, 0);
+        assert!(pending_raw_prefix(&[unknown], &pending, &nonces)
+            .unwrap()
+            .is_none());
+        let advanced = BTreeMap::from([(signer, 1)]);
+        assert!(pending_raw_prefix(&raws[..1], &pending, &advanced)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            pending_raw_prefix(&raws[1..], &pending, &advanced)
+                .unwrap()
+                .unwrap()[&signer],
+            3
+        );
+    }
 
     fn pending_fixture(
         count: usize,

@@ -1,0 +1,497 @@
+{
+  "schema": "novovm/resident-rpc-ingress-comparison/v1",
+  "date": "2026-10-04",
+  "baseline_commit": "d431a74bef8bee628202c35c3f9ae52533253fb8",
+  "implementation": "baseline plus source changes in the commit containing this report; original crates product",
+  "old_binary_sha256": "1D3BA5D3BCEF4A7C67F80198D815047790755BD7C84297DA24E75BAAF84C364A",
+  "new_binary_sha256": "9F76FF9874F2CD60EA01F1EE27DBFF41C2FD2F437EC6D498D862C733A3E3103A",
+  "new_test_binary_sha256": "58EE183C92C7110139B10BBD7BF79230ABFC70828D1CA897430C191A23F76BB8",
+  "aoem_sha256": "4DE9C21853B4BEBF1527F2B7D8461A3F393FCF83263E040408A0F7745B0ED463",
+  "environment": {
+    "os": "Windows x86_64",
+    "rust": "1.94.0",
+    "build": "release",
+    "cpu": "Intel Core Ultra 9 275HX",
+    "logical_processors": 24,
+    "validators": 4,
+    "independent_databases": 4,
+    "transport": "same-host WSS/E2E",
+    "legacy_host_execution": false,
+    "other_task_builds_or_tests_during_timed_window": false
+  },
+  "workload": {
+    "transactions_per_run": 65536,
+    "senders": 1024,
+    "nonces_per_sender": 64,
+    "shared_recipient": true,
+    "max_outstanding": 8192,
+    "http_batch_max": 1024,
+    "max_transactions_per_block": 1024,
+    "actual_batches_each_run": 64,
+    "actual_transactions_per_batch": 1024,
+    "qc_signatures_each_block": 3,
+    "successes_each_run": 65536,
+    "business_failures_each_run": 0,
+    "conflict_model": "distinct payers per batch; ordered nonce dependency across batches; shared credit-only recipient and ordered fee settlement"
+  },
+  "timing": {
+    "start": "first signed raw transaction HTTP dispatch",
+    "end": "all 65536 unique successful transactions have identical finalized receipt responses on all four nodes",
+    "included": [
+      "HTTP and observation/retries",
+      "strict authentication",
+      "AOEM execution",
+      "network and round BFT",
+      "four independent durable stores"
+    ],
+    "excluded": [
+      "wallet signing",
+      "process startup and genesis",
+      "post-window full economic oracle and cold restart"
+    ],
+    "latency": "per transaction first dispatch to slowest four-node finalized receipt HTTP response, nearest-rank; includes client observation"
+  },
+  "order": [
+    "before-fanout-1.json",
+    "after-fanout-1.json",
+    "before-fanout-2.json",
+    "after-fanout-2.json",
+    "single-ingress-1.json",
+    "single-ingress-2.json"
+  ],
+  "aggregate": {
+    "method": "sum successful transactions / sum elapsed seconds",
+    "before_fanout_tps": 4464.651430902867,
+    "after_fanout_tps": 6732.087845035424,
+    "fanout_change_percent": 50.786415226911075,
+    "single_ingress_tps": 6381.727319822539,
+    "single_ingress_is_not_same_http_work_as_fanout": true
+  },
+  "verification": {
+    "all_six_load_runs_passed": true,
+    "all_transactions_cold_receipts_checked_on_all_four": true,
+    "full_state_root_equals_economic_oracle": true,
+    "complete_1024_nonce_set_equals_64": true,
+    "shared_recipient_balance": 65536,
+    "fees_per_run": 2949120,
+    "all_runs_same_final_head_and_economic_roots": true,
+    "permanent_rejections": 0,
+    "unresolved_submitted": 0,
+    "transport_errors": 0,
+    "execution_failures": 0,
+    "observed_gossip_drops_or_expirations": 0,
+    "protected_drafts_checked": 49,
+    "protected_drafts_changed": 0
+  },
+  "tests": {
+    "release_native_pipeline_default": {
+      "passed": 328,
+      "failed": 0,
+      "ignored": 50
+    },
+    "explicit_real_aoem_pipeline": {
+      "passed": 43,
+      "failed": 0,
+      "excluded": "three controller throughput loads, three actual RPC tests run separately, large >8MiB state fixture"
+    },
+    "original_http": {
+      "passed": 13,
+      "failed": 0
+    },
+    "actual_rpc_functional": {
+      "process_exit_code": 0,
+      "success": 7,
+      "business_failure": 1,
+      "pending_same_hash_bad_signature_rejected": true,
+      "two_of_four_cannot_finalize": true,
+      "three_of_four_progress": true,
+      "cold_restart": true
+    },
+    "actual_rpc_single_ingress_functional": {
+      "process_exit_code": 0,
+      "passed": true,
+      "ingress": 0,
+      "initial_proposer": 1,
+      "success": 7,
+      "business_failure": 1,
+      "invalid_signature_and_stale_nonce_not_enqueued": true,
+      "cold_restart_and_continuation": true
+    },
+    "cargo_fmt": "PASS",
+    "cargo_clippy_workspace_all_targets": "PASS",
+    "restored_assembly_boundary": "PASS",
+    "complete_original_node_test_suite": "NOT CLAIMED; prior known failures remain recorded"
+  },
+  "interpretation": [
+    "Product RPC and early-body reuse use the same resident node/exec/AOEM, consensus journal and duplex core.",
+    "Only exact pending raw bytes reuse authentication; canonical hash alone cannot bypass changed signature.",
+    "Projection lag no longer rejects signature-checked memory admission; exact published parent remains mandatory before selection.",
+    "Early bind reuse totals are not before-parent completion totals: new fanout 131/108 versus 2/1; single ingress 146/162 versus 1/1.",
+    "Aggregate benefit covers combined scheduling, admission, lookahead and propagation; no single-change causal attribution is proven.",
+    "last_error retains parent/context/archive-request rejections. Archive rejection already appears in historical d431a74b binary evidence. Passing recovery does not mean zero diagnostics.",
+    "AOEM sibling, legacy and preserved runtime drafts unchanged."
+  ],
+  "limitations": [
+    "Two rounds per group on one Windows host, not stable mainnet capacity or four-machine validation.",
+    "Single ingress is best effort/non-durable; received and TransactionsTaken are not execution, durable admission or finality.",
+    "Offline peer or lost Taken can occupy finite global outbox slots until TTL; fault-condition throughput remains open.",
+    "Transport tags 9/10 require peer upgrades; no automatic negotiation. Original tags 1-8 and consensus signed domains unchanged.",
+    "V3 wallet signatures retain chain_id domain; transport genesis pins do not provide wallet cross-genesis protection.",
+    "Strict first-admission authentication remains on RPC control thread; before-parent overlap is limited in this workload.",
+    "Backend aoem_semantic_v2_cpu_callbacks; business GPU, automatic full same-candidate proof and A/A/B on actual product processes remain open.",
+    "Experimental native-resident-v1 is not deployment authorization; other product capabilities preserved, not all integrated here.",
+    "Pending pool is non-durable; recent receipt query scope 65536. Old data, signing logs, drafts and evidence retained."
+  ],
+  "reports": [
+    {
+      "file": "before-fanout-1.json",
+      "source": "artifacts/audit/resident-rpc-load/8352-1791056055680021700/result.json",
+      "sha256": "3588FBD583D64796E9752A1E6AD6855D98C7C87A80830E7E02ECE76FF2838BFD",
+      "passed": true,
+      "successful_tps": 4200.725396870673,
+      "elapsed_seconds": 15.601115,
+      "latency_us": {
+        "p95": 2958796,
+        "p99": 2973627,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 317440,
+        "admission_error_responses": 55296,
+        "retryable_admission_responses": 55296,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 55296,
+        "transport_errors": 0,
+        "observation_requests": 262144,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 88,
+        "observation_rounds": 64,
+        "deadline_expirations": 0
+      },
+      "early_reused": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "early_before_parent": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "file": "after-fanout-1.json",
+      "source": "artifacts/audit/resident-rpc-load/11724-1791057675017019000/result.json",
+      "sha256": "E33FC503A0FB9E1731FE2C6FCC76E68839072B9A24B811E479445D998966CFDE",
+      "passed": true,
+      "successful_tps": 6741.703644229468,
+      "elapsed_seconds": 9.720985,
+      "latency_us": {
+        "p95": 1240330,
+        "p99": 1276609,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 262144,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 262144,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 64,
+        "deadline_expirations": 0
+      },
+      "early_reused": [
+        33,
+        33,
+        32,
+        33
+      ],
+      "early_before_parent": [
+        1,
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "file": "before-fanout-2.json",
+      "source": "artifacts/audit/resident-rpc-load/11604-1791057727449246900/result.json",
+      "sha256": "084CB1E4967DF337C2AF59A1DD2FF95FAF6C39F289EA03641241F3B5C4358981",
+      "passed": true,
+      "successful_tps": 4763.9650704592295,
+      "elapsed_seconds": 13.756608,
+      "latency_us": {
+        "p95": 1730105,
+        "p99": 1748826,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 307200,
+        "admission_error_responses": 45056,
+        "retryable_admission_responses": 45056,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 45056,
+        "transport_errors": 0,
+        "observation_requests": 263168,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 85,
+        "observation_rounds": 65,
+        "deadline_expirations": 0
+      },
+      "early_reused": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "early_before_parent": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "file": "after-fanout-2.json",
+      "source": "artifacts/audit/resident-rpc-load/6732-1791057781520748400/result.json",
+      "sha256": "BE798503F321E5A05117CC6EFFFF81ACA18BEF15E1834909F3F6E0C6FD4AC0A7",
+      "passed": true,
+      "successful_tps": 6722.499437107611,
+      "elapsed_seconds": 9.748755,
+      "latency_us": {
+        "p95": 1282213,
+        "p99": 1297113,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 262144,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 262144,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 64,
+        "deadline_expirations": 0
+      },
+      "early_reused": [
+        27,
+        27,
+        27,
+        27
+      ],
+      "early_before_parent": [
+        0,
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "file": "single-ingress-1.json",
+      "source": "artifacts/audit/resident-rpc-load/25440-1791057828976859900/result.json",
+      "sha256": "F0EA6C86489F70E602E4B293BEBD9AEF2CFEB596FAB5477107C2802C544EE262",
+      "passed": true,
+      "successful_tps": 6676.65543329442,
+      "elapsed_seconds": 9.815693,
+      "latency_us": {
+        "p95": 1421735,
+        "p99": 1459562,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 351232,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 88,
+        "deadline_expirations": 0
+      },
+      "early_reused": [
+        35,
+        37,
+        37,
+        37
+      ],
+      "early_before_parent": [
+        0,
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "file": "single-ingress-2.json",
+      "source": "artifacts/audit/resident-rpc-load/27060-1791057877509792700/result.json",
+      "sha256": "4DA4D5268FC0238CF5B580E912E6828523FA808819969357A43FFA518F1B9439",
+      "passed": true,
+      "successful_tps": 6111.752673961739,
+      "elapsed_seconds": 10.722947,
+      "latency_us": {
+        "p95": 1469146,
+        "p99": 1498623,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 393216,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 101,
+        "deadline_expirations": 0
+      },
+      "early_reused": [
+        42,
+        40,
+        41,
+        39
+      ],
+      "early_before_parent": [
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "file": "product-rpc-functional.json",
+      "source": "target/resident-rpc-tests/2020-1791057673449538600/result.json",
+      "sha256": "CBE889FD0B19AAA70325F482A40C57558E42A90A1F88955A75FE7233C7F6F716",
+      "passed": null,
+      "successful_tps": null,
+      "elapsed_seconds": null,
+      "latency_us": null,
+      "counts": null,
+      "early_reused": [
+        null
+      ],
+      "early_before_parent": [
+        null
+      ]
+    },
+    {
+      "file": "single-ingress-functional.json",
+      "source": "target/resident-rpc-single-ingress-tests/7236-1791057656671059400/result.json",
+      "sha256": "C4B1CE79BF9F9CE030AB9F8CD4582717ABCC5B23CFD3140789095AE80C0F4B98",
+      "passed": true,
+      "successful_tps": null,
+      "elapsed_seconds": null,
+      "latency_us": null,
+      "counts": null,
+      "early_reused": [
+        null
+      ],
+      "early_before_parent": [
+        null
+      ]
+    }
+  ],
+  "changed_rust_sources_sha256": [
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/channel.rs",
+      "sha256": "ED434B51A6BC8DA5013953FA97A5905B7AA9ABCE668874AD35F50A3B5930E3C2"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/channel/early_tests.rs",
+      "sha256": "7923F73169359EBF90760034A8564F35A50866B456FB7C543FB4A7114BE004D3"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/channel/tests.rs",
+      "sha256": "CD6F68CC5A20482C4FB936AAC8CF74BB6E83A4ABA24F8DFA2CDAB86A7A1A3EA9"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/controller_integration.rs",
+      "sha256": "0A1007FFE4F91BF87328FEE9CE0AF01316FC61C253CFA24569C76F46AF5705E4"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/controller.rs",
+      "sha256": "5DFB158F81B182A1B221BE8F1FBEAB45E0D00468C6E52D7E65781915CB6C9012"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/controller/rpc_ingress.rs",
+      "sha256": "E3D1AA64B55BCAF95A08F868ECDE4913A72595DCAE1EA3BCB442AF16A1925003"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/controller/rpc_ingress/tests.rs",
+      "sha256": "109082178CF279E381BB65D9C125D9D636DE7FF851C46B5D6D2368C10F25B3A9"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/controller/successor/tests.rs",
+      "sha256": "7435B80F03547490775FF72793EC7093610AB09E5958FBA7BCD3674BEC8BF8C6"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/controller/tests.rs",
+      "sha256": "8710D7E3DC13A18A7B2077974B1043BBCB592E1DC1E60EE532FDB758FE7830DA"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/resident_rpc_process.rs",
+      "sha256": "26EC046A5365CDC4100260ACF0E33DE88CFF605D58A12609EC37E63B309364D1"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/resident_rpc_process/load.rs",
+      "sha256": "1B17B72E3FFCC745C7CCA57367238232A818589BAAEEDC5111BD1D54ED319934"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/transport.rs",
+      "sha256": "808BCC4ECBF9258A7665D44686A0493A85949261DF373928AD4F574C886B61B7"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/transport/early_tests.rs",
+      "sha256": "90D8D938606DBBBA40317E4434695BBF5C7DCD3237F4BC59FD230835D4F3B52E"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/transport/transactions.rs",
+      "sha256": "2EA35A1746023718C07D7242FD82BB7695D5A52C8E1823E20E6F629C430AFD01"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service.rs",
+      "sha256": "67DE6F8E0B2185BCFC43E3382F764F36743C1D3BF6A49840B856B47816617F85"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc.rs",
+      "sha256": "E69279552478A503FCF45EF0B70DDA84DD638594965D89669EFA17552AE69C6D"
+    }
+  ],
+  "reproduction": {
+    "build": "CARGO_TARGET_DIR=target; cargo build -p novovm-node --bin novovm-node --release --locked --offline; cargo test -p novovm-node --lib --release --no-run --locked --offline",
+    "environment": [
+      "NOVOVM_AOEM_TEST_LIBRARY=<repo>/aoem/windows/core/bin/aoem_ffi.dll",
+      "NOVOVM_RESIDENT_NODE_BINARY=<repo>/target/release/novovm-node.exe",
+      "NOVOVM_RESIDENT_RPC_LOAD_MODE=fanout|single_ingress",
+      "NOVOVM_RESIDENT_RPC_LOAD_INGRESS_NODE=0 (single_ingress only)",
+      "NOVOVM_RESIDENT_RPC_REQUIRE_EARLY_REUSE=1 (new binary only)"
+    ],
+    "test": "actual_product_rpc_65536_signed_transfers_finality_and_cold_economics --ignored --nocapture --test-threads=1",
+    "baseline": "frozen target/resident-rpc-d431a74b-baseline binaries, original harness, identical native library"
+  }
+}

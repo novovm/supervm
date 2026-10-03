@@ -21,6 +21,8 @@ const CONTEXT_BYTES: usize = 308;
 
 mod early;
 pub use early::{early_body_id, EarlyBodyScope};
+mod transactions;
+pub use transactions::TransactionsScope;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
@@ -60,6 +62,18 @@ pub enum Message {
         scope: EarlyBodyScope,
         announcement_id: Hash,
         context: BatchContext,
+    },
+    /// Non-authoritative input gossip. It has neither parent/leader privileges
+    /// nor a receipt. Every receiving pool must independently authenticate it.
+    Transactions {
+        scope: TransactionsScope,
+        raw_transactions: Vec<Vec<u8>>,
+    },
+    /// Flow credit only: a complete input was handed to a bounded consumer.
+    /// NOT signature validation, pool admission, durability or finality.
+    TransactionsTaken {
+        scope: TransactionsScope,
+        fragment_id: Hash,
     },
 }
 
@@ -137,6 +151,8 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::RequestDecision { .. } => 6,
         Message::EarlyBody { .. } => 7,
         Message::BindBody { .. } => 8,
+        Message::Transactions { .. } => 9,
+        Message::TransactionsTaken { .. } => 10,
     });
     match message {
         Message::Body {
@@ -190,6 +206,15 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         } => {
             early::append_bind(&mut out, scope, announcement_id, context, limits)?;
         }
+        Message::Transactions {
+            scope,
+            raw_transactions,
+        } => {
+            transactions::append(&mut out, scope, raw_transactions, limits)?;
+        }
+        Message::TransactionsTaken { scope, fragment_id } => {
+            transactions::append_taken(&mut out, scope, fragment_id)?;
+        }
     }
     ensure!(
         out.len() <= limits.message_bytes,
@@ -200,15 +225,22 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
 
 /// Allocation-free lane classification for the ingress owner's reservation.
 /// This checks only the wire prefix; it grants no decode or signing authority.
+#[cfg(test)]
 pub(crate) fn body_prefix(bytes: &[u8]) -> Result<bool> {
+    Ok(message_lane(bytes)? == 1)
+}
+
+/// Separate raw input from both consensus control and candidate body queues.
+pub(crate) fn message_lane(bytes: &[u8]) -> Result<usize> {
     ensure!(bytes.len() >= PREFIX_BYTES, "truncated host network prefix");
     ensure!(
         &bytes[..8] == MAGIC && bytes[8..10] == 1u16.to_be_bytes(),
         "host network protocol/version mismatch"
     );
     match bytes[10] {
-        1 | 7 => Ok(true),
-        2..=6 | 8 => Ok(false),
+        1 | 7 => Ok(1),
+        2..=6 | 8 | 10 => Ok(0),
+        9 => Ok(2),
         _ => anyhow::bail!("unknown host network message kind"),
     }
 }
@@ -292,6 +324,8 @@ pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
         }
         7 => early::decode_body(&mut reader, limits)?,
         8 => early::decode_bind(&mut reader)?,
+        9 => transactions::decode(&mut reader, limits)?,
+        10 => transactions::decode_taken(&mut reader)?,
         _ => anyhow::bail!("unknown host network message kind"),
     };
     ensure!(

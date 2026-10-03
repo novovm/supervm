@@ -13,6 +13,9 @@ mod successor;
 use successor::Successor;
 mod early_body;
 use early_body::{EarlyOrigin, EarlyWork};
+mod rpc_ingress;
+use rpc_ingress::Transactions;
+pub use rpc_ingress::{ReceivedTransactions, TransactionsStats};
 
 use super::channel::{
     ChannelEvent, HostChannel, Outbound, PrepareAdmission, PrepareInput, PrepareRequest,
@@ -341,6 +344,7 @@ pub struct Controller {
     request_due: Option<Instant>,
     now: Option<Instant>,
     stats: ControllerStats,
+    transactions: Transactions,
     recovery: Option<Recovery>,
     recovery_failure: Option<String>,
     #[cfg(test)]
@@ -376,6 +380,11 @@ impl Controller {
             config.collector,
         )?;
         let pacemaker = Pacemaker::new(config.timeouts)?;
+        let transactions = Transactions::new(&channel, config.peers.values().cloned().collect());
+        ensure!(
+            transactions.has_peer_capacity(),
+            "input gossip controller budget lacks per-peer slots"
+        );
         let replay = journal.take_replay_records();
         let last = if replay.is_empty() {
             journal.last_durable_message().cloned()
@@ -412,6 +421,7 @@ impl Controller {
             request_due: None,
             now: None,
             stats: ControllerStats::default(),
+            transactions,
             recovery: None,
             recovery_failure: None,
             #[cfg(test)]
@@ -473,6 +483,61 @@ impl Controller {
             body.candidate.as_ref().and_then(|(value, _)| {
                 (*value == block_hash).then(|| body.prepared.message().clone())
             })
+        })
+    }
+    /// Non-authoritative selection hint for one-body lookahead. The body has
+    /// the current parent/business pins and comes from the scheduled proposer,
+    /// but may not have executed yet. It cannot authorize nonce/state changes,
+    /// a parent binding, or a vote. A losing/invalid hint simply forces normal
+    /// current-height execution after the early work is retired.
+    pub fn current_body_hint(&self) -> Result<Option<Arc<Message>>> {
+        if self.is_recovering() {
+            return Ok(None);
+        }
+        let leader = self
+            .config
+            .validators
+            .leader(self.context().height, self.round())?;
+        let source = if leader == self.config.local_validator {
+            self.local_peer.as_str()
+        } else {
+            let Some(peer) = self.peer_for(&leader) else {
+                return Ok(None);
+            };
+            peer
+        };
+        let offered = self
+            .offers
+            .values()
+            .find(|offer| {
+                offer.proposal.proposal().context == self.context()
+                    && offer.proposal.proposal().round == self.round()
+                    && offer.decision.is_none()
+            })
+            .map(|offer| offer.body_id);
+        let mut eligible = self.bodies.iter().filter_map(|(id, body)| {
+            let current_round = if leader == self.config.local_validator {
+                body.local_round == Some(self.round())
+            } else {
+                offered == Some(*id)
+            };
+            match body.prepared.message().as_ref() {
+                Message::Body { context, .. }
+                    if current_round
+                        && !body.failed
+                        && body.source == source
+                        && self.matches_context(context) =>
+                {
+                    Some(body.prepared.message().clone())
+                }
+                _ => None,
+            }
+        });
+        let first = eligible.next();
+        Ok(if eligible.next().is_none() {
+            first
+        } else {
+            None
         })
     }
     pub fn is_local_leader(&self) -> Result<bool> {
@@ -622,6 +687,7 @@ impl Controller {
         }
         self.flush_preparations()?;
         self.flush_sends(now)?;
+        self.poll_transactions(now)?;
         self.flush_retired()?;
         self.stats.prevote_weight = self.collector.phase_weight(self.round(), Phase::Prevote);
         self.stats.precommit_weight = self.collector.phase_weight(self.round(), Phase::Precommit);
@@ -686,6 +752,9 @@ impl Controller {
     }
 
     fn prepared(&mut self, token: u64, result: std::result::Result<Ready, String>) -> Result<()> {
+        if self.transactions_prepared(token) {
+            return self.finish_transactions_prepared(token, result);
+        }
         let Some(pending) = self.preparing.remove(&token) else {
             self.stats.rejected_messages += 1;
             if let Ok(ready) = result {
@@ -812,6 +881,14 @@ impl Controller {
             self.retire(Retirement::Ready(ready));
             return Ok(());
         }
+        if matches!(ready.message.as_ref(), Message::Transactions { .. }) {
+            return self.receive_transactions(source, ready);
+        }
+        if matches!(ready.message.as_ref(), Message::TransactionsTaken { .. }) {
+            self.receive_transactions_taken(&source, &ready)?;
+            self.retire(Retirement::Ready(ready));
+            return Ok(());
+        }
         if matches!(ready.message.as_ref(), Message::EarlyBody { .. }) {
             return self.keep_early(source, ready, None);
         }
@@ -836,6 +913,8 @@ impl Controller {
         match ready.message.as_ref() {
             Message::Body { .. } => unreachable!("body routed separately"),
             Message::EarlyBody { .. } => unreachable!("early body routed separately"),
+            Message::Transactions { .. } => unreachable!("input gossip routed separately"),
+            Message::TransactionsTaken { .. } => unreachable!("input credit routed separately"),
             Message::BindBody {
                 scope,
                 announcement_id,

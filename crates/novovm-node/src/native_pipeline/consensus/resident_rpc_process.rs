@@ -1,6 +1,6 @@
 //! Actual product executable and HTTP RPC, not the controller test worker.
-//! This fresh loopback fixture explicitly fans out identical signed inputs;
-//! it does not claim mempool gossip, production activation, TPS or four machines.
+//! Fresh loopback fixtures distinguish explicit client fanout from one fixed
+//! HTTP ingress. Neither claims production activation, TPS or four machines.
 //! The parent never manufactures a proposal, vote, QC or publication permission.
 
 #[path = "resident_rpc_process/load.rs"]
@@ -476,6 +476,57 @@ fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()>
         directory.join("two-of-four-no-head.json"),
         serde_json::to_vec_pretty(&minority)?,
     )?;
+    // The canonical hash deliberately excludes signature bytes. A pending
+    // lookup/cache hit must therefore require identical raw bytes, never just
+    // this hash; exercise it while 2/4 cannot finalize the legitimate input.
+    let mut pending_bad_signature = first[0].clone();
+    *pending_bad_signature.last_mut().unwrap() ^= 1;
+    ensure!(
+        authenticate_transfer_v3(&pending_bad_signature, CHAIN, 1024).is_err(),
+        "pending negative signature fixture became valid"
+    );
+    let pending_bad_hash = {
+        use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v3};
+        hex(&canonical_tx_hash(&decode_transfer_v3(
+            &pending_bad_signature,
+            1024,
+        )?)?)
+    };
+    ensure!(
+        pending_bad_hash == all_hashes[0],
+        "negative fixture must collide only at canonical hash"
+    );
+    let mut pending_signature_rejections = Vec::new();
+    for (position, index) in order[..2].iter().enumerate() {
+        let before = nodes.rpc(*index, "nov_getTransactionStatus", json!([all_hashes[0]]))?;
+        ensure!(
+            before["state"] == "received" && before["finalized"] == false,
+            "signature-cache counterexample must exercise actual pending input"
+        );
+        let rejected = nodes.request(
+            *index,
+            json!({"jsonrpc":"2.0","id":7,
+            "method":"nov_sendRawTransaction","params":[hex(&pending_bad_signature)]}),
+        )?;
+        ensure!(
+            rejected.get("error").is_some(),
+            "same-hash altered signature bypassed pending authentication"
+        );
+        let after = nodes.rpc(*index, "nov_getTransactionStatus", json!([all_hashes[0]]))?;
+        let status = nodes.rpc(*index, "nov_chainStatus", json!([]))?;
+        ensure!(
+            after == before
+                && status["head"].is_null()
+                && status["pending"] == minority[position]["pending"],
+            "rejected same-hash signature changed valid pending state"
+        );
+        pending_signature_rejections.push(json!({"node":index,"canonical_hash":pending_bad_hash,
+            "response":rejected,"pending_before":before,"pending_after":after,"status":status}));
+    }
+    fs::write(
+        directory.join("pending-same-hash-bad-signature.json"),
+        serde_json::to_vec_pretty(&pending_signature_rejections)?,
+    )?;
     nodes.start(order[2], "create")?;
     nodes.wait_ready(&order[2..3])?;
     nodes.submit_batch(order[2], &first)?;
@@ -483,7 +534,13 @@ fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()>
     nodes.start(order[3], "create")?;
     nodes.wait_ready(&order[3..])?;
     nodes.submit_batch(order[3], &first)?;
-    nodes.wait_receipts(&order, &all_hashes)?;
+    let first_receipts = nodes.wait_receipts(&order, &all_hashes)?;
+    ensure!(
+        first_receipts[0]
+            .iter()
+            .all(|receipt| receipt["success"] == true && receipt["nonce_after"] == 1),
+        "rejected colliding signature harmed the original transfers"
+    );
 
     // Bad signature cannot reserve a nonce or enter execution.
     let mut bad = signed(1, 1, 100)?;
@@ -551,7 +608,7 @@ fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()>
             .all(|status| status["head"] == statuses[0]["head"]
                 && status["head"]["height"] == 3
                 && status["head"]["state_version"] == 6
-                && status["mempool_gossip"] == false
+                && status["mempool_gossip"] == true
                 && status["pending_survives_restart"] == false),
         "three-height head/profile differs"
     );
@@ -601,9 +658,10 @@ fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()>
         "product_binary_sha256":hex(&Sha256::digest(fs::read(&nodes.binary)?)),
         "aoem_sha256":hex(&Sha256::digest(fs::read(library()?)?)),
         "topology":"one host; four real novovm-node executables; HTTP RPC and WSS/E2E relay",
-        "input_distribution":"explicit identical signed RPC fanout, not mempool gossip",
+        "input_distribution":"explicit identical signed RPC fanout; does not independently prove single-ingress propagation",
         "legacy_host_permission":false,"live_pids":live_pids,"restarted_pids":cold_pids,
         "two_of_four_no_head":minority,"admission":admitted,"bad_signature_response":rejected,
+        "pending_same_hash_bad_signature":pending_signature_rejections,
         "nonce_replay_response":replay,"unique_finalized_transactions":8,"successful_transactions":7,
         "business_failed_transactions":1,"cold_receipts_equal":true,"receipts":final_receipts[0],
         "balances_before_restart":balances_before,"balances_after_restart":balances_reopened,
@@ -616,4 +674,285 @@ fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()>
     relay.shutdown()?;
     eprintln!("actual product RPC: 8 unique finalized (7 success, 1 business failure), 2/4 no head, four-height continuation and four-process cold restart PASS; {}", directory.display());
     Ok(())
+}
+
+// A rejected local request must not mint a propagation enqueue. This observes
+// the ingress controller's actual enqueue counter, not merely absence from a
+// peer's recent query index. Peers and the authoritative head are also checked.
+fn reject_without_broadcast(nodes: &mut ProductNodes, ingress: usize, raw: &[u8]) -> Result<Value> {
+    use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v3};
+    let indices = [0, 1, 2, 3];
+    let before = nodes.wait_ready(&indices)?;
+    ensure!(
+        before.iter().all(|status| status["pending"] == 0),
+        "negative fixture requires empty pools"
+    );
+    let hash = hex(&canonical_tx_hash(&decode_transfer_v3(raw, 1024)?)?);
+    let response = nodes.request(
+        ingress,
+        json!({"jsonrpc":"2.0","id":1,
+        "method":"nov_sendRawTransaction","params":[hex(raw)]}),
+    )?;
+    ensure!(
+        response.get("error").is_some(),
+        "negative signed input was accepted"
+    );
+    let after = nodes.wait_ready(&indices)?;
+    let queued = |status: &Value| -> Result<u64> {
+        status["transaction_gossip"]["outbound_batches_accepted"]
+            .as_u64()
+            .context("real transaction propagation enqueue counter missing")
+    };
+    ensure!(
+        queued(&before[ingress])? == queued(&after[ingress])?,
+        "rejected input was authorized for propagation"
+    );
+    ensure!(
+        after
+            .iter()
+            .zip(&before)
+            .all(|(after, before)| after["pending"] == 0 && after["head"] == before["head"]),
+        "rejected input changed pending or the finalized head"
+    );
+    let lookups = indices
+        .iter()
+        .map(|&node| nodes.rpc(node, "nov_getTransactionStatus", json!([hash])))
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        lookups
+            .iter()
+            .all(|status| status["state"] == "not_in_recent_index" && status["finalized"] == false),
+        "rejected input appeared on a node"
+    );
+    Ok(
+        json!({"hash":hash,"response":response,"before":before,"after":after,
+        "lookups":lookups,"ingress_enqueue_unchanged":true}),
+    )
+}
+
+#[test]
+#[ignore = "requires actual NOVOVM_RESIDENT_NODE_BINARY and real AOEM; one HTTP ingress, four real product nodes and cold restart; run alone"]
+fn actual_product_rpc_single_ingress_gossip_failures_and_restart() -> Result<()> {
+    let binary = PathBuf::from(
+        std::env::var_os("NOVOVM_RESIDENT_NODE_BINARY")
+            .context("explicit NOVOVM_RESIDENT_NODE_BINARY required")?,
+    )
+    .canonicalize()?;
+    ensure!(binary.is_file(), "actual product binary missing");
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/resident-rpc-single-ingress-tests")
+        .join(format!(
+            "{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+    fs::create_dir_all(&directory)?;
+    eprintln!(
+        "single-ingress product RPC artifacts={}",
+        directory.display()
+    );
+    let mut evidence = json!({});
+    let mut phase = "startup";
+    let result = (|| -> Result<()> {
+        let mut relay = Relay::start(&directory.join("relay"))?;
+        let (mut nodes, set) = setup(&directory, &relay, binary.clone())?;
+        let leader = set.leader(1, 0)?;
+        let leader = (0..4)
+            .find(|&index| {
+                Validator::new(validator_key(index).verifying_key().to_bytes(), 1)
+                    .is_ok_and(|validator| validator.id() == leader)
+            })
+            .context("missing leader")?;
+        let indices = [0, 1, 2, 3];
+        evidence["round_zero_scheduled_proposer"] = json!(leader);
+        for &node in &indices {
+            nodes.start(node, "create")?;
+        }
+        let initial = nodes.wait_ready(&indices)?;
+        ensure!(
+            initial.iter().all(|status| status["head"].is_null()
+                && status["mempool_gossip"] == true
+                && status["pending_survives_restart"] == false),
+            "single-ingress propagation profile not active"
+        );
+        // Pick a current non-proposer from observed status, not the assumed
+        // round-zero leader: startup may already have advanced the pacemaker.
+        let ingress = initial
+            .iter()
+            .position(|status| status["local_proposer"] == false)
+            .context("no observed non-proposer ingress")?;
+        evidence["ingress_node"] = json!(ingress);
+        evidence["ingress_was_non_proposer_at_selection"] = json!(true);
+        evidence["initial_status"] = json!(initial);
+        let mut all_raw = Vec::new();
+        let mut all_hashes = Vec::new();
+        phase = "single-ingress finalized prefix";
+        let first = vec![signed(1, 0, 100)?, signed(3, 0, 50)?];
+        let admission = nodes.submit_batch(ingress, &first)?;
+        ensure!(
+            admission
+                .iter()
+                .all(|receipt| receipt["state"] == "received"
+                    && receipt["admission_durable"] == false
+                    && receipt["executed"] == false
+                    && receipt["finalized"] == false),
+            "single ingress claimed premature finality"
+        );
+        evidence["initial_admission"] = json!(admission);
+        all_hashes.extend(transaction_hashes(&first)?);
+        all_raw.extend(first);
+        nodes.wait_receipts(&indices, &all_hashes)?;
+
+        phase = "rejected signature and stale nonce cannot broadcast";
+        let mut bad = signed(1, 1, 100)?;
+        *bad.last_mut().unwrap() ^= 1;
+        ensure!(
+            authenticate_transfer_v3(&bad, CHAIN, 1024).is_err(),
+            "negative signature valid"
+        );
+        evidence["bad_signature"] = reject_without_broadcast(&mut nodes, ingress, &bad)?;
+        let conflict = signed(1, 0, 101)?;
+        ensure!(
+            authenticate_transfer_v3(&conflict, CHAIN, 1024).is_ok(),
+            "nonce negative must have valid signature"
+        );
+        evidence["stale_nonce"] = reject_without_broadcast(&mut nodes, ingress, &conflict)?;
+
+        phase = "business failure, fees and nonce continuation";
+        for (nonce, amount) in [(1, 2_000_000), (2, 100)] {
+            let raw = vec![signed(1, nonce, amount)?, signed(3, nonce, 50)?];
+            nodes.submit_batch(ingress, &raw)?;
+            all_hashes.extend(transaction_hashes(&raw)?);
+            all_raw.extend(raw);
+            nodes.wait_receipts(&indices, &all_hashes)?;
+        }
+        let before = nodes.wait_receipts(&indices, &all_hashes)?;
+        ensure!(
+            before[0].iter().filter(|r| r["success"] == true).count() == 5
+                && before[0].iter().filter(|r| r["success"] == false).count() == 1,
+            "single-ingress business failure count differs"
+        );
+        for (index, receipt) in before[0].iter().enumerate() {
+            ensure!(
+                receipt["nonce_after"].as_u64() == Some(index as u64 / 2 + 1)
+                    && receipt["charged_fee"]
+                        .as_str()
+                        .context("fee missing")?
+                        .parse::<u128>()?
+                        > 0
+                    && receipt["proof_verified"] == false
+                    && receipt["finality_kind"] == "BFT_durable",
+                "single-ingress receipt economics/finality differs"
+            );
+        }
+        let balances_before = nodes.balances(&indices, &before[0], [200, 150])?;
+        let statuses = nodes.wait_ready(&indices)?;
+        ensure!(
+            statuses.iter().all(|s| s["head"] == statuses[0]["head"]
+                && s["head"]["state_version"] == 6
+                && s["pending"] == 0),
+            "single-ingress heads differ"
+        );
+        for (node, status) in statuses.iter().enumerate() {
+            if node != ingress {
+                ensure!(
+                    status["transaction_gossip"]["inbound_batches"]
+                        .as_u64()
+                        .unwrap_or(0)
+                        > 0,
+                    "non-ingress peer received no raw propagation batches"
+                );
+            }
+        }
+        // Exact replay is served from finalized receipts, not repropagated.
+        let replay_counter =
+            statuses[ingress]["transaction_gossip"]["outbound_batches_accepted"].clone();
+        ensure!(
+            nodes.submit_batch(ingress, &all_raw)? == before[0],
+            "single-ingress replay changed receipts"
+        );
+        let replay_status = nodes.rpc(ingress, "nov_chainStatus", json!([]))?;
+        ensure!(
+            replay_status["transaction_gossip"]["outbound_batches_accepted"] == replay_counter,
+            "finalized replay re-authorized propagation"
+        );
+        evidence["before_restart_status"] = json!(statuses);
+        let live_pids: Vec<_> = nodes.processes.iter().flatten().map(Child::id).collect();
+        nodes.stop_all()?;
+        phase = "four-store cold restart";
+        for &node in &indices {
+            nodes.start(node, "existing")?;
+        }
+        let cold_status = nodes.wait_ready(&indices)?;
+        ensure!(
+            cold_status.iter().all(|s| s["head"] == statuses[0]["head"]),
+            "cold single-ingress head changed"
+        );
+        let cold_receipts = nodes.wait_receipts(&indices, &all_hashes)?;
+        ensure!(
+            cold_receipts == before,
+            "cold single-ingress receipts changed"
+        );
+        let balances_cold = nodes.balances(&indices, &cold_receipts[0], [200, 150])?;
+        ensure!(
+            balances_cold == balances_before,
+            "cold single-ingress balances/root changed"
+        );
+        let cold_pids: Vec<_> = nodes.processes.iter().flatten().map(Child::id).collect();
+        ensure!(
+            cold_pids.iter().all(|pid| !live_pids.contains(pid)),
+            "processes did not cold restart"
+        );
+        phase = "same single ingress continues after restart";
+        let final_raw = vec![signed(1, 3, 100)?, signed(3, 3, 50)?];
+        nodes.submit_batch(ingress, &final_raw)?;
+        all_hashes.extend(transaction_hashes(&final_raw)?);
+        let final_receipts = nodes.wait_receipts(&indices, &all_hashes)?;
+        ensure!(
+            final_receipts[0][..6] == before[0]
+                && final_receipts[0][6..]
+                    .iter()
+                    .all(|r| r["success"] == true && r["nonce_after"] == 4),
+            "post-restart nonce continuation differs"
+        );
+        let final_status = nodes.wait_ready(&indices)?;
+        ensure!(
+            final_status
+                .iter()
+                .all(|s| s["head"] == final_status[0]["head"]
+                    && s["head"]["state_version"] == 8
+                    && s["pending"] == 0),
+            "post-restart four heads differ"
+        );
+        let final_balances = nodes.balances(&indices, &final_receipts[0], [300, 200])?;
+        evidence["live_pids"] = json!(live_pids);
+        evidence["cold_pids"] = json!(cold_pids);
+        evidence["cold_status"] = json!(cold_status);
+        evidence["final_status"] = json!(final_status);
+        evidence["receipts"] = json!(final_receipts[0]);
+        evidence["balances_before_restart"] = json!(balances_before);
+        evidence["balances_after_restart"] = json!(balances_cold);
+        evidence["final_balances"] = json!(final_balances);
+        nodes.stop_all()?;
+        relay.shutdown()?;
+        phase = "complete";
+        Ok(())
+    })();
+    let report = json!({"schema":"novovm/resident-product-rpc-single-ingress/v1","passed":result.is_ok(),
+        "failure":result.as_ref().err().map(|e|format!("{e:#}")),"phase":phase,"evidence":evidence,
+        "product_binary":binary,"product_binary_sha256":hex(&Sha256::digest(fs::read(&binary)?)),
+        "aoem_sha256":hex(&Sha256::digest(fs::read(library()?)?)),
+        "distribution":"one fixed non-proposer HTTP ingress; peer raw transaction propagation; all four queried",
+        "expected_unique_finalized":8,"expected_successful":7,"expected_business_failed":1,
+        "legacy_host_permission":false,"pending_durable":false,"performance_measured":false,
+        "four_machine_test":false,"production_acceptance":false});
+    fs::write(
+        directory.join("result.json"),
+        serde_json::to_vec_pretty(&report)?,
+    )?;
+    eprintln!(
+        "single-ingress product RPC report={}",
+        directory.join("result.json").display()
+    );
+    result
 }

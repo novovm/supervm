@@ -316,6 +316,10 @@ fn channel(
             messages: 8.max(peers.len() * 2),
             bytes: (32 * 1024 * 1024).max(peer_reservation),
         },
+        ingress: QueueBudget {
+            messages: 8.max(peers.len() * 2),
+            bytes: (32 * 1024 * 1024).max(peer_reservation),
+        },
     };
     HostChannel::start(
         network,

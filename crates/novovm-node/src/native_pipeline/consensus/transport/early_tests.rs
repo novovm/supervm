@@ -544,7 +544,10 @@ fn legacy_encode(message: &Message) -> Vec<u8> {
                 })[..184],
             );
         }
-        Message::EarlyBody { .. } | Message::BindBody { .. } => {
+        Message::EarlyBody { .. }
+        | Message::BindBody { .. }
+        | Message::Transactions { .. }
+        | Message::TransactionsTaken { .. } => {
             panic!("new tag sent to old codec oracle")
         }
     }

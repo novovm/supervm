@@ -190,6 +190,10 @@ fn channel(fixture: &Fixture, set: Arc<ValidatorSet>) -> Result<HostChannel> {
             messages: 8,
             bytes: 32 * 1024 * 1024,
         },
+        ingress: QueueBudget {
+            messages: 8,
+            bytes: 32 * 1024 * 1024,
+        },
     };
     HostChannel::start(
         network,

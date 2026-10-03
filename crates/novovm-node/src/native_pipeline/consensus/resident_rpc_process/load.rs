@@ -1,5 +1,6 @@
 //! Real HTTP workload against the original executable. This is explicitly
-//! four-way client fanout, NOT single-ingress gossip or a controller bypass.
+//! four-way client fanout by default, or explicit single-ingress submission.
+//! Both modes require four-node finality; neither bypasses the product RPC.
 //! All signing/oracle work is outside the timed window; failures retain reports.
 use super::super::controller_workload::{ExpectedState, Workload, AMOUNT};
 use super::*;
@@ -21,6 +22,83 @@ const NONCES: u64 = 64;
 const TRANSACTIONS: usize = SENDERS * NONCES as usize;
 const WINDOW: usize = SENDERS * 8;
 const HTTP_BATCH: usize = 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SubmissionMode {
+    Fanout,
+    SingleIngress(usize),
+}
+
+impl SubmissionMode {
+    fn parse(mode: Option<&str>, ingress: Option<&str>) -> Result<Self> {
+        match mode.unwrap_or("fanout") {
+            "fanout" => {
+                ensure!(
+                    ingress.is_none(),
+                    "ingress node only applies to single_ingress"
+                );
+                Ok(Self::Fanout)
+            }
+            "single_ingress" => {
+                let node = ingress.unwrap_or("0").parse::<usize>()?;
+                ensure!(node < 4, "single ingress node must be in 0..4");
+                Ok(Self::SingleIngress(node))
+            }
+            _ => bail!("RPC load mode must be fanout or single_ingress"),
+        }
+    }
+
+    fn targets(self, node: usize) -> bool {
+        match self {
+            Self::Fanout => true,
+            Self::SingleIngress(ingress) => ingress == node,
+        }
+    }
+
+    fn indices(self, indices: std::ops::Range<usize>) -> [Vec<usize>; 4] {
+        std::array::from_fn(|node| {
+            if self.targets(node) {
+                indices.clone().collect()
+            } else {
+                Vec::new()
+            }
+        })
+    }
+
+    fn retry(self, observations: &[Observation], dispatched: usize) -> [Vec<usize>; 4] {
+        std::array::from_fn(|node| {
+            if self.targets(node) {
+                (0..dispatched)
+                    .filter(|&i| !observations[i].admitted[node])
+                    .take(HTTP_BATCH)
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        })
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Fanout => "fanout",
+            Self::SingleIngress(_) => "single_ingress",
+        }
+    }
+
+    fn entry(self) -> Option<usize> {
+        match self {
+            Self::Fanout => None,
+            Self::SingleIngress(node) => Some(node),
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::Fanout => "explicit identical signed JSON-RPC fanout to all four nodes; does not prove single-ingress propagation",
+            Self::SingleIngress(_) => "one fixed HTTP submission node; peer propagation and four-node final receipt queries; no client transaction fanout",
+        }
+    }
+}
 
 #[derive(Serialize)]
 struct Observation {
@@ -348,6 +426,7 @@ fn observe_round(
 
 fn timed_load(
     nodes: &mut ProductNodes,
+    mode: SubmissionMode,
     raw_hex: &[String],
     observations: &mut [Observation],
     counts: &mut Counts,
@@ -365,12 +444,7 @@ fn timed_load(
         }
         // Retry only unresolved node admissions. HTTP transport failure means
         // UNKNOWN, not rejection; exact signed bytes and first-submit time survive.
-        let retry: [Vec<usize>; 4] = std::array::from_fn(|node| {
-            (0..dispatched)
-                .filter(|&i| !observations[i].admitted[node])
-                .take(HTTP_BATCH)
-                .collect()
-        });
+        let retry = mode.retry(observations, dispatched);
         if retry.iter().any(|indices| !indices.is_empty()) {
             submit_round(
                 nodes,
@@ -395,7 +469,7 @@ fn timed_load(
         let credit = WINDOW - (dispatched - completed);
         if dispatched < TRANSACTIONS && credit > 0 {
             let end = (dispatched + credit.min(HTTP_BATCH)).min(TRANSACTIONS);
-            let indices = std::array::from_fn(|_| (dispatched..end).collect());
+            let indices = mode.indices(dispatched..end);
             dispatched = end;
             counts.max_outstanding = counts.max_outstanding.max(dispatched - completed);
             submit_round(
@@ -742,9 +816,49 @@ fn percentile(sorted: &[u64], percent: usize) -> Option<u64> {
     (!sorted.is_empty()).then(|| sorted[(sorted.len() * percent).div_ceil(100).saturating_sub(1)])
 }
 
+fn early_reuse_evidence(statuses: &[Value], explicitly_required: bool) -> Result<Value> {
+    let available = statuses
+        .iter()
+        .any(|status| status.get("early_bind_reused").is_some());
+    let total = if available {
+        statuses.iter().try_fold(0u64, |total, status| {
+            total
+                .checked_add(
+                    status["early_bind_reused"]
+                        .as_u64()
+                        .context("missing early reuse counter")?,
+                )
+                .context("early reuse counter overflow")
+        })?
+    } else {
+        0
+    };
+    ensure!(
+        !(available || explicitly_required) || total > 0,
+        "large product RPC workload did not reuse any early authenticated body"
+    );
+    Ok(
+        json!({"counters_available":available,"explicitly_required":explicitly_required,"total":total,
+        "legacy_binary_without_counters_skipped":!available && !explicitly_required}),
+    )
+}
+
 #[test]
-#[ignore = "real product binary/AOEM required; 65,536 signed HTTP transfers, four-node fanout and cold restart; run alone"]
+#[ignore = "real product binary/AOEM required; 65,536 signed HTTP transfers, explicit submission mode, four-node finality and cold restart; run alone"]
 fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Result<()> {
+    let mode = SubmissionMode::parse(
+        std::env::var("NOVOVM_RESIDENT_RPC_LOAD_MODE")
+            .ok()
+            .as_deref(),
+        std::env::var("NOVOVM_RESIDENT_RPC_LOAD_INGRESS_NODE")
+            .ok()
+            .as_deref(),
+    )?;
+    let require_early = match std::env::var("NOVOVM_RESIDENT_RPC_REQUIRE_EARLY_REUSE").as_deref() {
+        Err(std::env::VarError::NotPresent) | Ok("0") => false,
+        Ok("1") => true,
+        _ => bail!("NOVOVM_RESIDENT_RPC_REQUIRE_EARLY_REUSE must be 0 or 1"),
+    };
     let binary = PathBuf::from(
         std::env::var_os("NOVOVM_RESIDENT_NODE_BINARY")
             .context("explicit NOVOVM_RESIDENT_NODE_BINARY required")?,
@@ -828,6 +942,7 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
         let timing_start = Instant::now();
         let measured = timed_load(
             &mut nodes,
+            mode,
             &raw_hex,
             &mut observations,
             &mut counts,
@@ -849,11 +964,26 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
         phase = "pre-restart full receipt verification";
         verify_cold_receipts(&mut nodes, &observations)?;
         let before = nodes.wait_ready(&[0, 1, 2, 3])?;
+        // Preserve real counters even when the additional early-reuse gate fails.
+        evidence["live_status"] = json!(before);
         ensure!(
             before.iter().all(|s| s["head"] == before[0]["head"]),
             "four heads disagree"
         );
+        for (node, _) in nodes.endpoints.iter().enumerate() {
+            ensure!(
+                observations.iter().all(|observation| {
+                    if mode.targets(node) {
+                        observation.admitted[node] && observation.admission_attempts[node] > 0
+                    } else {
+                        !observation.admitted[node] && observation.admission_attempts[node] == 0
+                    }
+                }),
+                "HTTP submission escaped the selected mode"
+            );
+        }
         let head: ParentPoint = serde_json::from_value(before[0]["head"].clone())?;
+        evidence["early_body_reuse"] = early_reuse_evidence(&before, require_early)?;
         ensure!(
             head.state_version == TRANSACTIONS as u64,
             "final state version differs from transaction count"
@@ -904,10 +1034,15 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
     let report = json!({"schema":"novovm/resident-product-rpc-load/v1","passed":result.is_ok(),
         "failure":result.as_ref().err().map(|e|format!("{e:#}")),"phase":phase,"evidence":evidence,
         "topology":"one host; four actual novovm-node processes and independent AOEM stores; WSS/E2E relay",
-        "distribution":"explicit identical signed JSON-RPC fanout to all four nodes; NO mempool gossip",
+        "distribution":mode.description(),"submission_mode":mode.name(),"ingress_node":mode.entry(),
+        "http_admission_targets":(0..4).filter(|&node|mode.targets(node)).collect::<Vec<_>>(),
+        "http_admissions_by_node":(0..4).map(|node|observations.iter().filter(|o|o.admitted[node]).count()).collect::<Vec<_>>(),
         "workload":{"transactions":TRANSACTIONS,"senders":SENDERS,"nonces_per_sender":NONCES,
             "shared_recipient":true,"max_outstanding":WINDOW,"http_batch_max":HTTP_BATCH,
-            "http_concurrency":4,"per_node_http_inflight":1,"submission_mode":"credit_first_bounded_fanout_v1",
+            "http_concurrency":4,"per_node_http_inflight":1,
+            "submission_http_concurrency":if mode == SubmissionMode::Fanout {4} else {1},
+            "observation_http_concurrency":4,
+            "submission_mode":if mode == SubmissionMode::Fanout {"credit_first_bounded_fanout_v1"} else {"credit_first_bounded_single_ingress_v1"},
             "signatures_pregenerated":true,"expected_business_failures":0,"actual_block_count_is_not_assumed":true},
         "counts":counts,"unique_submitted":submitted,"unsubmitted":TRANSACTIONS-submitted,
         "unique_permanently_rejected":observations.iter().filter(|o|o.permanent_rejected.iter().any(|v|*v)).count(),
@@ -983,4 +1118,89 @@ fn load_counts_only_four_node_observation_and_uses_nearest_rank_latency() {
     assert_eq!(percentile(&(1..=100).collect::<Vec<_>>(), 95), Some(95));
     assert_eq!(percentile(&(1..=100).collect::<Vec<_>>(), 99), Some(99));
     assert_eq!(percentile(&[], 99), None);
+}
+
+#[test]
+fn load_submission_mode_defaults_to_four_node_fanout_and_rejects_ambiguous_configuration() {
+    assert_eq!(
+        SubmissionMode::parse(None, None).unwrap(),
+        SubmissionMode::Fanout
+    );
+    assert_eq!(
+        SubmissionMode::parse(Some("fanout"), None).unwrap(),
+        SubmissionMode::Fanout
+    );
+    assert_eq!(
+        SubmissionMode::Fanout.indices(7..9),
+        [vec![7, 8], vec![7, 8], vec![7, 8], vec![7, 8]]
+    );
+    assert_eq!(
+        SubmissionMode::parse(Some("single_ingress"), None).unwrap(),
+        SubmissionMode::SingleIngress(0)
+    );
+    assert_eq!(
+        SubmissionMode::parse(Some("single_ingress"), Some("3")).unwrap(),
+        SubmissionMode::SingleIngress(3)
+    );
+    for (mode, ingress) in [
+        (Some("fanout"), Some("0")),
+        (None, Some("0")),
+        (Some("single_ingress"), Some("4")),
+        (Some("single_ingress"), Some("-1")),
+        (Some("single"), None),
+    ] {
+        assert!(SubmissionMode::parse(mode, ingress).is_err());
+    }
+}
+
+#[test]
+fn load_single_ingress_never_retries_non_http_peers_or_releases_three_node_credit() {
+    let mode = SubmissionMode::SingleIngress(2);
+    assert_eq!(mode.indices(0..2), [vec![], vec![], vec![0, 1], vec![]]);
+    let mut observed = Observation {
+        hash: "test".into(),
+        first_submit_us: Some(10),
+        admission_attempts: [0, 0, 1, 0],
+        admitted: [false, false, false, false],
+        permanent_rejected: [false; 4],
+        finalized_us: [Some(20), Some(21), Some(22), None],
+        receipt: Some(json!({"success":true})),
+    };
+    assert_eq!(
+        mode.retry(std::slice::from_ref(&observed), 1),
+        [vec![], vec![], vec![0], vec![]]
+    );
+    observed.admitted[2] = true;
+    assert!(mode
+        .retry(std::slice::from_ref(&observed), 1)
+        .iter()
+        .all(Vec::is_empty));
+    assert!(!observed.complete());
+    observed.finalized_us[3] = Some(24);
+    assert!(observed.complete());
+    assert_eq!(
+        observed.admitted,
+        [false, false, true, false],
+        "gossip is not HTTP admission"
+    );
+    assert_eq!(
+        SubmissionMode::Fanout.retry(std::slice::from_ref(&observed), 1),
+        [vec![0], vec![0], vec![], vec![0]]
+    );
+}
+
+#[test]
+fn load_early_reuse_requires_real_counter_but_keeps_frozen_legacy_comparison_runnable() {
+    let old = vec![json!({}); 4];
+    assert_eq!(
+        early_reuse_evidence(&old, false).unwrap()["legacy_binary_without_counters_skipped"],
+        true
+    );
+    assert!(early_reuse_evidence(&old, true).is_err());
+    let mut statuses = vec![json!({"early_bind_reused":0}); 4];
+    assert!(early_reuse_evidence(&statuses, false).is_err());
+    statuses[2]["early_bind_reused"] = json!(3);
+    assert_eq!(early_reuse_evidence(&statuses, true).unwrap()["total"], 3);
+    statuses[1] = json!({});
+    assert!(early_reuse_evidence(&statuses, false).is_err());
 }

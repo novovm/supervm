@@ -39,6 +39,9 @@ pub struct QueueBudget {
 pub struct LaneBudget {
     pub control: QueueBudget,
     pub body: QueueBudget,
+    /// Independent raw input queues. Gossip cannot consume candidate/control
+    /// reservations; these are additional explicit bounded logical bytes.
+    pub ingress: QueueBudget,
 }
 
 #[derive(Clone)]
@@ -262,6 +265,8 @@ pub struct ChannelStatus {
     pub sent_messages: u64,
     pub sent_frames: u64,
     pub expired_sends: u64,
+    pub ingress_expired_sends: u64,
+    pub ingress_dropped_received: u64,
     pub rejected_sends: u64,
     pub retired_messages: u64,
     pub pending_prepare: usize,
@@ -309,16 +314,17 @@ struct LocalReply {
 
 #[derive(Default)]
 struct Shared {
-    prepare: [VecDeque<Charged<PrepareRequest>>; 2],
-    local: [VecDeque<Charged<LocalReply>>; 2],
-    send: [VecDeque<Charged<SendJob>>; 2],
-    receive: [VecDeque<Charged<Received>>; 2],
-    retire: [VecDeque<Charged<Retirement>>; 2],
-    prepare_usage: [Usage; 2],
-    send_usage: [Usage; 2],
-    send_peer_usage: [BTreeMap<String, Usage>; 2],
-    receive_usage: [Usage; 2],
-    retire_usage: [Usage; 2],
+    prepare: [VecDeque<Charged<PrepareRequest>>; 3],
+    local: [VecDeque<Charged<LocalReply>>; 3],
+    send: [VecDeque<Charged<SendJob>>; 3],
+    receive: [VecDeque<Charged<Received>>; 3],
+    retire: [VecDeque<Charged<Retirement>>; 3],
+    prepare_usage: [Usage; 3],
+    send_usage: [Usage; 3],
+    send_peer_usage: [BTreeMap<String, Usage>; 3],
+    receive_usage: [Usage; 3],
+    ingress_peer_usage: BTreeMap<String, Usage>,
+    retire_usage: [Usage; 3],
     event_turn: usize,
     status: ChannelStatus,
 }
@@ -338,16 +344,18 @@ pub struct HostChannel {
 }
 
 fn lane(message: &Message) -> usize {
-    usize::from(matches!(
-        message,
-        Message::Body { .. } | Message::EarlyBody { .. }
-    ))
+    match message {
+        Message::Body { .. } | Message::EarlyBody { .. } => 1,
+        Message::Transactions { .. } => 2,
+        _ => 0,
+    }
 }
 fn budget(limits: LaneBudget, lane: usize) -> QueueBudget {
-    if lane == 0 {
-        limits.control
-    } else {
-        limits.body
+    match lane {
+        0 => limits.control,
+        1 => limits.body,
+        2 => limits.ingress,
+        _ => unreachable!("invalid channel lane"),
     }
 }
 fn peer_budget(global: QueueBudget, peers: usize) -> QueueBudget {
@@ -361,6 +369,10 @@ fn short_error(error: impl std::fmt::Display) -> String {
 }
 
 impl HostChannel {
+    /// The controller separately accounts input it retains after queue transfer.
+    pub(crate) fn transactions_budget(&self) -> (QueueBudget, Duration) {
+        (self.prepare_budget.ingress, self.ttl)
+    }
     /// O(1) logical-content reservation used by this channel for each message.
     /// Controllers can use the same bound for their own retained-body quotas.
     pub fn preparation_charge(&self) -> usize {
@@ -554,33 +566,40 @@ impl HostChannel {
             Err(TryLockError::WouldBlock) => return Ok(None),
             Err(TryLockError::Poisoned(_)) => anyhow::bail!("channel queue poisoned"),
         };
-        // Four independent sources: local control/body and remote control/body.
-        for offset in 0..4 {
-            let selected = (shared.event_turn + offset) % 4;
-            if selected < 2 {
+        // Six sources; sustained raw input cannot starve control/body replies.
+        for offset in 0..6 {
+            let selected = (shared.event_turn + offset) % 6;
+            if selected < 3 {
                 if let Some(reply) = shared.local[selected].pop_front() {
                     shared.prepare_usage[selected].release(reply.charge);
-                    shared.event_turn = (selected + 1) % 4;
+                    shared.event_turn = (selected + 1) % 6;
                     return Ok(Some(ChannelEvent::Prepared {
                         token: reply.value.token,
                         result: reply.value.result,
                     }));
                 }
             } else {
-                let lane = selected - 2;
+                let lane = selected - 3;
                 if shared.receive[lane]
                     .front()
                     .is_some_and(|received| received.created.elapsed() >= self.ttl)
                 {
                     // Do not destroy a potentially large body on the control
                     // caller. The owner retires it and returns the quota.
-                    shared.event_turn = (selected + 1) % 4;
+                    shared.event_turn = (selected + 1) % 6;
                     self.wake();
                     return Ok(None);
                 }
                 if let Some(received) = shared.receive[lane].pop_front() {
                     shared.receive_usage[lane].release(received.charge);
-                    shared.event_turn = (selected + 1) % 4;
+                    if lane == 2 {
+                        shared
+                            .ingress_peer_usage
+                            .get_mut(&received.value.peer)
+                            .expect("reserved input peer")
+                            .release(received.charge);
+                    }
+                    shared.event_turn = (selected + 1) % 6;
                     return Ok(Some(ChannelEvent::Received(received.value)));
                 }
             }
@@ -743,14 +762,19 @@ fn validate(config: &ChannelConfig) -> Result<(Reassembler, usize)> {
         .and_then(|bytes| bytes.checked_add(4096))
         .context("channel logical-content reservation overflow")?;
     for limits in [config.prepare, config.send, config.receive] {
-        for budget in [limits.control, limits.body] {
+        for budget in [limits.control, limits.body, limits.ingress] {
             ensure!(
                 (1..=4096).contains(&budget.messages) && budget.bytes >= charge,
                 "channel lane cannot retain one maximum-size message"
             );
         }
     }
-    for global in [config.send.control, config.send.body] {
+    for global in [
+        config.send.control,
+        config.send.body,
+        config.send.ingress,
+        config.receive.ingress,
+    ] {
         let peer = peer_budget(global, config.peers.len());
         ensure!(
             peer.messages > 0 && peer.bytes >= charge,
@@ -823,6 +847,18 @@ fn evidence(message: &Message, config: &ChannelConfig) -> Result<VerifiedEvidenc
         }
         Message::EarlyBody { scope, .. } => {
             fixed_early(scope, config)?;
+            Ok(VerifiedEvidence::None)
+        }
+        Message::Transactions { scope, .. } | Message::TransactionsTaken { scope, .. } => {
+            scope.validate_shape()?;
+            ensure!(
+                scope.chain_id == config.chain_id
+                    && scope.genesis == config.genesis
+                    && scope.protocol == config.protocol
+                    && scope.epoch == config.validators.epoch()
+                    && scope.validator_set_hash == config.validators.hash(),
+                "input gossip differs from pinned domain"
+            );
             Ok(VerifiedEvidence::None)
         }
         Message::BindBody {
@@ -1031,16 +1067,16 @@ fn run(
     let result = (|| -> Result<()> {
         while !stop.load(Ordering::Acquire) {
             let mut progressed = false;
-            // Control/body take alternating first turns; each job sends only
+            // All three lanes take rotating first turns; each job sends only
             // one carrier chunk, even if the network queue remains writable.
-            for offset in 0..2 {
-                let selected = (turn + offset) % 2;
+            for offset in 0..3 {
+                let selected = (turn + offset) % 3;
                 progressed |= retire_one(shared, selected)?;
                 progressed |= expire_receive_one(shared, selected, config.ttl)?;
                 progressed |= prepare_one(config, scope, charge, shared, selected)?;
                 progressed |= send_one(&network, config, shared, selected)?;
             }
-            turn = (turn + 1) % 2;
+            turn = (turn + 1) % 3;
             for _ in 0..8 {
                 let Some(inbound) = network.try_recv()? else {
                     break;
@@ -1186,6 +1222,9 @@ fn send_one(
             .map_err(|_| anyhow::anyhow!("channel queue poisoned"))?;
         release_send(&mut shared, selected, &job.value.outbound.peer, job.charge);
         shared.status.expired_sends += 1;
+        if selected == 2 {
+            shared.status.ingress_expired_sends += 1;
+        }
         return Ok(true);
     }
     let frame = match job.value.pending_frame.take() {
@@ -1242,7 +1281,17 @@ fn expire_receive_one(shared: &Mutex<Shared>, selected: usize, ttl: Duration) ->
                 .pop_front()
                 .expect("checked expired front");
             shared.receive_usage[selected].release(item.charge);
+            if selected == 2 {
+                shared
+                    .ingress_peer_usage
+                    .get_mut(&item.value.peer)
+                    .expect("reserved input peer")
+                    .release(item.charge);
+            }
             shared.status.dropped_received += 1;
+            if selected == 2 {
+                shared.status.ingress_dropped_received += 1;
+            }
             Some(item)
         } else {
             None
@@ -1279,24 +1328,42 @@ fn receive_one(
     charge: usize,
     shared: &Mutex<Shared>,
 ) -> Result<()> {
-    let selected = match transport::body_prefix(completed.chunks.first().map_or(&[], Vec::as_slice))
-    {
-        Ok(is_body) => usize::from(is_body),
-        Err(_) => {
-            shared
-                .lock()
-                .map_err(|_| anyhow::anyhow!("channel queue poisoned"))?
-                .status
-                .invalid_received += 1;
-            return Ok(());
-        }
-    };
+    let selected =
+        match transport::message_lane(completed.chunks.first().map_or(&[], Vec::as_slice)) {
+            Ok(lane) => lane,
+            Err(_) => {
+                shared
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("channel queue poisoned"))?
+                    .status
+                    .invalid_received += 1;
+                return Ok(());
+            }
+        };
     {
         let mut shared = shared
             .lock()
             .map_err(|_| anyhow::anyhow!("channel queue poisoned"))?;
         if !shared.receive_usage[selected].reserve(budget(config.receive, selected), charge) {
             shared.status.dropped_received += 1;
+            if selected == 2 {
+                shared.status.ingress_dropped_received += 1;
+            }
+            return Ok(());
+        }
+        if selected == 2
+            && !shared
+                .ingress_peer_usage
+                .entry(completed.peer.clone())
+                .or_default()
+                .reserve(
+                    peer_budget(config.receive.ingress, config.peers.len()),
+                    charge,
+                )
+        {
+            shared.receive_usage[selected].release(charge);
+            shared.status.dropped_received += 1;
+            shared.status.ingress_dropped_received += 1;
             return Ok(());
         }
     }
@@ -1330,6 +1397,13 @@ fn receive_one(
         }
         Err(_) => {
             shared.receive_usage[selected].release(charge);
+            if selected == 2 {
+                shared
+                    .ingress_peer_usage
+                    .get_mut(&completed.peer)
+                    .expect("reserved input peer")
+                    .release(charge);
+            }
             shared.status.invalid_received += 1;
         }
     }
@@ -1337,7 +1411,7 @@ fn receive_one(
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 
 #[cfg(test)]
 mod early_tests;

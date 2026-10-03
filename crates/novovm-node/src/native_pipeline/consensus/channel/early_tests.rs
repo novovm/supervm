@@ -70,6 +70,10 @@ fn config() -> ChannelConfig {
             messages: 8,
             bytes: charge * 8,
         },
+        ingress: QueueBudget {
+            messages: 8,
+            bytes: charge * 8,
+        },
     };
     ChannelConfig {
         chain_id: 292,

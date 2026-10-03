@@ -53,7 +53,7 @@ fn policy() -> DirectNovFeePolicy {
     }
 }
 
-fn config(local: u8) -> ChannelConfig {
+pub(crate) fn config(local: u8) -> ChannelConfig {
     let validators = Arc::new(
         ValidatorSet::new(
             292,
@@ -79,6 +79,10 @@ fn config(local: u8) -> ChannelConfig {
             bytes: charge * 8,
         },
         body: QueueBudget {
+            messages: 8,
+            bytes: charge * 8,
+        },
+        ingress: QueueBudget {
             messages: 8,
             bytes: charge * 8,
         },
@@ -147,7 +151,7 @@ fn control() -> Arc<Message> {
     })
 }
 
-fn unstarted(config: &ChannelConfig) -> HostChannel {
+pub(crate) fn unstarted(config: &ChannelConfig) -> HostChannel {
     let (_, charge) = validate(config).unwrap();
     HostChannel {
         shared: Arc::new(Mutex::new(Shared::default())),
@@ -162,7 +166,11 @@ fn unstarted(config: &ChannelConfig) -> HostChannel {
     }
 }
 
-fn prepared(channel: &HostChannel, config: &ChannelConfig, message: Arc<Message>) -> Ready {
+pub(crate) fn prepared(
+    channel: &HostChannel,
+    config: &ChannelConfig,
+    message: Arc<Message>,
+) -> Ready {
     let encoded = transport::encode(&message, config.codec).unwrap();
     prepare(message, encoded, config, &channel.scope, channel.charge).unwrap()
 }
@@ -173,6 +181,147 @@ fn decoded(config: &ChannelConfig, from: u8, message: &Message) -> CompletedMess
         id: [1; 32],
         chunks: vec![transport::encode(message, config.codec).unwrap()],
     }
+}
+
+fn raw_gossip(config: &ChannelConfig, sequence: u64) -> Arc<Message> {
+    Arc::new(Message::Transactions {
+        scope: transport::TransactionsScope {
+            chain_id: config.chain_id,
+            genesis: config.genesis,
+            protocol: config.protocol,
+            epoch: config.validators.epoch(),
+            validator_set_hash: config.validators.hash(),
+            session: [9; 32],
+            sequence,
+        },
+        raw_transactions: vec![vec![1, 2, 3]],
+    })
+}
+
+#[test]
+fn raw_ingress_peer_quota_preserves_other_peer_and_both_consensus_lanes() {
+    let mut config = config(0);
+    let charge = validate(&config).unwrap().1;
+    config.receive.ingress = QueueBudget {
+        messages: 2,
+        bytes: charge * 2,
+    };
+    let channel = unstarted(&config);
+    for (source, sequence) in [(1, 1), (1, 2), (2, 1)] {
+        receive_one(
+            decoded(&config, source, &raw_gossip(&config, sequence)),
+            &config,
+            &channel.scope,
+            charge,
+            &channel.shared,
+        )
+        .unwrap();
+    }
+    assert_eq!(channel.status().unwrap().ingress_dropped_received, 1);
+    for input in [control(), body(&config, false)] {
+        receive_one(
+            decoded(&config, 1, &input),
+            &config,
+            &channel.scope,
+            charge,
+            &channel.shared,
+        )
+        .unwrap();
+    }
+    let mut lanes = Vec::new();
+    for _ in 0..4 {
+        let Some(ChannelEvent::Received(received)) = channel.try_recv().unwrap() else {
+            panic!("queued source not served")
+        };
+        lanes.push(lane(&received.ready.message));
+    }
+    assert!(
+        lanes[..3].contains(&0) && lanes[..3].contains(&1),
+        "raw pressure starved consensus"
+    );
+    assert_eq!(lanes.iter().filter(|lane| **lane == 2).count(), 2);
+    assert!(channel
+        .shared
+        .lock()
+        .unwrap()
+        .ingress_peer_usage
+        .values()
+        .all(|usage| usage.messages == 0 && usage.bytes == 0));
+}
+
+#[test]
+fn raw_preparation_retirement_and_credit_cannot_consume_other_lane_reservations() {
+    let mut config = config(0);
+    let charge = validate(&config).unwrap().1;
+    config.prepare.ingress = QueueBudget {
+        messages: 1,
+        bytes: charge,
+    };
+    let channel = unstarted(&config);
+    let input = raw_gossip(&config, 1);
+    assert!(matches!(
+        channel.try_prepare(request(1, input.clone())).unwrap(),
+        PrepareAdmission::Accepted
+    ));
+    assert!(matches!(
+        channel.try_prepare(request(2, input.clone())).unwrap(),
+        PrepareAdmission::Backpressure(_)
+    ));
+    for (token, input) in [(3, control()), (4, body(&config, false))] {
+        assert!(matches!(
+            channel.try_prepare(request(token, input)).unwrap(),
+            PrepareAdmission::Accepted
+        ));
+    }
+    for selected in 0..3 {
+        prepare_one(&config, &channel.scope, charge, &channel.shared, selected).unwrap();
+    }
+    for _ in 0..3 {
+        assert!(matches!(
+            channel.try_recv().unwrap(),
+            Some(ChannelEvent::Prepared { result: Ok(_), .. })
+        ));
+    }
+    let ready = prepared(&channel, &config, input);
+    assert!(matches!(ready.evidence.as_ref(), VerifiedEvidence::None));
+    assert!(ready.body.is_none() && ready.early.is_none());
+    assert!(matches!(
+        channel.try_retire(Retirement::Ready(ready)).unwrap(),
+        RetireAdmission::Accepted
+    ));
+    assert_eq!(channel.shared.lock().unwrap().retire_usage[2].messages, 1);
+    assert!(retire_one(&channel.shared, 2).unwrap());
+    assert_eq!(channel.shared.lock().unwrap().retire_usage[2].messages, 0);
+}
+
+#[test]
+fn raw_gossip_wrong_pinned_domain_rejected_before_consumer() {
+    let config = config(0);
+    let channel = unstarted(&config);
+    for field in 0..5 {
+        let mut input = raw_gossip(&config, 1).as_ref().clone();
+        let Message::Transactions { scope, .. } = &mut input else {
+            unreachable!()
+        };
+        match field {
+            0 => scope.chain_id += 1,
+            1 => scope.genesis[0] ^= 1,
+            2 => scope.protocol[0] ^= 1,
+            3 => scope.epoch += 1,
+            _ => scope.validator_set_hash[0] ^= 1,
+        }
+        receive_one(
+            decoded(&config, 1, &input),
+            &config,
+            &channel.scope,
+            channel.charge,
+            &channel.shared,
+        )
+        .unwrap();
+    }
+    assert_eq!(channel.status().unwrap().invalid_received, 5);
+    assert!(channel.try_recv().unwrap().is_none());
+    assert_eq!(channel.shared.lock().unwrap().receive_usage[2].messages, 0);
 }
 
 fn wire_context(config: &ChannelConfig) -> WireContext {
@@ -340,6 +489,7 @@ fn control_body_local_remote_and_outbound_use_independent_quotas() {
     config.prepare = LaneBudget {
         control: one,
         body: one,
+        ingress: one,
     };
     config.receive = config.prepare;
     config.send = config.prepare;
@@ -1010,7 +1160,13 @@ fn ingress_prefix_rejects_bad_magic_version_kind_and_every_truncation() {
     bytes[10] = 8;
     assert!(!transport::body_prefix(&bytes[..11]).unwrap());
     assert!(transport::decode(&bytes[..11], config.codec).is_err());
-    for tag in [0, 9, 255] {
+    bytes[10] = 9;
+    assert_eq!(transport::message_lane(&bytes[..11]).unwrap(), 2);
+    assert!(transport::decode(&bytes[..11], config.codec).is_err());
+    bytes[10] = 10;
+    assert_eq!(transport::message_lane(&bytes[..11]).unwrap(), 0);
+    assert!(transport::decode(&bytes[..11], config.codec).is_err());
+    for tag in [0, 11, 255] {
         bytes[10] = tag;
         assert!(transport::body_prefix(&bytes).is_err());
     }
@@ -1227,6 +1383,7 @@ fn send_peer_count_and_byte_shares_cannot_consume_other_peer_or_other_lane() {
         config.send = LaneBudget {
             control: global,
             body: global,
+            ingress: global,
         };
         let channel = unstarted(&config);
         let share = if byte_limited { 1 } else { 2 };
