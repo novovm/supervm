@@ -1,7 +1,9 @@
-# Active replacement implementation
+# Runtime components pending product integration
 
-- This is the only active runtime source area. Read the root AGENTS.md and
-  current rebuild plan first. Work on main; do not introduce another branch.
+- This is not a replacement for the whole SUPERVM product. Read root AGENTS.md
+  and `../docs/NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md` first. Preserve useful
+  components for integration under novovm-node and the unified novovm-exec
+  facade. Work on main; do not introduce another branch.
 - Do not depend on, include, or wrap code from `legacy/` in an active build.
   Migrate a reviewed local algorithm when needed, record its source and tests,
   and remove the old orchestration assumptions from the migrated boundary.

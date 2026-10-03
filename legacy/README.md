@@ -1,11 +1,20 @@
 # Isolated SUPERVM reference
 
+The 2026-10-03 audit confirmed that this isolation exceeded the user's intended
+scope. Restore the product architecture under the
+[recovery roadmap](../docs/NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md), including
+novovm-node and supporting modules. This archive is preserved recovery material,
+not a declaration that every original module should be rewritten or discarded.
+The current update changes documentation only; no product paths are restored yet.
+
 `supervm-20261002/` contains the previous implementation, physically moved from
 the repository root at `ee8027131bb55d4741248a805e9bc6183235ebcb`.
 
-- 1,413 local files were hashed before and after relocation; all SHA256 values
-  matched. No source, local experiment, ledger, build output or SDK was deleted.
-- The move commit preserves the 750 tracked files as identical Git blobs.
+- The original relocation report recorded 1,413 matching local file hashes.
+  The 2026-10-03 audit did not repeat that historical untracked-file comparison
+  and does not use it as proof that every local file was preserved.
+- The 2026-10-03 Git audit verified all 750 tracked archived files as identical
+  to the pre-move blobs at main@eaf4f37.
   The 26 modified and 12 untracked experimental files remain local, unstaged,
   at their corresponding paths inside the archive. They are not accepted code.
 - The original Cargo workspace/lockfile, source, vendor code, proof projects,
@@ -20,4 +29,5 @@ the repository root at `ee8027131bb55d4741248a805e9bc6183235ebcb`.
   relocation has not revalidated its integration tests.
 
 No branches were created. B should protect its uncommitted work before pulling,
-then reread the root plan. Do not recreate the removed root `crates/` tree.
+then reread the recovery roadmap. The former blanket ban on restoring root
+`crates/` is superseded; do not equate restoration with enabling faulty hot paths.

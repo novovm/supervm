@@ -27,22 +27,27 @@ Hard rules:
 
 Shared product and multi-device development contract:
 
-- User directive 2026-10-02: the previous implementation is physically isolated
-  in `legacy/supervm-20261002/`. Active replacement code belongs in `runtime/`.
-  Do not resume feature work in legacy or recreate the old root `crates/` tree.
-  Do not depend on/include legacy crates in the new build. Reuse only reviewed
-  local primitives migrated into the new source area with explicit tests.
-  The root Cargo workspace and CI cover the new implementation only, not a
-  completed blockchain. See `legacy/README.md` for preservation boundaries.
+- User clarification 2026-10-03 supersedes the overbroad 2026-10-02 isolation
+  rule. Preserve/restore `crates/novovm-node` as the actual product controller
+  and `novovm-exec` as the unified AOEM facade, together with existing product
+  modules and supporting directories. Isolate faulty execution paths, not the
+  entire original product. Follow
+  `docs/NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md` for scope and acceptance.
+  The archive and uncommitted drafts remain protected: do not develop in,
+  overwrite, or directly link unreviewed legacy sources. Restore reviewed code
+  to the product layout and integrate useful runtime components; do not roll
+  back all later fixes or create a second product chain. The current Cargo/CI
+  still build runtime libraries only; documentation does not restore the node.
 
 - Before starting or resuming NOVOVM work, read
-  `docs/NOVOVM_UNIFIED_EXECUTION_REBUILD_PLAN.md` (including its latest short
-  handoff), `docs/NOVOVM_DELIVERY_ALIGNMENT.md`, and the latest section of
+  `docs/NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md` first, then
+  `docs/NOVOVM_UNIFIED_EXECUTION_REBUILD_PLAN.md`,
+  `docs/NOVOVM_DELIVERY_ALIGNMENT.md`, and the latest section of
   `docs/NOVOVM_PRODUCTION_READINESS_TRACKER.md`; verify the actual branch,
   working tree, local and remote commit, and current file claims rather than
-  relying on an earlier conversation snapshot. The rebuild plan is the current
-  implementation priority; older plans and signoffs retain only their stated
-  historical scope.
+  relying on an earlier conversation snapshot. The recovery roadmap is the
+  current implementation priority; conflicting runtime-only rules and older
+  next-step assignments are historical, not active authorization.
 - High-performance finalized transactions, cryptographic private assets, and
   post-quantum security remain core product delivery objectives. A runnable
   chain, component benchmark, storage-ownership gate, or green CI does not
