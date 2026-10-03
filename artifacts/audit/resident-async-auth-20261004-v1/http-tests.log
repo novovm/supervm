@@ -1,0 +1,22 @@
+
+running 18 tests
+test native_fresh_rpc::tests::bounded_http_framing_and_hex ... ok
+test native_fresh_rpc::tests::coalesced_submission_parse_errors_keep_per_item_ids_and_outcomes ... ok
+test native_fresh_rpc::tests::deferred_handler_cannot_reuse_an_expired_token ... ok
+test native_fresh_rpc::tests::deferred_owner_response_does_not_block_other_http_connections_or_dispatch_twice ... ok
+test native_fresh_rpc::tests::deferred_partial_http_reads_report_real_progress_without_expanding_read_quota ... ok
+test native_fresh_rpc::tests::deferred_timeout_cancels_once_and_recycled_connection_slot_cannot_receive_old_reply ... ok
+test native_fresh_rpc::tests::deferred_waiting_is_not_progress_but_start_and_ready_are ... ok
+test native_fresh_rpc::tests::durable_stage_defers_state_requests_but_serves_control_without_early_ack ... ok
+test native_fresh_rpc::tests::explicit_batch_envelope_keeps_original_http_limit_and_framing ... ok
+test native_fresh_rpc::tests::finalized_balance_params_reuse_public_nov_method_without_store_override ... ok
+test native_fresh_rpc::tests::idle_rpc_keeps_one_budget_and_caps_each_pause ... ok
+test native_fresh_rpc::tests::idle_rpc_preserves_poll_error_and_accepts_maximum_duration ... ok
+test native_fresh_rpc::tests::idle_rpc_slow_poll_exhausts_budget_without_another_poll_or_sleep ... ok
+test native_fresh_rpc::tests::idle_rpc_zero_budget_does_not_poll_or_sleep ... ok
+test native_fresh_rpc::tests::partial_client_does_not_block_another_and_times_out ... ok
+test native_fresh_rpc::tests::ready_http_connections_share_one_dispatch_and_keep_response_routing ... ok
+test native_fresh_rpc::tests::ready_submission_groups_preserve_query_barriers_and_response_ids ... ok
+test native_fresh_rpc::tests::real_candidate_completion_ends_idle_before_another_pause ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 1510 filtered out; finished in 0.03s

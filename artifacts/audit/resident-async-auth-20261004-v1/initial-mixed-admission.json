@@ -1,0 +1,288 @@
+[
+  [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "error": {
+        "code": -32000,
+        "message": "invalid native V3 signature"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "tx_hash": "0x2891db0d79e34f79354654ce85402a9b9b4e12b21c3bcdada052af47cce74ba0",
+        "state": "received",
+        "signature_verified": true,
+        "admission_durable": false,
+        "nonce_checked_at_execution": true,
+        "nonce_projection_height": 0,
+        "executed": false,
+        "finalized": false,
+        "proof_verified": false
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "error": {
+        "code": -32000,
+        "message": "signer nonce already reserved"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "result": {
+        "tx_hash": "0xd9ef3e1d15ab6511f7756ff7975f4c4cf25406f3f770ea4943eb15af95a1f4e8",
+        "state": "received",
+        "signature_verified": true,
+        "admission_durable": false,
+        "nonce_checked_at_execution": true,
+        "nonce_projection_height": 0,
+        "executed": false,
+        "finalized": false,
+        "proof_verified": false
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "result": {
+        "profile": "native-resident-v1",
+        "experimental": true,
+        "core": "novovm-node/native_pipeline -> novovm-exec/resident -> AOEM",
+        "consensus": "novovm-consensus/round_bft/journal",
+        "chain_id": 292,
+        "head": null,
+        "current_height": 1,
+        "round": 0,
+        "scheduled_proposer": "0x0becdc2bad0c6badb0bb45bc13bf8ab44d6575fb6c0a2c3faa9025a5025531eb",
+        "local_proposer": true,
+        "pending": 2,
+        "pending_bytes": 318,
+        "rpc_indexed_height": 0,
+        "projection_error": null,
+        "recovery_in_progress": false,
+        "executed_batches": 0,
+        "durable_decisions": 0,
+        "execution_components_total": 0,
+        "execution_credit_only_accounts_total": 0,
+        "execution_peak_callbacks": 0,
+        "execution_recomputed_transactions_total": 0,
+        "apfl_view_transactions_total": 0,
+        "apfl_transport": {
+          "prepared": {
+            "batches": 2,
+            "transactions": 2,
+            "canonical_bytes": 318,
+            "encoded_message_bytes": 1030
+          },
+          "received": {
+            "batches": 0,
+            "transactions": 0,
+            "canonical_bytes": 0,
+            "encoded_message_bytes": 0
+          },
+          "scope": "application codec work, not unique transactions or TLS delivery"
+        },
+        "successor_reused": 0,
+        "capture_seed_nodes": 0,
+        "early_authentication_started": 0,
+        "early_authentication_completed": 0,
+        "early_authentication_completed_before_parent": 0,
+        "early_bind_reused": 0,
+        "early_discarded": 0,
+        "execution_failures": 0,
+        "last_error": null,
+        "execution_backend": "aoem_semantic_v2_cpu_callbacks",
+        "business_gpu_active": false,
+        "business_proof_required": false,
+        "business_proof_verified": false,
+        "mempool_gossip": true,
+        "gossip_delivery": "best_effort_not_durable",
+        "transaction_gossip": {
+          "outbound_batches_accepted": 1,
+          "outbound_peer_enqueued": 2,
+          "peer_credits_returned": 0,
+          "rejected_credits": 0,
+          "taken_credits_queued": 0,
+          "taken_credits_enqueued": 0,
+          "inbound_batches": 0,
+          "inbound_dropped": 0,
+          "duplicate_batches": 0,
+          "conflicting_sequences": 0,
+          "expired_batches": 0,
+          "preparation_failures": 0,
+          "channel_expired_sends": 0,
+          "channel_dropped_received": 0,
+          "outbound_pending": 1,
+          "inbound_pending": 0,
+          "credit_pending": 0
+        },
+        "gossip_verified_inputs": 0,
+        "gossip_rejected_inputs": 0,
+        "authentication_cache_hits": 0,
+        "rpc_authentication": {
+          "owner": "same_resident_aoem_compute_session",
+          "http_waiting": 0,
+          "signature_batch_pending": false,
+          "submitted_batches": 2,
+          "completed_batches": 2,
+          "checked_rows": 4,
+          "rejected_rows": 1,
+          "cancelled_http": 0,
+          "control_polls_while_checking": 3,
+          "backpressured_polls": 0,
+          "scope": "local signature checks, not unique transactions or finality"
+        },
+        "pending_survives_restart": false,
+        "receipt_query_scope": "recent 65536 entries, rebuilt from durable archive"
+      }
+    }
+  ],
+  [
+    {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "error": {
+        "code": -32000,
+        "message": "invalid native V3 signature"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "tx_hash": "0x2891db0d79e34f79354654ce85402a9b9b4e12b21c3bcdada052af47cce74ba0",
+        "state": "received",
+        "signature_verified": true,
+        "admission_durable": false,
+        "nonce_checked_at_execution": true,
+        "nonce_projection_height": 0,
+        "executed": false,
+        "finalized": false,
+        "proof_verified": false
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "error": {
+        "code": -32000,
+        "message": "signer nonce already reserved"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "result": {
+        "tx_hash": "0xd9ef3e1d15ab6511f7756ff7975f4c4cf25406f3f770ea4943eb15af95a1f4e8",
+        "state": "received",
+        "signature_verified": true,
+        "admission_durable": false,
+        "nonce_checked_at_execution": true,
+        "nonce_projection_height": 0,
+        "executed": false,
+        "finalized": false,
+        "proof_verified": false
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "result": {
+        "profile": "native-resident-v1",
+        "experimental": true,
+        "core": "novovm-node/native_pipeline -> novovm-exec/resident -> AOEM",
+        "consensus": "novovm-consensus/round_bft/journal",
+        "chain_id": 292,
+        "head": null,
+        "current_height": 1,
+        "round": 0,
+        "scheduled_proposer": "0x0becdc2bad0c6badb0bb45bc13bf8ab44d6575fb6c0a2c3faa9025a5025531eb",
+        "local_proposer": false,
+        "pending": 2,
+        "pending_bytes": 318,
+        "rpc_indexed_height": 0,
+        "projection_error": null,
+        "recovery_in_progress": false,
+        "executed_batches": 0,
+        "durable_decisions": 0,
+        "execution_components_total": 0,
+        "execution_credit_only_accounts_total": 0,
+        "execution_peak_callbacks": 0,
+        "execution_recomputed_transactions_total": 0,
+        "apfl_view_transactions_total": 0,
+        "apfl_transport": {
+          "prepared": {
+            "batches": 1,
+            "transactions": 1,
+            "canonical_bytes": 159,
+            "encoded_message_bytes": 437
+          },
+          "received": {
+            "batches": 0,
+            "transactions": 0,
+            "canonical_bytes": 0,
+            "encoded_message_bytes": 0
+          },
+          "scope": "application codec work, not unique transactions or TLS delivery"
+        },
+        "successor_reused": 0,
+        "capture_seed_nodes": 0,
+        "early_authentication_started": 0,
+        "early_authentication_completed": 0,
+        "early_authentication_completed_before_parent": 0,
+        "early_bind_reused": 0,
+        "early_discarded": 0,
+        "execution_failures": 0,
+        "last_error": null,
+        "execution_backend": "aoem_semantic_v2_cpu_callbacks",
+        "business_gpu_active": false,
+        "business_proof_required": false,
+        "business_proof_verified": false,
+        "mempool_gossip": true,
+        "gossip_delivery": "best_effort_not_durable",
+        "transaction_gossip": {
+          "outbound_batches_accepted": 1,
+          "outbound_peer_enqueued": 1,
+          "peer_credits_returned": 0,
+          "rejected_credits": 0,
+          "taken_credits_queued": 0,
+          "taken_credits_enqueued": 0,
+          "inbound_batches": 0,
+          "inbound_dropped": 0,
+          "duplicate_batches": 0,
+          "conflicting_sequences": 0,
+          "expired_batches": 0,
+          "preparation_failures": 0,
+          "channel_expired_sends": 0,
+          "channel_dropped_received": 0,
+          "outbound_pending": 1,
+          "inbound_pending": 0,
+          "credit_pending": 0
+        },
+        "gossip_verified_inputs": 0,
+        "gossip_rejected_inputs": 0,
+        "authentication_cache_hits": 0,
+        "rpc_authentication": {
+          "owner": "same_resident_aoem_compute_session",
+          "http_waiting": 0,
+          "signature_batch_pending": false,
+          "submitted_batches": 2,
+          "completed_batches": 2,
+          "checked_rows": 4,
+          "rejected_rows": 1,
+          "cancelled_http": 0,
+          "control_polls_while_checking": 2,
+          "backpressured_polls": 0,
+          "scope": "local signature checks, not unique transactions or finality"
+        },
+        "pending_survives_restart": false,
+        "receipt_query_scope": "recent 65536 entries, rebuilt from durable archive"
+      }
+    }
+  ]
+]

@@ -101,6 +101,152 @@ impl From<Vec<Vec<u8>>> for BatchSource {
     }
 }
 
+/// Unverified admission row. Keeping a structured row does not confer the
+/// signature-checked capability; only the shared verifier below creates it.
+pub enum AdmissionInput {
+    Raw(Vec<u8>),
+    Apfl {
+        batch: Arc<ApflTransferBatch>,
+        index: usize,
+    },
+}
+
+impl AdmissionInput {
+    pub fn encoded_len(&self) -> Result<usize> {
+        match self {
+            Self::Raw(raw) => Ok(raw.len()),
+            Self::Apfl { batch, index } => batch.row(*index)?.encoded_len(),
+        }
+    }
+
+    /// Preserve raw allocations; project just this structured row when needed.
+    pub fn into_raw(self) -> Result<Vec<u8>> {
+        match self {
+            Self::Raw(raw) => Ok(raw),
+            Self::Apfl { batch, index } => batch.canonical_raw(index),
+        }
+    }
+}
+
+pub struct AdmissionRow {
+    pub input: AdmissionInput,
+    pub result: Result<SignatureCheckedTransfer>,
+}
+
+pub(crate) struct AdmissionRows {
+    pub rows: std::collections::VecDeque<AdmissionRow>,
+    pub peak_callbacks: usize,
+}
+
+trait AuthenticationSource: Send + Sync + 'static {
+    fn len(&self) -> usize;
+    fn authenticate(
+        &self,
+        index: usize,
+        chain: u64,
+        max: usize,
+    ) -> Result<SignatureCheckedTransfer>;
+}
+
+impl AuthenticationSource for BatchSource {
+    fn len(&self) -> usize {
+        self.len()
+    }
+    fn authenticate(
+        &self,
+        index: usize,
+        chain: u64,
+        max: usize,
+    ) -> Result<SignatureCheckedTransfer> {
+        self.authenticate(index, chain, max)
+    }
+}
+
+impl AuthenticationSource for Vec<AdmissionInput> {
+    fn len(&self) -> usize {
+        self.len()
+    }
+    fn authenticate(
+        &self,
+        index: usize,
+        chain: u64,
+        max: usize,
+    ) -> Result<SignatureCheckedTransfer> {
+        match &self[index] {
+            AdmissionInput::Raw(raw) => authenticate_transfer_v3(raw, chain, max),
+            AdmissionInput::Apfl { batch, index } => {
+                authenticate_apfl_row(batch.clone(), *index, chain)
+            }
+        }
+    }
+}
+
+pub(crate) fn admission_sizes(inputs: &[AdmissionInput]) -> Result<(usize, usize)> {
+    let mut bytes = 0usize;
+    let mut max = 0usize;
+    for input in inputs {
+        let len = input.encoded_len()?;
+        bytes = bytes
+            .checked_add(len)
+            .context("signature admission size overflow")?;
+        max = max.max(len);
+    }
+    Ok((bytes, max))
+}
+
+/// A borrowed row retains its whole immutable dictionary owner. Charge each
+/// distinct owner once, even if only one of its rows is offered for admission.
+pub(crate) fn admission_retained_bytes(inputs: &[AdmissionInput]) -> Result<usize> {
+    let mut owners = BTreeSet::new();
+    let mut bytes = 0usize;
+    for input in inputs {
+        let retained = match input {
+            AdmissionInput::Raw(raw) => raw.len(),
+            AdmissionInput::Apfl { batch, .. } if owners.insert(Arc::as_ptr(batch)) => {
+                batch.canonical_bytes()
+            }
+            AdmissionInput::Apfl { .. } => 0,
+        };
+        bytes = bytes
+            .checked_add(retained)
+            .context("signature retained input size overflow")?;
+    }
+    Ok(bytes)
+}
+
+/// Per-row external rejection is data, not owner failure. Duplicate hashes and
+/// nonce reservations belong to the serialized RPC pool, not this graph.
+pub(crate) fn authenticate_admission_rows(
+    session: &mut ComputeSession,
+    configured_chain_id: u64,
+    inputs: Vec<AdmissionInput>,
+    budget: AuthenticationBudget,
+    timeout: Duration,
+) -> Result<AdmissionRows> {
+    let (bytes, max) = admission_sizes(&inputs)?;
+    ensure!(
+        configured_chain_id != 0,
+        "configured chain id must be nonzero"
+    );
+    ensure!(
+        !inputs.is_empty()
+            && inputs.len() <= budget.transactions
+            && max <= budget.transaction_bytes
+            && bytes <= budget.body_bytes,
+        "signature admission exceeds input budget"
+    );
+    let (inputs, results, peak_callbacks) =
+        authenticate_graph(session, configured_chain_id, inputs, budget, timeout)?;
+    Ok(AdmissionRows {
+        rows: inputs
+            .into_iter()
+            .zip(results)
+            .map(|(input, result)| AdmissionRow { input, result })
+            .collect(),
+        peak_callbacks,
+    })
+}
+
 // Existing raw-input allocation/ownership tests inspect the exact returned
 // allocation. No production accessor can mutate or expand a structured batch.
 #[cfg(test)]
@@ -401,8 +547,34 @@ pub(crate) fn authenticate_source_batch(
     timeout: Duration,
 ) -> Result<SignatureCheckedBatch> {
     raw_transactions.validate(configured_chain_id, budget)?;
+    let (raw_transactions, results, peak_callbacks) = authenticate_graph(
+        session,
+        configured_chain_id,
+        raw_transactions,
+        budget,
+        timeout,
+    )?;
+    let transactions = results
+        .into_iter()
+        .collect::<Result<Vec<_>>>()
+        .context("signature batch rejected without state admission")?;
+    finish_authentication(
+        configured_chain_id,
+        raw_transactions,
+        transactions,
+        peak_callbacks,
+    )
+}
+
+fn authenticate_graph<S: AuthenticationSource>(
+    session: &mut ComputeSession,
+    configured_chain_id: u64,
+    source: S,
+    budget: AuthenticationBudget,
+    timeout: Duration,
+) -> Result<(S, Vec<Result<SignatureCheckedTransfer>>, usize)> {
     // Share immutable input allocation, not one copy of the whole body per task.
-    let body = Arc::new(raw_transactions);
+    let body = Arc::new(source);
     let slots: Vec<_> = (0..body.len())
         .map(|_| Arc::new(Mutex::new(None)))
         .collect();
@@ -448,11 +620,11 @@ pub(crate) fn authenticate_source_batch(
                     output.len() == 33 && output[0] == 1 && output[1..] == transaction.tx_hash(),
                     "authentication task result mismatch"
                 );
-                transaction
+                Ok(transaction)
             }
             Err(error) => {
                 ensure!(output == [0], "authentication rejection result mismatch");
-                return Err(error.context("signature batch rejected without state admission"));
+                Err(error)
             }
         };
         transactions.push(transaction);
@@ -460,10 +632,5 @@ pub(crate) fn authenticate_source_batch(
     let raw_transactions = Arc::try_unwrap(body).map_err(|_| {
         anyhow::anyhow!("authentication callbacks retained batch input after completion")
     })?;
-    finish_authentication(
-        configured_chain_id,
-        raw_transactions,
-        transactions,
-        report.peak_inflight,
-    )
+    Ok((raw_transactions, transactions, report.peak_inflight))
 }

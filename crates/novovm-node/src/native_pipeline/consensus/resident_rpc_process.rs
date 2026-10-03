@@ -13,6 +13,7 @@ use crate::native_pipeline::service::config::{protocol_commitment, PROFILE};
 use crate::native_pipeline::service::{GenesisAllocation, GenesisConfig, GenesisValidator};
 use novovm_network::duplex::peer_id_from_ed25519_public_key_v1;
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{SocketAddr, TcpListener};
 use std::process::{Child, Command, Stdio};
 
@@ -402,6 +403,120 @@ fn setup_with_genesis(
     ))
 }
 
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+struct ReceiptBlockPartition {
+    height: u64,
+    block_hash: String,
+    transactions: usize,
+    transaction_hashes: Vec<String>,
+}
+
+/// A JSON-RPC array is not an atomic block: rejected signature rows can leave
+/// fewer admitted transactions in a bounded graph. Record that fragmentation
+/// explicitly instead of either hiding it by reordering input or assuming that
+/// every graph produces a full block. The actual product cap remains enforced.
+fn receipt_partition(
+    receipts: &[Value],
+    expected_hashes: &[String],
+    batch_cap: usize,
+) -> Result<Vec<ReceiptBlockPartition>> {
+    ensure!(
+        batch_cap > 0 && !receipts.is_empty(),
+        "empty receipt partition or zero batch cap"
+    );
+    let expected: BTreeSet<_> = expected_hashes.iter().cloned().collect();
+    ensure!(
+        expected.len() == expected_hashes.len() && receipts.len() == expected.len(),
+        "receipt partition expected transaction count/uniqueness differs"
+    );
+    let mut seen = BTreeSet::new();
+    let mut blocks = BTreeMap::<u64, ReceiptBlockPartition>::new();
+    for receipt in receipts {
+        ensure!(
+            receipt["finalized"] == true && receipt["executed"] == true,
+            "partition contains a non-finalized receipt"
+        );
+        let tx_hash = receipt["tx_hash"]
+            .as_str()
+            .context("partition transaction hash missing")?;
+        ensure!(
+            expected.contains(tx_hash) && seen.insert(tx_hash.to_owned()),
+            "receipt partition contains an unexpected or duplicate transaction"
+        );
+        let height = receipt["block_height"]
+            .as_u64()
+            .context("partition height missing")?;
+        let block_hash = receipt["block_hash"]
+            .as_str()
+            .context("partition block hash missing")?;
+        let block = blocks
+            .entry(height)
+            .or_insert_with(|| ReceiptBlockPartition {
+                height,
+                block_hash: block_hash.to_owned(),
+                transactions: 0,
+                transaction_hashes: Vec::new(),
+            });
+        ensure!(
+            block.block_hash == block_hash,
+            "same-height receipt block hashes differ"
+        );
+        ensure!(
+            block.transactions < batch_cap,
+            "receipt block exceeds actual batch cap"
+        );
+        block.transactions += 1;
+        block.transaction_hashes.push(tx_hash.to_owned());
+    }
+    ensure!(
+        seen == expected,
+        "receipt partition omitted expected transactions"
+    );
+    let blocks: Vec<_> = blocks.into_values().collect();
+    for (index, block) in blocks.iter().enumerate() {
+        let height = u64::try_from(index)?
+            .checked_add(1)
+            .context("partition height overflow")?;
+        ensure!(
+            block.height == height,
+            "receipt partition heights are not contiguous from one"
+        );
+    }
+    Ok(blocks)
+}
+
+fn verify_partition_heads(
+    statuses: &[Value],
+    partition: &[ReceiptBlockPartition],
+    state_version: u64,
+) -> Result<()> {
+    ensure!(
+        statuses.len() == 4,
+        "partition requires four independent node reports"
+    );
+    let last = partition.last().context("empty finalized partition")?;
+    let head: ParentPoint = serde_json::from_value(statuses[0]["head"].clone())?;
+    ensure!(
+        statuses
+            .iter()
+            .all(|status| status["head"] == statuses[0]["head"])
+            && head.height == last.height
+            && hex(&head.block_hash) == last.block_hash
+            && head.state_version == state_version,
+        "actual finalized partition/head/state version differs"
+    );
+    Ok(())
+}
+
+fn next_partition_height(partition: &[ReceiptBlockPartition]) -> Result<u64> {
+    partition
+        .last()
+        .context("empty finalized partition")?
+        .height
+        .checked_add(1)
+        .context("partition successor height overflow")
+}
+
 #[test]
 #[ignore = "requires actual NOVOVM_RESIDENT_NODE_BINARY and real AOEM; four product processes and RPC, not TPS"]
 fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()> {
@@ -439,9 +554,46 @@ fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()>
     let mut all_raw = first.clone();
     let mut all_hashes = transaction_hashes(&first)?;
     let mut admitted = Vec::new();
+    let mut mixed_admission = Vec::new();
+    let mut bad = first[0].clone();
+    *bad.last_mut().unwrap() ^= 1;
+    let conflicting = signed(1, 0, 101)?;
     for index in &order[..2] {
-        admitted.extend(nodes.submit_batch(*index, &first)?);
+        // A bad row cannot poison following good rows or reserve their nonce.
+        // Two valid same-nonce values must still have only one pool winner,
+        // even though signatures are now computed concurrently on AOEM.
+        let inputs = [&bad, &first[0], &conflicting, &first[1]];
+        let mut requests: Vec<_> = inputs.iter().enumerate().map(|(id, raw)|
+            json!({"jsonrpc":"2.0","id":id,"method":"nov_sendRawTransaction","params":[hex(raw)]})
+        ).collect();
+        requests.push(json!({"jsonrpc":"2.0","id":4,"method":"nov_chainStatus","params":[]}));
+        let replies = nodes.request(*index, Value::Array(requests))?;
+        let rows = replies
+            .as_array()
+            .context("mixed admission must preserve batch response")?;
+        ensure!(
+            rows.len() == 5
+                && rows[0].get("error").is_some()
+                && rows[2].get("error").is_some()
+                && rows[1]["result"]["signature_verified"] == true
+                && rows[3]["result"]["signature_verified"] == true
+                && rows[4]["result"]["pending"] == 2,
+            "deferred mixed signature/nonce admission or query ordering changed"
+        );
+        for (id, row) in rows.iter().enumerate() {
+            ensure!(
+                row["id"] == id,
+                "deferred response was delivered to another request"
+            );
+        }
+        admitted.push(rows[1]["result"].clone());
+        admitted.push(rows[3]["result"].clone());
+        mixed_admission.push(replies);
     }
+    fs::write(
+        directory.join("mixed-async-admission.json"),
+        serde_json::to_vec_pretty(&mixed_admission)?,
+    )?;
     ensure!(
         admitted.iter().all(|reply| reply["state"] == "received"
             && reply["admission_durable"] == false
@@ -602,15 +754,25 @@ fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()>
         "different signed nonce replay accepted"
     );
     let statuses = nodes.wait_ready(&order)?;
+    let before_partition = receipt_partition(&before[0], &all_hashes, 2);
+    // Write the observed shape and all four heads before accepting the result,
+    // including when a malformed partition or head mismatch fails this test.
+    fs::write(
+        directory.join("before-restart-head-and-partition.json"),
+        serde_json::to_vec_pretty(&json!({"statuses":statuses,"receipts":before,
+            "actual_partition":before_partition.as_ref().ok(),
+            "partition_error":before_partition.as_ref().err().map(|error|format!("{error:#}")),
+            "batch_cap":2,"expected_unique_transactions":6,
+            "scope":"actual mixed-admission block shape; no fixed full-block assumption"}))?,
+    )?;
+    let before_partition = before_partition?;
+    verify_partition_heads(&statuses, &before_partition, 6)?;
     ensure!(
         statuses
             .iter()
-            .all(|status| status["head"] == statuses[0]["head"]
-                && status["head"]["height"] == 3
-                && status["head"]["state_version"] == 6
-                && status["mempool_gossip"] == true
+            .all(|status| status["mempool_gossip"] == true
                 && status["pending_survives_restart"] == false),
-        "three-height head/profile differs"
+        "product profile differs"
     );
     let balances_before = nodes.balances(&order, &before[0], [200, 150])?;
     let live_pids: Vec<_> = nodes.processes.iter().flatten().map(Child::id).collect();
@@ -645,13 +807,19 @@ fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()>
         "restart did not preserve nonce and advance"
     );
     let final_statuses = nodes.wait_ready(&order)?;
+    let final_partition = receipt_partition(&final_receipts[0], &all_hashes, 2)?;
+    verify_partition_heads(&final_statuses, &final_partition, 8)?;
+    let next_height = next_partition_height(&before_partition)?;
     ensure!(
-        final_statuses
-            .iter()
-            .all(|status| status["head"] == final_statuses[0]["head"]
-                && status["head"]["height"] == 4
-                && status["head"]["state_version"] == 8),
-        "post-restart heads differ"
+        final_partition.len() == before_partition.len() + 1
+            && final_partition[..before_partition.len()] == before_partition
+            && final_partition
+                .last()
+                .is_some_and(|block| block.height == next_height && block.transactions == 2)
+            && final_receipts[0][6..]
+                .iter()
+                .all(|receipt| receipt["block_height"] == next_height),
+        "post-restart two-transaction batch did not append exactly one full block"
     );
     let final_balances = nodes.balances(&order, &final_receipts[0], [300, 200])?;
     let report = json!({"schema":"novovm/resident-product-rpc-functional/v1", "product_binary":nodes.binary,
@@ -660,11 +828,13 @@ fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()>
         "topology":"one host; four real novovm-node executables; HTTP RPC and WSS/E2E relay",
         "input_distribution":"explicit identical signed RPC fanout; does not independently prove single-ingress propagation",
         "legacy_host_permission":false,"live_pids":live_pids,"restarted_pids":cold_pids,
-        "two_of_four_no_head":minority,"admission":admitted,"bad_signature_response":rejected,
+        "two_of_four_no_head":minority,"admission":admitted,"mixed_async_admission":mixed_admission,"bad_signature_response":rejected,
         "pending_same_hash_bad_signature":pending_signature_rejections,
         "nonce_replay_response":replay,"unique_finalized_transactions":8,"successful_transactions":7,
         "business_failed_transactions":1,"cold_receipts_equal":true,"receipts":final_receipts[0],
         "balances_before_restart":balances_before,"balances_after_restart":balances_reopened,
+        "before_restart_status":statuses,"before_restart_partition":before_partition,
+        "final_partition":final_partition,"batch_cap":2,
         "final_balances":final_balances,"final_status":final_statuses,"performance_measured":false,"four_machine_test":false});
     fs::write(
         directory.join("result.json"),
@@ -672,8 +842,120 @@ fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()>
     )?;
     nodes.stop_all()?;
     relay.shutdown()?;
-    eprintln!("actual product RPC: 8 unique finalized (7 success, 1 business failure), 2/4 no head, four-height continuation and four-process cold restart PASS; {}", directory.display());
+    eprintln!("actual product RPC: 8 unique finalized (7 success, 1 business failure), 2/4 no head, actual partition {final_partition:?}, one full-block continuation after four-process cold restart PASS; {}", directory.display());
     Ok(())
+}
+
+mod receipt_partition_tests {
+    use super::*;
+
+    fn fixture(counts: &[usize]) -> (Vec<Value>, Vec<String>, Vec<Value>) {
+        let mut receipts = Vec::new();
+        let mut hashes = Vec::new();
+        for (index, count) in counts.iter().enumerate() {
+            let height = index as u64 + 1;
+            for _ in 0..*count {
+                let tx_hash = hex(&[(hashes.len() + 1) as u8; 32]);
+                receipts.push(json!({"tx_hash":tx_hash,"block_height":height,
+                    "block_hash":hex(&[height as u8;32]),"executed":true,"finalized":true}));
+                hashes.push(tx_hash);
+            }
+        }
+        let head = ParentPoint {
+            height: counts.len() as u64,
+            block_hash: [counts.len() as u8; 32],
+            state_root: [42; 32],
+            receipt_batch_commitment: [43; 32],
+            state_version: hashes.len() as u64,
+            decision_hash: [44; 32],
+        };
+        (receipts, hashes, vec![json!({"head":head}); 4])
+    }
+
+    #[test]
+    fn actual_partition_preserves_visible_fragments_and_full_block_continuation() -> Result<()> {
+        let (receipts, hashes, statuses) = fixture(&[1, 1, 2, 2]);
+        let partition = receipt_partition(&receipts, &hashes, 2)?;
+        assert_eq!(
+            partition
+                .iter()
+                .map(|block| block.transactions)
+                .collect::<Vec<_>>(),
+            [1, 1, 2, 2]
+        );
+        verify_partition_heads(&statuses, &partition, 6)?;
+        assert_eq!(next_partition_height(&partition)?, 5);
+        let (after, after_hashes, after_statuses) = fixture(&[1, 1, 2, 2, 2]);
+        let continued = receipt_partition(&after, &after_hashes, 2)?;
+        assert_eq!(continued[..partition.len()], partition);
+        assert_eq!(continued.last().unwrap().transactions, 2);
+        verify_partition_heads(&after_statuses, &continued, 8)
+    }
+
+    #[test]
+    fn actual_partition_rejects_missing_height_and_genesis_height() {
+        let (mut receipts, hashes, _) = fixture(&[1, 1]);
+        receipts[1]["block_height"] = json!(3);
+        receipts[1]["block_hash"] = json!(hex(&[3; 32]));
+        assert!(receipt_partition(&receipts, &hashes, 2)
+            .unwrap_err()
+            .to_string()
+            .contains("contiguous"));
+        receipts[1]["block_height"] = json!(u64::MAX);
+        assert!(receipt_partition(&receipts, &hashes, 2).is_err());
+        receipts[1]["block_height"] = json!(0);
+        assert!(receipt_partition(&receipts, &hashes, 2).is_err());
+    }
+
+    #[test]
+    fn actual_partition_rejects_same_height_hash_conflict_and_duplicate_transaction() {
+        let (receipts, hashes, _) = fixture(&[2]);
+        let mut conflict = receipts.clone();
+        conflict[1]["block_hash"] = json!(hex(&[99; 32]));
+        assert!(receipt_partition(&conflict, &hashes, 2)
+            .unwrap_err()
+            .to_string()
+            .contains("same-height"));
+        let mut duplicate = receipts;
+        duplicate[1]["tx_hash"] = duplicate[0]["tx_hash"].clone();
+        assert!(receipt_partition(&duplicate, &hashes, 2)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate"));
+    }
+
+    #[test]
+    fn actual_partition_rejects_overfull_block_and_successor_overflow() {
+        let (receipts, hashes, _) = fixture(&[3]);
+        assert!(receipt_partition(&receipts, &hashes, 2)
+            .unwrap_err()
+            .to_string()
+            .contains("batch cap"));
+        let mut partition = receipt_partition(&receipts, &hashes, 3).unwrap();
+        partition[0].height = u64::MAX;
+        assert!(next_partition_height(&partition)
+            .unwrap_err()
+            .to_string()
+            .contains("overflow"));
+        assert!(next_partition_height(&[]).is_err());
+    }
+
+    #[test]
+    fn actual_partition_requires_all_four_heads_exact_last_block_and_state_version() -> Result<()> {
+        let (receipts, hashes, statuses) = fixture(&[1, 1, 2, 2]);
+        let partition = receipt_partition(&receipts, &hashes, 2)?;
+        assert!(verify_partition_heads(&statuses[..3], &partition, 6).is_err());
+        assert!(verify_partition_heads(&statuses, &partition, 7).is_err());
+        let mut disagreement = statuses.clone();
+        disagreement[3]["head"]["block_hash"] = json!(vec![99_u8; 32]);
+        assert!(verify_partition_heads(&disagreement, &partition, 6).is_err());
+        let mut wrong_head = statuses;
+        for status in &mut wrong_head {
+            status["head"]["block_hash"] = json!(vec![99_u8; 32]);
+        }
+        assert!(verify_partition_heads(&wrong_head, &partition, 6).is_err());
+        Ok(())
+    }
 }
 
 // A rejected local request must not mint a propagation enqueue. This observes

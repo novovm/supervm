@@ -9,7 +9,8 @@ use crate::native_pipeline::business::nov_transfer_batch::{
 };
 use crate::native_pipeline::execution::plan::{BatchContext, PlanBudget};
 use crate::native_pipeline::ingress::batch::{
-    authenticate_source_batch, AuthenticationBudget, BatchSource,
+    authenticate_admission_rows, authenticate_source_batch, AdmissionInput, AdmissionRows,
+    AuthenticationBudget, BatchSource,
 };
 use crate::native_pipeline::persistence::{PacketBudget, PreparedCandidate, StorageDomain};
 use anyhow::{ensure, Context, Result};
@@ -91,6 +92,10 @@ impl<T> ComputeTicket<T> {
 }
 
 enum Command {
+    Admission {
+        inputs: Vec<AdmissionInput>,
+        reply: mpsc::Sender<Result<AdmissionRows>>,
+    },
     Authenticate {
         request: Box<AuthenticateRequest>,
         reply: mpsc::Sender<Result<NovTransferBody>>,
@@ -120,6 +125,24 @@ pub(crate) struct ComputeOwner {
 }
 
 impl ComputeOwner {
+    pub(crate) fn try_admit_signatures(
+        &self,
+        inputs: Vec<AdmissionInput>,
+    ) -> Result<Submission<Vec<AdmissionInput>, AdmissionRows>> {
+        let (reply, receiver) = mpsc::channel();
+        match self.sender.try_send(Command::Admission { inputs, reply }) {
+            Ok(()) => Ok(Submission::Accepted(ComputeTicket {
+                receiver,
+                consumed: false,
+            })),
+            Err(mpsc::TrySendError::Full(Command::Admission { inputs, .. })) => {
+                Ok(Submission::Backpressured(inputs))
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => anyhow::bail!("compute owner unavailable"),
+            Err(mpsc::TrySendError::Full(_)) => unreachable!("typed command changed while sending"),
+        }
+    }
+
     pub(crate) fn try_authenticate(
         &self,
         request: AuthenticateRequest,
@@ -357,6 +380,18 @@ fn run_owner(
     let mut panicked = false;
     while let Ok(command) = receiver.recv() {
         match command {
+            Command::Admission { inputs, reply } => {
+                let result = run_checked(&mut panicked, || {
+                    authenticate_admission_rows(
+                        session,
+                        config.domain.chain_id,
+                        inputs,
+                        config.authentication,
+                        config.timeout,
+                    )
+                });
+                let _ = reply.send(result);
+            }
             Command::Authenticate { request, reply } => {
                 let result = run_checked(&mut panicked, || authenticate(session, config, *request));
                 let _ = reply.send(result);

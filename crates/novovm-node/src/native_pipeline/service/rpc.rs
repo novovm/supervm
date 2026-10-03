@@ -13,6 +13,7 @@ use crate::native_pipeline::consensus::transport::{EarlyBodyScope, Message};
 use crate::native_pipeline::consensus::wire::Hash;
 use crate::native_pipeline::consensus::ArchiveRead;
 use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
+#[cfg(test)]
 use crate::native_pipeline::ingress::authentication::authenticate_transfer_v3;
 use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v3};
 use crate::native_pipeline::persistence::io::IoTicket;
@@ -28,6 +29,8 @@ const MAX_POOL: usize = 65_536;
 const MAX_POOL_BYTES: usize = 64 * 1024 * 1024;
 const RECENT_RECEIPTS: usize = 65_536;
 const MAX_SIGNERS: usize = 65_536;
+
+mod admission;
 
 struct BalanceQuery {
     account: Account,
@@ -90,6 +93,7 @@ pub struct RpcLifecycle {
     authentication_cache_hits: u64,
     projection_error: Option<String>,
     balances: VecDeque<BalanceQuery>,
+    admission: admission::AdmissionState,
 }
 
 impl RpcLifecycle {
@@ -120,6 +124,7 @@ impl RpcLifecycle {
             authentication_cache_hits: 0,
             projection_error: None,
             balances: VecDeque::new(),
+            admission: admission::AdmissionState::default(),
         })
     }
 
@@ -131,6 +136,7 @@ impl RpcLifecycle {
                 self.projection_error = Some(format!("{error:#}"));
             }
         }
+        self.poll_admission()?;
         self.poll_gossip()?;
         if self.projection_error.is_some() || self.node.controller.is_recovering() {
             return Ok(());
@@ -359,36 +365,29 @@ impl RpcLifecycle {
         Ok(())
     }
 
-    fn submit(&mut self, raw: Vec<u8>) -> Result<Value> {
-        self.admit(raw, true)
-    }
-
-    fn admit(&mut self, raw: Vec<u8>, broadcast: bool) -> Result<Value> {
+    fn admit_checked(
+        &mut self,
+        input: crate::native_pipeline::pipeline::AdmissionInput,
+        checked: crate::native_pipeline::ingress::authentication::SignatureCheckedTransfer,
+        broadcast: bool,
+    ) -> Result<Value> {
         ensure!(
             self.projection_error.is_none(),
             "RPC projection unavailable"
         );
+        let matches = match &input {
+            crate::native_pipeline::pipeline::AdmissionInput::Raw(raw) => {
+                checked.transfer().matches_canonical_bytes(raw)?
+            }
+            crate::native_pipeline::pipeline::AdmissionInput::Apfl { batch, index } => {
+                checked.transfer() == batch.row(*index)?
+            }
+        };
+        ensure!(matches, "admission signature/input mismatch");
         // Signature-checked memory admission is not current-state admission.
         // A lagging query projection must not stall ingress. Selection still
         // waits for the exact published parent above; projection removes stale
         // nonces before any new current-height body can be submitted.
-        // A peer fanout and a client retry may carry the very same input. Reuse
-        // ONLY an exact byte match still held in the signature-checked pool;
-        // the canonical ID alone omits the signature and is insufficient.
-        let decoded = decode_transfer_v3(&raw, 1024)?;
-        let hash = canonical_tx_hash(&decoded)?;
-        if self
-            .pending
-            .get(&hash)
-            .is_some_and(|entry| entry.raw == raw)
-        {
-            self.authentication_cache_hits = self.authentication_cache_hits.saturating_add(1);
-            if broadcast {
-                self.queue_gossip(hash);
-            }
-            return Ok(self.pending_status(hash));
-        }
-        let checked = authenticate_transfer_v3(&raw, self.node.template.chain_id, 1024)?;
         for asset in [
             &checked.transfer().asset,
             &checked.transfer().fee_policy.pay_asset,
@@ -418,6 +417,7 @@ impl RpcLifecycle {
             !self.reservations.contains(&(signer, nonce)),
             "signer nonce already reserved"
         );
+        let raw = input.into_raw()?;
         ensure!(
             self.pending.len() < MAX_POOL
                 && raw.len() <= MAX_POOL_BYTES.saturating_sub(self.pending_bytes),
@@ -440,42 +440,8 @@ impl RpcLifecycle {
     }
 
     fn poll_gossip(&mut self) -> Result<()> {
-        self.ingress_batch_boundary = false;
         if self.projection_error.is_some() {
             return Ok(());
-        }
-        // Network identity authenticates the source, not its transactions. Work
-        // is bounded independently of control events and never re-broadcasts
-        // received input. A partially consumed batch retains one bounded Arc.
-        for _ in 0..32 {
-            if self.incoming.is_none() {
-                self.incoming = self
-                    .node
-                    .controller
-                    .take_transactions()
-                    .map(|received| (received.message, 0));
-            }
-            let Some((message, index)) = self.incoming.as_mut() else {
-                break;
-            };
-            let (raw, count) = match message.as_ref() {
-                Message::Transactions {
-                    raw_transactions, ..
-                } => (raw_transactions[*index].clone(), raw_transactions.len()),
-                Message::ApflTransactions { batch, .. } => {
-                    (batch.canonical_raw(*index)?, batch.len())
-                }
-                _ => anyhow::bail!("transaction channel returned a non-transaction message"),
-            };
-            *index += 1;
-            if *index == count {
-                self.incoming = None;
-                self.ingress_batch_boundary = true;
-            }
-            match self.admit(raw, false) {
-                Ok(_) => self.gossip_verified = self.gossip_verified.saturating_add(1),
-                Err(_) => self.gossip_rejected = self.gossip_rejected.saturating_add(1),
-            }
         }
         if self.gossip_offer.is_none() {
             let mut hashes = Vec::new();
@@ -650,6 +616,7 @@ impl RpcLifecycle {
             "transaction_gossip":self.node.controller.transactions_stats(),
             "gossip_verified_inputs":self.gossip_verified,"gossip_rejected_inputs":self.gossip_rejected,
             "authentication_cache_hits":self.authentication_cache_hits,
+            "rpc_authentication":self.admission.status(),
             "pending_survives_restart":false,
             "receipt_query_scope":"recent 65536 entries, rebuilt from durable archive"})
     }
@@ -677,7 +644,9 @@ impl RpcLifecycle {
             );
             match request["method"].as_str() {
                 Some("nov_chainStatus") => Ok(self.status()),
-                Some("nov_sendRawTransaction") => self.submit(one_hex_param(&request, 1024)?),
+                Some("nov_sendRawTransaction") => {
+                    anyhow::bail!("signed admission requires deferred resident RPC")
+                }
                 Some("nov_getAssetBalance") => self.balance(&request["params"]),
                 Some("nov_getTransactionStatus") => {
                     let hash: Hash = one_hex_param(&request, 32)?
@@ -727,10 +696,21 @@ fn pending_apfl_prefix(
 ) -> Result<Option<BTreeMap<Hash, u64>>> {
     let mut next = BTreeMap::new();
     for index in 0..batch.len() {
-        let raw = batch.canonical_raw(index)?;
-        if !advance_pending_raw(&raw, &mut next, pending, nonces)? {
+        let row = batch.row(index)?;
+        let hash = row.canonical_tx_hash()?;
+        let Some(entry) = pending.get(&hash) else {
+            return Ok(None);
+        };
+        if !row.matches_canonical_bytes(&entry.raw)? {
             return Ok(None);
         }
+        let expected = next
+            .entry(entry.signer)
+            .or_insert_with(|| nonces.get(&entry.signer).copied().unwrap_or(0));
+        if *expected != entry.nonce {
+            return Ok(None);
+        }
+        *expected = expected.checked_add(1).context("hint nonce overflow")?;
     }
     Ok(Some(next))
 }
@@ -882,22 +862,13 @@ pub fn run(path: &Path, mode: StartMode, run_for: Option<Duration>) -> Result<()
         loop {
             let now = Instant::now();
             lifecycle.poll(now)?;
-            rpc.poll_with(|request| lifecycle.handle(request))?;
+            let rpc_progress = rpc.poll_deferred(&mut lifecycle)?;
             if run_for.is_some_and(|limit| started.elapsed() >= limit) {
                 break;
             }
-            // Do not park between chunks of already-received signature work.
-            // Each chunk still returns here through controller and HTTP polling.
-            // Mere outbound backpressure is NOT work and must not cause a spin.
-            if lifecycle.projection_error.is_some()
-                || (lifecycle.incoming.is_none()
-                    && lifecycle
-                        .node
-                        .controller
-                        .transactions_stats()
-                        .inbound_pending
-                        == 0)
-            {
+            // Signature waiting returns through consensus and HTTP every turn;
+            // waiting for the native owner must not become a control busy-spin.
+            if !rpc_progress && !lifecycle.admission.made_progress {
                 std::thread::sleep(Duration::from_millis(1));
             }
         }

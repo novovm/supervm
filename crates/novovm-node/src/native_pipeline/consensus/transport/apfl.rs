@@ -36,8 +36,8 @@ fn canonical_size(batch: &ApflTransferBatch, fixed: usize) -> Result<usize> {
         .context("APFL canonical envelope size overflow")
 }
 
-/// Match old Body's exact ordered V3 commitment without creating Vec<Vec<u8>>.
-/// At most one canonical transaction projection is retained at a time.
+/// Match old Body's exact ordered V3 commitment by streaming its original wire
+/// bytes directly from borrowed rows, without a canonical transaction Vec.
 pub fn apfl_body_id(
     context: &BatchContext,
     batch: &ApflTransferBatch,
@@ -90,9 +90,9 @@ pub fn apfl_early_body_id(
 
 fn canonical_rows(digest: &mut Sha256, batch: &ApflTransferBatch) -> Result<()> {
     for index in 0..batch.len() {
-        let raw = batch.canonical_raw(index)?;
-        digest.update(u32::try_from(raw.len())?.to_be_bytes());
-        digest.update(raw);
+        let row = batch.row(index)?;
+        digest.update(u32::try_from(row.encoded_len()?)?.to_be_bytes());
+        row.update_canonical_digest(digest)?;
     }
     Ok(())
 }

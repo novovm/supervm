@@ -7,6 +7,7 @@ use super::*;
 use crate::native_pipeline::business::nov_transfer_batch::{
     NovCapturedInput, NovTransferBody, NovTransferCapture, NovTransferPlan,
 };
+use crate::native_pipeline::ingress::batch::AdmissionRows;
 use crate::native_pipeline::persistence::io::NodeReadReply;
 use crate::native_pipeline::state::frontier::CaptureStep;
 use crate::native_pipeline::state::frontier::PostStateSeed;
@@ -60,6 +61,8 @@ pub(super) fn start(
 }
 
 enum Stage {
+    Admission(Vec<AdmissionInput>),
+    Admitting(ComputeTicket<AdmissionRows>),
     Authenticate(Box<AuthenticateRequest>),
     Authenticating(ComputeTicket<NovTransferBody>),
     Bind(Box<BindRequest>),
@@ -88,7 +91,9 @@ enum Stage {
 impl Stage {
     fn label(&self) -> FailureStage {
         match self {
-            Self::Authenticate(_)
+            Self::Admission(_)
+            | Self::Admitting(_)
+            | Self::Authenticate(_)
             | Self::Authenticating(_)
             | Self::Bind(_)
             | Self::Prepare(_)
@@ -110,6 +115,7 @@ struct Job {
 }
 
 enum Reply {
+    Admission(mpsc::Sender<Result<SignatureAdmissionOutput>>),
     Durable(mpsc::Sender<Result<DurableBatch>>),
     Authenticated(mpsc::Sender<Result<AuthenticatedBody>>),
 }
@@ -117,6 +123,9 @@ enum Reply {
 impl Reply {
     fn fail(self, error: anyhow::Error) {
         match self {
+            Self::Admission(reply) => {
+                let _ = reply.send(Err(error));
+            }
             Self::Durable(reply) => {
                 let _ = reply.send(Err(error));
             }
@@ -130,6 +139,14 @@ impl Reply {
 impl From<DriverMessage> for Job {
     fn from(message: DriverMessage) -> Self {
         match message {
+            DriverMessage::Admission(command) => Self {
+                capture: CaptureObservation::default(),
+                stage: Stage::Admission(command.request.inputs),
+                candidate_id: None,
+                reply: Reply::Admission(command.reply),
+                _permit: command.permit,
+                background: true,
+            },
             DriverMessage::Batch(command) => Self {
                 capture: CaptureObservation::default(),
                 stage: Stage::Prepare(command.request.request),
@@ -162,6 +179,7 @@ impl From<DriverMessage> for Job {
 }
 
 enum Advancement {
+    Admitted(AdmissionRows),
     Pending { stage: Stage, progressed: bool },
     Complete(DurableBatch),
     Authenticated(NovTransferBody),
@@ -184,6 +202,17 @@ fn advance(
     let (cache, usage) = locality;
     use super::compute::Submission as ComputeSubmission;
     match stage {
+        Stage::Admission(inputs) => Ok(match compute.try_admit_signatures(inputs)? {
+            ComputeSubmission::Accepted(ticket) => pending(Stage::Admitting(ticket), true),
+            ComputeSubmission::Backpressured(inputs) => pending(Stage::Admission(inputs), false),
+        }),
+        Stage::Admitting(mut ticket) => {
+            if let Some(rows) = ticket.try_take()? {
+                Ok(Advancement::Admitted(rows))
+            } else {
+                Ok(pending(Stage::Admitting(ticket), false))
+            }
+        }
         Stage::Authenticate(request) => Ok(match compute.try_authenticate(*request)? {
             ComputeSubmission::Accepted(ticket) => pending(Stage::Authenticating(ticket), true),
             ComputeSubmission::Backpressured(request) => {
@@ -373,7 +402,9 @@ pub(super) fn run(
                 }
             }
         }
-        while connected && jobs.len() < config.max_batches {
+        // Candidate quota is unchanged. One separately byte-charged ingress
+        // request may coexist without occupying its current/background slots.
+        while connected && jobs.len() < config.max_batches + 1 {
             match receiver.try_recv() {
                 Ok(command) => enqueue(&mut jobs, command.into()),
                 Err(mpsc::TryRecvError::Empty) => break,
@@ -402,6 +433,14 @@ pub(super) fn run(
                 identity,
                 (&mut cache, &_permit.usage),
             ) {
+                Ok(Advancement::Admitted(rows)) => {
+                    if let Reply::Admission(reply) = reply {
+                        let _ = reply.send(Ok(SignatureAdmissionOutput { rows, _permit }));
+                    } else {
+                        reply.fail(anyhow::anyhow!("signature rows for candidate request"));
+                    }
+                    progressed = true;
+                }
                 Ok(Advancement::Pending {
                     stage,
                     progressed: made_progress,

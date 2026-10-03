@@ -1,0 +1,22 @@
+{
+  "schema": "novovm/frozen-rpc-baseline/v1",
+  "source_commit": "ed2bb415a969a424a51d605b5a3e3845bccd4e86",
+  "verified_against": "artifacts/audit/resident-apfl-20261004-v1/comparison.json",
+  "node_source": "target/release/novovm-node.exe",
+  "test_source": "target/release/deps/novovm_node-f6abee0fe86d4c64.exe",
+  "node_copy": "novovm-node.exe",
+  "test_copy": "novovm_node-tests.exe",
+  "node_sha256": "5207bf88cac76599e257119a489e5e20a3073c6156ec071738533697483ac28a",
+  "test_sha256": "7c40cb614507da5c5064c4b165af58d8fd250e4b5dae5640a9c801d5de8a699b",
+  "aoem_path": "aoem/windows/core/bin/aoem_ffi.dll",
+  "aoem_sha256": "4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463",
+  "rebuild_performed": false,
+  "environment": {
+    "NOVOVM_RESIDENT_RPC_LOAD_MODE": "single_ingress",
+    "NOVOVM_RESIDENT_RPC_LOAD_INGRESS_NODE": "0",
+    "NOVOVM_RESIDENT_RPC_REQUIRE_APFL": "1",
+    "NOVOVM_RESIDENT_RPC_REQUIRE_EARLY_REUSE": "1",
+    "NOVOVM_RESIDENT_RPC_LOAD_TIMEOUT_SECS": "600"
+  },
+  "test": "native_pipeline::consensus::tests::resident_rpc_process::load::actual_product_rpc_65536_signed_transfers_finality_and_cold_economics"
+}

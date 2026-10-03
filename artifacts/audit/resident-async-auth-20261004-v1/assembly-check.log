@@ -1,0 +1,3 @@
+PASS: Product has 21 approved members and no legacy dependency.
+PASS: Preserved components has 3 approved members and no legacy dependency.
+Assembly boundaries only; not execution ownership or mainnet acceptance.

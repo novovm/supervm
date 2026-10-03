@@ -14,15 +14,96 @@ struct Connection {
     stream: TcpStream,
     input: Vec<u8>,
     request: Option<Value>,
+    pending: Option<u64>,
     output: Option<Vec<u8>>,
     written: usize,
     opened: Instant,
+    // Reset each poll; only actual socket bytes set this bit.
+    io_progress: bool,
 }
 
 pub struct FreshRpcServer {
     listener: TcpListener,
     connections: Vec<Connection>,
     max_request: usize,
+    last_deferred_token: Option<u64>,
+}
+
+/// Deferred ownership is local to this HTTP server, not an execution receipt.
+/// Implementations must allocate strictly increasing tokens (never connection
+/// indexes), consume each reply once, and keep start/poll/cancel nonblocking.
+/// Cancellation abandons delivery, not necessarily already accepted AOEM work.
+pub(crate) trait DeferredRpcHandler {
+    fn start(&mut self, request: Value) -> DeferredRpcReply;
+    fn poll(&mut self, token: u64) -> Option<Value>;
+    fn cancel(&mut self, token: u64);
+}
+
+pub(crate) enum DeferredRpcReply {
+    Ready(Value),
+    Pending(u64),
+}
+
+impl Connection {
+    // The two dispatcher modes share framing, allocation and socket bounds.
+    // Once dispatched, a pending connection never reads/parses its request again.
+    fn read_request(&mut self, max_request: usize) -> bool {
+        if self.output.is_some() || self.request.is_some() || self.pending.is_some() {
+            return true;
+        }
+        let mut buffer = [0u8; 16 * 1024];
+        match self.stream.read(&mut buffer) {
+            Ok(0) => return false,
+            Ok(count) => {
+                self.input.extend_from_slice(&buffer[..count]);
+                self.io_progress = true;
+            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => return true,
+            Err(_) => return false,
+        }
+        if self.input.len() > max_request {
+            return false;
+        }
+        let request = match body_bounded(&self.input, max_request) {
+            Ok(Some(bytes)) => serde_json::from_slice(bytes),
+            Ok(None) => return true,
+            Err(_) => return false,
+        };
+        match request {
+            Ok(value) => self.request = Some(value),
+            Err(_) => {
+                self.output = Some(http_response(
+                    &json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"invalid JSON"}}),
+                ));
+                self.input = Vec::new();
+            }
+        }
+        true
+    }
+
+    fn take_request(&mut self) -> Option<Value> {
+        let request = self.request.take()?;
+        // Value owns the parsed bytes. Do not retain a second up-to-4MiB raw
+        // request while the execution owner holds a deferred authentication job.
+        self.input = Vec::new();
+        Some(request)
+    }
+
+    fn write_response(&mut self) -> bool {
+        let Some(output) = self.output.as_ref() else {
+            return true;
+        };
+        match self.stream.write(&output[self.written..]) {
+            Ok(0) => false,
+            Ok(count) => {
+                self.written += count;
+                self.io_progress = true;
+                self.written < output.len()
+            }
+            Err(error) if error.kind() == ErrorKind::WouldBlock => true,
+            Err(_) => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -282,6 +363,7 @@ impl FreshRpcServer {
             listener,
             connections: Vec::new(),
             max_request,
+            last_deferred_token: None,
         })
     }
 
@@ -317,10 +399,12 @@ impl FreshRpcServer {
 
     /// Reuse the product HTTP transport with an explicitly selected execution
     /// lifecycle. This does not select a signer, database, or execution policy.
+    #[cfg(test)]
     pub(crate) fn poll_with(&mut self, mut handle: impl FnMut(Value) -> Value) -> Result<()> {
         self.poll_batch_with(|requests| requests.into_iter().map(&mut handle).collect())
     }
 
+    #[cfg(test)]
     fn poll_batch_with(&mut self, handle: impl FnMut(Vec<Value>) -> Vec<Value>) -> Result<()> {
         self.poll_batch_when(true, handle)
     }
@@ -330,47 +414,15 @@ impl FreshRpcServer {
         storage_available: bool,
         mut handle: impl FnMut(Vec<Value>) -> Vec<Value>,
     ) -> Result<()> {
-        for _ in 0..MAX_CONNECTIONS {
-            match self.listener.accept() {
-                Ok((stream, _)) if self.connections.len() < MAX_CONNECTIONS => {
-                    stream.set_nonblocking(true)?;
-                    self.connections.push(Connection {
-                        stream,
-                        input: Vec::new(),
-                        request: None,
-                        output: None,
-                        written: 0,
-                        opened: Instant::now(),
-                    });
-                }
-                Ok(_) => (),
-                Err(error) if error.kind() == ErrorKind::WouldBlock => break,
-                Err(error) => return Err(error.into()),
-            }
+        if self
+            .connections
+            .iter()
+            .any(|connection| connection.pending.is_some())
+        {
+            bail!("pending deferred RPC requires its original handler");
         }
-        self.connections.retain_mut(|connection| {
-            if connection.opened.elapsed() > DEADLINE { return false; }
-            if connection.output.is_none() && connection.request.is_none() {
-                let mut buffer = [0u8; 16 * 1024];
-                match connection.stream.read(&mut buffer) {
-                    Ok(0) => return false,
-                    Ok(count) => connection.input.extend_from_slice(&buffer[..count]),
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => return true,
-                    Err(_) => return false,
-                }
-                if connection.input.len() > self.max_request { return false; }
-                let request = match body_bounded(&connection.input, self.max_request) {
-                    Ok(Some(bytes)) => serde_json::from_slice(bytes),
-                    Ok(None) => return true,
-                    Err(_) => return false,
-                };
-                match request {
-                    Ok(value) => connection.request = Some(value),
-                    Err(_) => connection.output = Some(http_response(&json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"invalid JSON"}}))),
-                }
-            }
-            true
-        });
+        self.accept_connections()?;
+        self.read_connections(|_| unreachable!("batch dispatcher has no deferred token"));
         let (positions, requests): (Vec<_>, Vec<_>) = self
             .connections
             .iter_mut()
@@ -387,7 +439,7 @@ impl FreshRpcServer {
                 {
                     return None;
                 }
-                connection.request.take().map(|request| (index, request))
+                connection.take_request().map(|request| (index, request))
             })
             .unzip();
         if !requests.is_empty() {
@@ -399,22 +451,96 @@ impl FreshRpcServer {
                 self.connections[index].output = Some(http_response(&response));
             }
         }
-        self.connections.retain_mut(|connection| {
-            if connection.output.is_none() {
-                return true;
-            }
-            let output = connection.output.as_ref().expect("response ready");
-            match connection.stream.write(&output[connection.written..]) {
-                Ok(0) => false,
-                Ok(count) => {
-                    connection.written += count;
-                    connection.written < output.len()
-                }
-                Err(error) if error.kind() == ErrorKind::WouldBlock => true,
-                Err(_) => false,
-            }
-        });
+        self.connections.retain_mut(Connection::write_response);
         Ok(())
+    }
+
+    /// One bounded turn for every live connection. Slow owner replies remain
+    /// pending without preventing unrelated control/query requests from running.
+    /// The original connection count, request envelope and absolute deadline
+    /// still apply; polling or completing work never renews the deadline.
+    /// True reports real socket/dispatch/completion/retirement progress, not a
+    /// pending job or WouldBlock. Partial request reads count without increasing
+    /// the original single-16KiB-read quota per connection per turn.
+    pub(crate) fn poll_deferred(&mut self, handler: &mut impl DeferredRpcHandler) -> Result<bool> {
+        let mut progressed = self.accept_connections()?;
+        progressed |= self.read_connections(|token| handler.cancel(token));
+        for connection in &mut self.connections {
+            if let Some(token) = connection.pending {
+                if let Some(response) = handler.poll(token) {
+                    progressed = true;
+                    connection.pending = None;
+                    connection.output = Some(http_response(&response));
+                }
+            } else if let Some(request) = connection.take_request() {
+                progressed = true;
+                match handler.start(request) {
+                    DeferredRpcReply::Ready(response) => {
+                        connection.output = Some(http_response(&response));
+                    }
+                    DeferredRpcReply::Pending(token) => {
+                        if self
+                            .last_deferred_token
+                            .is_some_and(|previous| token <= previous)
+                        {
+                            handler.cancel(token);
+                            bail!("deferred RPC token reused or out of order");
+                        }
+                        self.last_deferred_token = Some(token);
+                        connection.pending = Some(token);
+                    }
+                }
+            }
+        }
+        self.connections.retain_mut(|connection| {
+            let keep = connection.write_response();
+            progressed |= connection.io_progress || !keep;
+            keep
+        });
+        Ok(progressed)
+    }
+
+    fn accept_connections(&mut self) -> Result<bool> {
+        let mut progressed = false;
+        for _ in 0..MAX_CONNECTIONS {
+            match self.listener.accept() {
+                Ok((stream, _)) if self.connections.len() < MAX_CONNECTIONS => {
+                    stream.set_nonblocking(true)?;
+                    self.connections.push(Connection {
+                        stream,
+                        input: Vec::new(),
+                        request: None,
+                        pending: None,
+                        output: None,
+                        written: 0,
+                        opened: Instant::now(),
+                        io_progress: false,
+                    });
+                    progressed = true;
+                }
+                Ok(_) => progressed = true,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(progressed)
+    }
+
+    fn read_connections(&mut self, mut cancel: impl FnMut(u64)) -> bool {
+        let mut progressed = false;
+        self.connections.retain_mut(|connection| {
+            connection.io_progress = false;
+            let keep = connection.opened.elapsed() <= DEADLINE
+                && connection.read_request(self.max_request);
+            progressed |= connection.io_progress || !keep;
+            if !keep {
+                if let Some(token) = connection.pending.take() {
+                    cancel(token);
+                }
+            }
+            keep
+        });
+        progressed
     }
 }
 
@@ -444,6 +570,231 @@ fn poll_during_idle_with(
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[derive(Default)]
+    struct DeferredFixture {
+        next_token: u64,
+        starts: Vec<Value>,
+        polls: Vec<u64>,
+        cancelled: Vec<u64>,
+        responses: std::collections::BTreeMap<u64, Value>,
+    }
+
+    impl DeferredRpcHandler for DeferredFixture {
+        fn start(&mut self, request: Value) -> DeferredRpcReply {
+            self.starts.push(request.clone());
+            if request["method"] == "nov_chainStatus" {
+                return DeferredRpcReply::Ready(
+                    json!({"jsonrpc":"2.0","id":request["id"],"result":{"responsive":true}}),
+                );
+            }
+            self.next_token += 1;
+            DeferredRpcReply::Pending(self.next_token)
+        }
+
+        fn poll(&mut self, token: u64) -> Option<Value> {
+            self.polls.push(token);
+            self.responses.remove(&token)
+        }
+
+        fn cancel(&mut self, token: u64) {
+            self.cancelled.push(token);
+            self.responses.remove(&token);
+        }
+    }
+
+    fn deferred_client(address: SocketAddr, method: &str, id: u64) -> TcpStream {
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let body =
+            serde_json::to_vec(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":[]}))
+                .unwrap();
+        let mut packet =
+            format!("POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+        packet.extend_from_slice(&body);
+        stream.write_all(&packet).unwrap();
+        stream
+    }
+
+    fn deferred_response(stream: &mut TcpStream) -> Value {
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+    }
+
+    #[test]
+    fn deferred_owner_response_does_not_block_other_http_connections_or_dispatch_twice() {
+        let mut server = FreshRpcServer::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = server.local_addr().unwrap();
+        let mut handler = DeferredFixture::default();
+        let mut submit = deferred_client(address, "nov_sendRawTransaction", 11);
+        server.poll_deferred(&mut handler).unwrap();
+        assert_eq!(server.connections.len(), 1);
+        assert_eq!(server.connections[0].pending, Some(1));
+        assert!(server.connections[0].request.is_none() && server.connections[0].output.is_none());
+        assert_eq!(
+            server.connections[0].input.capacity(),
+            0,
+            "raw request retained after owner takeover"
+        );
+
+        let mut control = deferred_client(address, "nov_chainStatus", 22);
+        server.poll_deferred(&mut handler).unwrap();
+        assert_eq!(
+            deferred_response(&mut control),
+            json!({"jsonrpc":"2.0","id":22,"result":{"responsive":true}})
+        );
+        assert_eq!(handler.starts.len(), 2);
+        assert_eq!(handler.polls, [1]);
+        assert_eq!(server.connections.len(), 1);
+        assert!(
+            server.connections[0].output.is_none(),
+            "pending admission fabricated a response"
+        );
+        let response = json!({"jsonrpc":"2.0","id":11,"result":{"status":"received"}});
+        handler.responses.insert(1, response.clone());
+        server.poll_deferred(&mut handler).unwrap();
+        assert_eq!(deferred_response(&mut submit), response);
+        assert_eq!(
+            handler.starts.len(),
+            2,
+            "original request dispatched again while pending"
+        );
+        assert!(handler.cancelled.is_empty());
+        assert!(server.connections.is_empty());
+    }
+
+    #[test]
+    fn deferred_timeout_cancels_once_and_recycled_connection_slot_cannot_receive_old_reply() {
+        let mut server = FreshRpcServer::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = server.local_addr().unwrap();
+        let mut handler = DeferredFixture::default();
+        let mut old = deferred_client(address, "nov_sendRawTransaction", 11);
+        server.poll_deferred(&mut handler).unwrap();
+        server.connections[0].opened = Instant::now() - DEADLINE - Duration::from_secs(1);
+        server.poll_deferred(&mut handler).unwrap();
+        assert_eq!(handler.cancelled, [1]);
+        assert!(
+            handler.polls.is_empty(),
+            "expired job was polled before cancellation"
+        );
+        assert!(server.connections.is_empty());
+        let mut expired_reply = String::new();
+        old.read_to_string(&mut expired_reply).unwrap();
+        assert!(expired_reply.is_empty());
+
+        // An execution may finish after delivery cancellation. Its old token
+        // must not become the next connection's index or response authority.
+        handler
+            .responses
+            .insert(1, json!({"id":11,"result":"late old completion"}));
+        let mut new = deferred_client(address, "nov_sendRawTransaction", 33);
+        server.poll_deferred(&mut handler).unwrap();
+        assert_eq!(server.connections[0].pending, Some(2));
+        server.poll_deferred(&mut handler).unwrap();
+        assert_eq!(handler.polls, [2]);
+        assert!(server.connections[0].output.is_none());
+        let response = json!({"jsonrpc":"2.0","id":33,"result":{"status":"received"}});
+        handler.responses.insert(2, response.clone());
+        server.poll_deferred(&mut handler).unwrap();
+        assert_eq!(deferred_response(&mut new), response);
+        assert!(
+            handler.responses.contains_key(&1),
+            "new connection consumed old completion"
+        );
+        assert_eq!(handler.cancelled, [1]);
+        assert!(server.connections.is_empty());
+    }
+
+    #[test]
+    fn deferred_handler_cannot_reuse_an_expired_token() {
+        let mut server = FreshRpcServer::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = server.local_addr().unwrap();
+        let mut handler = DeferredFixture::default();
+        let _old = deferred_client(address, "nov_sendRawTransaction", 11);
+        server.poll_deferred(&mut handler).unwrap();
+        server.connections[0].opened = Instant::now() - DEADLINE - Duration::from_secs(1);
+        server.poll_deferred(&mut handler).unwrap();
+        handler.next_token = 0; // Deliberately broken handler, not an allowed sequence.
+        let _new = deferred_client(address, "nov_sendRawTransaction", 22);
+        let error = server.poll_deferred(&mut handler).unwrap_err();
+        assert!(error.to_string().contains("token reused"));
+        assert_eq!(handler.cancelled, [1, 1]);
+        assert!(server
+            .connections
+            .iter()
+            .all(|connection| connection.pending.is_none() && connection.output.is_none()));
+    }
+
+    #[test]
+    fn deferred_waiting_is_not_progress_but_start_and_ready_are() {
+        let mut server = FreshRpcServer::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let mut handler = DeferredFixture::default();
+        assert!(!server.poll_deferred(&mut handler).unwrap());
+        let mut client = deferred_client(server.local_addr().unwrap(), "nov_sendRawTransaction", 1);
+        assert!(server.poll_deferred(&mut handler).unwrap());
+        assert_eq!(server.connections[0].pending, Some(1));
+        for _ in 0..3 {
+            assert!(
+                !server.poll_deferred(&mut handler).unwrap(),
+                "waiting owner job fabricated IO progress"
+            );
+        }
+        assert_eq!(handler.starts.len(), 1);
+        handler
+            .responses
+            .insert(1, json!({"id":1,"result":"completed"}));
+        assert!(server.poll_deferred(&mut handler).unwrap());
+        assert_eq!(deferred_response(&mut client)["result"], "completed");
+        assert!(!server.poll_deferred(&mut handler).unwrap());
+    }
+
+    #[test]
+    fn deferred_partial_http_reads_report_real_progress_without_expanding_read_quota() {
+        let mut server = FreshRpcServer::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let mut handler = DeferredFixture::default();
+        let mut client = TcpStream::connect(server.local_addr().unwrap()).unwrap();
+        client.set_nodelay(true).unwrap();
+        assert!(
+            server.poll_deferred(&mut handler).unwrap(),
+            "accept is real progress"
+        );
+        assert!(server.connections[0].input.is_empty());
+        assert!(!server.poll_deferred(&mut handler).unwrap());
+
+        let mut partial = b"POST / HTTP/1.1\r\nContent-Length: 65536\r\n\r\n{".to_vec();
+        partial.extend(std::iter::repeat_n(b' ', 32 * 1024));
+        client.write_all(&partial).unwrap();
+        let started = Instant::now();
+        let mut read_turns = 0;
+        while server.connections[0].input.len() < partial.len() {
+            assert!(started.elapsed() < Duration::from_secs(1));
+            let before = server.connections[0].input.len();
+            let progress = server.poll_deferred(&mut handler).unwrap();
+            let read = server.connections[0].input.len() - before;
+            assert!(
+                read <= 16 * 1024,
+                "one poll drained beyond the original per-connection quota"
+            );
+            assert_eq!(
+                progress,
+                read > 0,
+                "partial read progress differs from actual bytes"
+            );
+            read_turns += usize::from(read > 0);
+        }
+        assert!(read_turns >= 3);
+        assert!(
+            handler.starts.is_empty(),
+            "incomplete request reached execution"
+        );
+        assert!(
+            !server.poll_deferred(&mut handler).unwrap(),
+            "WouldBlock fabricated progress"
+        );
+    }
 
     #[test]
     fn explicit_batch_envelope_keeps_original_http_limit_and_framing() {

@@ -9,10 +9,16 @@
 //! Callers supply independently authorized parent/domain policy. Different jobs
 //! may deliberately be competing local candidates, not a selected chain.
 
+mod admission;
 mod authentication;
 mod compute;
 mod driver;
 mod seed;
+pub use crate::native_pipeline::ingress::batch::{AdmissionInput, AdmissionRow};
+pub use admission::{
+    RejectedSignatureAdmissionSubmission, SignatureAdmissionOutput, SignatureAdmissionRequest,
+    SignatureAdmissionSubmission, SignatureAdmissionTicket,
+};
 pub use authentication::{
     AuthenticatedBody, AuthenticatedRequest, AuthenticatedSubmission, AuthenticationRequest,
     AuthenticationSubmission, AuthenticationTicket, RejectedAuthenticatedSubmission,
@@ -306,18 +312,21 @@ struct Usage {
     batches: usize,
     bytes: usize,
     background: usize,
+    ingress: usize,
 }
 struct Permit {
     usage: Arc<Mutex<Usage>>,
     bytes: usize,
     background: bool,
+    ingress: bool,
 }
 impl Drop for Permit {
     fn drop(&mut self) {
         let mut usage = self.usage.lock().unwrap_or_else(|error| error.into_inner());
-        usage.batches -= 1;
+        usage.batches -= usize::from(!self.ingress);
         usage.bytes -= self.bytes;
         usage.background -= usize::from(self.background);
+        usage.ingress -= usize::from(self.ingress);
     }
 }
 
@@ -363,6 +372,7 @@ enum DriverMessage {
     Batch(Command),
     Authenticate(authentication::AuthenticationCommand),
     Bind(authentication::BindCommand),
+    Admission(admission::AdmissionCommand),
 }
 
 pub struct CandidatePipeline {
@@ -381,7 +391,7 @@ impl CandidatePipeline {
     /// once inside its dedicated owner. No engine is initialized in try_submit.
     pub fn start(config: PipelineConfig, mode: OpenMode) -> Result<Self> {
         config.validate()?;
-        let (sender, receiver) = mpsc::sync_channel(config.max_batches);
+        let (sender, receiver) = mpsc::sync_channel(config.max_batches + 1);
         let (ready, ready_receiver) = mpsc::sync_channel(1);
         let worker_config = config.clone();
         let identity = Arc::new(());
@@ -537,6 +547,7 @@ impl CandidatePipeline {
             usage: self.usage.clone(),
             bytes,
             background,
+            ingress: false,
         })))
     }
 

@@ -859,6 +859,12 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
         Ok("1") => true,
         _ => bail!("NOVOVM_RESIDENT_RPC_REQUIRE_EARLY_REUSE must be 0 or 1"),
     };
+    let require_async_auth =
+        match std::env::var("NOVOVM_RESIDENT_RPC_REQUIRE_ASYNC_AUTH").as_deref() {
+            Err(std::env::VarError::NotPresent) | Ok("0") => false,
+            Ok("1") => true,
+            _ => bail!("NOVOVM_RESIDENT_RPC_REQUIRE_ASYNC_AUTH must be 0 or 1"),
+        };
     let binary = PathBuf::from(
         std::env::var_os("NOVOVM_RESIDENT_NODE_BINARY")
             .context("explicit NOVOVM_RESIDENT_NODE_BINARY required")?,
@@ -877,7 +883,7 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
     let mut counts = Counts::default();
     let mut events = Events::new(&directory.join("events.jsonl"))?;
     let mut observations = Vec::new();
-    let mut evidence = json!({});
+    let mut evidence = json!({"async_authentication_required":require_async_auth});
     let mut elapsed = None;
     let mut timed_wall_seconds = None;
     let mut phase = "prepare signatures/configuration";
@@ -925,7 +931,8 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
         );
         evidence = json!({"binary":binary,"binary_sha256":hex(&Sha256::digest(fs::read(&binary)?)),
             "aoem_sha256":hex(&Sha256::digest(fs::read(library()?)?)),"timeout_seconds":timeout,
-            "genesis_commitment":hex(&genesis.genesis_config_commitment)});
+            "genesis_commitment":hex(&genesis.genesis_config_commitment),
+            "async_authentication_required":require_async_auth});
         let mut relay = Relay::start(&directory.join("relay"))?;
         let (mut nodes, set) =
             setup_with_genesis(&directory, &relay, binary.clone(), genesis.clone(), SENDERS)?;
@@ -966,6 +973,15 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
         let before = nodes.wait_ready(&[0, 1, 2, 3])?;
         // Preserve real counters even when the additional early-reuse gate fails.
         evidence["live_status"] = json!(before);
+        evidence["async_authentication"] = json!({
+            "explicitly_required":require_async_auth,
+            "per_node":before.iter().map(|status|status["rpc_authentication"].clone()).collect::<Vec<_>>(),
+            "counter_scope":"owner authentication work; may include duplicates/retries and is not the finalized TPS numerator",
+            "control_polls_while_checking":"recorded only; zero is permitted for work completing between control polls",
+        });
+        if require_async_auth {
+            check_async_authentication(&before)?;
+        }
         let require_apfl = std::env::var("NOVOVM_RESIDENT_RPC_REQUIRE_APFL").as_deref() == Ok("1");
         evidence["apfl_views_required"] = json!(require_apfl);
         if require_apfl {
@@ -1080,6 +1096,66 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
         directory.join("result.json").display()
     );
     result
+}
+
+// These work counters are extra post-timer evidence, never the TPS numerator.
+// Do not lower the four-node count to compensate for a missing gossip route or
+// receipt projection winning a race: such a run must retain the unmet gate.
+fn check_async_authentication(statuses: &[Value]) -> Result<()> {
+    ensure!(
+        statuses.len() == 4,
+        "async authentication requires all four node statuses"
+    );
+    for (node, status) in statuses.iter().enumerate() {
+        let observed = &status["rpc_authentication"];
+        ensure!(
+            observed["owner"] == "same_resident_aoem_compute_session",
+            "node {node} RPC authentication used a missing or different owner"
+        );
+        for name in ["submitted_batches", "completed_batches"] {
+            ensure!(
+                observed[name].as_u64().is_some_and(|count| count > 0),
+                "node {node} async authentication {name} is missing or zero"
+            );
+        }
+        ensure!(
+            observed["checked_rows"].as_u64().is_some_and(|rows| rows >= TRANSACTIONS as u64),
+            "node {node} async authentication did not check all {TRANSACTIONS} signed rows: {observed}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn load_async_authentication_requires_same_owner_and_full_four_node_work_without_claiming_tps() {
+    let good = json!({"rpc_authentication":{
+        "owner":"same_resident_aoem_compute_session",
+        "submitted_batches":64,"completed_batches":64,"checked_rows":TRANSACTIONS,
+        "control_polls_while_checking":0,
+    }});
+    let statuses = vec![good; 4];
+    check_async_authentication(&statuses).unwrap();
+    assert!(check_async_authentication(&statuses[..3]).is_err());
+    for (field, value) in [
+        ("owner", json!("host_thread_pool")),
+        ("owner", Value::Null),
+        ("submitted_batches", json!(0)),
+        ("completed_batches", json!(0)),
+        ("checked_rows", json!(TRANSACTIONS - 1)),
+        ("checked_rows", json!(TRANSACTIONS.to_string())),
+    ] {
+        for node in 0..4 {
+            let mut changed = statuses.clone();
+            changed[node]["rpc_authentication"][field] = value.clone();
+            assert!(
+                check_async_authentication(&changed).is_err(),
+                "node {node} field {field} escaped gate"
+            );
+        }
+    }
+    let mut missing = statuses;
+    missing[3] = json!({});
+    assert!(check_async_authentication(&missing).is_err());
 }
 
 #[test]

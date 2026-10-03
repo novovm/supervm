@@ -123,6 +123,107 @@ fn fixture() -> TransferV3 {
     }
 }
 
+#[test]
+fn streaming_canonical_projection_matches_frozen_wire_and_preserves_outer_framing() -> Result<()> {
+    let original = fixture();
+    let mut variants = mutations(&original);
+    variants.push(original.clone());
+    // Exercise postcard varints and both sides of the stack-buffer boundaries,
+    // including bulk strings larger than that buffer and following signatures.
+    for length in [0, 1, 127, 128, 255, 256, 257, 511, 512, 513, 1024] {
+        let mut tx = original.clone();
+        tx.chain_id = u64::MAX;
+        tx.from = vec![0x12; 32];
+        tx.to = vec![0x34; 20];
+        tx.asset = "x".repeat(length);
+        tx.amount = u128::MAX;
+        tx.nonce = u64::MAX;
+        tx.fee_policy.pay_asset = "y".repeat(length + 1);
+        tx.fee_policy.max_pay_amount = u128::MAX;
+        tx.fee_policy.slippage_bps = u32::MAX;
+        variants.push(tx);
+    }
+    let mut unsigned = original;
+    unsigned.signature.clear();
+    variants.push(unsigned);
+    for tx in variants {
+        let bytes = frozen_wire(&tx, &tx.signature);
+        let view = tx.as_view();
+        assert_eq!(view.encoded_len()?, bytes.len());
+        assert!(view.matches_canonical_bytes(&bytes)?);
+        let mut reference = Sha256::new();
+        reference.update(b"outer-domain\0");
+        reference.update(u32::try_from(bytes.len())?.to_be_bytes());
+        reference.update(&bytes);
+        reference.update(b"next-row");
+        let mut actual = Sha256::new();
+        actual.update(b"outer-domain\0");
+        actual.update(u32::try_from(view.encoded_len()?)?.to_be_bytes());
+        view.update_canonical_digest(&mut actual)?;
+        actual.update(b"next-row");
+        assert_eq!(actual.finalize(), reference.finalize());
+    }
+    Ok(())
+}
+
+#[test]
+fn exact_canonical_match_rejects_all_byte_changes_and_signature_hash_aliases() -> Result<()> {
+    let tx = fixture();
+    let bytes = frozen_wire(&tx, &tx.signature);
+    for offset in 0..bytes.len() {
+        let mut changed = bytes.clone();
+        changed[offset] ^= 1;
+        assert!(
+            !tx.as_view().matches_canonical_bytes(&changed)?,
+            "byte {offset}"
+        );
+    }
+    for end in 0..bytes.len() {
+        assert!(!tx.as_view().matches_canonical_bytes(&bytes[..end])?);
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(!tx.as_view().matches_canonical_bytes(&trailing)?);
+    for mut changed in mutations(&tx) {
+        assert!(!changed.as_view().matches_canonical_bytes(&bytes)?);
+        // An input's own canonical representation matches regardless of whether
+        // its unverified signature authorizes the modified business fields.
+        assert!(changed
+            .as_view()
+            .matches_canonical_bytes(&changed.as_view().encode()?)?);
+        changed.signature[95] ^= 1;
+        assert!(!changed.as_view().matches_canonical_bytes(&bytes)?);
+    }
+    for signature_index in [0, 31, 32, 95] {
+        let mut altered = tx.clone();
+        altered.signature[signature_index] ^= 1;
+        assert_eq!(canonical_tx_hash(&altered)?, canonical_tx_hash(&tx)?);
+        assert!(!altered.as_view().matches_canonical_bytes(&bytes)?);
+        let mut old_digest = Sha256::new();
+        let mut new_digest = Sha256::new();
+        tx.as_view().update_canonical_digest(&mut old_digest)?;
+        altered.as_view().update_canonical_digest(&mut new_digest)?;
+        assert_ne!(old_digest.finalize(), new_digest.finalize());
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_streaming_view_errors_before_changing_digest() {
+    let mut bad_signature = fixture();
+    bad_signature.signature.pop();
+    let mut bad_account = fixture();
+    bad_account.from.pop();
+    for tx in [bad_signature, bad_account] {
+        let mut digest = Sha256::new();
+        digest.update(b"unchanged");
+        let before = digest.clone().finalize();
+        assert!(tx.as_view().matches_canonical_bytes(&[]).is_err());
+        assert!(tx.as_view().update_canonical_digest(&mut digest).is_err());
+        assert_eq!(digest.finalize(), before);
+    }
+}
+
 fn mutations(tx: &TransferV3) -> Vec<TransferV3> {
     let mut variants = Vec::new();
     macro_rules! change {

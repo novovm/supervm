@@ -15,9 +15,11 @@ fn job(marker: u8, background: bool) -> Job {
                 batches: 1,
                 bytes: 0,
                 background: usize::from(background),
+                ingress: 0,
             })),
             bytes: 0,
             background,
+            ingress: false,
         }),
         background,
     }
@@ -44,6 +46,30 @@ fn ordinary_admissions_precede_background_without_reordering_ordinary_jobs() {
     }
     enqueue(&mut jobs, job(3, false));
     assert_eq!(order(&jobs), [1, 2, 3, 9]);
+}
+
+#[test]
+fn typed_signature_admission_never_takes_current_candidate_scheduling_priority() {
+    let config = crate::native_pipeline::pipeline::tests::config("unused-admission-order".into());
+    let (pipeline, receiver) = crate::native_pipeline::pipeline::tests::inert_pipeline(config);
+    let SignatureAdmissionSubmission::Accepted(ticket) = pipeline
+        .try_admit_signatures_owned(SignatureAdmissionRequest::from_raw(vec![vec![7; 64]]).unwrap())
+        .unwrap()
+    else {
+        panic!("expected signature admission")
+    };
+    let mut ingress = Job::from(receiver.try_recv().unwrap());
+    assert!(matches!(ingress.stage, Stage::Admission(_)));
+    assert!(ingress._permit.ingress);
+    assert!(!ingress._permit.background);
+    assert!(ingress.background);
+    ingress.candidate_id = Some([9; 32]); // Test marker only, not a capability.
+    let mut jobs = VecDeque::new();
+    enqueue(&mut jobs, ingress);
+    enqueue(&mut jobs, job(1, false));
+    assert_eq!(order(&jobs), [1, 9]);
+    drop((jobs, ticket));
+    assert_eq!(pipeline.usage.lock().unwrap().ingress, 0);
 }
 
 #[test]
@@ -101,6 +127,7 @@ fn bound_job(marker: u8, background: bool) -> (Job, Arc<Mutex<Usage>>) {
         batches: 1,
         bytes,
         background: 1,
+        ingress: 0,
     }));
     // Authentication ALWAYS owns the optional permit. Bind scheduling priority
     // must come from the command, not from changing or inspecting this flag.
@@ -108,6 +135,7 @@ fn bound_job(marker: u8, background: bool) -> (Job, Arc<Mutex<Usage>>) {
         usage: usage.clone(),
         bytes,
         background: true,
+        ingress: false,
     });
     let original = Arc::as_ptr(&permit);
     let (reply, _) = mpsc::channel();

@@ -1,0 +1,276 @@
+{
+  "schema": "novovm/resident-async-auth-comparison/v1",
+  "baseline_commit": "ed2bb415a969a424a51d605b5a3e3845bccd4e86",
+  "modified_source": "baseline plus this comparison's containing commit",
+  "profile": "native-resident-v1 (experimental)",
+  "environment": {
+    "os": "Windows x86_64",
+    "cpu": "Intel Core Ultra 9 275HX",
+    "logical_processors": 24,
+    "rust": "1.94.0 release",
+    "nodes": 4,
+    "independent_aoem_databases": 4,
+    "transport": "existing WSS relay/E2E/NovoRUDP envelopes; same configuration",
+    "other_task_builds_during_measurement": false,
+    "aoem_library": "aoem/windows/core/bin/aoem_ffi.dll",
+    "aoem_sha256": "4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463"
+  },
+  "binary": {
+    "baseline_manifest": "frozen-baseline.json",
+    "modified_node_sha256": "7b06d334e98742862677b20caa22d091a7aed9b0c6c19a44c870d5c12394979b",
+    "load_test_binary_sha256": "3dc40def0b1105676dcb0cfd38e2d85247a2c73257cd1b2e5b4a3400032d7f5e",
+    "final_functional_test_binary_sha256": "134cd41eccc1876fb5b7d23cde04393c38c910c966a7d992fa338f70ec5f6bac",
+    "load_note": "Both modified loads used this test binary. Subsequently only the small mixed functional fixture's block-partition assertions were corrected; production node/load workload/timing were unchanged."
+  },
+  "method": {
+    "order": "old1 -> new1 -> old2 -> new2; builds/functional tests outside timed windows",
+    "transactions_per_run": 65536,
+    "batch_max": 1024,
+    "inflight_max": 8192,
+    "senders": 1024,
+    "nonces_per_sender": 64,
+    "conflicts": "independent payers within each batch, shared credit-only recipient, ordered payer nonce across batches; not a high-contention workload",
+    "submission": "original node0 RPC only; other validators independently authenticate/execute network APFL",
+    "timer": "first HTTP dispatch -> matching finalized receipt HTTP return from all four nodes; includes signature checks, execution, network, BFT, durable publication and observation",
+    "excluded": "wallet signing, process startup, cold restart/oracle (checked after timer)",
+    "latency": "per-transaction first dispatch -> slowest validator receipt HTTP return; nearest-rank; includes observation scheduling",
+    "pooling": "sum successful unique transactions / sum measured seconds, not average of TPS",
+    "new_extra_gate": "NOVOVM_RESIDENT_RPC_REQUIRE_ASYNC_AUTH=1; checks four status owners/rows only after timer, not a TPS numerator",
+    "business_failures_measured": false,
+    "all_runs_preserved": true
+  },
+  "runs": [
+    {
+      "passed": true,
+      "seconds": 11.159342,
+      "tps": 5872.747694263694,
+      "p95_us": 1723848,
+      "p99_us": 1736567,
+      "receipt_success": 65536,
+      "business_failure": 0,
+      "four_audits": 4,
+      "all_roots_match": true,
+      "apfl_views": [
+        65536,
+        65536,
+        65536,
+        65536
+      ],
+      "block_counts": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "unique_batch_sizes": [
+        1024
+      ],
+      "early_reuse": {
+        "counters_available": true,
+        "explicitly_required": true,
+        "total": 170,
+        "legacy_binary_without_counters_skipped": false
+      },
+      "source_sha256": "7B59E96AAC60AB9128595046555AC5425845676B5D64F6ED379A0E947CFC4AD8",
+      "report": "baseline-single-1.json",
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "source_directory": "../resident-rpc-load/18688-1791063328886099200"
+    },
+    {
+      "passed": true,
+      "seconds": 8.070191,
+      "tps": 8120.7495584677,
+      "p95_us": 1360964,
+      "p99_us": 1572067,
+      "receipt_success": 65536,
+      "business_failure": 0,
+      "four_audits": 4,
+      "all_roots_match": true,
+      "apfl_views": [
+        65536,
+        65536,
+        65536,
+        65536
+      ],
+      "block_counts": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "unique_batch_sizes": [
+        1024
+      ],
+      "early_reuse": {
+        "counters_available": true,
+        "explicitly_required": true,
+        "total": 104,
+        "legacy_binary_without_counters_skipped": false
+      },
+      "source_sha256": "71585ABF140EE4A199468C09034FA572AF0DE0693EA87CA3592CB290FA48DC22",
+      "report": "async-single-1.json",
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "source_directory": "../resident-rpc-load/5860-1791064760612797700"
+    },
+    {
+      "passed": true,
+      "seconds": 10.727966,
+      "tps": 6108.893335418848,
+      "p95_us": 1746097,
+      "p99_us": 1809007,
+      "receipt_success": 65536,
+      "business_failure": 0,
+      "four_audits": 4,
+      "all_roots_match": true,
+      "apfl_views": [
+        65536,
+        65536,
+        65536,
+        65536
+      ],
+      "block_counts": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "unique_batch_sizes": [
+        1024
+      ],
+      "early_reuse": {
+        "counters_available": true,
+        "explicitly_required": true,
+        "total": 165,
+        "legacy_binary_without_counters_skipped": false
+      },
+      "source_sha256": "F241C8B48D6E7827AF22B1977332A988670EA60124951A7AFF04EF00A87AB8E1",
+      "report": "baseline-single-2.json",
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "source_directory": "../resident-rpc-load/6720-1791064814103896400"
+    },
+    {
+      "passed": true,
+      "seconds": 7.448383,
+      "tps": 8798.688252201853,
+      "p95_us": 1225821,
+      "p99_us": 1254719,
+      "receipt_success": 65536,
+      "business_failure": 0,
+      "four_audits": 4,
+      "all_roots_match": true,
+      "apfl_views": [
+        65536,
+        65536,
+        65536,
+        65536
+      ],
+      "block_counts": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "unique_batch_sizes": [
+        1024
+      ],
+      "early_reuse": {
+        "counters_available": true,
+        "explicitly_required": true,
+        "total": 72,
+        "legacy_binary_without_counters_skipped": false
+      },
+      "source_sha256": "331C57B7A21AF328C430922DA312F560D16582288DB9CD2623F0D83105B36526",
+      "report": "async-single-2.json",
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "source_directory": "../resident-rpc-load/25648-1791064896485060100"
+    }
+  ],
+  "pooled": {
+    "baseline_successful_tps": 5988.493422763549,
+    "modified_successful_tps": 8446.136867988,
+    "gain_percent": 41.03942797836966
+  },
+  "verified": {
+    "all_runs_pass": true,
+    "each_run_success": 65536,
+    "each_run_business_failure": 0,
+    "each_run_reject_retry_transport_error": 0,
+    "all_runs_block_partition": "64 x 1024 on all four stores",
+    "each_block_qc_signatures": 3,
+    "all_full_state_roots_match_oracle": true,
+    "all_cold_restarts_pass": true,
+    "sender_nonce": 64,
+    "recipient_balance": "65536",
+    "total_fees": "2949120",
+    "baseline_and_modified_head_state_receipt_roots_equal": true,
+    "new_per_node_signature_rows": 65536,
+    "new_per_node_admission_graphs": 64,
+    "new_control_polls_while_checking": [
+      [
+        243,
+        411,
+        454,
+        391
+      ],
+      [
+        280,
+        355,
+        409,
+        436
+      ]
+    ],
+    "uncommitted_drafts_sha256_unchanged": 49
+  },
+  "functional_initial_failure": {
+    "log": "initial-functional-failure.log",
+    "mixed_input": "initial-mixed-admission.json",
+    "minority_status": "initial-minority.json",
+    "failure": "three-height head/profile differs",
+    "explanation": "2-row authentication graphs include rejected rows: [bad,good] yields one pending transaction before next graph. Mixed JSON-RPC arrays are not atomic block promises. Keep the input and verify/report actual contiguous per-block partition instead of rearranging input or adding a global admission barrier.",
+    "production_fix_for_fragmentation": false
+  },
+  "final_verification": {
+    "pure_pipeline": {"passed": 356, "ignored": 54, "log": "pure-tests.log"},
+    "http": {"passed": 18, "log": "http-tests.log"},
+    "real_aoem": {"passed": 47, "log": "native-tests.log"},
+    "original_binary_rpc": {"passed": 2, "log": "functional-tests.log", "reports": ["mixed-functional.json", "single-ingress-functional.json"], "each_unique_success": 7, "each_business_failure": 1},
+    "mixed_before_restart_partition": [1, 1, 2, 2],
+    "mixed_after_restart_partition": [1, 1, 2, 2, 2],
+    "root_fmt": "pass",
+    "workspace_all_targets_clippy_deny_warnings": "pass",
+    "node_release_build": "pass",
+    "assembly_boundary": "pass (assembly-check.log)",
+    "complete_legacy_product_regression": "not executed",
+    "linux_ci": "not signed off by these Windows runs; earlier e0 CI old-path cold RPC timeout retained as open evidence"
+  },
+  "limitations": [
+    "Two finite same-host samples per version, not stable mainnet capacity or multi-machine deployment.",
+    "Combined change (same-owner batch verification, streaming canonical checks/hashes and progress-aware polling); gains not attributed to one isolated factor.",
+    "CPU callback backend remains aoem_semantic_v2_cpu_callbacks, not complete algebraic opcode114 or GPU/ZK acceptance.",
+    "APFL-to-existing packet/proof canonical body materialization and raw mempool remain.",
+    "received remains bounded non-durable admission; accepted HTTP work may outlive response timeout and requires client retry.",
+    "Mixed rejected/valid rows with tiny graph budgets may form partial blocks; failure-heavy TPS not measured.",
+    "Known stale-parent rejections and shutdown reset logs retained; no claim of error-free logs.",
+    "Actual node A/A/B divergence recovery and offline peer backpressure acceptance remain outstanding."
+  ]
+}

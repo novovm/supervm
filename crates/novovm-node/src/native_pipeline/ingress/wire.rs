@@ -191,6 +191,58 @@ impl postcard::ser_flavors::Flavor for Canonical<'_> {
     }
 }
 
+// Coalesce postcard's small scalar writes on the stack. This flavor emits the
+// very same bytes as the owned encoder without allocating a transaction Vec.
+struct CanonicalDigest<'a> {
+    digest: &'a mut Sha256,
+    buffer: [u8; 256],
+    used: usize,
+}
+
+impl CanonicalDigest<'_> {
+    fn flush(&mut self) {
+        if self.used != 0 {
+            self.digest.update(&self.buffer[..self.used]);
+            self.used = 0;
+        }
+    }
+}
+
+impl postcard::ser_flavors::Flavor for CanonicalDigest<'_> {
+    type Output = ();
+
+    fn try_push(&mut self, byte: u8) -> postcard::Result<()> {
+        self.buffer[self.used] = byte;
+        self.used += 1;
+        if self.used == self.buffer.len() {
+            self.flush();
+        }
+        Ok(())
+    }
+
+    fn try_extend(&mut self, mut bytes: &[u8]) -> postcard::Result<()> {
+        let prefix = bytes.len().min(self.buffer.len() - self.used);
+        self.buffer[self.used..self.used + prefix].copy_from_slice(&bytes[..prefix]);
+        self.used += prefix;
+        bytes = &bytes[prefix..];
+        if self.used == self.buffer.len() {
+            self.flush();
+        }
+        if bytes.len() >= self.buffer.len() {
+            self.digest.update(bytes);
+        } else if !bytes.is_empty() {
+            self.buffer[..bytes.len()].copy_from_slice(bytes);
+            self.used = bytes.len();
+        }
+        Ok(())
+    }
+
+    fn finalize(mut self) -> postcard::Result<()> {
+        self.flush();
+        Ok(())
+    }
+}
+
 /// Allocation-free strict canonical V3 decode; references remain tied to raw.
 pub fn decode_transfer_view_v3(raw: &[u8], max_bytes: usize) -> Result<TransferView<'_>> {
     ensure!(
@@ -270,6 +322,50 @@ impl TransferView<'_> {
             .len()
             .checked_add(size)
             .context("native V3 size overflow")
+    }
+
+    /// Compare the COMPLETE canonical V3 encoding, including its signature,
+    /// without materializing or decoding another copy. A match is not signature
+    /// verification; callers may reuse only an independently verified input.
+    /// Like `encode`, an empty wallet pre-signature is representable here.
+    pub(crate) fn matches_canonical_bytes(self, raw: &[u8]) -> Result<bool> {
+        ensure!(
+            self.signature.is_empty() || self.signature.len() == SIGNATURE_BYTES,
+            "native V3 signature must be empty or 96 bytes"
+        );
+        let wire = borrowed(self, self.signature)?;
+        let Some(payload) = raw.strip_prefix(HEADER.as_slice()) else {
+            return Ok(false);
+        };
+        match postcard::serialize_with_flavor(&wire, Canonical(payload)) {
+            Ok(()) => Ok(true),
+            // The comparison flavor uses this only for unequal/truncated/tail
+            // bytes; other serialization failures are not treated as matches.
+            Err(postcard::Error::SerializeBufferFull) => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Append only the original canonical V3 wire to an existing SHA256 state.
+    /// No domain, length or transaction identity is added here: the caller owns
+    /// that framing. This is byte projection, NOT authentication or a new hash.
+    pub(crate) fn update_canonical_digest(self, digest: &mut Sha256) -> Result<()> {
+        ensure!(
+            self.signature.is_empty() || self.signature.len() == SIGNATURE_BYTES,
+            "native V3 signature must be empty or 96 bytes"
+        );
+        let wire = borrowed(self, self.signature)?;
+        digest.update(HEADER);
+        postcard::serialize_with_flavor(
+            &wire,
+            CanonicalDigest {
+                digest,
+                buffer: [0; 256],
+                used: 0,
+            },
+        )
+        .context("stream canonical native V3 Transfer")?;
+        Ok(())
     }
 
     /// Original complete-wire unsigned commitment, including an encoded empty
