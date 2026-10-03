@@ -121,6 +121,10 @@ pub fn handle_fresh_rpc(request: Value, lifecycle: &mut FreshChainLifecycleV1) -
                     lifecycle.transaction_status(hash)
                 })
             }
+            Some("nov_getAssetBalance") => {
+                let account = nov_balance_account(&request["params"])?;
+                lifecycle.finalized_nov_balance(&account)
+            }
             Some("nov_chainStatus") => Ok(lifecycle.status_json()),
             _ => bail!("method not supported"),
         }
@@ -131,6 +135,39 @@ pub fn handle_fresh_rpc(request: Value, lifecycle: &mut FreshChainLifecycleV1) -
             json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":error.to_string()}})
         }
     }
+}
+
+// Reuse the product method and its named parameters, but not the old Host
+// projection reader. This first finalized wallet query covers public NOV only.
+fn nov_balance_account(params: &Value) -> Result<String> {
+    let params = params
+        .as_object()
+        .context("balance params object required")?;
+    for name in params.keys() {
+        if !matches!(name.as_str(), "account" | "asset" | "asset_id") {
+            bail!("unsupported finalized balance parameter: {name}");
+        }
+    }
+    for name in ["asset", "asset_id"] {
+        if let Some(asset) = params.get(name) {
+            if !asset
+                .as_str()
+                .is_some_and(|asset| asset.eq_ignore_ascii_case("NOV"))
+            {
+                bail!("fresh finalized balance query supports public NOV only");
+            }
+        }
+    }
+    let account = params
+        .get("account")
+        .and_then(Value::as_str)
+        .context("account is required")?;
+    let account = account.strip_prefix("0x").unwrap_or(account);
+    if !matches!(account.len(), 40 | 64) {
+        bail!("account must be a 20-byte or 32-byte hex address");
+    }
+    decode_hex(account)?;
+    Ok(format!("0x{}", account.to_ascii_lowercase()))
 }
 
 // Only adjacent submissions share an admission turn. A status/query request
@@ -362,6 +399,38 @@ fn poll_during_idle_with(
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn finalized_balance_params_reuse_public_nov_method_without_store_override() {
+        for length in [20, 32] {
+            let account = "AB".repeat(length);
+            for prefix in ["", "0x"] {
+                assert_eq!(
+                    nov_balance_account(&json!({"account":format!("{prefix}{account}")})).unwrap(),
+                    format!("0x{}", account.to_ascii_lowercase())
+                );
+            }
+        }
+        let account = "0x".to_owned() + &"12".repeat(20);
+        assert!(nov_balance_account(&json!({"account":account,"asset_id":"nov"})).is_ok());
+        for params in [
+            Value::Null,
+            json!([account]),
+            json!({}),
+            json!({"account":7}),
+            json!({"account":"zz".repeat(20)}),
+            json!({"account":"12".repeat(19)}),
+            json!({"account":"12".repeat(33)}),
+            json!({"account":"啊".repeat(20)}),
+            json!({"account":account,"asset":"NUSD"}),
+            json!({"account":account,"asset":"NOV","asset_id":"ETH"}),
+            json!({"account":account,"asset":null}),
+            json!({"account":account,"store_path":"foreign.json"}),
+            json!({"account":account,"asset_view_authorized":true}),
+        ] {
+            assert!(nov_balance_account(&params).is_err(), "accepted {params}");
+        }
+    }
 
     #[test]
     fn ready_submission_groups_preserve_query_barriers_and_response_ids() {

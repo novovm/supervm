@@ -32,6 +32,7 @@ const MAX_EVENT_PAYLOAD_BYTES_V1: usize = 216;
 
 #[path = "semantic_graph_session_scope.rs"]
 mod session_scope;
+pub(crate) use session_scope::effective_environment as effective_runtime_environment;
 pub use session_scope::AoemSemanticGraphSessionScopeV1;
 
 #[cfg(test)]

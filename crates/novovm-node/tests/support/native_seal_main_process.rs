@@ -149,6 +149,7 @@ fn start_cluster(nodes: &[Node], active: &[usize], label: &str, ticks: u64) -> V
             .env("NOVOVM_NATIVE_SEAL_CONFIG", "seal.json")
             .stdout(fs::File::create(node.0.join(format!("{label}.stdout.log"))).unwrap())
             .stderr(fs::File::create(node.0.join(format!("{label}.stderr.log"))).unwrap());
+        node.assert_execution_policy(&cmd);
         let child = Child(cmd.spawn().unwrap());
         fs::write(
             node.0.join(format!("{label}.process.json")),
@@ -509,6 +510,11 @@ fn run_real_aoem_main_nodes_scenario(
         let mut nodes = Vec::new();
         for index in 0..4 {
             let node = Node::new(&format!("fresh-validator-{index}"));
+            let node = if matches!(transfer_scenario, Some(TransferScenario::MixedParity)) {
+                node.without_legacy_host_execution()
+            } else {
+                node
+            };
             let result = node.run(
                 &mut super::native_fresh_genesis_cli::prepare_command(&node, &genesis, &fresh_plan),
                 "prepare",

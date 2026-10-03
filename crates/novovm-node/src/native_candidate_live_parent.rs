@@ -39,6 +39,7 @@ pub(crate) struct FinalizedParentViewV1(ParentView);
 /// same nonce identity key used by native authentication, not an account alias.
 pub(crate) trait FinalizedRecordReaderV1 {
     fn next_nonce(&self, identity: &str) -> Result<u64>;
+    fn nov_balance(&self, account: &str) -> Result<Option<u128>>;
     fn receipt(&self, hash: &[u8; 32]) -> Result<Option<NovNativeExecutionReceiptV1>>;
     fn contains_receipt(&self, hash: &[u8; 32]) -> Result<bool> {
         Ok(self.receipt(hash)?.is_some())
@@ -48,6 +49,16 @@ pub(crate) trait FinalizedRecordReaderV1 {
 struct ColdFinalizedRecords<'a>(&'a NovNativeExecutionStoreV1);
 
 impl FinalizedRecordReaderV1 for ColdFinalizedRecords<'_> {
+    fn nov_balance(&self, account: &str) -> Result<Option<u128>> {
+        Ok(self
+            .0
+            .module_state
+            .account_asset_balances
+            .get(account)
+            .and_then(|assets| assets.get("NOV"))
+            .copied())
+    }
+
     fn next_nonce(&self, identity: &str) -> Result<u64> {
         Ok(self
             .0
@@ -79,6 +90,7 @@ impl<'a> RootedFinalizedRecords<'a> {
             &[][..],
             &["module_state"][..],
             &["module_state", "native_auth_next_nonces"][..],
+            &["module_state", "account_asset_balances"][..],
             &["receipts"][..],
         ] {
             if access.read_path(path)?.as_deref() != Some(b"{}") {
@@ -90,6 +102,25 @@ impl<'a> RootedFinalizedRecords<'a> {
 }
 
 impl FinalizedRecordReaderV1 for RootedFinalizedRecords<'_> {
+    fn nov_balance(&self, account: &str) -> Result<Option<u128>> {
+        let parent = self
+            .0
+            .read_path(&["module_state", "account_asset_balances", account])?;
+        let raw = self
+            .0
+            .read_path(&["module_state", "account_asset_balances", account, "NOV"])?;
+        match parent.as_deref() {
+            Some(b"{}") => (),
+            None if raw.is_none() => return Ok(None),
+            _ => bail!("finalized balance account object missing or invalid"),
+        }
+        raw.map(|bytes| {
+            serde_json::from_slice::<u128>(&bytes)
+                .context("finalized NOV balance must be a u128 JSON integer")
+        })
+        .transpose()
+    }
+
     fn next_nonce(&self, identity: &str) -> Result<u64> {
         match self
             .0

@@ -23,6 +23,10 @@ const MAX_RESULT_BYTES: usize = 64 * 1024 * 1024;
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 static NEXT_GRAPH_ID: AtomicU64 = AtomicU64::new(1);
 
+#[path = "semantic_compute_scope.rs"]
+mod session_scope;
+pub use session_scope::AoemComputeSessionScopeV1;
+
 /// A Host-owned computation, not a precomputed KV write or an AOEM business opcode.
 /// Owned captures are required because cancellation may outlive the caller.
 pub type AoemComputeTaskV1 = Box<dyn FnOnce() -> Result<Vec<u8>> + Send + 'static>;
@@ -110,7 +114,8 @@ struct ComputeSessionInner {
 }
 
 /// An explicit, same-thread computation owner. It has no storage provider,
-/// atomic writer, business policy, or global/TLS registration. A candidate can
+/// atomic writer or business policy. `open_scoped` may reuse an explicitly
+/// owned node-lifetime session; `open` always creates a cold session. A candidate can
 /// submit multiple bounded graphs, but only after each previous graph drains.
 /// Any admitted failure permanently poisons this owner; reopening is never an
 /// implicit recovery action. Drop the owner during normal thread execution.
@@ -175,6 +180,13 @@ pub fn execute_aoem_compute_tasks_v1(
 }
 
 impl AoemComputeSessionV1 {
+    /// Reuse the active same-thread compute scope, or open a cold session if
+    /// none exists. This remains synchronous; it does not add a scheduler,
+    /// bypass failure poisoning or turn Host callbacks into GPU operations.
+    pub fn open_scoped(runtime: &AoemRuntimeConfig) -> Result<Self> {
+        session_scope::open(runtime)
+    }
+
     pub fn open(runtime: &AoemRuntimeConfig) -> Result<Self> {
         let facade = AoemExecFacade::open_with_runtime(runtime)
             .context("open AOEM compute runtime failed")?;

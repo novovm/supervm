@@ -273,6 +273,17 @@ jobs:
           NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib candidate_workspace_record_profile_fresh_transfers_recover_and_finalize --locked -- --test-threads=1
 
+      - name: Resident compute and finalized wallet queries without Host permission
+        env:
+          NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p novovm-exec --lib semantic_compute --locked -- --include-ignored --test-threads=1
+          cargo test -p novovm-node --lib fresh_pool_tests --locked -- --test-threads=1
+          cargo test -p novovm-node --lib finalized_nov_balance --locked -- --test-threads=1
+          cargo test -p novovm-node --lib native_fresh_rpc --locked -- --test-threads=1
+
       - name: Native seal safety and authenticated WSS lifecycle regressions
         timeout-minutes: 20
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib native_block_seal --locked -- --test-threads=2
@@ -355,6 +366,29 @@ jobs:
             artifacts/audit/candidate-node-processes/**/*.process.json
             artifacts/audit/candidate-node-processes/**/*.stdout.log
             artifacts/audit/candidate-node-processes/**/*.stderr.log
+          if-no-files-found: warn
+
+      - name: Signed Transfer RPC finality and wallet recovery without Host permission
+        timeout-minutes: 15
+        env:
+          NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p novovm-node --lib --locked --no-run --message-format=json > "$RUNNER_TEMP/r2-oracle-build.jsonl"
+          oracle=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "novovm_node" and .profile.test) | .executable // empty' "$RUNNER_TEMP/r2-oracle-build.jsonl")
+          test -x "$oracle"
+          cargo test -p novovm-node --test native_candidate_node_cli --locked --no-run --message-format=json > "$RUNNER_TEMP/r2-rpc-build.jsonl"
+          binary=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "native_candidate_node_cli" and .profile.test) | .executable // empty' "$RUNNER_TEMP/r2-rpc-build.jsonl")
+          test -x "$binary"
+          sudo unshare --net sh -c 'ip link set lo up; exec env NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=0 NOVOVM_TRANSFER_PARITY_WORKER="$2" "$1" fresh_record_transfers_conflict_failure_serial_parity --ignored --test-threads=1' r2-product-rpc "$binary" "$oracle"
+
+      - name: Upload signed Transfer RPC acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: original-node-transfer-rpc-recovery
+          path: artifacts/audit/candidate-node-processes/**/mixed-*.json
           if-no-files-found: warn
 
       - name: Mainline soak freshness coverage and progress tests

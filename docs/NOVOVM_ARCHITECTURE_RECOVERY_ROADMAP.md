@@ -82,7 +82,8 @@ udp-batch、novovmctl、治理观测、发布策略和 bench，不能把它们�
 对搬迁前全部受控路径，未发现原路径与对应归档路径同时缺失的项目；750 个
 归档 Git blob 在审计基线仍与搬迁前相同。这不等于工作区所有文件都未改：
 已有 49 项草稿，且 Git 不能证明未跟踪文件的历史完整性。旧说明记载的本地
-文件哈希不作为本轮重验结果。恢复前还须逐文件保护本机及另一设备的草稿。
+文件哈希不作为本轮重验结果。恢复前的本机草稿保护已按清单完成；用户现已明确
+本轮只有一台电脑，不以历史另一设备要求阻断后续集成。
 
 ## 必须恢复的架构边界
 
@@ -149,8 +150,38 @@ Git 文件树恢复，不按模块价值筛选；后续成果以已有实现为�
 
 ## 实施顺序与验收出口
 
-所有阶段遵循同一产品路径。可以并行审查独立模块，但共享格式与接线由 A
-统一集成；不靠增加检查清单替代代码交付，不承诺未经测量的工期或 TPS。
+所有阶段遵循同一产品路径。本轮单机集成，可以并行审查独立模块；
+不靠增加检查清单替代代码交付，不承诺未经测量的工期或 TPS。
+
+### R2 首个贯通交付：原节点签名 NOV 转账
+
+开工基线 `main/origin/main@7b10c7f3`，2026-10-03，本机49项原草稿保留。
+R1 已收口，不再备份、搬目录或等待历史 B 端。此次只核查以下路径：
+
+| 边界 | 现有实现与本次缺口 |
+| --- | --- |
+| 用户入口 | 真实 `bin/novovm-node.rs` fresh-chain分支 → `native_fresh_rpc.rs` 的 `nov_sendRawTransaction`，不是旧立即执行RPC；接收仅表示queued |
+| 准入 | `native_fresh_pool.rs` 验签/链域/nonce身份/耐久pool；目前Execute可进池却在计算时被Host guard拒绝并halt，须在准入按实际能力拒绝，不能开启旧Host许可 |
+| 计算 | lifecycle/proposer → candidate workspace → `native_transfer_executor.rs` → exec `AoemComputeSessionV1` → bindings的AOEM V2任务接口；真实CPU回调，不能声称GPU已接通 |
+| 提交与发布 | 已验证父状态 → 隔离候选 → 原V3 AOEM持久化 → 原3/4 QC与publication；不创建新账本、不改变收费/失败或共识规则 |
+| 用户读回 | 已有transaction/chain status；补现有 `nov_getAssetBalance` 在fresh RPC上的NOV查询，从已finalized父的typed record读取，绝不读取旧Host投影或将读失败变成零余额 |
+| 验收复用 | 原 `fresh_record_transfers_conflict_failure_serial_parity` 四真实进程与串行经济oracle；补默认Host许可为0、坏签名/错误链/不支持Execute拒绝、余额查询及重启一致；陈旧父沿用既有真实候选拒绝测试 |
+
+本片实际修改范围：`native_fresh_pool.rs`及其测试、`native_candidate_live_parent.rs`、
+`native_fresh_chain_transactions.rs`、`native_fresh_rpc.rs`、现有进程夹具及相邻
+测试、必要CI和交接/验收文档。未混入49草稿、未修改AOEM兄弟仓或新建节点。
+接口复核补充：原node的graph存储会话常驻，但Transfer compute每段仍重新open。
+本片同时在 `novovm-exec` 复用原scope纪律接入同线程常驻compute会话，修改其
+导出、`native_transfer_dispatch.rs`及真实bin生命周期；不声称这已消除同步等待。
+当前控制线程仍同步准备候选；本片不把现有AOEM worker回调当完整后台流水线，
+也不把已有闭环重新署为新算法。Execute、账户政策、统一异构与高吞吐仍需后续接回。
+
+首片本机已验：原四真实进程RPC用例默认Host许可0通过，六笔用户交易5成功/
+1业务失败，余额+国库收费守恒，回执/余额/nonce及持久状态重启一致；纯Transfer
+真实库用例补陈旧父等6反例通过。完整范围、日志及本片所在提交见
+[台账最新节](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。这只收口首个用户操作，
+不是完整R2。下一片优先将已保留的有界后台候选流水线接到同一node/exec，
+移出控制循环的同步候选准备，逐步接回完整业务效应；不再搬目录或另造链。
 
 | 阶段 | 实际交付 | 通过条件 |
 | --- | --- | --- |
@@ -185,16 +216,15 @@ R4 保留已确认的经典隐私先闭环选择，明确其证明不抗量子�
 NOV 业务证明。先核对已有统一接口和适用后端，不擅自改为逐交易同步证明，
 不把独立 CPU proof 的分钟级时间当出块时间或默认生产路线。
 
-## 双机交接和下一刀
+## 本机交接和下一刀
 
-- R1 已按批准清单恢复装配并单独限制已知 Host 新执行旁路，见
-  [清单](NOVOVM_ISOLATION_UNDO_CHECKLIST.md)。下一代码任务进入 R2：在真实
-  node/exec 路径逐项审查并复用后续成果，不把独立 proof 优化当唯一主线。
-- B 拉取后先读本文件及[交付约定](NOVOVM_DELIVERY_ALIGNMENT.md)，核对本地
-  未提交/未推送工作再确认范围。Git 同步不会刷新正在运行的对话，不假定 B
-  已在线、已阅读或已停止旧任务。
-- 共享 node/exec/bindings、协议、Cargo、CI 和交接文档由 A 协调；B 的独立
-  隐私/PQ 成果保留，接入必须交接，不能并行创造不兼容的 wire。
+- R1 已按批准清单恢复装配，R2首片已完成原节点签名Transfer、最终余额查询和
+  同机四进程恢复验收。下一代码任务仍在R2：接回有界后台候选流水线与完整业务
+  效应，不把首片通过当统一异构/高TPS完成，也不把独立proof优化当唯一主线。
+- 本轮只按一台电脑执行；历史A/B认领不构成等待另一台设备的前置条件。
+  未来实际出现并行设备时，再核对各自未提交/未推送工作和共享文件范围。
+- 共享 node/exec/bindings、协议、Cargo、CI 由当前主任务统一集成；已有独立
+  隐私/PQ成果保留，接入须审查，不并行创造不兼容的wire。
 - 只在 SUPERVM 的 main 工作；不新建分支、不强推、不清理他人改动。
   AOEM 仍是独立通用内核，本路线不新增修改兄弟仓库的授权。
 - 必要测试随实际修改交付，使用[既有验收台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)

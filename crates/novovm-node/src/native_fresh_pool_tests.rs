@@ -16,13 +16,162 @@ mod fresh_pool_tests {
     }
 
     fn raw(chain: u64, nonce: u64, amount: u64) -> Vec<u8> {
+        let mut transaction = NovNativeTxWireV1 {
+            chain_id: chain,
+            kind: NovTxKindV1::Transfer(novovm_protocol::NovTransferTxV1 {
+                from: Vec::new(),
+                to: novovm_adapter_novovm::address_from_seed_v1([0xa5; 32]),
+                asset: "NOV".into(),
+                amount: u128::from(amount),
+                nonce,
+                fee_policy: NovFeePolicyV1 {
+                    pay_asset: "NOV".into(),
+                    max_pay_amount: 1_000,
+                    slippage_bps: 0,
+                },
+            }),
+            signature: Vec::new(),
+        };
+        sign_nov_native_tx_with_seed_v1(&mut transaction, [0xa4; 32]).unwrap();
+        encode_native_auth_test_tx_v1(&transaction)
+    }
+
+    fn execute_raw(chain: u64) -> Vec<u8> {
         encode_native_auth_test_tx_v1(&build_signed_native_auth_test_tx_v1(
             chain,
-            nonce,
+            0,
             [0xa4; 32],
             "pool-user",
-            amount,
+            1,
         ))
+    }
+
+    fn isolated_case(name: &str, permit: Option<&str>) -> bool {
+        super::restoration_host_guard::isolated_named_case(
+            &format!("tx_ingress::tests::fresh_pool_tests::{name}"),
+            permit,
+            true,
+        )
+    }
+
+    fn assert_execute_capability_rejection(error: anyhow::Error) {
+        assert!(
+            error.to_string().starts_with(
+                "legacy Host execution is disabled: fresh transaction pool Host Execute"
+            ),
+            "wrong rejection: {error:#}"
+        );
+    }
+
+    #[test]
+    fn unsupported_execute_is_rejected_before_admission_and_transfer_still_works() {
+        if !isolated_case(
+            "unsupported_execute_is_rejected_before_admission_and_transfer_still_works",
+            None,
+        ) {
+            return;
+        }
+        let path = path("unsupported-execute");
+        let chain = 891042;
+        let params = serde_json::json!({
+            "chain_id":chain,
+            "allow_legacy_host_execution":true,
+            "NOVOVM_ALLOW_LEGACY_HOST_EXECUTION":"1",
+            "aoem_owned_gate_config":{"production_candidate":true}
+        });
+        let mut pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
+        assert_execute_capability_rejection(
+            PendingTransaction::authenticate(execute_raw(chain), chain, &params)
+                .err()
+                .expect("RPC fields cannot grant a Host execution capability"),
+        );
+        assert!(pool.is_empty());
+        assert_eq!(pool.admission_sync_commits_for_test(), 0);
+        let transfer = PendingTransaction::authenticate(raw(chain, 0, 1), chain, &params).unwrap();
+        let hash = transfer.hash;
+        assert!(pool.insert(transfer).unwrap());
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool.admission_sync_commits_for_test(), 1);
+        drop(pool);
+        let pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
+        assert_eq!(pool.len(), 1);
+        assert!(pool.contains(&hash));
+        drop(pool);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn explicit_comparison_execute_still_requires_signature_and_chain() {
+        if !isolated_case(
+            "explicit_comparison_execute_still_requires_signature_and_chain",
+            Some("1"),
+        ) {
+            return;
+        }
+        let path = path("comparison-execute");
+        let chain = 891043;
+        let params = serde_json::json!({"chain_id":chain});
+        let signed = execute_raw(chain);
+        assert!(PendingTransaction::authenticate(signed.clone(), chain + 1, &params).is_err());
+        let mut bad_signature = signed.clone();
+        *bad_signature.last_mut().unwrap() ^= 1;
+        assert!(PendingTransaction::authenticate(bad_signature, chain, &params).is_err());
+        let entry = PendingTransaction::authenticate(signed.clone(), chain, &params).unwrap();
+        let hash = entry.hash;
+        let mut pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
+        assert!(pool.insert(entry).unwrap());
+        drop(pool);
+        let pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool.get(&hash).unwrap().raw, signed);
+        drop(pool);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn old_execute_pool_recovery_fails_closed_without_deleting_records() {
+        if !isolated_case(
+            "old_execute_pool_recovery_fails_closed_without_deleting_records",
+            None,
+        ) {
+            return;
+        }
+        // Only this exact test runs in the isolated child. Produce the old
+        // record with explicit permission, then simulate a default-denied
+        // restart without changing another test's process environment.
+        let path = path("old-execute-recovery");
+        let chain = 891044;
+        let params = serde_json::json!({"chain_id":chain});
+        let signed = execute_raw(chain);
+        std::env::set_var(NOV_NATIVE_ALLOW_LEGACY_HOST_EXECUTION_ENV, "1");
+        let entry = PendingTransaction::authenticate(signed.clone(), chain, &params).unwrap();
+        let hash = entry.hash;
+        let mut pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
+        assert!(pool.insert(entry).unwrap());
+        drop(pool);
+        std::env::remove_var(NOV_NATIVE_ALLOW_LEGACY_HOST_EXECUTION_ENV);
+        assert_execute_capability_rejection(
+            FreshTransactionPool::open(&path, chain, [7; 32], &params)
+                .err()
+                .expect("unsupported persisted Execute must not be silently dropped"),
+        );
+        let db = rocksdb::DB::open_default(&path).unwrap();
+        let mut key = vec![b't'];
+        key.extend_from_slice(&hash);
+        assert_eq!(db.get(key).unwrap().unwrap(), signed);
+        assert_eq!(
+            db.get(b"identity").unwrap().unwrap(),
+            serde_json::to_vec(&("novovm-fresh-transaction-pool/v1", chain, [7u8; 32])).unwrap()
+        );
+        assert_eq!(db.iterator(rocksdb::IteratorMode::Start).count(), 2);
+        drop(db);
+        std::env::set_var(NOV_NATIVE_ALLOW_LEGACY_HOST_EXECUTION_ENV, "1");
+        let pool = FreshTransactionPool::open(&path, chain, [7; 32], &params).unwrap();
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool.get(&hash).unwrap().raw, signed);
+        drop(pool);
+        std::env::remove_var(NOV_NATIVE_ALLOW_LEGACY_HOST_EXECUTION_ENV);
+        fs::remove_dir_all(path).unwrap();
     }
 
     #[test]

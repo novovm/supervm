@@ -7,6 +7,72 @@ use crate::native_state_storage::AoemStateReaderV1;
 use crate::tx_ingress::fresh_pool::{FreshTransactionPool, PendingTransaction};
 use native_transfer_record_execution::RootedAccess;
 
+#[test]
+fn finalized_nov_balance_typed_read_preserves_u128_and_rejects_corruption() {
+    struct Records {
+        account: Option<Vec<u8>>,
+        balance: Option<Vec<u8>>,
+        missing_map: bool,
+        fail: bool,
+    }
+    impl native_store_records::NativeRecordAccessV1 for Records {
+        fn read_path(&self, path: &[&str]) -> Result<Option<Vec<u8>>> {
+            if self.fail {
+                bail!("original read failure");
+            }
+            match path {
+                ["module_state", "account_asset_balances"] if self.missing_map => Ok(None),
+                ["module_state", "account_asset_balances", "test"] => Ok(self.account.clone()),
+                ["module_state", "account_asset_balances", "test", "NOV"] => {
+                    Ok(self.balance.clone())
+                }
+                _ => Ok(Some(b"{}".to_vec())),
+            }
+        }
+    }
+    let mut source = Records {
+        account: Some(b"{}".to_vec()),
+        balance: None,
+        missing_map: false,
+        fail: false,
+    };
+    let read = |source: &Records| {
+        live_parent::with_rooted_records_for_test_v1(source, |records| records.nov_balance("test"))
+    };
+    for balance in [0, (1u128 << 53) + 1, u128::MAX] {
+        source.balance = Some(balance.to_string().into_bytes());
+        assert_eq!(read(&source).unwrap(), Some(balance));
+    }
+    for malformed in [
+        "-1",
+        "1.5",
+        "null",
+        "{}",
+        "\"9\"",
+        "340282366920938463463374607431768211456",
+    ] {
+        source.balance = Some(malformed.as_bytes().to_vec());
+        assert!(read(&source).is_err(), "accepted {malformed}");
+    }
+    source.balance = None;
+    assert_eq!(read(&source).unwrap(), None);
+    source.account = None;
+    assert_eq!(read(&source).unwrap(), None);
+    source.balance = Some(b"0".to_vec());
+    assert!(read(&source).is_err(), "orphan balance accepted");
+    source.account = Some(b"[]".to_vec());
+    assert!(read(&source).is_err(), "invalid account object accepted");
+    source.account = Some(b"{}".to_vec());
+    source.missing_map = true;
+    assert!(read(&source).is_err(), "missing map was reported empty");
+    source.missing_map = false;
+    source.fail = true;
+    assert!(read(&source)
+        .unwrap_err()
+        .to_string()
+        .contains("original read failure"));
+}
+
 fn pool_image(pool: &FreshTransactionPool) -> Vec<([u8; 32], Vec<u8>, String, u64)> {
     pool.ordered()
         .into_iter()
@@ -123,6 +189,7 @@ fn reject_mismatched_projection(
     view: &live_parent::FinalizedParentViewV1,
     identity: &str,
     receipt: &NovNativeExecutionReceiptV1,
+    account: &str,
     params: &serde_json::Value,
 ) -> Result<()> {
     let workspace = WorkspaceStore::open(view.block().header.chain_id, params)?;
@@ -134,14 +201,24 @@ fn reject_mismatched_projection(
     let reader = AoemStateReaderV1::new(&workspace.graph, workspace.scope);
     let state = RecordOverlayV1::new(&reader, state_root);
     let receipts = RecordOverlayV1::new(&reader, receipt_root);
-    for change_receipt in [false, true] {
+    for query in 0..3 {
         let mut physical = RecordOverlayV1::new(&reader, physical_root);
-        let (path, raw) = if change_receipt {
+        let (path, raw) = if query == 1 {
             let mut bad = receipt.clone();
             bad.status = !bad.status;
             (
                 vec!["receipts".into(), bad.tx_hash.clone()],
                 serde_json::to_vec(&bad)?,
+            )
+        } else if query == 2 {
+            (
+                vec![
+                    "module_state".into(),
+                    "account_asset_balances".into(),
+                    account.into(),
+                    "NOV".into(),
+                ],
+                u128::MAX.to_string().into_bytes(),
             )
         } else {
             (
@@ -163,10 +240,12 @@ fn reject_mismatched_projection(
             receipts: &receipts,
         };
         let result = live_parent::with_rooted_records_for_test_v1(&access, |records| {
-            if change_receipt {
+            if query == 1 {
                 records
                     .receipt(&parse_fixed_hex_32_v1(&receipt.tx_hash, "receipt")?)
                     .map(|_| ())
+            } else if query == 2 {
+                records.nov_balance(account).map(|_| ())
             } else {
                 records.next_nonce(identity).map(|_| ())
             }
@@ -174,7 +253,7 @@ fn reject_mismatched_projection(
         let error = result
             .err()
             .context("hash-valid physical/consensus disagreement was accepted")?;
-        let expected = if change_receipt {
+        let expected = if query == 1 {
             "physical/receipt read mismatch"
         } else {
             "physical/state read mismatch"
@@ -196,6 +275,18 @@ pub(crate) fn exercise_finalized_record_queries_for_test_v1(
 ) -> Result<()> {
     // Independent complete-image oracle is deliberately outside every guard.
     let cold = load_finalized_genesis_parent_v1(chain, parent_id, genesis, params)?;
+    let balance_account = cold
+        .state()
+        .module_state
+        .account_asset_balances
+        .iter()
+        .find(|(_, assets)| {
+            assets
+                .get("NOV")
+                .is_some_and(|balance| *balance != u128::MAX)
+        })
+        .context("finalized query fixture lacks a NOV account")?
+        .0;
     let original_entries = cold
         .block()
         .body
@@ -257,6 +348,17 @@ pub(crate) fn exercise_finalized_record_queries_for_test_v1(
     let check_queries = || {
         state_records::without_materialization_for_test(|| {
             view.with_records(params, |records| {
+                for (account, assets) in &cold.state().module_state.account_asset_balances {
+                    if records.nov_balance(account)? != assets.get("NOV").copied() {
+                        bail!("finalized NOV balance differs from complete cold reference");
+                    }
+                }
+                if records
+                    .nov_balance("0xabsent-finalized-query-account")?
+                    .is_some()
+                {
+                    bail!("absent account balance was not absent");
+                }
                 for entry in &original_entries {
                     let expected = cold
                         .state()
@@ -291,6 +393,29 @@ pub(crate) fn exercise_finalized_record_queries_for_test_v1(
             })
         })
     };
+    check_queries()?;
+    let balance_chunk = {
+        let workspace = WorkspaceStore::open(chain, params)?;
+        let (physical, _, _, _, _) = view.record_state().unwrap().rooted_parts()?.unwrap();
+        physical_chunk_key(
+            &workspace,
+            physical,
+            &[
+                "module_state".into(),
+                "account_asset_balances".into(),
+                balance_account.clone(),
+                "NOV".into(),
+            ],
+        )?
+    };
+    without_fixture_chunk(chain, params, &balance_chunk, || {
+        state_records::without_materialization_for_test(|| {
+            rejection(
+                view.with_records(params, |records| records.nov_balance(balance_account)),
+                "missing finalized balance must not become zero",
+            )
+        })
+    })?;
     check_queries()?;
     let native_path = resolve_native_execution_store_path_from_params_v1(params)
         .context("query fixture requires an explicit native path")?;
@@ -443,6 +568,7 @@ pub(crate) fn exercise_finalized_record_queries_for_test_v1(
             &view,
             &alternative.identity,
             &cold.state().receipts[&hash],
+            balance_account,
             params,
         )
     })?;

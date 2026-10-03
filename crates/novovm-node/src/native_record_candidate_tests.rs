@@ -1004,6 +1004,106 @@ fn exercise_record_profile_fresh_transfers() {
             profile.receipt_root_codec()
         );
         let final_head = read_head();
+        // The finalized first block has displaced its original genesis parent.
+        // Reuse its real candidate, decision archive and successor inputs: these
+        // rejections must be parent/authority failures, not nonce or slot errors.
+        let before_catalog = workspace::list_v1(chain, params).unwrap();
+        let before_finality =
+            NovNativeBlockLedgerV1::load_fresh_finality_by_height_v1(&ledger, pin, namespace, 1)
+                .unwrap();
+        let reject_without_change = |result: Result<()>, expected: &str| {
+            let error = format!("{:#}", result.unwrap_err());
+            assert!(error.contains(expected), "{error}");
+            assert_eq!(read_head(), final_head);
+            assert_eq!(workspace::list_v1(chain, params).unwrap(), before_catalog);
+            assert_eq!(
+                NovNativeBlockLedgerV1::load_fresh_finality_by_height_v1(
+                    &ledger, pin, namespace, 1
+                )
+                .unwrap(),
+                before_finality
+            );
+            assert_eq!(
+                load_nov_native_execution_store_v1(path).unwrap(),
+                host_before
+            );
+        };
+        reject_without_change(
+            workspace::with_verified_genesis_block_candidate_v1(
+                chain,
+                input.workspace_id,
+                pin,
+                params,
+                |_| -> Result<()> { panic!("displaced genesis reached a signing callback") },
+            ),
+            "genesis parent authority codec mismatch",
+        );
+        reject_without_change(
+            workspace::prepare_genesis_promotion_v1(
+                chain,
+                input.workspace_id,
+                pin,
+                &path.with_extension("record-profile-seal-0"),
+                params,
+            )
+            .map(|_| ()),
+            "genesis parent authority codec mismatch",
+        );
+        // A distinct first-block plan must not create a new reservation against
+        // the old genesis. Exact historical replay is not a new authorization.
+        let obsolete_genesis_plan = make_plan(
+            plan.context,
+            compiled.state_root(),
+            None,
+            vec![transfer_candidate_raw(chain, 0, a, b, 101)],
+        );
+        reject_without_change(
+            workspace::create_from_genesis_v1(&obsolete_genesis_plan, pin, params).map(|_| ()),
+            "genesis parent authority codec mismatch",
+        );
+        let mut wrong_context = next_plan.context;
+        wrong_context.parent_block_hash[0] ^= 1;
+        let wrong_hash_plan = make_plan(
+            wrong_context,
+            next_plan.pre_state_root,
+            next_plan.aoem_parent.clone(),
+            next_plan.raw_txs.clone(),
+        );
+        reject_without_change(
+            workspace::create_from_finalized_genesis_v1(
+                &wrong_hash_plan,
+                input.workspace_id,
+                pin,
+                params,
+            )
+            .map(|_| ()),
+            "successor context does not extend the verified finalized parent",
+        );
+        let mut wrong_workspace = input.workspace_id;
+        wrong_workspace[0] ^= 1;
+        reject_without_change(
+            workspace::create_from_finalized_genesis_v1(&next_plan, wrong_workspace, pin, params)
+                .map(|_| ()),
+            "requested workspace is not the current finalized tip",
+        );
+        // Height two must bind its immediate finalized execution, not the
+        // still-retained genesis image one generation earlier.
+        let grandfather_plan = make_plan(
+            next_plan.context,
+            compiled.state_root(),
+            None,
+            next_plan.raw_txs.clone(),
+        );
+        reject_without_change(
+            workspace::create_from_finalized_genesis_v1(
+                &grandfather_plan,
+                input.workspace_id,
+                pin,
+                params,
+            )
+            .map(|_| ()),
+            "successor input differs from live finalized parent",
+        );
         let next_input = workspace::exercise_live_parent_admission_for_test_v1(
             &next_plan,
             input.workspace_id,

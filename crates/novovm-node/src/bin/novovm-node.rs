@@ -43634,6 +43634,10 @@ fn run_fresh_genesis_confirmation_v1(
     // workspace locks and all live parent/QC/root checks still run per call.
     // Drop it here, before thread/TLS teardown, including on startup errors.
     let _graph_scope = novovm_exec::AoemSemanticGraphSessionScopeV1::enter()?;
+    // Reuse the generic AOEM computation session across Transfer batches as
+    // well as the separate storage provider above. This is lifetime reuse,
+    // not asynchronous candidate execution or a new scheduling policy.
+    let _compute_scope = novovm_exec::AoemComputeSessionScopeV1::enter()?;
     let mut rpc = string_env_nonempty("NOVOVM_NATIVE_FRESH_RPC_BIND")
         .map(|address| -> Result<_> {
             if config.transaction_pool_path().is_none() {

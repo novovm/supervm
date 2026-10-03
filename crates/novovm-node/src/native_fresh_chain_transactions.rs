@@ -8,6 +8,27 @@ use crate::tx_ingress::fresh_pool::PendingTransaction;
 use sha2::{Digest, Sha256};
 
 impl FreshChainLifecycleV1 {
+    /// A read from the immutable finalized parent, never the pool, speculative
+    /// candidate or legacy Host JSON projection. Query errors are not balances.
+    pub(crate) fn finalized_nov_balance(&self, account: &str) -> Result<serde_json::Value> {
+        if self.halted {
+            bail!("fresh lifecycle halted");
+        }
+        let parent = self
+            .finalized_parent
+            .as_ref()
+            .context("finalized state unavailable")?;
+        let balance = parent.with_records(&self.params, |reader| reader.nov_balance(account))?;
+        let block = parent.block();
+        Ok(serde_json::json!({
+            "method":"nov_getAssetBalance", "account":account, "asset":"NOV",
+            "found":balance.is_some(), "balance":balance.unwrap_or(0).to_string(),
+            "finalized":true, "finalized_tip_height":block.header.height,
+            "block_hash":crate::native_block_seal::hex_v1(&block.header.block_hash),
+            "state_root":crate::native_block_seal::hex_v1(&block.header.post_state_root),
+        }))
+    }
+
     pub fn submit_raw_transaction(&mut self, raw: Vec<u8>) -> Result<serde_json::Value> {
         self.submit_raw_transactions(vec![raw])
             .pop()

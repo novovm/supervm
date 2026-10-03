@@ -2,11 +2,87 @@
 
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
-产品目标与双机必读入口：[NOVOVM 产品目标与双机交付主线](NOVOVM_DELIVERY_ALIGNMENT.md)。安全和恢复门禁不替代高性能、隐匿资产、抗量子的产品交付。
+产品目标与当前交接入口：[NOVOVM 产品目标与交付主线](NOVOVM_DELIVERY_ALIGNMENT.md)。本轮按单机执行，历史 A/B 分工不是开工前置。安全和恢复门禁不替代高性能、隐匿资产、抗量子的产品交付。
 
 2026-10-01 核对基线为 `main@9e104c0`。下文的 `b8aad0a` 加未提交工作区等文字是验收发生时的历史状态，相关更新现已进入该提交；不是当前工作区状态。后续以实际 HEAD 和新证据更新，不覆盖旧失败记录。
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
+
+## R2 首片：原节点签名转账、最终余额查询与恢复
+
+日期 2026-10-03；代码基线 `main@7b10c7f3adf7b1e48fd39435044d793077911146`
+加本节所在的纠错提交。本机 Windows / Rust 1.94.0 / 随仓 Windows core AOEM
+DLL，真实四个 `novovm-node` 进程；不是四台设备、Linux 或生产验收。R1 已收口，
+本轮没有搬目录、重启全量备份或等待另一设备。
+实际 `aoem/windows/core/bin/aoem_ffi.dll` SHA256：
+`4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463`；本片未更换库。
+
+**用户现在可在原 fresh-chain 节点提交签名 NOV Transfer，等正常共识最终确认，
+查询回执及绑定 finalized 块的 NOV 余额，重启后结果保持一致。** 提交、计算、
+持久化和 QC 原基础已有，本片不将整个闭环称作新写的算法。实际新增是：
+
+- 接回既有方法 `nov_getAssetBalance` 的 finalized NOV 查询；直接读原 AOEM
+  根绑定记录，不读旧 Host JSON 投影。余额为十进制字符串，响应带
+  `found`、`finalized_tip_height`、`block_hash`、`state_root`。缺失账户与读取
+  损坏区分，后者返回错误，不把错误显示为零余额。仅公开 NOV，不冒充隐私资产查询。
+- 有效签名但默认不可执行的 Execute 在共享池准入处明确拒绝，避免入池后
+  碰到原 Host guard 导致生命周期停止。RPC 参数不能开许可；旧测试池若已含
+  Execute，默认恢复失败且保留记录，不自动删数据。Transfer 仍正常准入。
+- 原存储会话已常驻；计算会话现在也由真实节点生命周期持有，在配置不变时
+  跨批复用。复用既有 compute 执行/取消/poison 规则，不另造调度器；失败不会
+  通过重新 open 隐式清除，未 drain 的任务仍按原契约保留 owner。
+
+实际路径：`nov_sendRawTransaction → fresh pool → node lifecycle/proposer →`
+`candidate workspace / native_transfer_executor → novovm-exec → aoem-bindings →`
+`AOEM V2 compute → 原 V3 AOEM 持久化 → 原 QC/发布 → finalized 查询/重启恢复`。
+复用恢复后的 Transfer 分量与 waves、精确父状态、鉴权、收费/失败、nonce、状态树、
+共识及经济 oracle，没有接入第二套 runtime 权威账本。后续 runtime/proof 成果及
+49 项原草稿未改；49 项逐文件 SHA256 对照原清单全部一致。
+
+接口用法（沿用现有 fresh genesis/seal/pool 配置及 `NOVOVM_NATIVE_FRESH_RPC_BIND`）：
+
+| 方法 | params | 结果含义 |
+| --- | --- | --- |
+| `nov_sendRawTransaction` | `["<真实签名交易编码的十六进制>"]` | queued/已接收不是执行成功或最终确认 |
+| `nov_getTransactionStatus` | `["<交易哈希>"]` | finalized 后检查 receipt 的业务成功/失败；失败交易也可被最终确认 |
+| `nov_getAssetBalance` | `{"account":"0x<20或32字节地址>","asset":"NOV"}` | 指定高度的最终余额快照，非 pending 余额；不能作为后继发布授权 |
+
+真实节点均显式 `NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=0`。复用原四进程测试，
+由一个节点接收六笔真实签名交易，网络传播后四节点分别查询：5 笔业务成功，
+1 笔余额不足失败，失败收取 46 单位手续费并消耗 nonce，后续同账户交易仍成功。
+2/4 无 QC、3/4 真实签名 QC/Decision V3、第4节点追赶，未降低票数要求。
+两持久块分别含 1 笔 bootstrap 和 6 笔用户交易；本次 tip 为高度 2。
+测试账户 A/B/C/D/bootstrap 最终余额依次为 999569/159/999944/11/1，
+加国库手续费 316 等于创世 2000000；四节点重启前后全状态经济 oracle 各自相等。
+这些是夹具最小单位，不是主网余额、费率变更或性能数据。
+
+| 本机检查 | 实际结果 |
+| --- | --- |
+| 原四进程 mixed Transfer RPC 用例 | 1/1；坏签名、错链、有效 Execute 均明确拒绝且不入池；pending 余额不变、nonce 冲突/重放、失败收费、最终回执和余额、重启全部核对 |
+| 纯 Transfer 根绑定/恢复真实 AOEM 用例 | 1/1；新增6项陈旧/错误父状态反例均在具体父授权检查拒绝，无 head/catalog/finality/Host投影变化；正确后继继续成功 |
+| finalized 读回完整性 | 上述真实用例覆盖余额缺块、物理/共识叶不一致；另1项 typed NOV单测含u128上界/坏类型，均通过 |
+| 常驻 compute | 14/14，含显式执行的真实SDK两批复用、配置漂移/失败poison、原取消/未drain/回调边界；无忽略项冒充通过 |
+| pool / fresh RPC | 10/10、10/10，含默认许可0与字段无法授权、历史记录保全及查询参数检查 |
+| exec普通回归 / Host限制回归 | 43项 / 5项通过；exec普通命令另13项ignored不计通过，其中compute相关真库已由上列显式命令另跑；未称exec所有opt-in均执行 |
+| 产品构建与格式 | `cargo check --workspace --all-targets --locked`、fmt、全workspace/all-targets Clippy `-D warnings`通过；未删模块 |
+
+原四进程证据在本机 `artifacts/audit/candidate-node-processes/`
+`seal-relay-23892-1790997228580771700/mixed-transfer-*.json` 及对应进程目录。
+本地日志 `artifacts/recovery/r2-product-rpc-v1.log`、`r2-rooted-parent-recovery-tests-v2.log`、
+`r2-compute-tests.log`、`r2-pool-tests.log`、`r2-balance-unit-tests.log`、
+`r2-rpc-tests.log`、`r2-workspace-check.log`、`r2-workspace-clippy.log`。
+首次 integration 构建因缓存中 `librocksdb_sys` 的 rlib 不可用失败，单独重建
+该依赖并复验原链接目标后通过；未改业务或删除缓存，初始日志保留为
+`r2-baseline-rpc.log`。父状态复跑第一次误用 `--ignored` 导致0项，不计通过；
+去掉该过滤后实际1/1通过，原日志保留。CI已加入原入口测试与证据上传，
+提交前本地通过不等于本轮远端 CI 已通过。
+
+**仍未完成：** 控制循环仍同步准备候选；费用、nonce及回执/树收尾还有Host计算，
+V2不透明CPU回调不是完整统一CPU/GPU语义。此片不签收完整R2、主链TPS、出块间隔、
+ZK、隐私/PQ或生产部署。Execute、旧账户政策写入和旧立即执行旁路仍默认受限，
+未连带关闭原EVM/查询/网络装配，但本片也未重跑其全部业务验收。
+下一片在同一node/exec接入已保留的常驻有界后台候选流水线，并迁接完整业务效应，
+保持精确父绑定及唯一提交/发布；不要再重写节点或用独立压测程序替代产品。
 
 ## 原产品装配恢复验收
 

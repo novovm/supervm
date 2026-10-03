@@ -13,7 +13,7 @@ use std::{
 };
 
 const CHAIN: u64 = 98_919_601;
-struct Node(PathBuf, Option<String>);
+struct Node(PathBuf, Option<String>, bool);
 impl Node {
     fn new(label: &str) -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -33,7 +33,29 @@ impl Node {
                     .as_nanos()
             ));
         fs::create_dir_all(&dir).unwrap();
-        Self(dir, None)
+        Self(dir, None, false)
+    }
+    // Opt in per fixture, not globally: historical comparison tests keep their
+    // original environment policy. Every command for this instance, including
+    // bootstrap and restart, explicitly disables legacy Host execution.
+    fn without_legacy_host_execution(mut self) -> Self {
+        self.2 = true;
+        self
+    }
+    fn assert_execution_policy(&self, command: &Command) {
+        if self.2 {
+            assert_eq!(
+                command
+                    .get_envs()
+                    .find(|(key, _)| {
+                        key.to_string_lossy()
+                            .eq_ignore_ascii_case("NOVOVM_ALLOW_LEGACY_HOST_EXECUTION")
+                    })
+                    .map(|(_, value)| value),
+                Some(Some(std::ffi::OsStr::new("0"))),
+                "this fixture must not inherit or enable legacy Host execution"
+            );
+        }
     }
     fn funded(label: &str) -> Self {
         use sha2::{Digest, Sha256};
@@ -141,9 +163,17 @@ impl Node {
             cmd.env("NOVOVM_ALLOW_AOEM_STATE_BOOTSTRAP_FROM_HOST", "true")
                 .env(NOV_NATIVE_AOEM_STATE_BOOTSTRAP_HOST_ANCHOR_ENV, anchor);
         }
+        if self.2 {
+            cmd.env("NOVOVM_ALLOW_LEGACY_HOST_EXECUTION", "0");
+        } else if let Some(permit) = std::env::var_os("NOVOVM_ALLOW_LEGACY_HOST_EXECUTION") {
+            // Historical comparison requires the caller's explicit opt-in.
+            cmd.env("NOVOVM_ALLOW_LEGACY_HOST_EXECUTION", permit);
+        }
+        self.assert_execution_policy(&cmd);
         cmd
     }
     fn run(&self, cmd: &mut Command, label: &str) -> (bool, String, String) {
+        self.assert_execution_policy(cmd);
         let stdout = self.0.join(format!("{label}.stdout.log"));
         let stderr = self.0.join(format!("{label}.stderr.log"));
         cmd.stdout(fs::File::create(&stdout).unwrap())

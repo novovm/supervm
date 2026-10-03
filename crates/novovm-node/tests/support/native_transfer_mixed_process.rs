@@ -8,6 +8,16 @@ use novovm_protocol::{
 use std::collections::BTreeMap;
 
 const DEADLINE: Duration = Duration::from_secs(120);
+// The same account labels as the existing independent economic oracle. Only
+// identities are repeated here; fees and resulting balances come from it.
+const BALANCE_ACCOUNTS: [(&str, u8); 5] = [
+    ("A", 64),
+    ("C", 65),
+    ("B", 201),
+    ("D", 202),
+    ("bootstrap", 128),
+];
+type BalanceViews = Vec<BTreeMap<String, Value>>;
 
 pub(super) fn inputs() -> (FreshGenesisConfigV1, NovNativeCandidateExecutionPlanV1) {
     oracle_worker(); // Fail before preparing any real nodes if the explicit worker is absent.
@@ -132,6 +142,116 @@ fn chain_statuses(addresses: &[String]) -> Vec<Value> {
                 .unwrap()
         })
         .collect()
+}
+
+fn balance_views(addresses: &[String]) -> BalanceViews {
+    let views: BalanceViews = addresses
+        .iter()
+        .map(|address| {
+            BALANCE_ACCOUNTS
+                .into_iter()
+                .chain([("unknown", 250)])
+                .map(|(label, seed)| {
+                    let account = format!(
+                        "0x{}",
+                        hex(&novovm_adapter_novovm::address_from_seed_v1([seed; 32]))
+                    );
+                    let result = transfer_throughput::rpc_once(
+                        address,
+                        "nov_getAssetBalance",
+                        serde_json::json!({"account":account,"asset":"NOV"}),
+                    )
+                    .unwrap();
+                    assert_eq!(result["method"], "nov_getAssetBalance");
+                    assert_eq!(result["account"], account);
+                    assert_eq!(result["asset"], "NOV");
+                    assert_eq!(result["finalized"], true);
+                    assert!(result["found"].is_boolean());
+                    let balance = result["balance"].as_str().unwrap();
+                    assert_eq!(balance.parse::<u128>().unwrap().to_string(), balance);
+                    if label == "unknown" {
+                        assert_eq!(result["found"], false);
+                        assert_eq!(balance, "0");
+                    }
+                    (label.to_string(), result)
+                })
+                .collect()
+        })
+        .collect();
+    assert!(views.iter().all(|view| view == &views[0]));
+    views
+}
+
+fn check_balance_anchor(views: &BalanceViews, block: &NovNativeDurableBlockV1) {
+    for view in views {
+        for balance in view.values() {
+            assert_eq!(balance["finalized_tip_height"], block.header.height);
+            assert_eq!(balance["block_hash"], hex(&block.header.block_hash));
+            assert_eq!(balance["state_root"], hex(&block.header.post_state_root));
+        }
+    }
+}
+
+fn check_balance_oracle(views: &BalanceViews, reports: &[Value], genesis: &FreshGenesisConfigV1) {
+    assert_eq!(views.len(), reports.len());
+    for (view, report) in views.iter().zip(reports) {
+        let expected = report["economic"]["balances"].as_object().unwrap();
+        assert_eq!(expected.len(), BALANCE_ACCOUNTS.len());
+        let mut sum = 0u128;
+        for (label, expected) in expected {
+            let actual = &view[label];
+            assert_eq!(actual["found"], true);
+            assert_eq!(actual["balance"], expected.to_string());
+            sum = sum
+                .checked_add(actual["balance"].as_str().unwrap().parse::<u128>().unwrap())
+                .unwrap();
+        }
+        // The oracle independently checks actual treasury reserve/bucket
+        // balances, every receipt, failure nonce and the full AOEM state.
+        let fees = report["economic"]["fees"]
+            .to_string()
+            .parse::<u128>()
+            .unwrap();
+        assert_eq!(
+            sum.checked_add(fees).unwrap().to_string(),
+            genesis.total_initial_nov
+        );
+    }
+}
+
+fn rejected_transactions(raw: &[u8]) -> Vec<(Vec<u8>, &'static str)> {
+    let transfer = decode_nov_native_tx_wire_v1(raw).unwrap();
+    let mut bad_signature = transfer.clone();
+    *bad_signature.signature.last_mut().unwrap() ^= 1;
+    let mut wrong_chain = transfer;
+    wrong_chain.chain_id += 1;
+    sign_nov_native_tx_with_seed_v1(&mut wrong_chain, [64; 32]).unwrap();
+    let (_, fixture) = super::super::native_fresh_genesis_cli::inputs();
+    let mut execute = decode_nov_native_tx_wire_v1(&fixture.raw_txs[0]).unwrap();
+    let NovTxKindV1::Execute(request) = &mut execute.kind else {
+        panic!("existing fresh fixture must carry Execute");
+    };
+    // A real valid direct-signer Execute, not a bad subject-authority fixture
+    // rejected before reaching the disabled Host execution capability.
+    request.account_id = None;
+    request.fee_owner_account_id = None;
+    request.nonce_owner_account_id = None;
+    request.nonce = 1;
+    sign_nov_native_tx_with_seed_v1(&mut execute, [64; 32]).unwrap();
+    vec![
+        (
+            encode_nov_native_tx_wire_v1(&bad_signature).unwrap(),
+            "signature or signer identity mismatch",
+        ),
+        (
+            encode_nov_native_tx_wire_v1(&wrong_chain).unwrap(),
+            "transaction chain or execution kind mismatch",
+        ),
+        (
+            encode_nov_native_tx_wire_v1(&execute).unwrap(),
+            "legacy Host execution is disabled",
+        ),
+    ]
 }
 
 fn transaction_statuses(
@@ -294,11 +414,49 @@ fn check_blocks(blocks: &[NovNativeDurableBlockV1], transactions: &[([u8; 32], V
 pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
     oracle_worker();
     assert_eq!(nodes.len(), 4);
+    for node in nodes {
+        assert!(
+            node.2,
+            "MixedParity requires an explicit Host denial policy"
+        );
+        node.assert_execution_policy(&node.command());
+    }
     let bootstrap = transfer_throughput::finalized_blocks(&nodes[0], 1);
+    let genesis: FreshGenesisConfigV1 =
+        serde_json::from_slice(&fs::read(nodes[0].0.join("genesis.json")).unwrap()).unwrap();
     let transactions = transactions();
     configure(nodes, false);
     let (mut children, addresses) = start(nodes, "continuous-mixed-admission", evidence);
     let before = chain_statuses(&addresses);
+    let initial_balances = balance_views(&addresses);
+    check_balance_anchor(&initial_balances, &bootstrap[0]);
+    let rejected = rejected_transactions(&transactions[0].1);
+    for address in &addresses {
+        for (raw, reason) in &rejected {
+            assert_rpc_rejection(address, raw, reason);
+        }
+    }
+    let rejected_hashes: Vec<_> = rejected
+        .iter()
+        .map(|(raw, _)| {
+            (
+                canonical_nov_native_tx_hash_from_payload_v1(raw).unwrap(),
+                raw.clone(),
+            )
+        })
+        .collect();
+    let rejected_statuses = transaction_statuses(&addresses, &rejected_hashes);
+    assert!(rejected_statuses
+        .iter()
+        .flatten()
+        .all(|status| status["status"] == "unknown"));
+    for (status, previous) in chain_statuses(&addresses).iter().zip(&before) {
+        assert_eq!(status["height"], 1);
+        assert_eq!(status["durable_pending_transactions"], 0);
+        assert_eq!(status["lifecycle_halted"], false);
+        assert_eq!(status["publication"], previous["publication"]);
+    }
+    assert_eq!(balance_views(&addresses), initial_balances);
     let admissions: Vec<_> = transactions
         .iter()
         .enumerate()
@@ -323,6 +481,8 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
         .collect();
     let queued = wait_transactions(&mut children, &addresses, &transactions, "queued", evidence);
     let staged = chain_statuses(&addresses);
+    let queued_balances = balance_views(&addresses);
+    assert_eq!(queued_balances, initial_balances);
     for (status, previous) in staged.iter().zip(&before) {
         assert_eq!(status["height"], 1);
         assert_eq!(status["finalized"], true);
@@ -335,6 +495,8 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
     }
     fs::write(evidence.join("mixed-transfer-admission.json"), serde_json::to_vec_pretty(&serde_json::json!({
         "single_ingress_validator_index":0,"admissions":admissions,"queued_by_node":queued,"before":before,"after":staged,
+        "legacy_host_execution":"0","rejected_transactions_by_node":rejected_statuses,
+        "initial_finalized_balances":initial_balances,"queued_finalized_balances":queued_balances,
     })).unwrap()).unwrap();
     stop(children);
     for node in nodes {
@@ -388,6 +550,7 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
         &nonce_conflict(&transactions[0].1, 102),
         "nonce already consumed",
     );
+    let finalized_balances = balance_views(&addresses);
     fs::write(
         evidence.join("mixed-transfer-receipts.json"),
         serde_json::to_vec_pretty(&receipts).unwrap(),
@@ -404,6 +567,8 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
         assert_eq!(transfer_throughput::finalized_blocks(node, tip), blocks);
     }
     let before_oracle = verify_oracle(nodes, &blocks, &receipts, "before-restart");
+    check_balance_anchor(&finalized_balances, blocks.last().unwrap());
+    check_balance_oracle(&finalized_balances, &before_oracle, &genesis);
 
     let (mut children, addresses) = start(nodes, "continuous-mixed-restart", evidence);
     let recovered = wait_transactions(
@@ -414,6 +579,8 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
         evidence,
     );
     assert_eq!(recovered, receipts);
+    let recovered_balances = balance_views(&addresses);
+    assert_eq!(recovered_balances, finalized_balances);
     for status in chain_statuses(&addresses) {
         assert_eq!(status["height"], tip);
         assert_eq!(status["finalized"], true);
@@ -434,6 +601,9 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
     fs::write(evidence.join("mixed-transfer-acceptance.json"), serde_json::to_vec_pretty(&serde_json::json!({
         "scope":"same_host_four_process_mixed_transfer_finality_v1","accepted":true,
         "transaction_count":6,"business_successes":5,"business_failures":1,
+        "legacy_host_execution":"0","bad_signature_rejected":true,"wrong_chain_rejected":true,"signed_execute_rejected_before_pool":true,
+        "queued_balances_unchanged":true,"finalized_balances_match_economic_oracle":true,"balances_plus_treasury_fees_conserved":true,
+        "restart_balances_equal":true,"finalized_balances_by_node":finalized_balances,
         "single_ingress_validator_index":0,"all_nodes_queued_before_proposal":true,
         "conflicting_nonces_ordered":true,"failure_nonce_consumed":true,"serial_oracle_verified":true,
         "pending_nonce_conflict_rejected":true,"consumed_nonce_conflict_rejected":true,"finalized_replay_idempotent":true,
@@ -502,6 +672,7 @@ fn verify_oracle(
                 .env("NOVOVM_TRANSFER_PARITY_OUTPUT", &output)
                 .stdout(fs::File::create(&stdout).unwrap())
                 .stderr(fs::File::create(&stderr).unwrap());
+            node.assert_execution_policy(&command);
             let mut child = Child(command.spawn().unwrap());
             let started = Instant::now();
             let status = loop {

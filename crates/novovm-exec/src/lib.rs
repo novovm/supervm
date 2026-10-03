@@ -181,7 +181,7 @@ impl AoemRuntimeVariant {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AoemRuntimeConfig {
     pub variant: AoemRuntimeVariant,
     pub aoem_root: PathBuf,
@@ -2907,7 +2907,8 @@ pub use ingress_codec::RawIngressCodecRegistry;
 pub use ingress_codec::AOEM_OPS_WIRE_V1_MAGIC;
 pub use ingress_codec::AOEM_OPS_WIRE_V1_VERSION;
 pub use semantic_compute::{
-    execute_aoem_compute_tasks_v1, AoemComputeReportV1, AoemComputeSessionV1, AoemComputeTaskV1,
+    execute_aoem_compute_tasks_v1, AoemComputeReportV1, AoemComputeSessionScopeV1,
+    AoemComputeSessionV1, AoemComputeTaskV1,
 };
 pub use semantic_graph_v3::{
     AoemAtomicGraphCommitReportV1, AoemAtomicGraphEventV1, AoemAtomicGraphRequestV1,

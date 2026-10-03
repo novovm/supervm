@@ -29,6 +29,13 @@ impl PendingTransaction {
         let hash = tx_hash_array_from_ir_v1(&ir);
         verify_nov_native_auth_v1(params, &transaction, &ir, hash)?;
         let reservation = nov_native_durable_auth_reservation_v1(&transaction, &ir, hash)?;
+        if !matches!(transaction.kind, NovTxKindV1::Transfer(_)) {
+            // A signed Execute must not poison the durable pool and then halt
+            // the proposer when candidate execution reaches its Host barrier.
+            // Match that process-only capability before admission; recovery
+            // reuses this check and retains unsupported records for inspection.
+            require_legacy_host_execution_comparison_v1("fresh transaction pool Host Execute")?;
+        }
         Ok(Self {
             hash,
             raw,

@@ -185,7 +185,7 @@ fn physical_path(path: &Path) -> Result<PathBuf> {
     }
 }
 
-fn effective_environment(runtime: &AoemRuntimeConfig) -> BTreeMap<OsString, OsString> {
+pub(crate) fn effective_environment(runtime: &AoemRuntimeConfig) -> BTreeMap<OsString, OsString> {
     let mut environment: BTreeMap<_, _> = std::env::vars_os()
         .filter_map(|(name, value)| {
             #[cfg(windows)]

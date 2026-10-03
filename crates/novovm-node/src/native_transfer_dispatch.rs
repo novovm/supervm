@@ -331,7 +331,10 @@ pub(super) fn execute_with_finalizer_v1(
         });
     }
     let runtime = native_aoem_owned_runtime_config_v1()?;
-    let mut session = AoemComputeSessionV1::open(&runtime)?;
+    // The actual fresh node owns a same-thread lifecycle scope. Preserve cold
+    // sessions for callers without one, while reusing its resident computation
+    // owner across batches. This call still waits for each graph to drain.
+    let mut session = AoemComputeSessionV1::open_scoped(&runtime)?;
     let computed = execute_transfer_components_v1(&mut session, work, Duration::from_secs(30))?;
     let mut observation = ComponentObservationV1 {
         transactions: items.len(),
