@@ -70,7 +70,7 @@ pub(super) fn survives_parent_ack(
     parent: ParentPoint,
 ) -> bool {
     match message {
-        Message::EarlyBody { scope, .. } => {
+        Message::EarlyBody { scope, .. } | Message::ApflEarlyBody { scope, .. } => {
             scope.target_height == current.height
                 && same_domain(scope.source, current)
                 && scope.source.height == parent.height
@@ -140,7 +140,9 @@ impl Controller {
         slot: u64,
         timestamp_unix_ms: u64,
     ) -> Result<bool> {
-        let Message::EarlyBody { scope, .. } = message.as_ref() else {
+        let (Message::EarlyBody { scope, .. } | Message::ApflEarlyBody { scope, .. }) =
+            message.as_ref()
+        else {
             anyhow::bail!("local early input is not an EarlyBody");
         };
         scope.validate_shape()?;
@@ -583,7 +585,7 @@ impl Controller {
             .prepared
             .body_id()
             .context("canonical identity absent")?;
-        // The owner constructs the old raw request for compatibility, but this
+        // The owner constructs an unverified request for either layout, but this
         // route MUST retire it and consume the authenticated body exactly once.
         if let Some(request) = ready.body.as_mut().and_then(|body| body.take_request()) {
             self.retire(Retirement::Request(request));
@@ -648,7 +650,7 @@ impl Controller {
 
     pub(super) fn retire_early_origin_cache(&mut self, origin: EarlyOrigin) {
         self.prune_fixed(|fixed| match fixed.prepared.message().as_ref() {
-            Message::EarlyBody { scope, .. } => {
+            Message::EarlyBody { scope, .. } | Message::ApflEarlyBody { scope, .. } => {
                 *scope != origin.scope || fixed.prepared.early_id() != Some(origin.id)
             }
             Message::BindBody {

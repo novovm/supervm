@@ -1,0 +1,22 @@
+{
+  "schema": "novovm/frozen-resident-rpc-baseline/v1",
+  "source_commit": "e0b162fec38d899ad7ce0d9058116330c29b5a87",
+  "source_node": "target/release/novovm-node.exe",
+  "source_test": "target/release/deps/novovm_node-f6abee0fe86d4c64.exe",
+  "frozen_node": "target/resident-rpc-e0b162fe-baseline/novovm-node.exe",
+  "frozen_test": "target/resident-rpc-e0b162fe-baseline/novovm_node-tests.exe",
+  "node_sha256": "9f76ff9874f2cd60ea01f1ee27dbff41c2fd2f437ec6d498d862c733a3e3103a",
+  "test_sha256": "58ee183c92c7110139b10bbd7bf79230abfc70828d1ca897430c191a23f76bb8",
+  "aoem_library": "aoem/windows/core/bin/aoem_ffi.dll",
+  "aoem_sha256": "4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463",
+  "verified_against_prior_report": "artifacts/audit/resident-rpc-load/27060-1791057877509792700/result.json",
+  "rebuilt": false,
+  "test": "native_pipeline::consensus::tests::resident_rpc_process::load::actual_product_rpc_65536_signed_transfers_finality_and_cold_economics",
+  "mode": "single_ingress",
+  "ingress_node": 0,
+  "require_early_reuse": true,
+  "report": "artifacts/audit/resident-rpc-load/20252-1791060481740582200/result.json",
+  "log": "target/resident-rpc-e0b162fe-baseline/single-ingress-baseline.log",
+  "test_exit_code": 0,
+  "rebuilt_for_run": false
+}

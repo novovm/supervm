@@ -104,7 +104,7 @@ fn fixture_with(payer_balance: u128, settlements: u64) -> Fixture {
     for bytes in &raw {
         let authenticated = authenticate_transfer_v3(bytes, CHAIN, MAX_TRANSACTION_BYTES).unwrap();
         let tx = authenticated.transfer();
-        let payer = Account::try_from(tx.from.as_slice()).unwrap();
+        let payer = Account::try_from(tx.from).unwrap();
         changes.push(StateChange::Put {
             key: balance_key(&payer),
             value: payer_balance.to_le_bytes().to_vec(),

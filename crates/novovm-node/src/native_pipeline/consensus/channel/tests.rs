@@ -1166,7 +1166,13 @@ fn ingress_prefix_rejects_bad_magic_version_kind_and_every_truncation() {
     bytes[10] = 10;
     assert_eq!(transport::message_lane(&bytes[..11]).unwrap(), 0);
     assert!(transport::decode(&bytes[..11], config.codec).is_err());
-    for tag in [0, 11, 255] {
+    for (tag, lane) in [(11, 1), (12, 1), (13, 2)] {
+        bytes[10] = tag;
+        assert_eq!(transport::message_lane(&bytes[..11]).unwrap(), lane);
+        assert_eq!(transport::body_prefix(&bytes[..11]).unwrap(), lane == 1);
+        assert!(transport::decode(&bytes[..11], config.codec).is_err());
+    }
+    for tag in [0, 14, 255] {
         bytes[10] = tag;
         assert!(transport::body_prefix(&bytes).is_err());
     }

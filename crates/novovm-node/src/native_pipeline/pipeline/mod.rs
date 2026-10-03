@@ -22,7 +22,8 @@ pub use authentication::{
 use crate::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::native_pipeline::business::nov_transfer_batch::ExecutionObservation;
 use crate::native_pipeline::execution::plan::{BatchContext, PlanBudget};
-use crate::native_pipeline::ingress::batch::AuthenticationBudget;
+use crate::native_pipeline::ingress::apfl::ApflTransferBatch;
+use crate::native_pipeline::ingress::batch::{AuthenticationBudget, BatchSource};
 use crate::native_pipeline::persistence::io::{
     IoBudget, IoMetadataClient, IoReadClient, IoService, IoTicket,
 };
@@ -107,15 +108,25 @@ impl BatchRequest {
         context: BatchContext,
         policy: DirectNovFeePolicy,
     ) -> Result<Self> {
+        Self::from_source(BatchSource::Raw(raw_transactions), context, policy)
+    }
+
+    pub fn from_apfl(
+        batch: Arc<ApflTransferBatch>,
+        context: BatchContext,
+        policy: DirectNovFeePolicy,
+    ) -> Result<Self> {
+        Self::from_source(BatchSource::Apfl(batch), context, policy)
+    }
+
+    fn from_source(
+        raw_transactions: BatchSource,
+        context: BatchContext,
+        policy: DirectNovFeePolicy,
+    ) -> Result<Self> {
         ensure!(!raw_transactions.is_empty(), "empty pipeline request");
         policy.validate()?;
-        let body_bytes = raw_transactions.iter().try_fold(0usize, |total, raw| {
-            ensure!(!raw.is_empty(), "empty pipeline transaction");
-            total
-                .checked_add(raw.len())
-                .context("pipeline body size overflow")
-        })?;
-        let max_transaction_bytes = raw_transactions.iter().map(Vec::len).max().unwrap_or(0);
+        let (body_bytes, max_transaction_bytes) = raw_transactions.sizes()?;
         let transaction_count = raw_transactions.len();
         Ok(Self {
             request: Box::new(compute::PrepareRequest {

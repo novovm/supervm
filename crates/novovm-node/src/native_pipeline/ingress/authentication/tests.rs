@@ -1,5 +1,5 @@
 use super::*;
-use crate::native_pipeline::ingress::wire::{encode_transfer_v3, FeePolicy};
+use crate::native_pipeline::ingress::wire::{encode_transfer_v3, signing_message, FeePolicy};
 use ed25519_dalek::{Signer, SigningKey, Verifier};
 
 const CHAIN: u64 = 71;
@@ -69,11 +69,11 @@ fn real_signatures_bind_both_account_widths_to_one_chain_separated_nonce_identit
     assert_eq!(first.nonce_identity(), second.nonce_identity());
     assert_eq!(
         first.tx_hash(),
-        canonical_tx_hash(first.transfer()).unwrap()
+        first.transfer().canonical_tx_hash().unwrap()
     );
     assert_eq!(
         second.tx_hash(),
-        canonical_tx_hash(second.transfer()).unwrap()
+        second.transfer().canonical_tx_hash().unwrap()
     );
 
     // Independently spell out the legacy chain-separated identity. A balance

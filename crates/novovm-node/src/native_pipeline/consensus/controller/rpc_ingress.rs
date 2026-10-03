@@ -34,7 +34,8 @@ pub struct TransactionsStats {
 
 pub struct ReceivedTransactions {
     pub peer: String,
-    /// Only Transactions is returned. Caller retains and validates each raw.
+    /// Only Transactions/ApflTransactions is returned. Caller retains and
+    /// strictly validates every original signed transaction, in either layout.
     pub message: Arc<Message>,
 }
 
@@ -174,7 +175,7 @@ impl Transactions {
             return Ok(false);
         }
         let Some(pending) = self.outbox.iter_mut().find(|pending| pending.prepared.as_ref().is_some_and(|prepared| {
-            prepared.fragment_id() == fragment_id && matches!(prepared.message().as_ref(), Message::Transactions { scope: original, .. } if original == scope)
+            prepared.fragment_id() == fragment_id && matches!(prepared.message().as_ref(), Message::Transactions { scope: original, .. } | Message::ApflTransactions { scope: original, .. } if original == scope)
         })) else { return Ok(false); };
         if now.duration_since(pending.created) >= self.ttl
             || !pending.queued[index]
@@ -209,24 +210,40 @@ impl Controller {
     /// Construct from already pool-admitted bytes; this function does NOT do
     /// authentication and therefore cannot be used as pool/signing admission.
     pub fn transactions_message(&mut self, raw_transactions: Vec<Vec<u8>>) -> Result<Arc<Message>> {
+        Ok(Arc::new(Message::Transactions {
+            scope: self.next_transactions_scope()?,
+            raw_transactions,
+        }))
+    }
+
+    /// Same non-authoritative local gossip envelope, retaining the structured
+    /// signed batch without expanding it back into a second raw transaction list.
+    pub fn apfl_transactions_message(
+        &mut self,
+        batch: Arc<ApflTransferBatch>,
+    ) -> Result<Arc<Message>> {
+        Ok(Arc::new(Message::ApflTransactions {
+            scope: self.next_transactions_scope()?,
+            batch,
+        }))
+    }
+
+    fn next_transactions_scope(&mut self) -> Result<TransactionsScope> {
         self.transactions.sequence = self
             .transactions
             .sequence
             .checked_add(1)
             .context("input gossip sequence exhausted")?;
         let context = self.context();
-        Ok(Arc::new(Message::Transactions {
-            scope: TransactionsScope {
-                chain_id: context.chain_id,
-                genesis: context.genesis_config_commitment,
-                protocol: context.protocol_commitment,
-                epoch: context.epoch,
-                validator_set_hash: context.validator_set_hash,
-                session: self.transactions.session,
-                sequence: self.transactions.sequence,
-            },
-            raw_transactions,
-        }))
+        Ok(TransactionsScope {
+            chain_id: context.chain_id,
+            genesis: context.genesis_config_commitment,
+            protocol: context.protocol_commitment,
+            epoch: context.epoch,
+            validator_set_hash: context.validator_set_hash,
+            session: self.transactions.session,
+            sequence: self.transactions.sequence,
+        })
     }
 
     pub fn transactions_stats(&self) -> &TransactionsStats {
@@ -236,7 +253,9 @@ impl Controller {
     /// Accepted means a bounded LOCAL preparation slot, never remote or durable
     /// receipt. Backpressure leaves the caller's original Arc untouched.
     pub fn try_submit_transactions(&mut self, message: &Arc<Message>) -> Result<bool> {
-        let Message::Transactions { scope, .. } = message.as_ref() else {
+        let (Message::Transactions { scope, .. } | Message::ApflTransactions { scope, .. }) =
+            message.as_ref()
+        else {
             anyhow::bail!("expected raw input gossip");
         };
         self.check_transactions_scope(scope)?;
@@ -302,7 +321,9 @@ impl Controller {
                     self.retire(Retirement::Ready(input.ready));
                     return None;
                 }
-                let Message::Transactions { scope, .. } = input.ready.message.as_ref() else {
+                let (Message::Transactions { scope, .. } | Message::ApflTransactions { scope, .. }) =
+                    input.ready.message.as_ref()
+                else {
                     unreachable!()
                 };
                 self.transactions.credits.push_back(PendingCredit {
@@ -477,7 +498,9 @@ impl Controller {
     }
 
     pub(super) fn receive_transactions(&mut self, peer: String, ready: Ready) -> Result<()> {
-        let Message::Transactions { scope, .. } = ready.message.as_ref() else {
+        let (Message::Transactions { scope, .. } | Message::ApflTransactions { scope, .. }) =
+            ready.message.as_ref()
+        else {
             unreachable!()
         };
         let now = Instant::now();

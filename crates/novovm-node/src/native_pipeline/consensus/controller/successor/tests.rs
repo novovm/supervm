@@ -115,6 +115,98 @@ fn raw(height: u64, extra: u128) -> Result<Vec<Vec<u8>>> {
         .collect()
 }
 
+/// Test-only layout conversion. Original signer bytes and semantic body IDs
+/// are unchanged; no test authority or execution result is fabricated.
+fn as_apfl(message: Arc<Message>) -> Result<Arc<Message>> {
+    use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
+    let convert = |raw: &[Vec<u8>]| -> Result<Arc<ApflTransferBatch>> {
+        Ok(Arc::new(ApflTransferBatch::from_raw(
+            raw,
+            ApflLimits {
+                transactions: 8,
+                transaction_bytes: 1024,
+                body_bytes: 8192,
+            },
+        )?))
+    };
+    Ok(Arc::new(match message.as_ref() {
+        Message::Body {
+            context,
+            raw_transactions,
+        } => Message::ApflBody {
+            context: *context,
+            batch: convert(raw_transactions)?,
+        },
+        Message::EarlyBody {
+            scope,
+            raw_transactions,
+        } => Message::ApflEarlyBody {
+            scope: *scope,
+            batch: convert(raw_transactions)?,
+        },
+        _ => bail!("APFL test conversion expected original body"),
+    }))
+}
+
+#[test]
+fn apfl_early_parent_ack_retention_keeps_the_same_domain_and_height_checks() -> Result<()> {
+    use crate::native_pipeline::consensus::transport::EarlyBodyScope;
+    let source = Context {
+        chain_id: CHAIN,
+        genesis_config_commitment: GENESIS,
+        protocol_commitment: PROTOCOL,
+        epoch: 1,
+        validator_set_hash: [3; 32],
+        height: 1,
+        parent_block_hash: [0; 32],
+        parent_decision_hash: [0; 32],
+    };
+    let parent = ParentPoint {
+        height: 1,
+        block_hash: [4; 32],
+        state_root: [5; 32],
+        receipt_batch_commitment: [6; 32],
+        state_version: 1,
+        decision_hash: [7; 32],
+    };
+    let current = Context {
+        height: 2,
+        parent_block_hash: parent.block_hash,
+        parent_decision_hash: parent.decision_hash,
+        ..source
+    };
+    let message = as_apfl(Arc::new(Message::EarlyBody {
+        scope: EarlyBodyScope {
+            source,
+            source_round: 0,
+            target_height: 2,
+        },
+        raw_transactions: raw(2, 0)?,
+    }))?;
+    assert!(early_body::survives_parent_ack(&message, current, parent));
+    for field in 0..6 {
+        let mut wrong = current;
+        match field {
+            0 => wrong.height += 1,
+            1 => wrong.chain_id += 1,
+            2 => wrong.genesis_config_commitment[0] ^= 1,
+            3 => wrong.protocol_commitment[0] ^= 1,
+            4 => wrong.epoch += 1,
+            _ => wrong.validator_set_hash[0] ^= 1,
+        }
+        assert!(!early_body::survives_parent_ack(&message, wrong, parent));
+    }
+    assert!(!early_body::survives_parent_ack(
+        &message,
+        current,
+        ParentPoint {
+            height: 0,
+            ..parent
+        }
+    ));
+    Ok(())
+}
+
 fn execution(parent: ParentPoint) -> BatchContext {
     BatchContext {
         chain_id: CHAIN,

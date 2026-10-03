@@ -567,8 +567,8 @@ fn apply_oracle(
     receipt: &crate::native_pipeline::persistence::packet::ReceiptView,
 ) -> Result<()> {
     let tx = checked.transfer();
-    let payer = Account::try_from(tx.from.clone()).map_err(anyhow::Error::msg)?;
-    let recipient = Account::try_from(tx.to.clone()).map_err(anyhow::Error::msg)?;
+    let payer = Account::try_from(tx.from).map_err(anyhow::Error::msg)?;
+    let recipient = Account::try_from(tx.to).map_err(anyhow::Error::msg)?;
     let identity = checked.nonce_identity();
     let before = expected.nonces.get(&identity).copied().unwrap_or(0);
     ensure!(
@@ -579,9 +579,9 @@ fn apply_oracle(
         tx_hash: checked.tx_hash(),
         payer: payer.clone(),
         recipient: recipient.clone(),
-        asset: tx.asset.clone(),
+        asset: tx.asset.to_owned(),
         amount: tx.amount,
-        pay_asset: tx.fee_policy.pay_asset.clone(),
+        pay_asset: tx.fee_policy.pay_asset.to_owned(),
         max_pay_amount: tx.fee_policy.max_pay_amount,
         slippage_bps: tx.fee_policy.slippage_bps,
     };
@@ -966,6 +966,16 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
         let before = nodes.wait_ready(&[0, 1, 2, 3])?;
         // Preserve real counters even when the additional early-reuse gate fails.
         evidence["live_status"] = json!(before);
+        let require_apfl = std::env::var("NOVOVM_RESIDENT_RPC_REQUIRE_APFL").as_deref() == Ok("1");
+        evidence["apfl_views_required"] = json!(require_apfl);
+        if require_apfl {
+            ensure!(
+                before.iter().all(|s| s["apfl_view_transactions_total"]
+                    .as_u64()
+                    .is_some_and(|count| count >= TRANSACTIONS as u64)),
+                "four-node execution did not all consume APFL authenticated views"
+            );
+        }
         ensure!(
             before.iter().all(|s| s["head"] == before[0]["head"]),
             "four heads disagree"

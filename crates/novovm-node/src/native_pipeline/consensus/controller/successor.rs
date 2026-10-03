@@ -104,7 +104,8 @@ impl Controller {
     /// Optional, bounded preannouncement. Ordinary try_submit_body remains
     /// exact-current-parent only. Admission grants no future signing rights.
     pub fn try_submit_successor_body(&mut self, message: &Arc<Message>) -> Result<bool> {
-        let Message::Body { context, .. } = message.as_ref() else {
+        let (Message::Body { context, .. } | Message::ApflBody { context, .. }) = message.as_ref()
+        else {
             anyhow::bail!("successor input is not a body");
         };
         if self.is_recovering()
@@ -229,7 +230,7 @@ impl Controller {
     pub(super) fn successor_has_local_early_target(&self, height: u64) -> bool {
         self.successor.as_ref().and_then(|s| s.body.as_ref()).is_some_and(|body|
             body.source == self.local_peer && !body.failed && body.early_origin.is_some()
-                && matches!(body.prepared.message().as_ref(), Message::Body { context, .. } if context.height == height))
+                && matches!(body.prepared.message().as_ref(), Message::Body { context, .. } | Message::ApflBody { context, .. } if context.height == height))
     }
 
     pub(super) fn successor_body_mut(&mut self, id: Hash) -> Option<&mut Body> {

@@ -195,6 +195,98 @@ fn reply(channel: &HostChannel, expected: u64) -> std::result::Result<Ready, Str
 }
 
 #[test]
+fn apfl_owner_keeps_shared_structure_through_exact_parent_binding_and_cached_retry() {
+    use crate::native_pipeline::ingress::wire::{encode_transfer_v3, FeePolicy, TransferV3};
+    let config = config();
+    let channel = unstarted(&config);
+    // Deliberately unverified signature: assembly is not authentication.
+    let raw = vec![encode_transfer_v3(&TransferV3 {
+        chain_id: config.chain_id,
+        from: vec![1; 32],
+        to: vec![2; 20],
+        asset: "NOV".into(),
+        amount: 17,
+        nonce: 29,
+        fee_policy: FeePolicy {
+            pay_asset: "NOV".into(),
+            max_pay_amount: 777,
+            slippage_bps: 19,
+        },
+        signature: vec![3; 96],
+    })
+    .unwrap()];
+    let batch = Arc::new(
+        ApflTransferBatch::from_raw(
+            &raw,
+            ApflLimits {
+                transactions: config.codec.transactions,
+                transaction_bytes: config.codec.transaction_bytes,
+                body_bytes: config.codec.body_bytes,
+            },
+        )
+        .unwrap(),
+    );
+    let message = Arc::new(Message::ApflEarlyBody {
+        scope: scope(&config),
+        batch: batch.clone(),
+    });
+    submit(&channel, 1, PrepareInput::New(message));
+    advance(&channel, &config, 1);
+    let mut announcement = reply(&channel, 1).unwrap();
+    let expected_early = transport::early_body_id(&scope(&config), &raw, config.codec).unwrap();
+    assert_eq!(announcement.prepared.early_id(), Some(expected_early));
+    assert!(announcement
+        .early
+        .as_mut()
+        .unwrap()
+        .take_request()
+        .is_some());
+    assert!(matches!(
+        announcement.evidence.as_ref(),
+        VerifiedEvidence::None
+    ));
+    let context = context(&config);
+    submit(
+        &channel,
+        2,
+        PrepareInput::BindEarly {
+            early: announcement.prepared,
+            context,
+        },
+    );
+    advance(&channel, &config, 1);
+    let mut bound = reply(&channel, 2).unwrap();
+    assert_eq!(bound.bound_early, Some((scope(&config), expected_early)));
+    assert_eq!(
+        bound.prepared.body_id(),
+        Some(transport::body_id(&context, &raw, config.codec).unwrap())
+    );
+    let Message::ApflBody {
+        batch: retained, ..
+    } = bound.message.as_ref()
+    else {
+        panic!("structure expanded during binding")
+    };
+    assert!(Arc::ptr_eq(retained, &batch));
+    assert!(bound.body.as_mut().unwrap().take_request().is_some());
+    assert!(bound.early.is_none());
+    submit(&channel, 3, PrepareInput::Cached(bound.prepared.clone()));
+    advance(&channel, &config, 1);
+    let cached = reply(&channel, 3).unwrap();
+    assert!(Arc::ptr_eq(&cached.message, &bound.message));
+    assert!(cached.bound_early.is_none());
+    let status = channel.status().unwrap();
+    assert_eq!(status.encoded_messages, 2);
+    assert_eq!(status.apfl_prepared.batches, 2);
+    assert_eq!(status.apfl_prepared.transactions, 2);
+    assert_eq!(
+        status.apfl_prepared.canonical_bytes,
+        2 * raw[0].len() as u64
+    );
+    assert_eq!(status.apfl_received.batches, 0);
+}
+
+#[test]
 fn early_owner_preserves_raw_identity_and_regenerates_only_unverified_request() {
     let config = config();
     let channel = unstarted(&config);

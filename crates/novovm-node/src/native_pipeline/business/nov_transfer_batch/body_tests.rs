@@ -131,7 +131,7 @@ fn parent(raw: &[Vec<u8>], balance: u128, nonce_offset: u64) -> (Memory, NodeHas
     let mut seen = BTreeSet::new();
     for tx in checked(raw).transactions() {
         if seen.insert(tx.nonce_identity()) {
-            let payer = Account::try_from(tx.transfer().from.as_slice()).unwrap();
+            let payer = Account::try_from(tx.transfer().from).unwrap();
             changes.push(StateChange::Put {
                 key: balance_key(&payer),
                 value: balance.to_le_bytes().to_vec(),
@@ -175,11 +175,11 @@ fn original_compile(
     for authenticated in batch.transactions() {
         let tx = authenticated.transfer();
         ensure!(
-            is_nov(&tx.asset) && is_nov(&tx.fee_policy.pay_asset),
+            is_nov(tx.asset) && is_nov(tx.fee_policy.pay_asset),
             "NOV direct profile does not support this asset or fee asset"
         );
-        let payer = Account::try_from(tx.from.as_slice()).map_err(anyhow::Error::msg)?;
-        let recipient = Account::try_from(tx.to.as_slice()).map_err(anyhow::Error::msg)?;
+        let payer = Account::try_from(tx.from).map_err(anyhow::Error::msg)?;
+        let recipient = Account::try_from(tx.to).map_err(anyhow::Error::msg)?;
         keys.insert(balance_key(&payer));
         keys.insert(balance_key(&recipient));
         keys.insert(nonce_key(&authenticated.nonce_identity()));
@@ -187,9 +187,9 @@ fn original_compile(
             tx_hash: authenticated.tx_hash(),
             payer,
             recipient,
-            asset: tx.asset.clone(),
+            asset: tx.asset.to_owned(),
             amount: tx.amount,
-            pay_asset: tx.fee_policy.pay_asset.clone(),
+            pay_asset: tx.fee_policy.pay_asset.to_owned(),
             max_pay_amount: tx.fee_policy.max_pay_amount,
             slippage_bps: tx.fee_policy.slippage_bps,
         });
@@ -590,5 +590,116 @@ fn native_body_capture_matches_original_compiler_for_each_exact_parent() -> Resu
         assert!(actual.observation().peak_callbacks > 0);
         assert_same_execution(&expected, &actual);
     }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY; structured input parity, not TPS"]
+fn native_apfl_views_match_raw_execution_failures_fees_nonce_and_proof_input() -> Result<()> {
+    use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
+    use crate::native_pipeline::ingress::batch::{authenticate_source_batch, BatchSource};
+    use novovm_exec::resident::ComputeSession;
+    use std::sync::Arc;
+    use std::time::Duration;
+    let library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+        .context("explicit trusted NOVOVM_AOEM_TEST_LIBRARY required")?;
+    let mut session = ComputeSession::open(&std::path::PathBuf::from(library), 4)?;
+    // Independent senders, repeated signer, mixed account widths and complete
+    // signed fees; no fixed amount/recipient/nonce arithmetic template.
+    let raw = vec![
+        signed_with(21, 3, |tx| {
+            tx.amount = 71;
+            tx.fee_policy.slippage_bps = 7;
+        }),
+        signed_with(22, 5, |tx| {
+            tx.to = vec![81; 32];
+            tx.amount = 123;
+            tx.fee_policy.max_pay_amount = 1;
+        }),
+        signed_with(21, 4, |tx| {
+            tx.to = vec![82; 20];
+            tx.amount = 11;
+        }),
+        signed_with(23, 2, |tx| {
+            tx.from = SigningKey::from_bytes(&[23; 32])
+                .verifying_key()
+                .to_bytes()
+                .to_vec();
+            tx.amount = 20_000;
+        }),
+    ];
+    let limits = ApflLimits {
+        transactions: 16,
+        transaction_bytes: 4096,
+        body_bytes: 65_536,
+    };
+    let batch = ApflTransferBatch::from_raw(&raw, limits)?;
+    let batch = Arc::new(ApflTransferBatch::decode(&batch.encode()?, limits)?);
+    for balance in [0, 10_000] {
+        let checked = authenticate_source_batch(
+            &mut session,
+            CHAIN,
+            BatchSource::Apfl(batch.clone()),
+            auth_budget(),
+            Duration::from_secs(10),
+        )?;
+        assert!(checked.transactions().iter().all(|tx| tx.is_apfl_view()));
+        let (memory, root) = parent(&raw, balance, 0);
+        let ctx = context(root);
+        let expected_plan = body(&raw).bind(ctx)?;
+        let actual_plan = NovTransferBody::prepare(checked, policy(), budget())?.bind(ctx)?;
+        assert_same_plan(&expected_plan, &actual_plan);
+        // The existing proof/packet source remains the exact original raw body;
+        // APFL has not replaced it with host assertions or precomputed outputs.
+        assert_eq!(actual_plan.plan().raw_transactions(), raw);
+        let expected_input = expected_plan.capture(&memory, capture_budget())?;
+        let actual_input = actual_plan.capture(&memory, capture_budget())?;
+        assert_eq!(
+            expected_input.execution_proof_input()?,
+            actual_input.execution_proof_input()?
+        );
+        let expected = expected_input.execute_for_proof()?;
+        let actual = actual_input.execute(&mut session, Duration::from_secs(10))?;
+        assert_eq!(actual.observation().apfl_view_transactions, raw.len());
+        assert_eq!(expected.observation().apfl_view_transactions, 0);
+        assert_same_execution(&expected, &actual);
+        assert!(actual
+            .receipts()
+            .iter()
+            .any(|r| r.failure.is_some() || r.fee_failure.is_some()));
+        if balance > 0 {
+            assert!(actual
+                .receipts()
+                .iter()
+                .any(|r| r.failure.is_none() && r.fee_failure.is_none()));
+        }
+    }
+    // A bad signature and duplicate intent must reject the whole batch without
+    // poisoning the resident owner; then the same owner accepts the good batch.
+    let mut bad = raw.clone();
+    *bad[0].last_mut().unwrap() ^= 1;
+    for invalid in [bad, vec![raw[0].clone(), raw[0].clone()]] {
+        let invalid = Arc::new(ApflTransferBatch::from_raw(&invalid, limits)?);
+        assert!(authenticate_source_batch(
+            &mut session,
+            CHAIN,
+            BatchSource::Apfl(invalid),
+            auth_budget(),
+            Duration::from_secs(10)
+        )
+        .is_err());
+    }
+    let checked = authenticate_source_batch(
+        &mut session,
+        CHAIN,
+        BatchSource::Apfl(batch),
+        auth_budget(),
+        Duration::from_secs(10),
+    )?;
+    let (stale_memory, stale_root) = parent(&raw, 10_000, 1);
+    assert!(NovTransferBody::prepare(checked, policy(), budget())?
+        .bind(context(stale_root))?
+        .capture(&stale_memory, capture_budget())
+        .is_err());
     Ok(())
 }

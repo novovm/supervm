@@ -13,6 +13,7 @@ use super::transport::{self, DecodeLimits, EarlyBodyScope, Message};
 use super::wire::{Hash, Phase, ValidatorSet, VerifiedProposal, VerifiedQuorum, VerifiedVote};
 use crate::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::native_pipeline::execution::plan::BatchContext;
+use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
 use crate::native_pipeline::persistence::StoredCandidate;
 use crate::native_pipeline::pipeline::{
     AuthenticatedBody, AuthenticatedRequest, AuthenticationRequest, AuthenticationTicket,
@@ -85,6 +86,7 @@ struct PreparedInner {
     early_id: Option<Hash>,
     charge: usize,
     lane: usize,
+    wire_bytes: usize,
 }
 
 /// Immutable owner-prepared bytes. Clone/retransmit is O(1), and never repeats
@@ -253,6 +255,34 @@ pub enum ChannelEvent {
     Received(Received),
 }
 
+/// Logical application-codec totals, not socket/TLS delivery or finalized work.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct ApflTraffic {
+    pub batches: u64,
+    pub transactions: u64,
+    pub canonical_bytes: u64,
+    pub encoded_message_bytes: u64,
+}
+
+impl ApflTraffic {
+    fn record(&mut self, ready: &Ready) {
+        let batch = match ready.message.as_ref() {
+            Message::ApflBody { batch, .. }
+            | Message::ApflEarlyBody { batch, .. }
+            | Message::ApflTransactions { batch, .. } => batch,
+            _ => return,
+        };
+        self.batches = self.batches.saturating_add(1);
+        self.transactions = self.transactions.saturating_add(batch.len() as u64);
+        self.canonical_bytes = self
+            .canonical_bytes
+            .saturating_add(batch.canonical_bytes() as u64);
+        self.encoded_message_bytes = self
+            .encoded_message_bytes
+            .saturating_add(ready.prepared.0.wire_bytes as u64);
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ChannelStatus {
     pub stopped: bool,
@@ -269,6 +299,8 @@ pub struct ChannelStatus {
     pub ingress_dropped_received: u64,
     pub rejected_sends: u64,
     pub retired_messages: u64,
+    pub apfl_prepared: ApflTraffic,
+    pub apfl_received: ApflTraffic,
     pub pending_prepare: usize,
     pub pending_send: usize,
     pub pending_receive: usize,
@@ -345,8 +377,11 @@ pub struct HostChannel {
 
 fn lane(message: &Message) -> usize {
     match message {
-        Message::Body { .. } | Message::EarlyBody { .. } => 1,
-        Message::Transactions { .. } => 2,
+        Message::Body { .. }
+        | Message::EarlyBody { .. }
+        | Message::ApflBody { .. }
+        | Message::ApflEarlyBody { .. } => 1,
+        Message::Transactions { .. } | Message::ApflTransactions { .. } => 2,
         _ => 0,
     }
 }
@@ -836,7 +871,7 @@ fn fixed_binding(
 
 fn evidence(message: &Message, config: &ChannelConfig) -> Result<VerifiedEvidence> {
     match message {
-        Message::Body { context, .. } => {
+        Message::Body { context, .. } | Message::ApflBody { context, .. } => {
             ensure!(
                 context.chain_id == config.chain_id
                     && context.genesis_config_commitment == config.genesis
@@ -845,11 +880,13 @@ fn evidence(message: &Message, config: &ChannelConfig) -> Result<VerifiedEvidenc
             );
             Ok(VerifiedEvidence::None)
         }
-        Message::EarlyBody { scope, .. } => {
+        Message::EarlyBody { scope, .. } | Message::ApflEarlyBody { scope, .. } => {
             fixed_early(scope, config)?;
             Ok(VerifiedEvidence::None)
         }
-        Message::Transactions { scope, .. } | Message::TransactionsTaken { scope, .. } => {
+        Message::Transactions { scope, .. }
+        | Message::ApflTransactions { scope, .. }
+        | Message::TransactionsTaken { scope, .. } => {
             scope.validate_shape()?;
             ensure!(
                 scope.chain_id == config.chain_id
@@ -945,6 +982,19 @@ fn ready(prepared: PreparedMessage, config: &ChannelConfig) -> Result<Ready> {
                 config.policy.clone(),
             )?),
         }),
+        Message::ApflBody { context, batch } => Some(PreparedBody {
+            id: prepared
+                .0
+                .body_id
+                .context("prepared APFL body lacks identity")?,
+            context: *context,
+            message: message.clone(),
+            request: Some(BatchRequest::from_apfl(
+                batch.clone(),
+                *context,
+                config.policy.clone(),
+            )?),
+        }),
         _ => None,
     };
     let early = match message.as_ref() {
@@ -959,6 +1009,17 @@ fn ready(prepared: PreparedMessage, config: &ChannelConfig) -> Result<Ready> {
             scope: *scope,
             request: Some(AuthenticationRequest::new(
                 raw_transactions.clone(),
+                config.policy.clone(),
+            )?),
+        }),
+        Message::ApflEarlyBody { scope, batch } => Some(PreparedEarlyBody {
+            id: prepared
+                .0
+                .early_id
+                .context("prepared APFL early body lacks identity")?,
+            scope: *scope,
+            request: Some(AuthenticationRequest::from_apfl(
+                batch.clone(),
                 config.policy.clone(),
             )?),
         }),
@@ -987,6 +1048,9 @@ fn prepare(
             context,
             raw_transactions,
         } => Some(transport::body_id(context, raw_transactions, config.codec)?),
+        Message::ApflBody { context, batch } => {
+            Some(transport::apfl_body_id(context, batch, config.codec)?)
+        }
         _ => None,
     };
     let early_id = match message.as_ref() {
@@ -998,9 +1062,13 @@ fn prepare(
             raw_transactions,
             config.codec,
         )?),
+        Message::ApflEarlyBody { scope, batch } => {
+            Some(transport::apfl_early_body_id(scope, batch, config.codec)?)
+        }
         _ => None,
     };
     let selected = lane(&message);
+    let wire_bytes = encoded.len();
     let encoded = OutgoingMessage::new(
         transport::fragment_domain(config.chain_id, config.genesis, config.protocol),
         encoded,
@@ -1016,6 +1084,7 @@ fn prepare(
             early_id,
             charge,
             lane: selected,
+            wire_bytes,
         })),
         config,
     )
@@ -1032,22 +1101,32 @@ fn bind_early(
         Arc::ptr_eq(&early.0.scope, owner),
         "early handle belongs to another channel"
     );
-    let Message::EarlyBody {
-        scope,
-        raw_transactions,
-    } = early.message().as_ref()
-    else {
-        anyhow::bail!("binding requires an early-body handle");
+    let (scope, message) = match early.message().as_ref() {
+        Message::EarlyBody {
+            scope,
+            raw_transactions,
+        } => (
+            *scope,
+            Message::Body {
+                context,
+                raw_transactions: raw_transactions.clone(),
+            },
+        ),
+        Message::ApflEarlyBody { scope, batch } => (
+            *scope,
+            Message::ApflBody {
+                context,
+                batch: batch.clone(),
+            },
+        ),
+        _ => anyhow::bail!("binding requires an early-body handle"),
     };
     let id = early.early_id().context("early handle lacks identity")?;
-    fixed_binding(scope, &id, &context, config)?;
-    let message = Arc::new(Message::Body {
-        context,
-        raw_transactions: raw_transactions.clone(),
-    });
+    fixed_binding(&scope, &id, &context, config)?;
+    let message = Arc::new(message);
     let encoded = transport::encode(&message, config.codec)?;
     let mut result = prepare(message, encoded, config, owner, charge)?;
-    result.bound_early = Some((*scope, id));
+    result.bound_early = Some((scope, id));
     // Keep the original allocation live through the entire overlap above. Its
     // independent admission charge is held until the local reply is consumed.
     drop(early);
@@ -1172,9 +1251,16 @@ fn prepare_one(
                         "stored body exceeds channel budget"
                     );
                 }
-                Arc::new(Message::Body {
+                Arc::new(Message::ApflBody {
                     context: *stored.context(),
-                    raw_transactions: transactions.to_vec(),
+                    batch: Arc::new(ApflTransferBatch::from_raw(
+                        transactions,
+                        ApflLimits {
+                            transactions: config.codec.transactions,
+                            transaction_bytes: config.codec.transaction_bytes,
+                            body_bytes: config.codec.body_bytes,
+                        },
+                    )?),
                 })
             }
         };
@@ -1189,6 +1275,9 @@ fn prepare_one(
         .map_err(|_| anyhow::anyhow!("channel queue poisoned"))?;
     if encoded_new {
         shared.status.encoded_messages += 1;
+        if let Ok(ready) = &result {
+            shared.status.apfl_prepared.record(ready);
+        }
     }
     if result.as_ref().is_ok_and(|ready| ready.body.is_some()) {
         shared.status.prepared_bodies += 1;
@@ -1382,6 +1471,7 @@ fn receive_one(
     match result {
         Ok(ready) => {
             shared.status.received_messages += 1;
+            shared.status.apfl_received.record(&ready);
             shared.status.encoded_messages += 1;
             if ready.body.is_some() {
                 shared.status.prepared_bodies += 1;

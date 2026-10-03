@@ -174,7 +174,26 @@ fn current_proposal_gate(
 #[test]
 #[ignore = "requires explicit real AOEM; authentication before any parent, sticky binding, future signing gate and full execution oracle"]
 fn real_auth_before_parent_rejects_wrong_source_and_sticky_rebinding_then_closes() -> Result<()> {
+    early_auth_before_parent_case(false)
+}
+
+#[test]
+#[ignore = "requires real AOEM; APFL early-body source, sticky binding, future signing gate and original full execution oracle"]
+fn real_apfl_auth_before_parent_rejects_wrong_source_and_sticky_rebinding_then_closes() -> Result<()>
+{
+    early_auth_before_parent_case(true)
+}
+
+fn early_auth_before_parent_case(apfl: bool) -> Result<()> {
     Fixture::run("early-auth-first", |controller, pipeline| {
+        let announcement = |scope, extra| -> Result<Arc<Message>> {
+            let original = self::announcement(scope, extra)?;
+            if apfl {
+                as_apfl(original)
+            } else {
+                Ok(original)
+            }
+        };
         let scope = controller
             .early_body_scope()?
             .context("fixture not next proposer")?;
@@ -287,7 +306,8 @@ fn real_auth_before_parent_rejects_wrong_source_and_sticky_rebinding_then_closes
         ensure!(
             child.packet().context() == &exact
                 && controller.stats.early_authentication_started == 1
-                && controller.stats.successor_completed_before_parent == 1,
+                && controller.stats.successor_completed_before_parent == 1
+                && controller.stats.apfl_view_transactions_total == if apfl { 2 } else { 0 },
             "binding changed or authentication repeated"
         );
         controller.drive_consensus()?;

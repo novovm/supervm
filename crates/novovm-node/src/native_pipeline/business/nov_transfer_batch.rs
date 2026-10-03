@@ -151,7 +151,7 @@ impl NovTransferBody {
         budget: PlanBudget,
     ) -> Result<Self> {
         let effect_contract = effect_contract(&policy)?;
-        let raw = batch.raw_transactions();
+        let raw = batch.source();
         // The same size predicates as BatchPlan::new, evaluated before a
         // parent exists. Its raw-content deduplication is already implied by
         // canonical transaction deduplication in this privately built batch;
@@ -161,30 +161,21 @@ impl NovTransferBody {
             !raw.is_empty() && raw.len() <= budget.transactions,
             "batch transaction budget exceeded or empty"
         );
-        let mut bytes = 0usize;
-        for transaction in raw {
-            ensure!(
-                !transaction.is_empty() && transaction.len() <= budget.transaction_bytes,
-                "batch raw transaction size exceeds budget or empty"
-            );
-            bytes = bytes
-                .checked_add(transaction.len())
-                .context("batch body overflow")?;
-            ensure!(
-                bytes <= budget.body_bytes,
-                "batch body byte budget exceeded"
-            );
-        }
+        let (bytes, max) = raw.sizes()?;
+        ensure!(
+            max <= budget.transaction_bytes && bytes <= budget.body_bytes,
+            "batch canonical body byte budget exceeded"
+        );
         let mut keys = BTreeSet::new();
         let mut requests = Vec::with_capacity(batch.transactions().len());
         for authenticated in batch.transactions() {
             let tx = authenticated.transfer();
             ensure!(
-                is_nov(&tx.asset) && is_nov(&tx.fee_policy.pay_asset),
+                is_nov(tx.asset) && is_nov(tx.fee_policy.pay_asset),
                 "NOV direct profile does not support this asset or fee asset"
             );
-            let payer = Account::try_from(tx.from.as_slice()).map_err(anyhow::Error::msg)?;
-            let recipient = Account::try_from(tx.to.as_slice()).map_err(anyhow::Error::msg)?;
+            let payer = Account::try_from(tx.from).map_err(anyhow::Error::msg)?;
+            let recipient = Account::try_from(tx.to).map_err(anyhow::Error::msg)?;
             keys.insert(balance_key(&payer));
             keys.insert(balance_key(&recipient));
             keys.insert(nonce_key(&authenticated.nonce_identity()));
@@ -192,9 +183,9 @@ impl NovTransferBody {
                 tx_hash: authenticated.tx_hash(),
                 payer,
                 recipient,
-                asset: tx.asset.clone(),
+                asset: tx.asset.to_owned(),
                 amount: tx.amount,
-                pay_asset: tx.fee_policy.pay_asset.clone(),
+                pay_asset: tx.fee_policy.pay_asset.to_owned(),
                 max_pay_amount: tx.fee_policy.max_pay_amount,
                 slippage_bps: tx.fee_policy.slippage_bps,
             });

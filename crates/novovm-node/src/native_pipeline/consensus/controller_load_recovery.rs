@@ -109,9 +109,9 @@ fn verify_receipts(
             tx_hash: tx.tx_hash(),
             payer: sender.account.clone(),
             recipient: workload.recipient().clone(),
-            asset: transfer.asset.clone(),
+            asset: transfer.asset.to_owned(),
             amount: transfer.amount,
-            pay_asset: transfer.fee_policy.pay_asset.clone(),
+            pay_asset: transfer.fee_policy.pay_asset.to_owned(),
             max_pay_amount: transfer.fee_policy.max_pay_amount,
             slippage_bps: transfer.fee_policy.slippage_bps,
         };

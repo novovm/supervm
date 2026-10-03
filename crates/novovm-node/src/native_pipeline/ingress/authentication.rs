@@ -3,11 +3,13 @@
 //! admission. No environment lookup, signer registry or nonce reservation occurs.
 //! V3 is Ed25519 only: no PQ or privacy capability is inferred from this type.
 
-use super::wire::{canonical_tx_hash, decode_transfer_v3, signing_message, TransferV3};
+use super::apfl::ApflTransferBatch;
+use super::wire::{decode_transfer_v3, TransferV3, TransferView};
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 const NONCE_SCHEME: &[u8] = b"novovm-native-auth/ed25519-public-key/v2\0";
 
@@ -23,15 +25,38 @@ const NONCE_SCHEME: &[u8] = b"novovm-native-auth/ed25519-public-key/v2\0";
 /// }
 /// ```
 pub struct SignatureCheckedTransfer {
-    transfer: TransferV3,
+    transfer: CheckedSource,
     tx_hash: [u8; 32],
     public_key: [u8; 32],
     nonce_identity: [u8; 32],
 }
 
+/// Keep the immutable structured row alive through compilation and AOEM business
+/// callbacks. Authentication never expands an APFL row into an owned Transfer.
+enum CheckedSource {
+    Wire(TransferV3),
+    Apfl {
+        batch: Arc<ApflTransferBatch>,
+        index: usize,
+    },
+}
+
+impl CheckedSource {
+    fn view(&self) -> TransferView<'_> {
+        match self {
+            Self::Wire(tx) => tx.as_view(),
+            Self::Apfl { batch, index } => batch.row(*index).expect("validated immutable APFL row"),
+        }
+    }
+}
+
 impl SignatureCheckedTransfer {
-    pub fn transfer(&self) -> &TransferV3 {
-        &self.transfer
+    pub(crate) fn is_apfl_view(&self) -> bool {
+        matches!(self.transfer, CheckedSource::Apfl { .. })
+    }
+
+    pub fn transfer(&self) -> TransferView<'_> {
+        self.transfer.view()
     }
 
     pub fn tx_hash(&self) -> [u8; 32] {
@@ -57,11 +82,32 @@ pub fn authenticate_transfer_v3(
     configured_chain_id: u64,
     max_bytes: usize,
 ) -> Result<SignatureCheckedTransfer> {
+    authenticate_source(
+        CheckedSource::Wire(decode_transfer_v3(raw, max_bytes)?),
+        configured_chain_id,
+    )
+}
+
+/// Same verifier and signed intent as raw V3, with no reconstructed raw body or
+/// receiver-generated signature. The codec is structural validation, NOT auth.
+pub(crate) fn authenticate_apfl_row(
+    batch: Arc<ApflTransferBatch>,
+    index: usize,
+    configured_chain_id: u64,
+) -> Result<SignatureCheckedTransfer> {
+    batch.row(index)?;
+    authenticate_source(CheckedSource::Apfl { batch, index }, configured_chain_id)
+}
+
+fn authenticate_source(
+    source: CheckedSource,
+    configured_chain_id: u64,
+) -> Result<SignatureCheckedTransfer> {
     ensure!(
         configured_chain_id != 0,
         "configured chain id must be nonzero"
     );
-    let transfer = decode_transfer_v3(raw, max_bytes)?;
+    let transfer = source.view();
     ensure!(
         transfer.chain_id == configured_chain_id,
         "signed chain domain mismatch"
@@ -82,10 +128,10 @@ pub fn authenticate_transfer_v3(
     let public_key: [u8; 32] = transfer.signature[..32].try_into()?;
     let signature = Signature::from_slice(&transfer.signature[32..])?;
     let key = VerifyingKey::from_bytes(&public_key).context("invalid Ed25519 public key")?;
-    key.verify_strict(&signing_message(&transfer)?, &signature)
+    key.verify_strict(&transfer.signing_message()?, &signature)
         .context("invalid native V3 signature")?;
     let account_matches = match transfer.from.len() {
-        20 => transfer.from == Sha256::digest(public_key)[12..32],
+        20 => transfer.from == &Sha256::digest(public_key)[12..32],
         32 => transfer.from == public_key,
         _ => false,
     };
@@ -99,8 +145,8 @@ pub fn authenticate_transfer_v3(
     digest.update(NONCE_SCHEME);
     digest.update(public_key);
     Ok(SignatureCheckedTransfer {
-        tx_hash: canonical_tx_hash(&transfer)?,
-        transfer,
+        tx_hash: transfer.canonical_tx_hash()?,
+        transfer: source,
         public_key,
         nonce_identity: digest.finalize().into(),
     })
@@ -131,7 +177,7 @@ pub fn check_nonce_sequence(
             .or_insert_with(|| parent.get(&identity).copied());
         let before = expected.context("nonce parent input missing; absence must be explicit")?;
         ensure!(
-            before == transaction.transfer.nonce,
+            before == transaction.transfer().nonce,
             "nonce replay, gap or conflicting signer alias"
         );
         let after = before.checked_add(1).context("signer nonce exhausted")?;

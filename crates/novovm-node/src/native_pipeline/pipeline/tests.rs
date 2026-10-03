@@ -8,7 +8,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub(super) fn request(root: NodeHash) -> BatchRequest {
     let input = compute::tests::control_test_request(root);
-    BatchRequest::new(input.raw_transactions, input.context, input.policy).unwrap()
+    BatchRequest::from_source(input.raw_transactions, input.context, input.policy).unwrap()
 }
 
 pub(super) fn config(database: PathBuf) -> PipelineConfig {

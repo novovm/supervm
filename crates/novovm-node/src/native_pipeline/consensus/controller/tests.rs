@@ -181,6 +181,16 @@ fn test_channel(
 #[ignore = "requires explicit real AOEM library; autonomous controller with disconnected transport"]
 fn real_controller_executes_and_signs_without_external_protocol_driver_but_cannot_self_finalize(
 ) -> Result<()> {
+    autonomous_execution_case(false)
+}
+
+#[test]
+#[ignore = "requires explicit real AOEM; APFL executes through the unchanged controller and cannot self-finalize"]
+fn real_apfl_controller_executes_and_signs_but_cannot_self_finalize() -> Result<()> {
+    autonomous_execution_case(true)
+}
+
+fn autonomous_execution_case(apfl: bool) -> Result<()> {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/runtime-rebuild/controller-tests")
         .join(format!(
@@ -204,22 +214,36 @@ fn real_controller_executes_and_signs_without_external_protocol_driver_but_canno
     let channel = disconnected_channel(&config, index)?;
     let mut controller = Controller::new(config, journal, channel)?;
     let result = (|| -> Result<()> {
+        let message = |context| -> Result<Arc<Message>> {
+            let raw_transactions = raw()?;
+            if apfl {
+                use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
+                Ok(Arc::new(Message::ApflBody {
+                    context,
+                    batch: Arc::new(ApflTransferBatch::from_raw(
+                        &raw_transactions,
+                        ApflLimits {
+                            transactions: 8,
+                            transaction_bytes: 1024,
+                            body_bytes: 8192,
+                        },
+                    )?),
+                }))
+            } else {
+                Ok(Arc::new(Message::Body {
+                    context,
+                    raw_transactions,
+                }))
+            }
+        };
         controller.regression_peer_requests_are_not_head_authority()?;
         let mut wrong = batch_context(root);
         wrong.parent_state_root = [0x93; 32];
         ensure!(
-            controller
-                .try_submit_body(&Arc::new(Message::Body {
-                    context: wrong,
-                    raw_transactions: raw()?
-                }))
-                .is_err(),
+            controller.try_submit_body(&message(wrong)?).is_err(),
             "wrong parent body accepted"
         );
-        let body = Arc::new(Message::Body {
-            context: batch_context(root),
-            raw_transactions: raw()?,
-        });
+        let body = message(batch_context(root))?;
         let deadline = Instant::now() + DEADLINE;
         while !controller.try_submit_body(&body)? {
             ensure!(
@@ -276,6 +300,8 @@ fn real_controller_executes_and_signs_without_external_protocol_driver_but_canno
                     == observed.credit_only_accounts as u64
                 && stats.execution_recomputed_transactions_total
                     == observed.recomputed_transactions as u64
+                && stats.apfl_view_transactions_total == observed.apfl_view_transactions as u64
+                && observed.apfl_view_transactions == if apfl { raw()?.len() } else { 0 }
                 && stats.execution_peak_callbacks == observed.peak_callbacks
                 && !stats.execution_observation_saturated,
             "controller did not preserve actual execution evidence: {stats:?}"

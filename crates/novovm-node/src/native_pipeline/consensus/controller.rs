@@ -32,6 +32,7 @@ use super::wire::{
 use super::{ArchiveRead, DurableMessage, TimeoutStep, ValidatorJournal};
 use crate::native_pipeline::business::nov_transfer_batch::ExecutionObservation;
 use crate::native_pipeline::execution::plan::BatchContext;
+use crate::native_pipeline::ingress::apfl::ApflTransferBatch;
 use crate::native_pipeline::pipeline::{
     AuthenticatedRequest, AuthenticatedSubmission, AuthenticationTicket, BatchRequest,
     CandidatePipeline, DurableCandidate, PipelineTicket, Submission,
@@ -103,6 +104,9 @@ pub struct ControllerStats {
     pub execution_credit_only_accounts_total: u64,
     /// Actual business reducer repairs, not consensus/pipeline retry counts.
     pub execution_recomputed_transactions_total: u64,
+    /// Authenticated APFL rows actually consumed by completed execution,
+    /// including stale candidates; not network delivery or finalized TPS.
+    pub apfl_view_transactions_total: u64,
     /// Maximum observed simultaneous AOEM business callbacks in a batch. This
     /// is neither the configured worker count nor a unique-thread measurement.
     pub execution_peak_callbacks: usize,
@@ -143,6 +147,10 @@ impl ControllerStats {
         self.execution_observation_saturated |= accumulate_observed(
             &mut self.execution_recomputed_transactions_total,
             observation.recomputed_transactions,
+        );
+        self.execution_observation_saturated |= accumulate_observed(
+            &mut self.apfl_view_transactions_total,
+            observation.apfl_view_transactions,
         );
         self.execution_peak_callbacks = self
             .execution_peak_callbacks
@@ -522,7 +530,7 @@ impl Controller {
                 offered == Some(*id)
             };
             match body.prepared.message().as_ref() {
-                Message::Body { context, .. }
+                Message::Body { context, .. } | Message::ApflBody { context, .. }
                     if current_round
                         && !body.failed
                         && body.source == source
@@ -551,10 +559,16 @@ impl Controller {
         self.channel.shutdown()
     }
 
+    /// Bounded channel observations only; preparation/receipt is not finality.
+    pub fn channel_status(&self) -> Result<super::channel::ChannelStatus> {
+        self.channel.status()
+    }
+
     /// Only O(1) domain/parent checks and bounded owner admission here. Caller
     /// retains its Arc on backpressure. No raw cloning/hash/BatchRequest work.
     pub fn try_submit_body(&mut self, message: &Arc<Message>) -> Result<bool> {
-        let Message::Body { context, .. } = message.as_ref() else {
+        let (Message::Body { context, .. } | Message::ApflBody { context, .. }) = message.as_ref()
+        else {
             anyhow::bail!("local input is not a body");
         };
         ensure!(
@@ -881,7 +895,10 @@ impl Controller {
             self.retire(Retirement::Ready(ready));
             return Ok(());
         }
-        if matches!(ready.message.as_ref(), Message::Transactions { .. }) {
+        if matches!(
+            ready.message.as_ref(),
+            Message::Transactions { .. } | Message::ApflTransactions { .. }
+        ) {
             return self.receive_transactions(source, ready);
         }
         if matches!(ready.message.as_ref(), Message::TransactionsTaken { .. }) {
@@ -889,10 +906,16 @@ impl Controller {
             self.retire(Retirement::Ready(ready));
             return Ok(());
         }
-        if matches!(ready.message.as_ref(), Message::EarlyBody { .. }) {
+        if matches!(
+            ready.message.as_ref(),
+            Message::EarlyBody { .. } | Message::ApflEarlyBody { .. }
+        ) {
             return self.keep_early(source, ready, None);
         }
-        if matches!(ready.message.as_ref(), Message::Body { .. }) {
+        if matches!(
+            ready.message.as_ref(),
+            Message::Body { .. } | Message::ApflBody { .. }
+        ) {
             if self.is_recovering() {
                 // Replay roots have reserved precedence. Peers retain their
                 // signed hints and can answer RequestBody after recovery.
@@ -911,9 +934,15 @@ impl Controller {
 
     fn receive_control(&mut self, source: String, ready: &Ready) -> Result<()> {
         match ready.message.as_ref() {
-            Message::Body { .. } => unreachable!("body routed separately"),
-            Message::EarlyBody { .. } => unreachable!("early body routed separately"),
-            Message::Transactions { .. } => unreachable!("input gossip routed separately"),
+            Message::Body { .. } | Message::ApflBody { .. } => {
+                unreachable!("body routed separately")
+            }
+            Message::EarlyBody { .. } | Message::ApflEarlyBody { .. } => {
+                unreachable!("early body routed separately")
+            }
+            Message::Transactions { .. } | Message::ApflTransactions { .. } => {
+                unreachable!("input gossip routed separately")
+            }
             Message::TransactionsTaken { .. } => unreachable!("input credit routed separately"),
             Message::BindBody {
                 scope,
@@ -1040,7 +1069,10 @@ impl Controller {
                     .filter(|fixed| {
                         matches!(
                             fixed.prepared.message().as_ref(),
-                            Message::Body { .. } | Message::EarlyBody { .. }
+                            Message::Body { .. }
+                                | Message::EarlyBody { .. }
+                                | Message::ApflBody { .. }
+                                | Message::ApflEarlyBody { .. }
                         )
                     })
                     .map(|fixed| {
@@ -1581,15 +1613,24 @@ impl Controller {
         }
         // A peer's archive response replaces only that peer's same-kind slot.
         if destination.is_some() {
-            let body = matches!(prepared.message().as_ref(), Message::Body { .. });
+            let body = matches!(
+                prepared.message().as_ref(),
+                Message::Body { .. } | Message::ApflBody { .. }
+            );
             self.prune_fixed(|old| {
                 old.destination != destination
-                    || matches!(old.prepared.message().as_ref(), Message::Body { .. }) != body
+                    || matches!(
+                        old.prepared.message().as_ref(),
+                        Message::Body { .. } | Message::ApflBody { .. }
+                    ) != body
             });
         }
         if matches!(
             prepared.message().as_ref(),
-            Message::Body { .. } | Message::EarlyBody { .. }
+            Message::Body { .. }
+                | Message::EarlyBody { .. }
+                | Message::ApflBody { .. }
+                | Message::ApflEarlyBody { .. }
         ) {
             let retained = self.retained_bodies();
             if !retained.contains_key(&id)
@@ -1614,7 +1655,10 @@ impl Controller {
         let body_fanout = (destination.is_none()
             && matches!(
                 prepared.message().as_ref(),
-                Message::Body { .. } | Message::EarlyBody { .. }
+                Message::Body { .. }
+                    | Message::EarlyBody { .. }
+                    | Message::ApflBody { .. }
+                    | Message::ApflEarlyBody { .. }
             ))
         .then(|| BodyFanout::new(self.config.peers.len()));
         self.fixed.push_back(Fixed {
@@ -1737,7 +1781,9 @@ impl Controller {
         self.prune_fixed(|fixed| {
             fixed.destination.as_ref() != Some(&peer)
                 || match fixed.prepared.message().as_ref() {
-                    Message::Body { context, .. } => context.height == requested.height,
+                    Message::Body { context, .. } | Message::ApflBody { context, .. } => {
+                        context.height == requested.height
+                    }
                     Message::Decision { proposal, .. } => proposal.context == requested,
                     _ => true,
                 }

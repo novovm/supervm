@@ -10,9 +10,11 @@
 
 use super::wire::{self, Hash, Proposal, Quorum, Vote};
 use crate::native_pipeline::execution::plan::BatchContext;
+use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
 use anyhow::{ensure, Context, Result};
 use novovm_network::duplex::fragments::{OutgoingMessage, MAX_MESSAGE_BYTES};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 pub const PROTOCOL: &str = "round-bft-transport/v1";
 const MAGIC: &[u8; 8] = b"NVHOSTN1";
@@ -23,6 +25,8 @@ mod early;
 pub use early::{early_body_id, EarlyBodyScope};
 mod transactions;
 pub use transactions::TransactionsScope;
+mod apfl;
+pub use apfl::{apfl_body_id, apfl_early_body_id};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
@@ -74,6 +78,20 @@ pub enum Message {
     TransactionsTaken {
         scope: TransactionsScope,
         fragment_id: Hash,
+    },
+    /// Structured transfer input; the canonical V3 body identity is unchanged.
+    /// Tags 11--13 have payload version 1 and do not grant execution authority.
+    ApflBody {
+        context: BatchContext,
+        batch: Arc<ApflTransferBatch>,
+    },
+    ApflEarlyBody {
+        scope: EarlyBodyScope,
+        batch: Arc<ApflTransferBatch>,
+    },
+    ApflTransactions {
+        scope: TransactionsScope,
+        batch: Arc<ApflTransferBatch>,
     },
 }
 
@@ -153,6 +171,9 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::BindBody { .. } => 8,
         Message::Transactions { .. } => 9,
         Message::TransactionsTaken { .. } => 10,
+        Message::ApflBody { .. } => 11,
+        Message::ApflEarlyBody { .. } => 12,
+        Message::ApflTransactions { .. } => 13,
     });
     match message {
         Message::Body {
@@ -215,6 +236,15 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::TransactionsTaken { scope, fragment_id } => {
             transactions::append_taken(&mut out, scope, fragment_id)?;
         }
+        Message::ApflBody { context, batch } => {
+            apfl::append_body(&mut out, context, batch, limits)?;
+        }
+        Message::ApflEarlyBody { scope, batch } => {
+            apfl::append_early(&mut out, scope, batch, limits)?;
+        }
+        Message::ApflTransactions { scope, batch } => {
+            apfl::append_transactions(&mut out, scope, batch, limits)?;
+        }
     }
     ensure!(
         out.len() <= limits.message_bytes,
@@ -238,9 +268,9 @@ pub(crate) fn message_lane(bytes: &[u8]) -> Result<usize> {
         "host network protocol/version mismatch"
     );
     match bytes[10] {
-        1 | 7 => Ok(1),
+        1 | 7 | 11 | 12 => Ok(1),
         2..=6 | 8 | 10 => Ok(0),
-        9 => Ok(2),
+        9 | 13 => Ok(2),
         _ => anyhow::bail!("unknown host network message kind"),
     }
 }
@@ -326,6 +356,7 @@ pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
         8 => early::decode_bind(&mut reader)?,
         9 => transactions::decode(&mut reader, limits)?,
         10 => transactions::decode_taken(&mut reader)?,
+        tag @ (11..=13) => apfl::decode(tag, &mut reader, limits)?,
         _ => anyhow::bail!("unknown host network message kind"),
     };
     ensure!(

@@ -12,6 +12,7 @@ use crate::native_pipeline::business::quoted_transfer::Account;
 use crate::native_pipeline::consensus::transport::{EarlyBodyScope, Message};
 use crate::native_pipeline::consensus::wire::Hash;
 use crate::native_pipeline::consensus::ArchiveRead;
+use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
 use crate::native_pipeline::ingress::authentication::authenticate_transfer_v3;
 use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v3};
 use crate::native_pipeline::persistence::io::IoTicket;
@@ -215,13 +216,8 @@ impl RpcLifecycle {
             context.parent_state_root = parent.state_root;
             context.parent_receipt_root = parent.receipt_batch_commitment;
             context.parent_state_version = parent.state_version;
-            self.offer = Some((
-                position,
-                Arc::new(Message::Body {
-                    context,
-                    raw_transactions,
-                }),
-            ));
+            let batch = apfl_batch(&raw_transactions, self.batch_size)?;
+            self.offer = Some((position, Arc::new(Message::ApflBody { context, batch })));
         }
         let body = &self.offer.as_ref().expect("prepared RPC body").1;
         let accepted = if position.successor {
@@ -264,13 +260,11 @@ impl RpcLifecycle {
             if raw_transactions.is_empty() {
                 return Ok(());
             }
+            let batch = apfl_batch(&raw_transactions, self.batch_size)?;
             self.early_offer = Some(EarlyOffer {
                 scope,
                 hint: body,
-                message: Arc::new(Message::EarlyBody {
-                    scope,
-                    raw_transactions,
-                }),
+                message: Arc::new(Message::ApflEarlyBody { scope, batch }),
             });
         }
         let timestamp = self
@@ -464,15 +458,17 @@ impl RpcLifecycle {
             let Some((message, index)) = self.incoming.as_mut() else {
                 break;
             };
-            let Message::Transactions {
-                raw_transactions, ..
-            } = message.as_ref()
-            else {
-                anyhow::bail!("transaction channel returned a non-transaction message");
+            let (raw, count) = match message.as_ref() {
+                Message::Transactions {
+                    raw_transactions, ..
+                } => (raw_transactions[*index].clone(), raw_transactions.len()),
+                Message::ApflTransactions { batch, .. } => {
+                    (batch.canonical_raw(*index)?, batch.len())
+                }
+                _ => anyhow::bail!("transaction channel returned a non-transaction message"),
             };
-            let raw = raw_transactions[*index].clone();
             *index += 1;
-            if *index == raw_transactions.len() {
+            if *index == count {
                 self.incoming = None;
                 self.ingress_batch_boundary = true;
             }
@@ -503,12 +499,10 @@ impl RpcLifecycle {
                 self.gossip_order.pop_front();
             }
             if !raw_transactions.is_empty() {
+                let batch = apfl_batch(&raw_transactions, self.batch_size)?;
                 self.gossip_offer = Some(GossipOffer {
                     hashes,
-                    message: self
-                        .node
-                        .controller
-                        .transactions_message(raw_transactions)?,
+                    message: self.node.controller.apfl_transactions_message(batch)?,
                 });
             }
         }
@@ -622,6 +616,12 @@ impl RpcLifecycle {
             .validators
             .leader(controller.context().height, controller.round())
             .ok();
+        let apfl_transport = match controller.channel_status() {
+            Ok(channel) => json!({"prepared":channel.apfl_prepared,
+                "received":channel.apfl_received,
+                "scope":"application codec work, not unique transactions or TLS delivery"}),
+            Err(error) => json!({"error":error.to_string()}),
+        };
         json!({"profile":"native-resident-v1","experimental":true,
             "core":"novovm-node/native_pipeline -> novovm-exec/resident -> AOEM",
             "consensus":"novovm-consensus/round_bft/journal",
@@ -636,6 +636,8 @@ impl RpcLifecycle {
             "execution_credit_only_accounts_total":stats.execution_credit_only_accounts_total,
             "execution_peak_callbacks":stats.execution_peak_callbacks,
             "execution_recomputed_transactions_total":stats.execution_recomputed_transactions_total,
+            "apfl_view_transactions_total":stats.apfl_view_transactions_total,
+            "apfl_transport":apfl_transport,
             "successor_reused":stats.successor_reused,"capture_seed_nodes":stats.capture_seed_nodes,
             "early_authentication_started":stats.early_authentication_started,
             "early_authentication_completed":stats.early_authentication_completed,
@@ -709,13 +711,28 @@ fn pending_body_prefix(
     pending: &BTreeMap<Hash, Pending>,
     nonces: &BTreeMap<Hash, u64>,
 ) -> Result<Option<BTreeMap<Hash, u64>>> {
-    let Message::Body {
-        raw_transactions, ..
-    } = body
-    else {
-        return Ok(None);
-    };
-    pending_raw_prefix(raw_transactions, pending, nonces)
+    match body {
+        Message::Body {
+            raw_transactions, ..
+        } => pending_raw_prefix(raw_transactions, pending, nonces),
+        Message::ApflBody { batch, .. } => pending_apfl_prefix(batch, pending, nonces),
+        _ => Ok(None),
+    }
+}
+
+fn pending_apfl_prefix(
+    batch: &ApflTransferBatch,
+    pending: &BTreeMap<Hash, Pending>,
+    nonces: &BTreeMap<Hash, u64>,
+) -> Result<Option<BTreeMap<Hash, u64>>> {
+    let mut next = BTreeMap::new();
+    for index in 0..batch.len() {
+        let raw = batch.canonical_raw(index)?;
+        if !advance_pending_raw(&raw, &mut next, pending, nonces)? {
+            return Ok(None);
+        }
+    }
+    Ok(Some(next))
 }
 
 fn pending_raw_prefix(
@@ -725,23 +742,46 @@ fn pending_raw_prefix(
 ) -> Result<Option<BTreeMap<Hash, u64>>> {
     let mut next = BTreeMap::new();
     for raw in raw_transactions {
-        let decoded = match decode_transfer_v3(raw, 1024) {
-            Ok(value) => value,
-            Err(_) => return Ok(None),
-        };
-        let hash = canonical_tx_hash(&decoded)?;
-        let Some(entry) = pending.get(&hash).filter(|entry| entry.raw == *raw) else {
-            return Ok(None);
-        };
-        let expected = next
-            .entry(entry.signer)
-            .or_insert_with(|| nonces.get(&entry.signer).copied().unwrap_or(0));
-        if *expected != entry.nonce {
+        if !advance_pending_raw(raw, &mut next, pending, nonces)? {
             return Ok(None);
         }
-        *expected = expected.checked_add(1).context("hint nonce overflow")?;
     }
     Ok(Some(next))
+}
+
+fn advance_pending_raw(
+    raw: &[u8],
+    next: &mut BTreeMap<Hash, u64>,
+    pending: &BTreeMap<Hash, Pending>,
+    nonces: &BTreeMap<Hash, u64>,
+) -> Result<bool> {
+    let decoded = match decode_transfer_v3(raw, 1024) {
+        Ok(value) => value,
+        Err(_) => return Ok(false),
+    };
+    let hash = canonical_tx_hash(&decoded)?;
+    let Some(entry) = pending.get(&hash).filter(|entry| entry.raw == raw) else {
+        return Ok(false);
+    };
+    let expected = next
+        .entry(entry.signer)
+        .or_insert_with(|| nonces.get(&entry.signer).copied().unwrap_or(0));
+    if *expected != entry.nonce {
+        return Ok(false);
+    }
+    *expected = expected.checked_add(1).context("hint nonce overflow")?;
+    Ok(true)
+}
+
+fn apfl_batch(raw: &[Vec<u8>], batch_size: usize) -> Result<Arc<ApflTransferBatch>> {
+    Ok(Arc::new(ApflTransferBatch::from_raw(
+        raw,
+        ApflLimits {
+            transactions: batch_size,
+            transaction_bytes: 1024,
+            body_bytes: super::body_byte_limit(batch_size),
+        },
+    )?))
 }
 
 fn select_pending_batch(
@@ -904,6 +944,46 @@ pub fn run_from_env() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apfl_pending_prefix_uses_exact_original_signature_and_nonce_not_codec_trust() -> Result<()> {
+        let raws: Vec<_> = (0..3)
+            .map(|n| super::super::tests::signed_raw(19, n))
+            .collect();
+        let mut pending = BTreeMap::new();
+        for raw in &raws {
+            let checked = authenticate_transfer_v3(raw, 71, 1024)?;
+            pending.insert(
+                checked.tx_hash(),
+                Pending {
+                    raw: raw.clone(),
+                    signer: checked.nonce_identity(),
+                    nonce: checked.transfer().nonce,
+                },
+            );
+        }
+        let signer = authenticate_transfer_v3(&raws[0], 71, 1024)?.nonce_identity();
+        let mut altered = raws[0].clone();
+        *altered.last_mut().unwrap() ^= 1;
+        let cases = [
+            (raws[..2].to_vec(), 0, true),
+            (raws[1..].to_vec(), 0, false),
+            (raws[1..].to_vec(), 1, true),
+            (vec![raws[0].clone(), raws[0].clone()], 0, false),
+            (vec![altered], 0, false),
+            (vec![super::super::tests::signed_raw(20, 0)], 0, false),
+        ];
+        for (raw, nonce, accepted) in cases {
+            let nonces = BTreeMap::from([(signer, nonce)]);
+            let batch = apfl_batch(&raw, 8)?;
+            let structured = pending_apfl_prefix(&batch, &pending, &nonces)?;
+            assert_eq!(structured, pending_raw_prefix(&raw, &pending, &nonces)?);
+            assert_eq!(structured.is_some(), accepted);
+            assert_eq!(nonces[&signer], nonce);
+            assert_eq!(pending.len(), 3);
+        }
+        Ok(())
+    }
 
     #[test]
     fn early_selection_uses_exact_verified_bytes_and_never_mutates_parent_nonces() {

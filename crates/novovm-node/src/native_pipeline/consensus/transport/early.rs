@@ -4,10 +4,10 @@
 use super::*;
 
 const VERSION: u16 = 1;
-const SCOPE_BYTES: usize = 3 * 8 + 5 * 32 + 2 * 8;
+pub(super) const SCOPE_BYTES: usize = 3 * 8 + 5 * 32 + 2 * 8;
 const BODY_FIXED_BYTES: usize = PREFIX_BYTES + 2 + SCOPE_BYTES + 4;
 const BIND_BYTES: usize = PREFIX_BYTES + 2 + SCOPE_BYTES + 32 + CONTEXT_BYTES;
-const ID_DOMAIN: &[u8] = b"novovm-round-bft-transport/v1/early-body/v1\0";
+pub(super) const ID_DOMAIN: &[u8] = b"novovm-round-bft-transport/v1/early-body/v1\0";
 
 /// One source consensus generation and its immediately following height. The
 /// target round is always zero; neither a future range nor a parent root is
@@ -151,7 +151,7 @@ pub(super) fn append_bind(
     Ok(())
 }
 
-fn append_scope(out: &mut Vec<u8>, scope: &EarlyBodyScope) {
+pub(super) fn append_scope(out: &mut Vec<u8>, scope: &EarlyBodyScope) {
     let source = &scope.source;
     out.extend_from_slice(&source.chain_id.to_be_bytes());
     out.extend_from_slice(&source.genesis_config_commitment);
@@ -165,7 +165,7 @@ fn append_scope(out: &mut Vec<u8>, scope: &EarlyBodyScope) {
     out.extend_from_slice(&scope.target_height.to_be_bytes());
 }
 
-fn read_scope(reader: &mut Reader<'_>) -> Result<EarlyBodyScope> {
+pub(super) fn read_scope(reader: &mut Reader<'_>) -> Result<EarlyBodyScope> {
     ensure!(
         reader.u16()? == VERSION,
         "early body payload version mismatch"

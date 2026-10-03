@@ -75,7 +75,7 @@ pub(crate) fn context(root: NodeHash) -> BatchContext {
 
 fn unverified_request(marker: u8) -> PrepareRequest {
     PrepareRequest {
-        raw_transactions: vec![vec![marker; 64]],
+        raw_transactions: vec![vec![marker; 64]].into(),
         context: context(empty_root()),
         policy: policy(),
     }
@@ -337,7 +337,7 @@ fn real_resident_owner_authenticates_and_executes_repeated_owned_captures() -> R
     let memory = Memory(update.nodes().clone());
     let raw_transactions = vec![signed(1, 100), signed(2, 200)];
     let make_request = || PrepareRequest {
-        raw_transactions: raw_transactions.clone(),
+        raw_transactions: raw_transactions.clone().into(),
         context: context(update.root()),
         policy: policy(),
     };

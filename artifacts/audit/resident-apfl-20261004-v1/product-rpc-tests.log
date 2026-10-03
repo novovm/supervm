@@ -1,0 +1,6 @@
+
+running 2 tests
+test native_pipeline::consensus::tests::resident_rpc_process::actual_product_rpc_signed_batches_failures_quorum_and_restart ... ok
+test native_pipeline::consensus::tests::resident_rpc_process::actual_product_rpc_single_ingress_gossip_failures_and_restart ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1505 filtered out; finished in 3.17s

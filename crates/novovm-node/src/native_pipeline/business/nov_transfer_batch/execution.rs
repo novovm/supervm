@@ -28,6 +28,9 @@ pub struct NovTransferReceipt {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExecutionObservation {
+    /// Actual verified structural rows used by this completed business batch.
+    /// Diagnostic only, not a statement field or a finalized success count.
+    pub apfl_view_transactions: usize,
     pub components: usize,
     pub credit_only_accounts: usize,
     pub recomputed_transactions: usize,
@@ -390,6 +393,11 @@ fn finish(
         digest.update(bytes);
     }
     let receipt_batch_commitment: NodeHash = digest.finalize().into();
+    let apfl_view_transactions = input
+        .transactions()
+        .iter()
+        .filter(|tx| tx.is_apfl_view())
+        .count();
     let effects = input.stage(&changes)?;
     let mut digest = Sha256::new();
     digest.update(b"novovm/replacement/nov-executed-batch/v1\0");
@@ -403,6 +411,7 @@ fn finish(
         receipt_batch_commitment,
         statement_commitment: digest.finalize().into(),
         observation: ExecutionObservation {
+            apfl_view_transactions,
             components: prepared.components.len(),
             credit_only_accounts: prepared.credit_only.len(),
             recomputed_transactions: recomputed,

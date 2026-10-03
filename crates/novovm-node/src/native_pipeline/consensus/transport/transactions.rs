@@ -79,7 +79,7 @@ pub(super) fn append(
     Ok(())
 }
 
-fn append_scope(out: &mut Vec<u8>, scope: &TransactionsScope) {
+pub(super) fn append_scope(out: &mut Vec<u8>, scope: &TransactionsScope) {
     out.extend_from_slice(&VERSION.to_be_bytes());
     out.extend_from_slice(&scope.chain_id.to_be_bytes());
     out.extend_from_slice(&scope.genesis);
@@ -90,7 +90,7 @@ fn append_scope(out: &mut Vec<u8>, scope: &TransactionsScope) {
     out.extend_from_slice(&scope.sequence.to_be_bytes());
 }
 
-fn read_scope(reader: &mut Reader<'_>) -> Result<TransactionsScope> {
+pub(super) fn read_scope(reader: &mut Reader<'_>) -> Result<TransactionsScope> {
     ensure!(
         reader.take(2)? == VERSION.to_be_bytes(),
         "input gossip version mismatch"

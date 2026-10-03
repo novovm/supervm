@@ -46,12 +46,14 @@ fn execution_observations_accumulate_scalars_and_maximum_without_claiming_worker
         components: 6,
         credit_only_accounts: 2,
         recomputed_transactions: 3,
+        apfl_view_transactions: 7,
         peak_callbacks: 4,
     };
     let last = ExecutionObservation {
         components: 3,
         credit_only_accounts: 1,
         recomputed_transactions: 2,
+        apfl_view_transactions: 0,
         peak_callbacks: 1,
     };
     stats.observe_execution(first);
@@ -59,6 +61,7 @@ fn execution_observations_accumulate_scalars_and_maximum_without_claiming_worker
     assert_eq!(stats.execution_components_total, 9);
     assert_eq!(stats.execution_credit_only_accounts_total, 3);
     assert_eq!(stats.execution_recomputed_transactions_total, 5);
+    assert_eq!(stats.apfl_view_transactions_total, 7);
     assert_eq!(stats.execution_peak_callbacks, 4);
     assert_eq!(stats.last_execution_observation, Some(last));
     assert!(!stats.execution_observation_saturated);
@@ -78,24 +81,28 @@ fn execution_observation_overflow_is_explicit_and_does_not_wrap() {
         execution_components_total: u64::MAX - 1,
         execution_credit_only_accounts_total: u64::MAX,
         execution_recomputed_transactions_total: u64::MAX - 2,
+        apfl_view_transactions_total: u64::MAX - 1,
         ..ControllerStats::default()
     };
     let observation = ExecutionObservation {
         components: 2,
         credit_only_accounts: 1,
         recomputed_transactions: 3,
+        apfl_view_transactions: 2,
         peak_callbacks: 1,
     };
     stats.observe_execution(observation);
     assert_eq!(stats.execution_components_total, u64::MAX);
     assert_eq!(stats.execution_credit_only_accounts_total, u64::MAX);
     assert_eq!(stats.execution_recomputed_transactions_total, u64::MAX);
+    assert_eq!(stats.apfl_view_transactions_total, u64::MAX);
     assert!(stats.execution_observation_saturated);
     assert_eq!(stats.last_execution_observation, Some(observation));
     stats.observe_execution(ExecutionObservation {
         components: 0,
         credit_only_accounts: 0,
         recomputed_transactions: 0,
+        apfl_view_transactions: 0,
         peak_callbacks: 0,
     });
     assert!(

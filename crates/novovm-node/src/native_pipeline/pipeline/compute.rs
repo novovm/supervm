@@ -8,7 +8,9 @@ use crate::native_pipeline::business::nov_transfer_batch::{
     ExecutionObservation, NovCapturedInput, NovTransferBody, NovTransferPlan,
 };
 use crate::native_pipeline::execution::plan::{BatchContext, PlanBudget};
-use crate::native_pipeline::ingress::batch::{authenticate_batch, AuthenticationBudget};
+use crate::native_pipeline::ingress::batch::{
+    authenticate_source_batch, AuthenticationBudget, BatchSource,
+};
 use crate::native_pipeline::persistence::{PacketBudget, PreparedCandidate, StorageDomain};
 use anyhow::{ensure, Context, Result};
 use novovm_exec::resident::ComputeSession;
@@ -31,13 +33,13 @@ pub(crate) struct ComputeConfig {
 }
 
 pub(crate) struct PrepareRequest {
-    pub raw_transactions: Vec<Vec<u8>>,
+    pub raw_transactions: BatchSource,
     pub context: BatchContext,
     pub policy: DirectNovFeePolicy,
 }
 
 pub(crate) struct AuthenticateRequest {
-    pub raw_transactions: Vec<Vec<u8>>,
+    pub raw_transactions: BatchSource,
     pub policy: DirectNovFeePolicy,
 }
 
@@ -319,7 +321,7 @@ fn authenticate(
     config: &ComputeConfig,
     request: AuthenticateRequest,
 ) -> Result<NovTransferBody> {
-    let batch = authenticate_batch(
+    let batch = authenticate_source_batch(
         session,
         config.domain.chain_id,
         request.raw_transactions,

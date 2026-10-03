@@ -2,7 +2,10 @@
 //! identities to a structural plan. It does not reserve nonce, quote fees, admit
 //! a mempool entry or mint a state/finality certificate.
 
-use super::authentication::{authenticate_transfer_v3, SignatureCheckedTransfer};
+use super::apfl::ApflTransferBatch;
+use super::authentication::{
+    authenticate_apfl_row, authenticate_transfer_v3, SignatureCheckedTransfer,
+};
 use crate::native_pipeline::execution::plan::{
     BatchContext, BatchPlan, BoundBatchCapture, OwnedBatchInput, PlanBudget,
     UnpublishedBatchEffects,
@@ -22,9 +25,115 @@ pub struct AuthenticationBudget {
     pub body_bytes: usize,
 }
 
+/// Structured input is immutable but untrusted. Bounds are charged against the
+/// expanded canonical body, not the compressed byte count.
+#[derive(Debug)]
+pub(crate) enum BatchSource {
+    Raw(Vec<Vec<u8>>),
+    Apfl(Arc<ApflTransferBatch>),
+}
+
+impl BatchSource {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Raw(raw) => raw.len(),
+            Self::Apfl(batch) => batch.len(),
+        }
+    }
+
+    pub(crate) fn sizes(&self) -> Result<(usize, usize)> {
+        match self {
+            Self::Raw(raw) => {
+                let mut total = 0usize;
+                let mut max = 0usize;
+                for row in raw {
+                    ensure!(!row.is_empty(), "empty pipeline transaction");
+                    total = total
+                        .checked_add(row.len())
+                        .context("pipeline body size overflow")?;
+                    max = max.max(row.len());
+                }
+                Ok((total, max))
+            }
+            Self::Apfl(batch) => Ok((batch.canonical_bytes(), batch.max_transaction_bytes())),
+        }
+    }
+
+    fn validate(&self, chain: u64, budget: AuthenticationBudget) -> Result<()> {
+        ensure!(chain != 0, "configured chain id must be nonzero");
+        let (bytes, max) = self.sizes()?;
+        ensure!(
+            !self.is_empty()
+                && self.len() <= budget.transactions
+                && max <= budget.transaction_bytes
+                && bytes <= budget.body_bytes,
+            "signature batch exceeds input budget"
+        );
+        Ok(())
+    }
+
+    fn authenticate(
+        &self,
+        index: usize,
+        chain: u64,
+        max: usize,
+    ) -> Result<SignatureCheckedTransfer> {
+        match self {
+            Self::Raw(raw) => authenticate_transfer_v3(&raw[index], chain, max),
+            Self::Apfl(batch) => authenticate_apfl_row(Arc::clone(batch), index, chain),
+        }
+    }
+
+    pub(crate) fn into_raw(self) -> Result<Vec<Vec<u8>>> {
+        match self {
+            Self::Raw(raw) => Ok(raw),
+            Self::Apfl(batch) => (0..batch.len()).map(|i| batch.canonical_raw(i)).collect(),
+        }
+    }
+}
+
+impl From<Vec<Vec<u8>>> for BatchSource {
+    fn from(raw: Vec<Vec<u8>>) -> Self {
+        Self::Raw(raw)
+    }
+}
+
+// Existing raw-input allocation/ownership tests inspect the exact returned
+// allocation. No production accessor can mutate or expand a structured batch.
+#[cfg(test)]
+impl std::ops::Deref for BatchSource {
+    type Target = Vec<Vec<u8>>;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Raw(raw) => raw,
+            Self::Apfl(_) => panic!("raw-only test accessor"),
+        }
+    }
+}
+
+#[cfg(test)]
+impl std::ops::DerefMut for BatchSource {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Raw(raw) => raw,
+            Self::Apfl(_) => panic!("raw-only test accessor"),
+        }
+    }
+}
+
+#[cfg(test)]
+impl PartialEq<Vec<Vec<u8>>> for BatchSource {
+    fn eq(&self, other: &Vec<Vec<u8>>) -> bool {
+        matches!(self, Self::Raw(raw) if raw == other)
+    }
+}
+
 pub struct SignatureCheckedBatch {
     chain_id: u64,
-    raw_transactions: Vec<Vec<u8>>,
+    raw_transactions: BatchSource,
     transactions: Vec<SignatureCheckedTransfer>,
     peak_callbacks: usize,
 }
@@ -32,7 +141,7 @@ pub struct SignatureCheckedBatch {
 impl SignatureCheckedBatch {
     /// Immutable authenticated bytes; business preparation may check its own
     /// bounds before a parent context exists. This grants no state authority.
-    pub(crate) fn raw_transactions(&self) -> &[Vec<u8>] {
+    pub(crate) fn source(&self) -> &BatchSource {
         &self.raw_transactions
     }
 
@@ -57,7 +166,14 @@ impl SignatureCheckedBatch {
             context.chain_id == self.chain_id,
             "authenticated batch chain cannot be replaced"
         );
-        let plan = BatchPlan::new(context, self.raw_transactions, declarations, budget)?;
+        // Canonical projection for existing plan/packet/proof compatibility.
+        // Checked rows retain their shared APFL source through compilation.
+        let plan = BatchPlan::new(
+            context,
+            self.raw_transactions.into_raw()?,
+            declarations,
+            budget,
+        )?;
         Ok(SignatureCheckedPlan {
             plan,
             transactions: self.transactions,
@@ -215,7 +331,7 @@ fn validate_authentication_input(
 
 fn finish_authentication(
     configured_chain_id: u64,
-    raw_transactions: Vec<Vec<u8>>,
+    raw_transactions: BatchSource,
     transactions: Vec<SignatureCheckedTransfer>,
     peak_callbacks: usize,
 ) -> Result<SignatureCheckedBatch> {
@@ -250,7 +366,12 @@ pub(crate) fn authenticate_batch_for_proof(
         .iter()
         .map(|raw| authenticate_transfer_v3(raw, configured_chain_id, budget.transaction_bytes))
         .collect::<Result<Vec<_>>>()?;
-    finish_authentication(configured_chain_id, raw_transactions, transactions, 0)
+    finish_authentication(
+        configured_chain_id,
+        BatchSource::Raw(raw_transactions),
+        transactions,
+        0,
+    )
 }
 
 /// Blocking work for the designated compute owner, not the network/control loop.
@@ -263,7 +384,23 @@ pub fn authenticate_batch(
     budget: AuthenticationBudget,
     timeout: Duration,
 ) -> Result<SignatureCheckedBatch> {
-    validate_authentication_input(configured_chain_id, &raw_transactions, budget)?;
+    authenticate_source_batch(
+        session,
+        configured_chain_id,
+        BatchSource::Raw(raw_transactions),
+        budget,
+        timeout,
+    )
+}
+
+pub(crate) fn authenticate_source_batch(
+    session: &mut ComputeSession,
+    configured_chain_id: u64,
+    raw_transactions: BatchSource,
+    budget: AuthenticationBudget,
+    timeout: Duration,
+) -> Result<SignatureCheckedBatch> {
+    raw_transactions.validate(configured_chain_id, budget)?;
     // Share immutable input allocation, not one copy of the whole body per task.
     let body = Arc::new(raw_transactions);
     let slots: Vec<_> = (0..body.len())
@@ -279,11 +416,8 @@ pub fn authenticate_batch(
                 // Invalid external input is a normal admission decision, not an
                 // AOEM infrastructure failure. Returning it as a task error would
                 // let any bad signature permanently poison the compute owner.
-                let authentication = authenticate_transfer_v3(
-                    &body[index],
-                    configured_chain_id,
-                    budget.transaction_bytes,
-                );
+                let authentication =
+                    body.authenticate(index, configured_chain_id, budget.transaction_bytes);
                 let output = match &authentication {
                     Ok(transaction) => [vec![1], transaction.tx_hash().to_vec()].concat(),
                     Err(_) => vec![0],

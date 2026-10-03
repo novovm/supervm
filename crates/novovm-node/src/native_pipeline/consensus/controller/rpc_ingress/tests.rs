@@ -110,6 +110,16 @@ fn every_pinned_domain_field_is_checked_without_height_or_parent_authority() -> 
 
 #[test]
 fn credit_matches_exact_peer_scope_and_bytes_once_without_authorizing_any_finality() -> Result<()> {
+    credit_case(false)
+}
+
+#[test]
+fn apfl_credit_matches_exact_peer_scope_and_bytes_once_without_authorizing_any_finality(
+) -> Result<()> {
+    credit_case(true)
+}
+
+fn credit_case(apfl: bool) -> Result<()> {
     use crate::native_pipeline::consensus::channel::tests::{config, prepared, unstarted};
     let config = config(0);
     let channel = unstarted(&config);
@@ -124,14 +134,63 @@ fn credit_matches_exact_peer_scope_and_bytes_once_without_authorizing_any_finali
         session: state.session,
         sequence: 1,
     };
-    let ready = prepared(
-        &channel,
-        &config,
+    let message = if apfl {
+        use crate::native_pipeline::ingress::{
+            apfl::ApflLimits,
+            wire::{encode_transfer_v3, FeePolicy, TransferV3},
+        };
+        // Structurally canonical but NOT signed: flow credit must never confer
+        // authentication, even for valid structural columns.
+        let raw = encode_transfer_v3(&TransferV3 {
+            chain_id: config.chain_id,
+            from: vec![1; 20],
+            to: vec![2; 20],
+            asset: "NOV".into(),
+            amount: 1,
+            nonce: 0,
+            fee_policy: FeePolicy {
+                pay_asset: "NOV".into(),
+                max_pay_amount: 0,
+                slippage_bps: 0,
+            },
+            signature: vec![0; 96],
+        })?;
+        Arc::new(Message::ApflTransactions {
+            scope,
+            batch: Arc::new(ApflTransferBatch::from_raw(
+                &[raw],
+                ApflLimits {
+                    transactions: config.codec.transactions,
+                    transaction_bytes: config.codec.transaction_bytes,
+                    body_bytes: config.codec.body_bytes,
+                },
+            )?),
+        })
+    } else {
         Arc::new(Message::Transactions {
             scope,
             raw_transactions: vec![vec![1, 2, 3]],
-        }),
-    );
+        })
+    };
+    let alternate_fragment = if let Message::ApflTransactions { scope, batch } = message.as_ref() {
+        Some(
+            prepared(
+                &channel,
+                &config,
+                Arc::new(Message::Transactions {
+                    scope: *scope,
+                    raw_transactions: (0..batch.len())
+                        .map(|i| batch.canonical_raw(i))
+                        .collect::<Result<_>>()?,
+                }),
+            )
+            .prepared
+            .fragment_id(),
+        )
+    } else {
+        None
+    };
+    let ready = prepared(&channel, &config, message);
     assert!(matches!(ready.evidence.as_ref(), VerifiedEvidence::None));
     assert!(
         ready.body.is_none() && ready.early.is_none(),
@@ -148,6 +207,16 @@ fn credit_matches_exact_peer_scope_and_bytes_once_without_authorizing_any_finali
     });
     let first = state.peers[0].clone();
     let second = state.peers[1].clone();
+    if let Some(alternate) = alternate_fragment {
+        assert_ne!(
+            alternate, fragment,
+            "raw and structural transport fragments must differ"
+        );
+        assert!(
+            !state.return_credit(&first, &scope, alternate, now)?,
+            "equivalent semantic transactions released a different transport credit"
+        );
+    }
     assert!(
         !state.return_credit(&second, &scope, fragment, now)?,
         "unsent peer released window"

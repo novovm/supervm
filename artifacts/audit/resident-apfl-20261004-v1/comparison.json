@@ -1,0 +1,338 @@
+{
+  "schema": "novovm/resident-apfl-product-comparison/v1",
+  "date": "2026-10-04",
+  "baseline_commit": "e0b162fec38d899ad7ce0d9058116330c29b5a87",
+  "after_source": "baseline plus the commit containing this report; original crates/ product only",
+  "profile": "native-resident-v1",
+  "experimental": true,
+  "production_acceptance": false,
+  "environment": {
+    "os": "Windows x86_64",
+    "rust": "1.94.0",
+    "build": "release --locked --offline",
+    "cpu": "Intel Core Ultra 9 275HX",
+    "logical_processors": 24,
+    "topology": "one machine, four original novovm-node binary processes, independent AOEM stores, existing WSS/E2E relay",
+    "concurrent_task_builds_or_other_tests_during_measurement": false
+  },
+  "workload": {
+    "transactions": 65536,
+    "senders": 1024,
+    "nonces_per_sender": 64,
+    "shared_recipient": true,
+    "conflicts": "independent payers per batch; common mergeable recipient credits; same payer nonce sequence across batches; not a high-conflict stress load",
+    "max_batch": 1024,
+    "max_outstanding": 8192,
+    "http_submission_node": 0,
+    "client_transaction_fanout": false,
+    "signatures": "original signed V3 Ed25519, 96-byte key/signature lane; signing before timer; every validator verifies",
+    "expected_business_failures": 0,
+    "business_failure_tps_measured": false
+  },
+  "timing": {
+    "start": "first HTTP submission dispatch",
+    "end": "all 65536 unique successful transactions observed as matching finalized receipts on all four nodes",
+    "included": [
+      "signature verification",
+      "full business execution",
+      "network",
+      "BFT",
+      "four durable stores",
+      "HTTP submission and receipt queries",
+      "bounded observation scheduling"
+    ],
+    "excluded": [
+      "wallet presigning",
+      "startup/genesis",
+      "complete cold-restart oracle"
+    ],
+    "percentiles": "per transaction first dispatch to slowest node receipt HTTP response; nearest-rank; not pure consensus latency",
+    "sequence": [
+      "before-single-1.json",
+      "after-single-1.json",
+      "before-single-2.json",
+      "after-single-2.json"
+    ]
+  },
+  "runs": [
+    {
+      "report": "before-single-1.json",
+      "sha256": "a88b0c550aef6c3bb107c399899e6e834e452526f2754750a08e53189b4c2a42",
+      "passed": true,
+      "successful_tps": 5555.19624373254,
+      "elapsed_seconds": 11.797243,
+      "p95_us": 1756735,
+      "p99_us": 1790363,
+      "successful": 65536,
+      "business_failed": 0,
+      "permanent_rejections": 0,
+      "unresolved": 0,
+      "http_transport_errors": 0,
+      "retries": 0,
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "apfl_views": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "observed_blocks_per_node": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "early_bind_reused": 149,
+      "binary_sha256": "0x9f76ff9874f2cd60ea01f1ee27dbff41c2fd2f437ec6d498d862c733a3e3103a",
+      "aoem_sha256": "0x4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463"
+    },
+    {
+      "report": "after-single-1.json",
+      "sha256": "2a2b6bb0da3600051e224fcd6780cc199b5377ffa5a4082a9892b5c79f677697",
+      "passed": true,
+      "successful_tps": 5743.3867490385555,
+      "elapsed_seconds": 11.410689,
+      "p95_us": 1518991,
+      "p99_us": 1779112,
+      "successful": 65536,
+      "business_failed": 0,
+      "permanent_rejections": 0,
+      "unresolved": 0,
+      "http_transport_errors": 0,
+      "retries": 0,
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "apfl_views": [
+        65536,
+        65536,
+        65536,
+        65536
+      ],
+      "observed_blocks_per_node": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "early_bind_reused": 184,
+      "binary_sha256": "0x5207bf88cac76599e257119a489e5e20a3073c6156ec071738533697483ac28a",
+      "aoem_sha256": "0x4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463"
+    },
+    {
+      "report": "before-single-2.json",
+      "sha256": "38ee345b3c93b80c999713439e969aaf0e61c2df081e263a66295c3843f551d1",
+      "passed": true,
+      "successful_tps": 5960.672260072163,
+      "elapsed_seconds": 10.994733,
+      "p95_us": 1562519,
+      "p99_us": 1737910,
+      "successful": 65536,
+      "business_failed": 0,
+      "permanent_rejections": 0,
+      "unresolved": 0,
+      "http_transport_errors": 0,
+      "retries": 0,
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "apfl_views": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "observed_blocks_per_node": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "early_bind_reused": 150,
+      "binary_sha256": "0x9f76ff9874f2cd60ea01f1ee27dbff41c2fd2f437ec6d498d862c733a3e3103a",
+      "aoem_sha256": "0x4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463"
+    },
+    {
+      "report": "after-single-2.json",
+      "sha256": "82aa232de6ac85b03a936f605d32e7f6890e888533c2d9228a4c2128afbfcb3c",
+      "passed": true,
+      "successful_tps": 5701.765375695669,
+      "elapsed_seconds": 11.493984,
+      "p95_us": 1788310,
+      "p99_us": 1822622,
+      "successful": 65536,
+      "business_failed": 0,
+      "permanent_rejections": 0,
+      "unresolved": 0,
+      "http_transport_errors": 0,
+      "retries": 0,
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "apfl_views": [
+        65536,
+        65536,
+        65536,
+        65536
+      ],
+      "observed_blocks_per_node": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "early_bind_reused": 138,
+      "binary_sha256": "0x5207bf88cac76599e257119a489e5e20a3073c6156ec071738533697483ac28a",
+      "aoem_sha256": "0x4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463"
+    }
+  ],
+  "pooled": {
+    "formula": "sum successful unique transactions / sum elapsed seconds, not arithmetic mean of TPS",
+    "before_successful_tps": 5750.795806383791,
+    "after_successful_tps": 5722.500382345559,
+    "change_percent": -0.49202623412263335,
+    "throughput_improvement_demonstrated": false,
+    "tail_latency_improvement_demonstrated": false,
+    "interpretation": "Two runs per version do not establish a stable improvement or regression. Preserve every run; do not compare against an older best sample as if common-condition."
+  },
+  "correctness": {
+    "each_run_four_cold_stores_verified": true,
+    "each_store_transactions": 65536,
+    "blocks": 64,
+    "transactions_per_block": 1024,
+    "signatures_per_qc": 3,
+    "signers": 1024,
+    "each_sender_nonce": 64,
+    "shared_recipient_balance": "65536",
+    "total_fees_nov": 2949120,
+    "full_state_root_matches_independent_oracle": true,
+    "live_and_cold_heads_match": true,
+    "all_four_run_final_heads_match": true,
+    "new_pids_on_all_cold_restarts": true,
+    "mixed_failure_functional_reports": [
+      "product-rpc-functional.json",
+      "single-ingress-functional.json"
+    ],
+    "each_functional_unique_transactions": 8,
+    "each_functional_success": 7,
+    "each_functional_business_failure": 1
+  },
+  "apfl": {
+    "magic": "NVAPFLV3",
+    "codec_version": 1,
+    "transport_tags": [
+      11,
+      12,
+      13
+    ],
+    "raw_signature_bytes_preserved": true,
+    "no_receiver_resigning": true,
+    "canonical_v3_hashes_body_commitments_and_proof_inputs_unchanged": true,
+    "aoem_view_counter": "Counts completed execution using APFL-origin authenticated rows, including any stale/recomputed candidate; not the TPS numerator",
+    "prepared_canonical_bytes": 110389248,
+    "prepared_encoded_message_bytes": 83603862,
+    "received_canonical_bytes": 158257152,
+    "received_encoded_message_bytes": 119810700,
+    "byte_scope": "Application codec work including repeated work. Encoded numerator includes message envelope; canonical denominator is raw V3 transaction bytes. Not TLS/relay/UDP measured traffic, and small batches may expand.",
+    "remaining_expansions": [
+      "raw RPC pending",
+      "row projection and decode at gossip admission",
+      "canonical raw body materialized at BatchPlan bind for existing packet/storage/proof contract"
+    ],
+    "execution_backend": "aoem_semantic_v2_cpu_callbacks",
+    "full_zero_expansion": false,
+    "opcode_114_full_nov_accepted": false,
+    "business_gpu_active": false,
+    "business_proof_generated_or_verified_by_rpc": false,
+    "native_udp_data_repair_ack_integrated_by_this_change": false
+  },
+  "checks": {
+    "fmt": "pass",
+    "clippy": "cargo clippy --workspace --all-targets --locked --offline -- -D warnings: pass",
+    "release_node_build": "pass",
+    "assembly_boundary": "runtime/check-isolation.ps1: pass",
+    "native_pipeline_default": {
+      "passed": 341,
+      "failed": 0,
+      "ignored": 53,
+      "log": "pure-tests.log"
+    },
+    "native_selected": {
+      "passed": 46,
+      "failed": 0,
+      "log": "native-tests.log"
+    },
+    "product_rpc": {
+      "passed": 2,
+      "failed": 0,
+      "log": "product-rpc-tests.log"
+    },
+    "full_original_node_lib_suite_claimed": false,
+    "protected_drafts": {
+      "count": 49,
+      "sha256_changed": 0
+    },
+    "siblings_modified": false,
+    "legacy_or_runtime_modified_by_this_change": false
+  },
+  "binaries": {
+    "frozen_manifest": "frozen-baseline.json",
+    "after_node_sha256": "5207bf88cac76599e257119a489e5e20a3073c6156ec071738533697483ac28a",
+    "after_test_sha256": "7c40cb614507da5c5064c4b165af58d8fd250e4b5dae5640a9c801d5de8a699b",
+    "before_test_sha256": "58ee183c92c7110139b10bbd7bf79230abfc70828d1ca897430c191a23f76bb8"
+  },
+  "reproduction": {
+    "repository_relative_paths": true,
+    "build": [
+      "cargo build -p novovm-node --bin novovm-node --release --locked --offline",
+      "cargo test -p novovm-node --lib --release --no-run --locked --offline"
+    ],
+    "environment": {
+      "NOVOVM_AOEM_TEST_LIBRARY": "aoem/windows/core/bin/aoem_ffi.dll (resolve absolute in local shell)",
+      "NOVOVM_RESIDENT_NODE_BINARY": "matching frozen or current novovm-node binary (resolve absolute in local shell)",
+      "NOVOVM_RESIDENT_RPC_LOAD_MODE": "single_ingress",
+      "NOVOVM_RESIDENT_RPC_LOAD_INGRESS_NODE": "0",
+      "NOVOVM_RESIDENT_RPC_REQUIRE_EARLY_REUSE": "1",
+      "NOVOVM_RESIDENT_RPC_REQUIRE_APFL": "1 for new APFL version only"
+    },
+    "test_filter": "actual_product_rpc_65536_signed_transfers_finality_and_cold_economics",
+    "test_arguments": [
+      "--ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "raw_local_report_directories": [
+      "artifacts/audit/resident-rpc-load/20252-1791060481740582200",
+      "artifacts/audit/resident-rpc-load/6556-1791061824868536600",
+      "artifacts/audit/resident-rpc-load/25684-1791061893167162100",
+      "artifacts/audit/resident-rpc-load/26720-1791062137157150900"
+    ],
+    "raw_result_reports_preserved_here": true,
+    "per_transaction_observations_and_databases_remain_local": true
+  },
+  "not_accepted": [
+    "first RPC signature verification is still synchronous",
+    "control-thread column construction and repeated projections still present; no unique bottleneck attribution",
+    "real original-node A/A/B partition recovery not signed off",
+    "sustained offline-peer backpressure not signed off; existing global-slot TTL limit remains",
+    "received is volatile not durable mempool receipt",
+    "V3 wallet chain_id domain not expanded to genesis-scoped replay protection",
+    "full original product capabilities not all in experimental resident profile",
+    "no GPU/ZK/mainnet/multi-machine/public-network acceptance"
+  ],
+  "logs": "All four load HTTP transport_errors counters are zero; stale context/parent rejections and shutdown connection resets still appear. This does not mean all network logs contain zero errors."
+}

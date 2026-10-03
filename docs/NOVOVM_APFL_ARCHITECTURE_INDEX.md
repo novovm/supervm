@@ -1,5 +1,29 @@
 # NOVOVM APFL Architecture Index
 
+## Current product wiring — 2026-10-04
+
+The original node's experimental `native-resident-v1` profile now uses
+`native_pipeline/ingress/apfl.rs`: `NVAPFLV3`, codec version 1, shared/dictionary/
+dense columns for the existing signed NNX1/3 Transfer. It preserves the exact
+96-byte Ed25519 key/signature and every signed amount, account, nonce and fee
+field; receivers do not generate signatures or trust sender authentication.
+Network tags 11–13 carry this batch over the existing NovoRUDP Data/WSS path.
+All participating nodes need the new decoder; old tags remain readable.
+
+APFL views reach the resident AOEM authentication owner and the existing business
+compiler. Packet/proof compatibility still materializes canonical V3 at plan bind;
+RPC pending and gossip admission also retain original raw bytes. This is NOT
+zero-expansion execution, opcode-114 full-NOV acceptance, GPU execution or ZK
+completion. See the [current measured scope](NOVOVM_PRODUCTION_READINESS_TRACKER.md).
+
+The historical gate below is a reuse reference, not an interchangeable V3 codec:
+its old 32-byte fixture signature lane and `Execute treasury.deposit_reserve`
+template must not be substituted for actual 96-byte signed NOV Transfers. In
+particular, reconstructing a fixture signature from a seed is not verification.
+Historical transport/component TPS is not current four-node finalized TPS.
+
+## Historical architecture index (preserved)
+
 Date: 2026-06-30
 
 Status: `ARCHITECTURE INDEX`

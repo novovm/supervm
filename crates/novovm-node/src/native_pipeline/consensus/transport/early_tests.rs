@@ -547,6 +547,9 @@ fn legacy_encode(message: &Message) -> Vec<u8> {
         Message::EarlyBody { .. }
         | Message::BindBody { .. }
         | Message::Transactions { .. }
+        | Message::ApflBody { .. }
+        | Message::ApflEarlyBody { .. }
+        | Message::ApflTransactions { .. }
         | Message::TransactionsTaken { .. } => {
             panic!("new tag sent to old codec oracle")
         }

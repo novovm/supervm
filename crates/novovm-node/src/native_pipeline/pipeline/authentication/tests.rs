@@ -20,6 +20,37 @@ fn input() -> AuthenticationRequest {
     AuthenticationRequest::new(vec![signed(1, 10), signed(2, 20)], policy()).unwrap()
 }
 
+#[test]
+fn apfl_authentication_reserves_expanded_body_and_returns_same_shared_source() {
+    use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
+    let raw = vec![signed(1, 10), signed(2, 20)];
+    let limits = ApflLimits {
+        transactions: 16,
+        transaction_bytes: 4096,
+        body_bytes: 65_536,
+    };
+    let batch = Arc::new(ApflTransferBatch::from_raw(&raw, limits).unwrap());
+    let request = AuthenticationRequest::from_apfl(batch.clone(), policy()).unwrap();
+    let mut config = cfg();
+    assert_eq!(request.body_bytes, raw.iter().map(Vec::len).sum::<usize>());
+    assert_eq!(
+        request.reservation(&config).unwrap(),
+        input().reservation(&config).unwrap()
+    );
+    config.max_batches = 1;
+    let (pipeline, _) = inert_pipeline(config);
+    let AuthenticationSubmission::Backpressured(returned) =
+        pipeline.try_authenticate_owned(request).unwrap()
+    else {
+        panic!("structured authentication bypassed ordinary reservation")
+    };
+    let BatchSource::Apfl(retained) = returned.request.raw_transactions else {
+        panic!("expanded structured input")
+    };
+    assert!(Arc::ptr_eq(&batch, &retained));
+    assert_eq!(usage(&pipeline), (0, 0, 0));
+}
+
 fn cfg() -> PipelineConfig {
     let mut config = config("unused-authentication-channel-fixture".into());
     config.max_batches = 3;
@@ -58,7 +89,7 @@ fn complete_authentication(pipeline: &CandidatePipeline, command: Authentication
     } = command;
     let checked = authenticate_batch_for_proof(
         domain().chain_id,
-        request.request.raw_transactions,
+        request.request.raw_transactions.into_raw().unwrap(),
         pipeline.config.authentication,
     )
     .unwrap();

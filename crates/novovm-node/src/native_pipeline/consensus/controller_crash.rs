@@ -250,8 +250,8 @@ fn verify_once(block: &ArchiveBlock) -> Result<()> {
             tx.nonce == 0 && !nonces.contains_key(&authenticated.nonce_identity()),
             "oracle expected one transaction per signer"
         );
-        let from = Account::try_from(tx.from.clone()).map_err(anyhow::Error::msg)?;
-        let to = Account::try_from(tx.to.clone()).map_err(anyhow::Error::msg)?;
+        let from = Account::try_from(tx.from).map_err(anyhow::Error::msg)?;
+        let to = Account::try_from(tx.to).map_err(anyhow::Error::msg)?;
         let snapshot = TransferSnapshot {
             payer_balance: *balances.get(&from).context("unfunded crash fixture")?,
             recipient_balance: balances.get(&to).copied().unwrap_or(0),
@@ -261,9 +261,9 @@ fn verify_once(block: &ArchiveBlock) -> Result<()> {
             tx_hash: authenticated.tx_hash(),
             payer: from.clone(),
             recipient: to.clone(),
-            asset: tx.asset.clone(),
+            asset: tx.asset.to_owned(),
             amount: tx.amount,
-            pay_asset: tx.fee_policy.pay_asset.clone(),
+            pay_asset: tx.fee_policy.pay_asset.to_owned(),
             max_pay_amount: tx.fee_policy.max_pay_amount,
             slippage_bps: tx.fee_policy.slippage_bps,
         };

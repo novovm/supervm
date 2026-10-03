@@ -15,16 +15,19 @@ pub struct AuthenticationRequest {
 impl AuthenticationRequest {
     /// Assembly-owner operation: checks lengths/policy, not signatures or state.
     pub fn new(raw_transactions: Vec<Vec<u8>>, policy: DirectNovFeePolicy) -> Result<Self> {
+        Self::from_source(BatchSource::Raw(raw_transactions), policy)
+    }
+
+    pub fn from_apfl(batch: Arc<ApflTransferBatch>, policy: DirectNovFeePolicy) -> Result<Self> {
+        Self::from_source(BatchSource::Apfl(batch), policy)
+    }
+
+    fn from_source(raw_transactions: BatchSource, policy: DirectNovFeePolicy) -> Result<Self> {
         ensure!(!raw_transactions.is_empty(), "empty pipeline request");
         policy.validate()?;
-        let body_bytes = raw_transactions.iter().try_fold(0usize, |total, raw| {
-            ensure!(!raw.is_empty(), "empty pipeline transaction");
-            total
-                .checked_add(raw.len())
-                .context("pipeline body size overflow")
-        })?;
+        let (body_bytes, max_transaction_bytes) = raw_transactions.sizes()?;
         Ok(Self {
-            max_transaction_bytes: raw_transactions.iter().map(Vec::len).max().unwrap_or(0),
+            max_transaction_bytes,
             transaction_count: raw_transactions.len(),
             body_bytes,
             request: Box::new(compute::AuthenticateRequest {
