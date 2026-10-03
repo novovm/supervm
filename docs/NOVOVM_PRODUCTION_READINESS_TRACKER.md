@@ -8,6 +8,63 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## R2 第五片：既有 AOEM 统一整数语义接线与原 Transfer 对照
+
+日期2026-10-03；基线`main@15a295b9b44fadd4ba6a4a8f11d1de580585520a`
+加本节所在提交。原产品node/exec位置不变；本机Windows / Rust 1.94.0，显式
+`NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=0`。随仓Windows core FULLMAX仍对应
+AOEM source `56e9da15010490ab54435ba6ab1c226f3d739176`，DLL SHA256仍为
+`4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463`。
+
+**本片新增的是原exec可调用的统一宽整数执行接口，以及原Transfer规则的真实GPU
+对照，不是新的用户交易服务；原RPC的默认交易路径本片未切换。** 回答当前架构：
+
+| 问题 | 当前代码事实 |
+| --- | --- |
+| 是否走统一门面 | 原真实交易走node→exec→bindings→AOEM；默认Transfer仍是V2 CPU回调图，不是所有业务已编译成AOEM可解释算子 |
+| 是否AOEM代数语义 | 原产品已有checked共享credit的局部代数重排；本片另将明确算术、域条件和后置条件编码到既有AOEM整数图，无Host数值解释器。但该Transfer计划仅cfg(test)，不是默认主链完整代数/异构执行已完成 |
+| 是否高并发 | 原无冲突分量确有并行；全局费用前缀、逐笔根与回执收尾仍有序。本片149行GPU数值对照不测主链最终确认TPS，也不验证自动CPU/GPU选型 |
+
+复用而非新造内核：`crates/novovm-exec/src/semantic_integer.rs`在已有
+`AoemExecSession`内调用`aoem_execute_ops_wire_v1`，使用既有opcode113 /
+AOIP0 v5 / APFLOU01 v2 / checked-i1024 / Vulkan-SPIR-V。虽然schema名为
+`compute.ai.sgm_infer_v1`，这里执行的是域中立整数程序，不是神经网络或CUDA。
+契约见[随仓头文件](../aoem/windows/include/aoem.h)；不新增FFI或NOV专属AOEM规则。
+请求和结果检查版本、形状、32 limbs、结果类别与故障字段；u128投影拒绝负数和
+截断。独立请求前缀防止同会话串读；执行错误/不完整时不读取旧结果，无CPU回退。
+
+原node的`native_transfer_semantic_tests.rs`只编译测试资产：10个输入、5个输出，
+4个顺序域检查、3个算术bank、4组范围/nonce/守恒/收费后置条件。余额、金额、费用
+完整保留u128；中间i1024避免将溢出误作环绕。费用拒绝与付费业务失败均输出正确
+nonce和业务码；错误nonce/身份或不一致快照属于域拒绝，不冒充失败交易回执。
+对照调用原`compute_outcome_v1`，不把Host预计算结果作为GPU输入。输入身份flag
+不是密码学鉴权证明；后置条件检查也不是ZK/业务有效性证明。
+
+| 本机验证 | 真实结果和范围 |
+| --- | --- |
+| 新增纯检查 | exec 4/4 + node 2/2；畸形/截断/错版本/错结果/部分执行拒绝、完整u128投影及固定规则资产。普通命令中两个GPU用例ignored，不计通过 |
+| 显式AOEM整数真库 | 1/1、零忽略；同session两次六行，含u128MAX、超过i128、域/反证/后置拒绝和i1024溢出；随后损坏内部图必须报错，不复用旧成功结果 |
+| 显式原Transfer真GPU | 1/1、零忽略；同session两次149行，逐字段对照余额、实扣费、nonce和失败类别；含失败优先级/self/full-u128。是数值输入，不是149笔已签名/已finalized用户交易 |
+| 普通原有回归 | 原Transfer 76通过/11忽略，exec 49通过/21忽略；包含上述纯检查，不重复累计。GPU用例显式执行结果见前两行 |
+| 原Transfer真实CPU并行/归并回归 | 4/4、零忽略；复跑原wave、组件共用session、1024笔checked共享收款、同图归并与失败关闭。证明既有并行分支保持，不是主链TPS |
+| 产品装配检查 | workspace/all-targets check、Clippy `-D warnings`、fmt通过；既有同源多bin提示保留 |
+
+真库日志：本机`artifacts/recovery/r2-uniform-integer-real-v*.log`及
+`r2-uniform-transfer-real-v2.log`；同149行首次3235.342ms、同session重复137.032ms，
+包含逐请求GPU设置/上传/计算/读回；不是纯kernel时间。整数最终为real-v3。
+这些只是两次调用样本，**不是稳定基准、出块间隔或主链TPS**；本轮没有重跑四进程
+RPC/QC/restart，默认路径未改，其历史证据见上一节。首轮Clippy的取模/布尔简化提示已修，保留v1失败及v2通过
+日志。本片CI仅新增无GPU的契约/规则检查；不能把GitHub普通runner绿灯写成GPU实测。
+
+**实际性能边界：** 对照随仓source，AOIP执行分支在每请求调用
+`ApflResidentModelDevice::new()`，随后创建operator；其Vulkan runtime/device和
+程序资源并未因外层AOEM句柄常驻而跨请求复用。这是此版本/此分支的限制，不能
+扩大为“AOEM没有成熟GPU”。默认路径暂不切换；下一步先核对已有常驻表面的适用
+契约，并将已验证计划接回原node的访问依赖、完整费用效应和唯一提交边界。
+全局日额度/国库归并、冲突重算、父状态根/回执、持久化/QC均不由本次数值对照签收。
+没有修改AOEM兄弟仓或SDK；原49项草稿哈希一致。完整R2、高TPS、统一异构调度、
+隐私/PQ、Linux GPU/实机、多机公网及生产部署均未因此签收。
+
 ## R2 第四片：原 Transfer 同一 AOEM 图内经济归并
 
 日期2026-10-03；基线`main@269c7b9a1d022818e7877bb035f453dcd07555c3`

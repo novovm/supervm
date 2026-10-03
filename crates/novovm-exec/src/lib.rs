@@ -12,6 +12,7 @@ use std::time::Instant;
 mod ingress_codec;
 mod semantic_compute;
 mod semantic_graph_v3;
+mod semantic_integer;
 
 pub const AOEM_FAILURE_CLASSIFICATION_CONTRACT_V1: &str = "novovm-exec/v1";
 pub const EIP7610_REJECTION_CONTRACT_V1: &str = "novovm-exec/eip7610-v1";
@@ -2916,6 +2917,10 @@ pub use semantic_graph_v3::{
     AoemSemanticGraphClientV1, AoemSemanticGraphOwnerV1, AoemSemanticGraphSessionScopeV1,
     AoemSemanticGraphStageAdmissionV1, AoemSemanticGraphStageHandleV1, AoemSemanticGraphStoreV1,
     AoemStorageProviderConfigV1,
+};
+pub use semantic_integer::{
+    AoemInteger1024V1, AoemIntegerOutcomeBatchV1, AoemIntegerOutcomeKindV1,
+    AoemIntegerOutcomeRequestV1, AoemIntegerOutcomeRowV1,
 };
 
 #[allow(dead_code)]

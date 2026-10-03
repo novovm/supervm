@@ -264,6 +264,17 @@ jobs:
       - name: NOVOVM control-plane portability tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovmctl
 
+      - name: Typed integer wire contracts and original Transfer policy assets
+        # Pure schema/policy checks only. Ignored Vulkan tests require an explicit
+        # GPU run; a hosted runner pass is not evidence of GPU execution or TPS.
+        env:
+          NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p novovm-exec --lib semantic_integer --locked -- --test-threads=1
+          cargo test -p novovm-node --lib transfer_semantic --locked -- --test-threads=1
+
       - name: Reject legacy Host writes by default during product restoration
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib restoration_host_guard --locked -- --test-threads=1
 

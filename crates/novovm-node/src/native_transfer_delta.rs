@@ -522,6 +522,10 @@ fn conflict_components_excluding_credits_v1(
 pub(crate) mod effects;
 
 #[cfg(test)]
+#[path = "native_transfer_semantic_tests.rs"]
+mod semantic_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
