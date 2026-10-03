@@ -1,0 +1,865 @@
+{
+  "schema": "novovm/resident-input-repair-comparison/v1",
+  "stage": "Six normal-load rounds complete; all rounds retained; fault evidence separate.",
+  "base_commit": "b9c612c323440a06cdbfc28435c7b807803e7283",
+  "product_path": "crates/novovm-node native_resident experimental profile; original novovm-exec and novovm-consensus; CPU resident execution",
+  "environment": {
+    "os": "Windows x86_64",
+    "build": "release",
+    "topology": "One host, four actual novovm-node processes, four independent AOEM databases; existing WSS/E2E/NovoRUDP configuration.",
+    "parallel_build_or_other_heavy_test_during_rounds": false,
+    "run_order": [
+      "old1",
+      "old2",
+      "new1",
+      "new2",
+      "old3",
+      "new3"
+    ],
+    "additional_pair_policy": "After the initial four-round regression, exactly one adjacent old3/new3 pair using the same latest measurement executable was added. No rounds removed and no further sampling selected for favorable results.",
+    "environment_variables": {
+      "NOVOVM_RESIDENT_RPC_LOAD_MODE": "single_ingress",
+      "NOVOVM_RESIDENT_RPC_LOAD_INGRESS_NODE": "0",
+      "NOVOVM_RESIDENT_RPC_REQUIRE_APFL": "1",
+      "NOVOVM_RESIDENT_RPC_REQUIRE_EARLY_REUSE": "1",
+      "NOVOVM_RESIDENT_RPC_REQUIRE_ASYNC_AUTH": "1",
+      "NOVOVM_RESIDENT_RPC_LOAD_TIMEOUT_SECS": "600"
+    }
+  },
+  "binaries": {
+    "old_node": {
+      "path": "target/resident-rpc-b9c612c3-baseline/novovm-node.exe",
+      "sha256": "0dc4830a76f9ae96429154ba418e50c1f16422b9b3ce6d492e9fe02baa942399",
+      "source": "b9c612c323440a06cdbfc28435c7b807803e7283",
+      "manifest": "frozen-baseline.json"
+    },
+    "new_node": {
+      "path": "target/release/novovm-node.exe",
+      "sha256": "ce675c6813534aa4b6810d32e0f58560a8abe4ea6ffbcab3ed12ab2606e6901d",
+      "source": "Base commit plus reviewed working-tree repair changes; exact measurement-time source bytes recorded below."
+    },
+    "old_measurement_test": {
+      "path": "target/resident-rpc-b9c612c3-baseline/novovm_node-tests.exe",
+      "sha256": "a352de11e74febd08b630a253f07676d1ef7f783ef579ef3858fb01ed677a978",
+      "used_for": [
+        "old1",
+        "old2"
+      ]
+    },
+    "new_measurement_test": {
+      "path": "target/release/deps/novovm_node-f6abee0fe86d4c64.exe",
+      "sha256": "6d155f10f68fd69d34b8a3e660867073c4f37fe977390d37bcc1865d2bb80a27",
+      "used_for": [
+        "new1",
+        "new2",
+        "old3",
+        "new3"
+      ]
+    },
+    "aoem": {
+      "path": "aoem/windows/core/bin/aoem_ffi.dll",
+      "sha256": "4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463"
+    }
+  },
+  "source_snapshot": {
+    "scope": "Actual on-disk bytes of the changed source/test files plus unchanged load.rs, collected during new1 and checked unchanged after new3; not Git line-ending-normalized hashes. Records source identity but is not a reproducible-build attestation.",
+    "load_source_changed": false,
+    "files": [
+      {
+        "path": "crates/novovm-network/src/duplex/worker.rs",
+        "sha256": "60ab1511b245bb28fe49a9dd6bfefde67a5f26a88511d861cffa2b67dba6c4eb",
+        "bytes": 27063
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/consensus/controller/rpc_ingress.rs",
+        "sha256": "5412f4b4c543bfa7fb64bd11484e1b58dab07cd75dea6929042695bd5c02e10d",
+        "bytes": 30118
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/consensus/controller/rpc_ingress/tests.rs",
+        "sha256": "a5453d2af6e1bbda6ea1545623de75c74833b0e2ab8743795cef6065af672201",
+        "bytes": 23371
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/consensus/resident_rpc_process/aab.rs",
+        "sha256": "b49516882b8daa01f3700bd0c170bc3b7c008e0d6a09a8766eea3f9cbe3f7c88",
+        "bytes": 35293
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/consensus/resident_rpc_process/load.rs",
+        "sha256": "23d4343ec8b93da74e5f5c6139addc5541f8e048ce10edaa1a2737877fd3a67a",
+        "bytes": 50448
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/consensus/resident_rpc_process/offline.rs",
+        "sha256": "1f4117408b76566352acd8199a1cf1d4e3245ee4ccda57190f643e996d6ea035",
+        "bytes": 25256
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/service/rpc.rs",
+        "sha256": "8a7d203ee8a1ea49f513ffe8069094995a3daa28f4c377e5be0214def229aca1",
+        "bytes": 45045
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs",
+        "sha256": "c252d968ab491a83c3936051a6b990efa3cd73ccc0ff13ce752a7407fe905620",
+        "bytes": 9923
+      }
+    ]
+  },
+  "workload": {
+    "transactions": 65536,
+    "senders": 1024,
+    "nonces_per_sender": 64,
+    "shared_recipient": true,
+    "max_outstanding": 8192,
+    "http_batch_max": 1024,
+    "http_concurrency": 4,
+    "per_node_http_inflight": 1,
+    "submission_http_concurrency": 1,
+    "observation_http_concurrency": 4,
+    "submission_mode": "credit_first_bounded_single_ingress_v1",
+    "signatures_pregenerated": true,
+    "expected_business_failures": 0,
+    "actual_block_count_is_not_assumed": true
+  },
+  "method": {
+    "same_reported_workload_all_six_rounds": true,
+    "signatures": "Real wallet signatures pregenerated outside the measured window.",
+    "timing": "First HTTP submission to receipt HTTP response completion for every unique transaction on all four nodes. Startup, signing and cold oracle verification excluded; no per-block wait before dispatching the next batch.",
+    "successful_tps": "Unique finalized successful transactions / measured elapsed seconds; four replicas, authentication checks, repair reservations and network packets do not multiply the numerator.",
+    "latency_us": "For each transaction: max(four finalized_us observations) - first_submit_us; nearest-rank percentile at ceil(N*p)-1 in the sorted complete sample set. Includes HTTP and bounded observation scheduling; not an isolated consensus latency.",
+    "pooled_tps": "sum(finalized_successful) / sum(elapsed_seconds), not the arithmetic mean of TPS.",
+    "pooled_latency": "Concatenate every raw transaction latency in the stated rounds, then sort and compute nearest rank; never average round percentiles.",
+    "observations": "Every complete observations.json retained losslessly in a ZIP; decompressed SHA256 checked against original. No sampling. Databases and keys were not copied.",
+    "scope": "Normal funded success load, not mixed business-failure throughput. Shared recipient, signer nonce dependencies, full fees and all four-node finality checks unchanged."
+  },
+  "runs": [
+    {
+      "name": "old1",
+      "source": "artifacts/audit/resident-rpc-load/6592-1791069924592415600/result.json",
+      "report": "old1-result.json",
+      "report_sha256": "697255b37a51852f21e9bcbdd6d1e87e42359e620ed8ed8bd7a807f0cffba698",
+      "log": "old1.log",
+      "log_sha256": "e7396e3a2d47465d10cc274ab5be6c35fbf30bc5eb157b025eb3124588b7555d",
+      "observations_archive": "old1-observations.zip",
+      "observations_zip_sha256": "20548f27e7f88f28e1c9819a39666302d765208f5d0d77f33d0eeed47147284a",
+      "observations_json_sha256": "d99f326194c82f1f02c6a5b18eae273ed43d44dc468aef34fd4789edaaad237e",
+      "observations_json_bytes": 40760321,
+      "observation_count": 65536,
+      "passed": true,
+      "elapsed_seconds": 7.610318,
+      "successful_tps": 8611.466695609828,
+      "p95_us": 1135485,
+      "p99_us": 1203273,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 776192,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 194,
+        "deadline_expirations": 0
+      },
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "unresolved_submitted": 0,
+      "event_count": 0,
+      "events_jsonl_bytes": 0,
+      "actual_block_sizes": [
+        1024
+      ],
+      "actual_block_count": 64,
+      "early_reuse_by_node": [
+        25,
+        25,
+        25,
+        25
+      ],
+      "early_completed_before_parent_by_node": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "authentication_control_polls_by_node": [
+        278,
+        372,
+        468,
+        404
+      ],
+      "repair_by_node": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "retained_live_last_errors": [
+        "decision not for exact current parent",
+        "decision not for exact current parent",
+        "collector vote context mismatch",
+        "decision not for exact current parent"
+      ],
+      "cold_last_errors": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "all_four_database_oracles_match": true,
+      "all_qc_signature_counts": 3,
+      "live_and_cold_heads_identical": true,
+      "all_cold_process_ids_changed": true,
+      "node_sha256": "0dc4830a76f9ae96429154ba418e50c1f16422b9b3ce6d492e9fe02baa942399",
+      "measurement_test_sha256": "a352de11e74febd08b630a253f07676d1ef7f783ef579ef3858fb01ed677a978"
+    },
+    {
+      "name": "old2",
+      "source": "artifacts/audit/resident-rpc-load/8108-1791070011225773700/result.json",
+      "report": "old2-result.json",
+      "report_sha256": "813ff25960eeeee4d4924e59a31d7631c817a99861494222554edd8206581ef1",
+      "log": "old2.log",
+      "log_sha256": "cd91da270edbdac82606856f97d331d6c2d2d7c0154dc31d4af42eda52f19709",
+      "observations_archive": "old2-observations.zip",
+      "observations_zip_sha256": "13ddd29ea1a64b5383037109bf2169faa4a6f7077193cbd58c0568fdbe0cf976",
+      "observations_json_sha256": "9dda72bae3872f3926ba9d4f74b87eb738b50dc398c3c06e8d2fe3546b5f2f63",
+      "observations_json_bytes": 40764417,
+      "observation_count": 65536,
+      "passed": true,
+      "elapsed_seconds": 7.900461,
+      "successful_tps": 8295.212140152327,
+      "p95_us": 1101612,
+      "p99_us": 1123634,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 862208,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 214,
+        "deadline_expirations": 0
+      },
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "unresolved_submitted": 0,
+      "event_count": 0,
+      "events_jsonl_bytes": 0,
+      "actual_block_sizes": [
+        1024
+      ],
+      "actual_block_count": 64,
+      "early_reuse_by_node": [
+        30,
+        30,
+        30,
+        29
+      ],
+      "early_completed_before_parent_by_node": [
+        0,
+        0,
+        0,
+        2
+      ],
+      "authentication_control_polls_by_node": [
+        227,
+        336,
+        368,
+        384
+      ],
+      "repair_by_node": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "retained_live_last_errors": [
+        "decision not for exact current parent",
+        "decision not for exact current parent",
+        "decision not for exact current parent",
+        "decision not for exact current parent"
+      ],
+      "cold_last_errors": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "all_four_database_oracles_match": true,
+      "all_qc_signature_counts": 3,
+      "live_and_cold_heads_identical": true,
+      "all_cold_process_ids_changed": true,
+      "node_sha256": "0dc4830a76f9ae96429154ba418e50c1f16422b9b3ce6d492e9fe02baa942399",
+      "measurement_test_sha256": "a352de11e74febd08b630a253f07676d1ef7f783ef579ef3858fb01ed677a978"
+    },
+    {
+      "name": "new1",
+      "source": "artifacts/audit/resident-rpc-load/10972-1791070995597631900/result.json",
+      "report": "new1-result.json",
+      "report_sha256": "d42cd78fbf312728c3c3d6f7bd16f64ff9d4fc5b175b5c8c7876c9146e9fab73",
+      "log": "new1.log",
+      "log_sha256": "aae864dfe7aa8f7a98b2051b51d24cb2792f50e37efd382ffb1c852af5953220",
+      "observations_archive": "new1-observations.zip",
+      "observations_zip_sha256": "1a6da47c373d742d35d7c0edfdad8dd9a8be9aa53de09b6d34e484eddaea7d35",
+      "observations_json_sha256": "3ca0b1e936a24b799f16c577a9b6ff29a711b4a018f3c23d217e976016908d62",
+      "observations_json_bytes": 40777729,
+      "observation_count": 65536,
+      "passed": true,
+      "elapsed_seconds": 8.174519,
+      "successful_tps": 8017.107795577942,
+      "p95_us": 1264136,
+      "p99_us": 1447706,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 867328,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 222,
+        "deadline_expirations": 0
+      },
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "unresolved_submitted": 0,
+      "event_count": 0,
+      "events_jsonl_bytes": 0,
+      "actual_block_sizes": [
+        1024
+      ],
+      "actual_block_count": 64,
+      "early_reuse_by_node": [
+        17,
+        15,
+        17,
+        17
+      ],
+      "early_completed_before_parent_by_node": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "authentication_control_polls_by_node": [
+        300,
+        345,
+        387,
+        306
+      ],
+      "repair_by_node": [
+        {
+          "omitted_recipient_inputs": 0,
+          "repair_batches_reserved": 0,
+          "repair_inputs_reserved": 0,
+          "scope": "local omitted-recipient repair; not remote or durable receipt"
+        },
+        {
+          "omitted_recipient_inputs": 0,
+          "repair_batches_reserved": 0,
+          "repair_inputs_reserved": 0,
+          "scope": "local omitted-recipient repair; not remote or durable receipt"
+        },
+        {
+          "omitted_recipient_inputs": 0,
+          "repair_batches_reserved": 0,
+          "repair_inputs_reserved": 0,
+          "scope": "local omitted-recipient repair; not remote or durable receipt"
+        },
+        {
+          "omitted_recipient_inputs": 0,
+          "repair_batches_reserved": 0,
+          "repair_inputs_reserved": 0,
+          "scope": "local omitted-recipient repair; not remote or durable receipt"
+        }
+      ],
+      "retained_live_last_errors": [
+        "decision not for exact current parent",
+        "decision not for exact current parent",
+        "decision not for exact current parent",
+        "decision not for exact current parent"
+      ],
+      "cold_last_errors": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "all_four_database_oracles_match": true,
+      "all_qc_signature_counts": 3,
+      "live_and_cold_heads_identical": true,
+      "all_cold_process_ids_changed": true,
+      "node_sha256": "ce675c6813534aa4b6810d32e0f58560a8abe4ea6ffbcab3ed12ab2606e6901d",
+      "measurement_test_sha256": "6d155f10f68fd69d34b8a3e660867073c4f37fe977390d37bcc1865d2bb80a27"
+    },
+    {
+      "name": "new2",
+      "source": "artifacts/audit/resident-rpc-load/5336-1791071242127256200/result.json",
+      "report": "new2-result.json",
+      "report_sha256": "a38895cfec219ad094b77d3d6e722ae4278f3cd094b25f619547a3c0b47aec93",
+      "log": "new2.log",
+      "log_sha256": "6b43682425c0d9f73852c3487218ca7263b5252a866ee1c372ccaa23c95e5a2b",
+      "observations_archive": "new2-observations.zip",
+      "observations_zip_sha256": "1ba8cdbe655ab661e83d89c1df5673c149e1f13bb946e8a44fa0940ae8e8ed29",
+      "observations_json_sha256": "ab516530b481629d34ef924874d8ea99c6bfd920bb439a662fec8dc38a19fd5e",
+      "observations_json_bytes": 40777729,
+      "observation_count": 65536,
+      "passed": true,
+      "elapsed_seconds": 8.242054,
+      "successful_tps": 7951.415994119913,
+      "p95_us": 1362349,
+      "p99_us": 1676896,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 948224,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 237,
+        "deadline_expirations": 0
+      },
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "unresolved_submitted": 0,
+      "event_count": 0,
+      "events_jsonl_bytes": 0,
+      "actual_block_sizes": [
+        1024
+      ],
+      "actual_block_count": 64,
+      "early_reuse_by_node": [
+        28,
+        27,
+        28,
+        28
+      ],
+      "early_completed_before_parent_by_node": [
+        0,
+        0,
+        1,
+        0
+      ],
+      "authentication_control_polls_by_node": [
+        244,
+        333,
+        336,
+        340
+      ],
+      "repair_by_node": [
+        {
+          "omitted_recipient_inputs": 0,
+          "repair_batches_reserved": 7,
+          "repair_inputs_reserved": 7168,
+          "scope": "local omitted-recipient repair; not remote or durable receipt"
+        },
+        {
+          "omitted_recipient_inputs": 0,
+          "repair_batches_reserved": 0,
+          "repair_inputs_reserved": 0,
+          "scope": "local omitted-recipient repair; not remote or durable receipt"
+        },
+        {
+          "omitted_recipient_inputs": 0,
+          "repair_batches_reserved": 0,
+          "repair_inputs_reserved": 0,
+          "scope": "local omitted-recipient repair; not remote or durable receipt"
+        },
+        {
+          "omitted_recipient_inputs": 0,
+          "repair_batches_reserved": 0,
+          "repair_inputs_reserved": 0,
+          "scope": "local omitted-recipient repair; not remote or durable receipt"
+        }
+      ],
+      "retained_live_last_errors": [
+        "decision not for exact current parent",
+        "decision not for exact current parent",
+        "decision not for exact current parent",
+        "decision not for exact current parent"
+      ],
+      "cold_last_errors": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "all_four_database_oracles_match": true,
+      "all_qc_signature_counts": 3,
+      "live_and_cold_heads_identical": true,
+      "all_cold_process_ids_changed": true,
+      "node_sha256": "ce675c6813534aa4b6810d32e0f58560a8abe4ea6ffbcab3ed12ab2606e6901d",
+      "measurement_test_sha256": "6d155f10f68fd69d34b8a3e660867073c4f37fe977390d37bcc1865d2bb80a27"
+    },
+    {
+      "name": "old3",
+      "source": "artifacts/audit/resident-rpc-load/24212-1791071475934704700/result.json",
+      "report": "old3-result.json",
+      "report_sha256": "1d575abd382984fe03a3fd01cb837d42131c54956941a90eb3adff750247bd01",
+      "log": "old3.log",
+      "log_sha256": "d3db8f47bf56754876cd7fca3fbfe5dd03bd701a1116cf2b265af3fd094b50ab",
+      "observations_archive": "old3-observations.zip",
+      "observations_zip_sha256": "69d1233952c1f88e1e64a5ce9f1f15c56e7617f03c97cb71377eef616c24bda0",
+      "observations_json_sha256": "f2c406e50aa0b5a3d41ab25469c9b440d161854dfee2b3981f9eda2fa4fac48b",
+      "observations_json_bytes": 40771585,
+      "observation_count": 65536,
+      "passed": true,
+      "elapsed_seconds": 8.946808,
+      "successful_tps": 7325.0705726556325,
+      "p95_us": 1361044,
+      "p99_us": 1539555,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1053696,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 267,
+        "deadline_expirations": 0
+      },
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "unresolved_submitted": 0,
+      "event_count": 0,
+      "events_jsonl_bytes": 0,
+      "actual_block_sizes": [
+        1024
+      ],
+      "actual_block_count": 64,
+      "early_reuse_by_node": [
+        28,
+        28,
+        28,
+        28
+      ],
+      "early_completed_before_parent_by_node": [
+        0,
+        0,
+        0,
+        2
+      ],
+      "authentication_control_polls_by_node": [
+        236,
+        293,
+        353,
+        350
+      ],
+      "repair_by_node": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "retained_live_last_errors": [
+        "decision not for exact current parent",
+        "proposal context/round/hint source mismatch",
+        "decision not for exact current parent",
+        "decision not for exact current parent"
+      ],
+      "cold_last_errors": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "all_four_database_oracles_match": true,
+      "all_qc_signature_counts": 3,
+      "live_and_cold_heads_identical": true,
+      "all_cold_process_ids_changed": true,
+      "node_sha256": "0dc4830a76f9ae96429154ba418e50c1f16422b9b3ce6d492e9fe02baa942399",
+      "measurement_test_sha256": "6d155f10f68fd69d34b8a3e660867073c4f37fe977390d37bcc1865d2bb80a27"
+    },
+    {
+      "name": "new3",
+      "source": "artifacts/audit/resident-rpc-load/20340-1791071512247365800/result.json",
+      "report": "new3-result.json",
+      "report_sha256": "aaa1b7b1610847e66871679a5e89bf0681e0b79535c5976840a59410537acb78",
+      "log": "new3.log",
+      "log_sha256": "8fe4d2b35aa52797c42d87b8d2206c98c681624e562db0ee132739893bf2707e",
+      "observations_archive": "new3-observations.zip",
+      "observations_zip_sha256": "1ad4068e29dc16358f8d534284c1c2cebb65f80342fc4c75e38e116313a0ea11",
+      "observations_json_sha256": "50c70dfd4168a40290415ba2131a9d17af2b5834efbac861f59da8b27f3513bf",
+      "observations_json_bytes": 40760321,
+      "observation_count": 65536,
+      "passed": true,
+      "elapsed_seconds": 8.127105,
+      "successful_tps": 8063.880065533791,
+      "p95_us": 1280961,
+      "p99_us": 1293051,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 885760,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 221,
+        "deadline_expirations": 0
+      },
+      "http_admissions_by_node": [
+        65536,
+        0,
+        0,
+        0
+      ],
+      "unresolved_submitted": 0,
+      "event_count": 0,
+      "events_jsonl_bytes": 0,
+      "actual_block_sizes": [
+        1024
+      ],
+      "actual_block_count": 64,
+      "early_reuse_by_node": [
+        21,
+        20,
+        21,
+        20
+      ],
+      "early_completed_before_parent_by_node": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "authentication_control_polls_by_node": [
+        238,
+        365,
+        389,
+        353
+      ],
+      "repair_by_node": [
+        {
+          "omitted_recipient_inputs": 0,
+          "repair_batches_reserved": 0,
+          "repair_inputs_reserved": 0,
+          "scope": "local omitted-recipient repair; not remote or durable receipt"
+        },
+        {
+          "omitted_recipient_inputs": 0,
+          "repair_batches_reserved": 0,
+          "repair_inputs_reserved": 0,
+          "scope": "local omitted-recipient repair; not remote or durable receipt"
+        },
+        {
+          "omitted_recipient_inputs": 0,
+          "repair_batches_reserved": 0,
+          "repair_inputs_reserved": 0,
+          "scope": "local omitted-recipient repair; not remote or durable receipt"
+        },
+        {
+          "omitted_recipient_inputs": 0,
+          "repair_batches_reserved": 0,
+          "repair_inputs_reserved": 0,
+          "scope": "local omitted-recipient repair; not remote or durable receipt"
+        }
+      ],
+      "retained_live_last_errors": [
+        "decision not for exact current parent",
+        "decision not for exact current parent",
+        "decision not for exact current parent",
+        "decision not for exact current parent"
+      ],
+      "cold_last_errors": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "all_four_database_oracles_match": true,
+      "all_qc_signature_counts": 3,
+      "live_and_cold_heads_identical": true,
+      "all_cold_process_ids_changed": true,
+      "node_sha256": "ce675c6813534aa4b6810d32e0f58560a8abe4ea6ffbcab3ed12ab2606e6901d",
+      "measurement_test_sha256": "6d155f10f68fd69d34b8a3e660867073c4f37fe977390d37bcc1865d2bb80a27"
+    }
+  ],
+  "comparisons": {
+    "initial_four_rounds": {
+      "old_runs": [
+        "old1",
+        "old2"
+      ],
+      "new_runs": [
+        "new1",
+        "new2"
+      ],
+      "old": {
+        "successful_transactions": 131072,
+        "elapsed_seconds": 15.510779,
+        "successful_tps": 8450.381505661322,
+        "latency_samples": 131072,
+        "p95_us": 1114174,
+        "p99_us": 1178728
+      },
+      "current": {
+        "successful_transactions": 131072,
+        "elapsed_seconds": 16.416573,
+        "successful_tps": 7984.126772378133,
+        "latency_samples": 131072,
+        "p95_us": 1291201,
+        "p99_us": 1452020
+      },
+      "tps_change_percent": -5.517558384444799,
+      "p95_change_percent": 15.888631398686371,
+      "p99_change_percent": 23.1853319849872
+    },
+    "adjacent_same_harness_pair": {
+      "old_runs": [
+        "old3"
+      ],
+      "new_runs": [
+        "new3"
+      ],
+      "old": {
+        "successful_transactions": 65536,
+        "elapsed_seconds": 8.946808,
+        "successful_tps": 7325.0705726556325,
+        "latency_samples": 65536,
+        "p95_us": 1361044,
+        "p99_us": 1539555
+      },
+      "current": {
+        "successful_transactions": 65536,
+        "elapsed_seconds": 8.127105,
+        "successful_tps": 8063.880065533791,
+        "latency_samples": 65536,
+        "p95_us": 1280961,
+        "p99_us": 1293051
+      },
+      "tps_change_percent": 10.086039247677991,
+      "p95_change_percent": -5.883939093813284,
+      "p99_change_percent": -16.01137991172774
+    },
+    "all_six_rounds": {
+      "old_runs": [
+        "old1",
+        "old2",
+        "old3"
+      ],
+      "new_runs": [
+        "new1",
+        "new2",
+        "new3"
+      ],
+      "old": {
+        "successful_transactions": 196608,
+        "elapsed_seconds": 24.457587,
+        "successful_tps": 8038.732520914676,
+        "latency_samples": 196608,
+        "p95_us": 1224225,
+        "p99_us": 1396279
+      },
+      "current": {
+        "successful_transactions": 196608,
+        "elapsed_seconds": 24.543678,
+        "successful_tps": 8010.535340302297,
+        "latency_samples": 196608,
+        "p95_us": 1286485,
+        "p99_us": 1452020
+      },
+      "tps_change_percent": -0.3507664988108061,
+      "p95_change_percent": 5.085666442034764,
+      "p99_change_percent": 3.992110459299325
+    }
+  },
+  "verified_each_run": {
+    "finalized_successful": 65536,
+    "finalized_business_failed": 0,
+    "admission_rejected": 0,
+    "admission_retries": 0,
+    "http_transport_errors": 0,
+    "unresolved": 0,
+    "deadline_expirations": 0,
+    "http_admissions_by_node": [
+      65536,
+      0,
+      0,
+      0
+    ],
+    "database_audits": 4,
+    "each_database_height": 64,
+    "transactions_per_block": 1024,
+    "state_version": 65536,
+    "signers": 1024,
+    "nonce_per_signer": 64,
+    "recipient_balance": "65536",
+    "settled_nov_fees": 2949120,
+    "full_state_root_equals_oracle": true,
+    "actual_qc_signatures_every_block": 3,
+    "live_and_cold_heads_identical": true,
+    "all_cold_process_ids_changed": true,
+    "each_node_apfl_view_transactions": 65536,
+    "each_node_authentication_owner": "same_resident_aoem_compute_session",
+    "each_node_authentication_submitted_batches": 64,
+    "each_node_authentication_completed_batches": 64,
+    "each_node_authentication_checked_rows": 65536,
+    "nonce_and_economics_source": "Unchanged load.rs apply_oracle verifies every archive receipt, signer nonce sequence and fees; lines 784-805 check the complete signer nonce set, full logical state root and durable balance/nonce/fee records."
+  },
+  "interpretation": {
+    "stable_speedup_claim": false,
+    "all_six_rounds": "Old pooled 8038.733 TPS versus new 8010.535 TPS (-0.35%); pooled P95/P99 +5.09%/+3.99%.",
+    "variability": "Initial four rounds show -5.52% throughput and +15.89%/+23.19% pooled P95/P99; the adjacent same-harness pair reverses direction (+10.09% TPS) because old3 is slower. Both comparisons remain, so neither stable improvement nor a precisely attributed code-only regression is established.",
+    "healthy_repair": "new1 and new3 have zero repair reservations. new2 records seven repair batches and 7168 recipient-input reservations at node0, and zero outstanding omitted-recipient inputs at the final snapshot. Other nodes record zero. These are local reservation counters, not remote durable ACKs or additional finalized transactions.",
+    "fault_evidence": "faults/fault-comparison.json separately covers omitted-peer recovery and A/A/B behavior; do not combine those functional/fault timings with normal-load TPS.",
+    "retained_noise": "All six HTTP event logs are empty and admission/retry/error counts are zero. Live last_error values and connection-reset teardown messages remain in the raw reports/logs; this is not a claim that every internal diagnostic is silent."
+  },
+  "limitations": [
+    "Single Windows host with four processes, not four physical devices or public-network production acceptance.",
+    "CPU resident path; no GPU throughput or complete business ZK proof claim.",
+    "Zero business failures in this workload; correctness coverage elsewhere is not a measured mixed-failure TPS result.",
+    "Early-body reuse is not equivalent to authentication completing before the parent; the separate counters are retained.",
+    "Only omitted-recipient local repair is exercised here. Local repair reservation does not prove delivery, remote pool acceptance or durable finality by itself.",
+    "All earlier evidence, the original raw run directories, and the initial baseline-summary.json are retained. The baseline-only summary is historical context, not the final comparison."
+  ]
+}

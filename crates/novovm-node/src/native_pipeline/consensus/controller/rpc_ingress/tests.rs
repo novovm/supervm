@@ -289,8 +289,21 @@ fn accept_prepared(
     sequence: u64,
     now: Instant,
 ) -> Result<(TransactionsScope, Hash)> {
+    accept_prepared_selected(state, channel, config, sequence, now, None)
+}
+
+fn accept_prepared_selected(
+    state: &mut Transactions,
+    channel: &HostChannel,
+    config: &super::super::super::channel::ChannelConfig,
+    sequence: u64,
+    now: Instant,
+    requested: Option<&[bool]>,
+) -> Result<(TransactionsScope, Hash)> {
     use crate::native_pipeline::consensus::channel::tests::prepared;
-    let mask = state.recipient_mask().context("no available recipient")?;
+    let mask = state
+        .recipient_mask_requested(requested)
+        .context("no available requested recipient")?;
     let queued: Vec<_> = mask
         .iter()
         .enumerate()
@@ -314,7 +327,10 @@ fn accept_prepared(
         }),
     );
     let fragment = ready.prepared.fragment_id();
-    state.prepared_admission(sequence, mask, now);
+    let requested_count = requested.map_or(state.peers.len(), |selected| {
+        selected.iter().filter(|selected| **selected).count()
+    });
+    state.prepared_admission(sequence, mask, requested_count, now);
     let entry = state.outbox.back_mut().unwrap();
     entry.prepared = Some(ready.prepared);
     entry.queued = queued;
@@ -468,7 +484,7 @@ fn byte_ceiling_and_owner_pending_preparations_are_charged_before_any_peer_send(
     assert_eq!((state.capacity(), state.peer_capacity()), (4, 2));
     for token in 1..=2 {
         let recipients = state.recipient_mask().unwrap();
-        state.prepared_admission(token, recipients, now);
+        state.prepared_admission(token, recipients, state.peers.len(), now);
         assert_bounded(&state);
     }
     assert!(state.recipient_mask().is_none());
@@ -523,6 +539,84 @@ fn detailed_peer_usage_is_query_only_and_does_not_materialize_in_the_poll_counte
     );
     assert!(state.stats.outbound_peer_pending.is_empty());
     Ok(())
+}
+
+#[test]
+fn targeted_repair_waits_for_requested_credit_and_never_resends_other_peers() -> Result<()> {
+    use crate::native_pipeline::consensus::channel::tests::{config, unstarted};
+    let config = config(0);
+    let channel = unstarted(&config);
+    let mut state = Transactions::new(&channel, config.peers.clone());
+    state.budget.messages = 2;
+    let now = Instant::now();
+    let peers = state.peers.clone();
+    let (first, first_fragment) = accept_prepared(&mut state, &channel, &config, 1, now)?;
+    assert!(state.return_credit(&peers[1], &first, first_fragment, now)?);
+    assert_eq!(state.recipient_mask(), Some(vec![false, true]));
+
+    let requested = [true, false];
+    let before = serde_json::to_value(state.stats_snapshot())?;
+    for _ in 0..64 {
+        assert!(state.recipient_mask_requested(Some(&requested)).is_none());
+    }
+    assert_eq!(serde_json::to_value(state.stats_snapshot())?, before);
+    assert_eq!(state.outbox.len(), 1);
+    assert_eq!(state.outbox[0].token, 1);
+
+    assert!(state.return_credit(&peers[0], &first, first_fragment, now)?);
+    release_completed(&mut state);
+    assert_eq!(
+        state.recipient_mask_requested(Some(&requested)),
+        Some(vec![true, false])
+    );
+    let (repair, repair_fragment) =
+        accept_prepared_selected(&mut state, &channel, &config, 2, now, Some(&requested))?;
+    assert_eq!(state.outbox.back().unwrap().pending, vec![true, false]);
+    assert_eq!(state.outbox.back().unwrap().queued, vec![true, false]);
+    assert_eq!(state.stats.outbound_recipient_reservations, 3);
+    assert_eq!(
+        state.stats.outbound_recipient_skips, 0,
+        "unrequested peer must not count as a skipped reservation"
+    );
+    assert!(!state.return_credit(&peers[1], &repair, repair_fragment, now)?);
+    assert!(state.return_credit(&peers[0], &repair, repair_fragment, now)?);
+    assert!(!state.return_credit(&peers[0], &repair, repair_fragment, now)?);
+    release_completed(&mut state);
+    assert_bounded(&state);
+    Ok(())
+}
+
+#[test]
+fn targeted_reservations_intersect_requested_peers_and_the_unchanged_global_budget() {
+    let mut state = state();
+    let now = Instant::now();
+    assert!(state
+        .recipient_mask_requested(Some(&[false, false]))
+        .is_none());
+    let quota = state.peer_capacity();
+    for token in 0..quota {
+        let mask = state
+            .recipient_mask_requested(Some(&[true, false]))
+            .unwrap();
+        assert_eq!(mask, vec![true, false]);
+        state.prepared_admission(token as u64, mask, 1, now);
+    }
+    assert_eq!(
+        state.recipient_mask_requested(Some(&[true, true])),
+        Some(vec![false, true])
+    );
+    for token in quota..state.capacity() {
+        let mask = state
+            .recipient_mask_requested(Some(&[false, true]))
+            .unwrap();
+        state.prepared_admission(token as u64, mask, 1, now);
+    }
+    assert_eq!(state.outbox.len(), state.capacity());
+    assert!(state
+        .recipient_mask_requested(Some(&[true, true]))
+        .is_none());
+    assert_eq!(state.stats.outbound_recipient_skips, 0);
+    assert_bounded(&state);
 }
 
 #[test]

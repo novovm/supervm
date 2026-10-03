@@ -415,16 +415,24 @@ impl NetworkWorker {
     }
 
     pub fn status(&self) -> Result<WorkerStatus> {
-        let shared = self
-            .shared
-            .try_lock()
-            .map_err(|_| anyhow::anyhow!("network status busy or poisoned"))?;
+        self.try_status()?.context("network status busy")
+    }
+
+    /// Nonblocking diagnostic snapshot. Contention is not a failed worker:
+    /// `None` lets a bounded caller poll again, whereas poisoned state is an
+    /// error and must not be treated as temporary unavailability.
+    pub fn try_status(&self) -> Result<Option<WorkerStatus>> {
+        let shared = match self.shared.try_lock() {
+            Ok(shared) => shared,
+            Err(TryLockError::WouldBlock) => return Ok(None),
+            Err(TryLockError::Poisoned(_)) => bail!("network status poisoned"),
+        };
         let mut status = shared.status.clone();
         status.outbound_messages = shared.outbound.count;
         status.outbound_bytes = shared.outbound.bytes;
         status.inbound_messages = shared.inbound.count;
         status.inbound_bytes = shared.inbound.bytes;
-        Ok(status)
+        Ok(Some(status))
     }
 
     /// Signals and joins the socket owner. Unlike try_send/try_recv, shutdown

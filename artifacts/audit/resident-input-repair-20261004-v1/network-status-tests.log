@@ -1,0 +1,27 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Finished `release` profile [optimized] target(s) in 40.95s
+     Running unittests src\lib.rs (target\release\deps\novovm_network-f603d657c7788f79.exe)
+
+running 14 tests
+test duplex::product_relay_client::tests::websocket_upgrade_rejects_status_prefix_accept_alias_suffix_duplicate_and_missing_tokens ... ok
+test duplex::worker::tests::poisoned_status_is_fatal_not_retryable_contention ... ok
+test duplex::worker::tests::status_contention_is_retryable_without_mutating_queue_or_snapshot ... ok
+test eth_chain_config::tests::peer_status_validation_rejects_wrong_network_genesis_and_stale_forks ... ok
+test eth_fullnode::tests::build_native_rlpx_status_prefers_local_canonical_head_and_genesis ... ok
+test eth_fullnode::tests::incompatible_status_decode_does_not_permanently_reject_prior_success ... ok
+test eth_fullnode::tests::incompatible_status_decode_immediately_rejects_pristine_peer ... ok
+test eth_fullnode::tests::malformed_status_fork_id_decode_immediately_rejects_pristine_peer ... ok
+test eth_rlpx::tests::responder_handshake_supports_hello_and_status_exchange ... ok
+test eth_rlpx::tests::status_payload_roundtrip_matches_geth_shape ... ok
+test product_identity::tests::tampering_expiry_and_missing_status_are_rejected ... ok
+test runtime_status::tests::runtime_sync_status_normalizes_fields ... ok
+test transport::tests::evm_native_status_response_triggers_header_pull_from_runtime_gap ... ok
+test transport::tests::real_rlpx_peer_worker_pivots_to_status_head_by_hash_v1 ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 686 filtered out; finished in 0.30s
+

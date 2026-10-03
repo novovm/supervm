@@ -1,0 +1,12 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Checking novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Checking novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Checking novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+    Checking novovm-bench v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-bench)
+    Checking novovmctl v0.1.0 (D:\WorksArea\SUPERVM\crates\novovmctl)
+    Checking novovm-evm-gateway v0.1.0 (D:\WorksArea\SUPERVM\crates\gateways\evm-gateway)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 20.88s

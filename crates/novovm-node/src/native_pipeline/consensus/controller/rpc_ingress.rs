@@ -5,6 +5,7 @@ use super::super::channel::QueueBudget;
 use super::super::transport::TransactionsScope;
 use super::*;
 use serde::Serialize;
+use std::collections::BTreeSet;
 
 const REPLAY_HINTS_PER_PEER: usize = 64;
 
@@ -140,21 +141,35 @@ impl Transactions {
     /// The source wallet pool and canonical body/archive recovery remain the
     /// owners of transaction lifetime; this is only best-effort propagation.
     fn recipient_mask(&self) -> Option<Vec<bool>> {
+        self.recipient_mask_requested(None)
+    }
+    /// A supplied selection has exactly the configured peer width. Unrequested
+    /// peers are not admitted and do not contribute to skipped-recipient counts.
+    fn recipient_mask_requested(&self, requested: Option<&[bool]>) -> Option<Vec<bool>> {
         if self.outbox.len() >= self.capacity() {
             return None;
         }
         let limit = self.peer_capacity();
         let mask: Vec<_> = (0..self.peers.len())
-            .map(|peer| self.pending_for_peer(peer) < limit)
+            .map(|peer| {
+                requested.is_none_or(|selected| selected[peer])
+                    && self.pending_for_peer(peer) < limit
+            })
             .collect();
         // Preserve the existing empty-peer local-only behavior. Otherwise no
         // available recipient means NO acceptance; the caller keeps its input.
         (self.peers.is_empty() || mask.iter().any(|pending| *pending)).then_some(mask)
     }
-    fn prepared_admission(&mut self, token: u64, pending: Vec<bool>, created: Instant) {
+    fn prepared_admission(
+        &mut self,
+        token: u64,
+        pending: Vec<bool>,
+        requested_count: usize,
+        created: Instant,
+    ) {
         let reserved = pending.iter().filter(|pending| **pending).count();
         self.stats.outbound_recipient_reservations += reserved as u64;
-        self.stats.outbound_recipient_skips += (self.peers.len() - reserved) as u64;
+        self.stats.outbound_recipient_skips += (requested_count - reserved) as u64;
         self.outbox.push_back(PendingSend {
             token,
             prepared: None,
@@ -321,10 +336,84 @@ impl Controller {
         self.transactions.stats_snapshot()
     }
 
+    /// Current best-effort preparation availability, in the immutable configured
+    /// peer order. This is a hint only: submission rechecks every quota.
+    pub fn transactions_available_recipients(&self) -> Vec<bool> {
+        if self.is_recovering() {
+            return vec![false; self.transactions.peers.len()];
+        }
+        self.transactions
+            .recipient_mask()
+            .unwrap_or_else(|| vec![false; self.transactions.peers.len()])
+    }
+
+    /// Query-only observations, not availability/execution/signing capabilities.
+    /// Missing bodies use the same qualification as the existing retry path;
+    /// no diagnosis is inferred from the counts and no work is scheduled here.
+    pub fn input_availability(&self) -> serde_json::Value {
+        let context = self.context();
+        let round = self.round();
+        let missing: BTreeSet<_> = self
+            .offers
+            .values()
+            .filter(|offer| {
+                self.candidate(offer.proposal.proposal().value).is_none()
+                    && !self.bodies.contains_key(&offer.body_id)
+            })
+            .map(|offer| offer.body_id)
+            .collect();
+        let current_bodies = self
+            .bodies
+            .values()
+            .filter(|body| match body.prepared.message().as_ref() {
+                Message::Body { context, .. } | Message::ApflBody { context, .. } => {
+                    self.matches_context(context)
+                }
+                _ => false,
+            })
+            .count();
+        serde_json::json!({
+            "current_offer_count": self.offers.values().filter(|offer| {
+                let proposal = offer.proposal.proposal();
+                proposal.context == context && proposal.round == round
+            }).count(),
+            "missing_exact_body_count": missing.len(),
+            "body_inflight_count": self.inflight.len(),
+            "known_current_body_count": current_bodies,
+            "local_preparing": self.local_preparing,
+            "journal_pending": self.journal.is_pending(),
+            "timeout_step": format!("{:?}", self.journal.step()),
+        })
+    }
+
     /// Accepted means a bounded LOCAL preparation slot, never remote or durable
     /// receipt. Full peers are excluded from this NEW best-effort fanout, not
     /// acknowledged. All-full backpressure leaves the original Arc untouched.
     pub fn try_submit_transactions(&mut self, message: &Arc<Message>) -> Result<bool> {
+        self.try_submit_transactions_selected(message, None)
+            .map(|selected| selected.is_some())
+    }
+
+    /// Reserve only requested recipients whose existing quotas permit it.
+    /// The returned mask is the exact accepted obligation set, not delivery or
+    /// signature evidence. None never takes ownership of the caller's Arc.
+    pub fn try_submit_transactions_to(
+        &mut self,
+        message: &Arc<Message>,
+        requested: &[bool],
+    ) -> Result<Option<Vec<bool>>> {
+        ensure!(
+            requested.len() == self.transactions.peers.len(),
+            "input recipient mask differs from configured peer width"
+        );
+        self.try_submit_transactions_selected(message, Some(requested))
+    }
+
+    fn try_submit_transactions_selected(
+        &mut self,
+        message: &Arc<Message>,
+        requested: Option<&[bool]>,
+    ) -> Result<Option<Vec<bool>>> {
         let (Message::Transactions { scope, .. } | Message::ApflTransactions { scope, .. }) =
             message.as_ref()
         else {
@@ -337,10 +426,10 @@ impl Controller {
             "input gossip is not from this controller process"
         );
         if self.is_recovering() {
-            return Ok(false);
+            return Ok(None);
         }
-        let Some(recipients) = self.transactions.recipient_mask() else {
-            return Ok(false);
+        let Some(recipients) = self.transactions.recipient_mask_requested(requested) else {
+            return Ok(None);
         };
         let token = self.allocate_token()?;
         match self.channel.try_prepare(PrepareRequest {
@@ -348,11 +437,18 @@ impl Controller {
             input: PrepareInput::New(message.clone()),
         })? {
             PrepareAdmission::Accepted => {
-                self.transactions
-                    .prepared_admission(token, recipients, Instant::now());
-                Ok(true)
+                let requested_count = requested.map_or(self.transactions.peers.len(), |selected| {
+                    selected.iter().filter(|selected| **selected).count()
+                });
+                self.transactions.prepared_admission(
+                    token,
+                    recipients.clone(),
+                    requested_count,
+                    Instant::now(),
+                );
+                Ok(Some(recipients))
             }
-            PrepareAdmission::Backpressure(_) => Ok(false),
+            PrepareAdmission::Backpressure(_) => Ok(None),
             PrepareAdmission::Rejected { reason, .. } => anyhow::bail!(reason),
         }
     }

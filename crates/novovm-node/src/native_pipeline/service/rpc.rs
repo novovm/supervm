@@ -31,6 +31,7 @@ const RECENT_RECEIPTS: usize = 65_536;
 const MAX_SIGNERS: usize = 65_536;
 
 mod admission;
+mod gossip;
 
 struct BalanceQuery {
     account: Account,
@@ -44,6 +45,8 @@ struct Pending {
     raw: Vec<u8>,
     signer: Hash,
     nonce: u64,
+    /// Peers omitted from local fanout reservation, NOT delivery/finality bits.
+    gossip_missing: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -63,6 +66,7 @@ struct EarlyOffer {
 struct GossipOffer {
     hashes: Vec<Hash>,
     message: Arc<Message>,
+    repair_peer: Option<usize>,
 }
 
 /// Derived query/admission projection only. Rebuilt from verified archive on
@@ -86,6 +90,7 @@ pub struct RpcLifecycle {
     gossip_order: VecDeque<Hash>,
     gossip_queued: BTreeSet<Hash>,
     gossip_offer: Option<GossipOffer>,
+    gossip_repair: gossip::RepairHints,
     incoming: Option<(Arc<Message>, usize)>,
     ingress_batch_boundary: bool,
     gossip_verified: u64,
@@ -117,6 +122,7 @@ impl RpcLifecycle {
             gossip_order: VecDeque::new(),
             gossip_queued: BTreeSet::new(),
             gossip_offer: None,
+            gossip_repair: gossip::RepairHints::default(),
             incoming: None,
             ingress_batch_boundary: false,
             gossip_verified: 0,
@@ -318,6 +324,7 @@ impl RpcLifecycle {
             self.nonces
                 .insert(receipt.signer_identity, receipt.nonce_after);
             if let Some(entry) = self.pending.remove(&receipt.tx_hash) {
+                self.gossip_repair.remove(entry.gossip_missing);
                 self.pending_bytes -= entry.raw.len();
                 self.reservations.remove(&(entry.signer, entry.nonce));
             }
@@ -343,6 +350,7 @@ impl RpcLifecycle {
             .collect();
         for hash in stale {
             let entry = self.pending.remove(&hash).expect("stale entry");
+            self.gossip_repair.remove(entry.gossip_missing);
             self.pending_bytes -= entry.raw.len();
             self.reservations.remove(&(entry.signer, entry.nonce));
             self.receipts.insert(
@@ -424,7 +432,15 @@ impl RpcLifecycle {
             "RPC pool backpressure; transaction not accepted"
         );
         self.pending_bytes += raw.len();
-        self.pending.insert(hash, Pending { raw, signer, nonce });
+        self.pending.insert(
+            hash,
+            Pending {
+                raw,
+                signer,
+                nonce,
+                gossip_missing: 0,
+            },
+        );
         self.reservations.insert((signer, nonce));
         self.order.push_back(hash);
         if broadcast {
@@ -437,54 +453,6 @@ impl RpcLifecycle {
         if self.gossip_queued.insert(hash) {
             self.gossip_order.push_back(hash);
         }
-    }
-
-    fn poll_gossip(&mut self) -> Result<()> {
-        if self.projection_error.is_some() {
-            return Ok(());
-        }
-        if self.gossip_offer.is_none() {
-            let mut hashes = Vec::new();
-            let mut raw_transactions = Vec::new();
-            let mut bytes = 0;
-            // All stale hashes are removed as the finalized projection drains;
-            // only a finite body is copied on each scheduling turn.
-            while let Some(hash) = self.gossip_order.front().copied() {
-                if let Some(entry) = self.pending.get(&hash) {
-                    if hashes.len() == self.batch_size
-                        || bytes + entry.raw.len() > super::body_byte_limit(self.batch_size)
-                    {
-                        break;
-                    }
-                    bytes += entry.raw.len();
-                    hashes.push(hash);
-                    raw_transactions.push(entry.raw.clone());
-                } else {
-                    self.gossip_queued.remove(&hash);
-                }
-                self.gossip_order.pop_front();
-            }
-            if !raw_transactions.is_empty() {
-                let batch = apfl_batch(&raw_transactions, self.batch_size)?;
-                self.gossip_offer = Some(GossipOffer {
-                    hashes,
-                    message: self.node.controller.apfl_transactions_message(batch)?,
-                });
-            }
-        }
-        if let Some(offer) = &self.gossip_offer {
-            if self
-                .node
-                .controller
-                .try_submit_transactions(&offer.message)?
-            {
-                for hash in &offer.hashes {
-                    self.gossip_queued.remove(hash);
-                }
-                self.gossip_offer = None;
-            }
-        }
-        Ok(())
     }
 
     fn pending_status(&self, hash: Hash) -> Value {
@@ -614,6 +582,8 @@ impl RpcLifecycle {
             "business_gpu_active":false,"business_proof_required":false,"business_proof_verified":false,
             "mempool_gossip":true,"gossip_delivery":"best_effort_not_durable",
             "transaction_gossip":self.node.controller.transactions_stats(),
+            "input_availability":controller.input_availability(),
+            "gossip_repair":self.gossip_repair.status(),
             "gossip_verified_inputs":self.gossip_verified,"gossip_rejected_inputs":self.gossip_rejected,
             "authentication_cache_hits":self.authentication_cache_hits,
             "rpc_authentication":self.admission.status(),
@@ -930,6 +900,7 @@ mod tests {
                     raw: raw.clone(),
                     signer: checked.nonce_identity(),
                     nonce: checked.transfer().nonce,
+                    gossip_missing: 0,
                 },
             );
         }
@@ -972,6 +943,7 @@ mod tests {
                     raw: raw.clone(),
                     signer: checked.nonce_identity(),
                     nonce: checked.transfer().nonce,
+                    gossip_missing: 0,
                 },
             );
         }
@@ -1043,6 +1015,7 @@ mod tests {
                     raw,
                     signer: [1; 32],
                     nonce: nonce as u64,
+                    gossip_missing: 0,
                 },
             );
         }

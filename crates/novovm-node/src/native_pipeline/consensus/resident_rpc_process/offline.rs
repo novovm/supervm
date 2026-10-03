@@ -4,6 +4,94 @@
 use super::*;
 
 const BATCHES: u64 = 16;
+const MAX_PROGRESS_SAMPLES: usize = 512;
+
+fn enter_phase(
+    evidence: &mut Value,
+    phase: &mut &'static str,
+    phase_started: &mut Instant,
+    next: &'static str,
+) {
+    record_phase(evidence, phase, *phase_started, true);
+    *phase = next;
+    *phase_started = Instant::now();
+}
+
+fn record_phase(evidence: &mut Value, phase: &str, started: Instant, completed: bool) {
+    evidence["phase_timings"]
+        .as_array_mut()
+        .expect("fixture phase timings initialized")
+        .push(
+            json!({"phase":phase,"elapsed_ms":started.elapsed().as_millis(),
+            "completed":completed}),
+        );
+}
+
+// These are separately queried observations, not an atomic cluster snapshot.
+// In particular pending > 0 does not prove an executable nonce prefix or a
+// current candidate body. Older binaries do not expose input_availability;
+// absence of this diagnostic must not be interpreted as absence of a body.
+fn progress_node_status(
+    index: usize,
+    status: &Value,
+    validator_indices: &BTreeMap<String, usize>,
+    online: &[usize],
+) -> Value {
+    let proposer = status["scheduled_proposer"]
+        .as_str()
+        .and_then(|id| validator_indices.get(id))
+        .copied();
+    let pool_observation = if status["local_proposer"] != true {
+        "not_local_proposer"
+    } else {
+        match status["pending"].as_u64() {
+            Some(0) => "empty_pending_observed",
+            Some(_) => "nonempty_pending_observed_executability_unknown",
+            None => "pending_not_observable",
+        }
+    };
+    json!({"node":index,"height":status["head"]["height"].as_u64().unwrap_or(0),
+        "current_height":status["current_height"],"round":status["round"],
+        "pending":status["pending"],"pending_bytes":status["pending_bytes"],
+        "leader":status["scheduled_proposer"],"local_leader":status["local_proposer"],
+        "scheduled_proposer_fixture_index":proposer,
+        "scheduled_proposer_configured_online":proposer.map(|node|online.contains(&node)),
+        "local_proposer_pool_observation":pool_observation,
+        "input_availability":status["input_availability"],
+        "current_body_observation":if status["input_availability"].is_null() {
+            "not_exposed_by_public_chain_status"
+        } else { "see_input_availability_not_a_root_cause_inference" },
+        "rpc_indexed_height":status["rpc_indexed_height"],
+        "projection_error":status["projection_error"],
+        "recovery_in_progress":status["recovery_in_progress"],
+        "executed_batches":status["executed_batches"],
+        "durable_decisions":status["durable_decisions"],
+        "execution_failures":status["execution_failures"],
+        "early_authentication_started":status["early_authentication_started"],
+        "early_authentication_completed":status["early_authentication_completed"],
+        "early_bind_reused":status["early_bind_reused"],
+        "gossip_verified_inputs":status["gossip_verified_inputs"],
+        "gossip_rejected_inputs":status["gossip_rejected_inputs"],
+        "rpc_authentication":status["rpc_authentication"],
+        "transaction_gossip":status["transaction_gossip"],
+        "gossip_repair":status["gossip_repair"],
+        "last_error":status["last_error"]})
+}
+
+fn propagation_counts(status: &Value) -> Result<(u64, u64, u64)> {
+    let total = status["transaction_gossip"]["outbound_batches_accepted"]
+        .as_u64()
+        .context("accepted gossip batch count")?;
+    let repair = status["gossip_repair"]
+        .get("repair_batches_reserved")
+        .map(|value| value.as_u64().context("reserved repair batch count"))
+        .transpose()?
+        .unwrap_or(0); // The old comparison executable has no repair counter.
+    let fresh = total
+        .checked_sub(repair)
+        .context("repair reservations exceed total gossip acceptances")?;
+    Ok((total, repair, fresh))
+}
 
 // A deliberately absent rotating proposer consumes the unchanged production
 // 5s propose/prevote/precommit timers at several of the sixteen heights. Bound
@@ -18,15 +106,29 @@ fn wait_online_progress(
     let mut progressed = started;
     let mut common_height = 0;
     let mut history = Vec::new();
+    let mut samples_dropped = 0;
+    let mut maximum_no_progress = Duration::ZERO;
+    let validator_indices = (0..nodes.processes.len())
+        .map(|index| {
+            let validator = Validator::new(validator_key(index).verifying_key().to_bytes(), 1)?;
+            Ok((hex(&validator.id()), index))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
     let mut sampled = started - Duration::from_secs(1);
     loop {
         nodes.alive()?;
-        let statuses = online.iter().map(|index| {
-            let status = nodes.rpc(*index, "nov_chainStatus", json!([]))?;
-            Ok(json!({"node":index,"height":status["head"]["height"].as_u64().unwrap_or(0),
-                "round":status["round"],"pending":status["pending"],"leader":status["scheduled_proposer"],
-                "local_leader":status["local_proposer"],"last_error":status["last_error"]}))
-        }).collect::<Result<Vec<_>>>()?;
+        let statuses = online
+            .iter()
+            .map(|index| {
+                let status = nodes.rpc(*index, "nov_chainStatus", json!([]))?;
+                Ok(progress_node_status(
+                    *index,
+                    &status,
+                    &validator_indices,
+                    online,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
         let minimum = statuses
             .iter()
             .filter_map(|status| status["height"].as_u64())
@@ -37,13 +139,31 @@ fn wait_online_progress(
             "online published height regressed"
         );
         let advanced = minimum > common_height;
+        let now = Instant::now();
+        maximum_no_progress = maximum_no_progress.max(now.duration_since(progressed));
         if advanced {
             common_height = minimum;
-            progressed = Instant::now();
+            progressed = now;
         }
+        // Update this even if no periodic sample is due, so timeout/failure
+        // reports retain the actual last queried states and observed stall.
+        evidence["online_last_status"] = json!(statuses);
+        evidence["online_progress_summary"] = json!({
+            "elapsed_ms":started.elapsed().as_millis(),"common_published_height":common_height,
+            "since_common_height_progress_ms":progressed.elapsed().as_millis(),
+            "max_observed_no_progress_ms":maximum_no_progress.as_millis(),
+            "clock_origin":"after propagation gate; before published-height polling",
+            "observation_scope":"sequential HTTP observations, not atomic or internal commit timestamps",
+            "input_availability_reported_by_all_nodes":statuses.iter()
+                .all(|status|!status["input_availability"].is_null())});
         if advanced || sampled.elapsed() >= Duration::from_secs(1) {
+            if history.len() == MAX_PROGRESS_SAMPLES {
+                history.remove(0);
+                samples_dropped += 1;
+            }
             history.push(json!({"elapsed_ms":started.elapsed().as_millis(),"nodes":statuses}));
             evidence["online_progress"] = json!(history);
+            evidence["online_progress_samples_dropped"] = json!(samples_dropped);
             sampled = Instant::now();
         }
         ensure!(
@@ -52,6 +172,7 @@ fn wait_online_progress(
             "online quorum stopped advancing or exceeded total fault budget; last={statuses:?}"
         );
         if minimum >= BATCHES {
+            evidence["online_quorum_publication_elapsed_ms"] = json!(started.elapsed().as_millis());
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -94,8 +215,11 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
         "external_votes_or_qcs":false,"legacy_host_permission":false,"reduced_quorum":false,
         "batch_cap":2,"signed_transactions":BATCHES*2,"channel_ttl_seconds":30,
         "propagation_deadline_seconds":8,"online_no_progress_deadline_seconds":90,
-        "online_total_fault_deadline_seconds":240,"production_acceptance":false,"performance_measured":false});
+        "online_total_fault_deadline_seconds":240,"production_acceptance":false,"performance_measured":false,
+        "phase_timings":[],"diagnostic_sample_limit":MAX_PROGRESS_SAMPLES,
+        "phase_timing_scope":"wall-clock intervals including HTTP observation and fixture checks; not production latency or TPS"});
     let mut phase = "startup";
+    let mut phase_started = Instant::now();
     let result = (|| -> Result<()> {
         for index in &online {
             nodes.start(*index, "create")?;
@@ -106,7 +230,12 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
             .map(|(seed, nonce, amount)| signed(seed, nonce, amount))
             .collect::<Result<Vec<_>>>()?;
         let mut hashes = transaction_hashes(&raw)?;
-        phase = "single HTTP admission";
+        enter_phase(
+            &mut evidence,
+            &mut phase,
+            &mut phase_started,
+            "single HTTP admission",
+        );
         let started = Instant::now();
         let admitted = nodes.submit_batch(0, &raw)?;
         ensure!(
@@ -114,13 +243,25 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
             "offline fixture signed admission changed"
         );
         evidence["admission"] = json!(admitted);
-        phase = "propagate beyond global capacity before TTL";
+        enter_phase(
+            &mut evidence,
+            &mut phase,
+            &mut phase_started,
+            "propagate beyond global capacity before TTL",
+        );
         loop {
             nodes.alive()?;
             let status = nodes.rpc(0, "nov_chainStatus", json!([]))?;
             evidence["ingress_before_ttl"] = status.clone();
             evidence["propagation_elapsed_ms"] = json!(started.elapsed().as_millis());
             let stats = &status["transaction_gossip"];
+            let (total_accepted, repair_reserved, new_input_accepted) =
+                propagation_counts(&status)?;
+            evidence["propagation_batch_counts"] = json!({
+                "outbound_batches_accepted":total_accepted,
+                "repair_batches_reserved":repair_reserved,
+                "new_input_batches_accepted":new_input_accepted,
+                "scope":"local queue admission, excludes repeated repair offers; not peer receipt"});
             ensure!(
                 stats["expired_batches"] == 0 && stats["channel_expired_sends"] == 0,
                 "peer isolation only progressed by expiring accepted sends"
@@ -129,7 +270,7 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
                 started.elapsed() < Duration::from_secs(8),
                 "offline recipient pinned global propagation capacity before TTL: {stats}"
             );
-            if stats["outbound_batches_accepted"].as_u64().unwrap_or(0) >= BATCHES {
+            if new_input_accepted >= BATCHES {
                 let capacity = stats["outbound_capacity"]
                     .as_u64()
                     .context("outbox capacity")?;
@@ -153,9 +294,14 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        phase =
-            "online quorum finality (offline node excluded from observation, not validator set)";
+        enter_phase(
+            &mut evidence,
+            &mut phase,
+            &mut phase_started,
+            "online quorum finality (offline node excluded from observation, not validator set)",
+        );
         wait_online_progress(&mut nodes, &online, &mut evidence)?;
+        let online_checks_started = Instant::now();
         let three_receipts = nodes.wait_receipts(&online, &hashes)?;
         ensure!(
             three_receipts
@@ -175,6 +321,8 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
         let partition = receipt_partition(&three_receipts[0], &hashes, 2)?;
         let online_balances = nodes.balances(&online, &three_receipts[0], [1600, 800])?;
         evidence["online_elapsed_ms"] = json!(started.elapsed().as_millis());
+        evidence["online_receipt_and_economics_elapsed_ms"] =
+            json!(online_checks_started.elapsed().as_millis());
         evidence["online_status"] = json!(three_status);
         evidence["online_receipts"] = json!(three_receipts);
         evidence["online_balances"] = json!(online_balances);
@@ -183,7 +331,12 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
             nodes.processes[offline].is_none(),
             "absent node was secretly helping quorum"
         );
-        phase = "fourth node archive catchup without wallet resubmission";
+        enter_phase(
+            &mut evidence,
+            &mut phase,
+            &mut phase_started,
+            "fourth node archive catchup without wallet resubmission",
+        );
         nodes.start(offline, "create")?;
         nodes.wait_ready(&[offline])?;
         let four_receipts = nodes.wait_receipts(&all, &hashes)?;
@@ -195,8 +348,15 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
         verify_partition_heads(&four_status, &partition, BATCHES * 2)?;
         let before_balances = nodes.balances(&all, &four_receipts[0], [1600, 800])?;
         evidence["fourth_caught_up_status"] = json!(four_status);
+        evidence["fourth_catchup_elapsed_ms"] = json!(phase_started.elapsed().as_millis());
         let pids: Vec<_> = nodes.processes.iter().flatten().map(Child::id).collect();
-        phase = "four-process cold recovery";
+        enter_phase(
+            &mut evidence,
+            &mut phase,
+            &mut phase_started,
+            "stop and audit confirmed archive",
+        );
+        let restart_started = Instant::now();
         nodes.stop_all()?;
         let online_signers = online
             .iter()
@@ -213,6 +373,12 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
             head,
             &online_signers,
         )?;
+        enter_phase(
+            &mut evidence,
+            &mut phase,
+            &mut phase_started,
+            "four-process cold recovery",
+        );
         for index in &all {
             nodes.start(*index, "existing")?;
         }
@@ -231,7 +397,13 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
             nodes.balances(&all, &cold[0], [1600, 800])? == before_balances,
             "cold balances/root differ"
         );
-        phase = "post-restart successor";
+        evidence["cold_restart_elapsed_ms"] = json!(phase_started.elapsed().as_millis());
+        enter_phase(
+            &mut evidence,
+            &mut phase,
+            &mut phase_started,
+            "post-restart successor",
+        );
         let next = vec![signed(1, BATCHES, 100)?, signed(3, BATCHES, 50)?];
         nodes.submit_batch(0, &next)?;
         hashes.extend(transaction_hashes(&next)?);
@@ -259,6 +431,16 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
             .collect::<Vec<_>>());
         evidence["successful_transactions"] = json!(BATCHES * 2 + 2);
         evidence["business_failed_transactions"] = json!(0);
+        evidence["post_restart_successor_elapsed_ms"] = json!(phase_started.elapsed().as_millis());
+        evidence["restart_and_successor_elapsed_ms"] = json!(restart_started.elapsed().as_millis());
+        evidence["restart_and_successor_timing_scope"] =
+            json!("stop confirmed nodes, audit archive, cold-open, verify old state, submit and observe successor; excludes final archive audit");
+        enter_phase(
+            &mut evidence,
+            &mut phase,
+            &mut phase_started,
+            "final archive verification",
+        );
         nodes.stop_all()?;
         let all_signers = all
             .iter()
@@ -269,9 +451,12 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
         let head: ParentPoint = serde_json::from_value(final_status[0]["head"].clone())?;
         evidence["final_archive"] =
             super::aab::audit_archived_quorums(&nodes, &all, &genesis, &set, head, &all_signers)?;
-        phase = "complete";
         Ok(())
     })();
+    record_phase(&mut evidence, phase, phase_started, result.is_ok());
+    if result.is_ok() {
+        phase = "complete";
+    }
     if result.is_err() {
         evidence["failure_status"] = json!(all
             .iter()
@@ -300,4 +485,81 @@ fn actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart() -> Res
         directory.join("result.json").display()
     );
     result
+}
+
+#[test]
+fn offline_diagnostics_distinguish_absent_proposer_from_observed_empty_pool() {
+    let validators = BTreeMap::from([("online".to_owned(), 0), ("absent".to_owned(), 2)]);
+    let status = json!({"head":{"height":3},"current_height":4,"round":0,
+        "scheduled_proposer":"absent","local_proposer":false,"pending":12,
+        "rpc_indexed_height":3,"rpc_authentication":{"signature_batch_pending":false}});
+    let absent = progress_node_status(0, &status, &validators, &[0, 1, 3]);
+    assert_eq!(absent["height"], 3);
+    assert_eq!(absent["current_height"], 4);
+    assert_eq!(absent["scheduled_proposer_fixture_index"], 2);
+    assert_eq!(absent["scheduled_proposer_configured_online"], false);
+    assert_eq!(
+        absent["local_proposer_pool_observation"],
+        "not_local_proposer"
+    );
+    assert!(absent["input_availability"].is_null());
+
+    let mut status = status;
+    status["scheduled_proposer"] = json!("online");
+    status["local_proposer"] = json!(true);
+    status["pending"] = json!(0);
+    status["rpc_authentication"]["signature_batch_pending"] = json!(true);
+    let empty = progress_node_status(0, &status, &validators, &[0, 1, 3]);
+    assert_eq!(empty["scheduled_proposer_configured_online"], true);
+    assert_eq!(
+        empty["local_proposer_pool_observation"],
+        "empty_pending_observed"
+    );
+    // Empty pending does not mean no in-flight authentication or no candidate.
+    assert_eq!(empty["rpc_authentication"]["signature_batch_pending"], true);
+    assert_eq!(
+        empty["current_body_observation"],
+        "not_exposed_by_public_chain_status"
+    );
+}
+
+#[test]
+fn offline_diagnostics_do_not_infer_executable_body_from_nonempty_pool() {
+    let validators = BTreeMap::from([("online".to_owned(), 0)]);
+    let status = json!({"head":{"height":8},"current_height":9,"round":1,
+        "scheduled_proposer":"online","local_proposer":true,"pending":2,
+        "rpc_indexed_height":7,"projection_error":null,
+        "input_availability":{"fixture_marker":"observed verbatim"}});
+    let observed = progress_node_status(0, &status, &validators, &[0]);
+    assert_eq!(
+        observed["local_proposer_pool_observation"],
+        "nonempty_pending_observed_executability_unknown"
+    );
+    assert_eq!(observed["rpc_indexed_height"], 7);
+    assert_eq!(observed["input_availability"], status["input_availability"]);
+    let mut unknown = status;
+    unknown["scheduled_proposer"] = json!("unknown identity");
+    let unknown = progress_node_status(0, &unknown, &validators, &[0]);
+    assert!(unknown["scheduled_proposer_fixture_index"].is_null());
+    assert!(unknown["scheduled_proposer_configured_online"].is_null());
+}
+
+#[test]
+fn offline_propagation_gate_does_not_count_repair_reacceptance_as_new_input() -> Result<()> {
+    let mut status = json!({"transaction_gossip":{"outbound_batches_accepted":16}});
+    assert_eq!(propagation_counts(&status)?, (16, 0, 16));
+    status["gossip_repair"] = json!({"repair_batches_reserved":8});
+    let (total, repair, fresh) = propagation_counts(&status)?;
+    assert_eq!((total, repair, fresh), (16, 8, 8));
+    assert!(
+        fresh < BATCHES,
+        "repeated repair offers cannot pass the gate"
+    );
+    status["transaction_gossip"]["outbound_batches_accepted"] = json!(24);
+    assert_eq!(propagation_counts(&status)?, (24, 8, 16));
+    status["gossip_repair"]["repair_batches_reserved"] = json!(25);
+    assert!(propagation_counts(&status).is_err());
+    status["gossip_repair"]["repair_batches_reserved"] = json!("unknown");
+    assert!(propagation_counts(&status).is_err());
+    Ok(())
 }

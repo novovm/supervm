@@ -625,19 +625,31 @@ fn actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers() ->
         for index in &honest {
             nodes.submit_batch(*index, &raw)?;
         }
+        let handshake_started = Instant::now();
         let deadline = Instant::now() + Duration::from_secs(4);
+        let mut status_busy_polls = 0u64;
+        evidence["fault_handshake_status_busy_polls"] = json!(0);
         loop {
             fault.pump()?;
-            let network = fault.worker.status()?;
-            if honest
-                .iter()
-                .all(|index| network.active_peers.contains(&peer(*index)))
-            {
-                break;
+            evidence["fault_handshake_elapsed_ms"] = json!(handshake_started.elapsed().as_millis());
+            // Read-only lock contention is retryable within the original
+            // four-second gate; poison remains an immediate error via `?`.
+            if let Some(network) = fault.worker.try_status()? {
+                evidence["fault_handshake_last_active_peers"] = json!(network.active_peers);
+                if honest
+                    .iter()
+                    .all(|index| network.active_peers.contains(&peer(*index)))
+                {
+                    break;
+                }
+            } else {
+                status_busy_polls += 1;
+                evidence["fault_handshake_status_busy_polls"] = json!(status_busy_polls);
             }
             ensure!(
                 Instant::now() < deadline,
-                "Byzantine peer handshake timeout"
+                "Byzantine peer handshake timeout; status_busy_polls={status_busy_polls}; last_active_peers={}",
+                evidence["fault_handshake_last_active_peers"]
             );
             std::thread::sleep(Duration::from_millis(1));
         }

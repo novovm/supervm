@@ -43,6 +43,57 @@ pub(super) fn unstarted(config: &NetworkWorkerConfig) -> NetworkWorker {
     }
 }
 
+#[test]
+fn status_contention_is_retryable_without_mutating_queue_or_snapshot() {
+    let worker = unstarted(&config(vec![id(2)]));
+    assert_eq!(
+        worker.try_send(id(2), vec![7; 13]).unwrap(),
+        SendAdmission::Accepted
+    );
+    let mut held = worker.shared.lock().unwrap();
+    held.inbound
+        .push(&id(2), vec![9; 5], 5, Instant::now())
+        .unwrap();
+    held.status.active_peers.push(id(2));
+    // The same thread deliberately owns the mutex: a blocking status read
+    // would deadlock, while a poisoned read must never return this `None`.
+    assert!(worker.try_status().unwrap().is_none());
+    assert_eq!(
+        worker.status().unwrap_err().to_string(),
+        "network status busy"
+    );
+    drop(held);
+    for status in [
+        worker.try_status().unwrap().unwrap(),
+        worker.status().unwrap(),
+    ] {
+        assert_eq!(status.outbound_messages, 1);
+        assert_eq!(status.outbound_bytes, 13);
+        assert_eq!(status.inbound_messages, 1);
+        assert_eq!(status.inbound_bytes, 5);
+        assert_eq!(status.active_peers, vec![id(2)]);
+    }
+}
+
+#[test]
+fn poisoned_status_is_fatal_not_retryable_contention() {
+    let worker = unstarted(&config(vec![id(2)]));
+    let shared = worker.shared.clone();
+    let poisoned = std::panic::catch_unwind(move || {
+        let _held = shared.lock().unwrap();
+        panic!("poison the test-only worker state");
+    });
+    assert!(poisoned.is_err());
+    assert_eq!(
+        worker.try_status().unwrap_err().to_string(),
+        "network status poisoned"
+    );
+    assert_eq!(
+        worker.status().unwrap_err().to_string(),
+        "network status poisoned"
+    );
+}
+
 #[derive(Default)]
 struct QueueWakeCounter(std::sync::atomic::AtomicUsize);
 

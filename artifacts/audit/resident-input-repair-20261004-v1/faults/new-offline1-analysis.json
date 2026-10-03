@@ -1,0 +1,83 @@
+{
+  "schema": "novovm-resident-input-repair-offline-observation-v1",
+  "report": "new-offline1-result.json",
+  "report_sha256": "827d225f516e12b561effa46a9232794f1524e04e2d3fb0496f5681befcefb22",
+  "log": "new-offline1.log",
+  "log_sha256": "0fe6ed61d921dcd1d7c158d26bf0af8ef2bbc5549488437d7427e6b573ce8537",
+  "source_report": "artifacts/audit/resident-rpc-offline/26500-1791070606421926300/result.json",
+  "source_log": "artifacts/audit/resident-input-repair-20261004-v1/new-offline1.log",
+  "copies_equal_source_sha256": true,
+  "node_binary_sha256": "ce675c6813534aa4b6810d32e0f58560a8abe4ea6ffbcab3ed12ab2606e6901d",
+  "passed": true,
+  "topology": "One machine, three original node executables online; fourth original validator absent, then catch-up, four-node cold restart and successor.",
+  "online_nodes": [0, 1, 3],
+  "absent_node": 2,
+  "quorum": {"validator_count": 4, "required_signatures": 3, "reduced": false},
+  "timings": {
+    "whole_test_seconds": 47.60,
+    "propagation_gate_from_before_http_admission_ms": 125,
+    "online_from_before_http_admission_through_economic_checks_ms": 43055,
+    "online_published_height_polling_ms": 42712,
+    "online_receipts_and_economic_checks_ms": 216,
+    "max_observed_common_height_no_progress_ms": 10376,
+    "fourth_catchup_with_checks_ms": 2432,
+    "cold_restart_with_old_state_checks_ms": 723,
+    "post_restart_successor_with_checks_ms": 521,
+    "stop_archive_audit_restart_and_successor_ms": 1435,
+    "scope": "Overlapping wall-clock spans include fixture and HTTP observation costs; do not sum nested fields or report them as normal-load TPS or exact internal commit latency."
+  },
+  "propagation_gate": {
+    "deadline_seconds": 8,
+    "queue_ttl_seconds": 30,
+    "total_batches_accepted": 16,
+    "repair_batches_reserved_at_gate": 0,
+    "new_input_batches_accepted_after_subtracting_repair": 16,
+    "scope": "Bounded local queue acceptance beyond shared capacity, not peer delivery or finality."
+  },
+  "repair_observed_at_online_completion": {
+    "ingress_repair_batches_reserved": 16,
+    "ingress_repair_inputs_reserved": 32,
+    "node_1_gossip_verified_inputs": 32,
+    "node_3_gossip_verified_inputs": 32,
+    "interpretation": "Repair was exercised. Remote strict-admission counters and actual complete finalized receipts support useful remote progress; the local repair reservation count alone does not establish delivery or uniqueness."
+  },
+  "progress": {
+    "retained_samples": 52,
+    "samples_dropped": 0,
+    "sample_clock_origin": "after propagation gate, before polling online published heights",
+    "decision_rounds_heights_1_through_17": [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0],
+    "every_archived_decision_has_three_signatures": true,
+    "only_heights_requiring_later_round": [4, 8, 12, 16],
+    "all_later_round_heights_have_absent_round_zero_proposer": true,
+    "observed_gaps_to_those_heights_ms": [10235, 10317, 10376, 10241],
+    "maximum_other_observed_common_height_advance_gap_ms": 277,
+    "absent_leader_samples": [
+      {"height": 4, "propose_first_ms": 222, "propose_last_ms": 4382, "precommit_first_ms": 5426, "precommit_last_ms": 9584, "published_ms": 10457},
+      {"height": 8, "propose_first_ms": 10949, "propose_last_ms": 15105, "precommit_first_ms": 16148, "precommit_last_ms": 20290, "published_ms": 21266},
+      {"height": 12, "propose_first_ms": 21596, "propose_last_ms": 25738, "precommit_first_ms": 26778, "precommit_last_ms": 30937, "published_ms": 31972},
+      {"height": 16, "propose_first_ms": 32470, "propose_last_ms": 36633, "precommit_first_ms": 37672, "precommit_last_ms": 41836, "published_ms": 42711}
+    ],
+    "transient_missing_body_samples": [
+      {"elapsed_ms": 3, "node": 3, "current_height": 2, "round": 0, "scheduled_proposer_node": 0, "is_local_proposer": false, "pending": 10, "missing_exact_body_count": 1},
+      {"elapsed_ms": 111, "node": 1, "current_height": 3, "round": 0, "scheduled_proposer_node": 3, "is_local_proposer": false, "pending": 28, "missing_exact_body_count": 1}
+    ],
+    "interpretation": "The long sampled gaps align with the deliberately absent proposer's four turns and observed unchanged Propose/Precommit waiting. Healthy-proposer heights all decided in round zero. Two follower body misses were observed briefly, without an extra deciding round. No sustained online-proposer empty-pool or missing-body stall was observed in this run; sampling cannot prove absence of every transient wait."
+  },
+  "final_state": {
+    "successful_transactions": 34,
+    "business_failed_transactions": 0,
+    "all_four_final_height": 17,
+    "all_four_final_state_version": 34,
+    "archived_parent_chain_and_qcs_checked": true,
+    "balance_receipt_nonce_and_cold_recovery_checked": true,
+    "economic_check_scope": "The offline balances helper derives payer and recipient expectations from actual receipt charged_fee; this is not the load fixture's independent full treasury and fee-model oracle."
+  },
+  "limits": [
+    "One finite functional fault run does not establish stable fault latency or repair capacity.",
+    "Progress observations are sequential HTTP samples, not an atomic view or internal timer trace.",
+    "Later deciding rounds plus timeout-step samples support the absent-leader waiting explanation here, not every earlier run's cause.",
+    "Ordinary stale-context and retired-round rejection errors remain in snapshots; the result is not an error-free-log claim.",
+    "Restart occurs after confirmation; no write-in-flight, power-loss or unknown-ACK injection is claimed.",
+    "No production timer, propagation deadline, quorum threshold, or ninety-second stall/two-hundred-forty-second total fixture limit was changed."
+  ]
+}

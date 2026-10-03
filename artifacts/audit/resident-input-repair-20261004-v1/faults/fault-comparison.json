@@ -1,0 +1,863 @@
+{
+  "schema": "novovm-resident-input-repair-fault-comparison-v1",
+  "scope": "Same updated diagnostic harness; sequential new1, old1, new2 original-product executable offline fixtures. One machine, not fault-throughput measurement or production acceptance.",
+  "baseline_commit": "b9c612c323440a06cdbfc28435c7b807803e7283",
+  "old_node_sha256": "0dc4830a76f9ae96429154ba418e50c1f16422b9b3ce6d492e9fe02baa942399",
+  "new_node_sha256": "ce675c6813534aa4b6810d32e0f58560a8abe4ea6ffbcab3ed12ab2606e6901d",
+  "earlier_122_second_online_run": "Historical reference from the previous slice, not substituted for the 156633 ms old-executable run with this same harness.",
+  "unchanged_conditions": {
+    "initial_online_nodes": [
+      0,
+      1,
+      3
+    ],
+    "initial_absent_node": 2,
+    "validator_count": 4,
+    "required_qc_signatures": 3,
+    "initial_signed_transactions": 32,
+    "batch_cap": 2,
+    "propagation_deadline_seconds": 8,
+    "channel_ttl_seconds": 30,
+    "common_height_stall_deadline_seconds": 90,
+    "total_online_fault_deadline_seconds": 240,
+    "production_timer_changed": false,
+    "wallet_resubmits_to_returning_node": false
+  },
+  "timer_scope": "online_elapsed_ms starts before HTTP admission and ends after online receipt/balance checks; publication polling begins after propagation. Other phase spans include their HTTP and fixture checks. Nested timers are not additive; sampled gaps are not exact internal timer durations.",
+  "cases": [
+    {
+      "id": "new-offline1",
+      "passed": true,
+      "node_sha256": "0xce675c6813534aa4b6810d32e0f58560a8abe4ea6ffbcab3ed12ab2606e6901d",
+      "report": "new-offline1-result.json",
+      "report_sha256": "827d225f516e12b561effa46a9232794f1524e04e2d3fb0496f5681befcefb22",
+      "log": "new-offline1.log",
+      "log_sha256": "0fe6ed61d921dcd1d7c158d26bf0af8ef2bbc5549488437d7427e6b573ce8537",
+      "test_elapsed_seconds": 47.6,
+      "phase_timings": [
+        {
+          "phase": "startup",
+          "elapsed_ms": 242,
+          "completed": true
+        },
+        {
+          "phase": "single HTTP admission",
+          "elapsed_ms": 26,
+          "completed": true
+        },
+        {
+          "phase": "propagate beyond global capacity before TTL",
+          "elapsed_ms": 99,
+          "completed": true
+        },
+        {
+          "phase": "online quorum finality (offline node excluded from observation, not validator set)",
+          "elapsed_ms": 42929,
+          "completed": true
+        },
+        {
+          "phase": "fourth node archive catchup without wallet resubmission",
+          "elapsed_ms": 2432,
+          "completed": true
+        },
+        {
+          "phase": "stop and audit confirmed archive",
+          "elapsed_ms": 189,
+          "completed": true
+        },
+        {
+          "phase": "four-process cold recovery",
+          "elapsed_ms": 723,
+          "completed": true
+        },
+        {
+          "phase": "post-restart successor",
+          "elapsed_ms": 521,
+          "completed": true
+        },
+        {
+          "phase": "final archive verification",
+          "elapsed_ms": 160,
+          "completed": true
+        }
+      ],
+      "propagation_elapsed_ms": 125,
+      "propagation_batch_counts": {
+        "outbound_batches_accepted": 16,
+        "repair_batches_reserved": 0,
+        "new_input_batches_accepted": 16,
+        "scope": "local queue admission, excludes repeated repair offers; not peer receipt"
+      },
+      "online_elapsed_ms": 43055,
+      "online_quorum_publication_elapsed_ms": 42712,
+      "online_receipt_and_economics_elapsed_ms": 216,
+      "fourth_catchup_elapsed_ms": 2432,
+      "cold_restart_elapsed_ms": 723,
+      "post_restart_successor_elapsed_ms": 521,
+      "restart_and_successor_elapsed_ms": 1435,
+      "max_observed_no_progress_ms": 10376,
+      "progress_samples": 52,
+      "samples_dropped": 0,
+      "common_height_advances": [
+        {
+          "height": 1,
+          "elapsed_ms": 3,
+          "gap_ms": 3
+        },
+        {
+          "height": 2,
+          "elapsed_ms": 111,
+          "gap_ms": 108
+        },
+        {
+          "height": 3,
+          "elapsed_ms": 222,
+          "gap_ms": 111
+        },
+        {
+          "height": 4,
+          "elapsed_ms": 10457,
+          "gap_ms": 10235
+        },
+        {
+          "height": 5,
+          "elapsed_ms": 10620,
+          "gap_ms": 163
+        },
+        {
+          "height": 6,
+          "elapsed_ms": 10839,
+          "gap_ms": 219
+        },
+        {
+          "height": 7,
+          "elapsed_ms": 10949,
+          "gap_ms": 110
+        },
+        {
+          "height": 8,
+          "elapsed_ms": 21266,
+          "gap_ms": 10317
+        },
+        {
+          "height": 9,
+          "elapsed_ms": 21376,
+          "gap_ms": 110
+        },
+        {
+          "height": 10,
+          "elapsed_ms": 21431,
+          "gap_ms": 55
+        },
+        {
+          "height": 11,
+          "elapsed_ms": 21596,
+          "gap_ms": 165
+        },
+        {
+          "height": 12,
+          "elapsed_ms": 31972,
+          "gap_ms": 10376
+        },
+        {
+          "height": 13,
+          "elapsed_ms": 32249,
+          "gap_ms": 277
+        },
+        {
+          "height": 14,
+          "elapsed_ms": 32360,
+          "gap_ms": 111
+        },
+        {
+          "height": 15,
+          "elapsed_ms": 32470,
+          "gap_ms": 110
+        },
+        {
+          "height": 16,
+          "elapsed_ms": 42711,
+          "gap_ms": 10241
+        }
+      ],
+      "decision_rounds_heights_1_through_17": [
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "online_proposer_views_sampled_for_at_least_one_second": [],
+      "missing_body_observations": [
+        {
+          "elapsed_ms": 3,
+          "node": 3,
+          "current_height": 2,
+          "round": 0,
+          "proposer_node": 0,
+          "proposer_online": true,
+          "local_proposer": false,
+          "pending": 10,
+          "missing_body": 1,
+          "timeout_step": "Propose",
+          "gossip_verified": 12
+        },
+        {
+          "elapsed_ms": 111,
+          "node": 1,
+          "current_height": 3,
+          "round": 0,
+          "proposer_node": 3,
+          "proposer_online": true,
+          "local_proposer": false,
+          "pending": 28,
+          "missing_body": 1,
+          "timeout_step": "Propose",
+          "gossip_verified": 32
+        }
+      ],
+      "body_diagnostic_available": true,
+      "online_completion_counters": [
+        {
+          "gossip_verified_inputs": 0,
+          "gossip_repair": {
+            "omitted_recipient_inputs": 0,
+            "repair_batches_reserved": 16,
+            "repair_inputs_reserved": 32,
+            "scope": "local omitted-recipient repair; not remote or durable receipt"
+          }
+        },
+        {
+          "gossip_verified_inputs": 32,
+          "gossip_repair": {
+            "omitted_recipient_inputs": 0,
+            "repair_batches_reserved": 0,
+            "repair_inputs_reserved": 0,
+            "scope": "local omitted-recipient repair; not remote or durable receipt"
+          }
+        },
+        {
+          "gossip_verified_inputs": 32,
+          "gossip_repair": {
+            "omitted_recipient_inputs": 0,
+            "repair_batches_reserved": 0,
+            "repair_inputs_reserved": 0,
+            "scope": "local omitted-recipient repair; not remote or durable receipt"
+          }
+        }
+      ],
+      "successful_transactions": 34,
+      "business_failed_transactions": 0,
+      "final_heights": [
+        17,
+        17,
+        17,
+        17
+      ],
+      "final_state_versions": [
+        34,
+        34,
+        34,
+        34
+      ],
+      "source_report": "artifacts/audit/resident-rpc-offline/26500-1791070606421926300/result.json",
+      "source_log": "artifacts/audit/resident-input-repair-20261004-v1/new-offline1.log",
+      "copies_equal_source_sha256": true
+    },
+    {
+      "id": "old-offline1",
+      "passed": true,
+      "node_sha256": "0x0dc4830a76f9ae96429154ba418e50c1f16422b9b3ce6d492e9fe02baa942399",
+      "report": "old-offline1-result.json",
+      "report_sha256": "f8c77d8a43c0444ca7ccc59d04585aa479051c154818e6e25137c1cd13ae2e4c",
+      "log": "old-offline1.log",
+      "log_sha256": "f34723b25f520933181eb01eaa0d1d4244b822b69ba821fbca34a7e661ae5d8e",
+      "test_elapsed_seconds": 160.96,
+      "phase_timings": [
+        {
+          "phase": "startup",
+          "elapsed_ms": 124,
+          "completed": true
+        },
+        {
+          "phase": "single HTTP admission",
+          "elapsed_ms": 24,
+          "completed": true
+        },
+        {
+          "phase": "propagate beyond global capacity before TTL",
+          "elapsed_ms": 86,
+          "completed": true
+        },
+        {
+          "phase": "online quorum finality (offline node excluded from observation, not validator set)",
+          "elapsed_ms": 156522,
+          "completed": true
+        },
+        {
+          "phase": "fourth node archive catchup without wallet resubmission",
+          "elapsed_ms": 2425,
+          "completed": true
+        },
+        {
+          "phase": "stop and audit confirmed archive",
+          "elapsed_ms": 198,
+          "completed": true
+        },
+        {
+          "phase": "four-process cold recovery",
+          "elapsed_ms": 700,
+          "completed": true
+        },
+        {
+          "phase": "post-restart successor",
+          "elapsed_ms": 514,
+          "completed": true
+        },
+        {
+          "phase": "final archive verification",
+          "elapsed_ms": 164,
+          "completed": true
+        }
+      ],
+      "propagation_elapsed_ms": 111,
+      "propagation_batch_counts": {
+        "outbound_batches_accepted": 16,
+        "repair_batches_reserved": 0,
+        "new_input_batches_accepted": 16,
+        "scope": "local queue admission, excludes repeated repair offers; not peer receipt"
+      },
+      "online_elapsed_ms": 156633,
+      "online_quorum_publication_elapsed_ms": 156301,
+      "online_receipt_and_economics_elapsed_ms": 218,
+      "fourth_catchup_elapsed_ms": 2425,
+      "cold_restart_elapsed_ms": 700,
+      "post_restart_successor_elapsed_ms": 514,
+      "restart_and_successor_elapsed_ms": 1413,
+      "max_observed_no_progress_ms": 22519,
+      "progress_samples": 160,
+      "samples_dropped": 0,
+      "common_height_advances": [
+        {
+          "height": 1,
+          "elapsed_ms": 4,
+          "gap_ms": 4
+        },
+        {
+          "height": 2,
+          "elapsed_ms": 59,
+          "gap_ms": 55
+        },
+        {
+          "height": 3,
+          "elapsed_ms": 22499,
+          "gap_ms": 22440
+        },
+        {
+          "height": 4,
+          "elapsed_ms": 44926,
+          "gap_ms": 22427
+        },
+        {
+          "height": 5,
+          "elapsed_ms": 45090,
+          "gap_ms": 164
+        },
+        {
+          "height": 6,
+          "elapsed_ms": 45199,
+          "gap_ms": 109
+        },
+        {
+          "height": 7,
+          "elapsed_ms": 45364,
+          "gap_ms": 165
+        },
+        {
+          "height": 8,
+          "elapsed_ms": 55679,
+          "gap_ms": 10315
+        },
+        {
+          "height": 9,
+          "elapsed_ms": 65930,
+          "gap_ms": 10251
+        },
+        {
+          "height": 10,
+          "elapsed_ms": 66151,
+          "gap_ms": 221
+        },
+        {
+          "height": 11,
+          "elapsed_ms": 88671,
+          "gap_ms": 22520
+        },
+        {
+          "height": 12,
+          "elapsed_ms": 111053,
+          "gap_ms": 22382
+        },
+        {
+          "height": 13,
+          "elapsed_ms": 111219,
+          "gap_ms": 166
+        },
+        {
+          "height": 14,
+          "elapsed_ms": 111399,
+          "gap_ms": 180
+        },
+        {
+          "height": 15,
+          "elapsed_ms": 133842,
+          "gap_ms": 22443
+        },
+        {
+          "height": 16,
+          "elapsed_ms": 156297,
+          "gap_ms": 22455
+        }
+      ],
+      "decision_rounds_heights_1_through_17": [
+        0,
+        0,
+        2,
+        2,
+        0,
+        0,
+        0,
+        1,
+        1,
+        0,
+        2,
+        2,
+        0,
+        0,
+        2,
+        2,
+        0
+      ],
+      "online_proposer_views_sampled_for_at_least_one_second": [
+        {
+          "height": 3,
+          "round": 0,
+          "proposer_node": 3,
+          "first_observed_ms": 59,
+          "last_observed_ms": 9428,
+          "pending_min": 12,
+          "pending_max": 12,
+          "gossip_verified_counts": [
+            16
+          ]
+        },
+        {
+          "height": 4,
+          "round": 1,
+          "proposer_node": 1,
+          "first_observed_ms": 32878,
+          "last_observed_ms": 44216,
+          "pending_min": 14,
+          "pending_max": 14,
+          "gossip_verified_counts": [
+            20
+          ]
+        },
+        {
+          "height": 9,
+          "round": 0,
+          "proposer_node": 1,
+          "first_observed_ms": 55679,
+          "last_observed_ms": 65010,
+          "pending_min": 8,
+          "pending_max": 8,
+          "gossip_verified_counts": [
+            20
+          ]
+        },
+        {
+          "height": 11,
+          "round": 0,
+          "proposer_node": 3,
+          "first_observed_ms": 66151,
+          "last_observed_ms": 75500,
+          "pending_min": 6,
+          "pending_max": 6,
+          "gossip_verified_counts": [
+            16
+          ]
+        },
+        {
+          "height": 12,
+          "round": 1,
+          "proposer_node": 1,
+          "first_observed_ms": 99074,
+          "last_observed_ms": 110457,
+          "pending_min": 4,
+          "pending_max": 4,
+          "gossip_verified_counts": [
+            20
+          ]
+        },
+        {
+          "height": 15,
+          "round": 0,
+          "proposer_node": 3,
+          "first_observed_ms": 111399,
+          "last_observed_ms": 120706,
+          "pending_min": 2,
+          "pending_max": 2,
+          "gossip_verified_counts": [
+            16
+          ]
+        },
+        {
+          "height": 16,
+          "round": 1,
+          "proposer_node": 1,
+          "first_observed_ms": 144235,
+          "last_observed_ms": 155640,
+          "pending_min": 0,
+          "pending_max": 0,
+          "gossip_verified_counts": [
+            20
+          ]
+        }
+      ],
+      "missing_body_observations": [],
+      "body_diagnostic_available": false,
+      "online_completion_counters": [
+        {
+          "gossip_verified_inputs": 0,
+          "gossip_repair": null
+        },
+        {
+          "gossip_verified_inputs": 20,
+          "gossip_repair": null
+        },
+        {
+          "gossip_verified_inputs": 16,
+          "gossip_repair": null
+        }
+      ],
+      "successful_transactions": 34,
+      "business_failed_transactions": 0,
+      "final_heights": [
+        17,
+        17,
+        17,
+        17
+      ],
+      "final_state_versions": [
+        34,
+        34,
+        34,
+        34
+      ],
+      "source_report": "artifacts/audit/resident-rpc-offline/12852-1791070687198214400/result.json",
+      "source_log": "artifacts/audit/resident-input-repair-20261004-v1/old-offline1.log",
+      "copies_equal_source_sha256": true
+    },
+    {
+      "id": "new-offline2",
+      "passed": true,
+      "node_sha256": "0xce675c6813534aa4b6810d32e0f58560a8abe4ea6ffbcab3ed12ab2606e6901d",
+      "report": "new-offline2-result.json",
+      "report_sha256": "49d596ab711affccc419a95a36b80dcb258a989c47236a0892e503e061b84946",
+      "log": "new-offline2.log",
+      "log_sha256": "1e4733cbfc84bcd9d47bdffba88580a35ccf23476dd030b3d2bdea17a2fde4c7",
+      "test_elapsed_seconds": 47.17,
+      "phase_timings": [
+        {
+          "phase": "startup",
+          "elapsed_ms": 131,
+          "completed": true
+        },
+        {
+          "phase": "single HTTP admission",
+          "elapsed_ms": 26,
+          "completed": true
+        },
+        {
+          "phase": "propagate beyond global capacity before TTL",
+          "elapsed_ms": 89,
+          "completed": true
+        },
+        {
+          "phase": "online quorum finality (offline node excluded from observation, not validator set)",
+          "elapsed_ms": 42804,
+          "completed": true
+        },
+        {
+          "phase": "fourth node archive catchup without wallet resubmission",
+          "elapsed_ms": 2443,
+          "completed": true
+        },
+        {
+          "phase": "stop and audit confirmed archive",
+          "elapsed_ms": 181,
+          "completed": true
+        },
+        {
+          "phase": "four-process cold recovery",
+          "elapsed_ms": 697,
+          "completed": true
+        },
+        {
+          "phase": "post-restart successor",
+          "elapsed_ms": 526,
+          "completed": true
+        },
+        {
+          "phase": "final archive verification",
+          "elapsed_ms": 179,
+          "completed": true
+        }
+      ],
+      "propagation_elapsed_ms": 116,
+      "propagation_batch_counts": {
+        "outbound_batches_accepted": 16,
+        "repair_batches_reserved": 0,
+        "new_input_batches_accepted": 16,
+        "scope": "local queue admission, excludes repeated repair offers; not peer receipt"
+      },
+      "online_elapsed_ms": 42920,
+      "online_quorum_publication_elapsed_ms": 42585,
+      "online_receipt_and_economics_elapsed_ms": 218,
+      "fourth_catchup_elapsed_ms": 2443,
+      "cold_restart_elapsed_ms": 697,
+      "post_restart_successor_elapsed_ms": 526,
+      "restart_and_successor_elapsed_ms": 1405,
+      "max_observed_no_progress_ms": 10323,
+      "progress_samples": 52,
+      "samples_dropped": 0,
+      "common_height_advances": [
+        {
+          "height": 1,
+          "elapsed_ms": 2,
+          "gap_ms": 2
+        },
+        {
+          "height": 2,
+          "elapsed_ms": 56,
+          "gap_ms": 54
+        },
+        {
+          "height": 3,
+          "elapsed_ms": 111,
+          "gap_ms": 55
+        },
+        {
+          "height": 4,
+          "elapsed_ms": 10301,
+          "gap_ms": 10190
+        },
+        {
+          "height": 5,
+          "elapsed_ms": 10356,
+          "gap_ms": 55
+        },
+        {
+          "height": 6,
+          "elapsed_ms": 10520,
+          "gap_ms": 164
+        },
+        {
+          "height": 7,
+          "elapsed_ms": 10681,
+          "gap_ms": 161
+        },
+        {
+          "height": 8,
+          "elapsed_ms": 20961,
+          "gap_ms": 10280
+        },
+        {
+          "height": 9,
+          "elapsed_ms": 21232,
+          "gap_ms": 271
+        },
+        {
+          "height": 10,
+          "elapsed_ms": 21341,
+          "gap_ms": 109
+        },
+        {
+          "height": 11,
+          "elapsed_ms": 21507,
+          "gap_ms": 166
+        },
+        {
+          "height": 12,
+          "elapsed_ms": 31814,
+          "gap_ms": 10307
+        },
+        {
+          "height": 13,
+          "elapsed_ms": 31976,
+          "gap_ms": 162
+        },
+        {
+          "height": 14,
+          "elapsed_ms": 32141,
+          "gap_ms": 165
+        },
+        {
+          "height": 15,
+          "elapsed_ms": 32259,
+          "gap_ms": 118
+        },
+        {
+          "height": 16,
+          "elapsed_ms": 42583,
+          "gap_ms": 10324
+        }
+      ],
+      "decision_rounds_heights_1_through_17": [
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "online_proposer_views_sampled_for_at_least_one_second": [],
+      "missing_body_observations": [],
+      "body_diagnostic_available": true,
+      "online_completion_counters": [
+        {
+          "gossip_verified_inputs": 0,
+          "gossip_repair": {
+            "omitted_recipient_inputs": 0,
+            "repair_batches_reserved": 16,
+            "repair_inputs_reserved": 32,
+            "scope": "local omitted-recipient repair; not remote or durable receipt"
+          }
+        },
+        {
+          "gossip_verified_inputs": 32,
+          "gossip_repair": {
+            "omitted_recipient_inputs": 0,
+            "repair_batches_reserved": 0,
+            "repair_inputs_reserved": 0,
+            "scope": "local omitted-recipient repair; not remote or durable receipt"
+          }
+        },
+        {
+          "gossip_verified_inputs": 32,
+          "gossip_repair": {
+            "omitted_recipient_inputs": 0,
+            "repair_batches_reserved": 0,
+            "repair_inputs_reserved": 0,
+            "scope": "local omitted-recipient repair; not remote or durable receipt"
+          }
+        }
+      ],
+      "successful_transactions": 34,
+      "business_failed_transactions": 0,
+      "final_heights": [
+        17,
+        17,
+        17,
+        17
+      ],
+      "final_state_versions": [
+        34,
+        34,
+        34,
+        34
+      ],
+      "source_report": "artifacts/audit/resident-rpc-offline/25220-1791070879043308200/result.json",
+      "source_log": "artifacts/audit/resident-input-repair-20261004-v1/new-offline2.log",
+      "copies_equal_source_sha256": true
+    }
+  ],
+  "conclusions": [
+    "The observed difference is concentrated in online confirmation: new runs 43055/42920 ms versus this same-harness old run 156633 ms. Fourth-node catch-up, cold recovery and successor stages remain comparable in these finite samples.",
+    "Both new runs decide only heights 4/8/12/16 in round 1, exactly the absent node's round-zero proposer turns; every healthy-proposer height decides in round 0. New run 1 additionally samples Propose then Precommit during all four absent-leader waits.",
+    "Old archived deciding rounds are later at eight heights. Seven online-proposer height/round views are repeatedly observed for at least one second without publication: several have nonempty pending pools and one has an empty pool. Nonempty pending does not prove an eligible nonce prefix or body.",
+    "The old executable does not expose input_availability, so an empty list of old missing_body_observations means unavailable evidence, not proof that all bodies were present. No exact internal cause is assigned to each old waiting round.",
+    "Repair is exercised in both new runs: ingress reserves sixteen repair batches/thirty-two inputs; nodes 1 and 3 each report thirty-two strictly verified gossip inputs and the actual final receipts complete. Local repair counters alone are not delivery evidence. Old remote verified-gossip counts are twenty and sixteen; it still eventually finalizes all transactions through normal proposal/archive processing.",
+    "New run 1 has two briefly observed missing-body follower states before prompt round-zero decisions; new run 2 samples none. Neither new run samples a sustained online-proposer wait, but bounded sampling cannot exclude every transient wait.",
+    "All three runs finish thirty-four successful transactions, zero business failures, four heads at height seventeen/state version thirty-four and verified actual three-signature archived certificates."
+  ],
+  "validation_scope": {
+    "balance_receipt_nonce_and_cold_recovery_checked": true,
+    "independent_full_treasury_and_fee_model_oracle": false,
+    "economic_check_scope": "The offline balances helper computes payer/recipient expectations using actual receipt charged_fee. The separate normal-load fixture owns the independent full economic/treasury oracle.",
+    "no_inflight_write_or_power_loss_injection": true,
+    "quorum_not_reduced": true,
+    "no_external_qc_manufactured": true
+  },
+  "aab": {
+    "passed": true,
+    "report": "aab-result.json",
+    "report_sha256": "3f5fc29254b17b5e36221e2a712968089cba979120241d62c02e07e1f6afb1fd",
+    "log": "aab.log",
+    "log_sha256": "b042d50c25833f145a860feca96bba60ade46bba76afa73f7a3f38f9906a8d53",
+    "own_byzantine_proposals": "aab-byzantine-signed-proposals.json",
+    "own_byzantine_proposals_sha256": "20aa53f459c251178ef609f8a41e357cea05934e957465fd8011eb00cef038e2",
+    "honest_vote_evidence": "aab-honest-before-recovery.json",
+    "honest_vote_evidence_sha256": "665146025afc1f07da690cdcb18d929daa812c1228f6f761aff4d7b4995aa553",
+    "source_directory": "target/resident-rpc-aab-tests/2104-1791070926231161400",
+    "source_log": "artifacts/audit/resident-input-repair-20261004-v1/aab.log",
+    "copies_equal_source_sha256": true,
+    "node_sha256": "ce675c6813534aa4b6810d32e0f58560a8abe4ea6ffbcab3ed12ab2606e6901d",
+    "whole_test_seconds": 11.09,
+    "original_node_processes": 3,
+    "test_only_byzantine_peers": 1,
+    "fault_peer_votes": 0,
+    "own_conflicting_proposals": 2,
+    "actual_honest_prevote_values": [
+      "A",
+      "A",
+      "B"
+    ],
+    "actual_honest_nil_precommits": 3,
+    "decision_rounds_heights_1_and_2": [
+      1,
+      0
+    ],
+    "required_qc_signatures": 3,
+    "handshake_busy_polls_observed": 0,
+    "status_contention_note": "This real run observed zero Busy polls. The new try_status distinction is tested separately with a held mutex and poisoned mutex; this run alone does not reproduce the CI contention.",
+    "late_fault_proposal_note": "Late proposals are queued for retransmission only; recipient processing is not separately signed off.",
+    "restart_scope": "Three honest processes cold-restart after confirmed state and then decide a successor; the Byzantine identity is not restarted as a clean honest signer."
+  },
+  "preservation": {
+    "copied_source_json_and_logs": 10,
+    "databases_copied": false,
+    "keys_copied": false,
+    "original_reports_modified": false
+  },
+  "limitations": [
+    "Two new functional runs and one old comparison are finite observations, not stable fault latency, capacity, TPS or public-network evidence.",
+    "The current repair experiment does not prove the cause of an older run that lacked final-status capture.",
+    "Stale-context and retired-round rejections remain visible; no error-free-log claim is made.",
+    "No process fault was injected during an atomic write or unknown durable ACK.",
+    "A/A/B is three original node executables plus a test peer, not four original node executables or four physical machines."
+  ]
+}
