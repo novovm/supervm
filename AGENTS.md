@@ -63,6 +63,16 @@ Shared product and multi-device development contract:
   post-quantum security remain core product delivery objectives. A runnable
   chain, component benchmark, storage-ownership gate, or green CI does not
   replace these objectives. Do not reduce scope without the user's agreement.
+- User confirmation 2026-10-03: converge consensus responsibilities into
+  `crates/novovm-consensus` on the restored main. First move bounded, actually
+  used protocol rules without changing behavior; separately integrate a whole
+  versioned safety/signing/recovery contract. Do not mix native V3 decisions
+  with round-bft votes or equate durable decision with completed publication.
+  Preserve R2 and unified AOEM work. After integration and acceptance, remove
+  superseded active implementations, entry points and misleading directions
+  with a reviewed replacement map. Do not delete August-October work by date,
+  unreviewed drafts, signing logs, runtime data or evidence. Follow the roadmap's
+  cleanup exit conditions; do not start another wholesale isolation/backup.
 - Keep AOEM domain-neutral. Host business-policy ownership does not justify
   treating serial Host computation plus AOEM persistence as completed parallel
   transaction execution. Follow the delivery contract's acceptance boundaries.

@@ -46,6 +46,10 @@ use crate::native_block_ledger::{
 use crate::native_root_codecs::NativeRootCodecProfileV1;
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+pub use novovm_consensus::native_seal_authority::{
+    validator_id_v1, NovNativeSealValidatorSetV1, NovNativeSealValidatorV1,
+    NOV_NATIVE_BLOCK_SEAL_MAX_VALIDATORS_V1, NOV_NATIVE_BLOCK_SEAL_VALIDATOR_SET_SCHEMA_V1,
+};
 use rocksdb::{
     Direction, IteratorMode, Options as RocksDbOptions, WriteBatch as RocksDbWriteBatch,
     WriteOptions, DB,
@@ -59,8 +63,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
 pub const NOV_NATIVE_BLOCK_SEAL_STORE_SCHEMA_V1: &str = "novovm-native-block-seal-store/v1";
-pub const NOV_NATIVE_BLOCK_SEAL_VALIDATOR_SET_SCHEMA_V1: &str =
-    "novovm-native-block-seal-validator-set/v1";
 pub const NOV_NATIVE_BLOCK_SEAL_SUBJECT_SCHEMA_V1: &str = "novovm-native-block-seal-subject/v1";
 pub const NOV_NATIVE_BLOCK_SEAL_PROPOSAL_SCHEMA_V1: &str = "novovm-native-block-seal-proposal/v1";
 pub const NOV_NATIVE_BLOCK_SEAL_VOTE_SCHEMA_V1: &str = "novovm-native-block-seal-vote/v1";
@@ -78,7 +80,6 @@ pub const NOV_NATIVE_BLOCK_SEAL_FRESH_SUCCESSOR_PROOF_V1: &str =
 pub const NOV_NATIVE_BLOCK_SEAL_VERIFICATION_PROFILE_V1: &str = "local-aoem-readback-and-body/v1";
 pub const NOV_NATIVE_BLOCK_SEAL_PHASE_V1: &str = "prepare";
 pub const NOV_NATIVE_BLOCK_SEAL_SIGNATURE_SCHEME_V1: &str = "ed25519";
-pub const NOV_NATIVE_BLOCK_SEAL_MAX_VALIDATORS_V1: usize = 1_024;
 pub const NOV_NATIVE_BLOCK_SEAL_MAX_QCS_PER_INDEX_V1: usize = 4_096;
 pub const NOV_NATIVE_BLOCK_SEAL_MAX_OUTBOX_SCAN_V1: usize = 4_096;
 
@@ -95,8 +96,6 @@ const OUTBOX_SCHEMA_V1: &str = "novovm-native-block-seal-outbox/v1";
 const QC_INDEX_SCHEMA_V1: &str = "novovm-native-block-seal-qc-index/v1";
 const COMPETING_QC_EVIDENCE_SCHEMA_V1: &str = "novovm-native-block-seal-competing-qc-evidence/v1";
 
-const VALIDATOR_ID_DOMAIN_V1: &[u8] = b"novovm-native-seal-validator-id-v1\0";
-const VALIDATOR_SET_HASH_DOMAIN_V1: &[u8] = b"novovm-native-seal-validator-set-v1\0";
 const NETWORK_DOMAIN_COMMITMENT_DOMAIN_V1: &[u8] = b"novovm-native-seal-network-domain-v1\0";
 const INLINE_BODY_COMMITMENT_DOMAIN_V1: &[u8] = b"novovm-native-seal-inline-body-commitment-v1\0";
 const AOEM_PARENT_COMMITMENT_DOMAIN_V1: &[u8] = b"novovm-native-seal-aoem-parent-commitment-v1\0";
@@ -110,154 +109,6 @@ const LEDGER_IDENTITY_COMMITMENT_DOMAIN_V1: &[u8] = b"novovm-native-seal-ledger-
 const FRESH_LEDGER_IDENTITY_DOMAIN_V1: &[u8] =
     b"novovm-native-seal-ledger-identity-fresh-genesis-v1\0";
 const COMPETING_QC_EVIDENCE_DOMAIN_V1: &[u8] = b"novovm-native-seal-competing-qc-evidence-v1\0";
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NovNativeSealValidatorV1 {
-    pub validator_id: [u8; 32],
-    pub public_key: [u8; 32],
-    pub weight: u64,
-}
-
-impl NovNativeSealValidatorV1 {
-    pub fn new(public_key: [u8; 32], weight: u64) -> Result<Self> {
-        if weight == 0 {
-            bail!("NOV native seal validator weight must be non-zero");
-        }
-        let verifying_key = VerifyingKey::from_bytes(&public_key)
-            .context("NOV native seal validator public key is invalid")?;
-        if verifying_key.is_weak() {
-            bail!("NOV native seal validator public key is weak");
-        }
-        Ok(Self {
-            validator_id: validator_id_v1(&public_key),
-            public_key,
-            weight,
-        })
-    }
-
-    fn validate(&self) -> Result<()> {
-        if self.weight == 0 || self.validator_id != validator_id_v1(&self.public_key) {
-            bail!("NOV native seal validator identity or weight is invalid");
-        }
-        let verifying_key = VerifyingKey::from_bytes(&self.public_key)
-            .context("NOV native seal validator public key is invalid")?;
-        if verifying_key.is_weak() {
-            bail!("NOV native seal validator public key is weak");
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NovNativeSealValidatorSetV1 {
-    pub schema: String,
-    pub chain_id: u64,
-    pub epoch: u64,
-    pub activation_height: u64,
-    pub validators: Vec<NovNativeSealValidatorV1>,
-    pub total_weight: u64,
-    pub quorum_weight: u64,
-    pub validator_set_hash: [u8; 32],
-}
-
-impl NovNativeSealValidatorSetV1 {
-    pub fn new(
-        chain_id: u64,
-        epoch: u64,
-        activation_height: u64,
-        mut validators: Vec<NovNativeSealValidatorV1>,
-    ) -> Result<Self> {
-        if chain_id == 0 || epoch == 0 || activation_height == 0 {
-            bail!("NOV native seal validator set chain, epoch, and activation height must be non-zero");
-        }
-        if validators.is_empty() || validators.len() > NOV_NATIVE_BLOCK_SEAL_MAX_VALIDATORS_V1 {
-            bail!("NOV native seal validator set size is invalid");
-        }
-        for validator in &validators {
-            validator.validate()?;
-        }
-        validators.sort_by_key(|validator| validator.validator_id);
-        if validators
-            .windows(2)
-            .any(|pair| pair[0].validator_id == pair[1].validator_id)
-        {
-            bail!("NOV native seal validator set contains a duplicate validator");
-        }
-        let total_weight = validators.iter().try_fold(0u64, |total, validator| {
-            total
-                .checked_add(validator.weight)
-                .context("NOV native seal validator weight overflow")
-        })?;
-        let quorum_weight = (((total_weight as u128) * 2) / 3 + 1) as u64;
-        let validator_set_hash = validator_set_hash_v1(
-            chain_id,
-            epoch,
-            activation_height,
-            validators.as_slice(),
-            total_weight,
-            quorum_weight,
-        );
-        let set = Self {
-            schema: NOV_NATIVE_BLOCK_SEAL_VALIDATOR_SET_SCHEMA_V1.to_string(),
-            chain_id,
-            epoch,
-            activation_height,
-            validators,
-            total_weight,
-            quorum_weight,
-            validator_set_hash,
-        };
-        set.validate()?;
-        Ok(set)
-    }
-
-    pub fn validate(&self) -> Result<()> {
-        if self.schema != NOV_NATIVE_BLOCK_SEAL_VALIDATOR_SET_SCHEMA_V1
-            || self.chain_id == 0
-            || self.epoch == 0
-            || self.activation_height == 0
-            || self.validators.is_empty()
-            || self.validators.len() > NOV_NATIVE_BLOCK_SEAL_MAX_VALIDATORS_V1
-        {
-            bail!("NOV native seal validator set metadata is invalid");
-        }
-        let mut total_weight = 0u64;
-        let mut previous = None;
-        for validator in &self.validators {
-            validator.validate()?;
-            if previous.is_some_and(|id| id >= validator.validator_id) {
-                bail!("NOV native seal validators are not strictly sorted and unique");
-            }
-            previous = Some(validator.validator_id);
-            total_weight = total_weight
-                .checked_add(validator.weight)
-                .context("NOV native seal validator weight overflow")?;
-        }
-        let quorum_weight = (((total_weight as u128) * 2) / 3 + 1) as u64;
-        let expected_hash = validator_set_hash_v1(
-            self.chain_id,
-            self.epoch,
-            self.activation_height,
-            self.validators.as_slice(),
-            total_weight,
-            quorum_weight,
-        );
-        if self.total_weight != total_weight
-            || self.quorum_weight != quorum_weight
-            || self.validator_set_hash != expected_hash
-        {
-            bail!("NOV native seal validator set commitment is invalid");
-        }
-        Ok(())
-    }
-
-    pub fn validator(&self, validator_id: [u8; 32]) -> Option<&NovNativeSealValidatorV1> {
-        self.validators
-            .binary_search_by_key(&validator_id, |validator| validator.validator_id)
-            .ok()
-            .map(|index| &self.validators[index])
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NovNativeSealSubjectV1 {
@@ -2340,34 +2191,6 @@ fn sign_vote_v1(
     Ok(vote)
 }
 
-fn validator_id_v1(public_key: &[u8; 32]) -> [u8; 32] {
-    hash_parts_v1(VALIDATOR_ID_DOMAIN_V1, &[public_key.as_slice()])
-}
-
-fn validator_set_hash_v1(
-    chain_id: u64,
-    epoch: u64,
-    activation_height: u64,
-    validators: &[NovNativeSealValidatorV1],
-    total_weight: u64,
-    quorum_weight: u64,
-) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(VALIDATOR_SET_HASH_DOMAIN_V1);
-    hasher.update(chain_id.to_be_bytes());
-    hasher.update(epoch.to_be_bytes());
-    hasher.update(activation_height.to_be_bytes());
-    hasher.update((validators.len() as u64).to_be_bytes());
-    for validator in validators {
-        hasher.update(validator.validator_id);
-        hasher.update(validator.public_key);
-        hasher.update(validator.weight.to_be_bytes());
-    }
-    hasher.update(total_weight.to_be_bytes());
-    hasher.update(quorum_weight.to_be_bytes());
-    hasher.finalize().into()
-}
-
 fn network_domain_commitment_v1(
     chain_id: u64,
     genesis_block_hash: &[u8; 32],
@@ -3614,6 +3437,33 @@ pub(crate) mod tests {
                 .expect("overflow validator"),
         ];
         assert!(NovNativeSealValidatorSetV1::new(chain_id, 2, 2, overflow).is_err());
+    }
+
+    #[test]
+    fn validator_authority_is_owned_by_consensus_and_preserves_stored_bytes() {
+        // A direct assignment proves the node calls the consensus-owned type,
+        // not a copied implementation or a wrapper forwarding back into node.
+        let (_, node_set) = validator_fixture_v1(81_009);
+        let consensus_set: novovm_consensus::native_seal_authority::NovNativeSealValidatorSetV1 =
+            node_set.clone();
+        let stored = serde_json::to_vec(&node_set).expect("node validator snapshot");
+        assert_eq!(stored, serde_json::to_vec(&consensus_set).unwrap());
+        let reopened: NovNativeSealValidatorSetV1 =
+            serde_json::from_slice(&stored).expect("same stored schema");
+        reopened
+            .validate()
+            .expect("consensus validation after readback");
+        assert_eq!(reopened, consensus_set);
+        for member in &reopened.validators {
+            let actual: &novovm_consensus::native_seal_authority::NovNativeSealValidatorV1 =
+                reopened
+                    .validator(member.validator_id)
+                    .expect("member lookup");
+            assert_eq!(actual, member);
+        }
+        let mut tampered = reopened;
+        tampered.quorum_weight -= 1;
+        assert!(tampered.validate().is_err());
     }
 
     #[test]

@@ -91,6 +91,7 @@ pub mod bft_engine;
 pub mod epoch;
 pub mod governance_verifier;
 pub mod market_engine;
+pub mod native_seal_authority;
 pub mod protocol;
 pub mod quorum_cert;
 pub mod token_runtime;

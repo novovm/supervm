@@ -7,6 +7,8 @@ authors = ["SuperVM Core Team"]
 description = "NOVOVM consensus migration skeleton from SVM2026"
 
 [dependencies]
+anyhow = "1"
+
 # Cryptography (Ed25519 signatures)
 ed25519-dalek = { version = "2", features = ["rand_core", "batch"] }
 rand = "0.8"

@@ -1554,6 +1554,7 @@ dependencies = [
 name = "novovm-consensus"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "criterion",
  "ed25519-dalek",
  "rand 0.8.5",
