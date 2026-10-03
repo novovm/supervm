@@ -220,6 +220,39 @@ AfterFinalityCommit进程强杀与幂等恢复窗口，不新造崩溃测试平�
 本片只删除迁入consensus后的node规则副本；整目录清理、协议升级及新的A/A/B
 真实进程验收均未执行。实际验证结果见台账最新节。
 
+### R3 第二片：新协议决定到原候选的只读接合
+
+基线`2da3583c`。原consensus的`round_bft`迁入该提交中runtime已提交的
+wire、round、collector及53项原测试，不读取脏controller，不新造共识算法。
+算法参照固定为[2019 v3 Algorithm 1](https://arxiv.org/pdf/1807.04938v3)，
+不是声明完整实现或形式证明；现实现采用固定集合、Ed25519、排序ID轮转leader，
+不把论文的加权leader或完整网络活性证明直接套用。journal/pacemaker未迁入；
+纯转换、混值计时资格和catch-up证据本身不授权签票，也不推进本机高度。
+
+新增`VerifiedDecision`核验精确同域／同轮／同值的提案和非nil Precommit QC；
+仍由原round决定规则判定。它是不可反序列化的只读证据，不是耐久ACK或finalized。
+原node的`native_round_bft`通过现有`load_block_artifact_v1`重验真实AOEM候选，
+绑定创世、原业务协议、独立native statement/profile、完整块头／执行证据及根编码。
+本地workspace/namespace/输出文档digest不入共享签名值。两个独立AOEM目录的
+相同交易必须产生相同值；公开原block codec变更须显式版本化，固定用例hash防漂移。
+
+**只支持首高历史候选的只读验证，不新增生产CLI/RPC，也不改V3写路径。**
+目前原首块promotion.decision、后继proof/intent、历史父与cold/rooted恢复都硬绑定
+V3，创世配置也没有新共识激活profile。故本片明确拒绝后继转换，不以旧V3父证明
+授予新协议父权。把V3签名换标签、只改一个证书函数或收到新证书就动态切协议都不允许。
+
+下一写路径接合必须同时处理：独立激活域、原首块及后继的版本化proof/intent、
+耐久签票状态+精确outbox原子条件写、原D0–D4发布/恢复及h+1授权。
+runtime journal的决定即原子写ChainHead、opening要求decided必有head、advance-height
+据此推进三处假设须一起适配；不搬来第二个链头，不拆写后仍声称原子。
+原累计receipt root也不能替代成runtime的per-batch receipt commitment。
+新协议正式签票仍以原四进程A/A/B、迟到证据、未知写结果、连续高度和重启验收为门。
+R2与统一异构／高吞吐／隐私／PQ工作保留。本片只读通过不解除这些限制。
+
+原runtime对应源码冻结为`2da3583c`历史迁接来源，正式规则后续只在原consensus演进；
+保留来源是为了接入剩余journal／恢复，不为维持第二套活动产品，也不为了跨crate
+复用而公开原始签名函数。待整套迁接与验收后依前节清理，不覆盖49项草稿。
+
 ### R2 首个贯通交付：原节点签名 NOV 转账
 
 开工基线 `main/origin/main@7b10c7f3`，2026-10-03，本机49项原草稿保留。

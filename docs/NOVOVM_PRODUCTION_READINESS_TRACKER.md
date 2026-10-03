@@ -8,6 +8,59 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## R3 第二片：新轮次协议决定与原 AOEM 候选的只读绑定
+
+日期2026-10-03；开发基线`main/origin/main@2da3583cc60088b35bf89e3efe8d1b1e0e7c5094`
+加本节所在提交。本机Windows / Rust 1.94.0，原产品workspace、AOEM库和业务规则不变。
+
+**本片新增的是原node库内可调用的候选／决定验证边界，不是新生产签票服务。**
+原`novovm-consensus::round_bft`复用该基线已提交runtime的wire、round、collector
+及53项原反例；算法、编码、签名域和锁规则不改。裸签票仍为crate私有，未暴露
+给node；journal、pacemaker、耐久ACK和状态发布没有迁入，不能称整套协议已接通。
+新增`VerifiedDecision`必须核对调用方固定的上下文／本地值、真实提案签名及
+同轮同值precommit QC；不反序列化成验证能力，不接受旧V3票改标签。
+
+原`novovm-node::native_round_bft`实际调用该接口：经原workspace加载器重新
+读取并验证完整AOEM输入、输出、鉴权、根、回执及完成标记，再绑定新profile和
+首块候选statement。statement含完整原块头及执行证据，不含本机namespace、
+workspace ID或本地output digest。它不注册／晋升候选、不写链头、不签票，
+结果也不能传给现有V3发布器。本片没有新增CLI/RPC或更换默认节点控制器。
+
+| 本机验证 | 实际结果及范围 |
+| --- | --- |
+| round-BFT规则与决定 | 61/61：53项原规则／反例，加8项决定验证；真签名错域、错轮次／阶段／值、nil、重复／混合票、错误leader和0/1/2-of-4均拒绝 |
+| 完整原共识库 | 152/152，包含上一行，不重复累计为独立新增用例 |
+| 原AOEM候选实库接线 | 1个聚合用例通过、零忽略、Host许可0；两个独立namespace／workspace执行同一真实签名Transfer得到相同块和值；缺输出、2票、坏签名、错创世、另一真实候选、读回篡改均拒绝；权威链头、创世状态及Host投影不变 |
+| 规范值固定 | 为新statement记录固定真实夹具golden；不是旧协议兼容断言，变更编码须升profile／statement版本 |
+| 原node封印回归 | 212/212；历史夹具显式Host许可1，仅证明旧行为未破坏，不作为默认旁路许可 |
+| 原四进程产品回归 | 1/1、零忽略、Host许可0；6笔签名交易5成功／1业务失败，经济oracle、费用守恒、失败nonce、冲突／重放拒绝、QC、查询及重启一致；全部节点完整块一致 |
+| 产品装配 | workspace/all-targets check、严格Clippy及fmt通过；原同源多bin提示保留 |
+
+四进程73.37秒是夹具总耗时，不是出块间隔、交易延迟或TPS。四进程用的是原V3
+发布路径，**不计作新协议A/A/B实节点恢复通过**。原迁回A/A/B只在纯状态机层
+验证；新协议耐久日志、真实网络分票、写入中断防双签及连续高度尚未验收。
+
+本机日志位于`artifacts/recovery/r3-round-*.log`：core-v1、consensus-all-v1、
+candidate-v3、native-seal-v1、four-process-v1、check-v1、clippy-v1和fmt-v1。
+candidate-v1首次测试编译缺SHA256 trait导入的失败记录保留，补导入后v2／v3通过。
+四进程证据：
+`artifacts/audit/candidate-node-processes/seal-relay-22784-1791031520569898900/mixed-transfer-acceptance.json`；
+`accepted=true`、`legacy_host_execution="0"`、`production_signoff=false`。
+收尾relay连接重置日志保留。CI增加同一规则和真实候选检查；上一笔`2da3583c`
+的CI运行37120629021已核实success，本片本机结果不冒充本片推送后的远端结果。
+
+**下一处接合边界：** 当前原首块晋升意图、后继证明、历史父和cold/rooted恢复
+硬绑定V3，genesis配置尚无新共识激活profile；因此本片明确拒绝height>1。
+下一片要将版本化激活、耐久签票／决定与原D1–D4发布恢复成套适配，不拿新票
+调用旧发布、不静默改签名域或清旧日志。runtime journal的transition原子写head、
+opening要求已决定即有head、advance按head推进三个假设必须一起处理；原账本
+无需重造，但多次跨库写不能声称原子提交。详细契约见[路线R3第二片](NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md#r3-第二片新协议决定到原候选的只读接合)。
+
+本片固定集合／Ed25519与现有轮转leader规则，不冒充完整Tendermint证明、PQ、
+GPU统一调度、主链TPS或生产签收。runtime已迁纯规则固定为历史来源，不在两边
+继续改协议；暂不删除runtime/legacy。全部整合验收后仍必须清理废弃副本、入口和
+误导指令，49项受保护草稿逐项SHA256一致，不碰AOEM兄弟仓与实际运行数据。
+
 ## R3 首片：现用验证者规则归入原共识模块
 
 日期2026-10-03；基线`main/origin/main@7bfee630fa6f08f1fd932719700697e862d7f5da`

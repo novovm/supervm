@@ -275,7 +275,7 @@ jobs:
           cargo test -p novovm-exec --lib semantic_integer --locked -- --test-threads=1
           cargo test -p novovm-node --lib transfer_semantic --locked -- --test-threads=1
 
-      - name: Consensus-owned native validator contract and node wiring
+      - name: Consensus authority, versioned evidence and native candidate wiring
         env:
           NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
         shell: bash
@@ -283,6 +283,8 @@ jobs:
           set -euo pipefail
           cargo test -p novovm-consensus --lib native_seal_authority --locked
           cargo test -p novovm-node --lib validator_authority_is_owned_by_consensus --locked
+          cargo test -p novovm-consensus --lib round_bft --locked
+          cargo test -p novovm-node --lib round_bft_candidate --locked -- --test-threads=1
 
       - name: Reject legacy Host writes by default during product restoration
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib restoration_host_guard --locked -- --test-threads=1
