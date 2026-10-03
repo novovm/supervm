@@ -31,7 +31,22 @@ pub struct AoemSemanticGraphSessionScopeV1 {
 }
 
 impl AoemSemanticGraphSessionScopeV1 {
+    // Only the storage owner may seed a scope with its already-open provider.
+    // Both this guard and its Rc stay on that owner thread, outside TLS.
+    pub(super) fn enter_with_provider(
+        identity: ProviderIdentity,
+        inner: Rc<SemanticGraphStoreInnerV1>,
+    ) -> Result<Self> {
+        inner.ensure_usable()?;
+        let scope = Self::enter()?;
+        *scope.state.provider.borrow_mut() = Some((identity, inner));
+        Ok(scope)
+    }
+
     pub fn enter() -> Result<Self> {
+        if super::owner::has_active_scope() {
+            bail!("AOEM local and remote graph scopes cannot overlap");
+        }
         ACTIVE_SCOPE.with(|slot| {
             let mut slot = slot
                 .try_borrow_mut()
@@ -46,6 +61,10 @@ impl AoemSemanticGraphSessionScopeV1 {
             Ok(Self { state })
         })
     }
+}
+
+pub(super) fn has_active_scope() -> bool {
+    ACTIVE_SCOPE.with(|slot| slot.borrow().upgrade().is_some())
 }
 
 impl Drop for AoemSemanticGraphSessionScopeV1 {
@@ -94,7 +113,8 @@ pub(super) fn open(
     Ok(inner)
 }
 
-struct ProviderIdentity {
+#[derive(Clone)]
+pub(super) struct ProviderIdentity {
     path: PathBuf,
     runtime: AoemRuntimeConfig,
     storage: AoemStorageProviderConfigV1,
@@ -103,7 +123,7 @@ struct ProviderIdentity {
 }
 
 impl ProviderIdentity {
-    fn new(
+    pub(super) fn new(
         runtime: &AoemRuntimeConfig,
         path: &Path,
         storage: &AoemStorageProviderConfigV1,
@@ -118,7 +138,7 @@ impl ProviderIdentity {
         })
     }
 
-    fn matches(&self, other: &Self) -> bool {
+    pub(super) fn matches(&self, other: &Self) -> bool {
         // Destructure exhaustively so adding a runtime option cannot silently
         // leave it out of the session identity.
         let AoemRuntimeConfig {

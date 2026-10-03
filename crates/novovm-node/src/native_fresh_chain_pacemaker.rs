@@ -496,6 +496,13 @@ impl ParentPacemaker {
             .then_some(self.state.current.round)
     }
 
+    /// A captured job cannot outlive its local timeout or a round change.
+    /// This is only a scheduler fence; the service's durable live signing
+    /// scopes still check the ledger and anti-equivocation state later.
+    pub(super) fn permits_prepared_round(&self, round: u64) -> bool {
+        self.state.current.round == round && !self.local_timed_out
+    }
+
     pub(super) fn certificate(&self) -> Option<&NovNativeSealNewViewCertificateV1> {
         self.certificate.as_ref()
     }

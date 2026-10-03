@@ -8,6 +8,12 @@
 
 ## 最新短交接
 
+- **2026-10-03 R2后台候选接回原节点：** 基线`09486e3e`加本节所在提交，
+  原node/exec常驻compute worker与AOEM存储owner已接线；四真实进程Transfer
+  RPC/费用/失败/nonce/余额/重启通过，Host许可0。计算与控制推进分离，落盘时
+  状态RPC仍有界等待；未称GPU或TPS完成。原49草稿和runtime保留。下一步精准
+  修复落盘后陈旧未注册候选的回收，再继续完整业务效应；证据/限制见台账最新节。
+
 - **2026-10-03 R2首个用户交易贯通：** R1已于`7b10c7f3`收口，按单机执行。
   沿原fresh RPC/node/exec/AOEM/QC路径，修不可执行Execute误准入、接已finalized
   NOV余额读回、复用compute会话，并扩展既有四进程混合转账/经济/重启测试。

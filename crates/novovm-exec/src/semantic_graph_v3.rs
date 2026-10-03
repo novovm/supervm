@@ -34,6 +34,12 @@ const MAX_EVENT_PAYLOAD_BYTES_V1: usize = 216;
 mod session_scope;
 pub(crate) use session_scope::effective_environment as effective_runtime_environment;
 pub use session_scope::AoemSemanticGraphSessionScopeV1;
+#[path = "semantic_graph_owner.rs"]
+mod owner;
+pub use owner::{
+    AoemSemanticGraphClientScopeV1, AoemSemanticGraphClientV1, AoemSemanticGraphOwnerV1,
+    AoemSemanticGraphStageAdmissionV1, AoemSemanticGraphStageHandleV1,
+};
 
 #[cfg(test)]
 #[path = "semantic_graph_scope_tests.rs"]
@@ -105,8 +111,13 @@ pub struct AoemAtomicGraphCommitReportV1 {
 }
 
 pub struct AoemSemanticGraphStoreV1 {
-    inner: Rc<SemanticGraphStoreInnerV1>,
+    inner: GraphStoreBackendV1,
     path: PathBuf,
+}
+
+enum GraphStoreBackendV1 {
+    Local(Rc<SemanticGraphStoreInnerV1>),
+    Remote(AoemSemanticGraphClientV1),
 }
 
 struct SemanticGraphStoreInnerV1 {
@@ -122,7 +133,10 @@ impl AoemSemanticGraphStoreV1 {
         config: &AoemStorageProviderConfigV1,
     ) -> Result<Self> {
         validate_storage_config(config)?;
-        let inner = session_scope::open(runtime, path, config)?;
+        let inner = match owner::scoped_client(runtime, path, config)? {
+            Some(client) => GraphStoreBackendV1::Remote(client),
+            None => GraphStoreBackendV1::Local(session_scope::open(runtime, path, config)?),
+        };
         Ok(Self {
             inner,
             path: path.to_path_buf(),
@@ -194,13 +208,16 @@ impl AoemSemanticGraphStoreV1 {
     }
 
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.ensure_usable()?;
+        let inner = match &self.inner {
+            GraphStoreBackendV1::Remote(client) => return client.get(key),
+            GraphStoreBackendV1::Local(inner) => inner,
+        };
+        inner.ensure_usable()?;
         if key.is_empty() {
             bail!("AOEM storage provider key must not be empty");
         }
-        let request = encode_storage_get_request(self.inner.database_id, key)?;
-        let response = self
-            .inner
+        let request = encode_storage_get_request(inner.database_id, key)?;
+        let response = inner
             .session
             .storage_provider_wire_v1(request.as_slice())
             .context("read AOEM storage provider failed")?;
@@ -212,8 +229,20 @@ impl AoemSemanticGraphStoreV1 {
         &self,
         request: AoemAtomicGraphRequestV1,
     ) -> Result<AoemAtomicGraphCommitReportV1> {
-        self.ensure_usable()?;
+        let inner = match &self.inner {
+            GraphStoreBackendV1::Remote(client) => return client.commit(request),
+            GraphStoreBackendV1::Local(inner) => inner,
+        };
+        inner.ensure_usable()?;
         let prepared = PreparedGraphV1::new(request)?;
+        self.commit_prepared(prepared)
+    }
+
+    fn commit_prepared(&self, prepared: PreparedGraphV1) -> Result<AoemAtomicGraphCommitReportV1> {
+        let GraphStoreBackendV1::Local(inner) = &self.inner else {
+            bail!("prepared AOEM graph must execute on its storage owner");
+        };
+        inner.ensure_usable()?;
         let seeds = prepared.seeds.clone();
         let options = AoemGraphSubmitOptionsV3 {
             // AOEM's generic semantic-graph contract reserves one queue slot
@@ -247,7 +276,7 @@ impl AoemSemanticGraphStoreV1 {
         };
         let mut flight = RetainUntilDrainedV1::new(GraphSubmissionOwnerV1 {
             // Do not let dropping the public store destroy a still-active session.
-            session: self.inner.session.clone(),
+            session: inner.session.clone(),
             context,
             seeds,
             options,
@@ -257,7 +286,7 @@ impl AoemSemanticGraphStoreV1 {
         // marker. Neither reads nor another commit may treat this session as a
         // known-good state. Recovery must establish quiescence (process restart
         // if the owner was retained), then re-open and verify durable evidence.
-        self.inner.poisoned.set(true);
+        inner.poisoned.set(true);
         let submit = unsafe {
             let owner = flight.owner();
             owner
@@ -265,25 +294,16 @@ impl AoemSemanticGraphStoreV1 {
                 .submit_semantic_graph_v3(&owner.seeds, &owner.options, &owner.callbacks)
         };
         if !matches!(submit, Ok(AOEM_STATUS_OK)) {
-            let _ = self
-                .inner
-                .session
-                .cancel_semantic_graph_v2(prepared.graph_id);
+            let _ = inner.session.cancel_semantic_graph_v2(prepared.graph_id);
             let _ = drain_submission_v1(&mut flight, CANCEL_COMPLETION_TIMEOUT);
             bail!("AOEM semantic graph V3 admission failed: {submit:?}");
         }
         let completion =
             wait_graph_completion_v1(&completion_rx, DEFAULT_COMPLETION_TIMEOUT, || {
-                let _ = self
-                    .inner
-                    .session
-                    .cancel_semantic_graph_v2(prepared.graph_id);
+                let _ = inner.session.cancel_semantic_graph_v2(prepared.graph_id);
             });
         if !drain_submission_v1(&mut flight, CANCEL_COMPLETION_TIMEOUT) {
-            let _ = self
-                .inner
-                .session
-                .cancel_semantic_graph_v2(prepared.graph_id);
+            let _ = inner.session.cancel_semantic_graph_v2(prepared.graph_id);
             bail!(
                 "AOEM semantic graph V3 did not drain; complete owner retained; restart required"
             );
@@ -325,7 +345,7 @@ impl AoemSemanticGraphStoreV1 {
                 prepared.event_count
             );
         }
-        self.inner.poisoned.set(false);
+        inner.poisoned.set(false);
         Ok(AoemAtomicGraphCommitReportV1 {
             graph_id: completion.graph_id,
             processed: completion.processed,
@@ -337,8 +357,12 @@ impl AoemSemanticGraphStoreV1 {
         })
     }
 
-    fn ensure_usable(&self) -> Result<()> {
-        self.inner.ensure_usable()
+    #[cfg(test)]
+    fn local_inner(&self) -> &Rc<SemanticGraphStoreInnerV1> {
+        match &self.inner {
+            GraphStoreBackendV1::Local(inner) => inner,
+            GraphStoreBackendV1::Remote(_) => panic!("expected a local graph store"),
+        }
     }
 }
 
@@ -1105,14 +1129,14 @@ mod tests {
             ),
             (1, 1, 0, 1)
         );
-        assert_eq!(Rc::strong_count(&store.inner.session), 1);
+        assert_eq!(Rc::strong_count(&store.local_inner().session), 1);
         assert_eq!(store.get(b"value").unwrap(), Some(b"first".to_vec()));
         assert_eq!(store.get(b"head").unwrap(), Some(b"first".to_vec()));
         store.commit(request(902, b"second")).unwrap();
-        assert_eq!(Rc::strong_count(&store.inner.session), 1);
+        assert_eq!(Rc::strong_count(&store.local_inner().session), 1);
         // Failed/uncertain sessions cannot serve apparently authoritative reads
         // or another commit. Opening a new store is the recovery boundary.
-        store.inner.poisoned.set(true);
+        store.local_inner().poisoned.set(true);
         assert!(store.get(b"head").is_err());
         assert!(store.commit(request(903, b"must-not-write")).is_err());
         drop(store);

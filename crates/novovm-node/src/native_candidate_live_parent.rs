@@ -612,7 +612,9 @@ impl FinalizedParentViewV1 {
                     total > crate::native_block_ledger::NOV_NATIVE_BLOCK_LEDGER_MAX_BODY_BYTES_V1
                 })
         {
-            bail!("successor transaction batch exceeds block bounds");
+            return Err(auth::CandidateInputRejected::from_error(anyhow::anyhow!(
+                "successor transaction batch exceeds block bounds"
+            )));
         }
         if context.chain_id != workspace.chain_id
             || h.height.checked_add(1) != Some(context.block_height)
@@ -620,12 +622,27 @@ impl FinalizedParentViewV1 {
             || context.slot <= h.slot
             || context.timestamp_unix_ms < h.timestamp_unix_ms
         {
-            bail!("successor context does not extend the verified finalized parent");
+            return Err(auth::CandidateInputRejected::from_error(anyhow::anyhow!(
+                "successor context does not extend the verified finalized parent"
+            )));
         }
         let hashes = raw_txs
             .iter()
-            .map(|raw| canonical_nov_native_tx_hash_from_payload_v1(raw))
+            .map(|raw| {
+                canonical_nov_native_tx_hash_from_payload_v1(raw)
+                    .map_err(auth::CandidateInputRejected::from_error)
+            })
             .collect::<Result<Vec<_>>>()?;
+        if hashes
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != hashes.len()
+        {
+            return Err(auth::CandidateInputRejected::from_error(anyhow::anyhow!(
+                "NOV native candidate plan contains duplicate transaction hashes"
+            )));
+        }
         let plan = NovNativeCandidateExecutionPlanV1::new(
             context,
             self.genesis_config().protocol_config_commitment,

@@ -273,7 +273,9 @@ impl FreshRpcServer {
     }
 
     pub fn poll(&mut self, lifecycle: &mut FreshChainLifecycleV1) -> Result<()> {
-        self.poll_batch_with(|requests| handle_fresh_rpc_requests(requests, lifecycle))
+        self.poll_batch_when(!lifecycle.candidate_storage_busy(), |requests| {
+            handle_fresh_rpc_requests(requests, lifecycle)
+        })
     }
 
     /// Service the existing bounded RPC poll within the owner's idle budget.
@@ -287,9 +289,12 @@ impl FreshRpcServer {
         let started = Instant::now();
         poll_during_idle_with(
             idle,
-            || crate::native_fresh_timing::measure("rpc.idle_poll", || self.poll(lifecycle)),
+            || {
+                crate::native_fresh_timing::measure("rpc.idle_poll", || self.poll(lifecycle))?;
+                Ok(lifecycle.candidate_completion_ready())
+            },
             || started.elapsed(),
-            std::thread::sleep,
+            std::thread::park_timeout,
         )
     }
 
@@ -298,7 +303,16 @@ impl FreshRpcServer {
         self.poll_batch_with(|requests| requests.into_iter().map(&mut handle).collect())
     }
 
-    fn poll_batch_with(&mut self, mut handle: impl FnMut(Vec<Value>) -> Vec<Value>) -> Result<()> {
+    #[cfg(test)]
+    fn poll_batch_with(&mut self, handle: impl FnMut(Vec<Value>) -> Vec<Value>) -> Result<()> {
+        self.poll_batch_when(true, handle)
+    }
+
+    fn poll_batch_when(
+        &mut self,
+        storage_available: bool,
+        mut handle: impl FnMut(Vec<Value>) -> Vec<Value>,
+    ) -> Result<()> {
         for _ in 0..MAX_CONNECTIONS {
             match self.listener.accept() {
                 Ok((stream, _)) if self.connections.len() < MAX_CONNECTIONS => {
@@ -319,7 +333,7 @@ impl FreshRpcServer {
         }
         self.connections.retain_mut(|connection| {
             if connection.opened.elapsed() > DEADLINE { return false; }
-            if connection.output.is_none() {
+            if connection.output.is_none() && connection.request.is_none() {
                 let mut buffer = [0u8; 16 * 1024];
                 match connection.stream.read(&mut buffer) {
                     Ok(0) => return false,
@@ -345,6 +359,17 @@ impl FreshRpcServer {
             .iter_mut()
             .enumerate()
             .filter_map(|(index, connection)| {
+                // Keep complete requests owned here within the existing count,
+                // byte and deadline budgets. Never report queued before fsync.
+                // A pure control query does not call workspace/owner storage.
+                if !storage_available
+                    && connection
+                        .request
+                        .as_ref()
+                        .is_some_and(|request| request["method"] != "nov_chainStatus")
+                {
+                    return None;
+                }
                 connection.request.take().map(|request| (index, request))
             })
             .unzip();
@@ -377,15 +402,18 @@ impl FreshRpcServer {
 }
 
 // Clock/sleep closures keep budget and error tests deterministic; production
-// uses one monotonic start and ordinary sleep, with no new scheduler or thread.
+// uses one monotonic start. A real queued candidate completion wakes the owner
+// without paying another full idle interval; RPC arrivals never reset a budget.
 fn poll_during_idle_with(
     idle: Duration,
-    mut poll: impl FnMut() -> Result<()>,
+    mut poll: impl FnMut() -> Result<bool>,
     mut elapsed: impl FnMut() -> Duration,
     mut sleep: impl FnMut(Duration),
 ) -> Result<()> {
     while elapsed() < idle {
-        poll()?;
+        if poll()? {
+            break;
+        }
         let remaining = idle.saturating_sub(elapsed());
         if remaining.is_zero() {
             break;
@@ -544,6 +572,76 @@ mod tests {
     }
 
     #[test]
+    fn durable_stage_defers_state_requests_but_serves_control_without_early_ack() {
+        let mut server = FreshRpcServer::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = server.local_addr().unwrap();
+        let send = |method: &str, id: u64| {
+            let mut stream = TcpStream::connect(address).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let body = serde_json::to_vec(
+                &json!({"jsonrpc":"2.0","id":id,"method":method,"params":["12"]}),
+            )
+            .unwrap();
+            let mut packet =
+                format!("POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+            packet.extend_from_slice(&body);
+            stream.write_all(&packet).unwrap();
+            stream
+        };
+        let mut submit = send("nov_sendRawTransaction", 1);
+        let mut query = send("nov_getTransactionStatus", 2);
+        let mut control = send("nov_chainStatus", 3);
+        let mut controls = 0;
+        server
+            .poll_batch_when(false, |requests| {
+                assert_eq!(requests.len(), 1);
+                assert_eq!(requests[0]["method"], "nov_chainStatus");
+                controls += 1;
+                vec![
+                    json!({"jsonrpc":"2.0","id":3,"result":{"candidate_durability_inflight":true}}),
+                ]
+            })
+            .unwrap();
+        assert_eq!(controls, 1);
+        assert_eq!(server.connections.len(), 2);
+        assert!(server
+            .connections
+            .iter()
+            .all(|c| c.request.is_some() && c.output.is_none()));
+        let mut response = String::new();
+        control.read_to_string(&mut response).unwrap();
+        assert!(response.contains("candidate_durability_inflight"));
+        server
+            .poll_batch_when(false, |_| {
+                panic!("state requests escaped durable backpressure")
+            })
+            .unwrap();
+        server
+            .poll_batch_when(true, |requests| {
+                assert_eq!(
+                    requests
+                        .iter()
+                        .map(|r| r["id"].as_u64().unwrap())
+                        .collect::<Vec<_>>(),
+                    [1, 2]
+                );
+                requests
+                    .into_iter()
+                    .map(|r| json!({"jsonrpc":"2.0","id":r["id"],"result":{"status":"queued"}}))
+                    .collect()
+            })
+            .unwrap();
+        for stream in [&mut submit, &mut query] {
+            let mut response = String::new();
+            stream.read_to_string(&mut response).unwrap();
+            assert!(response.contains("queued"));
+        }
+        assert!(server.connections.is_empty());
+    }
+
+    #[test]
     fn idle_rpc_zero_budget_does_not_poll_or_sleep() {
         poll_during_idle_with(
             Duration::ZERO,
@@ -564,7 +662,7 @@ mod tests {
             || {
                 polls += 1;
                 elapsed.set(elapsed.get() + Duration::from_millis(1));
-                Ok(())
+                Ok(false)
             },
             || elapsed.get(),
             |pause| {
@@ -594,7 +692,7 @@ mod tests {
             || {
                 polls += 1;
                 elapsed.set(Duration::from_millis(20));
-                Ok(())
+                Ok(false)
             },
             || elapsed.get(),
             |_| panic!("exhausted budget slept"),
@@ -614,7 +712,7 @@ mod tests {
                 if polls == 3 {
                     return Err(std::io::Error::other("original poll failure").into());
                 }
-                Ok(())
+                Ok(false)
             },
             || Duration::ZERO,
             |pause| {
@@ -626,6 +724,22 @@ mod tests {
         assert!(error.is::<std::io::Error>());
         assert_eq!(error.to_string(), "original poll failure");
         assert_eq!((polls, pauses), (3, 2));
+    }
+
+    #[test]
+    fn real_candidate_completion_ends_idle_before_another_pause() {
+        let mut polls = 0;
+        poll_during_idle_with(
+            Duration::from_secs(30),
+            || {
+                polls += 1;
+                Ok(true)
+            },
+            || Duration::ZERO,
+            |_| panic!("ready candidate delayed by idle budget"),
+        )
+        .unwrap();
+        assert_eq!(polls, 1);
     }
 
     #[test]

@@ -5,10 +5,13 @@
 
 #[path = "native_candidate_auth.rs"]
 mod auth;
+pub(crate) use auth::{require_new_successor_execution, CandidateInputRejected};
 #[path = "native_candidate_execution.rs"]
 mod execution;
 #[path = "native_candidate_finalized_parent.rs"]
 mod finalized_parent;
+#[path = "native_candidate_input_capture.rs"]
+mod input_capture;
 #[path = "native_candidate_live_parent.rs"]
 mod live_parent;
 pub(crate) use live_parent::{load_finalized_parent_view_v1, FinalizedParentViewV1};
@@ -26,6 +29,10 @@ pub(crate) use publication_verify_tests::exercise_publication_verify_corruption_
 mod rooted_parent;
 #[path = "native_candidate_state_records.rs"]
 mod state_records;
+pub(crate) use execution::{
+    capture_execution_from_finalized_v1, finish_execution_v1, ExecutionJobV1, ExecutionStartV1,
+    PreparedExecutionV1,
+};
 pub use execution::{
     complete_genesis_promotion_v1, complete_successor_ledger_v1, execute_v1,
     finalize_genesis_promotion_v1, finalize_successor_v1, load_block_artifact_v1,
@@ -375,10 +382,23 @@ struct WorkspaceStore {
     params: serde_json::Value,
     lock_path: PathBuf,
     lock: Option<WorkspaceLock>,
+    runtime: novovm_exec::AoemRuntimeConfig,
 }
 
 impl WorkspaceStore {
     fn open(chain_id: u64, params: &serde_json::Value) -> Result<Self> {
+        Self::open_mode(chain_id, params, true)
+    }
+
+    /// Immutable candidate computation only. The caller cannot publish control
+    /// metadata through commit() without acquiring the original namespace lock.
+    /// Graph ownership is supplied by the explicit storage-owner thread scope;
+    /// no Rc-backed handle or OS lock is moved between threads.
+    fn open_computation(chain_id: u64, params: &serde_json::Value) -> Result<Self> {
+        Self::open_mode(chain_id, params, false)
+    }
+
+    fn open_mode(chain_id: u64, params: &serde_json::Value, lock_required: bool) -> Result<Self> {
         let gates = tx_ingress_aoem_ownership_gates_from_params_v1(params);
         if !gates.explicit || !(gates.production_candidate || gates.semantic_graph_v3_required) {
             bail!("candidate workspace requires explicit AOEM production ownership");
@@ -405,7 +425,9 @@ impl WorkspaceStore {
         let lock_path =
             canonical_db_path.join(format!("candidate-workspace-{}.lock", to_hex(&scope)));
         reject_poisoned_workspace(&lock_path)?;
-        let lock = acquire_workspace_lock(&lock_path)?;
+        let lock = lock_required
+            .then(|| acquire_workspace_lock(&lock_path))
+            .transpose()?;
         let runtime = native_aoem_owned_runtime_config_v1()?;
         if runtime.persist_backend.trim().eq_ignore_ascii_case("none") {
             bail!("candidate workspace requires a persistent AOEM backend");
@@ -423,7 +445,8 @@ impl WorkspaceStore {
             chain_id,
             params: params.clone(),
             lock_path,
-            lock: Some(lock),
+            lock,
+            runtime,
         })
     }
 
@@ -504,6 +527,9 @@ impl WorkspaceStore {
         writes: Vec<AoemAtomicGraphWriteV1>,
         completion_write: AoemAtomicGraphWriteV1,
     ) -> Result<()> {
+        if self.lock.is_none() {
+            bail!("candidate computation view cannot commit workspace metadata without its lock");
+        }
         let digest = sha256_bytes_v1(&[
             b"novovm-candidate-workspace-graph-v1\0",
             &self.scope,
@@ -626,6 +652,29 @@ impl WorkspaceStore {
             self.read_input(descriptor)?;
         }
         Ok(descriptor.info(self.chain_id, slot, status))
+    }
+
+    /// An owned NCW2 input need not have been staged yet. Materialize only its
+    /// already published parent source, never try to read a new candidate slot.
+    fn cold_payload_from_verified(&self, verified: &VerifiedInput) -> Result<Payload> {
+        let VerifiedInput::Light(light) = verified else {
+            bail!("owned cold input is already directly available");
+        };
+        let payload = Payload {
+            schema: SCHEMA.into(),
+            plan: light.plan.clone(),
+            parent_block: None,
+            parent_snapshot: None,
+            genesis: None,
+            finalized_parent: Some(
+                light
+                    .finalized_parent
+                    .materialize_cold(self, &self.params)?,
+            ),
+            record_state: light.record_state.clone(),
+        };
+        validate_payload(&payload, self)?;
+        Ok(payload)
     }
 }
 
@@ -1237,6 +1286,27 @@ pub fn list_v1(chain_id: u64, params: &serde_json::Value) -> Result<Vec<Workspac
         .iter()
         .map(|(slot, descriptor)| workspace.info(*slot, descriptor))
         .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn assert_execution_unpublished_for_test_v1(
+    chain: u64,
+    id: [u8; 32],
+    params: &serde_json::Value,
+) -> Result<()> {
+    let workspace = WorkspaceStore::open(chain, params)?;
+    let mut first_chunk = id.to_vec();
+    first_chunk.extend_from_slice(&0u32.to_be_bytes());
+    for key in [
+        workspace.key(b'v', &id),
+        workspace.key(b'e', &id),
+        workspace.key(b'o', &first_chunk),
+    ] {
+        if workspace.graph.get(&key)?.is_some() {
+            bail!("candidate unexpectedly has an output reservation, chunk or completion");
+        }
+    }
+    Ok(())
 }
 
 pub fn abort_v1(

@@ -2912,8 +2912,10 @@ pub use semantic_compute::{
 };
 pub use semantic_graph_v3::{
     AoemAtomicGraphCommitReportV1, AoemAtomicGraphEventV1, AoemAtomicGraphRequestV1,
-    AoemAtomicGraphStepV1, AoemAtomicGraphWriteV1, AoemSemanticGraphSessionScopeV1,
-    AoemSemanticGraphStoreV1, AoemStorageProviderConfigV1,
+    AoemAtomicGraphStepV1, AoemAtomicGraphWriteV1, AoemSemanticGraphClientScopeV1,
+    AoemSemanticGraphClientV1, AoemSemanticGraphOwnerV1, AoemSemanticGraphSessionScopeV1,
+    AoemSemanticGraphStageAdmissionV1, AoemSemanticGraphStageHandleV1, AoemSemanticGraphStoreV1,
+    AoemStorageProviderConfigV1,
 };
 
 #[allow(dead_code)]

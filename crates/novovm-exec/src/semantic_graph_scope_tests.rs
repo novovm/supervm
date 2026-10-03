@@ -42,7 +42,7 @@ impl Drop for ScopeRuntimeEnvironment {
     }
 }
 
-fn with_scope_runtime(label: &str, test: impl FnOnce(&AoemRuntimeConfig, &Path)) {
+pub(super) fn with_scope_runtime(label: &str, test: impl FnOnce(&AoemRuntimeConfig, &Path)) {
     let _lock = SCOPE_RUNTIME_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -76,7 +76,7 @@ fn with_scope_runtime(label: &str, test: impl FnOnce(&AoemRuntimeConfig, &Path))
     test(&runtime, &directory.join("provider.rocksdb"));
 }
 
-fn scope_request(graph_id: u64, value: &[u8]) -> AoemAtomicGraphRequestV1 {
+pub(super) fn scope_request(graph_id: u64, value: &[u8]) -> AoemAtomicGraphRequestV1 {
     AoemAtomicGraphRequestV1 {
         graph_id,
         steps: vec![AoemAtomicGraphStepV1 {
@@ -142,17 +142,23 @@ fn graph_scope_real_aoem_reuses_provider_alias_and_reopens_after_drop() {
             ),
             (1, 1, 0, 1)
         );
-        let weak = Rc::downgrade(&first.inner);
-        let session = Rc::downgrade(&first.inner.session);
+        let weak = Rc::downgrade(first.local_inner());
+        let session = Rc::downgrade(&first.local_inner().session);
         let alias = path.parent().unwrap().join(".").join("provider.rocksdb");
         for index in 0..8 {
             let next = AoemSemanticGraphStoreV1::open(runtime, &alias, &config).unwrap();
             // Pointer identity proves that this is one native session/provider,
             // not a second RocksDB open which happened to see the same bytes.
-            assert!(Rc::ptr_eq(&first.inner, &next.inner));
-            assert!(Rc::ptr_eq(&first.inner.session, &next.inner.session));
-            assert_eq!(first.inner.database_id, next.inner.database_id);
-            assert_ne!(next.inner.database_id, 0);
+            assert!(Rc::ptr_eq(first.local_inner(), next.local_inner()));
+            assert!(Rc::ptr_eq(
+                &first.local_inner().session,
+                &next.local_inner().session
+            ));
+            assert_eq!(
+                first.local_inner().database_id,
+                next.local_inner().database_id
+            );
+            assert_ne!(next.local_inner().database_id, 0);
             if index == 0 {
                 // Recovery may resubmit exactly the same durable graph. A
                 // long-lived session must not retain a completed graph ID and
@@ -178,7 +184,7 @@ fn graph_scope_real_aoem_reuses_provider_alias_and_reopens_after_drop() {
         drop(first);
         assert!(weak.upgrade().is_some(), "scope retains the native owner");
         let last = AoemSemanticGraphStoreV1::open(runtime, path, &config).unwrap();
-        assert!(Rc::ptr_eq(&weak.upgrade().unwrap(), &last.inner));
+        assert!(Rc::ptr_eq(&weak.upgrade().unwrap(), last.local_inner()));
         last.commit(scope_request(1_002, b"second")).unwrap();
         drop(last);
         drop(scope);
@@ -188,7 +194,7 @@ fn graph_scope_real_aoem_reuses_provider_alias_and_reopens_after_drop() {
         let reopened = AoemSemanticGraphStoreV1::open(runtime, path, &config).unwrap();
         assert_eq!(reopened.get(b"head").unwrap(), Some(b"second".to_vec()));
         assert_eq!(reopened.get(b"value").unwrap(), Some(b"second".to_vec()));
-        let unscoped = Rc::downgrade(&reopened.inner);
+        let unscoped = Rc::downgrade(reopened.local_inner());
         drop(reopened);
         assert!(
             unscoped.upgrade().is_none(),
@@ -210,8 +216,8 @@ fn graph_scope_real_aoem_unwind_releases_scope_and_provider() {
             store
                 .commit(scope_request(1_101, b"before-unwind"))
                 .unwrap();
-            provider = Some(Rc::downgrade(&store.inner));
-            session = Some(Rc::downgrade(&store.inner.session));
+            provider = Some(Rc::downgrade(store.local_inner()));
+            session = Some(Rc::downgrade(&store.local_inner().session));
             panic!("host unwinds after a fully drained commit");
         }));
         assert!(failed.is_err());
@@ -257,10 +263,10 @@ fn graph_scope_real_aoem_rejects_runtime_config_path_and_environment_drift() {
         scope_expect_open_error(runtime, path, &config);
         std::env::remove_var("AOEM_FFI_GLOBAL_BUDGET");
         let alias = AoemSemanticGraphStoreV1::open(runtime, path, &config).unwrap();
-        assert!(Rc::ptr_eq(&store.inner, &alias.inner));
+        assert!(Rc::ptr_eq(store.local_inner(), alias.local_inner()));
         assert_eq!(alias.get(b"head").unwrap(), Some(b"unchanged".to_vec()));
         assert!(
-            !store.inner.poisoned.get(),
+            !store.local_inner().poisoned.get(),
             "identity rejection is not a failed commit"
         );
     });
@@ -275,10 +281,10 @@ fn graph_scope_real_aoem_shares_poison_across_handles_and_new_opens() {
         let first = AoemSemanticGraphStoreV1::open(runtime, path, &config).unwrap();
         first.commit(scope_request(1_301, b"durable")).unwrap();
         let second = AoemSemanticGraphStoreV1::open(runtime, path, &config).unwrap();
-        assert!(Rc::ptr_eq(&first.inner, &second.inner));
+        assert!(Rc::ptr_eq(first.local_inner(), second.local_inner()));
         // Simulate the existing uncertain-commit barrier without leaving a real
         // in-flight owner or waiting for the 30-second failure deadline.
-        first.inner.poisoned.set(true);
+        first.local_inner().poisoned.set(true);
         for store in [&first, &second] {
             assert!(store
                 .get(b"head")
@@ -325,12 +331,12 @@ fn graph_scope_real_aoem_pre_admission_validation_does_not_poison_shared_owner()
             .unwrap_err()
             .to_string()
             .contains("exceeds"));
-        assert!(!first.inner.poisoned.get());
+        assert!(!first.local_inner().poisoned.get());
         assert_eq!(second.get(b"head").unwrap(), Some(b"original".to_vec()));
         assert_eq!(second.get(b"value").unwrap(), Some(b"original".to_vec()));
         second.commit(scope_request(1_403, b"valid")).unwrap();
         let third = AoemSemanticGraphStoreV1::open(runtime, path, &config).unwrap();
-        assert!(Rc::ptr_eq(&first.inner, &third.inner));
+        assert!(Rc::ptr_eq(first.local_inner(), third.local_inner()));
         assert_eq!(third.get(b"head").unwrap(), Some(b"valid".to_vec()));
     });
 }

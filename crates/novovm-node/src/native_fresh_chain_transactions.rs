@@ -14,6 +14,9 @@ impl FreshChainLifecycleV1 {
         if self.halted {
             bail!("fresh lifecycle halted");
         }
+        if self.candidate_storage_busy() {
+            bail!("candidate durable stage busy; retry state query");
+        }
         let parent = self
             .finalized_parent
             .as_ref()
@@ -48,10 +51,14 @@ impl FreshChainLifecycleV1 {
                 .map(|_| Err(anyhow::anyhow!("transaction admission batch limit")))
                 .collect();
         }
-        if self.halted {
+        if self.halted || self.candidate_storage_busy() {
             return raws
                 .into_iter()
-                .map(|_| Err(anyhow::anyhow!("fresh lifecycle halted")))
+                .map(|_| {
+                    Err(anyhow::anyhow!(
+                        "fresh lifecycle halted or durable stage busy"
+                    ))
+                })
                 .collect();
         }
         let mut results: Vec<Option<Result<serde_json::Value>>> =
@@ -154,6 +161,9 @@ impl FreshChainLifecycleV1 {
     pub fn transaction_status(&self, hash: [u8; 32]) -> Result<serde_json::Value> {
         if self.halted {
             bail!("fresh lifecycle halted");
+        }
+        if self.candidate_storage_busy() {
+            bail!("candidate durable stage busy; retry state query");
         }
         let hex = crate::native_block_seal::hex_v1(&hash);
         if let Some(parent) = &self.finalized_parent {

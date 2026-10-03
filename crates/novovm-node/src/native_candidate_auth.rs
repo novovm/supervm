@@ -13,6 +13,33 @@ use crate::native_candidate_plan::NovNativeCandidateExecutionPlanV1;
 use serde::de::DeserializeOwned;
 use std::collections::{HashMap, HashSet};
 
+/// A peer-supplied candidate is invalid. Storage reads, corrupt parent records,
+/// local configuration and AOEM failures must not acquire this classification:
+/// the lifecycle may reject this input, but must surface those other failures.
+#[derive(Debug)]
+pub(crate) struct CandidateInputRejected(anyhow::Error);
+
+impl CandidateInputRejected {
+    pub(crate) fn from_error(error: anyhow::Error) -> anyhow::Error {
+        anyhow::Error::new(Self(error))
+    }
+}
+
+impl std::fmt::Display for CandidateInputRejected {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, formatter)
+    }
+}
+
+impl std::error::Error for CandidateInputRejected {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // Keep the original context text exactly once, with its underlying
+        // source chain. Classification never depends on that display text.
+        let original: &(dyn std::error::Error + Send + Sync) = self.0.as_ref();
+        original.source()
+    }
+}
+
 pub(super) struct AuthenticatedItem {
     pub(super) native_tx: NovNativeTxWireV1,
     pub(super) ir: TxIR,
@@ -174,7 +201,9 @@ fn authenticate_parent_plan(
     parent: &dyn ParentAuthAccess,
     params: &serde_json::Value,
 ) -> Result<Vec<AuthenticatedItem>> {
-    plan.validate()?;
+    verify_auth_configuration(plan.context.chain_id, params)?;
+    plan.validate()
+        .map_err(CandidateInputRejected::from_error)?;
     parent.verify_domain(plan.context.chain_id, plan.protocol_config_commitment)?;
 
     // Only cache signers touched by this batch; the immutable parent remains
@@ -185,26 +214,33 @@ fn authenticate_parent_plan(
     let mut authenticated = Vec::with_capacity(plan.raw_txs.len());
 
     for (index, (raw, expected_hash)) in plan.raw_txs.iter().zip(&plan.tx_hashes).enumerate() {
-        let item = authenticate_transaction(raw, plan.context.chain_id, params, index)?;
+        let item = authenticate_transaction(raw, plan.context.chain_id, params, index)
+            .map_err(CandidateInputRejected::from_error)?;
         let tx_hash = item.tx_hash;
         if tx_hash != *expected_hash {
-            bail!("candidate authentication transaction {index} canonical hash mismatch");
+            return Err(CandidateInputRejected::from_error(anyhow::anyhow!(
+                "candidate authentication transaction {index} canonical hash mismatch"
+            )));
         }
         if !seen_hashes.insert(tx_hash) {
-            bail!("candidate authentication duplicate signed intent at transaction {index}");
+            return Err(CandidateInputRejected::from_error(anyhow::anyhow!(
+                "candidate authentication duplicate signed intent at transaction {index}"
+            )));
         }
 
         // Candidates and authority execution share the pinned V2 signer domain.
         let reservation = &item.durable_auth_reservation;
         if !seen_nonce_keys.insert(reservation.ledger_key.clone()) {
-            bail!("candidate authentication duplicate nonce key at transaction {index}");
+            return Err(CandidateInputRejected::from_error(anyhow::anyhow!(
+                "candidate authentication duplicate nonce key at transaction {index}"
+            )));
         }
         if parent.contains_reservation(&reservation.ledger_key)?
             || parent.contains_receipt(&reservation.tx_hash)?
         {
-            bail!(
+            return Err(CandidateInputRejected::from_error(anyhow::anyhow!(
                 "candidate authentication transaction {index} was already committed in its parent"
-            );
+            )));
         }
         let expected = match expected_nonces.entry(reservation.identity_key.clone()) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
@@ -214,17 +250,44 @@ fn authenticate_parent_plan(
         };
         *expected = match novovm_protocol::native_nonce::advance_nonce_v1(*expected, reservation.nonce) {
             Ok(next) => next,
-            Err(novovm_protocol::native_nonce::NonceSequenceErrorV1::Mismatch) => bail!(
+            Err(novovm_protocol::native_nonce::NonceSequenceErrorV1::Mismatch) => return Err(CandidateInputRejected::from_error(anyhow::anyhow!(
                 "candidate authentication nonce sequence mismatch transaction={index} expected={} got={}",
                 *expected,
                 reservation.nonce
-            ),
-            Err(novovm_protocol::native_nonce::NonceSequenceErrorV1::Exhausted) => bail!("candidate authentication nonce sequence overflow"),
+            ))),
+            Err(novovm_protocol::native_nonce::NonceSequenceErrorV1::Exhausted) => return Err(CandidateInputRejected::from_error(anyhow::anyhow!("candidate authentication nonce sequence overflow"))),
         };
 
         authenticated.push(item);
     }
     Ok(authenticated)
+}
+
+/// Local configuration is not peer input. Validate it outside the typed
+/// transaction rejection boundary used below, preserving the verifier's text.
+fn verify_auth_configuration(chain: u64, params: &serde_json::Value) -> Result<()> {
+    if let Some(requested) = requested_native_chain_id_v1(params) {
+        if requested != chain {
+            bail!(
+                "nov native authentication rejected: chain domain mismatch requested={} signed={}",
+                requested,
+                chain
+            );
+        }
+    }
+    if let Ok(raw) = std::env::var(NOV_NATIVE_CHAIN_ID_ENV) {
+        let configured = raw.trim().parse::<u64>().map_err(|error| {
+            anyhow::anyhow!(
+                "nov native authentication rejected: invalid {}: {}",
+                NOV_NATIVE_CHAIN_ID_ENV,
+                error
+            )
+        })?;
+        if configured != chain {
+            bail!("nov native authentication rejected: configured chain domain mismatch configured={} signed={}", configured, chain);
+        }
+    }
+    Ok(())
 }
 
 /// Shared pure per-item checks. No parent reads, pending admission or nonce
@@ -284,6 +347,29 @@ fn authenticate_transaction(
     })
 }
 
+/// Admission only, never part of historical authentication or output readback.
+/// A stored Execute result remains readable with the comparison permission off;
+/// a new worker job that would need Host computation must be refused up front.
+fn require_new_execution_capability(native_tx: &NovNativeTxWireV1) -> Result<()> {
+    native_transfer_dispatch::require_execution_capability_v1(native_tx, true)
+        .map_err(CandidateInputRejected::from_error)?;
+    if !matches!(native_tx.kind, NovTxKindV1::Transfer(_)) {
+        require_legacy_host_execution_comparison_v1("fresh successor Host Execute")
+            .map_err(CandidateInputRejected::from_error)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn require_new_successor_execution(raw_txs: &[Vec<u8>]) -> Result<()> {
+    for (index, raw) in raw_txs.iter().enumerate() {
+        let tx = decode_nov_native_tx_wire_v1(raw)
+            .with_context(|| format!("decode candidate transaction {index}"))
+            .map_err(CandidateInputRejected::from_error)?;
+        require_new_execution_capability(&tx)?;
+    }
+    Ok(())
+}
+
 pub(super) fn select_transactions(
     chain: u64,
     protocol: [u8; 32],
@@ -325,6 +411,7 @@ fn select_parent_transactions(
     params: &serde_json::Value,
     limit: usize,
 ) -> Result<Vec<Vec<u8>>> {
+    verify_auth_configuration(chain, params)?;
     if !(1..=NOV_NATIVE_BLOCK_LEDGER_MAX_TXS_V1).contains(&limit) {
         bail!("proposal_max_transactions is outside its bounds");
     }
@@ -355,6 +442,9 @@ fn select_parent_transactions(
         let Ok(item) = authenticate_transaction(&raw, chain, params, index) else {
             continue;
         };
+        if require_new_execution_capability(&item.native_tx).is_err() {
+            continue;
+        }
         let reservation = &item.durable_auth_reservation;
         if seen_hashes.contains(&item.tx_hash) || seen_nonce_keys.contains(&reservation.ledger_key)
         {
@@ -585,9 +675,12 @@ mod record_tests {
         ] {
             let mut reader = Reader::new(&parent);
             reader.values.remove(&path(parts));
+            let error = authenticate_record_plan(&plan, &reader, &params)
+                .err()
+                .unwrap();
             assert!(
-                authenticate_record_plan(&plan, &reader, &params).is_err(),
-                "{parts:?}"
+                !error.is::<CandidateInputRejected>(),
+                "parent failure classified as peer input: {parts:?}: {error:#}"
             );
         }
         let nonce_path = path(&[
@@ -600,9 +693,12 @@ mod record_tests {
             reader
                 .values
                 .insert(nonce_path.clone(), invalid.as_bytes().to_vec());
+            let error = authenticate_record_plan(&plan, &reader, &params)
+                .err()
+                .unwrap();
             assert!(
-                authenticate_record_plan(&plan, &reader, &params).is_err(),
-                "{invalid}"
+                !error.is::<CandidateInputRejected>(),
+                "parent failure classified as peer input: {invalid}: {error:#}"
             );
         }
         for (parts, value) in [
@@ -620,7 +716,13 @@ mod record_tests {
         ] {
             let mut reader = Reader::new(&parent);
             reader.values.insert(parts, value);
-            assert!(authenticate_record_plan(&plan, &reader, &params).is_err());
+            let error = authenticate_record_plan(&plan, &reader, &params)
+                .err()
+                .unwrap();
+            assert!(
+                !error.is::<CandidateInputRejected>(),
+                "parent corruption classified as peer input: {error:#}"
+            );
         }
         let mut reader = Reader::new(&parent);
         reader.failed_path = Some(nonce_path);
@@ -630,6 +732,18 @@ mod record_tests {
         assert!(error
             .to_string()
             .contains("injected missing or corrupt parent blob"));
+        assert!(!error.is::<CandidateInputRejected>());
+        let error = authenticate_record_plan(
+            &plan,
+            &Reader::new(&parent),
+            &serde_json::json!({"chain_id": CHAIN + 1}),
+        )
+        .err()
+        .unwrap();
+        assert!(
+            !error.is::<CandidateInputRejected>(),
+            "local chain configuration classified as peer input: {error:#}"
+        );
     }
 
     #[test]
@@ -648,12 +762,11 @@ mod record_tests {
         ] {
             let mut reader = Reader::new(&parent);
             reader.values.insert(parts, b"null".to_vec());
-            assert!(authenticate_record_plan(
-                &plan(std::slice::from_ref(&first)),
-                &reader,
-                &params
-            )
-            .is_err());
+            let error =
+                authenticate_record_plan(&plan(std::slice::from_ref(&first)), &reader, &params)
+                    .err()
+                    .unwrap();
+            assert!(error.is::<CandidateInputRejected>(), "{error:#}");
         }
         let mut bad_signature = transaction(0, [0x62; 32], 2);
         bad_signature.signature[40] ^= 1;
@@ -670,8 +783,12 @@ mod record_tests {
             let plan = plan(&[first.clone(), invalid]);
             let reader = Reader::new(&parent);
             let before = reader.values.clone();
-            assert!(authenticate_plan(&plan, &parent, &params).is_err());
-            assert!(authenticate_record_plan(&plan, &reader, &params).is_err());
+            let error = authenticate_plan(&plan, &parent, &params).err().unwrap();
+            assert!(error.is::<CandidateInputRejected>(), "{error:#}");
+            let error = authenticate_record_plan(&plan, &reader, &params)
+                .err()
+                .unwrap();
+            assert!(error.is::<CandidateInputRejected>(), "{error:#}");
             assert_eq!(reader.values, before);
         }
         // A failed late item cannot reserve an earlier valid nonce in the parent.

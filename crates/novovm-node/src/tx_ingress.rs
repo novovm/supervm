@@ -1605,6 +1605,23 @@ fn native_aoem_owned_runtime_config_v1() -> Result<AoemRuntimeConfig> {
     Ok(runtime)
 }
 
+/// Establish one physical AOEM storage owner before starting the main-chain
+/// pipeline. All participating threads enter an explicit client scope; no
+/// additional database or signing owner is created by this transport boundary.
+pub fn start_native_candidate_storage_owner_v1(
+    params: &serde_json::Value,
+) -> Result<novovm_exec::AoemSemanticGraphOwnerV1> {
+    validate_native_persistence_path_isolation_v1(params)?;
+    let path = native_aoem_owned_state_db_path_v1(params);
+    path.canonicalize()
+        .context("candidate storage owner requires existing AOEM authority database")?;
+    novovm_exec::AoemSemanticGraphOwnerV1::start(
+        &native_aoem_owned_runtime_config_v1()?,
+        &path,
+        &novovm_exec::AoemStorageProviderConfigV1::default(),
+    )
+}
+
 fn tx_ingress_string_param_any_v1(params: &serde_json::Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .filter_map(|key| params.get(*key))

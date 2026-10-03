@@ -280,6 +280,10 @@ jobs:
         run: |
           set -euo pipefail
           cargo test -p novovm-exec --lib semantic_compute --locked -- --include-ignored --test-threads=1
+          cargo test -p novovm-exec --lib graph_owner --locked -- --include-ignored --test-threads=1
+          cargo test -p novovm-exec --lib graph_scope --locked -- --include-ignored --test-threads=1
+          cargo test -p novovm-node --lib candidate_worker --locked -- --test-threads=1
+          cargo test -p novovm-node --lib record_auth_ --locked -- --test-threads=1
           cargo test -p novovm-node --lib fresh_pool_tests --locked -- --test-threads=1
           cargo test -p novovm-node --lib finalized_nov_balance --locked -- --test-threads=1
           cargo test -p novovm-node --lib native_fresh_rpc --locked -- --test-threads=1

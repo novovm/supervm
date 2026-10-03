@@ -144,6 +144,31 @@ fn chain_statuses(addresses: &[String]) -> Vec<Value> {
         .collect()
 }
 
+fn check_candidate_pipelines(statuses: &[Value], require_execution: bool) -> Vec<Value> {
+    statuses
+        .iter()
+        .map(|status| {
+            let pipeline = &status["candidate_pipeline"];
+            assert!(
+                pipeline.is_object(),
+                "the product candidate worker must be enabled"
+            );
+            assert_eq!(pipeline["max_inflight"], 1);
+            assert_eq!(pipeline["poisoned"], false);
+            assert_eq!(pipeline["failed"], 0);
+            if require_execution {
+                assert!(
+                    pipeline["completed"].as_u64().unwrap() >= 1,
+                    "each validator must complete its own candidate execution"
+                );
+            }
+            // Reopening finalized data must not require execution again. Nor
+            // do different validators need identical submission/completion counts.
+            pipeline.clone()
+        })
+        .collect()
+}
+
 fn balance_views(addresses: &[String]) -> BalanceViews {
     let views: BalanceViews = addresses
         .iter()
@@ -551,6 +576,7 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
         "nonce already consumed",
     );
     let finalized_balances = balance_views(&addresses);
+    let completed_pipelines = check_candidate_pipelines(&chain_statuses(&addresses), true);
     fs::write(
         evidence.join("mixed-transfer-receipts.json"),
         serde_json::to_vec_pretty(&receipts).unwrap(),
@@ -581,7 +607,9 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
     assert_eq!(recovered, receipts);
     let recovered_balances = balance_views(&addresses);
     assert_eq!(recovered_balances, finalized_balances);
-    for status in chain_statuses(&addresses) {
+    let restart_statuses = chain_statuses(&addresses);
+    let restart_pipelines = check_candidate_pipelines(&restart_statuses, false);
+    for status in restart_statuses {
         assert_eq!(status["height"], tip);
         assert_eq!(status["finalized"], true);
         assert_eq!(status["lifecycle_halted"], false);
@@ -604,6 +632,7 @@ pub(super) fn exercise(nodes: &[Node], evidence: &std::path::Path) {
         "legacy_host_execution":"0","bad_signature_rejected":true,"wrong_chain_rejected":true,"signed_execute_rejected_before_pool":true,
         "queued_balances_unchanged":true,"finalized_balances_match_economic_oracle":true,"balances_plus_treasury_fees_conserved":true,
         "restart_balances_equal":true,"finalized_balances_by_node":finalized_balances,
+        "candidate_pipelines_by_node":completed_pipelines,"restart_candidate_pipelines_by_node":restart_pipelines,
         "single_ingress_validator_index":0,"all_nodes_queued_before_proposal":true,
         "conflicting_nonces_ordered":true,"failure_nonce_consumed":true,"serial_oracle_verified":true,
         "pending_nonce_conflict_rejected":true,"consumed_nonce_conflict_rejected":true,"finalized_replay_idempotent":true,

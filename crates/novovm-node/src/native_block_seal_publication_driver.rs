@@ -1,12 +1,13 @@
-//! Completed fresh-chain publication remains a read-only certificate relay.
-//! It holds no signing key and admits no new transactions or votes.
+//! Completed fresh-chain publication becomes a frozen certificate relay.
+//! Opening verifies execution and completes the original durable publication.
+//! Polling only retransmits those owned bytes; it neither checks current storage
+//! health nor grants current-parent, signing, transaction or publication rights.
 use super::*;
 use crate::native_block_seal::commit_v3::lifecycle::certificate_envelope;
 use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1 as Message;
 use crate::native_block_seal::round_wire::{
     encode_nov_native_seal_round_wire_v1, round_wire_object_hash_v1,
 };
-use crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1;
 use crate::tx_ingress::candidate_workspace::{
     self as workspace, FreshSuccessorPublicationV1, GenesisPromotionPublicationV1,
 };
@@ -26,20 +27,24 @@ impl PublicationReport {
     }
 }
 
-pub struct FreshGenesisPublicationDriverV1 {
-    body_delivery: Option<body_delivery::BodyDeliveryV1>,
+/// Private, non-deserializable historical evidence. Only the strict `open`
+/// path below constructs it, after the durable publication is finalized.
+/// No ledger/workspace paths, parameters, mutable authority or signer survive
+/// here, so a relay poll cannot accidentally become a live authority operation.
+struct FrozenPublicationRelayV1 {
     chain: u64,
     height: u64,
-    parent: Option<[u8; 32]>,
-    id: [u8; 32],
-    pin: [u8; 32],
-    params: serde_json::Value,
-    authority: NovNativeSealEpochAuthorityV1,
     local_peer: String,
     peers: BTreeSet<String>,
     frames: Vec<([u8; 32], Vec<u8>)>,
     certificate_hash: [u8; 32],
     report: PublicationReport,
+}
+
+pub struct FreshGenesisPublicationDriverV1 {
+    frozen: FrozenPublicationRelayV1,
+    // The sender changes retry cursors, never the already verified body bytes.
+    body_delivery: Option<body_delivery::BodyDeliveryV1>,
     attempted: BTreeMap<([u8; 32], String), Instant>,
     next_send: usize,
     last_seen: Instant,
@@ -171,20 +176,20 @@ impl FreshGenesisPublicationDriverV1 {
                 params,
             )?)
         };
+        if !report.finalized() {
+            bail!("publication relay requires finalized durable publication");
+        }
         Ok(Some(Self {
+            frozen: FrozenPublicationRelayV1 {
+                chain: config.chain_id,
+                height: config.height,
+                local_peer,
+                peers: runtime.remote_peer_ids().iter().cloned().collect(),
+                frames,
+                certificate_hash,
+                report,
+            },
             body_delivery,
-            chain: config.chain_id,
-            height: config.height,
-            parent: config.finalized_parent_workspace_id,
-            id,
-            pin,
-            params: params.clone(),
-            authority: config.authority.clone(),
-            local_peer,
-            peers: runtime.remote_peer_ids().iter().cloned().collect(),
-            frames,
-            certificate_hash,
-            report,
             attempted: BTreeMap::new(),
             next_send: 0,
             last_seen: now,
@@ -210,41 +215,25 @@ impl FreshGenesisPublicationDriverV1 {
         now: Instant,
     ) -> Result<()> {
         if now < self.last_seen
-            || runtime.chain_id() != self.chain
+            || runtime.chain_id() != self.frozen.chain
             || runtime.role() != ProductMainlineOverlayRoleV1::Duplex
-            || runtime.startup().local_peer_id != self.local_peer
+            || runtime.startup().local_peer_id != self.frozen.local_peer
             || runtime
                 .remote_peer_ids()
                 .iter()
                 .cloned()
                 .collect::<BTreeSet<_>>()
-                != self.peers
+                != self.frozen.peers
         {
             bail!("published relay runtime or monotonic clock changed");
         }
-        self.authority.validate()?;
-        let verified = match self.parent {
-            Some(parent) => PublicationReport::Successor(workspace::verify_successor_authority_v1(
-                self.chain,
-                parent,
-                self.id,
-                self.pin,
-                &self.params,
-            )?),
-            None => PublicationReport::Genesis(workspace::verify_genesis_promotion_v1(
-                self.chain,
-                self.id,
-                self.pin,
-                &self.params,
-            )?),
-        };
-        if verified != self.report {
-            bail!("published relay authority changed");
-        }
+        // Historical signed evidence does not become invalid when the local
+        // head advances or storage later becomes unavailable. New operations
+        // and reopening still require their independent live verification.
         self.last_seen = now;
         let sent = crate::native_block_seal::round_overlay::submit_frames(
-            &self.frames,
-            &self.peers,
+            &self.frozen.frames,
+            &self.frozen.peers,
             &mut self.attempted,
             &mut self.next_send,
             now,
@@ -268,13 +257,15 @@ impl FreshGenesisPublicationDriverV1 {
         serde_json::json!({
             "enabled":true, "ok":!self.halted, "halted":self.halted, "prepared":!self.halted,
             "decision_v3_enabled":true, "decision_confirmed":!self.halted,
-            "decision_certificate_hash":crate::native_block_seal::hex_v1(&self.certificate_hash),
-            "phase":"PublishedCertificateRelay", "height":self.height,
-            "publication":self.report, "queued_egress":self.sent,
-            "signing_enabled":false, "finalized":!self.halted && self.report.finalized(),
-            "safe":!self.halted && self.report.finalized(),
-            "proof_sealed":!self.halted && self.report.finalized(),
-            "chain_canonical":!self.halted && self.report.finalized(),
+            "decision_certificate_hash":crate::native_block_seal::hex_v1(&self.frozen.certificate_hash),
+            "phase":"PublishedCertificateRelay", "height":self.frozen.height,
+            "publication":self.frozen.report, "queued_egress":self.sent,
+            "publication_evidence_scope":"historical_verified_at_open",
+            "live_storage_verified":false, "live_authority_granted":false,
+            "signing_enabled":false, "finalized":!self.halted && self.frozen.report.finalized(),
+            "safe":!self.halted && self.frozen.report.finalized(),
+            "proof_sealed":!self.halted && self.frozen.report.finalized(),
+            "chain_canonical":!self.halted && self.frozen.report.finalized(),
             "proof_kind":"bft_decision_v3_with_local_aoem_readback",
             "zero_knowledge_execution_proof":false,
         })

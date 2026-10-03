@@ -118,6 +118,18 @@ pub(super) fn load_block_artifact_with_parent_archive_v1(
     let payload = workspace.read_input_with_parent_archive(&input, verified_parent_archive)?;
     let output = read_output_view(workspace, &input, descriptor, &payload, params)?
         .context("completed isolated block output missing")?;
+    build_artifact_from_output(&input, descriptor, &payload, &output).map(Some)
+}
+
+/// Pure byte construction shared by computed previews and durable readback.
+/// This grants neither storage-completion nor signing/publication authority.
+/// The durable loader above still performs all original reads and validation.
+pub(super) fn build_artifact_from_output(
+    input: &Descriptor,
+    descriptor: &OutputDescriptor,
+    payload: &VerifiedInput,
+    output: &OutputView,
+) -> Result<IsolatedBlockArtifactV1> {
     let plan = payload.plan();
     let mut prepared = build_prepared_block_v1(NovNativeBlockCandidateInputV1 {
         context: plan.context,
@@ -127,7 +139,7 @@ pub(super) fn load_block_artifact_with_parent_archive_v1(
         aoem_parent: plan.aoem_parent.clone(),
     })?;
     prepared.expected_aoem_batch_id = Some(output.batch_result.batch_id.clone());
-    prepared.expected_aoem_output_commitment = Some(output.expected_output_commitment);
+    prepared.expected_aoem_output_commitment = Some(output.expected_output_commitment.clone());
     let receipts = plan
         .tx_hashes
         .iter()
@@ -164,7 +176,7 @@ pub(super) fn load_block_artifact_with_parent_archive_v1(
         profile,
     )?;
     plan.validate_against_block(&block)?;
-    let fresh_genesis_identity = match &payload {
+    let fresh_genesis_identity = match payload {
         VerifiedInput::Light(payload) => {
             Some(payload.finalized_parent.config.compile()?.identity())
         }
@@ -183,13 +195,13 @@ pub(super) fn load_block_artifact_with_parent_archive_v1(
             }
         }
     };
-    Ok(Some(IsolatedBlockArtifactV1 {
-        workspace_id: id,
+    Ok(IsolatedBlockArtifactV1 {
+        workspace_id: input.id,
         plan_commitment: input.plan,
         output_digest: descriptor.digest,
         fresh_genesis_identity,
         block,
-    }))
+    })
 }
 
 /// Explicit local registration, not a network admission or signing API. Holds

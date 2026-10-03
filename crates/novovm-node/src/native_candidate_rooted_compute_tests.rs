@@ -75,7 +75,9 @@ pub(crate) fn exercise_light_first_compute_for_test_v1(
     // The earlier extra computation is only a serialization test oracle.
     let _ = rooted_compute::take_observation_for_test();
     let _ = native_transfer_dispatch::take_component_observation_for_test_v1();
-    let actual = state_records::without_materialization_for_test(|| execute_v1(chain, id, params))?;
+    let actual = state_records::without_materialization_for_test(|| {
+        exercise_execution_pipeline_for_test_v1(chain, id, params)
+    })?;
     let (observed_id, transaction_count, peak_inflight) =
         rooted_compute::take_observation_for_test()
             .context("public first-compute did not record its real AOEM observation")?;

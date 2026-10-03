@@ -101,6 +101,27 @@ impl FreshChainLifecycleV1 {
         )? {
             return Ok(());
         }
+        if self.candidate_worker.is_some() {
+            let certificate = self
+                .pacemaker
+                .as_ref()
+                .and_then(pacemaker::ParentPacemaker::certificate)
+                .cloned();
+            let preparation = config.clone().begin_fresh_successor(
+                context.slot,
+                context.timestamp_unix_ms,
+                selected,
+                &self.params,
+                None,
+            )?;
+            self.start_preparing_candidate(
+                preparation,
+                round,
+                candidate_pipeline::CandidateOrigin::Local { certificate },
+            )?;
+            self.proposal_window.clear();
+            return Ok(());
+        }
         let next = config.clone().prepare_fresh_successor(
             context.slot,
             context.timestamp_unix_ms,

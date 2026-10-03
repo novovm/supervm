@@ -59,6 +59,15 @@ pub(crate) use rooted_output::{
 };
 use rooted_output::{authenticate_payload, read_output_view, OutputView};
 
+#[path = "native_candidate_execution_pipeline.rs"]
+mod pipeline;
+#[cfg(test)]
+pub(crate) use pipeline::exercise_execution_pipeline_for_test_v1;
+pub(crate) use pipeline::{
+    capture_execution_from_finalized_v1, finish_execution_v1, ExecutionJobV1, ExecutionStartV1,
+    PreparedExecutionV1,
+};
+
 pub(super) const OUTPUT_SCHEMA: &str = "novovm-native-candidate-execution/v1";
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TOTAL_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
@@ -946,83 +955,19 @@ pub(crate) fn execute_with_checkpoint_v1(
     params: &serde_json::Value,
     checkpoint: impl Fn(ExecutionCheckpointV1) -> Result<()>,
 ) -> Result<ExecutionInfoV1> {
-    let mut workspace = WorkspaceStore::open(chain_id, params)?;
-    let input = ready_input(&workspace, id)?;
-    let verified = workspace.read_input(&input)?;
-    let outputs = catalog(&workspace)?;
-    let existing = outputs
-        .iter()
-        .find(|(known, _)| *known == id)
-        .map(|(_, output)| output);
-    let complete = existing
-        .map(|output| is_complete(&workspace, &input, output))
-        .transpose()?
-        .unwrap_or(false);
-    // A completed or fully written result recovers without resubmitting AOEM
-    // or recomputing business transitions, including after authority GC.
-    if let Some(descriptor) = existing {
-        if let Some(output) = read_output_view(&workspace, &input, descriptor, &verified, params)? {
-            if !complete {
-                publish(&mut workspace, &input, descriptor)?;
-                checkpoint(ExecutionCheckpointV1::Completed)?;
-            }
-            return info(&input, descriptor, output, verified.root_codec_profile()?);
-        }
-        if complete {
-            bail!("completed candidate output has missing chunks");
-        }
+    match pipeline::begin_with_checkpoint(chain_id, id, params, &checkpoint)? {
+        ExecutionStartV1::Complete(result) => Ok(*result),
+        ExecutionStartV1::Job(job) => pipeline::finish_with_checkpoint(job.run()?, &checkpoint),
     }
-    let prepared = prepare_output(&workspace, &input, &verified, existing, params)?;
-    let descriptor = prepared.descriptor(&input);
-    let bytes = prepared.bytes();
-    check_output_capacity(0, bytes.len())?;
-    if let Some(previous) = existing {
-        if previous != &descriptor {
-            bail!("incomplete candidate output recomputation differs from reserved bytes");
-        }
-    } else {
-        let total = outputs
-            .iter()
-            .try_fold(0usize, |total, (_, output)| total.checked_add(output.len))
-            .context("candidate output capacity overflow")?;
-        check_output_capacity(total, bytes.len())?;
-        let reservation = AoemAtomicGraphWriteV1::Put {
-            key: workspace.key(b'v', &id),
-            value: descriptor.encode(),
-        };
-        workspace.commit(b'V', &input, vec![reservation.clone()], reservation)?;
-    }
-    checkpoint(ExecutionCheckpointV1::OutputReserved)?;
-    prepared.persist(&workspace)?;
-    let writes: Vec<_> = bytes
-        .chunks(CHUNK_BYTES)
-        .enumerate()
-        .map(|(index, chunk)| AoemAtomicGraphWriteV1::Put {
-            key: output_chunk_key(&workspace, &id, index),
-            value: chunk.to_vec(),
-        })
-        .collect();
-    let reservation = AoemAtomicGraphWriteV1::Put {
-        key: workspace.key(b'v', &id),
-        value: descriptor.encode(),
-    };
-    workspace.commit(b'P', &input, writes[..1].to_vec(), reservation.clone())?;
-    checkpoint(ExecutionCheckpointV1::PartialOutput)?;
-    workspace.commit(b'O', &input, writes, reservation)?;
-    checkpoint(ExecutionCheckpointV1::OutputWritten)?;
-    let readback = read_output_view(&workspace, &input, &descriptor, &verified, params)?
-        .context("candidate output readback incomplete")?;
-    publish(&mut workspace, &input, &descriptor)?;
-    checkpoint(ExecutionCheckpointV1::Completed)?;
-    info(
-        &input,
-        &descriptor,
-        readback,
-        verified.root_codec_profile()?,
-    )
 }
 
-enum PreparedOutput {
+struct PreparedOutput {
+    storage: PreparedOutputStorage,
+    // Computed data only. This is not a durable completion or signing view.
+    preview: OutputView,
+}
+
+enum PreparedOutputStorage {
     Delta {
         document: Box<state_records::PreparedDeltaDocument>,
         updates: Box<state_records::RecordTreeUpdatesV1>,
@@ -1033,10 +978,10 @@ enum PreparedOutput {
 
 impl PreparedOutput {
     fn bytes(&self) -> &[u8] {
-        match self {
-            Self::Delta { document, .. } => &document.bytes,
-            Self::Cold(document) => &document.bytes,
-            Self::Inline(bytes) => bytes,
+        match &self.storage {
+            PreparedOutputStorage::Delta { document, .. } => &document.bytes,
+            PreparedOutputStorage::Cold(document) => &document.bytes,
+            PreparedOutputStorage::Inline(bytes) => bytes,
         }
     }
 
@@ -1049,13 +994,28 @@ impl PreparedOutput {
     }
 
     fn persist(&self, workspace: &WorkspaceStore) -> Result<()> {
-        match self {
-            Self::Delta { document, updates } => {
+        match &self.storage {
+            PreparedOutputStorage::Delta { document, updates } => {
                 state_records::persist_delta(workspace, document, updates)
             }
-            Self::Cold(document) => state_records::persist(workspace, document),
-            Self::Inline(_) => Ok(()),
+            PreparedOutputStorage::Cold(document) => state_records::persist(workspace, document),
+            PreparedOutputStorage::Inline(_) => Ok(()),
         }
+    }
+
+    // Only the private worker continuation consumes this preview. All public
+    // artifact loaders still require durable completion and full readback.
+    fn preview_artifact(
+        &self,
+        input: &Descriptor,
+        verified: &VerifiedInput,
+    ) -> Result<IsolatedBlockArtifactV1> {
+        block_artifact::build_artifact_from_output(
+            input,
+            &self.descriptor(input),
+            verified,
+            &self.preview,
+        )
     }
 }
 
@@ -1111,9 +1071,18 @@ fn prepare_output(
                     input_digest: input.payload,
                 };
                 if existing.is_none_or(|previous| *previous == descriptor) {
-                    return Ok(PreparedOutput::Delta {
-                        document: Box::new(document),
-                        updates: Box::new(computed.updates),
+                    return Ok(PreparedOutput {
+                        storage: PreparedOutputStorage::Delta {
+                            document: Box::new(document),
+                            updates: Box::new(computed.updates),
+                        },
+                        preview: OutputView {
+                            expected_output_commitment: computed
+                                .metadata
+                                .expected_output_commitment,
+                            batch_result: computed.metadata.batch_result,
+                            receipts: computed.receipts,
+                        },
                     });
                 }
             }
@@ -1135,7 +1104,7 @@ fn prepare_output(
     let payload = match verified.cold_payload() {
         Some(payload) => payload,
         None => {
-            materialized = workspace.read_payload(input)?;
+            materialized = workspace.cold_payload_from_verified(verified)?;
             &materialized
         }
     };
@@ -1235,9 +1204,30 @@ fn prepare_cold_output(
     } else {
         None
     };
-    let result = match inline {
-        Some(bytes) => PreparedOutput::Inline(bytes),
-        None => PreparedOutput::Cold(Box::new(prepared)),
+    let receipts = payload
+        .plan
+        .tx_hashes
+        .iter()
+        .map(|hash| {
+            let hash = to_hex(hash);
+            let receipt = output
+                .store
+                .receipts
+                .remove(&hash)
+                .context("computed block receipt missing")?;
+            Ok((hash, receipt))
+        })
+        .collect::<Result<_>>()?;
+    let result = PreparedOutput {
+        storage: match inline {
+            Some(bytes) => PreparedOutputStorage::Inline(bytes),
+            None => PreparedOutputStorage::Cold(Box::new(prepared)),
+        },
+        preview: OutputView {
+            expected_output_commitment: output.expected_output_commitment,
+            batch_result: output.batch_result,
+            receipts,
+        },
     };
     if result.descriptor(input) != descriptor || existing.is_some_and(|old| *old != descriptor) {
         bail!("incomplete candidate output recomputation differs from reserved bytes");

@@ -27,6 +27,9 @@ pub(super) fn take_observation_for_test() -> Option<([u8; 32], usize, usize)> {
 pub(super) struct ComputedDeltaOutput {
     pub(super) metadata: rooted_output::OutputMetadata,
     pub(super) updates: state_records::RecordTreeUpdatesV1,
+    // Actual current-block receipts already checked against the staged trees.
+    // Kept only to reject a wrong remote subject before reserving any storage.
+    pub(super) receipts: BTreeMap<String, NovNativeExecutionReceiptV1>,
 }
 
 impl ComputedDeltaOutput {
@@ -287,5 +290,6 @@ pub(super) fn compute(
             blob_bytes,
             changes: Some(update.changes),
         },
+        receipts: current_receipts,
     })
 }

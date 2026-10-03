@@ -70,6 +70,12 @@ fn exercise_fresh_successor_relay(
         assert_eq!(relay.status_json()["height"], height);
         assert_eq!(relay.status_json()["finalized"], true);
         assert_eq!(relay.status_json()["signing_enabled"], false);
+        assert_eq!(
+            relay.status_json()["publication_evidence_scope"],
+            "historical_verified_at_open"
+        );
+        assert_eq!(relay.status_json()["live_storage_verified"], false);
+        assert_eq!(relay.status_json()["live_authority_granted"], false);
         let artifact = workspace::load_block_artifact_v1(chain, id, params)
             .unwrap()
             .unwrap();
@@ -142,19 +148,67 @@ fn exercise_fresh_successor_relay(
         let original = db.get(pin_key).unwrap().unwrap();
         db.delete(pin_key).unwrap();
         drop(db);
-        assert!(relay.poll(runtime, Instant::now()).is_err());
-        assert_eq!(relay.status_json()["halted"], true);
-        assert_eq!(relay.status_json()["finalized"], false);
+        // A previously verified, immutable certificate remains valid evidence.
+        // Relaying it does not assert current disk health and cannot create a
+        // new vote. The independent authority/recovery boundaries must reject
+        // exactly the same corruption, without repairing it.
+        relay.poll(runtime, Instant::now()).unwrap();
+        assert_eq!(relay.status_json()["halted"], false);
+        assert_eq!(relay.status_json()["finalized"], true);
+        assert_eq!(relay.status_json()["live_storage_verified"], false);
+        assert!(workspace::verify_successor_authority_v1(chain, parent, id, pin, params).is_err());
         assert!(Driver::open(&load(), &ledger, params, runtime, Instant::now()).is_err());
+        let mut signing_scope_entered = false;
+        assert!(workspace::with_verified_finalized_parent_round_v1(
+            chain,
+            id,
+            pin,
+            params,
+            |_| -> anyhow::Result<()> {
+                signing_scope_entered = true;
+                anyhow::bail!("corrupt parent must not reach the signing scope")
+            },
+        )
+        .is_err());
+        assert!(!signing_scope_entered);
+        assert_eq!(
+            seal.load_pending_outbox(chain, validator.validator_id, 128)
+                .unwrap(),
+            before
+        );
         let db = rocksdb::DB::open_default(&ledger).unwrap();
         assert!(db.get(pin_key).unwrap().is_none());
         db.put(pin_key, original).unwrap(); // Explicit fixture restoration.
         drop(db);
-        assert!(relay.poll(runtime, Instant::now()).is_err());
+        relay.poll(runtime, Instant::now()).unwrap();
         assert!(
             Driver::open(&load(), &ledger, params, runtime, Instant::now())
                 .unwrap()
                 .is_some()
+        );
+        // Frozen evidence must not relax the relay's dynamic transport identity
+        // or monotonic clock fence. A failure remains sticky for this instance.
+        let other_runtime = peers
+            .iter()
+            .enumerate()
+            .find(|(index, _)| *index != sender)
+            .map(|(_, (peer, _))| *peer)
+            .unwrap();
+        assert!(relay.poll(other_runtime, Instant::now()).is_err());
+        assert_eq!(relay.status_json()["halted"], true);
+        assert!(relay.poll(runtime, Instant::now()).is_err());
+        let opened_at = Instant::now();
+        let mut relay = Driver::open(&load(), &ledger, params, runtime, opened_at)
+            .unwrap()
+            .unwrap();
+        assert!(relay
+            .poll(runtime, opened_at - Duration::from_nanos(1))
+            .is_err());
+        assert!(relay.poll(runtime, opened_at).is_err());
+        assert_eq!(
+            seal.load_pending_outbox(chain, validator.validator_id, 128)
+                .unwrap(),
+            before
         );
     });
 }

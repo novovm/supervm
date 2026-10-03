@@ -1,9 +1,13 @@
 //! Fresh-chain confirmation and opt-in received-successor handoff.
-//! Enqueue never executes or signs. Poll verifies the live finalized parent,
-//! assembles an authenticated body, executes locally, then opens the V3 service.
+//! Enqueue never executes or signs. New authority actions verify the live
+//! finalized parent. Fixed sealed evidence is relayed without reacquiring it.
 use super::*;
 use crate::native_candidate_body::network::CandidateBodyInboxV1;
 use crate::native_fresh_timing::{measure, Span};
+#[path = "native_fresh_candidate_pipeline.rs"]
+mod candidate_pipeline;
+#[path = "native_candidate_worker.rs"]
+mod candidate_worker;
 #[path = "native_fresh_chain_clock.rs"]
 mod clock;
 #[path = "native_fresh_chain_history.rs"]
@@ -30,6 +34,9 @@ pub const FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1: usize = 8 * 1024 * 1024;
 
 /// Run on the main node's dedicated thread with FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1.
 pub struct FreshChainLifecycleV1 {
+    candidate_worker: Option<candidate_worker::CandidateWorker>,
+    preparing: Option<candidate_pipeline::PreparingCandidate>,
+    candidate_stale_completions: u64,
     clock_waiting: bool,
     future_timestamp_rejected: u64,
     pool: Option<FreshTransactionPool>,
@@ -104,6 +111,9 @@ impl FreshChainLifecycleV1 {
             now,
         );
         let mut this = Self {
+            candidate_worker: None,
+            preparing: None,
+            candidate_stale_completions: 0,
             clock_waiting: false,
             future_timestamp_rejected: 0,
             pool: config
@@ -177,6 +187,44 @@ impl FreshChainLifecycleV1 {
             }
         }
         Ok(this)
+    }
+
+    /// The actual node installs the shared single-provider owner before open.
+    /// Existing synchronous fixtures may retain `open` without a worker.
+    pub fn enable_candidate_pipeline(
+        &mut self,
+        client: novovm_exec::AoemSemanticGraphClientV1,
+    ) -> Result<()> {
+        if self.candidate_worker.is_some() || self.preparing.is_some() || self.halted {
+            bail!("candidate pipeline can only be installed once on an active lifecycle");
+        }
+        self.candidate_worker = Some(candidate_worker::CandidateWorker::start(client)?);
+        Ok(())
+    }
+
+    pub fn candidate_completion_ready(&self) -> bool {
+        // A queued result cannot progress while the wall-clock guard is
+        // waiting. Keep the result, but do not turn RPC idle into a busy loop.
+        !self.clock_waiting
+            && !self.halted
+            && (self
+                .candidate_worker
+                .as_ref()
+                .is_some_and(candidate_worker::CandidateWorker::completion_ready)
+                || self
+                    .preparing
+                    .as_ref()
+                    .is_some_and(candidate_pipeline::PreparingCandidate::completion_ready))
+    }
+
+    /// The isolated durable stage owns the workspace lock on the storage
+    /// thread. Do not wait for that lock while asking the same owner for a KV:
+    /// doing so inverts the lock/command order. RPC keeps bounded pending input,
+    /// control status and fixed proof relay remain live, and admission ACKs wait.
+    pub fn candidate_storage_busy(&self) -> bool {
+        self.preparing
+            .as_ref()
+            .is_some_and(candidate_pipeline::PreparingCandidate::storage_busy)
     }
 
     fn arm_body_reception(&mut self, now: Instant) -> Result<()> {
@@ -307,6 +355,19 @@ impl FreshChainLifecycleV1 {
             bail!("fresh lifecycle monotonic clock moved backwards");
         }
         self.last_seen = now;
+        if self.candidate_storage_busy() {
+            let config = self
+                .config
+                .as_ref()
+                .context("durability parent config missing")?;
+            check_runtime(config, runtime)?;
+            self.publication
+                .as_mut()
+                .context("durability publication missing")?
+                .poll(runtime, now)?;
+            self.poll_preparing_candidate(runtime, now)?;
+            return Ok(());
+        }
         if let Some(config) = &self.config {
             check_runtime(config, runtime)?;
             if let Some(history) = &mut self.history {
@@ -345,7 +406,8 @@ impl FreshChainLifecycleV1 {
             }
             return Ok(());
         }
-        // Reject corrupt/moved parent authority before processing remote work.
+        // Retransmit fixed historical proof only. New preparation, pacemaker
+        // actions and signing each retain their own live authority checks.
         measure("lifecycle.publication_poll", || {
             self.publication
                 .as_mut()
@@ -373,6 +435,11 @@ impl FreshChainLifecycleV1 {
             let cursor = self.next_peer % (2 * peers.len());
             let peer = &peers[cursor / 2];
             self.next_peer = (cursor + 1) % (2 * peers.len());
+            // Leave body frames staged while the one candidate job is in
+            // flight. Timeout/new-view traffic remains independently live.
+            if self.preparing.is_some() && cursor.is_multiple_of(2) {
+                continue;
+            }
             let queues = if cursor.is_multiple_of(2) {
                 &mut self.pending
             } else {
@@ -427,16 +494,47 @@ impl FreshChainLifecycleV1 {
                 continue;
             }
             let certificate = body.message.certificate().cloned();
+            if self.candidate_worker.is_some() {
+                let round = body.message.round();
+                let preparation = match config.clone().begin_received_successor(body, &self.params)
+                {
+                    Ok(preparation) => preparation,
+                    Err(error)
+                        if error
+                            .is::<crate::tx_ingress::candidate_workspace::CandidateInputRejected>(
+                            ) =>
+                    {
+                        self.rejected = self.rejected.saturating_add(1);
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
+                self.start_preparing_candidate(
+                    preparation,
+                    round,
+                    candidate_pipeline::CandidateOrigin::Received {
+                        certificate,
+                        manifest: Box::new(manifest),
+                    },
+                )?;
+                // No registration/vote until an independent later poll takes
+                // the completion through the current parent/round fence.
+                return Ok(());
+            }
             let next = match measure("lifecycle.received_successor_prepare", || {
                 config
                     .clone()
                     .prepare_received_successor(body, &self.params)
             }) {
                 Ok(next) => next,
-                Err(_) => {
+                Err(error)
+                    if error.is::<crate::tx_ingress::candidate_workspace::CandidateInputRejected>()
+                        || error.is::<crate::native_block_seal::service_config::SuccessorOutputMismatch>() =>
+                {
                     self.rejected = self.rejected.saturating_add(1);
                     continue;
                 }
+                Err(error) => return Err(error),
             };
             let mut service = measure("lifecycle.received_successor_open", || {
                 NovNativeSealServiceV1::open_configured(
@@ -476,6 +574,9 @@ impl FreshChainLifecycleV1 {
                 .context("successor pacemaker missing")?
                 .poll(config, &self.params, runtime, now)
         })?;
+        if self.preparing.is_some() {
+            return self.poll_preparing_candidate(runtime, now);
+        }
         measure("lifecycle.propose_from_pool", || {
             self.propose_from_pool(runtime, now, wall_ms)
         })
@@ -489,6 +590,14 @@ impl FreshChainLifecycleV1 {
             .or_else(|| self.publication.as_ref().map(|p| p.status_json()))
             .unwrap_or_else(|| serde_json::json!({}));
         value["successor_reception_enabled"] = self.receive_successors.into();
+        value["candidate_pipeline"] = self
+            .candidate_worker
+            .as_ref()
+            .map(candidate_worker::CandidateWorker::status_json)
+            .unwrap_or(serde_json::Value::Null);
+        value["candidate_preparation_inflight"] = self.preparing.is_some().into();
+        value["candidate_durability_inflight"] = self.candidate_storage_busy().into();
+        value["candidate_stale_completions"] = self.candidate_stale_completions.into();
         value["clock_waiting"] = self.clock_waiting.into();
         value["future_timestamp_rejected"] = self.future_timestamp_rejected.into();
         value["max_future_block_time_ms"] = clock::MAX_FUTURE_BLOCK_TIME_MS.into();

@@ -15,6 +15,9 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 #[path = "native_block_seal_service_recovery.rs"]
 mod recovery;
+#[path = "native_fresh_successor_preparation.rs"]
+mod successor_preparation;
+pub(crate) use successor_preparation::{FreshSuccessorPreparationV1, SuccessorOutputMismatch};
 
 pub const NOV_NATIVE_SEAL_SERVICE_SCHEMA_V1: &str = "novovm-native-seal-service/v1";
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
@@ -318,36 +321,105 @@ impl NovNativeSealServiceConfigV1 {
         body: crate::native_candidate_body::VerifiedCandidateBodyV1,
         params: &serde_json::Value,
     ) -> Result<Self> {
+        let preparation = self.begin_received_successor_mode(body, params, false)?;
+        crate::tx_ingress::candidate_workspace::execute_v1(
+            preparation.chain_id(),
+            preparation.workspace_id(),
+            params,
+        )?;
+        preparation.finish(params)
+    }
+
+    pub(crate) fn begin_received_successor(
+        self,
+        body: crate::native_candidate_body::VerifiedCandidateBodyV1,
+        params: &serde_json::Value,
+    ) -> Result<FreshSuccessorPreparationV1> {
+        self.begin_received_successor_mode(body, params, true)
+    }
+
+    fn begin_received_successor_mode(
+        self,
+        body: crate::native_candidate_body::VerifiedCandidateBodyV1,
+        params: &serde_json::Value,
+        deferred: bool,
+    ) -> Result<FreshSuccessorPreparationV1> {
+        use crate::tx_ingress::candidate_workspace::CandidateInputRejected;
         let proposal = body
             .message
             .proposal()
-            .context("received body proposal missing")?;
+            .context("received body proposal missing")
+            .map_err(CandidateInputRejected::from_error)?;
         let subject = &proposal.subject;
         if body.authority_commitment != self.authority.authority_commitment
             || subject.parent_block_hash != self.block_hash
             || self.height.checked_add(1) != Some(subject.height)
         {
-            bail!("received body does not extend configured authority and parent");
+            return Err(CandidateInputRejected::from_error(anyhow::anyhow!(
+                "received body does not extend configured authority and parent"
+            )));
         }
-        self.prepare_fresh_successor_inner(
+        self.begin_fresh_successor_mode(
             subject.slot,
             subject.timestamp_unix_ms,
             body.raw_txs,
             params,
-            Some(subject),
+            Some(subject.clone()),
+            deferred,
         )
     }
 
     fn prepare_fresh_successor_inner(
-        mut self,
+        self,
         slot: u64,
         timestamp_unix_ms: u64,
         raw_txs: Vec<Vec<u8>>,
         params: &serde_json::Value,
         expected: Option<&crate::native_block_seal::NovNativeSealSubjectV1>,
     ) -> Result<Self> {
+        let preparation = self.begin_fresh_successor_mode(
+            slot,
+            timestamp_unix_ms,
+            raw_txs,
+            params,
+            expected.cloned(),
+            false,
+        )?;
+        crate::native_fresh_timing::measure("successor.prepare.execute", || {
+            crate::tx_ingress::candidate_workspace::execute_v1(
+                preparation.chain_id(),
+                preparation.workspace_id(),
+                params,
+            )
+        })?;
+        preparation.finish(params)
+    }
+
+    /// Capture input without a new durable slot. The value stays with the lifecycle
+    /// owner; neither the signer nor this service configuration goes to compute.
+    pub(crate) fn begin_fresh_successor(
+        self,
+        slot: u64,
+        timestamp_unix_ms: u64,
+        raw_txs: Vec<Vec<u8>>,
+        params: &serde_json::Value,
+        expected: Option<crate::native_block_seal::NovNativeSealSubjectV1>,
+    ) -> Result<FreshSuccessorPreparationV1> {
+        self.begin_fresh_successor_mode(slot, timestamp_unix_ms, raw_txs, params, expected, true)
+    }
+
+    fn begin_fresh_successor_mode(
+        self,
+        slot: u64,
+        timestamp_unix_ms: u64,
+        raw_txs: Vec<Vec<u8>>,
+        params: &serde_json::Value,
+        expected: Option<crate::native_block_seal::NovNativeSealSubjectV1>,
+        deferred: bool,
+    ) -> Result<FreshSuccessorPreparationV1> {
         use crate::tx_ingress::candidate_workspace as workspace;
         self.validate(self.chain_id)?;
+        workspace::require_new_successor_execution(&raw_txs)?;
         let pin = self
             .fresh_genesis_config_commitment
             .context("successor requires fresh genesis")?;
@@ -405,37 +477,24 @@ impl NovNativeSealServiceConfigV1 {
             raw_txs,
             params,
         )?;
-        // Full-batch authentication above precedes staging, GC and execution.
-        // Each existing boundary rechecks live parent authority under its locks.
-        let candidate = crate::native_fresh_timing::measure("successor.prepare.create", || {
-            workspace::create_from_finalized_genesis_v1(&plan, parent_id, pin, params)
-        })?;
-        crate::native_fresh_timing::measure("successor.prepare.execute", || {
-            workspace::execute_v1(self.chain_id, candidate.workspace_id, params)
-        })?;
-        let artifact = crate::native_fresh_timing::measure("successor.prepare.artifact", || {
-            workspace::load_block_artifact_v1(self.chain_id, candidate.workspace_id, params)
-        })?
-        .context("prepared successor output missing")?;
-        let actual = parent.successor_seal_subject(&artifact, expected.map_or(0, |s| s.round))?;
-        if expected.is_some_and(|expected| expected != &actual) {
-            bail!("received successor output differs from local verified execution");
-        }
-        crate::native_fresh_timing::measure("successor.prepare.register", || {
-            workspace::register_finalized_successor_v1(
-                self.chain_id,
-                parent_id,
-                candidate.workspace_id,
-                pin,
-                params,
-            )
-        })?;
-        self.height = height;
-        self.block_hash = artifact.block().header.block_hash;
-        self.isolated_workspace_id = Some(candidate.workspace_id);
-        self.finalized_parent_workspace_id = Some(parent_id);
-        self.validate(self.chain_id)?;
-        Ok(self)
+        // New asynchronous inputs do not occupy the durable catalog until the
+        // result passes current-parent/round and complete output-subject checks.
+        let (candidate, execution) = if deferred {
+            let execution =
+                crate::native_fresh_timing::measure("successor.prepare.capture", || {
+                    workspace::capture_execution_from_finalized_v1(&plan, parent_id, pin, params)
+                })?;
+            (execution.workspace_id(), Some(execution))
+        } else {
+            let candidate =
+                crate::native_fresh_timing::measure("successor.prepare.create", || {
+                    workspace::create_from_finalized_genesis_v1(&plan, parent_id, pin, params)
+                })?;
+            (candidate.workspace_id, None)
+        };
+        Ok(FreshSuccessorPreparationV1::new(
+            self, candidate, expected, execution,
+        ))
     }
 
     pub fn is_fresh_successor(&self) -> bool {

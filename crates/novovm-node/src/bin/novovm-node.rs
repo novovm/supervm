@@ -43629,14 +43629,14 @@ fn run_fresh_genesis_confirmation_v1(
     interval_ms: u64,
 ) -> Result<()> {
     let _session_scope = novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
-    // Keep the AOEM authority provider open for this dedicated node thread.
-    // This lazy, thread-bound scope caches only the physical provider/session;
-    // workspace locks and all live parent/QC/root checks still run per call.
-    // Drop it here, before thread/TLS teardown, including on startup errors.
-    let _graph_scope = novovm_exec::AoemSemanticGraphSessionScopeV1::enter()?;
-    // Reuse the generic AOEM computation session across Transfer batches as
-    // well as the separate storage provider above. This is lifetime reuse,
-    // not asynchronous candidate execution or a new scheduling policy.
+    // One physical provider remains on its explicit owner thread. The control
+    // thread and candidate worker use the same exec client; no Rc/FFI handle
+    // crosses threads. Declaration order joins lifecycle workers before owner.
+    let storage_owner =
+        novovm_node::tx_ingress::start_native_candidate_storage_owner_v1(execution_params)?;
+    let _storage_scope = storage_owner.client().enter()?;
+    // Keep startup/recovery computation scoped here. Ongoing candidate
+    // computation uses its own same-thread scope on the resident worker.
     let _compute_scope = novovm_exec::AoemComputeSessionScopeV1::enter()?;
     let mut rpc = string_env_nonempty("NOVOVM_NATIVE_FRESH_RPC_BIND")
         .map(|address| -> Result<_> {
@@ -43666,6 +43666,7 @@ fn run_fresh_genesis_confirmation_v1(
         &runtime,
         Instant::now(),
     )?;
+    lifecycle.enable_candidate_pipeline(storage_owner.client())?;
     // Retain the physical ledger and its exact validated DB revision after
     // startup. ANY ledger write invalidates that content validation. Existing
     // authority/candidate locks and live bindings still guard every transition;
@@ -43762,7 +43763,7 @@ fn run_fresh_genesis_confirmation_v1(
             // RPC work rather than leaving ready clients asleep with this thread.
             rpc.poll_during_idle(&mut lifecycle, idle)?;
         } else {
-            std::thread::sleep(idle);
+            std::thread::park_timeout(idle);
         }
     }
     println!(

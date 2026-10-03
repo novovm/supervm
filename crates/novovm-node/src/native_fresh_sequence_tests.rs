@@ -166,6 +166,17 @@ fn exercise_fresh_sequence(
                 .unwrap();
             assert_eq!(retry.isolated_workspace_id, Some(candidate));
             assert_eq!(retry.block_hash, next.block_hash);
+            // Exercise the reviewed worker/owner handoff on the same original
+            // finalized sequence, without replacing its business or finality.
+            crate::native_block_seal::service::FreshChainLifecycleV1::exercise_candidate_pipeline_for_test_v1(
+                path, params,
+                [
+                    transfer_candidate_raw(chain, 4, [0xc3; 32], [0xd4; 32], 11),
+                    transfer_candidate_raw(chain, 5, [0xc3; 32], [0xd4; 32], 12),
+                    transfer_candidate_raw(chain, 6, [0xc3; 32], [0xd4; 32], 13),
+                ],
+                context.timestamp_unix_ms + 7,
+            ).unwrap();
             crate::native_block_seal::tests::native_seal_round_network::with_service_test_transports(chain, |peers| {
                 let (runtime, _) = peers.iter().find(|(_, key)|
                     key.verifying_key() == next.signer.verifying_key()).unwrap();

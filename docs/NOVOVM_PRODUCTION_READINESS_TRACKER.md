@@ -8,6 +8,66 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## R2 第二片：原节点常驻后台候选流水线
+
+日期 2026-10-03；代码基线 `main@09486e3e7326202837e22b401e01be6da4e90bc2`
+加本节所在提交。本机 Windows / Rust 1.94.0 / 随仓 core AOEM，DLL SHA256
+仍为 `4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463`。
+本片未修改 AOEM 仓库或 DLL，未恢复目录或建立另一条产品链。
+
+**新增用户能力：原 fresh-chain 节点计算后继候选时，控制循环可以继续接收交易、
+查询已 finalized 的回执/余额，并处理真实签名轮次消息。** 实际四进程测试仍用
+现有 `nov_sendRawTransaction`、`nov_getTransactionStatus`、`nov_getAssetBalance`，
+不是独立转账程序。每节点实际完成1个后台候选，6笔用户交易5成功/1业务失败，
+手续费/nonce/余额守恒与原串行经济 oracle 一致，3/4 QC门槛未降低；重启后结果
+一致，worker重新常驻但不重算历史完成结果。`queued`、计算完成、落盘均不是最终确认。
+
+复用来源及接线：选择性迁接受保护草稿的 storage owner、owned capture/run/finish、
+单候选 worker 和 lifecycle/RPC 接线；原49项草稿逐文件哈希仍一致。正式实现位于
+`crates/novovm-node` / `crates/novovm-exec`，沿用原 Transfer 分量、waves、三树格式、
+`persist_delta`、收费和签票/发布；不迁入 packet、批读等无关优化，不链接 legacy。
+一个 worker 接收一个**批候选**，不是每次只执行一笔；批内原 AOEM 计算并发保留。
+
+实际路径：`真实node lifecycle → owned输入捕获 → 常驻候选worker / exec计算会话 →`
+`原AOEM V2 compute → 主循环父/轮次/输出核对 → 常驻AOEM存储owner执行原V3写入 →`
+`主循环再次父/轮次核对 → 原候选注册 / BFT签票 / 发布 → finalized查询`。
+AOEM非Send句柄只在所属线程创建和释放；新捕获不占持久候选槽，异步完成不能直接签票。
+错误签名/nonce/不支持的新Execute为明确准入拒绝，父状态读取/存储故障仍上报，
+不能吞成坏交易。执行许可不进入历史共享鉴权，既有已完成Execute仍可读取/幂等恢复。
+固定已验证证明可继续转发，但明确仅为 `historical_verified_at_open`，不是实时状态授权；
+新签票、重开、晋升仍验证现有真实状态。
+
+| 本机检查 | 结果与范围 |
+| --- | --- |
+| 原四真实进程 Transfer RPC、QC、经济及重启 | 1/1，Host许可0；四节点worker各submitted/completed=1、failed=0，重启均未重算；不是TPS/多机验收 |
+| 原连续record-genesis真实AOEM/网络/恢复夹具 | 1/1（该历史fixture初始化显式Host许可1，不替代上一行许可0验收）；计算暂停时真实RPC/余额、WSS交易与签名Timeout处理继续，发送方持久票重开一致；34个丢弃capture不占槽、错subject拒绝、陈旧计算/落盘均不注册不签票、3笔pool重开保留；后续原链推进回归仍通过 |
+| 真实AOEM纯Transfer、精确父、恢复及分阶段执行 | 1/1，Host许可0；包含无锁计算、输入篡改/abort/retire拒绝、完成重用，以及新Execute/混合capture拒绝且无slot/权威变化 |
+| 常驻owner / scope / compute | 9/9、6/6、14/14，显式include-ignored执行真SDK用例；普通exec另45通过/20ignored，不将ignored计通过 |
+| worker / RPC / pool / typed auth / Host限制 | 6/6、12/12、10/10、3/3、5/5；另真实历史Execute禁算但已完成可读回归1/1 |
+| 原耐久账本 / 封印和Overlay | 40/40、211/211（后者含上述6个worker测试，不重复累计） |
+| 产品构建 | 全workspace/all-targets check、Clippy `-D warnings`、fmt通过；原同源多bin提示保留 |
+
+四进程证据：本机 `artifacts/audit/candidate-node-processes/`
+`seal-relay-2560-1791000619042896800/mixed-transfer-acceptance.json` 及同目录回执/准入。
+本地日志 `artifacts/recovery/r2-async-*.log`。初次Host guard回归揭示共享鉴权许可过宽，
+修正后 `r2-async-final-candidate_workspace_execution_host_barrier_default_guard.log` 通过；
+初次liveness夹具尾部误用普通fresh账本open，原fence正确拒绝，改用现有verified父作用域后
+`r2-async-real-lifecycle-v2.log` 完整通过。Timeout仅一张真票，不冒充QC；陈旧轮次为
+测试内注入，暂停用于响应性检查，不作为AOEM并行速度或真实换轮负载证据。
+失败日志保留，不放松生产检查。CI沿用原真实四进程门，并加入owner/scope/worker/auth检查。
+前轮Linux CI `37093118760` 的历史子进程丢失显式许可问题，已由 `09486e3e` 单独修复
+并推送，本机33/33回归通过；本片本机通过不等于远端CI已通过。
+
+**仍有限制，不签收完整R2或生产：** 输入捕获、重验、注册仍同步；落盘阶段状态RPC
+保留原数量/字节/3秒期限等待，超时需客户端重试，不能保证即时响应。该阶段只继续
+纯chainStatus、不可变证明relay和内存gossip，pacemaker状态处理延后。owner队列8项、
+候选1批不是统一全局字节预算；Drop等待正常worker退出，不声称可强制取消卡住的FFI。
+若候选已落盘才因过期轮次拒绝注册，会留下未注册输出；现有32槽回收不覆盖这类高于
+finalized高度的孤立结果，反复发生可能耗尽槽。下一片需精准接回可恢复的未注册候选
+回收，不能用增大槽数/降低最终性门槛掩盖；随后继续原路径完整业务效应及批量成本整改。
+费用/nonce/树收尾仍有Host计算，V2 CPU回调不等于统一CPU/GPU语义；本片未签收
+主链TPS、GPU/ZK、隐私/PQ、Linux实机、多机公网或nightly长跑。
+
 ## R2 首片：原节点签名转账、最终余额查询与恢复
 
 日期 2026-10-03；代码基线 `main@7b10c7f3adf7b1e48fd39435044d793077911146`

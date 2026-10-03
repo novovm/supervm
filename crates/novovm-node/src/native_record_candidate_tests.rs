@@ -960,6 +960,37 @@ fn exercise_record_profile_fresh_transfers() {
             slot: 2,
             timestamp_unix_ms: config.timestamp_unix_ms + 1,
         };
+        // Admission to a new successor worker is distinct from read-only
+        // authentication of historical plans. Check the actual capture entry
+        // with this verified finalized parent, without reserving any slot.
+        with_env_removed_v1(NOV_NATIVE_ALLOW_LEGACY_HOST_EXECUTION_ENV, || {
+            let execute = candidate_workspace_execution_raw(chain, 2, a, 1, "deposit_reserve");
+            for raw_txs in [
+                vec![execute.clone()],
+                vec![transfer_candidate_raw(chain, 0, d, a, 1), execute],
+            ] {
+                let host_plan = parent.successor_plan(context, raw_txs, params).unwrap();
+                let catalog = workspace::list_v1(chain, params).unwrap();
+                let authority = read_head();
+                let error = workspace::capture_execution_from_finalized_v1(
+                    &host_plan,
+                    input.workspace_id,
+                    pin,
+                    params,
+                )
+                .err()
+                .expect("new Host successor capture must be disabled by default");
+                assert!(error.is::<workspace::CandidateInputRejected>(), "{error:#}");
+                assert!(
+                    error.to_string().contains(
+                        "legacy Host execution is disabled: fresh successor Host Execute"
+                    ),
+                    "wrong capture refusal: {error:#}"
+                );
+                assert_eq!(workspace::list_v1(chain, params).unwrap(), catalog);
+                assert_eq!(read_head(), authority);
+            }
+        });
         assert!(
             parent
                 .successor_plan(context, vec![plan.raw_txs[0].clone()], params)
