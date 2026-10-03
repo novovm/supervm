@@ -152,6 +152,7 @@ impl FreshGenesisConfigV1 {
     /// environment or choose economic parameters. Both profiles fix epoch and
     /// activation to 1, the current fresh nonce scheme, and all history to empty.
     pub fn compile(&self) -> Result<CompiledFreshGenesisV1> {
+        let _timing = crate::native_fresh_timing::Span::start("genesis.compile");
         #[cfg(test)]
         GENESIS_COMPILATION_COUNT.with(|count| count.set(count.get() + 1));
         let root_codec_profile = self.root_codec_profile()?;

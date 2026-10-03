@@ -317,9 +317,11 @@ fn observation_window(
     nodes: usize,
     total: usize,
     cursor: &mut usize,
+    limit: usize,
 ) -> (Vec<(usize, usize)>, bool) {
     let slots = total * nodes;
     assert!(slots > 0 && *cursor < slots && samples.len() <= total);
+    assert!(limit > 0 && limit <= OBSERVATIONS_PER_TURN);
     let mut selected = Vec::new();
     let mut wrapped = false;
     for _ in 0..slots {
@@ -333,7 +335,7 @@ fn observation_window(
             .is_some_and(|sample| sample.finalized_ms_by_node[node].is_none())
         {
             selected.push((index, node));
-            if selected.len() == OBSERVATIONS_PER_TURN {
+            if selected.len() == limit {
                 break;
             }
         }
@@ -443,18 +445,40 @@ fn measure_continuous(
                         .collect()
                 });
                 measured.record_admissions(results, addresses.len())?;
+                // Recheck the deadline and the existing credit on every group.
+                // Queries cannot preempt refill: at most MAX_OUTSTANDING / 4
+                // successful groups reach the same fixed outstanding cap.
+                continue;
             }
 
             let observation_started = Instant::now();
-            let (window, wrapped) =
-                observation_window(&measured.samples, addresses.len(), total, &mut cursor);
-            for chunk in window.chunks(CLIENT_CONCURRENCY) {
-                admission_slots(
+            let mut wrapped = false;
+            let mut observed_this_turn = BTreeSet::new();
+            for _ in 0..OBSERVATIONS_PER_TURN.div_ceil(CLIENT_CONCURRENCY) {
+                if admission_slots(
                     measured.attempts,
                     total,
                     outstanding(&measured.samples),
                     clock.elapsed(),
-                )?;
+                )? > 0
+                {
+                    break;
+                }
+                // Commit the fair cursor only for a dispatched group. A newly
+                // released credit must not wait behind the rest of a 32-query
+                // window, or lose the unqueried entries from that window.
+                let (mut chunk, group_wrapped) = observation_window(
+                    &measured.samples,
+                    addresses.len(),
+                    total,
+                    &mut cursor,
+                    CLIENT_CONCURRENCY,
+                );
+                wrapped |= group_wrapped;
+                chunk.retain(|pair| observed_this_turn.insert(*pair));
+                if chunk.is_empty() {
+                    break;
+                }
                 measured.evidence.observation_requests += chunk.len();
                 measured.evidence.max_concurrent_requests =
                     measured.evidence.max_concurrent_requests.max(chunk.len());
@@ -521,6 +545,23 @@ fn measure_continuous(
                     .max_observation_sweep_wall_ms
                     .max(sweep_started.elapsed().as_secs_f64() * 1000.0);
                 sweep_started = Instant::now();
+            }
+
+            if admission_slots(
+                measured.attempts,
+                total,
+                outstanding(&measured.samples),
+                clock.elapsed(),
+            )? > 0
+            {
+                // Preserve the original turn-start-at-cap measurement, while
+                // giving freed credit priority over chain-status sampling too.
+                if capacity_limited {
+                    measured.evidence.capacity_limited_turns += 1;
+                    measured.evidence.capacity_limited_turn_ms +=
+                        turn_started.elapsed().as_secs_f64() * 1000.0;
+                }
+                continue;
             }
 
             if clock.elapsed() >= next_pool_sample {
@@ -907,6 +948,7 @@ fn exercise_workload(
             "durable_receipts_enabled":profile.durable_receipts(),
             "measurement_label":profile.measurement_label(),
             "proposal_collect_ms":profile.collect_ms(),
+            "client_refill_policy":if continuous {"credit_first_bounded_v2"} else {"batch_finality_barrier"},
         }))
         .unwrap(),
     )
@@ -1076,6 +1118,8 @@ fn exercise_workload(
     let workload = serde_json::json!({
         "batches":if continuous {None}else{Some(BATCHES)},"transactions_per_batch":if continuous {None}else{Some(SIGNERS)},"disjoint_account_pairs_per_batch":if continuous {None}else{Some(SIGNERS)},
         "submission_mode":if continuous {"bounded_continuous_replenishment"} else {"batch_finality_barrier"},
+        "client_refill_policy":if continuous {"credit_first_bounded_v2"} else {"batch_finality_barrier"},
+        "observation_yields_to_available_admission_credit":continuous,
         "nonce_rounds":rounds,"transactions_per_signer":rounds,
         "same_signer_transactions_conflict":true,"distinct_signer_account_pairs_disjoint":true,
         "client_outstanding_cap":if continuous {Some(MAX_OUTSTANDING)}else{None},
@@ -1093,10 +1137,49 @@ fn exercise_workload(
         "physical_lan_executed":false,"public_network_executed":false,"production_signoff":false,
         "report_is_short_baseline_not_saturation_or_long_soak":true,
     });
+    // This report is reached only after full-block membership, successful
+    // receipts on all four nodes, and restart checks. The failure count below
+    // is therefore derived from those observations, not a mixed-load result.
+    let finalized_transactions: usize = blocks
+        .iter()
+        .skip(1)
+        .map(|block| block.body.tx_hashes.len())
+        .sum();
+    let finalized_successful = samples
+        .iter()
+        .filter(|sample| {
+            sample.finalized_ms_by_node.iter().all(Option::is_some)
+                && successful_receipts.contains(&sample.tx_hash)
+        })
+        .count();
+    let admission_errors = admission_outcomes
+        .iter()
+        .filter_map(|outcome| outcome["error"].as_str())
+        .count();
+    let admission_rejected = admission_outcomes
+        .iter()
+        .filter_map(|outcome| outcome["error"].as_str())
+        .filter(|error| error.starts_with("RPC nov_sendRawTransaction:"))
+        .count();
     let report = serde_json::json!({
         "scope":if continuous {"same_host_four_process_record_transfer_continuous_backlog_v1"}else{"same_host_four_process_record_transfer_rpc_finality_baseline_v1"},
         "accepted":true,"attempted":attempts,"admitted":samples.len(),
         "successful_finalized_transactions":expected.len(),"success_ratio":expected.len() as f64 / attempts as f64,
+        "finalized_successful_transactions":finalized_successful,
+        "finalized_failed_business_transactions":finalized_transactions-finalized_successful,
+        "admission_rejected_transactions":admission_rejected,
+        "admission_uncertain_transactions":admission_errors-admission_rejected,
+        "admitted_unresolved_transactions":outstanding(&samples),
+        "dispatched_without_admission_outcome":attempts-admission_outcomes.len(),
+        "not_attempted_transactions":SIGNERS*rounds-attempts,
+        "counting_scope":{
+            "finalized":"unique measured transactions in verified durable blocks, excluding bootstrap",
+            "successful":"finalized with successful receipts observed on all four nodes",
+            "failed_business":"durable measured transaction count minus all-four successful count, after existing all-success assertions",
+            "admission_uncertain_is_not_business_failure":true,
+            "business_failure_workload_exercised":false,
+            "report_requires_all_success":"failed runs retain transfer-finality-observations.json and do not produce this accepted performance report"
+        },
         "window_seconds":duration,"finalized_tps":expected.len() as f64 / duration,
         "latency_ms_p50":percentile(&latency,50),"latency_ms_p95":percentile(&latency,95),"latency_ms_p99":percentile(&latency,99),
         "percentile_method":"nearest_rank","confirmation_observation":"all_four_nodes_RPC_finalized_and_successful_receipt",
@@ -1188,13 +1271,127 @@ mod continuous_scheduler_tests {
     }
 
     #[test]
+    fn credit_first_refill_reaches_existing_cap_before_observation() {
+        let total = SIGNERS * CONTINUOUS_ROUNDS;
+        let mut measured = ContinuousMeasurement::default();
+        let mut groups = Vec::new();
+        loop {
+            let count = admission_slots(
+                measured.attempts,
+                total,
+                outstanding(&measured.samples),
+                Duration::ZERO,
+            )
+            .unwrap();
+            if count == 0 {
+                break;
+            }
+            let start = measured.attempts;
+            measured.attempts += count;
+            let results = (start..start + count)
+                .map(|index| {
+                    let mut hash = [0; 32];
+                    hash[..8].copy_from_slice(&(index as u64).to_le_bytes());
+                    (
+                        index / SIGNERS,
+                        hash,
+                        0.0,
+                        1.0,
+                        Ok(serde_json::json!({"tx_hash":hex(&hash),"status":"queued"})),
+                    )
+                })
+                .collect();
+            measured.record_admissions(results, 4).unwrap();
+            groups.push(count);
+        }
+        assert_eq!(groups, vec![CLIENT_CONCURRENCY; 32]);
+        assert_eq!(measured.attempts, MAX_OUTSTANDING);
+        assert_eq!(measured.admission_outcomes.len(), MAX_OUTSTANDING);
+        assert_eq!(outstanding(&measured.samples), MAX_OUTSTANDING);
+
+        // Refill groups cannot silently extend the global deadline.
+        assert!(admission_slots(4, total, 4, DEADLINE).is_err());
+        assert_eq!(
+            admission_slots(total - 2, total, 0, Duration::ZERO).unwrap(),
+            2
+        );
+        assert_eq!(admission_slots(total, total, 2, Duration::ZERO).unwrap(), 0);
+    }
+
+    #[test]
+    fn credit_first_observation_yields_without_skipping_unqueried_entries() {
+        let total = SIGNERS * CONTINUOUS_ROUNDS;
+        let mut samples: Vec<_> = (0..MAX_OUTSTANDING).map(sample).collect();
+        let mut attempts = samples.len();
+        let mut cursor = 0;
+        let (group, _) = observation_window(&samples, 4, total, &mut cursor, CLIENT_CONCURRENCY);
+        assert_eq!(group, vec![(0, 0), (0, 1), (0, 2), (0, 3)]);
+        samples[0].finalized_ms_by_node[..3].fill(Some(2.0));
+        assert_eq!(
+            admission_slots(attempts, total, outstanding(&samples), Duration::ZERO).unwrap(),
+            0,
+            "three observers are not four-node finality"
+        );
+        samples[0].finalized_ms_by_node[3] = Some(2.0);
+        assert_eq!(
+            admission_slots(attempts, total, outstanding(&samples), Duration::ZERO).unwrap(),
+            1
+        );
+        // The first completed observation group returns immediately to refill;
+        // it did not advance the cursor over the other 28 unissued requests.
+        samples.push(sample(attempts));
+        attempts += 1;
+        let (next, _) = observation_window(&samples, 4, total, &mut cursor, CLIENT_CONCURRENCY);
+        assert_eq!(next, vec![(1, 0), (1, 1), (1, 2), (1, 3)]);
+
+        for sample in &mut samples[1..10] {
+            sample.finalized_ms_by_node.fill(Some(3.0));
+        }
+        let cursor_before_refill = cursor;
+        let mut groups = Vec::new();
+        loop {
+            let count =
+                admission_slots(attempts, total, outstanding(&samples), Duration::ZERO).unwrap();
+            if count == 0 {
+                break;
+            }
+            samples.extend((attempts..attempts + count).map(sample));
+            attempts += count;
+            groups.push(count);
+        }
+        assert_eq!(groups, vec![4, 4, 1]);
+        assert_eq!(outstanding(&samples), MAX_OUTSTANDING);
+        assert_eq!(cursor, cursor_before_refill);
+    }
+
+    #[test]
+    fn credit_first_small_observation_groups_do_not_duplicate_sparse_queries() {
+        let samples = vec![sample(0)];
+        let total = SIGNERS * CONTINUOUS_ROUNDS;
+        let mut cursor = 0;
+        let mut observed = BTreeSet::new();
+        let mut dispatched = Vec::new();
+        for _ in 0..OBSERVATIONS_PER_TURN.div_ceil(CLIENT_CONCURRENCY) {
+            let (mut chunk, _) =
+                observation_window(&samples, 4, total, &mut cursor, CLIENT_CONCURRENCY);
+            chunk.retain(|pair| observed.insert(*pair));
+            if chunk.is_empty() {
+                break;
+            }
+            dispatched.extend(chunk);
+        }
+        assert_eq!(dispatched, vec![(0, 0), (0, 1), (0, 2), (0, 3)]);
+    }
+
+    #[test]
     fn continuous_backlog_observation_cursor_is_bounded_and_fair() {
         let total = SIGNERS * CONTINUOUS_ROUNDS;
         let mut samples: Vec<_> = (0..MAX_OUTSTANDING).map(sample).collect();
         let mut cursor = 0;
         let mut seen = BTreeSet::new();
         for _ in 0..(MAX_OUTSTANDING * 4 / OBSERVATIONS_PER_TURN) {
-            let (window, _) = observation_window(&samples, 4, total, &mut cursor);
+            let (window, _) =
+                observation_window(&samples, 4, total, &mut cursor, OBSERVATIONS_PER_TURN);
             assert_eq!(window.len(), OBSERVATIONS_PER_TURN);
             for pair in window {
                 assert!(seen.insert(pair));
@@ -1206,7 +1403,8 @@ mod continuous_scheduler_tests {
         let mut after_growth = BTreeSet::new();
         let mut wrapped = false;
         for _ in 0..32 {
-            let (window, did_wrap) = observation_window(&samples, 4, total, &mut cursor);
+            let (window, did_wrap) =
+                observation_window(&samples, 4, total, &mut cursor, OBSERVATIONS_PER_TURN);
             wrapped |= did_wrap;
             assert!(window.len() <= OBSERVATIONS_PER_TURN);
             assert_eq!(

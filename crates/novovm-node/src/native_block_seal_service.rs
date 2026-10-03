@@ -411,7 +411,9 @@ impl NovNativeSealServiceV1 {
         if self.halted {
             bail!("native seal service is halted; inspect and restart explicitly");
         }
-        let result = self.poll_inner(candidate_view, runtime, now);
+        let result = crate::native_fresh_timing::measure("seal.service.inner", || {
+            self.poll_inner(candidate_view, runtime, now)
+        });
         if result.is_err() {
             self.halt("local_poll_fault");
         }

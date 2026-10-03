@@ -455,14 +455,23 @@ pub fn with_verified_finalized_successor_v1<T>(
     action: impl FnOnce(&NovNativeBlockLedgerV1) -> Result<T>,
 ) -> Result<T> {
     let mut workspace = WorkspaceStore::open(chain, params)?;
-    let candidate = block_artifact::load_block_artifact_inner_v1(&workspace, candidate_id, params)?
-        .context("successor signing requires complete AOEM output")?;
+    let candidate = crate::native_fresh_timing::measure("seal.successor.artifact", || {
+        block_artifact::load_block_artifact_inner_v1(&workspace, candidate_id, params)
+    })?
+    .context("successor signing requires complete AOEM output")?;
     let native_path = resolve_native_execution_store_path_from_params_v1(params)
         .context("successor signing requires explicit native path")?;
     let namespace = parse_fixed_hex_32_v1(&workspace.namespace, "successor namespace")?;
     let mut action = Some(action);
     let mut result = None;
+    let mut parent_timing = Some(crate::native_fresh_timing::Span::start(
+        "seal.successor.parent",
+    ));
     with_finalized_parent_locked(&mut workspace, parent_id, genesis, params, &mut |parent| {
+        // Exclude the callback from parent capture timing. This changes no
+        // lock lifetime, verification order or behavior on an error path.
+        drop(parent_timing.take());
+        let _action_timing = crate::native_fresh_timing::Span::start("seal.successor.action");
         parent.successor_seal_subject(&candidate, 0)?;
         result = Some(NovNativeBlockLedgerV1::with_fresh_successor_seal_scope_v1(
             &nov_native_block_ledger_rocksdb_path_v1(&native_path),

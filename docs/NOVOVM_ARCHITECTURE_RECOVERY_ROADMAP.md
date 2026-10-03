@@ -241,8 +241,14 @@ wire、round、collector及53项原测试，不读取脏controller，不新造�
 V3，创世配置也没有新共识激活profile。故本片明确拒绝后继转换，不以旧V3父证明
 授予新协议父权。把V3签名换标签、只改一个证书函数或收到新证书就动态切协议都不允许。
 
-下一写路径接合必须同时处理：独立激活域、原首块及后继的版本化proof/intent、
-耐久签票状态+精确outbox原子条件写、原D0–D4发布/恢复及h+1授权。
+**2026-10-03性能切片边界（基线`4de28f3b`）：** 本轮原节点性能A/B保持现有
+V3协议及发布规则，不借性能优化激活新共识。journal/pacemaker与新协议真实原
+节点A/A/B仍未接通；以下是待实施契约，不是本轮吞吐测量或已完成验收。
+
+下一写路径须成套接合独立激活域、原首块／后继的版本化proof/intent、历史父与
+cold/rooted恢复；不能只开新签票入口。签票状态与精确outbox原子条件写确认ACK
+后才出票，未知结果冻结新签票并恢复核验。已决定与已发布分开：沿原D1–D4
+完成AOEM晋升、ledger及finality验回，再重新捕获合法父权限，才允许h+1签票。
 runtime journal的决定即原子写ChainHead、opening要求decided必有head、advance-height
 据此推进三处假设须一起适配；不搬来第二个链头，不拆写后仍声称原子。
 原累计receipt root也不能替代成runtime的per-batch receipt commitment。

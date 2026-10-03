@@ -43681,6 +43681,7 @@ fn run_fresh_genesis_confirmation_v1(
     #[cfg(test)]
     let mut faults = partition_test::Controller::open()?;
     loop {
+        let tick_started = Instant::now();
         #[cfg(test)]
         if let Some(faults) = &mut faults {
             faults.refresh()?;
@@ -43757,10 +43758,14 @@ fn run_fresh_genesis_confirmation_v1(
         if max_ticks > 0 && ticks >= max_ticks {
             break;
         }
-        let idle = Duration::from_millis(interval_ms);
+        let idle =
+            novovm_node::native_block_seal::service::FreshChainLifecycleV1::remaining_tick_idle(
+                Duration::from_millis(interval_ms),
+                tick_started.elapsed(),
+            );
         if let Some(rpc) = &mut rpc {
-            // Preserve the lifecycle idle budget, but continue serving bounded
-            // RPC work rather than leaving ready clients asleep with this thread.
+            // Service bounded RPC work within this turn's remaining budget.
+            // Overruns add no sleep and never accumulate catch-up turns.
             rpc.poll_during_idle(&mut lifecycle, idle)?;
         } else {
             std::thread::park_timeout(idle);

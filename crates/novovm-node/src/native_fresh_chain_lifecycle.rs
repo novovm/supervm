@@ -65,6 +65,13 @@ pub struct FreshChainLifecycleV1 {
 }
 
 impl FreshChainLifecycleV1 {
+    /// Remaining idle budget for this owner-loop turn, including work already
+    /// performed. Each turn starts a new budget; overruns never accrue catch-up
+    /// turns or shorten a later turn. This is not a block-time guarantee.
+    pub fn remaining_tick_idle(interval: Duration, elapsed: Duration) -> Duration {
+        interval.saturating_sub(elapsed)
+    }
+
     pub fn open(
         config: NovNativeSealServiceConfigV1,
         ledger_path: &Path,
@@ -701,5 +708,73 @@ impl FreshChainLifecycleV1 {
             value["halted"] = true.into();
         }
         value
+    }
+}
+
+#[cfg(test)]
+mod tick_budget_tests {
+    use super::FreshChainLifecycleV1;
+    use std::time::Duration;
+
+    #[test]
+    fn fresh_tick_idle_zero_work_preserves_full_budget() {
+        let interval = Duration::from_millis(250);
+        assert_eq!(
+            FreshChainLifecycleV1::remaining_tick_idle(interval, Duration::ZERO),
+            interval
+        );
+        assert_eq!(
+            FreshChainLifecycleV1::remaining_tick_idle(Duration::ZERO, Duration::ZERO),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn fresh_tick_idle_subtracts_work_from_this_turn() {
+        assert_eq!(
+            FreshChainLifecycleV1::remaining_tick_idle(
+                Duration::from_millis(250),
+                Duration::from_millis(200)
+            ),
+            Duration::from_millis(50)
+        );
+    }
+
+    #[test]
+    fn fresh_tick_idle_equal_work_exhausts_budget() {
+        let interval = Duration::from_millis(250);
+        assert_eq!(
+            FreshChainLifecycleV1::remaining_tick_idle(interval, interval),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn fresh_tick_idle_overrun_never_wraps_or_adds_sleep() {
+        for elapsed in [Duration::from_millis(300), Duration::MAX] {
+            assert_eq!(
+                FreshChainLifecycleV1::remaining_tick_idle(Duration::from_millis(250), elapsed),
+                Duration::ZERO
+            );
+        }
+    }
+
+    #[test]
+    fn fresh_tick_idle_next_turn_does_not_catch_up() {
+        let interval = Duration::from_millis(250);
+        let remaining: Vec<_> = [600, 25, 0]
+            .into_iter()
+            .map(|millis| {
+                FreshChainLifecycleV1::remaining_tick_idle(interval, Duration::from_millis(millis))
+            })
+            .collect();
+        assert_eq!(
+            remaining,
+            [
+                Duration::ZERO,
+                Duration::from_millis(225),
+                Duration::from_millis(250)
+            ]
+        );
     }
 }
