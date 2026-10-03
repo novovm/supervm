@@ -63,6 +63,18 @@ Shared product and multi-device development contract:
   post-quantum security remain core product delivery objectives. A runnable
   chain, component benchmark, storage-ownership gate, or green CI does not
   replace these objectives. Do not reduce scope without the user's agreement.
+- User clarification 2026-10-04: integrate the complete, measured `a7db795`
+  fast path into the original product on current main. Preserve product
+  responsibilities, not the old serial control flow. Reviewed controller,
+  pipeline, state, duplex transport and durable consensus mechanisms may be
+  reused together as node internals; never create a second active signer,
+  authority head or replacement product. Earlier behavior-preserving slices
+  do not permanently freeze V3/state/receipt formats; version required changes.
+  Establish the shared 65,536-transaction comparison and prove product RPC
+  uses the SAME core. The roughly 10K result is a CPU-stage reference, not a
+  final target. Retain AOEM unified algebraic/heterogeneous execution and GPU
+  proof integration; do not gate CPU fast-path recovery on new GPU work or
+  invent a separate CUDA route. Measure execution and proof gains separately.
 - User confirmation 2026-10-03: converge consensus responsibilities into
   `crates/novovm-consensus` on the restored main. First move bounded, actually
   used protocol rules without changing behavior; separately integrate a whole
